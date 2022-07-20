@@ -28,14 +28,14 @@ if __name__ == '__main__':
     except ImportError:
         _keystone = None
 
-    a = ArchX86()
+    a = ArchX86()  # get architecture
     #a.bits=16
-    a.reg_blacklist = ('gdt', 'ldt')
-    a.keystone
-    a._ks.sym_resolver = resolver
+    a.reg_blacklist = ('gdt', 'ldt')  # make cs,ds valid
+    a.keystone  # init keystone assembler
+    a._ks.sym_resolver = resolver  # set resolver
     #a._ks_x86_syntax = 'masm'
     #a._configure_keystone()
-    a._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM
+    a._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
 
     #a.ks_mode = _keystone.KS_MODE_16 + _keystone.KS_MODE_LITTLE_ENDIAN
     #print(pyvex.lift(a.asm('je 3'), 0, a).pp())
