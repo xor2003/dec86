@@ -1,3 +1,5 @@
+import re
+
 import pyvex
 # pip install keystone-engine
 from archinfo.arch_x86 import ArchX86
@@ -31,14 +33,17 @@ def vexer(instruction):
 
     arch_32 = ArchX86()  # get architecture
     # a.bits=16
-    arch_32.reg_blacklist = ('gdt', 'ldt')  # make cs,ds valid
+    #arch_32.reg_blacklist = ('gdt', 'ldt')  # make cs,ds valid
     arch_32.keystone  # init keystone assembler
     arch_32._ks.sym_resolver = resolver  # set resolver
     # a._ks_x86_syntax = 'masm'
     # a._configure_keystone()
     arch_32._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
     addr = 1
-    vex = pyvex.lift(arch_32.asm(instruction), addr, arch_32)
+    instruction = re.sub(r'\b[cdefgs]s:','',instruction)
+    bytes = arch_32.asm(instruction)
+    vex = pyvex.lift(bytes, addr, arch_32)
+    assert vex.statements
     vex._size = length
     vex.statements[0].len = length
 
@@ -61,18 +66,29 @@ if __name__ == '__main__':
     # print(pyvex.lift(a.asm('je 3'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,5\nmul ax'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,abcd'), 0, a).pp())
-    instruction = 'add ax,abcd'
+    #instruction = 'add ax,abcd'
+    instruction = 'mov word ptr es:[di],0x42'
     #instruction = 'inc eax'
     vex = vexer(instruction)
     print(vex.pp())
-    exit(0)
+    #exit(0)
 
     #print(pyvex.lift(a.asm('jp abcd'), 0, a).pp())
     #print(pyvex.lift(a.asm('clc')+a.asm('add ax,3')+a.asm('adc ax,5')+a.asm('mul ax')+a.asm('clc'), 0, a).pp())
     #a.bits=32
 
     #bytes = a.asm('push ebp')+a.asm('mov ebp,esp')+a.asm('mov eax,[ebp+8]')+a.asm('mov ebx,[ebp+0xc]')+a.asm('add ax,bx')+a.asm('pop ebp')+a.asm('ret')
-    bytes = arch_32.asm('adc ax,abcd') + arch_32.asm('add ax,bx') + arch_32.asm('ret')
+    bytes = arch_32.asm(
+'''
+        push    ebp
+        mov     ebp, esp
+        mov     edx, DWORD PTR [ebp+8]
+        mov     eax, DWORD PTR [ebp+0xC]
+add ax,abcd
+adc ax,dx
+        pop     ebp
+        ret
+''')
     project = angr.load_shellcode(bytes, arch_32, start_offset=0, load_address=0, support_selfmodifying_code=False)
     cfg = project.analyses[CFGFast].prep()(data_references=True, normalize=True)
 
