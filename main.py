@@ -85,7 +85,8 @@ if __name__ == '__main__':
         mov     edx, DWORD PTR [ebp+8]
         mov     eax, DWORD PTR [ebp+0xC]
 add ax,abcd
-adc ax,dx
+add ax,dx
+and eax,0xffff
         pop     ebp
         ret
 ''')
