@@ -66,8 +66,8 @@ if __name__ == '__main__':
     # print(pyvex.lift(a.asm('je 3'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,5\nmul ax'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,abcd'), 0, a).pp())
-    #instruction = 'add ax,abcd'
-    instruction = 'mov word ptr es:[di],0x42'
+    instruction = 'add ax,abcd'
+    #instruction = 'mov word ptr es:[di],0x42'
     #instruction = 'inc eax'
     vex = vexer(instruction)
     print(vex.pp())
@@ -78,18 +78,42 @@ if __name__ == '__main__':
     #a.bits=32
 
     #bytes = a.asm('push ebp')+a.asm('mov ebp,esp')+a.asm('mov eax,[ebp+8]')+a.asm('mov ebx,[ebp+0xc]')+a.asm('add ax,bx')+a.asm('pop ebp')+a.asm('ret')
-    bytes = arch_32.asm(
-'''
-        push    ebp
-        mov     ebp, esp
-        mov     edx, DWORD PTR [ebp+8]
-        mov     eax, DWORD PTR [ebp+0xC]
-add ax,abcd
-add ax,dx
-and eax,0xffff
-        pop     ebp
-        ret
-''')
+    #;push     ebp
+    #;mov     ebp, esp
+
+    bytes = arch_32.asm('''
+           ; mov     eax, dword ptr [esp + 4]
+           ; mov     ecx, dword ptr [esp + 8]
+            shl     ecx, 4
+            mov     eax, dword ptr [eax + ecx]
+            ret
+    ''')
+
+    bytes = arch_32.asm('''
+    
+            mov     eax, dword ptr [esp + 4]
+            mov     ebx, dword ptr [esp + 0xc]
+            mov     ecx, dword ptr [esp + 8]
+            sub ax,abcd
+            sub ax,cx
+            movzx eax,ax
+            ret
+    ''')
+
+    bytes = arch_32.asm('''
+
+            mov     eax, dword ptr [esp + 4]
+            mov     ebx, dword ptr [esp + 0xc]
+            mov     ecx, dword ptr [esp + 8]
+            sub ax,abcd
+            jz second
+            sub ax,cx
+        second:
+            movzx eax,ax
+            ret
+    ''')
+
+
     project = angr.load_shellcode(bytes, arch_32, start_offset=0, load_address=0, support_selfmodifying_code=False)
     cfg = project.analyses[CFGFast].prep()(data_references=True, normalize=True)
 
