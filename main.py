@@ -1,9 +1,24 @@
 import re
 
+import angr
 import pyvex
 # pip install keystone-engine
+
+from pyvex.lifting import LibVEXLifter, lifters
+
+
+class Lifter16(LibVEXLifter):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def _lift(self, *args, **kwargs):
+        print('Hi!')
+        return super()._lift(*args, **kwargs)
+
+lifters['X86'] = [Lifter16]
+
 from archinfo.arch_x86 import ArchX86
-import angr
 from angr.analyses import (
     VariableRecoveryFast,
     CallingConventionAnalysis,
@@ -29,7 +44,8 @@ def vexer(instruction):
     arch_16.keystone  # init keystone assembler
     arch_16._ks.sym_resolver = resolver  # set resolver
     arch_16._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
-    length = len(arch_16.asm(instruction))
+    _16bit_length = len(arch_16.asm(instruction))
+
 
     arch_32 = ArchX86()  # get architecture
     # a.bits=16
@@ -44,11 +60,11 @@ def vexer(instruction):
     bytes = arch_32.asm(instruction)
     vex = pyvex.lift(bytes, addr, arch_32)
     assert vex.statements
-    vex._size = length
-    vex.statements[0].len = length
+    vex._size = _16bit_length
+    vex.statements[0].len = _16bit_length
 
-    vex.default_exit_target = addr + length
-    vex.next = pyvex.expr.Const(pyvex.const.U32(addr + length))
+    vex.default_exit_target = addr + _16bit_length
+    vex.next = pyvex.expr.Const(pyvex.const.U32(addr + _16bit_length))
     return vex
 
 
@@ -62,6 +78,8 @@ if __name__ == '__main__':
         import keystone as _keystone
     except ImportError:
         _keystone = None
+
+    #angr.block.DEFAULT_VEX_ENGINE = Lifter16(None)
 
     # print(pyvex.lift(a.asm('je 3'), 0, a).pp())
     # print(pyvex.lift(a.asm('adc ax,5\nmul ax'), 0, a).pp())
@@ -81,24 +99,9 @@ if __name__ == '__main__':
     #;push     ebp
     #;mov     ebp, esp
 
-    bytes = arch_32.asm('''
-           ; mov     eax, dword ptr [esp + 4]
-           ; mov     ecx, dword ptr [esp + 8]
-            shl     ecx, 4
-            mov     eax, dword ptr [eax + ecx]
-            ret
-    ''')
 
-    bytes = arch_32.asm('''
-    
-            mov     eax, dword ptr [esp + 4]
-            mov     ebx, dword ptr [esp + 0xc]
-            mov     ecx, dword ptr [esp + 8]
-            sub ax,abcd
-            sub ax,cx
-            movzx eax,ax
-            ret
-    ''')
+
+
 
     bytes = arch_32.asm('''
 
@@ -106,13 +109,42 @@ if __name__ == '__main__':
             mov     ebx, dword ptr [esp + 0xc]
             mov     ecx, dword ptr [esp + 8]
             sub ax,abcd
-            jz second
+            ja second
             sub ax,cx
         second:
             movzx eax,ax
             ret
     ''')
 
+    bytes = arch_32.asm('''
+            mov     eax, dword ptr [esp + 4]
+            mov     ecx, dword ptr [esp + 8]
+            shl     ecx, 4
+            mov     eax, dword ptr [eax + ecx]
+            ret
+    ''')
+
+    bytes = arch_32.asm('''
+
+            mov     eax, dword ptr [esp + 4]
+            mov     ebx, dword ptr [esp + 0xc]
+            mov     ecx, dword ptr [esp + 8]
+            sub ax,abcd
+            sub ax,cx
+            movzx eax,ax
+            ret
+    ''')
+
+    bytes = arch_32.asm('''
+
+            mov     eax, dword ptr [esp + 4]
+            mov     ecx, dword ptr [esp + 8]
+            sub ax,42
+            sub ax,cx
+            movzx eax,ax
+            ret
+    ''')
+    print(bytes)
 
     project = angr.load_shellcode(bytes, arch_32, start_offset=0, load_address=0, support_selfmodifying_code=False)
     cfg = project.analyses[CFGFast].prep()(data_references=True, normalize=True)
