@@ -20,18 +20,16 @@ def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
     # "0x%x:\t%s\t%s" % (instr.address, instr.mnemonic, instr.op_str))
 
 
-def asm32() -> bytes:
+def asm32(line) -> bytes:
     import keystone as ks
-    while True:
-        line = yield
-        if line:
-            ks_ = ks.Ks(ks.KS_ARCH_X86, ks.KS_MODE_32)
-            data, count = ks_.asm(line, as_bytes=True)
-            if count == 0:
-                continue
-            #if count != 1:
-            #    raise Exception(f"Could not assemble {line}")
-            yield data
+    if line:
+        ks_ = ks.Ks(ks.KS_ARCH_X86, ks.KS_MODE_32)
+        data, count = ks_.asm(line, as_bytes=True)
+        if count == 0:
+            raise Exception(f"Could not assemble {line}")
+        #if count != 1:
+        #    raise Exception(f"Could not assemble {line}")
+        return data
 
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
@@ -74,19 +72,33 @@ class Lifter16(LibVEXLifter):
               load_from_ro_regions=False):
         print(f'Input: {locals()}')
 
-        '''
-        md = Cs(CS_ARCH_X86, CS_MODE_32)
-        global data
-        for i in md.disasm(data, 0x1000, count=1):
-            print("0x%x:\t%s\t%s" % (i.address, i.mnemonic, i.op_str))
-        '''
-        asm = asm32()
-        next(asm)
+        #asm = asm32()
+        #next(asm)
 
         addr16bit = 0
         addr32bit = 0
         i = 0
-        bytes16 = ffi().unpack(data, len(data))
+        try:
+            bytes16 = ffi().unpack(data, len(data))
+            #raise Exception()
+        except:
+            vex = super()._lift(data,
+                                bytes_offset=bytes_offset,
+                                max_bytes=max_bytes,
+                                max_inst=max_inst,
+                                opt_level=opt_level,
+                                traceflags=traceflags,
+                                allow_arch_optimizations=allow_arch_optimizations,
+                                strict_block_end=strict_block_end,
+                                skip_stmts=skip_stmts,
+                                collect_data_refs=collect_data_refs,
+                                cross_insn_opt=cross_insn_opt,
+                                load_from_ro_regions=load_from_ro_regions)
+            print("As is:")
+            self.render_vex_to_json(vex)
+            return vex
+
+        print("Trying to convert:")
         print(f"bytes: {bytes16}")
 
         vex=None
@@ -95,7 +107,7 @@ class Lifter16(LibVEXLifter):
             print(f"intr16: {instr16.size} {instr16.mnemonic} {instr16.op_str}")
             instr16_size = instr16.size
 
-            bytes32 = asm.send(f"{instr16.mnemonic} {instr16.op_str}")
+            bytes32 = asm32(f"{instr16.mnemonic} {instr16.op_str}")
             instr32_size = len(bytes32)
             d = disasm(bytes32, addr=addr32bit, bitness=32)
             instr32 = next(d)
@@ -124,15 +136,13 @@ class Lifter16(LibVEXLifter):
             vex.statements[0].len = instr16_size
             vex.default_exit_target = addr16bit + instr16_size
             vex.next = pyvex.expr.Const(pyvex.const.U32(addr16bit + instr16_size))
-            print(vex)
+            #print(vex)
             #self.render_vex_to_json(vex)
             addr16bit += sizes_16bit[i]
             statements.append(vex.statements)
         vex.statements = statements
+        vex._size = len(bytes16)
         self.render_vex_to_json(vex)
-        print(f'Instruction: {vex}')
-
-        print(f'Result: {vex}')
 
         print(f'Output: {vex}')
         return vex
