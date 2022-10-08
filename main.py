@@ -86,7 +86,7 @@ class Lifter16(LibVEXLifter):
         i = 0
         try:
             bytes16 = ffi().unpack(data, len(data))
-            raise Exception()
+            #raise Exception()
         except:
             vex = super()._lift(data,
                                 bytes_offset=bytes_offset,
@@ -258,6 +258,8 @@ class myRdTmp:
 
     @staticmethod
     def set_temp(obj, context):
+        if len(context.results) == 0:
+            raise Exception()
         obj._tmp = context.results.pop(0)
 
 
@@ -275,7 +277,7 @@ def arg_walker(args: IRSB, op, context: myContext):
     if isinstance(args, RdTmp):
         getattr(myRdTmp, op)(args, context)
     elif isinstance(args, Load):
-        getattr(myRdTmp, op)(args.addr, context)
+        arg_walker(args.addr, op, context)
     elif isinstance(args, (Unop, Binop, Triop)):
         for arg in args.args:
             arg_walker(arg, op, context)
@@ -290,16 +292,17 @@ def statement_walker(vex: IRSB, op, context: myContext):
             arg_walker(stmt.data, op, context)
 
 
-def merge_vexes(vex1, vex2):
+def merge_vexes(vex1, vex2_):
+    vex2 = deepcopy(vex2_)
     # Get temporary variables indexes for instr 1
-    c1 = myContext()
-    statement_walker(vex1, 'get_temp', c1)
+    #c1 = myContext()
+    #statement_walker(vex1, 'get_temp', c1)
     #print(c1.results)
     max_temp = len(vex1._tyenv.types) # max(c1.results)
 
     # Get temporary variables indexes for instr 2
     c2 = myContext()
-    statement_walker(vex1, 'get_temp', c2)
+    statement_walker(vex2, 'get_temp', c2)
     #print(c2.results)
 
     # Shift second instruciton indexes
@@ -308,16 +311,20 @@ def merge_vexes(vex1, vex2):
 
     # Add PUT(eip) = x
     #vex1.statements.append(Put(copy(vex1.next), 68))
+    #if vex2.statements[0].addr == 0xf and vex2.statements[0].len == 6:
+    #    print('x')
+    # Fix temporaries indexes
+    statement_walker(vex2, 'set_temp', c2)
 
     # Fix addr inside IMark
     assert isinstance(vex2.statements[0], IMark)
     vex2.statements[0].addr += vex1._size
 
     # Merge instructions
-    vex1.statements += deepcopy(vex2.statements)
+    vex1.statements += vex2.statements
     # Fix temporaries indexes
-    c1.results += c2.results
-    statement_walker(vex1, 'set_temp', c1)
+    ##c1.results += c2.results
+    ##statement_walker(vex1, 'set_temp', c1)
 
     # Merge types
     vex1._tyenv.types += vex2._tyenv.types
@@ -370,7 +377,7 @@ if __name__ == '__main__':
     """
     print(1)
     vex1 = pyvex.lift(arch_32.asm('add     eax, dword ptr [esp + 4]'), 0, arch_32)
-    vex1 = pyvex.lift(arch_32.asm('jmp 4'), 0, arch_32)
+    #vex1 = pyvex.lift(arch_32.asm('jmp 4'), 0, arch_32)
     print(vex1.pp())
 
     # print(Lifter16.render_vex_to_json(vex))
@@ -380,7 +387,7 @@ if __name__ == '__main__':
 
     print(2)
     vex2 = pyvex.lift(arch_32.asm('sub     ebx, dword ptr [esp + 0xc]'), 0, arch_32)
-    vex2 = pyvex.lift(arch_32.asm('jmp 8'), 0, arch_32)
+    #vex2 = pyvex.lift(arch_32.asm('jmp 8'), 0, arch_32)
     print(vex2.pp())
     #print(Lifter16.render_vex_to_json(vex2))
     # with open("2.txt", "w") as text_file:
@@ -399,10 +406,8 @@ if __name__ == '__main__':
     print(12)
     vex = pyvex.lift(arch_32.asm('''add     eax, dword ptr [esp + 4]
             sub     ebx, dword ptr [esp + 0xc]'''), 0, arch_32)
-    vex = pyvex.lift(arch_32.asm('''
-            mov al,1
-            jmp 80
-            '''), 0, arch_32)
+    #vex = pyvex.lift(arch_32.asm('''  mov al,1
+    #        jmp 80    '''), 0, arch_32)
     print(vex.pp())
     #print(Lifter16.render_vex_to_json(vex))
     # with open("12.txt", "w") as text_file:
@@ -475,8 +480,8 @@ if __name__ == '__main__':
         '''
 
 
-    sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
-    bytes_ = assembler(CODE, 32)
+    #sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
+    bytes_ = assembler(CODE, 16)
 
     print(bytes_)
 
