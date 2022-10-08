@@ -1,20 +1,25 @@
 import re
+from abc import abstractmethod
 from copy import deepcopy, copy
 
 import angr
 import pyvex
 # pip install keystone-engine
 # from capstone import *
+from pyvex import IRSB
+from pyvex.expr import Binop, Triop, Unop, RdTmp
 
 from pyvex.lifting import LibVEXLifter, lifters
 from cffi import FFI as ffi
 import jsonpickle
 
+from pyvex.stmt import WrTmp, Put
+
 
 def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
     import capstone as cs
 
-    md = cs.Cs(cs.CS_ARCH_X86, {16:cs.CS_MODE_16, 32:cs.CS_MODE_32}[bitness])
+    md = cs.Cs(cs.CS_ARCH_X86, {16: cs.CS_MODE_16, 32: cs.CS_MODE_32}[bitness])
     for instr in md.disasm(CODE, addr):
         yield instr
     # "0x%x:\t%s\t%s" % (instr.address, instr.mnemonic, instr.op_str))
@@ -27,13 +32,14 @@ def asm32(line) -> bytes:
         data, count = ks_.asm(line, as_bytes=True)
         if count == 0:
             raise Exception(f"Could not assemble {line}")
-        #if count != 1:
+        # if count != 1:
         #    raise Exception(f"Could not assemble {line}")
         return data
 
+
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
-    ks_ = ks.Ks(ks.KS_ARCH_X86, {16:ks.KS_MODE_16, 32:ks.KS_MODE_32}[bitness])
+    ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
     data, count = ks_.asm(lines, as_bytes=True)
     return data
 
@@ -72,15 +78,15 @@ class Lifter16(LibVEXLifter):
               load_from_ro_regions=False):
         print(f'Input: {locals()}')
 
-        #asm = asm32()
-        #next(asm)
+        # asm = asm32()
+        # next(asm)
 
         addr16bit = 0
         addr32bit = 0
         i = 0
         try:
             bytes16 = ffi().unpack(data, len(data))
-            #raise Exception()
+            raise Exception()
         except:
             vex = super()._lift(data,
                                 bytes_offset=bytes_offset,
@@ -94,15 +100,15 @@ class Lifter16(LibVEXLifter):
                                 collect_data_refs=collect_data_refs,
                                 cross_insn_opt=cross_insn_opt,
                                 load_from_ro_regions=load_from_ro_regions)
-            print("As is:")
-            self.render_vex_to_json(vex)
+            print(f"As is: {vex}")
+            # self.render_vex_to_json(vex)
             return vex
 
         print("Trying to convert:")
         print(f"bytes: {bytes16}")
 
-        vex=None
-        statements=[]
+        vex = None
+        statements = []
         for instr16 in disasm(bytes16, addr=addr16bit, bitness=16):
             print(f"intr16: {instr16.size} {instr16.mnemonic} {instr16.op_str}")
             instr16_size = instr16.size
@@ -116,7 +122,7 @@ class Lifter16(LibVEXLifter):
             instr32_cdata = ffi().from_buffer(bytearray(bytes32))
             vex = super()._lift(instr32_cdata,
                                 bytes_offset=bytes_offset,
-                                max_bytes=max_bytes, #instr32_size,
+                                max_bytes=max_bytes,  # instr32_size,
                                 max_inst=1,
                                 opt_level=opt_level,
                                 traceflags=traceflags,
@@ -128,7 +134,7 @@ class Lifter16(LibVEXLifter):
                                 load_from_ro_regions=load_from_ro_regions)
             assert vex.statements
             print(vex)
-            #self.render_vex_to_json(vex)
+            # self.render_vex_to_json(vex)
 
             addr32bit += instr32_size
 
@@ -136,25 +142,26 @@ class Lifter16(LibVEXLifter):
             vex.statements[0].len = instr16_size
             vex.default_exit_target = addr16bit + instr16_size
             vex.next = pyvex.expr.Const(pyvex.const.U32(addr16bit + instr16_size))
-            #print(vex)
-            #self.render_vex_to_json(vex)
+            # print(vex)
+            # self.render_vex_to_json(vex)
             addr16bit += sizes_16bit[i]
             statements.append(vex.statements)
         vex.statements = statements
         vex._size = len(bytes16)
-        self.render_vex_to_json(vex)
+        Lifter16.render_vex_to_json(vex)
 
         print(f'Output: {vex}')
         return vex
 
-    def render_vex_to_json(self, vex):
+    @staticmethod
+    def render_vex_to_json(vex):
         vexx = copy(vex)
         vexx.arch = None
         json = jsonpickle.encode(vexx, indent=2)
-        print(json)
+        return json
 
 
-lifters['X86'] = [Lifter16]
+# lifters['X86'] = [Lifter16]
 
 from archinfo.arch_x86 import ArchX86
 from angr.analyses import (
@@ -240,6 +247,31 @@ def get_instructions_sizes(CODE):
     return sizes16, sizes32
 
 
+def merge_vexes(vex1, vex2):
+    #c1 = myContext()
+    #statement_walker(vex1, 'get_temp', c1)
+    #print(c1.results)
+    max_temp = len(vex1._tyenv.types) # max(c1.results)
+
+    c2 = myContext()
+    statement_walker(vex1, 'get_temp', c2)
+    #print(c2.results)
+
+    for i in range(len(c2.results)):
+        c2.results[i] += max_temp
+    statement_walker(vex2, 'set_temp', c2)
+    #vex2._tyenv.types[0:0] = ['Ity_I0'] * (max_temp + 1)
+    vex1._tyenv.types += vex1._tyenv.types
+
+    vex1.statements += vex2.statements
+    vex1._instructions += vex2._instructions
+    vex1.default_exit_target = vex2.default_exit_target
+    vex1._instruction_addresses = tuple(list(vex1._instruction_addresses) + [vex1._size + ins_addr  for ins_addr in vex2._instruction_addresses])
+    vex1._size += vex2._size
+    return vex1
+
+
+
 if __name__ == '__main__':
     try:
         import capstone as _capstone
@@ -268,6 +300,85 @@ if __name__ == '__main__':
 
     # print(pyvex.lift(a.asm('jp abcd'), 0, a).pp())
     # print(pyvex.lift(a.asm('clc')+a.asm('add ax,3')+a.asm('adc ax,5')+a.asm('mul ax')+a.asm('clc'), 0, a).pp())
+    arch_32 = ArchX86()  # get architecture
+    print(1)
+    vex1 = pyvex.lift(arch_32.asm('add     eax, dword ptr [esp + 4]'), 0, arch_32)
+    print(vex1.pp())
+
+
+    # print(Lifter16.render_vex_to_json(vex))
+
+    # with open("1.txt", "w") as text_file:
+    #    text_file.write(Lifter16.render_vex_to_json(vex))
+
+    class myContext:
+        def __init__(self, ):
+            self.results = []
+
+    class myRdTmp:
+        @staticmethod
+        def get_temp(obj, context):
+            context.results.append(obj._tmp)
+
+        @staticmethod
+        def set_temp(obj, context):
+            obj._tmp = context.results.pop(0)
+
+
+    class myWrTmp:
+        @staticmethod
+        def get_temp(obj, context):
+            context.results.append(obj.tmp)
+
+        @staticmethod
+        def set_temp(obj, context):
+            obj.tmp = context.results.pop(0)
+
+
+    def arg_walker(args: IRSB, op, context: myContext):
+        if isinstance(args, RdTmp):
+            getattr(myRdTmp, op)(args, context)
+        if isinstance(args, (Unop, Binop, Triop)):
+            for arg in args.args:
+                arg_walker(arg, op, context)
+
+
+    def statement_walker(vex: IRSB, op, context: myContext):
+        for stmt in vex.statements:
+            if isinstance(stmt, WrTmp):
+                getattr(myWrTmp, op)(stmt, context)
+                arg_walker(stmt.data, op, context)
+            elif isinstance(stmt, Put):
+                arg_walker(stmt.data, op, context)
+
+
+    print(2)
+    vex2 = pyvex.lift(arch_32.asm('sub     ebx, dword ptr [esp + 0xc]'), 0, arch_32)
+    print(vex2.pp())
+    #print(Lifter16.render_vex_to_json(vex2))
+    # with open("2.txt", "w") as text_file:
+    #    text_file.write(Lifter16.render_vex_to_json(vex))
+
+    vex = merge_vexes(vex1, vex2)
+    '''
+    c.results = []
+    statement_walker(vex, 'get_temp', c)
+    print(c.results)
+    '''
+    print(vex.pp())
+
+    exit(0)
+
+    print(12)
+    vex = pyvex.lift(arch_32.asm('''add     eax, dword ptr [esp + 4]
+            sub     ebx, dword ptr [esp + 0xc]'''), 0, arch_32)
+    # print(vex.pp())
+    print(Lifter16.render_vex_to_json(vex))
+    # with open("12.txt", "w") as text_file:
+    #    text_file.write(Lifter16.render_vex_to_json(vex))
+    exit(0)
+
+    # Lifter16.render_vex_to_json(vex)
     # a.bits=32
 
     # bytes = a.asm('push ebp')+a.asm('mov ebp,esp')+a.asm('mov eax,[ebp+8]')+a.asm('mov ebx,[ebp+0xc]')+a.asm('add ax,bx')+a.asm('pop ebp')+a.asm('ret')
@@ -331,8 +442,13 @@ if __name__ == '__main__':
         ret
         '''
 
+    CODE = '''
+            add     ax, word ptr [esi + 4]
+        sbb     ax, word ptr [edi + 8]
+        '''
+
     sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
-    bytes_ = assembler(CODE, 16)
+    bytes_ = assembler(CODE, 32)
 
     print(bytes_)
 
