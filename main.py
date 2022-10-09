@@ -134,14 +134,31 @@ class Lifter16(LibVEXLifter):
                                 cross_insn_opt=cross_insn_opt,
                                 load_from_ro_regions=load_from_ro_regions)
             assert vex_current.statements
-            print(vex_current)
+            print(f"""
+            Before:
+            {vex_current}
+            """)
             # self.render_vex_to_json(vex)
 
             addr32bit += instr32_size
 
             # print(vex)
             # self.render_vex_to_json(vex)
+            vex_current._instruction_addresses = (addr16bit,)
+            assert isinstance(vex_current.statements[0], IMark)
+            vex_current.statements[0].addr = addr16bit
+            vex_current.statements[0].len = instr16_size
+
+            if isinstance(vex_current.next, Const):
+                vex_current.next = pyvex.expr.Const(pyvex.const.U32(addr16bit + instr16_size))
+
+            vex_current.default_exit_target = addr16bit + instr16_size
+
             addr16bit += instr16_size
+
+            print(f"""After:
+            {vex_current}
+            """)
 
             if first:
                 vex = vex_current
@@ -290,6 +307,7 @@ def statement_walker(vex: IRSB, op, context: myContext):
             arg_walker(stmt.data, op, context)
         elif isinstance(stmt, Put):
             arg_walker(stmt.data, op, context)
+    arg_walker(vex.next, op, context)
 
 
 def merge_vexes(vex1, vex2_):
@@ -317,8 +335,8 @@ def merge_vexes(vex1, vex2_):
     statement_walker(vex2, 'set_temp', c2)
 
     # Fix addr inside IMark
-    assert isinstance(vex2.statements[0], IMark)
-    vex2.statements[0].addr += vex1._size
+    #assert isinstance(vex2.statements[0], IMark)
+    #vex2.statements[0].addr += vex1._size
 
     # Merge instructions
     vex1.statements += vex2.statements
@@ -338,7 +356,7 @@ def merge_vexes(vex1, vex2_):
     # Increase size
     vex1._size += vex2._size
     # Fix next
-    vex1.next = pyvex.expr.Const(pyvex.const.U32(vex1._size))
+    vex1.next = vex2.next  #pyvex.expr.Const(pyvex.const.U32(vex1._size))
 
     return vex1
 
