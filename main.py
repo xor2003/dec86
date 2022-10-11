@@ -164,7 +164,7 @@ class Lifter16(LibVEXLifter):
                 vex = vex_current
                 first = False
             else:
-                merge_vexes(vex, vex_current)
+                vex = merge_vexes(vex, vex_current)
 
         Lifter16.render_vex_to_json(vex)
 
@@ -313,9 +313,6 @@ def statement_walker(vex: IRSB, op, context: myContext):
 def merge_vexes(vex1, vex2_):
     vex2 = deepcopy(vex2_)
     # Get temporary variables indexes for instr 1
-    #c1 = myContext()
-    #statement_walker(vex1, 'get_temp', c1)
-    #print(c1.results)
     max_temp = len(vex1._tyenv.types) # max(c1.results)
 
     # Get temporary variables indexes for instr 2
@@ -329,8 +326,6 @@ def merge_vexes(vex1, vex2_):
 
     # Add PUT(eip) = x
     #vex1.statements.append(Put(copy(vex1.next), 68))
-    #if vex2.statements[0].addr == 0xf and vex2.statements[0].len == 6:
-    #    print('x')
     # Fix temporaries indexes
     statement_walker(vex2, 'set_temp', c2)
 
@@ -356,7 +351,8 @@ def merge_vexes(vex1, vex2_):
     # Increase size
     vex1._size += vex2._size
     # Fix next
-    vex1.next = vex2.next  #pyvex.expr.Const(pyvex.const.U32(vex1._size))
+    vex1.next = copy(vex2.next)  #pyvex.expr.Const(pyvex.const.U32(vex1._size))
+    vex1.jumpkind = vex2.jumpkind
 
     return vex1
 
@@ -480,14 +476,6 @@ if __name__ == '__main__':
     ''')
     """
 
-    CODE = '''
-            mov     eax, dword ptr [esp + 4]
-            mov     ecx, dword ptr [esp + 8]
-            sub ax,42
-            sub ax,cx
-            movzx eax,ax
-            ret
-    '''
 
     CODE = '''
             mov     eax, dword ptr [esp + 4]
@@ -497,6 +485,14 @@ if __name__ == '__main__':
         ret
         '''
 
+    CODE = '''
+            mov     eax, dword ptr [esp + 4]
+            mov     ecx, dword ptr [esp + 8]
+            sub ax,42
+            sub ax,cx
+            movzx eax,ax
+            ret
+    '''
 
     #sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
     bytes_ = assembler(CODE, 16)
