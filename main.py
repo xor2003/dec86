@@ -1,3 +1,4 @@
+import pprint
 import re
 from abc import abstractmethod
 from copy import deepcopy, copy
@@ -21,6 +22,7 @@ def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
 
     md = cs.Cs(cs.CS_ARCH_X86, {16: cs.CS_MODE_16, 32: cs.CS_MODE_32}[bitness])
     for instr in md.disasm(CODE, addr):
+        #print(instr)
         yield instr
     # "0x%x:\t%s\t%s" % (instr.address, instr.mnemonic, instr.op_str))
 
@@ -334,27 +336,27 @@ def merge_vexes(vex1, vex2_):
     #vex2.statements[0].addr += vex1._size
 
     # Merge instructions
-    vex1.statements += vex2.statements
+    vex2.statements = vex1.statements + vex2.statements
     # Fix temporaries indexes
     ##c1.results += c2.results
     ##statement_walker(vex1, 'set_temp', c1)
 
     # Merge types
-    vex1._tyenv.types += vex2._tyenv.types
+    vex2._tyenv.types = vex1._tyenv.types + vex2._tyenv.types
 
     # Sum number of instructions
-    vex1._instructions += vex2._instructions
+    vex2._instructions = vex1._instructions + vex2._instructions
     # Update default_exit_target
-    vex1.default_exit_target = vex2.default_exit_target
+    ##vex1.default_exit_target = vex2.default_exit_target
     # Add instruction addresses
-    vex1._instruction_addresses = tuple(list(vex1._instruction_addresses) + [vex1._size + ins_addr  for ins_addr in vex2._instruction_addresses])
+    vex2._instruction_addresses = tuple(list(vex1._instruction_addresses) + [vex1._size + ins_addr  for ins_addr in vex2._instruction_addresses])
     # Increase size
-    vex1._size += vex2._size
+    vex2._size = vex1._size + vex2._size
     # Fix next
-    vex1.next = copy(vex2.next)  #pyvex.expr.Const(pyvex.const.U32(vex1._size))
-    vex1.jumpkind = vex2.jumpkind
+    ##vex1.next = copy(vex2.next)  #pyvex.expr.Const(pyvex.const.U32(vex1._size))
+    ##vex1.jumpkind = vex2.jumpkind
 
-    return vex1
+    return vex2
 
 
 
@@ -478,21 +480,24 @@ if __name__ == '__main__':
 
 
     CODE = '''
-            mov     eax, dword ptr [esp + 4]
-        mov     ecx, dword ptr [esp + 8]
+        movzx     eax, word ptr [esp + 4]
+        movzx     ecx, word ptr [esp + 8]
         shl     ecx, 4
-        mov     eax, dword ptr [eax + ecx]
+        movzx  ecx,cx
+        mov     ax, word ptr [eax + ecx]
+        movzx eax,ax
         ret
         '''
 
     CODE = '''
-            mov     eax, dword ptr [esp + 4]
-            mov     ecx, dword ptr [esp + 8]
+            movzx     eax, word ptr [esp + 4]
+            movzx     ecx, word ptr [esp + 8]
             sub ax,42
             sub ax,cx
             movzx eax,ax
             ret
     '''
+
 
     #sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
     bytes_ = assembler(CODE, 16)
