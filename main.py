@@ -7,8 +7,9 @@ import angr
 import pyvex
 # pip install keystone-engine
 # from capstone import *
-from pyvex import IRSB
-from pyvex.expr import Binop, Triop, Unop, RdTmp, Const, Load
+from pyvex import IRSB, IRTypeEnv
+from pyvex.const import U32
+from pyvex.expr import Binop, Triop, Unop, RdTmp, Const, Load, Get
 
 from pyvex.lifting import LibVEXLifter, lifters
 from cffi import FFI as ffi
@@ -22,7 +23,7 @@ def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
 
     md = cs.Cs(cs.CS_ARCH_X86, {16: cs.CS_MODE_16, 32: cs.CS_MODE_32}[bitness])
     for instr in md.disasm(CODE, addr):
-        #print(instr)
+        # print(instr)
         yield instr
     # "0x%x:\t%s\t%s" % (instr.address, instr.mnemonic, instr.op_str))
 
@@ -88,7 +89,7 @@ class Lifter16(LibVEXLifter):
         i = 0
         try:
             bytes16 = ffi().unpack(data, len(data))
-            #raise Exception()
+            # raise Exception()
         except:
             vex = super()._lift(data,
                                 bytes_offset=bytes_offset,
@@ -124,17 +125,17 @@ class Lifter16(LibVEXLifter):
 
             instr32_cdata = ffi().from_buffer(bytearray(bytes32))
             vex_current = super()._lift(instr32_cdata,
-                                bytes_offset=bytes_offset,
-                                max_bytes=max_bytes,  # instr32_size,
-                                max_inst=1,
-                                opt_level=opt_level,
-                                traceflags=traceflags,
-                                allow_arch_optimizations=allow_arch_optimizations,
-                                strict_block_end=strict_block_end,
-                                skip_stmts=False,
-                                collect_data_refs=collect_data_refs,
-                                cross_insn_opt=cross_insn_opt,
-                                load_from_ro_regions=load_from_ro_regions)
+                                        bytes_offset=bytes_offset,
+                                        max_bytes=max_bytes,  # instr32_size,
+                                        max_inst=1,
+                                        opt_level=opt_level,
+                                        traceflags=traceflags,
+                                        allow_arch_optimizations=allow_arch_optimizations,
+                                        strict_block_end=strict_block_end,
+                                        skip_stmts=False,
+                                        collect_data_refs=collect_data_refs,
+                                        cross_insn_opt=cross_insn_opt,
+                                        load_from_ro_regions=load_from_ro_regions)
             assert vex_current.statements
             print(f"""
             Before:
@@ -160,15 +161,15 @@ class Lifter16(LibVEXLifter):
 
             print(f"""After:
             {vex_current}
+            {Lifter16.render_vex_to_json(vex_current)}
             """)
 
             if first:
                 vex = vex_current
                 first = False
             else:
-                vex = merge_vexes(vex, vex_current)
-
-        Lifter16.render_vex_to_json(vex)
+                # vex = merge_vexes(vex, vex_current)
+                vex.extend(vex_current)
 
         print(f'Output: {vex}')
         return vex
@@ -191,6 +192,120 @@ from angr.analyses import (
     CFGFast,
     Decompiler,
 )
+
+
+class MyVex(IRSB):
+
+    def __init__(self, addr=0, len=0):
+        self.arch = ArchX86()
+        IRSB.__init__(self, None, 0, self.arch)
+        self.addr = addr
+        self.len = len
+        self._tyenv = IRTypeEnv(self.arch)
+
+    def add_tmp(self, size):
+        return self._tyenv.add('Ity_I%s' % size)
+
+    def get(self, register):
+        return Get(self.arch.get_register_offset(register), 'Ity_I%d' % (8 * self.arch.registers[register][1]))
+
+    def conv16Uto32(self, source):
+        return Unop("Iop_16Uto32", [source])
+
+    def put(self, register, temporary):
+        return Put(RdTmp(temporary), self.arch.get_register_offset(register))
+
+    def load_byte(self, addr):
+        return Load("Iend_LE", "Ity_I8", addr)
+
+    def load_word(self, addr):
+        return Load("Iend_LE", "Ity_I16", addr)
+
+    def load_dword(self, addr):
+        return Load("Iend_LE", "Ity_I32", addr)
+
+    def add(self, size, *args):
+        if size not in [8,16,32]:
+            raise ValueError('Invalid op size %d' % size)
+        if len(args) == 1:
+            return Unop("Iop_Add%d" % size, args)
+        elif len(args) == 2:
+            return Binop("Iop_Add%d" % size, args)
+        elif len(args) == 3:
+            return Triop("Iop_Add%d" % size, args)
+        else:
+            raise ValueError('Invalid number of args %s' % args)
+
+    def mov(self):
+        t0 = self.add_tmp(32)
+        t1 = self.add_tmp(32)
+        t2 = self.add_tmp(32)
+        t3 = self.add_tmp(32)
+        t4 = self.add_tmp(32)  # movzx     eax, word ptr [esp + 4]
+        self.statements = [
+            IMark(self.addr, self.len, 0),
+            WrTmp(t2, self.get('esp')),
+            WrTmp(t1, self.add(32, RdTmp(t2), Const(U32(4)))),
+            WrTmp(t4, self.load_word(RdTmp(t1))),
+            WrTmp(t3, self.conv16Uto32(RdTmp(t4))),
+            self.put('eax', t3)
+        ]
+        self._size = self.len
+        self.next = Const(U32(self.addr+self.len))
+        self.jumpkind = "Ijk_Boring"
+        self._instructions = 1
+        self.default_exit_target = self.addr+self.len,
+        self._instruction_addresses = (self.addr)
+
+        print(self)
+        exit(0)
+        '''
+  ],
+  "next": {
+    "py/object": "pyvex.expr.Const",
+    "_con": {
+      "py/object": "pyvex.const.U32",
+      "_value": 7
+    }
+  },
+  "_tyenv": {
+    "py/object": "pyvex.block.IRTypeEnv",
+    "types": [
+      "Ity_I32",
+      "Ity_I32",
+      "Ity_I32",
+      "Ity_I32",
+      "Ity_I16",
+      "Ity_I32"
+    ],
+    "wordty": "Ity_I32"
+  },
+  "jumpkind": "Ijk_Boring",
+  "_direct_next": null,
+  "_size": 5,
+  "_instructions": 1,
+  "_exit_statements": null,
+  "default_exit_target": 7,
+  "_instruction_addresses": {
+    "py/tuple": [
+      0
+    ]
+  },
+  "data_refs": [
+    {
+      "py/object": "pyvex.data_ref.DataRef",
+      "data_addr": 4,
+      "data_size": 0,
+      "data_type": 36864,
+      "stmt_idx": 2,
+      "ins_addr": 0
+    }
+  ]
+}
+'''
+
+    def make_temp(self):
+        pass
 
 
 # from keystone import Ks
@@ -266,9 +381,11 @@ def get_instructions_sizes(CODE):
                 exit(1)
     return sizes16, sizes32
 
+
 class myContext:
     def __init__(self, ):
         self.results = []
+
 
 class myRdTmp:
     @staticmethod
@@ -315,25 +432,25 @@ def statement_walker(vex: IRSB, op, context: myContext):
 def merge_vexes(vex1, vex2_):
     vex2 = deepcopy(vex2_)
     # Get temporary variables indexes for instr 1
-    max_temp = len(vex1._tyenv.types) # max(c1.results)
+    max_temp = len(vex1._tyenv.types)  # max(c1.results)
 
     # Get temporary variables indexes for instr 2
     c2 = myContext()
     statement_walker(vex2, 'get_temp', c2)
-    #print(c2.results)
+    # print(c2.results)
 
     # Shift second instruciton indexes
     for i in range(len(c2.results)):
         c2.results[i] += max_temp
 
     # Add PUT(eip) = x
-    #vex1.statements.append(Put(copy(vex1.next), 68))
+    # vex1.statements.append(Put(copy(vex1.next), 68))
     # Fix temporaries indexes
     statement_walker(vex2, 'set_temp', c2)
 
     # Fix addr inside IMark
-    #assert isinstance(vex2.statements[0], IMark)
-    #vex2.statements[0].addr += vex1._size
+    # assert isinstance(vex2.statements[0], IMark)
+    # vex2.statements[0].addr += vex1._size
 
     # Merge instructions
     vex2.statements = vex1.statements + vex2.statements
@@ -349,7 +466,8 @@ def merge_vexes(vex1, vex2_):
     # Update default_exit_target
     ##vex1.default_exit_target = vex2.default_exit_target
     # Add instruction addresses
-    vex2._instruction_addresses = tuple(list(vex1._instruction_addresses) + [vex1._size + ins_addr  for ins_addr in vex2._instruction_addresses])
+    vex2._instruction_addresses = tuple(
+        list(vex1._instruction_addresses) + [vex1._size + ins_addr for ins_addr in vex2._instruction_addresses])
     # Increase size
     vex2._size = vex1._size + vex2._size
     # Fix next
@@ -357,7 +475,6 @@ def merge_vexes(vex1, vex2_):
     ##vex1.jumpkind = vex2.jumpkind
 
     return vex2
-
 
 
 if __name__ == '__main__':
@@ -478,7 +595,6 @@ if __name__ == '__main__':
     ''')
     """
 
-
     CODE = '''
         movzx     eax, word ptr [esp + 4]
         movzx     ecx, word ptr [esp + 8]
@@ -498,8 +614,9 @@ if __name__ == '__main__':
             ret
     '''
 
-
-    #sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
+    v = MyVex()
+    v.mov()
+    # sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
     bytes_ = assembler(CODE, 16)
 
     print(bytes_)
