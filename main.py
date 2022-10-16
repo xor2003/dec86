@@ -7,8 +7,9 @@ import angr
 import pyvex
 # pip install keystone-engine
 # from capstone import *
+from archinfo import arch
 from pyvex import IRSB, IRTypeEnv
-from pyvex.const import U32
+from pyvex.const import U32, U1, U8, U16
 from pyvex.data_ref import DataRef
 from pyvex.expr import Binop, Triop, Unop, RdTmp, Const, Load, Get, int_type_for_size
 
@@ -17,7 +18,26 @@ from cffi import FFI as ffi
 import jsonpickle
 
 from pyvex.stmt import WrTmp, Put, IMark
+from archinfo.arch_x86 import ArchX86
 
+arch = ArchX86()
+IMark.__repr__ = lambda self: "IMark(addr=self.v.addr, length=self.v._size, delta=0)"
+Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"
+Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{repr(self.data)})"
+WrTmp.__repr__ = lambda self: f"WrTmp(t{self.tmp},{repr(self.data)})"
+RdTmp.__repr__ = lambda self: "RdTmp(t%d)" % self.tmp
+Binop.__repr__ = lambda self: f"Binop({repr(self.op)},{repr(self.args)})"
+Const.__repr__ = lambda self: "Const(%s)" % repr(self._con)
+U1.__repr__ = lambda self: "U1(%d)" % self.value
+U8.__repr__ = lambda self: "U8(%d)" % self.value
+U16.__repr__ = lambda self: "U16(%d)" % self.value
+U32.__repr__ = lambda self: "U32(%d)" % self.value
+IRTypeEnv.__repr__ = lambda self: f"IRTypeEnv(self.arch, types={self.types})"
+IRSB.__repr__ = lambda self: f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n"+\
+               f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n"+\
+               f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n"+\
+               f"v._instructions={repr(self._instructions)}\n"+ \
+               f"v._instruction_addresses={repr(self._instruction_addresses)}"
 
 def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
     import capstone as cs
@@ -189,7 +209,7 @@ class Lifter16(LibVEXLifter):
 
 lifters['X86'] = [Lifter16]
 
-from archinfo.arch_x86 import ArchX86
+#from archinfo.arch_x86 import ArchX86
 from angr.analyses import (
     VariableRecoveryFast,
     CallingConventionAnalysis,
@@ -202,23 +222,24 @@ from angr.analyses import (
 class MyVex(IRSB):
 
     def __init__(self, addr=0):
-        self.v = IRSB(None, addr, ArchX86())
-        # super().__init__(None, addr, ArchX86())
-        self.v._tyenv = IRTypeEnv(self.v.arch)
+        self.addr = addr
+        self.arch = ArchX86()
+        self.v = IRSB(None, self.addr, self.arch)
+        self.v._tyenv = IRTypeEnv(self.arch)
 
     def add_tmp(self, size):
-        return self.v._tyenv.add('Ity_I%s' % size)
+        return self.v._tyenv.add(pyvex.expr.int_type_for_size(size))
 
     def get(self, register):
-        ty = pyvex.expr.int_type_for_size( (8 * self.v.arch.registers[register][1]) )
-        ty_int = pyvex.enums.get_int_from_enum(ty)
-        return Get(self.v.arch.get_register_offset(register), ty, ty_int)
+        ty = pyvex.expr.int_type_for_size(8 * self.v.arch.registers[register][1])
+        #ty_int = pyvex.enums.get_int_from_enum(ty)
+        return Get(self.v.arch.get_register_offset(register), ty)
 
     def conv16Uto32(self, source):
         return Unop("Iop_16Uto32", [source])
 
-    def put(self, register, temporary):
-        return Put(RdTmp(temporary), self.v.arch.get_register_offset(register))
+    def put(self, register, source):
+        return Put(source, self.v.arch.get_register_offset(register))
 
     def load_byte(self, addr):
         return Load("Iend_LE", "Ity_I8", addr)
@@ -249,13 +270,18 @@ class MyVex(IRSB):
         t3 = self.add_tmp(32)
         t4 = self.add_tmp(16)  # movzx     eax, word ptr [esp + 4]
         self.v.statements = [
-            IMark(self.v.addr, self.v._size, 0),
+            IMark(self.addr, self.v._size, 0),
             WrTmp(t2, self.get('esp')),
             WrTmp(t1, self.add(32, RdTmp(t2), Const(U32(4)))),
             WrTmp(t4, self.load_word(RdTmp(t1))),
             WrTmp(t3, self.conv16Uto32(RdTmp(t4))),
-            self.put('eax', t3)
+            self.put('eax', RdTmp(t3))
         ]
+        #self.v=IRSB(None, 0, self.arch)
+        self.v.statements = [IMark(addr=self.v.addr, length=self.v._size, delta=0), WrTmp(t2, self.get('esp')),
+                        WrTmp(t1, Binop('Iop_Add32', [RdTmp(t2), Const(U32(4))])),
+                        WrTmp(t4, Load(end='Iend_LE', ty='Ity_I16', addr=RdTmp(t1))),
+                        WrTmp(t3, Unop(op='Iop_16Uto32', args=[RdTmp(t4)])), self.put('eax', RdTmp(t3))]
 
         self.v.next = Const(U32(self.v.addr + self.v._size))
         self.v.jumpkind = "Ijk_Boring"
@@ -266,53 +292,8 @@ class MyVex(IRSB):
 
         print(self.v)
         print(repr(self.v))
-        print(Lifter16.render_vex_to_json(self.v))
+        #print(Lifter16.render_vex_to_json(self.v))
         return self.v
-        #exit(0)
-        '''
-  ],
-  "next": {
-    "py/object": "pyvex.expr.Const",
-    "_con": {
-      "py/object": "pyvex.const.U32",
-      "_value": 7
-    }
-  },
-  "_tyenv": {
-    "py/object": "pyvex.block.IRTypeEnv",
-    "types": [
-      "Ity_I32",
-      "Ity_I32",
-      "Ity_I32",
-      "Ity_I32",
-      "Ity_I16",
-      "Ity_I32"
-    ],
-    "wordty": "Ity_I32"
-  },
-  "jumpkind": "Ijk_Boring",
-  "_direct_next": null,
-  "_size": 5,
-  "_instructions": 1,
-  "_exit_statements": null,
-  "default_exit_target": 7,
-  "_instruction_addresses": {
-    "py/tuple": [
-      0
-    ]
-  },
-  "data_refs": [
-    {
-      "py/object": "pyvex.data_ref.DataRef",
-      "data_addr": 4,
-      "data_size": 0,
-      "data_type": 36864,
-      "stmt_idx": 2,
-      "ins_addr": 0
-    }
-  ]
-}
-'''
 
     def make_temp(self):
         pass
