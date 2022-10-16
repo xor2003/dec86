@@ -9,7 +9,8 @@ import pyvex
 # from capstone import *
 from pyvex import IRSB, IRTypeEnv
 from pyvex.const import U32
-from pyvex.expr import Binop, Triop, Unop, RdTmp, Const, Load, Get
+from pyvex.data_ref import DataRef
+from pyvex.expr import Binop, Triop, Unop, RdTmp, Const, Load, Get, int_type_for_size
 
 from pyvex.lifting import LibVEXLifter, lifters
 from cffi import FFI as ffi
@@ -80,6 +81,7 @@ class Lifter16(LibVEXLifter):
               cross_insn_opt=True,
               load_from_ro_regions=False):
         print(f'Input: {locals()}')
+        collect_data_refs = False
 
         # asm = asm32()
         # next(asm)
@@ -159,13 +161,16 @@ class Lifter16(LibVEXLifter):
 
             addr16bit += instr16_size
 
+            print(repr(vex_current))
             print(f"""After:
             {vex_current}
-            {Lifter16.render_vex_to_json(vex_current)}
             """)
+            # {Lifter16.render_vex_to_json(vex_current)}
 
             if first:
-                vex = vex_current
+                #vex = vex_current
+                v = MyVex()
+                vex = v.mov()
                 first = False
             else:
                 # vex = merge_vexes(vex, vex_current)
@@ -196,24 +201,24 @@ from angr.analyses import (
 
 class MyVex(IRSB):
 
-    def __init__(self, addr=0, len=0):
-        self.arch = ArchX86()
-        IRSB.__init__(self, None, 0, self.arch)
-        self.addr = addr
-        self.len = len
-        self._tyenv = IRTypeEnv(self.arch)
+    def __init__(self, addr=0):
+        self.v = IRSB(None, addr, ArchX86())
+        # super().__init__(None, addr, ArchX86())
+        self.v._tyenv = IRTypeEnv(self.v.arch)
 
     def add_tmp(self, size):
-        return self._tyenv.add('Ity_I%s' % size)
+        return self.v._tyenv.add('Ity_I%s' % size)
 
     def get(self, register):
-        return Get(self.arch.get_register_offset(register), 'Ity_I%d' % (8 * self.arch.registers[register][1]))
+        ty = pyvex.expr.int_type_for_size( (8 * self.v.arch.registers[register][1]) )
+        ty_int = pyvex.enums.get_int_from_enum(ty)
+        return Get(self.v.arch.get_register_offset(register), ty, ty_int)
 
     def conv16Uto32(self, source):
         return Unop("Iop_16Uto32", [source])
 
     def put(self, register, temporary):
-        return Put(RdTmp(temporary), self.arch.get_register_offset(register))
+        return Put(RdTmp(temporary), self.v.arch.get_register_offset(register))
 
     def load_byte(self, addr):
         return Load("Iend_LE", "Ity_I8", addr)
@@ -225,7 +230,7 @@ class MyVex(IRSB):
         return Load("Iend_LE", "Ity_I32", addr)
 
     def add(self, size, *args):
-        if size not in [8,16,32]:
+        if size not in [8, 16, 32]:
             raise ValueError('Invalid op size %d' % size)
         if len(args) == 1:
             return Unop("Iop_Add%d" % size, args)
@@ -237,28 +242,33 @@ class MyVex(IRSB):
             raise ValueError('Invalid number of args %s' % args)
 
     def mov(self):
+        self.v._size = 5
         t0 = self.add_tmp(32)
         t1 = self.add_tmp(32)
         t2 = self.add_tmp(32)
         t3 = self.add_tmp(32)
-        t4 = self.add_tmp(32)  # movzx     eax, word ptr [esp + 4]
-        self.statements = [
-            IMark(self.addr, self.len, 0),
+        t4 = self.add_tmp(16)  # movzx     eax, word ptr [esp + 4]
+        self.v.statements = [
+            IMark(self.v.addr, self.v._size, 0),
             WrTmp(t2, self.get('esp')),
             WrTmp(t1, self.add(32, RdTmp(t2), Const(U32(4)))),
             WrTmp(t4, self.load_word(RdTmp(t1))),
             WrTmp(t3, self.conv16Uto32(RdTmp(t4))),
             self.put('eax', t3)
         ]
-        self._size = self.len
-        self.next = Const(U32(self.addr+self.len))
-        self.jumpkind = "Ijk_Boring"
-        self._instructions = 1
-        self.default_exit_target = self.addr+self.len,
-        self._instruction_addresses = (self.addr)
 
-        print(self)
-        exit(0)
+        self.v.next = Const(U32(self.v.addr + self.v._size))
+        self.v.jumpkind = "Ijk_Boring"
+        self.v._instructions = 1
+        self.v.default_exit_target = self.v.addr + self.v._size
+        self.v._instruction_addresses = (self.v.addr,)
+        #self.v.data_refs = [DataRef(4, 0, 36864, 2, 0)]
+
+        print(self.v)
+        print(repr(self.v))
+        print(Lifter16.render_vex_to_json(self.v))
+        return self.v
+        #exit(0)
         '''
   ],
   "next": {
@@ -614,8 +624,6 @@ if __name__ == '__main__':
             ret
     '''
 
-    v = MyVex()
-    v.mov()
     # sizes_16bit, sizes_32bit = get_instructions_sizes(CODE)
     bytes_ = assembler(CODE, 16)
 
