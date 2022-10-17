@@ -11,16 +11,18 @@ from archinfo import arch
 from pyvex import IRSB, IRTypeEnv
 from pyvex.const import U32, U1, U8, U16
 from pyvex.data_ref import DataRef
-from pyvex.expr import Binop, Triop, Unop, RdTmp, Const, Load, Get, int_type_for_size
+from pyvex.expr import Binop, RdTmp, Const, Get, Unop, IRExpr, Binder, VECRET, GSPTR, GetI, Qop, Triop, Load, ITE, CCall
+from pyvex.stmt import IRStmt, NoOp, IMark, AbiHint, Put, PutI, Store, CAS, LLSC, MBE, Dirty, Exit, LoadG, StoreG, WrTmp
 
 from pyvex.lifting import LibVEXLifter, lifters
 from cffi import FFI as ffi
 import jsonpickle
 
-from pyvex.stmt import WrTmp, Put, IMark
 from archinfo.arch_x86 import ArchX86
+from vextest.reprmixin import ReprMixin
 
 arch = ArchX86()
+# Serialization
 IMark.__repr__ = lambda self: "IMark(addr=self.v.addr, length=self.v._size, delta=0)"
 Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"
 Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{repr(self.data)})"
@@ -33,11 +35,16 @@ U8.__repr__ = lambda self: "U8(%d)" % self.value
 U16.__repr__ = lambda self: "U16(%d)" % self.value
 U32.__repr__ = lambda self: "U32(%d)" % self.value
 IRTypeEnv.__repr__ = lambda self: f"IRTypeEnv(self.arch, types={self.types})"
-IRSB.__repr__ = lambda self: f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n"+\
-               f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n"+\
-               f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n"+\
-               f"v._instructions={repr(self._instructions)}\n"+ \
-               f"v._instruction_addresses={repr(self._instruction_addresses)}"
+IRSB.__repr__ = lambda \
+    self: f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n" + \
+          f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n" + \
+          f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n" + \
+          f"v._instructions={repr(self._instructions)}\n" + \
+          f"v._instruction_addresses={repr(self._instruction_addresses)}"
+for Class in [Unop, IRExpr, Binder, VECRET, GSPTR, GetI, Qop, Triop, Load, ITE, CCall, IRStmt, NoOp, IMark, AbiHint,
+              Put, PutI, Store, CAS, LLSC, MBE, Dirty, Exit, LoadG, StoreG]:
+    Class.__bases__ += (ReprMixin,)
+
 
 def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
     import capstone as cs
@@ -188,7 +195,7 @@ class Lifter16(LibVEXLifter):
             # {Lifter16.render_vex_to_json(vex_current)}
 
             if first:
-                #vex = vex_current
+                # vex = vex_current
                 v = MyVex()
                 vex = v.mov()
                 first = False
@@ -209,7 +216,7 @@ class Lifter16(LibVEXLifter):
 
 lifters['X86'] = [Lifter16]
 
-#from archinfo.arch_x86 import ArchX86
+# from archinfo.arch_x86 import ArchX86
 from angr.analyses import (
     VariableRecoveryFast,
     CallingConventionAnalysis,
@@ -232,7 +239,7 @@ class MyVex(IRSB):
 
     def get(self, register):
         ty = pyvex.expr.int_type_for_size(8 * self.v.arch.registers[register][1])
-        #ty_int = pyvex.enums.get_int_from_enum(ty)
+        # ty_int = pyvex.enums.get_int_from_enum(ty)
         return Get(self.v.arch.get_register_offset(register), ty)
 
     def conv16Uto32(self, source):
@@ -277,22 +284,22 @@ class MyVex(IRSB):
             WrTmp(t3, self.conv16Uto32(RdTmp(t4))),
             self.put('eax', RdTmp(t3))
         ]
-        #self.v=IRSB(None, 0, self.arch)
+        # self.v=IRSB(None, 0, self.arch)
         self.v.statements = [IMark(addr=self.v.addr, length=self.v._size, delta=0), WrTmp(t2, self.get('esp')),
-                        WrTmp(t1, Binop('Iop_Add32', [RdTmp(t2), Const(U32(4))])),
-                        WrTmp(t4, Load(end='Iend_LE', ty='Ity_I16', addr=RdTmp(t1))),
-                        WrTmp(t3, Unop(op='Iop_16Uto32', args=[RdTmp(t4)])), self.put('eax', RdTmp(t3))]
+                             WrTmp(t1, Binop('Iop_Add32', [RdTmp(t2), Const(U32(4))])),
+                             WrTmp(t4, Load(end='Iend_LE', ty='Ity_I16', addr=RdTmp(t1))),
+                             WrTmp(t3, Unop(op='Iop_16Uto32', args=[RdTmp(t4)])), self.put('eax', RdTmp(t3))]
 
         self.v.next = Const(U32(self.v.addr + self.v._size))
         self.v.jumpkind = "Ijk_Boring"
         self.v._instructions = 1
         self.v.default_exit_target = self.v.addr + self.v._size
         self.v._instruction_addresses = (self.v.addr,)
-        #self.v.data_refs = [DataRef(4, 0, 36864, 2, 0)]
+        # self.v.data_refs = [DataRef(4, 0, 36864, 2, 0)]
 
         print(self.v)
         print(repr(self.v))
-        #print(Lifter16.render_vex_to_json(self.v))
+        # print(Lifter16.render_vex_to_json(self.v))
         return self.v
 
     def make_temp(self):
