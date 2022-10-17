@@ -24,8 +24,6 @@ from vextest.reprmixin import ReprMixin
 arch = ArchX86()
 # Serialization
 IMark.__repr__ = lambda self: "IMark(addr=self.v.addr, length=self.v._size, delta=0)"
-Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"
-Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{repr(self.data)})"
 WrTmp.__repr__ = lambda self: f"WrTmp(t{self.tmp},{repr(self.data)})"
 RdTmp.__repr__ = lambda self: "RdTmp(t%d)" % self.tmp
 Binop.__repr__ = lambda self: f"Binop({repr(self.op)},{repr(self.args)})"
@@ -35,6 +33,8 @@ U8.__repr__ = lambda self: "U8(%d)" % self.value
 U16.__repr__ = lambda self: "U16(%d)" % self.value
 U32.__repr__ = lambda self: "U32(%d)" % self.value
 IRTypeEnv.__repr__ = lambda self: f"IRTypeEnv(self.arch, types={self.types})"
+Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"
+Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{repr(self.data)})"
 IRSB.__repr__ = lambda \
     self: f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n" + \
           f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n" + \
