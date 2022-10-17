@@ -152,19 +152,23 @@ class Lifter16(LibVEXLifter):
             instr32 = next(d)
             print(f"intr32: {instr32.size} {instr32.mnemonic} {instr32.op_str}")
 
-            instr32_cdata = ffi().from_buffer(bytearray(bytes32))
-            vex_current = super()._lift(instr32_cdata,
-                                        bytes_offset=bytes_offset,
-                                        max_bytes=max_bytes,  # instr32_size,
-                                        max_inst=1,
-                                        opt_level=opt_level,
-                                        traceflags=traceflags,
-                                        allow_arch_optimizations=allow_arch_optimizations,
-                                        strict_block_end=strict_block_end,
-                                        skip_stmts=False,
-                                        collect_data_refs=collect_data_refs,
-                                        cross_insn_opt=cross_insn_opt,
-                                        load_from_ro_regions=load_from_ro_regions)
+            try:
+                instr32_cdata = ffi().from_buffer(bytearray(bytes32))
+                vex_current = super()._lift(instr32_cdata,
+                                            bytes_offset=bytes_offset,
+                                            max_bytes=max_bytes,  # instr32_size,
+                                            max_inst=1,
+                                            opt_level=opt_level,
+                                            traceflags=traceflags,
+                                            allow_arch_optimizations=allow_arch_optimizations,
+                                            strict_block_end=strict_block_end,
+                                            skip_stmts=False,
+                                            collect_data_refs=collect_data_refs,
+                                            cross_insn_opt=cross_insn_opt,
+                                            load_from_ro_regions=load_from_ro_regions)
+            except Exception as ex:
+                print(ex)
+                raise
             assert vex_current.statements
             print(f"""
             Before:
@@ -172,21 +176,12 @@ class Lifter16(LibVEXLifter):
             """)
             # self.render_vex_to_json(vex)
 
-            addr32bit += instr32_size
-
             # print(vex)
             # self.render_vex_to_json(vex)
-            vex_current._instruction_addresses = (addr16bit,)
-            assert isinstance(vex_current.statements[0], IMark)
-            vex_current.statements[0].addr = addr16bit
-            vex_current.statements[0].len = instr16_size
-
-            if isinstance(vex_current.next, Const):
-                vex_current.next = pyvex.expr.Const(pyvex.const.U32(addr16bit + instr16_size))
-
-            vex_current.default_exit_target = addr16bit + instr16_size
+            vex_current = self.change_instr_size(vex_current, addr16bit, instr16_size)
 
             addr16bit += instr16_size
+            addr32bit += instr32_size
 
             print(repr(vex_current))
             print(f"""After:
@@ -195,9 +190,9 @@ class Lifter16(LibVEXLifter):
             # {Lifter16.render_vex_to_json(vex_current)}
 
             if first:
-                # vex = vex_current
-                v = MyVex()
-                vex = v.mov()
+                vex = vex_current
+                #v = MyVex()
+                #vex = v.mov()
                 first = False
             else:
                 # vex = merge_vexes(vex, vex_current)
@@ -205,6 +200,16 @@ class Lifter16(LibVEXLifter):
 
         print(f'Output: {vex}')
         return vex
+
+    def change_instr_size(self, vex_current, addr16bit, instr16_size):
+        vex_current._instruction_addresses = (addr16bit,)
+        assert isinstance(vex_current.statements[0], IMark)
+        vex_current.statements[0].addr = addr16bit
+        vex_current.statements[0].len = instr16_size
+        if isinstance(vex_current.next, Const):
+            vex_current.next = pyvex.expr.Const(pyvex.const.U32(addr16bit + instr16_size))
+        vex_current.default_exit_target = addr16bit + instr16_size
+        return vex_current
 
     @staticmethod
     def render_vex_to_json(vex):
@@ -271,11 +276,7 @@ class MyVex(IRSB):
 
     def mov(self):
         self.v._size = 5
-        t0 = self.add_tmp(32)
-        t1 = self.add_tmp(32)
-        t2 = self.add_tmp(32)
-        t3 = self.add_tmp(32)
-        t4 = self.add_tmp(16)  # movzx     eax, word ptr [esp + 4]
+        '''
         self.v.statements = [
             IMark(self.addr, self.v._size, 0),
             WrTmp(t2, self.get('esp')),
@@ -284,11 +285,22 @@ class MyVex(IRSB):
             WrTmp(t3, self.conv16Uto32(RdTmp(t4))),
             self.put('eax', RdTmp(t3))
         ]
+        '''
         # self.v=IRSB(None, 0, self.arch)
-        self.v.statements = [IMark(addr=self.v.addr, length=self.v._size, delta=0), WrTmp(t2, self.get('esp')),
-                             WrTmp(t1, Binop('Iop_Add32', [RdTmp(t2), Const(U32(4))])),
-                             WrTmp(t4, Load(end='Iend_LE', ty='Ity_I16', addr=RdTmp(t1))),
-                             WrTmp(t3, Unop(op='Iop_16Uto32', args=[RdTmp(t4)])), self.put('eax', RdTmp(t3))]
+        t0 = self.add_tmp(32)
+        t1 = self.add_tmp(32)
+        t2 = self.add_tmp(16)
+        t3 = self.add_tmp(32)
+        t4 = self.add_tmp(32)  # movzx     eax, word ptr [esp + 4]
+        t5 = self.add_tmp(16)  # movzx     eax, word ptr [esp + 4]
+        self.v.statements = [IMark(addr=self.v.addr, length=self.v._size, delta=0),
+                             WrTmp(t2, self.get('es')),
+                             WrTmp(t3, Unop(op='Iop_16Uto32', args=[RdTmp(t2)])),
+                             WrTmp(t4, Binop('Iop_Shl32', [RdTmp(t3), Const(U8(4))])),
+                             WrTmp(t1, Binop('Iop_Add32', [RdTmp(t4), Const(U32(0x2000))])),
+                             WrTmp(t5, Load(end='Iend_LE', ty='Ity_I16', addr=RdTmp(t1))),
+                             WrTmp(t0, Unop(op='Iop_16Uto32', args=[RdTmp(t5)])),
+                             self.put('eax', RdTmp(t0))]
 
         self.v.next = Const(U32(self.v.addr + self.v._size))
         self.v.jumpkind = "Ijk_Boring"
@@ -593,6 +605,7 @@ if __name__ == '__main__':
     ''')
     """
 
+
     CODE = '''
         movzx     eax, word ptr [esp + 4]
         movzx     ecx, word ptr [esp + 8]
@@ -602,8 +615,8 @@ if __name__ == '__main__':
         movzx eax,ax
         ret
         '''
-
     CODE = '''
+            imul bx
             movzx     eax, word ptr [esp + 4]
             movzx     ecx, word ptr [esp + 8]
             sub ax,42
