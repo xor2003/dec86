@@ -1,0 +1,6 @@
+angr
+archinfo
+capstone
+jsonpickle
+keystone_engine
+pyvex
