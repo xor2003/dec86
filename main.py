@@ -11,15 +11,15 @@ from archinfo import arch
 from pyvex import IRSB, IRTypeEnv
 from pyvex.const import U32, U1, U8, U16
 from pyvex.data_ref import DataRef
-from pyvex.expr import Binop, RdTmp, Const, Get, Unop, IRExpr, Binder, VECRET, GSPTR, GetI, Qop, Triop, Load, ITE, CCall
-from pyvex.stmt import IRStmt, NoOp, IMark, AbiHint, Put, PutI, Store, CAS, LLSC, MBE, Dirty, Exit, LoadG, StoreG, WrTmp
+from pyvex.expr import *
+from pyvex.stmt import *
 
 from pyvex.lifting import LibVEXLifter, lifters
 from cffi import FFI as ffi
 import jsonpickle
 
 from archinfo.arch_x86 import ArchX86
-from vextest.reprmixin import ReprMixin
+from reprmixin import ReprMixin
 
 arch = ArchX86()
 # Serialization
@@ -94,7 +94,7 @@ class Lifter16(LibVEXLifter):
         self.arch_16._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
         """
 
-    def _lift(self,
+    def lift(self,
               data,
               bytes_offset=None,
               max_bytes=None,
@@ -120,7 +120,7 @@ class Lifter16(LibVEXLifter):
             bytes16 = ffi().unpack(data, len(data))
             # raise Exception()
         except:
-            vex = super()._lift(data,
+            vex = super().lift(data,
                                 bytes_offset=bytes_offset,
                                 max_bytes=max_bytes,
                                 max_inst=max_inst,
@@ -154,7 +154,7 @@ class Lifter16(LibVEXLifter):
 
             try:
                 instr32_cdata = ffi().from_buffer(bytearray(bytes32))
-                vex_current = super()._lift(instr32_cdata,
+                vex_current = super().lift(instr32_cdata,
                                             bytes_offset=bytes_offset,
                                             max_bytes=max_bytes,  # instr32_size,
                                             max_inst=1,
@@ -630,7 +630,7 @@ if __name__ == '__main__':
 
     print(bytes_)
 
-    project = angr.load_shellcode(bytes_, arch_32, start_offset=0, load_address=0, support_selfmodifying_code=False)
+    project = angr.load_shellcode(bytes_, arch_32, start_offset=0, load_address=0, selfmodifying_code=False)
     cfg = project.analyses[CFGFast].prep()(data_references=True, normalize=True)
 
     func = cfg.functions[0]

@@ -2,5 +2,5 @@ angr
 archinfo
 capstone
 jsonpickle
-keystone_engine
+keystone-engine
 pyvex
