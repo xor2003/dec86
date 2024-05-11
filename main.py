@@ -1,11 +1,18 @@
 import angr
 from angr.analyses import CFGFast, VariableRecoveryFast, CallingConventionAnalysis, Decompiler
 from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.angr_platforms.X86_16.lift_86_16 import Lifter86_16
+from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC
 
 import logging
+
+#from angr_platforms.angr_platforms.msp430.arch_msp430 import ArchMSP430
+
 logging.getLogger('angr').setLevel('DEBUG')
+logging.getLogger('pyvex.lifting.util').setLevel('DEBUG')
 
 arch_16 = Arch86_16()  # get architecture
+#m = ArchMSP430()
 """
 bytes = arch_32.asm('''
 
