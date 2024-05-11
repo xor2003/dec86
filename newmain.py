@@ -2,6 +2,9 @@ import angr
 from angr.analyses import CFGFast, VariableRecoveryFast, CallingConventionAnalysis, Decompiler
 from angr_platforms.angr_platforms.X86_16.arch_X86_16 import Arch86_16
 
+import logging
+logging.getLogger('angr').setLevel('DEBUG')
+
 arch_16 = Arch86_16()  # get architecture
 """
 bytes = arch_32.asm('''
@@ -57,7 +60,7 @@ CODE = '''
 '''
 
 byte_string = b'\xb8\x01\x00\xc3'
-project = angr.load_shellcode(byte_string, arch="86_16", start_offset=0, load_address=0, selfmodifying_code=False, rebase_granularity=0x1000)
+project = angr.load_shellcode(byte_string, arch=arch_16, start_offset=0, load_address=0, selfmodifying_code=False, rebase_granularity=0x1000)
 print("After load")
 
 block = project.factory.block(project.entry, byte_string=byte_string)
