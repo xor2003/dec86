@@ -1,8 +1,8 @@
 import angr
 from angr.analyses import CFGFast, VariableRecoveryFast, CallingConventionAnalysis, Decompiler
-from angr_platforms.angr_platforms.X86_16.arch_X86_16 import ArchX86_16
+from angr_platforms.angr_platforms.X86_16.arch_X86_16 import Arch86_16
 
-arch_16 = ArchX86_16()  # get architecture
+arch_16 = Arch86_16()  # get architecture
 """
 bytes = arch_32.asm('''
 
@@ -56,12 +56,15 @@ CODE = '''
         ret
 '''
 
-project = angr.load_shellcode(b'\xb8\x01\x00\x00\x00\xc3', "X86", start_offset=0, load_address=0, selfmodifying_code=False, rebase_granularity=0x1000)
-#,)
-#                              max_addr= 2**32)
-block = project.factory.block(project.entry)
-print(block.pp())
+byte_string = b'\xb8\x01\x00\xc3'
+project = angr.load_shellcode(byte_string, arch="86_16", start_offset=0, load_address=0, selfmodifying_code=False, rebase_granularity=0x1000)
+print("After load")
 
+block = project.factory.block(project.entry, byte_string=byte_string)
+print("Created block")
+block.pp()
+
+print("After disasm")
 cfg = project.analyses[CFGFast].prep()(data_references=True, normalize=True)
 
 func = cfg.functions[0]
