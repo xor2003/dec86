@@ -9,6 +9,7 @@ import logging
 #from angr_platforms.angr_platforms.msp430.arch_msp430 import ArchMSP430
 
 logging.getLogger('angr').setLevel('DEBUG')
+logging.getLogger('angr.calling_conventions').setLevel('DEBUG')
 logging.getLogger('pyvex.lifting.util').setLevel('DEBUG')
 
 arch_16 = Arch86_16()  # get architecture
