@@ -67,7 +67,7 @@ CODE = '''
         ret
 '''
 
-byte_string = b'\xb8\x01\x00\xc3'
+byte_string = b'\xb8\x03\x04\xc3'
 project = angr.load_shellcode(byte_string, arch=arch_16, start_offset=0, load_address=0, selfmodifying_code=False, rebase_granularity=0x1000)
 print("After load")
 
