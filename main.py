@@ -3,8 +3,8 @@ from angr.analyses import CFGFast, VariableRecoveryFast, CallingConventionAnalys
 from archinfo import ArchX86
 
 from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.angr_platforms.X86_16.lift_86_16 import Lifter86_16
-from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC
+from angr_platforms.angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa
+from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noqa
 
 import logging
 
@@ -13,6 +13,7 @@ import logging
 logging.getLogger('angr').setLevel('DEBUG')
 logging.getLogger('angr.calling_conventions').setLevel('DEBUG')
 logging.getLogger('pyvex.lifting.util').setLevel('DEBUG')
+logging.getLogger('angr_platforms.angr_platforms.X86_16.lift_86_16').setLevel('DEBUG')
 
 """
 bytes = arch_32.asm('''
