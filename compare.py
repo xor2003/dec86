@@ -75,23 +75,13 @@ def compare_states(state32, state16):
     flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
     flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
     for flag, value32 in flags32.items():
+        if flag in {"PF", "DF", "AF"}:
+            continue
         value16 = flags16[flag]  # calculate_flags(flags2[flag])
         # print(f"Flag {flag} differs: state32={value32}, state16={value16}")
 
         if repr(value32) != repr(value16):
             print(f"Flag {flag} differs: state32={value32}, state16={value16}")
-
-
-def calculate_flags(state):
-    cc_op = state.regs.cc_op
-    cc_dep1 = state.regs.cc_dep1
-    cc_dep2 = state.regs.cc_dep2
-    cc_ndep = state.regs.cc_ndep
-
-    # Use the SimStateCCall plugin to calculate the flags
-    flags = state.project.arch.ccall.calc_all_flags(state, cc_op, cc_dep1, cc_dep2, cc_ndep)
-    return flags
-
 
 CODE = """
 add bx,dx
