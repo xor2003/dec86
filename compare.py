@@ -1,3 +1,6 @@
+import logging
+from copy import deepcopy
+
 import angr
 import pyvex
 from archinfo import ArchX86
@@ -6,17 +9,16 @@ from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa
 from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noqa
 
-import logging
-
 logging.getLogger('angr.storage.memory_mixins.default_filler_mixin').setLevel('ERROR')
 logging.getLogger('pyvex.expr').setLevel('DEBUG')
-#logging.getLogger('angr').setLevel('DEBUG')
-#logging.getLogger('angr.calling_conventions').setLevel('DEBUG')
-#logging.getLogger('pyvex.lifting.util').setLevel('DEBUG')
-#logging.getLogger('angr_platforms.angr_platforms.X86_16.lift_86_16').setLevel('DEBUG')
-FLAGS={"OF":0, "PF":2, "AF":4, "ZF":6, "SF":7, "DF":10, "OF":11}
-#LOHF SF:ZF:0:AF:0:PF:1:CF
-LAHF={"SF":7, "ZF":6, "AF":4, "PF":2, "CF":0}
+# logging.getLogger('angr').setLevel('DEBUG')
+# logging.getLogger('angr.calling_conventions').setLevel('DEBUG')
+# logging.getLogger('pyvex.lifting.util').setLevel('DEBUG')
+# logging.getLogger('angr_platforms.angr_platforms.X86_16.lift_86_16').setLevel('DEBUG')
+FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "DF": 10, "OF": 11}
+# LOHF SF:ZF:0:AF:0:PF:1:CF
+LAHF = {"SF": 7, "ZF": 6, "AF": 4, "PF": 2, "CF": 0}
+
 
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
@@ -51,41 +53,48 @@ def prepare(arch, data):
     return simgr
 
 
-def compare_states(state1, state2):
+def compare_states(state32, state16):
     # Helper function to concretize values
 
     # Compare registers
-    for reg in state2.arch.register_list:
+    for reg in state16.arch.register_list:
         reg_name = reg.name
         if reg_name in ("eax", "eip", "eflags"):
             continue
-        val1 = getattr(state1.regs, reg_name)
+        val32 = getattr(state32.regs, reg_name)
         try:
-            val2 = getattr(state2.regs, reg_name)
-            #print(f"Register {reg_name}: state1={val1}, state2={val2}")
-            if repr(val1) != repr(val2):
-                print(f"Register {reg_name} differs: state1={val1}, state2={val2}")
+            val16 = getattr(state16.regs, reg_name)
+            # print(f"Register {reg_name}: state1={val1}, state2={val2}")
+            if repr(val32) != repr(val16):
+                print(f"Register {reg_name} differs: state32={val32}, state16={val16}")
         except KeyError as ex:
             pass
-            #print(f"Register {reg_name} not found in state")
+            # print(f"Register {reg_name} not found in state")
     # To handle lazy flag calculation, print individual flags
-    flags1 = {key: state1.regs.ah[bit] for key, bit in LAHF.items()}
-    flags2 = {key: state2.regs.ah[bit] for key, bit in LAHF.items()}
-    for flag, value1 in flags1.items():
-        value2 = flags2[flag]
-        if repr(value1) != repr(value2):
-            print(f"Flag {flag} differs: state1={value1}, state2={value2}")
+    # flags2_ = calculate_flags(state2)
+    flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
+    flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
+    for flag, value32 in flags32.items():
+        value16 = flags16[flag]  # calculate_flags(flags2[flag])
+        # print(f"Flag {flag} differs: state32={value32}, state16={value16}")
 
+        if repr(value32) != repr(value16):
+            print(f"Flag {flag} differs: state32={value32}, state16={value16}")
+
+
+def calculate_flags(state):
+    cc_op = state.regs.cc_op
+    cc_dep1 = state.regs.cc_dep1
+    cc_dep2 = state.regs.cc_dep2
+    cc_ndep = state.regs.cc_ndep
+
+    # Use the SimStateCCall plugin to calculate the flags
+    flags = state.project.arch.ccall.calc_all_flags(state, cc_op, cc_dep1, cc_dep2, cc_ndep)
+    return flags
 
 
 CODE = """
 add bx,dx
-lahf
-"""
-"""
-pushf
-pop bx
-ret
 """
 
 arch_16 = Arch86_16()  # get architecture
@@ -102,16 +111,19 @@ simgr16 = prepare(arch_16, bytes16)
 current_state32 = simgr32.active[0]
 current_state16 = simgr16.active[0]
 for reg in current_state16.arch.register_list:
-    val1 = getattr(current_state32.regs, reg.name)
+    #if reg.name in {"op_cc_op", "op_cc_dep1", "op_cc_dep2", "op_cc_ndep", "eflags"}:
+    #    continue
+    val16 = deepcopy(getattr(current_state16.regs, reg.name))
     try:
-        setattr(current_state16.regs, reg.name, val1)
+        pass
+        setattr(current_state32.regs, reg.name, val16)
     except Exception:
         pass
 
 state32 = step(simgr32)
 state16 = step(simgr16)
-#state16 = simgr16.active[0]
+#state32 =current_state32
+#state16 =current_state16
 
 print("~~compare~~")
 compare_states(state32, state16)
-
