@@ -15,6 +15,9 @@ logging.getLogger('pyvex.expr').setLevel('DEBUG')
 #logging.getLogger('pyvex.lifting.util').setLevel('DEBUG')
 #logging.getLogger('angr_platforms.angr_platforms.X86_16.lift_86_16').setLevel('DEBUG')
 FLAGS={"OF":0, "PF":2, "AF":4, "ZF":6, "SF":7, "DF":10, "OF":11}
+#LOHF SF:ZF:0:AF:0:PF:1:CF
+LAHF={"SF":7, "ZF":6, "AF":4, "PF":2, "CF":0}
+
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
@@ -54,7 +57,7 @@ def compare_states(state1, state2):
     # Compare registers
     for reg in state2.arch.register_list:
         reg_name = reg.name
-        if reg_name in ("eip", "eflags"):
+        if reg_name in ("eax", "eip", "eflags"):
             continue
         val1 = getattr(state1.regs, reg_name)
         try:
@@ -66,8 +69,8 @@ def compare_states(state1, state2):
             pass
             #print(f"Register {reg_name} not found in state")
     # To handle lazy flag calculation, print individual flags
-    flags1 = {key: state1.regs.eflags[bit] for key, bit in FLAGS.items()}
-    flags2 = {key: state2.regs.eflags[bit] for key, bit in FLAGS.items()}
+    flags1 = {key: state1.regs.ah[bit] for key, bit in LAHF.items()}
+    flags2 = {key: state2.regs.ah[bit] for key, bit in LAHF.items()}
     for flag, value1 in flags1.items():
         value2 = flags2[flag]
         if repr(value1) != repr(value2):
@@ -76,7 +79,8 @@ def compare_states(state1, state2):
 
 
 CODE = """
-add ax,dx
+add bx,dx
+lahf
 """
 """
 pushf
