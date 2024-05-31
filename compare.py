@@ -1,4 +1,5 @@
 import logging
+import re
 from copy import deepcopy
 
 import angr
@@ -61,12 +62,14 @@ def compare_states(state32, state16):
         reg_name = reg.name
         if reg_name in ("eax", "eip", "eflags"):
             continue
-        val32 = getattr(state32.regs, reg_name)
+        val32 = repr(getattr(state32.regs, reg_name))
+        val32 = filter_symbolic(val32)
         try:
-            val16 = getattr(state16.regs, reg_name)
-            # print(f"Register {reg_name}: state1={val1}, state2={val2}")
-            if repr(val32) != repr(val16):
-                print(f"Register {reg_name} differs: state32={val32}, state16={val16}")
+            val16 = repr(getattr(state16.regs, reg_name))
+            val16 = filter_symbolic(val16)
+            #print(f"Register {reg_name}: state32={val32}, state16={val16}")
+            if val32 != val16:
+                print(f"Register {reg_name} differs: state32={val32}\n                 state16={val16}")
         except KeyError as ex:
             pass
             # print(f"Register {reg_name} not found in state")
@@ -77,14 +80,25 @@ def compare_states(state32, state16):
     for flag, value32 in flags32.items():
         if flag in {"PF", "DF", "AF"}:
             continue
-        value16 = flags16[flag]  # calculate_flags(flags2[flag])
+        value32 = repr(flags32[flag])
+        value32 = filter_symbolic(value32)
+        value16 = repr(flags16[flag])
+        value16 = filter_symbolic(value16)
         #print(f"Flag {flag} differs: state32={value32}, state16={value16}")
 
         if repr(value32) != repr(value16):
             print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
 
+
+def filter_symbolic(value32):
+    value32 = value32.replace("{UNINITIALIZED}", "").replace("reg_", "")
+    value32 = re.sub(r"_\d_32", "", value32)
+    value32 = re.sub(r"\[(\d+):\1\]", "[\g<1>]", value32)
+    return value32
+
+
 CODE = """
-add bx,dx
+idiv bl
 """
 
 arch_16 = Arch86_16()  # get architecture
