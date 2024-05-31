@@ -81,7 +81,7 @@ def compare_states(state32, state16):
         #print(f"Flag {flag} differs: state32={value32}, state16={value16}")
 
         if repr(value32) != repr(value16):
-            print(f"Flag {flag} differs: state32={value32}, state16={value16}")
+            print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
 
 CODE = """
 add bx,dx
