@@ -98,7 +98,7 @@ def filter_symbolic(value32):
 
 
 CODE = """
-idiv bl
+inc bl
 """
 
 arch_16 = Arch86_16()  # get architecture
