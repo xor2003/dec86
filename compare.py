@@ -60,7 +60,7 @@ def compare_states(state32, state16):
     # Compare registers
     for reg in state16.arch.register_list:
         reg_name = reg.name
-        if reg_name in ("eax", "eip", "eflags"):
+        if reg_name in {"eflags"}:
             continue
         val32 = repr(getattr(state32.regs, reg_name))
         val32 = filter_symbolic(val32)
@@ -98,7 +98,7 @@ def filter_symbolic(value32):
 
 
 CODE = """
-inc bl
+jz 5
 """
 
 arch_16 = Arch86_16()  # get architecture
