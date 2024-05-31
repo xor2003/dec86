@@ -29,7 +29,7 @@ def assembler(lines, bitness=0) -> bytes:
 
 def step(simgr):
     # Step to the next instruction (execute the current block)
-    simgr.step()
+    simgr.step(num_inst=1)
     # Get the new state after execution
     new_state = simgr.active[0]
     return new_state
@@ -41,7 +41,7 @@ def prepare(arch, data):
     project = angr.load_shellcode(data, arch=arch, start_offset=0, load_address=addr, selfmodifying_code=False,
                                   rebase_granularity=0x1000)
     # Lift the instruction to VEX
-    block = pyvex.lift(data, addr, arch)
+    block = pyvex.lift(data, addr, arch, max_inst=1)
     print(block.pp())
     state = project.factory.blank_state()
     # Execute the instruction
@@ -78,7 +78,7 @@ def compare_states(state32, state16):
         if flag in {"PF", "DF", "AF"}:
             continue
         value16 = flags16[flag]  # calculate_flags(flags2[flag])
-        # print(f"Flag {flag} differs: state32={value32}, state16={value16}")
+        #print(f"Flag {flag} differs: state32={value32}, state16={value16}")
 
         if repr(value32) != repr(value16):
             print(f"Flag {flag} differs: state32={value32}, state16={value16}")
@@ -103,12 +103,12 @@ current_state16 = simgr16.active[0]
 for reg in current_state16.arch.register_list:
     #if reg.name in {"op_cc_op", "op_cc_dep1", "op_cc_dep2", "op_cc_ndep", "eflags"}:
     #    continue
-    val16 = deepcopy(getattr(current_state16.regs, reg.name))
+    val16 = getattr(current_state16.regs, reg.name)
     try:
         pass
         setattr(current_state32.regs, reg.name, val16)
-    except Exception:
-        pass
+    except Exception as ex:
+        print(f"Register {reg.name} failed to set %s", ex)
 
 state32 = step(simgr32)
 state16 = step(simgr16)
