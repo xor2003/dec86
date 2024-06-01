@@ -202,14 +202,14 @@ mov si,ax
 mov sp,bp
 mov sp,di
 mov ss,dx
-"""
-
-LIST="""
 neg cx
 nop
 or al,al
 or ax,ax
 or ch,0x80
+"""
+
+LIST="""
 pop bp
 pop di
 push ax
