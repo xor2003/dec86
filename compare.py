@@ -1,9 +1,9 @@
 import logging
 import re
 import sys
-from copy import deepcopy
 
 import angr
+import claripy
 import pyvex
 from archinfo import ArchX86
 
@@ -13,25 +13,22 @@ from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noq
 
 logging.getLogger('angr.storage.memory_mixins.default_filler_mixin').setLevel('ERROR')
 logging.getLogger('pyvex.expr').setLevel('DEBUG')
-# logging.getLogger('angr').setLevel('DEBUG')
-# logging.getLogger('angr.calling_conventions').setLevel('DEBUG')
-# logging.getLogger('pyvex.lifting.util').setLevel('DEBUG')
-# logging.getLogger('angr_platforms.angr_platforms.X86_16.lift_86_16').setLevel('DEBUG')
+logging.getLogger('angr_platforms.X86_16.parse').setLevel('DEBUG')
+
 FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "DF": 10, "OF": 11}
-# LOHF SF:ZF:0:AF:0:PF:1:CF
-LAHF = {"SF": 7, "ZF": 6, "AF": 4, "PF": 2, "CF": 0}
 
 
 def assembler(lines, bitness=0) -> bytes:
     import keystone as ks
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
     data, count = ks_.asm(lines, as_bytes=True)
+    print(data)
     return data
 
 
-def step(simgr):
+def step(simgr, insn_bytes):
     # Step to the next instruction (execute the current block)
-    simgr.step(num_inst=1)
+    simgr.step(num_inst=1, insn_bytes=insn_bytes)
     # Get the new state after execution
     new_state = simgr.active[0]
     return new_state
@@ -44,7 +41,7 @@ def prepare(arch, data):
                                   rebase_granularity=0x1000)
     # Lift the instruction to VEX
     block = pyvex.lift(data, addr, arch, max_inst=1)
-    print(block.pp())
+    #print(block.pp())
     state = project.factory.blank_state()
     # Execute the instruction
     block = project.factory.block(state.addr, len(data))
@@ -117,6 +114,10 @@ def compare_instructions_impact(instruction: str):
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
+    current_state16.regs.eflags = claripy.BVV(0, 32)
+    current_state16.regs.eip = claripy.BVV(0, 32)
+    current_state16.regs.eax = claripy.BVV(0, 32)
+    current_state16.regs.ecx = claripy.BVV(0, 32)
     for reg in current_state16.arch.register_list:
         # if reg.name in {"op_cc_op", "op_cc_dep1", "op_cc_dep2", "op_cc_ndep", "eflags"}:
         #    continue
@@ -126,14 +127,14 @@ def compare_instructions_impact(instruction: str):
             setattr(current_state32.regs, reg.name, val16)
         except Exception as ex:
             print(f"Register {reg.name} failed to set %s", ex)
-    state32 = step(simgr32)
-    state16 = step(simgr16)
+    state32 = step(simgr32, bytes32)
+    state16 = step(simgr16, bytes16)
     # state32 =current_state32
     # state16 =current_state16
     print("~~compare~~")
     return compare_states(instruction, state32, state16)
 
-LIST="""
+"""
 add ax,cx
 add bx,0x10
 add bx,dx
@@ -152,24 +153,25 @@ cmp bp,di
 cmp cx,ax
 cmp di,0x200
 dec cx
-idiv cx
 imul ax,ax,0x6
-imul si,si,0xa0
+mov bx,0x1234
+imul si,si,0x3
+imul si,si,0x1234
 inc bx
-int 0x21
 ja 0x21c
 jae 0x109
 jb 0x106
 jbe 0x109
 jcxz 0x7b
-je 0x125
-jg 0xffffffc2
+je 0x25
+jnz 6
+jg 2
 jge 0x2e
 jl 0x11
 jle 5
+jmp 5
 jmp 0x1ea
 jmp 0xffffff35
-jmp 5
 jne 0x25
 mov ah,0x0
 mov ax,0x1a
@@ -200,6 +202,9 @@ mov si,ax
 mov sp,bp
 mov sp,di
 mov ss,dx
+"""
+
+LIST="""
 neg cx
 nop
 or al,al
@@ -229,9 +234,11 @@ sub sp,0x34
 xchg bx,ax
 xor ah,ah
 xor bp,bp
+int 0x21
 call 0x17a
 call 0xffffcd92
 callf 0x2e0:0xb38
+idiv cx
 """
 
 CODE = """
