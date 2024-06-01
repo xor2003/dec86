@@ -207,9 +207,6 @@ nop
 or al,al
 or ax,ax
 or ch,0x80
-"""
-
-LIST="""
 pop bp
 pop di
 push ax
@@ -217,8 +214,6 @@ push cs
 push si
 ret
 retf
-sbb ax,ax
-sbb cx,cx
 shl ax,1
 shl bx,1
 shl bx,cl
@@ -234,11 +229,16 @@ sub sp,0x34
 xchg bx,ax
 xor ah,ah
 xor bp,bp
+"""
+
+LIST="""
 int 0x21
 call 0x17a
 call 0xffffcd92
 callf 0x2e0:0xb38
 idiv cx
+sbb ax,ax
+sbb cx,cx
 """
 
 CODE = """
