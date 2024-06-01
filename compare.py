@@ -1,5 +1,6 @@
 import logging
 import re
+import sys
 from copy import deepcopy
 
 import angr
@@ -54,13 +55,16 @@ def prepare(arch, data):
     return simgr
 
 
-def compare_states(state32, state16):
-    # Helper function to concretize values
+def compare_states(instruction, state32, state16):
+    differencies = []
 
+    skip_regs = {"eflags"}
+    if not instruction.startswith("j") and not instruction.startswith("l"):
+        skip_regs.add("eip")
     # Compare registers
     for reg in state16.arch.register_list:
         reg_name = reg.name
-        if reg_name in {"eflags"}:
+        if reg_name in skip_regs:
             continue
         val32 = repr(getattr(state32.regs, reg_name))
         val32 = filter_symbolic(val32)
@@ -70,11 +74,12 @@ def compare_states(state32, state16):
             #print(f"Register {reg_name}: state32={val32}, state16={val16}")
             if val32 != val16:
                 print(f"Register {reg_name} differs: state32={val32}\n                 state16={val16}")
+                differencies.append((reg_name, val32, val16))
         except KeyError as ex:
             pass
             # print(f"Register {reg_name} not found in state")
+    return differencies
     # To handle lazy flag calculation, print individual flags
-    # flags2_ = calculate_flags(state2)
     flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
     flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
     for flag, value32 in flags32.items():
@@ -88,6 +93,8 @@ def compare_states(state32, state16):
 
         if repr(value32) != repr(value16):
             print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
+            differencies.append((flag, value32, value16))
+        return differencies
 
 
 def filter_symbolic(value32):
@@ -97,37 +104,99 @@ def filter_symbolic(value32):
     return value32
 
 
+
+
+def compare_instructions_impact(instruction: str):
+    arch_16 = Arch86_16()  # get architecture
+    arch_32 = ArchX86()  # get architecture
+    print("~~32~~")
+    bytes32 = assembler(instruction, 32)
+    simgr32 = prepare(arch_32, bytes32)
+    print("~~16~~")
+    bytes16 = assembler(instruction, 16)
+    simgr16 = prepare(arch_16, bytes16)
+    current_state32 = simgr32.active[0]
+    current_state16 = simgr16.active[0]
+    for reg in current_state16.arch.register_list:
+        # if reg.name in {"op_cc_op", "op_cc_dep1", "op_cc_dep2", "op_cc_ndep", "eflags"}:
+        #    continue
+        val16 = getattr(current_state16.regs, reg.name)
+        try:
+            pass
+            setattr(current_state32.regs, reg.name, val16)
+        except Exception as ex:
+            print(f"Register {reg.name} failed to set %s", ex)
+    state32 = step(simgr32)
+    state16 = step(simgr16)
+    # state32 =current_state32
+    # state16 =current_state16
+    print("~~compare~~")
+    return compare_states(instruction, state32, state16)
+
+LIST="""
+add ax, ax
+ add ax, cx
+ add cx, 2
+ add sp, 2
+ and al, 3
+ and ax, 0xf
+ cdq 
+ cmp al, 1
+ cmp ax, 0x15
+ cmp ax, 8
+ cmp cx, ax
+ dec cx
+ idiv cx
+ inc ax
+ je 0x14
+ je 9
+ jg 0xffffffc2
+ jge 0x2e
+ jge 0xf
+ jl 0x11
+ jl 5
+ jle 5
+ jmp 0xffffff35
+ jmp 5
+ jne 0x25
+ jne 5
+ mov ax, 0x1a
+ mov bp, sp
+ mov bx, ax
+ mov ch, al
+ mov cl, 4
+ mov cx, 0x96
+ mov cx, ax
+ mov di, ax
+ mov si, ax
+ mov sp, bp
+ neg cx
+ or ax, ax
+ pop bp
+ push ax
+ push si
+ ret 
+ sbb ax, ax
+ sbb cx, cx
+ shl ax, 1
+ shl bx, 1
+ shl bx, cl
+ shl si, cl
+ sti 
+ sub ah, ah
+ sub al, 0x4a
+ sub ax, ax
+ sub cl, cl
+ sub sp, 0x34
+ xchg bx, ax
+ call 0x484
+ call 0xffffcd92
+"""
+
 CODE = """
 jz 5
 """
-
-arch_16 = Arch86_16()  # get architecture
-arch_32 = ArchX86()  # get architecture
-
-print("~~32~~")
-bytes32 = assembler(CODE, 32)
-simgr32 = prepare(arch_32, bytes32)
-
-print("~~16~~")
-bytes16 = assembler(CODE, 16)
-simgr16 = prepare(arch_16, bytes16)
-
-current_state32 = simgr32.active[0]
-current_state16 = simgr16.active[0]
-for reg in current_state16.arch.register_list:
-    #if reg.name in {"op_cc_op", "op_cc_dep1", "op_cc_dep2", "op_cc_ndep", "eflags"}:
-    #    continue
-    val16 = getattr(current_state16.regs, reg.name)
-    try:
-        pass
-        setattr(current_state32.regs, reg.name, val16)
-    except Exception as ex:
-        print(f"Register {reg.name} failed to set %s", ex)
-
-state32 = step(simgr32)
-state16 = step(simgr16)
-#state32 =current_state32
-#state16 =current_state16
-
-print("~~compare~~")
-compare_states(state32, state16)
+for line in filter(None, LIST.splitlines()):
+    result = compare_instructions_impact(line)
+    if result:
+        sys.exit()
