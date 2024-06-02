@@ -111,7 +111,7 @@ def compare_instructions_impact(instruction: str):
     simgr32 = prepare(arch_32, bytes32)
     print("~~16~~")
     bytes16 = assembler(instruction, 16)
-    bytes16=b"\xcd\x21"
+    #bytes16=b"\xcd\x21"
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
@@ -128,7 +128,9 @@ def compare_instructions_impact(instruction: str):
             setattr(current_state32.regs, reg.name, val16)
         except Exception as ex:
             print(f"Register {reg.name} failed to set %s", ex)
+    print("~~will step 32~~")
     state32 = step(simgr32, bytes32)
+    print("~~will step 16~")
     state16 = step(simgr16, bytes16)
     # state32 =current_state32
     # state16 =current_state16
@@ -233,10 +235,12 @@ xor bp,bp
 call 0x17a
 call 0xfd92
 callf [0x2e0:0xb38]
+int 0x21
 """
 
 LIST="""
-int 0x21
+add sp, 0xa
+movsw
 idiv cx
 sbb ax,ax
 sbb cx,cx
