@@ -111,7 +111,7 @@ def compare_instructions_impact(instruction: str):
     simgr32 = prepare(arch_32, bytes32)
     print("~~16~~")
     bytes16 = assembler(instruction, 16)
-    #bytes16=b"\xcd\x21"
+    bytes16=b"\xcd\x21"
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
