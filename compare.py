@@ -240,14 +240,14 @@ int 0x21
 
 LIST="""
 add sp, 0xa
-movsw
-idiv cx
-sbb ax,ax
-sbb cx,cx
 """
 
 CODE = """
 jz 5
+movsw
+idiv cx
+sbb ax,ax
+sbb cx,cx
 """
 for line in filter(None, LIST.splitlines()):
     result = compare_instructions_impact(line)

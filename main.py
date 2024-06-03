@@ -73,8 +73,8 @@ arch_16 = Arch86_16()  # get architecture
 byte_string = b'\xb8\x03\x04\xc3'
 #byte_string = b'\xb8\x03\x04\x00\x00\xc3'
 #with open("/home/xor/vextest/4093.bin", "rb") as f:
-#with open("/home/xor/masm2c/asmTests/tt.com", "rb") as f:
 #with open("/home/xor/inertia_player/snake.com", "rb") as f:
+#with open("/home/xor/masm2c/asmTests/t.com", "rb") as f:
 with open("/home/xor/vextest/1f44.bin", "rb") as f:
         byte_string = f.read()
 #byte_string = b"\x8B\x44\x24\x08\x03\x44\x24\x04\xC3" # 32+ return value
