@@ -36,8 +36,8 @@ def step(simgr, insn_bytes):
 
 def prepare(arch, data):
     # Create an Angr project
-    addr = 0  # 0x400000
-    project = angr.load_shellcode(data, arch=arch, start_offset=0, load_address=addr, selfmodifying_code=False,
+    addr = 0x100  # 0x400000
+    project = angr.load_shellcode(data, arch=arch, start_offset=addr, load_address=addr, selfmodifying_code=False,
                                   rebase_granularity=0x1000)
     # Lift the instruction to VEX
     block = pyvex.lift(data, addr, arch, max_inst=1)
@@ -111,7 +111,7 @@ def compare_instructions_impact(instruction: str):
     simgr32 = prepare(arch_32, bytes32)
     print("~~16~~")
     bytes16 = assembler(instruction, 16)
-    #bytes16=b"\xcd\x21"
+    #bytes16=b"\xe9\xe7\x01"
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
@@ -158,17 +158,10 @@ cmp di,0x200
 dec cx
 mov bx,0x1234
 imul ax,ax,0x6
-imul si,si,0x3 ; TODO cf, of
-imul si,si,0x1234 ; TODO cf, of
-"""
-
-LIST="""
 inc bx
 je 0x25
 jnz 6
 ja 0xc
-jae 0x109
-jb 0x106
 jbe 0x109
 jcxz 0x7b
 jg 2
@@ -176,8 +169,13 @@ jge 0x2e
 jl 0x11
 jle 5
 jmp 5
-jmp 0x1ea
-jmp 0xffffff35
+imul si,si,0x3 ; TODO cf, of
+imul si,si,0x1234 ; TODO cf, of
+jae 0x109  # TODO carry
+jb 0x106  # TODO carry
+jmp 0x1ea  # working. assember issue
+jmp -35  # working
+jmp 0xffffff35  # working
 mov ah,0x0
 mov ax,0x1a
 mov ax,0x2500
@@ -212,6 +210,19 @@ nop
 or al,al
 or ax,ax
 or ch,0x80
+"""
+
+LIST="""
+neg cx
+shl ax,1
+shl bx,1
+shl bx,cl
+shl si,cl
+shr di,cl
+rol si,cl
+ror si,cl
+rcl si,cl
+rcr si,cl
 pop bp
 pop di
 push ax
@@ -219,11 +230,6 @@ push cs
 push si
 ret
 retf
-shl ax,1
-shl bx,1
-shl bx,cl
-shl si,cl
-shr di,cl
 sti
 sub ah,ah
 sub al,0x4a
