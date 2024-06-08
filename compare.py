@@ -157,12 +157,12 @@ cmp cx,ax
 cmp di,0x200
 dec cx
 mov bx,0x1234
+imul ax,ax,0x6
+imul si,si,0x3 ; TODO cf, of
+imul si,si,0x1234 ; TODO cf, of
 """
 
 LIST="""
-imul ax,ax,0x6
-imul si,si,0x3
-imul si,si,0x1234
 inc bx
 je 0x25
 jnz 6
