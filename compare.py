@@ -1,6 +1,5 @@
 import logging
 import re
-import sys
 
 import angr
 import claripy
@@ -11,9 +10,9 @@ from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa
 from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noqa
 
-logging.getLogger('angr.storage.memory_mixins.default_filler_mixin').setLevel('ERROR')
-logging.getLogger('pyvex.expr').setLevel('DEBUG')
-logging.getLogger('angr_platforms.X86_16.parse').setLevel('DEBUG')
+logging.getLogger("angr.storage.memory_mixins.default_filler_mixin").setLevel("ERROR")
+logging.getLogger("pyvex.expr").setLevel("DEBUG")
+logging.getLogger("angr_platforms.X86_16.parse").setLevel("DEBUG")
 
 FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "DF": 10, "OF": 11}
 
@@ -74,7 +73,7 @@ def compare_states(instruction, state32_, state16_):
                     val16 = filter_symbolic(val16)
                     print(f"Register {reg_name} differs: state32={val32}\n                 state16={val16}")
                     differencies.append((reg_name, val32, val16))
-            except KeyError as ex:
+            except KeyError:
                 pass
                 # print(f"Register {reg_name} not found in state")
         #return differencies
@@ -99,10 +98,8 @@ def compare_states(instruction, state32_, state16_):
 def filter_symbolic(value32):
     value32 = value32.replace("{UNINITIALIZED}", "").replace("reg_", "")
     value32 = re.sub(r"_\d_32", "", value32)
-    value32 = re.sub(r"\[(\d+):\1\]", "[\g<1>]", value32)
+    value32 = re.sub(r"\[(\d+):\1\]", r"[\g<1>]", value32)
     return value32
-
-
 
 
 def compare_instructions_impact(instruction: str):
@@ -119,29 +116,20 @@ def compare_instructions_impact(instruction: str):
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
     current_state16.regs.d = current_state16.regs.eflags[10]
-    #current_state16.regs.eip = claripy.BVS('eip', 32)
-    #current_state16.regs.eax = claripy.BVS('eax', 32)
-    #current_state16.regs.ecx = claripy.BVS('ecx', 32)
     for reg in current_state16.arch.register_list:
-        # if reg.name in {"op_cc_op", "op_cc_dep1", "op_cc_dep2", "op_cc_ndep", "eflags"}:
-        #    continue
         val16 = getattr(current_state16.regs, reg.name)
-        #if reg.name not in ("flags", "eflags"):
-        #    val16 = claripy.BVS(reg.name, val16.length)
         try:
-            #setattr(current_state16.regs, reg.name, val16)
             setattr(current_state32.regs, reg.name, val16)
         except Exception as ex:
             print(f"Register {reg.name} failed to set %s", ex)
     print("~~will step 32~~")
-    state32 = step(simgr32, bytes32)
+    stage32 = step(simgr32, bytes32)
     print("~~will step 16~")
-    state16 = step(simgr16, bytes16)
-    # state32 =current_state32
-    # state16 =current_state16
-    print("~~compare~~")
-    return compare_states(instruction, state32, state16)
+    stage16 = step(simgr16, bytes16)
+    print("~~compare impact~~")
+    return compare_states(instruction, stage32, stage16)
 
+TODO = \
 """
 imul si,si,0x3 ; TODO cf, of
 imul si,si,0x1234 ; TODO cf, of
@@ -182,13 +170,19 @@ rol si,cl # TODO
 ror si,cl # TODO
 rcl si,cl # TODO
 rcr si,cl # TODO
+mul bx
+div cx
+div cl
+mul bl
 movsw # TODO
 idiv cx  # TODO
 in al,dx
-
 """
 
 LIST="""
+std
+sti
+
 int 0x21
 add ax,cx
 add bx,0x10
@@ -282,9 +276,11 @@ sbb cx,cx
 out dx,al
 """
 
-CODE = """
-"""
-for line in filter(None, LIST.splitlines()):
-    result = compare_instructions_impact(line)
-    if result:
-        sys.exit()
+def test_instructions():
+    for line in filter(None, LIST.splitlines()):
+        result = compare_instructions_impact(line)
+        assert not result, result
+    print("Success!")
+
+if __name__ == '__main__':
+    test_instructions()

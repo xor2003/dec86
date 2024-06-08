@@ -89,7 +89,7 @@ block.pp()
 
 print("After disasm")
 # force_complete_scan=False - because it is mix of code and data
-cfg = project.analyses[CFGFast].prep()(force_complete_scan=False, data_references=True, normalize=True)
+cfg = project.analyses[CFGFast].prep()(data_references=True, normalize=True)
 
 func = cfg.functions[0]
 
