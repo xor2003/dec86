@@ -112,8 +112,9 @@ def compare_instructions_impact(instruction: str):
     bytes32 = assembler(instruction, 32)
     simgr32 = prepare(arch_32, bytes32)
     print("~~16~~")
-    bytes16 = assembler(instruction, 16)
+    bytes16 = assembler(instruction, 16)[1:5]
     #bytes16=b"\xe9\xe7\x01"
+    print(bytes16)
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
@@ -146,6 +147,7 @@ imul si,si,0x3 ; TODO cf, of
 imul si,si,0x1234 ; TODO cf, of
 jae 0x109  # TODO carry
 jb 0x106  # TODO carry
+jbe 0x109  # TODO carry
 jmp 0x1ea  # working. assember issue
 jmp -35  # working
 jmp 0xffffff35  # working
@@ -173,15 +175,9 @@ cmp di,0x200
 dec cx
 mov bx,0x1234
 inc bx
-ja 0xc  # TODO carry
-jbe 0x109  # TODO carry
 je 0x25
 jnz 6
-"""
-
-LIST="""
 jcxz 0x7b
-jg 2
 jge 0x2e
 jl 0x11
 jle 5
@@ -215,6 +211,34 @@ mov si,ax
 mov sp,bp
 mov sp,di
 mov ss,dx
+jno 6
+jo 6
+jns 6
+js 6
+jnc 6
+jc 6
+jna 6
+ja 6
+jnl 6
+jl 6
+jng 6
+jg 6
+"""
+
+LIST="""
+jno 0x106
+jo 0x106
+jns 0x106
+js 0x106
+jnc 0x106
+jc 0x106
+jna 0x106
+ja 0x106
+jnl 0x106
+jl 0x106
+jng 0x106
+jg 0x106
+
 neg cx
 nop
 or al,al
