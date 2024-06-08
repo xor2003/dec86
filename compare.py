@@ -30,7 +30,7 @@ def step(simgr, insn_bytes):
     # Step to the next instruction (execute the current block)
     simgr.step(num_inst=1, insn_bytes=insn_bytes)
     # Get the new state after execution
-    new_state = simgr.active[0]
+    new_state = simgr.active
     return new_state
 
 
@@ -52,45 +52,47 @@ def prepare(arch, data):
     return simgr
 
 
-def compare_states(instruction, state32, state16):
+
+def compare_states(instruction, state32_, state16_):
     differencies = []
+    for state32, state16 in zip(state32_, state16_):
+        state16.regs.eip &= 0xffff
+        skip_regs = {"eflags", "d"}
+        if not instruction.startswith("j") and not instruction.startswith("l"):
+            skip_regs.add("eip")
+        # Compare registers
+        for reg in state16.arch.register_list:
+            reg_name = reg.name
+            if reg_name in skip_regs:
+                continue
+            val32 = repr(claripy.simplify(getattr(state32.regs, reg_name)))
+            try:
+                val16 = repr(claripy.simplify(getattr(state16.regs, reg_name)))
+                #print(f"Register {reg_name}: state32={val32}, state16={val16}")
+                if val32 != val16:
+                    val32 = filter_symbolic(val32)
+                    val16 = filter_symbolic(val16)
+                    print(f"Register {reg_name} differs: state32={val32}\n                 state16={val16}")
+                    differencies.append((reg_name, val32, val16))
+            except KeyError as ex:
+                pass
+                # print(f"Register {reg_name} not found in state")
+        #return differencies
+        # To handle lazy flag calculation, print individual flags
+        flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
+        flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
+        for flag, value32 in flags32.items():
+            if flag not in {"CF", "ZF", "SF", "OF"}:
+                continue
+            value32 = repr(claripy.simplify(flags32[flag]))
+            value16 = repr(claripy.simplify(flags16[flag]))
+            #print(f"Flag {flag}: state32={value32}\n         state16={value16}")
 
-    skip_regs = {"eflags"}
-    if not instruction.startswith("j") and not instruction.startswith("l"):
-        skip_regs.add("eip")
-    # Compare registers
-    for reg in state16.arch.register_list:
-        reg_name = reg.name
-        if reg_name in skip_regs:
-            continue
-        val32 = repr(getattr(state32.regs, reg_name))
-        val32 = filter_symbolic(val32)
-        try:
-            val16 = repr(getattr(state16.regs, reg_name))
-            val16 = filter_symbolic(val16)
-            #print(f"Register {reg_name}: state32={val32}, state16={val16}")
-            if val32 != val16:
-                print(f"Register {reg_name} differs: state32={val32}\n                 state16={val16}")
-                differencies.append((reg_name, val32, val16))
-        except KeyError as ex:
-            pass
-            # print(f"Register {reg_name} not found in state")
-    #return differencies
-    # To handle lazy flag calculation, print individual flags
-    flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
-    flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
-    for flag, value32 in flags32.items():
-        if flag not in {"CF", "ZF", "SF", "OF", "DF"}:
-            continue
-        value32 = repr(flags32[flag])
-        value32 = filter_symbolic(value32)
-        value16 = repr(flags16[flag])
-        value16 = filter_symbolic(value16)
-        #print(f"Flag {flag} differs: state32={value32}, state16={value16}")
-
-        if repr(value32) != repr(value16):
-            print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
-            differencies.append((flag, value32, value16))
+            if value32 != value16:
+                value32 = filter_symbolic(value32)
+                value16 = filter_symbolic(value16)
+                print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
+                differencies.append((flag, value32, value16))
     return differencies
 
 
@@ -115,16 +117,18 @@ def compare_instructions_impact(instruction: str):
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
-    current_state16.regs.eflags = claripy.BVV(0, 32)
-    current_state16.regs.eip = claripy.BVV(0, 32)
-    current_state16.regs.eax = claripy.BVV(0, 32)
-    current_state16.regs.ecx = claripy.BVV(0, 32)
+    current_state16.regs.d = current_state16.regs.eflags[10]
+    #current_state16.regs.eip = claripy.BVS('eip', 32)
+    #current_state16.regs.eax = claripy.BVS('eax', 32)
+    #current_state16.regs.ecx = claripy.BVS('ecx', 32)
     for reg in current_state16.arch.register_list:
         # if reg.name in {"op_cc_op", "op_cc_dep1", "op_cc_dep2", "op_cc_ndep", "eflags"}:
         #    continue
         val16 = getattr(current_state16.regs, reg.name)
+        #if reg.name not in ("flags", "eflags"):
+        #    val16 = claripy.BVS(reg.name, val16.length)
         try:
-            pass
+            #setattr(current_state16.regs, reg.name, val16)
             setattr(current_state32.regs, reg.name, val16)
         except Exception as ex:
             print(f"Register {reg.name} failed to set %s", ex)
@@ -138,6 +142,17 @@ def compare_instructions_impact(instruction: str):
     return compare_states(instruction, state32, state16)
 
 """
+imul si,si,0x3 ; TODO cf, of
+imul si,si,0x1234 ; TODO cf, of
+jae 0x109  # TODO carry
+jb 0x106  # TODO carry
+jmp 0x1ea  # working. assember issue
+jmp -35  # working
+jmp 0xffffff35  # working
+shl dx,1  # flags correct
+shl dx,0  # TODO flags
+imul ax,ax,0x6  # TODO cf, of
+
 add ax,cx
 add bx,0x10
 add bx,dx
@@ -157,25 +172,20 @@ cmp cx,ax
 cmp di,0x200
 dec cx
 mov bx,0x1234
-imul ax,ax,0x6
 inc bx
+ja 0xc  # TODO carry
+jbe 0x109  # TODO carry
 je 0x25
 jnz 6
-ja 0xc
-jbe 0x109
+"""
+
+LIST="""
 jcxz 0x7b
 jg 2
 jge 0x2e
 jl 0x11
 jle 5
 jmp 5
-imul si,si,0x3 ; TODO cf, of
-imul si,si,0x1234 ; TODO cf, of
-jae 0x109  # TODO carry
-jb 0x106  # TODO carry
-jmp 0x1ea  # working. assember issue
-jmp -35  # working
-jmp 0xffffff35  # working
 mov ah,0x0
 mov ax,0x1a
 mov ax,0x2500
@@ -210,12 +220,9 @@ nop
 or al,al
 or ax,ax
 or ch,0x80
-"""
-
-LIST="""
-neg cx
+not cx
 shl ax,1
-shl bx,1
+
 shl bx,cl
 shl si,cl
 shr di,cl
