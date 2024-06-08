@@ -75,12 +75,12 @@ def compare_states(instruction, state32, state16):
         except KeyError as ex:
             pass
             # print(f"Register {reg_name} not found in state")
-    return differencies
+    #return differencies
     # To handle lazy flag calculation, print individual flags
     flags32 = {key: state32.regs.flags[bit] for key, bit in FLAGS.items()}
     flags16 = {key: state16.regs.flags[bit] for key, bit in FLAGS.items()}
     for flag, value32 in flags32.items():
-        if flag in {"PF", "DF", "AF"}:
+        if flag not in {"CF", "ZF", "SF", "OF", "DF"}:
             continue
         value32 = repr(flags32[flag])
         value32 = filter_symbolic(value32)
@@ -91,7 +91,7 @@ def compare_states(instruction, state32, state16):
         if repr(value32) != repr(value16):
             print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
             differencies.append((flag, value32, value16))
-        return differencies
+    return differencies
 
 
 def filter_symbolic(value32):
@@ -149,25 +149,28 @@ and bx,0xfff0
 cdq 
 cld
 cli
+cmp bp,di
 cmp al,1
 cmp ax,0x15
 cmp ax,8
-cmp bp,di
 cmp cx,ax
 cmp di,0x200
 dec cx
-imul ax,ax,0x6
 mov bx,0x1234
+"""
+
+LIST="""
+imul ax,ax,0x6
 imul si,si,0x3
 imul si,si,0x1234
 inc bx
-ja 0x21c
+je 0x25
+jnz 6
+ja 0xc
 jae 0x109
 jb 0x106
 jbe 0x109
 jcxz 0x7b
-je 0x25
-jnz 6
 jg 2
 jge 0x2e
 jl 0x11
@@ -175,7 +178,6 @@ jle 5
 jmp 5
 jmp 0x1ea
 jmp 0xffffff35
-jne 0x25
 mov ah,0x0
 mov ax,0x1a
 mov ax,0x2500
@@ -235,11 +237,8 @@ xor bp,bp
 call 0x17a
 call 0xfd92
 callf [0x2e0:0xb38]
-int 0x21
-"""
+int 0x21out dx,al
 
-LIST="""
-add sp, 0xa
 """
 
 CODE = """
