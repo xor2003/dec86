@@ -24,16 +24,24 @@ byte_string = b'\xb8\x03\x04\xc3'
 #with open("/home/xor/vextest/22ec.bin", "rb") as f:
 with open(sys.argv[1], "rb") as f:
         byte_string = f.read()
-project = angr.load_shellcode(byte_string, arch=arch_16, start_offset=0, load_address=0, selfmodifying_code=False, rebase_granularity=0x1000)
+addr = 0x100
+project = angr.load_shellcode(byte_string, arch=arch_16, start_offset=addr, load_address=addr, selfmodifying_code=False, rebase_granularity=0x1000)
 print("After load")
 
-block = project.factory.block(project.entry, byte_string=byte_string)
-print("Created block")
-block.pp()
+#block = project.factory.block(project.entry, max_size=len(byte_string))
 
 print("After disasm")
 # force_complete_scan=False - because it is mix of code and data
 cfg = project.analyses[CFGFast].prep()(force_complete_scan=False, data_references=True, normalize=True)
+
+for node in cfg.graph.nodes():
+    block = project.factory.block(node.addr, size=node.size)
+    if block.size == 0:
+        continue
+    print(f"Block at {hex(node.addr)}, size: {block.size}")
+
+    block.vex.pp()
+    block.pp()
 
 for addr, func in cfg.functions.items():
         _ = project.analyses[VariableRecoveryFast].prep()(func)
