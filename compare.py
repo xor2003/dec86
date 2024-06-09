@@ -4,6 +4,7 @@ import re
 import angr
 import claripy
 import pyvex
+from angr.analyses import CFGFast, VariableRecoveryFast, CallingConventionAnalysis, Decompiler
 from archinfo import ArchX86
 
 from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -140,6 +141,10 @@ shl dx,1  # flags correct
 shl dx,0  # TODO flags
 shl ax,1  # cf, of
 imul ax,ax,0x6  # TODO cf, of
+sbb ax,cx
+sbb ax,ax
+sbb cx,cx
+
 jno 0x106  # assembler
 jo 0x106
 jns 0x106
@@ -155,6 +160,7 @@ jg 0x106  # assembler
 shl bx,cl  # disagree
 shl si,cl  # disagree
 shr di,cl  # disagree
+test ax,cx
 
 call 0x17a # assembler
 call 0xfd92 # assembler
@@ -180,11 +186,26 @@ in al,dx
 """
 
 LIST="""
+and ax,cx
+or ax,cx
+xor ax,cx
+cmp ax,cx
+sub ax,cx
+xchg ax,cx
+add ax,cx
+
+and al,cl
+or al,cl
+xor al,cl
+cmp al,cl
+sub al,cl
+xchg al,cl
+add al,cl
+
 std
 sti
 
 int 0x21
-add ax,cx
 add bx,0x10
 add bx,dx
 add cx,2
@@ -270,8 +291,6 @@ sub sp,0x34
 xchg bx,ax
 xor ah,ah
 xor bp,bp
-sbb ax,ax
-sbb cx,cx
 
 out dx,al
 """
@@ -282,5 +301,57 @@ def test_instructions():
         assert not result, result
     print("Success!")
 
+INSTR="""
+add
+adc
+and
+or
+xor
+cmp
+test
+sub
+sbb
+xchg
+"""
+def test_prog():
+    for instr in filter(None, INSTR.splitlines()):
+        proc = f"""
+          push    bp
+          mov     bp, sp
+          mov     ax, word ptr [bp+0x4]
+          mov     cx, word ptr [bp+0x6]
+          {instr}  ax, cx
+          #pushf
+          #pop     dx
+          pop     bp
+            
+        """
+        bytes16 = assembler(proc, 16) + b'\xc3'
+        arch_16 = Arch86_16()
+        project = angr.load_shellcode(bytes16, arch=arch_16, start_offset=0, load_address=0,
+                                      selfmodifying_code=False, rebase_granularity=0x1000)
+        print("After load")
+
+        block = project.factory.block(project.entry, byte_string=bytes16)
+        print("Created block")
+        block.pp()
+
+        print("After disasm")
+        # force_complete_scan=False - because it is mix of code and data
+        cfg = project.analyses[CFGFast].prep()(data_references=True, normalize=True)
+
+        func = cfg.functions[0]
+
+        _ = project.analyses[VariableRecoveryFast].prep()(func)
+        cca = project.analyses[CallingConventionAnalysis].prep()(func, cfg=cfg.model)
+        func.calling_convention = cca.cc
+        func.prototype = cca.prototype
+
+        dec = project.analyses[Decompiler].prep()(func, cfg=cfg.model)
+        assert dec.codegen is not None, "Failed to decompile function %s." % repr(func)
+        print("Decompiled function %s\n%s" % (repr(func), dec.codegen.text))
+
+
 if __name__ == '__main__':
+    #test_prog()
     test_instructions()
