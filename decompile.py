@@ -4,9 +4,9 @@ import sys
 import angr
 from angr.analyses import CFGFast, VariableRecoveryFast, CallingConventionAnalysis, Decompiler
 
-from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa
-from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noqa
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa
+from angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noqa
 
 import logging
 
@@ -41,8 +41,9 @@ for node in cfg.graph.nodes():
         continue
     print(f"Block at {hex(node.addr)}, size: {block.size}")
 
-    block.vex.pp()
     block.pp()
+    block.vex.pp()
+    print()
 
 for addr, func in cfg.functions.items():
         _ = project.analyses[VariableRecoveryFast].prep()(func)
