@@ -9,7 +9,7 @@ from archinfo import ArchX86
 
 from angr_platforms.angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa
-from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSC  # noqa
+from angr_platforms.angr_platforms.X86_16.simos_86_16 import SimCC8616MSCmedium  # noqa
 
 logging.getLogger("angr.storage.memory_mixins.default_filler_mixin").setLevel("ERROR")
 logging.getLogger("pyvex.expr").setLevel("DEBUG")
@@ -183,9 +183,11 @@ mul bl
 movsw # TODO
 idiv cx  # TODO
 in al,dx
+leave # wrong esp, ebp
 """
 
 LIST="""
+enter 4,1
 and ax,cx
 or ax,cx
 xor ax,cx
