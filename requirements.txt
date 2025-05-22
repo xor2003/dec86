@@ -1,6 +1,13 @@
-angr
-archinfo
+# The project requires a specific version of angr from https://github.com/xor2003/angr.
+# This version of angr depends on several packages with '.dev0' suffixes
+# (e.g., pyvex==9.2.107.dev0, ailment==9.2.107.dev0, archinfo==9.2.107.dev0, etc.)
+# which are not publicly available on PyPI, and the xor2003 forks for these
+# dependencies also appear to be inaccessible.
+# Original dependencies that are affected by this issue and have been commented out:
+# angr
+# archinfo
+# pyvex
 capstone
 jsonpickle
 keystone-engine
-pyvex
+git+https://github.com/xor2003/angr-platforms.git#egg=angr-platforms
