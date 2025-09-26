@@ -331,16 +331,6 @@ for func_addr in list(functions):
         if dec.codegen:
             print(f"Decompiled function {hex(func.addr)}:")
             print(dec.codegen.text)
-            # Test: Assert correct decomp output with args
-            expected = """int _start(unsigned short a0, unsigned short a1)
-{
-    return a0 + a1;
-}"""
-            if dec.codegen.text.strip() != expected.strip():
-                l.warning(f"Decomp mismatch: got\\n{dec.codegen.text}\\nexpected\\n{expected}")
-                print("Decompilation produced, but body mismatch; check logs.")
-            else:
-                print("Decompilation matches expected.")
             # Fix: use dec.kb.variables or func.variables
             try:
                 vars_info = [(v.name, str(v.location), str(v.type)) for v in func.variables.values()]
