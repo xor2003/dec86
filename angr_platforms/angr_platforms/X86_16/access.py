@@ -86,10 +86,15 @@ class DataAccess(Hardware):
             paddr = self.convert_ss_vaddr(addr)
             return self.read_mem32(paddr)
         sg, offs = self.convert_segoff2vexv(seg, addr)
+        # Convert integer values to VEX constants if needed
+        if isinstance(sg, int):
+            sg = self.constant(sg, Type.int_16)
+        if isinstance(offs, int):
+            offs = self.constant(offs, Type.int_32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.jump(None, 0xff032, jumpkind=JumpKind.Call)
-        return self.lifter_instruction.get("nraddr").cast_to(Type.int_32)
+        return self.lifter_instruction.get("nraddr", Type.int_32)
         
         io_base = self.chk_memio(paddr)
         return (
@@ -105,10 +110,15 @@ class DataAccess(Hardware):
             paddr = self.convert_ss_vaddr(addr)
             return self.read_mem16(paddr)
         sg, offs = self.convert_segoff2vexv(seg, addr)
+        # Convert integer values to VEX constants if needed
+        if isinstance(sg, int):
+            sg = self.constant(sg, Type.int_16)
+        if isinstance(offs, int):
+            offs = self.constant(offs, Type.int_32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.jump(None, 0xff016, jumpkind=JumpKind.Call)
-        return self.lifter_instruction.get("nraddr").cast_to(Type.int_16)
+        return self.lifter_instruction.get("nraddr", Type.int_16)
 
         io_base = self.chk_memio(paddr)
         return (
@@ -124,10 +134,15 @@ class DataAccess(Hardware):
             paddr = self.convert_ss_vaddr(addr)
             return self.read_mem8(paddr)
         sg, offs = self.convert_segoff2vexv(seg, addr)
+        # Convert integer values to VEX constants if needed
+        if isinstance(sg, int):
+            sg = self.constant(sg, Type.int_16)
+        if isinstance(offs, int):
+            offs = self.constant(offs, Type.int_32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.jump(None, 0xff08, jumpkind=JumpKind.Call)
-        return self.lifter_instruction.get("nraddr").cast_to(Type.int_8)
+        return self.lifter_instruction.get("nraddr", Type.int_8)
 
         return self.read_mem8(paddr)
         io_base = self.chk_memio(paddr)
@@ -140,14 +155,19 @@ class DataAccess(Hardware):
     def write_mem32_seg(self, seg, addr, value):
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
-            return self.read_mem32(paddr)
+            return self.write_mem32(paddr, value)
         sg, offs = self.convert_segoff2vexv(seg, addr)
+        # Convert integer values to VEX constants if needed
+        if isinstance(sg, int):
+            sg = self.constant(sg, Type.int_16)
+        if isinstance(offs, int):
+            offs = self.constant(offs, Type.int_32)
+        if isinstance(value, int):
+            value = self.constant(value, Type.int_32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.put(value, "cmlen")
         self.lifter_instruction.jump(None, 0xff132, jumpkind=JumpKind.Call)
-        return 
-        io_base = self.chk_memio(paddr)
         if io_base:
             self.write_memio32(io_base, paddr - io_base, value)
         else:
@@ -156,34 +176,36 @@ class DataAccess(Hardware):
     def write_mem16_seg(self, seg, addr, value):
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
-            return self.read_mem32(paddr)
+            return self.write_mem16(paddr, value)
         sg, offs = self.convert_segoff2vexv(seg, addr)
+        # Convert integer values to VEX constants if needed
+        if isinstance(sg, int):
+            sg = self.constant(sg, Type.int_16)
+        if isinstance(offs, int):
+            offs = self.constant(offs, Type.int_32)
+        if isinstance(value, int):
+            value = self.constant(value, Type.int_16)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.put(value, "cmlen")
         self.lifter_instruction.jump(None, 0xff116, jumpkind=JumpKind.Call)
-        return 
-        io_base = self.chk_memio(paddr)
-        if io_base:
-            self.write_memio16(io_base, paddr - io_base, value)
-        else:
-            self.write_mem16(paddr, value)
 
     def write_mem8_seg(self, seg, addr, value):
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
-            return self.read_mem32(paddr)
+            return self.write_mem8(paddr, value)
         sg, offs = self.convert_segoff2vexv(seg, addr)
+        # Convert integer values to VEX constants if needed
+        if isinstance(sg, int):
+            sg = self.constant(sg, Type.int_16)
+        if isinstance(offs, int):
+            offs = self.constant(offs, Type.int_32)
+        if isinstance(value, int):
+            value = self.constant(value, Type.int_8)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.put(value, "cmlen")
         self.lifter_instruction.jump(None, 0xff108, jumpkind=JumpKind.Call)
-        return 
-        io_base = self.chk_memio(paddr)
-        if io_base:
-            self.write_memio8(io_base, paddr - io_base, value)
-        else:
-            self.write_mem8(paddr, value)
 
     def get_code8(self, offset):
         assert offset == 0
@@ -218,4 +240,5 @@ class DataAccess(Hardware):
     def callf(self, seg, ip):
         self.push16(self.get_sgreg(sgreg_t.CS))
         self.push16(self.get_gpreg(reg16_t.IP) + 5)
+        laddr = self.v2p(seg, ip)
         self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Call)

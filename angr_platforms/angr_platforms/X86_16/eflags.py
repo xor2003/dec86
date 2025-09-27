@@ -258,6 +258,41 @@ class Eflags:
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, (result ^ v)[size - 1])
+
+    def update_eflags_rol(self, v, c):
+        # For ROL, CF = LSB of result, OF = MSB of result XOR LSB of result (if c == 1)
+        size = v.width
+        c = c % size  # Normalize shift count
+        if c == 0:
+            return
+        result = (v << c) | (v >> (size - c))
+        
+        # Set carry flag to LSB of result
+        flags = self.get_gpreg(reg16_t.FLAGS)
+        flags = self.set_carry(flags, result & 1)
+        
+        # Set overflow flag if shift count is 1
+        if c == 1:
+            of = ((result >> (size - 1)) & 1) ^ (result & 1)
+            flags = self.set_overflow(flags, of)
+        self.set_gpreg(reg16_t.FLAGS, flags)
+        
+    def update_eflags_ror(self, v, c):
+        # For ROR, CF = MSB of result, OF = MSB of result XOR MSB-1 of result (if c == 1)
+        size = v.width
+        c = c % size  # Normalize shift count
+        if c == 0:
+            return
+        result = (v >> c) | (v << (size - c))
+        
+        # Set carry flag to MSB of result
+        flags = self.get_gpreg(reg16_t.FLAGS)
+        flags = self.set_carry(flags, (result >> (size - 1)) & 1)
+        
+        # Set overflow flag if shift count is 1
+        if c == 1:
+            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
+            flags = self.set_overflow(flags, of)
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_shr(self, v, c):

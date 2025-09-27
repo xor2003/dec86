@@ -24,8 +24,7 @@ class SimDOSintcall(SimCC):
         print("DOS int was called %s" % state.regs.ip_at_syscall)
         return state.regs.ax
 
-
-class SimCC8616MSC(SimCC):
+class SimCC8616MSCsmall(SimCC):
     ARG_REGS = []
     FP_ARG_REGS = []
     STACKARG_SP_DIFF = 2
@@ -37,6 +36,18 @@ class SimCC8616MSC(SimCC):
     CALLEE_CLEANUP = True
 
 
-register_default_cc("86_16", SimCC8616MSC)
+class SimCC8616MSCmedium(SimCC):
+    ARG_REGS = []
+    FP_ARG_REGS = []
+    STACKARG_SP_DIFF = 2
+    RETURN_ADDR = SimStackArg(0, 2)
+    RETURN_VAL = SimRegArg("ax", 2)
+    OVERFLOW_RETURN_VAL = SimRegArg("dx", 2)
+    ARCH = Arch86_16
+    STACK_ALIGNMENT = 2
+    CALLEE_CLEANUP = True
+
+
+register_default_cc("86_16", SimCC8616MSCsmall)
 register_syscall_cc("86_16", "Linux", SimDOSintcall)
 register_syscall_cc("86_16", "default", SimDOSintcall)

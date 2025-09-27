@@ -154,8 +154,8 @@ class DTRegister:
 class Processor(Eflags, CR):
     def __init__(self):
         super().__init__()
-        return
-
+        self.lifter_instruction = None
+        self.flags = 0
         self.eip = 0  # X86Instruction pointer
         self.gpregs = [GPRegister() for _ in range(reg32_t.GPREGS_COUNT.value)]  # General-purpose registers
         self.sgregs = [SGRegister() for _ in range(sgreg_t.SGREGS_COUNT.value)]  # Segment registers
@@ -218,10 +218,29 @@ class Processor(Eflags, CR):
         return self.eip
 
     def get_ip(self):
+        if self.lifter_instruction is None:
+            return self.eip & 0xFFFF
         return self.lifter_instruction.get("ip", Type.int_16)
-        return self.eip & 0xFFFF
 
     def get_gpreg(self, n):
+        if self.lifter_instruction is None:
+            if isinstance(n, reg32_t):
+                idx = n.value
+                if idx < reg32_t.GPREGS_COUNT.value:
+                    return self.gpregs[idx].reg32
+                elif idx == reg32_t.EIP.value:
+                    return self.eip
+                elif idx == reg32_t.EFLAGS.value:
+                    return self.flags
+            elif isinstance(n, reg16_t):
+                idx = n.value
+                if idx < reg32_t.GPREGS_COUNT.value:  # 8 for 16-bit views
+                    return self.gpregs[idx].reg16
+                elif idx == reg16_t.IP.value:
+                    return self.eip & 0xFFFF
+                elif idx == reg16_t.FLAGS.value:
+                    return self.flags & 0xFFFF
+            raise ValueError(f"Cannot get gpreg {n} without lifter_instruction in concrete mode")
         return self.lifter_instruction.get(n.name.lower(), TYPES[type(n)])
 
     def constant(self, n, type_=Type.int_8):
@@ -229,6 +248,23 @@ class Processor(Eflags, CR):
 
     def get_sgreg(self, n):
         return self.lifter_instruction.get(n.name.lower(), TYPES[type(n)])
+
+    def get_carry(self):
+        # Get the carry flag (bit 0 of FLAGS register)
+        flags = self.get_gpreg(reg16_t.FLAGS)
+        return flags[0].cast_to(Type.int_1)
+
+    def set_carry_flag(self, flags, carry):
+        # Set the carry flag (bit 0 of FLAGS register)
+        flags = super().set_carry(flags, carry)
+        self.set_gpreg(reg16_t.FLAGS, flags)
+        return flags
+
+    def set_overflow_flag(self, flags, overflow):
+        # Set the overflow flag (bit 11 of FLAGS register)
+        flags = super().set_overflow(flags, overflow)
+        self.set_gpreg(reg16_t.FLAGS, flags)
+        return flags
 
     def get_dtreg_selector(self, n):
         #assert n < dtreg_t.DTREGS_COUNT.value
@@ -246,10 +282,34 @@ class Processor(Eflags, CR):
         self.eip = value
 
     def set_ip(self, value):
+        if self.lifter_instruction is None:
+            self.eip = (self.eip & 0xFFFF0000) | (value & 0xFFFF)
+            return
         assert False
-        self.set_gpreg(self, "ip", self.lifter_instruction.constant(value, Type.int_16))
+        self.set_gpreg(reg16_t.IP, self.lifter_instruction.constant(value, Type.int_16))
 
     def set_gpreg(self, n, value):
+        if self.lifter_instruction is None:
+            if isinstance(value, int):
+                if isinstance(n, reg32_t):
+                    idx = n.value
+                    if idx < reg32_t.GPREGS_COUNT.value:
+                        self.gpregs[idx].reg32 = value
+                    elif idx == reg32_t.EIP.value:
+                        self.eip = value
+                    elif idx == reg32_t.EFLAGS.value:
+                        self.flags = value
+                    return
+                elif isinstance(n, reg16_t):
+                    idx = n.value
+                    if idx < reg32_t.GPREGS_COUNT.value:
+                        self.gpregs[idx].reg16 = value
+                    elif idx == reg16_t.IP.value:
+                        self.eip = (self.eip & 0xFFFF0000) | (value & 0xFFFF)
+                    elif idx == reg16_t.FLAGS.value:
+                        self.flags = (self.flags & 0xFFFF0000) | (value & 0xFFFF)
+                    return
+            raise ValueError(f"Cannot set gpreg {n} = {value} without lifter_instruction in concrete mode")
         if isinstance(value, int):
             val = self.lifter_instruction.constant(value, TYPES[type(n)])
         else:

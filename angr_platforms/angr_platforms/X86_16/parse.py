@@ -61,7 +61,7 @@ class ParseInstr(X86Instruction):
             opcode = (opcode & 0xFF) | 0x0100
 
         if opcode not in self.chk:
-
+            logger.error(f"Unknown opcode at {self.emu.bitstream.bytepos:08x}: {opcode:02x}, next bytes: {self.emu.bitstream.peek('uint:32'):08x}")
             raise RuntimeError(f"Unknown opcode {self.emu.bitstream.bytepos:08x}: {opcode:02x}{self.emu.bitstream.peek('uint:32'):08x}")
             #sys.exit(1)
         if self.chk[opcode] & CHK_MODRM:
@@ -97,7 +97,7 @@ class ParseInstr(X86Instruction):
         if self.instr.opcode == 0x0F:
             self.instr.opcode = (self.instr.opcode << 8) + self.emu.get_code8(0)
             #self.emu.update_eip(1)
-        logger.warning(f"opcode: {self.instr.opcode:0x}")
+        logger.debug(f"opcode: {self.instr.opcode:0x}")
 
     def parse_modrm_sib_disp(self) -> None:
         modrm = self.emu.get_code8(0)
