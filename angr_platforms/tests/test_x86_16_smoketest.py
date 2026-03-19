@@ -2,7 +2,7 @@ import io
 
 import angr
 import keystone as ks
-from angr.sim_type import SimTypeInt, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
@@ -33,6 +33,14 @@ def _assert_word_signature(func, arg_count: int):
     assert all(isinstance(arg, SimTypeShort) and arg.size == 16 for arg in func.prototype.args)
     assert isinstance(func.prototype.returnty, SimTypeInt)
     assert func.prototype.returnty.size == 16
+
+
+def _assert_long_signature(func, arg_count: int):
+    assert func.prototype is not None
+    assert len(func.prototype.args) == arg_count
+    assert all(isinstance(arg, SimTypeLong) and arg.size == 32 for arg in func.prototype.args)
+    assert isinstance(func.prototype.returnty, SimTypeLong)
+    assert func.prototype.returnty.size == 32
 
 
 def test_mov_add_ret_smoke():
@@ -173,3 +181,72 @@ def test_conditional_two_word_args_signature():
     assert dec.codegen is not None
     _assert_word_signature(func, 2)
     assert "? 0 : 1" not in dec.codegen.text
+
+
+def test_wide_return_inference():
+    project = _project_from_asm("mov ax, 0x5678; mov dx, 0x1234; ret")
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    func = cfg.functions[0x1000]
+    dec = project.analyses.Decompiler(func, cfg=cfg)
+
+    assert dec.codegen is not None
+    _assert_long_signature(func, 0)
+    assert "return" in dec.codegen.text
+
+
+def test_wide_arg_and_return_inference():
+    project = _project_from_asm("push bp; mov bp, sp; mov ax, [bp+4]; mov dx, [bp+6]; pop bp; ret")
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    func = cfg.functions[0x1000]
+    dec = project.analyses.Decompiler(func, cfg=cfg)
+
+    assert dec.codegen is not None
+    _assert_long_signature(func, 1)
+    assert "return" in dec.codegen.text
+
+
+def test_explicit_wide_return_codegen():
+    project = _project_from_asm("mov ax, 0x5678; mov dx, 0x1234; ret")
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    func = cfg.functions[0x1000]
+    func.prototype = SimTypeFunction([], SimTypeLong()).with_arch(project.arch)
+    func.is_prototype_guessed = False
+    dec = project.analyses.Decompiler(func, cfg=cfg)
+
+    assert dec.codegen is not None
+    assert "return 305419896;" in dec.codegen.text
+
+
+def test_explicit_near_pointer_prototype():
+    project = _project_from_asm("push bp; mov bp, sp; mov ax, [bp+4]; pop bp; ret")
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    func = cfg.functions[0x1000]
+    func.prototype = SimTypeFunction([SimTypePointer(SimTypeChar())], SimTypePointer(SimTypeChar())).with_arch(
+        project.arch
+    )
+    func.is_prototype_guessed = False
+    dec = project.analyses.Decompiler(func, cfg=cfg)
+
+    assert dec.codegen is not None
+    assert "char * _start(char *a0)" in dec.codegen.text
+    assert "return a0;" in dec.codegen.text
+
+
+def test_explicit_far_pointer_like_prototype():
+    project = _project_from_asm("push bp; mov bp, sp; mov ax, [bp+4]; mov dx, [bp+6]; pop bp; ret")
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    func = cfg.functions[0x1000]
+    func.prototype = SimTypeFunction([SimTypeLong(label="far_ptr")], SimTypeLong(label="far_ptr")).with_arch(
+        project.arch
+    )
+    func.is_prototype_guessed = False
+    dec = project.analyses.Decompiler(func, cfg=cfg)
+
+    assert dec.codegen is not None
+    assert "long _start" in dec.codegen.text
+    assert "0x10000" in dec.codegen.text
