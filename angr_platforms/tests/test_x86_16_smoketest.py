@@ -4,6 +4,7 @@ import angr
 import keystone as ks
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
 
+from angr_platforms.X86_16.annotations import decompile_function
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.simos_86_16 import SimCC8616MSCsmall  # noqa: F401
@@ -250,3 +251,42 @@ def test_explicit_far_pointer_like_prototype():
     assert dec.codegen is not None
     assert "long _start" in dec.codegen.text
     assert "0x10000" in dec.codegen.text
+
+
+def test_c_decl_annotation_applies_function_and_argument_names():
+    project = _project_from_asm("push bp; mov bp, sp; mov ax, [bp+4]; add ax, [bp+6]; pop bp; ret")
+
+    dec = decompile_function(project, 0x1000, c_decl="int add_words(int lhs, int rhs);")
+
+    assert dec.codegen is not None
+    assert "int add_words(int lhs, int rhs)" in dec.codegen.text
+    assert "return lhs + rhs;" in dec.codegen.text
+
+
+def test_stack_variable_annotation_applies_local_name():
+    project = _project_from_asm(
+        "push bp; mov bp, sp; sub sp, 2; mov ax, [bp+4]; add ax, [bp+6]; "
+        "mov [bp-2], ax; mov ax, [bp-2]; mov sp, bp; pop bp; ret"
+    )
+
+    dec = decompile_function(
+        project,
+        0x1000,
+        c_decl="int add_store(int lhs, int rhs);",
+        stack_vars={-4: "total"},
+    )
+
+    assert dec.codegen is not None
+    assert "int add_store(int lhs, int rhs)" in dec.codegen.text
+    assert "unsigned short total;" in dec.codegen.text
+    assert "total = lhs + rhs;" in dec.codegen.text
+
+
+def test_c_decl_annotation_applies_pointer_signature():
+    project = _project_from_asm("push bp; mov bp, sp; mov ax, [bp+4]; pop bp; ret")
+
+    dec = decompile_function(project, 0x1000, c_decl="char *identity(char *src);")
+
+    assert dec.codegen is not None
+    assert "identity(char *src)" in dec.codegen.text
+    assert "return src;" in dec.codegen.text

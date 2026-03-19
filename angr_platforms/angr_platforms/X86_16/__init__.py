@@ -1,6 +1,6 @@
-__all__ = ["arch_86_16", "lift_86_16", "simos_86_16"]
+__all__ = ["annotations", "arch_86_16", "lift_86_16", "simos_86_16"]
 
-from . import arch_86_16, lift_86_16, simos_86_16  # noqa: F401
+from . import annotations, arch_86_16, lift_86_16, simos_86_16  # noqa: F401
 
 try:
     import networkx
@@ -18,7 +18,10 @@ try:
     from angr.analyses.decompiler.clinic import Clinic
     from angr.analyses.typehoon.typeconsts import Pointer, Int16 as TCInt16
     from angr.knowledge_plugins.functions.function import Function
+    from angr.knowledge_plugins.variables.variable_manager import VariableManagerInternal
+    from angr.sim_variable import SimMemoryVariable
     from angr.sim_variable import SimStackVariable
+    from .annotations import ANNOTATION_KEY
 
     class Pointer16(Pointer, TCInt16):
         def __init__(self, basetype=None):
@@ -195,6 +198,7 @@ try:
                 stack_args.append((var.offset, size))
 
             returnty = self.function.prototype.returnty
+            existing_arg_names = self.function.prototype.arg_names if self.function.prototype is not None else ()
             if wide_return and (
                 returnty is None or isinstance(returnty, (SimTypeInt, SimTypeShort, SimTypeChar))
             ):
@@ -233,13 +237,18 @@ try:
                     idx += 1
                 if returnty is None:
                     returnty = SimTypeInt()
-                self.function.prototype = SimTypeFunction([ty for _, ty in collapsed_args], returnty).with_arch(self.project.arch)
+                arg_names = existing_arg_names[: len(collapsed_args)] if existing_arg_names else ()
+                self.function.prototype = SimTypeFunction(
+                    [ty for _, ty in collapsed_args], returnty, arg_names=arg_names
+                ).with_arch(self.project.arch)
                 self.function.is_prototype_guessed = False
                 return
             if wide_return:
-                self.function.prototype = SimTypeFunction(self.function.prototype.args, returnty or SimTypeLong()).with_arch(
-                    self.project.arch
-                )
+                self.function.prototype = SimTypeFunction(
+                    self.function.prototype.args,
+                    returnty or SimTypeLong(),
+                    arg_names=existing_arg_names,
+                ).with_arch(self.project.arch)
                 self.function.is_prototype_guessed = False
                 return
 
@@ -273,6 +282,52 @@ try:
 
     if getattr(CITE.c_repr_chunks, "__name__", "") != "_c_repr_chunks_8616":
         CITE.c_repr_chunks = _c_repr_chunks_8616
+
+    _orig_assign_unified_variable_names = VariableManagerInternal.assign_unified_variable_names
+
+    def _assign_unified_variable_names_8616(self, labels=None, arg_names=None, reset=False, func_blocks=None):
+        _orig_assign_unified_variable_names(self, labels=labels, arg_names=arg_names, reset=reset, func_blocks=func_blocks)
+
+        if self.func_addr is None or not self.manager._kb.functions.contains_addr(self.func_addr):
+            return
+        function = self.manager._kb.functions[self.func_addr]
+        annotations = function.info.get(ANNOTATION_KEY)
+        if not annotations:
+            return
+
+        for var in self.get_unified_variables():
+            if isinstance(var, SimStackVariable):
+                spec = annotations["stack_vars"].get(var.offset)
+                if spec is None:
+                    continue
+                if "name" in spec:
+                    var.name = spec["name"]
+                    var._hash = None
+                if "type" in spec:
+                    self.set_variable_type(var, spec["type"], mark_manual=True, all_unified=True)
+
+    if getattr(VariableManagerInternal.assign_unified_variable_names, "__name__", "") != "_assign_unified_variable_names_8616":
+        VariableManagerInternal.assign_unified_variable_names = _assign_unified_variable_names_8616
+
+    _orig_assign_variable_names = VariableManagerInternal.assign_variable_names
+
+    def _assign_variable_names_8616(self, labels=None, types=None):
+        _orig_assign_variable_names(self, labels=labels, types=types)
+
+        if self.func_addr != "global":
+            return
+        for function in self.manager._kb.functions.values():
+            annotations = function.info.get(ANNOTATION_KEY)
+            if not annotations:
+                continue
+            for addr, name in annotations["global_vars"].items():
+                self.manager._kb.labels[addr] = name
+                for var in self.get_global_variables(addr):
+                    if isinstance(var, SimMemoryVariable):
+                        var.name = name
+
+    if getattr(VariableManagerInternal.assign_variable_names, "__name__", "") != "_assign_variable_names_8616":
+        VariableManagerInternal.assign_variable_names = _assign_variable_names_8616
 
     _orig_returnmaker_handle_return = ReturnMaker._handle_Return
 
