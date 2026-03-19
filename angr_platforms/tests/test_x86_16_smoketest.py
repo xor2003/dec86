@@ -120,6 +120,18 @@ def test_single_word_arg_signature_and_return_type():
     assert "return v0 + 1;" in dec.codegen.text
 
 
+def test_no_arg_frame_function_does_not_gain_phantom_arg():
+    project = _project_from_asm("push bp; mov bp, sp; mov ax, 7; pop bp; ret")
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    func = cfg.functions[0x1000]
+    dec = project.analyses.Decompiler(func, cfg=cfg)
+
+    assert dec.codegen is not None
+    _assert_word_signature(func, 0)
+    assert "return 7;" in dec.codegen.text
+
+
 def test_three_word_args_signature():
     project = _project_from_asm(
         "push bp; mov bp, sp; mov ax, [bp+4]; add ax, [bp+6]; add ax, [bp+8]; pop bp; ret"

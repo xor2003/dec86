@@ -114,6 +114,8 @@ try:
                     continue
                 if getattr(var, "name", None) == "ret_addr":
                     continue
+                if not variable_kb.variables.get_variable_accesses(var):
+                    continue
                 if var.offset < 2 or var.offset in seen_offsets:
                     continue
                 seen_offsets.add(var.offset)
