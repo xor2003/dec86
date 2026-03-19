@@ -18,6 +18,10 @@ def _annotation_dict(function):
     )
 
 
+def _normalize_bp_disp(offset: int) -> int:
+    return offset - 2
+
+
 def annotate_function(
     project,
     func_addr: int,
@@ -27,6 +31,7 @@ def annotate_function(
     prototype: SimTypeFunction | None = None,
     arg_names: list[str] | tuple[str, ...] | None = None,
     stack_vars: dict[int, str | dict] | None = None,
+    bp_stack_vars: dict[int, str | dict] | None = None,
     global_vars: dict[int, str] | None = None,
 ):
     func = project.kb.functions.function(addr=func_addr, create=True)
@@ -70,6 +75,12 @@ def annotate_function(
             else:
                 entry.update(spec)
 
+    if bp_stack_vars:
+        translated = {}
+        for bp_disp, spec in bp_stack_vars.items():
+            translated[_normalize_bp_disp(bp_disp)] = spec
+        annotate_function(project, func_addr, stack_vars=translated)
+
     if global_vars:
         for addr, var_name in global_vars.items():
             annotations["global_vars"][addr] = var_name
@@ -83,6 +94,13 @@ def annotate_stack_variable(project, func_addr: int, offset: int, name: str, typ
     if type_ is not None:
         spec["type"] = type_
     return annotate_function(project, func_addr, stack_vars={offset: spec})
+
+
+def annotate_bp_stack_variable(project, func_addr: int, bp_disp: int, name: str, type_=None):
+    spec = {"name": name}
+    if type_ is not None:
+        spec["type"] = type_
+    return annotate_function(project, func_addr, bp_stack_vars={bp_disp: spec})
 
 
 def annotate_global_variable(project, addr: int, name: str):

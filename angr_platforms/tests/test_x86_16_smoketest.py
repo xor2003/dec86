@@ -282,6 +282,24 @@ def test_stack_variable_annotation_applies_local_name():
     assert "total = lhs + rhs;" in dec.codegen.text
 
 
+def test_bp_relative_stack_annotation_uses_assembly_displacement():
+    project = _project_from_asm(
+        "push bp; mov bp, sp; sub sp, 2; mov ax, [bp+4]; add ax, [bp+6]; "
+        "mov [bp-2], ax; mov ax, [bp-2]; mov sp, bp; pop bp; ret"
+    )
+
+    dec = decompile_function(
+        project,
+        0x1000,
+        c_decl="int add_store_bp(int lhs, int rhs);",
+        bp_stack_vars={-2: "sum_local"},
+    )
+
+    assert dec.codegen is not None
+    assert "unsigned short sum_local;" in dec.codegen.text
+    assert "sum_local = lhs + rhs;" in dec.codegen.text
+
+
 def test_c_decl_annotation_applies_pointer_signature():
     project = _project_from_asm("push bp; mov bp, sp; mov ax, [bp+4]; pop bp; ret")
 
