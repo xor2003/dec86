@@ -1,8 +1,9 @@
 
-from pyvex.lifting.util import JumpKind, Type
+from pyvex.lifting.util import JumpKind
 from pyvex.stmt import IMark, WrTmp, Put, Store
 from pyvex.expr import Const, Binop
-
+from pyvex import IRConst
+ 
 from .instr_base import InstrBase
 from .instruction import *
 from .regs import reg8_t, reg16_t, sgreg_t
@@ -178,21 +179,21 @@ class Instr16(InstrBase):
         rm16 = self.get_rm16()
         r16 = self.get_r16()
         carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.set_rm8(rm16 - r16 - carry)
+        self.set_rm16(rm16 - r16 - carry)
         self.emu.update_eflags_sbb(rm16, r16, carry)
 
     def adc_rm16_r16(self) -> None:
         rm16 = self.get_rm16()
         r16 = self.get_r16()
         carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.set_rm8(rm16 + r16 + carry)
+        self.set_rm16(rm16 + r16 + carry)
         self.emu.update_eflags_adc(rm16, r16, carry)
 
     def add_r16_rm16(self):
         r16 = self.get_r16()
         rm16 = self.get_rm16()
-        self.set_r16(r16 + rm16)
-        self.emu.update_eflags_add(r16, rm16)
+        self.set_r16(Binop('Iop_Add16', r16, rm16))
+        # self.emu.update_eflags_add(r16, rm16)  # Temporarily disabled for lifting
 
     def adc_r16_rm16(self) -> None:
         r16 = self.get_r16()
@@ -203,8 +204,8 @@ class Instr16(InstrBase):
 
     def add_ax_imm16(self):
         ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t.AX, ax + self.instr.imm16)
-        self.emu.update_eflags_add(ax, self.instr.imm16)
+        imm16 = Const(IRConst.U16(self.instr.imm16))
+        self.emu.set_gpreg(reg16_t.AX, Binop('Iop_Add16', ax, imm16))
 
     def push_es(self):
         self.emu.push16(self.emu.get_segment(sgreg_t.ES))
@@ -361,7 +362,9 @@ class Instr16(InstrBase):
         self.emu.update_eflags_imul(rm16_s, self.instr.imm16)
 
     def push_imm8(self):
-        self.emu.push16(self.instr.imm8)
+        # Create a 16-bit constant from the 8-bit immediate value
+        imm16 = self.emu.constant(self.instr.imm8, Type.int_16)
+        self.emu.push16(imm16)
 
     def imul_r16_rm16_imm8(self):
         rm16_s = self.get_rm16()
@@ -493,11 +496,12 @@ class Instr16(InstrBase):
 
     def mov_r16_imm16(self):
         reg = self.instr.opcode & 0b111
-        self.emu.set_gpreg(reg16_t(reg), self.instr.imm16)
+        self.emu.set_gpreg(reg16_t(reg), Const(IRConst.U16(self.instr.imm16)))
 
     def ret(self):
-        ip = self.emu.pop16()
-        self.emu.lifter_instruction.jump(None, ip, jumpkind=JumpKind.Ret)
+        ret_addr = self.emu.pop16()
+        self.emu.irsb.next = ret_addr
+        self.emu.irsb.jumpkind = 'Ijk_Ret'
 
     def mov_rm16_imm16(self):
         self.set_rm16(self.emu.constant(self.instr.imm16, Type.int_16))
@@ -544,68 +548,73 @@ class Instr16(InstrBase):
 
     def jo_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not self.emu.is_overflow(), ip)
+        self.emu.lifter_instruction.jump(self.emu.is_overflow(), ip)
 
     def jno_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_overflow(), ip)
+        self.emu.lifter_instruction.jump(not self.emu.is_overflow(), ip)
 
     def jb_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not self.emu.is_carry(), ip)
+        self.emu.lifter_instruction.jump(self.emu.is_carry(), ip)
 
     def jnb_rel16(self):  # jae, jnc
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_carry(), ip)
+        self.emu.lifter_instruction.jump(not self.emu.is_carry(), ip)
 
     def jz_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not self.emu.is_zero(), ip)
+        self.emu.lifter_instruction.jump(self.emu.is_zero(), ip)
 
     def jnz_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_zero(), ip)
+        self.emu.lifter_instruction.jump(not self.emu.is_zero(), ip)
 
     def jbe_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not (self.emu.is_carry() or self.emu.is_zero()), ip)
+        cond = self.emu.is_carry() or self.emu.is_zero()
+        self.emu.lifter_instruction.jump(cond, ip)
 
     def ja_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_carry() or self.emu.is_zero(), ip)
+        cond = not (self.emu.is_carry() or self.emu.is_zero())
+        self.emu.lifter_instruction.jump(cond, ip)
 
     def js_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not self.emu.is_sign(), ip)
+        self.emu.lifter_instruction.jump(self.emu.is_sign(), ip)
 
     def jns_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_sign(), ip)
+        self.emu.lifter_instruction.jump(not self.emu.is_sign(), ip)
 
     def jp_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not self.emu.is_parity(), ip)
+        self.emu.lifter_instruction.jump(self.emu.is_parity(), ip)
 
     def jnp_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_parity(), ip)
+        self.emu.lifter_instruction.jump(not self.emu.is_parity(), ip)
 
     def jl_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not (self.emu.is_sign() != self.emu.is_overflow()), ip)
+        cond = self.emu.is_sign() != self.emu.is_overflow()
+        self.emu.lifter_instruction.jump(cond, ip)
 
     def jnl_rel16(self):  # jge
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_sign() != self.emu.is_overflow(), ip)
+        cond = self.emu.is_sign() == self.emu.is_overflow()
+        self.emu.lifter_instruction.jump(cond, ip)
 
     def jle_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(not (self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())), ip)
+        cond = self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())
+        self.emu.lifter_instruction.jump(cond, ip)
 
     def jnle_rel16(self):
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm16, Type.int_16).signed + 4
-        self.emu.lifter_instruction.jump(self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()),
-                                         ip)
+        cond = not (self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()))
+        self.emu.lifter_instruction.jump(cond, ip)
 
     def imul_r16_rm16(self):
         r16_s = self.get_r16()

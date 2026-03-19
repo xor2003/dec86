@@ -1,7 +1,6 @@
 from typing import Optional
 
 from bitstring import ConstBitStream
-from pyvex.lifting.util.vex_helper import Type
 
 DEFAULT_MEMORY_SIZE = 1024  # 1 KB
 

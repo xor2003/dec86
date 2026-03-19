@@ -2,6 +2,8 @@ import logging
 import struct
 from typing import TYPE_CHECKING
 
+from pyvex.lifting.util.vex_helper import Type
+
 if TYPE_CHECKING:
     from .emulator import Emulator
 from .instruction import *
@@ -132,10 +134,10 @@ class ParseInstr(X86Instruction):
 
     def parse_modrm16(self) -> None:
         if (self.instr.modrm.mod == 0 and self.instr.modrm.rm == 6) or self.instr.modrm.mod == 2:
-            self.instr.disp16 = self.emu.get_code16(0)
+            self.instr.disp16 = self.emu.constant(self.emu.get_code16(0), Type.int_16)
             #self.emu.update_eip(2)
         elif self.instr.modrm.mod == 1:
-            self.instr.disp8 = struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0]
+            self.instr.disp8 = self.emu.constant(struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0], Type.int_8)
             #self.emu.update_eip(1)
 
     def parse_moffs(self) -> None:

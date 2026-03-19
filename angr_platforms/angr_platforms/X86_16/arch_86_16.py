@@ -48,6 +48,8 @@ class Arch86_16(Arch):
         for reg in self.register_list:
             self.logger.debug(f"Reg {reg.name}: size {reg.size}, vex_offset {reg.vex_offset}")
 
+        self.vex_offsets = {reg.name.lower(): reg.vex_offset for reg in self.register_list}
+
     name = "86_16"
     bits = 16
     stack_change = -2

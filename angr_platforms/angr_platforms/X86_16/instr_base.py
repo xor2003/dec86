@@ -1,7 +1,6 @@
 from typing import TYPE_CHECKING, Any, Callable, Dict
 
 from pyvex.lifting.util import JumpKind
-from pyvex.lifting.util.vex_helper import Type
 
 from .emu import EmuInstr
 from .exec import ExecInstr
@@ -16,6 +15,9 @@ CHSZ_NONE: int = 0
 CHSZ_OP: int = 1
 CHSZ_AD: int = 2
 
+
+import logging
+logger = logging.getLogger(__name__)
 
 class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
@@ -330,9 +332,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def jle_rel8(self) -> None:
-        result = self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())
         ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not result, ip, JumpKind.Boring)
+        cond = self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())
+        self.emu.lifter_instruction.jump(cond, ip)
 
     def jnle_rel8(self) -> None:
         result = ~self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow())

@@ -1,4 +1,8 @@
-from pyvex.lifting.util.vex_helper import JumpKind, Type
+from pyvex.lifting.util.vex_helper import JumpKind
+
+ITY_I8 = 2
+ITY_I16 = 3
+ITY_I32 = 4
 
 from .hardware import Hardware
 from .regs import reg16_t, reg32_t, sgreg_t
@@ -18,7 +22,7 @@ class DataAccess(Hardware):
         self.set_gpreg(reg, sel)
 
     def get_segment(self, reg):
-        return self.lifter_instruction.get(reg.name.lower(), Type.int_16)
+        return self.lifter_instruction.get(reg.name.lower(), ITY_I16)
 
     #def trans_v2p(self, mode, seg, vaddr):
     #    laddr = self.trans_v2l(mode, seg, vaddr)
@@ -28,7 +32,7 @@ class DataAccess(Hardware):
 
 
     def convert_ss_vaddr(self, vaddr):
-        laddr = vaddr.cast_to(Type.int_16)  # Simplify ss: for decompiler
+        laddr = vaddr.cast_to(ITY_I16)  # Simplify ss: for decompiler
         return laddr
 
     def v2p(self, seg, off):
@@ -39,12 +43,12 @@ class DataAccess(Hardware):
         if isinstance(seg, sgreg_t):
             sg = self.get_sgreg(seg)
         elif isinstance(seg, int):
-            sg = self.constant(seg, Type.int_16)
+            sg = self.constant(seg, ITY_I16)
         else:
             sg = seg
         if not isinstance(vaddr, int):
-            vaddr = vaddr.cast_to(Type.int_32)
-        sg = sg.cast_to(Type.int_32)
+            vaddr = vaddr.cast_to(ITY_I32)
+        sg = sg.cast_to(ITY_I32)
         return sg, vaddr
 
     def search_tlb(self, vpn):
@@ -88,13 +92,13 @@ class DataAccess(Hardware):
         sg, offs = self.convert_segoff2vexv(seg, addr)
         # Convert integer values to VEX constants if needed
         if isinstance(sg, int):
-            sg = self.constant(sg, Type.int_16)
+            sg = self.constant(sg, ITY_I16)
         if isinstance(offs, int):
-            offs = self.constant(offs, Type.int_32)
+            offs = self.constant(offs, ITY_I32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.jump(None, 0xff032, jumpkind=JumpKind.Call)
-        return self.lifter_instruction.get("nraddr", Type.int_32)
+        return self.lifter_instruction.get("nraddr", Ity_I32)
         
         io_base = self.chk_memio(paddr)
         return (
@@ -112,13 +116,13 @@ class DataAccess(Hardware):
         sg, offs = self.convert_segoff2vexv(seg, addr)
         # Convert integer values to VEX constants if needed
         if isinstance(sg, int):
-            sg = self.constant(sg, Type.int_16)
+            sg = self.constant(sg, ITY_I16)
         if isinstance(offs, int):
-            offs = self.constant(offs, Type.int_32)
+            offs = self.constant(offs, ITY_I32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.jump(None, 0xff016, jumpkind=JumpKind.Call)
-        return self.lifter_instruction.get("nraddr", Type.int_16)
+        return self.lifter_instruction.get("nraddr", ITY_I16)
 
         io_base = self.chk_memio(paddr)
         return (
@@ -136,13 +140,13 @@ class DataAccess(Hardware):
         sg, offs = self.convert_segoff2vexv(seg, addr)
         # Convert integer values to VEX constants if needed
         if isinstance(sg, int):
-            sg = self.constant(sg, Type.int_16)
+            sg = self.constant(sg, ITY_I16)
         if isinstance(offs, int):
-            offs = self.constant(offs, Type.int_32)
+            offs = self.constant(offs, ITY_I32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.jump(None, 0xff08, jumpkind=JumpKind.Call)
-        return self.lifter_instruction.get("nraddr", Type.int_8)
+        return self.lifter_instruction.get("nraddr", ITY_I8)
 
         return self.read_mem8(paddr)
         io_base = self.chk_memio(paddr)
@@ -159,11 +163,11 @@ class DataAccess(Hardware):
         sg, offs = self.convert_segoff2vexv(seg, addr)
         # Convert integer values to VEX constants if needed
         if isinstance(sg, int):
-            sg = self.constant(sg, Type.int_16)
+            sg = self.constant(sg, ITY_I16)
         if isinstance(offs, int):
-            offs = self.constant(offs, Type.int_32)
+            offs = self.constant(offs, ITY_I32)
         if isinstance(value, int):
-            value = self.constant(value, Type.int_32)
+            value = self.constant(value, ITY_I32)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.put(value, "cmlen")
@@ -180,11 +184,11 @@ class DataAccess(Hardware):
         sg, offs = self.convert_segoff2vexv(seg, addr)
         # Convert integer values to VEX constants if needed
         if isinstance(sg, int):
-            sg = self.constant(sg, Type.int_16)
+            sg = self.constant(sg, ITY_I16)
         if isinstance(offs, int):
-            offs = self.constant(offs, Type.int_32)
+            offs = self.constant(offs, ITY_I32)
         if isinstance(value, int):
-            value = self.constant(value, Type.int_16)
+            value = self.constant(value, ITY_I16)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.put(value, "cmlen")
@@ -197,11 +201,11 @@ class DataAccess(Hardware):
         sg, offs = self.convert_segoff2vexv(seg, addr)
         # Convert integer values to VEX constants if needed
         if isinstance(sg, int):
-            sg = self.constant(sg, Type.int_16)
+            sg = self.constant(sg, ITY_I16)
         if isinstance(offs, int):
-            offs = self.constant(offs, Type.int_32)
+            offs = self.constant(offs, ITY_I32)
         if isinstance(value, int):
-            value = self.constant(value, Type.int_8)
+            value = self.constant(value, ITY_I8)
         self.lifter_instruction.put(sg, "sc_class")
         self.lifter_instruction.put(offs, "nraddr")
         self.lifter_instruction.put(value, "cmlen")
