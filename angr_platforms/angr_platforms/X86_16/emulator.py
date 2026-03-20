@@ -28,7 +28,9 @@ class Emulator(Interrupt):
             if ty is None:
                 raise ValueError("type is required to wrap an integer into a VEX value")
             return self.constant(value, ty)
-        return VexValue(self.lifter_instruction, value)
+        if self.lifter_instruction is None:
+            raise ValueError("cannot wrap a non-constant VEX expression without an active lifter instruction")
+        return VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
 
     def push16(self, val):
         sp = self.get_gpreg(reg16_t.SP)
