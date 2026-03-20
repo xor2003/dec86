@@ -1,6 +1,6 @@
-__all__ = ["annotations", "arch_86_16", "lift_86_16", "simos_86_16"]
+__all__ = ["annotations", "arch_86_16", "lift_86_16", "load_dos_mz", "simos_86_16"]
 
-from . import annotations, arch_86_16, lift_86_16, simos_86_16  # noqa: F401
+from . import annotations, arch_86_16, lift_86_16, load_dos_mz, simos_86_16  # noqa: F401
 
 try:
     import networkx
