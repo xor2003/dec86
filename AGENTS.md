@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `49 passed`
+- `51 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -183,8 +183,10 @@ Expected status as of 2026-03-20:
   - `scasb`
   - `scasw`
   - `rcr ax, 1` (compared against 32-bit `0x66 0xD1 0xD8`)
+  - `loop rel8` (compared against 32-bit `0x67 0xE2 ...` using relative-target equivalence)
   - direct execution tests for `les` and `lds` far-pointer loads
   - `iret` lifting/runtime regression coverage, asserting the lifted block writes `CS` and `FLAGS`, returns with `Ijk_Ret`, and transfers control to the low 16-bit target without crashing
+  - direct execution coverage for `pop r/m16` (`0x8f /0`)
 - This was added while enabling real sample-matrix coverage, since medium-model startup code reached `f3 aa` and exposed the missing `stosb` lift.
 
 ### Recent rotate/return fixes
@@ -193,10 +195,19 @@ Expected status as of 2026-03-20:
   - added missing `0xD1 /3` dispatch for `rcr r/m16,1`
   - added `rcr_rm16_1()`
   - fixed `rcl()` and `rcr()` to write updated `FLAGS` back after carry/overflow changes
+  - fixed `loop`, `loope`, and `loopne` to use properly widened signed rel8 offsets
+  - added `0x8f /0` support for `pop r/m16`
 - `angr_platforms/angr_platforms/X86_16/instr_base.py`
   - fixed `iret()` to return to `v2p(cs, ip)` instead of crashing on an undefined `laddr`
 - `angr_platforms/angr_platforms/X86_16/processor.py`
   - fixed `get_carry()` to return a real wrapped bit expression (`flags[0]`) instead of a raw `Binop`, which had been breaking rotate-through-carry lifting
+
+### Current bounded real-sample decompilation findings
+
+- Using `CFGFast(start_at_entry=False, function_starts=[...])` on `x16_samples/IMOD.EXE` exposed a real medium-model blocker before the latest loop fix:
+  - `loop rel8` had been building malformed typed arithmetic (`Add16(..., 0x-e)`)
+- After the loop fix, targeted decompilation on real sample functions is still expensive enough that a `timeout 20` probe can expire without producing stable output, so the next iteration should likely keep using bounded single-function probes with explicit timeouts rather than whole-program CFG/decompilation.
+- A separate small-model bounded probe also surfaced an unknown `0x8f` opcode on one path, which is why `pop r/m16` was added.
 
 ### DOS MZ loader status
 
