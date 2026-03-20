@@ -28,6 +28,8 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
+logging.getLogger("angr_platforms.X86_16.parse").setLevel(logging.CRITICAL)
+logging.getLogger("angr_platforms.X86_16.lift_86_16").setLevel(logging.CRITICAL)
 
 
 def _parse_int(value: str) -> int:
@@ -65,11 +67,12 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
     return angr.Project(path, auto_load_libs=False)
 
 
-def _pick_function(project: angr.Project, addr: int | None):
+def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
     target_addr = project.entry if addr is None else addr
     cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=[target_addr],
+        regions=regions,
         normalize=True,
         force_complete_scan=False,
     )
@@ -136,13 +139,32 @@ def main() -> int:
     )
     print("recovering function...", flush=True)
 
+    regions = None
+    if args.binary.suffix.lower() == ".com":
+        start = args.base_addr
+        regions = [(start, start + args.binary.stat().st_size)]
+
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(args.timeout)
     try:
-        cfg, func = _pick_function(project, args.addr)
+        cfg, func = _pick_function(project, args.addr, regions=regions)
     except _AnalysisTimeout:
         print(f"Timed out while recovering a function after {args.timeout}s.")
+        print("Tip: try --addr 0x... for a specific function or raise --timeout for larger binaries.")
         return 3
+    except Exception as ex:
+        print(f"Function recovery failed: {ex}")
+        if args.binary.suffix.lower() == ".com":
+            try:
+                block = project.factory.block(project.entry, opt_level=0)
+                print("\n== first block asm ==")
+                for insn in block.capstone.insns:
+                    print(f"{insn.address:#06x}: {insn.mnemonic} {insn.op_str}".rstrip())
+                print("\nTip: tiny .COM files may include trailing data right after code.")
+                print("Try decompiling a specific function with --addr, or use --show-asm for a quick inspection.")
+            except Exception:
+                pass
+        return 5
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
@@ -166,6 +188,9 @@ def main() -> int:
     except _AnalysisTimeout:
         print(f"\nTimed out while decompiling after {args.timeout}s.")
         return 4
+    except Exception as ex:
+        print(f"\nDecompilation failed: {ex}")
+        return 6
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
