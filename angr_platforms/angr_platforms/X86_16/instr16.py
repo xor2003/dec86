@@ -62,6 +62,7 @@ class Instr16(InstrBase):
         self.set_funcflag(0x8B, self.mov_r16_rm16, CHK_MODRM)
         self.set_funcflag(0x8C, self.mov_rm16_sreg, CHK_MODRM)
         self.set_funcflag(0x8D, self.lea_r16_m16, CHK_MODRM)
+        self.set_funcflag(0x8F, self.code_8f, CHK_MODRM)
 
         for i in range(1, 8):
             self.set_funcflag(0x90+i, self.xchg_r16_ax, 0)
@@ -151,7 +152,8 @@ class Instr16(InstrBase):
         cx = self.emu.get_gpreg(reg16_t.CX)
         cx -= 1
         self.emu.set_gpreg(reg16_t.CX, cx)
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).signed + 2
+        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
         self.emu.lifter_instruction.jump(cx != 0, ip, JumpKind.Boring)
 
     def loop16e(self) -> None:
@@ -159,7 +161,8 @@ class Instr16(InstrBase):
         cx -= 1
         self.emu.set_gpreg(reg16_t.CX, cx)
         zero = self.emu.is_zero()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).signed + 2
+        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
         self.emu.lifter_instruction.jump(cx and zero, ip, JumpKind.Boring)
 
     def loop16ne(self) -> None:
@@ -167,8 +170,16 @@ class Instr16(InstrBase):
         cx -= 1
         self.emu.set_gpreg(reg16_t.CX, cx)
         zero = self.emu.is_zero()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).signed + 2
+        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
         self.emu.lifter_instruction.jump(cx and not zero, ip, JumpKind.Boring)
+
+    def code_8f(self):
+        reg = self.instr.modrm.reg
+        if reg == 0:
+            self.pop_rm16()
+        else:
+            raise RuntimeError(f"not implemented: 0x8f /{reg}")
 
     def sbb_r16_rm16(self) -> None:
         r16 = self.get_r16()
@@ -1249,6 +1260,10 @@ class Instr16(InstrBase):
     def push_rm16(self):
         rm16 = self.get_rm16()
         self.emu.push16(rm16)
+
+    def pop_rm16(self):
+        value = self.emu.pop16()
+        self.set_rm16(value)
 
     def enter(self):
         bytes_ = self.instr.imm16

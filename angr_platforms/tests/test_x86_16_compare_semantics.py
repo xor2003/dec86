@@ -58,6 +58,31 @@ def _run_one_instruction_with_flags(arch, code: bytes, ax: int, flags: int):
     return simgr.active[0]
 
 
+def _run_loop_instruction(arch, code: bytes, cx: int, flags: int = 0):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.cx = cx
+    state.regs.flags = flags
+    try:
+        state.regs.ecx = cx
+    except AttributeError:
+        pass
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
 def _assert_same_store_effect(code16: bytes, code32: bytes, width: int, ax: int):
     state32 = _run_one_instruction(ArchX86(), code32, ax=ax)
     state16 = _run_one_instruction(Arch86_16(), code16, ax=ax)
@@ -189,6 +214,30 @@ def _run_iret_instruction(code: bytes, sp: int = 0x300):
     return simgr.active[0], block
 
 
+def _run_pop_rm16_instruction(code: bytes, sp: int = 0x300, bx: int = 0x220):
+    project = angr.load_shellcode(
+        code,
+        arch=Arch86_16(),
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ss = 0
+    state.regs.ds = 0
+    state.regs.sp = sp
+    state.regs.bx = bx
+    state.memory.store(sp, b"\x34\x12")
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
 def test_stosb_matches_upstream_x86_vex_effect():
     _assert_same_store_effect(b"\xAA", b"\xAA", 1, ax=0x125A)
 
@@ -222,6 +271,14 @@ def test_rcr_ax_1_matches_upstream_x86_vex_effect():
         assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
 
 
+def test_loop_rel8_matches_upstream_x86_vex_effect():
+    state32 = _run_loop_instruction(ArchX86(), b"\x67\xE2\xF2", cx=2)
+    state16 = _run_loop_instruction(Arch86_16(), b"\xE2\xF2", cx=2)
+
+    assert state32.addr - (0x100 + 3) == state16.addr - (0x100 + 2)
+    assert state32.solver.eval(state32.regs.cx) == state16.solver.eval(state16.regs.cx)
+
+
 def test_les_loads_far_pointer_into_register_and_es():
     state = _run_far_load_instruction(b"\xC4\x04")
 
@@ -247,3 +304,10 @@ def test_iret_restores_ip_cs_and_flags():
     assert state.addr == 0x5678
     assert block.vex.jumpkind == "Ijk_Ret"
     assert {"cs", "flags"} <= put_regs
+
+
+def test_pop_rm16_writes_memory_and_advances_stack():
+    state = _run_pop_rm16_instruction(b"\x8F\x07")
+
+    assert state.solver.eval(state.memory.load(0x220, 2, endness=state.arch.memory_endness)) == 0x1234
+    assert state.addr == 0x102
