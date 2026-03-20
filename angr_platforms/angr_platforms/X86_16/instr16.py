@@ -73,6 +73,8 @@ class Instr16(InstrBase):
         self.set_funcflag(0x9D, self.popf, 0)
         self.set_funcflag(0xA1, self.mov_ax_moffs16, CHK_MOFFS)
         self.set_funcflag(0xA3, self.mov_moffs16_ax, CHK_MOFFS)
+        self.set_funcflag(0xAA, self.stosb_m8_al, 0)
+        self.set_funcflag(0xAB, self.stosw_m16_ax, 0)
         self.set_funcflag(0xA5, self.movsw_m16_m16, 0)
         self.set_funcflag(0xA6, self.cmps_m8_m8, 0)
         self.set_funcflag(0xA7, self.cmps_m16_m16, 0)
@@ -433,6 +435,42 @@ class Instr16(InstrBase):
 
     def mov_moffs16_ax(self):
         self.set_moffs16(self.emu.get_gpreg(reg16_t.AX))
+
+    def _string_delta(self, width):
+        df = self.emu.is_direction()
+        neg = self.emu.constant((-width) & 0xFFFF, Type.int_16)
+        pos = self.emu.constant(width, Type.int_16)
+        expr = self.emu.lifter_instruction.irsb_c.ite(df.cast_to(Type.int_1).rdt, neg.rdt, pos.rdt)
+        return self.emu._vv(expr)
+
+    def _repeat_prefix_cond(self):
+        if self.instr.pre_repeat == NONE:
+            return None
+
+        cx = self.emu.get_gpreg(reg16_t.CX)
+        remaining = cx - self.emu.constant(1, Type.int_16)
+        self.emu.set_gpreg(reg16_t.CX, remaining)
+        return remaining != self.emu.constant(0, Type.int_16)
+
+    def stosb_m8_al(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        di = self.emu.get_gpreg(reg16_t.DI)
+        self.emu.put_data8(sgreg_t.ES, di, self.emu.get_gpreg(reg8_t.AL))
+        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(1))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def stosw_m16_ax(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        di = self.emu.get_gpreg(reg16_t.DI)
+        self.emu.put_data16(sgreg_t.ES, di, self.emu.get_gpreg(reg16_t.AX))
+        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(2))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
 
     def cmps_m8_m8(self):
         while True:
