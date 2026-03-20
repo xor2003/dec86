@@ -144,38 +144,33 @@ class ExecInstr(X86Instruction):
             return self.calc_modrm16()
 
     def calc_modrm16(self):
-        from pyvex.expr import Const, Binop
-        from pyvex import IRConst
-
         addr = self.emu.constant(0, Type.int_16)
 
         if self.instr.modrm.mod == 1:
-            disp = Unop('Iop_8Sto16', Const(IRConst.U8(self.instr.disp8)))
-            addr = Binop('Iop_Add16', addr, disp)
+            disp8 = self.instr.disp8 if self.instr.disp8 < 0x80 else self.instr.disp8 - 0x100
+            addr = addr + self.emu.constant(disp8 & 0xFFFF, Type.int_16)
         elif self.instr.modrm.mod == 2:
-            disp = Const(IRConst.U16(self.instr.disp16))
-            addr = Binop('Iop_Add16', addr, disp)
+            addr = addr + self.emu.constant(self.instr.disp16, Type.int_16)
 
         rm = self.instr.modrm.rm
         if rm in (0, 1, 7):
             bx = self.emu.get_gpreg(reg16_t.BX)
-            addr = Binop('Iop_Add16', addr, bx)
+            addr = addr + bx
         elif rm in (2, 3, 6):
             if self.instr.modrm.mod == 0 and rm == 6:
-                disp = Const(IRConst.U16(self.instr.disp16))
-                addr = Binop('Iop_Add16', addr, disp)
+                addr = addr + self.emu.constant(self.instr.disp16, Type.int_16)
             else:
                 bp = self.emu.get_gpreg(reg16_t.BP)
-                addr = Binop('Iop_Add16', addr, bp)
+                addr = addr + bp
                 self.instr.segment = sgreg_t.SS.value
 
         if rm < 6:
             if rm % 2:
                 di = self.emu.get_gpreg(reg16_t.DI)
-                addr = Binop('Iop_Add16', addr, di)
+                addr = addr + di
             else:
                 si = self.emu.get_gpreg(reg16_t.SI)
-                addr = Binop('Iop_Add16', addr, si)
+                addr = addr + si
 
         return addr
 

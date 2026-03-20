@@ -90,11 +90,6 @@ def test_cod_extractor_identifies_relocation_free_and_relocated_samples():
     assert compiler_bytes.find(b"\xe8\x00\x00") == 0x160
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=_TimeoutExpired,
-    reason="BIOSFUNC.COD now reaches CFG but still hangs during segmented-address analysis",
-)
 def test_bios_cod_sample_decompilation():
     bios_entries = _extract_cod_function("BIOSFUNC.COD", "_bios_clearkeyflags")
     project = _project_from_bytes(_join_entries(bios_entries))
@@ -109,7 +104,8 @@ def test_bios_cod_sample_decompilation():
         signal.signal(signal.SIGALRM, old_handler)
 
     assert dec.codegen is not None
-    assert "return;" in dec.codegen.text
+    assert any(token in dec.codegen.text for token in ("g_417", "1047"))
+    assert "return" in dec.codegen.text
 
 
 def test_compiler_idiom_prefix_lifts_from_cod_bytes():
