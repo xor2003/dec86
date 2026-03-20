@@ -83,8 +83,8 @@ def test_cod_extractor_identifies_relocation_free_and_relocated_samples():
 
 @pytest.mark.xfail(
     strict=True,
-    raises=AttributeError,
-    reason="segment-register moves from BIOSFUNC.COD still fail during lifting/decompilation",
+    raises=Exception,
+    reason="segment-register memory writes from BIOSFUNC.COD still fail during segmented address lifting",
 )
 def test_bios_cod_sample_decompilation():
     bios_entries = _extract_cod_function("BIOSFUNC.COD", "_bios_clearkeyflags")

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+files = [
+    "angr_platforms",
+    "tests",
+]
+ignore_missing_imports = true
+check_untyped_defs = true
+pretty = true
+show_error_codes = true
+warn_unused_ignores = true
+exclude = [
+    "build/",
+    "dist/",
+    "angr_platforms.egg-info/",
+]

@@ -22,7 +22,7 @@ class DataAccess(Hardware):
         self.set_gpreg(reg, sel)
 
     def get_segment(self, reg):
-        return self.lifter_instruction.get(reg.name.lower(), ITY_I16)
+        return self.get_sgreg(reg)
 
     #def trans_v2p(self, mode, seg, vaddr):
     #    laddr = self.trans_v2l(mode, seg, vaddr)

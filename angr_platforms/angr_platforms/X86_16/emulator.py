@@ -7,6 +7,7 @@ from pyvex import IRSB
 from pyvex.stmt import WrTmp
 from pyvex.expr import RdTmp, Load
 from pyvex.lifting.util.vex_helper import Type
+from pyvex.lifting.util.syntax_wrapper import VexValue
 
 
 class Emulator(Interrupt):
@@ -20,61 +21,75 @@ class Emulator(Interrupt):
         self.regs = {}
         self.tmp_counter = 0
 
+    def _vv(self, value, ty=None):
+        if isinstance(value, VexValue):
+            return value
+        if isinstance(value, int):
+            if ty is None:
+                raise ValueError("type is required to wrap an integer into a VEX value")
+            return self.constant(value, ty)
+        return VexValue(self.lifter_instruction, value)
+
     def push16(self, val):
         sp = self.get_gpreg(reg16_t.SP)
         two = self.constant(2, Type.int_16)
-        new_sp = Binop('Iop_Sub16', sp, two)
+        new_sp = sp - two
         self.set_gpreg(reg16_t.SP, new_sp)
         ss = self.get_sgreg(sgreg_t.SS)
-        ss32 = Binop('Iop_Zext16to32', ss)
+        ss32 = ss.cast_to(Type.int_32)
         four = self.constant(4, Type.int_8)
-        base = Binop('Iop_Shl32', ss32, four)
-        sp32 = Binop('Iop_Zext16to32', new_sp)
-        addr = Binop('Iop_Add32', base, sp32)
+        base = ss32 << four
+        sp32 = new_sp.cast_to(Type.int_32)
+        addr = base + sp32
+        if isinstance(val, int):
+            val = self.constant(val, Type.int_16)
         if self.irsb:
-            self.irsb._append_stmt(Store(self.arch.memory_endness, addr, val))
+            self.irsb._append_stmt(Store(addr.rdt, val.rdt, self.arch.memory_endness))
 
     def pop16(self):
         sp = self.get_gpreg(reg16_t.SP)
         ss = self.get_sgreg(sgreg_t.SS)
-        ss32 = Binop('Iop_Zext16to32', ss)
+        ss32 = ss.cast_to(Type.int_32)
         four = self.constant(4, Type.int_8)
-        base = Binop('Iop_Shl32', ss32, four)
-        sp32 = Binop('Iop_Zext16to32', sp)
-        addr = Binop('Iop_Add32', base, sp32)
+        base = ss32 << four
+        sp32 = sp.cast_to(Type.int_32)
+        addr = base + sp32
         if self.irsb:
             tmp_id = self.tmp_counter
             self.tmp_counter += 1
-            self.irsb._append_stmt(WrTmp(tmp_id, Load(self.arch.memory_endness, addr, 3)))
-            val = RdTmp(tmp_id)
+            self.irsb._append_stmt(WrTmp(tmp_id, Load(self.arch.memory_endness, Type.int_16, addr.rdt)))
+            val = VexValue(self.lifter_instruction, RdTmp.get_instance(tmp_id))
         else:
             val = 0  # concrete fallback
         two = self.constant(2, Type.int_16)
-        new_sp = Binop('Iop_Add16', sp, two)
+        new_sp = sp + two
         self.set_gpreg(reg16_t.SP, new_sp)
         return val
 
     def get_data16(self, seg, addr):
-        ss = self.get_sgreg(seg)
-        ss32 = Binop('Iop_Zext16to32', ss)
+        ss = self._vv(self.get_sgreg(seg), Type.int_16)
+        addr = self._vv(addr, Type.int_16)
+        ss32 = ss.cast_to(Type.int_32)
         four = self.constant(4, Type.int_8)
-        base = Binop('Iop_Shl32', ss32, four)
-        addr32 = Binop('Iop_Zext16to32', addr)
-        full_addr = Binop('Iop_Add32', base, addr32)
+        base = ss32 << four
+        addr32 = addr.cast_to(Type.int_32)
+        full_addr = base + addr32
         if self.irsb:
             tmp_id = self.tmp_counter
             self.tmp_counter += 1
-            self.irsb._append_stmt(WrTmp(tmp_id, Load(self.arch.memory_endness, full_addr, 3)))
-            return RdTmp(tmp_id)
+            self.irsb._append_stmt(WrTmp(tmp_id, Load(self.arch.memory_endness, Type.int_16, full_addr.rdt)))
+            return VexValue(self.lifter_instruction, RdTmp.get_instance(tmp_id))
         else:
             return 0  # concrete fallback
 
     def put_data16(self, seg, addr, val):
-        ss = self.get_sgreg(seg)
-        ss32 = Binop('Iop_Zext16to32', ss)
+        ss = self._vv(self.get_sgreg(seg), Type.int_16)
+        addr = self._vv(addr, Type.int_16)
+        ss32 = ss.cast_to(Type.int_32)
         four = self.constant(4, Type.int_8)
-        base = Binop('Iop_Shl32', ss32, four)
-        addr32 = Binop('Iop_Zext16to32', addr)
-        full_addr = Binop('Iop_Add32', base, addr32)
+        base = ss32 << four
+        addr32 = addr.cast_to(Type.int_32)
+        full_addr = base + addr32
+        val = self._vv(val, Type.int_16)
         if self.irsb:
-            self.irsb._append_stmt(Store(self.arch.memory_endness, full_addr, val))
+            self.irsb._append_stmt(Store(full_addr.rdt, val.rdt, self.arch.memory_endness))
