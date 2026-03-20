@@ -113,12 +113,20 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `33 passed, 1 xfailed`
+- `34 passed`
 
-### Current known failure
+### Recent BIOS `.COD` fix
 
-- The remaining `xfail` is the BIOS `.COD` segmented-memory / segmented-analysis case in `tests/test_x86_16_cod_samples.py`.
-- This is still useful as a regression target and should not be silently removed.
+- The former BIOS `.COD` `xfail` in `tests/test_x86_16_cod_samples.py` was fixed.
+- Root cause:
+  - segmented non-`SS` memory accesses in `access.py` still routed through synthetic `0xff0xx` helper-call trampolines
+  - 16-bit ModRM address construction in `exec.py` still built raw `pyvex.Binop/Unop` nodes containing `VexValue` wrappers
+- Fixes applied:
+  - `angr_platforms/angr_platforms/X86_16/access.py` now uses direct real-mode linear-address load/store logic for segmented accesses
+  - `angr_platforms/angr_platforms/X86_16/exec.py` now builds 16-bit ModRM addresses with `VexValue` arithmetic instead of raw malformed expressions
+- Current behavior:
+  - the BIOS sample now lifts, builds CFG, and decompiles without hanging
+  - the decompiler still does not recover the source perfectly, but it does recover the `0x417` BIOS data-area store and is now stable enough for a passing regression
 
 ### DOS / BIOS interrupt support status
 
@@ -204,4 +212,4 @@ Useful recent commit in `f15se2-re`:
 - Good next targets:
   - make `x16_samples/build_matrix.sh` fully reproducible without manual cleanup steps
   - extend real-binary coverage beyond entry-block loading
-  - keep narrowing the remaining BIOS `.COD` `xfail`
+  - improve decompilation quality for the BIOS `.COD` sample now that it no longer crashes
