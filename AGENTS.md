@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `47 passed`
+- `49 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -182,8 +182,21 @@ Expected status as of 2026-03-20:
   - `lodsw` (compared against 32-bit `0x66 0x67 0xAD` so operand and address size match)
   - `scasb`
   - `scasw`
+  - `rcr ax, 1` (compared against 32-bit `0x66 0xD1 0xD8`)
   - direct execution tests for `les` and `lds` far-pointer loads
+  - `iret` lifting/runtime regression coverage, asserting the lifted block writes `CS` and `FLAGS`, returns with `Ijk_Ret`, and transfers control to the low 16-bit target without crashing
 - This was added while enabling real sample-matrix coverage, since medium-model startup code reached `f3 aa` and exposed the missing `stosb` lift.
+
+### Recent rotate/return fixes
+
+- `angr_platforms/angr_platforms/X86_16/instr16.py`
+  - added missing `0xD1 /3` dispatch for `rcr r/m16,1`
+  - added `rcr_rm16_1()`
+  - fixed `rcl()` and `rcr()` to write updated `FLAGS` back after carry/overflow changes
+- `angr_platforms/angr_platforms/X86_16/instr_base.py`
+  - fixed `iret()` to return to `v2p(cs, ip)` instead of crashing on an undefined `laddr`
+- `angr_platforms/angr_platforms/X86_16/processor.py`
+  - fixed `get_carry()` to return a real wrapped bit expression (`flags[0]`) instead of a raw `Binop`, which had been breaking rotate-through-carry lifting
 
 ### DOS MZ loader status
 
