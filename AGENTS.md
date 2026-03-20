@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `52 passed`
+- `53 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -212,6 +212,7 @@ Expected status as of 2026-03-20:
   - `fold_values` decompiles successfully from raw `.COD` bytes via `tests/test_x86_16_cod_samples.py`
   - this probe exposed a bogus `Iop_16Sto16` in the lifted IR, traced to duplicate sign extension in `sub rm16, imm8` / `and rm16, imm8` flag-update paths
   - that duplicate sign extension was removed, which unblocked decompilation of the sample blob
+- The far-model counterpart `x16_samples/IMOD.COD` `fold_values` now also has direct regression coverage and decompiles successfully from raw `.COD` bytes.
 
 ### DOS MZ loader status
 
@@ -229,6 +230,11 @@ Expected status as of 2026-03-20:
   - `/home/xor/vextest/angr_platforms/x16_samples/`
 - User-facing rebuild entry point:
   - `/home/xor/vextest/angr_platforms/scripts/build_x16_samples.sh`
+- User-facing decompiler entry point from the repo root:
+  - `/home/xor/vextest/decompile.py`
+  - intended usage: `./decompile.py binary.exe`
+  - for raw blobs: `./decompile.py --blob binary.bin`
+  - current nuance: `.EXE` and relocation-free `.COD`/blob flows are the smoothest path; some `.COM` entry decompilations can still scan into trailing data
 - Main files:
   - `x16_samples/intdemo.c`
   - `x16_samples/IDEMO.C`
