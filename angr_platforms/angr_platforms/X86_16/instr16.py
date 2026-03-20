@@ -73,8 +73,12 @@ class Instr16(InstrBase):
         self.set_funcflag(0x9D, self.popf, 0)
         self.set_funcflag(0xA1, self.mov_ax_moffs16, CHK_MOFFS)
         self.set_funcflag(0xA3, self.mov_moffs16_ax, CHK_MOFFS)
+        self.set_funcflag(0xAC, self.lodsb_al_m8, 0)
         self.set_funcflag(0xAA, self.stosb_m8_al, 0)
         self.set_funcflag(0xAB, self.stosw_m16_ax, 0)
+        self.set_funcflag(0xAD, self.lodsw_ax_m16, 0)
+        self.set_funcflag(0xAE, self.scasb_al_m8, 0)
+        self.set_funcflag(0xAF, self.scasw_ax_m16, 0)
         self.set_funcflag(0xA5, self.movsw_m16_m16, 0)
         self.set_funcflag(0xA6, self.cmps_m8_m8, 0)
         self.set_funcflag(0xA7, self.cmps_m16_m16, 0)
@@ -85,6 +89,7 @@ class Instr16(InstrBase):
 
         self.set_funcflag(0xC3, self.ret, 0)
         self.set_funcflag(0xC4, self.les_es_r16_m16, CHK_MODRM)
+        self.set_funcflag(0xC5, self.lds_ds_r16_m16, CHK_MODRM)
         self.set_funcflag(0xC7, self.mov_rm16_imm16, CHK_MODRM | CHK_IMM16)
         self.set_funcflag(0xC8, self.enter, CHK_IMM16 | CHK_IMM8)
         self.set_funcflag(0xC9, self.leave, 0)
@@ -401,9 +406,22 @@ class Instr16(InstrBase):
         m16 = self.get_m()
         self.set_r16(m16)
 
+    def _load_far_pointer(self):
+        addr = self.get_m()
+        seg = self.select_segment()
+        offset = self.emu.get_data16(seg, addr)
+        segment = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_16))
+        return offset, segment
+
     def les_es_r16_m16(self):
-        m16 = self.get_m()
-        self.set_r16(m16)
+        offset, segment = self._load_far_pointer()
+        self.set_r16(offset)
+        self.emu.set_sgreg(sgreg_t.ES, segment)
+
+    def lds_ds_r16_m16(self):
+        offset, segment = self._load_far_pointer()
+        self.set_r16(offset)
+        self.emu.set_sgreg(sgreg_t.DS, segment)
 
     def xchg_r16_ax(self):
         reg = self.instr.opcode & 0b111
@@ -443,6 +461,11 @@ class Instr16(InstrBase):
         expr = self.emu.lifter_instruction.irsb_c.ite(df.cast_to(Type.int_1).rdt, neg.rdt, pos.rdt)
         return self.emu._vv(expr)
 
+    def _string_source_segment(self):
+        if self.instr.prefix:
+            return sgreg_t(self.instr.pre_segment)
+        return sgreg_t.DS
+
     def _repeat_prefix_cond(self):
         if self.instr.pre_repeat == NONE:
             return None
@@ -472,9 +495,55 @@ class Instr16(InstrBase):
         if repeat_cond is not None:
             self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
 
+    def lodsb_al_m8(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        si = self.emu.get_gpreg(reg16_t.SI)
+        next_si = si + self._string_delta(1)
+        value = self.emu.get_data8(self._string_source_segment(), si)
+        self.emu.set_gpreg(reg8_t.AL, value)
+        self.emu.set_gpreg(reg16_t.SI, next_si)
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def lodsw_ax_m16(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        si = self.emu.get_gpreg(reg16_t.SI)
+        next_si = si + self._string_delta(2)
+        value = self.emu.get_data16(self._string_source_segment(), si)
+        self.emu.set_gpreg(reg16_t.AX, value)
+        self.emu.set_gpreg(reg16_t.SI, next_si)
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def scasb_al_m8(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        di = self.emu.get_gpreg(reg16_t.DI)
+        value = self.emu.get_data8(sgreg_t.ES, di)
+        self.emu.update_eflags_sub(self.emu.get_gpreg(reg8_t.AL), value)
+        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(1))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def scasw_ax_m16(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        di = self.emu.get_gpreg(reg16_t.DI)
+        value = self.emu.get_data16(sgreg_t.ES, di)
+        self.emu.update_eflags_sub(self.emu.get_gpreg(reg16_t.AX), value)
+        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(2))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
     def cmps_m8_m8(self):
         while True:
-            m8_s = self.emu.get_data8(sgreg_t(self.instr.segment), self.emu.get_gpreg(reg16_t.SI))
+            m8_s = self.emu.get_data8(self._string_source_segment(), self.emu.get_gpreg(reg16_t.SI))
             m8_d = self.emu.get_data8(self.emu.ES, self.emu.get_gpreg(reg16_t.DI))
             self.emu.update_eflags_sub(m8_s, m8_d)
 
@@ -494,7 +563,7 @@ class Instr16(InstrBase):
 
     def cmps_m16_m16(self):
         while True:
-            m16_s = self.emu.get_data16(sgreg_t(self.instr.segment), self.emu.get_gpreg(reg16_t.SI))
+            m16_s = self.emu.get_data16(self._string_source_segment(), self.emu.get_gpreg(reg16_t.SI))
             m16_d = self.emu.get_data16(reg16_t.ES, self.emu.get_gpreg(reg16_t.DI))
             self.emu.update_eflags_sub(m16_s, m16_d)
 
@@ -522,7 +591,7 @@ class Instr16(InstrBase):
             elif self.instr.pre_repeat == REPNZ:
                 self.emu.lifter_instruction.jump(self.emu.get_gpreg(reg16_t.CX) != 0, ip, JumpKind.Boring)
 
-        m16_s = self.emu.get_data16(sgreg_t(self.instr.segment), self.emu.get_gpreg(reg16_t.SI))
+        m16_s = self.emu.get_data16(self._string_source_segment(), self.emu.get_gpreg(reg16_t.SI))
         self.emu.put_data16(sgreg_t.ES, self.emu.get_gpreg(reg16_t.DI), m16_s)
 
         self.emu.update_gpreg(reg16_t.SI, 2 if ~self.emu.is_direction() else -2)
@@ -561,7 +630,7 @@ class Instr16(InstrBase):
         size = 3  # opcode + imm16
         return_ip = self.emu.get_gpreg(reg16_t.IP) + size
         self.emu.push16(return_ip)
-        imm = self.emu.constant(Type.int_16, self.instr.imm16)
+        imm = self.emu.constant(self.instr.imm16, Type.int_16)
         target = return_ip + imm
         self.emu.lifter_instruction.jump(None, target, JumpKind.Call)
 
@@ -569,7 +638,7 @@ class Instr16(InstrBase):
     def jmp_rel16(self):
         size = 3  # opcode + imm16
         current_ip = self.emu.get_gpreg(reg16_t.IP) + size
-        imm = self.emu.constant(Type.int_16, self.instr.imm16)
+        imm = self.emu.constant(self.instr.imm16, Type.int_16)
         target = current_ip + imm
         self.emu.lifter_instruction.jump(None, target, JumpKind.Boring)
 
@@ -906,12 +975,18 @@ class Instr16(InstrBase):
     def and_rm16_imm8(self):
         rm16 = self.get_rm16()
         self.set_rm16(rm16 & self.instr.imm8)
-        self.emu.update_eflags_and(rm16, self.emu.constant(Type.int_8, self.instr.imm8).widen_signed(Type.int_16).widen_signed(Type.int_16))
+        self.emu.update_eflags_and(
+            rm16,
+            self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16).widen_signed(Type.int_16),
+        )
 
     def sub_rm16_imm8(self):
         rm16 = self.get_rm16()
         self.set_rm16(rm16 - self.instr.imm8)
-        self.emu.update_eflags_sub(rm16, self.emu.constant(Type.int_8, self.instr.imm8).widen_signed(Type.int_16).widen_signed(Type.int_16))
+        self.emu.update_eflags_sub(
+            rm16,
+            self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16).widen_signed(Type.int_16),
+        )
 
     def xor_rm16_imm8(self):
         rm16 = self.get_rm16()

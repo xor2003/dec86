@@ -1,6 +1,8 @@
 from typing import Optional
 
 from bitstring import ConstBitStream
+from pyvex.lifting.util.vex_helper import Type
+from pyvex.lifting.util.syntax_wrapper import VexValue
 
 DEFAULT_MEMORY_SIZE = 1024  # 1 KB
 
@@ -40,32 +42,41 @@ class Memory:
     def read_mem32(self, addr: int) -> int:
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        return self.lifter_instruction.load(addr, Type.int_32)
+        rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_32)
+        return VexValue(self.lifter_instruction, rdt)
 
     def read_mem16(self, addr: int) -> int:
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        return self.lifter_instruction.load(addr, Type.int_16)
+        rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_16)
+        return VexValue(self.lifter_instruction, rdt)
 
     def read_mem8(self, addr: int) -> int:
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        return self.lifter_instruction.load(addr, Type.int_8)
+        rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_8)
+        return VexValue(self.lifter_instruction, rdt)
 
     def write_mem32(self, addr: int, value: int):
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        self.lifter_instruction.store(value, addr)
+        if isinstance(value, int):
+            value = self.lifter_instruction.constant(value, Type.int_32)
+        self.lifter_instruction._irsb_c.store(addr.rdt, value.rdt)
 
     def write_mem16(self, addr: int, value: int):
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        self.lifter_instruction.store(value, addr)
+        if isinstance(value, int):
+            value = self.lifter_instruction.constant(value, Type.int_16)
+        self.lifter_instruction._irsb_c.store(addr.rdt, value.rdt)
 
     def write_mem8(self, addr: int, value: int):
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        self.lifter_instruction.store(value, addr)
+        if isinstance(value, int):
+            value = self.lifter_instruction.constant(value, Type.int_8)
+        self.lifter_instruction._irsb_c.store(addr.rdt, value.rdt)
 
     def is_ena_a20gate(self) -> bool:
         return self.a20gate

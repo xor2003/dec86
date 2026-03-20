@@ -46,9 +46,54 @@ def _assert_same_store_effect(code16: bytes, code32: bytes, width: int, ax: int)
     )
 
 
+def _assert_same_load_effect(code16: bytes, code32: bytes, mem: bytes):
+    state32 = _run_load_instruction(ArchX86(), code32, mem)
+    state16 = _run_load_instruction(Arch86_16(), code16, mem)
+
+    assert state32.solver.eval(state32.regs.ax) == state16.solver.eval(state16.regs.ax)
+    assert state32.solver.eval(state32.regs.si) == state16.solver.eval(state16.regs.si)
+
+
+def _run_load_instruction(arch, code: bytes, mem: bytes, si: int = 0x220):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ds = 0
+    try:
+        state.regs.si = si
+    except AttributeError:
+        pass
+    try:
+        state.regs.esi = si
+    except AttributeError:
+        pass
+    state.memory.store(si, mem)
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
 def test_stosb_matches_upstream_x86_vex_effect():
     _assert_same_store_effect(b"\xAA", b"\xAA", 1, ax=0x125A)
 
 
 def test_stosw_matches_upstream_x86_vex_effect():
     _assert_same_store_effect(b"\xAB", b"\x66\xAB", 2, ax=0x3456)
+
+
+def test_lodsb_matches_upstream_x86_vex_effect():
+    _assert_same_load_effect(b"\xAC", b"\x67\xAC", b"\x78")
+
+
+def test_lodsw_matches_upstream_x86_vex_effect():
+    _assert_same_load_effect(b"\xAD", b"\x66\x67\xAD", b"\x78\x56")

@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any, Callable, Dict
 
 from pyvex.lifting.util import JumpKind
+from pyvex.lifting.util.vex_helper import Type
 
 from .emu import EmuInstr
 from .exec import ExecInstr
