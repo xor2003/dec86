@@ -1,5 +1,6 @@
 import logging
 
+import bitstring
 import pyvex
 from pyvex.lifting import register
 from pyvex.lifting.util import Instruction, ParseError, GymratLifter, JumpKind
@@ -18,6 +19,14 @@ from .instruction import InstrData
 from .regs import reg16_t
 
 logger = logging.getLogger(__name__)
+
+
+def _bitstream_is_empty(bitstrm):
+    try:
+        bitstrm.peek(1)
+        return False
+    except bitstring.ReadError:
+        return True
 
 
 class _LifterInstructionFacade:
@@ -39,6 +48,31 @@ class _LifterInstructionFacade:
 
 class Instruction_ANY(Instruction):
     _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}
+    _BLOCK_TERMINATORS = {
+        "call",
+        "jmp",
+        "je",
+        "jz",
+        "jne",
+        "jnz",
+        "jle",
+        "jg",
+        "jl",
+        "jge",
+        "jb",
+        "jbe",
+        "ja",
+        "jae",
+        "jnb",
+        "jnc",
+        "jc",
+        "ret",
+        "retf",
+        "iret",
+        "int",
+        "int3",
+        "hlt",
+    }
 
     # Convert everything that's not an instruction into a No-op to meet the BF spec
     bin_format = "xxxxxxxx" # We don't care, match it all
@@ -546,9 +580,33 @@ class Instruction_ANY(Instruction):
     def disassemble(self):
         return self.start, self.cs.insn_name(), [str(i) for i in self.cs.operands]
 
-class Lifter86_16(GymratLifter):
+    def ends_block(self):
+        return self.cs.mnemonic in self._BLOCK_TERMINATORS
 
+class Lifter86_16(GymratLifter):
     instrs = {Instruction_ANY}
+
+    def decode(self):
+        try:
+            self.create_bitstrm()
+            instructions = []
+            addr = self.irsb.addr
+            bytepos = self.bitstrm.bytepos
+
+            while not _bitstream_is_empty(self.bitstrm):
+                instr = self._decode_next_instruction(addr)
+                if not instr:
+                    break
+                instructions.append(instr)
+                addr += self.bitstrm.bytepos - bytepos
+                bytepos = self.bitstrm.bytepos
+                if getattr(instr, "ends_block", None) and instr.ends_block():
+                    break
+            return instructions
+        except Exception as exc:
+            self.errors = str(exc)
+            logger.exception("Error decoding x86-16 block:")
+            raise
 
 
 register(Lifter86_16, "86_16")

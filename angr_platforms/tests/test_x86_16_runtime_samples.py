@@ -54,6 +54,17 @@ def _run_to_completion(project: angr.Project, max_steps: int = 16):
     return simgr
 
 
+def _run_plain_steps_to_completion(project: angr.Project, max_steps: int = 16):
+    simgr = project.factory.simgr(_concreteish_entry_state(project))
+
+    for _ in range(max_steps):
+        if simgr.deadended or not simgr.active:
+            break
+        simgr.step()
+
+    return simgr
+
+
 def test_com_dos_sample_runs_to_dos_exit():
     project = _com_project("ICOMDO.COM")
     simgr = _run_to_completion(project)
@@ -67,6 +78,26 @@ def test_com_dos_sample_runs_to_dos_exit():
 def test_com_bios_sample_runs_to_dos_exit():
     project = _com_project("ICOMBI.COM")
     simgr = _run_to_completion(project)
+
+    assert len(simgr.active) == 0
+    assert len(simgr.deadended) == 1
+    assert len(simgr.errored) == 0
+    assert simgr.deadended[0].addr == 0
+
+
+def test_com_dos_sample_runs_to_dos_exit_with_plain_steps():
+    project = _com_project("ICOMDO.COM")
+    simgr = _run_plain_steps_to_completion(project)
+
+    assert len(simgr.active) == 0
+    assert len(simgr.deadended) == 1
+    assert len(simgr.errored) == 0
+    assert simgr.deadended[0].addr == 0
+
+
+def test_com_bios_sample_runs_to_dos_exit_with_plain_steps():
+    project = _com_project("ICOMBI.COM")
+    simgr = _run_plain_steps_to_completion(project)
 
     assert len(simgr.active) == 0
     assert len(simgr.deadended) == 1
