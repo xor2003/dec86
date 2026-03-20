@@ -12,6 +12,22 @@ from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
 MATRIX_DIR = Path("/home/xor/games/f15se2-re/x16_samples")
 MANIFEST_PATH = MATRIX_DIR / "matrix_manifest.json"
+EXPECTED_EXE_VARIANTS = {
+    ("ISOD", "small", "/Od"),
+    ("ISOT", "small", "/Ot"),
+    ("ISOX", "small", "/Ox"),
+    ("IMOD", "medium", "/Od"),
+    ("IMOT", "medium", "/Ot"),
+    ("IMOX", "medium", "/Ox"),
+    ("ILOD", "large", "/Od"),
+    ("ILOT", "large", "/Ot"),
+    ("IHOD", "huge", "/Od"),
+    ("IHOT", "huge", "/Ot"),
+}
+EXPECTED_COM_VARIANTS = {
+    ("ICOMDO", "tiny", "n/a"),
+    ("ICOMBI", "tiny", "n/a"),
+}
 
 
 def _load_manifest():
@@ -23,19 +39,26 @@ def test_sample_matrix_manifest_has_expected_variant_mix():
     entries = _load_manifest()
     exe_entries = [entry for entry in entries if entry["format"] == "exe"]
     com_entries = [entry for entry in entries if entry["format"] == "com"]
+    exe_variants = {(entry["id"], entry["memory_model"], entry["optimization"]) for entry in exe_entries}
+    com_variants = {(entry["id"], entry["memory_model"], entry["optimization"]) for entry in com_entries}
 
     assert len(exe_entries) == 10
     assert len(com_entries) == 2
+    assert exe_variants == EXPECTED_EXE_VARIANTS
+    assert com_variants == EXPECTED_COM_VARIANTS
 
     for entry in exe_entries:
         assert (MATRIX_DIR / entry["binary"]).exists()
         assert (MATRIX_DIR / entry["object"]).exists()
         assert (MATRIX_DIR / entry["cod"]).exists()
         assert (MATRIX_DIR / entry["map"]).exists()
+        assert entry["source"] == "IDEMO.C"
+        assert entry["compiler"] == "msc510"
 
     for entry in com_entries:
         assert (MATRIX_DIR / entry["binary"]).exists()
         assert (MATRIX_DIR / entry["listing"]).exists()
+        assert entry["compiler"] == "uasm"
 
 
 @pytest.mark.skipif(not MANIFEST_PATH.exists(), reason="sample matrix manifest is not available")
