@@ -273,7 +273,7 @@ class Processor(Eflags, CR):
     def get_carry(self):
         # Get the carry flag (bit 0 of FLAGS register)
         flags = self.get_gpreg(reg16_t.FLAGS)
-        return Binop('Iop_Shr16', flags, self.constant(0, Type.int_16)).cast_to(Type.int_1)
+        return flags[0]
 
     def set_carry_flag(self, flags, carry):
         # Set the carry flag (bit 0 of FLAGS register)

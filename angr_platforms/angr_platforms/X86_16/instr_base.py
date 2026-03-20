@@ -420,7 +420,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         flags = self.emu.pop16()
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
         self.emu.set_sgreg(sgreg_t.CS, cs)
-        addr = laddr
+        addr = self.emu.v2p(cs, ip)
         self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
 
     def in_al_imm8(self) -> None:

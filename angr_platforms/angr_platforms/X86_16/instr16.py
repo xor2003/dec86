@@ -815,6 +815,8 @@ class Instr16(InstrBase):
         reg = self.instr.modrm.reg
         if reg == 2:
             self.rcl_rm16_1()
+        elif reg == 3:
+            self.rcr_rm16_1()
         elif reg == 4:
             self.shl_rm16_1()
         elif reg == 5:
@@ -1054,6 +1056,10 @@ class Instr16(InstrBase):
         rm16 = self.get_rm16()
         self.rcl(rm16, 1)
 
+    def rcr_rm16_1(self):
+        rm16 = self.get_rm16()
+        self.rcr(rm16, 1)
+
     def rcr_rm16_imm8(self):
         rm16 = self.get_rm16()
         self.rcr(rm16, self.instr.imm8)
@@ -1102,6 +1108,7 @@ class Instr16(InstrBase):
         if b == 1:
             of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
             flags = self.emu.set_overflow(flags, of)
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def rcr(self, a, b):
         # Rotate through carry right: shift bits right, with CF shifting in and out
@@ -1124,6 +1131,7 @@ class Instr16(InstrBase):
         if b == 1:
             of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
             flags = self.emu.set_overflow(flags, of)
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def shr_rm16_cl(self):
         rm16 = self.get_rm16()
