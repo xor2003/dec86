@@ -97,11 +97,6 @@ def test_bios_cod_sample_decompilation():
     assert "return;" in dec.codegen.text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=NameError,
-    reason="compiler_idiom_test_suite uses shl rm16,1 and currently hits an undefined Type symbol",
-)
 def test_compiler_idiom_prefix_lifts_from_cod_bytes():
     compiler_entries = _extract_cod_function("output_Od_Gs.COD", "_compiler_idiom_test_suite")
     # This relocation-free prefix covers `result = param_int * 2; temp_val = 10;`.

@@ -1,7 +1,8 @@
-from pyvex.expr import Get, Const, Load, Binop
+from pyvex.expr import Get, Const, Load, Binop, Unop
 from pyvex.stmt import Put, Store
 from pyvex import IRConst
 from pyvex.lifting.util.vex_helper import Type
+from pyvex.lifting.util.syntax_wrapper import VexValue
 from .cr import CR
 from .eflags import Eflags
 from .regs import dtreg_t, reg8_t, reg16_t, reg32_t, sgreg_t
@@ -224,7 +225,7 @@ class Processor(Eflags, CR):
         if self.lifter_instruction is None:
             return self.eip & 0xFFFF
         offset = self.vex_offsets.get('ip', 0)
-        return Get(offset, Type.int_16)
+        return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_16))
 
     def get_gpreg(self, n):
         name = n.name.lower()
@@ -232,7 +233,7 @@ class Processor(Eflags, CR):
             if self.vex_offsets is None:
                 raise ValueError("vex_offsets not initialized for lifting mode")
             offset = self.vex_offsets.get(name, 0)
-            return Get(offset, TYPES[type(n)])
+            return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, TYPES[type(n)]))
         # concrete mode
         if isinstance(n, reg32_t):
             idx = n.value
@@ -254,14 +255,7 @@ class Processor(Eflags, CR):
 
     def constant(self, n, type_=Type.int_8):
         if self.lifter_instruction is not None:
-            if type_ == Type.int_8:
-                return Const(IRConst.U8(n))
-            elif type_ == Type.int_16:
-                return Const(IRConst.U16(n))
-            elif type_ == Type.int_32:
-                return Const(IRConst.U32(n))
-            else:
-                raise ValueError(f"Unsupported type {type_}")
+            return VexValue(self.lifter_instruction, self.lifter_instruction.mkconst(n, type_))
         return n
 
     def get_sgreg(self, n):
@@ -270,7 +264,7 @@ class Processor(Eflags, CR):
             if self.vex_offsets is None:
                 raise ValueError("vex_offsets not initialized for lifting mode")
             offset = self.vex_offsets.get(name, 0)
-            return Get(offset, Type.int_16)
+            return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_16))
         return self.sgregs[n.value].raw
 
     def get_segment(self, n):
@@ -320,7 +314,11 @@ class Processor(Eflags, CR):
             if self.vex_offsets is None:
                 raise ValueError("vex_offsets not initialized for lifting mode")
             offset = self.vex_offsets.get(name, 0)
-            self.lifter_instruction._append_stmt(Put(offset, value))
+            if isinstance(value, int):
+                value = self.constant(value, TYPES[type(n)])
+            if isinstance(value, VexValue):
+                value = value.rdt
+            self.lifter_instruction._append_stmt(Put(value, offset))
             return
         # concrete mode
         if isinstance(value, int):
@@ -351,7 +349,11 @@ class Processor(Eflags, CR):
             if self.vex_offsets is None:
                 raise ValueError("vex_offsets not initialized for lifting mode")
             offset = self.vex_offsets.get(name, 0)
-            self.lifter_instruction._append_stmt(Put(offset, reg))
+            if isinstance(reg, int):
+                reg = self.constant(reg, Type.int_16)
+            if isinstance(reg, VexValue):
+                reg = reg.rdt
+            self.lifter_instruction._append_stmt(Put(reg, offset))
             return
         if isinstance(reg, (Get, Const, Binop, Load, Unop)):
             return

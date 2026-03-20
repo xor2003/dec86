@@ -1,5 +1,6 @@
 
 from pyvex.lifting.util import JumpKind
+from pyvex.lifting.util.vex_helper import Type
 from pyvex.stmt import IMark, WrTmp, Put, Store
 from pyvex.expr import Const, Binop
 from pyvex import IRConst
