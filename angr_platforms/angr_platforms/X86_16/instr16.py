@@ -555,44 +555,44 @@ class Instr16(InstrBase):
             self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
 
     def cmps_m8_m8(self):
-        while True:
-            m8_s = self.emu.get_data8(self._string_source_segment(), self.emu.get_gpreg(reg16_t.SI))
-            m8_d = self.emu.get_data8(self.emu.ES, self.emu.get_gpreg(reg16_t.DI))
-            self.emu.update_eflags_sub(m8_s, m8_d)
+        repeat_cond = self._repeat_prefix_cond()
 
-            self.emu.update_gpreg(reg16_t.SI, -1 if self.emu.is_direction() else 1)
-            self.emu.update_gpreg(reg16_t.DI, -1 if self.emu.is_direction() else 1)
+        si = self.emu.get_gpreg(reg16_t.SI)
+        di = self.emu.get_gpreg(reg16_t.DI)
+        delta = self._string_delta(1)
+        m8_s = self.emu.get_data8(self._string_source_segment(), si)
+        m8_d = self.emu.get_data8(sgreg_t.ES, di)
+        self.emu.update_eflags_sub(m8_s, m8_d)
+        self.emu.set_gpreg(reg16_t.SI, si + delta)
+        self.emu.set_gpreg(reg16_t.DI, di + delta)
 
-            if self.instr.pre_repeat != self.emu.NONE:
-                self.emu.update_gpreg(reg16_t.CX, -1)
-                if self.instr.pre_repeat == self.emu.REPZ:
-                    if not self.emu.get_gpreg(reg16_t.CX) or not self.emu.is_zero():
-                        break
-                elif self.instr.pre_repeat == self.emu.REPNZ:
-                    if not self.emu.get_gpreg(reg16_t.CX) or self.emu.is_zero():
-                        break
-            else:
-                break
+        if repeat_cond is not None:
+            cond = repeat_cond.cast_to(Type.int_1)
+            if self.instr.pre_repeat == REPZ:
+                cond = cond & self.emu.is_zero()
+            elif self.instr.pre_repeat == REPNZ:
+                cond = cond & (self.emu.is_zero() == self.emu.constant(0, Type.int_1))
+            self.emu.lifter_instruction.jump(cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
 
     def cmps_m16_m16(self):
-        while True:
-            m16_s = self.emu.get_data16(self._string_source_segment(), self.emu.get_gpreg(reg16_t.SI))
-            m16_d = self.emu.get_data16(reg16_t.ES, self.emu.get_gpreg(reg16_t.DI))
-            self.emu.update_eflags_sub(m16_s, m16_d)
+        repeat_cond = self._repeat_prefix_cond()
 
-            self.emu.update_gpreg(reg16_t.SI, -2 if self.emu.is_direction() else 2)
-            self.emu.update_gpreg(reg16_t.DI, -2 if self.emu.is_direction() else 2)
+        si = self.emu.get_gpreg(reg16_t.SI)
+        di = self.emu.get_gpreg(reg16_t.DI)
+        delta = self._string_delta(2)
+        m16_s = self.emu.get_data16(self._string_source_segment(), si)
+        m16_d = self.emu.get_data16(sgreg_t.ES, di)
+        self.emu.update_eflags_sub(m16_s, m16_d)
+        self.emu.set_gpreg(reg16_t.SI, si + delta)
+        self.emu.set_gpreg(reg16_t.DI, di + delta)
 
-            if self.instr.pre_repeat != self.emu.NONE:
-                self.emu.update_gpreg(reg16_t.CX, -1)
-                if self.instr["pre_               repeat"] == self.emu.REPZ:
-                    if not self.emu.get_gpreg(reg16_t.CX) or not self.emu.is_zero():
-                        break
-                elif self.instr.pre_repeat == self.emu.REPNZ:
-                    if not self.emu.get_gpreg(reg16_t.CX) or self.emu.is_zero():
-                        break
-            else:
-                break
+        if repeat_cond is not None:
+            cond = repeat_cond.cast_to(Type.int_1)
+            if self.instr.pre_repeat == REPZ:
+                cond = cond & self.emu.is_zero()
+            elif self.instr.pre_repeat == REPNZ:
+                cond = cond & (self.emu.is_zero() == self.emu.constant(0, Type.int_1))
+            self.emu.lifter_instruction.jump(cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
 
 
     def movsw_m16_m16(self):

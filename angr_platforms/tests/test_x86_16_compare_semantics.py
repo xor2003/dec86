@@ -139,6 +139,16 @@ def _assert_same_scan_effect(code16: bytes, code32: bytes, width: int, ax: int, 
         assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
 
 
+def _assert_same_cmps_effect(code16: bytes, code32: bytes, src: bytes, dst: bytes):
+    state32 = _run_cmps_instruction(ArchX86(), code32, src=src, dst=dst)
+    state16 = _run_cmps_instruction(Arch86_16(), code16, src=src, dst=dst)
+
+    assert state32.solver.eval(state32.regs.si) == state16.solver.eval(state16.regs.si)
+    assert state32.solver.eval(state32.regs.di) == state16.solver.eval(state16.regs.di)
+    for bit in (0, 6, 7, 11):
+        assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
+
+
 def _run_scan_instruction(arch, code: bytes, ax: int, mem: bytes, di: int = 0x200):
     project = angr.load_shellcode(
         code,
@@ -162,6 +172,39 @@ def _run_scan_instruction(arch, code: bytes, ax: int, mem: bytes, di: int = 0x20
     except AttributeError:
         pass
     state.memory.store(di, mem)
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
+def _run_cmps_instruction(arch, code: bytes, src: bytes, dst: bytes, si: int = 0x220, di: int = 0x200):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ds = 0
+    state.regs.es = 0
+    try:
+        state.regs.si = si
+        state.regs.di = di
+    except AttributeError:
+        pass
+    try:
+        state.regs.esi = si
+        state.regs.edi = di
+    except AttributeError:
+        pass
+    state.memory.store(si, src)
+    state.memory.store(di, dst)
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)
@@ -260,6 +303,10 @@ def test_scasb_matches_upstream_x86_vex_effect():
 
 def test_scasw_matches_upstream_x86_vex_effect():
     _assert_same_scan_effect(b"\xAF", b"\x66\x67\xAF", 2, ax=0x5678, mem=b"\x78\x56")
+
+
+def test_cmpsb_matches_upstream_x86_vex_effect():
+    _assert_same_cmps_effect(b"\xA6", b"\x67\xA6", b"\x78", b"\x78")
 
 
 def test_rcr_ax_1_matches_upstream_x86_vex_effect():

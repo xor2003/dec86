@@ -105,3 +105,13 @@ def test_com_variants_disassemble_as_real_mode_blobs():
 
         assert project.arch.name == "86_16"
         assert "int " in asm
+
+
+def test_small_model_rep_cmps_block_lifts():
+    project = angr.Project(MATRIX_DIR / "ISOD.EXE")
+
+    block = project.factory.block(0x1267, size=8, opt_level=0)
+    asm = "\n".join(f"{insn.mnemonic} {insn.op_str}".strip() for insn in block.capstone.insns).lower()
+
+    assert "cmpsb" in asm
+    assert block.vex.jumpkind == "Ijk_Boring"
