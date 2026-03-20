@@ -115,7 +115,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `36 passed`
+- `38 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -155,11 +155,15 @@ Expected status as of 2026-03-20:
   - `angr_platforms/tests/test_x86_16_runtime_samples.py`
 - Current runtime scope:
   - runs the tiny `.COM` samples under angr/SimOS
-  - steps them instruction-by-instruction using Capstone-derived sizes
-  - verifies they reach clean DOS termination instead of decoding into embedded data
-- Important nuance:
-  - generic block stepping over these COM samples still exposes a separate block-termination / decode-through-data issue around `int` sites
-  - the current runtime harness intentionally uses explicit instruction sizes to validate simulator behavior while keeping that lifter issue isolated
+  - verifies they reach clean DOS termination with both:
+  - plain `simgr.step()` block stepping
+  - instruction-by-instruction stepping using Capstone-derived sizes
+- Recent fix:
+  - `angr_platforms/angr_platforms/X86_16/lift_86_16.py` now stops decode at block-terminating instructions like `int`, `call`, `ret`, and jumps
+  - this fixed the old decode-through-data failure on `ICOMDO.COM`, where lifting used to run past `int 21h` into the trailing `"sample$"` string bytes
+- Current nuance:
+  - plain stepping now works for the covered COM runtime samples
+  - the instruction-sized stepping helper remains useful as a narrower execution harness for future debugging
 
 ### DOS MZ loader status
 
@@ -231,6 +235,7 @@ Useful recent commits in `angr_platforms`:
 - `4e782ce` `Hook synthetic DOS int 21h targets`
 - `29579cc` `Add DOS and BIOS interrupt handler framework`
 - `ba3b8b8` `Add regression coverage for sample matrix`
+- `521996c` `Add x86-16 runtime sample coverage`
 
 Useful recent commit in `f15se2-re`:
 - `0d19540` `Add x86-16 sample matrix corpus`
@@ -241,7 +246,8 @@ Useful recent commit in `f15se2-re`:
 - Prefer moving remaining 16-bit support out of patched `venv/` behavior and into repo-managed code or upstreamable patches.
 - Keep using `.COD` files as a decompilation-quality oracle whenever possible.
 - Good next targets:
-  - fix generic block termination around `int` sites so runtime execution does not need explicit instruction-sized stepping for COM samples
   - extend real-binary coverage beyond entry-block loading
+  - run/decompile more of the sample matrix end-to-end, not just entry or tiny runtime paths
+  - add stronger semantic checks for interrupt-heavy samples, especially BIOS data-area interactions such as `0x417`
   - improve decompilation quality for the BIOS `.COD` sample now that it no longer crashes
   - keep improving user-facing names/docs for BIOS Data Area symbols such as `0x417` (`0x40:0x17`, keyboard flag byte 0)
