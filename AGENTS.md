@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `55 passed`
+- `57 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -183,6 +183,7 @@ Expected status as of 2026-03-20:
   - `scasb`
   - `scasw`
   - `rcr ax, 1` (compared against 32-bit `0x66 0xD1 0xD8`)
+  - `adc ax, imm16` (compared against 32-bit `0x66 0x15 ...`)
   - `loop rel8` (compared against 32-bit `0x67 0xE2 ...` using relative-target equivalence)
   - `cmpsb` (compared against 32-bit `0x67 0xA6`)
   - direct execution tests for `les` and `lds` far-pointer loads
@@ -214,6 +215,11 @@ Expected status as of 2026-03-20:
   - this probe exposed a bogus `Iop_16Sto16` in the lifted IR, traced to duplicate sign extension in `sub rm16, imm8` / `and rm16, imm8` flag-update paths
   - that duplicate sign extension was removed, which unblocked decompilation of the sample blob
 - The far-model counterpart `x16_samples/IMOD.COD` `fold_values` now also has direct regression coverage and decompiles successfully from raw `.COD` bytes.
+- The external real-code corpus under `/home/xor/vextest/cod/f14/` is now being mined too.
+  - `OVL.COD` `_dig_load_overlay` is relocation-free and now has direct block-lifting coverage in `tests/test_x86_16_cod_samples.py`.
+  - That sample exposed a real missing opcode on live code: `0x15` (`adc ax, imm16`) at offset `0x37`.
+  - Fix: `angr_platforms/angr_platforms/X86_16/instr16.py` now registers and implements `adc_ax_imm16()`.
+  - Current regression shape: the lifted block at `0x1030` is checked for the real `adc`/flags/update path instead of running whole-function decompilation, which keeps the suite fast and stable.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
