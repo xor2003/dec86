@@ -6,6 +6,7 @@ import argparse
 import logging
 import os
 from pathlib import Path
+import resource
 import signal
 import sys
 
@@ -89,6 +90,51 @@ def _raise_timeout(_signum, _frame):
     raise _AnalysisTimeout()
 
 
+def _apply_memory_limit(max_memory_mb: int | None) -> None:
+    if max_memory_mb is None or max_memory_mb <= 0:
+        return
+    limit = max_memory_mb * 1024 * 1024
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ValueError, OSError):
+        pass
+
+
+def _infer_com_region(path: Path, base_addr: int, window: int) -> tuple[int, int]:
+    data = path.read_bytes()
+    end_limit = min(len(data), window)
+    current = 0
+    ah = None
+    ax = None
+
+    while current < end_limit:
+        chunk = data[current : current + 16]
+        insn = next(Arch86_16().capstone.disasm(chunk, base_addr + current, 1), None)
+        if insn is None:
+            break
+
+        text = f"{insn.mnemonic} {insn.op_str}".strip().lower()
+        if text.startswith("mov ah, "):
+            ah = int(text.split(", ", 1)[1], 0)
+        elif text.startswith("mov ax, "):
+            ax = int(text.split(", ", 1)[1], 0)
+            ah = (ax >> 8) & 0xFF
+
+        current += insn.size
+
+        if insn.mnemonic == "int":
+            if insn.op_str.lower() == "0x20":
+                break
+            if insn.op_str.lower() == "0x21" and ah == 0x4C:
+                break
+            if insn.op_str.lower() == "0x27":
+                break
+        if insn.mnemonic in {"ret", "retf", "iret", "jmp"}:
+            break
+
+    return base_addr, base_addr + max(current, 1)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Decompile a DOS/x86-16 sample with angr-platforms.",
@@ -128,7 +174,21 @@ def main() -> int:
         default=20,
         help="Analysis timeout in seconds. Defaults to 20.",
     )
+    parser.add_argument(
+        "--window",
+        type=_parse_int,
+        default=0x200,
+        help="Bound CFG recovery to [addr, addr+window). Defaults to 0x200.",
+    )
+    parser.add_argument(
+        "--max-memory-mb",
+        type=int,
+        default=2048,
+        help="Best-effort address-space limit in MB. Defaults to 2048.",
+    )
     args = parser.parse_args()
+
+    _apply_memory_limit(args.max_memory_mb)
 
     print(f"loading: {args.binary}", flush=True)
     project = _build_project(
@@ -140,9 +200,11 @@ def main() -> int:
     print("recovering function...", flush=True)
 
     regions = None
-    if args.binary.suffix.lower() == ".com":
-        start = args.base_addr
-        regions = [(start, start + args.binary.stat().st_size)]
+    target_addr = args.entry_point if args.addr is None else args.addr
+    if args.binary.suffix.lower() == ".com" and args.addr is None:
+        regions = [_infer_com_region(args.binary, args.base_addr, args.window)]
+    else:
+        regions = [(target_addr, target_addr + args.window)]
 
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(args.timeout)
