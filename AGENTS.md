@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `53 passed`
+- `55 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -184,6 +184,7 @@ Expected status as of 2026-03-20:
   - `scasw`
   - `rcr ax, 1` (compared against 32-bit `0x66 0xD1 0xD8`)
   - `loop rel8` (compared against 32-bit `0x67 0xE2 ...` using relative-target equivalence)
+  - `cmpsb` (compared against 32-bit `0x67 0xA6`)
   - direct execution tests for `les` and `lds` far-pointer loads
   - `iret` lifting/runtime regression coverage, asserting the lifted block writes `CS` and `FLAGS`, returns with `Ijk_Ret`, and transfers control to the low 16-bit target without crashing
   - direct execution coverage for `pop r/m16` (`0x8f /0`)
@@ -213,6 +214,10 @@ Expected status as of 2026-03-20:
   - this probe exposed a bogus `Iop_16Sto16` in the lifted IR, traced to duplicate sign extension in `sub rm16, imm8` / `and rm16, imm8` flag-update paths
   - that duplicate sign extension was removed, which unblocked decompilation of the sample blob
 - The far-model counterpart `x16_samples/IMOD.COD` `fold_values` now also has direct regression coverage and decompiles successfully from raw `.COD` bytes.
+- A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
+  - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
+  - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
+  - Current nuance: `cmpsw` still does not have a compare-style semantic regression because its behavior does not yet match upstream closely enough to lock in.
 
 ### DOS MZ loader status
 
