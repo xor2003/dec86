@@ -21,6 +21,10 @@ def interrupt_addr(vector: int) -> int:
     return INTERRUPT_BASE_ADDR + (vector & 0xFF)
 
 
+def runtime_interrupt_addr(vector: int) -> int:
+    return interrupt_addr(vector) & 0xFFFF
+
+
 class InterruptHandler(SimProcedure):
     INT_VECTOR = None
     INT_NAME = "interrupt"
@@ -119,6 +123,10 @@ class BIOSInt1AClock(BIOSInterruptHandler):
 class DOSInt20Terminate(DOSInterruptHandler):
     INT_VECTOR = 0x20
     INT_NAME = "dos_int20_terminate"
+    NO_RET = True
+
+    def run(self):  # pylint:disable=arguments-differ
+        self.exit(0)
 
 
 class DOSInt21(DOSInterruptHandler):
@@ -147,7 +155,7 @@ class DOSInt21(DOSInterruptHandler):
             return self.state.regs.ax
 
         if self.state.solver.is_true(ah == 0x4C):
-            return claripy.ZeroExt(8, self.state.regs.al)
+            self.exit(claripy.ZeroExt(8, self.state.regs.al))
 
         return claripy.BVS("dos_int21_ax", 16, explicit_name=True)
 
@@ -165,6 +173,10 @@ class DOSInt26AbsoluteDiskWrite(DOSInterruptHandler):
 class DOSInt27TerminateStayResident(DOSInterruptHandler):
     INT_VECTOR = 0x27
     INT_NAME = "dos_int27_tsr"
+    NO_RET = True
+
+    def run(self):  # pylint:disable=arguments-differ
+        self.exit(0)
 
 
 class DOSInt2FMultiplex(DOSInterruptHandler):
@@ -235,6 +247,9 @@ class SimDOS86_16(SimOS):
         for vector in range(INTERRUPT_VECTOR_COUNT):
             handler_cls = get_interrupt_handler_class(vector)
             self.project.hook(interrupt_addr(vector), handler_cls(), replace=True)
+            runtime_addr = runtime_interrupt_addr(vector)
+            if runtime_addr != interrupt_addr(vector):
+                self.project.hook(runtime_addr, handler_cls(), replace=True)
 
 
 class SimCC8616MSCsmall(SimCC):
