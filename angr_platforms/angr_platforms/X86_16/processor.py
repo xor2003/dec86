@@ -340,8 +340,7 @@ class Processor(Eflags, CR):
                 elif idx == reg16_t.FLAGS.value:
                     self.flags = (self.flags & 0xFFFF0000) | (value & 0xFFFF)
                 return
-        print(f"set_gpreg called with lifter_instruction: {self.lifter_instruction is not None}, value type: {type(value)}")
-        pass  # Temporarily bypass for lifting mode issues
+        raise TypeError(f"Cannot set {n} from non-concrete value of type {type(value)} in concrete mode")
 
     def set_sgreg(self, n, reg):
         name = n.name.lower()

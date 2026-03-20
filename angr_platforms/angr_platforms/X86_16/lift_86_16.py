@@ -20,6 +20,23 @@ from .regs import reg16_t
 logger = logging.getLogger(__name__)
 
 
+class _LifterInstructionFacade:
+    """
+    Combine the raw IRSB customizer API with the higher-level Instruction helpers.
+    Modern pyvex exposes jump/get/put on Instruction, but low-level IR building
+    helpers like _append_stmt() and _settmp() still live on the IRSB customizer.
+    """
+
+    def __init__(self, irsb_c, instruction):
+        self._irsb_c = irsb_c
+        self._instruction = instruction
+
+    def __getattr__(self, name):
+        if hasattr(self._instruction, name):
+            return getattr(self._instruction, name)
+        return getattr(self._irsb_c, name)
+
+
 class Instruction_ANY(Instruction):
     _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}
 
@@ -31,7 +48,7 @@ class Instruction_ANY(Instruction):
         self.irsb_c = irsb_c
         self.mark_instruction_start()
         self.emu.irsb = irsb_c
-        self.emu.set_lifter_instruction(irsb_c)
+        self.emu.set_lifter_instruction(_LifterInstructionFacade(irsb_c, self))
         self._past_instructions = past_instructions
         self._future_instructions = future_instructions
         if self.simple_semantics is not None:

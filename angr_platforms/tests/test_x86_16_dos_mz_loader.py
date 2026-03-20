@@ -4,6 +4,7 @@ from pathlib import Path
 
 import angr
 import pytest
+import pyvex
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
@@ -52,6 +53,17 @@ def test_dos_mz_entry_block_lifts_under_x86_16():
 
     assert "mov ah, 0x30" in asm
     assert "int 0x21" in asm
+
+
+@pytest.mark.skipif(not T_EXE_PATH.exists(), reason="f15se2-re test executable is not available")
+def test_dos_mz_entry_block_routes_int21_to_synthetic_call():
+    project = angr.Project(T_EXE_PATH)
+
+    block = project.factory.block(project.entry, size=8, opt_level=0)
+
+    assert block.vex.jumpkind == "Ijk_Call"
+    assert isinstance(block.vex.next, pyvex.expr.Const)
+    assert block.vex.next.con.value == 0xFF021
 
 
 @pytest.mark.skipif(
