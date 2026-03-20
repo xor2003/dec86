@@ -25,6 +25,7 @@ class Instr16(InstrBase):
         self.set_funcflag(0x0E, self.push_cs, 0)
         self.set_funcflag(0x11, self.adc_rm16_r16, CHK_MODRM)
         self.set_funcflag(0x13, self.adc_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x15, self.adc_ax_imm16, CHK_IMM16)
         self.set_funcflag(0x16, self.push_ss, 0)
         self.set_funcflag(0x17, self.pop_ss, 0)
         self.set_funcflag(0x19, self.sbb_rm16_r16, CHK_MODRM)
@@ -225,6 +226,13 @@ class Instr16(InstrBase):
         ax = self.emu.get_gpreg(reg16_t.AX)
         imm16 = Const(IRConst.U16(self.instr.imm16))
         self.emu.set_gpreg(reg16_t.AX, Binop('Iop_Add16', ax, imm16))
+
+    def adc_ax_imm16(self):
+        ax = self.emu.get_gpreg(reg16_t.AX)
+        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
+        carry = self.emu.is_carry().cast_to(Type.int_16)
+        self.emu.set_gpreg(reg16_t.AX, ax + imm16 + carry)
+        self.emu.update_eflags_adc(ax, imm16, carry)
 
     def push_es(self):
         self.emu.push16(self.emu.get_segment(sgreg_t.ES))

@@ -15,6 +15,7 @@ from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 
 _ROOT = Path(__file__).resolve().parents[2]
 _COD_DIR = _ROOT / "cod"
+_F14_COD_DIR = _COD_DIR / "f14"
 _X16_SAMPLES_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 BDA_KEYBOARD_FLAGS_LINEAR = 0x417  # 0x40:0x17 in the BIOS Data Area.
 
@@ -144,3 +145,17 @@ def test_far_sample_matrix_fold_values_decompilation_from_cod_bytes():
     assert dec.codegen is not None
     assert "123" in dec.codegen.text
     assert "return" in dec.codegen.text
+
+
+def test_f14_overlay_loader_block_lifts_from_cod_bytes():
+    overlay_entries = _extract_cod_function("OVL.COD", "_dig_load_overlay", cod_dir=_F14_COD_DIR)
+    project = _project_from_bytes(_join_entries(overlay_entries))
+
+    # This real F-14 overlay loader block used to fail on opcode 0x15 (`adc ax, imm16`).
+    block = project.factory.block(0x1030)
+    irsb_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "PUT(ax) = 0x0000" in irsb_text
+    assert "PUT(flags)" in irsb_text
+    assert "PUT(ip) = 0x1043" in irsb_text
