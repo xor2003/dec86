@@ -523,9 +523,10 @@ class Instr16(InstrBase):
         repeat_cond = self._repeat_prefix_cond()
 
         di = self.emu.get_gpreg(reg16_t.DI)
+        next_di = di + self._string_delta(1)
         value = self.emu.get_data8(sgreg_t.ES, di)
         self.emu.update_eflags_sub(self.emu.get_gpreg(reg8_t.AL), value)
-        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(1))
+        self.emu.set_gpreg(reg16_t.DI, next_di)
 
         if repeat_cond is not None:
             self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
@@ -534,9 +535,10 @@ class Instr16(InstrBase):
         repeat_cond = self._repeat_prefix_cond()
 
         di = self.emu.get_gpreg(reg16_t.DI)
+        next_di = di + self._string_delta(2)
         value = self.emu.get_data16(sgreg_t.ES, di)
         self.emu.update_eflags_sub(self.emu.get_gpreg(reg16_t.AX), value)
-        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(2))
+        self.emu.set_gpreg(reg16_t.DI, next_di)
 
         if repeat_cond is not None:
             self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
