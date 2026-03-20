@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import angr
@@ -8,11 +9,29 @@ import pyvex
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
-from angr_platforms.X86_16.simos_86_16 import DOS_INT21_ADDR, DOSInt21
+from angr_platforms.X86_16.simos_86_16 import (
+    BIOSInt12MemorySize,
+    DOSInt21,
+    INTERRUPT_VECTOR_COUNT,
+    interrupt_addr,
+)
 
 
 T_EXE_PATH = Path("/home/xor/games/f15se2-re/T.EXE")
 T_COD_PATH = Path("/home/xor/games/f15se2-re/T.COD")
+
+
+def _blob_project(code: bytes):
+    return angr.Project(
+        io.BytesIO(code),
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+        simos="DOS",
+    )
 
 
 def _read_mz_header(path: Path) -> dict[str, int]:
@@ -64,7 +83,7 @@ def test_dos_mz_entry_block_routes_int21_to_synthetic_call():
 
     assert block.vex.jumpkind == "Ijk_Call"
     assert isinstance(block.vex.next, pyvex.expr.Const)
-    assert block.vex.next.con.value == 0xFF021
+    assert block.vex.next.con.value == interrupt_addr(0x21)
 
 
 @pytest.mark.skipif(not T_EXE_PATH.exists(), reason="f15se2-re test executable is not available")
@@ -72,8 +91,44 @@ def test_dos_mz_project_hooks_int21_target_as_dos_helper():
     project = angr.Project(T_EXE_PATH)
 
     assert project.simos.name == "DOS"
-    assert project.is_hooked(DOS_INT21_ADDR)
-    assert isinstance(project.hooked_by(DOS_INT21_ADDR), DOSInt21)
+    assert project.is_hooked(interrupt_addr(0x21))
+    assert isinstance(project.hooked_by(interrupt_addr(0x21)), DOSInt21)
+
+
+def test_simos_hooks_all_interrupt_vectors():
+    project = angr.load_shellcode(b"\xCD\x10\xC3", arch="X86_16", simos="DOS")
+
+    for vector in range(INTERRUPT_VECTOR_COUNT):
+        assert project.is_hooked(interrupt_addr(vector))
+
+
+def test_shellcode_interrupt_targets_match_vector_number():
+    project = _blob_project(b"\xCD\x10\xC3")
+
+    block = project.factory.block(0x1000, opt_level=0)
+
+    assert block.vex.jumpkind == "Ijk_Call"
+    assert isinstance(block.vex.next, pyvex.expr.Const)
+    assert block.vex.next.con.value == interrupt_addr(0x10)
+
+
+def test_bios_and_dos_interrupt_handlers_have_basic_semantics():
+    bios_project = angr.load_shellcode(b"\x90", arch="X86_16", simos="DOS")
+    bios_state = bios_project.factory.call_state(addr=interrupt_addr(0x12), ret_addr=0)
+    bios_result = bios_project.factory.callable(
+        interrupt_addr(0x12), concrete_only=True, base_state=bios_state
+    )()
+
+    dos_project = angr.load_shellcode(b"\x90", arch="X86_16", simos="DOS")
+    dos_state = dos_project.factory.call_state(addr=interrupt_addr(0x21), ret_addr=0)
+    dos_state.regs.ah = 0x30
+    dos_result = dos_project.factory.callable(
+        interrupt_addr(0x21), concrete_only=True, base_state=dos_state
+    )()
+
+    assert isinstance(bios_project.hooked_by(interrupt_addr(0x12)), BIOSInt12MemorySize)
+    assert bios_result.concrete_value == 640
+    assert dos_result.concrete_value == 5
 
 
 @pytest.mark.skipif(

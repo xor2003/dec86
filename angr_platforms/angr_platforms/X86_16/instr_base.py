@@ -409,11 +409,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def int_imm8(self) -> None:
         #self.emu.lifter_instruction.put(self.emu.constant(self.instr.imm8), "ip_at_syscall")
-        #if self.instr.imm8 == 0x21:
-        #    exit = self.instr.imm8 == 0x21 and self.emu.get_gpreg(reg8_t.AH) == 0x4c
-        self.emu.lifter_instruction.jump(None, 0xff021, JumpKind.Call)
-        #else:
-        #    self.emu.lifter_instruction.jump(None, self.emu.get_gpreg(reg16_t.IP) + 2, JumpKind.Syscall)
+        # Model real-mode interrupts as synthetic call targets so CFG/decompilation
+        # can treat them like normal helper functions.
+        self.emu.lifter_instruction.jump(None, 0xFF000 + self.instr.imm8, JumpKind.Call)
 
     def iret(self) -> None:
         ip = self.emu.pop16()
