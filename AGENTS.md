@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `43 passed`
+- `47 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -180,6 +180,9 @@ Expected status as of 2026-03-20:
   - `stosw` (compared against 32-bit `0x66 0xAB` so the operand size matches)
   - `lodsb`
   - `lodsw` (compared against 32-bit `0x66 0x67 0xAD` so operand and address size match)
+  - `scasb`
+  - `scasw`
+  - direct execution tests for `les` and `lds` far-pointer loads
 - This was added while enabling real sample-matrix coverage, since medium-model startup code reached `f3 aa` and exposed the missing `stosb` lift.
 
 ### DOS MZ loader status
