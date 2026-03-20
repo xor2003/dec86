@@ -1,5 +1,6 @@
 import io
 import re
+import signal
 import sys
 from pathlib import Path
 
@@ -69,6 +70,14 @@ def _join_entries(entries, start_offset=None, end_offset=None):
     )
 
 
+class _TimeoutExpired(Exception):
+    pass
+
+
+def _raise_timeout(_signum, _frame):
+    raise _TimeoutExpired("timed out while analyzing BIOS .COD sample")
+
+
 def test_cod_extractor_identifies_relocation_free_and_relocated_samples():
     bios_entries = _extract_cod_function("BIOSFUNC.COD", "_bios_clearkeyflags")
     bios_bytes = _join_entries(bios_entries)
@@ -83,15 +92,21 @@ def test_cod_extractor_identifies_relocation_free_and_relocated_samples():
 
 @pytest.mark.xfail(
     strict=True,
-    raises=Exception,
-    reason="segment-register memory writes from BIOSFUNC.COD still fail during segmented address lifting",
+    raises=_TimeoutExpired,
+    reason="BIOSFUNC.COD now reaches CFG but still hangs during segmented-address analysis",
 )
 def test_bios_cod_sample_decompilation():
     bios_entries = _extract_cod_function("BIOSFUNC.COD", "_bios_clearkeyflags")
     project = _project_from_bytes(_join_entries(bios_entries))
 
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.alarm(5)
+    try:
+        cfg = project.analyses.CFGFast(normalize=True)
+        dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
     assert dec.codegen is not None
     assert "return;" in dec.codegen.text
