@@ -15,6 +15,7 @@ from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 
 _ROOT = Path(__file__).resolve().parents[2]
 _COD_DIR = _ROOT / "cod"
+_X16_SAMPLES_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 BDA_KEYBOARD_FLAGS_LINEAR = 0x417  # 0x40:0x17 in the BIOS Data Area.
 
 
@@ -30,9 +31,10 @@ def _project_from_bytes(code: bytes):
     )
 
 
-def _extract_cod_function(cod_name: str, proc_name: str):
-    lines = (_COD_DIR / cod_name).read_text(errors="ignore").splitlines()
-    start_marker = f"{proc_name}\tPROC NEAR"
+def _extract_cod_function(cod_name: str, proc_name: str, cod_dir: Path | None = None, proc_kind: str = "NEAR"):
+    base_dir = _COD_DIR if cod_dir is None else cod_dir
+    lines = (base_dir / cod_name).read_text(errors="ignore").splitlines()
+    start_marker = f"{proc_name}\tPROC {proc_kind}"
     end_marker = f"{proc_name}\tENDP"
 
     collect = False
@@ -118,3 +120,15 @@ def test_compiler_idiom_prefix_lifts_from_cod_bytes():
     irsb = project.factory.block(0x1000, len(prefix)).vex
 
     assert "Shl16" in irsb._pp_str()
+
+
+def test_sample_matrix_fold_values_decompilation_from_cod_bytes():
+    fold_entries = _extract_cod_function("ISOD.COD", "fold_values", cod_dir=_X16_SAMPLES_DIR)
+    project = _project_from_bytes(_join_entries(fold_entries))
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+
+    assert dec.codegen is not None
+    assert "123" in dec.codegen.text
+    assert "return" in dec.codegen.text
