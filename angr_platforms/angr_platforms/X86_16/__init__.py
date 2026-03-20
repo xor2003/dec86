@@ -392,6 +392,22 @@ try:
         if self.func_addr is None or not self.manager._kb.functions.contains_addr(self.func_addr):
             return
         function = self.manager._kb.functions[self.func_addr]
+        if function.project is not None and function.project.arch.name == "86_16" and function.prototype is not None:
+            stack_arg_names = list(function.prototype.arg_names) if function.prototype.arg_names else []
+            stack_arg_vars = sorted(
+                (
+                    var
+                    for var in self.get_unified_variables()
+                    if isinstance(var, SimStackVariable) and var.offset >= 2
+                ),
+                key=lambda var: (var.offset, var.size or 0, var.ident or ""),
+            )
+            for idx, var in enumerate(stack_arg_vars):
+                desired_name = stack_arg_names[idx] if idx < len(stack_arg_names) else f"a{idx}"
+                if reset or var.name is None or var.name == var.ident or var.name.startswith(("a", "v")):
+                    var.name = desired_name
+                    var._hash = None
+
         annotations = function.info.get(ANNOTATION_KEY)
         if not annotations:
             return
@@ -435,6 +451,8 @@ try:
     def _combo_reg_expr(self, stmt, reg_arg):
         reg = self.arch.registers[reg_arg.reg_name]
         ins_addr = getattr(stmt, "ins_addr", None)
+        if ins_addr is None and hasattr(stmt, "tags"):
+            ins_addr = stmt.tags.get("ins_addr")
         return ailment.Expr.Register(
             self._next_atom(),
             None,
@@ -461,6 +479,10 @@ try:
                     return _orig_returnmaker_handle_return(self, stmt_idx, stmt, block)
                 low_reg, high_reg = ret_val.locations
                 ins_addr = getattr(stmt, "ins_addr", None)
+                if ins_addr is None and hasattr(stmt, "tags"):
+                    ins_addr = stmt.tags.get("ins_addr")
+                if ins_addr is None and block is not None:
+                    ins_addr = block.addr
                 low = _combo_reg_expr(self, stmt, low_reg)
                 high = _combo_reg_expr(self, stmt, high_reg)
                 low_32 = ailment.Expr.Convert(self._next_atom(), low.bits, 32, False, low, ins_addr=ins_addr)
@@ -486,10 +508,7 @@ try:
                 )
                 new_stmt = stmt.copy()
                 new_stmt.ret_exprs = [ret_expr]
-                new_statements = block.statements[::]
-                new_statements[stmt_idx] = new_stmt
-                self._new_block = block.copy(statements=new_statements)
-                return
+                return new_stmt
         return _orig_returnmaker_handle_return(self, stmt_idx, stmt, block)
 
     if getattr(ReturnMaker._handle_Return, "__name__", "") != "_handle_return_8616":

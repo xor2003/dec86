@@ -85,7 +85,8 @@ def test_enter_local_stack_smoke():
     cfg = project.analyses.CFGFast(normalize=True)
     dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
     assert dec.codegen is not None
-    assert "return 1;" in dec.codegen.text
+    assert "flag = 1;" in dec.codegen.text
+    assert "return flag;" in dec.codegen.text or "return 1;" in dec.codegen.text
 
 
 def test_near_call_smoke():
@@ -126,7 +127,7 @@ def test_single_word_arg_signature_and_return_type():
 
     assert dec.codegen is not None
     _assert_word_signature(func, 1)
-    assert "return v0 + 1;" in dec.codegen.text
+    assert "return a0 + 1;" in dec.codegen.text or "return v0 + 1;" in dec.codegen.text
 
 
 def test_no_arg_frame_function_does_not_gain_phantom_arg():
