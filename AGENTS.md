@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `51 passed`
+- `52 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -208,6 +208,10 @@ Expected status as of 2026-03-20:
   - `loop rel8` had been building malformed typed arithmetic (`Add16(..., 0x-e)`)
 - After the loop fix, targeted decompilation on real sample functions is still expensive enough that a `timeout 20` probe can expire without producing stable output, so the next iteration should likely keep using bounded single-function probes with explicit timeouts rather than whole-program CFG/decompilation.
 - A separate small-model bounded probe also surfaced an unknown `0x8f` opcode on one path, which is why `pop r/m16` was added.
+- A relocation-free real sample from `x16_samples/ISOD.COD` now has direct regression coverage:
+  - `fold_values` decompiles successfully from raw `.COD` bytes via `tests/test_x86_16_cod_samples.py`
+  - this probe exposed a bogus `Iop_16Sto16` in the lifted IR, traced to duplicate sign extension in `sub rm16, imm8` / `and rm16, imm8` flag-update paths
+  - that duplicate sign extension was removed, which unblocked decompilation of the sample blob
 
 ### DOS MZ loader status
 
