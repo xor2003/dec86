@@ -132,3 +132,15 @@ def test_sample_matrix_fold_values_decompilation_from_cod_bytes():
     assert dec.codegen is not None
     assert "123" in dec.codegen.text
     assert "return" in dec.codegen.text
+
+
+def test_far_sample_matrix_fold_values_decompilation_from_cod_bytes():
+    fold_entries = _extract_cod_function("IMOD.COD", "fold_values", cod_dir=_X16_SAMPLES_DIR, proc_kind="FAR")
+    project = _project_from_bytes(_join_entries(fold_entries))
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+
+    assert dec.codegen is not None
+    assert "123" in dec.codegen.text
+    assert "return" in dec.codegen.text
