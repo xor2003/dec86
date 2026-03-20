@@ -159,3 +159,16 @@ def test_f14_overlay_loader_block_lifts_from_cod_bytes():
     assert "PUT(ax) = 0x0000" in irsb_text
     assert "PUT(flags)" in irsb_text
     assert "PUT(ip) = 0x1043" in irsb_text
+
+
+def test_f14_mono_set_pos_decompilation_from_cod_bytes():
+    entries = _extract_cod_function("MONOPRIN.COD", "_mset_pos", cod_dir=_F14_COD_DIR)
+    project = _project_from_bytes(_join_entries(entries))
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+
+    assert dec.codegen is not None
+    assert "% 80" in dec.codegen.text
+    assert "% 25" in dec.codegen.text
+    assert "return" in dec.codegen.text
