@@ -10,7 +10,7 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
 
-MATRIX_DIR = Path("/home/xor/games/f15se2-re/x16_samples")
+MATRIX_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 MANIFEST_PATH = MATRIX_DIR / "matrix_manifest.json"
 EXPECTED_EXE_VARIANTS = {
     ("ISOD", "small", "/Od"),

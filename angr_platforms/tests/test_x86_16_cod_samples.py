@@ -15,6 +15,7 @@ from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 
 _ROOT = Path(__file__).resolve().parents[2]
 _COD_DIR = _ROOT / "cod"
+BDA_KEYBOARD_FLAGS_LINEAR = 0x417  # 0x40:0x17 in the BIOS Data Area.
 
 
 def _project_from_bytes(code: bytes):
@@ -104,7 +105,7 @@ def test_bios_cod_sample_decompilation():
         signal.signal(signal.SIGALRM, old_handler)
 
     assert dec.codegen is not None
-    assert any(token in dec.codegen.text for token in ("g_417", "1047"))
+    assert any(token in dec.codegen.text for token in ("g_417", str(BDA_KEYBOARD_FLAGS_LINEAR)))
     assert "return" in dec.codegen.text
 
 
