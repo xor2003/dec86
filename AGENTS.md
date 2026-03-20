@@ -234,7 +234,11 @@ Expected status as of 2026-03-20:
   - `/home/xor/vextest/decompile.py`
   - intended usage: `./decompile.py binary.exe`
   - for raw blobs: `./decompile.py --blob binary.bin`
-  - current nuance: `.EXE` and relocation-free `.COD`/blob flows are the smoothest path; some `.COM` entry decompilations can still scan into trailing data
+  - current behavior:
+    - `.EXE` entry decompilation now uses a bounded recovery window by default, which makes it much less CPU/RAM hungry
+    - `.COM` entry decompilation now infers a small linear code region first, so tiny DOS stubs like `ICOMDO.COM` decompile instead of immediately walking into trailing strings
+    - resource guardrails were added in the CLI: `--timeout`, `--window`, and `--max-memory-mb`
+    - the remaining nuance is quality, not basic usability: `.COM` output is still rough and call targets may remain unnamed
 - Main files:
   - `x16_samples/intdemo.c`
   - `x16_samples/IDEMO.C`
