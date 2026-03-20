@@ -154,8 +154,10 @@ Expected status as of 2026-03-20:
 
 ### Real sample corpus
 
-- A reproducible real-mode sample matrix was added in:
-  - `/home/xor/games/f15se2-re/x16_samples/`
+- The canonical reproducible real-mode sample matrix now lives in:
+  - `/home/xor/vextest/angr_platforms/x16_samples/`
+- User-facing rebuild entry point:
+  - `/home/xor/vextest/angr_platforms/scripts/build_x16_samples.sh`
 - Main files:
   - `x16_samples/intdemo.c`
   - `x16_samples/IDEMO.C`
@@ -165,6 +167,9 @@ Expected status as of 2026-03-20:
   - `x16_samples/ICOMBI.ASM`
 - The manifest is consumed by:
   - `angr_platforms/tests/test_x86_16_sample_matrix.py`
+- Compatibility setup:
+  - `/home/xor/games/f15se2-re/x16_samples` is a symlink to the in-project copy
+  - the pre-move directory was preserved at `/home/xor/games/f15se2-re/x16_samples.backup_2026-03-20`
 
 ### Sample matrix contents
 
@@ -177,6 +182,13 @@ Expected status as of 2026-03-20:
 
 ### Toolchain caveats in `f15se2-re`
 
+- `x16_samples/build_matrix.sh` is meant to be run from `angr_platforms`, not from `f15se2-re`.
+- The build still uses the DOS compiler toolchain from `f15se2-re` by default:
+  - default toolchain root: `/home/xor/games/f15se2-re`
+  - override with `X16_TOOLCHAIN_ROOT=/path/to/f15se2-re`
+- The rebuild script stages sources into a real directory under the toolchain tree:
+  - `x16_samples_stage`
+  - this avoids DOSBox mount/write issues with symlinked source directories
 - The DOS build environment for `x16_samples` may require compatibility copies of MSC runtime libraries:
   - `dos/msc510/lib/MLIBCE.LIB`
   - `dos/msc510/lib/LLIBCE.LIB`
@@ -210,6 +222,6 @@ Useful recent commit in `f15se2-re`:
 - Prefer moving remaining 16-bit support out of patched `venv/` behavior and into repo-managed code or upstreamable patches.
 - Keep using `.COD` files as a decompilation-quality oracle whenever possible.
 - Good next targets:
-  - make `x16_samples/build_matrix.sh` fully reproducible without manual cleanup steps
   - extend real-binary coverage beyond entry-block loading
   - improve decompilation quality for the BIOS `.COD` sample now that it no longer crashes
+  - keep improving user-facing names/docs for BIOS Data Area symbols such as `0x417` (`0x40:0x17`, keyboard flag byte 0)
