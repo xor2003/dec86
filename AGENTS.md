@@ -99,6 +99,7 @@ For issues or maintenance, consider angr's pcode alternatives.
 - `angr_platforms/tests/test_x86_16_cod_samples.py`
 - `angr_platforms/tests/test_x86_16_dos_mz_loader.py`
 - `angr_platforms/tests/test_x86_16_sample_matrix.py`
+- `angr_platforms/tests/test_x86_16_runtime_samples.py`
 
 ### Current known-good focused test command
 
@@ -109,11 +110,12 @@ Run from `/home/xor/vextest/angr_platforms`:
   tests/test_x86_16_smoketest.py \
   tests/test_x86_16_cod_samples.py \
   tests/test_x86_16_dos_mz_loader.py \
-  tests/test_x86_16_sample_matrix.py
+  tests/test_x86_16_sample_matrix.py \
+  tests/test_x86_16_runtime_samples.py
 ```
 
 Expected status as of 2026-03-20:
-- `34 passed`
+- `36 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -132,6 +134,9 @@ Expected status as of 2026-03-20:
 
 - `int xx` lifting now routes to synthetic targets at `0xFF000 + vector`.
 - `angr_platforms/angr_platforms/X86_16/simos_86_16.py` hooks all 256 vectors.
+- For execution, the same handlers are also hooked at their 16-bit runtime aliases:
+  - `interrupt_addr(vector) & 0xFFFF`
+  - this is needed because symbolic execution lands on truncated 16-bit interrupt targets even when the lifted IR encodes `0xFF000 + vector`
 - Named/common handlers exist for:
   - BIOS: `10h`, `11h`, `12h`, `13h`, `14h`, `15h`, `16h`, `17h`, `1Ah`
   - DOS: `20h`, `21h`, `25h`, `26h`, `27h`, `2Fh`
@@ -140,7 +145,21 @@ Expected status as of 2026-03-20:
   - `AH=19h`
   - `AH=30h`
   - `AH=35h`
+  - `AH=4Ch` now terminates execution via `exit(code)`
+- `INT 20h` and `INT 27h` now also behave as no-return DOS termination helpers
 - All other vectors currently have safe generic hooks mainly for CFG/decompilation stability, not full semantics.
+
+### Runtime sample status
+
+- There is now execution-based coverage in:
+  - `angr_platforms/tests/test_x86_16_runtime_samples.py`
+- Current runtime scope:
+  - runs the tiny `.COM` samples under angr/SimOS
+  - steps them instruction-by-instruction using Capstone-derived sizes
+  - verifies they reach clean DOS termination instead of decoding into embedded data
+- Important nuance:
+  - generic block stepping over these COM samples still exposes a separate block-termination / decode-through-data issue around `int` sites
+  - the current runtime harness intentionally uses explicit instruction sizes to validate simulator behavior while keeping that lifter issue isolated
 
 ### DOS MZ loader status
 
@@ -222,6 +241,7 @@ Useful recent commit in `f15se2-re`:
 - Prefer moving remaining 16-bit support out of patched `venv/` behavior and into repo-managed code or upstreamable patches.
 - Keep using `.COD` files as a decompilation-quality oracle whenever possible.
 - Good next targets:
+  - fix generic block termination around `int` sites so runtime execution does not need explicit instruction-sized stepping for COM samples
   - extend real-binary coverage beyond entry-block loading
   - improve decompilation quality for the BIOS `.COD` sample now that it no longer crashes
   - keep improving user-facing names/docs for BIOS Data Area symbols such as `0x417` (`0x40:0x17`, keyboard flag byte 0)
