@@ -100,6 +100,7 @@ For issues or maintenance, consider angr's pcode alternatives.
 - `angr_platforms/tests/test_x86_16_dos_mz_loader.py`
 - `angr_platforms/tests/test_x86_16_sample_matrix.py`
 - `angr_platforms/tests/test_x86_16_runtime_samples.py`
+- `angr_platforms/tests/test_x86_16_compare_semantics.py`
 
 ### Current known-good focused test command
 
@@ -115,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `39 passed`
+- `41 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -166,6 +167,18 @@ Expected status as of 2026-03-20:
 - Current nuance:
   - plain stepping now works for the covered COM runtime samples
   - the instruction-sized stepping helper remains useful as a narrower execution harness for future debugging
+
+### Compare-based instruction semantics
+
+- There is now a small compare-style regression file:
+  - `angr_platforms/tests/test_x86_16_compare_semantics.py`
+- It follows the same idea as `/home/xor/vextest/compare.py`:
+  - run one instruction under upstream x86 VEX and under the x86-16 lifter
+  - compare concrete effects on registers and memory
+- Current covered cases:
+  - `stosb`
+  - `stosw` (compared against 32-bit `0x66 0xAB` so the operand size matches)
+- This was added while enabling real sample-matrix coverage, since medium-model startup code reached `f3 aa` and exposed the missing `stosb` lift.
 
 ### DOS MZ loader status
 
@@ -250,7 +263,7 @@ Useful recent commit in `f15se2-re`:
 - Good next targets:
   - extend real-binary coverage beyond entry-block loading
   - run/decompile more of the sample matrix end-to-end, not just entry or tiny runtime paths
-  - sample-matrix decompilation currently exposes additional missing instruction coverage in real code, notably string ops like opcode `0xAA` (`stosb`)
+  - sample-matrix decompilation currently gets farther, but still needs more real-code instruction coverage beyond the new `stos*` support
   - add stronger semantic checks for interrupt-heavy samples, especially BIOS data-area interactions such as `0x417`
   - improve decompilation quality for the BIOS `.COD` sample now that it no longer crashes
   - keep improving user-facing names/docs for BIOS Data Area symbols such as `0x417` (`0x40:0x17`, keyboard flag byte 0)
