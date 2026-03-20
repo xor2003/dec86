@@ -115,7 +115,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `38 passed`
+- `39 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -161,6 +161,8 @@ Expected status as of 2026-03-20:
 - Recent fix:
   - `angr_platforms/angr_platforms/X86_16/lift_86_16.py` now stops decode at block-terminating instructions like `int`, `call`, `ret`, and jumps
   - this fixed the old decode-through-data failure on `ICOMDO.COM`, where lifting used to run past `int 21h` into the trailing `"sample$"` string bytes
+  - `angr_platforms/angr_platforms/X86_16/access.py` now uses modern `Type.int_*` values for segmented constant construction and imports `JumpKind` for far calls
+  - this fixed medium-model far-call lifting such as the `IMOD.EXE` block at `0x1180`
 - Current nuance:
   - plain stepping now works for the covered COM runtime samples
   - the instruction-sized stepping helper remains useful as a narrower execution harness for future debugging
@@ -248,6 +250,7 @@ Useful recent commit in `f15se2-re`:
 - Good next targets:
   - extend real-binary coverage beyond entry-block loading
   - run/decompile more of the sample matrix end-to-end, not just entry or tiny runtime paths
+  - sample-matrix decompilation currently exposes additional missing instruction coverage in real code, notably string ops like opcode `0xAA` (`stosb`)
   - add stronger semantic checks for interrupt-heavy samples, especially BIOS data-area interactions such as `0x417`
   - improve decompilation quality for the BIOS `.COD` sample now that it no longer crashes
   - keep improving user-facing names/docs for BIOS Data Area symbols such as `0x417` (`0x40:0x17`, keyboard flag byte 0)
