@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `57 passed`
+- `58 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -220,6 +220,8 @@ Expected status as of 2026-03-20:
   - That sample exposed a real missing opcode on live code: `0x15` (`adc ax, imm16`) at offset `0x37`.
   - Fix: `angr_platforms/angr_platforms/X86_16/instr16.py` now registers and implements `adc_ax_imm16()`.
   - Current regression shape: the lifted block at `0x1030` is checked for the real `adc`/flags/update path instead of running whole-function decompilation, which keeps the suite fast and stable.
+  - `MONOPRIN.COD` `_mset_pos` is also relocation-free and now has direct decompilation coverage.
+  - Current stable recovered features from that sample: `% 80`, `% 25`, and a clean `return` path.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
