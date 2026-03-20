@@ -1,6 +1,9 @@
-ITY_I8 = 2
-ITY_I16 = 3
-ITY_I32 = 4
+from pyvex.lifting.util.vex_helper import Type
+from pyvex.lifting.util import JumpKind
+
+ITY_I8 = Type.int_8
+ITY_I16 = Type.int_16
+ITY_I32 = Type.int_32
 
 from .hardware import Hardware
 from .regs import reg16_t, reg32_t, sgreg_t

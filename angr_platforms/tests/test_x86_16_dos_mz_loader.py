@@ -95,6 +95,14 @@ def test_dos_mz_project_hooks_int21_target_as_dos_helper():
     assert isinstance(project.hooked_by(interrupt_addr(0x21)), DOSInt21)
 
 
+def test_medium_model_far_call_block_lifts():
+    project = angr.Project(Path(__file__).resolve().parents[1] / "x16_samples" / "IMOD.EXE")
+
+    block = project.factory.block(0x1180, size=8, opt_level=0)
+
+    assert block.vex.jumpkind == "Ijk_Call"
+
+
 def test_simos_hooks_all_interrupt_vectors():
     project = angr.load_shellcode(b"\xCD\x10\xC3", arch="X86_16", simos="DOS")
 
