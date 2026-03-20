@@ -63,17 +63,14 @@ try:
         _rd_state.ReachingDefinitionsState._initial_stack_pointer = _initial_stack_pointer_8616
 
     class Pointer16(Pointer, TCInt16):
-        def __init__(self, basetype=None):
-            Pointer.__init__(self, basetype)
+        def __init__(self, basetype=None, name: str | None = None):
+            Pointer.__init__(self, basetype, name=name)
+            TCInt16.__init__(self, name=name)
 
         def __repr__(self, memo=None):
-            if self.basetype is None:
-                bt = "None"
-            elif memo is None:
-                bt = repr(self.basetype)
-            else:
-                bt = self.basetype.__repr__(memo=memo)
-            return f"ptr16({bt})"
+            bt = self.basetype.__repr__(memo=memo) if isinstance(self.basetype, TCInt16) else repr(self.basetype)
+            name_str = f"{self.name}#" if self.name else ""
+            return f"{name_str}ptr16({bt})"
 
     if not hasattr(_typehoon_simple_solver, "Pointer16"):
         _typehoon_simple_solver.Pointer16 = Pointer16
