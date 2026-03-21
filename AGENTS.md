@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `65 passed`
+- `71 passed`
 
 ### Focused lint/type-check scope
 
@@ -365,11 +365,21 @@ Useful recent commit in `f15se2-re`:
 - For wide `.COD` triage, use the bounded scanner instead of ad hoc probing:
   - `../venv/bin/python scripts/scan_cod_dir.py /path/to/cod_dir --timeout-sec 5 --max-memory-mb 1024`
   - `../venv/bin/python scripts/scan_cod_dir.py /path/to/cod_dir --mode decompile-reloc-free --timeout-sec 5 --max-memory-mb 1024`
+  - it now scans recursively with `rglob("*.COD")`, not just one directory level
   - it is sequential, applies a hard address-space cap with `RLIMIT_AS`, and prevents the multi-process RAM blowups the user reported
 - Current bounded whole-directory result for `cod/default/`:
   - 31 functions scanned
   - no raw block-lift failures
   - no relocation-free decompilation failures under the same bounded settings
+- Current early whole-tree `cod/` triage findings after switching the scanner to recursive mode:
+  - first blocker was unknown opcode `0x1A` (`sbb r8, r/m8`)
+  - second blocker was a typed-width bug in `sbb rm16, imm8`, where a 1-bit carry was subtracted from a 16-bit value without widening
+  - both are fixed now, and the compare-style suite has direct regressions for them
+- Recent whole-tree-friendly lifter fixes:
+  - `instr16.py` now registers the missing 8-bit ALU opcode families (`0x00/02/04`, `0x08/0A/0C`, `0x10/12/14`, `0x18/1A/1C`, `0x20/22/24`, `0x28/2A/2C`, `0x30/32/34`, `0x38/3A/3C`)
+  - `instr_base.py` now implements `adc_al_imm8`, `sbb_rm8_r8`, `sbb_r8_rm8`, and `sbb_al_imm8`
+  - `instr16.py` `sbb_rm16_imm8()` now widens both the signed imm8 and CF before subtracting
+  - `div_dx_ax_rm16()` no longer crashes body analysis on the old missing `EXP_DE` attribute path
 - Prefer relocation-free `.COD` helpers first. A fast scan for functions with no `e8 00 00` or `9a 00 00 00 00` usually finds the highest-value regressions quickly.
 - Not every relocation-free helper is a good decompilation oracle. Tiny DGROUP/global-store wrappers can decompile into raw `ds * 16 + offset` stores with no useful symbol recovery. Current example: `CARR.COD` `_SetDLC` was easy to lift but not worth keeping as a human-facing decompilation regression.
 - Use `.COD` in two modes:
