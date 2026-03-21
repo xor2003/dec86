@@ -54,6 +54,29 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
     return recovered
 
 
+def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
+    """
+    Rewrite Function._call_sites for immediate far calls recovered from blocks.
+
+    CFGFast currently leaves some x86-16 far callsites pointing at a bogus short
+    target (for example `0x14`) even when the block disassembly clearly shows an
+    immediate `seg:off` far call. The decompiler reads `Function.get_call_target()`
+    from `_call_sites`, so patching those entries gives downstream analyses a
+    much better callee address without needing to modify site-packages angr.
+    """
+
+    changed = False
+
+    for target in far_targets:
+        old = function._call_sites.get(target.callsite_addr)
+        new = (target.target_addr, target.return_addr)
+        if old != new:
+            function._call_sites[target.callsite_addr] = new
+            changed = True
+
+    return changed
+
+
 def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_window: int = 0x80):
     """
     Re-run CFG with direct far callees seeded as extra function starts.
@@ -67,14 +90,19 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
     if not far_targets:
         return None
 
+    patch_far_call_sites(function, far_targets)
+
     function_starts = [function.addr, *(target.target_addr for target in far_targets)]
     regions = [(function.addr, function.addr + entry_window)]
     regions.extend((target.target_addr, target.target_addr + callee_window) for target in far_targets)
 
-    return project.analyses.CFGFast(
+    cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=sorted(set(function_starts)),
         regions=regions,
         normalize=True,
         force_complete_scan=False,
     )
+    if function.addr in cfg.functions:
+        patch_far_call_sites(cfg.functions[function.addr], far_targets)
+    return cfg

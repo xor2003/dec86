@@ -163,6 +163,24 @@ def test_medium_model_entry_far_call_targets_are_discoverable():
     assert {target.target_addr for target in far_targets} >= {0x111A, 0x121E, 0x1380, 0x161F}
 
 
+def test_medium_model_entry_far_call_sites_are_patched():
+    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[project.entry],
+        regions=[(project.entry, project.entry + 0x200)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=0x200)
+
+    assert extended_cfg is not None
+    function = extended_cfg.functions[project.entry]
+    assert function.get_call_target(0x117E) == 0x1380
+    assert function.get_call_target(0x1185) == 0x161F
+    assert function.get_call_target(0x11CE) == 0x121E
+
+
 def test_small_model_entry_function_decompiles_in_bounded_window():
     recovered_c = _decompile_entry_function("ISOD.EXE")
 
