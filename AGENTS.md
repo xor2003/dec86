@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `61 passed`
+- `62 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -228,6 +228,8 @@ Expected status as of 2026-03-20:
   - Current stable recovered features from that sample: the original struct-stride constants `46` and `18`, plus a clean `return` path.
   - `COCKPIT.COD` `_ConfigCrts` now has direct block-lifting coverage for its indexed copy loop.
   - Current stable lifted features from that sample: scaled index via `Shl16`, source offset `0x0222`, `LDle:I16` / `STle`, and loop bound `8`.
+  - `COCKPIT.COD` `_LookDown` now has direct decompilation coverage.
+  - Current stable recovered features from that sample: the original UI/layout constants `50`, `27`, `25`, and `39`.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
@@ -350,7 +352,9 @@ Useful recent commit in `f15se2-re`:
 - For source-backed decompilation assertions, prefer stable tokens from the original source:
   - constants like `8150`, `500`, `125`, `1000`
   - stride constants like `46` and `18`
+  - UI/layout constants like `50`, `27`, `25`, and `39`
   - operators like `% 80` and `% 25`
   - `return`
+- When branch recovery is still ugly, constant-rich helpers are often better regression targets than predicate-heavy helpers. Current example: `COCKPIT.COD` `_LookDown` is a better decompilation oracle than `CARR.COD` `_InBox`.
 - Avoid asserting on variable names in decompiler output. They still drift a lot on x86-16 and create low-value churn.
 - The first `unicornlib.so` warning is expected in many local probes and is not the bug unless the actual lift/decompile fails afterwards.
