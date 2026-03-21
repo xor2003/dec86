@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `63 passed`
+- `65 passed`
 
 ### Focused lint/type-check scope
 
@@ -246,6 +246,8 @@ Expected status as of 2026-03-20:
   - Current stable recovered features from that sample: the original UI/layout constants `50`, `27`, `25`, and `39`.
   - `COCKPIT.COD` `_LookUp` now has direct decompilation coverage.
   - Current stable recovered features from that sample: the original UI/layout constants `150`, `138`, `136`, and `139`.
+  - `BILLASM.COD` `_MousePOS` now has direct decompilation coverage.
+  - Current stable recovered features from that sample: the `MouseX = x * 2` scaling, a clean early-return path, and the mouse interrupt call site.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
