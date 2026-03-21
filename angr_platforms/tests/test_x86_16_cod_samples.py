@@ -223,3 +223,15 @@ def test_f14_lookdown_decompilation_from_cod_bytes():
     assert dec.codegen is not None
     for token in ("50", "27", "25", "39"):
         assert token in dec.codegen.text
+
+
+def test_f14_lookup_decompilation_from_cod_bytes():
+    entries = _extract_cod_function("COCKPIT.COD", "_LookUp", cod_dir=_F14_COD_DIR)
+    project = _project_from_bytes(_join_entries(entries))
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+
+    assert dec.codegen is not None
+    for token in ("150", "138", "136", "139"):
+        assert token in dec.codegen.text
