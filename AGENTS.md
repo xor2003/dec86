@@ -115,8 +115,8 @@ Run from `/home/xor/vextest/angr_platforms`:
   tests/test_x86_16_runtime_samples.py
 ```
 
-Expected status as of 2026-03-20:
-- `70 passed, 2 skipped`
+Expected status as of 2026-03-21:
+- `73 passed, 2 skipped`
 
 ### Focused lint/type-check scope
 
@@ -177,6 +177,21 @@ Expected status as of 2026-03-20:
 - Current nuance:
   - plain stepping now works for the covered COM runtime samples
   - the instruction-sized stepping helper remains useful as a narrower execution harness for future debugging
+
+### Recent control-flow fixes
+
+- `instr16.py` now routes near control-flow through shared helpers:
+  - `_emit_near_call()`
+  - `_emit_near_jump()`
+- This was added after finding a real CFG/decompiler bug in `call r/m16`:
+  - `call_rm16()` had been mutating `IP` directly instead of emitting `Ijk_Call`
+  - the block could keep decoding into following instructions and collapse into a fake `ret`-shaped block if a `ret` byte sequence followed
+- Fix:
+  - `call_rel16()` and `call_rm16()` now both emit `Ijk_Call`
+  - `jmp_rel16()` and `jmp_rm16()` now both go through the same bounded jump helper
+- Regression coverage:
+  - `tests/test_x86_16_smoketest.py::test_indirect_near_call_lifts_as_call_edge`
+  - this checks `mov ax, 0x1005; call ax; ret` and verifies the block stops at the indirect call instead of folding in the trailing `ret`
 
 ### Compare-based instruction semantics
 
@@ -273,6 +288,23 @@ Expected status as of 2026-03-20:
   - `/home/xor/games/f15se2-re/T.EXE`
   - `/home/xor/games/f15se2-re/T.COD`
 
+### Small real EXE decompilation status
+
+- We now have bounded entry-function decompilation coverage for two real MSC-built `.EXE` samples:
+  - `x16_samples/ISOD.EXE`
+  - `x16_samples/IMOD.EXE`
+- Coverage lives in:
+  - `angr_platforms/tests/test_x86_16_sample_matrix.py`
+- Current guarantee:
+  - bounded `CFGFast` recovers the entry function
+  - `Decompiler` produces C text instead of crashing or timing out under the focused test settings
+- Current stable anchors:
+  - `ISOD.EXE` recovered entry C contains `520`
+  - `IMOD.EXE` recovered entry C contains `526`
+- Interpretation:
+  - this is good evidence that angr is a viable base for small DOS real-mode `.EXE` decompilation
+  - current weaknesses are mostly decompilation quality issues around calling conventions, stack tracking, and startup-code readability, not basic loader/lifter viability
+
 ### Real sample corpus
 
 - The canonical reproducible real-mode sample matrix now lives in:
@@ -288,6 +320,11 @@ Expected status as of 2026-03-20:
     - `.COM` entry decompilation now infers a small linear code region first, so tiny DOS stubs like `ICOMDO.COM` decompile instead of immediately walking into trailing strings
     - resource guardrails were added in the CLI: `--timeout`, `--window`, and `--max-memory-mb`
     - the remaining nuance is quality, not basic usability: `.COM` output is still rough and call targets may remain unnamed
+- Block-level flow troubleshooting helper:
+  - `/home/xor/vextest/angr_platforms/scripts/inspect_x86_16_flow.py`
+  - intended usage:
+    - `cd /home/xor/vextest/angr_platforms && ../venv/bin/python scripts/inspect_x86_16_flow.py x16_samples/ISOD.EXE --blocks 1`
+  - it prints recovered blocks, jump kinds, next targets, asm, and VEX side by side for a bounded function window
 - Main files:
   - `x16_samples/intdemo.c`
   - `x16_samples/IDEMO.C`
@@ -408,6 +445,9 @@ Useful recent commit in `f15se2-re`:
   - `ISOD.COD` `query_interrupts` prefix from `0x35` to `0x4e`, which keeps the setup for `inregs.h.ah = 0x30; int86(0x21, &inregs, &outregs);` while avoiding the unresolved relocation on the call itself
 - Good current `cod/default` simple body seed:
   - `MAX.COD` `_max` body from `0x4e` onward, which skips the unresolved `__chkstk` prologue call and keeps the source-intent-rich `if (x > y) return x; return y;` compare/return body
+- For control-flow troubleshooting, inspect block shape before you inspect decompiler text.
+  - `scripts/inspect_x86_16_flow.py` is the fastest way to confirm whether a block actually ends at the `call`, `jmp`, `int`, or `iret` you expect.
+  - This mattered for the real `call r/m16` bug: the decompiler symptom was vague, but the block shape made the root cause obvious.
 - When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
 - If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
 - If the data result matches but the flags still diverge, it is still worth landing the narrower regression and documenting the remaining flag gap explicitly. Current example: `sar al, 1`.
