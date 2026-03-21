@@ -424,9 +424,13 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_rm8(self.emu.lifter_instruction.constant(self.instr.imm8, Type.int_8))
 
     def retf_imm16(self) -> None:
-        self.set_gpreg(reg16_t.SP, self.get_gpreg(reg16_t.SP) + self.instr.imm16)
         ip = self.emu.pop16()
         seg = self.emu.pop16()
+        self.emu.set_gpreg(
+            reg16_t.SP,
+            self.emu.get_gpreg(reg16_t.SP) + self.emu.constant(self.instr.imm16, Type.int_16),
+        )
+        self.emu.set_sgreg(sgreg_t.CS, seg)
         addr = self.emu.v2p(seg, ip)
         self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
 

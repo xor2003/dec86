@@ -23,6 +23,7 @@ class ParseInstr(X86Instruction):
 
     def parse_prefix(self) -> int:
         chsz = 0
+        prefix_len = 0
 
         while True:
             #code = self.emu.get_code8_(bitstream)
@@ -49,13 +50,16 @@ class ParseInstr(X86Instruction):
                 case 0xF3:
                     self.instr.pre_repeat = REPZ
                 case _:
+                    self.instr.prefix_len = prefix_len
                     return chsz
 
             self.emu.bitstream.read("uint:8")
             self.instr.prefix = code
+            prefix_len += 1
             #self.emu.update_eip(1)
 
     def parse(self) -> None:
+        start = self.emu.bitstream.bytepos
         self.parse_opcode()
 
         opcode = self.instr.opcode
@@ -89,6 +93,8 @@ class ParseInstr(X86Instruction):
             self.instr.modrm.imm8 = self.emu.get_code8(0)
         if opcode == 0xf7 and self.instr.modrm.reg == 0:  #test
             self.instr.modrm.imm16 = self.emu.get_code16(0)
+
+        self.instr.size = self.instr.prefix_len + (self.emu.bitstream.bytepos - start)
 
 
     def parse_opcode(self) -> None:

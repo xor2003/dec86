@@ -482,7 +482,11 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DX, -1 if ax & 0x8000 else 0)
 
     def callf_ptr16_16(self):
-        self.emu.callf(self.instr.ptr16, self.instr.imm16)
+        self.emu.callf(
+            self.instr.ptr16,
+            self.instr.imm16,
+            return_ip=self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(5, Type.int_16),
+        )
 
 
     def pushf(self):
@@ -1300,7 +1304,8 @@ class Instr16(InstrBase):
         m32 = self.get_m()
         ip = self.emu.read_mem16(m32)  # TODO: check segment, probably self.emu.get_data16(select_segment(),
         cs = self.emu.read_mem16(m32 + 2)
-        self.emu.callf(cs, ip)
+        size = self.emu.constant(self.instr.size, Type.int_16)
+        self.emu.callf(cs, ip, return_ip=self.emu.get_gpreg(reg16_t.IP) + size)
 
     def jmp_rm16(self):
         rm16 = self.get_rm16()

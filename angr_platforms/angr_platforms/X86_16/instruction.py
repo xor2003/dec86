@@ -49,6 +49,8 @@ class InstrData:
         self.imm32 = 0  # 32-bit immediate value
         self.ptr16 = 0  # 16-bit far pointer
         self.moffs = 0  # Memory offset
+        self.prefix_len = 0  # number of prefix bytes consumed
+        self.size = 0  # total instruction size in bytes including prefixes
 
 # Base class for instruction handlers
 class X86Instruction:
@@ -96,5 +98,4 @@ class InstrFlags:
         self.ptr16 = bool(value & (1 << 4))
         self.moffs = bool(value & (1 << 5))
         self.moffs8 = bool(value & (1 << 6))
-
 

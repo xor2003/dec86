@@ -118,6 +118,58 @@ def test_indirect_near_call_lifts_as_call_edge():
     assert "ret" not in asm
 
 
+def test_immediate_far_call_lifts_as_call_edge():
+    code = bytes.fromhex("9a08003412c3")  # call far 1234:0008; retf
+    project = _project_from_bytes(code)
+
+    block = project.factory.block(0x1000, opt_level=0)
+
+    assert block.vex.jumpkind == "Ijk_Call"
+    assert "lcall" in "\n".join(f"{insn.mnemonic} {insn.op_str}".strip().lower() for insn in block.capstone.insns)
+
+
+def test_immediate_far_jump_lifts_as_boring_jump():
+    code = bytes.fromhex("ea08003412")  # jmp far 1234:0008
+    project = _project_from_bytes(code)
+
+    block = project.factory.block(0x1000, opt_level=0)
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "ljmp" in "\n".join(f"{insn.mnemonic} {insn.op_str}".strip().lower() for insn in block.capstone.insns)
+
+
+def test_retf_imm16_lifts_and_adjusts_stack():
+    code = bytes.fromhex("ca0400")  # retf 4
+    project = _project_from_bytes(code)
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Ret"
+    assert "PUT(sp)" in vex_text
+    assert "PUT(cs)" in vex_text
+
+
+def test_indirect_far_call_lifts_as_call_edge():
+    code = bytes.fromhex("ff1e0610c3c308003412")  # call far [0x1006]
+    project = _project_from_bytes(code)
+
+    block = project.factory.block(0x1000, opt_level=0)
+
+    assert block.vex.jumpkind == "Ijk_Call"
+    assert "lcall" in "\n".join(f"{insn.mnemonic} {insn.op_str}".strip().lower() for insn in block.capstone.insns)
+
+
+def test_indirect_far_jump_lifts_as_boring_jump():
+    code = bytes.fromhex("ff2e0610c3c308003412")  # jmp far [0x1006]
+    project = _project_from_bytes(code)
+
+    block = project.factory.block(0x1000, opt_level=0)
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "ljmp" in "\n".join(f"{insn.mnemonic} {insn.op_str}".strip().lower() for insn in block.capstone.insns)
+
+
 def test_stack_arg_prototype_inference():
     project = _project_from_asm(
         "push bp; mov bp, sp; mov ax, [bp+4]; mov dx, [bp+6]; add ax, dx; pop bp; ret",

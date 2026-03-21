@@ -156,8 +156,15 @@ class DataAccess(Hardware):
     def put_data32(self, seg, addr, value):
         self.write_mem32_seg(seg, addr, value)
 
-    def callf(self, seg, ip):
+    def callf(self, seg, ip, return_ip=None):
         self.push16(self.get_sgreg(sgreg_t.CS))
-        self.push16(self.get_gpreg(reg16_t.IP) + 5)
+        if return_ip is None:
+            return_ip = self.get_gpreg(reg16_t.IP)
+        self.push16(return_ip)
         laddr = self.v2p(seg, ip)
         self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Call)
+
+    def jmpf(self, seg, ip):
+        self.set_sgreg(sgreg_t.CS, seg)
+        laddr = self.v2p(seg, ip)
+        self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Boring)
