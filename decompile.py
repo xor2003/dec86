@@ -32,6 +32,10 @@ from angr_platforms.X86_16.analysis_helpers import extend_cfg_for_far_calls
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
 logging.getLogger("angr_platforms.X86_16.parse").setLevel(logging.CRITICAL)
 logging.getLogger("angr_platforms.X86_16.lift_86_16").setLevel(logging.CRITICAL)
+logging.getLogger("angr.analyses.decompiler.clinic").setLevel(logging.CRITICAL)
+logging.getLogger("angr.analyses.decompiler.callsite_maker").setLevel(logging.CRITICAL)
+logging.getLogger("angr.analyses.decompiler.optimization_passes.optimization_pass").setLevel(logging.CRITICAL)
+logging.getLogger("angr.analyses.analysis").setLevel(logging.CRITICAL)
 
 
 def _parse_int(value: str) -> int:
@@ -95,6 +99,29 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
     return cfg, function
 
 
+def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, window: int):
+    if binary_path.suffix.lower() == ".com":
+        regions = [_infer_com_region(binary_path, base_addr, window)]
+        cfg = project.analyses.CFGFast(
+            start_at_entry=False,
+            function_starts=[project.entry],
+            regions=regions,
+            normalize=True,
+            force_complete_scan=False,
+        )
+    else:
+        cfg = project.analyses.CFGFast(
+            normalize=True,
+            force_complete_scan=False,
+        )
+
+    if project.arch.name == "86_16" and project.entry in cfg.functions:
+        extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
+        if extended_cfg is not None and project.entry in extended_cfg.functions:
+            cfg = extended_cfg
+    return cfg
+
+
 class _AnalysisTimeout(Exception):
     pass
 
@@ -148,6 +175,46 @@ def _infer_com_region(path: Path, base_addr: int, window: int) -> tuple[int, int
     return base_addr, base_addr + max(current, 1)
 
 
+def _format_first_block_asm(project: angr.Project, addr: int) -> str:
+    try:
+        block = project.factory.block(addr, opt_level=0)
+    except Exception as ex:
+        return f"<assembly unavailable: {ex}>"
+
+    lines = []
+    for insn in block.capstone.insns[:16]:
+        lines.append(f"{insn.address:#06x}: {insn.mnemonic} {insn.op_str}".rstrip())
+    return "\n".join(lines) if lines else "<no instructions>"
+
+
+def _interesting_functions(cfg, *, limit: int):
+    functions = [
+        function
+        for function in cfg.functions.values()
+        if not function.is_plt and not function.name.startswith("Unresolvable")
+    ]
+    functions.sort(key=lambda function: function.addr)
+    return functions[:limit], len(functions)
+
+
+def _decompile_function(project: angr.Project, cfg, function, timeout: int) -> tuple[str, str]:
+    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.alarm(timeout)
+    try:
+        dec = project.analyses.Decompiler(function, cfg=cfg)
+    except _AnalysisTimeout:
+        return "timeout", f"Timed out after {timeout}s."
+    except Exception as ex:
+        return "error", str(ex)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+    if dec.codegen is None:
+        return "empty", "Decompiler did not produce code."
+    return "ok", dec.codegen.text
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Decompile a DOS/x86-16 sample with angr-platforms.",
@@ -199,6 +266,12 @@ def main() -> int:
         default=2048,
         help="Best-effort address-space limit in MB. Defaults to 2048.",
     )
+    parser.add_argument(
+        "--max-functions",
+        type=int,
+        default=32,
+        help="Maximum number of recovered functions to print when decompiling a whole binary. Defaults to 32.",
+    )
     args = parser.parse_args()
 
     _apply_memory_limit(args.max_memory_mb)
@@ -210,72 +283,99 @@ def main() -> int:
         base_addr=args.base_addr,
         entry_point=args.entry_point,
     )
-    print("recovering function...", flush=True)
+    if args.addr is not None:
+        print("recovering function...", flush=True)
 
-    regions = None
-    target_addr = args.entry_point if args.addr is None else args.addr
-    if args.binary.suffix.lower() == ".com" and args.addr is None:
-        regions = [_infer_com_region(args.binary, args.base_addr, args.window)]
-    else:
-        regions = [(target_addr, target_addr + args.window)]
+        regions = [(args.addr, args.addr + args.window)]
+        old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+        signal.alarm(args.timeout)
+        try:
+            cfg, func = _pick_function(project, args.addr, regions=regions)
+        except _AnalysisTimeout:
+            print(f"Timed out while recovering a function after {args.timeout}s.")
+            print("Tip: try a larger --timeout for larger binaries.")
+            return 3
+        except Exception as ex:
+            print(f"Function recovery failed: {ex}")
+            print("\n== first block asm ==")
+            print(_format_first_block_asm(project, args.addr))
+            return 5
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
 
+        print(f"binary: {args.binary}")
+        print(f"arch: {project.arch.name}")
+        print(f"entry: {project.entry:#x}")
+        print(f"function: {func.addr:#x} {func.name}")
+
+        if args.show_asm:
+            print("\n== asm ==")
+            print(_format_first_block_asm(project, func.addr))
+
+        print("decompiling...", flush=True)
+        status, payload = _decompile_function(project, cfg, func, args.timeout)
+        if status != "ok":
+            print(f"\nDecompilation {status}: {payload}")
+            print("\n== asm fallback ==")
+            print(_format_first_block_asm(project, func.addr))
+            return 6 if status == "error" else 4
+
+        print("\n== c ==")
+        print(payload)
+        return 0
+
+    print("recovering functions...", flush=True)
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(args.timeout)
     try:
-        cfg, func = _pick_function(project, args.addr, regions=regions)
+        cfg = _recover_cfg(project, args.binary, base_addr=args.base_addr, window=args.window)
     except _AnalysisTimeout:
-        print(f"Timed out while recovering a function after {args.timeout}s.")
-        print("Tip: try --addr 0x... for a specific function or raise --timeout for larger binaries.")
+        print(f"Timed out while recovering functions after {args.timeout}s.")
+        print("Tip: try a larger --timeout or decompile a specific function with --addr.")
         return 3
     except Exception as ex:
-        print(f"Function recovery failed: {ex}")
-        if args.binary.suffix.lower() == ".com":
-            try:
-                block = project.factory.block(project.entry, opt_level=0)
-                print("\n== first block asm ==")
-                for insn in block.capstone.insns:
-                    print(f"{insn.address:#06x}: {insn.mnemonic} {insn.op_str}".rstrip())
-                print("\nTip: tiny .COM files may include trailing data right after code.")
-                print("Try decompiling a specific function with --addr, or use --show-asm for a quick inspection.")
-            except Exception:
-                pass
+        print(f"Function catalog recovery failed: {ex}")
+        print("\n== entry asm ==")
+        print(_format_first_block_asm(project, project.entry))
         return 5
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
+    functions, total_functions = _interesting_functions(cfg, limit=args.max_functions)
+
     print(f"binary: {args.binary}")
     print(f"arch: {project.arch.name}")
     print(f"entry: {project.entry:#x}")
-    print(f"function: {func.addr:#x} {func.name}")
+    print(f"functions recovered: {total_functions}")
+    if total_functions > len(functions):
+        print(f"showing first {len(functions)} functions; use --max-functions to raise the cap")
 
-    if args.show_asm:
-        block = project.factory.block(func.addr, opt_level=0)
-        print("\n== asm ==")
-        for insn in block.capstone.insns:
-            print(f"{insn.address:#06x}: {insn.mnemonic} {insn.op_str}".rstrip())
+    decompiled = 0
+    failed = 0
+    for function in functions:
+        print(f"\n== function {function.addr:#x} {function.name} ==")
+        if args.show_asm:
+            print("-- asm --")
+            print(_format_first_block_asm(project, function.addr))
 
-    print("decompiling...", flush=True)
-    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(args.timeout)
-    try:
-        dec = project.analyses.Decompiler(func, cfg=cfg)
-    except _AnalysisTimeout:
-        print(f"\nTimed out while decompiling after {args.timeout}s.")
-        return 4
-    except Exception as ex:
-        print(f"\nDecompilation failed: {ex}")
-        return 6
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-    if dec.codegen is None:
-        print("\nDecompilation did not produce code.")
-        return 2
+        status, payload = _decompile_function(project, cfg, function, args.timeout)
+        if status == "ok":
+            decompiled += 1
+            print("-- c --")
+            print(payload)
+        else:
+            failed += 1
+            print(f"-- {status} --")
+            print(payload)
+            print("-- asm fallback --")
+            print(_format_first_block_asm(project, function.addr))
 
-    print("\n== c ==")
-    print(dec.codegen.text)
-    return 0
+    print(f"\nsummary: decompiled {decompiled}/{len(functions)} shown functions")
+    if failed:
+        print(f"summary: {failed} functions fell back to asm/details")
+    return 0 if decompiled else 2
 
 
 if __name__ == "__main__":
