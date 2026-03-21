@@ -37,7 +37,7 @@ def _run_one_instruction(arch, code: bytes, ax: int = 0x125A, di: int = 0x200):
     return simgr.active[0]
 
 
-def _run_one_instruction_with_flags(arch, code: bytes, ax: int, flags: int):
+def _run_one_instruction_with_flags(arch, code: bytes, ax: int, flags: int, dx: int | None = None):
     project = angr.load_shellcode(
         code,
         arch=arch,
@@ -51,6 +51,15 @@ def _run_one_instruction_with_flags(arch, code: bytes, ax: int, flags: int):
     )
     state.regs.ax = ax
     state.regs.flags = flags
+    if dx is not None:
+        try:
+            state.regs.dx = dx
+        except AttributeError:
+            pass
+        try:
+            state.regs.edx = dx
+        except AttributeError:
+            pass
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)
@@ -327,6 +336,24 @@ def test_adc_ax_imm16_matches_upstream_x86_vex_effect():
         assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
 
 
+def test_sbb_dx_imm8_matches_upstream_x86_vex_effect():
+    state32 = _run_one_instruction_with_flags(ArchX86(), b"\x66\x83\xDA\x00", ax=0x0000, dx=0x1234, flags=1)
+    state16 = _run_one_instruction_with_flags(Arch86_16(), b"\x83\xDA\x00", ax=0x0000, dx=0x1234, flags=1)
+
+    assert state32.solver.eval(state32.regs.dx) == state16.solver.eval(state16.regs.dx)
+    for bit in (0, 6, 7, 11):
+        assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
+
+
+def test_sbb_al_al_opcode_1a_matches_upstream_x86_vex_effect():
+    state32 = _run_one_instruction_with_flags(ArchX86(), b"\x1A\xC0", ax=0x0050, flags=1)
+    state16 = _run_one_instruction_with_flags(Arch86_16(), b"\x1A\xC0", ax=0x0050, flags=1)
+
+    assert state32.solver.eval(state32.regs.ax) == state16.solver.eval(state16.regs.ax)
+    for bit in (0, 6, 7, 11):
+        assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
+
+
 def test_sar_al_1_matches_upstream_x86_vex_effect():
     state32 = _run_one_instruction_with_flags(ArchX86(), b"\xD0\xF8", ax=0x80FF, flags=0)
     state16 = _run_one_instruction_with_flags(Arch86_16(), b"\xD0\xF8", ax=0x80FF, flags=0)
@@ -374,3 +401,17 @@ def test_pop_rm16_writes_memory_and_advances_stack():
 
     assert state.solver.eval(state.memory.load(0x220, 2, endness=state.arch.memory_endness)) == 0x1234
     assert state.addr == 0x102
+
+
+def test_div_zero_block_lifts_without_python_attribute_error():
+    project = angr.load_shellcode(
+        b"\x31\xD2\xB8\x34\x12\x31\xC9\xF7\xF1",
+        arch=Arch86_16(),
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+
+    block = project.factory.block(0x100, num_inst=4)
+    assert block.vex is not None

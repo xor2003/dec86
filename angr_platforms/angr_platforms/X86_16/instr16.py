@@ -14,35 +14,59 @@ class Instr16(InstrBase):
     def __init__(self, emu: Emulator, instr: InstrData):
         super().__init__(emu, instr, mode32=False)  # X86Instruction
 
+        self.set_funcflag(0x00, self.add_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x01, self.add_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x02, self.add_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x03, self.add_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x04, self.add_al_imm8, CHK_IMM8)
         self.set_funcflag(0x05, self.add_ax_imm16, CHK_IMM16)
         self.set_funcflag(0x06, self.push_es, 0)
         self.set_funcflag(0x07, self.pop_es, 0)
+        self.set_funcflag(0x08, self.or_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x09, self.or_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x0A, self.or_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x0B, self.or_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x0C, self.or_al_imm8, CHK_IMM8)
         self.set_funcflag(0x0D, self.or_ax_imm16, CHK_IMM16)
         self.set_funcflag(0x0E, self.push_cs, 0)
+        self.set_funcflag(0x10, self.adc_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x11, self.adc_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x12, self.adc_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x13, self.adc_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x14, self.adc_al_imm8, CHK_IMM8)
         self.set_funcflag(0x15, self.adc_ax_imm16, CHK_IMM16)
         self.set_funcflag(0x16, self.push_ss, 0)
         self.set_funcflag(0x17, self.pop_ss, 0)
+        self.set_funcflag(0x18, self.sbb_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x19, self.sbb_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x1A, self.sbb_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x1B, self.sbb_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x1C, self.sbb_al_imm8, CHK_IMM8)
         self.set_funcflag(0x1E, self.push_ds, 0)
         self.set_funcflag(0x1F, self.pop_ds, 0)
+        self.set_funcflag(0x20, self.and_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x21, self.and_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x22, self.and_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x23, self.and_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x24, self.and_al_imm8, CHK_IMM8)
         self.set_funcflag(0x25, self.and_ax_imm16, CHK_IMM16)
+        self.set_funcflag(0x28, self.sub_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x29, self.sub_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x2A, self.sub_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x2B, self.sub_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x2C, self.sub_al_imm8, CHK_IMM8)
         self.set_funcflag(0x2D, self.sub_ax_imm16, CHK_IMM16)
+        self.set_funcflag(0x30, self.xor_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x31, self.xor_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x32, self.xor_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x33, self.xor_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x34, self.xor_al_imm8, CHK_IMM8)
         self.set_funcflag(0x35, self.xor_ax_imm16, CHK_IMM16)
+        self.set_funcflag(0x38, self.cmp_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x39, self.cmp_rm16_r16, CHK_MODRM)
+        self.set_funcflag(0x3A, self.cmp_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x3B, self.cmp_r16_rm16, CHK_MODRM)
+        self.set_funcflag(0x3C, self.cmp_al_imm8, CHK_IMM8)
         self.set_funcflag(0x3D, self.cmp_ax_imm16, CHK_IMM16)
 
         for i in range(8):
@@ -998,9 +1022,10 @@ class Instr16(InstrBase):
 
     def sbb_rm16_imm8(self):
         rm16 = self.get_rm16()
-        cf = self.emu.is_carry()
-        self.set_rm16(rm16 - self.instr.imm8 - cf)
-        self.emu.update_eflags_sbb(rm16, self.instr.imm8, cf)
+        cf = self.emu.is_carry().cast_to(Type.int_16)
+        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        self.set_rm16(rm16 - imm8 - cf)
+        self.emu.update_eflags_sbb(rm16, imm8, cf)
 
     def and_rm16_imm8(self):
         rm16 = self.get_rm16()
@@ -1226,8 +1251,9 @@ class Instr16(InstrBase):
 
     def div_dx_ax_rm16(self):
         rm16 = self.get_rm16()
-        if rm16 == 0:
-            raise Exception(self.emu.EXP_DE)
+        # Avoid turning decompilation/lifting into a Python crash when the divisor
+        # is unknown or currently zero in a stack slot. The runtime engine can still
+        # model a real divide error separately if needed.
         val = (self.emu.get_gpreg(reg16_t.DX) << 16) | self.emu.get_gpreg(reg16_t.AX)
         self.emu.set_gpreg(reg16_t.AX, val // rm16)
         self.emu.set_gpreg(reg16_t.DX, val % rm16)

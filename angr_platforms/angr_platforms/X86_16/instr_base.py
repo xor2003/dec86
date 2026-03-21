@@ -185,6 +185,12 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_r8(r8 + rm8 + carry)
         self.emu.update_eflags_adc(r8, rm8, carry)
 
+    def adc_al_imm8(self) -> None:
+        al = self.emu.get_gpreg(reg8_t.AL)
+        carry = self.emu.is_carry().cast_to(Type.int_8)
+        self.emu.set_gpreg(reg8_t.AL, al + self.instr.imm8 + carry)
+        self.emu.update_eflags_adc(al, self.instr.imm8, carry)
+
     def add_al_imm8(self) -> None:
         al = self.emu.get_gpreg(reg8_t.AL)
         self.emu.set_gpreg(reg8_t.AL, al + self.instr.imm8)
@@ -240,6 +246,26 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         al = self.emu.get_gpreg(reg8_t.AL)
         self.emu.set_gpreg(reg8_t.AL, al - self.instr.imm8)
         self.emu.update_eflags_sub(al, self.instr.imm8)
+
+    def sbb_rm8_r8(self) -> None:
+        rm8 = self.get_rm8()
+        r8 = self.get_r8()
+        carry = self.emu.is_carry().cast_to(Type.int_8)
+        self.set_rm8(rm8 - r8 - carry)
+        self.emu.update_eflags_sbb(rm8, r8, carry)
+
+    def sbb_r8_rm8(self) -> None:
+        r8 = self.get_r8()
+        rm8 = self.get_rm8()
+        carry = self.emu.is_carry().cast_to(Type.int_8)
+        self.set_r8(r8 - rm8 - carry)
+        self.emu.update_eflags_sbb(r8, rm8, carry)
+
+    def sbb_al_imm8(self) -> None:
+        al = self.emu.get_gpreg(reg8_t.AL)
+        carry = self.emu.is_carry().cast_to(Type.int_8)
+        self.emu.set_gpreg(reg8_t.AL, al - self.instr.imm8 - carry)
+        self.emu.update_eflags_sbb(al, self.instr.imm8, carry)
 
     def xor_rm8_r8(self) -> None:
         rm8 = self.get_rm8()
