@@ -229,6 +229,10 @@ Expected status as of 2026-03-20:
   - this probe exposed a bogus `Iop_16Sto16` in the lifted IR, traced to duplicate sign extension in `sub rm16, imm8` / `and rm16, imm8` flag-update paths
   - that duplicate sign extension was removed, which unblocked decompilation of the sample blob
 - The far-model counterpart `x16_samples/IMOD.COD` `fold_values` now also has direct regression coverage and decompiles successfully from raw `.COD` bytes.
+- `tests/test_x86_16_cod_samples.py` is now organized as a small table-driven corpus spec:
+  - `DecompCase` entries for source-backed decompilation oracles
+  - `BlockLiftCase` entries for real-code block-lift oracles
+  - this makes it much easier to add new `.COD` samples without duplicating boilerplate and keeps the original C intent visible near the expected anchors
 - The external real-code corpus under `/home/xor/vextest/cod/f14/` is now being mined too.
   - `OVL.COD` `_dig_load_overlay` is relocation-free and now has direct block-lifting coverage in `tests/test_x86_16_cod_samples.py`.
   - That sample exposed a real missing opcode on live code: `0x15` (`adc ax, imm16`) at offset `0x37`.
@@ -353,9 +357,13 @@ Useful recent commit in `f15se2-re`:
 ### Tips And Tricks For Next Agents
 
 - Prefer relocation-free `.COD` helpers first. A fast scan for functions with no `e8 00 00` or `9a 00 00 00 00` usually finds the highest-value regressions quickly.
+- Not every relocation-free helper is a good decompilation oracle. Tiny DGROUP/global-store wrappers can decompile into raw `ds * 16 + offset` stores with no useful symbol recovery. Current example: `CARR.COD` `_SetDLC` was easy to lift but not worth keeping as a human-facing decompilation regression.
 - Use `.COD` in two modes:
   - decompilation regression when the recovered C stays bounded and preserves stable constants or operators
   - block-lift regression when full decompilation is too slow or too noisy, but a real block still exercises a missing opcode, loop, or segmented access
+- Prefer the table-driven style in `tests/test_x86_16_cod_samples.py` when adding new cases:
+  - put the original C fragment and expected anchors in `DecompCase` / `BlockLiftCase`
+  - keep one parametric test per mode instead of adding another one-off test function
 - Good current `f14` seeds:
   - decompilation-friendly: `MONOPRIN.COD` `_mset_pos`, `NHORZ.COD` `_ChangeWeather`, `PLANES3.COD` `_Ready5`, `COCKPIT.COD` `_LookDown`, `COCKPIT.COD` `_LookUp`, `BILLASM.COD` `_MousePOS`
   - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`
