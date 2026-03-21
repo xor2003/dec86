@@ -357,6 +357,10 @@ Useful recent commit in `f15se2-re`:
   - UI/layout constants like `50`, `27`, `25`, `39`, `150`, `138`, `136`, and `139`
   - operators like `% 80` and `% 25`
   - `return`
+- Make tests readable for humans, not just protective for the lifter:
+  - include a short original-C fragment in the assertion message when possible
+  - for decompilation regressions, fail with both the expected source fragment and the recovered C text
+  - for block-lift regressions, fail with both the expected source fragment and the recovered IRSB text
 - When branch recovery is still ugly, constant-rich helpers are often better regression targets than predicate-heavy helpers. Current example: `COCKPIT.COD` `_LookDown` is a better decompilation oracle than `CARR.COD` `_InBox`.
 - Avoid asserting on variable names in decompiler output. They still drift a lot on x86-16 and create low-value churn.
 - The first `unicornlib.so` warning is expected in many local probes and is not the bug unless the actual lift/decompile fails afterwards.
