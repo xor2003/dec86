@@ -214,8 +214,8 @@ class Instr16(InstrBase):
         self.emu.update_eflags_sbb(r16, rm16, carry)
 
     def add_rm16_r16(self):
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
+        rm16 = self.get_rm16().cast_to(Type.int_16)
+        r16 = self.get_r16().cast_to(Type.int_16)
         self.set_rm16(rm16 + r16)
         self.emu.update_eflags_add(rm16, r16)
 

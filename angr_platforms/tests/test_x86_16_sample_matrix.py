@@ -6,6 +6,7 @@ from pathlib import Path
 import angr
 import pytest
 
+from angr_platforms.X86_16.analysis_helpers import collect_direct_far_call_targets, extend_cfg_for_far_calls
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
@@ -43,6 +44,9 @@ def _decompile_entry_function(binary_name: str, window: int = 0x200):
         normalize=True,
         force_complete_scan=False,
     )
+    extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
+    if extended_cfg is not None and project.entry in extended_cfg.functions:
+        cfg = extended_cfg
     function = cfg.functions[project.entry]
     dec = project.analyses.Decompiler(function, cfg=cfg)
     return dec.codegen.text if dec.codegen is not None else None
@@ -131,6 +135,34 @@ def test_small_model_rep_cmps_block_lifts():
     assert block.vex.jumpkind == "Ijk_Boring"
 
 
+def test_medium_model_global_add_block_lifts():
+    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+
+    block = project.factory.block(0x1682, size=4, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert "add word ptr [0x62], dx" in "\n".join(
+        f"{insn.mnemonic} {insn.op_str}".strip().lower() for insn in block.capstone.insns
+    )
+    assert "Add16" in vex_text
+    assert block.vex.jumpkind == "Ijk_Boring"
+
+
+def test_medium_model_entry_far_call_targets_are_discoverable():
+    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[project.entry],
+        regions=[(project.entry, project.entry + 0x200)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+
+    far_targets = collect_direct_far_call_targets(cfg.functions[project.entry])
+
+    assert {target.target_addr for target in far_targets} >= {0x111A, 0x121E, 0x1380, 0x161F}
+
+
 def test_small_model_entry_function_decompiles_in_bounded_window():
     recovered_c = _decompile_entry_function("ISOD.EXE")
 
@@ -143,3 +175,5 @@ def test_medium_model_entry_function_decompiles_in_bounded_window():
 
     assert recovered_c is not None
     assert "526" in recovered_c
+    assert "sub_1380()" in recovered_c
+    assert "sub_161f()" in recovered_c

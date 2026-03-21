@@ -161,6 +161,7 @@ class DataAccess(Hardware):
         if return_ip is None:
             return_ip = self.get_gpreg(reg16_t.IP)
         self.push16(return_ip)
+        self.set_sgreg(sgreg_t.CS, seg)
         laddr = self.v2p(seg, ip)
         self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Call)
 
