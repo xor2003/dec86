@@ -357,7 +357,7 @@ Useful recent commit in `f15se2-re`:
   - decompilation regression when the recovered C stays bounded and preserves stable constants or operators
   - block-lift regression when full decompilation is too slow or too noisy, but a real block still exercises a missing opcode, loop, or segmented access
 - Good current `f14` seeds:
-  - decompilation-friendly: `MONOPRIN.COD` `_mset_pos`, `NHORZ.COD` `_ChangeWeather`, `PLANES3.COD` `_Ready5`, `COCKPIT.COD` `_LookDown`, `COCKPIT.COD` `_LookUp`
+  - decompilation-friendly: `MONOPRIN.COD` `_mset_pos`, `NHORZ.COD` `_ChangeWeather`, `PLANES3.COD` `_Ready5`, `COCKPIT.COD` `_LookDown`, `COCKPIT.COD` `_LookUp`, `BILLASM.COD` `_MousePOS`
   - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`
 - When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
 - If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
@@ -372,6 +372,7 @@ Useful recent commit in `f15se2-re`:
   - constants like `8150`, `500`, `125`, `1000`
   - stride constants like `46` and `18`
   - UI/layout constants like `50`, `27`, `25`, `39`, `150`, `138`, `136`, and `139`
+  - simple behavioral anchors like `* 2` for `MouseX = x << 1`
   - operators like `% 80` and `% 25`
   - `return`
 - Make tests readable for humans, not just protective for the lifter:
