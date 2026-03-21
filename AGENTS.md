@@ -252,6 +252,8 @@ Expected status as of 2026-03-20:
   - Current stable recovered features from that sample: the original UI/layout constants `150`, `138`, `136`, and `139`.
   - `BILLASM.COD` `_MousePOS` now has direct decompilation coverage.
   - Current stable recovered features from that sample: the `MouseX = x * 2` scaling, a clean early-return path, and the mouse interrupt call site.
+  - `CARR.COD` `_InBox` now has direct block-lifting coverage for its entry bounds-check block.
+  - Current stable lifted features from that sample: unsigned compare IR (`CmpGT16U`) and the two source-corresponding branch targets for the `return 0` and `return 1` paths.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
@@ -366,7 +368,7 @@ Useful recent commit in `f15se2-re`:
   - keep one parametric test per mode instead of adding another one-off test function
 - Good current `f14` seeds:
   - decompilation-friendly: `MONOPRIN.COD` `_mset_pos`, `NHORZ.COD` `_ChangeWeather`, `PLANES3.COD` `_Ready5`, `COCKPIT.COD` `_LookDown`, `COCKPIT.COD` `_LookUp`, `BILLASM.COD` `_MousePOS`
-  - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`
+  - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`, `CARR.COD` `_InBox`
 - When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
 - If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
 - If the data result matches but the flags still diverge, it is still worth landing the narrower regression and documenting the remaining flag gap explicitly. Current example: `sar al, 1`.
