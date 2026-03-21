@@ -247,3 +247,13 @@ def test_f14_lookup_decompilation_from_cod_bytes():
         "Rp3D->Length1 = 150; RpCRT1->YBgn = 138; RpCRT2->YBgn = 136; "
         "RpCRT4->YBgn = 150; else Rp3D->Length1 = 139;",
     )
+
+
+def test_f14_mousepos_decompilation_from_cod_bytes():
+    entries = _extract_cod_function("BILLASM.COD", "_MousePOS", cod_dir=_F14_COD_DIR)
+    text = _decompile_blob(_join_entries(entries))
+    _assert_text_contains(
+        text,
+        ("* 2", "return"),
+        "if (!MOUSE) return 0; MouseX = x << 1; MouseY = y; int 33h;",
+    )
