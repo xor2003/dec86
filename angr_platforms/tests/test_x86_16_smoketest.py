@@ -79,6 +79,30 @@ def test_cmp_je_lifts():
     assert "CmpEQ16" in irsb._pp_str()
 
 
+def test_simple_je_short_targets_branch_destination():
+    project = _project_from_bytes(bytes.fromhex("74 02 b8 01 00 c3"))  # je +2; mov ax,1; ret
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "if (" in vex_text
+    assert "PUT(ip) = 0x1004" in vex_text
+    assert "if (" in vex_text and "PUT(ip) = 0x1002" in vex_text
+
+
+def test_simple_je_near_targets_branch_destination():
+    project = _project_from_bytes(bytes.fromhex("0f840200b80100c3"))  # je +2; mov ax,1; ret
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "if (" in vex_text
+    assert "PUT(ip) = 0x1006" in vex_text
+    assert "if (" in vex_text and "PUT(ip) = 0x1004" in vex_text
+
+
 def test_enter_local_stack_smoke():
     project = _project_from_asm("enter 2, 0; mov word ptr [bp-2], 1; mov ax, [bp-2]; leave; ret")
 

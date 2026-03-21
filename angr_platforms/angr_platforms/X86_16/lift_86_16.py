@@ -412,6 +412,18 @@ class Instruction_ANY(Instruction):
             return lhs > rhs
         return None
 
+    def _emit_simple_jcc(self, taken_cond, target):
+        """
+        Emit a conditional branch using the pyvex Instruction.jump() polarity.
+
+        Instruction.jump(cond, target) expects `cond` to describe the
+        fallthrough path. The x86 condition codes are naturally expressed as
+        taken-branch predicates, so we invert them here in one place to avoid
+        repeating that subtle calling convention at every jcc site.
+        """
+
+        self.jump(~taken_cond, target, JumpKind.Boring)
+
     def _lift_simple(self):
         kind = self.simple_semantics[0]
         if kind == "nop":
@@ -544,7 +556,7 @@ class Instruction_ANY(Instruction):
                     cond = (~cf) & (~zf)
                 else:
                     raise NotImplementedError(kind)
-            self.jump(cond, target, JumpKind.Boring)
+            self._emit_simple_jcc(cond, target)
             return
         if kind == "ret":
             sp = self._get_reg16("sp")
