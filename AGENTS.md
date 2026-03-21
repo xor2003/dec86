@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-21:
-- `78 passed, 2 skipped`
+- `80 passed, 2 skipped`
 
 ### Focused lint/type-check scope
 
@@ -208,6 +208,15 @@ Expected status as of 2026-03-21:
   - indirect far jump
   - `retf imm16`
   - indirect near call
+- The simplified Capstone-backed branch path in `lift_86_16.py` also had a real jcc polarity bug:
+  - `_lift_simple()` was feeding taken-branch predicates directly into `Instruction.jump()`
+  - pyvex expects that helper condition to describe the fallthrough edge instead
+  - result: short/near simple conditional branches could invert the edge shape in the lifted IRSB
+- Fix:
+  - `lift_86_16.py` now routes those through `_emit_simple_jcc()`, which inverts the taken predicate in one explicit place
+- Regression coverage:
+  - `tests/test_x86_16_smoketest.py::test_simple_je_short_targets_branch_destination`
+  - `tests/test_x86_16_smoketest.py::test_simple_je_near_targets_branch_destination`
 
 ### Compare-based instruction semantics
 
