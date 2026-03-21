@@ -26,6 +26,7 @@ sys.path.insert(0, str(_ROOT / "angr_platforms"))
 import angr_platforms.X86_16  # noqa: F401
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.analysis_helpers import extend_cfg_for_far_calls
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -79,7 +80,19 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
     )
     if target_addr not in cfg.functions:
         raise KeyError(f"Function {target_addr:#x} was not recovered by CFGFast.")
-    return cfg, cfg.functions[target_addr]
+    function = cfg.functions[target_addr]
+
+    if project.arch.name == "86_16":
+        extended_cfg = extend_cfg_for_far_calls(
+            project,
+            function,
+            entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+        )
+        if extended_cfg is not None and target_addr in extended_cfg.functions:
+            cfg = extended_cfg
+            function = cfg.functions[target_addr]
+
+    return cfg, function
 
 
 class _AnalysisTimeout(Exception):
