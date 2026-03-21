@@ -362,6 +362,14 @@ Useful recent commit in `f15se2-re`:
 
 ### Tips And Tricks For Next Agents
 
+- For wide `.COD` triage, use the bounded scanner instead of ad hoc probing:
+  - `../venv/bin/python scripts/scan_cod_dir.py /path/to/cod_dir --timeout-sec 5 --max-memory-mb 1024`
+  - `../venv/bin/python scripts/scan_cod_dir.py /path/to/cod_dir --mode decompile-reloc-free --timeout-sec 5 --max-memory-mb 1024`
+  - it is sequential, applies a hard address-space cap with `RLIMIT_AS`, and prevents the multi-process RAM blowups the user reported
+- Current bounded whole-directory result for `cod/default/`:
+  - 31 functions scanned
+  - no raw block-lift failures
+  - no relocation-free decompilation failures under the same bounded settings
 - Prefer relocation-free `.COD` helpers first. A fast scan for functions with no `e8 00 00` or `9a 00 00 00 00` usually finds the highest-value regressions quickly.
 - Not every relocation-free helper is a good decompilation oracle. Tiny DGROUP/global-store wrappers can decompile into raw `ds * 16 + offset` stores with no useful symbol recovery. Current example: `CARR.COD` `_SetDLC` was easy to lift but not worth keeping as a human-facing decompilation regression.
 - Use `.COD` in two modes:
