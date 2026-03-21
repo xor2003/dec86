@@ -138,6 +138,15 @@ BLOCK_LIFT_CASES = (
         original_c="for (i = 0; i < 8; i++) { CrtDisplays[i] = CrtConfig[i]; }",
         expected_tokens=("Shl16", "0x0222", "LDle:I16", "STle", "0x0008"),
     ),
+    BlockLiftCase(
+        name="f14_inbox_bounds_check",
+        cod_name="CARR.COD",
+        proc_name="_InBox",
+        cod_dir=_F14_COD_DIR,
+        block_addr=0x1000,
+        original_c="if ((x < xl) || (x > xh) || (z < zl) || (z > zh)) return 0; else return 1;",
+        expected_tokens=("CmpGT16U", "PUT(ip) = 0x100b", "PUT(ip) = 0x101d", "Ijk_Boring"),
+    ),
 )
 
 
