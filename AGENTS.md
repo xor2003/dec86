@@ -101,6 +101,7 @@ For issues or maintenance, consider angr's pcode alternatives.
 - `angr_platforms/tests/test_x86_16_sample_matrix.py`
 - `angr_platforms/tests/test_x86_16_runtime_samples.py`
 - `angr_platforms/tests/test_x86_16_compare_semantics.py`
+- `angr_platforms/tests/test_x86_16_cli.py`
 
 ### Current known-good focused test command
 
@@ -116,7 +117,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-21:
-- `83 passed, 2 skipped`
+- `85 passed, 2 skipped`
 
 ### Focused lint/type-check scope
 
@@ -233,6 +234,7 @@ Expected status as of 2026-03-21:
   - `scasb`
   - `scasw`
   - `rcr ax, 1` (compared against 32-bit `0x66 0xD1 0xD8`)
+  - `ror al, 1` result regression (compared against 32-bit `0xD0 0xC8`)
   - `adc ax, imm16` (compared against 32-bit `0x66 0x15 ...`)
   - `sar al, 1` result regression (compared against 32-bit `0xD0 0xF8`)
   - `loop rel8` (compared against 32-bit `0x67 0xE2 ...` using relative-target equivalence)
@@ -345,10 +347,21 @@ Expected status as of 2026-03-21:
   - intended usage: `./decompile.py binary.exe`
   - for raw blobs: `./decompile.py --blob binary.bin`
   - current behavior:
-    - `.EXE` entry decompilation now uses a bounded recovery window by default, which makes it much less CPU/RAM hungry
+    - with `--addr`, it still decompiles one specific function
+    - without `--addr`, it now recovers a bounded whole-binary function catalog, prints each recovered function it can decompile, and falls back to a short asm listing plus error/timeout info for functions it cannot
+    - `.EXE` whole-binary recovery now stays bounded enough for small real samples like `snake.exe`
     - `.COM` entry decompilation now infers a small linear code region first, so tiny DOS stubs like `ICOMDO.COM` decompile instead of immediately walking into trailing strings
     - resource guardrails were added in the CLI: `--timeout`, `--window`, and `--max-memory-mb`
+    - whole-binary printing is capped with `--max-functions`
     - the remaining nuance is quality, not basic usability: `.COM` output is still rough and call targets may remain unnamed
+    - the CLI now suppresses most internal decompiler warning noise so the user sees function results instead of logger spam
+- Real user-facing sample:
+  - `/home/xor/vextest/snake.exe`
+  - `./decompile.py ./snake.exe --timeout 10 --max-functions 6`
+  - current behavior:
+    - recovers 15 functions
+    - decompiles the readable subset
+    - prints asm fallback for functions like `sub_11a3` when decompilation returns no code
 - Block-level flow troubleshooting helper:
   - `/home/xor/vextest/angr_platforms/scripts/inspect_x86_16_flow.py`
   - intended usage:
@@ -471,6 +484,13 @@ Useful recent commit in `f15se2-re`:
   - `extend_cfg_for_far_calls()` is the current best way to improve user-visible entry-function decompilation without triggering unrelated unsupported code paths
   - current stable real targets discovered in `IMOD.EXE` entry startup code include `0x111A`, `0x121E`, `0x1380`, and `0x161F`
   - current honest limitation: this improves recovered C and `Function.get_call_target()`, but it does not yet suppress decompiler warnings about unknown calling conventions or `callee None`
+- For user-facing CLI work, prefer making failures visible instead of silent:
+  - print a short per-function status
+  - include first-block asm when decompilation fails or returns no code
+  - cap the number of printed functions with `--max-functions` to keep output readable on real binaries
+- Current small rotate nuance:
+  - byte `ror` now lifts and real binaries like `snake.exe` no longer crash on missing `ror_rm8`
+  - the compare-style regression currently locks in the correct data result, but not the full flags behavior yet
 - Recent whole-tree-friendly lifter fixes:
   - `instr16.py` now registers the missing 8-bit ALU opcode families (`0x00/02/04`, `0x08/0A/0C`, `0x10/12/14`, `0x18/1A/1C`, `0x20/22/24`, `0x28/2A/2C`, `0x30/32/34`, `0x38/3A/3C`)
   - `instr_base.py` now implements `adc_al_imm8`, `sbb_rm8_r8`, `sbb_r8_rm8`, and `sbb_al_imm8`
