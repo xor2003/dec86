@@ -32,6 +32,34 @@ def _project_from_bytes(code: bytes):
     )
 
 
+def _decompile_blob(code: bytes):
+    project = _project_from_bytes(code)
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+    assert dec.codegen is not None
+    return dec.codegen.text
+
+
+def _assert_text_contains(text: str, expected_tokens: tuple[str, ...], original_c: str):
+    missing = [token for token in expected_tokens if token not in text]
+    assert not missing, (
+        "Recovered C no longer reflects the original source intent.\n"
+        f"Original C fragment:\n{original_c}\n\n"
+        f"Missing expected tokens: {missing}\n\n"
+        f"Recovered C:\n{text}"
+    )
+
+
+def _assert_irsb_contains(irsb_text: str, expected_tokens: tuple[str, ...], original_c: str):
+    missing = [token for token in expected_tokens if token not in irsb_text]
+    assert not missing, (
+        "Lifted VEX no longer reflects the intended source-level operation.\n"
+        f"Original C fragment:\n{original_c}\n\n"
+        f"Missing expected IR anchors: {missing}\n\n"
+        f"Recovered IRSB:\n{irsb_text}"
+    )
+
+
 def _extract_cod_function(cod_name: str, proc_name: str, cod_dir: Path | None = None, proc_kind: str = "NEAR"):
     base_dir = _COD_DIR if cod_dir is None else cod_dir
     lines = (base_dir / cod_name).read_text(errors="ignore").splitlines()
@@ -107,9 +135,12 @@ def test_bios_cod_sample_decompilation():
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
-    assert dec.codegen is not None
+    _assert_text_contains(
+        dec.codegen.text,
+        ("return",),
+        "uint16 FAR *bios_keyflags = MK_FP(0x40, 0x17); *bios_keyflags = 0;",
+    )
     assert any(token in dec.codegen.text for token in ("g_417", str(BDA_KEYBOARD_FLAGS_LINEAR)))
-    assert "return" in dec.codegen.text
 
 
 def test_compiler_idiom_prefix_lifts_from_cod_bytes():
@@ -125,26 +156,14 @@ def test_compiler_idiom_prefix_lifts_from_cod_bytes():
 
 def test_sample_matrix_fold_values_decompilation_from_cod_bytes():
     fold_entries = _extract_cod_function("ISOD.COD", "fold_values", cod_dir=_X16_SAMPLES_DIR)
-    project = _project_from_bytes(_join_entries(fold_entries))
-
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
-
-    assert dec.codegen is not None
-    assert "123" in dec.codegen.text
-    assert "return" in dec.codegen.text
+    text = _decompile_blob(_join_entries(fold_entries))
+    _assert_text_contains(text, ("123", "return"), "return value + 123;")
 
 
 def test_far_sample_matrix_fold_values_decompilation_from_cod_bytes():
     fold_entries = _extract_cod_function("IMOD.COD", "fold_values", cod_dir=_X16_SAMPLES_DIR, proc_kind="FAR")
-    project = _project_from_bytes(_join_entries(fold_entries))
-
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
-
-    assert dec.codegen is not None
-    assert "123" in dec.codegen.text
-    assert "return" in dec.codegen.text
+    text = _decompile_blob(_join_entries(fold_entries))
+    _assert_text_contains(text, ("123", "return"), "return value + 123;")
 
 
 def test_f14_overlay_loader_block_lifts_from_cod_bytes():
@@ -156,46 +175,42 @@ def test_f14_overlay_loader_block_lifts_from_cod_bytes():
     irsb_text = block.vex._pp_str()
 
     assert block.vex.jumpkind == "Ijk_Boring"
-    assert "PUT(ax) = 0x0000" in irsb_text
-    assert "PUT(flags)" in irsb_text
-    assert "PUT(ip) = 0x1043" in irsb_text
+    _assert_irsb_contains(
+        irsb_text,
+        ("PUT(ax) = 0x0000", "PUT(flags)", "PUT(ip) = 0x1043"),
+        "ax = 0; adc ax, 0; err = ax; if (err == 0) goto success;",
+    )
 
 
 def test_f14_mono_set_pos_decompilation_from_cod_bytes():
     entries = _extract_cod_function("MONOPRIN.COD", "_mset_pos", cod_dir=_F14_COD_DIR)
-    project = _project_from_bytes(_join_entries(entries))
-
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
-
-    assert dec.codegen is not None
-    assert "% 80" in dec.codegen.text
-    assert "% 25" in dec.codegen.text
-    assert "return" in dec.codegen.text
+    text = _decompile_blob(_join_entries(entries))
+    _assert_text_contains(
+        text,
+        ("% 80", "% 25", "return"),
+        "_mono_x = x % 80; _mono_y = y % 25; return 0;",
+    )
 
 
 def test_f14_change_weather_decompilation_from_cod_bytes():
     entries = _extract_cod_function("NHORZ.COD", "_ChangeWeather", cod_dir=_F14_COD_DIR)
-    project = _project_from_bytes(_join_entries(entries))
-
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
-
-    assert dec.codegen is not None
-    for token in ("8150", "500", "125", "1000"):
-        assert token in dec.codegen.text
+    text = _decompile_blob(_join_entries(entries))
+    _assert_text_contains(
+        text,
+        ("8150", "500", "125", "1000"),
+        "if (BadWeather) { CLOUDHEIGHT=8150; CLOUDTHICK=500; } "
+        "else { CLOUDHEIGHT=125; CLOUDTHICK=1000; }",
+    )
 
 
 def test_f14_ready5_decompilation_from_cod_bytes():
     entries = _extract_cod_function("PLANES3.COD", "_Ready5", cod_dir=_F14_COD_DIR)
-    project = _project_from_bytes(_join_entries(entries))
-
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
-
-    assert dec.codegen is not None
-    for token in ("46", "18", "return"):
-        assert token in dec.codegen.text
+    text = _decompile_blob(_join_entries(entries))
+    _assert_text_contains(
+        text,
+        ("46", "18", "return"),
+        "bv[planecnt].basespeed = 0; /* struct stride 46, field offset 18 */ return 0;",
+    )
 
 
 def test_f14_config_crts_loop_block_lifts_from_cod_bytes():
@@ -206,32 +221,29 @@ def test_f14_config_crts_loop_block_lifts_from_cod_bytes():
     irsb_text = block.vex._pp_str()
 
     assert block.vex.jumpkind == "Ijk_Boring"
-    assert "Shl16" in irsb_text
-    assert "0x0222" in irsb_text
-    assert "LDle:I16" in irsb_text
-    assert "STle" in irsb_text
-    assert "0x0008" in irsb_text
+    _assert_irsb_contains(
+        irsb_text,
+        ("Shl16", "0x0222", "LDle:I16", "STle", "0x0008"),
+        "for (i = 0; i < 8; i++) { CrtDisplays[i] = CrtConfig[i]; }",
+    )
 
 
 def test_f14_lookdown_decompilation_from_cod_bytes():
     entries = _extract_cod_function("COCKPIT.COD", "_LookDown", cod_dir=_F14_COD_DIR)
-    project = _project_from_bytes(_join_entries(entries))
-
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
-
-    assert dec.codegen is not None
-    for token in ("50", "27", "25", "39"):
-        assert token in dec.codegen.text
+    text = _decompile_blob(_join_entries(entries))
+    _assert_text_contains(
+        text,
+        ("50", "27", "25", "39"),
+        "Rp3D->Length1 = 50; RpCRT1->YBgn = 27; RpCRT2->YBgn = 25; RpCRT4->YBgn = 39;",
+    )
 
 
 def test_f14_lookup_decompilation_from_cod_bytes():
     entries = _extract_cod_function("COCKPIT.COD", "_LookUp", cod_dir=_F14_COD_DIR)
-    project = _project_from_bytes(_join_entries(entries))
-
-    cfg = project.analyses.CFGFast(normalize=True)
-    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
-
-    assert dec.codegen is not None
-    for token in ("150", "138", "136", "139"):
-        assert token in dec.codegen.text
+    text = _decompile_blob(_join_entries(entries))
+    _assert_text_contains(
+        text,
+        ("150", "138", "136", "139"),
+        "Rp3D->Length1 = 150; RpCRT1->YBgn = 138; RpCRT2->YBgn = 136; "
+        "RpCRT4->YBgn = 150; else Rp3D->Length1 = 139;",
+    )
