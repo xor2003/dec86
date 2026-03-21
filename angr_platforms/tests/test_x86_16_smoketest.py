@@ -105,6 +105,19 @@ def test_near_call_smoke():
     assert "return 3;" in callee.codegen.text
 
 
+def test_indirect_near_call_lifts_as_call_edge():
+    code = bytes.fromhex("b80510ffd0c3")  # mov ax,0x1005; call ax; ret
+    project = _project_from_bytes(code)
+
+    block = project.factory.block(0x1000, opt_level=0)
+    asm = "\n".join(f"{insn.mnemonic} {insn.op_str}".strip() for insn in block.capstone.insns).lower()
+
+    assert block.vex.jumpkind == "Ijk_Call"
+    assert "PUT(sp)" in block.vex._pp_str()
+    assert "call ax" in asm
+    assert "ret" not in asm
+
+
 def test_stack_arg_prototype_inference():
     project = _project_from_asm(
         "push bp; mov bp, sp; mov ax, [bp+4]; mov dx, [bp+6]; add ax, dx; pop bp; ret",

@@ -651,6 +651,22 @@ class Instr16(InstrBase):
         reg = self.instr.opcode & 0b111
         self.emu.set_gpreg(reg16_t(reg), Const(IRConst.U16(self.instr.imm16)))
 
+    def _emit_near_call(self, target):
+        """
+        Emit a near call edge in a single place.
+
+        Near-call bugs tend to show up as CFG/decompiler pathologies rather than
+        obvious execution failures, so keeping the stack update and call jumpkind
+        together makes this area much easier to troubleshoot.
+        """
+
+        return_ip = self.emu.get_ip()
+        self.emu.push16(return_ip)
+        self.emu.lifter_instruction.jump(None, target, JumpKind.Call)
+
+    def _emit_near_jump(self, target):
+        self.emu.lifter_instruction.jump(None, target, JumpKind.Boring)
+
     def ret(self):
         ret_addr = self.emu.pop16()
         self.emu.irsb.next = ret_addr
@@ -674,10 +690,9 @@ class Instr16(InstrBase):
     def call_rel16(self):
         size = 3  # opcode + imm16
         return_ip = self.emu.get_gpreg(reg16_t.IP) + size
-        self.emu.push16(return_ip)
         imm = self.emu.constant(self.instr.imm16, Type.int_16)
         target = return_ip + imm
-        self.emu.lifter_instruction.jump(None, target, JumpKind.Call)
+        self._emit_near_call(target)
 
 
     def jmp_rel16(self):
@@ -685,7 +700,7 @@ class Instr16(InstrBase):
         current_ip = self.emu.get_gpreg(reg16_t.IP) + size
         imm = self.emu.constant(self.instr.imm16, Type.int_16)
         target = current_ip + imm
-        self.emu.lifter_instruction.jump(None, target, JumpKind.Boring)
+        self._emit_near_jump(target)
 
     def jmpf_ptr16_16(self):
         self.emu.jmpf(self.instr.ptr16, self.instr.imm16)
@@ -1279,8 +1294,7 @@ class Instr16(InstrBase):
 
     def call_rm16(self):
         rm16 = self.get_rm16()
-        self.emu.push16(self.emu.get_ip())
-        self.emu.set_ip(rm16)
+        self._emit_near_call(rm16)
 
     def callf_m16_16(self):
         m32 = self.get_m()
@@ -1290,7 +1304,7 @@ class Instr16(InstrBase):
 
     def jmp_rm16(self):
         rm16 = self.get_rm16()
-        self.emu.lifter_instruction.jump(None, rm16)
+        self._emit_near_jump(rm16)
 
     def jmpf_m16_16(self):
         m32 = self.get_m()

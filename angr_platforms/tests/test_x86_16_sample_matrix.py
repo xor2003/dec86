@@ -34,6 +34,20 @@ def _load_manifest():
     return json.loads(MANIFEST_PATH.read_text())
 
 
+def _decompile_entry_function(binary_name: str, window: int = 0x200):
+    project = angr.Project(MATRIX_DIR / binary_name)
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[project.entry],
+        regions=[(project.entry, project.entry + window)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[project.entry]
+    dec = project.analyses.Decompiler(function, cfg=cfg)
+    return dec.codegen.text if dec.codegen is not None else None
+
+
 @pytest.mark.skipif(not MANIFEST_PATH.exists(), reason="sample matrix manifest is not available")
 def test_sample_matrix_manifest_has_expected_variant_mix():
     entries = _load_manifest()
@@ -115,3 +129,17 @@ def test_small_model_rep_cmps_block_lifts():
 
     assert "cmpsb" in asm
     assert block.vex.jumpkind == "Ijk_Boring"
+
+
+def test_small_model_entry_function_decompiles_in_bounded_window():
+    recovered_c = _decompile_entry_function("ISOD.EXE")
+
+    assert recovered_c is not None
+    assert "520" in recovered_c
+
+
+def test_medium_model_entry_function_decompiles_in_bounded_window():
+    recovered_c = _decompile_entry_function("IMOD.EXE")
+
+    assert recovered_c is not None
+    assert "526" in recovered_c
