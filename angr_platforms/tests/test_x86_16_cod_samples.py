@@ -19,6 +19,7 @@ _COD_DIR = _ROOT / "cod"
 _F14_COD_DIR = _COD_DIR / "f14"
 _X16_SAMPLES_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 BDA_KEYBOARD_FLAGS_LINEAR = 0x417  # 0x40:0x17 in the BIOS Data Area.
+_OPTIONAL_COMPILER_COD = _COD_DIR / "output_Od_Gs.COD"
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,15 @@ BLOCK_LIFT_CASES = (
         start_offset=0x4E,
     ),
     BlockLiftCase(
+        name="f14_get_cat_heading_segmented_add",
+        cod_name="CARR.COD",
+        proc_name="_GetCatHeading",
+        cod_dir=_F14_COD_DIR,
+        block_addr=0x1000,
+        original_c="return carrier.catpult[cat].heading + carrier.heading;",
+        expected_tokens=("Shl16", "LDle:I16", "Add16", "PUT(ax)"),
+    ),
+    BlockLiftCase(
         name="f14_overlay_loader_block",
         cod_name="OVL.COD",
         proc_name="_dig_load_overlay",
@@ -264,6 +274,9 @@ def _raise_timeout(_signum, _frame):
 
 
 def test_cod_extractor_identifies_relocation_free_and_relocated_samples():
+    if not _OPTIONAL_COMPILER_COD.exists():
+        pytest.skip("optional compiler corpus sample output_Od_Gs.COD is not present in this workspace")
+
     bios_entries = _extract_cod_function("BIOSFUNC.COD", "_bios_clearkeyflags")
     bios_bytes = _join_entries(bios_entries)
 
@@ -297,6 +310,9 @@ def test_bios_cod_sample_decompilation():
 
 
 def test_compiler_idiom_prefix_lifts_from_cod_bytes():
+    if not _OPTIONAL_COMPILER_COD.exists():
+        pytest.skip("optional compiler corpus sample output_Od_Gs.COD is not present in this workspace")
+
     compiler_entries = _extract_cod_function("output_Od_Gs.COD", "_compiler_idiom_test_suite")
     # This relocation-free prefix covers `result = param_int * 2; temp_val = 10;`.
     prefix = _join_entries(compiler_entries, start_offset=0x9, end_offset=0x16)
@@ -322,5 +338,6 @@ def test_cod_block_lift_cases(case: BlockLiftCase):
     block = project.factory.block(case.block_addr)
     irsb_text = block.vex._pp_str()
 
-    assert block.vex.jumpkind == "Ijk_Boring"
+    expected_jumpkind = "Ijk_Ret" if case.name == "f14_get_cat_heading_segmented_add" else "Ijk_Boring"
+    assert block.vex.jumpkind == expected_jumpkind
     _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)

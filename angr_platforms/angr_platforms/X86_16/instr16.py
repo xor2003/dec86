@@ -236,7 +236,7 @@ class Instr16(InstrBase):
     def add_r16_rm16(self):
         r16 = self.get_r16()
         rm16 = self.get_rm16()
-        self.set_r16(Binop('Iop_Add16', r16, rm16))
+        self.set_r16(r16 + rm16)
         # self.emu.update_eflags_add(r16, rm16)  # Temporarily disabled for lifting
 
     def adc_r16_rm16(self) -> None:
