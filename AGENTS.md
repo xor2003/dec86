@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `71 passed`
+- `70 passed, 2 skipped`
 
 ### Focused lint/type-check scope
 
@@ -375,11 +375,24 @@ Useful recent commit in `f15se2-re`:
   - first blocker was unknown opcode `0x1A` (`sbb r8, r/m8`)
   - second blocker was a typed-width bug in `sbb rm16, imm8`, where a 1-bit carry was subtracted from a 16-bit value without widening
   - both are fixed now, and the compare-style suite has direct regressions for them
+- Current bounded `f14` batch triage (`--stop-after-failures 5`) surfaced these exact first-five lift blockers:
+  - `3DPLANES.COD` `_Do3dObject` — timeout
+  - `BULLETS.COD` `_TrackBullets` — timeout
+  - `CARR.COD` `_GetCatHeading` — timeout
+  - `CARR.COD` `_GlideScopeCheck` — timeout
+  - `CARR.COD` `_ils` — timeout
+- Best-next-step result from that batch:
+  - `_GetCatHeading` was the best target because it is tiny and relocation-free
+  - it was narrowed to the segmented direct-memory instruction `26 03 06 0c 00` (`add ax, WORD PTR es:[000Ch]`)
+  - fixing `add_r16_rm16()` to use wrapped VEX arithmetic (`r16 + rm16`) instead of a raw `Binop(...)` removed the `f14` raw-lift failures in the bounded scan
+- Current optional-sample nuance:
+  - `tests/test_x86_16_cod_samples.py` now skips two old `output_Od_Gs.COD` tests if that optional file is not present in the current workspace
 - Recent whole-tree-friendly lifter fixes:
   - `instr16.py` now registers the missing 8-bit ALU opcode families (`0x00/02/04`, `0x08/0A/0C`, `0x10/12/14`, `0x18/1A/1C`, `0x20/22/24`, `0x28/2A/2C`, `0x30/32/34`, `0x38/3A/3C`)
   - `instr_base.py` now implements `adc_al_imm8`, `sbb_rm8_r8`, `sbb_r8_rm8`, and `sbb_al_imm8`
   - `instr16.py` `sbb_rm16_imm8()` now widens both the signed imm8 and CF before subtracting
   - `div_dx_ax_rm16()` no longer crashes body analysis on the old missing `EXP_DE` attribute path
+  - `instr16.py` `add_r16_rm16()` now uses wrapped arithmetic instead of a raw `Binop(...)`, which fixed the segmented-memory `_GetCatHeading` timeout
 - Prefer relocation-free `.COD` helpers first. A fast scan for functions with no `e8 00 00` or `9a 00 00 00 00` usually finds the highest-value regressions quickly.
 - Not every relocation-free helper is a good decompilation oracle. Tiny DGROUP/global-store wrappers can decompile into raw `ds * 16 + offset` stores with no useful symbol recovery. Current example: `CARR.COD` `_SetDLC` was easy to lift but not worth keeping as a human-facing decompilation regression.
 - Use `.COD` in two modes:
