@@ -327,6 +327,13 @@ def test_rcr_ax_1_matches_upstream_x86_vex_effect():
         assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
 
 
+def test_ror_al_1_matches_upstream_x86_vex_effect():
+    state32 = _run_one_instruction_with_flags(ArchX86(), b"\xD0\xC8", ax=0x0081, flags=0)
+    state16 = _run_one_instruction_with_flags(Arch86_16(), b"\xD0\xC8", ax=0x0081, flags=0)
+
+    assert state32.solver.eval(state32.regs.ax) == state16.solver.eval(state16.regs.ax)
+
+
 def test_adc_ax_imm16_matches_upstream_x86_vex_effect():
     state32 = _run_one_instruction_with_flags(ArchX86(), b"\x66\x15\x00\x00", ax=0x0000, flags=1)
     state16 = _run_one_instruction_with_flags(Arch86_16(), b"\x15\x00\x00", ax=0x0000, flags=1)

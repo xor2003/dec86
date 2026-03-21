@@ -285,9 +285,9 @@ class Eflags:
             return
         result = (v >> c) | (v << (size - c))
         
-        # Set carry flag to MSB of result
+        # CF after ROR is the original bit that lands in the new MSB.
         flags = self.get_gpreg(reg16_t.FLAGS)
-        flags = self.set_carry(flags, (result >> (size - 1)) & 1)
+        flags = self.set_carry(flags, (v >> (c - 1)) & 1)
         
         # Set overflow flag if shift count is 1
         if c == 1:

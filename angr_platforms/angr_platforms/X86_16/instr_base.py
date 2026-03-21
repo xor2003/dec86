@@ -590,7 +590,15 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def code_c0(self) -> None:
         reg = self.instr.modrm.reg
-        if reg == 4:
+        if reg == 0:
+            self.rol_rm8_imm8()
+        elif reg == 1:
+            self.ror_rm8_imm8()
+        elif reg == 2:
+            self.rcl_rm8_imm8()
+        elif reg == 3:
+            self.rcr_rm8_imm8()
+        elif reg == 4:
             self.shl_rm8_imm8()
         elif reg == 5:
             self.shr_rm8_imm8()
@@ -645,6 +653,30 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         count = self._group2_rm8_count()
         self.set_rm8(rm8 << count)
         self.emu.update_eflags_shl(rm8, count)
+
+    def rol_rm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self._group2_rm8_count()
+        width = self.emu.constant(8, Type.int_8)
+        self.set_rm8((rm8 << count) | (rm8 >> (width - count)))
+        self.emu.update_eflags_rol(rm8, count)
+
+    def ror_rm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self._group2_rm8_count()
+        width = self.emu.constant(8, Type.int_8)
+        self.set_rm8((rm8 >> count) | (rm8 << (width - count)))
+        self.emu.update_eflags_ror(rm8, count)
+
+    def rcl_rm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self._group2_rm8_count()
+        self._rcl_rm8(rm8, count)
+
+    def rcr_rm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self._group2_rm8_count()
+        self._rcr_rm8(rm8, count)
 
     def shr_rm8(self) -> None:
         rm8 = self.get_rm8()
@@ -717,6 +749,30 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_rm8(rm8 << self.instr.imm8)
         self.emu.update_eflags_shl(rm8, self.emu.constant(self.instr.imm8, Type.int_8))
 
+    def rol_rm8_imm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        width = self.emu.constant(8, Type.int_8)
+        self.set_rm8((rm8 << count) | (rm8 >> (width - count)))
+        self.emu.update_eflags_rol(rm8, count)
+
+    def ror_rm8_imm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        width = self.emu.constant(8, Type.int_8)
+        self.set_rm8((rm8 >> count) | (rm8 << (width - count)))
+        self.emu.update_eflags_ror(rm8, count)
+
+    def rcl_rm8_imm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        self._rcl_rm8(rm8, count)
+
+    def rcr_rm8_imm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        self._rcr_rm8(rm8, count)
+
 
     def shr_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
@@ -732,6 +788,40 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def sar_rm8_imm8(self) -> None:
         rm8_s = self.get_rm8()
         self.set_rm8(rm8_s.sar(self.instr.imm8))
+
+    def _rcl_rm8(self, value, count) -> None:
+        size = 8
+        steps = count % (size + 1)
+        result = value
+        cf = self.emu.get_carry()
+        for _ in range(steps):
+            new_cf = (result >> (size - 1)) & 1
+            result = ((result << 1) | cf.cast_to(Type.int_8)) & self.emu.constant((1 << size) - 1, Type.int_8)
+            cf = new_cf
+        self.set_rm8(result)
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = self.emu.set_carry(flags, cf)
+        if steps == 1:
+            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
+            flags = self.emu.set_overflow(flags, of)
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
+
+    def _rcr_rm8(self, value, count) -> None:
+        size = 8
+        steps = count % (size + 1)
+        result = value
+        cf = self.emu.get_carry()
+        for _ in range(steps):
+            new_cf = result & 1
+            result = (result >> 1) | (cf.cast_to(Type.int_8) << (size - 1))
+            cf = new_cf
+        self.set_rm8(result)
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = self.emu.set_carry(flags, cf)
+        if steps == 1:
+            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
+            flags = self.emu.set_overflow(flags, of)
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
 
     def test_rm8_imm8(self) -> None:
