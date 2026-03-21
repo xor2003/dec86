@@ -118,6 +118,16 @@ Run from `/home/xor/vextest/angr_platforms`:
 Expected status as of 2026-03-20:
 - `63 passed`
 
+### Focused lint/type-check scope
+
+- `pyproject.toml` now targets `ruff` and `mypy` primarily at:
+  - `angr_platforms/X86_16/*.py`
+  - the `tests/test_x86_16*.py` files
+  - `tests/conftest.py`
+- This is intentional: it keeps lint/type work centered on the x86-16 lifter/decompiler surface we are actively enhancing instead of the whole historical repo.
+- Current local nuance:
+  - the repo `venv` still does not have `ruff` or `mypy` installed, so `../venv/bin/python -m ruff ...` and `../venv/bin/python -m mypy` currently fail with `No module named ...`
+
 ### Recent BIOS `.COD` fix
 
 - The former BIOS `.COD` `xfail` in `tests/test_x86_16_cod_samples.py` was fixed.
@@ -184,6 +194,7 @@ Expected status as of 2026-03-20:
   - `scasw`
   - `rcr ax, 1` (compared against 32-bit `0x66 0xD1 0xD8`)
   - `adc ax, imm16` (compared against 32-bit `0x66 0x15 ...`)
+  - `sar al, 1` result regression (compared against 32-bit `0xD0 0xF8`)
   - `loop rel8` (compared against 32-bit `0x67 0xE2 ...` using relative-target equivalence)
   - `cmpsb` (compared against 32-bit `0x67 0xA6`)
   - direct execution tests for `les` and `lds` far-pointer loads
@@ -201,6 +212,9 @@ Expected status as of 2026-03-20:
   - added `0x8f /0` support for `pop r/m16`
 - `angr_platforms/angr_platforms/X86_16/instr_base.py`
   - fixed `iret()` to return to `v2p(cs, ip)` instead of crashing on an undefined `laddr`
+  - `code_d0_d2()` is now a clearer lazy name-based dispatch table instead of a long `if/elif` chain
+  - real bug found while improving readability: `reg == 7` (`sar r/m8`) had been unreachable because the old code repeated `reg == 5`
+  - `shl_rm8()`, `shr_rm8()`, and `sar_rm8()` now exist for the Group-2 byte-op path
 - `angr_platforms/angr_platforms/X86_16/processor.py`
   - fixed `get_carry()` to return a real wrapped bit expression (`flags[0]`) instead of a raw `Binop`, which had been breaking rotate-through-carry lifting
 
@@ -345,6 +359,7 @@ Useful recent commit in `f15se2-re`:
   - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`
 - When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
 - If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
+- If the data result matches but the flags still diverge, it is still worth landing the narrower regression and documenting the remaining flag gap explicitly. Current example: `sar al, 1`.
 - If the equivalent upstream compare is awkward or absent, prefer a real `.COD` regression in `tests/test_x86_16_cod_samples.py` over adding a brittle synthetic test.
 - For loop or array-copy helpers, block-level VEX checks are often more stable than decompiler-text checks. Useful anchors in `irsb._pp_str()` are:
   - `Shl16` for scaled indices
