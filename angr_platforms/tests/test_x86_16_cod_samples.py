@@ -211,3 +211,15 @@ def test_f14_config_crts_loop_block_lifts_from_cod_bytes():
     assert "LDle:I16" in irsb_text
     assert "STle" in irsb_text
     assert "0x0008" in irsb_text
+
+
+def test_f14_lookdown_decompilation_from_cod_bytes():
+    entries = _extract_cod_function("COCKPIT.COD", "_LookDown", cod_dir=_F14_COD_DIR)
+    project = _project_from_bytes(_join_entries(entries))
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+
+    assert dec.codegen is not None
+    for token in ("50", "27", "25", "39"):
+        assert token in dec.codegen.text
