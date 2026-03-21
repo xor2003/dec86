@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-21:
-- `80 passed, 2 skipped`
+- `82 passed, 2 skipped`
 
 ### Focused lint/type-check scope
 
@@ -326,9 +326,13 @@ Expected status as of 2026-03-21:
 - Current stable anchors:
   - `ISOD.EXE` recovered entry C contains `520`
   - `IMOD.EXE` recovered entry C contains `526`
+  - `IMOD.EXE` recovered entry C also now contains seeded far-call names such as `sub_1380()` and `sub_161f()`
 - Interpretation:
   - this is good evidence that angr is a viable base for small DOS real-mode `.EXE` decompilation
   - current weaknesses are mostly decompilation quality issues around calling conventions, stack tracking, and startup-code readability, not basic loader/lifter viability
+- Current nuance:
+  - the helper-assisted bounded CFG makes the recovered C much more readable for medium-model startup code
+  - angr decompiler warnings about `callee None` still remain, so callsite recovery inside the decompiler is not fully solved yet
 
 ### Real sample corpus
 
@@ -350,6 +354,17 @@ Expected status as of 2026-03-21:
   - intended usage:
     - `cd /home/xor/vextest/angr_platforms && ../venv/bin/python scripts/inspect_x86_16_flow.py x16_samples/ISOD.EXE --blocks 1`
   - it prints recovered blocks, jump kinds, next targets, asm, and VEX side by side for a bounded function window
+- Bounded far-call recovery helpers:
+  - `/home/xor/vextest/angr_platforms/angr_platforms/X86_16/analysis_helpers.py`
+  - current helpers:
+    - `collect_direct_far_call_targets(function)` recovers immediate far-call `seg:off` targets directly from the entry function blocks
+    - `extend_cfg_for_far_calls(project, function, entry_window=..., callee_window=...)` reruns bounded `CFGFast` with those targets seeded as extra function starts/regions
+  - this is now used by:
+    - `tests/test_x86_16_sample_matrix.py`
+    - `/home/xor/vextest/decompile.py`
+  - motivation:
+    - medium-model DOS startup code uses many immediate far calls that stock angr CFG still collapses to bogus `0x14`-style call targets
+    - seeding the direct far callees materially improves user-visible decompiled C without requiring a wide CFG scan
 - Main files:
   - `x16_samples/intdemo.c`
   - `x16_samples/IDEMO.C`
@@ -416,6 +431,7 @@ Useful recent commit in `f15se2-re`:
 - Keep using `.COD` files as a decompilation-quality oracle whenever possible.
 - Good next targets:
   - extend real-binary coverage beyond entry-block loading
+  - improve decompiler-side far-call target recovery so clinic/callsite_maker stop reporting `callee None` on medium-model startup code
   - run/decompile more of the sample matrix end-to-end, not just entry or tiny runtime paths
   - sample-matrix decompilation currently gets farther, but still needs more real-code instruction coverage beyond the new `stos*`, `lods*`, `scas*`, `lds`, and `les` support
   - add stronger semantic checks for interrupt-heavy samples, especially BIOS data-area interactions such as `0x417`
@@ -449,6 +465,11 @@ Useful recent commit in `f15se2-re`:
   - fixing `add_r16_rm16()` to use wrapped VEX arithmetic (`r16 + rm16`) instead of a raw `Binop(...)` removed the `f14` raw-lift failures in the bounded scan
 - Current optional-sample nuance:
   - `tests/test_x86_16_cod_samples.py` now skips two old `output_Od_Gs.COD` tests if that optional file is not present in the current workspace
+- For medium-model `.EXE` decompilation, prefer the new bounded far-call helper flow over widening the CFG region blindly:
+  - `collect_direct_far_call_targets()` is good for quick inspection and tests
+  - `extend_cfg_for_far_calls()` is the current best way to improve user-visible entry-function decompilation without triggering unrelated unsupported code paths
+  - current stable real targets discovered in `IMOD.EXE` entry startup code include `0x111A`, `0x121E`, `0x1380`, and `0x161F`
+  - current honest limitation: this improves recovered C, but it does not yet suppress decompiler warnings about unknown calling conventions or `callee None`
 - Recent whole-tree-friendly lifter fixes:
   - `instr16.py` now registers the missing 8-bit ALU opcode families (`0x00/02/04`, `0x08/0A/0C`, `0x10/12/14`, `0x18/1A/1C`, `0x20/22/24`, `0x28/2A/2C`, `0x30/32/34`, `0x38/3A/3C`)
   - `instr_base.py` now implements `adc_al_imm8`, `sbb_rm8_r8`, `sbb_r8_rm8`, and `sbb_al_imm8`
