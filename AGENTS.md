@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `59 passed`
+- `60 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -224,6 +224,8 @@ Expected status as of 2026-03-20:
   - Current stable recovered features from that sample: `% 80`, `% 25`, and a clean `return` path.
   - `NHORZ.COD` `_ChangeWeather` is also relocation-free and now has direct decompilation coverage.
   - Current stable recovered features from that sample: the original weather constants `8150`, `500`, `125`, and `1000`.
+  - `PLANES3.COD` `_Ready5` is also relocation-free and now has direct decompilation coverage.
+  - Current stable recovered features from that sample: the original struct-stride constants `46` and `18`, plus a clean `return` path.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
