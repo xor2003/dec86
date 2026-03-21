@@ -254,6 +254,8 @@ Expected status as of 2026-03-20:
   - Current stable recovered features from that sample: the `MouseX = x * 2` scaling, a clean early-return path, and the mouse interrupt call site.
   - `x16_samples/ISOD.COD` `query_interrupts` now has direct block-lifting coverage for its relocation-free setup prefix before the first `_int86` call.
   - Current stable lifted features from that sample: `inregs.h.ah = 0x30`, `int86(0x21, ...)` setup, and the expected fallthrough IP before the unresolved call site.
+  - `cod/default/MAX.COD` `_max` now has direct block-lifting coverage for its relocation-free compare/return body after the `__chkstk` prologue call.
+  - Current stable lifted features from that sample: the `x > y` compare path, the two return-target branches, and the expected body-only fallthrough shape.
   - `CARR.COD` `_InBox` now has direct block-lifting coverage for its entry bounds-check block.
   - Current stable lifted features from that sample: unsigned compare IR (`CmpGT16U`) and the two source-corresponding branch targets for the `return 0` and `return 1` paths.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
@@ -373,6 +375,8 @@ Useful recent commit in `f15se2-re`:
   - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`, `CARR.COD` `_InBox`
 - Good current `x16_samples` block-prefix seed:
   - `ISOD.COD` `query_interrupts` prefix from `0x35` to `0x4e`, which keeps the setup for `inregs.h.ah = 0x30; int86(0x21, &inregs, &outregs);` while avoiding the unresolved relocation on the call itself
+- Good current `cod/default` simple body seed:
+  - `MAX.COD` `_max` body from `0x4e` onward, which skips the unresolved `__chkstk` prologue call and keeps the source-intent-rich `if (x > y) return x; return y;` compare/return body
 - When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
 - If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
 - If the data result matches but the flags still diverge, it is still worth landing the narrower regression and documenting the remaining flag gap explicitly. Current example: `sar al, 1`.
