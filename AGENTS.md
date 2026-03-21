@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `62 passed`
+- `63 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -230,6 +230,8 @@ Expected status as of 2026-03-20:
   - Current stable lifted features from that sample: scaled index via `Shl16`, source offset `0x0222`, `LDle:I16` / `STle`, and loop bound `8`.
   - `COCKPIT.COD` `_LookDown` now has direct decompilation coverage.
   - Current stable recovered features from that sample: the original UI/layout constants `50`, `27`, `25`, and `39`.
+  - `COCKPIT.COD` `_LookUp` now has direct decompilation coverage.
+  - Current stable recovered features from that sample: the original UI/layout constants `150`, `138`, `136`, and `139`.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
@@ -339,7 +341,7 @@ Useful recent commit in `f15se2-re`:
   - decompilation regression when the recovered C stays bounded and preserves stable constants or operators
   - block-lift regression when full decompilation is too slow or too noisy, but a real block still exercises a missing opcode, loop, or segmented access
 - Good current `f14` seeds:
-  - decompilation-friendly: `MONOPRIN.COD` `_mset_pos`, `NHORZ.COD` `_ChangeWeather`, `PLANES3.COD` `_Ready5`
+  - decompilation-friendly: `MONOPRIN.COD` `_mset_pos`, `NHORZ.COD` `_ChangeWeather`, `PLANES3.COD` `_Ready5`, `COCKPIT.COD` `_LookDown`, `COCKPIT.COD` `_LookUp`
   - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`
 - When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
 - If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
@@ -352,7 +354,7 @@ Useful recent commit in `f15se2-re`:
 - For source-backed decompilation assertions, prefer stable tokens from the original source:
   - constants like `8150`, `500`, `125`, `1000`
   - stride constants like `46` and `18`
-  - UI/layout constants like `50`, `27`, `25`, and `39`
+  - UI/layout constants like `50`, `27`, `25`, `39`, `150`, `138`, `136`, and `139`
   - operators like `% 80` and `% 25`
   - `return`
 - When branch recovery is still ugly, constant-rich helpers are often better regression targets than predicate-heavy helpers. Current example: `COCKPIT.COD` `_LookDown` is a better decompilation oracle than `CARR.COD` `_InBox`.
