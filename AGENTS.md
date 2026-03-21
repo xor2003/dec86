@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-21:
-- `82 passed, 2 skipped`
+- `83 passed, 2 skipped`
 
 ### Focused lint/type-check scope
 
@@ -358,6 +358,7 @@ Expected status as of 2026-03-21:
   - `/home/xor/vextest/angr_platforms/angr_platforms/X86_16/analysis_helpers.py`
   - current helpers:
     - `collect_direct_far_call_targets(function)` recovers immediate far-call `seg:off` targets directly from the entry function blocks
+    - `patch_far_call_sites(function, far_targets)` rewrites `Function._call_sites` for those direct far-call sites so `Function.get_call_target()` returns the real linear callee address instead of a bogus short target like `0x14`
     - `extend_cfg_for_far_calls(project, function, entry_window=..., callee_window=...)` reruns bounded `CFGFast` with those targets seeded as extra function starts/regions
   - this is now used by:
     - `tests/test_x86_16_sample_matrix.py`
@@ -469,7 +470,7 @@ Useful recent commit in `f15se2-re`:
   - `collect_direct_far_call_targets()` is good for quick inspection and tests
   - `extend_cfg_for_far_calls()` is the current best way to improve user-visible entry-function decompilation without triggering unrelated unsupported code paths
   - current stable real targets discovered in `IMOD.EXE` entry startup code include `0x111A`, `0x121E`, `0x1380`, and `0x161F`
-  - current honest limitation: this improves recovered C, but it does not yet suppress decompiler warnings about unknown calling conventions or `callee None`
+  - current honest limitation: this improves recovered C and `Function.get_call_target()`, but it does not yet suppress decompiler warnings about unknown calling conventions or `callee None`
 - Recent whole-tree-friendly lifter fixes:
   - `instr16.py` now registers the missing 8-bit ALU opcode families (`0x00/02/04`, `0x08/0A/0C`, `0x10/12/14`, `0x18/1A/1C`, `0x20/22/24`, `0x28/2A/2C`, `0x30/32/34`, `0x38/3A/3C`)
   - `instr_base.py` now implements `adc_al_imm8`, `sbb_rm8_r8`, `sbb_r8_rm8`, and `sbb_al_imm8`
