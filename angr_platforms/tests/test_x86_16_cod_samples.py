@@ -184,3 +184,15 @@ def test_f14_change_weather_decompilation_from_cod_bytes():
     assert dec.codegen is not None
     for token in ("8150", "500", "125", "1000"):
         assert token in dec.codegen.text
+
+
+def test_f14_ready5_decompilation_from_cod_bytes():
+    entries = _extract_cod_function("PLANES3.COD", "_Ready5", cod_dir=_F14_COD_DIR)
+    project = _project_from_bytes(_join_entries(entries))
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+
+    assert dec.codegen is not None
+    for token in ("46", "18", "return"):
+        assert token in dec.codegen.text
