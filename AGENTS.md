@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-20:
-- `60 passed`
+- `61 passed`
 
 ### Recent BIOS `.COD` fix
 
@@ -226,6 +226,8 @@ Expected status as of 2026-03-20:
   - Current stable recovered features from that sample: the original weather constants `8150`, `500`, `125`, and `1000`.
   - `PLANES3.COD` `_Ready5` is also relocation-free and now has direct decompilation coverage.
   - Current stable recovered features from that sample: the original struct-stride constants `46` and `18`, plus a clean `return` path.
+  - `COCKPIT.COD` `_ConfigCrts` now has direct block-lifting coverage for its indexed copy loop.
+  - Current stable lifted features from that sample: scaled index via `Shl16`, source offset `0x0222`, `LDle:I16` / `STle`, and loop bound `8`.
 - A real sample-matrix crash site at `ISOD.EXE:0x1267` (`f3 a6`, `rep cmpsb`) is now covered and lifts successfully.
   - Root cause: `cmpsb/cmpsw` still had legacy handwritten logic; `cmpsb` used `self.emu.ES` as a nonexistent attribute and mixed repeat-condition widths incorrectly.
   - Fix: `cmpsb/cmpsw` were moved onto the same single-step/update/jump style as the newer string ops, and the `cmpsb` real-code block now lifts under test.
@@ -327,3 +329,28 @@ Useful recent commit in `f15se2-re`:
   - add stronger semantic checks for interrupt-heavy samples, especially BIOS data-area interactions such as `0x417`
   - improve decompilation quality for the BIOS `.COD` sample now that it no longer crashes
   - keep improving user-facing names/docs for BIOS Data Area symbols such as `0x417` (`0x40:0x17`, keyboard flag byte 0)
+
+### Tips And Tricks For Next Agents
+
+- Prefer relocation-free `.COD` helpers first. A fast scan for functions with no `e8 00 00` or `9a 00 00 00 00` usually finds the highest-value regressions quickly.
+- Use `.COD` in two modes:
+  - decompilation regression when the recovered C stays bounded and preserves stable constants or operators
+  - block-lift regression when full decompilation is too slow or too noisy, but a real block still exercises a missing opcode, loop, or segmented access
+- Good current `f14` seeds:
+  - decompilation-friendly: `MONOPRIN.COD` `_mset_pos`, `NHORZ.COD` `_ChangeWeather`, `PLANES3.COD` `_Ready5`
+  - block-lift-friendly: `OVL.COD` `_dig_load_overlay`, `COCKPIT.COD` `_ConfigCrts`
+- When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
+- If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
+- If the equivalent upstream compare is awkward or absent, prefer a real `.COD` regression in `tests/test_x86_16_cod_samples.py` over adding a brittle synthetic test.
+- For loop or array-copy helpers, block-level VEX checks are often more stable than decompiler-text checks. Useful anchors in `irsb._pp_str()` are:
+  - `Shl16` for scaled indices
+  - absolute DGROUP offsets like `0x0222`
+  - `LDle:I16` / `STle`
+  - loop-bound constants like `0x0008`
+- For source-backed decompilation assertions, prefer stable tokens from the original source:
+  - constants like `8150`, `500`, `125`, `1000`
+  - stride constants like `46` and `18`
+  - operators like `% 80` and `% 25`
+  - `return`
+- Avoid asserting on variable names in decompiler output. They still drift a lot on x86-16 and create low-value churn.
+- The first `unicornlib.so` warning is expected in many local probes and is not the bug unless the actual lift/decompile fails afterwards.
