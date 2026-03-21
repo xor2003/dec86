@@ -196,3 +196,18 @@ def test_f14_ready5_decompilation_from_cod_bytes():
     assert dec.codegen is not None
     for token in ("46", "18", "return"):
         assert token in dec.codegen.text
+
+
+def test_f14_config_crts_loop_block_lifts_from_cod_bytes():
+    entries = _extract_cod_function("COCKPIT.COD", "_ConfigCrts", cod_dir=_F14_COD_DIR)
+    project = _project_from_bytes(_join_entries(entries))
+
+    block = project.factory.block(0x100B)
+    irsb_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "Shl16" in irsb_text
+    assert "0x0222" in irsb_text
+    assert "LDle:I16" in irsb_text
+    assert "STle" in irsb_text
+    assert "0x0008" in irsb_text
