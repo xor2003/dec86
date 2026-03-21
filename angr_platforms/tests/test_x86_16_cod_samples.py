@@ -121,6 +121,15 @@ DECOMP_CASES = (
 
 BLOCK_LIFT_CASES = (
     BlockLiftCase(
+        name="isod_query_interrupts_setup",
+        cod_name="ISOD.COD",
+        proc_name="query_interrupts",
+        cod_dir=_X16_SAMPLES_DIR,
+        block_addr=0x1000,
+        original_c="inregs.h.ah = 0x30; int86(0x21, &inregs, &outregs);",
+        expected_tokens=("STle(t14) = 0x30", "PUT(ax) = 0x0021", "PUT(ip) = 0x1019"),
+    ),
+    BlockLiftCase(
         name="f14_overlay_loader_block",
         cod_name="OVL.COD",
         proc_name="_dig_load_overlay",
@@ -294,7 +303,11 @@ def test_cod_decompilation_cases(case: DecompCase):
 @pytest.mark.parametrize("case", BLOCK_LIFT_CASES, ids=lambda case: case.name)
 def test_cod_block_lift_cases(case: BlockLiftCase):
     entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=case.cod_dir, proc_kind=case.proc_kind)
-    project = _project_from_bytes(_join_entries(entries))
+    code = _join_entries(entries)
+    if case.name == "isod_query_interrupts_setup":
+        code = _join_entries(entries, start_offset=0x35, end_offset=0x4E)
+
+    project = _project_from_bytes(code)
     block = project.factory.block(case.block_addr)
     irsb_text = block.vex._pp_str()
 
