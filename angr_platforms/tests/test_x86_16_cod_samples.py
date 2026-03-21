@@ -42,6 +42,8 @@ class BlockLiftCase:
     expected_tokens: tuple[str, ...]
     cod_dir: Path | None = None
     proc_kind: str = "NEAR"
+    start_offset: int | None = None
+    end_offset: int | None = None
 
 
 DECOMP_CASES = (
@@ -128,6 +130,18 @@ BLOCK_LIFT_CASES = (
         block_addr=0x1000,
         original_c="inregs.h.ah = 0x30; int86(0x21, &inregs, &outregs);",
         expected_tokens=("STle(t14) = 0x30", "PUT(ax) = 0x0021", "PUT(ip) = 0x1019"),
+        start_offset=0x35,
+        end_offset=0x4E,
+    ),
+    BlockLiftCase(
+        name="default_max_compare_body",
+        cod_name="MAX.COD",
+        proc_name="_max",
+        cod_dir=_COD_DIR / "default",
+        block_addr=0x1000,
+        original_c="if (x > y) return x; return y;",
+        expected_tokens=("CmpGT16U", "PUT(ip) = 0x1008", "PUT(ip) = 0x100e", "LDle:I16"),
+        start_offset=0x4E,
     ),
     BlockLiftCase(
         name="f14_overlay_loader_block",
@@ -303,10 +317,7 @@ def test_cod_decompilation_cases(case: DecompCase):
 @pytest.mark.parametrize("case", BLOCK_LIFT_CASES, ids=lambda case: case.name)
 def test_cod_block_lift_cases(case: BlockLiftCase):
     entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=case.cod_dir, proc_kind=case.proc_kind)
-    code = _join_entries(entries)
-    if case.name == "isod_query_interrupts_setup":
-        code = _join_entries(entries, start_offset=0x35, end_offset=0x4E)
-
+    code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
     project = _project_from_bytes(code)
     block = project.factory.block(case.block_addr)
     irsb_text = block.vex._pp_str()
