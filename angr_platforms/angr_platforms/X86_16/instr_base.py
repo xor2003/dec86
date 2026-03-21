@@ -1,4 +1,6 @@
-from typing import TYPE_CHECKING, Any, Callable, Dict
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
@@ -18,7 +20,10 @@ CHSZ_AD: int = 2
 
 
 import logging
+
 logger = logging.getLogger(__name__)
+
+OpcodeHandler = Callable[..., None]
 
 class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
@@ -26,8 +31,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         super(ExecInstr, self).__init__(emu, instr, mode32)  # ParseInstr
         super(ParseInstr, self).__init__(emu, instr, mode32)  # EmuInstr
         self.emu = emu
-        self.instrfuncs: Dict[int, Callable[[Dict[str, Any]], None]] = {}
-        self.chk: Dict[int, int] = {}
+        self.instrfuncs: dict[int, OpcodeHandler] = {}
+        self.chk: dict[int, int] = {}
         self.chsz_ad = False
 
         self.set_funcflag(0x00, self.add_rm8_r8, CHK_MODRM)
@@ -123,28 +128,31 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_funcflag(0xFE, self.code_fe, CHK_MODRM)
 
 
-    def code_d0_d2(self):
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.rol_rm8()
-        elif reg == 1:
-            self.ror_rm8()
-        elif reg == 2:
-            self.rcl_rm8()
-        elif reg == 3:
-            self.rcr_rm8()
-        elif reg == 4:
-            self.shl_rm8()  # sal
-        elif reg == 5:
-            self.shr_rm8()
-        elif reg == 6:
-            self.shl_rm8()  # sal
-        elif reg == 5:
-            self.sar_rm8()
-        else:
-            raise RuntimeError(f"not implemented: 0xd0_d2 /{reg}")
+    def code_d0_d2(self) -> None:
+        """
+        Handle the x86 Group-2 byte shifts/rotates used by opcodes 0xD0 and 0xD2.
 
-    def set_funcflag(self, opcode: int, func: Callable[[Dict[str, Any]], None], flags: int):
+        Keeping this as an explicit dispatch table makes it easier to audit when
+        a real sample trips over one of the rarely used `/digit` encodings.
+        """
+
+        group2_handler_names = {
+            0: "rol_rm8",
+            1: "ror_rm8",
+            2: "rcl_rm8",
+            3: "rcr_rm8",
+            4: "shl_rm8",  # SHL
+            5: "shr_rm8",
+            6: "shl_rm8",  # SAL aliases SHL on x86
+            7: "sar_rm8",
+        }
+        reg = self.instr.modrm.reg
+        handler_name = group2_handler_names.get(reg)
+        if handler_name is None:
+            raise RuntimeError(f"not implemented: 0xd0_d2 /{reg}")
+        cast(OpcodeHandler, getattr(self, handler_name))()
+
+    def set_funcflag(self, opcode: int, func: OpcodeHandler, flags: int) -> None:
         if opcode >> 8 == 0x0F:
             opcode = (opcode & 0xFF) | 0x0100
         assert opcode < 0x200
@@ -590,6 +598,34 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             self.dec_rm8()
         else:
             raise RuntimeError(f"not implemented: 0xf6 /{reg}")
+
+    def _group2_rm8_count(self):
+        """
+        Resolve the implicit shift/rotate count for opcodes 0xD0 and 0xD2.
+
+        0xD0 uses a fixed count of 1, while 0xD2 uses CL.
+        """
+
+        if self.instr.opcode == 0xD2:
+            return self.emu.get_gpreg(reg8_t.CL)
+        return self.emu.constant(1, Type.int_8)
+
+    def shl_rm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self._group2_rm8_count()
+        self.set_rm8(rm8 << count)
+        self.emu.update_eflags_shl(rm8, count)
+
+    def shr_rm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self._group2_rm8_count()
+        self.set_rm8(rm8 >> count)
+        self.emu.update_eflags_shr(rm8, count)
+
+    def sar_rm8(self) -> None:
+        rm8 = self.get_rm8()
+        count = self._group2_rm8_count()
+        self.set_rm8(rm8.sar(count))
 
     def inc_rm8(self) -> None:
         rm8 = self.get_rm8() + 1

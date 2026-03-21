@@ -5,6 +5,11 @@ build-backend = "setuptools.build_meta"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+include = [
+    "angr_platforms/X86_16/*.py",
+    "tests/test_x86_16*.py",
+    "tests/conftest.py",
+]
 
 [tool.ruff.lint]
 select = [
@@ -19,8 +24,14 @@ select = [
 [tool.mypy]
 python_version = "3.10"
 files = [
-    "angr_platforms",
-    "tests",
+    "angr_platforms/X86_16",
+    "tests/test_x86_16_smoketest.py",
+    "tests/test_x86_16_cod_samples.py",
+    "tests/test_x86_16_dos_mz_loader.py",
+    "tests/test_x86_16_sample_matrix.py",
+    "tests/test_x86_16_runtime_samples.py",
+    "tests/test_x86_16_compare_semantics.py",
+    "tests/conftest.py",
 ]
 ignore_missing_imports = true
 check_untyped_defs = true

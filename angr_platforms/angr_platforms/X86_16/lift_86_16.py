@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import bitstring
 import pyvex
@@ -21,7 +22,7 @@ from .regs import reg16_t
 logger = logging.getLogger(__name__)
 
 
-def _bitstream_is_empty(bitstrm):
+def _bitstream_is_empty(bitstrm: bitstring.ConstBitStream) -> bool:
     try:
         bitstrm.peek(1)
         return False
@@ -36,11 +37,11 @@ class _LifterInstructionFacade:
     helpers like _append_stmt() and _settmp() still live on the IRSB customizer.
     """
 
-    def __init__(self, irsb_c, instruction):
+    def __init__(self, irsb_c: Any, instruction: Instruction) -> None:
         self._irsb_c = irsb_c
         self._instruction = instruction
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         if hasattr(self._instruction, name):
             return getattr(self._instruction, name)
         return getattr(self._irsb_c, name)
