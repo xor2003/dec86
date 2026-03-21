@@ -116,7 +116,7 @@ Run from `/home/xor/vextest/angr_platforms`:
 ```
 
 Expected status as of 2026-03-21:
-- `73 passed, 2 skipped`
+- `78 passed, 2 skipped`
 
 ### Focused lint/type-check scope
 
@@ -192,6 +192,22 @@ Expected status as of 2026-03-21:
 - Regression coverage:
   - `tests/test_x86_16_smoketest.py::test_indirect_near_call_lifts_as_call_edge`
   - this checks `mov ax, 0x1005; call ax; ret` and verifies the block stops at the indirect call instead of folding in the trailing `ret`
+- Far-control-flow paths were tightened too:
+  - `retf_imm16()` in `instr_base.py` had two real bugs:
+    - it called nonexistent `self.set_gpreg(...)` instead of `self.emu.set_gpreg(...)`
+    - it adjusted `SP` before popping `IP`/`CS`, which is the wrong order for `retf imm16`
+  - `access.py` now has a real `jmpf()` helper for far jumps
+  - `access.py` `callf()` now accepts an explicit `return_ip`, which avoids hardcoding the 5-byte immediate far-call case for all far calls
+  - `InstrData` now tracks `prefix_len` and total `size`
+  - `parse.py` now records total instruction size during parsing
+  - `callf_m16_16()` now uses the parsed instruction size for its return address instead of a guessed constant
+- Current regression coverage in `tests/test_x86_16_smoketest.py` now includes:
+  - immediate far call
+  - immediate far jump
+  - indirect far call
+  - indirect far jump
+  - `retf imm16`
+  - indirect near call
 
 ### Compare-based instruction semantics
 
@@ -448,6 +464,8 @@ Useful recent commit in `f15se2-re`:
 - For control-flow troubleshooting, inspect block shape before you inspect decompiler text.
   - `scripts/inspect_x86_16_flow.py` is the fastest way to confirm whether a block actually ends at the `call`, `jmp`, `int`, or `iret` you expect.
   - This mattered for the real `call r/m16` bug: the decompiler symptom was vague, but the block shape made the root cause obvious.
+- If a control-flow helper needs the next IP, prefer using parsed instruction size instead of hardcoded byte counts unless the encoding is truly fixed-width.
+  - This mattered for far calls: immediate `9A ptr16:16` is 5 bytes, but indirect `FF /3` is variable-length.
 - When probing new real samples, start with a 4-5 second alarm-bounded single-function blob analysis before trying whole-program CFG. This avoids the RAM/CPU blowups the user complained about.
 - If a real sample exposes a missing opcode, add the smallest compare-style semantic regression in `tests/test_x86_16_compare_semantics.py` when upstream x86 VEX has an equivalent encoding.
 - If the data result matches but the flags still diverge, it is still worth landing the narrower regression and documenting the remaining flag gap explicitly. Current example: `sar al, 1`.
