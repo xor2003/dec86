@@ -635,6 +635,16 @@ def test_cbw_matches_upstream_x86_vex_effect():
     )
 
 
+def test_inc_ax_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x40",
+        b"\x66\x40",
+        regs={"ax": 0x7FFF, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(4, 6, 7, 11),
+    )
+
+
 def test_cwd_matches_upstream_x86_vex_effect():
     _assert_same_reg_effect_with_flags(
         b"\x99",
@@ -661,6 +671,47 @@ def test_test_ax_cx_matches_upstream_x86_vex_effect():
         b"\x66\x85\xC8",
         regs={"ax": 0x1234, "cx": 0x00F0, "flags": 0xFFFF},
         compare_regs=(),
+        compare_flag_bits=(0, 4, 6, 7, 11),
+    )
+
+
+def test_or_ax_imm16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x0D\x5B\xDF",
+        b"\x66\x0D\x5B\xDF",
+        regs={"ax": 0x2104, "flags": 0xFFFF},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 4, 6, 7, 11),
+    )
+
+
+def test_and_ax_imm16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x25\x8D\x26",
+        b"\x66\x25\x8D\x26",
+        regs={"ax": 0xFFFF, "flags": 0xFFFF},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 4, 6, 7, 11),
+    )
+
+
+def test_xor_ax_imm16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x35\x00\x00",
+        b"\x66\x35\x00\x00",
+        regs={"ax": 0x0000, "flags": 0xFFFF},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 4, 6, 7, 11),
+    )
+
+
+def test_xor_al_imm8_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x34\x96",
+        b"\x34\x96",
+        regs={"ax": 0x0082, "flags": 0xFFFF},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 4, 6, 7, 11),
     )
 
 

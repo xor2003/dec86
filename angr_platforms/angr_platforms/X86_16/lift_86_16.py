@@ -164,7 +164,7 @@ class Instruction_ANY(Instruction):
             return ("leave",)
         if self.cs.mnemonic == "enter" and len(ops) == 2 and all(op.type == 2 for op in ops):
             return ("enter", ops[0].imm & 0xFFFF, ops[1].imm & 0xFF)
-        if self.cs.mnemonic in {"push", "pop", "inc"} and len(ops) == 1:
+        if self.cs.mnemonic in {"push", "pop"} and len(ops) == 1:
             reg_name = self._reg16_name(ops[0])
             mem = self._bp_mem(ops[0])
             if reg_name:
@@ -201,15 +201,13 @@ class Instruction_ANY(Instruction):
             return ("mov_mem_imm16", dst_mem, src_imm)
         if self.cs.mnemonic == "lea" and dst_reg and src_mem:
             return ("lea_reg_bpdisp16", dst_reg, src_mem)
-        if self.cs.mnemonic in {"add", "sub", "xor", "and", "or", "cmp"} and dst_reg:
+        if self.cs.mnemonic == "cmp" and dst_reg:
             if src_reg:
                 return (f"{self.cs.mnemonic}_reg_reg16", dst_reg, src_reg)
             if src_mem:
                 return (f"{self.cs.mnemonic}_reg_mem16", dst_reg, src_mem)
             if src_imm is not None:
                 return (f"{self.cs.mnemonic}_reg_imm16", dst_reg, src_imm)
-        if self.cs.mnemonic in {"add", "sub"} and dst_reg in {"sp", "bp"} and src_imm is not None:
-            return (f"{self.cs.mnemonic}_reg_imm16", dst_reg, src_imm)
         return None
 
     def _reg16_name(self, operand):

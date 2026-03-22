@@ -112,7 +112,7 @@ class Eflags:
         flags = self.set_flag(flags, 4, self._adjust_flag(v1, self.constant(1, v1.ty), result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
-        flags = self.set_overflow(flags, v1 == self.constant(1 << (size - 1), v1.ty))
+        flags = self.set_overflow(flags, v1 == self.constant((1 << (size - 1)) - 1, v1.ty))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_add(self, v1, v2):
@@ -157,6 +157,7 @@ class Eflags:
 
         flags = self.set_carry(flags, self.constant(0))
         flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self.constant(0, Type.int_1))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, self.constant(0))
@@ -170,6 +171,7 @@ class Eflags:
 
         flags = self.set_carry(flags, self.constant(0))
         flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self.constant(0, Type.int_1))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, self.constant(0))
@@ -214,6 +216,7 @@ class Eflags:
 
         flags = self.set_carry(flags, self.constant(0))
         flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self.constant(0, Type.int_1))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, self.constant(0))

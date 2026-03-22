@@ -970,6 +970,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def xor_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
         self.set_rm8(rm8 ^ self.instr.imm8)
+        self.emu.update_eflags_xor(rm8, self.instr.imm8)
 
 
     def cmp_rm8_imm8(self) -> None:
