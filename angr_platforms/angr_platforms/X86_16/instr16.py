@@ -1369,8 +1369,7 @@ class Instr16(InstrBase):
 
     def test_rm16_imm16(self):
         rm16 = self.get_rm16()
-        imm16 = self.instr.modrm.imm16  # self.emu.get_code16(0)
-        #self.emu.update_eip(2)
+        imm16 = self.instr.imm16
         self.emu.update_eflags_and(rm16, imm16)
 
     def not_rm16(self):

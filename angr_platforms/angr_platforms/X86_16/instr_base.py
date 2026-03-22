@@ -1085,7 +1085,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def neg_rm8(self) -> None:
         rm8 = self.get_rm8()
         self.set_rm8(self.emu.constant(0, Type.int_8) - rm8)
-        self.emu.update_eflags_sub(0, rm8)
+        self.emu.update_eflags_sub(self.emu.constant(0, Type.int_8), rm8)
 
 
     def mul_ax_al_rm8(self) -> None:
