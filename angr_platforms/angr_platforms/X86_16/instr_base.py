@@ -1109,7 +1109,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def mul_ax_al_rm8(self) -> None:
         rm8 = self.get_rm8()
         al = self.emu.get_gpreg(reg8_t.AL)
-        val = al * rm8
+        val = al.cast_to(Type.int_16) * rm8.cast_to(Type.int_16)
         self.emu.set_gpreg(reg16_t.AX, val)
         self.emu.update_eflags_mul(al, rm8)
 

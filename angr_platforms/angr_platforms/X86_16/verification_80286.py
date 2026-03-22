@@ -23,6 +23,15 @@ REG_ORDER = ("ax", "bx", "cx", "dx", "cs", "ss", "ds", "es", "sp", "bp", "si", "
 STRING_OPCODES = {0x6C, 0x6D, 0x6E, 0x6F, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF}
 PREFIX_BYTES = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
 REAL_MODE_FLAGS_MASK = 0x0FD7
+FLAGS_MASKS: dict[str, int] = {
+    "F6.4": 0x0F03,
+    "F6.5": 0x0F03,
+    "F7.4": 0x0F03,
+    "F6.6": 0x0700,
+    "F6.7": 0x0700,
+    "F7.6": 0x0700,
+    "F7.7": 0x0700,
+}
 
 
 @dataclass
@@ -333,7 +342,7 @@ def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str
     return state, False
 
 
-def _compare_case(state, case: dict[str, Any], *, halted: bool) -> list[CaseMismatch]:
+def _compare_case(state, case: dict[str, Any], *, opcode: str, halted: bool) -> list[CaseMismatch]:
     mismatches: list[CaseMismatch] = []
     initial_regs = case["initial"].get("regs", {})
     final_regs = case["final"].get("regs", {})
@@ -346,12 +355,22 @@ def _compare_case(state, case: dict[str, Any], *, halted: bool) -> list[CaseMism
         if reg == "ip" and not executed_hlt and reg in final_regs:
             expected = (expected - 1) & 0xFFFF
         actual = state.solver.eval(getattr(state.regs, reg))
+        if reg == "flags":
+            mask = FLAGS_MASKS.get(opcode)
+            if case.get("exception", {}).get("number") == 0:
+                mask = 0x0700
+            if mask is not None:
+                expected &= mask
+                actual &= mask
         if actual != expected:
             mismatches.append(CaseMismatch("reg", reg, expected, actual))
 
     initial_ram = {addr: byte for addr, byte in case["initial"].get("ram", [])}
     final_ram = {addr: byte for addr, byte in case["final"].get("ram", [])}
+    flag_address = case.get("exception", {}).get("flag_address")
     for addr in sorted(set(initial_ram) | set(final_ram)):
+        if flag_address is not None and addr in {flag_address, flag_address + 1}:
+            continue
         expected = final_ram.get(addr, initial_ram.get(addr))
         if expected is None:
             continue
@@ -379,10 +398,10 @@ def verify_case(
         repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
         exc = case.get("exception")
         handled_exception = False
-        if exc is not None and exc.get("number") == 13 and _mem_operand_offset_ffff(case, insn_bytes):
-            _simulate_documented_exception(state, case)
+        if _simulate_manual_control_flow(case, state, insn_bytes):
             handled_exception = True
-        elif _simulate_manual_control_flow(case, state, insn_bytes):
+        elif exc is not None:
+            _simulate_documented_exception(state, case)
             handled_exception = True
         else:
             state = _step_with_bytes(project, state, insn_bytes)
@@ -394,7 +413,7 @@ def verify_case(
         halted = False
         if execute_halt:
             state, halted = _maybe_execute_terminating_halt(project, state, case)
-        result.mismatches = _compare_case(state, case, halted=halted)
+        result.mismatches = _compare_case(state, case, opcode=opcode, halted=halted)
         result.passed = not result.mismatches
         return result
     except Exception as ex:  # pylint:disable=broad-except

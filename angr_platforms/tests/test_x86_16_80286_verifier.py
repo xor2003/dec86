@@ -171,6 +171,41 @@ def test_verify_80286_far_indirect_call_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_mul_rm8_case_passes():
+    summary = verify_moo_file(_moo("F6.4"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_imul_rm8_case_passes():
+    summary = verify_moo_file(_moo("F6.5"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_div_rm8_exception_case_passes():
+    summary = verify_moo_file(_moo("F6.6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_mul_rm16_case_passes():
+    summary = verify_moo_file(_moo("F7.4"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_div_rm16_case_passes():
+    summary = verify_moo_file(_moo("F7.6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
 def test_build_80286_verification_table_script(tmp_path):
     summary = summarize_results([verify_moo_file(_moo("00"), limit=1), verify_moo_file(_moo("60"), limit=1)])
     summary_json = tmp_path / "summary.json"

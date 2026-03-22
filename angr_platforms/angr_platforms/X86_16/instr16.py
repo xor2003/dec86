@@ -1412,9 +1412,9 @@ class Instr16(InstrBase):
     def mul_dx_ax_rm16(self):
         rm16 = self.get_rm16()
         ax = self.emu.get_gpreg(reg16_t.AX)
-        val = ax * rm16
-        self.emu.set_gpreg(reg16_t.AX, val & 0xFFFF)
-        self.emu.set_gpreg(reg16_t.DX, (val >> 16) & 0xFFFF)
+        val = ax.cast_to(Type.int_32) * rm16.cast_to(Type.int_32)
+        self.emu.set_gpreg(reg16_t.AX, val.cast_to(Type.int_16))
+        self.emu.set_gpreg(reg16_t.DX, (val >> 16).cast_to(Type.int_16))
         self.emu.update_eflags_mul(ax, rm16)
 
     def imul_dx_ax_rm16(self):
@@ -1426,13 +1426,16 @@ class Instr16(InstrBase):
         self.emu.update_eflags_imul(ax_s, rm16_s)
 
     def div_dx_ax_rm16(self):
-        rm16 = self.get_rm16()
+        rm16 = self.get_rm16().cast_to(Type.int_32)
         # Avoid turning decompilation/lifting into a Python crash when the divisor
         # is unknown or currently zero in a stack slot. The runtime engine can still
         # model a real divide error separately if needed.
-        val = (self.emu.get_gpreg(reg16_t.DX) << 16) | self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t.AX, val // rm16)
-        self.emu.set_gpreg(reg16_t.DX, val % rm16)
+        val = (
+            (self.emu.get_gpreg(reg16_t.DX).cast_to(Type.int_32) << 16)
+            | self.emu.get_gpreg(reg16_t.AX).cast_to(Type.int_32)
+        )
+        self.emu.set_gpreg(reg16_t.AX, (val // rm16).cast_to(Type.int_16))
+        self.emu.set_gpreg(reg16_t.DX, (val % rm16).cast_to(Type.int_16))
 
     def idiv_dx_ax_rm16(self):
         rm16_s = self.get_rm16().cast_to(Type.int_32, signed=True)
@@ -1440,8 +1443,8 @@ class Instr16(InstrBase):
         #    raise Exception(self.emu.EXP_DE)
         val_s = ((self.emu.get_gpreg(reg16_t.DX).cast_to(Type.int_32, signed=True) << 16)
                  | self.emu.get_gpreg(reg16_t.AX).cast_to(Type.int_32))
-        self.emu.set_gpreg(reg16_t.AX, val_s // rm16_s)
-        self.emu.set_gpreg(reg16_t.DX, val_s % rm16_s)
+        self.emu.set_gpreg(reg16_t.AX, (val_s // rm16_s).cast_to(Type.int_16))
+        self.emu.set_gpreg(reg16_t.DX, (val_s % rm16_s).cast_to(Type.int_16))
 
     def inc_rm16(self):
         rm16 = self.get_rm16()

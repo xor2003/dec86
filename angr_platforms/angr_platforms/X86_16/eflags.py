@@ -271,13 +271,13 @@ class Eflags:
         size = v1.width
 
         sign = (v1.cast_to(v2.ty, signed=True)*v2.signed)[size - 1]
-        #_7fff = self.constant(0xffff8000, Type.int_32)
-        #cfof = ((result & _7fff) == 0) and ((result & _7fff) == _7fff)
-        #cfof = (result.signed >> 16).signed == (result.signed >> 15).signed
-        #flags = self.set_carry(flags, cfof)
+        low = result.cast_to(type1)
+        sign_ext_ok = ((result >> size) == low.widen_signed(Type.int_32).sar(self.constant(size, Type.int_8))).cast_to(Type.int_1)
+        cfof = (sign_ext_ok == self.constant(0, Type.int_1)).cast_to(Type.int_1)
+        flags = self.set_carry(flags, cfof)
         flags = self.set_zero(flags, result.cast_to(type1) == 0)
         flags = self.set_sign(flags, sign)
-        #flags = self.set_overflow(flags, cfof)
+        flags = self.set_overflow(flags, cfof)
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_shl(self, v, c):
