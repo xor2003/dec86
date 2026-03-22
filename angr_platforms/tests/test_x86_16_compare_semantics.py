@@ -806,6 +806,38 @@ def test_stc_matches_upstream_x86_vex_effect():
     )
 
 
+def test_cli_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xFA",
+        b"\xFA",
+        regs={"flags": 0xFFFF},
+        compare_regs=(),
+        compare_flag_bits=(9,),
+    )
+
+
+def test_sti_matches_upstream_x86_vex_effect():
+    state = _run_control_flow_instruction(b"\xFB")
+
+    assert state.solver.eval(state.regs.flags[9]) == 1
+
+
+def test_cld_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xFC",
+        b"\xFC",
+        regs={"flags": 0xFFFF},
+        compare_regs=(),
+        compare_flag_bits=(10,),
+    )
+
+
+def test_std_matches_upstream_x86_vex_effect():
+    state = _run_control_flow_instruction(b"\xFD")
+
+    assert state.solver.eval(state.regs.flags[10]) == 1
+
+
 def test_loop_rel8_matches_upstream_x86_vex_effect():
     state32 = _run_loop_instruction(ArchX86(), b"\x67\xE2\xF2", cx=2)
     state16 = _run_loop_instruction(Arch86_16(), b"\xE2\xF2", cx=2)

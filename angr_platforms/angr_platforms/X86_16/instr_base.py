@@ -873,22 +873,29 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             return self.emu.get_gpreg(reg8_t.CL)
         return self.emu.constant(1, Type.int_8)
 
+    def _masked_shift_count8(self, count):
+        count_v = self.emu.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
+        return count_v & self.emu.constant(0x1F, Type.int_8)
+
+    def _rotate_count8(self, count, modulo):
+        return self._masked_shift_count8(count) % self.emu.constant(modulo, Type.int_8)
+
     def shl_rm8(self) -> None:
         rm8 = self.get_rm8()
-        count = self._group2_rm8_count()
+        count = self._masked_shift_count8(self._group2_rm8_count())
         self.set_rm8(rm8 << count)
         self.emu.update_eflags_shl(rm8, count)
 
     def rol_rm8(self) -> None:
         rm8 = self.get_rm8()
-        count = self._group2_rm8_count()
+        count = self._rotate_count8(self._group2_rm8_count(), 8)
         width = self.emu.constant(8, Type.int_8)
         self.set_rm8((rm8 << count) | (rm8 >> (width - count)))
         self.emu.update_eflags_rol(rm8, count)
 
     def ror_rm8(self) -> None:
         rm8 = self.get_rm8()
-        count = self._group2_rm8_count()
+        count = self._rotate_count8(self._group2_rm8_count(), 8)
         width = self.emu.constant(8, Type.int_8)
         self.set_rm8((rm8 >> count) | (rm8 << (width - count)))
         self.emu.update_eflags_ror(rm8, count)
@@ -905,13 +912,13 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def shr_rm8(self) -> None:
         rm8 = self.get_rm8()
-        count = self._group2_rm8_count()
+        count = self._masked_shift_count8(self._group2_rm8_count())
         self.set_rm8(rm8 >> count)
         self.emu.update_eflags_shr(rm8, count)
 
     def sar_rm8(self) -> None:
         rm8 = self.get_rm8()
-        count = self._group2_rm8_count()
+        count = self._masked_shift_count8(self._group2_rm8_count())
         self.set_rm8(rm8.sar(count))
         self.emu.update_eflags_sar(rm8, count)
 
@@ -972,19 +979,20 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def shl_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
-        self.set_rm8(rm8 << self.instr.imm8)
-        self.emu.update_eflags_shl(rm8, self.emu.constant(self.instr.imm8, Type.int_8))
+        count = self._masked_shift_count8(self.instr.imm8)
+        self.set_rm8(rm8 << count)
+        self.emu.update_eflags_shl(rm8, count)
 
     def rol_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
-        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        count = self._rotate_count8(self.instr.imm8, 8)
         width = self.emu.constant(8, Type.int_8)
         self.set_rm8((rm8 << count) | (rm8 >> (width - count)))
         self.emu.update_eflags_rol(rm8, count)
 
     def ror_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
-        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        count = self._rotate_count8(self.instr.imm8, 8)
         width = self.emu.constant(8, Type.int_8)
         self.set_rm8((rm8 >> count) | (rm8 << (width - count)))
         self.emu.update_eflags_ror(rm8, count)
@@ -1002,18 +1010,21 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def shr_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
-        self.set_rm8(rm8 >> self.instr.imm8)
-        self.emu.update_eflags_shr(rm8, self.instr.imm8)
+        count = self._masked_shift_count8(self.instr.imm8)
+        self.set_rm8(rm8 >> count)
+        self.emu.update_eflags_shr(rm8, count)
 
 
     def sal_rm8_imm8(self) -> None:
-        rm8_s = self.get_rm8().signed
-        self.set_rm8(rm8_s << self.instr.imm8)
+        rm8 = self.get_rm8()
+        count = self._masked_shift_count8(self.instr.imm8)
+        self.set_rm8(rm8 << count)
+        self.emu.update_eflags_shl(rm8, count)
 
 
     def sar_rm8_imm8(self) -> None:
         rm8_s = self.get_rm8()
-        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        count = self._masked_shift_count8(self.instr.imm8)
         self.set_rm8(rm8_s.sar(count))
         self.emu.update_eflags_sar(rm8_s, count)
 
@@ -1039,7 +1050,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
         flags = self.emu.set_carry(flags, cf)
         one_step = steps == self.emu.constant(1, Type.int_8)
-        of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
+        of = ((result >> (size - 1)) & 1) ^ cf.cast_to(Type.int_8)
         flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 

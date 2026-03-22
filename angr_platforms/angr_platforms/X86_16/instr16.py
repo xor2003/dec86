@@ -1183,16 +1183,19 @@ class Instr16(InstrBase):
 
     def shr_rm16_imm8(self):
         rm16 = self.get_rm16()
-        self.set_rm16(rm16 >> self.instr.imm8)
-        self.emu.update_eflags_shr(rm16, self.instr.imm8)
+        count = self._shift_count(self.instr.imm8)
+        self.set_rm16(rm16 >> count)
+        self.emu.update_eflags_shr(rm16, count)
 
     def sal_rm16_imm8(self):
-        rm16_s = self.get_rm16().signed
-        self.set_rm16(rm16_s << self.instr.imm8)
+        rm16 = self.get_rm16()
+        count = self._shift_count(self.instr.imm8)
+        self.set_rm16(rm16 << count)
+        self.emu.update_eflags_shl(rm16, count)
 
     def sar_rm16_imm8(self):
         rm16 = self.get_rm16()
-        count = self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8)
+        count = self._shift_count(self.instr.imm8)
         self.set_rm16(rm16.sar(count))
         self.emu.update_eflags_sar(rm16, count)
 
@@ -1231,7 +1234,11 @@ class Instr16(InstrBase):
 
     def _rot_count(self, count, modulo):
         count_v = count if hasattr(count, "cast_to") else self.emu.constant(count, Type.int_8)
-        return count_v.cast_to(Type.int_8) % self.emu.constant(modulo, Type.int_8)
+        return (count_v.cast_to(Type.int_8) & self.emu.constant(0x1F, Type.int_8)) % self.emu.constant(modulo, Type.int_8)
+
+    def _shift_count(self, count):
+        count_v = count if hasattr(count, "cast_to") else self.emu.constant(count, Type.int_8)
+        return count_v.cast_to(Type.int_8) & self.emu.constant(0x1F, Type.int_8)
 
     def _set_rotate_cf(self, cf):
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
@@ -1247,6 +1254,7 @@ class Instr16(InstrBase):
         result = self._ite_value(count == self.emu.constant(0, Type.int_8), a, result)
         self.set_rm16(result)
         self._set_rotate_cf(result[0])
+        self.emu.update_eflags_rol(a, count)
 
     def shl_rm16_cl(self):
         rm16 = self.get_rm16()
@@ -1254,8 +1262,9 @@ class Instr16(InstrBase):
         self.shl(rm16, cl)
 
     def shl(self, a, b):
-        self.set_rm16(a << b)
-        self.emu.update_eflags_shl(a, b)
+        count = self._shift_count(b)
+        self.set_rm16(a << count)
+        self.emu.update_eflags_shl(a, count)
 
     def rol_rm16_imm8(self):
         rm16 = self.get_rm16()
@@ -1298,6 +1307,7 @@ class Instr16(InstrBase):
         result = self._ite_value(count == self.emu.constant(0, Type.int_8), a, result)
         self.set_rm16(result)
         self._set_rotate_cf(result[15])
+        self.emu.update_eflags_ror(a, count)
 
     def rcl(self, a, b):
         count = self._rot_count(b, 17)
@@ -1314,6 +1324,11 @@ class Instr16(InstrBase):
             selected_carry = self._ite_value(cond, carry.cast_to(Type.int_16), selected_carry)
         self.set_rm16(selected_result)
         self._set_rotate_cf(selected_carry.cast_to(Type.int_1))
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        one_step = count == self.emu.constant(1, Type.int_8)
+        of = selected_result[15].cast_to(Type.int_1) ^ selected_carry.cast_to(Type.int_1)
+        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def rcr(self, a, b):
         count = self._rot_count(b, 17)
@@ -1330,6 +1345,11 @@ class Instr16(InstrBase):
             selected_carry = self._ite_value(cond, carry.cast_to(Type.int_16), selected_carry)
         self.set_rm16(selected_result)
         self._set_rotate_cf(selected_carry.cast_to(Type.int_1))
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        one_step = count == self.emu.constant(1, Type.int_8)
+        of = selected_result[15].cast_to(Type.int_1) ^ selected_result[14].cast_to(Type.int_1)
+        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def shr_rm16_cl(self):
         rm16 = self.get_rm16()
@@ -1342,13 +1362,15 @@ class Instr16(InstrBase):
         self.shr(rm16, cl)
 
     def shr(self, a, b):
-        self.set_rm16(a >> b)
-        self.emu.update_eflags_shr(a, b)
+        count = self._shift_count(b)
+        self.set_rm16(a >> count)
+        self.emu.update_eflags_shr(a, count)
 
     def sal_rm16_1(self):
-        rm16_s = self.get_rm16().signed
+        rm16 = self.get_rm16()
         cl = self.emu.constant(1, Type.int_8)
-        self.set_rm16(rm16_s << cl)
+        self.set_rm16(rm16 << cl)
+        self.emu.update_eflags_shl(rm16, cl)
 
     def sar_rm16_1(self):
         rm16_s = self.get_rm16()
@@ -1357,13 +1379,14 @@ class Instr16(InstrBase):
         self.emu.update_eflags_sar(rm16_s, cl)
 
     def sal_rm16_cl(self):
-        rm16_s = self.get_rm16().signed
-        cl = self.emu.get_gpreg(reg8_t.CL)
-        self.set_rm16(rm16_s << cl)
+        rm16 = self.get_rm16()
+        cl = self._shift_count(self.emu.get_gpreg(reg8_t.CL))
+        self.set_rm16(rm16 << cl)
+        self.emu.update_eflags_shl(rm16, cl)
 
     def sar_rm16_cl(self):
         rm16_s = self.get_rm16()
-        cl = self.emu.get_gpreg(reg8_t.CL)
+        cl = self._shift_count(self.emu.get_gpreg(reg8_t.CL))
         self.set_rm16(rm16_s.sar(cl))
         self.emu.update_eflags_sar(rm16_s, cl)
 
