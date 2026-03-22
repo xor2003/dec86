@@ -722,6 +722,26 @@ def test_test_ax_cx_matches_upstream_x86_vex_effect():
     )
 
 
+def test_sbb_ax_imm16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x1D\xDE\xFD",
+        b"\x66\x1D\xDE\xFD\x00\x00",
+        regs={"ax": 0x7A3E, "flags": 0x00D3},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 2, 4, 6, 7, 11),
+    )
+
+
+def test_cmp_ax_imm16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x3D\x00\x00",
+        b"\x66\x3D\x00\x00\x00\x00",
+        regs={"ax": 0x0233, "flags": 0x0412},
+        compare_regs=(),
+        compare_flag_bits=(0, 2, 4, 6, 7, 11),
+    )
+
+
 def test_or_ax_imm16_matches_upstream_x86_vex_effect():
     _assert_same_reg_effect_with_flags(
         b"\x0D\x5B\xDF",
@@ -1303,6 +1323,14 @@ def test_push_sp_matches_upstream_x86_vex_effect():
     assert state32.solver.eval(state32.memory.load(0x2FE, 2, endness=state32.arch.memory_endness)) == (
         state16.solver.eval(state16.memory.load(0x2FE, 2, endness=state16.arch.memory_endness))
     )
+
+
+def test_salc_sets_al_from_carry_flag():
+    set_state = _run_one_instruction_with_flags(Arch86_16(), b"\xD6", ax=0x00AA, flags=0x0001)
+    clear_state = _run_one_instruction_with_flags(Arch86_16(), b"\xD6", ax=0x00AA, flags=0x0000)
+
+    assert set_state.solver.eval(set_state.regs.ax) == 0x00FF
+    assert clear_state.solver.eval(clear_state.regs.ax) == 0x0000
 
 
 def test_leave_restores_bp_and_releases_stack_frame():

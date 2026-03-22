@@ -99,6 +99,15 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_funcflag(0xD2, self.code_d0_d2, CHK_MODRM)
         self.set_funcflag(0xD4, self.aam, CHK_IMM8)
         self.set_funcflag(0xD5, self.aad, CHK_IMM8)
+        self.set_funcflag(0xD6, self.salc, 0)
+        self.set_funcflag(0xD8, self.esc, CHK_MODRM)
+        self.set_funcflag(0xD9, self.esc, CHK_MODRM)
+        self.set_funcflag(0xDA, self.esc, CHK_MODRM)
+        self.set_funcflag(0xDB, self.esc, CHK_MODRM)
+        self.set_funcflag(0xDC, self.esc, CHK_MODRM)
+        self.set_funcflag(0xDD, self.esc, CHK_MODRM)
+        self.set_funcflag(0xDE, self.esc, CHK_MODRM)
+        self.set_funcflag(0xDF, self.esc, CHK_MODRM)
         self.set_funcflag(0xE4, self.in_al_imm8, CHK_IMM8)
         self.set_funcflag(0xE6, self.out_imm8_al, CHK_IMM8)
         self.set_funcflag(0xEB, self.jmp, CHK_IMM8)
@@ -461,6 +470,20 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def test_al_imm8(self) -> None:
         al = self.emu.get_gpreg(reg8_t.AL)
         self.emu.update_eflags_and(al, self.instr.imm8)
+
+    def salc(self) -> None:
+        value = self._ite_value(
+            self.emu.is_carry().cast_to(Type.int_1),
+            self.emu.constant(0xFF, Type.int_8),
+            self.emu.constant(0x00, Type.int_8),
+        )
+        self.emu.set_gpreg(reg8_t.AL, value)
+
+    def esc(self) -> None:
+        if self.instr.modrm.mod != 3:
+            addr = self.get_m()
+            seg = self.select_segment()
+            self.emu.get_data8(seg, addr)
 
     def mov_r8_imm8(self) -> None:
         reg = self.instr.opcode & 0b111

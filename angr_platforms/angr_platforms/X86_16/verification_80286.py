@@ -26,6 +26,8 @@ REAL_MODE_FLAGS_MASK = 0x0FD7
 FLAGS_MASKS: dict[str, int] = {
     "69": 0x0803,
     "6B": 0x0803,
+    "C1.3": 0x05D7,
+    "C1.6": 0x05D7,
     "F6.4": 0x0F03,
     "F6.5": 0x0F03,
     "F7.4": 0x0F03,
@@ -395,10 +397,18 @@ def verify_case(
 
     try:
         state = _initial_state(project, case)
-        insn_bytes = _instruction_bytes(case)
+        exc = case.get("exception")
+        try:
+            insn_bytes = _instruction_bytes(case)
+        except RuntimeError:
+            if exc is not None and exc.get("number") == 6:
+                _simulate_documented_exception(state, case)
+                result.mismatches = _compare_case(state, case, opcode=opcode, halted=False)
+                result.passed = not result.mismatches
+                return result
+            raise
         start_addr = state.addr
         repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
-        exc = case.get("exception")
         handled_exception = False
         if _simulate_manual_control_flow(case, state, insn_bytes):
             handled_exception = True

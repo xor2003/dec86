@@ -281,8 +281,15 @@ class Instruction_ANY(Instruction):
         lhs_sign = lhs[15]
         rhs_sign = rhs[15]
         res_sign = result[15]
+        low8 = result.cast_to(Type.int_8)
+        parity = low8 ^ (low8 >> self.constant(4, Type.int_8))
+        parity = parity ^ (parity >> self.constant(2, Type.int_8))
+        parity = parity ^ (parity >> self.constant(1, Type.int_8))
+        af = (((lhs ^ rhs) ^ result) & self._const16(0x0010)) != self._const16(0)
 
         self._set_flag_bit(0, lhs < rhs)
+        self._set_flag_bit(2, (~parity & self.constant(1, Type.int_8)) != self.constant(0, Type.int_8))
+        self._set_flag_bit(4, af)
         self._set_flag_bit(6, lhs == rhs)
         self._set_flag_bit(7, res_sign != self._const16(0))
         overflow = (lhs_sign != rhs_sign) & (res_sign != lhs_sign)

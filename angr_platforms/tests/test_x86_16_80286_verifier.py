@@ -122,6 +122,20 @@ def test_verify_80286_adc_rm16_r16_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_sbb_ax_imm16_case_passes():
+    summary = verify_moo_file(_moo("1D"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_cmp_ax_imm16_case_passes():
+    summary = verify_moo_file(_moo("3D"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
 def test_verify_80286_sbb_rm8_r8_case_passes():
     summary = verify_moo_file(_moo("18"), limit=1)
 
@@ -138,6 +152,13 @@ def test_verify_80286_cwd_case_passes():
 
 def test_verify_80286_gp_faulting_memory_operand_case_passes():
     summary = verify_moo_file(_moo("D1.6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_bound_invalid_case_passes():
+    summary = verify_moo_file(_moo("62"), limit=1)
 
     assert summary["passed"] == 1
     assert summary["failed"] == 0
@@ -173,6 +194,48 @@ def test_verify_80286_iret_case_passes():
 
 def test_verify_80286_hlt_case_passes():
     summary = verify_moo_file(_moo("F4"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_invalid_8f_case_passes():
+    summary = verify_moo_file(_moo("8F"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_invalid_c6_case_passes():
+    summary = verify_moo_file(_moo("C6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_salc_case_passes():
+    summary = verify_moo_file(_moo("D6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_esc_case_passes():
+    summary = verify_moo_file(_moo("D8"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_rcr_rm16_imm8_case_passes():
+    summary = verify_moo_file(_moo("C1.3"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_sal_rm16_imm8_case_passes():
+    summary = verify_moo_file(_moo("C1.6"), limit=1)
 
     assert summary["passed"] == 1
     assert summary["failed"] == 0

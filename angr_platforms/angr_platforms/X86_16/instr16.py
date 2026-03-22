@@ -8,6 +8,7 @@ from pyvex import IRConst
 from .instr_base import InstrBase
 from .instruction import *
 from .regs import reg8_t, reg16_t, sgreg_t
+from .exception import EXP_UD
 
 
 class Instr16(InstrBase):
@@ -42,6 +43,7 @@ class Instr16(InstrBase):
         self.set_funcflag(0x1A, self.sbb_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x1B, self.sbb_r16_rm16, CHK_MODRM)
         self.set_funcflag(0x1C, self.sbb_al_imm8, CHK_IMM8)
+        self.set_funcflag(0x1D, self.sbb_ax_imm16, CHK_IMM16)
         self.set_funcflag(0x1E, self.push_ds, 0)
         self.set_funcflag(0x1F, self.pop_ds, 0)
         self.set_funcflag(0x20, self.and_rm8_r8, CHK_MODRM)
@@ -77,6 +79,7 @@ class Instr16(InstrBase):
 
         self.set_funcflag(0x60, self.pusha, 0)
         self.set_funcflag(0x61, self.popa, 0)
+        self.set_funcflag(0x62, self.bound_r16_m16, CHK_MODRM)
         self.set_funcflag(0x68, self.push_imm16, CHK_IMM16)
         self.set_funcflag(0x69, self.imul_r16_rm16_imm16, CHK_MODRM | CHK_IMM16)
         self.set_funcflag(0x6A, self.push_imm8, CHK_IMM8)
@@ -269,6 +272,13 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.AX, ax + imm16 + carry)
         self.emu.update_eflags_adc(ax, imm16, carry)
 
+    def sbb_ax_imm16(self):
+        ax = self.emu.get_gpreg(reg16_t.AX)
+        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
+        carry = self.emu.is_carry().cast_to(Type.int_16)
+        self.emu.set_gpreg(reg16_t.AX, ax - imm16 - carry)
+        self.emu.update_eflags_sbb(ax, imm16, carry)
+
     def push_es(self):
         self.emu.push16(self.emu.get_segment(sgreg_t.ES))
 
@@ -424,6 +434,17 @@ class Instr16(InstrBase):
 
     def push_imm16(self):
         self.emu.push16(self.emu.constant(self.instr.imm16, Type.int_16))
+
+    def bound_r16_m16(self):
+        if self.instr.modrm.mod == 3:
+            raise Exception(EXP_UD)
+        reg = self.get_r16().signed
+        addr = self.get_m()
+        seg = self.select_segment()
+        lower = self.emu.get_data16(seg, addr).signed
+        upper = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_16)).signed
+        out_of_range = (reg < lower) | (reg > upper)
+        self.emu.lifter_instruction.jump(out_of_range, 0xFF005, JumpKind.Call)
 
     def imul_r16_rm16_imm16(self):
         rm16_s = self.get_rm16().signed
