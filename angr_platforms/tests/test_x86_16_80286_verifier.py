@@ -122,11 +122,31 @@ def test_verify_80286_add_rm16_r16_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_add_rm16_r16_unaligned_word_case_passes():
+    _, cases = load_moo_cases(_moo("01"))
+    case = next(c for c in cases if c["idx"] == 1439)
+    result = verify_case(case, opcode="01")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_adc_rm16_r16_case_passes():
     summary = verify_moo_file(_moo("11"), limit=1)
 
     assert summary["passed"] == 1
     assert summary["failed"] == 0
+
+
+def test_verify_80286_add_r16_rm16_unaligned_word_case_passes():
+    _, cases = load_moo_cases(_moo("03"))
+    case = next(c for c in cases if c["idx"] == 1423)
+    result = verify_case(case, opcode="03")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
 
 
 def test_verify_80286_lock_sbb_rm16_case_passes():

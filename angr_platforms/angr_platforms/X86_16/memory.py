@@ -1,6 +1,7 @@
 from typing import Optional
 
 from bitstring import ConstBitStream
+from pyvex.expr import Binop
 from pyvex.lifting.util.vex_helper import Type
 from pyvex.lifting.util.syntax_wrapper import VexValue
 
@@ -48,8 +49,18 @@ class Memory:
     def read_mem16(self, addr: int) -> int:
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_16)
-        return VexValue(self.lifter_instruction, rdt)
+        elif not isinstance(addr, VexValue):
+            addr = VexValue(self.lifter_instruction, addr)
+        else:
+            addr = VexValue(self.lifter_instruction, addr.rdt)
+        low = VexValue(self.lifter_instruction, self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_8))
+        one = self.lifter_instruction.constant(1, Type.int_32)
+        high_addr = VexValue(
+            self.lifter_instruction,
+            self.lifter_instruction._settmp(Binop("Iop_Add32", [addr.rdt, one.rdt])),
+        )
+        high = VexValue(self.lifter_instruction, self.lifter_instruction._irsb_c.load(high_addr.rdt, Type.int_8))
+        return low.cast_to(Type.int_16) | (high.cast_to(Type.int_16) << 8)
 
     def read_mem8(self, addr: int) -> int:
         if isinstance(addr, int):
@@ -67,9 +78,25 @@ class Memory:
     def write_mem16(self, addr: int, value: int):
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
+        elif not isinstance(addr, VexValue):
+            addr = VexValue(self.lifter_instruction, addr)
+        else:
+            addr = VexValue(self.lifter_instruction, addr.rdt)
         if isinstance(value, int):
             value = self.lifter_instruction.constant(value, Type.int_16)
-        self.lifter_instruction._irsb_c.store(addr.rdt, value.rdt)
+        elif not isinstance(value, VexValue):
+            value = VexValue(self.lifter_instruction, value)
+        else:
+            value = VexValue(self.lifter_instruction, value.rdt)
+        low = value.cast_to(Type.int_8)
+        one = self.lifter_instruction.constant(1, Type.int_32)
+        high_addr = VexValue(
+            self.lifter_instruction,
+            self.lifter_instruction._settmp(Binop("Iop_Add32", [addr.rdt, one.rdt])),
+        )
+        high = (value >> 8).cast_to(Type.int_8)
+        self.lifter_instruction._irsb_c.store(addr.rdt, low.rdt)
+        self.lifter_instruction._irsb_c.store(high_addr.rdt, high.rdt)
 
     def write_mem8(self, addr: int, value: int):
         if isinstance(addr, int):
