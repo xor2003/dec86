@@ -387,6 +387,13 @@ class Instr16(InstrBase):
 
     def push_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
+        if reg == reg16_t.SP:
+            sp = self.emu.get_gpreg(reg16_t.SP)
+            new_sp = sp - self.emu.constant(2, Type.int_16)
+            self.emu.set_gpreg(reg16_t.SP, new_sp)
+            self.emu.put_data16(sgreg_t.SS, new_sp, sp)
+            return
+
         value = self.emu.get_gpreg(reg)
         self.emu.push16(value)
 
@@ -419,9 +426,10 @@ class Instr16(InstrBase):
         self.emu.push16(self.emu.constant(self.instr.imm16, Type.int_16))
 
     def imul_r16_rm16_imm16(self):
-        rm16_s = self.get_rm16()
-        self.set_r16(rm16_s * self.instr.imm16)
-        self.emu.update_eflags_imul(rm16_s, self.instr.imm16)
+        rm16_s = self.get_rm16().signed
+        imm16_s = self.emu.constant(self.instr.imm16, Type.int_16).signed
+        self.set_r16((rm16_s * imm16_s).cast_to(Type.int_16))
+        self.emu.update_eflags_imul(rm16_s, imm16_s)
 
     def push_imm8(self):
         # Create a 16-bit constant from the 8-bit immediate value
@@ -429,9 +437,10 @@ class Instr16(InstrBase):
         self.emu.push16(imm16)
 
     def imul_r16_rm16_imm8(self):
-        rm16_s = self.get_rm16()
-        self.set_r16(rm16_s * self.instr.imm8)
-        self.emu.update_eflags_imul(rm16_s, self.instr.imm8)
+        rm16_s = self.get_rm16().signed
+        imm8_s = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16).signed
+        self.set_r16((rm16_s * imm8_s).cast_to(Type.int_16))
+        self.emu.update_eflags_imul(rm16_s, imm8_s)
 
     def test_rm16_r16(self):
         rm16 = self.get_rm16()
@@ -441,8 +450,15 @@ class Instr16(InstrBase):
     def xchg_r16_rm16(self):
         r16 = self.get_r16()
         rm16 = self.get_rm16()
+        if self.instr.modrm.mod == 3:
+            self.set_r16(rm16)
+            self.set_rm16(r16)
+            return
+
+        addr = self.get_m()
+        seg = self.select_segment()
         self.set_r16(rm16)
-        self.set_rm16(r16)
+        self.emu.put_data16(seg, addr, r16)
 
     def mov_rm16_r16(self):
         r16 = self.get_r16()
@@ -505,7 +521,9 @@ class Instr16(InstrBase):
         self.emu.push16(self.emu.get_flags())
 
     def popf(self):
-        self.emu.set_flags(self.emu.pop16())
+        flags = self.emu.pop16()
+        masked = (flags & self.emu.constant(0x0FD5, Type.int_16)) | self.emu.constant(0x0002, Type.int_16)
+        self.emu.set_flags(masked)
 
     def mov_ax_moffs16(self):
         self.emu.set_gpreg(reg16_t.AX, self.get_moffs16())

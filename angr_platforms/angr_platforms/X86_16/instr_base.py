@@ -407,8 +407,15 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def xchg_r8_rm8(self) -> None:
         r8 = self.get_r8()
         rm8 = self.get_rm8()
+        if self.instr.modrm.mod == 3:
+            self.set_r8(rm8)
+            self.set_rm8(r8)
+            return
+
+        addr = self.get_m()
+        seg = self.select_segment()
         self.set_r8(rm8)
-        self.set_rm8(r8)
+        self.emu.put_data8(seg, addr, r8)
 
     def mov_rm8_r8(self) -> None:
         r8 = self.get_r8()

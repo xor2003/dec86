@@ -665,6 +665,53 @@ def test_xchg_ax_cx_matches_upstream_x86_vex_effect():
     )
 
 
+def test_xchg_di_mem_matches_upstream_x86_vex_effect():
+    code16 = b"\x87\x3D"
+    code32 = b"\x67\x66\x87\x3F"
+
+    project32 = angr.load_shellcode(
+        code32,
+        arch=ArchX86(),
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state32 = project32.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state32.regs.ds = 0
+    state32.regs.di = 0x220
+    state32.regs.edi = 0x220
+    state32.memory.store(0x220, b"\x78\x56")
+    simgr32 = project32.factory.simgr(state32)
+    simgr32.step(num_inst=1, insn_bytes=code32)
+    state32 = simgr32.active[0]
+
+    project16 = angr.load_shellcode(
+        code16,
+        arch=Arch86_16(),
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state16 = project16.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state16.regs.ds = 0
+    state16.regs.di = 0x220
+    state16.memory.store(0x220, b"\x78\x56")
+    simgr16 = project16.factory.simgr(state16)
+    simgr16.step(num_inst=1, insn_bytes=code16)
+    state16 = simgr16.active[0]
+
+    assert state32.solver.eval(state32.regs.di) == state16.solver.eval(state16.regs.di)
+    assert state32.solver.eval(state32.memory.load(0x220, 2, endness=state32.arch.memory_endness)) == (
+        state16.solver.eval(state16.memory.load(0x220, 2, endness=state16.arch.memory_endness))
+    )
+
+
 def test_test_ax_cx_matches_upstream_x86_vex_effect():
     _assert_same_reg_effect_with_flags(
         b"\x85\xC8",
@@ -721,6 +768,26 @@ def test_imul_cx_matches_upstream_x86_vex_effect():
         b"\x66\xF7\xE9",
         regs={"ax": 0xFFFE, "cx": 0xFFFC, "flags": 0},
         compare_regs=("ax", "dx"),
+        compare_flag_bits=(0, 11),
+    )
+
+
+def test_imul_ax_bx_imm16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x69\xC3\x76\x0F",
+        b"\x66\x69\xC3\x76\x0F\x00\x00",
+        regs={"ax": 0x0000, "bx": 0x81AB, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 11),
+    )
+
+
+def test_imul_di_bx_imm8_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x6B\xFB\x40",
+        b"\x66\x6B\xFB\x40",
+        regs={"di": 0xB875, "bx": 0xFFC4, "flags": 0},
+        compare_regs=("di",),
         compare_flag_bits=(0, 11),
     )
 
@@ -1226,6 +1293,16 @@ def test_popf_restores_flag_bits_from_stack():
     assert state16.solver.eval(state16.regs.sp) == 0x302
     for bit in (0, 2, 4, 6, 7, 8, 9, 10, 11):
         assert state16.solver.eval(state16.regs.flags[bit]) == ((0x08D5 >> bit) & 1)
+
+
+def test_push_sp_matches_upstream_x86_vex_effect():
+    state32 = _run_stack_instruction(ArchX86(), b"\x66\x54", {"sp": 0x300}, sp=0x300)
+    state16 = _run_stack_instruction(Arch86_16(), b"\x54", {"sp": 0x300}, sp=0x300)
+
+    assert state32.solver.eval(state32.regs.sp) == state16.solver.eval(state16.regs.sp)
+    assert state32.solver.eval(state32.memory.load(0x2FE, 2, endness=state32.arch.memory_endness)) == (
+        state16.solver.eval(state16.memory.load(0x2FE, 2, endness=state16.arch.memory_endness))
+    )
 
 
 def test_leave_restores_bp_and_releases_stack_frame():

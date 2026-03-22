@@ -272,7 +272,13 @@ class Eflags:
 
         sign = (v1.cast_to(v2.ty, signed=True)*v2.signed)[size - 1]
         low = result.cast_to(type1)
-        sign_ext_ok = ((result >> size) == low.widen_signed(Type.int_32).sar(self.constant(size, Type.int_8))).cast_to(Type.int_1)
+        high = (result >> self.constant(size, Type.int_8)).cast_to(type1)
+        sign_ext = self._ite(
+            low[size - 1].cast_to(Type.int_1),
+            self.constant((1 << size) - 1, type1),
+            self.constant(0, type1),
+        ).cast_to(type1)
+        sign_ext_ok = (high == sign_ext).cast_to(Type.int_1)
         cfof = (sign_ext_ok == self.constant(0, Type.int_1)).cast_to(Type.int_1)
         flags = self.set_carry(flags, cfof)
         flags = self.set_zero(flags, result.cast_to(type1) == 0)

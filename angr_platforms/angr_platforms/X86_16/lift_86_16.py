@@ -438,9 +438,12 @@ class Instruction_ANY(Instruction):
             return
         if kind == "push_reg16":
             _, reg_name = self.simple_semantics
+            value = self._get_reg16(reg_name)
             sp = self._get_reg16("sp") - self._const16(2)
             self.put(sp, "sp")
-            self._stack_store16(sp, self._get_reg16(reg_name))
+            if reg_name == "sp":
+                value = sp + self._const16(2)
+            self._stack_store16(sp, value)
             return
         if kind == "push_imm16":
             _, imm = self.simple_semantics

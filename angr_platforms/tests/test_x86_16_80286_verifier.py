@@ -50,6 +50,20 @@ def test_verify_80286_pushf_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_push_sp_case_passes():
+    summary = verify_moo_file(_moo("54"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_popf_case_passes():
+    summary = verify_moo_file(_moo("9D"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
 def test_verify_80286_in_al_imm8_case_passes():
     summary = verify_moo_file(_moo("E4"), limit=1)
 
@@ -201,6 +215,27 @@ def test_verify_80286_mul_rm16_case_passes():
 
 def test_verify_80286_div_rm16_case_passes():
     summary = verify_moo_file(_moo("F7.6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_imul_rm16_imm16_case_passes():
+    summary = verify_moo_file(_moo("69"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_imul_rm16_imm8_case_passes():
+    summary = verify_moo_file(_moo("6B"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_xchg_r16_rm16_case_passes():
+    summary = verify_moo_file(_moo("87"), limit=1)
 
     assert summary["passed"] == 1
     assert summary["failed"] == 0
