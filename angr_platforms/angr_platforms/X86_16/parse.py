@@ -49,6 +49,11 @@ class ParseInstr(X86Instruction):
                     self.instr.pre_repeat = REPNZ
                 case 0xF3:
                     self.instr.pre_repeat = REPZ
+                case 0xF0:
+                    # LOCK is a valid real-mode prefix. For our current single-core
+                    # verifier path it does not change architectural results, so we
+                    # keep it as a consumed prefix and let the following opcode lift.
+                    pass
                 case _:
                     self.instr.prefix_len = prefix_len
                     return chsz

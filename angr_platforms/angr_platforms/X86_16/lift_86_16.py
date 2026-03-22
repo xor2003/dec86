@@ -157,6 +157,8 @@ class Instruction_ANY(Instruction):
         if self.cs.mnemonic == "nop":
             return ("nop",)
         if self.cs.mnemonic == "ret":
+            if len(ops) == 1 and ops[0].type == 2:
+                return ("ret_imm16", ops[0].imm & 0xFFFF)
             return ("ret",)
         if self.cs.mnemonic == "leave":
             return ("leave",)
@@ -228,6 +230,9 @@ class Instruction_ANY(Instruction):
     def _const16(self, value):
         return self.constant(value & 0xFFFF, Type.int_16)
 
+    def _const32(self, value):
+        return self.constant(value & 0xFFFFFFFF, Type.int_32)
+
     def _bp_mem(self, operand):
         if operand.type != 3 or getattr(operand, "size", None) != 2:
             return None
@@ -253,6 +258,17 @@ class Instruction_ANY(Instruction):
     def _store_mem16(self, mem_spec, value):
         self.store(value, self._addr_from_bp_mem(mem_spec))
 
+    def _real_mode_linear(self, seg_reg, off16):
+        seg = self._get_reg16(seg_reg).cast_to(Type.int_32)
+        off32 = off16.cast_to(Type.int_32)
+        return (seg << self.constant(4, Type.int_8)) + off32
+
+    def _stack_load16(self, off16):
+        return self.load(self._real_mode_linear("ss", off16), Type.int_16)
+
+    def _stack_store16(self, off16, value):
+        self.store(value, self._real_mode_linear("ss", off16))
+
     def _set_zf_from_cond(self, cond):
         self._set_flag_bit(6, cond)
 
@@ -276,6 +292,9 @@ class Instruction_ANY(Instruction):
 
     def _flag_is_set(self, bit):
         return (self._get_reg16("flags") & self._const16(1 << bit)) != self._const16(0)
+
+    def _flag_is_clear(self, bit):
+        return (self._get_reg16("flags") & self._const16(1 << bit)) == self._const16(0)
 
     def _binop_reg_reg(self, op_name, dst_reg, src_reg):
         dst = self._get_reg16(dst_reg)
@@ -413,16 +432,7 @@ class Instruction_ANY(Instruction):
         return None
 
     def _emit_simple_jcc(self, taken_cond, target):
-        """
-        Emit a conditional branch using the pyvex Instruction.jump() polarity.
-
-        Instruction.jump(cond, target) expects `cond` to describe the
-        fallthrough path. The x86 condition codes are naturally expressed as
-        taken-branch predicates, so we invert them here in one place to avoid
-        repeating that subtle calling convention at every jcc site.
-        """
-
-        self.jump(~taken_cond, target, JumpKind.Boring)
+        self.jump(taken_cond, target, JumpKind.Boring)
 
     def _lift_simple(self):
         kind = self.simple_semantics[0]
@@ -432,24 +442,24 @@ class Instruction_ANY(Instruction):
             _, reg_name = self.simple_semantics
             sp = self._get_reg16("sp") - self._const16(2)
             self.put(sp, "sp")
-            self.store(self._get_reg16(reg_name), sp)
+            self._stack_store16(sp, self._get_reg16(reg_name))
             return
         if kind == "push_imm16":
             _, imm = self.simple_semantics
             sp = self._get_reg16("sp") - self._const16(2)
             self.put(sp, "sp")
-            self.store(self._const16(imm), sp)
+            self._stack_store16(sp, self._const16(imm))
             return
         if kind == "push_mem16":
             _, mem_spec = self.simple_semantics
             sp = self._get_reg16("sp") - self._const16(2)
             self.put(sp, "sp")
-            self.store(self._load_mem16(mem_spec), sp)
+            self._stack_store16(sp, self._load_mem16(mem_spec))
             return
         if kind == "pop_reg16":
             _, reg_name = self.simple_semantics
             sp = self._get_reg16("sp")
-            self.put(self.load(sp, Type.int_16), reg_name)
+            self.put(self._stack_load16(sp), reg_name)
             self.put(sp + self._const16(2), "sp")
             return
         if kind == "inc_reg16":
@@ -461,25 +471,32 @@ class Instruction_ANY(Instruction):
             ret_addr = self._const16(self.addr + self.cs.size)
             sp = self._get_reg16("sp") - self._const16(2)
             self.put(sp, "sp")
-            self.store(ret_addr, sp)
+            self._stack_store16(sp, ret_addr)
             self.jump(None, self._const16(target), JumpKind.Call)
             return
         if kind == "enter":
             _, frame_size, nesting = self.simple_semantics
-            if nesting != 0:
-                raise NotImplementedError("enter with nesting level != 0")
+            nesting &= 0x1F
             old_bp = self._get_reg16("bp")
             sp = self._get_reg16("sp") - self._const16(2)
             self.put(sp, "sp")
-            self.store(old_bp, sp)
-            self.put(sp, "bp")
-            if frame_size:
-                self.put(sp - self._const16(frame_size), "sp")
+            self._stack_store16(sp, old_bp)
+            frame_temp = sp
+            if nesting:
+                bp_cursor = old_bp
+                for _ in range(1, nesting):
+                    bp_cursor = bp_cursor - self._const16(2)
+                    sp = sp - self._const16(2)
+                    self._stack_store16(sp, self._stack_load16(bp_cursor))
+                sp = sp - self._const16(2)
+                self._stack_store16(sp, frame_temp)
+            self.put(frame_temp, "bp")
+            self.put(sp - self._const16(frame_size), "sp")
             return
         if kind == "leave":
             bp = self._get_reg16("bp")
             self.put(bp, "sp")
-            self.put(self.load(bp, Type.int_16), "bp")
+            self.put(self._stack_load16(bp), "bp")
             self.put(bp + self._const16(2), "sp")
             return
         if kind == "mov_reg_imm16":
@@ -534,14 +551,16 @@ class Instruction_ANY(Instruction):
                 cf = self._flag_is_set(0)
                 sf = self._flag_is_set(7)
                 of = self._flag_is_set(11)
+                nzf = self._flag_is_clear(6)
+                ncf = self._flag_is_clear(0)
                 if kind in {"je", "jz"}:
                     cond = zf
                 elif kind in {"jne", "jnz"}:
-                    cond = ~zf
+                    cond = nzf
                 elif kind == "jle":
                     cond = zf | (sf != of)
                 elif kind == "jg":
-                    cond = (~zf) & (sf == of)
+                    cond = nzf & (sf == of)
                 elif kind == "jl":
                     cond = sf != of
                 elif kind == "jge":
@@ -549,19 +568,26 @@ class Instruction_ANY(Instruction):
                 elif kind in {"jb", "jc"}:
                     cond = cf
                 elif kind in {"jae", "jnb", "jnc"}:
-                    cond = ~cf
+                    cond = ncf
                 elif kind == "jbe":
                     cond = cf | zf
                 elif kind == "ja":
-                    cond = (~cf) & (~zf)
+                    cond = ncf & nzf
                 else:
                     raise NotImplementedError(kind)
             self._emit_simple_jcc(cond, target)
             return
         if kind == "ret":
             sp = self._get_reg16("sp")
-            ret_addr = self.load(sp, Type.int_16)
+            ret_addr = self._stack_load16(sp)
             self.put(sp + self._const16(2), "sp")
+            self.jump(None, ret_addr, JumpKind.Ret)
+            return
+        if kind == "ret_imm16":
+            _, imm = self.simple_semantics
+            sp = self._get_reg16("sp")
+            ret_addr = self._stack_load16(sp)
+            self.put(sp + self._const16(2 + imm), "sp")
             self.jump(None, ret_addr, JumpKind.Ret)
             return
         raise NotImplementedError(f"unknown simple semantics: {kind}")

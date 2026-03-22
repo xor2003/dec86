@@ -46,15 +46,19 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_funcflag(0x20, self.and_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x22, self.and_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x24, self.and_al_imm8, CHK_IMM8)
+        self.set_funcflag(0x27, self.daa, 0)
         self.set_funcflag(0x28, self.sub_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x2A, self.sub_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x2C, self.sub_al_imm8, CHK_IMM8)
+        self.set_funcflag(0x2F, self.das, 0)
         self.set_funcflag(0x30, self.xor_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x32, self.xor_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x34, self.xor_al_imm8, CHK_IMM8)
+        self.set_funcflag(0x37, self.aaa, 0)
         self.set_funcflag(0x38, self.cmp_rm8_r8, CHK_MODRM)
         self.set_funcflag(0x3A, self.cmp_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x3C, self.cmp_al_imm8, CHK_IMM8)
+        self.set_funcflag(0x3F, self.aas, 0)
         self.set_funcflag(0x70, self.jo_rel8, CHK_IMM8)
         self.set_funcflag(0x71, self.jno_rel8, CHK_IMM8)
         self.set_funcflag(0x72, self.jb_rel8, CHK_IMM8)
@@ -77,7 +81,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_funcflag(0x8A, self.mov_r8_rm8, CHK_MODRM)
         self.set_funcflag(0x8E, self.mov_sreg_rm16, CHK_MODRM)
         self.set_funcflag(0x90, self.nop, 0)
-        self.set_funcflag(0x9F, self.lohf, 0)
+        self.set_funcflag(0x9B, self.wait, 0)
+        self.set_funcflag(0x9E, self.sahf, 0)
+        self.set_funcflag(0x9F, self.lahf, 0)
         self.set_funcflag(0xA0, self.mov_al_moffs8, CHK_MOFFS)
         self.set_funcflag(0xA2, self.mov_moffs8_al, CHK_MOFFS)
         self.set_funcflag(0xA8, self.test_al_imm8, CHK_IMM8)
@@ -91,11 +97,16 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_funcflag(0xCF, self.iret, 0)
         self.set_funcflag(0xD0, self.code_d0_d2, CHK_MODRM)
         self.set_funcflag(0xD2, self.code_d0_d2, CHK_MODRM)
+        self.set_funcflag(0xD4, self.aam, CHK_IMM8)
+        self.set_funcflag(0xD5, self.aad, CHK_IMM8)
         self.set_funcflag(0xE4, self.in_al_imm8, CHK_IMM8)
         self.set_funcflag(0xE6, self.out_imm8_al, CHK_IMM8)
         self.set_funcflag(0xEB, self.jmp, CHK_IMM8)
         self.set_funcflag(0xEC, self.in_al_dx, 0)
         self.set_funcflag(0xEE, self.out_dx_al, 0)
+        self.set_funcflag(0xF5, self.cmc, 0)
+        self.set_funcflag(0xF8, self.clc, 0)
+        self.set_funcflag(0xF9, self.stc, 0)
         self.set_funcflag(0xFA, self.cli, 0)
         self.set_funcflag(0xFB, self.sti, 0)
         self.set_funcflag(0xFC, self.cld, 0)
@@ -126,6 +137,14 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_funcflag(0xC0, self.code_c0, CHK_MODRM | CHK_IMM8)
         self.set_funcflag(0xF6, self.code_f6, CHK_MODRM)
         self.set_funcflag(0xFE, self.code_fe, CHK_MODRM)
+
+    def _ite_value(self, cond, when_true, when_false):
+        expr = self.emu.lifter_instruction.irsb_c.ite(
+            cond.cast_to(Type.int_1).rdt,
+            when_true.rdt,
+            when_false.rdt,
+        )
+        return self.emu._vv(expr)
 
 
     def code_d0_d2(self) -> None:
@@ -298,82 +317,86 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         al = self.emu.get_gpreg(reg8_t.AL)
         self.emu.update_eflags_sub(al, self.instr.imm8)
 
+    def _rel8_target(self):
+        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        return self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
+
     def jo_rel8(self) -> None:
         result = self.emu.is_overflow()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def jno_rel8(self) -> None:
         result = self.emu.is_overflow()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
 
     def jb_rel8(self) -> None:
         result = self.emu.is_carry()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def jnb_rel8(self) -> None:  # jae
         result = self.emu.is_carry()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
 
     def jz_rel8(self) -> None:
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not self.emu.is_zero(), ip)
-
-    def jnz_rel8(self) -> None:
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
+        ip = self._rel8_target()
         self.emu.lifter_instruction.jump(self.emu.is_zero(), ip)
 
+    def jnz_rel8(self) -> None:
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(~self.emu.is_zero(), ip)
+
     def jbe_rel8(self) -> None:
-        result = self.emu.is_carry() or self.emu.is_zero()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not result, ip, JumpKind.Boring)
+        result = self.emu.is_carry() | self.emu.is_zero()
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def ja_rel8(self) -> None:
-        result = self.emu.is_carry() or self.emu.is_zero()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        result = self.emu.is_carry() | self.emu.is_zero()
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
 
     def js_rel8(self) -> None:
         result = self.emu.is_sign()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def jns_rel8(self) -> None:
         result = self.emu.is_sign()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
 
     def jp_rel8(self) -> None:
         result = self.emu.is_parity()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
+        ip = self._rel8_target()
         self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def jnp_rel8(self) -> None:
         result = self.emu.is_parity()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
 
     def jl_rel8(self) -> None:
         result = self.emu.is_sign() != self.emu.is_overflow()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def jnl_rel8(self) -> None:  # jge
         result = self.emu.is_sign() != self.emu.is_overflow()
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        ip = self._rel8_target()
+        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
 
     def jle_rel8(self) -> None:
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        cond = self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())
+        ip = self._rel8_target()
+        cond = self.emu.is_zero() | (self.emu.is_sign() != self.emu.is_overflow())
         self.emu.lifter_instruction.jump(cond, ip)
 
     def jnle_rel8(self) -> None:
-        result = ~self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow())
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
+        result = ~self.emu.is_zero() & (self.emu.is_sign() == self.emu.is_overflow())
+        ip = self._rel8_target()
         self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def test_rm8_r8(self) -> None:
@@ -402,9 +425,25 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def nop(self) -> None:
         pass
 
-    def lohf(self) -> None:
+    def wait(self) -> None:
+        # WAIT only stalls until TEST is asserted; architecturally it is a no-op
+        # for the real-mode concrete verifier we are using here.
+        self.nop()
+
+    def lahf(self) -> None:
         flags = self.emu.get_gpreg(reg16_t.FLAGS).cast_to(Type.int_8)
-        self.emu.set_gpreg(reg8_t.AH, flags)
+        flags_low = flags & self.emu.constant(0xD5, Type.int_8)
+        self.emu.set_gpreg(reg8_t.AH, flags_low | self.emu.constant(0x02, Type.int_8))
+
+    def lohf(self) -> None:
+        self.lahf()
+
+    def sahf(self) -> None:
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        ah = self.emu.get_gpreg(reg8_t.AH).cast_to(Type.int_16)
+        preserved = flags & self.emu.constant(0xFF2A, Type.int_16)
+        new_bits = ah & self.emu.constant(0x00D5, Type.int_16)
+        self.emu.set_gpreg(reg16_t.FLAGS, preserved | new_bits | self.emu.constant(0x0002, Type.int_16))
 
     def mov_al_moffs8(self) -> None:
         self.emu.set_gpreg(reg8_t.AL, self.get_moffs8())
@@ -422,6 +461,180 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def mov_rm8_imm8(self) -> None:
         self.set_rm8(self.emu.lifter_instruction.constant(self.instr.imm8, Type.int_8))
+
+    def _update_adjust_flags(self, result, *, af=None, cf=None, of=None):
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        low = result.cast_to(Type.int_8)
+        if af is not None:
+            flags = self.emu.set_flag(flags, 4, af)
+        if cf is not None:
+            flags = self.emu.set_carry(flags, cf)
+        if of is not None:
+            flags = self.emu.set_overflow(flags, of)
+        flags = self.emu.set_parity(flags, self.emu.chk_parity(low))
+        flags = self.emu.set_zero(flags, low == self.emu.constant(0, Type.int_8))
+        flags = self.emu.set_sign(flags, low[7])
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
+
+    def daa(self) -> None:
+        al = self.emu.get_gpreg(reg8_t.AL)
+        af = self.emu.get_flag(4)
+        cf = self.emu.is_carry()
+
+        low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(Type.int_1) | af
+        high_adjust = (al > self.emu.constant(0x99, Type.int_8)).cast_to(Type.int_1) | cf
+
+        result = al
+        result = self._ite_value(high_adjust, result + self.emu.constant(0x60, Type.int_8), result)
+        result = self._ite_value(low_adjust, result + self.emu.constant(0x06, Type.int_8), result)
+        self.emu.set_gpreg(reg8_t.AL, result)
+        self._update_adjust_flags(
+            result,
+            af=low_adjust.cast_to(Type.int_1),
+            cf=high_adjust.cast_to(Type.int_1),
+        )
+
+    def das(self) -> None:
+        al = self.emu.get_gpreg(reg8_t.AL)
+        af = self.emu.get_flag(4)
+        cf = self.emu.is_carry()
+        old_sign = al[7]
+
+        low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(Type.int_1) | af
+        high_adjust = (al > self.emu.constant(0x99, Type.int_8)).cast_to(Type.int_1) | cf
+
+        cf_after_low = self._ite_value(
+            high_adjust,
+            self.emu.constant(1, Type.int_1),
+            (al <= self.emu.constant(0x05, Type.int_8)).cast_to(Type.int_1),
+        )
+        cf_final = self._ite_value(
+            low_adjust.cast_to(Type.int_1),
+            cf_after_low,
+            high_adjust.cast_to(Type.int_1),
+        )
+
+        result = al
+        result = self._ite_value(high_adjust, result - self.emu.constant(0x60, Type.int_8), result)
+        result = self._ite_value(low_adjust, result - self.emu.constant(0x06, Type.int_8), result)
+        self.emu.set_gpreg(reg8_t.AL, result)
+        overflow = old_sign.cast_to(Type.int_1) & (result[7].cast_to(Type.int_1) ^ self.emu.constant(1, Type.int_1))
+        self._update_adjust_flags(
+            result,
+            af=low_adjust.cast_to(Type.int_1),
+            cf=cf_final,
+            of=overflow,
+        )
+
+    def aaa(self) -> None:
+        ax = self.emu.get_gpreg(reg16_t.AX)
+        al = self.emu.get_gpreg(reg8_t.AL)
+        af = self.emu.get_flag(4)
+        low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(Type.int_1)
+        adjust = low_adjust | af
+
+        result_ax = self._ite_value(adjust, ax + self.emu.constant(0x0106, Type.int_16), ax)
+        self.emu.set_gpreg(reg16_t.AX, result_ax)
+        pre_mask_al = result_ax.cast_to(Type.int_8)
+        masked_al = pre_mask_al & self.emu.constant(0x0F, Type.int_8)
+        self.emu.set_gpreg(reg8_t.AL, masked_al)
+
+        overflow = self._ite_value(
+            low_adjust,
+            ((al & self.emu.constant(0xF0, Type.int_8)) == self.emu.constant(0x70, Type.int_8)).cast_to(Type.int_1),
+            self.emu.constant(0, Type.int_1),
+        )
+        sign = self._ite_value(
+            low_adjust,
+            ((al >= self.emu.constant(0x7A, Type.int_8)) & (al <= self.emu.constant(0xF9, Type.int_8))).cast_to(Type.int_1),
+            self.emu.constant(0, Type.int_1),
+        )
+        zero = self._ite_value(
+            low_adjust,
+            (pre_mask_al == self.emu.constant(0, Type.int_8)).cast_to(Type.int_1),
+            self._ite_value(
+                af,
+                self.emu.constant(0, Type.int_1),
+                (pre_mask_al == self.emu.constant(0, Type.int_8)).cast_to(Type.int_1),
+            ),
+        )
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = self.emu.set_flag(flags, 4, adjust)
+        flags = self.emu.set_carry(flags, adjust)
+        flags = self.emu.set_overflow(flags, overflow)
+        flags = self.emu.set_sign(flags, sign)
+        flags = self.emu.set_zero(flags, zero)
+        flags = self.emu.set_parity(flags, self.emu.chk_parity(pre_mask_al))
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
+
+    def aas(self) -> None:
+        ax = self.emu.get_gpreg(reg16_t.AX)
+        al = self.emu.get_gpreg(reg8_t.AL)
+        af = self.emu.get_flag(4)
+        low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(Type.int_1)
+        adjust = low_adjust | af
+
+        result_ax = self._ite_value(adjust, ax - self.emu.constant(0x0106, Type.int_16), ax)
+        self.emu.set_gpreg(reg16_t.AX, result_ax)
+        pre_mask_al = result_ax.cast_to(Type.int_8)
+        masked_al = pre_mask_al & self.emu.constant(0x0F, Type.int_8)
+        self.emu.set_gpreg(reg8_t.AL, masked_al)
+
+        overflow = self._ite_value(
+            low_adjust,
+            self.emu.constant(0, Type.int_1),
+            self._ite_value(
+                af,
+                ((al >= self.emu.constant(0x80, Type.int_8)) & (al <= self.emu.constant(0x85, Type.int_8))).cast_to(Type.int_1),
+                self.emu.constant(0, Type.int_1),
+            ),
+        )
+        sign = self._ite_value(
+            low_adjust,
+            (al > self.emu.constant(0x85, Type.int_8)).cast_to(Type.int_1),
+            self._ite_value(
+                af,
+                ((al < self.emu.constant(0x06, Type.int_8)) | (al > self.emu.constant(0x85, Type.int_8))).cast_to(Type.int_1),
+                (al >= self.emu.constant(0x80, Type.int_8)).cast_to(Type.int_1),
+            ),
+        )
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = self.emu.set_flag(flags, 4, adjust)
+        flags = self.emu.set_carry(flags, adjust)
+        flags = self.emu.set_overflow(flags, overflow)
+        flags = self.emu.set_sign(flags, sign)
+        flags = self.emu.set_zero(flags, (pre_mask_al == self.emu.constant(0, Type.int_8)).cast_to(Type.int_1))
+        flags = self.emu.set_parity(flags, self.emu.chk_parity(pre_mask_al))
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
+
+    def aam(self) -> None:
+        base = self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8)
+        al = self.emu.get_gpreg(reg8_t.AL)
+        ah = al // base
+        new_al = al % base
+        self.emu.set_gpreg(reg8_t.AH, ah)
+        self.emu.set_gpreg(reg8_t.AL, new_al)
+        self._update_adjust_flags(
+            new_al,
+            af=self.emu.constant(0, Type.int_1),
+            cf=self.emu.constant(0, Type.int_1),
+            of=self.emu.constant(0, Type.int_1),
+        )
+
+    def aad(self) -> None:
+        base = self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8)
+        ah = self.emu.get_gpreg(reg8_t.AH)
+        al = self.emu.get_gpreg(reg8_t.AL)
+        ax = ah.cast_to(Type.int_16) * base.cast_to(Type.int_16) + al.cast_to(Type.int_16)
+        new_al = ax.cast_to(Type.int_8)
+        self.emu.set_gpreg(reg8_t.AL, new_al)
+        self.emu.set_gpreg(reg8_t.AH, self.emu.constant(0, Type.int_8))
+        self._update_adjust_flags(
+            new_al,
+            af=self.emu.constant(0, Type.int_1),
+            cf=self.emu.constant(0, Type.int_1),
+            of=self.emu.constant(0, Type.int_1),
+        )
 
     def retf_imm16(self) -> None:
         ip = self.emu.pop16()
@@ -480,6 +693,18 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         dx = self.emu.get_gpreg(reg16_t.DX)
         al = self.emu.get_gpreg(reg8_t.AL)
         self.emu.out_io8(dx, al)
+
+    def cmc(self) -> None:
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        self.emu.set_gpreg(reg16_t.FLAGS, flags ^ self.emu.constant(0x0001, Type.int_16))
+
+    def clc(self) -> None:
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        self.emu.set_gpreg(reg16_t.FLAGS, flags & self.emu.constant(0xFFFE, Type.int_16))
+
+    def stc(self) -> None:
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        self.emu.set_gpreg(reg16_t.FLAGS, flags | self.emu.constant(0x0001, Type.int_16))
 
     def cli(self) -> None:
         self.emu.set_interrupt(False)
@@ -611,7 +836,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def code_f6(self) -> None:
         reg = self.instr.modrm.reg
-        if reg == 0:
+        if reg in (0, 1):
             self.test_rm8_imm8()
         elif reg == 2:
             self.not_rm8()
@@ -690,8 +915,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_rm8(rm8.sar(count))
 
     def inc_rm8(self) -> None:
-        rm8 = self.get_rm8() + 1
-        self.set_rm8(rm8)
+        rm8 = self.get_rm8()
+        self.set_rm8(rm8 + 1)
         self.emu.update_eflags_inc(rm8)
 
     def dec_rm8(self) -> None:
@@ -711,15 +936,15 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def adc_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
-        cf = self.emu.is_carry()
+        cf = self.emu.is_carry().cast_to(Type.int_8)
         self.set_rm8(rm8 + self.instr.imm8 + cf)
-        self.emu.update_eflags_add(rm8, self.instr.imm8 + cf)
+        self.emu.update_eflags_adc(rm8, self.instr.imm8, cf)
 
     def sbb_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
-        cf = self.emu.is_carry()
+        cf = self.emu.is_carry().cast_to(Type.int_8)
         self.set_rm8(rm8 - self.instr.imm8 - cf)
-        self.emu.update_eflags_sub(rm8, self.instr.imm8 + cf)
+        self.emu.update_eflags_sbb(rm8, self.instr.imm8, cf)
 
 
     def and_rm8_imm8(self) -> None:
@@ -791,36 +1016,54 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def _rcl_rm8(self, value, count) -> None:
         size = 8
-        steps = count % (size + 1)
+        count_v = self.emu.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
+        steps = count_v % self.emu.constant(size + 1, Type.int_8)
         result = value
         cf = self.emu.get_carry()
-        for _ in range(steps):
-            new_cf = (result >> (size - 1)) & 1
-            result = ((result << 1) | cf.cast_to(Type.int_8)) & self.emu.constant((1 << size) - 1, Type.int_8)
-            cf = new_cf
+
+        for step in range(1, size + 1):
+            cand_result = value
+            cand_cf = self.emu.get_carry()
+            for _ in range(step):
+                new_cf = (cand_result >> (size - 1)) & 1
+                cand_result = ((cand_result << 1) | cand_cf.cast_to(Type.int_8)) & self.emu.constant((1 << size) - 1, Type.int_8)
+                cand_cf = new_cf
+            use_step = steps == self.emu.constant(step, Type.int_8)
+            result = self._ite_value(use_step, cand_result, result)
+            cf = self._ite_value(use_step, cand_cf.cast_to(Type.int_1), cf.cast_to(Type.int_1))
+
         self.set_rm8(result)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
         flags = self.emu.set_carry(flags, cf)
-        if steps == 1:
-            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
-            flags = self.emu.set_overflow(flags, of)
+        one_step = steps == self.emu.constant(1, Type.int_8)
+        of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
+        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def _rcr_rm8(self, value, count) -> None:
         size = 8
-        steps = count % (size + 1)
+        count_v = self.emu.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
+        steps = count_v % self.emu.constant(size + 1, Type.int_8)
         result = value
         cf = self.emu.get_carry()
-        for _ in range(steps):
-            new_cf = result & 1
-            result = (result >> 1) | (cf.cast_to(Type.int_8) << (size - 1))
-            cf = new_cf
+
+        for step in range(1, size + 1):
+            cand_result = value
+            cand_cf = self.emu.get_carry()
+            for _ in range(step):
+                new_cf = cand_result & 1
+                cand_result = (cand_result >> 1) | (cand_cf.cast_to(Type.int_8) << (size - 1))
+                cand_cf = new_cf
+            use_step = steps == self.emu.constant(step, Type.int_8)
+            result = self._ite_value(use_step, cand_result, result)
+            cf = self._ite_value(use_step, cand_cf.cast_to(Type.int_1), cf.cast_to(Type.int_1))
+
         self.set_rm8(result)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
         flags = self.emu.set_carry(flags, cf)
-        if steps == 1:
-            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
-            flags = self.emu.set_overflow(flags, of)
+        one_step = steps == self.emu.constant(1, Type.int_8)
+        of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
+        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
 
@@ -837,9 +1080,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
 
     def neg_rm8(self) -> None:
-        rm8_s = self.get_rm8().signed
-        self.set_rm8(-rm8_s)
-        self.emu.update_eflags_sub(0, rm8_s)
+        rm8 = self.get_rm8()
+        self.set_rm8(self.emu.constant(0, Type.int_8) - rm8)
+        self.emu.update_eflags_sub(0, rm8)
 
 
     def mul_ax_al_rm8(self) -> None:
