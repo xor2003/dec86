@@ -470,6 +470,7 @@ def verify_moo_file(
     limit: int | None = None,
     execute_halt: bool = True,
     revoked_hashes: set[str] | None = None,
+    progress_every: int | None = None,
 ) -> dict[str, Any]:
     cpu_name, cases = load_moo_cases(path)
     opcode = opcode_name_for_path(path)
@@ -477,7 +478,11 @@ def verify_moo_file(
     project = _make_project()
 
     results: list[CaseResult] = []
-    for case in cases[: limit if limit is not None else len(cases)]:
+    selected_cases = cases[: limit if limit is not None else len(cases)]
+    total_cases = len(selected_cases)
+    if progress_every:
+        print(f"[{opcode}] starting {total_cases} cases", flush=True)
+    for index, case in enumerate(selected_cases, start=1):
         case_hash = case.get("hash", "").lower()
         if case_hash and case_hash in revoked_hashes:
             results.append(
@@ -490,8 +495,10 @@ def verify_moo_file(
                     skipped=True,
                 )
             )
-            continue
-        results.append(verify_case(case, opcode=opcode, project=project, execute_halt=execute_halt))
+        else:
+            results.append(verify_case(case, opcode=opcode, project=project, execute_halt=execute_halt))
+        if progress_every and (index % progress_every == 0 or index == total_cases):
+            print(f"[{opcode}] case {index}/{total_cases}", flush=True)
 
     passed = sum(1 for r in results if r.passed)
     skipped = sum(1 for r in results if r.skipped)
