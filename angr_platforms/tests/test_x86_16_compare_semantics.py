@@ -92,6 +92,31 @@ def _run_loop_instruction(arch, code: bytes, cx: int, flags: int = 0):
     return simgr.active[0]
 
 
+def _run_jcc_instruction(arch, code: bytes, *, cx: int = 0, flags: int = 0):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.cx = cx
+    state.regs.flags = flags
+    try:
+        state.regs.ecx = cx
+    except AttributeError:
+        pass
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
 def _run_one_instruction_with_regs(arch, code: bytes, regs: dict[str, int]):
     project = angr.load_shellcode(
         code,
@@ -745,6 +770,17 @@ def test_movsb_matches_upstream_x86_vex_effect():
     assert state32.solver.eval(state32.regs.di) == state16.solver.eval(state16.regs.di)
 
 
+def test_movsw_matches_upstream_x86_vex_effect():
+    state32 = _run_movs_instruction(ArchX86(), b"\x66\x67\xA5", src=b"\x34\x12")
+    state16 = _run_movs_instruction(Arch86_16(), b"\xA5", src=b"\x34\x12")
+
+    assert state32.solver.eval(state32.memory.load(0x200, 2, endness=state32.arch.memory_endness)) == (
+        state16.solver.eval(state16.memory.load(0x200, 2, endness=state16.arch.memory_endness))
+    )
+    assert state32.solver.eval(state32.regs.si) == state16.solver.eval(state16.regs.si)
+    assert state32.solver.eval(state32.regs.di) == state16.solver.eval(state16.regs.di)
+
+
 def test_rep_movsb_matches_upstream_x86_vex_effect():
     state32 = _run_movs_instruction(ArchX86(), b"\xF3\xA4", src=b"ZQ", cx=2)
     state16 = _run_movs_instruction(Arch86_16(), b"\xF3\xA4", src=b"ZQ", cx=2)
@@ -844,6 +880,38 @@ def test_loop_rel8_matches_upstream_x86_vex_effect():
 
     assert state32.addr - (0x100 + 3) == state16.addr - (0x100 + 2)
     assert state32.solver.eval(state32.regs.cx) == state16.solver.eval(state16.regs.cx)
+
+
+def test_cmpsw_matches_upstream_x86_vex_effect():
+    _assert_same_cmps_effect(b"\xA7", b"\x66\x67\xA7", b"\x78\x56", b"\x78\x56")
+
+
+def test_jz_rel8_taken_matches_upstream_x86_vex_effect():
+    state32 = _run_jcc_instruction(ArchX86(), b"\x74\x05", flags=0x0040)
+    state16 = _run_jcc_instruction(Arch86_16(), b"\x74\x05", flags=0x0040)
+
+    assert state32.addr == state16.addr
+
+
+def test_jnz_rel8_not_taken_matches_upstream_x86_vex_effect():
+    state32 = _run_jcc_instruction(ArchX86(), b"\x75\x05", flags=0x0040)
+    state16 = _run_jcc_instruction(Arch86_16(), b"\x75\x05", flags=0x0040)
+
+    assert state32.addr == state16.addr
+
+
+def test_jc_rel8_taken_matches_upstream_x86_vex_effect():
+    state32 = _run_jcc_instruction(ArchX86(), b"\x72\x05", flags=0x0001)
+    state16 = _run_jcc_instruction(Arch86_16(), b"\x72\x05", flags=0x0001)
+
+    assert state32.addr == state16.addr
+
+
+def test_jcxz_rel8_taken_matches_upstream_x86_vex_effect():
+    state32 = _run_jcc_instruction(ArchX86(), b"\x67\xE3\x05", cx=0)
+    state16 = _run_jcc_instruction(Arch86_16(), b"\xE3\x05", cx=0)
+
+    assert state32.addr - (0x100 + 3) == state16.addr - (0x100 + 2)
 
 
 def test_les_loads_far_pointer_into_register_and_es():

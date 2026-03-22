@@ -1030,7 +1030,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def _rcl_rm8(self, value, count) -> None:
         size = 8
-        count_v = self.emu.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
+        count_v = self._masked_shift_count8(count)
         steps = count_v % self.emu.constant(size + 1, Type.int_8)
         result = value
         cf = self.emu.get_carry()
@@ -1056,7 +1056,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def _rcr_rm8(self, value, count) -> None:
         size = 8
-        count_v = self.emu.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
+        count_v = self._masked_shift_count8(count)
         steps = count_v % self.emu.constant(size + 1, Type.int_8)
         result = value
         cf = self.emu.get_carry()

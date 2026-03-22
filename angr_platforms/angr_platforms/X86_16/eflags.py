@@ -297,7 +297,7 @@ class Eflags:
         flags = self._ite(unchanged, self.get_gpreg(reg16_t.FLAGS), flags)
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), cf))
         flags = self.set_parity(flags, self._ite(unchanged, self.get_flag(2), self.chk_parity(result)))
-        flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(1, Type.int_1)))
+        flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(0, Type.int_1)))
         flags = self.set_zero(flags, self._ite(unchanged, self.get_flag(6), (result == 0).cast_to(Type.int_1)))
         flags = self.set_sign(flags, self._ite(unchanged, self.get_flag(7), result[size - 1].cast_to(Type.int_1)))
         flags = self.set_overflow(
@@ -320,7 +320,7 @@ class Eflags:
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), result[0].cast_to(Type.int_1)))
         flags = self.set_overflow(
             flags,
-            self._ite(one, (result[size - 1] ^ result[0]).cast_to(Type.int_1), self.get_flag(11)),
+            self._ite(c == self.constant(0, Type.int_8), self.get_flag(11), (result[size - 1] ^ result[0]).cast_to(Type.int_1)),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -334,7 +334,7 @@ class Eflags:
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), result[size - 1].cast_to(Type.int_1)))
         flags = self.set_overflow(
             flags,
-            self._ite(one, (result[size - 1] ^ result[size - 2]).cast_to(Type.int_1), self.get_flag(11)),
+            self._ite(c == self.constant(0, Type.int_8), self.get_flag(11), (result[size - 1] ^ result[size - 2]).cast_to(Type.int_1)),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
