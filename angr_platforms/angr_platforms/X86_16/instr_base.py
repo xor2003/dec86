@@ -644,6 +644,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             self.emu.get_gpreg(reg16_t.SP) + self.emu.constant(self.instr.imm16, Type.int_16),
         )
         self.emu.set_sgreg(sgreg_t.CS, seg)
+        self.emu.set_gpreg(reg16_t.IP, ip)
         addr = self.emu.v2p(seg, ip)
         self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
 
@@ -651,6 +652,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         ip = self.emu.pop16()
         seg = self.emu.pop16()
         self.emu.set_sgreg(sgreg_t.CS, seg)
+        self.emu.set_gpreg(reg16_t.IP, ip)
         addr = self.emu.v2p(seg, ip)
         self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
 
@@ -663,6 +665,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         #self.emu.lifter_instruction.put(self.emu.constant(self.instr.imm8), "ip_at_syscall")
         # Model real-mode interrupts as synthetic call targets so CFG/decompilation
         # can treat them like normal helper functions.
+        self.emu.set_gpreg(reg16_t.IP, self.emu.constant(self.instr.imm8, Type.int_16))
         self.emu.lifter_instruction.jump(None, 0xFF000 + self.instr.imm8, JumpKind.Call)
 
     def iret(self) -> None:
@@ -671,6 +674,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         flags = self.emu.pop16()
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
         self.emu.set_sgreg(sgreg_t.CS, cs)
+        self.emu.set_gpreg(reg16_t.IP, ip)
         addr = self.emu.v2p(cs, ip)
         self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
 
@@ -682,7 +686,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.out_io8(self.instr.imm8, al)
 
     def jmp(self) -> None:
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16) + 2
+        size = self.emu.constant(self.instr.size, Type.int_16)
+        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16) + size
+        self.emu.set_gpreg(reg16_t.IP, ip)
         self.emu.lifter_instruction.jump(None, ip, JumpKind.Boring)
 
     def in_al_dx(self) -> None:

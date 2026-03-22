@@ -738,7 +738,7 @@ class Instr16(InstrBase):
         reg = self.instr.opcode & 0b111
         self.emu.set_gpreg(reg16_t(reg), Const(IRConst.U16(self.instr.imm16)))
 
-    def _emit_near_call(self, target):
+    def _emit_near_call(self, target, return_ip=None):
         """
         Emit a near call edge in a single place.
 
@@ -747,15 +747,19 @@ class Instr16(InstrBase):
         together makes this area much easier to troubleshoot.
         """
 
-        return_ip = self.emu.get_ip()
+        if return_ip is None:
+            return_ip = self.emu.get_ip() + self.emu.constant(self.instr.size, Type.int_16)
         self.emu.push16(return_ip)
+        self.emu.set_gpreg(reg16_t.IP, target)
         self.emu.lifter_instruction.jump(None, target, JumpKind.Call)
 
     def _emit_near_jump(self, target):
+        self.emu.set_gpreg(reg16_t.IP, target)
         self.emu.lifter_instruction.jump(None, target, JumpKind.Boring)
 
     def ret(self):
         ret_addr = self.emu.pop16()
+        self.emu.set_gpreg(reg16_t.IP, ret_addr)
         self.emu.irsb.next = ret_addr
         self.emu.irsb.jumpkind = 'Ijk_Ret'
 
@@ -765,6 +769,7 @@ class Instr16(InstrBase):
             reg16_t.SP,
             self.emu.get_gpreg(reg16_t.SP) + self.emu.constant(self.instr.imm16, Type.int_16),
         )
+        self.emu.set_gpreg(reg16_t.IP, ret_addr)
         self.emu.irsb.next = ret_addr
         self.emu.irsb.jumpkind = 'Ijk_Ret'
 
@@ -792,7 +797,7 @@ class Instr16(InstrBase):
 
 
     def jmp_rel16(self):
-        size = 3  # opcode + imm16
+        size = self.instr.size
         current_ip = self.emu.get_gpreg(reg16_t.IP) + size
         imm = self.emu.constant(self.instr.imm16, Type.int_16)
         target = current_ip + imm
@@ -1450,7 +1455,8 @@ class Instr16(InstrBase):
 
     def call_rm16(self):
         rm16 = self.get_rm16()
-        self._emit_near_call(rm16)
+        return_ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.size, Type.int_16)
+        self._emit_near_call(rm16, return_ip=return_ip)
 
     def callf_m16_16(self):
         m32 = self.get_m()

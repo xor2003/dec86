@@ -1014,7 +1014,7 @@ def test_call_rm16_pushes_return_and_jumps():
 
     assert state.addr == 0x222
     assert state.solver.eval(state.regs.sp) == 0x2FE
-    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x100
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x102
 
 
 def test_jmpf_ptr16_16_executes_to_linear_alias():

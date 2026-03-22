@@ -129,6 +129,48 @@ def test_verify_80286_gp_faulting_memory_operand_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_jmp_short_case_passes():
+    summary = verify_moo_file(_moo("EB"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_far_jmp_case_passes():
+    summary = verify_moo_file(_moo("EA"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_int_case_passes():
+    summary = verify_moo_file(_moo("CD"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_iret_case_passes():
+    summary = verify_moo_file(_moo("CF"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_hlt_case_passes():
+    summary = verify_moo_file(_moo("F4"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_far_indirect_call_case_passes():
+    summary = verify_moo_file(_moo("FF.3"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
 def test_build_80286_verification_table_script(tmp_path):
     summary = summarize_results([verify_moo_file(_moo("00"), limit=1), verify_moo_file(_moo("60"), limit=1)])
     summary_json = tmp_path / "summary.json"

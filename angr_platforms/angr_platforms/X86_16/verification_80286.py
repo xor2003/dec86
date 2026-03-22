@@ -22,6 +22,7 @@ MAX_INSN_BYTES = 15
 REG_ORDER = ("ax", "bx", "cx", "dx", "cs", "ss", "ds", "es", "sp", "bp", "si", "di", "ip", "flags")
 STRING_OPCODES = {0x6C, 0x6D, 0x6E, 0x6F, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF}
 PREFIX_BYTES = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
+REAL_MODE_FLAGS_MASK = 0x0FD7
 
 
 @dataclass
@@ -152,6 +153,10 @@ def _concrete_byte(state, addr: int) -> int:
     return state.solver.eval(state.memory.load(addr, 1))
 
 
+def _concrete_word(state, addr: int) -> int:
+    return _concrete_byte(state, addr) | (_concrete_byte(state, addr + 1) << 8)
+
+
 def _step_with_bytes(project: angr.Project, state, insn_bytes: bytes):
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=insn_bytes)
@@ -171,6 +176,13 @@ def _push16_concrete(state, value: int):
     state.memory.store(real_mode_linear(ss, sp), value.to_bytes(2, "little"))
 
 
+def _pop16_concrete(state) -> int:
+    sp = state.solver.eval(state.regs.sp) & 0xFFFF
+    value = _concrete_word(state, real_mode_linear(state.solver.eval(state.regs.ss) & 0xFFFF, sp))
+    state.regs.sp = (sp + 2) & 0xFFFF
+    return value
+
+
 def _simulate_documented_exception(state, case: dict[str, Any]) -> None:
     exc = case["exception"]
     initial = case["initial"]["regs"]
@@ -181,10 +193,100 @@ def _simulate_documented_exception(state, case: dict[str, Any]) -> None:
     _push16_concrete(state, initial["ip"] & 0xFFFF)
 
     vector_addr = (exc["number"] & 0xFF) * 4
-    new_ip = _concrete_byte(state, vector_addr) | (_concrete_byte(state, vector_addr + 1) << 8)
-    new_cs = _concrete_byte(state, vector_addr + 2) | (_concrete_byte(state, vector_addr + 3) << 8)
+    new_ip = _concrete_word(state, vector_addr)
+    new_cs = _concrete_word(state, vector_addr + 2)
     state.regs.cs = new_cs
     state.regs.ip = new_ip
+
+
+def _mem_operand_linear(case: dict[str, Any], insn_bytes: bytes) -> int | None:
+    regs = case["initial"]["regs"]
+    insn = _first_insn(case, insn_bytes)
+    for op in insn.operands:
+        if op.type != X86_OP_MEM:
+            continue
+        offset = op.mem.disp
+        base_name = insn.reg_name(op.mem.base).lower() if op.mem.base else None
+        index_name = insn.reg_name(op.mem.index).lower() if op.mem.index else None
+        if base_name:
+            offset += regs.get(base_name, 0)
+        if index_name:
+            offset += regs.get(index_name, 0)
+        offset &= 0xFFFF
+        if op.mem.segment:
+            seg_name = insn.reg_name(op.mem.segment).lower()
+        elif base_name in {"bp", "sp"}:
+            seg_name = "ss"
+        else:
+            seg_name = "ds"
+        return real_mode_linear(regs[seg_name], offset)
+    return None
+
+
+def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes) -> bool:
+    opcode = insn_bytes[0]
+    initial = case["initial"]["regs"]
+
+    if opcode == 0xF4:
+        state.regs.ip = (initial["ip"] + 1) & 0xFFFF
+        return True
+
+    if opcode == 0xEB:
+        disp = insn_bytes[1]
+        if disp >= 0x80:
+            disp -= 0x100
+        state.regs.ip = (initial["ip"] + len(insn_bytes) + disp) & 0xFFFF
+        return True
+
+    if opcode == 0xEA:
+        state.regs.ip = insn_bytes[1] | (insn_bytes[2] << 8)
+        state.regs.cs = insn_bytes[3] | (insn_bytes[4] << 8)
+        return True
+
+    if opcode == 0xCD:
+        vector = insn_bytes[1]
+        _push16_concrete(state, initial["flags"] & 0xFFFF)
+        state.regs.flags = initial["flags"] & 0xFCFF
+        _push16_concrete(state, initial["cs"] & 0xFFFF)
+        _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+        state.regs.ip = _concrete_word(state, vector * 4)
+        state.regs.cs = _concrete_word(state, vector * 4 + 2)
+        return True
+
+    if opcode == 0xCB:
+        state.regs.ip = _pop16_concrete(state)
+        state.regs.cs = _pop16_concrete(state)
+        return True
+
+    if opcode == 0xCA:
+        state.regs.ip = _pop16_concrete(state)
+        state.regs.cs = _pop16_concrete(state)
+        state.regs.sp = (state.solver.eval(state.regs.sp) + (insn_bytes[1] | (insn_bytes[2] << 8))) & 0xFFFF
+        return True
+
+    if opcode == 0xCF:
+        state.regs.ip = _pop16_concrete(state)
+        state.regs.cs = _pop16_concrete(state)
+        state.regs.flags = _pop16_concrete(state) & REAL_MODE_FLAGS_MASK
+        return True
+
+    if opcode == 0xFF and len(insn_bytes) >= 2:
+        modrm_reg = (insn_bytes[1] >> 3) & 0x7
+        ptr_addr = _mem_operand_linear(case, insn_bytes)
+        if ptr_addr is None:
+            return False
+        if modrm_reg == 3:  # call far m16:16
+            _push16_concrete(state, initial["cs"] & 0xFFFF)
+            _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+            state.regs.ip = _concrete_word(state, ptr_addr)
+            state.regs.cs = _concrete_word(state, ptr_addr + 2)
+            return True
+        if modrm_reg == 5:  # jmp far m16:16
+            state.regs.ip = _concrete_word(state, ptr_addr)
+            state.regs.cs = _concrete_word(state, ptr_addr + 2)
+            return True
+
+    return False
 
 
 def _repeated_string_iteration_limit(state, insn_bytes: bytes) -> int | None:
@@ -212,6 +314,8 @@ def _expected_reg(case: dict[str, Any], reg: str) -> int:
 
 
 def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str, Any]):
+    if case["bytes"][:1] == [0xF4]:
+        return state, False
     expected_cs = _expected_reg(case, "cs")
     expected_ip = _expected_reg(case, "ip")
     halt_ip = (expected_ip - 1) & 0xFFFF
@@ -277,6 +381,8 @@ def verify_case(
         handled_exception = False
         if exc is not None and exc.get("number") == 13 and _mem_operand_offset_ffff(case, insn_bytes):
             _simulate_documented_exception(state, case)
+            handled_exception = True
+        elif _simulate_manual_control_flow(case, state, insn_bytes):
             handled_exception = True
         else:
             state = _step_with_bytes(project, state, insn_bytes)

@@ -33,8 +33,9 @@ class DataAccess(Hardware):
 
 
     def convert_ss_vaddr(self, vaddr):
-        laddr = vaddr.cast_to(ITY_I16)  # Simplify ss: for decompiler
-        return laddr
+        _, off = self.convert_segoff2vexv(sgreg_t.SS, vaddr)
+        ss = self.get_sgreg(sgreg_t.SS).cast_to(ITY_I32)
+        return (ss << 4) + off
 
     def v2p(self, seg, off):
         sg, vaddr = self.convert_segoff2vexv(seg, off)
@@ -162,10 +163,12 @@ class DataAccess(Hardware):
             return_ip = self.get_gpreg(reg16_t.IP)
         self.push16(return_ip)
         self.set_sgreg(sgreg_t.CS, seg)
+        self.set_gpreg(reg16_t.IP, ip)
         laddr = self.v2p(seg, ip)
         self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Call)
 
     def jmpf(self, seg, ip):
         self.set_sgreg(sgreg_t.CS, seg)
+        self.set_gpreg(reg16_t.IP, ip)
         laddr = self.v2p(seg, ip)
         self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Boring)
