@@ -92,6 +92,111 @@ def _run_loop_instruction(arch, code: bytes, cx: int, flags: int = 0):
     return simgr.active[0]
 
 
+def _run_one_instruction_with_regs(arch, code: bytes, regs: dict[str, int]):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ds = 0
+    state.regs.es = 0
+    state.regs.ss = 0
+    for reg, value in regs.items():
+        setattr(state.regs, reg, value)
+        alias = {"cx": "ecx", "dx": "edx", "si": "esi", "di": "edi"}.get(reg)
+        if alias is not None:
+            try:
+                setattr(state.regs, alias, value)
+            except AttributeError:
+                pass
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
+def _run_xlat_instruction(arch, code: bytes, table: bytes, bx: int = 0x220, ax: int = 0x0005):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ds = 0
+    state.regs.bx = bx
+    state.regs.ax = ax
+    try:
+        state.regs.ebx = bx
+    except AttributeError:
+        pass
+    state.memory.store(bx, table)
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
+def _run_movs_instruction(arch, code: bytes, src: bytes, si: int = 0x220, di: int = 0x200, cx: int = 0):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ds = 0
+    state.regs.es = 0
+    state.regs.si = si
+    state.regs.di = di
+    state.regs.cx = cx
+    try:
+        state.regs.esi = si
+        state.regs.edi = di
+        state.regs.ecx = cx
+    except AttributeError:
+        pass
+    state.memory.store(si, src)
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
+def _assert_same_reg_effect_with_flags(
+    code16: bytes,
+    code32: bytes,
+    *,
+    regs: dict[str, int],
+    compare_regs: tuple[str, ...],
+    compare_flag_bits: tuple[int, ...] = (0, 6, 7, 11),
+):
+    state32 = _run_one_instruction_with_regs(ArchX86(), code32, regs)
+    state16 = _run_one_instruction_with_regs(Arch86_16(), code16, regs)
+
+    for reg in compare_regs:
+        assert state32.solver.eval(getattr(state32.regs, reg)) == state16.solver.eval(getattr(state16.regs, reg))
+    for bit in compare_flag_bits:
+        assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
+
+
 def _assert_same_store_effect(code16: bytes, code32: bytes, width: int, ax: int):
     state32 = _run_one_instruction(ArchX86(), code32, ax=ax)
     state16 = _run_one_instruction(Arch86_16(), code16, ax=ax)
@@ -266,6 +371,73 @@ def _run_iret_instruction(code: bytes, sp: int = 0x300):
     return simgr.active[0], block
 
 
+def _run_control_flow_instruction(code: bytes, setup=None, sp: int = 0x300):
+    project = angr.load_shellcode(
+        code,
+        arch=Arch86_16(),
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ss = 0
+    state.regs.cs = 0
+    state.regs.sp = sp
+    if setup is not None:
+        setup(state)
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
+def _run_stack_instruction(arch, code: bytes, regs: dict[str, int], stack: bytes = b"", sp: int = 0x300):
+    project = angr.load_shellcode(
+        code,
+        arch=arch,
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+    state = project.factory.blank_state(
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+    )
+    state.regs.ss = 0
+    state.regs.ds = 0
+    state.regs.es = 0
+    state.regs.sp = sp
+    reg_aliases = {
+        "ax": "eax",
+        "bx": "ebx",
+        "cx": "ecx",
+        "dx": "edx",
+        "bp": "ebp",
+        "si": "esi",
+        "di": "edi",
+        "sp": "esp",
+    }
+    for reg, value in regs.items():
+        setattr(state.regs, reg, value)
+        alias = reg_aliases.get(reg)
+        if alias is not None:
+            try:
+                setattr(state.regs, alias, value)
+            except AttributeError:
+                pass
+    if stack:
+        state.memory.store(sp, stack)
+
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=code)
+    assert len(simgr.active) == 1
+    return simgr.active[0]
+
+
 def _run_pop_rm16_instruction(code: bytes, sp: int = 0x300, bx: int = 0x220):
     project = angr.load_shellcode(
         code,
@@ -368,6 +540,272 @@ def test_sar_al_1_matches_upstream_x86_vex_effect():
     assert state32.solver.eval(state32.regs.ax) == state16.solver.eval(state16.regs.ax)
 
 
+def test_shl_bx_cl_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xE3",
+        b"\x66\xD3\xE3",
+        regs={"bx": 0x1234, "cx": 3, "flags": 0},
+        compare_regs=("bx",),
+        compare_flag_bits=(0, 6, 7),
+    )
+
+
+def test_shr_di_cl_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xEF",
+        b"\x66\xD3\xEF",
+        regs={"di": 0x9234, "cx": 3, "flags": 0},
+        compare_regs=("di",),
+        compare_flag_bits=(0, 6, 7),
+    )
+
+
+def test_rol_si_cl_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xC6",
+        b"\x66\xD3\xC6",
+        regs={"si": 0x9234, "cx": 3, "flags": 0},
+        compare_regs=("si",),
+        compare_flag_bits=(0,),
+    )
+
+
+def test_ror_si_cl_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xCE",
+        b"\x66\xD3\xCE",
+        regs={"si": 0x9234, "cx": 3, "flags": 0},
+        compare_regs=("si",),
+        compare_flag_bits=(0,),
+    )
+
+
+def test_rcl_si_cl_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xD6",
+        b"\x66\xD3\xD6",
+        regs={"si": 0x9234, "cx": 3, "flags": 1},
+        compare_regs=("si",),
+        compare_flag_bits=(0,),
+    )
+
+
+def test_rcr_si_cl_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xDE",
+        b"\x66\xD3\xDE",
+        regs={"si": 0x9234, "cx": 3, "flags": 1},
+        compare_regs=("si",),
+        compare_flag_bits=(0,),
+    )
+
+
+def test_cbw_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x98",
+        b"\x66\x98",
+        regs={"ax": 0x0081},
+        compare_regs=("ax",),
+        compare_flag_bits=(),
+    )
+
+
+def test_cwd_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x99",
+        b"\x66\x99",
+        regs={"ax": 0x8001, "dx": 0},
+        compare_regs=("dx",),
+        compare_flag_bits=(),
+    )
+
+
+def test_xchg_ax_cx_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x91",
+        b"\x91",
+        regs={"ax": 0x1234, "cx": 0xABCD},
+        compare_regs=("ax", "cx"),
+        compare_flag_bits=(),
+    )
+
+
+def test_test_ax_cx_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x85\xC8",
+        b"\x66\x85\xC8",
+        regs={"ax": 0x1234, "cx": 0x00F0, "flags": 0xFFFF},
+        compare_regs=(),
+    )
+
+
+def test_imul_cx_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xF7\xE9",
+        b"\x66\xF7\xE9",
+        regs={"ax": 0xFFFE, "cx": 0xFFFC, "flags": 0},
+        compare_regs=("ax", "dx"),
+        compare_flag_bits=(0, 11),
+    )
+
+
+def test_neg_bx_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xF7\xDB",
+        b"\x66\xF7\xDB",
+        regs={"bx": 0x1234, "flags": 0},
+        compare_regs=("bx",),
+    )
+
+
+def test_not_bx_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xF7\xD3",
+        b"\x66\xF7\xD3",
+        regs={"bx": 0x1234, "flags": 0},
+        compare_regs=("bx",),
+        compare_flag_bits=(),
+    )
+
+
+def test_aaa_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x37",
+        b"\x37",
+        regs={"ax": 0x009B, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 4),
+    )
+
+
+def test_aas_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x3F",
+        b"\x3F",
+        regs={"ax": 0x000B, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 4),
+    )
+
+
+def test_daa_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x27",
+        b"\x27",
+        regs={"ax": 0x009B, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 2, 4, 6, 7),
+    )
+
+
+def test_das_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x2F",
+        b"\x2F",
+        regs={"ax": 0x009B, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 2, 4, 6, 7),
+    )
+
+
+def test_aam_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD4\x0A",
+        b"\xD4\x0A",
+        regs={"ax": 0x0023, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 2, 4, 6, 7, 11),
+    )
+
+
+def test_aad_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD5\x0A",
+        b"\xD5\x0A",
+        regs={"ax": 0x0205, "flags": 0},
+        compare_regs=("ax",),
+        compare_flag_bits=(0, 2, 4, 6, 7, 11),
+    )
+
+
+def test_xlat_matches_upstream_x86_vex_effect():
+    table = bytes(range(16))
+    state32 = _run_xlat_instruction(ArchX86(), b"\xD7", table=table)
+    state16 = _run_xlat_instruction(Arch86_16(), b"\xD7", table=table)
+
+    assert state32.solver.eval(state32.regs.al) == state16.solver.eval(state16.regs.al)
+
+
+def test_movsb_matches_upstream_x86_vex_effect():
+    state32 = _run_movs_instruction(ArchX86(), b"\xA4", src=b"Z")
+    state16 = _run_movs_instruction(Arch86_16(), b"\xA4", src=b"Z")
+
+    assert state32.solver.eval(state32.memory.load(0x200, 1)) == state16.solver.eval(state16.memory.load(0x200, 1))
+    assert state32.solver.eval(state32.regs.si) == state16.solver.eval(state16.regs.si)
+    assert state32.solver.eval(state32.regs.di) == state16.solver.eval(state16.regs.di)
+
+
+def test_rep_movsb_matches_upstream_x86_vex_effect():
+    state32 = _run_movs_instruction(ArchX86(), b"\xF3\xA4", src=b"ZQ", cx=2)
+    state16 = _run_movs_instruction(Arch86_16(), b"\xF3\xA4", src=b"ZQ", cx=2)
+
+    assert state32.addr == state16.addr
+    assert state32.solver.eval(state32.memory.load(0x200, 1)) == state16.solver.eval(state16.memory.load(0x200, 1))
+    assert state32.solver.eval(state32.regs.si) == state16.solver.eval(state16.regs.si)
+    assert state32.solver.eval(state32.regs.di) == state16.solver.eval(state16.regs.di)
+    assert state32.solver.eval(state32.regs.cx) == state16.solver.eval(state16.regs.cx)
+
+
+def test_lahf_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x9F",
+        b"\x9F",
+        regs={"ax": 0x3400, "flags": 0x08D5},
+        compare_regs=("ax",),
+        compare_flag_bits=(),
+    )
+
+
+def test_sahf_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x9E",
+        b"\x9E",
+        regs={"ax": 0xD500, "flags": 0x0800},
+        compare_regs=(),
+        compare_flag_bits=(0, 2, 4, 6, 7, 11),
+    )
+
+
+def test_cmc_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xF5",
+        b"\xF5",
+        regs={"flags": 0x0000},
+        compare_regs=(),
+        compare_flag_bits=(0,),
+    )
+
+
+def test_clc_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xF8",
+        b"\xF8",
+        regs={"flags": 0x0001},
+        compare_regs=(),
+        compare_flag_bits=(0,),
+    )
+
+
+def test_stc_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xF9",
+        b"\xF9",
+        regs={"flags": 0x0000},
+        compare_regs=(),
+        compare_flag_bits=(0,),
+    )
+
+
 def test_loop_rel8_matches_upstream_x86_vex_effect():
     state32 = _run_loop_instruction(ArchX86(), b"\x67\xE2\xF2", cx=2)
     state16 = _run_loop_instruction(Arch86_16(), b"\xE2\xF2", cx=2)
@@ -398,9 +836,161 @@ def test_iret_restores_ip_cs_and_flags():
         if isinstance(stmt, pyvex.stmt.Put)
     }
 
-    assert state.addr == 0x5678
+    assert state.addr == 0x79B8
+    assert state.solver.eval(state.regs.cs) == 0x1234
+    assert state.solver.eval(state.regs.sp) == 0x306
+    assert state.solver.eval(state.regs.flags) == 0x0801
     assert block.vex.jumpkind == "Ijk_Ret"
     assert {"cs", "flags"} <= put_regs
+
+
+def test_jmp_short_executes_to_branch_target():
+    state = _run_control_flow_instruction(b"\xEB\x02")
+
+    assert state.addr == 0x104
+    assert state.solver.eval(state.regs.sp) == 0x300
+
+
+def test_jmp_rm16_executes_to_register_target():
+    state = _run_control_flow_instruction(b"\xFF\xE0", setup=lambda s: setattr(s.regs, "ax", 0x222))
+
+    assert state.addr == 0x222
+    assert state.solver.eval(state.regs.sp) == 0x300
+
+
+def test_call_rm16_pushes_return_and_jumps():
+    state = _run_control_flow_instruction(b"\xFF\xD0", setup=lambda s: setattr(s.regs, "ax", 0x222))
+
+    assert state.addr == 0x222
+    assert state.solver.eval(state.regs.sp) == 0x2FE
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x100
+
+
+def test_jmpf_ptr16_16_executes_to_linear_alias():
+    state = _run_control_flow_instruction(b"\xEA\x78\x56\x34\x12")
+
+    assert state.addr == 0x79B8
+    assert state.solver.eval(state.regs.cs) == 0x1234
+    assert state.solver.eval(state.regs.sp) == 0x300
+
+
+def test_callf_ptr16_16_pushes_return_frame_and_jumps():
+    state = _run_control_flow_instruction(b"\x9A\x78\x56\x34\x12")
+
+    assert state.addr == 0x79B8
+    assert state.solver.eval(state.regs.cs) == 0x1234
+    assert state.solver.eval(state.regs.sp) == 0x2FC
+    assert state.solver.eval(state.memory.load(0x2FC, 2, endness=state.arch.memory_endness)) == 0x105
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x0000
+
+
+def test_jmpf_m16_16_executes_to_linear_alias():
+    state = _run_control_flow_instruction(
+        b"\xFF\x2E\x20\x01",
+        setup=lambda s: (setattr(s.regs, "ds", 0), s.memory.store(0x120, b"\x78\x56\x34\x12")),
+    )
+
+    assert state.addr == 0x79B8
+    assert state.solver.eval(state.regs.cs) == 0x1234
+    assert state.solver.eval(state.regs.sp) == 0x300
+
+
+def test_callf_m16_16_pushes_return_frame_and_jumps():
+    state = _run_control_flow_instruction(
+        b"\xFF\x1E\x20\x01",
+        setup=lambda s: (setattr(s.regs, "ds", 0), s.memory.store(0x120, b"\x78\x56\x34\x12")),
+    )
+
+    assert state.addr == 0x79B8
+    assert state.solver.eval(state.regs.cs) == 0x1234
+    assert state.solver.eval(state.regs.sp) == 0x2FC
+    assert state.solver.eval(state.memory.load(0x2FC, 2, endness=state.arch.memory_endness)) == 0x104
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x0000
+
+
+def test_ret_pops_target_and_advances_stack():
+    state = _run_control_flow_instruction(b"\xC3", setup=lambda s: s.memory.store(0x300, b"\x78\x56"))
+
+    assert state.addr == 0x5678
+    assert state.solver.eval(state.regs.sp) == 0x302
+
+
+def test_retn_imm16_pops_target_and_adjusts_stack():
+    state = _run_control_flow_instruction(b"\xC2\x04\x00", setup=lambda s: s.memory.store(0x300, b"\x78\x56"))
+
+    assert state.addr == 0x5678
+    assert state.solver.eval(state.regs.sp) == 0x306
+
+
+def test_retf_transfers_control_without_crashing():
+    state = _run_control_flow_instruction(b"\xCB", setup=lambda s: s.memory.store(0x300, b"\x78\x56\x34\x12"))
+
+    assert state.addr == 0x79B8
+    assert state.solver.eval(state.regs.cs) == 0x1234
+    assert state.solver.eval(state.regs.sp) == 0x304
+
+
+def test_retf_imm16_transfers_control_without_crashing():
+    state = _run_control_flow_instruction(b"\xCA\x04\x00", setup=lambda s: s.memory.store(0x300, b"\x78\x56\x34\x12"))
+
+    assert state.addr == 0x79B8
+    assert state.solver.eval(state.regs.cs) == 0x1234
+    assert state.solver.eval(state.regs.sp) == 0x308
+
+
+def test_into_falls_through_when_overflow_clear():
+    state = _run_control_flow_instruction(b"\xCE")
+
+    assert state.addr == 0x101
+
+
+def test_into_branches_to_interrupt_vector_when_overflow_set():
+    state = _run_control_flow_instruction(b"\xCE", setup=lambda s: setattr(s.regs, "flags", 0x0800))
+
+    assert state.addr == 0xF004
+
+
+def test_insb_advances_di_and_writes_byte():
+    state = _run_control_flow_instruction(
+        b"\x6C",
+        setup=lambda s: (setattr(s.regs, "es", 0), setattr(s.regs, "di", 0x200), setattr(s.regs, "dx", 0x40)),
+    )
+
+    assert state.solver.eval(state.regs.di) == 0x201
+    assert state.solver.eval(state.memory.load(0x200, 1)) == 0xFF
+
+
+def test_insw_advances_di_by_word():
+    state = _run_control_flow_instruction(
+        b"\x6D",
+        setup=lambda s: (setattr(s.regs, "es", 0), setattr(s.regs, "di", 0x200), setattr(s.regs, "dx", 0x40)),
+    )
+
+    assert state.solver.eval(state.regs.di) == 0x202
+    assert state.solver.eval(state.memory.load(0x200, 2, endness=state.arch.memory_endness)) == 0xFFFF
+
+
+def test_outsb_advances_si():
+    state = _run_control_flow_instruction(
+        b"\x6E",
+        setup=lambda s: (setattr(s.regs, "ds", 0), setattr(s.regs, "si", 0x220), setattr(s.regs, "dx", 0x40), s.memory.store(0x220, b"X")),
+    )
+
+    assert state.solver.eval(state.regs.si) == 0x221
+
+
+def test_outsw_advances_si_by_word():
+    state = _run_control_flow_instruction(
+        b"\x6F",
+        setup=lambda s: (
+            setattr(s.regs, "ds", 0),
+            setattr(s.regs, "si", 0x220),
+            setattr(s.regs, "dx", 0x40),
+            s.memory.store(0x220, b"\x34\x12"),
+        ),
+    )
+
+    assert state.solver.eval(state.regs.si) == 0x222
 
 
 def test_pop_rm16_writes_memory_and_advances_stack():
@@ -408,6 +998,89 @@ def test_pop_rm16_writes_memory_and_advances_stack():
 
     assert state.solver.eval(state.memory.load(0x220, 2, endness=state.arch.memory_endness)) == 0x1234
     assert state.addr == 0x102
+
+
+def test_pusha_pushes_all_registers_using_original_sp():
+    state = _run_stack_instruction(
+        Arch86_16(),
+        b"\x60",
+        {
+            "ax": 0x1111,
+            "cx": 0x2222,
+            "dx": 0x3333,
+            "bx": 0x4444,
+            "bp": 0x5555,
+            "si": 0x6666,
+            "di": 0x7777,
+        },
+        sp=0x300,
+    )
+
+    assert state.solver.eval(state.regs.sp) == 0x2F0
+    assert state.solver.eval(state.memory.load(0x2F0, 2, endness=state.arch.memory_endness)) == 0x7777
+    assert state.solver.eval(state.memory.load(0x2F2, 2, endness=state.arch.memory_endness)) == 0x6666
+    assert state.solver.eval(state.memory.load(0x2F4, 2, endness=state.arch.memory_endness)) == 0x5555
+    assert state.solver.eval(state.memory.load(0x2F6, 2, endness=state.arch.memory_endness)) == 0x0300
+    assert state.solver.eval(state.memory.load(0x2F8, 2, endness=state.arch.memory_endness)) == 0x4444
+    assert state.solver.eval(state.memory.load(0x2FA, 2, endness=state.arch.memory_endness)) == 0x3333
+    assert state.solver.eval(state.memory.load(0x2FC, 2, endness=state.arch.memory_endness)) == 0x2222
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x1111
+
+
+def test_popa_restores_registers_and_discards_saved_sp_word():
+    stack = b"\x11\x11\x22\x22\x33\x33\x44\x44\x55\x55\x66\x66\x77\x77\x88\x88"
+    state = _run_stack_instruction(Arch86_16(), b"\x61", {}, stack=stack, sp=0x300)
+
+    assert state.solver.eval(state.regs.di) == 0x1111
+    assert state.solver.eval(state.regs.si) == 0x2222
+    assert state.solver.eval(state.regs.bp) == 0x3333
+    assert state.solver.eval(state.regs.bx) == 0x5555
+    assert state.solver.eval(state.regs.dx) == 0x6666
+    assert state.solver.eval(state.regs.cx) == 0x7777
+    assert state.solver.eval(state.regs.ax) == 0x8888
+    assert state.solver.eval(state.regs.sp) == 0x310
+
+
+def test_pushf_pushes_current_flags_word():
+    state = _run_stack_instruction(Arch86_16(), b"\x9C", {"flags": 0x08D5}, sp=0x300)
+
+    assert state.solver.eval(state.regs.sp) == 0x2FE
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x08D5
+
+
+def test_popf_restores_flag_bits_from_stack():
+    stack = b"\xD5\x08"
+    state16 = _run_stack_instruction(Arch86_16(), b"\x9D", {"flags": 0}, stack=stack, sp=0x300)
+
+    assert state16.solver.eval(state16.regs.sp) == 0x302
+    for bit in (0, 2, 4, 6, 7, 8, 9, 10, 11):
+        assert state16.solver.eval(state16.regs.flags[bit]) == ((0x08D5 >> bit) & 1)
+
+
+def test_leave_restores_bp_and_releases_stack_frame():
+    stack = b"\x34\x12"
+    regs = {"bp": 0x300, "sp": 0x2F0}
+    state16 = _run_stack_instruction(Arch86_16(), b"\xC9", regs, stack=stack, sp=0x300)
+
+    assert state16.solver.eval(state16.regs.bp) == 0x1234
+    assert state16.solver.eval(state16.regs.sp) == 0x302
+
+
+def test_enter_allocates_simple_frame():
+    state = _run_stack_instruction(Arch86_16(), b"\xC8\x04\x00\x00", {"bp": 0x280}, sp=0x300)
+
+    assert state.solver.eval(state.regs.bp) == 0x2FE
+    assert state.solver.eval(state.regs.sp) == 0x2FA
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x0280
+
+
+def test_enter_level_one_pushes_frame_pointer_copy():
+    state = _run_stack_instruction(Arch86_16(), b"\xC8\x04\x00\x01", {"bp": 0x280}, sp=0x300)
+
+    assert state.solver.eval(state.regs.bp) == 0x2FE
+    assert state.solver.eval(state.regs.sp) == 0x2F8
+    assert state.solver.eval(state.memory.load(0x2FC, 2, endness=state.arch.memory_endness)) == 0x02FE
+    assert state.solver.eval(state.memory.load(0x2FE, 2, endness=state.arch.memory_endness)) == 0x0280
 
 
 def test_div_zero_block_lifts_without_python_attribute_error():
