@@ -1194,6 +1194,7 @@ class Instr16(InstrBase):
         rm16 = self.get_rm16()
         count = self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8)
         self.set_rm16(rm16.sar(count))
+        self.emu.update_eflags_sar(rm16, count)
 
     def shl_rm16_1(self):
         rm16 = self.get_rm16()
@@ -1353,6 +1354,7 @@ class Instr16(InstrBase):
         rm16_s = self.get_rm16()
         cl = self.emu.constant(1, Type.int_8)
         self.set_rm16(rm16_s.sar(cl))
+        self.emu.update_eflags_sar(rm16_s, cl)
 
     def sal_rm16_cl(self):
         rm16_s = self.get_rm16().signed
@@ -1363,6 +1365,7 @@ class Instr16(InstrBase):
         rm16_s = self.get_rm16()
         cl = self.emu.get_gpreg(reg8_t.CL)
         self.set_rm16(rm16_s.sar(cl))
+        self.emu.update_eflags_sar(rm16_s, cl)
 
     def test_rm16_imm16(self):
         rm16 = self.get_rm16()

@@ -913,6 +913,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         rm8 = self.get_rm8()
         count = self._group2_rm8_count()
         self.set_rm8(rm8.sar(count))
+        self.emu.update_eflags_sar(rm8, count)
 
     def inc_rm8(self) -> None:
         rm8 = self.get_rm8()
@@ -1012,7 +1013,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def sar_rm8_imm8(self) -> None:
         rm8_s = self.get_rm8()
-        self.set_rm8(rm8_s.sar(self.instr.imm8))
+        count = self.emu.constant(self.instr.imm8, Type.int_8)
+        self.set_rm8(rm8_s.sar(count))
+        self.emu.update_eflags_sar(rm8_s, count)
 
     def _rcl_rm8(self, value, count) -> None:
         size = 8

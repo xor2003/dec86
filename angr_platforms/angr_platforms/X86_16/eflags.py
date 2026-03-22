@@ -53,10 +53,7 @@ class Eflags:
         return self.set_flag(flags, 0, carry)
 
     def set_parity(self, flags, parity):
-        return
-        eflags = self.get_gpreg(reg16_t.FLAGS)
-        eflags[self.constant(2)] = parity.cast_to(Type.int_16)
-        self.set_gpreg(reg16_t.FLAGS, flags)
+        return self.set_flag(flags, 2, parity)
 
     def set_zero(self, flags, zero):
         return self.set_flag(flags, 6, zero)
@@ -79,11 +76,25 @@ class Eflags:
         flags = self.set_flag(flags, 10, direction)
         self.set_gpreg(reg16_t.FLAGS, flags)
 
+    @staticmethod
+    def _wider_type(ty):
+        if ty == Type.int_8:
+            return Type.int_16
+        if ty == Type.int_16:
+            return Type.int_32
+        return Type.int_32
+
+    def _adjust_flag(self, v1, v2, result):
+        one = self.constant(1, result.ty)
+        return (((v1 ^ v2) ^ result) >> 4 & one).cast_to(Type.int_1)
+
     def update_eflags_inc(self, v1):
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v1.width
-        result = v1
+        result = v1 + self.constant(1, v1.ty)
 
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(v1, self.constant(1, v1.ty), result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, v1 == self.constant(1 << (size - 1), v1.ty))
@@ -94,29 +105,32 @@ class Eflags:
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v1.width
         result = v1 + v2
+        wide = self._wider_type(v1.ty)
+        carry = ((v1.cast_to(wide) + v2.cast_to(wide)) >> size & self.constant(1, wide)).cast_to(Type.int_1)
 
-        flags = self.set_carry(flags, result < v1)
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_carry(flags, carry)
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(v1, v2, result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
-        flags = self.set_overflow(flags,
-            ~(~(1 ^ v1[size - 1] ^ v2[size - 1]) | ~((v1 ^ (v1 + v2))[size - 1])),
-        )
+        flags = self.set_overflow(flags, (((~(v1 ^ v2)) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)).cast_to(Type.int_1))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_adc(self, v1, v2, carry):
         v2 = self.constant(v2, v1.ty) if isinstance(v2, int) else v2
+        carry = self.constant(carry, v1.ty) if isinstance(carry, int) else carry.cast_to(v1.ty)
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v1.width
         result = v1 + v2 + carry
+        wide = self._wider_type(v1.ty)
+        carry_out = ((v1.cast_to(wide) + v2.cast_to(wide) + carry.cast_to(wide)) >> size & self.constant(1, wide)).cast_to(Type.int_1)
 
-        flags = self.set_carry(flags, result < v1)
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_carry(flags, carry_out)
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(v1, v2, result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
-        flags = self.set_overflow(flags,
-            ~(~(1 ^ v1[size - 1] ^ v2[size - 1]) | ~((v1 ^ (v1 + v2))[size - 1])),
-        )
+        flags = self.set_overflow(flags, (((~(v1 ^ v2)) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)).cast_to(Type.int_1))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
 
@@ -127,7 +141,7 @@ class Eflags:
         size = v1.width
 
         flags = self.set_carry(flags, self.constant(0))
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_parity(flags, self.chk_parity(result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, self.constant(0))
@@ -140,7 +154,7 @@ class Eflags:
         size = v1.width
 
         flags = self.set_carry(flags, self.constant(0))
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_parity(flags, self.chk_parity(result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, self.constant(0))
@@ -152,29 +166,29 @@ class Eflags:
         result = v1 - v2
         size = v1.width
 
-        flags = self.set_carry(flags, v2 > v1)
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_carry(flags, (v1 < v2).cast_to(Type.int_1))
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(v1, v2, result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
-        flags = self.set_overflow(flags,
-            ~(~(v1[size-1] ^ v2[size-1]) | ~(((v1 & (1<<(size-1))) ^ v1 + v2 * -1)[size-1])),
-        )
+        flags = self.set_overflow(flags, ((((v1 ^ v2) & (v1 ^ result)) >> (size - 1)) & self.constant(1, v1.ty)).cast_to(Type.int_1))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
 
     def update_eflags_sbb(self, v1, v2, c):
         v2 = self.constant(v2, v1.ty) if isinstance(v2, int) else v2
+        c = self.constant(c, v1.ty) if isinstance(c, int) else c.cast_to(v1.ty)
         flags = self.get_gpreg(reg16_t.FLAGS)
         result = v1 - v2 - c
         size = v1.width
+        borrow = (v1.cast_to(self._wider_type(v1.ty)) < (v2.cast_to(self._wider_type(v1.ty)) + c.cast_to(self._wider_type(v1.ty)))).cast_to(Type.int_1)
 
-        flags = self.set_carry(flags, (v2 >= v1) if c else (v2 > v1))  # TODO
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_carry(flags, borrow)
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(v1, v2, result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
-        flags = self.set_overflow(flags,
-            ~(~(v1[size-1] ^ v2[size-1]) | ~(((v1 & (1<<(size-1))) ^ v1 + (v2 + c) * -1)[size-1])),
-        )
+        flags = self.set_overflow(flags, ((((v1 ^ v2) & (v1 ^ result)) >> (size - 1)) & self.constant(1, v1.ty)).cast_to(Type.int_1))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_xor(self, v1, v2):
@@ -184,7 +198,7 @@ class Eflags:
         size = v1.width
 
         flags = self.set_carry(flags, self.constant(0))
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_parity(flags, self.chk_parity(result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, self.constant(0))
@@ -196,7 +210,8 @@ class Eflags:
         size = v2.width
 
         flags = self.set_carry(flags, v2 != 0)
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(self.constant(0, v2.ty), v2, result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags,
@@ -211,7 +226,8 @@ class Eflags:
         result = v1 - v2
         size = v1.width
 
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_flag(flags, 4, self._adjust_flag(v1, v2, result))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, v1 == (self.constant(1 << (size - 1), v1.ty)))
@@ -253,11 +269,12 @@ class Eflags:
         result = v << c
         size = v.width
 
-        flags = self.set_carry(flags, (v >> (size - c - 1)) & 1)
+        flags = self.set_carry(flags, (v >> (size - c)) & 1)
         #self.set_parity(flags, self.chk_parity(result & 0xFF))
         flags = self.set_zero(flags, result == 0)
         flags = self.set_sign(flags, result[size - 1])
         flags = self.set_overflow(flags, (result ^ v)[size - 1])
+        self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_rol(self, v, c):
         # For ROL, CF = LSB of result, OF = MSB of result XOR LSB of result (if c == 1)
@@ -308,8 +325,21 @@ class Eflags:
             flags = self.set_overflow(flags, v >> (size - 1) & 1)
         self.set_gpreg(reg16_t.FLAGS, flags)
 
+    def update_eflags_sar(self, v, c):
+        c = self.constant(c, Type.int_8) if isinstance(c, int) else c.cast_to(Type.int_8)
+        flags = self.get_gpreg(reg16_t.FLAGS)
+        result = v.sar(c)
+        size = v.width
+
+        flags = self.set_carry(flags, (v >> (c - 1)) & 1)
+        flags = self.set_parity(flags, self.chk_parity(result))
+        flags = self.set_zero(flags, result == 0)
+        flags = self.set_sign(flags, result[size - 1])
+        flags = self.set_overflow(flags, self.constant(0, Type.int_1))
+        self.set_gpreg(reg16_t.FLAGS, flags)
+
     def chk_parity(self, v):
-        return None
+        v = self.constant(v, Type.int_8) if isinstance(v, int) else v.cast_to(Type.int_8)
         p = self.constant(1, Type.int_1)
         for i in range(8):
             p ^= v[i].cast_to(Type.int_1)
