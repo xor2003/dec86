@@ -13,7 +13,13 @@ from angr_platforms.X86_16.verification_80286 import (
     verify_case,
     verify_moo_file,
 )
-from scripts.verify_80286_real_mode import _exclude_compare_covered, _sample_compare_covered
+from scripts.verify_80286_real_mode import (
+    _exclude_cached_passes,
+    _exclude_compare_covered,
+    _load_passed_cache,
+    _sample_compare_covered,
+    _update_passed_cache,
+)
 
 
 SUITE_DIR = REPO_ROOT / "80286" / "v1_real_mode"
@@ -175,3 +181,32 @@ def test_sample_compare_covered_changes_with_day():
     _, sampled_day_2, _ = _sample_compare_covered(files, day_of_month=2)
 
     assert sampled_day_1 != sampled_day_2 or not sampled_day_1 or not sampled_day_2
+
+
+def test_passed_cache_roundtrip_and_filtering(tmp_path):
+    cache = tmp_path / "passed.txt"
+    cache.write_text("00\nD3.4\n")
+
+    loaded = _load_passed_cache(cache)
+    kept, skipped = _exclude_cached_passes([_moo("00"), _moo("60"), _moo("D3.4")], loaded)
+
+    assert loaded == {"00", "D3.4"}
+    assert _moo("60") in kept
+    assert _moo("00") in skipped
+    assert _moo("D3.4") in skipped
+
+
+def test_update_passed_cache_adds_new_passing_opcodes(tmp_path):
+    cache = tmp_path / "passed.txt"
+    cache.write_text("00\n")
+
+    updated = _update_passed_cache(
+        cache,
+        [
+            {"opcode": "60", "failed": 0},
+            {"opcode": "D0.0", "failed": 1},
+        ],
+    )
+
+    assert updated == {"00", "60"}
+    assert cache.read_text().splitlines() == ["00", "60"]
