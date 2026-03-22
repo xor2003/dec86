@@ -84,6 +84,21 @@ class Eflags:
             return Type.int_32
         return Type.int_32
 
+    def _count8(self, count):
+        return self.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
+
+    def _mask_shift_count(self, count):
+        return self._count8(count) & self.constant(0x1F, Type.int_8)
+
+    def _ite(self, cond, when_true, when_false):
+        cond = self.constant(cond, Type.int_1) if isinstance(cond, int) else cond.cast_to(Type.int_1)
+        expr = self.lifter_instruction.irsb_c.ite(
+            cond.rdt,
+            when_true.rdt,
+            when_false.rdt,
+        )
+        return self._vv(expr)
+
     def _adjust_flag(self, v1, v2, result):
         one = self.constant(1, result.ty)
         return (((v1 ^ v2) ^ result) >> 4 & one).cast_to(Type.int_1)
@@ -263,78 +278,113 @@ class Eflags:
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_shl(self, v, c):
-        #if c == 0:
-        #    return
+        c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
-        result = v << c
         size = v.width
+        step_result = v
+        step_cf = self.get_flag(0)
+        result = v
+        cf = self.get_flag(0)
+        for step in range(1, 32):
+            step_cf = step_result[size - 1].cast_to(Type.int_1)
+            step_result = step_result << self.constant(1, Type.int_8)
+            use_step = c == self.constant(step, Type.int_8)
+            result = self._ite(use_step, step_result, result)
+            cf = self._ite(use_step, step_cf, cf)
 
-        flags = self.set_carry(flags, (v >> (size - c)) & 1)
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
-        flags = self.set_zero(flags, result == 0)
-        flags = self.set_sign(flags, result[size - 1])
-        flags = self.set_overflow(flags, (result ^ v)[size - 1])
+        unchanged = c == self.constant(0, Type.int_8)
+        one = c == self.constant(1, Type.int_8)
+        flags = self._ite(unchanged, self.get_gpreg(reg16_t.FLAGS), flags)
+        flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), cf))
+        flags = self.set_parity(flags, self._ite(unchanged, self.get_flag(2), self.chk_parity(result)))
+        flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(1, Type.int_1)))
+        flags = self.set_zero(flags, self._ite(unchanged, self.get_flag(6), (result == 0).cast_to(Type.int_1)))
+        flags = self.set_sign(flags, self._ite(unchanged, self.get_flag(7), result[size - 1].cast_to(Type.int_1)))
+        flags = self.set_overflow(
+            flags,
+            self._ite(
+                one,
+                (result[size - 1].cast_to(Type.int_1) ^ cf).cast_to(Type.int_1),
+                self.constant(0, Type.int_1),
+            ),
+        )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_rol(self, v, c):
-        # For ROL, CF = LSB of result, OF = MSB of result XOR LSB of result (if c == 1)
         size = v.width
-        c = c % size  # Normalize shift count
-        if c == 0:
-            return
-        result = (v << c) | (v >> (size - c))
-        
-        # Set carry flag to LSB of result
+        c = self._mask_shift_count(c) % self.constant(size, Type.int_8)
+        result = (v << c) | (v >> (self.constant(size, Type.int_8) - c))
         flags = self.get_gpreg(reg16_t.FLAGS)
-        flags = self.set_carry(flags, result & 1)
-        
-        # Set overflow flag if shift count is 1
-        if c == 1:
-            of = ((result >> (size - 1)) & 1) ^ (result & 1)
-            flags = self.set_overflow(flags, of)
+        unchanged = c == self.constant(0, Type.int_8)
+        one = c == self.constant(1, Type.int_8)
+        flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), result[0].cast_to(Type.int_1)))
+        flags = self.set_overflow(
+            flags,
+            self._ite(one, (result[size - 1] ^ result[0]).cast_to(Type.int_1), self.get_flag(11)),
+        )
         self.set_gpreg(reg16_t.FLAGS, flags)
-        
+
     def update_eflags_ror(self, v, c):
-        # For ROR, CF = MSB of result, OF = MSB of result XOR MSB-1 of result (if c == 1)
         size = v.width
-        c = c % size  # Normalize shift count
-        if c == 0:
-            return
-        result = (v >> c) | (v << (size - c))
-        
-        # CF after ROR is the original bit that lands in the new MSB.
+        c = self._mask_shift_count(c) % self.constant(size, Type.int_8)
+        result = (v >> c) | (v << (self.constant(size, Type.int_8) - c))
         flags = self.get_gpreg(reg16_t.FLAGS)
-        flags = self.set_carry(flags, (v >> (c - 1)) & 1)
-        
-        # Set overflow flag if shift count is 1
-        if c == 1:
-            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
-            flags = self.set_overflow(flags, of)
+        unchanged = c == self.constant(0, Type.int_8)
+        one = c == self.constant(1, Type.int_8)
+        flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), result[size - 1].cast_to(Type.int_1)))
+        flags = self.set_overflow(
+            flags,
+            self._ite(one, (result[size - 1] ^ result[size - 2]).cast_to(Type.int_1), self.get_flag(11)),
+        )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_shr(self, v, c):
+        c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
-        result = v >> c
         size = v.width
+        step_result = v
+        step_cf = self.get_flag(0)
+        result = v
+        cf = self.get_flag(0)
+        for step in range(1, 32):
+            step_cf = step_result[0].cast_to(Type.int_1)
+            step_result = step_result >> self.constant(1, Type.int_8)
+            use_step = c == self.constant(step, Type.int_8)
+            result = self._ite(use_step, step_result, result)
+            cf = self._ite(use_step, step_cf, cf)
 
-        flags = self.set_carry(flags, v >> (c - 1) & 1)
-        #self.set_parity(flags, self.chk_parity(result & 0xFF))
-        flags = self.set_zero(flags, result == 0)
-        flags = self.set_sign(flags, result[size - 1])
-        if c == 1:
-            flags = self.set_overflow(flags, v >> (size - 1) & 1)
+        unchanged = c == self.constant(0, Type.int_8)
+        one = c == self.constant(1, Type.int_8)
+        flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), cf))
+        flags = self.set_parity(flags, self._ite(unchanged, self.get_flag(2), self.chk_parity(result)))
+        flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(1, Type.int_1)))
+        flags = self.set_zero(flags, self._ite(unchanged, self.get_flag(6), (result == 0).cast_to(Type.int_1)))
+        flags = self.set_sign(flags, self._ite(unchanged, self.get_flag(7), result[size - 1].cast_to(Type.int_1)))
+        flags = self.set_overflow(flags, self._ite(one, v[size - 1].cast_to(Type.int_1), self.constant(0, Type.int_1)))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_sar(self, v, c):
-        c = self.constant(c, Type.int_8) if isinstance(c, int) else c.cast_to(Type.int_8)
+        c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
-        result = v.sar(c)
         size = v.width
+        step_result = v
+        step_cf = self.get_flag(0)
+        result = v
+        cf = self.get_flag(0)
+        for step in range(1, 32):
+            step_cf = step_result[0].cast_to(Type.int_1)
+            step_result = step_result.sar(self.constant(1, Type.int_8))
+            use_step = c == self.constant(step, Type.int_8)
+            result = self._ite(use_step, step_result, result)
+            cf = self._ite(use_step, step_cf, cf)
 
-        flags = self.set_carry(flags, (v >> (c - 1)) & 1)
-        flags = self.set_parity(flags, self.chk_parity(result))
-        flags = self.set_zero(flags, result == 0)
-        flags = self.set_sign(flags, result[size - 1])
+        unchanged = c == self.constant(0, Type.int_8)
+        one = c == self.constant(1, Type.int_8)
+        flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), cf))
+        flags = self.set_parity(flags, self._ite(unchanged, self.get_flag(2), self.chk_parity(result)))
+        flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(1, Type.int_1)))
+        flags = self.set_zero(flags, self._ite(unchanged, self.get_flag(6), (result == 0).cast_to(Type.int_1)))
+        flags = self.set_sign(flags, self._ite(unchanged, self.get_flag(7), result[size - 1].cast_to(Type.int_1)))
         flags = self.set_overflow(flags, self.constant(0, Type.int_1))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
