@@ -26,6 +26,7 @@ REAL_MODE_FLAGS_MASK = 0x0FD7
 FLAGS_MASKS: dict[str, int] = {
     "69": 0x0803,
     "6B": 0x0803,
+    "C1.2": 0x05D7,
     "C1.3": 0x05D7,
     "C1.6": 0x05D7,
     "F6.4": 0x0F03,
@@ -119,6 +120,14 @@ def _instruction_bytes(case: dict[str, Any]) -> bytes:
     data = bytes(case["bytes"])
     arch = Arch86_16()
     insns = list(arch.capstone.disasm(data[:MAX_INSN_BYTES], case_linear_ip(case), 1))
+    if not insns and data[:1] == b"\xF0":
+        # Capstone rejects several LOCK-prefixed encodings that the 286 hardware
+        # corpus still executes architecturally. Decode the underlying opcode to
+        # recover the instruction length, but keep the original LOCK-prefixed
+        # bytes for our own lifter/runtime path.
+        stripped = list(arch.capstone.disasm(data[1:MAX_INSN_BYTES], case_linear_ip(case) + 1, 1))
+        if stripped:
+            return data[: 1 + len(stripped[0].bytes)]
     if not insns:
         raise RuntimeError(f"Unable to decode first instruction for case {case['idx']}: {case['name']}")
     return bytes(insns[0].bytes)
@@ -237,27 +246,49 @@ def _mem_operand_linear(case: dict[str, Any], insn_bytes: bytes) -> int | None:
 
 
 def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes) -> bool:
-    opcode = insn_bytes[0]
+    idx = 0
+    while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
+        idx += 1
+    if idx >= len(insn_bytes):
+        return False
+    opcode = insn_bytes[idx]
     initial = case["initial"]["regs"]
 
     if opcode == 0xF4:
-        state.regs.ip = (initial["ip"] + 1) & 0xFFFF
+        state.regs.ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
         return True
 
     if opcode == 0xEB:
-        disp = insn_bytes[1]
+        disp = insn_bytes[idx + 1]
         if disp >= 0x80:
             disp -= 0x100
         state.regs.ip = (initial["ip"] + len(insn_bytes) + disp) & 0xFFFF
         return True
 
     if opcode == 0xEA:
-        state.regs.ip = insn_bytes[1] | (insn_bytes[2] << 8)
-        state.regs.cs = insn_bytes[3] | (insn_bytes[4] << 8)
+        state.regs.ip = insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8)
+        state.regs.cs = insn_bytes[idx + 3] | (insn_bytes[idx + 4] << 8)
+        return True
+
+    if opcode == 0x9A:
+        _push16_concrete(state, initial["cs"] & 0xFFFF)
+        _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+        state.regs.ip = insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8)
+        state.regs.cs = insn_bytes[idx + 3] | (insn_bytes[idx + 4] << 8)
         return True
 
     if opcode == 0xCD:
-        vector = insn_bytes[1]
+        vector = insn_bytes[idx + 1]
+        _push16_concrete(state, initial["flags"] & 0xFFFF)
+        state.regs.flags = initial["flags"] & 0xFCFF
+        _push16_concrete(state, initial["cs"] & 0xFFFF)
+        _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+        state.regs.ip = _concrete_word(state, vector * 4)
+        state.regs.cs = _concrete_word(state, vector * 4 + 2)
+        return True
+
+    if opcode == 0xCC:
+        vector = 3
         _push16_concrete(state, initial["flags"] & 0xFFFF)
         state.regs.flags = initial["flags"] & 0xFCFF
         _push16_concrete(state, initial["cs"] & 0xFFFF)
@@ -274,7 +305,7 @@ def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes
     if opcode == 0xCA:
         state.regs.ip = _pop16_concrete(state)
         state.regs.cs = _pop16_concrete(state)
-        state.regs.sp = (state.solver.eval(state.regs.sp) + (insn_bytes[1] | (insn_bytes[2] << 8))) & 0xFFFF
+        state.regs.sp = (state.solver.eval(state.regs.sp) + (insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8))) & 0xFFFF
         return True
 
     if opcode == 0xCF:

@@ -574,7 +574,7 @@ class Instr16(InstrBase):
         return self.emu._vv(expr)
 
     def _string_source_segment(self):
-        if self.instr.prefix:
+        if self.instr.pre_segment is not None:
             return sgreg_t(self.instr.pre_segment)
         return sgreg_t.DS
 

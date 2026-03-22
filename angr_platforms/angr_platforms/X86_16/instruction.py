@@ -34,7 +34,7 @@ class SIB:
 class InstrData:
     def __init__(self):
         self.prefix = 0  # X86Instruction prefix
-        self.pre_segment = 0  # Segment override prefix
+        self.pre_segment = None  # Segment override prefix
         self.pre_repeat = NONE  # Repeat prefix
 
         self.segment: int = 0  # Default segment register
@@ -61,7 +61,8 @@ class X86Instruction:
         self.chsz_ad = False
 
     def select_segment(self):
-        return sgreg_t(self.instr.pre_segment if self.instr.prefix else self.instr.segment)
+        seg = self.instr.pre_segment if self.instr.pre_segment is not None else self.instr.segment
+        return sgreg_t(seg)
 
 # Class for executing instructions
 
@@ -98,4 +99,3 @@ class InstrFlags:
         self.ptr16 = bool(value & (1 << 4))
         self.moffs = bool(value & (1 << 5))
         self.moffs8 = bool(value & (1 << 6))
-

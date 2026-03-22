@@ -64,6 +64,13 @@ def test_verify_80286_popf_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_lock_pop_sp_case_passes():
+    summary = verify_moo_file(_moo("5C"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
 def test_verify_80286_in_al_imm8_case_passes():
     summary = verify_moo_file(_moo("E4"), limit=1)
 
@@ -117,6 +124,13 @@ def test_verify_80286_add_rm16_r16_case_passes():
 
 def test_verify_80286_adc_rm16_r16_case_passes():
     summary = verify_moo_file(_moo("11"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_lock_sbb_rm16_case_passes():
+    summary = verify_moo_file(_moo("1B"), limit=1)
 
     assert summary["passed"] == 1
     assert summary["failed"] == 0
@@ -199,6 +213,13 @@ def test_verify_80286_hlt_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_lock_far_call_case_passes():
+    summary = verify_moo_file(_moo("9A"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
 def test_verify_80286_invalid_8f_case_passes():
     summary = verify_moo_file(_moo("8F"), limit=1)
 
@@ -236,6 +257,27 @@ def test_verify_80286_rcr_rm16_imm8_case_passes():
 
 def test_verify_80286_sal_rm16_imm8_case_passes():
     summary = verify_moo_file(_moo("C1.6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_lock_sal_rm8_imm8_case_passes():
+    summary = verify_moo_file(_moo("C0.6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_lock_rcl_rm16_imm8_case_passes():
+    summary = verify_moo_file(_moo("C1.2"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
+def test_verify_80286_lock_int3_case_passes():
+    summary = verify_moo_file(_moo("CC"), limit=1)
 
     assert summary["passed"] == 1
     assert summary["failed"] == 0

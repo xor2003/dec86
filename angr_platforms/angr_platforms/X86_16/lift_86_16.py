@@ -121,7 +121,15 @@ class Instruction_ANY(Instruction):
 
     def parse(self, bitstrm):
         self.start = bitstrm.bytepos
-        instr = list(self.arch.capstone.disasm(bytes(bitstrm[self.start * 8: self.start * 8 + 15 * 8]), self.addr, 1))
+        raw = bytes(bitstrm[self.start * 8: self.start * 8 + 15 * 8])
+        cs_prefix_len = 0
+        instr = list(self.arch.capstone.disasm(raw, self.addr, 1))
+        if not instr and raw[:1] == b"\xF0":
+            # Capstone rejects several LOCK-prefixed forms that the real 286 still
+            # executes. Decode the underlying opcode for mnemonic discovery, but let
+            # our own parser consume the real prefix byte stream below.
+            instr = list(self.arch.capstone.disasm(raw[1:], self.addr + 1, 1))
+            cs_prefix_len = 1 if instr else 0
         if not instr:
             raise ParseError("Couldn't disassemble instruction")
         self.cs = instr[0]
@@ -129,8 +137,8 @@ class Instruction_ANY(Instruction):
         self.name = self.cs.insn_name()
         self.simple_semantics = self._match_simple_semantics()
         if self.simple_semantics is not None:
-            bitstrm.bytepos = self.start + self.cs.size
-            self.bitwidth = self.cs.size * 8
+            bitstrm.bytepos = self.start + cs_prefix_len + self.cs.size
+            self.bitwidth = (cs_prefix_len + self.cs.size) * 8
             self.is_mode32 = False
             self.chsz_op = False
             return {"x": "00000000"}
@@ -467,8 +475,13 @@ class Instruction_ANY(Instruction):
         if kind == "pop_reg16":
             _, reg_name = self.simple_semantics
             sp = self._get_reg16("sp")
-            self.put(self._stack_load16(sp), reg_name)
-            self.put(sp + self._const16(2), "sp")
+            value = self._stack_load16(sp)
+            next_sp = sp + self._const16(2)
+            if reg_name == "sp":
+                self.put(value, "sp")
+            else:
+                self.put(value, reg_name)
+                self.put(next_sp, "sp")
             return
         if kind == "inc_reg16":
             _, reg_name = self.simple_semantics
