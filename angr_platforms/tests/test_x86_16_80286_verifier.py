@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from angr_platforms.X86_16.coverage_manifest import COMPARE_VERIFIED_MOO_OPCODES
 from angr_platforms.X86_16.verification_80286 import (
     REPO_ROOT,
     load_moo_cases,
@@ -12,6 +13,7 @@ from angr_platforms.X86_16.verification_80286 import (
     verify_case,
     verify_moo_file,
 )
+from scripts.verify_80286_real_mode import _exclude_compare_covered
 
 
 SUITE_DIR = REPO_ROOT / "80286" / "v1_real_mode"
@@ -108,3 +110,17 @@ def test_build_80286_verification_table_script(tmp_path):
     assert "`00`" in text
     assert "`60`" in text
     assert "80286 Real-Mode Verification Table" in text
+
+
+def test_compare_verified_manifest_covers_known_upstream_compare_cases():
+    assert "AA" in COMPARE_VERIFIED_MOO_OPCODES
+    assert "D3.4" in COMPARE_VERIFIED_MOO_OPCODES
+    assert "F7.3" in COMPARE_VERIFIED_MOO_OPCODES
+
+
+def test_exclude_compare_covered_filters_known_cases():
+    kept, skipped = _exclude_compare_covered([_moo("AA"), _moo("00"), _moo("D3.4")])
+
+    assert _moo("00") in kept
+    assert _moo("AA") in skipped
+    assert _moo("D3.4") in skipped
