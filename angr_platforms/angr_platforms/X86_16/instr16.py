@@ -81,6 +81,10 @@ class Instr16(InstrBase):
         self.set_funcflag(0x69, self.imul_r16_rm16_imm16, CHK_MODRM | CHK_IMM16)
         self.set_funcflag(0x6A, self.push_imm8, CHK_IMM8)
         self.set_funcflag(0x6B, self.imul_r16_rm16_imm8, CHK_MODRM | CHK_IMM8)
+        self.set_funcflag(0x6C, self.insb_m8_dx, 0)
+        self.set_funcflag(0x6D, self.insw_m16_dx, 0)
+        self.set_funcflag(0x6E, self.outsb_dx_m8, 0)
+        self.set_funcflag(0x6F, self.outsw_dx_m16, 0)
         self.set_funcflag(0x85, self.test_rm16_r16, CHK_MODRM)
         self.set_funcflag(0x87, self.xchg_r16_rm16, CHK_MODRM)
         self.set_funcflag(0x89, self.mov_rm16_r16, CHK_MODRM)
@@ -97,8 +101,10 @@ class Instr16(InstrBase):
         self.set_funcflag(0x9A, self.callf_ptr16_16, CHK_PTR16 | CHK_IMM16)
         self.set_funcflag(0x9C, self.pushf, 0)
         self.set_funcflag(0x9D, self.popf, 0)
+        self.set_funcflag(0xCE, self.into, 0)
         self.set_funcflag(0xA1, self.mov_ax_moffs16, CHK_MOFFS)
         self.set_funcflag(0xA3, self.mov_moffs16_ax, CHK_MOFFS)
+        self.set_funcflag(0xA4, self.movsb_m8_m8, 0)
         self.set_funcflag(0xAC, self.lodsb_al_m8, 0)
         self.set_funcflag(0xAA, self.stosb_m8_al, 0)
         self.set_funcflag(0xAB, self.stosw_m16_ax, 0)
@@ -113,12 +119,14 @@ class Instr16(InstrBase):
         for i in range(8):
             self.set_funcflag(0xB8+i, self.mov_r16_imm16, CHK_IMM16)
 
+        self.set_funcflag(0xC2, self.ret_imm16, CHK_IMM16)
         self.set_funcflag(0xC3, self.ret, 0)
         self.set_funcflag(0xC4, self.les_es_r16_m16, CHK_MODRM)
         self.set_funcflag(0xC5, self.lds_ds_r16_m16, CHK_MODRM)
         self.set_funcflag(0xC7, self.mov_rm16_imm16, CHK_MODRM | CHK_IMM16)
         self.set_funcflag(0xC8, self.enter, CHK_IMM16 | CHK_IMM8)
         self.set_funcflag(0xC9, self.leave, 0)
+        self.set_funcflag(0xD7, self.xlat, 0)
         self.set_funcflag(0xE0, self.loop16ne, CHK_IMM8)
         self.set_funcflag(0xE1, self.loop16e, CHK_IMM8)
         self.set_funcflag(0xE2, self.loop16, CHK_IMM8)
@@ -169,8 +177,8 @@ class Instr16(InstrBase):
 
     def jcxz_rel8(self) -> None:
         cx = self.emu.get_gpreg(reg16_t.CX)
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8 + 2, Type.int_8).widen_signed(Type.int_16)
-        self.emu.lifter_instruction.jump(not (cx == 0), ip)
+        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16) + self.emu.constant(2, Type.int_16)
+        self.emu.lifter_instruction.jump(cx == 0, ip)
 
 
     def loop16(self) -> None:
@@ -188,7 +196,8 @@ class Instr16(InstrBase):
         zero = self.emu.is_zero()
         rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
         ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
-        self.emu.lifter_instruction.jump(cx and zero, ip, JumpKind.Boring)
+        count_nonzero = (cx != self.emu.constant(0, Type.int_16)).cast_to(Type.int_1)
+        self.emu.lifter_instruction.jump(count_nonzero & zero, ip, JumpKind.Boring)
 
     def loop16ne(self) -> None:
         cx = self.emu.get_gpreg(reg16_t.CX)
@@ -197,7 +206,8 @@ class Instr16(InstrBase):
         zero = self.emu.is_zero()
         rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
         ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
-        self.emu.lifter_instruction.jump(cx and not zero, ip, JumpKind.Boring)
+        count_nonzero = (cx != self.emu.constant(0, Type.int_16)).cast_to(Type.int_1)
+        self.emu.lifter_instruction.jump(count_nonzero & ~zero, ip, JumpKind.Boring)
 
     def code_8f(self):
         reg = self.instr.modrm.reg
@@ -237,7 +247,7 @@ class Instr16(InstrBase):
         r16 = self.get_r16()
         rm16 = self.get_rm16()
         self.set_r16(r16 + rm16)
-        # self.emu.update_eflags_add(r16, rm16)  # Temporarily disabled for lifting
+        self.emu.update_eflags_add(r16, rm16)
 
     def adc_r16_rm16(self) -> None:
         r16 = self.get_r16()
@@ -248,8 +258,9 @@ class Instr16(InstrBase):
 
     def add_ax_imm16(self):
         ax = self.emu.get_gpreg(reg16_t.AX)
-        imm16 = Const(IRConst.U16(self.instr.imm16))
-        self.emu.set_gpreg(reg16_t.AX, Binop('Iop_Add16', ax, imm16))
+        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
+        self.emu.set_gpreg(reg16_t.AX, ax + imm16)
+        self.emu.update_eflags_add(ax, imm16)
 
     def adc_ax_imm16(self):
         ax = self.emu.get_gpreg(reg16_t.AX)
@@ -364,8 +375,8 @@ class Instr16(InstrBase):
 
     def inc_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
-        r16 = self.emu.get_gpreg(reg) + 1
-        self.emu.set_gpreg(reg, r16)
+        r16 = self.emu.get_gpreg(reg)
+        self.emu.set_gpreg(reg, r16 + 1)
         self.emu.update_eflags_inc(r16)
 
     def dec_r16(self):
@@ -376,7 +387,8 @@ class Instr16(InstrBase):
 
     def push_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
-        self.emu.push16(self.emu.get_gpreg(reg))
+        value = self.emu.get_gpreg(reg)
+        self.emu.push16(value)
 
     def pop_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
@@ -397,12 +409,11 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, self.emu.pop16())
         self.emu.set_gpreg(reg16_t.SI, self.emu.pop16())
         self.emu.set_gpreg(reg16_t.BP, self.emu.pop16())
-        sp = self.emu.pop16()
+        self.emu.pop16()
         self.emu.set_gpreg(reg16_t.BX, self.emu.pop16())
         self.emu.set_gpreg(reg16_t.DX, self.emu.pop16())
         self.emu.set_gpreg(reg16_t.CX, self.emu.pop16())
         self.emu.set_gpreg(reg16_t.AX, self.emu.pop16())
-        self.emu.set_gpreg(reg16_t.SP, sp)
 
     def push_imm16(self):
         self.emu.push16(self.emu.constant(self.instr.imm16, Type.int_16))
@@ -479,7 +490,8 @@ class Instr16(InstrBase):
 
     def cwd(self):
         ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t.DX, -1 if ax & 0x8000 else 0)
+        dx = self.emu.constant(0, Type.int_16) - ax[15].cast_to(Type.int_16)
+        self.emu.set_gpreg(reg16_t.DX, dx)
 
     def callf_ptr16_16(self):
         self.emu.callf(
@@ -501,6 +513,20 @@ class Instr16(InstrBase):
     def mov_moffs16_ax(self):
         self.set_moffs16(self.emu.get_gpreg(reg16_t.AX))
 
+    def into(self):
+        self.emu.lifter_instruction.jump(
+            self.emu.is_overflow(),
+            0xFF004,
+            JumpKind.Call,
+        )
+
+    def xlat(self):
+        self.instr.segment = sgreg_t.DS.value
+        bx = self.emu.get_gpreg(reg16_t.BX)
+        al = self.emu.get_gpreg(reg8_t.AL).cast_to(Type.int_16)
+        value = self.emu.get_data8(self.select_segment(), bx + al)
+        self.emu.set_gpreg(reg8_t.AL, value)
+
     def _string_delta(self, width):
         df = self.emu.is_direction()
         neg = self.emu.constant((-width) & 0xFFFF, Type.int_16)
@@ -521,6 +547,20 @@ class Instr16(InstrBase):
         remaining = cx - self.emu.constant(1, Type.int_16)
         self.emu.set_gpreg(reg16_t.CX, remaining)
         return remaining != self.emu.constant(0, Type.int_16)
+
+    def movsb_m8_m8(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        si = self.emu.get_gpreg(reg16_t.SI)
+        di = self.emu.get_gpreg(reg16_t.DI)
+        delta = self._string_delta(1)
+        value = self.emu.get_data8(self._string_source_segment(), si)
+        self.emu.put_data8(sgreg_t.ES, di, value)
+        self.emu.set_gpreg(reg16_t.SI, si + delta)
+        self.emu.set_gpreg(reg16_t.DI, di + delta)
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
 
     def stosb_m8_al(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -632,19 +672,62 @@ class Instr16(InstrBase):
 
 
     def movsw_m16_m16(self):
-        if self.instr.pre_repeat != NONE:
-            self.emu.update_gpreg(reg16_t.CX, -1)
-            ip = self.emu.get_gpreg(reg16_t.IP)
-            if self.instr.pre_repeat == REPZ:
-                self.emu.lifter_instruction.jump(self.emu.get_gpreg(reg16_t.CX) == 0, ip, JumpKind.Boring)
-            elif self.instr.pre_repeat == REPNZ:
-                self.emu.lifter_instruction.jump(self.emu.get_gpreg(reg16_t.CX) != 0, ip, JumpKind.Boring)
+        repeat_cond = self._repeat_prefix_cond()
 
-        m16_s = self.emu.get_data16(self._string_source_segment(), self.emu.get_gpreg(reg16_t.SI))
-        self.emu.put_data16(sgreg_t.ES, self.emu.get_gpreg(reg16_t.DI), m16_s)
+        si = self.emu.get_gpreg(reg16_t.SI)
+        di = self.emu.get_gpreg(reg16_t.DI)
+        delta = self._string_delta(2)
+        value = self.emu.get_data16(self._string_source_segment(), si)
+        self.emu.put_data16(sgreg_t.ES, di, value)
+        self.emu.set_gpreg(reg16_t.SI, si + delta)
+        self.emu.set_gpreg(reg16_t.DI, di + delta)
 
-        self.emu.update_gpreg(reg16_t.SI, 2 if ~self.emu.is_direction() else -2)
-        self.emu.update_gpreg(reg16_t.DI, 2 if ~self.emu.is_direction() else -2)
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def insb_m8_dx(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        di = self.emu.get_gpreg(reg16_t.DI)
+        dx = self.emu.get_gpreg(reg16_t.DX)
+        self.emu.put_data8(sgreg_t.ES, di, self.emu.in_io8(dx))
+        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(1))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def insw_m16_dx(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        di = self.emu.get_gpreg(reg16_t.DI)
+        dx = self.emu.get_gpreg(reg16_t.DX)
+        self.emu.put_data16(sgreg_t.ES, di, self.emu.in_io16(dx))
+        self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(2))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def outsb_dx_m8(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        si = self.emu.get_gpreg(reg16_t.SI)
+        dx = self.emu.get_gpreg(reg16_t.DX)
+        self.emu.out_io8(dx, self.emu.get_data8(self._string_source_segment(), si))
+        self.emu.set_gpreg(reg16_t.SI, si + self._string_delta(1))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+
+    def outsw_dx_m16(self):
+        repeat_cond = self._repeat_prefix_cond()
+
+        si = self.emu.get_gpreg(reg16_t.SI)
+        dx = self.emu.get_gpreg(reg16_t.DX)
+        self.emu.out_io16(dx, self.emu.get_data16(self._string_source_segment(), si))
+        self.emu.set_gpreg(reg16_t.SI, si + self._string_delta(2))
+
+        if repeat_cond is not None:
+            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
 
 
     def test_ax_imm16(self):
@@ -673,6 +756,15 @@ class Instr16(InstrBase):
 
     def ret(self):
         ret_addr = self.emu.pop16()
+        self.emu.irsb.next = ret_addr
+        self.emu.irsb.jumpkind = 'Ijk_Ret'
+
+    def ret_imm16(self):
+        ret_addr = self.emu.pop16()
+        self.emu.set_gpreg(
+            reg16_t.SP,
+            self.emu.get_gpreg(reg16_t.SP) + self.emu.constant(self.instr.imm16, Type.int_16),
+        )
         self.emu.irsb.next = ret_addr
         self.emu.irsb.jumpkind = 'Ijk_Ret'
 
@@ -882,7 +974,11 @@ class Instr16(InstrBase):
 
     def code_d1(self):
         reg = self.instr.modrm.reg
-        if reg == 2:
+        if reg == 0:
+            self.rol_rm16_1()
+        elif reg == 1:
+            self.ror_rm16_1()
+        elif reg == 2:
             self.rcl_rm16_1()
         elif reg == 3:
             self.rcr_rm16_1()
@@ -901,6 +997,12 @@ class Instr16(InstrBase):
         reg = self.instr.modrm.reg
         if reg == 0:
             self.rol_rm16_cl()
+        elif reg == 1:
+            self.ror_rm16_cl()
+        elif reg == 2:
+            self.rcl_rm16_cl()
+        elif reg == 3:
+            self.rcr_rm16_cl()
         elif reg == 4:
             self.shl_rm16_cl()
         elif reg == 5:
@@ -914,7 +1016,7 @@ class Instr16(InstrBase):
 
     def code_f7(self):
         reg = self.instr.modrm.reg
-        if reg == 0:
+        if reg in (0, 1):
             self.test_rm16_imm16()
         elif reg == 2:
             self.not_rm16()
@@ -994,15 +1096,17 @@ class Instr16(InstrBase):
 
     def adc_rm16_imm16(self):
         rm16 = self.get_rm16()
-        cf = self.emu.is_carry()
-        self.set_rm16(rm16 + self.instr.imm16 + cf)
-        self.emu.update_eflags_add(rm16, self.instr.imm16 + cf)
+        cf = self.emu.is_carry().cast_to(Type.int_16)
+        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
+        self.set_rm16(rm16 + imm16 + cf)
+        self.emu.update_eflags_adc(rm16, imm16, cf)
 
     def sbb_rm16_imm16(self):
         rm16 = self.get_rm16()
-        cf = self.emu.is_carry()
-        self.set_rm16(rm16 - self.instr.imm16 - cf)
-        self.emu.update_eflags_sbb(rm16, self.instr.imm16, cf)
+        cf = self.emu.is_carry().cast_to(Type.int_16)
+        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
+        self.set_rm16(rm16 - imm16 - cf)
+        self.emu.update_eflags_sbb(rm16, imm16, cf)
 
     def and_rm16_imm16(self):
         rm16 = self.get_rm16()
@@ -1016,7 +1120,9 @@ class Instr16(InstrBase):
 
     def xor_rm16_imm16(self):
         rm16 = self.get_rm16()
-        self.set_rm16(rm16 ^ self.instr.imm16)
+        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
+        self.set_rm16(rm16 ^ imm16)
+        self.emu.update_eflags_xor(rm16, imm16)
 
     def cmp_rm16_imm16(self):
         rm16 = self.get_rm16()
@@ -1024,13 +1130,15 @@ class Instr16(InstrBase):
 
     def add_rm16_imm8(self):
         rm16 = self.get_rm16()
-        self.set_rm16(rm16 + self.instr.imm8)
-        self.emu.update_eflags_add(rm16, self.instr.imm8)
+        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        self.set_rm16(rm16 + imm8)
+        self.emu.update_eflags_add(rm16, imm8)
 
     def or_rm16_imm8(self):
         rm16 = self.get_rm16()
-        self.set_rm16(rm16 | self.instr.imm8)
-        self.emu.update_eflags_or(rm16, self.instr.imm8)
+        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        self.set_rm16(rm16 | imm8)
+        self.emu.update_eflags_or(rm16, imm8)
 
     def adc_rm16_imm8(self):
         rm16 = self.get_rm16()
@@ -1048,27 +1156,26 @@ class Instr16(InstrBase):
 
     def and_rm16_imm8(self):
         rm16 = self.get_rm16()
-        self.set_rm16(rm16 & self.instr.imm8)
-        self.emu.update_eflags_and(
-            rm16,
-            self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
-        )
+        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        self.set_rm16(rm16 & imm8)
+        self.emu.update_eflags_and(rm16, imm8)
 
     def sub_rm16_imm8(self):
         rm16 = self.get_rm16()
-        self.set_rm16(rm16 - self.instr.imm8)
-        self.emu.update_eflags_sub(
-            rm16,
-            self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
-        )
+        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        self.set_rm16(rm16 - imm8)
+        self.emu.update_eflags_sub(rm16, imm8)
 
     def xor_rm16_imm8(self):
         rm16 = self.get_rm16()
-        self.set_rm16(rm16 ^ self.instr.imm8)
+        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        self.set_rm16(rm16 ^ imm8)
+        self.emu.update_eflags_xor(rm16, imm8)
 
     def cmp_rm16_imm8(self):
         rm16 = self.get_rm16()
-        self.emu.update_eflags_sub(rm16, self.instr.imm8)
+        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        self.emu.update_eflags_sub(rm16, imm8)
 
     def shl_rm16_imm8(self):
         rm16 = self.get_rm16()
@@ -1084,8 +1191,9 @@ class Instr16(InstrBase):
         self.set_rm16(rm16_s << self.instr.imm8)
 
     def sar_rm16_imm8(self):
-        rm16_s = self.get_rm16().signed
-        self.set_rm16(rm16_s.sar(self.instr.imm8))
+        rm16 = self.get_rm16()
+        count = self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8)
+        self.set_rm16(rm16.sar(count))
 
     def shl_rm16_1(self):
         rm16 = self.get_rm16()
@@ -1097,9 +1205,47 @@ class Instr16(InstrBase):
         cl = self.emu.get_gpreg(reg8_t.CL)
         self.rol(rm16, cl)
 
+    def ror_rm16_cl(self):
+        rm16 = self.get_rm16()
+        cl = self.emu.get_gpreg(reg8_t.CL)
+        self.ror(rm16, cl)
+
+    def rcl_rm16_cl(self):
+        rm16 = self.get_rm16()
+        cl = self.emu.get_gpreg(reg8_t.CL)
+        self.rcl(rm16, cl)
+
+    def rcr_rm16_cl(self):
+        rm16 = self.get_rm16()
+        cl = self.emu.get_gpreg(reg8_t.CL)
+        self.rcr(rm16, cl)
+
+    def _ite_value(self, cond, when_true, when_false):
+        expr = self.emu.lifter_instruction.irsb_c.ite(
+            cond.cast_to(Type.int_1).rdt,
+            when_true.rdt,
+            when_false.rdt,
+        )
+        return self.emu._vv(expr)
+
+    def _rot_count(self, count, modulo):
+        count_v = count if hasattr(count, "cast_to") else self.emu.constant(count, Type.int_8)
+        return count_v.cast_to(Type.int_8) % self.emu.constant(modulo, Type.int_8)
+
+    def _set_rotate_cf(self, cf):
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = self.emu.set_carry(flags, cf.cast_to(Type.int_1))
+        self.emu.set_gpreg(reg16_t.FLAGS, flags)
+
     def rol(self, a, b):
-        self.set_rm16(a.rol(b))
-        self.emu.update_eflags_shl(a, b)
+        count = self._rot_count(b, 16)
+        inv_count = self.emu.constant(16, Type.int_8) - count
+        result = ((a << count) | (a >> inv_count)) & self.emu.constant(
+            0xFFFF, Type.int_16
+        )
+        result = self._ite_value(count == self.emu.constant(0, Type.int_8), a, result)
+        self.set_rm16(result)
+        self._set_rotate_cf(result[0])
 
     def shl_rm16_cl(self):
         rm16 = self.get_rm16()
@@ -1114,9 +1260,17 @@ class Instr16(InstrBase):
         rm16 = self.get_rm16()
         self.rol(rm16, self.instr.imm8)
 
+    def rol_rm16_1(self):
+        rm16 = self.get_rm16()
+        self.rol(rm16, 1)
+
     def ror_rm16_imm8(self):
         rm16 = self.get_rm16()
         self.ror(rm16, self.instr.imm8)
+
+    def ror_rm16_1(self):
+        rm16 = self.get_rm16()
+        self.ror(rm16, 1)
 
     def rcl_rm16_imm8(self):
         rm16 = self.get_rm16()
@@ -1134,74 +1288,47 @@ class Instr16(InstrBase):
         rm16 = self.get_rm16()
         self.rcr(rm16, self.instr.imm8)
 
-    def rol(self, a, b):
-        # Rotate left: shift bits left, with the MSB wrapping around to LSB
-        size = 16  # 16-bit register
-        b = b % size  # Normalize shift count
-        if b == 0:
-            return
-        result = (a << b) | (a >> (size - b))
-        self.set_rm16(result)
-        # Update flags
-        self.emu.update_eflags_rol(a, b)
-
     def ror(self, a, b):
-        # Rotate right: shift bits right, with the LSB wrapping around to MSB
-        size = 16  # 16-bit register
-        b = b % size  # Normalize shift count
-        if b == 0:
-            return
-        result = (a >> b) | (a << (size - b))
+        count = self._rot_count(b, 16)
+        inv_count = self.emu.constant(16, Type.int_8) - count
+        result = ((a >> count) | (a << inv_count)) & self.emu.constant(
+            0xFFFF, Type.int_16
+        )
+        result = self._ite_value(count == self.emu.constant(0, Type.int_8), a, result)
         self.set_rm16(result)
-        # Update flags
-        self.emu.update_eflags_ror(a, b)
+        self._set_rotate_cf(result[15])
 
     def rcl(self, a, b):
-        # Rotate through carry left: shift bits left, with CF shifting in and out
-        size = 16  # 16-bit register
-        b = b % (size + 1)  # Normalize shift count (size+1 because of CF)
-        if b == 0:
-            return
-        # Get current carry flag
-        cf = self.emu.get_carry()
+        count = self._rot_count(b, 17)
         result = a
-        for i in range(b):
-            new_cf = (result >> (size - 1)) & 1  # MSB goes to CF
-            result = (result << 1) | cf.cast_to(Type.int_16)  # Shift left and insert old CF
-            result = result & ((1 << size) - 1)  # Mask to 16 bits
-            cf = new_cf  # Update CF for next iteration
-        self.set_rm16(result)
-        # Update carry flag with the last bit that was shifted out
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
-        flags = self.emu.set_carry(flags, cf)
-        # Update overflow flag (set if LSB of result != MSB of result when b=1)
-        if b == 1:
-            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
-            flags = self.emu.set_overflow(flags, of)
-        self.emu.set_gpreg(reg16_t.FLAGS, flags)
+        carry = self.emu.get_carry().cast_to(Type.int_1)
+        selected_result = a
+        selected_carry = carry.cast_to(Type.int_16)
+        for step in range(1, 17):
+            shifted_out = result[15].cast_to(Type.int_1)
+            result = ((result << 1) | carry.cast_to(Type.int_16)) & self.emu.constant(0xFFFF, Type.int_16)
+            carry = shifted_out
+            cond = count == self.emu.constant(step, Type.int_8)
+            selected_result = self._ite_value(cond, result, selected_result)
+            selected_carry = self._ite_value(cond, carry.cast_to(Type.int_16), selected_carry)
+        self.set_rm16(selected_result)
+        self._set_rotate_cf(selected_carry.cast_to(Type.int_1))
 
     def rcr(self, a, b):
-        # Rotate through carry right: shift bits right, with CF shifting in and out
-        size = 16  # 16-bit register
-        b = b % (size + 1)  # Normalize shift count (size+1 because of CF)
-        if b == 0:
-            return
-        # Get current carry flag
-        cf = self.emu.get_carry()
+        count = self._rot_count(b, 17)
         result = a
-        for i in range(b):
-            new_cf = result & 1  # LSB goes to CF
-            result = (result >> 1) | (cf << (size - 1))  # Shift right and insert old CF
-            cf = new_cf  # Update CF for next iteration
-        self.set_rm16(result)
-        # Update carry flag with the last bit that was shifted out
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
-        flags = self.emu.set_carry(flags, cf)
-        # Update overflow flag (set if LSB of result != MSB of result when b=1)
-        if b == 1:
-            of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
-            flags = self.emu.set_overflow(flags, of)
-        self.emu.set_gpreg(reg16_t.FLAGS, flags)
+        carry = self.emu.get_carry().cast_to(Type.int_1)
+        selected_result = a
+        selected_carry = carry.cast_to(Type.int_16)
+        for step in range(1, 17):
+            shifted_out = result[0].cast_to(Type.int_1)
+            result = (result >> 1) | (carry.cast_to(Type.int_16) << 15)
+            carry = shifted_out
+            cond = count == self.emu.constant(step, Type.int_8)
+            selected_result = self._ite_value(cond, result, selected_result)
+            selected_carry = self._ite_value(cond, carry.cast_to(Type.int_16), selected_carry)
+        self.set_rm16(selected_result)
+        self._set_rotate_cf(selected_carry.cast_to(Type.int_1))
 
     def shr_rm16_cl(self):
         rm16 = self.get_rm16()
@@ -1289,7 +1416,7 @@ class Instr16(InstrBase):
     def inc_rm16(self):
         rm16 = self.get_rm16()
         self.set_rm16(rm16 + 1)
-        self.emu.update_eflags_add(rm16, 1)
+        self.emu.update_eflags_inc(rm16)
 
     def dec_rm16(self):
         rm16 = self.get_rm16()
@@ -1332,17 +1459,16 @@ class Instr16(InstrBase):
 
         self.emu.push16(self.emu.get_gpreg(reg16_t.BP))
         ss = self.emu.get_sgreg(sgreg_t.SS)
-        sp = self.emu.get_gpreg(reg16_t.SP)
-        self.emu.set_gpreg(reg16_t.BP, sp)
-
-        bp = sp - 2
+        frame_temp = self.emu.get_gpreg(reg16_t.SP)
+        sp = frame_temp
         if level:
+            bp = self.emu.get_gpreg(reg16_t.BP)
             for i in range(1, level):
                 bp -= 2
                 sp -= 2
                 self.emu.put_data16(ss, sp, self.emu.get_data16(ss, bp))
             sp -= 2
-            self.emu.put_data16(ss, sp, self.emu.get_gpreg(reg16_t.BP))
-            self.emu.push16(bp)
+            self.emu.put_data16(ss, sp, frame_temp)
+        self.emu.set_gpreg(reg16_t.BP, frame_temp)
         sp -= bytes_
         self.emu.set_gpreg(reg16_t.SP, sp)
