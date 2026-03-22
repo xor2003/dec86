@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+import gzip
+import importlib.util
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+import angr
+from angr import options as o
+
+from .arch_86_16 import Arch86_16
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_SUITE_DIR = REPO_ROOT / "80286" / "v1_real_mode"
+DEFAULT_REVOCATION_LIST = REPO_ROOT / "80286" / "revocation_list.txt"
+DEFAULT_MOO_PARSER = REPO_ROOT / "80286" / "tools" / "moo2json.py"
+MAX_INSN_BYTES = 15
+REG_ORDER = ("ax", "bx", "cx", "dx", "cs", "ss", "ds", "es", "sp", "bp", "si", "di", "ip", "flags")
+STRING_OPCODES = {0x6C, 0x6D, 0x6E, 0x6F, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF}
+PREFIX_BYTES = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
+
+
+@dataclass
+class CaseMismatch:
+    kind: str
+    name: str
+    expected: int
+    actual: int
+    address: int | None = None
+
+
+@dataclass
+class CaseResult:
+    opcode: str
+    idx: int
+    name: str
+    hash: str | None
+    passed: bool
+    skipped: bool = False
+    error: str | None = None
+    mismatches: list[CaseMismatch] = field(default_factory=list)
+
+
+def _load_moo_parser():
+    spec = importlib.util.spec_from_file_location("moo2json_local", DEFAULT_MOO_PARSER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load MOO parser from {DEFAULT_MOO_PARSER}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_revocation_hashes(path: Path = DEFAULT_REVOCATION_LIST) -> set[str]:
+    if not path.exists():
+        return set()
+    hashes = set()
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        hashes.add(line.lower())
+    return hashes
+
+
+def load_moo_cases(path: Path) -> tuple[str, list[dict[str, Any]]]:
+    parser = _load_moo_parser()
+    with gzip.open(path, "rb") if path.suffix == ".gz" else path.open("rb") as f:
+        return parser.parse_moo_bytes(f.read())
+
+
+def case_linear_ip(case: dict[str, Any]) -> int:
+    regs = case["initial"]["regs"]
+    return ((regs["cs"] & 0xFFFF) << 4) + (regs["ip"] & 0xFFFF)
+
+
+def real_mode_linear(cs: int, ip: int) -> int:
+    return (((cs & 0xFFFF) << 4) + (ip & 0xFFFF)) & 0xFFFFFF
+
+
+def opcode_name_for_path(path: Path) -> str:
+    name = path.name
+    if name.endswith(".MOO.gz"):
+        return name[:-7]
+    if name.endswith(".MOO"):
+        return name[:-4]
+    return path.stem
+
+
+def _make_project() -> angr.Project:
+    return angr.load_shellcode(
+        b"\x90",
+        arch=Arch86_16(),
+        start_offset=0,
+        load_address=0,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+
+
+def _instruction_bytes(case: dict[str, Any]) -> bytes:
+    data = bytes(case["bytes"])
+    arch = Arch86_16()
+    insns = list(arch.capstone.disasm(data[:MAX_INSN_BYTES], case_linear_ip(case), 1))
+    if not insns:
+        raise RuntimeError(f"Unable to decode first instruction for case {case['idx']}: {case['name']}")
+    return bytes(insns[0].bytes)
+
+
+def _initial_state(project: angr.Project, case: dict[str, Any]):
+    regs = case["initial"]["regs"]
+    state = project.factory.blank_state(
+        addr=regs["ip"] & 0xFFFF,
+        add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS},
+    )
+    for reg, value in regs.items():
+        setattr(state.regs, reg, value)
+    for addr, byte in case["initial"].get("ram", []):
+        state.memory.store(addr, bytes([byte]))
+    return state
+
+
+def _concrete_byte(state, addr: int) -> int:
+    return state.solver.eval(state.memory.load(addr, 1))
+
+
+def _step_with_bytes(project: angr.Project, state, insn_bytes: bytes):
+    simgr = project.factory.simgr(state)
+    simgr.step(num_inst=1, insn_bytes=insn_bytes)
+    if simgr.errored:
+        raise simgr.errored[0].error
+    if simgr.active:
+        return simgr.active[0]
+    if simgr.deadended:
+        return simgr.deadended[0]
+    raise RuntimeError("Execution produced no active or deadended state")
+
+
+def _repeated_string_iteration_limit(state, insn_bytes: bytes) -> int | None:
+    idx = 0
+    saw_repeat = False
+    while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
+        if insn_bytes[idx] in {0xF2, 0xF3}:
+            saw_repeat = True
+        idx += 1
+    if not saw_repeat or idx >= len(insn_bytes) or insn_bytes[idx] not in STRING_OPCODES:
+        return None
+    return state.solver.eval(state.regs.cx)
+
+
+def _current_fetch_byte(state) -> int:
+    cs = state.solver.eval(state.regs.cs)
+    ip = state.solver.eval(state.regs.ip)
+    return _concrete_byte(state, real_mode_linear(cs, ip))
+
+
+def _expected_reg(case: dict[str, Any], reg: str) -> int:
+    initial_regs = case["initial"].get("regs", {})
+    final_regs = case["final"].get("regs", {})
+    return final_regs.get(reg, initial_regs[reg])
+
+
+def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str, Any]):
+    expected_cs = _expected_reg(case, "cs")
+    expected_ip = _expected_reg(case, "ip")
+    halt_ip = (expected_ip - 1) & 0xFFFF
+    halt_linear = real_mode_linear(expected_cs, halt_ip)
+    state.memory.store(halt_linear, b"\xF4")
+
+    current_cs = state.solver.eval(state.regs.cs)
+    current_ip = state.solver.eval(state.regs.ip)
+    if current_cs == expected_cs and current_ip == halt_ip:
+        return _step_with_bytes(project, state, b"\xF4"), True
+
+    if _current_fetch_byte(state) == 0xF4:
+        return _step_with_bytes(project, state, b"\xF4"), True
+
+    return state, False
+
+
+def _compare_case(state, case: dict[str, Any], *, halted: bool) -> list[CaseMismatch]:
+    mismatches: list[CaseMismatch] = []
+    initial_regs = case["initial"].get("regs", {})
+    final_regs = case["final"].get("regs", {})
+    executed_hlt = halted or case["bytes"][:1] == [0xF4]
+
+    for reg in REG_ORDER:
+        if reg not in initial_regs:
+            continue
+        expected = final_regs.get(reg, initial_regs[reg])
+        if reg == "ip" and not executed_hlt and reg in final_regs:
+            expected = (expected - 1) & 0xFFFF
+        actual = state.solver.eval(getattr(state.regs, reg))
+        if actual != expected:
+            mismatches.append(CaseMismatch("reg", reg, expected, actual))
+
+    initial_ram = {addr: byte for addr, byte in case["initial"].get("ram", [])}
+    final_ram = {addr: byte for addr, byte in case["final"].get("ram", [])}
+    for addr in sorted(set(initial_ram) | set(final_ram)):
+        expected = final_ram.get(addr, initial_ram.get(addr))
+        if expected is None:
+            continue
+        actual = _concrete_byte(state, addr)
+        if actual != expected:
+            mismatches.append(CaseMismatch("mem", f"{addr:#x}", expected, actual, address=addr))
+
+    return mismatches
+
+
+def verify_case(
+    case: dict[str, Any],
+    *,
+    opcode: str,
+    project: angr.Project | None = None,
+    execute_halt: bool = True,
+) -> CaseResult:
+    project = _make_project() if project is None else project
+    result = CaseResult(opcode=opcode, idx=case["idx"], name=case["name"], hash=case.get("hash"), passed=False)
+
+    try:
+        state = _initial_state(project, case)
+        insn_bytes = _instruction_bytes(case)
+        start_addr = state.addr
+        repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
+        state = _step_with_bytes(project, state, insn_bytes)
+        if repeat_limit is not None:
+            iterations = 1
+            while state.addr == start_addr and iterations < max(1, repeat_limit):
+                state = _step_with_bytes(project, state, insn_bytes)
+                iterations += 1
+        halted = False
+        if execute_halt:
+            state, halted = _maybe_execute_terminating_halt(project, state, case)
+        result.mismatches = _compare_case(state, case, halted=halted)
+        result.passed = not result.mismatches
+        return result
+    except Exception as ex:  # pylint:disable=broad-except
+        result.error = f"{type(ex).__name__}: {ex}"
+        return result
+
+
+def verify_moo_file(
+    path: Path,
+    *,
+    limit: int | None = None,
+    execute_halt: bool = True,
+    revoked_hashes: set[str] | None = None,
+) -> dict[str, Any]:
+    cpu_name, cases = load_moo_cases(path)
+    opcode = opcode_name_for_path(path)
+    revoked_hashes = revoked_hashes or set()
+    project = _make_project()
+
+    results: list[CaseResult] = []
+    for case in cases[: limit if limit is not None else len(cases)]:
+        case_hash = case.get("hash", "").lower()
+        if case_hash and case_hash in revoked_hashes:
+            results.append(
+                CaseResult(
+                    opcode=opcode,
+                    idx=case["idx"],
+                    name=case["name"],
+                    hash=case.get("hash"),
+                    passed=False,
+                    skipped=True,
+                )
+            )
+            continue
+        results.append(verify_case(case, opcode=opcode, project=project, execute_halt=execute_halt))
+
+    passed = sum(1 for r in results if r.passed)
+    skipped = sum(1 for r in results if r.skipped)
+    failed = sum(1 for r in results if not r.passed and not r.skipped)
+    return {
+        "opcode": opcode,
+        "path": str(path),
+        "cpu": cpu_name,
+        "total": len(results),
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "sample_name": results[0].name if results else "",
+        "results": [asdict(r) for r in results],
+    }
+
+
+def discover_moo_files(root: Path, opcodes: list[str] | None = None) -> list[Path]:
+    if root.is_file():
+        return [root]
+    selected = {op.lower() for op in opcodes} if opcodes else None
+    files = sorted(root.glob("*.MOO*"))
+    if selected is None:
+        return files
+    return [path for path in files if opcode_name_for_path(path).lower() in selected]
+
+
+def summarize_results(file_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "suite": "80286_real_mode",
+        "files": file_summaries,
+        "total_files": len(file_summaries),
+        "total_cases": sum(item["total"] for item in file_summaries),
+        "passed_cases": sum(item["passed"] for item in file_summaries),
+        "failed_cases": sum(item["failed"] for item in file_summaries),
+        "skipped_cases": sum(item["skipped"] for item in file_summaries),
+    }
+
+
+def summary_to_json(summary: dict[str, Any]) -> str:
+    return json.dumps(summary, indent=2, sort_keys=False)
