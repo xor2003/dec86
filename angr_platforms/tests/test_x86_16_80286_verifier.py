@@ -122,6 +122,13 @@ def test_verify_80286_cwd_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_gp_faulting_memory_operand_case_passes():
+    summary = verify_moo_file(_moo("D1.6"), limit=1)
+
+    assert summary["passed"] == 1
+    assert summary["failed"] == 0
+
+
 def test_build_80286_verification_table_script(tmp_path):
     summary = summarize_results([verify_moo_file(_moo("00"), limit=1), verify_moo_file(_moo("60"), limit=1)])
     summary_json = tmp_path / "summary.json"

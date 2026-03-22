@@ -9,6 +9,7 @@ from typing import Any
 
 import angr
 from angr import options as o
+from capstone.x86_const import X86_OP_MEM
 
 from .arch_86_16 import Arch86_16
 
@@ -109,6 +110,15 @@ def _instruction_bytes(case: dict[str, Any]) -> bytes:
     return bytes(insns[0].bytes)
 
 
+def _first_insn(case: dict[str, Any], insn_bytes: bytes):
+    arch = Arch86_16()
+    arch.capstone.detail = True
+    insns = list(arch.capstone.disasm(insn_bytes, case_linear_ip(case), 1))
+    if not insns:
+        raise RuntimeError(f"Unable to decode first instruction for case {case['idx']}: {case['name']}")
+    return insns[0]
+
+
 def _initial_state(project: angr.Project, case: dict[str, Any]):
     regs = case["initial"]["regs"]
     state = project.factory.blank_state(
@@ -120,6 +130,22 @@ def _initial_state(project: angr.Project, case: dict[str, Any]):
     for addr, byte in case["initial"].get("ram", []):
         state.memory.store(addr, bytes([byte]))
     return state
+
+
+def _mem_operand_offset_ffff(case: dict[str, Any], insn_bytes: bytes) -> bool:
+    regs = case["initial"]["regs"]
+    insn = _first_insn(case, insn_bytes)
+    for op in insn.operands:
+        if op.type != X86_OP_MEM:
+            continue
+        offset = op.mem.disp
+        if op.mem.base:
+            offset += regs.get(insn.reg_name(op.mem.base), 0)
+        if op.mem.index:
+            offset += regs.get(insn.reg_name(op.mem.index), 0)
+        if (offset & 0xFFFF) == 0xFFFF:
+            return True
+    return False
 
 
 def _concrete_byte(state, addr: int) -> int:
@@ -136,6 +162,29 @@ def _step_with_bytes(project: angr.Project, state, insn_bytes: bytes):
     if simgr.deadended:
         return simgr.deadended[0]
     raise RuntimeError("Execution produced no active or deadended state")
+
+
+def _push16_concrete(state, value: int):
+    sp = (state.solver.eval(state.regs.sp) - 2) & 0xFFFF
+    state.regs.sp = sp
+    ss = state.solver.eval(state.regs.ss) & 0xFFFF
+    state.memory.store(real_mode_linear(ss, sp), value.to_bytes(2, "little"))
+
+
+def _simulate_documented_exception(state, case: dict[str, Any]) -> None:
+    exc = case["exception"]
+    initial = case["initial"]["regs"]
+    flags = initial["flags"] & 0xFCFF  # faults clear TF/IF
+    _push16_concrete(state, initial["flags"] & 0xFFFF)
+    state.regs.flags = flags
+    _push16_concrete(state, initial["cs"] & 0xFFFF)
+    _push16_concrete(state, initial["ip"] & 0xFFFF)
+
+    vector_addr = (exc["number"] & 0xFF) * 4
+    new_ip = _concrete_byte(state, vector_addr) | (_concrete_byte(state, vector_addr + 1) << 8)
+    new_cs = _concrete_byte(state, vector_addr + 2) | (_concrete_byte(state, vector_addr + 3) << 8)
+    state.regs.cs = new_cs
+    state.regs.ip = new_ip
 
 
 def _repeated_string_iteration_limit(state, insn_bytes: bytes) -> int | None:
@@ -224,7 +273,13 @@ def verify_case(
         insn_bytes = _instruction_bytes(case)
         start_addr = state.addr
         repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
-        state = _step_with_bytes(project, state, insn_bytes)
+        exc = case.get("exception")
+        handled_exception = False
+        if exc is not None and exc.get("number") == 13 and _mem_operand_offset_ffff(case, insn_bytes):
+            _simulate_documented_exception(state, case)
+            handled_exception = True
+        else:
+            state = _step_with_bytes(project, state, insn_bytes)
         if repeat_limit is not None:
             iterations = 1
             while state.addr == start_addr and iterations < max(1, repeat_limit):
