@@ -94,10 +94,10 @@ class ParseInstr(X86Instruction):
         if self.chk[opcode] & CHK_MOFFS:
             self.parse_moffs()
 
-        if opcode == 0xf6 and self.instr.modrm.reg == 0:  #test
-            self.instr.modrm.imm8 = self.emu.get_code8(0)
-        if opcode == 0xf7 and self.instr.modrm.reg == 0:  #test
-            self.instr.modrm.imm16 = self.emu.get_code16(0)
+        if opcode == 0xF6 and self.instr.modrm.reg in (0, 1):  # test
+            self.instr.imm8 = self.emu.get_code8(0)
+        if opcode == 0xF7 and self.instr.modrm.reg in (0, 1):  # test
+            self.instr.imm16 = self.emu.get_code16(0)
 
         self.instr.size = self.instr.prefix_len + (self.emu.bitstream.bytepos - start)
 

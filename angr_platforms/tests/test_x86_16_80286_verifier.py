@@ -13,7 +13,7 @@ from angr_platforms.X86_16.verification_80286 import (
     verify_case,
     verify_moo_file,
 )
-from scripts.verify_80286_real_mode import _exclude_compare_covered
+from scripts.verify_80286_real_mode import _exclude_compare_covered, _sample_compare_covered
 
 
 SUITE_DIR = REPO_ROOT / "80286" / "v1_real_mode"
@@ -124,3 +124,26 @@ def test_exclude_compare_covered_filters_known_cases():
     assert _moo("00") in kept
     assert _moo("AA") in skipped
     assert _moo("D3.4") in skipped
+
+
+def test_sample_compare_covered_is_deterministic_for_day():
+    files = [_moo("AA"), _moo("00"), _moo("D3.4"), _moo("F7.3")]
+
+    kept_a, sampled_a, skipped_a = _sample_compare_covered(files, day_of_month=22)
+    kept_b, sampled_b, skipped_b = _sample_compare_covered(files, day_of_month=22)
+
+    assert kept_a == kept_b
+    assert sampled_a == sampled_b
+    assert skipped_a == skipped_b
+    assert _moo("00") in kept_a
+    assert set(sampled_a).issubset(set(kept_a))
+    assert set(sampled_a).isdisjoint(set(skipped_a))
+
+
+def test_sample_compare_covered_changes_with_day():
+    files = [_moo("AA"), _moo("D3.4"), _moo("F7.3")]
+
+    _, sampled_day_1, _ = _sample_compare_covered(files, day_of_month=1)
+    _, sampled_day_2, _ = _sample_compare_covered(files, day_of_month=2)
+
+    assert sampled_day_1 != sampled_day_2 or not sampled_day_1 or not sampled_day_2
