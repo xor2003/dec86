@@ -43,29 +43,13 @@ class Emulator(Interrupt):
         two = self.constant(2, Type.int_16)
         new_sp = sp - two
         self.set_gpreg(reg16_t.SP, new_sp)
-        ss = self.get_sgreg(sgreg_t.SS)
-        ss32 = ss.cast_to(Type.int_32)
-        four = self.constant(4, Type.int_8)
-        base = ss32 << four
-        sp32 = new_sp.cast_to(Type.int_32)
-        addr = base + sp32
         if isinstance(val, int):
             val = self.constant(val, Type.int_16)
-        if self.irsb:
-            self.irsb._append_stmt(Store(addr.rdt, val.rdt, self.arch.memory_endness))
+        self.write_mem16_seg(sgreg_t.SS, new_sp, val)
 
     def pop16(self):
         sp = self.get_gpreg(reg16_t.SP)
-        ss = self.get_sgreg(sgreg_t.SS)
-        ss32 = ss.cast_to(Type.int_32)
-        four = self.constant(4, Type.int_8)
-        base = ss32 << four
-        sp32 = sp.cast_to(Type.int_32)
-        addr = base + sp32
-        if self.irsb:
-            val = self._vv(Load(self.arch.memory_endness, Type.int_16, addr.rdt))
-        else:
-            val = 0  # concrete fallback
+        val = self.read_mem16_seg(sgreg_t.SS, sp)
         two = self.constant(2, Type.int_16)
         new_sp = sp + two
         self.set_gpreg(reg16_t.SP, new_sp)
