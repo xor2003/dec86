@@ -99,6 +99,16 @@ def test_verify_80286_rep_insw_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_repe_scasb_case_passes():
+    _, cases = load_moo_cases(_moo("AE"))
+    case = next(c for c in cases if c["idx"] == 16)
+    result = verify_case(case, opcode="AE")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_case_checks_unchanged_registers_and_memory():
     _, cases = load_moo_cases(_moo("00"))
     result = verify_case(cases[0], opcode="00")

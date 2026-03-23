@@ -222,15 +222,17 @@ def _step_with_bytes(project: angr.Project, state, insn_bytes: bytes):
     raise RuntimeError("Execution produced no active or deadended state")
 
 
-def _step_with_lock_retry(project: angr.Project, state, insn_bytes: bytes):
+def _step_with_lock_retry(project: angr.Project, state, insn_bytes: bytes, *, advance_ip_for_stripped_lock: bool = True):
     try:
         return _step_with_bytes(project, state, insn_bytes)
     except Exception as ex:  # pylint:disable=broad-except
         if 0xF0 not in insn_bytes or "IR decoding error" not in str(ex):
             raise
         stripped = bytes(b for i, b in enumerate(insn_bytes) if not (b == 0xF0 and i == insn_bytes.index(0xF0)))
+        original_addr = state.addr
         stepped = _step_with_bytes(project, state, stripped)
-        stepped.regs.ip = (stepped.solver.eval(stepped.regs.ip) + 1) & 0xFFFF
+        if advance_ip_for_stripped_lock or stepped.addr != original_addr:
+            stepped.regs.ip = (stepped.solver.eval(stepped.regs.ip) + 1) & 0xFFFF
         return stepped
 
 
@@ -388,6 +390,34 @@ def _repeated_string_iteration_limit(state, insn_bytes: bytes) -> int | None:
     return state.solver.eval(state.regs.cx)
 
 
+def _repeat_prefix_and_opcode(insn_bytes: bytes) -> tuple[int, int] | None:
+    idx = 0
+    repeat_prefix: int | None = None
+    while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
+        if insn_bytes[idx] in {0xF2, 0xF3}:
+            repeat_prefix = insn_bytes[idx]
+        idx += 1
+    if repeat_prefix is None or idx >= len(insn_bytes) or insn_bytes[idx] not in STRING_OPCODES:
+        return None
+    return repeat_prefix, insn_bytes[idx]
+
+
+def _repeat_should_continue(state, insn_bytes: bytes) -> bool:
+    repeat_meta = _repeat_prefix_and_opcode(insn_bytes)
+    if repeat_meta is None:
+        return False
+    repeat_prefix, opcode = repeat_meta
+    cx = state.solver.eval(state.regs.cx) & 0xFFFF
+    if cx == 0:
+        return False
+    if opcode not in {0xA6, 0xA7, 0xAE, 0xAF}:
+        return True
+    zf = (state.solver.eval(state.regs.flags) >> 6) & 1
+    if repeat_prefix == 0xF3:
+        return zf == 1
+    return zf == 0
+
+
 def _current_fetch_byte(state) -> int:
     cs = state.solver.eval(state.regs.cs)
     ip = state.solver.eval(state.regs.ip)
@@ -490,8 +520,15 @@ def verify_case(
         elif exc is not None:
             _simulate_documented_exception(state, case)
             handled_exception = True
+        elif repeat_limit == 0:
+            state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
         else:
-            state = _step_with_lock_retry(project, state, insn_bytes)
+            state = _step_with_lock_retry(
+                project,
+                state,
+                insn_bytes,
+                advance_ip_for_stripped_lock=repeat_limit is None,
+            )
             if allow_ip_relocation_retry and _should_retry_with_relocated_ip(case, state):
                 relocated = deepcopy(case)
                 delta = 0x2000 - (case["initial"]["regs"]["ip"] & 0xFFFF)
@@ -507,9 +544,12 @@ def verify_case(
                 )
         if repeat_limit is not None:
             iterations = 1
-            while state.addr == start_addr and iterations < max(1, repeat_limit):
-                state = _step_with_bytes(project, state, insn_bytes)
+            max_iterations = max(1, repeat_limit)
+            while state.addr == start_addr and iterations < max_iterations and _repeat_should_continue(state, insn_bytes):
+                state = _step_with_lock_retry(project, state, insn_bytes, advance_ip_for_stripped_lock=False)
                 iterations += 1
+            if state.addr == start_addr and (iterations >= max_iterations or not _repeat_should_continue(state, insn_bytes)):
+                state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
         halted = False
         if execute_halt:
             state, halted = _maybe_execute_terminating_halt(project, state, case)
