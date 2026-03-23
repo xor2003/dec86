@@ -96,15 +96,42 @@ def collect_dos_int21_calls(function, binary_path: Path | None = None) -> list[D
     for block_addr in sorted(getattr(function, "block_addrs_set", ())):
         block = project.factory.block(block_addr, opt_level=0)
         for ins in block.capstone.insns:
-            text = f"{ins.mnemonic} {ins.op_str}".strip().lower()
-            if text.startswith("mov ah, "):
-                ah = int(text.split(", ", 1)[1], 0) & 0xFF
-                ax = None if ax is None else ((ah << 8) | (ax & 0x00FF))
-            elif text.startswith("mov ax, "):
-                ax = int(text.split(", ", 1)[1], 0) & 0xFFFF
-                ah = (ax >> 8) & 0xFF
-            elif text.startswith("mov dx, "):
-                dx = int(text.split(", ", 1)[1], 0) & 0xFFFF
+            operands = getattr(ins.insn, "operands", ())
+            if ins.mnemonic == "mov" and len(operands) == 2:
+                dst, src = operands
+                if dst.type == 1 and src.type == 2:
+                    reg_name = ins.reg_name(dst.reg).lower()
+                    imm = src.imm & 0xFFFF
+                    if reg_name == "ah":
+                        ah = imm & 0xFF
+                        ax = None if ax is None else ((ah << 8) | (ax & 0x00FF))
+                    elif reg_name == "ax":
+                        ax = imm
+                        ah = (ax >> 8) & 0xFF
+                    elif reg_name == "dx":
+                        dx = imm
+                elif dst.type == 1:
+                    reg_name = ins.reg_name(dst.reg).lower()
+                    if reg_name == "ah":
+                        ah = None
+                        ax = None
+                    elif reg_name == "ax":
+                        ax = None
+                        ah = None
+                    elif reg_name == "dx":
+                        dx = None
+            elif ins.mnemonic == "xor" and len(operands) == 2 and operands[0].type == 1 and operands[1].type == 1:
+                dst_name = ins.reg_name(operands[0].reg).lower()
+                src_name = ins.reg_name(operands[1].reg).lower()
+                if dst_name == src_name:
+                    if dst_name == "ax":
+                        ax = 0
+                        ah = 0
+                    elif dst_name == "dx":
+                        dx = 0
+                    elif dst_name == "ah":
+                        ah = 0
+                        ax = None if ax is None else (ax & 0x00FF)
             elif ins.mnemonic == "int" and ins.op_str.lower() == "0x21":
                 calls.append(
                     DOSInt21Call(

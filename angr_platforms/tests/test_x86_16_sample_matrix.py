@@ -7,7 +7,12 @@ from pathlib import Path
 import angr
 import pytest
 
-from angr_platforms.X86_16.analysis_helpers import collect_direct_far_call_targets, extend_cfg_for_far_calls, infer_com_region
+from angr_platforms.X86_16.analysis_helpers import (
+    collect_direct_far_call_targets,
+    collect_dos_int21_calls,
+    extend_cfg_for_far_calls,
+    infer_com_region,
+)
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
@@ -214,6 +219,23 @@ def test_small_model_entry_function_decompiles_in_bounded_window():
 
     assert recovered_c is not None
     assert "520" in recovered_c
+
+
+def test_small_model_entry_dos_int21_calls_are_recoverable():
+    project = angr.Project(MATRIX_DIR / "ISOD.EXE")
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1146],
+        regions=[(0x1146, 0x1146 + 0x200)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1146]
+
+    calls = collect_dos_int21_calls(function, MATRIX_DIR / "ISOD.EXE")
+
+    assert [call.insn_addr for call in calls] == [0x1148, 0x117A, 0x11A2]
+    assert [call.ah for call in calls] == [0x30, 0x4C, 0x4A]
 
 
 def test_medium_model_entry_function_decompiles_in_bounded_window():
