@@ -426,6 +426,15 @@ def _repeat_prefix_and_opcode(insn_bytes: bytes) -> tuple[int, int] | None:
     return repeat_prefix, insn_bytes[idx]
 
 
+def _prefixed_opcode(insn_bytes: bytes) -> int | None:
+    idx = 0
+    while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
+        idx += 1
+    if idx >= len(insn_bytes):
+        return None
+    return insn_bytes[idx]
+
+
 def _repeat_should_continue(state, insn_bytes: bytes) -> bool:
     repeat_meta = _repeat_prefix_and_opcode(insn_bytes)
     if repeat_meta is None:
@@ -440,6 +449,44 @@ def _repeat_should_continue(state, insn_bytes: bytes) -> bool:
     if repeat_prefix == 0xF3:
         return zf == 1
     return zf == 0
+
+
+def _faulting_word_string_delta(state) -> int:
+    flags = state.solver.eval(state.regs.flags) & 0xFFFF
+    return -2 if ((flags >> 10) & 1) else 2
+
+
+def _simulate_faulting_lodsw_case(project: angr.Project, state, case: dict[str, Any], insn_bytes: bytes):
+    exc = case.get("exception")
+    if exc is None or exc.get("number") != 13:
+        return None
+    if _prefixed_opcode(insn_bytes) != 0xAD:
+        return None
+
+    start_addr = state.addr
+    repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
+
+    while True:
+        si = state.solver.eval(state.regs.si) & 0xFFFF
+        if si == 0xFFFF:
+            if repeat_limit is not None:
+                cx = state.solver.eval(state.regs.cx) & 0xFFFF
+                if cx == 0:
+                    state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
+                    return state
+                state.regs.cx = (cx - 1) & 0xFFFF
+            state.regs.si = (si + _faulting_word_string_delta(state)) & 0xFFFF
+            _simulate_documented_exception(state, case)
+            return state
+
+        state = _step_with_lock_retry(
+            project,
+            state,
+            insn_bytes,
+            advance_ip_for_stripped_lock=repeat_limit is None,
+        )
+        if repeat_limit is None or state.addr != start_addr:
+            return None
 
 
 def _current_fetch_byte(state) -> int:
@@ -542,8 +589,13 @@ def verify_case(
         if _simulate_manual_control_flow(case, state, insn_bytes):
             handled_exception = True
         elif exc is not None:
-            _simulate_documented_exception(state, case)
-            handled_exception = True
+            faulted_lodsw = _simulate_faulting_lodsw_case(project, state, case, insn_bytes)
+            if faulted_lodsw is not None:
+                state = faulted_lodsw
+                handled_exception = True
+            else:
+                _simulate_documented_exception(state, case)
+                handled_exception = True
         elif repeat_limit == 0:
             state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
         else:
