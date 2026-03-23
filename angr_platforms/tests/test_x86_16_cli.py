@@ -49,6 +49,22 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert "_start" not in result.stdout
 
 
+def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(ICOMDO_COM), "--timeout", "10", "--window", "0x80", "--max-functions", "2"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "int _start(void)" in result.stdout
+    assert "dos_int21();" in result.stdout
+    assert "1044513();" not in result.stdout
+
+
 def test_trace_x86_16_paths_cli_traces_small_com_stub():
     result = subprocess.run(
         [sys.executable, str(TRACE_PATH), str(ICOMDO_COM), "--mode", "exec", "--max-steps", "6"],
