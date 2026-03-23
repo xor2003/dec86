@@ -100,6 +100,8 @@ def ensure_dos_service_hook(project, call: DOSInt21Call) -> tuple[int, str]:
 
 
 def normalize_api_style(api_style: str) -> str:
+    if api_style in {"pseudo", "service"}:
+        return "pseudo"
     if api_style in {"dos", "msc", "compiler"}:
         return "dos"
     return api_style
@@ -361,6 +363,52 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
     if api_style == "raw":
         return "dos_int21()"
 
+    if api_style == "pseudo":
+        name = dos_service_name(call)
+        if call.ah in {0x39, 0x3A, 0x3B, 0x41}:
+            path = _dos_path_arg(call, far_ptr=False) or "NULL"
+            return f"{name}({path})"
+        if call.ah == 0x09:
+            if call.string_literal is not None:
+                return f'{name}("{call.string_literal}")'
+            if call.dx is None:
+                return f"{name}()"
+            return f"{name}((const char *)0x{call.dx:x})"
+        if call.ah == 0x30:
+            return f"{name}()"
+        if call.ah == 0x3D:
+            path = _dos_path_arg(call, far_ptr=False) or "NULL"
+            mode = _dos_arg(call.al, call.al_expr) or "0"
+            return f"{name}({path}, {mode})"
+        if call.ah == 0x3C:
+            path = _dos_path_arg(call, far_ptr=False) or "NULL"
+            attrs = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"{name}({path}, {attrs})"
+        if call.ah == 0x3E:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            return f"{name}({handle})"
+        if call.ah == 0x3F:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            buffer = _dos_buffer_arg(call, far_ptr=False, const=False) or "NULL"
+            count = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"{name}({handle}, {buffer}, {count})"
+        if call.ah == 0x40:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            buffer = _dos_buffer_arg(call, far_ptr=False, const=True) or "NULL"
+            count = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"{name}({handle}, {buffer}, {count})"
+        if call.ah == 0x42:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            offset = _dos_seek_offset_arg(call)
+            origin = _dos_arg(call.al, call.al_expr) or "0"
+            return f"{name}({handle}, {offset}, {origin})"
+        if call.ah == 0x4A:
+            return f"{name}()"
+        if call.ah == 0x4C:
+            exit_code = call.ax & 0xFF if call.ax is not None else 0
+            return f"{name}({exit_code})"
+        return name + "()"
+
     if api_style == "dos":
         if call.ah == 0x39:
             path = _dos_path_arg(call, far_ptr=True) or "NULL"
@@ -477,7 +525,33 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
     declarations: list[str] = []
     seen: set[str] = set()
     for call in calls:
-        if api_style == "dos":
+        if api_style == "pseudo":
+            name = dos_service_name(call)
+            if call.ah in {0x39, 0x3A, 0x3B, 0x41}:
+                decl = f"int {name}(const char *path);"
+            elif call.ah == 0x09:
+                decl = f"void {name}(const char *s);"
+            elif call.ah == 0x30:
+                decl = f"int {name}(void);"
+            elif call.ah == 0x3D:
+                decl = f"int {name}(const char *path, int mode);"
+            elif call.ah == 0x3C:
+                decl = f"int {name}(const char *path, int attrs);"
+            elif call.ah == 0x3E:
+                decl = f"int {name}(int handle);"
+            elif call.ah == 0x3F:
+                decl = f"int {name}(int handle, void *buffer, unsigned int count);"
+            elif call.ah == 0x40:
+                decl = f"int {name}(int handle, const void *buffer, unsigned int count);"
+            elif call.ah == 0x42:
+                decl = f"long {name}(int handle, long offset, int origin);"
+            elif call.ah == 0x4A:
+                decl = f"int {name}(void);"
+            elif call.ah == 0x4C:
+                decl = f"void {name}(int status);"
+            else:
+                decl = f"int {name}(void);"
+        elif api_style == "dos":
             if call.ah == 0x39:
                 decl = "int _dos_mkdir(const char far *path);"
             elif call.ah == 0x3A:

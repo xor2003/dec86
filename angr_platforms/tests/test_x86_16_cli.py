@@ -128,6 +128,37 @@ def test_decompile_cli_supports_raw_api_style_for_known_helpers():
     assert "dos_int21();" in result.stdout
 
 
+def test_decompile_cli_supports_pseudo_api_style_for_known_helpers():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLI_PATH),
+            str(ICOMDO_COM),
+            "--timeout",
+            "10",
+            "--window",
+            "0x80",
+            "--max-functions",
+            "2",
+            "--api-style",
+            "pseudo",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "int dos_get_version(void);" in result.stdout
+    assert "void dos_print_dollar_string(const char *s);" in result.stdout
+    assert "void dos_exit(int status);" in result.stdout
+    assert "dos_get_version();" in result.stdout
+    assert 'dos_print_dollar_string("DOS sample");' in result.stdout
+    assert "dos_exit(0);" in result.stdout
+
+
 def test_decompile_cli_supports_msc_api_style_alias_for_known_helpers():
     result = subprocess.run(
         [
@@ -234,3 +265,28 @@ def test_trace_x86_16_paths_cli_supports_msc_helper_annotations():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "0x1002: int 0x21 ; _dos_get_version()" in result.stdout
     assert '0x1009: int 0x21 ; _dos_print_dollar_string("DOS sample")' in result.stdout
+
+
+def test_trace_x86_16_paths_cli_supports_pseudo_helper_annotations():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(TRACE_PATH),
+            str(ICOMDO_COM),
+            "--mode",
+            "cfg",
+            "--max-blocks",
+            "4",
+            "--api-style",
+            "pseudo",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "0x1002: int 0x21 ; dos_get_version()" in result.stdout
+    assert '0x1009: int 0x21 ; dos_print_dollar_string("DOS sample")' in result.stdout
