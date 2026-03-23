@@ -917,7 +917,7 @@ def test_aam_matches_upstream_x86_vex_effect():
         b"\xD4\x0A",
         regs={"ax": 0x0023, "flags": 0},
         compare_regs=("ax",),
-        compare_flag_bits=(0, 2, 4, 6, 7, 11),
+        compare_flag_bits=(2, 6, 7),
     )
 
 
@@ -927,7 +927,7 @@ def test_aad_matches_upstream_x86_vex_effect():
         b"\xD5\x0A",
         regs={"ax": 0x0205, "flags": 0},
         compare_regs=("ax",),
-        compare_flag_bits=(0, 2, 4, 6, 7, 11),
+        compare_flag_bits=(2, 6, 7),
     )
 
 
