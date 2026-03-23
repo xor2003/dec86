@@ -39,6 +39,7 @@ from angr_platforms.X86_16.analysis_helpers import (
 )
 from angr_platforms.X86_16.cod_extract import (
     extract_cod_function_entries,
+    extract_small_two_arg_cod_logic_bytes,
     extract_simple_cod_logic_bytes,
     infer_cod_logic_start,
     join_cod_entries,
@@ -443,7 +444,9 @@ def main() -> int:
     function_label = None
     if args.proc is not None:
         entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
-        proc_code = extract_simple_cod_logic_bytes(entries)
+        proc_code = extract_small_two_arg_cod_logic_bytes(entries)
+        if proc_code is None:
+            proc_code = extract_simple_cod_logic_bytes(entries)
         if proc_code is None:
             logic_start = infer_cod_logic_start(entries)
             proc_code = join_cod_entries(entries, start_offset=logic_start)
