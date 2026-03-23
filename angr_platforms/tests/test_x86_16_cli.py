@@ -7,8 +7,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
+TRACE_PATH = REPO_ROOT / "angr_platforms" / "scripts" / "trace_x86_16_paths.py"
 MONOPRIN_COD = REPO_ROOT / "cod" / "f14" / "MONOPRIN.COD"
 NHORZ_COD = REPO_ROOT / "cod" / "f14" / "NHORZ.COD"
+ICOMDO_COM = REPO_ROOT / "angr_platforms" / "x16_samples" / "ICOMDO.COM"
 
 
 def test_decompile_cli_recovers_source_like_monoprin_tokens():
@@ -45,3 +47,42 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert "8150" in result.stdout
     assert "500" in result.stdout
     assert "_start" not in result.stdout
+
+
+def test_trace_x86_16_paths_cli_traces_small_com_stub():
+    result = subprocess.run(
+        [sys.executable, str(TRACE_PATH), str(ICOMDO_COM), "--mode", "exec", "--max-steps", "6"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "mode: exec" in result.stdout
+    assert "== step 0 @ 0x1000 ==" in result.stdout
+    assert "mov ah, 0x30" in result.stdout
+    assert "== step 2 @ 0xf021 ==" in result.stdout
+    assert "helper=DOSInt21" in result.stdout
+    assert "== step 3 @ 0x1004 ==" in result.stdout
+    assert "mov ah, 9" in result.stdout
+    assert "== step 5 @ 0x1009 ==" in result.stdout
+    assert "int 0x21" in result.stdout
+
+
+def test_trace_x86_16_paths_cli_recovers_cfg_for_small_com_stub():
+    result = subprocess.run(
+        [sys.executable, str(TRACE_PATH), str(ICOMDO_COM), "--mode", "cfg", "--max-blocks", "4"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "mode: cfg" in result.stdout
+    assert "function: 0x1000 _start" in result.stdout
+    assert "== block 0x1000 ==" in result.stdout
+    assert "0x1000: mov ah, 0x30" in result.stdout
