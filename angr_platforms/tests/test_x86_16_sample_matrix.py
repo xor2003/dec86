@@ -742,3 +742,110 @@ def test_synthetic_bp_based_dos_unlink_call_recovers_argument_shape(tmp_path):
     assert calls[0].dx_expr == "[bp+4]"
     assert modern == ["unlink((const char *)[bp+4])"]
     assert dos == ["_dos_unlink((const char far *)[bp+4])"]
+
+
+def test_synthetic_dos_drive_and_cwd_helpers_map_to_named_calls(tmp_path):
+    code = bytes(
+        [
+            0xB4,
+            0x0E,  # mov ah, 0Eh
+            0xB2,
+            0x02,  # mov dl, 2
+            0xCD,
+            0x21,  # int 21h
+            0xB4,
+            0x47,  # mov ah, 47h
+            0xB2,
+            0x01,  # mov dl, 1
+            0xBE,
+            0x80,
+            0x01,  # mov si, 180h
+            0xCD,
+            0x21,  # int 21h
+            0xC3,
+        ]
+    )
+    binary_path = tmp_path / "dos_drive_cwd.bin"
+    binary_path.write_bytes(code)
+
+    project = angr.Project(
+        binary_path,
+        auto_load_libs=False,
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+    )
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1000],
+        regions=[(0x1000, 0x1020)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1000]
+
+    calls = collect_dos_int21_calls(function)
+    modern = decompile._int21_call_replacements(project, function, "modern", None)
+    dos = decompile._int21_call_replacements(project, function, "dos", None)
+    pseudo = decompile._int21_call_replacements(project, function, "pseudo", None)
+
+    assert [call.ah for call in calls] == [0x0E, 0x47]
+    assert modern == ["set_current_drive(2)", "get_current_directory(1, (char *)0x180)"]
+    assert dos == ["_dos_setdrive(2)", "_dos_getcwd(1, (char far *)0x180)"]
+    assert pseudo == ["dos_set_current_drive(2)", "dos_get_current_directory(1, (char *)0x180)"]
+
+
+def test_synthetic_bp_based_dos_getcwd_call_recovers_argument_shapes(tmp_path):
+    code = bytes(
+        [
+            0x55,  # push bp
+            0x89,
+            0xE5,  # mov bp, sp
+            0xB4,
+            0x47,  # mov ah, 47h
+            0x8A,
+            0x56,
+            0x04,  # mov dl, [bp+4]
+            0x8B,
+            0x76,
+            0x06,  # mov si, [bp+6]
+            0xCD,
+            0x21,  # int 21h
+            0xC3,
+        ]
+    )
+    binary_path = tmp_path / "bp_getcwd.bin"
+    binary_path.write_bytes(code)
+
+    project = angr.Project(
+        binary_path,
+        auto_load_libs=False,
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+    )
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1000],
+        regions=[(0x1000, 0x1010)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1000]
+
+    calls = collect_dos_int21_calls(function)
+    modern = decompile._int21_call_replacements(project, function, "modern", None)
+    dos = decompile._int21_call_replacements(project, function, "dos", None)
+
+    assert len(calls) == 1
+    assert calls[0].ah == 0x47
+    assert calls[0].dl_expr == "[bp+4]"
+    assert calls[0].si_expr == "[bp+6]"
+    assert modern == ["get_current_directory([bp+4], (char *)[bp+6])"]
+    assert dos == ["_dos_getcwd([bp+4], (char far *)[bp+6])"]

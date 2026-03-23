@@ -23,11 +23,15 @@ class DOSInt21Call:
     bx: int | None = None
     cx: int | None = None
     dx: int | None = None
+    si: int | None = None
+    dl: int | None = None
     ah_expr: str | None = None
     al_expr: str | None = None
     bx_expr: str | None = None
     cx_expr: str | None = None
     dx_expr: str | None = None
+    si_expr: str | None = None
+    dl_expr: str | None = None
     string_literal: str | None = None
 
 
@@ -43,12 +47,16 @@ def dos_service_addr(call: DOSInt21Call) -> int:
 
 
 def dos_service_name(call: DOSInt21Call) -> str:
+    if call.ah == 0x0E:
+        return "dos_set_current_drive"
     if call.ah == 0x39:
         return "dos_mkdir"
     if call.ah == 0x3A:
         return "dos_rmdir"
     if call.ah == 0x3B:
         return "dos_chdir"
+    if call.ah == 0x47:
+        return "dos_get_current_directory"
     if call.ah == 0x09:
         return "dos_print_dollar_string"
     if call.ah == 0x30:
@@ -242,6 +250,8 @@ def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> 
         "bx": (None, None),
         "cx": (None, None),
         "dx": (None, None),
+        "dl": (None, None),
+        "si": (None, None),
     }
 
     def set_reg(reg_name: str, value: int | None, expr: str | None) -> None:
@@ -266,6 +276,17 @@ def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> 
                 regs["ax"] = ((((ah_val & 0xFF) << 8) | (value & 0xFF)), None)
             else:
                 regs["ax"] = (None, None)
+        elif reg_name == "dx":
+            if value is not None:
+                regs["dl"] = (value & 0xFF, _format_imm(value & 0xFF))
+            else:
+                regs["dl"] = (None, None)
+        elif reg_name == "dl":
+            dx_val, _ = regs["dx"]
+            if value is not None and dx_val is not None:
+                regs["dx"] = (((dx_val & 0xFF00) | (value & 0xFF)), None)
+            else:
+                regs["dx"] = (None, None)
 
     for block_addr in sorted(getattr(function, "block_addrs_set", ())):
         block = project.factory.block(block_addr, opt_level=0)
@@ -291,6 +312,8 @@ def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> 
                 bx, bx_expr = regs["bx"]
                 cx, cx_expr = regs["cx"]
                 dx, dx_expr = regs["dx"]
+                si, si_expr = regs["si"]
+                dl, dl_expr = regs["dl"]
                 path_literal = None
                 if ah in {0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x41}:
                     path_literal = decode_com_c_string(binary_path, dx)
@@ -305,11 +328,15 @@ def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> 
                         bx=bx,
                         cx=cx,
                         dx=dx,
+                        si=si,
+                        dl=dl,
                         ah_expr=ah_expr,
                         al_expr=al_expr,
                         bx_expr=bx_expr,
                         cx_expr=cx_expr,
                         dx_expr=dx_expr,
+                        si_expr=si_expr,
+                        dl_expr=dl_expr,
                         string_literal=path_literal,
                     )
                 )
@@ -345,6 +372,21 @@ def _dos_buffer_arg(call: DOSInt21Call, *, far_ptr: bool, const: bool) -> str | 
     return None
 
 
+def _dos_si_buffer_arg(call: DOSInt21Call, *, far_ptr: bool, const: bool) -> str | None:
+    cast = "const char far *" if far_ptr and const else "char far *" if far_ptr else "const char *" if const else "char *"
+    if call.si is not None:
+        return f"({cast})0x{call.si:x}"
+    if call.si_expr is not None:
+        return f"({cast}){call.si_expr}"
+    return None
+
+
+def _dos_drive_arg(call: DOSInt21Call) -> str | None:
+    if call.dl is not None:
+        return _format_imm(call.dl)
+    return call.dl_expr
+
+
 def _dos_seek_offset_arg(call: DOSInt21Call) -> str:
     if call.cx is not None and call.dx is not None:
         return f"0x{(((call.cx & 0xFFFF) << 16) | (call.dx & 0xFFFF)):x}"
@@ -365,9 +407,16 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
 
     if api_style == "pseudo":
         name = dos_service_name(call)
+        if call.ah == 0x0E:
+            drive = _dos_drive_arg(call) or "0"
+            return f"{name}({drive})"
         if call.ah in {0x39, 0x3A, 0x3B, 0x41}:
             path = _dos_path_arg(call, far_ptr=False) or "NULL"
             return f"{name}({path})"
+        if call.ah == 0x47:
+            drive = _dos_drive_arg(call) or "0"
+            buffer = _dos_si_buffer_arg(call, far_ptr=False, const=False) or "NULL"
+            return f"{name}({drive}, {buffer})"
         if call.ah == 0x09:
             if call.string_literal is not None:
                 return f'{name}("{call.string_literal}")'
@@ -410,6 +459,9 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
         return name + "()"
 
     if api_style == "dos":
+        if call.ah == 0x0E:
+            drive = _dos_drive_arg(call) or "0"
+            return f"_dos_setdrive({drive})"
         if call.ah == 0x39:
             path = _dos_path_arg(call, far_ptr=True) or "NULL"
             return f"_dos_mkdir({path})"
@@ -419,6 +471,10 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
         if call.ah == 0x3B:
             path = _dos_path_arg(call, far_ptr=True) or "NULL"
             return f"_dos_chdir({path})"
+        if call.ah == 0x47:
+            drive = _dos_drive_arg(call) or "0"
+            buffer = _dos_si_buffer_arg(call, far_ptr=True, const=False) or "NULL"
+            return f"_dos_getcwd({drive}, {buffer})"
         if call.ah == 0x30:
             return "_dos_get_version()"
         if call.ah == 0x09:
@@ -463,6 +519,9 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
             return f"_dos_exit({exit_code})"
         return "dos_int21()"
 
+    if call.ah == 0x0E:
+        drive = _dos_drive_arg(call) or "0"
+        return f"set_current_drive({drive})"
     if call.ah == 0x39:
         path = _dos_path_arg(call, far_ptr=False) or "NULL"
         return f"mkdir({path})"
@@ -472,6 +531,10 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
     if call.ah == 0x3B:
         path = _dos_path_arg(call, far_ptr=False) or "NULL"
         return f"chdir({path})"
+    if call.ah == 0x47:
+        drive = _dos_drive_arg(call) or "0"
+        buffer = _dos_si_buffer_arg(call, far_ptr=False, const=False) or "NULL"
+        return f"get_current_directory({drive}, {buffer})"
     if call.ah == 0x30:
         return "get_dos_version()"
     if call.ah == 0x09:
@@ -527,8 +590,12 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
     for call in calls:
         if api_style == "pseudo":
             name = dos_service_name(call)
-            if call.ah in {0x39, 0x3A, 0x3B, 0x41}:
+            if call.ah == 0x0E:
+                decl = f"int {name}(int drive);"
+            elif call.ah in {0x39, 0x3A, 0x3B, 0x41}:
                 decl = f"int {name}(const char *path);"
+            elif call.ah == 0x47:
+                decl = f"int {name}(int drive, char *buffer);"
             elif call.ah == 0x09:
                 decl = f"void {name}(const char *s);"
             elif call.ah == 0x30:
@@ -552,12 +619,16 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
             else:
                 decl = f"int {name}(void);"
         elif api_style == "dos":
-            if call.ah == 0x39:
+            if call.ah == 0x0E:
+                decl = "int _dos_setdrive(unsigned char drive);"
+            elif call.ah == 0x39:
                 decl = "int _dos_mkdir(const char far *path);"
             elif call.ah == 0x3A:
                 decl = "int _dos_rmdir(const char far *path);"
             elif call.ah == 0x3B:
                 decl = "int _dos_chdir(const char far *path);"
+            elif call.ah == 0x47:
+                decl = "int _dos_getcwd(unsigned char drive, char far *buffer);"
             elif call.ah == 0x30:
                 decl = "unsigned short _dos_get_version(void);"
             elif call.ah == 0x09:
@@ -583,12 +654,16 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
             else:
                 decl = "unsigned short dos_int21(void);"
         else:
-            if call.ah == 0x39:
+            if call.ah == 0x0E:
+                decl = "int set_current_drive(int drive);"
+            elif call.ah == 0x39:
                 decl = "int mkdir(const char *path);"
             elif call.ah == 0x3A:
                 decl = "int rmdir(const char *path);"
             elif call.ah == 0x3B:
                 decl = "int chdir(const char *path);"
+            elif call.ah == 0x47:
+                decl = "int get_current_directory(int drive, char *buffer);"
             elif call.ah == 0x30:
                 decl = "int get_dos_version(void);"
             elif call.ah == 0x09:
