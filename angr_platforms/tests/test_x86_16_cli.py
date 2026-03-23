@@ -29,6 +29,9 @@ def test_decompile_cli_recovers_source_like_monoprin_tokens():
     assert "== c ==" in result.stdout
     assert "% 80" in result.stdout
     assert "% 25" in result.stdout
+    assert "unsigned short a1;  // [bp+0x4]" in result.stdout
+    assert "unsigned short a2;  // [bp+0x6]" in result.stdout
+    assert "&v1" not in result.stdout
     assert "return" in result.stdout
 
 
