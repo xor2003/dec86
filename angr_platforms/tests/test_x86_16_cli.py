@@ -171,11 +171,25 @@ def test_trace_x86_16_paths_cli_traces_small_com_stub():
     assert "== step 0 @ 0x1000 ==" in result.stdout
     assert "mov ah, 0x30" in result.stdout
     assert "== step 2 @ 0xf021 ==" in result.stdout
-    assert "helper=DOSInt21" in result.stdout
+    assert "helper=DOSInt21 ; get_dos_version()" in result.stdout
     assert "== step 3 @ 0x1004 ==" in result.stdout
     assert "mov ah, 9" in result.stdout
     assert "== step 5 @ 0x1009 ==" in result.stdout
     assert "int 0x21" in result.stdout
+
+
+def test_trace_x86_16_paths_cli_exec_supports_helper_annotations():
+    result = subprocess.run(
+        [sys.executable, str(TRACE_PATH), str(ICOMDO_COM), "--mode", "exec", "--max-steps", "8"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert 'helper=DOSInt21 ; print_dos_string("DOS sample")' in result.stdout
 
 
 def test_trace_x86_16_paths_cli_recovers_cfg_for_small_com_stub():
