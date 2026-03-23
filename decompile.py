@@ -38,6 +38,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     render_dos_int21_call,
 )
 from angr_platforms.X86_16.cod_extract import extract_cod_function_entries, join_cod_entries
+from angr.analyses.decompiler.structured_codegen import c as structured_c
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -205,6 +206,7 @@ def _decompile_function(
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
+    _attach_dos_pseudo_callees(project, function, dec.codegen, api_style)
     return "ok", _format_known_helper_calls(project, function, dec.codegen.text, api_style, binary_path)
 
 
@@ -219,6 +221,67 @@ def _helper_name(project: angr.Project, addr: int) -> str | None:
     if isinstance(name, str) and name:
         return name
     return proc.__class__.__name__
+
+
+def _iter_c_nodes(node):
+    yield node
+    if isinstance(node, structured_c.CStatements):
+        for stmt in node.statements:
+            yield from _iter_c_nodes(stmt)
+        return
+    for attr in ("lhs", "rhs", "expr", "condition", "true_node", "false_node", "stmt", "callee_target"):
+        if hasattr(node, attr):
+            try:
+                value = getattr(node, attr)
+            except Exception:
+                continue
+            if value is not None and type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
+                yield from _iter_c_nodes(value)
+    if hasattr(node, "args"):
+        try:
+            args = getattr(node, "args")
+        except Exception:
+            args = None
+        if args:
+            for arg in args:
+                if type(arg).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
+                    yield from _iter_c_nodes(arg)
+
+
+def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_style: str) -> None:
+    if api_style != "pseudo" or getattr(codegen, "cfunc", None) is None:
+        return
+
+    dos_calls = collect_dos_int21_calls(function)
+    if not dos_calls:
+        return
+
+    pseudo_funcs = []
+    for call in dos_calls:
+        target = function.get_call_target(call.insn_addr)
+        if target is None:
+            continue
+        pseudo_funcs.append(project.kb.functions.function(addr=target))
+
+    if not pseudo_funcs:
+        return
+
+    call_nodes = [
+        node
+        for node in _iter_c_nodes(codegen.cfunc.statements)
+        if isinstance(node, structured_c.CFunctionCall) and node.callee_func is None
+    ]
+
+    # Only patch when the structured C still preserves a clean one-to-one call
+    # shape. The decompiler can sometimes collapse DOS interrupt helpers into a
+    # much noisier tree where forcing a pseudo-callee onto the remaining call
+    # node makes the output worse rather than better.
+    if len(call_nodes) != len(pseudo_funcs):
+        return
+
+    for node, pseudo_func in zip(call_nodes, pseudo_funcs):
+        if pseudo_func is not None:
+            node.callee_func = pseudo_func
 
 
 def _int21_call_replacements(project: angr.Project, function, api_style: str, binary_path: Path | None) -> list[str]:
