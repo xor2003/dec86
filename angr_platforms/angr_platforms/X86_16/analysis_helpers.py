@@ -10,6 +10,25 @@ class FarCallTarget:
     return_addr: int | None
 
 
+def _absolute_mem_disp(operand) -> int | None:
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return None
+    if getattr(mem, "base", 0) != 0 or getattr(mem, "index", 0) != 0:
+        return None
+    return getattr(mem, "disp", 0) & 0xFFFF
+
+
+def _initial_cs_linear_base(project) -> int | None:
+    initial_regs = getattr(project.loader.main_object, "initial_register_values", None)
+    if not initial_regs:
+        return None
+    cs = initial_regs.get("cs")
+    if cs is None:
+        return None
+    return (cs & 0xFFFF) << 4
+
+
 def resolve_direct_call_target_from_block(project, block_addr: int) -> int | None:
     """
     Recover a direct call target from the last instruction in a block.
@@ -37,9 +56,67 @@ def resolve_direct_call_target_from_block(project, block_addr: int) -> int | Non
     return None
 
 
+def resolve_stored_near_call_target_from_function(function, callsite_addr: int) -> int | None:
+    """
+    Recover a near call target from a startup-built absolute pointer slot.
+
+    This is intentionally narrow. It only handles patterns like:
+
+        mov word ptr ss:[0x60], 0x01a2
+        ...
+        call word ptr [0x60]
+
+    which appear in MSC startup code for real-mode DOS.
+    """
+
+    project = function.project
+    if project is None:
+        return None
+
+    block = project.factory.block(callsite_addr, opt_level=0)
+    insns = getattr(block.capstone, "insns", ())
+    if not insns:
+        return None
+    last = insns[-1]
+    operands = getattr(last.insn, "operands", ())
+    if last.mnemonic != "call" or len(operands) != 1 or operands[0].type != 3:
+        return None
+
+    slot_disp = _absolute_mem_disp(operands[0])
+    if slot_disp is None:
+        return None
+
+    cs_base = _initial_cs_linear_base(project)
+    if cs_base is None:
+        return None
+
+    prior_insns = []
+    for addr in sorted(function.block_addrs_set):
+        if addr >= callsite_addr:
+            continue
+        prior_block = project.factory.block(addr, opt_level=0)
+        prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
+
+    for ins in reversed(prior_insns):
+        if ins.address >= callsite_addr:
+            continue
+        opers = getattr(ins.insn, "operands", ())
+        if ins.mnemonic != "mov" or len(opers) != 2:
+            continue
+        dst, src = opers
+        if dst.type != 3 or src.type != 2:
+            continue
+        dst_disp = _absolute_mem_disp(dst)
+        if dst_disp != slot_disp:
+            continue
+        return cs_base + (src.imm & 0xFFFF)
+
+    return None
+
+
 def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
     """
-    Recover immediate far-call targets directly from lifted blocks.
+    Recover direct or startup-recoverable call targets directly from lifted blocks.
 
     angr's stock call-target recovery does not currently understand the x86-16
     `CS:IP` far-call pattern very well, so medium-model DOS startup code often
@@ -56,6 +133,8 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
 
     for callsite_addr in sorted(function.get_call_sites()):
         target_addr = resolve_direct_call_target_from_block(project, callsite_addr)
+        if target_addr is None:
+            target_addr = resolve_stored_near_call_target_from_function(function, callsite_addr)
         # Real-mode far calls commonly land below 64 KiB once segment:offset is
         # linearized (for example 0x0114:0x0240 -> 0x1380). Only discard calls
         # we still failed to resolve, not low linear addresses.
