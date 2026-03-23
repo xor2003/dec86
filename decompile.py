@@ -27,7 +27,7 @@ sys.path.insert(0, str(_ROOT / "angr_platforms"))
 import angr_platforms.X86_16  # noqa: F401
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.analysis_helpers import extend_cfg_for_far_calls
+from angr_platforms.X86_16.analysis_helpers import extend_cfg_for_far_calls, infer_com_region
 from angr_platforms.X86_16.cod_extract import extract_cod_function_entries, join_cod_entries
 
 
@@ -116,7 +116,7 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
 
 def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, window: int):
     if binary_path.suffix.lower() == ".com":
-        regions = [_infer_com_region(binary_path, base_addr, window)]
+        regions = [infer_com_region(binary_path, base_addr=base_addr, window=window, arch=project.arch)]
         cfg = project.analyses.CFGFast(
             start_at_entry=False,
             function_starts=[project.entry],
@@ -153,41 +153,6 @@ def _apply_memory_limit(max_memory_mb: int | None) -> None:
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except (ValueError, OSError):
         pass
-
-
-def _infer_com_region(path: Path, base_addr: int, window: int) -> tuple[int, int]:
-    data = path.read_bytes()
-    end_limit = min(len(data), window)
-    current = 0
-    ah = None
-    ax = None
-
-    while current < end_limit:
-        chunk = data[current : current + 16]
-        insn = next(Arch86_16().capstone.disasm(chunk, base_addr + current, 1), None)
-        if insn is None:
-            break
-
-        text = f"{insn.mnemonic} {insn.op_str}".strip().lower()
-        if text.startswith("mov ah, "):
-            ah = int(text.split(", ", 1)[1], 0)
-        elif text.startswith("mov ax, "):
-            ax = int(text.split(", ", 1)[1], 0)
-            ah = (ax >> 8) & 0xFF
-
-        current += insn.size
-
-        if insn.mnemonic == "int":
-            if insn.op_str.lower() == "0x20":
-                break
-            if insn.op_str.lower() == "0x21" and ah == 0x4C:
-                break
-            if insn.op_str.lower() == "0x27":
-                break
-        if insn.mnemonic in {"ret", "retf", "iret", "jmp"}:
-            break
-
-    return base_addr, base_addr + max(current, 1)
 
 
 def _format_first_block_asm(project: angr.Project, addr: int) -> str:
