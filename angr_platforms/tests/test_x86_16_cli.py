@@ -10,6 +10,7 @@ CLI_PATH = REPO_ROOT / "decompile.py"
 TRACE_PATH = REPO_ROOT / "angr_platforms" / "scripts" / "trace_x86_16_paths.py"
 MONOPRIN_COD = REPO_ROOT / "cod" / "f14" / "MONOPRIN.COD"
 NHORZ_COD = REPO_ROOT / "cod" / "f14" / "NHORZ.COD"
+MAX_COD = REPO_ROOT / "cod" / "default" / "MAX.COD"
 ICOMDO_COM = REPO_ROOT / "angr_platforms" / "x16_samples" / "ICOMDO.COM"
 
 
@@ -47,6 +48,23 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert "8150" in result.stdout
     assert "500" in result.stdout
     assert "_start" not in result.stdout
+
+
+def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(MAX_COD), "--proc", "_max", "--timeout", "10"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _max" in result.stdout
+    assert "UnresolvableJumpTarget" not in result.stdout
+    assert "if" in result.stdout
+    assert "return" in result.stdout
 
 
 def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():

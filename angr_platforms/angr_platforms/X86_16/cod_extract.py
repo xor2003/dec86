@@ -49,3 +49,19 @@ def join_cod_entries(
         if (start_offset is None or start_offset <= int(entry["offset"]))
         and (end_offset is None or int(entry["offset"]) < end_offset)
     )
+
+
+def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
+    """
+    For small MSC-style procedures extracted from .COD, skip a leading
+    ``__chkstk`` call when it appears in the entry prologue so the decompiler
+    can focus on the actual function body.
+    """
+
+    for idx, entry in enumerate(entries[:8]):
+        text = str(entry.get("text", "")).lower()
+        if "call" not in text or "__chkstk" not in text:
+            continue
+        if idx + 1 < len(entries):
+            return int(entries[idx + 1]["offset"])
+    return None
