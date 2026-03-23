@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -8,6 +9,46 @@ class FarCallTarget:
     callsite_addr: int
     target_addr: int
     return_addr: int | None
+
+
+def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
+    """
+    Infer a bounded `.COM` code region by scanning until a likely terminator.
+
+    This keeps tiny DOS stubs from decompiling their trailing strings as code.
+    """
+
+    data = path.read_bytes()
+    end_limit = min(len(data), window)
+    current = 0
+    ah = None
+
+    while current < end_limit:
+        chunk = data[current : current + 16]
+        insn = next(arch.capstone.disasm(chunk, base_addr + current, 1), None)
+        if insn is None:
+            break
+
+        text = f"{insn.mnemonic} {insn.op_str}".strip().lower()
+        if text.startswith("mov ah, "):
+            ah = int(text.split(", ", 1)[1], 0)
+        elif text.startswith("mov ax, "):
+            ax = int(text.split(", ", 1)[1], 0)
+            ah = (ax >> 8) & 0xFF
+
+        current += insn.size
+
+        if insn.mnemonic == "int":
+            if insn.op_str.lower() == "0x20":
+                break
+            if insn.op_str.lower() == "0x21" and ah == 0x4C:
+                break
+            if insn.op_str.lower() == "0x27":
+                break
+        if insn.mnemonic in {"ret", "retf", "iret", "jmp"}:
+            break
+
+    return base_addr, base_addr + max(current, 1)
 
 
 def _absolute_mem_disp(operand) -> int | None:

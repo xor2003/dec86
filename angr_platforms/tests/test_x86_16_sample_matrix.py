@@ -7,7 +7,7 @@ from pathlib import Path
 import angr
 import pytest
 
-from angr_platforms.X86_16.analysis_helpers import collect_direct_far_call_targets, extend_cfg_for_far_calls
+from angr_platforms.X86_16.analysis_helpers import collect_direct_far_call_targets, extend_cfg_for_far_calls, infer_com_region
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
@@ -37,17 +37,35 @@ def _load_manifest():
 
 
 def _decompile_entry_function(binary_name: str, window: int = 0x200):
-    project = angr.Project(MATRIX_DIR / binary_name)
+    path = MATRIX_DIR / binary_name
+    if binary_name.lower().endswith(".com"):
+        project = angr.Project(
+            path,
+            main_opts={
+                "backend": "blob",
+                "arch": Arch86_16(),
+                "base_addr": 0x1000,
+                "entry_point": 0x1000,
+            },
+            simos="DOS",
+        )
+        regions = [infer_com_region(path, base_addr=0x1000, window=window, arch=project.arch)]
+    else:
+        project = angr.Project(path)
+        regions = [(project.entry, project.entry + window)]
+
     cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=[project.entry],
-        regions=[(project.entry, project.entry + window)],
+        regions=regions,
         normalize=True,
         force_complete_scan=False,
     )
-    extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
-    if extended_cfg is not None and project.entry in extended_cfg.functions:
-        cfg = extended_cfg
+    if project.arch.name == "86_16":
+        extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
+        if extended_cfg is not None and project.entry in extended_cfg.functions:
+            cfg = extended_cfg
+
     function = cfg.functions[project.entry]
     dec = project.analyses.Decompiler(function, cfg=cfg)
     return dec.codegen.text if dec.codegen is not None else None
@@ -204,6 +222,14 @@ def test_medium_model_entry_function_decompiles_in_bounded_window():
     assert "526" in recovered_c
     assert "sub_1380()" in recovered_c
     assert "sub_161f()" in recovered_c
+
+
+def test_com_entry_function_decompiles_without_trailing_data_junk():
+    recovered_c = _decompile_entry_function("ICOMDO.COM", window=0x80)
+
+    assert recovered_c is not None
+    assert "field_61" not in recovered_c
+    assert "insw" not in recovered_c
 
 
 def test_medium_model_far_call_sites_stop_logging_unknown_cc(caplog):
