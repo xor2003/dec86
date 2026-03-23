@@ -117,6 +117,19 @@ def _run_jcc_instruction(arch, code: bytes, *, cx: int = 0, flags: int = 0):
     return simgr.active[0]
 
 
+def _assert_same_jcc_addr(code16: bytes, code32: bytes, *, cx: int = 0, flags: int = 0):
+    state32 = _run_jcc_instruction(ArchX86(), code32, cx=cx, flags=flags)
+    state16 = _run_jcc_instruction(Arch86_16(), code16, cx=cx, flags=flags)
+    assert state32.addr == state16.addr
+
+
+def _assert_same_loop_addr(code16: bytes, code32: bytes, *, cx: int, flags: int = 0):
+    state32 = _run_loop_instruction(ArchX86(), code32, cx=cx, flags=flags)
+    state16 = _run_loop_instruction(Arch86_16(), code16, cx=cx, flags=flags)
+    assert state32.addr - len(code32) == state16.addr - len(code16)
+    assert state32.solver.eval(state32.regs.cx) == state16.solver.eval(state16.regs.cx)
+
+
 def _run_one_instruction_with_regs(arch, code: bytes, regs: dict[str, int]):
     project = angr.load_shellcode(
         code,
@@ -1053,11 +1066,7 @@ def test_std_matches_upstream_x86_vex_effect():
 
 
 def test_loop_rel8_matches_upstream_x86_vex_effect():
-    state32 = _run_loop_instruction(ArchX86(), b"\x67\xE2\xF2", cx=2)
-    state16 = _run_loop_instruction(Arch86_16(), b"\xE2\xF2", cx=2)
-
-    assert state32.addr - (0x100 + 3) == state16.addr - (0x100 + 2)
-    assert state32.solver.eval(state32.regs.cx) == state16.solver.eval(state16.regs.cx)
+    _assert_same_loop_addr(b"\xE2\xF2", b"\x67\xE2\xF2", cx=2)
 
 
 def test_cmpsw_matches_upstream_x86_vex_effect():
@@ -1065,31 +1074,49 @@ def test_cmpsw_matches_upstream_x86_vex_effect():
 
 
 def test_jz_rel8_taken_matches_upstream_x86_vex_effect():
-    state32 = _run_jcc_instruction(ArchX86(), b"\x74\x05", flags=0x0040)
-    state16 = _run_jcc_instruction(Arch86_16(), b"\x74\x05", flags=0x0040)
-
-    assert state32.addr == state16.addr
+    _assert_same_jcc_addr(b"\x74\x05", b"\x74\x05", flags=0x0040)
 
 
 def test_jnz_rel8_not_taken_matches_upstream_x86_vex_effect():
-    state32 = _run_jcc_instruction(ArchX86(), b"\x75\x05", flags=0x0040)
-    state16 = _run_jcc_instruction(Arch86_16(), b"\x75\x05", flags=0x0040)
-
-    assert state32.addr == state16.addr
+    _assert_same_jcc_addr(b"\x75\x05", b"\x75\x05", flags=0x0040)
 
 
 def test_jc_rel8_taken_matches_upstream_x86_vex_effect():
-    state32 = _run_jcc_instruction(ArchX86(), b"\x72\x05", flags=0x0001)
-    state16 = _run_jcc_instruction(Arch86_16(), b"\x72\x05", flags=0x0001)
+    _assert_same_jcc_addr(b"\x72\x05", b"\x72\x05", flags=0x0001)
 
-    assert state32.addr == state16.addr
+
+def test_ja_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x77\x05", b"\x77\x05", flags=0x0000)
+
+
+def test_jbe_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x76\x05", b"\x76\x05", flags=0x0001)
+
+
+def test_jo_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x70\x05", b"\x70\x05", flags=0x0800)
+
+
+def test_js_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x78\x05", b"\x78\x05", flags=0x0080)
+
+
+def test_jp_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x7A\x05", b"\x7A\x05", flags=0x0004)
 
 
 def test_jcxz_rel8_taken_matches_upstream_x86_vex_effect():
     state32 = _run_jcc_instruction(ArchX86(), b"\x67\xE3\x05", cx=0)
     state16 = _run_jcc_instruction(Arch86_16(), b"\xE3\x05", cx=0)
-
     assert state32.addr - (0x100 + 3) == state16.addr - (0x100 + 2)
+
+
+def test_loope_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_loop_addr(b"\xE1\x05", b"\x67\xE1\x05", cx=2, flags=0x0040)
+
+
+def test_loopne_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_loop_addr(b"\xE0\x05", b"\x67\xE0\x05", cx=2, flags=0x0000)
 
 
 def test_les_loads_far_pointer_into_register_and_es():
