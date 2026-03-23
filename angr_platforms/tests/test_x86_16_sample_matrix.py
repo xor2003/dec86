@@ -48,7 +48,7 @@ def _load_manifest():
     return json.loads(MANIFEST_PATH.read_text())
 
 
-def _decompile_entry_function(binary_name: str, window: int = 0x200):
+def _decompile_entry_function(binary_name: str, window: int = 0x200, api_style: str | None = None):
     path = MATRIX_DIR / binary_name
     if binary_name.lower().endswith(".com"):
         project = angr.Project(
@@ -80,7 +80,12 @@ def _decompile_entry_function(binary_name: str, window: int = 0x200):
 
     function = cfg.functions[project.entry]
     dec = project.analyses.Decompiler(function, cfg=cfg)
-    return dec.codegen.text if dec.codegen is not None else None
+    if dec.codegen is None:
+        return None
+    text = dec.codegen.text
+    if api_style is not None:
+        text = decompile._format_known_helper_calls(project, function, text, api_style, path)
+    return text
 
 
 @pytest.mark.skipif(not MANIFEST_PATH.exists(), reason="sample matrix manifest is not available")
@@ -226,6 +231,18 @@ def test_small_model_entry_function_decompiles_in_bounded_window():
 
     assert recovered_c is not None
     assert "520" in recovered_c
+
+
+def test_small_model_entry_function_formats_pseudo_dos_helpers():
+    recovered_c = _decompile_entry_function("ISOD.EXE", api_style="pseudo")
+
+    assert recovered_c is not None
+    assert "int dos_get_version(void);" in recovered_c
+    assert "int dos_setblock(void);" in recovered_c
+    assert "void dos_exit(int status);" in recovered_c
+    assert "dos_get_version()" in recovered_c
+    assert "dos_exit(255)" in recovered_c
+    assert "dos_setblock()" in recovered_c
 
 
 def test_small_model_entry_dos_int21_calls_are_recoverable():
