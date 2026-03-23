@@ -7,6 +7,7 @@ import io
 import logging
 import os
 from pathlib import Path
+import re
 import resource
 import signal
 import sys
@@ -192,7 +193,35 @@ def _decompile_function(project: angr.Project, cfg, function, timeout: int) -> t
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
-    return "ok", dec.codegen.text
+    return "ok", _format_known_helper_calls(project, dec.codegen.text)
+
+
+def _helper_name(project: angr.Project, addr: int) -> str | None:
+    proc = project.hooked_by(addr)
+    if proc is None:
+        return None
+    name = getattr(proc, "INT_NAME", None)
+    if isinstance(name, str) and name:
+        return name
+    name = getattr(proc, "display_name", None)
+    if isinstance(name, str) and name:
+        return name
+    return proc.__class__.__name__
+
+
+def _format_known_helper_calls(project: angr.Project, c_text: str) -> str:
+    mappings: dict[str, str] = {}
+    for addr in getattr(project, "_sim_procedures", {}):
+        name = _helper_name(project, addr)
+        if not name:
+            continue
+        mappings[str(addr)] = name
+        mappings[hex(addr)] = name
+        mappings[hex(addr).upper().replace("X", "x")] = name
+
+    for literal, name in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
+        c_text = re.sub(rf"(?<![A-Za-z_]){re.escape(literal)}(?=\s*\()", name, c_text)
+    return c_text
 
 
 def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int):
