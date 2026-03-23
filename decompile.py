@@ -34,6 +34,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     extend_cfg_for_far_calls,
     infer_com_region,
     normalize_api_style,
+    patch_dos_int21_call_sites,
     render_dos_int21_call,
 )
 from angr_platforms.X86_16.cod_extract import extract_cod_function_entries, join_cod_entries
@@ -118,6 +119,7 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
         if extended_cfg is not None and target_addr in extended_cfg.functions:
             cfg = extended_cfg
             function = cfg.functions[target_addr]
+        patch_dos_int21_call_sites(function, getattr(project.loader.main_object, "binary", None))
 
     return cfg, function
 
@@ -142,6 +144,7 @@ def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, wi
         extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
         if extended_cfg is not None and project.entry in extended_cfg.functions:
             cfg = extended_cfg
+        patch_dos_int21_call_sites(cfg.functions[project.entry], binary_path)
     return cfg
 
 
@@ -353,9 +356,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--api-style",
-        choices=("modern", "dos", "raw", "msc", "compiler"),
+        choices=("modern", "dos", "raw", "pseudo", "service", "msc", "compiler"),
         default="modern",
-        help="Name recovered DOS helpers as modern-style calls, DOS/compiler-style calls, or raw interrupt helpers.",
+        help="Name recovered DOS helpers as modern-style calls, DOS/compiler-style calls, pseudo-callee service calls, or raw interrupt helpers.",
     )
     args = parser.parse_args()
 
