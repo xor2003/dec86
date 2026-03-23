@@ -254,6 +254,27 @@ def _dos_arg(value: int | None, expr: str | None) -> str | None:
     return expr
 
 
+def _dos_buffer_arg(call: DOSInt21Call, *, far_ptr: bool, const: bool) -> str | None:
+    cast = "const void far *" if far_ptr and const else "void far *" if far_ptr else "const void *" if const else "void *"
+    if call.dx is not None:
+        return f"({cast})0x{call.dx:x}"
+    if call.dx_expr is not None:
+        return f"({cast}){call.dx_expr}"
+    return None
+
+
+def _dos_seek_offset_arg(call: DOSInt21Call) -> str:
+    if call.cx is not None and call.dx is not None:
+        return f"0x{(((call.cx & 0xFFFF) << 16) | (call.dx & 0xFFFF)):x}"
+    high = _dos_arg(call.cx, call.cx_expr)
+    low = _dos_arg(call.dx, call.dx_expr)
+    if high is not None and low is not None:
+        return f"MK_LONG({low}, {high})"
+    if low is not None:
+        return low
+    return "0"
+
+
 def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
     api_style = normalize_api_style(api_style)
 
@@ -280,6 +301,21 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
         if call.ah == 0x3E:
             handle = _dos_arg(call.bx, call.bx_expr) or "0"
             return f"_dos_close({handle})"
+        if call.ah == 0x3F:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            buffer = _dos_buffer_arg(call, far_ptr=True, const=False) or "NULL"
+            count = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"_dos_read({handle}, {buffer}, {count})"
+        if call.ah == 0x40:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            buffer = _dos_buffer_arg(call, far_ptr=True, const=True) or "NULL"
+            count = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"_dos_write({handle}, {buffer}, {count})"
+        if call.ah == 0x42:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            offset = _dos_seek_offset_arg(call)
+            origin = _dos_arg(call.al, call.al_expr) or "0"
+            return f"_dos_seek({handle}, {offset}, {origin})"
         if call.ah == 0x4A:
             return "_dos_setblock()"
         if call.ah == 0x4C:
@@ -306,6 +342,21 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
     if call.ah == 0x3E:
         handle = _dos_arg(call.bx, call.bx_expr) or "0"
         return f"close({handle})"
+    if call.ah == 0x3F:
+        handle = _dos_arg(call.bx, call.bx_expr) or "0"
+        buffer = _dos_buffer_arg(call, far_ptr=False, const=False) or "NULL"
+        count = _dos_arg(call.cx, call.cx_expr) or "0"
+        return f"read({handle}, {buffer}, {count})"
+    if call.ah == 0x40:
+        handle = _dos_arg(call.bx, call.bx_expr) or "0"
+        buffer = _dos_buffer_arg(call, far_ptr=False, const=True) or "NULL"
+        count = _dos_arg(call.cx, call.cx_expr) or "0"
+        return f"write({handle}, {buffer}, {count})"
+    if call.ah == 0x42:
+        handle = _dos_arg(call.bx, call.bx_expr) or "0"
+        offset = _dos_seek_offset_arg(call)
+        origin = _dos_arg(call.al, call.al_expr) or "0"
+        return f"lseek({handle}, {offset}, {origin})"
     if call.ah == 0x4A:
         return "resize_dos_memory_block()"
     if call.ah == 0x4C:
@@ -333,6 +384,12 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
                 decl = "int _dos_creat(const char far *path, unsigned short attrs);"
             elif call.ah == 0x3E:
                 decl = "int _dos_close(unsigned short handle);"
+            elif call.ah == 0x3F:
+                decl = "int _dos_read(unsigned short handle, void far *buffer, unsigned short count);"
+            elif call.ah == 0x40:
+                decl = "int _dos_write(unsigned short handle, const void far *buffer, unsigned short count);"
+            elif call.ah == 0x42:
+                decl = "long _dos_seek(unsigned short handle, long offset, unsigned char origin);"
             elif call.ah == 0x4A:
                 decl = "int _dos_setblock(void);"
             elif call.ah == 0x4C:
@@ -350,6 +407,12 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
                 decl = "int creat(const char *path, int attrs);"
             elif call.ah == 0x3E:
                 decl = "int close(int fd);"
+            elif call.ah == 0x3F:
+                decl = "int read(int fd, void *buf, unsigned int count);"
+            elif call.ah == 0x40:
+                decl = "int write(int fd, const void *buf, unsigned int count);"
+            elif call.ah == 0x42:
+                decl = "long lseek(int fd, long offset, int whence);"
             elif call.ah == 0x4A:
                 decl = "int resize_dos_memory_block(void);"
             elif call.ah == 0x4C:
