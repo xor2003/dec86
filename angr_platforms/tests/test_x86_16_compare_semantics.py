@@ -1093,16 +1093,52 @@ def test_jbe_rel8_taken_matches_upstream_x86_vex_effect():
     _assert_same_jcc_addr(b"\x76\x05", b"\x76\x05", flags=0x0001)
 
 
+def test_jae_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x73\x05", b"\x73\x05", flags=0x0000)
+
+
+def test_jb_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x72\x05", b"\x72\x05", flags=0x0001)
+
+
 def test_jo_rel8_taken_matches_upstream_x86_vex_effect():
     _assert_same_jcc_addr(b"\x70\x05", b"\x70\x05", flags=0x0800)
+
+
+def test_jno_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x71\x05", b"\x71\x05", flags=0x0000)
 
 
 def test_js_rel8_taken_matches_upstream_x86_vex_effect():
     _assert_same_jcc_addr(b"\x78\x05", b"\x78\x05", flags=0x0080)
 
 
+def test_jns_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x79\x05", b"\x79\x05", flags=0x0000)
+
+
 def test_jp_rel8_taken_matches_upstream_x86_vex_effect():
     _assert_same_jcc_addr(b"\x7A\x05", b"\x7A\x05", flags=0x0004)
+
+
+def test_jnp_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x7B\x05", b"\x7B\x05", flags=0x0000)
+
+
+def test_jg_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x7F\x05", b"\x7F\x05", flags=0x0000)
+
+
+def test_jge_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x7D\x05", b"\x7D\x05", flags=0x0000)
+
+
+def test_jl_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x7C\x05", b"\x7C\x05", flags=0x0080)
+
+
+def test_jle_rel8_taken_matches_upstream_x86_vex_effect():
+    _assert_same_jcc_addr(b"\x7E\x05", b"\x7E\x05", flags=0x0040)
 
 
 def test_jcxz_rel8_taken_matches_upstream_x86_vex_effect():
