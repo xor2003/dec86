@@ -159,6 +159,16 @@ def test_verify_80286_push_es_unaligned_stack_word_case_passes():
     assert result.mismatches == []
 
 
+def test_verify_80286_daa_overflow_case_passes():
+    _, cases = load_moo_cases(_moo("27"))
+    case = next(c for c in cases if c["idx"] == 0)
+    result = verify_case(case, opcode="27")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_lock_sbb_rm16_case_passes():
     summary = verify_moo_file(_moo("1B"), limit=1)
 

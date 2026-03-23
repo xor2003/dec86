@@ -510,18 +510,27 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         al = self.emu.get_gpreg(reg8_t.AL)
         af = self.emu.get_flag(4)
         cf = self.emu.is_carry()
-
         low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(Type.int_1) | af
         high_adjust = (al > self.emu.constant(0x99, Type.int_8)).cast_to(Type.int_1) | cf
 
+        overflow = self._ite_value(
+            cf.cast_to(Type.int_1),
+            ((al >= self.emu.constant(0x1A, Type.int_8)) & (al <= self.emu.constant(0x7F, Type.int_8))).cast_to(Type.int_1),
+            ((al >= self.emu.constant(0x7A, Type.int_8)) & (al <= self.emu.constant(0x7F, Type.int_8))).cast_to(Type.int_1),
+        )
+
         result = al
-        result = self._ite_value(high_adjust, result + self.emu.constant(0x60, Type.int_8), result)
-        result = self._ite_value(low_adjust, result + self.emu.constant(0x06, Type.int_8), result)
+        low_added = result + self.emu.constant(0x06, Type.int_8)
+        result = self._ite_value(low_adjust.cast_to(Type.int_1), low_added, result)
+
+        high_added = result + self.emu.constant(0x60, Type.int_8)
+        result = self._ite_value(high_adjust.cast_to(Type.int_1), high_added, result)
         self.emu.set_gpreg(reg8_t.AL, result)
         self._update_adjust_flags(
             result,
             af=low_adjust.cast_to(Type.int_1),
             cf=high_adjust.cast_to(Type.int_1),
+            of=overflow,
         )
 
     def das(self) -> None:

@@ -528,6 +528,8 @@ def verify_moo_file(
     execute_halt: bool = True,
     revoked_hashes: set[str] | None = None,
     progress_every: int | None = None,
+    case_start: int = 0,
+    case_stop: int | None = None,
 ) -> dict[str, Any]:
     cpu_name, cases = load_moo_cases(path)
     opcode = opcode_name_for_path(path)
@@ -535,7 +537,9 @@ def verify_moo_file(
     project = _make_project()
 
     results: list[CaseResult] = []
-    selected_cases = cases[: limit if limit is not None else len(cases)]
+    selected_cases = cases[case_start:case_stop]
+    if limit is not None:
+        selected_cases = selected_cases[:limit]
     total_cases = len(selected_cases)
     if progress_every:
         print(f"[{opcode}] starting {total_cases} cases", flush=True)
