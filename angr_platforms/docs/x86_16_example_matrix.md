@@ -1,0 +1,52 @@
+# x86-16 Example Matrix
+
+This table tracks the real `.COD` / `.COM` / `.EXE` examples we are actively
+using as decompiler-quality and logic-correctness oracles for Inertia
+decompiler.
+
+The intent is practical:
+- keep a small set of named examples visible
+- show which ones are tiny and cheap versus large and noisy
+- record what each example is currently useful for
+
+## Focused Examples
+
+| Example | Proc | Kind | File Size | Current Logic Anchor | Notes |
+| --- | --- | --- | ---: | --- | --- |
+| `cod/default/MAX.COD` | `_max` | near | `2771` B | `if (x > y) return x; return y;` | Smallest branch/return correctness case. Also checks `.COD --proc` skipping of leading `__chkstk`. |
+| `cod/f14/NHORZ.COD` | `_ChangeWeather` | near | `108285` B | direct truth-test plus `8150`, `500`, `125`, `1000` | Good for direct-memory compare recovery and `if/else` shape. |
+| `cod/f14/MONOPRIN.COD` | `_mset_pos` | near | `20309` B | `% 80`, `% 25` | Good for simple arithmetic and frame-wrapper normalization. |
+| `cod/f14/BILLASM.COD` | `_MousePOS` | near | `5689` B | `if (!MOUSE) return 0;`, `x * 2` | Good for byte compare recovery and tiny early-return logic. |
+| `cod/f14/PLANES3.COD` | `_Ready5` | near | `637819` B | `46`, `18`, `return` | Large source file, but the chosen procedure is still small and good for struct-stride anchoring. |
+| `cod/f14/COCKPIT.COD` | `_LookDown` | near | `354631` B | `50`, `27`, `25`, `39` | Good for constant-heavy branch bodies and repeated field updates. |
+| `cod/f14/COCKPIT.COD` | `_LookUp` | near | `354631` B | `150`, `138`, `136`, `139` | Pairs with `_LookDown`; same shape, different constants and else-path. |
+| `cod/f14/CARR.COD` | `_InBox` | near | `254653` B | `return 1;`, relational comparisons | Good for multi-condition bounds logic. Still somewhat low-level, but stable. |
+| `angr_platforms/x16_samples/ICOMDO.COM` | `_start` | tiny `.COM` | n/a in this table | `get_dos_version(); print_dos_string(...); exit(0);` | Best user-facing tiny runtime sample. More about helper-call quality than arithmetic logic. |
+| `angr_platforms/x16_samples/ISOD.EXE` | `_start` | small-model `.EXE` | paired with `ISOD.COD` | named DOS helpers plus startup constants | Useful bridge from tiny examples to real startup code. Still noisier than the small `.COD` set. |
+
+## `fold_values` Matrix
+
+These are the same source-level arithmetic helper across different memory-model
+and optimization variants from the sample matrix.
+
+| Example | Proc Kind | File Size | Current Logic Anchor | Notes |
+| --- | --- | ---: | --- | --- |
+| `angr_platforms/x16_samples/ISOD.COD` | near | `8527` B | `123`, `return` | Small model, `/Od` style baseline. |
+| `angr_platforms/x16_samples/ISOT.COD` | near | `7596` B | `123`, `return` | Small model optimized variant. |
+| `angr_platforms/x16_samples/ISOX.COD` | near | `7596` B | `123`, `return` | Small model alternate optimized build. |
+| `angr_platforms/x16_samples/IMOD.COD` | far | `8676` B | `123`, `return` | Medium model baseline; useful for far-model decompilation correctness. |
+| `angr_platforms/x16_samples/IMOT.COD` | far | `7760` B | `123`, `return` | Medium model optimized variant. |
+| `angr_platforms/x16_samples/IMOX.COD` | far | `7760` B | `123`, `return` | Medium model alternate optimized build. |
+| `angr_platforms/x16_samples/IHOD.COD` | far | `9006` B | `123`, `return` | Huge model baseline. |
+| `angr_platforms/x16_samples/IHOT.COD` | far | `8042` B | `123`, `return` | Huge model optimized variant. |
+| `angr_platforms/x16_samples/ILOD.COD` | far | `9006` B | `123`, `return` | Large model baseline. |
+| `angr_platforms/x16_samples/ILOT.COD` | far | `8042` B | `123`, `return` | Large model optimized variant. |
+
+## Current Use
+
+- The focused example set is the main small-to-medium logic correctness ladder.
+- The `fold_values` matrix is the current model/optimization consistency ladder.
+- When adding new examples, prefer:
+  - one small, source-obvious procedure
+  - one clear logic anchor
+  - one reason the example is distinct from the ones already here
