@@ -242,9 +242,18 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
         normalize=True,
         force_complete_scan=False,
     )
+    all_targets = list(far_targets)
     if function.addr in cfg.functions:
-        patch_far_call_sites(cfg.functions[function.addr], far_targets)
-    for target in far_targets:
+        recovered_function = cfg.functions[function.addr]
+        recovered_targets = collect_direct_far_call_targets(recovered_function)
+        merged: dict[tuple[int, int], FarCallTarget] = {
+            (target.callsite_addr, target.target_addr): target for target in far_targets
+        }
+        for target in recovered_targets:
+            merged[(target.callsite_addr, target.target_addr)] = target
+        all_targets = list(merged.values())
+        patch_far_call_sites(recovered_function, all_targets)
+    for target in all_targets:
         callee = cfg.kb.functions.function(addr=target.target_addr, create=True)
         if callee is not None:
             callee._init_prototype_and_calling_convention()

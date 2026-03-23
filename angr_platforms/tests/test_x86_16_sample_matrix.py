@@ -204,6 +204,7 @@ def test_medium_model_entry_far_call_sites_are_patched():
     assert function.get_call_target(0x11E1) == 0x111A
     assert function.get_call_target(0x11F4) == 0x12E2
     assert function.get_call_target(0x11FA) == 0x1380
+    assert function.get_call_target(0x1209) == 0x1380
     assert function.get_call_target(0x120F) == 0x161F
     assert function.get_call_target(0x1214) == 0x12E2
 
@@ -256,5 +257,6 @@ def test_medium_model_far_call_sites_stop_logging_unknown_cc(caplog):
     assert "Call site 0x11dc" not in warning_text
     assert "Call site 0x11e1" not in warning_text
     assert "Call site 0x11f4" not in warning_text
+    assert "Call site 0x11fa" not in warning_text
     assert "Call site 0x1209" not in warning_text
     assert "Call site 0x1214" not in warning_text
