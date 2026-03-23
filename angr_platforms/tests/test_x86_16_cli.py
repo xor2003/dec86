@@ -122,6 +122,34 @@ def test_decompile_cli_supports_raw_api_style_for_known_helpers():
     assert "dos_int21();" in result.stdout
 
 
+def test_decompile_cli_supports_msc_api_style_alias_for_known_helpers():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLI_PATH),
+            str(ICOMDO_COM),
+            "--timeout",
+            "10",
+            "--window",
+            "0x80",
+            "--max-functions",
+            "2",
+            "--api-style",
+            "msc",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "_dos_get_version();" in result.stdout
+    assert '_dos_print_dollar_string("DOS sample");' in result.stdout
+    assert "_dos_exit(0);" in result.stdout
+
+
 def test_trace_x86_16_paths_cli_traces_small_com_stub():
     result = subprocess.run(
         [sys.executable, str(TRACE_PATH), str(ICOMDO_COM), "--mode", "exec", "--max-steps", "6"],

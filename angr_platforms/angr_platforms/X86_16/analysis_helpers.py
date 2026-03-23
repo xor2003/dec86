@@ -11,6 +11,15 @@ class FarCallTarget:
     return_addr: int | None
 
 
+@dataclass(frozen=True)
+class DOSInt21Call:
+    insn_addr: int
+    ah: int | None
+    ax: int | None
+    dx: int | None
+    string_literal: str | None
+
+
 def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
     """
     Infer a bounded `.COM` code region by scanning until a likely terminator.
@@ -49,6 +58,66 @@ def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[
             break
 
     return base_addr, base_addr + max(current, 1)
+
+
+def decode_com_dollar_string(binary_path: Path | None, dx: int | None) -> str | None:
+    if binary_path is None or binary_path.suffix.lower() != ".com" or dx is None or dx < 0x100:
+        return None
+    try:
+        data = binary_path.read_bytes()
+    except OSError:
+        return None
+
+    start = dx - 0x100
+    if start < 0 or start >= len(data):
+        return None
+    end = data.find(b"$", start)
+    if end == -1:
+        return None
+    raw = data[start:end]
+    if not raw:
+        return ""
+    if any(byte < 0x20 or byte > 0x7E for byte in raw):
+        return None
+    text = raw.decode("ascii", errors="ignore")
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def collect_dos_int21_calls(function, binary_path: Path | None = None) -> list[DOSInt21Call]:
+    project = function.project
+    if project is None:
+        return []
+
+    calls: list[DOSInt21Call] = []
+    ah: int | None = None
+    ax: int | None = None
+    dx: int | None = None
+
+    for block_addr in sorted(getattr(function, "block_addrs_set", ())):
+        block = project.factory.block(block_addr, opt_level=0)
+        for ins in block.capstone.insns:
+            text = f"{ins.mnemonic} {ins.op_str}".strip().lower()
+            if text.startswith("mov ah, "):
+                ah = int(text.split(", ", 1)[1], 0) & 0xFF
+                ax = None if ax is None else ((ah << 8) | (ax & 0x00FF))
+            elif text.startswith("mov ax, "):
+                ax = int(text.split(", ", 1)[1], 0) & 0xFFFF
+                ah = (ax >> 8) & 0xFF
+            elif text.startswith("mov dx, "):
+                dx = int(text.split(", ", 1)[1], 0) & 0xFFFF
+            elif ins.mnemonic == "int" and ins.op_str.lower() == "0x21":
+                calls.append(
+                    DOSInt21Call(
+                        insn_addr=ins.address,
+                        ah=ah,
+                        ax=ax,
+                        dx=dx,
+                        string_literal=decode_com_dollar_string(binary_path, dx),
+                    )
+                )
+                dx = None
+
+    return calls
 
 
 def _absolute_mem_disp(operand) -> int | None:
