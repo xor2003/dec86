@@ -11,6 +11,7 @@ try:
     from angr.analyses.decompiler.return_maker import ReturnMaker
     from angr.analyses.decompiler.callsite_maker import CallSiteMaker
     from angr.analyses.decompiler.structured_codegen.c import (
+        CBinaryOp,
         CClosingObject,
         CConstant,
         CExpression,
@@ -387,10 +388,36 @@ try:
                 return inner.operand
         return None
 
+    def _unwrap_zero_comparison(expr):
+        while isinstance(expr, CTypeCast):
+            expr = expr.expr
+        if not isinstance(expr, CBinaryOp) or expr.op not in {"CmpEQ", "CmpNE"}:
+            return None
+        lhs_zero = _unwrap_bool_constant(expr.lhs)
+        rhs_zero = _unwrap_bool_constant(expr.rhs)
+        if rhs_zero == 0:
+            return expr.op, expr.lhs
+        if lhs_zero == 0:
+            return expr.op, expr.rhs
+        return None
+
     def _c_repr_chunks_8616(self, indent=0, asexpr=False):
         true_val = _unwrap_bool_constant(self.iftrue)
         false_val = _unwrap_bool_constant(self.iffalse)
+        zero_cmp = _unwrap_zero_comparison(self.cond)
         if (true_val, false_val) == (0, 1):
+            if zero_cmp is not None:
+                op, other = zero_cmp
+                if op == "CmpEQ":
+                    yield from CExpression._try_c_repr_chunks(other)
+                    return
+                if op == "CmpNE":
+                    yield "!", self
+                    paren = CClosingObject("(")
+                    yield "(", paren
+                    yield from CExpression._try_c_repr_chunks(other)
+                    yield ")", paren
+                    return
             yield "!", self
             paren = CClosingObject("(")
             yield "(", paren
@@ -398,6 +425,18 @@ try:
             yield ")", paren
             return
         if (true_val, false_val) == (1, 0):
+            if zero_cmp is not None:
+                op, other = zero_cmp
+                if op == "CmpEQ":
+                    yield "!", self
+                    paren = CClosingObject("(")
+                    yield "(", paren
+                    yield from CExpression._try_c_repr_chunks(other)
+                    yield ")", paren
+                    return
+                if op == "CmpNE":
+                    yield from CExpression._try_c_repr_chunks(other)
+                    return
             yield from self.cond.c_repr_chunks()
             return
         yield from _orig_cite_c_repr_chunks(self, indent=indent, asexpr=asexpr)
