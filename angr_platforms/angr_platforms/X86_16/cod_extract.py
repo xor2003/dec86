@@ -111,3 +111,54 @@ def extract_simple_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | 
         return None
 
     return b"".join(entry["bytes"] for entry in body_entries)
+
+
+def extract_small_two_arg_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | None:
+    """
+    Normalize tiny ``bp``-framed two-argument helpers.
+
+    This keeps the body bytes for small helpers that only reference
+    ``[bp+4]`` / ``[bp+6]`` and do not allocate locals, which avoids bogus
+    saved-frame stores in the recovered C while still keeping the real
+    argument-relative accesses visible.
+    """
+
+    if len(entries) < 4:
+        return None
+
+    first = str(entries[0].get("text", "")).strip().lower()
+    second = str(entries[1].get("text", "")).strip().lower()
+    if first != "push\tbp" or second != "mov\tbp,sp":
+        return None
+
+    saw_ret = False
+    arg_disps: set[int] = set()
+    body_entries: list[dict[str, object]] = []
+
+    for idx, entry in enumerate(entries[2:], start=2):
+        text = str(entry.get("text", "")).strip().lower()
+        if "[bp-" in text or "sub\tsp," in text or "enter" in text:
+            return None
+        if "call" in text:
+            return None
+
+        for match in re.finditer(r"\[bp\+([0-9a-f]+)\]", text):
+            arg_disps.add(int(match.group(1), 16))
+
+        next_text = str(entries[idx + 1].get("text", "")).strip().lower() if idx + 1 < len(entries) else ""
+        if text == "mov\tsp,bp":
+            continue
+        if text == "pop\tbp" and next_text == "ret":
+            continue
+        if text == "nop":
+            continue
+
+        body_entries.append(entry)
+        if text == "ret":
+            saw_ret = True
+
+    if not saw_ret or not body_entries:
+        return None
+    if arg_disps - {4, 6}:
+        return None
+    return b"".join(entry["bytes"] for entry in body_entries)

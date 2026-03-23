@@ -121,6 +121,7 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "function: 0x1000 _MousePOS" in result.stdout
     assert "if (!(*((char *)" in result.stdout
     assert "if (...)" not in result.stdout
+    assert "&v1" not in result.stdout
     assert "* 2" in result.stdout
 
 
