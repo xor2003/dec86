@@ -13,6 +13,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     collect_dos_int21_calls,
     extend_cfg_for_far_calls,
     infer_com_region,
+    patch_dos_int21_call_sites,
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
@@ -82,6 +83,9 @@ def _decompile_entry_function(binary_name: str, window: int = 0x200, api_style: 
     dec = project.analyses.Decompiler(function, cfg=cfg)
     if dec.codegen is None:
         return None
+    patch_dos_int21_call_sites(function, path)
+    if api_style is not None and decompile._attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
+        dec.codegen.regenerate_text()
     text = dec.codegen.text
     if api_style is not None:
         text = decompile._format_known_helper_calls(project, function, text, api_style, path)
@@ -243,6 +247,41 @@ def test_small_model_entry_function_formats_pseudo_dos_helpers():
     assert "dos_get_version()" in recovered_c
     assert "dos_exit(255)" in recovered_c
     assert "dos_setblock()" in recovered_c
+
+
+def test_com_entry_function_attaches_pseudo_callees_before_final_rendering():
+    path = MATRIX_DIR / "ICOMDO.COM"
+    project = angr.Project(
+        path,
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+        simos="DOS",
+    )
+    regions = [infer_com_region(path, base_addr=0x1000, window=0x80, arch=project.arch)]
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[project.entry],
+        regions=regions,
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[project.entry]
+    patch_dos_int21_call_sites(function, path)
+    dec = project.analyses.Decompiler(function, cfg=cfg)
+
+    assert dec.codegen is not None
+    assert "1044513();" in dec.codegen.text
+    assert decompile._attach_dos_pseudo_callees(project, function, dec.codegen, "pseudo") is True
+
+    dec.codegen.regenerate_text()
+
+    assert "dos_get_version();" in dec.codegen.text
+    assert "dos_print_dollar_string();" in dec.codegen.text
+    assert "dos_exit();" in dec.codegen.text
 
 
 def test_small_model_entry_dos_int21_calls_are_recoverable():
