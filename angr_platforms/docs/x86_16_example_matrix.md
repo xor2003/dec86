@@ -46,6 +46,12 @@ and optimization variants from the sample matrix.
 
 - The focused example set is the main small-to-medium logic correctness ladder.
 - The `fold_values` matrix is the current model/optimization consistency ladder.
+- The `query_interrupts` setup prefix is now also locked across all 10 sample-matrix variants at block-lift level:
+  - `ISOD`, `ISOT`, `ISOX`
+  - `IMOD`, `IMOT`, `IMOX`
+  - `IHOD`, `IHOT`
+  - `ILOD`, `ILOT`
+- That matrix is intentionally block-level today because it is a cleaner correctness oracle than the current full decompiled C for those startup/helper-heavy routines.
 - When adding new examples, prefer:
   - one small, source-obvious procedure
   - one clear logic anchor
