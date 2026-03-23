@@ -303,6 +303,68 @@ def _dos_helper_declarations(function, api_style: str, binary_path: Path | None)
     return dos_helper_declarations(collect_dos_int21_calls(function, binary_path), api_style)
 
 
+def _split_top_level_binary(expr: str, op: str) -> tuple[str, str] | None:
+    depth = 0
+    i = 0
+    while i <= len(expr) - len(op):
+        ch = expr[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        if depth == 0 and expr.startswith(op, i):
+            return expr[:i].strip(), expr[i + len(op) :].strip()
+        i += 1
+    return None
+
+
+def _simplify_negated_condition(expr: str) -> str:
+    expr = expr.strip()
+    if not expr.startswith("!(") or not expr.endswith(")"):
+        return expr
+
+    inner = expr[2:-1].strip()
+    if inner.startswith("!(") and inner.endswith(")"):
+        return inner[2:-1].strip()
+
+    for op, replacement in (("!=", "=="), ("==", "!="), (">=", "<"), ("<=", ">"), (">", "<="), ("<", ">=")):
+        parts = _split_top_level_binary(inner, op)
+        if parts is not None:
+            lhs, rhs = parts
+            return f"{lhs} {replacement} {rhs}"
+
+    return expr
+
+
+def _simplify_condition_line(line: str) -> str:
+    marker = "if ("
+    start = line.find(marker)
+    if start < 0:
+        return line
+
+    cond_start = start + len(marker)
+    depth = 1
+    i = cond_start
+    while i < len(line):
+        ch = line[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                condition = line[cond_start:i]
+                simplified = _simplify_negated_condition(condition)
+                if simplified != condition:
+                    return line[:cond_start] + simplified + line[i:]
+                return line
+        i += 1
+    return line
+
+
+def _simplify_x86_16_conditions(c_text: str) -> str:
+    return "\n".join(_simplify_condition_line(line) for line in c_text.splitlines())
+
+
 def _format_known_helper_calls(
     project: angr.Project, function, c_text: str, api_style: str, binary_path: Path | None
 ) -> str:
@@ -332,7 +394,7 @@ def _format_known_helper_calls(
     declarations = _dos_helper_declarations(function, api_style, binary_path)
     if declarations:
         c_text = "\n".join(declarations) + "\n\n" + c_text
-    return c_text
+    return _simplify_x86_16_conditions(c_text)
 
 
 def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int):
