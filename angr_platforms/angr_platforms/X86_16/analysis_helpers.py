@@ -20,6 +20,12 @@ class DOSInt21Call:
     string_literal: str | None
 
 
+def normalize_api_style(api_style: str) -> str:
+    if api_style in {"dos", "msc", "compiler"}:
+        return "dos"
+    return api_style
+
+
 def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
     """
     Infer a bounded `.COM` code region by scanning until a likely terminator.
@@ -145,6 +151,80 @@ def collect_dos_int21_calls(function, binary_path: Path | None = None) -> list[D
                 dx = None
 
     return calls
+
+
+def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
+    api_style = normalize_api_style(api_style)
+
+    if api_style == "raw":
+        return "dos_int21()"
+
+    if api_style == "dos":
+        if call.ah == 0x30:
+            return "_dos_get_version()"
+        if call.ah == 0x09:
+            if call.string_literal is not None:
+                return f'_dos_print_dollar_string("{call.string_literal}")'
+            if call.dx is None:
+                return "_dos_print_dollar_string()"
+            return f"_dos_print_dollar_string((const char far *)0x{call.dx:x})"
+        if call.ah == 0x4A:
+            return "_dos_setblock()"
+        if call.ah == 0x4C:
+            exit_code = call.ax & 0xFF if call.ax is not None else 0
+            return f"_dos_exit({exit_code})"
+        return "dos_int21()"
+
+    if call.ah == 0x30:
+        return "get_dos_version()"
+    if call.ah == 0x09:
+        if call.string_literal is not None:
+            return f'print_dos_string("{call.string_literal}")'
+        if call.dx is None:
+            return "print_dos_string()"
+        return f"print_dos_string((const char *)0x{call.dx:x})"
+    if call.ah == 0x4A:
+        return "resize_dos_memory_block()"
+    if call.ah == 0x4C:
+        exit_code = call.ax & 0xFF if call.ax is not None else 0
+        return f"exit({exit_code})"
+    return "dos_int21()"
+
+
+def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[str]:
+    api_style = normalize_api_style(api_style)
+    if api_style == "raw":
+        return []
+
+    declarations: list[str] = []
+    seen: set[str] = set()
+    for call in calls:
+        if api_style == "dos":
+            if call.ah == 0x30:
+                decl = "unsigned short _dos_get_version(void);"
+            elif call.ah == 0x09:
+                decl = "void _dos_print_dollar_string(const char far *s);"
+            elif call.ah == 0x4A:
+                decl = "int _dos_setblock(void);"
+            elif call.ah == 0x4C:
+                decl = "void _dos_exit(unsigned char status);"
+            else:
+                decl = "unsigned short dos_int21(void);"
+        else:
+            if call.ah == 0x30:
+                decl = "int get_dos_version(void);"
+            elif call.ah == 0x09:
+                decl = "void print_dos_string(const char *s);"
+            elif call.ah == 0x4A:
+                decl = "int resize_dos_memory_block(void);"
+            elif call.ah == 0x4C:
+                decl = "void exit(int status);"
+            else:
+                decl = "int dos_int21(void);"
+        if decl not in seen:
+            seen.add(decl)
+            declarations.append(decl)
+    return declarations
 
 
 def _absolute_mem_disp(operand) -> int | None:

@@ -193,3 +193,30 @@ def test_trace_x86_16_paths_cli_recovers_cfg_for_small_com_stub():
     assert "function: 0x1000 _start" in result.stdout
     assert "== block 0x1000 ==" in result.stdout
     assert "0x1000: mov ah, 0x30" in result.stdout
+    assert "0x1002: int 0x21 ; get_dos_version()" in result.stdout
+    assert '0x1009: int 0x21 ; print_dos_string("DOS sample")' in result.stdout
+
+
+def test_trace_x86_16_paths_cli_supports_msc_helper_annotations():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(TRACE_PATH),
+            str(ICOMDO_COM),
+            "--mode",
+            "cfg",
+            "--max-blocks",
+            "4",
+            "--api-style",
+            "msc",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "0x1002: int 0x21 ; _dos_get_version()" in result.stdout
+    assert '0x1009: int 0x21 ; _dos_print_dollar_string("DOS sample")' in result.stdout
