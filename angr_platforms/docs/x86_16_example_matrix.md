@@ -20,6 +20,7 @@ The intent is practical:
 | `cod/f14/PLANES3.COD` | `_Ready5` | near | `637819` B | `46`, `18`, `return` | Large source file, but the chosen procedure is still small and good for struct-stride anchoring. |
 | `cod/f14/COCKPIT.COD` | `_LookDown` | near | `354631` B | `50`, `27`, `25`, `39` | Good for constant-heavy branch bodies and repeated field updates. |
 | `cod/f14/COCKPIT.COD` | `_LookUp` | near | `354631` B | `150`, `138`, `136`, `139` | Pairs with `_LookDown`; same shape, different constants and else-path. |
+| `cod/f14/COCKPIT.COD` | `_ConfigCrts` | near | `354631` B | counted copy loop, `flag * 2`, `546 + v5`, `flag < 8` | Good for simple loop/copy correctness on a real large `.COD` source file. |
 | `cod/f14/CARR.COD` | `_InBox` | near | `254653` B | `return 1;`, relational comparisons | Good for multi-condition bounds logic. Still somewhat low-level, but stable. |
 | `angr_platforms/x16_samples/ICOMDO.COM` | `_start` | tiny `.COM` | n/a in this table | `get_dos_version(); print_dos_string(...); exit(0);` | Best user-facing tiny runtime sample. More about helper-call quality than arithmetic logic. |
 | `angr_platforms/x16_samples/ISOD.EXE` | `_start` | small-model `.EXE` | paired with `ISOD.COD` | named DOS helpers plus startup constants | Useful bridge from tiny examples to real startup code. Still noisier than the small `.COD` set. |
@@ -62,12 +63,34 @@ rendered C is still low-level.
 | `angr_platforms/x16_samples/ILOD.COD` | far | `9006` B | `show_summary`, split word loads, final helper call | Large model baseline. |
 | `angr_platforms/x16_samples/ILOT.COD` | far | `8042` B | `show_summary`, split word loads, final helper call | Large model optimized variant. |
 
+## `_main` Matrix
+
+These are the same source-level `main` wrapper across the 10 sample matrix
+variants. Today it is useful as a decompiled-C consistency ladder for call
+sequence stability and folded-byte/word value flow around the final
+`fold_values(...)` return path.
+
+| Example | Proc Kind | File Size | Current Logic Anchor | Notes |
+| --- | --- | ---: | --- | --- |
+| `angr_platforms/x16_samples/ISOD.COD` | near | `8527` B | `_main`, helper calls, `& 0xff00 |`, final return call | Small model `/Od` baseline. |
+| `angr_platforms/x16_samples/ISOT.COD` | near | `7596` B | `_main`, helper calls, `& 0xff00 |`, final return call | Small model optimized variant. |
+| `angr_platforms/x16_samples/ISOX.COD` | near | `7596` B | `_main`, helper calls, `& 0xff00 |`, final return call | Small model alternate optimized build. |
+| `angr_platforms/x16_samples/IMOD.COD` | far | `8676` B | `_main`, helper calls, `& 0xff00 |`, final return call | Medium model baseline. |
+| `angr_platforms/x16_samples/IMOT.COD` | far | `7760` B | `_main`, helper calls, `& 0xff00 |`, final return call | Medium model optimized variant. |
+| `angr_platforms/x16_samples/IMOX.COD` | far | `7760` B | `_main`, helper calls, `& 0xff00 |`, final return call | Medium model alternate optimized build. |
+| `angr_platforms/x16_samples/IHOD.COD` | far | `9006` B | `_main`, helper calls, `& 0xff00 |`, final return call | Huge model baseline. |
+| `angr_platforms/x16_samples/IHOT.COD` | far | `8042` B | `_main`, helper calls, `& 0xff00 |`, final return call | Huge model optimized variant. |
+| `angr_platforms/x16_samples/ILOD.COD` | far | `9006` B | `_main`, helper calls, `& 0xff00 |`, final return call | Large model baseline. |
+| `angr_platforms/x16_samples/ILOT.COD` | far | `8042` B | `_main`, helper calls, `& 0xff00 |`, final return call | Large model optimized variant. |
+
 ## Current Use
 
 - The focused example set is the main small-to-medium logic correctness ladder.
 - The `fold_values` matrix is the current model/optimization consistency ladder.
 - The `show_summary` matrix is the current decompiled-C consistency ladder for
   split word-load reconstruction across memory models and optimization levels.
+- The `_main` matrix is the current decompiled-C consistency ladder for helper
+  call ordering and folded byte/word flow across the same 10 variants.
 - The `query_interrupts` setup prefix is now also locked across all 10 sample-matrix variants at block-lift level:
   - `ISOD`, `ISOT`, `ISOX`
   - `IMOD`, `IMOT`, `IMOX`

@@ -125,6 +125,44 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "* 2" in result.stdout
 
 
+def test_decompile_cli_recovers_configcrts_copy_loop():
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_ConfigCrts")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _ConfigCrts" in result.stdout
+    assert "unsigned short _ConfigCrts(void)" in result.stdout
+    assert "do" in result.stdout
+    assert "flag * 2" in result.stdout
+    assert "546 + v5" in result.stdout
+    assert "flag < 8" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("path", "proc_kind", "shape_tokens"),
+    [
+        (ISOD_COD, "NEAR", ("& 0xff00 |", "return ")),
+        (ISOT_COD, "NEAR", ("& 0xff00 |", "return ")),
+        (ISOX_COD, "NEAR", ("& 0xff00 |", "return ")),
+        (IMOD_COD, "FAR", ("& 0xff00 |", "return ")),
+        (IMOT_COD, "FAR", ("sub_1004();", "v3 >> 8;")),
+        (IMOX_COD, "FAR", ("sub_1004();", "v3 >> 8;")),
+        (IHOD_COD, "FAR", ("& 0xff00 |", "return ")),
+        (IHOT_COD, "FAR", ("sub_1004();", "v3 >> 8;")),
+        (ILOD_COD, "FAR", ("& 0xff00 |", "return ")),
+        (ILOT_COD, "FAR", ("sub_1004();", "v3 >> 8;")),
+    ],
+)
+def test_decompile_cli_main_matrix(path: Path, proc_kind: str, shape_tokens: tuple[str, str]):
+    result = _run_decompile_proc(path, "_main", proc_kind=proc_kind, analysis_timeout=20, subprocess_timeout=60)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _main" in result.stdout
+    assert "int _main(void)" in result.stdout
+    for token in shape_tokens:
+        assert token in result.stdout
+    assert "Decompiler timeout" not in result.stdout
+
+
 @pytest.mark.parametrize(
     ("path", "proc_kind"),
     [
