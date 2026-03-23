@@ -149,6 +149,19 @@ def test_decompile_cli_recovers_rotate_pt_logic():
     assert "sub_101f();" in result.stdout
 
 
+def test_decompile_cli_recovers_sethook_branch_logic():
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "CARR.COD", "_SetHook")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _SetHook" in result.stdout
+    assert "int _SetHook()" in result.stdout
+    assert "return 1;" in result.stdout
+    assert "a0 >> 8" in result.stdout
+    assert "v8 = 93;" in result.stdout
+    assert "v8 = 106;" in result.stdout
+    assert "sub_102f();" in result.stdout
+
+
 @pytest.mark.parametrize(
     ("path", "proc_kind", "shape_tokens"),
     [
@@ -275,6 +288,15 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             30,
             ("function: 0x1000 _InBox", "return 1;", "a2 > v9", "a4 < v9"),
             ("if (...)",),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "CARR.COD",
+            "_SetHook",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "sub_102f();"),
+            (),
         ),
         (
             ISOD_COD,
