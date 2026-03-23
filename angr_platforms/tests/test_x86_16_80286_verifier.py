@@ -245,6 +245,26 @@ def test_verify_80286_jmp_short_case_passes():
     assert summary["failed"] == 0
 
 
+def test_verify_80286_loop_prefixed_case_passes():
+    _, cases = load_moo_cases(_moo("E2"))
+    case = next(c for c in cases if c["idx"] == 27)
+    result = verify_case(case, opcode="E2")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
+def test_verify_80286_loop_to_local_hlt_case_passes():
+    _, cases = load_moo_cases(_moo("E2"))
+    case = next(c for c in cases if c["idx"] == 3450)
+    result = verify_case(case, opcode="E2")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_far_jmp_case_passes():
     summary = verify_moo_file(_moo("EA"), limit=1)
 

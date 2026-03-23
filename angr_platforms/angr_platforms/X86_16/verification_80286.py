@@ -305,6 +305,27 @@ def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes
         state.regs.ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
         return True
 
+    if opcode in {0xE0, 0xE1, 0xE2, 0xE3}:
+        disp = insn_bytes[idx + 1]
+        if disp >= 0x80:
+            disp -= 0x100
+        next_ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
+        target_ip = (next_ip + disp) & 0xFFFF
+        cx = (initial["cx"] - (0 if opcode == 0xE3 else 1)) & 0xFFFF
+        zero = (initial["flags"] >> 6) & 1
+        if opcode != 0xE3:
+            state.regs.cx = cx
+        if opcode == 0xE0:
+            taken = cx != 0 and zero == 0
+        elif opcode == 0xE1:
+            taken = cx != 0 and zero == 1
+        elif opcode == 0xE2:
+            taken = cx != 0
+        else:
+            taken = (initial["cx"] & 0xFFFF) == 0
+        state.regs.ip = target_ip if taken else next_ip
+        return True
+
     if opcode == 0xEB:
         disp = insn_bytes[idx + 1]
         if disp >= 0x80:
