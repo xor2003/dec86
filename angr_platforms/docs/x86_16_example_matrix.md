@@ -47,22 +47,22 @@ and optimization variants from the sample matrix.
 ## `show_summary` Matrix
 
 These are the same source-level summary-print wrapper across the 10 sample
-matrix variants. Today it is useful as a decompiled-C correctness ladder for
-split word-load reconstruction and call-through stability, even though the
-rendered C is still low-level.
+matrix variants. Today it is useful in two ways:
+- decompiled-C consistency for split word-load reconstruction
+- block-lift consistency for near/far `cprintf` call setup
 
 | Example | Proc Kind | File Size | Current Logic Anchor | Notes |
 | --- | --- | ---: | --- | --- |
-| `angr_platforms/x16_samples/ISOD.COD` | near | `8527` B | `show_summary`, split word loads, final helper call | Small model `/Od` baseline. |
-| `angr_platforms/x16_samples/ISOT.COD` | near | `7596` B | `show_summary`, split word loads, final helper call | Small model optimized variant. |
-| `angr_platforms/x16_samples/ISOX.COD` | near | `7596` B | `show_summary`, split word loads, final helper call | Small model alternate optimized build. |
-| `angr_platforms/x16_samples/IMOD.COD` | far | `8676` B | `show_summary`, split word loads, final helper call | Medium model baseline. |
-| `angr_platforms/x16_samples/IMOT.COD` | far | `7760` B | `show_summary`, split word loads, final helper call | Medium model optimized variant. |
-| `angr_platforms/x16_samples/IMOX.COD` | far | `7760` B | `show_summary`, split word loads, final helper call | Medium model alternate optimized build. |
-| `angr_platforms/x16_samples/IHOD.COD` | far | `9006` B | `show_summary`, split word loads, final helper call | Huge model baseline. |
-| `angr_platforms/x16_samples/IHOT.COD` | far | `8042` B | `show_summary`, split word loads, final helper call | Huge model optimized variant. |
-| `angr_platforms/x16_samples/ILOD.COD` | far | `9006` B | `show_summary`, split word loads, final helper call | Large model baseline. |
-| `angr_platforms/x16_samples/ILOT.COD` | far | `8042` B | `show_summary`, split word loads, final helper call | Large model optimized variant. |
+| `angr_platforms/x16_samples/ISOD.COD` | near | `8527` B | three `g_info` pushes + format push before `_cprintf` | Small model `/Od` baseline. |
+| `angr_platforms/x16_samples/ISOT.COD` | near | `7596` B | three `g_info` pushes + format push before `_cprintf` | Small model optimized variant. |
+| `angr_platforms/x16_samples/ISOX.COD` | near | `7596` B | three `g_info` pushes + format push before `_cprintf` | Small model alternate optimized build. |
+| `angr_platforms/x16_samples/IMOD.COD` | far | `8676` B | three `g_info` pushes + format push before far `_cprintf` | Medium model baseline. |
+| `angr_platforms/x16_samples/IMOT.COD` | far | `7760` B | three `g_info` pushes + format push before far `_cprintf` | Medium model optimized variant. |
+| `angr_platforms/x16_samples/IMOX.COD` | far | `7760` B | three `g_info` pushes + format push before far `_cprintf` | Medium model alternate optimized build. |
+| `angr_platforms/x16_samples/IHOD.COD` | far | `9006` B | `push ds` + format pointer + far `_cprintf` setup | Huge model baseline. |
+| `angr_platforms/x16_samples/IHOT.COD` | far | `8042` B | `push ds` + format pointer + far `_cprintf` setup | Huge model optimized variant. |
+| `angr_platforms/x16_samples/ILOD.COD` | far | `9006` B | `push ds` + format pointer + far `_cprintf` setup | Large model baseline. |
+| `angr_platforms/x16_samples/ILOT.COD` | far | `8042` B | `push ds` + format pointer + far `_cprintf` setup | Large model optimized variant. |
 
 ## `_main` Matrix
 
@@ -90,6 +90,8 @@ sequence stability and folded-byte/word value flow around the final
 - The `fold_values` matrix is the current model/optimization consistency ladder.
 - The `show_summary` matrix is the current decompiled-C consistency ladder for
   split word-load reconstruction across memory models and optimization levels.
+- The `show_summary` matrix also now has a block-lift ladder for the `_cprintf`
+  call-setup prefix, which is a cleaner oracle for near/far ABI differences.
 - The `_main` matrix is the current decompiled-C consistency ladder for helper
   call ordering and folded byte/word flow across the same 10 variants.
 - The `query_interrupts` setup prefix is now also locked across all 10 sample-matrix variants at block-lift level:

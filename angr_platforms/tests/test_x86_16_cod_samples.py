@@ -403,6 +403,110 @@ QUERY_INTERRUPT_INT21_VECTOR_MATRIX_CASES = (
 )
 
 
+SHOW_SUMMARY_MATRIX_CASES = (
+    MatrixBlockLiftCase(
+        name="isod_show_summary_prefix",
+        cod_name="ISOD.COD",
+        proc_name="show_summary",
+        proc_kind="NEAR",
+        start_offset=0xF2,
+        end_offset=0x102,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "PUT(ax) = 0x0000"),
+    ),
+    MatrixBlockLiftCase(
+        name="isot_show_summary_prefix",
+        cod_name="ISOT.COD",
+        proc_name="show_summary",
+        proc_kind="NEAR",
+        start_offset=0xD8,
+        end_offset=0xE8,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "PUT(ax) = 0x0000"),
+    ),
+    MatrixBlockLiftCase(
+        name="isox_show_summary_prefix",
+        cod_name="ISOX.COD",
+        proc_name="show_summary",
+        proc_kind="NEAR",
+        start_offset=0xD8,
+        end_offset=0xE8,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "PUT(ax) = 0x0000"),
+    ),
+    MatrixBlockLiftCase(
+        name="imod_show_summary_prefix",
+        cod_name="IMOD.COD",
+        proc_name="show_summary",
+        proc_kind="FAR",
+        start_offset=0xFC,
+        end_offset=0x10C,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "PUT(ax) = 0x0000"),
+    ),
+    MatrixBlockLiftCase(
+        name="imot_show_summary_prefix",
+        cod_name="IMOT.COD",
+        proc_name="show_summary",
+        proc_kind="FAR",
+        start_offset=0xE2,
+        end_offset=0xF2,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "PUT(ax) = 0x0000"),
+    ),
+    MatrixBlockLiftCase(
+        name="imox_show_summary_prefix",
+        cod_name="IMOX.COD",
+        proc_name="show_summary",
+        proc_kind="FAR",
+        start_offset=0xE2,
+        end_offset=0xF2,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "PUT(ax) = 0x0000"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihod_show_summary_prefix",
+        cod_name="IHOD.COD",
+        proc_name="show_summary",
+        proc_kind="FAR",
+        start_offset=0x107,
+        end_offset=0x118,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "GET:I16(ds)"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihot_show_summary_prefix",
+        cod_name="IHOT.COD",
+        proc_name="show_summary",
+        proc_kind="FAR",
+        start_offset=0xEC,
+        end_offset=0xFD,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "GET:I16(ds)"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilod_show_summary_prefix",
+        cod_name="ILOD.COD",
+        proc_name="show_summary",
+        proc_kind="FAR",
+        start_offset=0x107,
+        end_offset=0x118,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "GET:I16(ds)"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilot_show_summary_prefix",
+        cod_name="ILOT.COD",
+        proc_name="show_summary",
+        proc_kind="FAR",
+        start_offset=0xEC,
+        end_offset=0xFD,
+        original_c='cprintf("dos=%u bios=%u mode=%u\\r\\n", g_info.dos_version, g_info.bios_kb, g_info.video_mode);',
+        expected_tokens=("0x0004", "0x0002", "0x0000", "STle(", "GET:I16(ds)"),
+    ),
+)
+
+
 def _project_from_bytes(code: bytes):
     return angr.Project(
         io.BytesIO(code),
@@ -577,6 +681,18 @@ def test_query_interrupt_block_lift_matrix(case: MatrixBlockLiftCase):
 
 @pytest.mark.parametrize("case", QUERY_INTERRUPT_INT21_VECTOR_MATRIX_CASES, ids=lambda case: case.name)
 def test_query_interrupt_int21_vector_block_lift_matrix(case: MatrixBlockLiftCase):
+    entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
+    code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
+    project = _project_from_bytes(code)
+    block = project.factory.block(0x1000)
+    irsb_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)
+
+
+@pytest.mark.parametrize("case", SHOW_SUMMARY_MATRIX_CASES, ids=lambda case: case.name)
+def test_show_summary_block_lift_matrix(case: MatrixBlockLiftCase):
     entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
     code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
     project = _project_from_bytes(code)
