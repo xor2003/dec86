@@ -28,7 +28,14 @@ sys.path.insert(0, str(_ROOT / "angr_platforms"))
 import angr_platforms.X86_16  # noqa: F401
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.analysis_helpers import collect_dos_int21_calls, extend_cfg_for_far_calls, infer_com_region
+from angr_platforms.X86_16.analysis_helpers import (
+    collect_dos_int21_calls,
+    dos_helper_declarations,
+    extend_cfg_for_far_calls,
+    infer_com_region,
+    normalize_api_style,
+    render_dos_int21_call,
+)
 from angr_platforms.X86_16.cod_extract import extract_cod_function_entries, join_cod_entries
 
 
@@ -43,12 +50,6 @@ logging.getLogger("angr.analyses.analysis").setLevel(logging.CRITICAL)
 
 def _parse_int(value: str) -> int:
     return int(value, 0)
-
-
-def _normalize_api_style(api_style: str) -> str:
-    if api_style in {"dos", "msc", "compiler"}:
-        return "dos"
-    return api_style
 
 
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
@@ -217,85 +218,15 @@ def _helper_name(project: angr.Project, addr: int) -> str | None:
     return proc.__class__.__name__
 
 
-def _format_service_call(api_style: str, ah: int | None, ax: int | None, dx: int | None, string_literal: str | None) -> str:
-    api_style = _normalize_api_style(api_style)
-
-    if api_style == "raw":
-        return "dos_int21()"
-
-    if api_style == "dos":
-        if ah == 0x30:
-            return "_dos_get_version()"
-        if ah == 0x09:
-            if string_literal is not None:
-                return f'_dos_print_dollar_string("{string_literal}")'
-            if dx is None:
-                return "_dos_print_dollar_string()"
-            return f"_dos_print_dollar_string((const char far *)0x{dx:x})"
-        if ah == 0x4A:
-            return "_dos_setblock()"
-        if ah == 0x4C:
-            exit_code = ax & 0xFF if ax is not None else 0
-            return f"_dos_exit({exit_code})"
-        return "dos_int21()"
-
-    if ah == 0x30:
-        return "get_dos_version()"
-    if ah == 0x09:
-        if string_literal is not None:
-            return f'print_dos_string("{string_literal}")'
-        if dx is None:
-            return "print_dos_string()"
-        return f"print_dos_string((const char *)0x{dx:x})"
-    if ah == 0x4A:
-        return "resize_dos_memory_block()"
-    if ah == 0x4C:
-        exit_code = ax & 0xFF if ax is not None else 0
-        return f"exit({exit_code})"
-    return "dos_int21()"
-
-
 def _int21_call_replacements(project: angr.Project, function, api_style: str, binary_path: Path | None) -> list[str]:
     return [
-        _format_service_call(api_style, call.ah, call.ax, call.dx, call.string_literal)
+        render_dos_int21_call(call, api_style)
         for call in collect_dos_int21_calls(function, binary_path)
     ]
 
 
 def _dos_helper_declarations(function, api_style: str, binary_path: Path | None) -> list[str]:
-    api_style = _normalize_api_style(api_style)
-    if api_style == "raw":
-        return []
-
-    declarations: list[str] = []
-    seen: set[str] = set()
-    for call in collect_dos_int21_calls(function, binary_path):
-        if api_style == "dos":
-            if call.ah == 0x30:
-                decl = "unsigned short _dos_get_version(void);"
-            elif call.ah == 0x09:
-                decl = "void _dos_print_dollar_string(const char far *s);"
-            elif call.ah == 0x4A:
-                decl = "int _dos_setblock(void);"
-            elif call.ah == 0x4C:
-                decl = "void _dos_exit(unsigned char status);"
-            else:
-                decl = "unsigned short dos_int21(void);"
-        else:
-            if call.ah == 0x30:
-                decl = "int get_dos_version(void);"
-            elif call.ah == 0x09:
-                decl = "void print_dos_string(const char *s);"
-            elif call.ah == 0x4A:
-                decl = "int resize_dos_memory_block(void);"
-            elif call.ah == 0x4C:
-                decl = "void exit(int status);"
-            else:
-                decl = "int dos_int21(void);"
-        if decl not in seen:
-            seen.add(decl)
-            declarations.append(decl)
-    return declarations
+    return dos_helper_declarations(collect_dos_int21_calls(function, binary_path), api_style)
 
 
 def _format_known_helper_calls(
