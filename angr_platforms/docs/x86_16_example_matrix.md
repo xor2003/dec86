@@ -24,6 +24,7 @@ The intent is practical:
 | `cod/f14/COCKPIT.COD` | `_ConfigCrts` | near | `354631` B | counted copy loop, `flag * 2`, `546 + v5`, `flag < 8` | Good for simple loop/copy correctness on a real large `.COD` source file. |
 | `cod/f14/CARR.COD` | `_InBox` | near | `254653` B | `return 1;`, relational comparisons | Good for multi-condition bounds logic. Still somewhat low-level, but stable. |
 | `cod/f14/CARR.COD` | `_SetHook` | near | `254653` B | `return 1;`, hook state store, `93` / `106` message branches | Good for small state-toggle logic with an early-return path. |
+| `cod/f14/CARR.COD` | `_SetGear` | near | `254653` B | guard threshold `350`, message branches `73` / `52` | Good for guarded state-update logic with multiple early-return branches. |
 | `angr_platforms/x16_samples/ICOMDO.COM` | `_start` | tiny `.COM` | n/a in this table | `get_dos_version(); print_dos_string(...); exit(0);` | Best user-facing tiny runtime sample. More about helper-call quality than arithmetic logic. |
 | `angr_platforms/x16_samples/ISOD.EXE` | `_start` | small-model `.EXE` | paired with `ISOD.COD` | named DOS helpers plus startup constants | Useful bridge from tiny examples to real startup code. Still noisier than the small `.COD` set. |
 

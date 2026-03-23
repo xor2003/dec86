@@ -162,6 +162,18 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "sub_102f();" in result.stdout
 
 
+def test_decompile_cli_recovers_setgear_guard_logic():
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "CARR.COD", "_SetGear")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _SetGear" in result.stdout
+    assert "int _SetGear()" in result.stdout
+    assert "350" in result.stdout
+    assert "v14 = 73;" in result.stdout
+    assert "v14 = 52;" in result.stdout
+    assert "sub_102f();" in result.stdout
+
+
 @pytest.mark.parametrize(
     ("path", "proc_kind", "shape_tokens"),
     [
@@ -296,6 +308,15 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             10,
             30,
             ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "sub_102f();"),
+            (),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "CARR.COD",
+            "_SetGear",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _SetGear", "350", "v14 = 73;", "v14 = 52;", "sub_102f();"),
             (),
         ),
         (
