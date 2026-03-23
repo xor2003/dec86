@@ -1,6 +1,8 @@
-# Agents in angr-platforms
+# Inertia Decompiler
 
 ## Overview
+
+Project name: **Inertia decompiler**.
 
 Decompiler for 16-bit x86 real mode based on angr.
 angr_platforms - patched to support x86 16-bit.
