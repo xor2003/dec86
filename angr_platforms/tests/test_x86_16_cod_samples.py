@@ -180,6 +180,15 @@ BLOCK_LIFT_CASES = (
         original_c="if ((x < xl) || (x > xh) || (z < zl) || (z > zh)) return 0; else return 1;",
         expected_tokens=("CmpGT16U", "PUT(ip) = 0x100b", "PUT(ip) = 0x101d", "Ijk_Boring"),
     ),
+    BlockLiftCase(
+        name="f14_inboxlng_long_bounds_check",
+        cod_name="CARR.COD",
+        proc_name="_InBoxLng",
+        cod_dir=_F14_COD_DIR,
+        block_addr=0x1000,
+        original_c="if ((x < xl) || (x > xh) || (z < zl) || (z > zh)) return 0; else return 1;",
+        expected_tokens=("CmpGT16S", "PUT(ip) = 0x100e", "PUT(ip) = 0x1045", "LDle:I16"),
+    ),
 )
 
 
