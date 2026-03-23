@@ -137,6 +137,18 @@ def test_decompile_cli_recovers_configcrts_copy_loop():
     assert "flag < 8" in result.stdout
 
 
+def test_decompile_cli_recovers_rotate_pt_logic():
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "BILLASM.COD", "_rotate_pt")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _rotate_pt" in result.stdout
+    assert "int _rotate_pt()" in result.stdout
+    assert "a1 * -1" in result.stdout
+    assert "0 + v12" in result.stdout
+    assert "2 + v12" in result.stdout
+    assert "sub_101f();" in result.stdout
+
+
 @pytest.mark.parametrize(
     ("path", "proc_kind", "shape_tokens"),
     [

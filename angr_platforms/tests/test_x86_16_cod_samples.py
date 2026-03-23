@@ -299,6 +299,110 @@ QUERY_INTERRUPT_MATRIX_CASES = (
 )
 
 
+QUERY_INTERRUPT_INT21_VECTOR_MATRIX_CASES = (
+    MatrixBlockLiftCase(
+        name="isod_query_interrupts_int21_vector",
+        cod_name="ISOD.COD",
+        proc_name="query_interrupts",
+        proc_kind="NEAR",
+        start_offset=0xD7,
+        end_offset=0xE3,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="isot_query_interrupts_int21_vector",
+        cod_name="ISOT.COD",
+        proc_name="query_interrupts",
+        proc_kind="NEAR",
+        start_offset=0xC7,
+        end_offset=0xD3,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="isox_query_interrupts_int21_vector",
+        cod_name="ISOX.COD",
+        proc_name="query_interrupts",
+        proc_kind="NEAR",
+        start_offset=0xC7,
+        end_offset=0xD3,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="imod_query_interrupts_int21_vector",
+        cod_name="IMOD.COD",
+        proc_name="query_interrupts",
+        proc_kind="FAR",
+        start_offset=0xE1,
+        end_offset=0xED,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="imot_query_interrupts_int21_vector",
+        cod_name="IMOT.COD",
+        proc_name="query_interrupts",
+        proc_kind="FAR",
+        start_offset=0xD1,
+        end_offset=0xDD,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="imox_query_interrupts_int21_vector",
+        cod_name="IMOX.COD",
+        proc_name="query_interrupts",
+        proc_kind="FAR",
+        start_offset=0xD1,
+        end_offset=0xDD,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihod_query_interrupts_int21_vector",
+        cod_name="IHOD.COD",
+        proc_name="query_interrupts",
+        proc_kind="FAR",
+        start_offset=0xEC,
+        end_offset=0xF8,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihot_query_interrupts_int21_vector",
+        cod_name="IHOT.COD",
+        proc_name="query_interrupts",
+        proc_kind="FAR",
+        start_offset=0xDC,
+        end_offset=0xE8,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilod_query_interrupts_int21_vector",
+        cod_name="ILOD.COD",
+        proc_name="query_interrupts",
+        proc_kind="FAR",
+        start_offset=0xEC,
+        end_offset=0xF8,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilot_query_interrupts_int21_vector",
+        cod_name="ILOT.COD",
+        proc_name="query_interrupts",
+        proc_kind="FAR",
+        start_offset=0xDC,
+        end_offset=0xE8,
+        original_c="g_info.int21_segment = sregs.es; g_info.int21_offset = outregs.x.bx;",
+        expected_tokens=("0x00000008", "0x0000000a", "STle(", "LDle:I16"),
+    ),
+)
+
+
 def _project_from_bytes(code: bytes):
     return angr.Project(
         io.BytesIO(code),
@@ -461,6 +565,18 @@ def test_cod_block_lift_cases(case: BlockLiftCase):
 
 @pytest.mark.parametrize("case", QUERY_INTERRUPT_MATRIX_CASES, ids=lambda case: case.name)
 def test_query_interrupt_block_lift_matrix(case: MatrixBlockLiftCase):
+    entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
+    code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
+    project = _project_from_bytes(code)
+    block = project.factory.block(0x1000)
+    irsb_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)
+
+
+@pytest.mark.parametrize("case", QUERY_INTERRUPT_INT21_VECTOR_MATRIX_CASES, ids=lambda case: case.name)
+def test_query_interrupt_int21_vector_block_lift_matrix(case: MatrixBlockLiftCase):
     entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
     code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
     project = _project_from_bytes(code)

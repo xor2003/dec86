@@ -17,6 +17,7 @@ The intent is practical:
 | `cod/f14/NHORZ.COD` | `_ChangeWeather` | near | `108285` B | direct truth-test plus `8150`, `500`, `125`, `1000` | Good for direct-memory compare recovery and `if/else` shape. |
 | `cod/f14/MONOPRIN.COD` | `_mset_pos` | near | `20309` B | `% 80`, `% 25` | Good for simple arithmetic and frame-wrapper normalization. |
 | `cod/f14/BILLASM.COD` | `_MousePOS` | near | `5689` B | `if (!MOUSE) return 0;`, `x * 2` | Good for byte compare recovery and tiny early-return logic. |
+| `cod/f14/BILLASM.COD` | `_rotate_pt` | near | `5689` B | indexed word loads, `a1 * -1`, trig-call setup | Good for small arithmetic/setup logic before call-heavy code. |
 | `cod/f14/PLANES3.COD` | `_Ready5` | near | `637819` B | `46`, `18`, `return` | Large source file, but the chosen procedure is still small and good for struct-stride anchoring. |
 | `cod/f14/COCKPIT.COD` | `_LookDown` | near | `354631` B | `50`, `27`, `25`, `39` | Good for constant-heavy branch bodies and repeated field updates. |
 | `cod/f14/COCKPIT.COD` | `_LookUp` | near | `354631` B | `150`, `138`, `136`, `139` | Pairs with `_LookDown`; same shape, different constants and else-path. |
@@ -96,6 +97,7 @@ sequence stability and folded-byte/word value flow around the final
   - `IMOD`, `IMOT`, `IMOX`
   - `IHOD`, `IHOT`
   - `ILOD`, `ILOT`
+- A second `query_interrupts` matrix now also locks the `int86x(0x21)` / `g_info.int21_segment` / `g_info.int21_offset` tail across those same 10 variants.
 - That matrix is intentionally block-level today because it is a cleaner correctness oracle than the current full decompiled C for those startup/helper-heavy routines.
 - When adding new examples, prefer:
   - one small, source-obvious procedure
