@@ -74,6 +74,23 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
     assert "return a2;" in result.stdout
 
 
+def test_decompile_cli_recovers_small_cod_byte_condition_logic():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(REPO_ROOT / "cod" / "f14" / "BILLASM.COD"), "--proc", "_MousePOS", "--timeout", "10"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _MousePOS" in result.stdout
+    assert "if (!(*((char *)" in result.stdout
+    assert "if (...)" not in result.stdout
+    assert "* 2" in result.stdout
+
+
 def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():
     result = subprocess.run(
         [sys.executable, str(CLI_PATH), str(ICOMDO_COM), "--timeout", "10", "--window", "0x80", "--max-functions", "2"],

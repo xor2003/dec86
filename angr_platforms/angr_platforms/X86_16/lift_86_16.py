@@ -48,6 +48,7 @@ class _LifterInstructionFacade:
 
 
 class Instruction_ANY(Instruction):
+    _REG8_NAMES = {"al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"}
     _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}
     _BLOCK_TERMINATORS = {
         "call",
@@ -194,10 +195,14 @@ class Instruction_ANY(Instruction):
         dst_reg = self._reg16_name(dst)
         src_reg = self._reg16_name(src)
         src_imm = self._imm16_value(src)
+        src_imm8 = self._imm8_value(src)
         dst_mem = self._bp_mem(dst)
         src_mem = self._bp_mem(src)
         dst_abs_mem = self._direct_mem16(dst)
         src_abs_mem = self._direct_mem16(src)
+        dst_abs_mem8 = self._direct_mem8(dst)
+        src_reg8 = self._reg8_name(src)
+        dst_reg8 = self._reg8_name(dst)
 
         if self.cs.mnemonic == "mov" and dst_reg and src_imm is not None:
             return ("mov_reg_imm16", dst_reg, src_imm)
@@ -223,20 +228,41 @@ class Instruction_ANY(Instruction):
                 return ("cmp_mem_reg16", dst_mem, src_reg)
             if src_imm is not None:
                 return ("cmp_mem_imm16", dst_mem, src_imm)
-        if self.cs.mnemonic == "cmp" and dst_abs_mem:
+        if self.cs.mnemonic == "cmp" and dst_abs_mem is not None:
             if src_imm is not None:
                 return ("cmp_abs_imm16", dst_abs_mem, src_imm)
             if src_reg:
                 return ("cmp_abs_reg16", dst_abs_mem, src_reg)
-        if self.cs.mnemonic == "cmp" and dst_reg and src_abs_mem:
+        if self.cs.mnemonic == "cmp" and dst_reg and src_abs_mem is not None:
             return ("cmp_reg_abs16", dst_reg, src_abs_mem)
+        if self.cs.mnemonic == "cmp" and dst_abs_mem8 is not None:
+            if src_imm8 is not None:
+                return ("cmp_abs_imm8", dst_abs_mem8, src_imm8)
+            if src_reg8:
+                return ("cmp_abs_reg8", dst_abs_mem8, src_reg8)
+        if self.cs.mnemonic == "cmp" and dst_reg8 and dst_reg8 in self._REG8_NAMES:
+            src_abs_mem8 = self._direct_mem8(src)
+            if src_abs_mem8 is not None:
+                return ("cmp_reg_abs8", dst_reg8, src_abs_mem8)
         return None
+
+    def _reg8_name(self, operand):
+        if operand.type != 1 or getattr(operand, "size", None) != 1:
+            return None
+        reg_name = self.cs.reg_name(operand.reg).lower()
+        return reg_name if reg_name in self._REG8_NAMES else None
 
     def _reg16_name(self, operand):
         if operand.type != 1 or getattr(operand, "size", None) != 2:
             return None
         reg_name = self.cs.reg_name(operand.reg).lower()
         return reg_name if reg_name in self._REG16_NAMES else None
+
+    @staticmethod
+    def _imm8_value(operand):
+        if operand.type != 2:
+            return None
+        return operand.imm & 0xFF
 
     @staticmethod
     def _imm16_value(operand):
@@ -273,6 +299,14 @@ class Instruction_ANY(Instruction):
             return None
         return mem.disp & 0xFFFF
 
+    def _direct_mem8(self, operand):
+        if operand.type != 3 or getattr(operand, "size", None) != 1:
+            return None
+        mem = operand.mem
+        if mem.base or mem.index:
+            return None
+        return mem.disp & 0xFFFF
+
     def _addr_from_bp_mem(self, mem_spec):
         base, _, signed_disp = mem_spec
         addr = self._get_reg16(base)
@@ -288,6 +322,9 @@ class Instruction_ANY(Instruction):
 
     def _load_abs16(self, offset):
         return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_16)
+
+    def _load_abs8(self, offset):
+        return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_8)
 
     def _real_mode_linear(self, seg_reg, off16):
         seg = self._get_reg16(seg_reg).cast_to(Type.int_32)
@@ -325,6 +362,25 @@ class Instruction_ANY(Instruction):
         self._set_flag_bit(4, af)
         self._set_flag_bit(6, lhs == rhs)
         self._set_flag_bit(7, res_sign != self._const16(0))
+        overflow = (lhs_sign != rhs_sign) & (res_sign != lhs_sign)
+        self._set_flag_bit(11, overflow)
+
+    def _update_cmp_flags8(self, lhs, rhs):
+        result = lhs - rhs
+        lhs_sign = lhs[7]
+        rhs_sign = rhs[7]
+        res_sign = result[7]
+        parity = lhs - rhs
+        parity = parity ^ (parity >> self.constant(4, Type.int_8))
+        parity = parity ^ (parity >> self.constant(2, Type.int_8))
+        parity = parity ^ (parity >> self.constant(1, Type.int_8))
+        af = (((lhs ^ rhs) ^ result) & self.constant(0x10, Type.int_8)) != self.constant(0, Type.int_8)
+
+        self._set_flag_bit(0, lhs < rhs)
+        self._set_flag_bit(2, (~parity & self.constant(1, Type.int_8)) != self.constant(0, Type.int_8))
+        self._set_flag_bit(4, af)
+        self._set_flag_bit(6, lhs == rhs)
+        self._set_flag_bit(7, res_sign != self.constant(0, Type.int_8))
         overflow = (lhs_sign != rhs_sign) & (res_sign != lhs_sign)
         self._set_flag_bit(11, overflow)
 
@@ -423,6 +479,15 @@ class Instruction_ANY(Instruction):
         if kind == "cmp_abs_imm16":
             _, offset, imm = semantics
             return self._load_abs16(offset), self._const16(imm)
+        if kind == "cmp_reg_abs8":
+            _, lhs_reg, offset = semantics
+            return self.get(lhs_reg, Type.int_8), self._load_abs8(offset)
+        if kind == "cmp_abs_reg8":
+            _, offset, rhs_reg = semantics
+            return self._load_abs8(offset), self.get(rhs_reg, Type.int_8)
+        if kind == "cmp_abs_imm8":
+            _, offset, imm = semantics
+            return self._load_abs8(offset), self.constant(imm, Type.int_8)
         return None
 
     def _next_instruction_is_simple_jcc(self):
@@ -619,6 +684,21 @@ class Instruction_ANY(Instruction):
             _, offset, imm = self.simple_semantics
             if not self._next_instruction_is_simple_jcc():
                 self._update_cmp_flags(self._load_abs16(offset), self._const16(imm))
+            return
+        if kind == "cmp_reg_abs8":
+            _, dst_reg, offset = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags8(self.get(dst_reg, Type.int_8), self._load_abs8(offset))
+            return
+        if kind == "cmp_abs_reg8":
+            _, offset, src_reg = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags8(self._load_abs8(offset), self.get(src_reg, Type.int_8))
+            return
+        if kind == "cmp_abs_imm8":
+            _, offset, imm = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags8(self._load_abs8(offset), self.constant(imm, Type.int_8))
             return
         if kind in {"je", "jz", "jne", "jnz", "jmp", "jle", "jg", "jl", "jge", "jb", "jbe", "ja", "jae", "jnb", "jnc", "jc"}:
             _, abs_target = self.simple_semantics
