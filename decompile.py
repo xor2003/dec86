@@ -206,7 +206,8 @@ def _decompile_function(
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
-    _attach_dos_pseudo_callees(project, function, dec.codegen, api_style)
+    if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
+        dec.codegen.regenerate_text()
     return "ok", _format_known_helper_calls(project, function, dec.codegen.text, api_style, binary_path)
 
 
@@ -248,13 +249,13 @@ def _iter_c_nodes(node):
                     yield from _iter_c_nodes(arg)
 
 
-def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_style: str) -> None:
+def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_style: str) -> bool:
     if api_style != "pseudo" or getattr(codegen, "cfunc", None) is None:
-        return
+        return False
 
     dos_calls = collect_dos_int21_calls(function)
     if not dos_calls:
-        return
+        return False
 
     pseudo_funcs = []
     for call in dos_calls:
@@ -264,7 +265,7 @@ def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_sty
         pseudo_funcs.append(project.kb.functions.function(addr=target))
 
     if not pseudo_funcs:
-        return
+        return False
 
     call_nodes = [
         node
@@ -277,11 +278,12 @@ def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_sty
     # much noisier tree where forcing a pseudo-callee onto the remaining call
     # node makes the output worse rather than better.
     if len(call_nodes) != len(pseudo_funcs):
-        return
+        return False
 
     for node, pseudo_func in zip(call_nodes, pseudo_funcs):
         if pseudo_func is not None:
             node.callee_func = pseudo_func
+    return True
 
 
 def _int21_call_replacements(project: angr.Project, function, api_style: str, binary_path: Path | None) -> list[str]:
@@ -312,9 +314,14 @@ def _format_known_helper_calls(
 
     replacements = _int21_call_replacements(project, function, api_style, binary_path)
     for replacement in replacements:
-        c_text, count = re.subn(r"(?<![A-Za-z_])dos_int21\s*\(\s*\)", replacement, c_text, count=1)
-        if count == 0:
-            break
+        helper_name = replacement.split("(", 1)[0]
+        for pattern in (
+            r"(?<![A-Za-z_])dos_int21\s*\(\s*\)",
+            rf"(?<![A-Za-z_]){re.escape(helper_name)}\s*\(\s*\)",
+        ):
+            c_text, count = re.subn(pattern, replacement, c_text, count=1)
+            if count:
+                break
 
     declarations = _dos_helper_declarations(function, api_style, binary_path)
     if declarations:
