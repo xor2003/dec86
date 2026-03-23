@@ -126,6 +126,32 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
 
 
 @pytest.mark.parametrize(
+    ("path", "proc_kind"),
+    [
+        (ISOD_COD, "NEAR"),
+        (ISOT_COD, "NEAR"),
+        (ISOX_COD, "NEAR"),
+        (IMOD_COD, "FAR"),
+        (IMOT_COD, "FAR"),
+        (IMOX_COD, "FAR"),
+        (IHOD_COD, "FAR"),
+        (IHOT_COD, "FAR"),
+        (ILOD_COD, "FAR"),
+        (ILOT_COD, "FAR"),
+    ],
+)
+def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
+    result = _run_decompile_proc(path, "show_summary", proc_kind=proc_kind, analysis_timeout=20, subprocess_timeout=60)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 show_summary" in result.stdout
+    assert "int show_summary(void)" in result.stdout
+    assert "* 0x100) >> 8;" in result.stdout
+    assert "*((" in result.stdout
+    assert "Decompiler timeout" not in result.stdout
+
+
+@pytest.mark.parametrize(
     ("path", "proc", "proc_kind", "analysis_timeout", "subprocess_timeout", "expected_tokens", "forbidden_tokens"),
     [
         (
