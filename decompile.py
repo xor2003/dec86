@@ -232,6 +232,8 @@ def _format_service_call(api_style: str, ah: int | None, ax: int | None, dx: int
             if dx is None:
                 return "_dos_print_dollar_string()"
             return f"_dos_print_dollar_string((const char far *)0x{dx:x})"
+        if ah == 0x4A:
+            return "_dos_setblock()"
         if ah == 0x4C:
             exit_code = ax & 0xFF if ax is not None else 0
             return f"_dos_exit({exit_code})"
@@ -245,6 +247,8 @@ def _format_service_call(api_style: str, ah: int | None, ax: int | None, dx: int
         if dx is None:
             return "print_dos_string()"
         return f"print_dos_string((const char *)0x{dx:x})"
+    if ah == 0x4A:
+        return "resize_dos_memory_block()"
     if ah == 0x4C:
         exit_code = ax & 0xFF if ax is not None else 0
         return f"exit({exit_code})"
@@ -271,6 +275,8 @@ def _dos_helper_declarations(function, api_style: str, binary_path: Path | None)
                 decl = "unsigned short _dos_get_version(void);"
             elif call.ah == 0x09:
                 decl = "void _dos_print_dollar_string(const char far *s);"
+            elif call.ah == 0x4A:
+                decl = "int _dos_setblock(void);"
             elif call.ah == 0x4C:
                 decl = "void _dos_exit(unsigned char status);"
             else:
@@ -280,6 +286,8 @@ def _dos_helper_declarations(function, api_style: str, binary_path: Path | None)
                 decl = "int get_dos_version(void);"
             elif call.ah == 0x09:
                 decl = "void print_dos_string(const char *s);"
+            elif call.ah == 0x4A:
+                decl = "int resize_dos_memory_block(void);"
             elif call.ah == 0x4C:
                 decl = "void exit(int status);"
             else:
