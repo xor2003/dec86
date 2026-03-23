@@ -255,12 +255,13 @@ def _pop16_concrete(state) -> int:
 
 def _simulate_documented_exception(state, case: dict[str, Any]) -> None:
     exc = case["exception"]
-    initial = case["initial"]["regs"]
-    flags = initial["flags"] & 0xFCFF  # faults clear TF/IF
-    _push16_concrete(state, initial["flags"] & 0xFFFF)
-    state.regs.flags = flags
-    _push16_concrete(state, initial["cs"] & 0xFFFF)
-    _push16_concrete(state, initial["ip"] & 0xFFFF)
+    current_flags = state.solver.eval(state.regs.flags) & 0xFFFF
+    current_cs = state.solver.eval(state.regs.cs) & 0xFFFF
+    current_ip = state.solver.eval(state.regs.ip) & 0xFFFF
+    state.regs.flags = current_flags & 0xFCFF  # faults clear TF/IF
+    _push16_concrete(state, current_flags)
+    _push16_concrete(state, current_cs)
+    _push16_concrete(state, current_ip)
 
     vector_addr = (exc["number"] & 0xFF) * 4
     new_ip = _concrete_word(state, vector_addr)
@@ -456,26 +457,28 @@ def _faulting_word_string_delta(state) -> int:
     return -2 if ((flags >> 10) & 1) else 2
 
 
-def _simulate_faulting_lodsw_case(project: angr.Project, state, case: dict[str, Any], insn_bytes: bytes):
+def _simulate_faulting_word_string_case(project: angr.Project, state, case: dict[str, Any], insn_bytes: bytes):
     exc = case.get("exception")
     if exc is None or exc.get("number") != 13:
         return None
-    if _prefixed_opcode(insn_bytes) != 0xAD:
+    opcode = _prefixed_opcode(insn_bytes)
+    if opcode not in {0xAD, 0xAF}:
         return None
 
     start_addr = state.addr
     repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
+    index_reg = "si" if opcode == 0xAD else "di"
 
     while True:
-        si = state.solver.eval(state.regs.si) & 0xFFFF
-        if si == 0xFFFF:
+        offset = state.solver.eval(getattr(state.regs, index_reg)) & 0xFFFF
+        if offset == 0xFFFF:
             if repeat_limit is not None:
                 cx = state.solver.eval(state.regs.cx) & 0xFFFF
                 if cx == 0:
                     state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
                     return state
                 state.regs.cx = (cx - 1) & 0xFFFF
-            state.regs.si = (si + _faulting_word_string_delta(state)) & 0xFFFF
+            setattr(state.regs, index_reg, (offset + _faulting_word_string_delta(state)) & 0xFFFF)
             _simulate_documented_exception(state, case)
             return state
 
@@ -487,6 +490,16 @@ def _simulate_faulting_lodsw_case(project: angr.Project, state, case: dict[str, 
         )
         if repeat_limit is None or state.addr != start_addr:
             return None
+
+
+def _case_flags_mask(opcode: str, case: dict[str, Any]) -> int | None:
+    mask = FLAGS_MASKS.get(opcode)
+    if opcode == "D3.2":
+        count = case["initial"]["regs"]["cx"] & 0xFF
+        if count != 1:
+            dynamic_mask = REAL_MODE_FLAGS_MASK & ~0x0800
+            mask = dynamic_mask if mask is None else (mask & dynamic_mask)
+    return mask
 
 
 def _current_fetch_byte(state) -> int:
@@ -535,7 +548,7 @@ def _compare_case(state, case: dict[str, Any], *, opcode: str, halted: bool) -> 
             expected = (expected - 1) & 0xFFFF
         actual = state.solver.eval(getattr(state.regs, reg))
         if reg == "flags":
-            mask = FLAGS_MASKS.get(opcode)
+            mask = _case_flags_mask(opcode, case)
             if case.get("exception", {}).get("number") == 0:
                 mask = 0x0700
             if mask is not None:
@@ -589,9 +602,9 @@ def verify_case(
         if _simulate_manual_control_flow(case, state, insn_bytes):
             handled_exception = True
         elif exc is not None:
-            faulted_lodsw = _simulate_faulting_lodsw_case(project, state, case, insn_bytes)
-            if faulted_lodsw is not None:
-                state = faulted_lodsw
+            faulted_string = _simulate_faulting_word_string_case(project, state, case, insn_bytes)
+            if faulted_string is not None:
+                state = faulted_string
                 handled_exception = True
             else:
                 _simulate_documented_exception(state, case)

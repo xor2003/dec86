@@ -209,6 +209,26 @@ def test_verify_80286_rep_faulting_lodsw_preserves_ax_and_decrements_cx():
     assert result.mismatches == []
 
 
+def test_verify_80286_faulting_scasw_updates_di_before_gp_fault():
+    _, cases = load_moo_cases(_moo("AF"))
+    case = next(c for c in cases if c["idx"] == 2413)
+    result = verify_case(case, opcode="AF")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
+def test_verify_80286_rcl_rm16_cl_masks_undefined_overflow():
+    _, cases = load_moo_cases(_moo("D3.2"))
+    case = next(c for c in cases if c["idx"] == 1)
+    result = verify_case(case, opcode="D3.2")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_lock_sbb_rm16_case_passes():
     summary = verify_moo_file(_moo("1B"), limit=1)
 
