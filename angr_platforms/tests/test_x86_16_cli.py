@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -12,6 +14,36 @@ MONOPRIN_COD = REPO_ROOT / "cod" / "f14" / "MONOPRIN.COD"
 NHORZ_COD = REPO_ROOT / "cod" / "f14" / "NHORZ.COD"
 MAX_COD = REPO_ROOT / "cod" / "default" / "MAX.COD"
 ICOMDO_COM = REPO_ROOT / "angr_platforms" / "x16_samples" / "ICOMDO.COM"
+ISOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ISOD.COD"
+IMOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOD.COD"
+
+
+def _run_decompile_proc(
+    path: Path,
+    proc: str,
+    *,
+    proc_kind: str = "NEAR",
+    analysis_timeout: int = 10,
+    subprocess_timeout: int = 30,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(CLI_PATH),
+            str(path),
+            "--proc",
+            proc,
+            "--proc-kind",
+            proc_kind,
+            "--timeout",
+            str(analysis_timeout),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=subprocess_timeout,
+        check=False,
+    )
 
 
 def test_decompile_cli_recovers_source_like_monoprin_tokens():
@@ -75,20 +107,126 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
 
 
 def test_decompile_cli_recovers_small_cod_byte_condition_logic():
-    result = subprocess.run(
-        [sys.executable, str(CLI_PATH), str(REPO_ROOT / "cod" / "f14" / "BILLASM.COD"), "--proc", "_MousePOS", "--timeout", "10"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "BILLASM.COD", "_MousePOS")
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _MousePOS" in result.stdout
     assert "if (!(*((char *)" in result.stdout
     assert "if (...)" not in result.stdout
     assert "* 2" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("path", "proc", "proc_kind", "analysis_timeout", "subprocess_timeout", "expected_tokens", "forbidden_tokens"),
+    [
+        (
+            MAX_COD,
+            "_max",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _max", "a1 <= a2", "return a1;", "return a2;"),
+            ("UnresolvableJumpTarget",),
+        ),
+        (
+            NHORZ_COD,
+            "_ChangeWeather",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _ChangeWeather", "if (*((short *)", "214", "1000"),
+            ("if (!(...))", "if (!(!"),
+        ),
+        (
+            MONOPRIN_COD,
+            "_mset_pos",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _mset_pos", "% 80", "% 25", "unsigned short a1;  // [bp+0x4]"),
+            ("&v1",),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "BILLASM.COD",
+            "_MousePOS",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _MousePOS", "if (!(*((char *)", "* 2"),
+            ("if (...)",),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "PLANES3.COD",
+            "_Ready5",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _Ready5", "46", "18", "return"),
+            (),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+            "_LookDown",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _LookDown", "374", "50", "27", "25", "39"),
+            (),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+            "_LookUp",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _LookUp", "374", "150", "138", "136", "139"),
+            (),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "CARR.COD",
+            "_InBox",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _InBox", "return 1;", "a2 > v9", "a4 < v9"),
+            ("if (...)",),
+        ),
+        (
+            ISOD_COD,
+            "fold_values",
+            "NEAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            IMOD_COD,
+            "fold_values",
+            "FAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+    ],
+)
+def test_decompile_cli_small_cod_logic_batch(
+    path, proc, proc_kind, analysis_timeout, subprocess_timeout, expected_tokens, forbidden_tokens
+):
+    result = _run_decompile_proc(
+        path,
+        proc,
+        proc_kind=proc_kind,
+        analysis_timeout=analysis_timeout,
+        subprocess_timeout=subprocess_timeout,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    for token in expected_tokens:
+        assert token in result.stdout, result.stdout
+    for token in forbidden_tokens:
+        assert token not in result.stdout, result.stdout
 
 
 def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():
