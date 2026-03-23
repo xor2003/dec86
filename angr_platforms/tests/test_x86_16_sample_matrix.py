@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+import sys
 
 import angr
 import pytest
@@ -18,6 +19,12 @@ from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
 
 MATRIX_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import decompile
+
 MANIFEST_PATH = MATRIX_DIR / "matrix_manifest.json"
 EXPECTED_EXE_VARIANTS = {
     ("ISOD", "small", "/Od"),
@@ -236,6 +243,22 @@ def test_small_model_entry_dos_int21_calls_are_recoverable():
 
     assert [call.insn_addr for call in calls] == [0x1148, 0x117A, 0x11A2]
     assert [call.ah for call in calls] == [0x30, 0x4C, 0x4A]
+
+
+def test_small_model_entry_dos_int21_calls_map_to_named_helpers():
+    project = angr.Project(MATRIX_DIR / "ISOD.EXE")
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1146],
+        regions=[(0x1146, 0x1146 + 0x200)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1146]
+
+    replacements = decompile._int21_call_replacements(project, function, "modern", MATRIX_DIR / "ISOD.EXE")
+
+    assert replacements == ["get_dos_version()", "exit(255)", "resize_dos_memory_block()"]
 
 
 def test_medium_model_entry_function_decompiles_in_bounded_window():
