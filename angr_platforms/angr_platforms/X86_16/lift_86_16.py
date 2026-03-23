@@ -216,6 +216,11 @@ class Instruction_ANY(Instruction):
                 return (f"{self.cs.mnemonic}_reg_mem16", dst_reg, src_mem)
             if src_imm is not None:
                 return (f"{self.cs.mnemonic}_reg_imm16", dst_reg, src_imm)
+        if self.cs.mnemonic == "cmp" and dst_mem:
+            if src_reg:
+                return ("cmp_mem_reg16", dst_mem, src_reg)
+            if src_imm is not None:
+                return ("cmp_mem_imm16", dst_mem, src_imm)
         return None
 
     def _reg16_name(self, operand):
@@ -383,6 +388,12 @@ class Instruction_ANY(Instruction):
         if kind == "cmp_reg_mem16":
             _, lhs_reg, mem_spec = semantics
             return self._get_reg16(lhs_reg), self._load_mem16(mem_spec)
+        if kind == "cmp_mem_reg16":
+            _, mem_spec, rhs_reg = semantics
+            return self._load_mem16(mem_spec), self._get_reg16(rhs_reg)
+        if kind == "cmp_mem_imm16":
+            _, mem_spec, imm = semantics
+            return self._load_mem16(mem_spec), self._const16(imm)
         return None
 
     def _next_instruction_is_simple_jcc(self):
@@ -559,6 +570,16 @@ class Instruction_ANY(Instruction):
         if kind.endswith("_reg_imm16"):
             op_name, dst_reg, imm = self.simple_semantics
             self._binop_reg_imm(op_name[:-10], dst_reg, imm)
+            return
+        if kind == "cmp_mem_reg16":
+            _, mem_spec, src_reg = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags(self._load_mem16(mem_spec), self._get_reg16(src_reg))
+            return
+        if kind == "cmp_mem_imm16":
+            _, mem_spec, imm = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags(self._load_mem16(mem_spec), self._const16(imm))
             return
         if kind in {"je", "jz", "jne", "jnz", "jmp", "jle", "jg", "jl", "jge", "jb", "jbe", "ja", "jae", "jnb", "jnc", "jc"}:
             _, abs_target = self.simple_semantics

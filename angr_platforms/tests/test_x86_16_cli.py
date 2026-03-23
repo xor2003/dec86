@@ -63,8 +63,9 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _max" in result.stdout
     assert "UnresolvableJumpTarget" not in result.stdout
-    assert "if" in result.stdout
-    assert "return" in result.stdout
+    assert "a1 <= a2" in result.stdout
+    assert "return a1;" in result.stdout
+    assert "return a2;" in result.stdout
 
 
 def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():
