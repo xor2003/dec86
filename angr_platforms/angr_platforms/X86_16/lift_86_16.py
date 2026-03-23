@@ -196,6 +196,8 @@ class Instruction_ANY(Instruction):
         src_imm = self._imm16_value(src)
         dst_mem = self._bp_mem(dst)
         src_mem = self._bp_mem(src)
+        dst_abs_mem = self._direct_mem16(dst)
+        src_abs_mem = self._direct_mem16(src)
 
         if self.cs.mnemonic == "mov" and dst_reg and src_imm is not None:
             return ("mov_reg_imm16", dst_reg, src_imm)
@@ -221,6 +223,13 @@ class Instruction_ANY(Instruction):
                 return ("cmp_mem_reg16", dst_mem, src_reg)
             if src_imm is not None:
                 return ("cmp_mem_imm16", dst_mem, src_imm)
+        if self.cs.mnemonic == "cmp" and dst_abs_mem:
+            if src_imm is not None:
+                return ("cmp_abs_imm16", dst_abs_mem, src_imm)
+            if src_reg:
+                return ("cmp_abs_reg16", dst_abs_mem, src_reg)
+        if self.cs.mnemonic == "cmp" and dst_reg and src_abs_mem:
+            return ("cmp_reg_abs16", dst_reg, src_abs_mem)
         return None
 
     def _reg16_name(self, operand):
@@ -256,6 +265,14 @@ class Instruction_ANY(Instruction):
             return None
         return (base, mem.disp & 0xFFFF, mem.disp)
 
+    def _direct_mem16(self, operand):
+        if operand.type != 3 or getattr(operand, "size", None) != 2:
+            return None
+        mem = operand.mem
+        if mem.base or mem.index:
+            return None
+        return mem.disp & 0xFFFF
+
     def _addr_from_bp_mem(self, mem_spec):
         base, _, signed_disp = mem_spec
         addr = self._get_reg16(base)
@@ -268,6 +285,9 @@ class Instruction_ANY(Instruction):
 
     def _store_mem16(self, mem_spec, value):
         self.store(value, self._addr_from_bp_mem(mem_spec))
+
+    def _load_abs16(self, offset):
+        return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_16)
 
     def _real_mode_linear(self, seg_reg, off16):
         seg = self._get_reg16(seg_reg).cast_to(Type.int_32)
@@ -388,12 +408,21 @@ class Instruction_ANY(Instruction):
         if kind == "cmp_reg_mem16":
             _, lhs_reg, mem_spec = semantics
             return self._get_reg16(lhs_reg), self._load_mem16(mem_spec)
+        if kind == "cmp_reg_abs16":
+            _, lhs_reg, offset = semantics
+            return self._get_reg16(lhs_reg), self._load_abs16(offset)
         if kind == "cmp_mem_reg16":
             _, mem_spec, rhs_reg = semantics
             return self._load_mem16(mem_spec), self._get_reg16(rhs_reg)
         if kind == "cmp_mem_imm16":
             _, mem_spec, imm = semantics
             return self._load_mem16(mem_spec), self._const16(imm)
+        if kind == "cmp_abs_reg16":
+            _, offset, rhs_reg = semantics
+            return self._load_abs16(offset), self._get_reg16(rhs_reg)
+        if kind == "cmp_abs_imm16":
+            _, offset, imm = semantics
+            return self._load_abs16(offset), self._const16(imm)
         return None
 
     def _next_instruction_is_simple_jcc(self):
@@ -580,6 +609,16 @@ class Instruction_ANY(Instruction):
             _, mem_spec, imm = self.simple_semantics
             if not self._next_instruction_is_simple_jcc():
                 self._update_cmp_flags(self._load_mem16(mem_spec), self._const16(imm))
+            return
+        if kind == "cmp_abs_reg16":
+            _, offset, src_reg = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags(self._load_abs16(offset), self._get_reg16(src_reg))
+            return
+        if kind == "cmp_abs_imm16":
+            _, offset, imm = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags(self._load_abs16(offset), self._const16(imm))
             return
         if kind in {"je", "jz", "jne", "jnz", "jmp", "jle", "jg", "jl", "jge", "jb", "jbe", "ja", "jae", "jnb", "jnc", "jc"}:
             _, abs_target = self.simple_semantics

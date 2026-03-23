@@ -45,8 +45,10 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _ChangeWeather" in result.stdout
     assert "int _ChangeWeather" in result.stdout
-    assert "8150" in result.stdout
-    assert "500" in result.stdout
+    assert "*((short *)" in result.stdout
+    assert "if (!(...))" not in result.stdout
+    assert "*((char *)(v1 * 16 + 6)) = 214;" in result.stdout
+    assert "*((char *)(v1 * 16 + 9)) = 1;" in result.stdout
     assert "_start" not in result.stdout
 
 
