@@ -249,6 +249,16 @@ def test_verify_80286_shl_rm16_cl_masks_undefined_adjust_flag():
     assert result.mismatches == []
 
 
+def test_verify_80286_shl_rm8_cl_masks_undefined_adjust_flag():
+    _, cases = load_moo_cases(_moo("D2.4"))
+    case = cases[0]
+    result = verify_case(case, opcode="D2.4")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_lock_sbb_rm16_case_passes():
     summary = verify_moo_file(_moo("1B"), limit=1)
 

@@ -499,7 +499,7 @@ def _case_flags_mask(opcode: str, case: dict[str, Any]) -> int | None:
         if count != 1:
             dynamic_mask = REAL_MODE_FLAGS_MASK & ~0x0800
             mask = dynamic_mask if mask is None else (mask & dynamic_mask)
-    if opcode in {"D3.4", "D3.5", "D3.7"}:
+    if opcode in {"D0.4", "D0.5", "D0.7", "D1.4", "D1.5", "D1.7", "D2.4", "D2.5", "D2.7", "D3.4", "D3.5", "D3.7"}:
         dynamic_mask = REAL_MODE_FLAGS_MASK & ~0x0010
         mask = dynamic_mask if mask is None else (mask & dynamic_mask)
     return mask

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import angr
@@ -160,7 +161,8 @@ def test_medium_model_entry_far_call_targets_are_discoverable():
 
     far_targets = collect_direct_far_call_targets(cfg.functions[project.entry])
 
-    assert {target.target_addr for target in far_targets} >= {0x111A, 0x121E, 0x1380, 0x161F}
+    assert len(far_targets) >= 11
+    assert {target.target_addr for target in far_targets} >= {0x111A, 0x121E, 0x12E2, 0x1380, 0x13F4, 0x1586, 0x161F}
 
 
 def test_medium_model_entry_far_call_sites_are_patched():
@@ -179,6 +181,12 @@ def test_medium_model_entry_far_call_sites_are_patched():
     assert function.get_call_target(0x117E) == 0x1380
     assert function.get_call_target(0x1185) == 0x161F
     assert function.get_call_target(0x11CE) == 0x121E
+    assert function.get_call_target(0x11D5) == 0x1586
+    assert function.get_call_target(0x11DC) == 0x13F4
+    assert function.get_call_target(0x11E1) == 0x111A
+    assert function.get_call_target(0x11F4) == 0x12E2
+    assert function.get_call_target(0x11FA) == 0x1380
+    assert function.get_call_target(0x120F) == 0x161F
 
 
 def test_small_model_entry_function_decompiles_in_bounded_window():
@@ -195,3 +203,30 @@ def test_medium_model_entry_function_decompiles_in_bounded_window():
     assert "526" in recovered_c
     assert "sub_1380()" in recovered_c
     assert "sub_161f()" in recovered_c
+
+
+def test_medium_model_far_call_sites_stop_logging_unknown_cc(caplog):
+    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[project.entry],
+        regions=[(project.entry, project.entry + 0x200)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=0x200)
+    assert extended_cfg is not None
+
+    with caplog.at_level(logging.WARNING):
+        function = extended_cfg.functions[project.entry]
+        project.analyses.Decompiler(function, cfg=extended_cfg)
+
+    warning_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Call site 0x117e" not in warning_text
+    assert "Call site 0x1185" not in warning_text
+    assert "Call site 0x11ce" not in warning_text
+    assert "Call site 0x11d5" not in warning_text
+    assert "Call site 0x11dc" not in warning_text
+    assert "Call site 0x11e1" not in warning_text
+    assert "Call site 0x11f4" not in warning_text
+    assert "Call site 0x1209" not in warning_text

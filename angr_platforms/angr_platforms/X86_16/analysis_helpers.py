@@ -10,6 +10,33 @@ class FarCallTarget:
     return_addr: int | None
 
 
+def resolve_direct_call_target_from_block(project, block_addr: int) -> int | None:
+    """
+    Recover a direct call target from the last instruction in a block.
+
+    This is intentionally narrow and only handles the direct near/far forms
+    that show up in our DOS samples. Indirect calls still return ``None``.
+    """
+
+    block = project.factory.block(block_addr, opt_level=0)
+    insns = getattr(block.capstone, "insns", ())
+    if not insns:
+        return None
+
+    last = insns[-1]
+    operands = getattr(last.insn, "operands", ())
+
+    if last.mnemonic == "lcall" and len(operands) == 2 and all(op.type == 2 for op in operands):
+        seg = operands[0].imm & 0xFFFF
+        off = operands[1].imm & 0xFFFF
+        return (seg << 4) + off
+
+    if last.mnemonic == "call" and len(operands) == 1 and operands[0].type == 2:
+        return operands[0].imm & 0xFFFF
+
+    return None
+
+
 def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
     """
     Recover immediate far-call targets directly from lifted blocks.
@@ -28,25 +55,17 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
     recovered: list[FarCallTarget] = []
 
     for callsite_addr in sorted(function.get_call_sites()):
-        block = project.factory.block(callsite_addr, opt_level=0)
-        insns = getattr(block.capstone, "insns", ())
-        if not insns:
+        target_addr = resolve_direct_call_target_from_block(project, callsite_addr)
+        # Real-mode far calls commonly land below 64 KiB once segment:offset is
+        # linearized (for example 0x0114:0x0240 -> 0x1380). Only discard calls
+        # we still failed to resolve, not low linear addresses.
+        if target_addr is None:
             continue
 
-        last = insns[-1]
-        if last.mnemonic not in {"lcall", "call"}:
-            continue
-
-        operands = getattr(last.insn, "operands", ())
-        if len(operands) != 2 or not all(op.type == 2 for op in operands):
-            continue
-
-        seg = operands[0].imm & 0xFFFF
-        off = operands[1].imm & 0xFFFF
         recovered.append(
             FarCallTarget(
                 callsite_addr=callsite_addr,
-                target_addr=(seg << 4) + off,
+                target_addr=target_addr,
                 return_addr=function.get_call_return(callsite_addr),
             )
         )
@@ -105,4 +124,8 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
     )
     if function.addr in cfg.functions:
         patch_far_call_sites(cfg.functions[function.addr], far_targets)
+    for target in far_targets:
+        callee = cfg.kb.functions.function(addr=target.target_addr, create=True)
+        if callee is not None:
+            callee._init_prototype_and_calling_convention()
     return cfg
