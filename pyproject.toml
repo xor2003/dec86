@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vextest-x86-16"
+version = "0.1"
+description = "angr-based 16-bit x86 real-mode decompiler workspace"
+readme = "angr_platforms/README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "angr==9.2.205",
+    "archinfo==9.2.205",
+    "cle==9.2.205",
+    "claripy==9.2.205",
+    "pyvex==9.2.205",
+    "capstone==5.0.6",
+    "z3-solver==4.13.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=9,<10",
+    "keystone-engine==0.9.2",
+]
+dev = [
+    "pytest>=9,<10",
+    "keystone-engine==0.9.2",
+    "mypy",
+    "ruff",
+]
+
+[project.scripts]
+decompile-x86-16 = "decompile:main"
+
+[tool.setuptools]
+package-dir = {"" = "angr_platforms"}
+
+[tool.setuptools.packages.find]
+where = ["angr_platforms"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+include = [
+    "angr_platforms/angr_platforms/X86_16/*.py",
+    "angr_platforms/tests/test_x86_16*.py",
+    "angr_platforms/tests/conftest.py",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"angr_platforms/tests/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+files = [
+    "angr_platforms/angr_platforms/X86_16",
+    "angr_platforms/tests/test_x86_16_smoketest.py",
+    "angr_platforms/tests/test_x86_16_cod_samples.py",
+    "angr_platforms/tests/test_x86_16_dos_mz_loader.py",
+    "angr_platforms/tests/test_x86_16_sample_matrix.py",
+    "angr_platforms/tests/test_x86_16_runtime_samples.py",
+    "angr_platforms/tests/test_x86_16_compare_semantics.py",
+    "angr_platforms/tests/conftest.py",
+]
+ignore_missing_imports = true
+check_untyped_defs = true
+pretty = true
+show_error_codes = true
+warn_unused_ignores = true
+exclude = [
+    "build/",
+    "dist/",
+    "angr_platforms/angr_platforms.egg-info/",
+]
