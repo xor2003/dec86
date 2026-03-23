@@ -9,7 +9,15 @@ try:
     from angr.calling_conventions import SimComboArg, SimRegArg
     from angr.analyses.calling_convention import utils as _cc_utils
     from angr.analyses.decompiler.return_maker import ReturnMaker
-    from angr.analyses.decompiler.structured_codegen.c import CClosingObject, CConstant, CITE, CTypeCast, CUnaryOp
+    from angr.analyses.decompiler.callsite_maker import CallSiteMaker
+    from angr.analyses.decompiler.structured_codegen.c import (
+        CClosingObject,
+        CConstant,
+        CExpression,
+        CITE,
+        CTypeCast,
+        CUnaryOp,
+    )
     from angr.analyses.reaching_definitions import rd_state as _rd_state
     from angr.analyses.variable_recovery import variable_recovery_base as _variable_recovery_base
     from angr.sim_type import SimTypeBottom, SimTypePointer
@@ -28,6 +36,7 @@ try:
     from angr.sim_variable import SimMemoryVariable
     from angr.sim_variable import SimStackVariable
     from .annotations import ANNOTATION_KEY
+    from .analysis_helpers import resolve_direct_call_target_from_block
 
     _orig_is_sane_register_variable = _cc_utils.is_sane_register_variable
 
@@ -358,12 +367,24 @@ try:
     Clinic._make_function_prototype = _make_function_prototype_8616
 
     _orig_cite_c_repr_chunks = CITE.c_repr_chunks
+    _orig_cunaryop_c_repr_chunks_not = CUnaryOp._c_repr_chunks_not
 
     def _unwrap_bool_constant(expr):
         while isinstance(expr, CTypeCast):
             expr = expr.expr
         if isinstance(expr, CConstant) and isinstance(expr.value, int):
             return expr.value
+        return None
+
+    def _unwrap_double_not(expr):
+        while isinstance(expr, CTypeCast):
+            expr = expr.expr
+        if isinstance(expr, CUnaryOp) and expr.op == "Not":
+            inner = expr.operand
+            while isinstance(inner, CTypeCast):
+                inner = inner.expr
+            if isinstance(inner, CUnaryOp) and inner.op == "Not":
+                return inner.operand
         return None
 
     def _c_repr_chunks_8616(self, indent=0, asexpr=False):
@@ -383,6 +404,16 @@ try:
 
     if getattr(CITE.c_repr_chunks, "__name__", "") != "_c_repr_chunks_8616":
         CITE.c_repr_chunks = _c_repr_chunks_8616
+
+    if getattr(CUnaryOp._c_repr_chunks_not, "__name__", "") != "_c_unaryop_chunks_not_8616":
+        def _c_unaryop_chunks_not_8616(self):
+            unwrapped = _unwrap_double_not(self)
+            if unwrapped is not None:
+                yield from CExpression._try_c_repr_chunks(unwrapped)
+                return
+            yield from _orig_cunaryop_c_repr_chunks_not(self)
+
+        CUnaryOp._c_repr_chunks_not = _c_unaryop_chunks_not_8616
 
     _orig_assign_unified_variable_names = VariableManagerInternal.assign_unified_variable_names
 
@@ -513,6 +544,31 @@ try:
 
     if getattr(ReturnMaker._handle_Return, "__name__", "") != "_handle_return_8616":
         ReturnMaker._handle_Return = _handle_return_8616
+
+    _orig_callsite_get_call_target = CallSiteMaker._get_call_target
+
+    def _get_call_target_8616(self, stmt):
+        target = _orig_callsite_get_call_target(stmt)
+        if target is not None or self.project.arch.name != "86_16":
+            return target
+
+        try:
+            function = self.kb.functions.floor_func(self.block.addr)
+        except Exception:
+            function = None
+
+        if function is not None and self.block.addr in getattr(function, "block_addrs_set", set()):
+            target = function.get_call_target(self.block.addr)
+            if target not in (None, 0x14, 20):
+                return target
+
+        try:
+            return resolve_direct_call_target_from_block(self.project, self.block.addr)
+        except Exception:
+            return None
+
+    if getattr(CallSiteMaker._get_call_target, "__name__", "") != "_get_call_target_8616":
+        CallSiteMaker._get_call_target = _get_call_target_8616
 
     _orig_init_proto_cc = Function._init_prototype_and_calling_convention
 
