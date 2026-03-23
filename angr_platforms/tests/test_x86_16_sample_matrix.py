@@ -605,3 +605,140 @@ def test_synthetic_bp_based_dos_seek_call_recovers_argument_shapes(tmp_path):
     assert calls[0].dx_expr == "[bp+8]"
     assert modern == ["lseek([bp+4], MK_LONG([bp+8], [bp+6]), [bp+0xa])"]
     assert dos == ["_dos_seek([bp+4], MK_LONG([bp+8], [bp+6]), [bp+0xa])"]
+
+
+def test_synthetic_dos_filesystem_helpers_map_to_named_calls(tmp_path):
+    code = bytearray(
+        [
+            0xB4,
+            0x39,  # mov ah, 39h
+            0xBA,
+            0x30,
+            0x01,  # mov dx, 130h
+            0xCD,
+            0x21,  # int 21h
+            0xB4,
+            0x3A,  # mov ah, 3Ah
+            0xBA,
+            0x40,
+            0x01,  # mov dx, 140h
+            0xCD,
+            0x21,  # int 21h
+            0xB4,
+            0x3B,  # mov ah, 3Bh
+            0xBA,
+            0x50,
+            0x01,  # mov dx, 150h
+            0xCD,
+            0x21,  # int 21h
+            0xB4,
+            0x41,  # mov ah, 41h
+            0xBA,
+            0x60,
+            0x01,  # mov dx, 160h
+            0xCD,
+            0x21,  # int 21h
+            0xC3,
+        ]
+    )
+    while len(code) < 0x30:
+        code.append(0)
+    code.extend(b"DIR1\x00")
+    while len(code) < 0x40:
+        code.append(0)
+    code.extend(b"DIR2\x00")
+    while len(code) < 0x50:
+        code.append(0)
+    code.extend(b"DIR3\x00")
+    while len(code) < 0x60:
+        code.append(0)
+    code.extend(b"OLD.DAT\x00")
+
+    binary_path = tmp_path / "dos_fs_helpers.com"
+    binary_path.write_bytes(bytes(code))
+
+    project = angr.Project(
+        binary_path,
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+        simos="DOS",
+    )
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1000],
+        regions=[(0x1000, 0x1020)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1000]
+
+    calls = collect_dos_int21_calls(function, binary_path)
+    modern = decompile._int21_call_replacements(project, function, "modern", binary_path)
+    dos = decompile._int21_call_replacements(project, function, "dos", binary_path)
+    modern_decls = decompile._dos_helper_declarations(function, "modern", binary_path)
+    dos_decls = decompile._dos_helper_declarations(function, "dos", binary_path)
+
+    assert [call.ah for call in calls] == [0x39, 0x3A, 0x3B, 0x41]
+    assert modern == ['mkdir("DIR1")', 'rmdir("DIR2")', 'chdir("DIR3")', 'unlink("OLD.DAT")']
+    assert dos == ['_dos_mkdir("DIR1")', '_dos_rmdir("DIR2")', '_dos_chdir("DIR3")', '_dos_unlink("OLD.DAT")']
+    assert "int mkdir(const char *path);" in modern_decls
+    assert "int rmdir(const char *path);" in modern_decls
+    assert "int chdir(const char *path);" in modern_decls
+    assert "int unlink(const char *path);" in modern_decls
+    assert "int _dos_mkdir(const char far *path);" in dos_decls
+    assert "int _dos_rmdir(const char far *path);" in dos_decls
+    assert "int _dos_chdir(const char far *path);" in dos_decls
+    assert "int _dos_unlink(const char far *path);" in dos_decls
+
+
+def test_synthetic_bp_based_dos_unlink_call_recovers_argument_shape(tmp_path):
+    code = bytes(
+        [
+            0x55,  # push bp
+            0x89,
+            0xE5,  # mov bp, sp
+            0xB4,
+            0x41,  # mov ah, 41h
+            0x8B,
+            0x56,
+            0x04,  # mov dx, [bp+4]
+            0xCD,
+            0x21,  # int 21h
+            0xC3,
+        ]
+    )
+    binary_path = tmp_path / "bp_unlink.bin"
+    binary_path.write_bytes(code)
+
+    project = angr.Project(
+        binary_path,
+        auto_load_libs=False,
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+    )
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1000],
+        regions=[(0x1000, 0x1010)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1000]
+
+    calls = collect_dos_int21_calls(function)
+    modern = decompile._int21_call_replacements(project, function, "modern", None)
+    dos = decompile._int21_call_replacements(project, function, "dos", None)
+
+    assert len(calls) == 1
+    assert calls[0].ah == 0x41
+    assert calls[0].dx_expr == "[bp+4]"
+    assert modern == ["unlink((const char *)[bp+4])"]
+    assert dos == ["_dos_unlink((const char far *)[bp+4])"]

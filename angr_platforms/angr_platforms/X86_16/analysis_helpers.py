@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import claripy
 from dataclasses import dataclass
 from pathlib import Path
+
+from angr import SimProcedure
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,74 @@ class DOSInt21Call:
     cx_expr: str | None = None
     dx_expr: str | None = None
     string_literal: str | None = None
+
+
+DOS_SERVICE_BASE_ADDR = 0xFE000
+
+
+def _dos_service_key(call: DOSInt21Call) -> int:
+    return call.ah & 0xFF if call.ah is not None else 0
+
+
+def dos_service_addr(call: DOSInt21Call) -> int:
+    return DOS_SERVICE_BASE_ADDR + _dos_service_key(call)
+
+
+def dos_service_name(call: DOSInt21Call) -> str:
+    if call.ah == 0x39:
+        return "dos_mkdir"
+    if call.ah == 0x3A:
+        return "dos_rmdir"
+    if call.ah == 0x3B:
+        return "dos_chdir"
+    if call.ah == 0x09:
+        return "dos_print_dollar_string"
+    if call.ah == 0x30:
+        return "dos_get_version"
+    if call.ah == 0x3C:
+        return "dos_creat"
+    if call.ah == 0x3D:
+        return "dos_open"
+    if call.ah == 0x3E:
+        return "dos_close"
+    if call.ah == 0x3F:
+        return "dos_read"
+    if call.ah == 0x40:
+        return "dos_write"
+    if call.ah == 0x42:
+        return "dos_lseek"
+    if call.ah == 0x4A:
+        return "dos_setblock"
+    if call.ah == 0x4C:
+        return "dos_exit"
+    return "dos_int21"
+
+
+def ensure_dos_service_hook(project, call: DOSInt21Call) -> tuple[int, str]:
+    addr = dos_service_addr(call)
+    name = dos_service_name(call)
+
+    if not project.is_hooked(addr):
+        no_ret = call.ah == 0x4C
+
+        def _run(self):  # pylint:disable=unused-argument
+            if no_ret:
+                code = getattr(self.state.regs, "al", claripy.BVV(0, 8))
+                self.exit(claripy.ZeroExt(8, code))
+            return claripy.BVS(f"{name}_ax", 16, explicit_name=True)
+
+        proc_cls = type(
+            f"{name.title().replace('_', '')}Procedure",
+            (SimProcedure,),
+            {
+                "display_name": name,
+                "NO_RET": no_ret,
+                "run": _run,
+            },
+        )
+        project.hook(addr, proc_cls(), replace=True)
+
+    return addr, name
 
 
 def normalize_api_style(api_style: str) -> str:
@@ -97,11 +168,19 @@ def _decode_com_ascii_string(binary_path: Path | None, dx: int | None, *, termin
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def decode_com_dollar_string(binary_path: Path | None, dx: int | None) -> str | None:
+def _coerce_path(binary_path: Path | str | None) -> Path | None:
+    if binary_path is None or isinstance(binary_path, Path):
+        return binary_path
+    return Path(binary_path)
+
+
+def decode_com_dollar_string(binary_path: Path | str | None, dx: int | None) -> str | None:
+    binary_path = _coerce_path(binary_path)
     return _decode_com_ascii_string(binary_path, dx, terminator=ord("$"))
 
 
-def decode_com_c_string(binary_path: Path | None, dx: int | None) -> str | None:
+def decode_com_c_string(binary_path: Path | str | None, dx: int | None) -> str | None:
+    binary_path = _coerce_path(binary_path)
     return _decode_com_ascii_string(binary_path, dx, terminator=0)
 
 
@@ -147,7 +226,8 @@ def _operand_expr(ins, operand) -> tuple[int | None, str | None]:
     return None, None
 
 
-def collect_dos_int21_calls(function, binary_path: Path | None = None) -> list[DOSInt21Call]:
+def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> list[DOSInt21Call]:
+    binary_path = _coerce_path(binary_path)
     project = function.project
     if project is None:
         return []
@@ -210,7 +290,7 @@ def collect_dos_int21_calls(function, binary_path: Path | None = None) -> list[D
                 cx, cx_expr = regs["cx"]
                 dx, dx_expr = regs["dx"]
                 path_literal = None
-                if ah in {0x3C, 0x3D}:
+                if ah in {0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x41}:
                     path_literal = decode_com_c_string(binary_path, dx)
                 elif ah == 0x09:
                     path_literal = decode_com_dollar_string(binary_path, dx)
@@ -282,6 +362,15 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
         return "dos_int21()"
 
     if api_style == "dos":
+        if call.ah == 0x39:
+            path = _dos_path_arg(call, far_ptr=True) or "NULL"
+            return f"_dos_mkdir({path})"
+        if call.ah == 0x3A:
+            path = _dos_path_arg(call, far_ptr=True) or "NULL"
+            return f"_dos_rmdir({path})"
+        if call.ah == 0x3B:
+            path = _dos_path_arg(call, far_ptr=True) or "NULL"
+            return f"_dos_chdir({path})"
         if call.ah == 0x30:
             return "_dos_get_version()"
         if call.ah == 0x09:
@@ -316,6 +405,9 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
             offset = _dos_seek_offset_arg(call)
             origin = _dos_arg(call.al, call.al_expr) or "0"
             return f"_dos_seek({handle}, {offset}, {origin})"
+        if call.ah == 0x41:
+            path = _dos_path_arg(call, far_ptr=True) or "NULL"
+            return f"_dos_unlink({path})"
         if call.ah == 0x4A:
             return "_dos_setblock()"
         if call.ah == 0x4C:
@@ -323,6 +415,15 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
             return f"_dos_exit({exit_code})"
         return "dos_int21()"
 
+    if call.ah == 0x39:
+        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+        return f"mkdir({path})"
+    if call.ah == 0x3A:
+        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+        return f"rmdir({path})"
+    if call.ah == 0x3B:
+        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+        return f"chdir({path})"
     if call.ah == 0x30:
         return "get_dos_version()"
     if call.ah == 0x09:
@@ -357,6 +458,9 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
         offset = _dos_seek_offset_arg(call)
         origin = _dos_arg(call.al, call.al_expr) or "0"
         return f"lseek({handle}, {offset}, {origin})"
+    if call.ah == 0x41:
+        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+        return f"unlink({path})"
     if call.ah == 0x4A:
         return "resize_dos_memory_block()"
     if call.ah == 0x4C:
@@ -374,7 +478,13 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
     seen: set[str] = set()
     for call in calls:
         if api_style == "dos":
-            if call.ah == 0x30:
+            if call.ah == 0x39:
+                decl = "int _dos_mkdir(const char far *path);"
+            elif call.ah == 0x3A:
+                decl = "int _dos_rmdir(const char far *path);"
+            elif call.ah == 0x3B:
+                decl = "int _dos_chdir(const char far *path);"
+            elif call.ah == 0x30:
                 decl = "unsigned short _dos_get_version(void);"
             elif call.ah == 0x09:
                 decl = "void _dos_print_dollar_string(const char far *s);"
@@ -390,6 +500,8 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
                 decl = "int _dos_write(unsigned short handle, const void far *buffer, unsigned short count);"
             elif call.ah == 0x42:
                 decl = "long _dos_seek(unsigned short handle, long offset, unsigned char origin);"
+            elif call.ah == 0x41:
+                decl = "int _dos_unlink(const char far *path);"
             elif call.ah == 0x4A:
                 decl = "int _dos_setblock(void);"
             elif call.ah == 0x4C:
@@ -397,7 +509,13 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
             else:
                 decl = "unsigned short dos_int21(void);"
         else:
-            if call.ah == 0x30:
+            if call.ah == 0x39:
+                decl = "int mkdir(const char *path);"
+            elif call.ah == 0x3A:
+                decl = "int rmdir(const char *path);"
+            elif call.ah == 0x3B:
+                decl = "int chdir(const char *path);"
+            elif call.ah == 0x30:
                 decl = "int get_dos_version(void);"
             elif call.ah == 0x09:
                 decl = "void print_dos_string(const char *s);"
@@ -413,6 +531,8 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
                 decl = "int write(int fd, const void *buf, unsigned int count);"
             elif call.ah == 0x42:
                 decl = "long lseek(int fd, long offset, int whence);"
+            elif call.ah == 0x41:
+                decl = "int unlink(const char *path);"
             elif call.ah == 0x4A:
                 decl = "int resize_dos_memory_block(void);"
             elif call.ah == 0x4C:
@@ -586,6 +706,35 @@ def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
         if old != new:
             function._call_sites[target.callsite_addr] = new
             changed = True
+
+    return changed
+
+
+def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) -> bool:
+    """
+    Rewrite Function._call_sites for recoverable int 21h services.
+
+    This gives the decompiler service-specific pseudo-callees instead of a
+    single undifferentiated `dos_int21` hook at every site.
+    """
+
+    project = function.project
+    if project is None:
+        return False
+
+    changed = False
+    for call in collect_dos_int21_calls(function, binary_path):
+        target_addr, name = ensure_dos_service_hook(project, call)
+        return_addr = function.get_call_return(call.insn_addr)
+        new = (target_addr, return_addr)
+        old = function._call_sites.get(call.insn_addr)
+        if old != new:
+            function._call_sites[call.insn_addr] = new
+            changed = True
+        callee = project.kb.functions.function(addr=target_addr, create=True)
+        if callee is not None:
+            callee.name = name
+            callee._init_prototype_and_calling_convention()
 
     return changed
 
