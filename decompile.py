@@ -37,7 +37,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     patch_dos_int21_call_sites,
     render_dos_int21_call,
 )
-from angr_platforms.X86_16.cod_extract import extract_cod_function_entries, join_cod_entries
+from angr_platforms.X86_16.cod_extract import extract_cod_function_entries, infer_cod_logic_start, join_cod_entries
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
 
@@ -438,7 +438,8 @@ def main() -> int:
     function_label = None
     if args.proc is not None:
         entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
-        proc_code = join_cod_entries(entries)
+        logic_start = infer_cod_logic_start(entries)
+        proc_code = join_cod_entries(entries, start_offset=logic_start)
         project = _build_project_from_bytes(
             proc_code,
             base_addr=args.base_addr,
