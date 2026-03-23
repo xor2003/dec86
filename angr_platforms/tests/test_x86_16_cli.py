@@ -61,11 +61,65 @@ def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "int _start(void)" in result.stdout
-    assert "dos_get_version();" in result.stdout
-    assert "dos_print_dollar_string((const char *)0x110);" in result.stdout
+    assert "get_dos_version();" in result.stdout
+    assert "print_dos_string((const char *)0x110);" in result.stdout
     assert "exit(0);" in result.stdout
     assert "1044513();" not in result.stdout
     assert "dos_int21();" not in result.stdout
+
+
+def test_decompile_cli_supports_dos_api_style_for_known_helpers():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLI_PATH),
+            str(ICOMDO_COM),
+            "--timeout",
+            "10",
+            "--window",
+            "0x80",
+            "--max-functions",
+            "2",
+            "--api-style",
+            "dos",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "_dos_get_version();" in result.stdout
+    assert "_dos_print_dollar_string((const char far *)0x110);" in result.stdout
+    assert "_dos_exit(0);" in result.stdout
+
+
+def test_decompile_cli_supports_raw_api_style_for_known_helpers():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLI_PATH),
+            str(ICOMDO_COM),
+            "--timeout",
+            "10",
+            "--window",
+            "0x80",
+            "--max-functions",
+            "2",
+            "--api-style",
+            "raw",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "dos_int21();" in result.stdout
 
 
 def test_trace_x86_16_paths_cli_traces_small_com_stub():
