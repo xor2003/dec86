@@ -494,11 +494,14 @@ def _simulate_faulting_word_string_case(project: angr.Project, state, case: dict
 
 def _case_flags_mask(opcode: str, case: dict[str, Any]) -> int | None:
     mask = FLAGS_MASKS.get(opcode)
-    if opcode == "D3.2":
+    if opcode in {"D3.0", "D3.1", "D3.2", "D3.3", "D3.4", "D3.5"}:
         count = case["initial"]["regs"]["cx"] & 0xFF
         if count != 1:
             dynamic_mask = REAL_MODE_FLAGS_MASK & ~0x0800
             mask = dynamic_mask if mask is None else (mask & dynamic_mask)
+    if opcode in {"D3.4", "D3.5", "D3.7"}:
+        dynamic_mask = REAL_MODE_FLAGS_MASK & ~0x0010
+        mask = dynamic_mask if mask is None else (mask & dynamic_mask)
     return mask
 
 

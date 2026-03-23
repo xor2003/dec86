@@ -229,6 +229,26 @@ def test_verify_80286_rcl_rm16_cl_masks_undefined_overflow():
     assert result.mismatches == []
 
 
+def test_verify_80286_rcr_rm16_cl_masks_undefined_overflow():
+    _, cases = load_moo_cases(_moo("D3.3"))
+    case = next(c for c in cases if c["idx"] == 3)
+    result = verify_case(case, opcode="D3.3")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
+def test_verify_80286_shl_rm16_cl_masks_undefined_adjust_flag():
+    _, cases = load_moo_cases(_moo("D3.4"))
+    case = next(c for c in cases if c["idx"] == 2575)
+    result = verify_case(case, opcode="D3.4")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_lock_sbb_rm16_case_passes():
     summary = verify_moo_file(_moo("1B"), limit=1)
 
