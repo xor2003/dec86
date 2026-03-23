@@ -321,29 +321,29 @@ class Eflags:
 
     def update_eflags_rol(self, v, c):
         size = v.width
-        c = self._mask_shift_count(c) % self.constant(size, Type.int_8)
+        masked = self._mask_shift_count(c)
+        c = masked % self.constant(size, Type.int_8)
         result = (v << c) | (v >> (self.constant(size, Type.int_8) - c))
         flags = self.get_gpreg(reg16_t.FLAGS)
-        unchanged = c == self.constant(0, Type.int_8)
-        one = c == self.constant(1, Type.int_8)
+        unchanged = masked == self.constant(0, Type.int_8)
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), result[0].cast_to(Type.int_1)))
         flags = self.set_overflow(
             flags,
-            self._ite(c == self.constant(0, Type.int_8), self.get_flag(11), (result[size - 1] ^ result[0]).cast_to(Type.int_1)),
+            self._ite(unchanged, self.get_flag(11), (result[size - 1] ^ result[0]).cast_to(Type.int_1)),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_ror(self, v, c):
         size = v.width
-        c = self._mask_shift_count(c) % self.constant(size, Type.int_8)
+        masked = self._mask_shift_count(c)
+        c = masked % self.constant(size, Type.int_8)
         result = (v >> c) | (v << (self.constant(size, Type.int_8) - c))
         flags = self.get_gpreg(reg16_t.FLAGS)
-        unchanged = c == self.constant(0, Type.int_8)
-        one = c == self.constant(1, Type.int_8)
+        unchanged = masked == self.constant(0, Type.int_8)
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), result[size - 1].cast_to(Type.int_1)))
         flags = self.set_overflow(
             flags,
-            self._ite(c == self.constant(0, Type.int_8), self.get_flag(11), (result[size - 1] ^ result[size - 2]).cast_to(Type.int_1)),
+            self._ite(unchanged, self.get_flag(11), (result[size - 1] ^ result[size - 2]).cast_to(Type.int_1)),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 

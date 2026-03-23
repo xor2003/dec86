@@ -1290,15 +1290,15 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def rol(self, a, b):
-        count = self._rot_count(b, 16)
+        masked = self._shift_count(b)
+        count = masked % self.emu.constant(16, Type.int_8)
         inv_count = self.emu.constant(16, Type.int_8) - count
-        result = ((a << count) | (a >> inv_count)) & self.emu.constant(
+        rotated = ((a << count) | (a >> inv_count)) & self.emu.constant(
             0xFFFF, Type.int_16
         )
-        result = self._ite_value(count == self.emu.constant(0, Type.int_8), a, result)
+        result = self._ite_value(masked == self.emu.constant(0, Type.int_8), a, rotated)
         self.set_rm16(result)
-        self._set_rotate_cf(result[0])
-        self.emu.update_eflags_rol(a, count)
+        self.emu.update_eflags_rol(a, masked)
 
     def shl_rm16_cl(self):
         rm16 = self.get_rm16()
@@ -1343,15 +1343,15 @@ class Instr16(InstrBase):
         self.rcr(rm16, self.instr.imm8)
 
     def ror(self, a, b):
-        count = self._rot_count(b, 16)
+        masked = self._shift_count(b)
+        count = masked % self.emu.constant(16, Type.int_8)
         inv_count = self.emu.constant(16, Type.int_8) - count
-        result = ((a >> count) | (a << inv_count)) & self.emu.constant(
+        rotated = ((a >> count) | (a << inv_count)) & self.emu.constant(
             0xFFFF, Type.int_16
         )
-        result = self._ite_value(count == self.emu.constant(0, Type.int_8), a, result)
+        result = self._ite_value(masked == self.emu.constant(0, Type.int_8), a, rotated)
         self.set_rm16(result)
-        self._set_rotate_cf(result[15])
-        self.emu.update_eflags_ror(a, count)
+        self.emu.update_eflags_ror(a, masked)
 
     def rcl(self, a, b):
         count = self._rot_count(b, 17)

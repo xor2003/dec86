@@ -605,6 +605,26 @@ def test_ror_si_cl_matches_upstream_x86_vex_effect():
     )
 
 
+def test_rol_si_cl_masked_16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xC6",
+        b"\x66\xD3\xC6",
+        regs={"si": 0x9234, "cx": 0x10, "flags": 0x0801},
+        compare_regs=("si",),
+        compare_flag_bits=(0, 11),
+    )
+
+
+def test_ror_si_cl_masked_16_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xD3\xCE",
+        b"\x66\xD3\xCE",
+        regs={"si": 0x9234, "cx": 0x10, "flags": 0x0801},
+        compare_regs=("si",),
+        compare_flag_bits=(0, 11),
+    )
+
+
 def test_rcl_si_cl_matches_upstream_x86_vex_effect():
     _assert_same_reg_effect_with_flags(
         b"\xD3\xD6",
