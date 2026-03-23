@@ -193,7 +193,7 @@ def _decompile_function(project: angr.Project, cfg, function, timeout: int) -> t
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
-    return "ok", _format_known_helper_calls(project, dec.codegen.text)
+    return "ok", _format_known_helper_calls(project, function, dec.codegen.text)
 
 
 def _helper_name(project: angr.Project, addr: int) -> str | None:
@@ -209,7 +209,42 @@ def _helper_name(project: angr.Project, addr: int) -> str | None:
     return proc.__class__.__name__
 
 
-def _format_known_helper_calls(project: angr.Project, c_text: str) -> str:
+def _int21_call_replacements(project: angr.Project, function) -> list[str]:
+    replacements: list[str] = []
+    ah: int | None = None
+    ax: int | None = None
+    dx: int | None = None
+
+    for block_addr in sorted(getattr(function, "block_addrs_set", ())):
+        block = project.factory.block(block_addr, opt_level=0)
+        for ins in block.capstone.insns:
+            text = f"{ins.mnemonic} {ins.op_str}".strip().lower()
+            if text.startswith("mov ah, "):
+                ah = int(text.split(", ", 1)[1], 0) & 0xFF
+                ax = None if ax is None else ((ah << 8) | (ax & 0x00FF))
+            elif text.startswith("mov ax, "):
+                ax = int(text.split(", ", 1)[1], 0) & 0xFFFF
+                ah = (ax >> 8) & 0xFF
+            elif text.startswith("mov dx, "):
+                dx = int(text.split(", ", 1)[1], 0) & 0xFFFF
+            elif ins.mnemonic == "int" and ins.op_str.lower() == "0x21":
+                if ah == 0x30:
+                    replacements.append("dos_get_version()")
+                elif ah == 0x09:
+                    if dx is None:
+                        replacements.append("dos_print_dollar_string()")
+                    else:
+                        replacements.append(f"dos_print_dollar_string((const char *)0x{dx:x})")
+                elif ah == 0x4C:
+                    exit_code = ax & 0xFF if ax is not None else 0
+                    replacements.append(f"exit({exit_code})")
+                else:
+                    replacements.append("dos_int21()")
+                dx = None
+    return replacements
+
+
+def _format_known_helper_calls(project: angr.Project, function, c_text: str) -> str:
     mappings: dict[str, str] = {}
     for addr in getattr(project, "_sim_procedures", {}):
         name = _helper_name(project, addr)
@@ -221,6 +256,12 @@ def _format_known_helper_calls(project: angr.Project, c_text: str) -> str:
 
     for literal, name in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
         c_text = re.sub(rf"(?<![A-Za-z_]){re.escape(literal)}(?=\s*\()", name, c_text)
+
+    replacements = _int21_call_replacements(project, function)
+    for replacement in replacements:
+        c_text, count = re.subn(r"(?<![A-Za-z_])dos_int21\s*\(\s*\)", replacement, c_text, count=1)
+        if count == 0:
+            break
     return c_text
 
 
