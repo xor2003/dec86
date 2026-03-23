@@ -169,6 +169,16 @@ def test_verify_80286_daa_overflow_case_passes():
     assert result.mismatches == []
 
 
+def test_verify_80286_aaa_overflow_case_passes():
+    _, cases = load_moo_cases(_moo("37"))
+    case = next(c for c in cases if c["idx"] == 43)
+    result = verify_case(case, opcode="37")
+
+    assert result.passed
+    assert result.error is None
+    assert result.mismatches == []
+
+
 def test_verify_80286_lock_sbb_rm16_case_passes():
     summary = verify_moo_file(_moo("1B"), limit=1)
 

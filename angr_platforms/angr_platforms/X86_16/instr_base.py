@@ -574,36 +574,20 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
         result_ax = self._ite_value(adjust, ax + self.emu.constant(0x0106, Type.int_16), ax)
         self.emu.set_gpreg(reg16_t.AX, result_ax)
-        pre_mask_al = result_ax.cast_to(Type.int_8)
-        masked_al = pre_mask_al & self.emu.constant(0x0F, Type.int_8)
+        new_al = self._ite_value(adjust, al + self.emu.constant(6, Type.int_8), al)
+        masked_al = new_al & self.emu.constant(0x0F, Type.int_8)
         self.emu.set_gpreg(reg8_t.AL, masked_al)
 
-        overflow = self._ite_value(
-            low_adjust,
-            ((al & self.emu.constant(0xF0, Type.int_8)) == self.emu.constant(0x70, Type.int_8)).cast_to(Type.int_1),
-            self.emu.constant(0, Type.int_1),
-        )
-        sign = self._ite_value(
-            low_adjust,
-            ((al >= self.emu.constant(0x7A, Type.int_8)) & (al <= self.emu.constant(0xF9, Type.int_8))).cast_to(Type.int_1),
-            self.emu.constant(0, Type.int_1),
-        )
-        zero = self._ite_value(
-            low_adjust,
-            (pre_mask_al == self.emu.constant(0, Type.int_8)).cast_to(Type.int_1),
-            self._ite_value(
-                af,
-                self.emu.constant(0, Type.int_1),
-                (pre_mask_al == self.emu.constant(0, Type.int_8)).cast_to(Type.int_1),
-            ),
-        )
+        overflow = ((al >= self.emu.constant(0x7A, Type.int_8)) & (al <= self.emu.constant(0x7F, Type.int_8))).cast_to(Type.int_1)
+        sign = ((al >= self.emu.constant(0x7A, Type.int_8)) & (al <= self.emu.constant(0xF9, Type.int_8))).cast_to(Type.int_1)
+        zero = (new_al == self.emu.constant(0, Type.int_8)).cast_to(Type.int_1)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
         flags = self.emu.set_flag(flags, 4, adjust)
         flags = self.emu.set_carry(flags, adjust)
         flags = self.emu.set_overflow(flags, overflow)
         flags = self.emu.set_sign(flags, sign)
         flags = self.emu.set_zero(flags, zero)
-        flags = self.emu.set_parity(flags, self.emu.chk_parity(pre_mask_al))
+        flags = self.emu.set_parity(flags, self.emu.chk_parity(new_al))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def aas(self) -> None:
