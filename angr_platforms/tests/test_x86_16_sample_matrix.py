@@ -305,3 +305,148 @@ def test_medium_model_far_call_sites_stop_logging_unknown_cc(caplog):
     assert "Call site 0x11fa" not in warning_text
     assert "Call site 0x1209" not in warning_text
     assert "Call site 0x1214" not in warning_text
+
+
+def test_synthetic_com_dos_file_services_map_to_named_helpers(tmp_path):
+    code = bytearray(
+        [
+            0xB4,
+            0x3D,  # mov ah, 3Dh
+            0xB0,
+            0x01,  # mov al, 1
+            0xBA,
+            0x30,
+            0x01,  # mov dx, 130h
+            0xCD,
+            0x21,  # int 21h
+            0xB4,
+            0x3C,  # mov ah, 3Ch
+            0xB9,
+            0x20,
+            0x00,  # mov cx, 20h
+            0xBA,
+            0x40,
+            0x01,  # mov dx, 140h
+            0xCD,
+            0x21,  # int 21h
+            0xB4,
+            0x3E,  # mov ah, 3Eh
+            0xBB,
+            0x42,
+            0x00,  # mov bx, 42h
+            0xCD,
+            0x21,  # int 21h
+            0xB8,
+            0x00,
+            0x4C,  # mov ax, 4C00h
+            0xCD,
+            0x21,  # int 21h
+        ]
+    )
+    while len(code) < 0x30:
+        code.append(0)
+    code.extend(b"INPUT.TXT\x00")
+    while len(code) < 0x40:
+        code.append(0)
+    code.extend(b"OUTPUT.BIN\x00")
+
+    binary_path = tmp_path / "dos_file_calls.com"
+    binary_path.write_bytes(bytes(code))
+
+    project = angr.Project(
+        binary_path,
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+        simos="DOS",
+    )
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1000],
+        regions=[(0x1000, 0x1020)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1000]
+
+    calls = collect_dos_int21_calls(function, binary_path)
+    modern = decompile._int21_call_replacements(project, function, "modern", binary_path)
+    dos = decompile._int21_call_replacements(project, function, "dos", binary_path)
+    modern_decls = decompile._dos_helper_declarations(function, "modern", binary_path)
+    dos_decls = decompile._dos_helper_declarations(function, "dos", binary_path)
+
+    assert [call.ah for call in calls] == [0x3D, 0x3C, 0x3E, 0x4C]
+    assert modern == [
+        'open("INPUT.TXT", 1)',
+        'creat("OUTPUT.BIN", 0x20)',
+        "close(0x42)",
+        "exit(0)",
+    ]
+    assert dos == [
+        '_dos_open("INPUT.TXT", 1)',
+        '_dos_creat("OUTPUT.BIN", 0x20)',
+        "_dos_close(0x42)",
+        "_dos_exit(0)",
+    ]
+    assert "int open(const char *path, int oflag);" in modern_decls
+    assert "int creat(const char *path, int attrs);" in modern_decls
+    assert "int close(int fd);" in modern_decls
+    assert "int _dos_open(const char far *path, unsigned char mode);" in dos_decls
+    assert "int _dos_creat(const char far *path, unsigned short attrs);" in dos_decls
+    assert "int _dos_close(unsigned short handle);" in dos_decls
+
+
+def test_synthetic_bp_based_dos_open_call_recovers_argument_shapes(tmp_path):
+    code = bytes(
+        [
+            0x55,  # push bp
+            0x89,
+            0xE5,  # mov bp, sp
+            0xB4,
+            0x3D,  # mov ah, 3Dh
+            0x8A,
+            0x46,
+            0x06,  # mov al, [bp+6]
+            0x8B,
+            0x56,
+            0x04,  # mov dx, [bp+4]
+            0xCD,
+            0x21,  # int 21h
+            0xC3,  # ret
+        ]
+    )
+    binary_path = tmp_path / "bp_open.bin"
+    binary_path.write_bytes(code)
+
+    project = angr.Project(
+        binary_path,
+        auto_load_libs=False,
+        main_opts={
+            "backend": "blob",
+            "arch": Arch86_16(),
+            "base_addr": 0x1000,
+            "entry_point": 0x1000,
+        },
+    )
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[0x1000],
+        regions=[(0x1000, 0x1010)],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[0x1000]
+
+    calls = collect_dos_int21_calls(function)
+    modern = decompile._int21_call_replacements(project, function, "modern", None)
+    dos = decompile._int21_call_replacements(project, function, "dos", None)
+
+    assert len(calls) == 1
+    assert calls[0].ah == 0x3D
+    assert calls[0].al_expr == "[bp+6]"
+    assert calls[0].dx_expr == "[bp+4]"
+    assert modern == ["open((const char *)[bp+4], [bp+6])"]
+    assert dos == ["_dos_open((const char far *)[bp+4], [bp+6])"]

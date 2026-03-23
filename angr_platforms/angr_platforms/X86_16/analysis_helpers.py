@@ -14,10 +14,18 @@ class FarCallTarget:
 @dataclass(frozen=True)
 class DOSInt21Call:
     insn_addr: int
-    ah: int | None
-    ax: int | None
-    dx: int | None
-    string_literal: str | None
+    ah: int | None = None
+    al: int | None = None
+    ax: int | None = None
+    bx: int | None = None
+    cx: int | None = None
+    dx: int | None = None
+    ah_expr: str | None = None
+    al_expr: str | None = None
+    bx_expr: str | None = None
+    cx_expr: str | None = None
+    dx_expr: str | None = None
+    string_literal: str | None = None
 
 
 def normalize_api_style(api_style: str) -> str:
@@ -66,7 +74,7 @@ def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[
     return base_addr, base_addr + max(current, 1)
 
 
-def decode_com_dollar_string(binary_path: Path | None, dx: int | None) -> str | None:
+def _decode_com_ascii_string(binary_path: Path | None, dx: int | None, *, terminator: int) -> str | None:
     if binary_path is None or binary_path.suffix.lower() != ".com" or dx is None or dx < 0x100:
         return None
     try:
@@ -77,7 +85,7 @@ def decode_com_dollar_string(binary_path: Path | None, dx: int | None) -> str | 
     start = dx - 0x100
     if start < 0 or start >= len(data):
         return None
-    end = data.find(b"$", start)
+    end = data.find(bytes([terminator]), start)
     if end == -1:
         return None
     raw = data[start:end]
@@ -89,68 +97,161 @@ def decode_com_dollar_string(binary_path: Path | None, dx: int | None) -> str | 
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def decode_com_dollar_string(binary_path: Path | None, dx: int | None) -> str | None:
+    return _decode_com_ascii_string(binary_path, dx, terminator=ord("$"))
+
+
+def decode_com_c_string(binary_path: Path | None, dx: int | None) -> str | None:
+    return _decode_com_ascii_string(binary_path, dx, terminator=0)
+
+
+def _format_imm(value: int) -> str:
+    if 0 <= value <= 9:
+        return str(value)
+    return f"0x{value:x}"
+
+
+def _format_mem_operand(ins, operand) -> str:
+    mem = getattr(operand, "mem", None)
+    if mem is None:
+        return "<mem>"
+
+    pieces: list[str] = []
+    base = getattr(mem, "base", 0)
+    index = getattr(mem, "index", 0)
+    disp = getattr(mem, "disp", 0)
+    if base:
+        pieces.append(ins.reg_name(base).lower())
+    if index:
+        pieces.append(ins.reg_name(index).lower())
+    if disp:
+        disp_text = hex(abs(disp)) if abs(disp) > 9 else str(abs(disp))
+        if pieces:
+            pieces.append(("+" if disp >= 0 else "-") + disp_text)
+        else:
+            pieces.append(("-" if disp < 0 else "") + disp_text)
+    if not pieces:
+        pieces.append("0")
+    return "[" + "".join(pieces) + "]"
+
+
+def _operand_expr(ins, operand) -> tuple[int | None, str | None]:
+    if operand.type == 1:
+        reg_name = ins.reg_name(operand.reg).lower()
+        return None, reg_name
+    if operand.type == 2:
+        imm = operand.imm & 0xFFFF
+        return imm, _format_imm(imm)
+    if operand.type == 3:
+        return None, _format_mem_operand(ins, operand)
+    return None, None
+
+
 def collect_dos_int21_calls(function, binary_path: Path | None = None) -> list[DOSInt21Call]:
     project = function.project
     if project is None:
         return []
 
     calls: list[DOSInt21Call] = []
-    ah: int | None = None
-    ax: int | None = None
-    dx: int | None = None
+    regs: dict[str, tuple[int | None, str | None]] = {
+        "ah": (None, None),
+        "al": (None, None),
+        "ax": (None, None),
+        "bx": (None, None),
+        "cx": (None, None),
+        "dx": (None, None),
+    }
+
+    def set_reg(reg_name: str, value: int | None, expr: str | None) -> None:
+        regs[reg_name] = (value, expr)
+
+        if reg_name == "ax":
+            if value is not None:
+                regs["ah"] = ((value >> 8) & 0xFF, _format_imm((value >> 8) & 0xFF))
+                regs["al"] = (value & 0xFF, _format_imm(value & 0xFF))
+            else:
+                regs["ah"] = (None, None)
+                regs["al"] = (None, None)
+        elif reg_name == "ah":
+            al_val, al_expr = regs["al"]
+            if value is not None and al_val is not None:
+                regs["ax"] = (((value & 0xFF) << 8) | (al_val & 0xFF), None)
+            else:
+                regs["ax"] = (None, None)
+        elif reg_name == "al":
+            ah_val, ah_expr = regs["ah"]
+            if value is not None and ah_val is not None:
+                regs["ax"] = ((((ah_val & 0xFF) << 8) | (value & 0xFF)), None)
+            else:
+                regs["ax"] = (None, None)
 
     for block_addr in sorted(getattr(function, "block_addrs_set", ())):
         block = project.factory.block(block_addr, opt_level=0)
         for ins in block.capstone.insns:
-            operands = getattr(ins.insn, "operands", ())
+            operands = getattr(ins, "operands", ())
             if ins.mnemonic == "mov" and len(operands) == 2:
                 dst, src = operands
-                if dst.type == 1 and src.type == 2:
+                if dst.type == 1:
                     reg_name = ins.reg_name(dst.reg).lower()
-                    imm = src.imm & 0xFFFF
-                    if reg_name == "ah":
-                        ah = imm & 0xFF
-                        ax = None if ax is None else ((ah << 8) | (ax & 0x00FF))
-                    elif reg_name == "ax":
-                        ax = imm
-                        ah = (ax >> 8) & 0xFF
-                    elif reg_name == "dx":
-                        dx = imm
-                elif dst.type == 1:
-                    reg_name = ins.reg_name(dst.reg).lower()
-                    if reg_name == "ah":
-                        ah = None
-                        ax = None
-                    elif reg_name == "ax":
-                        ax = None
-                        ah = None
-                    elif reg_name == "dx":
-                        dx = None
+                    if reg_name in regs:
+                        value, expr = _operand_expr(ins, src)
+                        set_reg(reg_name, value, expr)
             elif ins.mnemonic == "xor" and len(operands) == 2 and operands[0].type == 1 and operands[1].type == 1:
                 dst_name = ins.reg_name(operands[0].reg).lower()
                 src_name = ins.reg_name(operands[1].reg).lower()
                 if dst_name == src_name:
-                    if dst_name == "ax":
-                        ax = 0
-                        ah = 0
-                    elif dst_name == "dx":
-                        dx = 0
-                    elif dst_name == "ah":
-                        ah = 0
-                        ax = None if ax is None else (ax & 0x00FF)
+                    if dst_name in regs:
+                        set_reg(dst_name, 0, "0")
             elif ins.mnemonic == "int" and ins.op_str.lower() == "0x21":
+                ah, ah_expr = regs["ah"]
+                al, al_expr = regs["al"]
+                ax, _ = regs["ax"]
+                bx, bx_expr = regs["bx"]
+                cx, cx_expr = regs["cx"]
+                dx, dx_expr = regs["dx"]
+                path_literal = None
+                if ah in {0x3C, 0x3D}:
+                    path_literal = decode_com_c_string(binary_path, dx)
+                elif ah == 0x09:
+                    path_literal = decode_com_dollar_string(binary_path, dx)
                 calls.append(
                     DOSInt21Call(
                         insn_addr=ins.address,
                         ah=ah,
+                        al=al,
                         ax=ax,
+                        bx=bx,
+                        cx=cx,
                         dx=dx,
-                        string_literal=decode_com_dollar_string(binary_path, dx),
+                        ah_expr=ah_expr,
+                        al_expr=al_expr,
+                        bx_expr=bx_expr,
+                        cx_expr=cx_expr,
+                        dx_expr=dx_expr,
+                        string_literal=path_literal,
                     )
                 )
-                dx = None
+                set_reg("dx", None, None)
 
     return calls
+
+
+def _dos_path_arg(call: DOSInt21Call, *, far_ptr: bool) -> str | None:
+    if call.string_literal is not None:
+        return f'"{call.string_literal}"'
+    if call.dx is not None:
+        cast = "const char far *" if far_ptr else "const char *"
+        return f"({cast})0x{call.dx:x}"
+    if call.dx_expr is not None:
+        cast = "const char far *" if far_ptr else "const char *"
+        return f"({cast}){call.dx_expr}"
+    return None
+
+
+def _dos_arg(value: int | None, expr: str | None) -> str | None:
+    if value is not None:
+        return _format_imm(value)
+    return expr
 
 
 def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
@@ -168,6 +269,17 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
             if call.dx is None:
                 return "_dos_print_dollar_string()"
             return f"_dos_print_dollar_string((const char far *)0x{call.dx:x})"
+        if call.ah == 0x3D:
+            path = _dos_path_arg(call, far_ptr=True) or "NULL"
+            mode = _dos_arg(call.al, call.al_expr) or "0"
+            return f"_dos_open({path}, {mode})"
+        if call.ah == 0x3C:
+            path = _dos_path_arg(call, far_ptr=True) or "NULL"
+            attrs = _dos_arg(call.cx, call.cx_expr) or "0"
+            return f"_dos_creat({path}, {attrs})"
+        if call.ah == 0x3E:
+            handle = _dos_arg(call.bx, call.bx_expr) or "0"
+            return f"_dos_close({handle})"
         if call.ah == 0x4A:
             return "_dos_setblock()"
         if call.ah == 0x4C:
@@ -183,6 +295,17 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
         if call.dx is None:
             return "print_dos_string()"
         return f"print_dos_string((const char *)0x{call.dx:x})"
+    if call.ah == 0x3D:
+        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+        mode = _dos_arg(call.al, call.al_expr) or "0"
+        return f"open({path}, {mode})"
+    if call.ah == 0x3C:
+        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+        attrs = _dos_arg(call.cx, call.cx_expr) or "0"
+        return f"creat({path}, {attrs})"
+    if call.ah == 0x3E:
+        handle = _dos_arg(call.bx, call.bx_expr) or "0"
+        return f"close({handle})"
     if call.ah == 0x4A:
         return "resize_dos_memory_block()"
     if call.ah == 0x4C:
@@ -204,6 +327,12 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
                 decl = "unsigned short _dos_get_version(void);"
             elif call.ah == 0x09:
                 decl = "void _dos_print_dollar_string(const char far *s);"
+            elif call.ah == 0x3D:
+                decl = "int _dos_open(const char far *path, unsigned char mode);"
+            elif call.ah == 0x3C:
+                decl = "int _dos_creat(const char far *path, unsigned short attrs);"
+            elif call.ah == 0x3E:
+                decl = "int _dos_close(unsigned short handle);"
             elif call.ah == 0x4A:
                 decl = "int _dos_setblock(void);"
             elif call.ah == 0x4C:
@@ -215,6 +344,12 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
                 decl = "int get_dos_version(void);"
             elif call.ah == 0x09:
                 decl = "void print_dos_string(const char *s);"
+            elif call.ah == 0x3D:
+                decl = "int open(const char *path, int oflag);"
+            elif call.ah == 0x3C:
+                decl = "int creat(const char *path, int attrs);"
+            elif call.ah == 0x3E:
+                decl = "int close(int fd);"
             elif call.ah == 0x4A:
                 decl = "int resize_dos_memory_block(void);"
             elif call.ah == 0x4C:
