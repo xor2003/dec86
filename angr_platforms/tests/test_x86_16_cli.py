@@ -60,6 +60,9 @@ def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
+    assert "int get_dos_version(void);" in result.stdout
+    assert "void print_dos_string(const char *s);" in result.stdout
+    assert "void exit(int status);" in result.stdout
     assert "int _start(void)" in result.stdout
     assert "get_dos_version();" in result.stdout
     assert 'print_dos_string("DOS sample");' in result.stdout
@@ -91,6 +94,9 @@ def test_decompile_cli_supports_dos_api_style_for_known_helpers():
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
+    assert "unsigned short _dos_get_version(void);" in result.stdout
+    assert "void _dos_print_dollar_string(const char far *s);" in result.stdout
+    assert "void _dos_exit(unsigned char status);" in result.stdout
     assert "_dos_get_version();" in result.stdout
     assert '_dos_print_dollar_string("DOS sample");' in result.stdout
     assert "_dos_exit(0);" in result.stdout
