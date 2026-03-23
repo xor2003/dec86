@@ -28,7 +28,7 @@ sys.path.insert(0, str(_ROOT / "angr_platforms"))
 import angr_platforms.X86_16  # noqa: F401
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.analysis_helpers import extend_cfg_for_far_calls, infer_com_region
+from angr_platforms.X86_16.analysis_helpers import collect_dos_int21_calls, extend_cfg_for_far_calls, infer_com_region
 from angr_platforms.X86_16.cod_extract import extract_cod_function_entries, join_cod_entries
 
 
@@ -43,6 +43,12 @@ logging.getLogger("angr.analyses.analysis").setLevel(logging.CRITICAL)
 
 def _parse_int(value: str) -> int:
     return int(value, 0)
+
+
+def _normalize_api_style(api_style: str) -> str:
+    if api_style in {"dos", "msc", "compiler"}:
+        return "dos"
+    return api_style
 
 
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
@@ -211,31 +217,9 @@ def _helper_name(project: angr.Project, addr: int) -> str | None:
     return proc.__class__.__name__
 
 
-def _decode_com_dollar_string(binary_path: Path | None, dx: int | None) -> str | None:
-    if binary_path is None or binary_path.suffix.lower() != ".com" or dx is None or dx < 0x100:
-        return None
-    try:
-        data = binary_path.read_bytes()
-    except OSError:
-        return None
+def _format_service_call(api_style: str, ah: int | None, ax: int | None, dx: int | None, string_literal: str | None) -> str:
+    api_style = _normalize_api_style(api_style)
 
-    start = dx - 0x100
-    if start < 0 or start >= len(data):
-        return None
-    end = data.find(b"$", start)
-    if end == -1:
-        return None
-    raw = data[start:end]
-    if not raw:
-        return ""
-    if any(byte < 0x20 or byte > 0x7E for byte in raw):
-        return None
-    text = raw.decode("ascii", errors="ignore")
-    return text.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def _format_service_call(api_style: str, ah: int | None, ax: int | None, dx: int | None, binary_path: Path | None) -> str:
-    string_literal = _decode_com_dollar_string(binary_path, dx)
     if api_style == "raw":
         return "dos_int21()"
 
@@ -268,27 +252,10 @@ def _format_service_call(api_style: str, ah: int | None, ax: int | None, dx: int
 
 
 def _int21_call_replacements(project: angr.Project, function, api_style: str, binary_path: Path | None) -> list[str]:
-    replacements: list[str] = []
-    ah: int | None = None
-    ax: int | None = None
-    dx: int | None = None
-
-    for block_addr in sorted(getattr(function, "block_addrs_set", ())):
-        block = project.factory.block(block_addr, opt_level=0)
-        for ins in block.capstone.insns:
-            text = f"{ins.mnemonic} {ins.op_str}".strip().lower()
-            if text.startswith("mov ah, "):
-                ah = int(text.split(", ", 1)[1], 0) & 0xFF
-                ax = None if ax is None else ((ah << 8) | (ax & 0x00FF))
-            elif text.startswith("mov ax, "):
-                ax = int(text.split(", ", 1)[1], 0) & 0xFFFF
-                ah = (ax >> 8) & 0xFF
-            elif text.startswith("mov dx, "):
-                dx = int(text.split(", ", 1)[1], 0) & 0xFFFF
-            elif ins.mnemonic == "int" and ins.op_str.lower() == "0x21":
-                replacements.append(_format_service_call(api_style, ah, ax, dx, binary_path))
-                dx = None
-    return replacements
+    return [
+        _format_service_call(api_style, call.ah, call.ax, call.dx, call.string_literal)
+        for call in collect_dos_int21_calls(function, binary_path)
+    ]
 
 
 def _format_known_helper_calls(
@@ -411,7 +378,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--api-style",
-        choices=("modern", "dos", "raw"),
+        choices=("modern", "dos", "raw", "msc", "compiler"),
         default="modern",
         help="Name recovered DOS helpers as modern-style calls, DOS/compiler-style calls, or raw interrupt helpers.",
     )
