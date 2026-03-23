@@ -178,7 +178,7 @@ def _interesting_functions(cfg, *, limit: int):
     return functions[:limit], len(functions)
 
 
-def _decompile_function(project: angr.Project, cfg, function, timeout: int) -> tuple[str, str]:
+def _decompile_function(project: angr.Project, cfg, function, timeout: int, api_style: str) -> tuple[str, str]:
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
     try:
@@ -193,7 +193,7 @@ def _decompile_function(project: angr.Project, cfg, function, timeout: int) -> t
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
-    return "ok", _format_known_helper_calls(project, function, dec.codegen.text)
+    return "ok", _format_known_helper_calls(project, function, dec.codegen.text, api_style)
 
 
 def _helper_name(project: angr.Project, addr: int) -> str | None:
@@ -209,7 +209,35 @@ def _helper_name(project: angr.Project, addr: int) -> str | None:
     return proc.__class__.__name__
 
 
-def _int21_call_replacements(project: angr.Project, function) -> list[str]:
+def _format_service_call(api_style: str, ah: int | None, ax: int | None, dx: int | None) -> str:
+    if api_style == "raw":
+        return "dos_int21()"
+
+    if api_style == "dos":
+        if ah == 0x30:
+            return "_dos_get_version()"
+        if ah == 0x09:
+            if dx is None:
+                return "_dos_print_dollar_string()"
+            return f"_dos_print_dollar_string((const char far *)0x{dx:x})"
+        if ah == 0x4C:
+            exit_code = ax & 0xFF if ax is not None else 0
+            return f"_dos_exit({exit_code})"
+        return "dos_int21()"
+
+    if ah == 0x30:
+        return "get_dos_version()"
+    if ah == 0x09:
+        if dx is None:
+            return "print_dos_string()"
+        return f"print_dos_string((const char *)0x{dx:x})"
+    if ah == 0x4C:
+        exit_code = ax & 0xFF if ax is not None else 0
+        return f"exit({exit_code})"
+    return "dos_int21()"
+
+
+def _int21_call_replacements(project: angr.Project, function, api_style: str) -> list[str]:
     replacements: list[str] = []
     ah: int | None = None
     ax: int | None = None
@@ -228,23 +256,12 @@ def _int21_call_replacements(project: angr.Project, function) -> list[str]:
             elif text.startswith("mov dx, "):
                 dx = int(text.split(", ", 1)[1], 0) & 0xFFFF
             elif ins.mnemonic == "int" and ins.op_str.lower() == "0x21":
-                if ah == 0x30:
-                    replacements.append("dos_get_version()")
-                elif ah == 0x09:
-                    if dx is None:
-                        replacements.append("dos_print_dollar_string()")
-                    else:
-                        replacements.append(f"dos_print_dollar_string((const char *)0x{dx:x})")
-                elif ah == 0x4C:
-                    exit_code = ax & 0xFF if ax is not None else 0
-                    replacements.append(f"exit({exit_code})")
-                else:
-                    replacements.append("dos_int21()")
+                replacements.append(_format_service_call(api_style, ah, ax, dx))
                 dx = None
     return replacements
 
 
-def _format_known_helper_calls(project: angr.Project, function, c_text: str) -> str:
+def _format_known_helper_calls(project: angr.Project, function, c_text: str, api_style: str) -> str:
     mappings: dict[str, str] = {}
     for addr in getattr(project, "_sim_procedures", {}):
         name = _helper_name(project, addr)
@@ -257,7 +274,7 @@ def _format_known_helper_calls(project: angr.Project, function, c_text: str) -> 
     for literal, name in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
         c_text = re.sub(rf"(?<![A-Za-z_]){re.escape(literal)}(?=\s*\()", name, c_text)
 
-    replacements = _int21_call_replacements(project, function)
+    replacements = _int21_call_replacements(project, function, api_style)
     for replacement in replacements:
         c_text, count = re.subn(r"(?<![A-Za-z_])dos_int21\s*\(\s*\)", replacement, c_text, count=1)
         if count == 0:
@@ -360,6 +377,12 @@ def main() -> int:
         default=32,
         help="Maximum number of recovered functions to print when decompiling a whole binary. Defaults to 32.",
     )
+    parser.add_argument(
+        "--api-style",
+        choices=("modern", "dos", "raw"),
+        default="modern",
+        help="Name recovered DOS helpers as modern-style calls, DOS/compiler-style calls, or raw interrupt helpers.",
+    )
     args = parser.parse_args()
 
     _apply_memory_limit(args.max_memory_mb)
@@ -423,7 +446,7 @@ def main() -> int:
             print(_format_first_block_asm(project, func.addr))
 
         print("decompiling...", flush=True)
-        status, payload = _decompile_function(project, cfg, func, args.timeout)
+        status, payload = _decompile_function(project, cfg, func, args.timeout, args.api_style)
         if status != "ok":
             print(f"\nDecompilation {status}: {payload}")
             print("\n== asm fallback ==")
@@ -458,7 +481,7 @@ def main() -> int:
         print(f"arch: {project.arch.name}")
         print(f"entry: {project.entry:#x}")
         print(f"fallback function: {func.addr:#x} {func.name}")
-        status, payload = _decompile_function(project, cfg, func, args.timeout)
+        status, payload = _decompile_function(project, cfg, func, args.timeout, args.api_style)
         if status != "ok":
             print(f"\nDecompilation {status}: {payload}")
             print("\n== asm fallback ==")
@@ -497,7 +520,7 @@ def main() -> int:
             print("-- asm --")
             print(_format_first_block_asm(project, function.addr))
 
-        status, payload = _decompile_function(project, cfg, function, args.timeout)
+        status, payload = _decompile_function(project, cfg, function, args.timeout, args.api_style)
         if status == "ok":
             decompiled += 1
             print("-- c --")
