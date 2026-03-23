@@ -16,6 +16,14 @@ MAX_COD = REPO_ROOT / "cod" / "default" / "MAX.COD"
 ICOMDO_COM = REPO_ROOT / "angr_platforms" / "x16_samples" / "ICOMDO.COM"
 ISOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ISOD.COD"
 IMOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOD.COD"
+ISOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ISOT.COD"
+ISOX_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ISOX.COD"
+IHOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IHOD.COD"
+IHOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IHOT.COD"
+ILOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOD.COD"
+ILOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOT.COD"
+IMOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOT.COD"
+IMOX_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOX.COD"
 
 
 def _run_decompile_proc(
@@ -202,6 +210,78 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
         ),
         (
             IMOD_COD,
+            "fold_values",
+            "FAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            ISOT_COD,
+            "fold_values",
+            "NEAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            ISOX_COD,
+            "fold_values",
+            "NEAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            IHOD_COD,
+            "fold_values",
+            "FAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            IHOT_COD,
+            "fold_values",
+            "FAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            ILOD_COD,
+            "fold_values",
+            "FAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            ILOT_COD,
+            "fold_values",
+            "FAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            IMOT_COD,
+            "fold_values",
+            "FAR",
+            20,
+            60,
+            ("function: 0x1000 fold_values", "123", "return"),
+            (),
+        ),
+        (
+            IMOX_COD,
             "fold_values",
             "FAR",
             20,
