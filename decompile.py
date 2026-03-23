@@ -258,6 +258,38 @@ def _int21_call_replacements(project: angr.Project, function, api_style: str, bi
     ]
 
 
+def _dos_helper_declarations(function, api_style: str, binary_path: Path | None) -> list[str]:
+    api_style = _normalize_api_style(api_style)
+    if api_style == "raw":
+        return []
+
+    declarations: list[str] = []
+    seen: set[str] = set()
+    for call in collect_dos_int21_calls(function, binary_path):
+        if api_style == "dos":
+            if call.ah == 0x30:
+                decl = "unsigned short _dos_get_version(void);"
+            elif call.ah == 0x09:
+                decl = "void _dos_print_dollar_string(const char far *s);"
+            elif call.ah == 0x4C:
+                decl = "void _dos_exit(unsigned char status);"
+            else:
+                decl = "unsigned short dos_int21(void);"
+        else:
+            if call.ah == 0x30:
+                decl = "int get_dos_version(void);"
+            elif call.ah == 0x09:
+                decl = "void print_dos_string(const char *s);"
+            elif call.ah == 0x4C:
+                decl = "void exit(int status);"
+            else:
+                decl = "int dos_int21(void);"
+        if decl not in seen:
+            seen.add(decl)
+            declarations.append(decl)
+    return declarations
+
+
 def _format_known_helper_calls(
     project: angr.Project, function, c_text: str, api_style: str, binary_path: Path | None
 ) -> str:
@@ -278,6 +310,10 @@ def _format_known_helper_calls(
         c_text, count = re.subn(r"(?<![A-Za-z_])dos_int21\s*\(\s*\)", replacement, c_text, count=1)
         if count == 0:
             break
+
+    declarations = _dos_helper_declarations(function, api_style, binary_path)
+    if declarations:
+        c_text = "\n".join(declarations) + "\n\n" + c_text
     return c_text
 
 
