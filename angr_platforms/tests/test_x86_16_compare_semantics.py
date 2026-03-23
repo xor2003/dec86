@@ -476,6 +476,18 @@ def _run_stack_instruction(arch, code: bytes, regs: dict[str, int], stack: bytes
     return simgr.active[0]
 
 
+def _assert_same_stack_effect(code16: bytes, code32: bytes, *, regs: dict[str, int], stack: bytes = b"", sp: int = 0x300):
+    state32 = _run_stack_instruction(ArchX86(), code32, regs, stack=stack, sp=sp)
+    state16 = _run_stack_instruction(Arch86_16(), code16, regs, stack=stack, sp=sp)
+
+    assert state32.solver.eval(state32.regs.sp) == state16.solver.eval(state16.regs.sp)
+    for offset in range(0, max(2, len(stack)), 2):
+        addr = sp - 2 + offset if not stack else sp + offset
+        assert state32.solver.eval(state32.memory.load(addr, 2, endness=state32.arch.memory_endness)) == (
+            state16.solver.eval(state16.memory.load(addr, 2, endness=state16.arch.memory_endness))
+        )
+
+
 def _run_pop_rm16_instruction(code: bytes, sp: int = 0x300, bx: int = 0x220):
     project = angr.load_shellcode(
         code,
@@ -1406,6 +1418,18 @@ def test_push_sp_matches_upstream_x86_vex_effect():
     assert state32.solver.eval(state32.memory.load(0x2FE, 2, endness=state32.arch.memory_endness)) == (
         state16.solver.eval(state16.memory.load(0x2FE, 2, endness=state16.arch.memory_endness))
     )
+
+
+def test_push_ax_matches_upstream_x86_vex_effect():
+    _assert_same_stack_effect(b"\x50", b"\x66\x50", regs={"ax": 0x1234}, sp=0x300)
+
+
+def test_push_imm16_matches_upstream_x86_vex_effect():
+    _assert_same_stack_effect(b"\x68\x78\x56", b"\x66\x68\x78\x56", regs={}, sp=0x300)
+
+
+def test_push_imm8_sign_extended_matches_upstream_x86_vex_effect():
+    _assert_same_stack_effect(b"\x6A\x80", b"\x66\x6A\x80", regs={}, sp=0x300)
 
 
 def test_salc_sets_al_from_carry_flag():
