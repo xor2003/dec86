@@ -1504,7 +1504,7 @@ def main() -> int:
 
     _apply_memory_limit(args.max_memory_mb)
 
-    print(f"loading: {args.binary}", flush=True)
+    print(f"/* loading: {args.binary} */", flush=True)
     function_label = None
     cod_metadata = None
     synthetic_globals = None
@@ -1536,7 +1536,7 @@ def main() -> int:
             entry_point=args.entry_point,
         )
     if args.addr is not None:
-        print("recovering function...", flush=True)
+        print("/* recovering function... */", flush=True)
 
         try:
             if function_label is not None and args.addr == project.entry:
@@ -1551,28 +1551,28 @@ def main() -> int:
                     signal.alarm(0)
                     signal.signal(signal.SIGALRM, old_handler)
         except _AnalysisTimeout:
-            print(f"Timed out while recovering a function after {args.timeout}s.")
-            print("Tip: try a larger --timeout for larger binaries.")
+            print(f"/* Timed out while recovering a function after {args.timeout}s. */")
+            print("/* Tip: try a larger --timeout for larger binaries. */")
             return 3
         except Exception as ex:
-            print(f"Function recovery failed: {ex}")
-            print("\n== first block asm ==")
+            print(f"/* Function recovery failed: {ex} */")
+            print("\n/* == first block asm == */")
             print(_format_first_block_asm(project, args.addr))
             return 5
 
         if function_label is not None:
             func.name = function_label
 
-        print(f"binary: {args.binary}")
-        print(f"arch: {project.arch.name}")
-        print(f"entry: {project.entry:#x}")
-        print(f"function: {func.addr:#x} {func.name}")
+        print(f"/* binary: {args.binary} */")
+        print(f"/* arch: {project.arch.name} */")
+        print(f"/* entry: {project.entry:#x} */")
+        print(f"/* function: {func.addr:#x} {func.name} */")
 
         if args.show_asm:
-            print("\n== asm ==")
+            print("\n/* == asm == */")
             print(_format_first_block_asm(project, func.addr))
 
-        print("decompiling...", flush=True)
+        print("/* decompiling... */", flush=True)
         status, payload = _decompile_function(
             project,
             cfg,
@@ -1584,52 +1584,52 @@ def main() -> int:
             synthetic_globals=synthetic_globals,
         )
         if status != "ok":
-            print(f"\nDecompilation {status}: {payload}")
-            print("\n== asm fallback ==")
+            print(f"\n/* Decompilation {status}: {payload} */")
+            print("\n/* == asm fallback == */")
             print(_format_first_block_asm(project, func.addr))
             return 6 if status == "error" else 4
 
-        print("\n== c ==")
+        print("\n/* == c == */")
         print(payload)
         return 0
 
-    print("recovering functions...", flush=True)
+    print("/* recovering functions... */", flush=True)
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(args.timeout)
     try:
         cfg = _recover_cfg(project, args.binary, base_addr=args.base_addr, window=args.window)
     except _AnalysisTimeout:
-        print(f"Timed out while recovering functions after {args.timeout}s.")
-        print("Trying bounded entry-function recovery instead...")
+        print(f"/* Timed out while recovering functions after {args.timeout}s. */")
+        print("/* Trying bounded entry-function recovery instead... */")
         try:
             cfg, func = _fallback_entry_function(project, timeout=args.timeout, window=args.window)
         except _AnalysisTimeout:
-            print("Bounded entry-function recovery also timed out.")
-            print("Tip: try a larger --timeout or decompile a specific function with --addr.")
+            print("/* Bounded entry-function recovery also timed out. */")
+            print("/* Tip: try a larger --timeout or decompile a specific function with --addr. */")
             return 3
         except Exception as ex:
-            print(f"Bounded entry-function recovery failed: {ex}")
-            print("\n== entry asm ==")
+            print(f"/* Bounded entry-function recovery failed: {ex} */")
+            print("\n/* == entry asm == */")
             print(_format_first_block_asm(project, project.entry))
             return 5
 
-        print(f"binary: {args.binary}")
-        print(f"arch: {project.arch.name}")
-        print(f"entry: {project.entry:#x}")
-        print(f"fallback function: {func.addr:#x} {func.name}")
+        print(f"/* binary: {args.binary} */")
+        print(f"/* arch: {project.arch.name} */")
+        print(f"/* entry: {project.entry:#x} */")
+        print(f"/* fallback function: {func.addr:#x} {func.name} */")
         status, payload = _decompile_function(project, cfg, func, args.timeout, args.api_style, args.binary)
         if status != "ok":
-            print(f"\nDecompilation {status}: {payload}")
-            print("\n== asm fallback ==")
+            print(f"\n/* Decompilation {status}: {payload} */")
+            print("\n/* == asm fallback == */")
             print(_format_first_block_asm(project, func.addr))
             return 6 if status == "error" else 4
 
-        print("\n== c ==")
+        print("\n/* == c == */")
         print(payload)
         return 0
     except Exception as ex:
-        print(f"Function catalog recovery failed: {ex}")
-        print("\n== entry asm ==")
+        print(f"/* Function catalog recovery failed: {ex} */")
+        print("\n/* == entry asm == */")
         print(_format_first_block_asm(project, project.entry))
         return 5
     finally:
@@ -1641,25 +1641,25 @@ def main() -> int:
 
     functions, total_functions = _interesting_functions(cfg, limit=args.max_functions)
 
-    print(f"binary: {args.binary}")
-    print(f"arch: {project.arch.name}")
-    print(f"entry: {project.entry:#x}")
-    print(f"functions recovered: {total_functions}")
+    print(f"/* binary: {args.binary} */")
+    print(f"/* arch: {project.arch.name} */")
+    print(f"/* entry: {project.entry:#x} */")
+    print(f"/* functions recovered: {total_functions} */")
     if total_functions > len(functions):
-        print(f"showing first {len(functions)} functions; use --max-functions to raise the cap")
+        print(f"/* showing first {len(functions)} functions; use --max-functions to raise the cap */")
 
     decompiled = 0
     failed = 0
     for function in functions:
-        print(f"\n== function {function.addr:#x} {function.name} ==")
+        print(f"\n/* == function {function.addr:#x} {function.name} == */")
         if args.show_asm:
-            print("-- asm --")
+            print("/* -- asm -- */")
             print(_format_first_block_asm(project, function.addr))
 
         status, payload = _decompile_function(project, cfg, function, args.timeout, args.api_style, args.binary)
         if status == "ok":
             decompiled += 1
-            print("-- c --")
+            print("/* -- c -- */")
             print(payload)
         else:
             failed += 1
