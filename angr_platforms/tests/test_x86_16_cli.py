@@ -196,9 +196,13 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "sub_102f();" not in result.stdout
     assert "HookDown == Hook" in result.stdout
     assert "HookDown = Hook;" in result.stdout
+    assert "s_2 = &v3;" in result.stdout
+    assert "s_4 = 5;" in result.stdout
+    assert "s_6 = v8;" in result.stdout
+    assert "v5 * 16" not in result.stdout
     assert "!= Hook" not in result.stdout
     assert "return 1;" in result.stdout
-    assert "Hook >> 8" in result.stdout
+    assert "Hook >> 8" not in result.stdout
     assert "v8 = 93;" in result.stdout
     assert "v8 = 106;" in result.stdout
 
@@ -218,6 +222,10 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "MinAlt" in result.stdout
     assert "Damaged" in result.stdout
     assert "Knots <= 350" in result.stdout
+    assert "s_2 = &v3;" in result.stdout
+    assert "s_4 = 2;" in result.stdout
+    assert "s_6 = v14;" in result.stdout
+    assert "v5 * 16" not in result.stdout
     assert "350" in result.stdout
     assert "v14 = 73;" in result.stdout
     assert "v14 = 52;" in result.stdout
@@ -419,7 +427,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();", "HookDown == Hook", "HookDown = Hook;"),
+            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();", "HookDown == Hook", "HookDown = Hook;", "s_4 = 5;", "s_6 = v8;"),
             (),
         ),
         (
@@ -428,8 +436,8 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "350", "v14 = 73;", "v14 = 52;", "sub_102f();"),
-            (),
+            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "350", "v14 = 73;", "v14 = 52;", "sub_102f();", "s_4 = 2;", "s_6 = v14;"),
+            ("v5 * 16",),
         ),
         (
             REPO_ROOT / "cod" / "f14" / "CARR.COD",
