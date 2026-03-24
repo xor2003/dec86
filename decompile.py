@@ -519,10 +519,11 @@ def _match_ss_stack_reference(node, project: angr.Project):
             continue
         if not isinstance(inner.operand, structured_c.CVariable):
             continue
-        stack_var = getattr(inner.operand, "variable", None)
+        cvar = inner.operand
+        stack_var = getattr(cvar, "variable", None)
         if not isinstance(stack_var, SimStackVariable):
             continue
-        return stack_var
+        return stack_var, cvar
 
     return None
 
@@ -650,9 +651,10 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
     created: dict[tuple[int, int], structured_c.CVariable] = {}
 
     def transform(node):
-        stack_var = _match_ss_stack_reference(node, project)
-        if stack_var is None:
+        matched = _match_ss_stack_reference(node, project)
+        if matched is None:
             return node
+        stack_var, ref_cvar = matched
 
         type_ = getattr(node, "type", None)
         if type_ is None:
@@ -670,7 +672,7 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
                 stack_var.offset,
                 size,
                 base=getattr(stack_var, "base", "bp"),
-                name=getattr(stack_var, "name", None),
+                name=getattr(ref_cvar, "name", None) or getattr(stack_var, "name", None),
                 region=codegen.cfunc.addr,
             ),
             variable_type=type_,
