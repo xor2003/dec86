@@ -126,6 +126,10 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _MousePOS" in result.stdout
+    assert "[bp+0x4] = x" in result.stdout
+    assert "[bp+0x6] = y" in result.stdout
+    assert "unsigned short x;  // [bp+0x4] x" in result.stdout
+    assert "unsigned short y;  // [bp+0x6] y" in result.stdout
     assert "if (!(*((char *)" in result.stdout
     assert "if (...)" not in result.stdout
     assert "&v1" not in result.stdout
@@ -337,7 +341,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _MousePOS", "if (!(*((char *)", "* 2"),
+            ("function: 0x1000 _MousePOS", "if (!(*((char *)", "* 2", "unsigned short x;  // [bp+0x4] x", "unsigned short y;  // [bp+0x6] y"),
             ("if (...)",),
         ),
         (
