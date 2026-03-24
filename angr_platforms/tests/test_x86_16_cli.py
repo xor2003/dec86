@@ -96,10 +96,10 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert "if (!(!" not in result.stdout
     assert "BadWeather = 0;" in result.stdout
     assert "BadWeather = 1;" in result.stdout
-    assert "CLOUDHEIGHT = 214;" in result.stdout
-    assert "CLOUDTHICK = 244;" in result.stdout
+    assert "CLOUDHEIGHT = 8150;" in result.stdout
+    assert "CLOUDTHICK = 500;" in result.stdout
     assert "CLOUDHEIGHT = 125;" in result.stdout
-    assert "CLOUDTHICK = 232;" in result.stdout
+    assert "CLOUDTHICK = 1000;" in result.stdout
     assert "0x7000" not in result.stdout
     assert "_start" not in result.stdout
 
@@ -144,6 +144,8 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "MouseX = v5;" in result.stdout
     assert "MouseY = y;" in result.stdout
     assert "0x7000" not in result.stdout
+    assert "28675" not in result.stdout
+    assert "28677" not in result.stdout
 
 
 def test_decompile_cli_recovers_configcrts_copy_loop():
@@ -232,7 +234,7 @@ def test_decompile_cli_recovers_setdlc_state_store():
     assert "unsigned short DLC;  // [bp+0x4] DLC" in result.stdout
     assert "globals = _DirectLiftControl" in result.stdout
     assert "DirectLiftControl = DLC;" in result.stdout
-    assert "DLC >> 8" in result.stdout
+    assert "DLC >> 8" not in result.stdout
     assert "return DLC;" in result.stdout
 
 
@@ -346,7 +348,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _ChangeWeather", "if (BadWeather)", "CLOUDHEIGHT = 214;", "CLOUDTHICK = 232;", "1000"),
+            ("function: 0x1000 _ChangeWeather", "if (BadWeather)", "CLOUDHEIGHT = 8150;", "CLOUDTHICK = 500;", "CLOUDTHICK = 1000;"),
             ("if (!(...))", "if (!(!"),
         ),
         (
@@ -373,7 +375,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
                 "MouseX = v5;",
                 "MouseY = y;",
             ),
-            ("if (...)",),
+            ("if (...)", "28675", "28677"),
         ),
         (
             REPO_ROOT / "cod" / "f14" / "PLANES3.COD",
@@ -435,8 +437,8 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetDLC", "DirectLiftControl = DLC;", "DLC >> 8", "return DLC;"),
-            (),
+            ("function: 0x1000 _SetDLC", "DirectLiftControl = DLC;", "return DLC;"),
+            ("DLC >> 8",),
         ),
         (
             REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",

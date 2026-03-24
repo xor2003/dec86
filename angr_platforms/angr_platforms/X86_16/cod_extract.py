@@ -120,12 +120,12 @@ def join_cod_entries_with_synthetic_globals(
     start_offset: int | None = None,
     end_offset: int | None = None,
     symbol_base: int = 0x7000,
-) -> tuple[bytes, dict[int, str]]:
+) -> tuple[bytes, dict[int, tuple[str, int]]]:
     global_re = re.compile(r"\b(?:BYTE|WORD|DWORD)\s+PTR\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
     size_re = re.compile(r"\b(BYTE|WORD|DWORD)\s+PTR\b", re.IGNORECASE)
 
     symbol_addrs: dict[str, int] = {}
-    addr_to_name: dict[int, str] = {}
+    addr_to_name: dict[int, tuple[str, int]] = {}
     next_addr = symbol_base
     patched_chunks: list[bytes] = []
 
@@ -152,7 +152,7 @@ def join_cod_entries_with_synthetic_globals(
                 if next_addr % align:
                     next_addr += align - (next_addr % align)
                 symbol_addrs[symbol] = next_addr
-                addr_to_name[next_addr] = symbol
+                addr_to_name[next_addr] = (symbol, width)
                 next_addr += width
 
             target_addr = symbol_addrs[symbol]
