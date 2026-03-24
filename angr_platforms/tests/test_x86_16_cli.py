@@ -130,10 +130,12 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "[bp+0x6] = y" in result.stdout
     assert "unsigned short x;  // [bp+0x4] x" in result.stdout
     assert "unsigned short y;  // [bp+0x6] y" in result.stdout
-    assert "if (!(*((char *)" in result.stdout
+    assert "if (!(*((char *)(v3 * 16 + 0x7000))))" in result.stdout
     assert "if (...)" not in result.stdout
     assert "&v1" not in result.stdout
     assert "* 2" in result.stdout
+    assert "28674" in result.stdout
+    assert "28676" in result.stdout
 
 
 def test_decompile_cli_recovers_configcrts_copy_loop():
@@ -314,7 +316,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _max", "if (a1 > a2)", "return a1;", "return a2;"),
+            ("function: 0x1000 _max", "if (x > y)", "return x;", "return y;"),
             ("UnresolvableJumpTarget",),
         ),
         (
@@ -341,7 +343,15 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _MousePOS", "if (!(*((char *)", "* 2", "unsigned short x;  // [bp+0x4] x", "unsigned short y;  // [bp+0x6] y"),
+            (
+                "function: 0x1000 _MousePOS",
+                "if (!(*((char *)(v3 * 16 + 0x7000))))",
+                "* 2",
+                "unsigned short x;  // [bp+0x4] x",
+                "unsigned short y;  // [bp+0x6] y",
+                "28674",
+                "28676",
+            ),
             ("if (...)",),
         ),
         (
@@ -386,7 +396,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "sub_102f();"),
+            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();"),
             (),
         ),
         (
@@ -404,7 +414,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetDLC", "a1 >> 8", "return a1;"),
+            ("function: 0x1000 _SetDLC", "DLC >> 8", "return DLC;"),
             (),
         ),
         (
@@ -422,7 +432,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _DrawRadarAlt", "if (!(*((short *)", "v2 = 0;", "v2 = 112;", ")) = 2;", "sub_1023();"),
+            ("function: 0x1000 _DrawRadarAlt", "if (!(*((short *)", "y2 = 0;", "y2 = 112;", ")) = 2;", "sub_1023();"),
             (),
         ),
         (
