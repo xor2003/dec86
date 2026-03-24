@@ -112,11 +112,11 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
     assert "/* COD annotations:" in result.stdout
     assert "[bp+0x4] = x" in result.stdout
     assert "[bp+0x6] = y" in result.stdout
-    assert "unsigned short a1;  // [bp+0x4] x" in result.stdout
-    assert "unsigned short a2;  // [bp+0x6] y" in result.stdout
-    assert "if (a1 > a2)" in result.stdout
-    assert "return a1;" in result.stdout
-    assert "return a2;" in result.stdout
+    assert "unsigned short x;  // [bp+0x4] x" in result.stdout
+    assert "unsigned short y;  // [bp+0x6] y" in result.stdout
+    assert "if (x > y)" in result.stdout
+    assert "return x;" in result.stdout
+    assert "return y;" in result.stdout
 
 
 def test_decompile_cli_recovers_small_cod_byte_condition_logic():
@@ -163,13 +163,13 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "[bp+0x4] = Hook" in result.stdout
     assert "globals = _HookDown" in result.stdout
     assert "calls = _Message" in result.stdout
-    assert "unsigned short a0;  // [bp+0x2] Hook" in result.stdout
+    assert "unsigned short Hook;  // [bp+0x2] Hook" in result.stdout
     assert "_Message();" in result.stdout
     assert "sub_102f();" not in result.stdout
-    assert "== a0" in result.stdout
-    assert "!= a0" not in result.stdout
+    assert "== Hook" in result.stdout
+    assert "!= Hook" not in result.stdout
     assert "return 1;" in result.stdout
-    assert "a0 >> 8" in result.stdout
+    assert "Hook >> 8" in result.stdout
     assert "v8 = 93;" in result.stdout
     assert "v8 = 106;" in result.stdout
 
@@ -221,8 +221,10 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
     assert "[bp-0x8] = soffset" in result.stdout
     assert "calls = _MapInEMSSprite, _TransRectCopy, _MDiv, _Rotate2D, _scaley, _DrawLine, _RectCopy" in result.stdout
     assert "if (!(*((short *)" in result.stdout
-    assert "v2 = 0;" in result.stdout
-    assert "v2 = 112;" in result.stdout
+    assert "unsigned short y2;  // [bp-0xa] y2" in result.stdout
+    assert "char b;  // [bp-0x2] b" in result.stdout
+    assert "y2 = 0;" in result.stdout
+    assert "y2 = 112;" in result.stdout
     assert ")) = 2;" in result.stdout
     assert "sub_1023();" in result.stdout
 
