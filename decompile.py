@@ -230,6 +230,8 @@ def _decompile_function(
         changed = True
     if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
         changed = True
+    if _attach_cod_global_declaration_names(dec.codegen, synthetic_globals):
+        changed = True
     if _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals):
         changed = True
     if _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals):
@@ -795,6 +797,54 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
 
     if _replace_c_children(root, transform):
         changed = True
+    return changed
+
+
+def _attach_cod_global_declaration_names(codegen, synthetic_globals: dict[int, tuple[str, int]] | None) -> bool:
+    if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        if not isinstance(variable, SimMemoryVariable):
+            continue
+        symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
+        if symbol is None:
+            continue
+        raw_name, _width = symbol
+        name = _sanitize_cod_identifier(raw_name)
+        if getattr(variable, "name", None) != name:
+            variable.name = name
+            changed = True
+        if getattr(cvar, "name", None) != name:
+            cvar.name = name
+            changed = True
+        unified = getattr(cvar, "unified_variable", None)
+        if unified is not None and getattr(unified, "name", None) != name:
+            unified.name = name
+            changed = True
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable, cvar_and_vartypes in list(unified_locals.items()):
+            if not isinstance(variable, SimMemoryVariable):
+                continue
+            symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
+            if symbol is None:
+                continue
+            raw_name, _width = symbol
+            name = _sanitize_cod_identifier(raw_name)
+            new_entries = set()
+            for cvariable, vartype in cvar_and_vartypes:
+                if getattr(cvariable, "name", None) != name:
+                    cvariable.name = name
+                    changed = True
+                new_entries.add((cvariable, vartype))
+            if new_entries != cvar_and_vartypes:
+                unified_locals[variable] = new_entries
+                changed = True
+
     return changed
 
 
