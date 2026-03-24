@@ -673,11 +673,54 @@ def _same_c_expression(lhs, rhs) -> bool:
     return lhs is rhs
 
 
+def _is_c_constant_int(node, value: int) -> bool:
+    return isinstance(node, structured_c.CConstant) and isinstance(node.value, int) and node.value == value
+
+
+def _cite_is_negation(node) -> bool:
+    return type(node).__name__ == "CITE" and _is_c_constant_int(node.iftrue, 0) and _is_c_constant_int(node.iffalse, 1)
+
+
+def _invert_comparison_op(op: str) -> str | None:
+    return {
+        "==": "!=",
+        "!=": "==",
+        ">": "<=",
+        "<": ">=",
+        ">=": "<",
+        "<=": ">",
+    }.get(op)
+
+
+def _simplify_boolean_expr(node, codegen):
+    if isinstance(node, structured_c.CUnaryOp) and node.op == "Not" and _cite_is_negation(node.operand):
+        return node.operand.cond
+
+    if _cite_is_negation(node):
+        cond = node.cond
+        if isinstance(cond, structured_c.CBinaryOp):
+            inverted = _invert_comparison_op(cond.op)
+            if inverted is not None:
+                return structured_c.CBinaryOp(
+                    inverted,
+                    cond.lhs,
+                    cond.rhs,
+                    type=getattr(node, "type", None),
+                    codegen=codegen,
+                    tags=getattr(node, "tags", None),
+                )
+
+    return node
+
+
 def _simplify_structured_c_expressions(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
     def transform(node):
+        simplified = _simplify_boolean_expr(node, codegen)
+        if simplified is not node:
+            return simplified
         if isinstance(node, structured_c.CBinaryOp) and node.op == "Sub":
             if _same_c_expression(node.lhs, node.rhs):
                 type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None)
