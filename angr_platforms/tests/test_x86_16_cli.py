@@ -230,9 +230,11 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "MinAlt" in result.stdout
     assert "Damaged" in result.stdout
     assert "v12 = Alt;" in result.stdout
+    assert "MinAlt != v12" in result.stdout
+    assert "Knots <= 350" in result.stdout
+    assert "!(!(" not in result.stdout
     assert "28679" not in result.stdout
     assert "* 0x100" not in result.stdout
-    assert "Knots <= 350" in result.stdout
     assert "v2 = &v3;" in result.stdout
     assert "v1 = 2;" in result.stdout
     assert "v0 = v14;" in result.stdout
