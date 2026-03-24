@@ -373,7 +373,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _LookDown", "374", "50", "27", "25", "39"),
+            ("function: 0x1000 _LookDown", "0x7000", "28674", "28688", "50", "27", "25", "39"),
             (),
         ),
         (
@@ -382,7 +382,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _LookUp", "374", "150", "138", "136", "139"),
+            ("function: 0x1000 _LookUp", "0x7000", "28674", "28688", "150", "138", "136", "139"),
             (),
         ),
         (
