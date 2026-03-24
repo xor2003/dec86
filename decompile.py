@@ -714,7 +714,80 @@ def _make_inverted_comparison(node, codegen):
     )
 
 
+def _extract_same_zero_compare_expr(node):
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "CmpEQ":
+        return None
+
+    if _is_c_constant_int(node.rhs, 0):
+        return node.lhs
+    if _is_c_constant_int(node.lhs, 0):
+        return node.rhs
+    return None
+
+
+def _extract_zero_flag_source_expr(node):
+    if isinstance(node, structured_c.CBinaryOp):
+        if node.op == "Mul":
+            pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+            for maybe_logic, maybe_scale in pairs:
+                if not _is_c_constant_int(maybe_scale, 64):
+                    continue
+                source_expr = _extract_same_zero_compare_expr(maybe_logic)
+                if source_expr is not None:
+                    return source_expr
+                if not isinstance(maybe_logic, structured_c.CBinaryOp) or maybe_logic.op != "LogicalAnd":
+                    continue
+                lhs_expr = _extract_same_zero_compare_expr(maybe_logic.lhs)
+                rhs_expr = _extract_same_zero_compare_expr(maybe_logic.rhs)
+                if lhs_expr is not None and rhs_expr is not None and _same_c_expression(lhs_expr, rhs_expr):
+                    return lhs_expr
+
+        for attr in ("lhs", "rhs"):
+            child = getattr(node, attr, None)
+            if _structured_codegen_node(child):
+                extracted = _extract_zero_flag_source_expr(child)
+                if extracted is not None:
+                    return extracted
+
+    elif isinstance(node, structured_c.CUnaryOp):
+        child = getattr(node, "operand", None)
+        if _structured_codegen_node(child):
+            return _extract_zero_flag_source_expr(child)
+
+    elif isinstance(node, structured_c.CTypeCast):
+        child = getattr(node, "expr", None)
+        if _structured_codegen_node(child):
+            return _extract_zero_flag_source_expr(child)
+
+    return None
+
+
+def _simplify_zero_flag_comparison(node, codegen):
+    if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"CmpEQ", "CmpNE"}:
+        return node
+
+    if _is_c_constant_int(node.rhs, 0):
+        expr = node.lhs
+    elif _is_c_constant_int(node.lhs, 0):
+        expr = node.rhs
+    else:
+        return node
+
+    source_expr = _extract_zero_flag_source_expr(expr)
+    if source_expr is None:
+        return node
+
+    if node.op == "CmpEQ":
+        return source_expr
+
+    return structured_c.CUnaryOp("Not", source_expr, codegen=codegen)
+
+
 def _simplify_boolean_expr(node, codegen):
+    simplified = _simplify_zero_flag_comparison(node, codegen)
+    if simplified is not node:
+        return simplified
+
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Not" and _cite_is_negation(node.operand):
         inverted = _make_inverted_comparison(node.operand.cond, codegen)
         return inverted if inverted is not None else node.operand.cond
