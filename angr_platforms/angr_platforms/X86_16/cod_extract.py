@@ -9,6 +9,7 @@ from pathlib import Path
 class CODProcMetadata:
     stack_aliases: dict[int, str]
     call_names: tuple[str, ...]
+    global_names: tuple[str, ...]
 
 
 def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> list[dict[str, object]]:
@@ -52,9 +53,11 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     collect = False
     stack_aliases: dict[int, str] = {}
     call_names: list[str] = []
+    global_names: list[str] = []
 
     alias_re = re.compile(r"^\s*;\s*([A-Za-z_$?@][\w$?@]*)\s*=\s*(-?[0-9A-Fa-f]+)\s*$")
     call_re = re.compile(r"\bcall\b(?:\s+far ptr)?\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
+    global_re = re.compile(r"\b(?:BYTE|WORD|DWORD)\s+PTR\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
 
     for line in lines:
         if start_marker in line:
@@ -78,7 +81,18 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             if not callee.startswith("$") and callee not in call_names:
                 call_names.append(callee)
 
-    return CODProcMetadata(stack_aliases=stack_aliases, call_names=tuple(call_names))
+        for global_match in global_re.finditer(line):
+            global_name = global_match.group(1)
+            if global_name.startswith("$") or global_name == proc_name:
+                continue
+            if global_name not in global_names:
+                global_names.append(global_name)
+
+    return CODProcMetadata(
+        stack_aliases=stack_aliases,
+        call_names=tuple(call_names),
+        global_names=tuple(global_names),
+    )
 
 
 def join_cod_entries(

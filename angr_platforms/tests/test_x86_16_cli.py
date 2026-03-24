@@ -160,6 +160,9 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _SetHook" in result.stdout
     assert "int _SetHook()" in result.stdout
+    assert "[bp+0x4] = Hook" in result.stdout
+    assert "globals = _HookDown" in result.stdout
+    assert "calls = _Message" in result.stdout
     assert "== a0" in result.stdout
     assert "!= a0" not in result.stdout
     assert "return 1;" in result.stdout
