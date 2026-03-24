@@ -140,6 +140,8 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "if (!(MOUSE))" in result.stdout
     assert "if (...)" not in result.stdout
     assert "&v1" not in result.stdout
+    assert "return 0;" in result.stdout
+    assert "v4 - v4" not in result.stdout
     assert "* 2" in result.stdout
     assert "MouseX = v5;" in result.stdout
     assert "MouseY = y;" in result.stdout
