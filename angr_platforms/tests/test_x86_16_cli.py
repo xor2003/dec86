@@ -192,6 +192,9 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "globals = _HookDown" in result.stdout
     assert "calls = _Message" in result.stdout
     assert "unsigned short Hook;  // [bp+0x2] Hook" in result.stdout
+    assert "unsigned short v0;  // [bp-0x6]" in result.stdout
+    assert "unsigned short v1;  // [bp-0x4]" in result.stdout
+    assert "unsigned short v2;  // [bp-0x2]" in result.stdout
     assert "_Message();" in result.stdout
     assert "sub_102f();" not in result.stdout
     assert "HookDown == Hook" in result.stdout
@@ -216,11 +219,17 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "[bp+0x4] = G" in result.stdout
     assert "globals = _ejected, _Status, _Knots, _Alt, _MinAlt, _Damaged" in result.stdout
     assert "unsigned short G;  // [bp+0x2] G" in result.stdout
+    assert "unsigned short v0;  // [bp-0x6]" in result.stdout
+    assert "unsigned short v1;  // [bp-0x4]" in result.stdout
+    assert "unsigned short v2;  // [bp-0x2]" in result.stdout
     assert "if (!(ejected))" in result.stdout
     assert "Status" in result.stdout
     assert "Alt" in result.stdout
     assert "MinAlt" in result.stdout
     assert "Damaged" in result.stdout
+    assert "v12 = Alt;" in result.stdout
+    assert "28679" not in result.stdout
+    assert "* 0x100" not in result.stdout
     assert "Knots <= 350" in result.stdout
     assert "v2 = &v3;" in result.stdout
     assert "v1 = 2;" in result.stdout
