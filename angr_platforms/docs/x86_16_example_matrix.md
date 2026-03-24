@@ -28,6 +28,7 @@ The intent is practical:
 | `cod/f14/CARR.COD` | `_SetGear` | near | `254653` B | guard threshold `350`, message branches `73` / `52` | Good for guarded state-update logic with multiple early-return branches. |
 | `cod/f14/CARR.COD` | `_SetDLC` | near | `254653` B | state store plus `return a1;` | Tiny state-write helper; good cheap oracle for direct global stores and return-value preservation. |
 | `cod/f14/COCKPIT.COD` | `_TIDShowRange` | near | `354631` B | `146`, `21`, `29`, `9`, `160`, `782`, `* 2` | Good for constant-heavy UI/layout logic plus indexed table access and final helper call setup. |
+| `cod/f14/COCKPIT.COD` | `_DrawRadarAlt` | near | `354631` B | direct truth-test, `v2 = 0` / `112`, final state write and helper call | Good for another small branch-heavy cockpit helper with a simple boolean split and call tail. |
 | `angr_platforms/x16_samples/ICOMDO.COM` | `_start` | tiny `.COM` | n/a in this table | `get_dos_version(); print_dos_string(...); exit(0);` | Best user-facing tiny runtime sample. More about helper-call quality than arithmetic logic. |
 | `angr_platforms/x16_samples/ISOD.EXE` | `_start` | small-model `.EXE` | paired with `ISOD.COD` | named DOS helpers plus startup constants | Useful bridge from tiny examples to real startup code. Still noisier than the small `.COD` set. |
 
@@ -35,6 +36,12 @@ The intent is practical:
 
 These are the same source-level arithmetic helper across different memory-model
 and optimization variants from the sample matrix.
+
+Today it is useful in two ways:
+- decompiled-C consistency for the recovered arithmetic body
+- block-lift consistency for the two stable body families:
+  - unoptimized `/Od`-style entry
+  - optimized `/Ot`/`/Ox`-style entry
 
 | Example | Proc Kind | File Size | Current Logic Anchor | Notes |
 | --- | --- | ---: | --- | --- |

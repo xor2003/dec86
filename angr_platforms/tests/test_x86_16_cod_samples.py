@@ -724,6 +724,110 @@ MAIN_CALL_PREFIX_MATRIX_CASES = (
 )
 
 
+FOLD_VALUES_BLOCK_MATRIX_CASES = (
+    MatrixBlockLiftCase(
+        name="isod_fold_values_block",
+        cod_name="ISOD.COD",
+        proc_name="fold_values",
+        proc_kind="NEAR",
+        start_offset=0x0,
+        end_offset=0x1B,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("Sub16(t9,0x0002)", "Add16(0x0000,0x0006)", "CmpGT16U", "PUT(ip) = 0x101b"),
+    ),
+    MatrixBlockLiftCase(
+        name="isot_fold_values_block",
+        cod_name="ISOT.COD",
+        proc_name="fold_values",
+        proc_kind="NEAR",
+        start_offset=0x0,
+        end_offset=0x16,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("8Sto16(0x02)", "Add16(0x0000,0x0006)", "CmpLE16U", "PUT(ip) = 0x1016"),
+    ),
+    MatrixBlockLiftCase(
+        name="isox_fold_values_block",
+        cod_name="ISOX.COD",
+        proc_name="fold_values",
+        proc_kind="NEAR",
+        start_offset=0x0,
+        end_offset=0x16,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("8Sto16(0x02)", "Add16(0x0000,0x0006)", "CmpLE16U", "PUT(ip) = 0x1016"),
+    ),
+    MatrixBlockLiftCase(
+        name="imod_fold_values_block",
+        cod_name="IMOD.COD",
+        proc_name="fold_values",
+        proc_kind="FAR",
+        start_offset=0x0,
+        end_offset=0x1B,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("Sub16(t9,0x0002)", "Add16(0x0000,0x0008)", "CmpGT16U", "PUT(ip) = 0x101b"),
+    ),
+    MatrixBlockLiftCase(
+        name="imot_fold_values_block",
+        cod_name="IMOT.COD",
+        proc_name="fold_values",
+        proc_kind="FAR",
+        start_offset=0x0,
+        end_offset=0x16,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("8Sto16(0x02)", "Add16(0x0000,0x0008)", "CmpLE16U", "PUT(ip) = 0x1016"),
+    ),
+    MatrixBlockLiftCase(
+        name="imox_fold_values_block",
+        cod_name="IMOX.COD",
+        proc_name="fold_values",
+        proc_kind="FAR",
+        start_offset=0x0,
+        end_offset=0x16,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("8Sto16(0x02)", "Add16(0x0000,0x0008)", "CmpLE16U", "PUT(ip) = 0x1016"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihod_fold_values_block",
+        cod_name="IHOD.COD",
+        proc_name="fold_values",
+        proc_kind="FAR",
+        start_offset=0x0,
+        end_offset=0x1B,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("Sub16(t9,0x0002)", "Add16(0x0000,0x0008)", "CmpGT16U", "PUT(ip) = 0x101b"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihot_fold_values_block",
+        cod_name="IHOT.COD",
+        proc_name="fold_values",
+        proc_kind="FAR",
+        start_offset=0x0,
+        end_offset=0x16,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("8Sto16(0x02)", "Add16(0x0000,0x0008)", "CmpLE16U", "PUT(ip) = 0x1016"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilod_fold_values_block",
+        cod_name="ILOD.COD",
+        proc_name="fold_values",
+        proc_kind="FAR",
+        start_offset=0x0,
+        end_offset=0x1B,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("Sub16(t9,0x0002)", "Add16(0x0000,0x0008)", "CmpGT16U", "PUT(ip) = 0x101b"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilot_fold_values_block",
+        cod_name="ILOT.COD",
+        proc_name="fold_values",
+        proc_kind="FAR",
+        start_offset=0x0,
+        end_offset=0x16,
+        original_c="return (mode << 5) + bios_kb + 123 <= 1000;",
+        expected_tokens=("8Sto16(0x02)", "Add16(0x0000,0x0008)", "CmpLE16U", "PUT(ip) = 0x1016"),
+    ),
+)
+
+
 def _project_from_bytes(code: bytes):
     return angr.Project(
         io.BytesIO(code),
@@ -941,4 +1045,16 @@ def test_main_call_prefix_block_lift_matrix(case: MatrixBlockLiftCase):
     irsb_text = block.vex._pp_str()
 
     assert block.vex.jumpkind == "Ijk_Call"
+    _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)
+
+
+@pytest.mark.parametrize("case", FOLD_VALUES_BLOCK_MATRIX_CASES, ids=lambda case: case.name)
+def test_fold_values_block_lift_matrix(case: MatrixBlockLiftCase):
+    entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
+    code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
+    project = _project_from_bytes(code)
+    block = project.factory.block(0x1000)
+    irsb_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
     _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)

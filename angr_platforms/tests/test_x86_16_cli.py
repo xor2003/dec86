@@ -201,6 +201,19 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "sub_103b();" in result.stdout
 
 
+def test_decompile_cli_recovers_drawradaralt_branch_logic():
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_DrawRadarAlt")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _DrawRadarAlt" in result.stdout
+    assert "int _DrawRadarAlt(void)" in result.stdout
+    assert "if (!(*((short *)" in result.stdout
+    assert "v2 = 0;" in result.stdout
+    assert "v2 = 112;" in result.stdout
+    assert ")) = 2;" in result.stdout
+    assert "sub_1023();" in result.stdout
+
+
 @pytest.mark.parametrize(
     ("path", "proc_kind", "shape_tokens"),
     [
@@ -362,6 +375,15 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             10,
             30,
             ("function: 0x1000 _TIDShowRange", "146", "21", "29", "9", "782", "* 2", "sub_103b();"),
+            (),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+            "_DrawRadarAlt",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _DrawRadarAlt", "if (!(*((short *)", "v2 = 0;", "v2 = 112;", ")) = 2;", "sub_1023();"),
             (),
         ),
         (
