@@ -41,10 +41,10 @@ from angr_platforms.X86_16.cod_extract import (
     CODProcMetadata,
     extract_cod_function_entries,
     extract_cod_proc_metadata,
-    extract_small_two_arg_cod_logic_bytes,
-    extract_simple_cod_logic_bytes,
+    extract_small_two_arg_cod_logic_entries,
+    extract_simple_cod_logic_entries,
     infer_cod_logic_start,
-    join_cod_entries,
+    join_cod_entries_with_synthetic_globals,
 )
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
@@ -670,12 +670,14 @@ def main() -> int:
     if args.proc is not None:
         entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
         cod_metadata = extract_cod_proc_metadata(args.binary, args.proc, args.proc_kind)
-        proc_code = extract_small_two_arg_cod_logic_bytes(entries)
-        if proc_code is None:
-            proc_code = extract_simple_cod_logic_bytes(entries)
-        if proc_code is None:
+        selected_entries = extract_small_two_arg_cod_logic_entries(entries)
+        if selected_entries is None:
+            selected_entries = extract_simple_cod_logic_entries(entries)
+        if selected_entries is None:
             logic_start = infer_cod_logic_start(entries)
-            proc_code = join_cod_entries(entries, start_offset=logic_start)
+            proc_code, _synthetic_globals = join_cod_entries_with_synthetic_globals(entries, start_offset=logic_start)
+        else:
+            proc_code, _synthetic_globals = join_cod_entries_with_synthetic_globals(selected_entries)
         project = _build_project_from_bytes(
             proc_code,
             base_addr=args.base_addr,
