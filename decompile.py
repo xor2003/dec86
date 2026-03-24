@@ -327,9 +327,60 @@ def _attach_cod_callee_names(codegen, cod_metadata: CODProcMetadata | None) -> b
     return True
 
 
+def _build_cod_positive_bp_alias_map(
+    bp_disps: list[int], cod_metadata: CODProcMetadata | None
+) -> dict[int, str]:
+    if cod_metadata is None:
+        return {}
+
+    meta_positive = sorted((disp, name) for disp, name in cod_metadata.stack_aliases.items() if disp > 0)
+    if not meta_positive:
+        return {}
+
+    var_positive = sorted(disp for disp in bp_disps if disp > 0)
+    if not var_positive:
+        return {}
+
+    alias_map: dict[int, str] = {}
+    if len(var_positive) <= len(meta_positive):
+        for disp, (_, name) in zip(var_positive, meta_positive):
+            alias_map[disp] = name
+
+    for disp in var_positive:
+        direct = cod_metadata.stack_aliases.get(disp)
+        if direct is not None:
+            alias_map.setdefault(disp, direct)
+
+    return alias_map
+
+
+def _cod_stack_alias_for_disp(
+    disp: int,
+    cod_metadata: CODProcMetadata | None,
+    *,
+    positive_aliases: dict[int, str] | None = None,
+) -> str | None:
+    if cod_metadata is None:
+        return None
+    if disp > 0 and positive_aliases is not None:
+        alias = positive_aliases.get(disp)
+        if alias is not None:
+            return alias
+    return cod_metadata.stack_aliases.get(disp)
+
+
 def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) -> bool:
     if cod_metadata is None or not cod_metadata.stack_aliases or getattr(codegen, "cfunc", None) is None:
         return False
+
+    positive_aliases = _build_cod_positive_bp_alias_map(
+        [
+            getattr(variable, "offset", None)
+            for variable in getattr(codegen.cfunc, "variables_in_use", {})
+            if getattr(variable, "base", None) == "bp" and isinstance(getattr(variable, "offset", None), int)
+        ],
+        cod_metadata,
+    )
 
     changed = False
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
@@ -338,9 +389,7 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
         disp = getattr(variable, "offset", None)
         if disp is None:
             continue
-        alias = cod_metadata.stack_aliases.get(disp)
-        if alias is None and disp > 0:
-            alias = cod_metadata.stack_aliases.get(disp + 2)
+        alias = _cod_stack_alias_for_disp(disp, cod_metadata, positive_aliases=positive_aliases)
         if alias is None:
             continue
 
@@ -438,6 +487,18 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
     if metadata is None:
         return c_text
 
+    positive_aliases = _build_cod_positive_bp_alias_map(
+        [
+            disp
+            for disp in (
+                int(match.group(2), 16) if match.group(1) == "+" else -int(match.group(2), 16)
+                for match in re.finditer(r"// \[bp([+-])0x([0-9a-f]+)\]", c_text)
+            )
+            if disp > 0
+        ],
+        metadata,
+    )
+
     lines: list[str] = []
     for line in c_text.splitlines():
         match = re.search(r"// \[bp([+-])0x([0-9a-f]+)\]", line)
@@ -445,9 +506,7 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
             disp = int(match.group(2), 16)
             if match.group(1) == "-":
                 disp = -disp
-            alias = metadata.stack_aliases.get(disp)
-            if alias is None and disp > 0:
-                alias = metadata.stack_aliases.get(disp + 2)
+            alias = _cod_stack_alias_for_disp(disp, metadata, positive_aliases=positive_aliases)
             if alias is not None and not line.rstrip().endswith(f" {alias}"):
                 line = f"{line} {alias}"
         lines.append(line)
