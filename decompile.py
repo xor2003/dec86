@@ -392,6 +392,8 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
             if match.group(1) == "-":
                 disp = -disp
             alias = metadata.stack_aliases.get(disp)
+            if alias is None and disp > 0:
+                alias = metadata.stack_aliases.get(disp + 2)
             if alias is not None and not line.rstrip().endswith(f" {alias}"):
                 line = f"{line} {alias}"
         lines.append(line)
