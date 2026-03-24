@@ -14,7 +14,7 @@ The intent is practical:
 | Example | Proc | Kind | File Size | Current Logic Anchor | Notes |
 | --- | --- | --- | ---: | --- | --- |
 | `cod/default/MAX.COD` | `_max` | near | `2771` B | `if (x > y) return x; return y;` | Smallest branch/return correctness case. Also checks `.COD --proc` skipping of leading `__chkstk`. |
-| `cod/f14/NHORZ.COD` | `_ChangeWeather` | near | `108285` B | direct truth-test plus `8150`, `500`, `125`, `1000` | Good for direct-memory compare recovery and `if/else` shape. |
+| `cod/f14/NHORZ.COD` | `_ChangeWeather` | near | `108285` B | direct truth-test plus split-word stores for `8150`, `500`, `125`, `1000` | Good for direct-memory compare recovery, `if/else` shape, and distinct synthetic global materialization for `_CLOUDHEIGHT` / `_CLOUDTHICK`. |
 | `cod/f14/MONOPRIN.COD` | `_mset_pos` | near | `20309` B | `% 80`, `% 25` | Good for simple arithmetic and frame-wrapper normalization. |
 | `cod/f14/BILLASM.COD` | `_MousePOS` | near | `5689` B | `if (!MOUSE) return 0;`, `x * 2` | Good for byte compare recovery and tiny early-return logic. |
 | `cod/f14/BILLASM.COD` | `_rotate_pt` | near | `5689` B | indexed word loads, `a1 * -1`, trig-call setup | Good for small arithmetic/setup logic before call-heavy code. |
@@ -25,7 +25,7 @@ The intent is practical:
 | `cod/f14/CARR.COD` | `_InBox` | near | `254653` B | `return 1;`, relational comparisons | Good for multi-condition bounds logic. Still somewhat low-level, but stable. |
 | `cod/f14/CARR.COD` | `_InBoxLng` | near | `254653` B | long compare chain, first branch from signed high-word compare | Good for 32-bit-style bounds logic even before full decompiled-C recovery. |
 | `cod/f14/CARR.COD` | `_SetHook` | near | `254653` B | `return 1;`, hook state store, `93` / `106` message branches | Good for small state-toggle logic with an early-return path. |
-| `cod/f14/CARR.COD` | `_SetGear` | near | `254653` B | guard threshold `350`, message branches `73` / `52` | Good for guarded state-update logic with multiple early-return branches. |
+| `cod/f14/CARR.COD` | `_SetGear` | near | `254653` B | guard threshold `350`, message branches `73` / `52`, distinct direct globals/tables | Good for guarded state-update logic with multiple early-return branches and separated synthetic globals for `_Status`, `_Knots`, `_Alt`, `_MinAlt`, and `_Damaged`. |
 | `cod/f14/CARR.COD` | `_SetDLC` | near | `254653` B | state store plus `return a1;` | Tiny state-write helper; good cheap oracle for direct global stores and return-value preservation. |
 | `cod/f14/COCKPIT.COD` | `_TIDShowRange` | near | `354631` B | `146`, `21`, `29`, `9`, `160`, `782`, `* 2` | Good for constant-heavy UI/layout logic plus indexed table access and final helper call setup. |
 | `cod/f14/COCKPIT.COD` | `_DrawRadarAlt` | near | `354631` B | direct truth-test, `v2 = 0` / `112`, final state write and helper call | Good for another small branch-heavy cockpit helper with a simple boolean split and call tail. |

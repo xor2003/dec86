@@ -90,11 +90,20 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _ChangeWeather" in result.stdout
     assert "int _ChangeWeather" in result.stdout
+    assert "globals = _CLOUDHEIGHT, _CLOUDTHICK" in result.stdout
     assert "if (*((short *)" in result.stdout
     assert "if (!(...))" not in result.stdout
     assert "if (!(!" not in result.stdout
-    assert "*((char *)(v1 * 16 + 6)) = 214;" in result.stdout
-    assert "*((char *)(v1 * 16 + 9)) = 1;" in result.stdout
+    assert "0x7000" in result.stdout
+    assert "28673" in result.stdout
+    assert "28674" in result.stdout
+    assert "28676" in result.stdout
+    assert "*((char *)(v1 * 16 + 28674)) = 214;" in result.stdout
+    assert "*((char *)(v1 * 16 + 28675)) = 31;" in result.stdout
+    assert "*((char *)(v1 * 16 + 28676)) = 244;" in result.stdout
+    assert "*((char *)(v1 * 16 + 28677)) = 1;" in result.stdout
+    assert "*((char *)(v1 * 16 + 28674)) = 125;" in result.stdout
+    assert "*((char *)(v1 * 16 + 28676)) = 232;" in result.stdout
     assert "_start" not in result.stdout
 
 
@@ -201,7 +210,13 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "function: 0x1000 _SetGear" in result.stdout
     assert "int _SetGear()" in result.stdout
     assert "[bp+0x4] = G" in result.stdout
+    assert "globals = _ejected, _Status, _Knots, _Alt, _MinAlt, _Damaged" in result.stdout
     assert "unsigned short G;  // [bp+0x2] G" in result.stdout
+    assert "0x7000" in result.stdout
+    assert "28674" in result.stdout
+    assert "28678" in result.stdout
+    assert "28680" in result.stdout
+    assert "28682" in result.stdout
     assert "350" in result.stdout
     assert "v14 = 73;" in result.stdout
     assert "v14 = 52;" in result.stdout
@@ -329,7 +344,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _ChangeWeather", "if (*((short *)", "214", "1000"),
+            ("function: 0x1000 _ChangeWeather", "if (*((short *)", "0x7000", "28674", "28676", "214", "1000"),
             ("if (!(...))", "if (!(!"),
         ),
         (
@@ -409,7 +424,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetGear", "350", "v14 = 73;", "v14 = 52;", "sub_102f();"),
+            ("function: 0x1000 _SetGear", "0x7000", "28674", "28678", "28680", "28682", "350", "v14 = 73;", "v14 = 52;", "sub_102f();"),
             (),
         ),
         (
