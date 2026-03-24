@@ -397,10 +397,12 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
         lines.append(line)
 
     comments: list[str] = []
-    if metadata.stack_aliases or metadata.call_names:
+    if metadata.stack_aliases or metadata.call_names or metadata.global_names:
         comments.append("/* COD annotations:")
         for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: (item[0] < 0, item[0])):
             comments.append(f" * {_format_bp_disp(disp)} = {name}")
+        if metadata.global_names:
+            comments.append(f" * globals = {', '.join(metadata.global_names)}")
         if metadata.call_names:
             comments.append(f" * calls = {', '.join(metadata.call_names)}")
         comments.append(" */")
