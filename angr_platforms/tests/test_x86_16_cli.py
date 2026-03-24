@@ -486,7 +486,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _DrawRadarAlt", "if (!(*((short *)", "y2 = 0;", "y2 = 112;", ")) = 2;", "sub_1023();"),
+            ("function: 0x1000 _DrawRadarAlt", "if (!(View))", "y2 = 0;", "y2 = 112;", "v0 = 2;", "sub_1023();"),
             (),
         ),
         (
