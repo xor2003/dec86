@@ -244,7 +244,10 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "function: 0x1000 _TIDShowRange" in result.stdout
     assert "int _TIDShowRange(void)" in result.stdout
     assert "[bp-0xc] = mseg" in result.stdout
+    assert "globals = _Rp2, _Tscale, _Rp1" in result.stdout
     assert "char mseg;  // [bp-0xc] mseg" in result.stdout
+    assert "0x7000" in result.stdout
+    assert "28674" in result.stdout
     assert "146" in result.stdout
     assert "21" in result.stdout
     assert "29" in result.stdout
@@ -442,7 +445,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _TIDShowRange", "146", "21", "29", "9", "782", "* 2", "sub_103b();"),
+            ("function: 0x1000 _TIDShowRange", "0x7000", "28674", "146", "21", "29", "9", "782", "* 2", "sub_103b();"),
             (),
         ),
         (
