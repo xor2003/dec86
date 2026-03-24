@@ -148,6 +148,14 @@ def test_decompile_cli_recovers_rotate_pt_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _rotate_pt" in result.stdout
     assert "int _rotate_pt()" in result.stdout
+    assert "[bp+0x4] = s" in result.stdout
+    assert "[bp+0x6] = d" in result.stdout
+    assert "[bp-0x4] = y" in result.stdout
+    assert "[bp-0x2] = x" in result.stdout
+    assert "unsigned short s;  // [bp+0x2] s" in result.stdout
+    assert "unsigned short d;  // [bp+0x6] d" in result.stdout
+    assert "unsigned short y;  // [bp-0x4] y" in result.stdout
+    assert "char x;  // [bp-0x2] x" in result.stdout
     assert "calls = _CosB, _SinB" in result.stdout
     assert "unsigned short d;  // [bp+0x6] d" in result.stdout
     assert "d * -1" in result.stdout
@@ -226,7 +234,9 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
     assert "function: 0x1000 _DrawRadarAlt" in result.stdout
     assert "int _DrawRadarAlt(void)" in result.stdout
     assert "[bp-0xc] = newalt" in result.stdout
+    assert "[bp-0xa] = y2" in result.stdout
     assert "[bp-0x8] = soffset" in result.stdout
+    assert "[bp-0x2] = b" in result.stdout
     assert "calls = _MapInEMSSprite, _TransRectCopy, _MDiv, _Rotate2D, _scaley, _DrawLine, _RectCopy" in result.stdout
     assert "if (!(*((short *)" in result.stdout
     assert "unsigned short y2;  // [bp-0xa] y2" in result.stdout
