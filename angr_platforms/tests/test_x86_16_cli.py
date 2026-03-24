@@ -164,13 +164,14 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "globals = _HookDown" in result.stdout
     assert "calls = _Message" in result.stdout
     assert "unsigned short a0;  // [bp+0x2] Hook" in result.stdout
+    assert "_Message();" in result.stdout
+    assert "sub_102f();" not in result.stdout
     assert "== a0" in result.stdout
     assert "!= a0" not in result.stdout
     assert "return 1;" in result.stdout
     assert "a0 >> 8" in result.stdout
     assert "v8 = 93;" in result.stdout
     assert "v8 = 106;" in result.stdout
-    assert "sub_102f();" in result.stdout
 
 
 def test_decompile_cli_recovers_setgear_guard_logic():
