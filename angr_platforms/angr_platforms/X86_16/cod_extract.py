@@ -56,6 +56,7 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     global_names: list[str] = []
 
     alias_re = re.compile(r"^\s*;\s*([A-Za-z_$?@][\w$?@]*)\s*=\s*(-?[0-9A-Fa-f]+)\s*$")
+    entry_re = re.compile(r"\*\*\*\s+[0-9A-Fa-f]+\s+(?:[0-9A-Fa-f]{2}\s+)+(.*)$")
     call_re = re.compile(r"\bcall\b(?:\s+far ptr)?\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
     global_re = re.compile(r"\b(?:BYTE|WORD|DWORD)\s+PTR\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
 
@@ -73,15 +74,19 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             stack_aliases[int(alias_match.group(2), 0)] = alias_match.group(1)
             continue
 
-        call_match = call_re.search(line)
-        if call_match:
+        entry_match = entry_re.search(line)
+        if entry_match is None:
+            continue
+        asm_text = entry_match.group(1).strip()
+
+        for call_match in call_re.finditer(asm_text):
             callee = call_match.group(1)
             if callee == "__chkstk":
                 continue
             if not callee.startswith("$") and callee not in call_names:
                 call_names.append(callee)
 
-        for global_match in global_re.finditer(line):
+        for global_match in global_re.finditer(asm_text):
             global_name = global_match.group(1)
             if global_name.startswith("$") or global_name == proc_name:
                 continue
