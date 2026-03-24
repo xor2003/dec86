@@ -220,7 +220,12 @@ def _decompile_function(
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
+    changed = False
     if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
+        changed = True
+    if _attach_cod_callee_names(dec.codegen, cod_metadata):
+        changed = True
+    if changed:
         dec.codegen.regenerate_text()
     formatted = _format_known_helper_calls(project, function, dec.codegen.text, api_style, binary_path)
     return "ok", _annotate_cod_proc_output(formatted, cod_metadata)
@@ -298,6 +303,25 @@ def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_sty
     for node, pseudo_func in zip(call_nodes, pseudo_funcs):
         if pseudo_func is not None:
             node.callee_func = pseudo_func
+    return True
+
+
+def _attach_cod_callee_names(codegen, cod_metadata: CODProcMetadata | None) -> bool:
+    if cod_metadata is None or not cod_metadata.call_names or getattr(codegen, "cfunc", None) is None:
+        return False
+
+    call_nodes = [
+        node
+        for node in _iter_c_nodes(codegen.cfunc.statements)
+        if isinstance(node, structured_c.CFunctionCall)
+        and getattr(node, "callee_func", None) is not None
+        and getattr(node.callee_func, "name", "").startswith("sub_")
+    ]
+    if len(call_nodes) != len(cod_metadata.call_names):
+        return False
+
+    for node, call_name in zip(call_nodes, cod_metadata.call_names):
+        node.callee_func.name = call_name
     return True
 
 
