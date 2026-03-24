@@ -184,6 +184,8 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "unsigned short Hook;  // [bp+0x2] Hook" in result.stdout
     assert "_Message();" in result.stdout
     assert "sub_102f();" not in result.stdout
+    assert "0x7000" in result.stdout
+    assert "28673" in result.stdout
     assert "== Hook" in result.stdout
     assert "!= Hook" not in result.stdout
     assert "return 1;" in result.stdout
@@ -214,6 +216,8 @@ def test_decompile_cli_recovers_setdlc_state_store():
     assert "int _SetDLC()" in result.stdout
     assert "[bp+0x4] = DLC" in result.stdout
     assert "unsigned short DLC;  // [bp+0x4] DLC" in result.stdout
+    assert "0x7000" in result.stdout
+    assert "28673" in result.stdout
     assert "DLC >> 8" in result.stdout
     assert "return DLC;" in result.stdout
 
@@ -396,7 +400,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();"),
+            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();", "0x7000", "28673"),
             (),
         ),
         (
@@ -414,7 +418,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetDLC", "DLC >> 8", "return DLC;"),
+            ("function: 0x1000 _SetDLC", "DLC >> 8", "return DLC;", "0x7000", "28673"),
             (),
         ),
         (
