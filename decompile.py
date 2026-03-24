@@ -327,7 +327,7 @@ def _attach_cod_callee_names(codegen, cod_metadata: CODProcMetadata | None) -> b
 
     call_nodes = [
         node
-        for node in _iter_c_nodes(codegen.cfunc.statements)
+        for node in _iter_c_nodes_deep(codegen.cfunc.statements)
         if isinstance(node, structured_c.CFunctionCall)
         and getattr(node, "callee_func", None) is not None
         and getattr(node.callee_func, "name", "").startswith("sub_")
@@ -611,6 +611,36 @@ def _replace_c_children(node, transform) -> bool:
                 changed = True
 
     return changed
+
+
+def _iter_c_nodes_deep(node, seen: set[int] | None = None):
+    if seen is None:
+        seen = set()
+    if not _structured_codegen_node(node):
+        return
+    node_id = id(node)
+    if node_id in seen:
+        return
+    seen.add(node_id)
+    yield node
+
+    for attr in dir(node):
+        if attr.startswith("_") or attr in {"codegen"}:
+            continue
+        try:
+            value = getattr(node, attr)
+        except Exception:
+            continue
+        if _structured_codegen_node(value):
+            yield from _iter_c_nodes_deep(value, seen)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                if _structured_codegen_node(item):
+                    yield from _iter_c_nodes_deep(item, seen)
+                elif isinstance(item, tuple):
+                    for subitem in item:
+                        if _structured_codegen_node(subitem):
+                            yield from _iter_c_nodes_deep(subitem, seen)
 
 
 def _same_c_expression(lhs, rhs) -> bool:
