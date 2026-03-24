@@ -18,9 +18,9 @@ The intent is practical:
 | `cod/f14/MONOPRIN.COD` | `_mset_pos` | near | `20309` B | `% 80`, `% 25` | Good for simple arithmetic and frame-wrapper normalization. |
 | `cod/f14/BILLASM.COD` | `_MousePOS` | near | `5689` B | `if (!MOUSE) return 0;`, `x * 2` | Good for byte compare recovery and tiny early-return logic. |
 | `cod/f14/BILLASM.COD` | `_rotate_pt` | near | `5689` B | indexed word loads, `a1 * -1`, trig-call setup | Good for small arithmetic/setup logic before call-heavy code. |
-| `cod/f14/PLANES3.COD` | `_Ready5` | near | `637819` B | `46`, `18`, `return` | Large source file, but the chosen procedure is still small and good for struct-stride anchoring. |
-| `cod/f14/COCKPIT.COD` | `_LookDown` | near | `354631` B | `50`, `27`, `25`, `39` | Good for constant-heavy branch bodies and repeated field updates. |
-| `cod/f14/COCKPIT.COD` | `_LookUp` | near | `354631` B | `150`, `138`, `136`, `139` | Pairs with `_LookDown`; same shape, different constants and else-path. |
+| `cod/f14/PLANES3.COD` | `_Ready5` | near | `637819` B | `planecnt`, `droll`, `pdest`, `* 46`, `+ 18` | Large source file, but the chosen procedure is still small and now useful for named-global plus struct-stride anchoring. |
+| `cod/f14/COCKPIT.COD` | `_LookDown` | near | `354631` B | `if (!(BackSeat))`, `Rp3D`, `RpCRT1`, `RpCRT2`, `RpCRT4`, `50`, `27`, `25`, `39` | Good for constant-heavy branch bodies and repeated field updates with recovered global names. |
+| `cod/f14/COCKPIT.COD` | `_LookUp` | near | `354631` B | `if (!(BackSeat))`, `Rp3D`, `RpCRT1`, `RpCRT2`, `RpCRT4`, `150`, `138`, `136`, `139` | Pairs with `_LookDown`; same shape, different constants and else-path. |
 | `cod/f14/COCKPIT.COD` | `_ConfigCrts` | near | `354631` B | counted copy loop, `flag * 2`, `546 + v5`, `flag < 8` | Good for simple loop/copy correctness on a real large `.COD` source file. |
 | `cod/f14/CARR.COD` | `_InBox` | near | `254653` B | `return 1;`, relational comparisons | Good for multi-condition bounds logic. Still somewhat low-level, but stable. |
 | `cod/f14/CARR.COD` | `_InBoxLng` | near | `254653` B | long compare chain, first branch from signed high-word compare | Good for 32-bit-style bounds logic even before full decompiled-C recovery. |
@@ -120,6 +120,7 @@ variants. Today it is useful in two ways:
   - `ILOD`, `ILOT`
 - A second `query_interrupts` matrix now also locks the `int86x(0x21)` / `g_info.int21_segment` / `g_info.int21_offset` tail across those same 10 variants.
 - That matrix is intentionally block-level today because it is a cleaner correctness oracle than the current full decompiled C for those startup/helper-heavy routines.
+- `examples/snake.lst` is a useful future oracle candidate, but the current listing does not byte-match the checked-in `snake.exe`, so it should not yet be used as a direct correctness source for that binary without a matching rebuild.
 - When adding new examples, prefer:
   - one small, source-obvious procedure
   - one clear logic anchor
