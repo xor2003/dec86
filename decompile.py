@@ -223,6 +223,8 @@ def _decompile_function(
     changed = False
     if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
         changed = True
+    if _attach_cod_variable_names(dec.codegen, cod_metadata):
+        changed = True
     if _attach_cod_callee_names(dec.codegen, cod_metadata):
         changed = True
     if changed:
@@ -323,6 +325,34 @@ def _attach_cod_callee_names(codegen, cod_metadata: CODProcMetadata | None) -> b
     for node, call_name in zip(call_nodes, cod_metadata.call_names):
         node.callee_func.name = call_name
     return True
+
+
+def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) -> bool:
+    if cod_metadata is None or not cod_metadata.stack_aliases or getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        if getattr(variable, "base", None) != "bp":
+            continue
+        disp = getattr(variable, "offset", None)
+        if disp is None:
+            continue
+        alias = cod_metadata.stack_aliases.get(disp)
+        if alias is None and disp > 0:
+            alias = cod_metadata.stack_aliases.get(disp + 2)
+        if alias is None:
+            continue
+
+        if getattr(variable, "name", None) != alias:
+            variable.name = alias
+            changed = True
+        unified = getattr(cvar, "unified_variable", None)
+        if unified is not None and getattr(unified, "name", None) != alias:
+            unified.name = alias
+            changed = True
+
+    return changed
 
 
 def _int21_call_replacements(project: angr.Project, function, api_style: str, binary_path: Path | None) -> list[str]:
