@@ -91,19 +91,16 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert "function: 0x1000 _ChangeWeather" in result.stdout
     assert "int _ChangeWeather" in result.stdout
     assert "globals = _CLOUDHEIGHT, _CLOUDTHICK" in result.stdout
-    assert "if (*((short *)" in result.stdout
+    assert "if (BadWeather)" in result.stdout
     assert "if (!(...))" not in result.stdout
     assert "if (!(!" not in result.stdout
-    assert "0x7000" in result.stdout
-    assert "28673" in result.stdout
-    assert "28674" in result.stdout
-    assert "28676" in result.stdout
-    assert "*((char *)(v1 * 16 + 28674)) = 214;" in result.stdout
-    assert "*((char *)(v1 * 16 + 28675)) = 31;" in result.stdout
-    assert "*((char *)(v1 * 16 + 28676)) = 244;" in result.stdout
-    assert "*((char *)(v1 * 16 + 28677)) = 1;" in result.stdout
-    assert "*((char *)(v1 * 16 + 28674)) = 125;" in result.stdout
-    assert "*((char *)(v1 * 16 + 28676)) = 232;" in result.stdout
+    assert "BadWeather = 0;" in result.stdout
+    assert "BadWeather = 1;" in result.stdout
+    assert "CLOUDHEIGHT = 214;" in result.stdout
+    assert "CLOUDTHICK = 244;" in result.stdout
+    assert "CLOUDHEIGHT = 125;" in result.stdout
+    assert "CLOUDTHICK = 232;" in result.stdout
+    assert "0x7000" not in result.stdout
     assert "_start" not in result.stdout
 
 
@@ -139,12 +136,14 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "[bp+0x6] = y" in result.stdout
     assert "unsigned short x;  // [bp+0x4] x" in result.stdout
     assert "unsigned short y;  // [bp+0x6] y" in result.stdout
-    assert "if (!(*((char *)(v3 * 16 + 0x7000))))" in result.stdout
+    assert "globals = _MOUSE, _MouseX, _MouseY" in result.stdout
+    assert "if (!(MOUSE))" in result.stdout
     assert "if (...)" not in result.stdout
     assert "&v1" not in result.stdout
     assert "* 2" in result.stdout
-    assert "28674" in result.stdout
-    assert "28676" in result.stdout
+    assert "MouseX = v5;" in result.stdout
+    assert "MouseY = y;" in result.stdout
+    assert "0x7000" not in result.stdout
 
 
 def test_decompile_cli_recovers_configcrts_copy_loop():
@@ -193,9 +192,8 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "unsigned short Hook;  // [bp+0x2] Hook" in result.stdout
     assert "_Message();" in result.stdout
     assert "sub_102f();" not in result.stdout
-    assert "0x7000" in result.stdout
-    assert "28673" in result.stdout
-    assert "== Hook" in result.stdout
+    assert "HookDown == Hook" in result.stdout
+    assert "HookDown = Hook;" in result.stdout
     assert "!= Hook" not in result.stdout
     assert "return 1;" in result.stdout
     assert "Hook >> 8" in result.stdout
@@ -212,11 +210,12 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "[bp+0x4] = G" in result.stdout
     assert "globals = _ejected, _Status, _Knots, _Alt, _MinAlt, _Damaged" in result.stdout
     assert "unsigned short G;  // [bp+0x2] G" in result.stdout
-    assert "0x7000" in result.stdout
-    assert "28674" in result.stdout
-    assert "28678" in result.stdout
-    assert "28680" in result.stdout
-    assert "28682" in result.stdout
+    assert "if (!(ejected))" in result.stdout
+    assert "Status" in result.stdout
+    assert "Alt" in result.stdout
+    assert "MinAlt" in result.stdout
+    assert "Damaged" in result.stdout
+    assert "Knots <= 350" in result.stdout
     assert "350" in result.stdout
     assert "v14 = 73;" in result.stdout
     assert "v14 = 52;" in result.stdout
@@ -231,8 +230,8 @@ def test_decompile_cli_recovers_setdlc_state_store():
     assert "int _SetDLC()" in result.stdout
     assert "[bp+0x4] = DLC" in result.stdout
     assert "unsigned short DLC;  // [bp+0x4] DLC" in result.stdout
-    assert "0x7000" in result.stdout
-    assert "28673" in result.stdout
+    assert "globals = _DirectLiftControl" in result.stdout
+    assert "DirectLiftControl = DLC;" in result.stdout
     assert "DLC >> 8" in result.stdout
     assert "return DLC;" in result.stdout
 
@@ -347,7 +346,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _ChangeWeather", "if (*((short *)", "0x7000", "28674", "28676", "214", "1000"),
+            ("function: 0x1000 _ChangeWeather", "if (BadWeather)", "CLOUDHEIGHT = 214;", "CLOUDTHICK = 232;", "1000"),
             ("if (!(...))", "if (!(!"),
         ),
         (
@@ -367,12 +366,12 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             30,
             (
                 "function: 0x1000 _MousePOS",
-                "if (!(*((char *)(v3 * 16 + 0x7000))))",
+                "if (!(MOUSE))",
                 "* 2",
                 "unsigned short x;  // [bp+0x4] x",
                 "unsigned short y;  // [bp+0x6] y",
-                "28674",
-                "28676",
+                "MouseX = v5;",
+                "MouseY = y;",
             ),
             ("if (...)",),
         ),
@@ -418,7 +417,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();", "0x7000", "28673"),
+            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();", "HookDown == Hook", "HookDown = Hook;"),
             (),
         ),
         (
@@ -427,7 +426,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetGear", "0x7000", "28674", "28678", "28680", "28682", "350", "v14 = 73;", "v14 = 52;", "sub_102f();"),
+            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "350", "v14 = 73;", "v14 = 52;", "sub_102f();"),
             (),
         ),
         (
@@ -436,7 +435,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetDLC", "DLC >> 8", "return DLC;", "0x7000", "28673"),
+            ("function: 0x1000 _SetDLC", "DirectLiftControl = DLC;", "DLC >> 8", "return DLC;"),
             (),
         ),
         (
