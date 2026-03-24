@@ -459,7 +459,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "350", "v14 = 73;", "v14 = 52;", "sub_102f();", "v1 = 2;", "v0 = v14;"),
+            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "350", "v14 = 73;", "v14 = 52;", "_Message();", "v1 = 2;", "v0 = v14;"),
             ("v5 * 16",),
         ),
         (
@@ -477,7 +477,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _TIDShowRange", "0x7000", "28674", "146", "21", "29", "9", "782", "* 2", "sub_103b();"),
+            ("function: 0x1000 _TIDShowRange", "mseg", "Rp2", "Tscale * 2", "146", "21", "29", "9", "782", "sub_103b();"),
             (),
         ),
         (
