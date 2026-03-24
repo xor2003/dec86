@@ -240,7 +240,8 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "350" in result.stdout
     assert "v14 = 73;" in result.stdout
     assert "v14 = 52;" in result.stdout
-    assert "sub_102f();" in result.stdout
+    assert "_Message();" in result.stdout
+    assert "sub_102f();" not in result.stdout
 
 
 def test_decompile_cli_recovers_setdlc_state_store():
