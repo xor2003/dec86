@@ -27,6 +27,7 @@ The intent is practical:
 | `cod/f14/CARR.COD` | `_SetHook` | near | `254653` B | `return 1;`, hook state store, `93` / `106` message branches | Good for small state-toggle logic with an early-return path. |
 | `cod/f14/CARR.COD` | `_SetGear` | near | `254653` B | guard threshold `350`, message branches `73` / `52` | Good for guarded state-update logic with multiple early-return branches. |
 | `cod/f14/CARR.COD` | `_SetDLC` | near | `254653` B | state store plus `return a1;` | Tiny state-write helper; good cheap oracle for direct global stores and return-value preservation. |
+| `cod/f14/COCKPIT.COD` | `_TIDShowRange` | near | `354631` B | `146`, `21`, `29`, `9`, `160`, `782`, `* 2` | Good for constant-heavy UI/layout logic plus indexed table access and final helper call setup. |
 | `angr_platforms/x16_samples/ICOMDO.COM` | `_start` | tiny `.COM` | n/a in this table | `get_dos_version(); print_dos_string(...); exit(0);` | Best user-facing tiny runtime sample. More about helper-call quality than arithmetic logic. |
 | `angr_platforms/x16_samples/ISOD.EXE` | `_start` | small-model `.EXE` | paired with `ISOD.COD` | named DOS helpers plus startup constants | Useful bridge from tiny examples to real startup code. Still noisier than the small `.COD` set. |
 
@@ -98,6 +99,9 @@ variants. Today it is useful in two ways:
   call-setup prefix, which is a cleaner oracle for near/far ABI differences.
 - The `_main` matrix is the current decompiled-C consistency ladder for helper
   call ordering and folded byte/word flow across the same 10 variants.
+- The `_main` matrix now also has a block-lift ladder for the
+  `query_interrupts(); show_summary();` call prefix, which cleanly exposes the
+  near/far call setup split across the matrix variants.
 - The `_main` matrix now also has a block-lift ladder for the final
   `fold_values(g_info.video_mode, g_info.bios_kb & 0xFF)` argument setup, which
   is a cleaner oracle for byte-to-word reconstruction plus stack argument

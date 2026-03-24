@@ -186,6 +186,21 @@ def test_decompile_cli_recovers_setdlc_state_store():
     assert "return a1;" in result.stdout
 
 
+def test_decompile_cli_recovers_tidshowrange_layout_logic():
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_TIDShowRange")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _TIDShowRange" in result.stdout
+    assert "int _TIDShowRange(void)" in result.stdout
+    assert "146" in result.stdout
+    assert "21" in result.stdout
+    assert "29" in result.stdout
+    assert "9" in result.stdout
+    assert "782" in result.stdout
+    assert "* 2" in result.stdout
+    assert "sub_103b();" in result.stdout
+
+
 @pytest.mark.parametrize(
     ("path", "proc_kind", "shape_tokens"),
     [
@@ -338,6 +353,15 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             10,
             30,
             ("function: 0x1000 _SetDLC", "a1 >> 8", "return a1;"),
+            (),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+            "_TIDShowRange",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _TIDShowRange", "146", "21", "29", "9", "782", "* 2", "sub_103b();"),
             (),
         ),
         (

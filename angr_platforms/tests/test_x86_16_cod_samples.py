@@ -620,6 +620,110 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
 )
 
 
+MAIN_CALL_PREFIX_MATRIX_CASES = (
+    MatrixBlockLiftCase(
+        name="isod_main_call_prefix",
+        cod_name="ISOD.COD",
+        proc_name="_main",
+        proc_kind="NEAR",
+        start_offset=0x10E,
+        end_offset=0x11D,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(bp)", "GET:I16(di)", "GET:I16(si)", "0x100c", "Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="isot_main_call_prefix",
+        cod_name="ISOT.COD",
+        proc_name="_main",
+        proc_kind="NEAR",
+        start_offset=0xF0,
+        end_offset=0xF6,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(sp)", "STle(", "0x1003", "NEXT: PUT(ip) = 0x0f38; Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="isox_main_call_prefix",
+        cod_name="ISOX.COD",
+        proc_name="_main",
+        proc_kind="NEAR",
+        start_offset=0xF0,
+        end_offset=0xF6,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(sp)", "STle(", "0x1003", "NEXT: PUT(ip) = 0x0f38; Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="imod_main_call_prefix",
+        cod_name="IMOD.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x11A,
+        end_offset=0x12D,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(bp)", "GET:I16(di)", "GET:I16(si)", "PUT(cs) = 0x0000", "Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="imot_main_call_prefix",
+        cod_name="IMOT.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0xFC,
+        end_offset=0x104,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(cs)", "STle(", "0x1004", "NEXT: PUT(ip) = 0x1004; Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="imox_main_call_prefix",
+        cod_name="IMOX.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0xFC,
+        end_offset=0x104,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(cs)", "STle(", "0x1004", "NEXT: PUT(ip) = 0x1004; Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihod_main_call_prefix",
+        cod_name="IHOD.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x126,
+        end_offset=0x139,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(bp)", "GET:I16(di)", "GET:I16(si)", "PUT(cs) = 0x0000", "Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihot_main_call_prefix",
+        cod_name="IHOT.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x106,
+        end_offset=0x10E,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(cs)", "STle(", "0x1004", "NEXT: PUT(ip) = 0x1004; Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilod_main_call_prefix",
+        cod_name="ILOD.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x126,
+        end_offset=0x139,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(bp)", "GET:I16(di)", "GET:I16(si)", "PUT(cs) = 0x0000", "Ijk_Call"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilot_main_call_prefix",
+        cod_name="ILOT.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x106,
+        end_offset=0x10E,
+        original_c="query_interrupts(); show_summary();",
+        expected_tokens=("GET:I16(cs)", "STle(", "0x1004", "NEXT: PUT(ip) = 0x1004; Ijk_Call"),
+    ),
+)
+
+
 def _project_from_bytes(code: bytes):
     return angr.Project(
         io.BytesIO(code),
@@ -825,4 +929,16 @@ def test_main_fold_values_arg_block_lift_matrix(case: MatrixBlockLiftCase):
     irsb_text = block.vex._pp_str()
 
     assert block.vex.jumpkind == "Ijk_Boring"
+    _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)
+
+
+@pytest.mark.parametrize("case", MAIN_CALL_PREFIX_MATRIX_CASES, ids=lambda case: case.name)
+def test_main_call_prefix_block_lift_matrix(case: MatrixBlockLiftCase):
+    entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
+    code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
+    project = _project_from_bytes(code)
+    block = project.factory.block(0x1000)
+    irsb_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Call"
     _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)
