@@ -230,6 +230,8 @@ def _decompile_function(
         changed = True
     if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
         changed = True
+    if _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals):
+        changed = True
     if _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals):
         changed = True
     if _attach_cod_variable_names(dec.codegen, cod_metadata):
@@ -649,8 +651,10 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
         return False
 
     created: dict[tuple[int, int], structured_c.CVariable] = {}
+    promoted: set[tuple[int, int]] = set()
 
     def transform(node):
+        nonlocal promoted
         matched = _match_ss_stack_reference(node, project)
         if matched is None:
             return node
@@ -663,6 +667,7 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
         bits = getattr(type_, "size", None)
         size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
         key = (stack_var.offset, size)
+        promoted.add(key)
         existing = created.get(key)
         if existing is not None:
             return existing
@@ -692,6 +697,40 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
 
     if _replace_c_children(root, transform):
         changed = True
+
+    target_type = SimTypeShort(False)
+    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        if getattr(variable, "base", None) != "bp":
+            continue
+        key = (getattr(variable, "offset", None), 2)
+        if key not in promoted:
+            continue
+        if getattr(variable, "size", 0) < 2:
+            variable.size = 2
+            changed = True
+        if getattr(cvar, "variable_type", None) != target_type:
+            cvar.variable_type = target_type
+            changed = True
+        unified = getattr(cvar, "unified_variable", None)
+        if unified is not None and getattr(unified, "size", 0) < 2:
+            try:
+                unified.size = 2
+                changed = True
+            except Exception:
+                pass
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable, cvar_and_vartypes in list(unified_locals.items()):
+            if getattr(variable, "base", None) != "bp":
+                continue
+            key = (getattr(variable, "offset", None), 2)
+            if key not in promoted:
+                continue
+            new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
+            if new_entries != cvar_and_vartypes:
+                unified_locals[variable] = new_entries
+                changed = True
     return changed
 
 
@@ -703,6 +742,41 @@ def _global_memory_addr(node) -> int | None:
         return None
     addr = getattr(variable, "addr", None)
     return addr if isinstance(addr, int) else None
+
+
+def _global_load_addr(node, project: angr.Project) -> int | None:
+    addr = _global_memory_addr(node)
+    if addr is not None:
+        return addr
+    seg_name, linear = _match_segmented_dereference(node, project)
+    if seg_name != "ds":
+        return None
+    return linear
+
+
+def _match_scaled_high_byte(node, project: angr.Project) -> int | None:
+    if not isinstance(node, structured_c.CBinaryOp):
+        return None
+
+    if node.op == "Mul":
+        pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+        for maybe_load, maybe_scale in pairs:
+            if _c_constant_value(maybe_scale) != 0x100:
+                continue
+            addr = _global_load_addr(maybe_load, project)
+            if addr is not None:
+                return addr
+
+    if node.op == "Shl":
+        pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+        for maybe_load, maybe_scale in pairs:
+            if _c_constant_value(maybe_scale) != 8:
+                continue
+            addr = _global_load_addr(maybe_load, project)
+            if addr is not None:
+                return addr
+
+    return None
 
 
 def _high_byte_store_addr(node, project: angr.Project) -> int | None:
@@ -718,6 +792,61 @@ def _make_word_global(codegen, addr: int, name: str):
         variable_type=SimTypeShort(False),
         codegen=codegen,
     )
+
+
+def _coalesce_cod_word_global_loads(
+    project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None
+) -> bool:
+    if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
+        return False
+
+    created: dict[int, structured_c.CVariable] = {}
+
+    def make_word_global(addr: int):
+        existing = created.get(addr)
+        if existing is not None:
+            return existing
+        raw_name, _width = _synthetic_global_entry(synthetic_globals, addr)
+        cvar = _make_word_global(codegen, addr, _sanitize_cod_identifier(raw_name))
+        created[addr] = cvar
+        return cvar
+
+    def transform(node):
+        if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
+            return node
+
+        for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            low_addr = _global_load_addr(low_expr, project)
+            if low_addr is None:
+                continue
+
+            symbol = _synthetic_global_entry(synthetic_globals, low_addr)
+            if symbol is None:
+                continue
+            _raw_name, width = symbol
+            if width < 2:
+                continue
+
+            high_addr = _match_scaled_high_byte(high_expr, project)
+            if high_addr != low_addr + 1:
+                continue
+
+            return make_word_global(low_addr)
+
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    else:
+        changed = False
+
+    if _replace_c_children(root, transform):
+        changed = True
+    return changed
 
 
 def _coalesce_cod_word_global_statements(
