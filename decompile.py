@@ -47,7 +47,7 @@ from angr_platforms.X86_16.cod_extract import (
     join_cod_entries_with_synthetic_globals,
 )
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr.sim_type import SimTypeShort
 
 
@@ -225,6 +225,8 @@ def _decompile_function(
         return "empty", "Decompiler did not produce code."
     changed = False
     if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
+        changed = True
+    if _attach_ss_stack_variables(project, dec.codegen):
         changed = True
     if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
         changed = True
@@ -488,6 +490,43 @@ def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | Non
     return _match_real_mode_linear_expr(operand, project)
 
 
+def _match_ss_stack_reference(node, project: angr.Project):
+    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        return None
+    operand = node.operand
+    if not isinstance(operand, structured_c.CTypeCast):
+        return None
+    expr = operand.expr
+    if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Add":
+        return None
+
+    for maybe_mul, other in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+        if not isinstance(maybe_mul, structured_c.CBinaryOp) or maybe_mul.op != "Mul":
+            continue
+        seg_name = None
+        for maybe_seg, maybe_scale in ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs)):
+            if _c_constant_value(maybe_scale) != 16:
+                continue
+            seg_name = _segment_reg_name(maybe_seg, project)
+            if seg_name is not None:
+                break
+        if seg_name != "ss":
+            continue
+        if not isinstance(other, structured_c.CTypeCast):
+            continue
+        inner = other.expr
+        if not isinstance(inner, structured_c.CUnaryOp) or inner.op != "Reference":
+            continue
+        if not isinstance(inner.operand, structured_c.CVariable):
+            continue
+        stack_var = getattr(inner.operand, "variable", None)
+        if not isinstance(stack_var, SimStackVariable):
+            continue
+        return stack_var
+
+    return None
+
+
 def _replace_c_children(node, transform) -> bool:
     changed = False
 
@@ -584,6 +623,56 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
         name = _sanitize_cod_identifier(name)
         cvar = structured_c.CVariable(
             SimMemoryVariable(linear, size, name=name, region=codegen.cfunc.addr),
+            variable_type=type_,
+            codegen=codegen,
+        )
+        created[key] = cvar
+        return cvar
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    else:
+        changed = False
+
+    if _replace_c_children(root, transform):
+        changed = True
+    return changed
+
+
+def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    created: dict[tuple[int, int], structured_c.CVariable] = {}
+
+    def transform(node):
+        stack_var = _match_ss_stack_reference(node, project)
+        if stack_var is None:
+            return node
+
+        type_ = getattr(node, "type", None)
+        if type_ is None:
+            return node
+
+        bits = getattr(type_, "size", None)
+        size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+        key = (stack_var.offset, size)
+        existing = created.get(key)
+        if existing is not None:
+            return existing
+
+        cvar = structured_c.CVariable(
+            SimStackVariable(
+                stack_var.offset,
+                size,
+                base=getattr(stack_var, "base", "bp"),
+                name=getattr(stack_var, "name", None),
+                region=codegen.cfunc.addr,
+            ),
             variable_type=type_,
             codegen=codegen,
         )
