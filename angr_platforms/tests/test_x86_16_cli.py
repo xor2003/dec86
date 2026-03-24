@@ -207,6 +207,8 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "sub_102f();" not in result.stdout
     assert "HookDown == Hook" in result.stdout
     assert "HookDown = Hook;" in result.stdout
+    assert "if (Hook)" in result.stdout
+    assert "if (!(...))" not in result.stdout
     assert "v2 = &v3;" in result.stdout
     assert "v1 = 5;" in result.stdout
     assert "v0 = v8;" in result.stdout
@@ -239,6 +241,7 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "Damaged" in result.stdout
     assert "v12 = Alt;" in result.stdout
     assert "MinAlt != v12" in result.stdout
+    assert "if (!(v13 & 4))" in result.stdout
     assert "Knots <= 350" in result.stdout
     assert "!(!(" not in result.stdout
     assert "28679" not in result.stdout
@@ -450,7 +453,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetHook", "return 1;", "v8 = 93;", "v8 = 106;", "_Message();", "HookDown == Hook", "HookDown = Hook;", "v1 = 5;", "v0 = v8;"),
+            ("function: 0x1000 _SetHook", "return 1;", "if (Hook)", "v8 = 93;", "v8 = 106;", "_Message();", "HookDown == Hook", "HookDown = Hook;", "v1 = 5;", "v0 = v8;"),
             (),
         ),
         (
@@ -459,7 +462,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "350", "v14 = 73;", "v14 = 52;", "_Message();", "v1 = 2;", "v0 = v14;"),
+            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "if (!(v13 & 4))", "350", "v14 = 73;", "v14 = 52;", "_Message();", "v1 = 2;", "v0 = v14;"),
             ("v5 * 16",),
         ),
         (
