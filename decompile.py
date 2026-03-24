@@ -692,23 +692,32 @@ def _invert_comparison_op(op: str) -> str | None:
     }.get(op)
 
 
+def _make_inverted_comparison(node, codegen):
+    if not isinstance(node, structured_c.CBinaryOp):
+        return None
+    inverted = _invert_comparison_op(node.op)
+    if inverted is None:
+        return None
+    return structured_c.CBinaryOp(
+        inverted,
+        node.lhs,
+        node.rhs,
+        type=getattr(node, "type", None),
+        codegen=codegen,
+        tags=getattr(node, "tags", None),
+    )
+
+
 def _simplify_boolean_expr(node, codegen):
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Not" and _cite_is_negation(node.operand):
-        return node.operand.cond
+        inverted = _make_inverted_comparison(node.operand.cond, codegen)
+        return inverted if inverted is not None else node.operand.cond
 
     if _cite_is_negation(node):
         cond = node.cond
-        if isinstance(cond, structured_c.CBinaryOp):
-            inverted = _invert_comparison_op(cond.op)
-            if inverted is not None:
-                return structured_c.CBinaryOp(
-                    inverted,
-                    cond.lhs,
-                    cond.rhs,
-                    type=getattr(node, "type", None),
-                    codegen=codegen,
-                    tags=getattr(node, "tags", None),
-                )
+        inverted = _make_inverted_comparison(cond, codegen)
+        if inverted is not None:
+            return inverted
 
     return node
 
