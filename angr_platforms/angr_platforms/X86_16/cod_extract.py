@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class CODProcMetadata:
+    stack_aliases: dict[int, str]
+    call_names: tuple[str, ...]
 
 
 def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> list[dict[str, object]]:
@@ -35,6 +42,43 @@ def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str 
     if not entries:
         raise ValueError(f"did not find {proc_name} ({proc_kind}) in {cod_path}")
     return entries
+
+
+def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> CODProcMetadata:
+    lines = cod_path.read_text(errors="ignore").splitlines()
+    start_marker = f"{proc_name}\tPROC {proc_kind}"
+    end_marker = f"{proc_name}\tENDP"
+
+    collect = False
+    stack_aliases: dict[int, str] = {}
+    call_names: list[str] = []
+
+    alias_re = re.compile(r"^\s*;\s*([A-Za-z_$?@][\w$?@]*)\s*=\s*(-?[0-9A-Fa-f]+)\s*$")
+    call_re = re.compile(r"\bcall\b(?:\s+far ptr)?\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
+
+    for line in lines:
+        if start_marker in line:
+            collect = True
+            continue
+        if collect and end_marker in line:
+            break
+        if not collect:
+            continue
+
+        alias_match = alias_re.match(line)
+        if alias_match:
+            stack_aliases[int(alias_match.group(2), 0)] = alias_match.group(1)
+            continue
+
+        call_match = call_re.search(line)
+        if call_match:
+            callee = call_match.group(1)
+            if callee == "__chkstk":
+                continue
+            if not callee.startswith("$") and callee not in call_names:
+                call_names.append(callee)
+
+    return CODProcMetadata(stack_aliases=stack_aliases, call_names=tuple(call_names))
 
 
 def join_cod_entries(

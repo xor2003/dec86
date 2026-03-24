@@ -109,6 +109,11 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _max" in result.stdout
     assert "UnresolvableJumpTarget" not in result.stdout
+    assert "/* COD annotations:" in result.stdout
+    assert "[bp+0x4] = x" in result.stdout
+    assert "[bp+0x6] = y" in result.stdout
+    assert "unsigned short a1;  // [bp+0x4] x" in result.stdout
+    assert "unsigned short a2;  // [bp+0x6] y" in result.stdout
     assert "if (a1 > a2)" in result.stdout
     assert "return a1;" in result.stdout
     assert "return a2;" in result.stdout
@@ -207,6 +212,9 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _DrawRadarAlt" in result.stdout
     assert "int _DrawRadarAlt(void)" in result.stdout
+    assert "[bp-0xc] = newalt" in result.stdout
+    assert "[bp-0x8] = soffset" in result.stdout
+    assert "calls = _MapInEMSSprite, _TransRectCopy, _MDiv, _Rotate2D, _scaley, _DrawLine, _RectCopy" in result.stdout
     assert "if (!(*((short *)" in result.stdout
     assert "v2 = 0;" in result.stdout
     assert "v2 = 112;" in result.stdout
