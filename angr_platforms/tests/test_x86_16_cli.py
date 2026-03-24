@@ -364,7 +364,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _Ready5", "46", "18", "return"),
+            ("function: 0x1000 _Ready5", "0x7000", "28674", "28676", "46", "18", "return"),
             (),
         ),
         (
