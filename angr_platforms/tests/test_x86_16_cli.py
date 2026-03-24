@@ -109,7 +109,7 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _max" in result.stdout
     assert "UnresolvableJumpTarget" not in result.stdout
-    assert "a1 <= a2" in result.stdout
+    assert "if (a1 > a2)" in result.stdout
     assert "return a1;" in result.stdout
     assert "return a2;" in result.stdout
 
@@ -176,6 +176,16 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "sub_102f();" in result.stdout
 
 
+def test_decompile_cli_recovers_setdlc_state_store():
+    result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "CARR.COD", "_SetDLC")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 _SetDLC" in result.stdout
+    assert "int _SetDLC()" in result.stdout
+    assert "a1 >> 8" in result.stdout
+    assert "return a1;" in result.stdout
+
+
 @pytest.mark.parametrize(
     ("path", "proc_kind", "shape_tokens"),
     [
@@ -237,7 +247,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _max", "a1 <= a2", "return a1;", "return a2;"),
+            ("function: 0x1000 _max", "if (a1 > a2)", "return a1;", "return a2;"),
             ("UnresolvableJumpTarget",),
         ),
         (
@@ -319,6 +329,15 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             10,
             30,
             ("function: 0x1000 _SetGear", "350", "v14 = 73;", "v14 = 52;", "sub_102f();"),
+            (),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "CARR.COD",
+            "_SetDLC",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _SetDLC", "a1 >> 8", "return a1;"),
             (),
         ),
         (

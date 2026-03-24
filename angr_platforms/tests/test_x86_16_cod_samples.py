@@ -516,6 +516,110 @@ SHOW_SUMMARY_MATRIX_CASES = (
 )
 
 
+MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
+    MatrixBlockLiftCase(
+        name="isod_main_fold_values_args",
+        cod_name="ISOD.COD",
+        proc_name="_main",
+        proc_kind="NEAR",
+        start_offset=0x11D,
+        end_offset=0x127,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="isot_main_fold_values_args",
+        cod_name="ISOT.COD",
+        proc_name="_main",
+        proc_kind="NEAR",
+        start_offset=0xF6,
+        end_offset=0x100,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="isox_main_fold_values_args",
+        cod_name="ISOX.COD",
+        proc_name="_main",
+        proc_kind="NEAR",
+        start_offset=0xF6,
+        end_offset=0x100,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="imod_main_fold_values_args",
+        cod_name="IMOD.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x12D,
+        end_offset=0x137,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="imot_main_fold_values_args",
+        cod_name="IMOT.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x104,
+        end_offset=0x10E,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="imox_main_fold_values_args",
+        cod_name="IMOX.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x104,
+        end_offset=0x10E,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihod_main_fold_values_args",
+        cod_name="IHOD.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x139,
+        end_offset=0x143,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="ihot_main_fold_values_args",
+        cod_name="IHOT.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x10E,
+        end_offset=0x118,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilod_main_fold_values_args",
+        cod_name="ILOD.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x139,
+        end_offset=0x143,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+    MatrixBlockLiftCase(
+        name="ilot_main_fold_values_args",
+        cod_name="ILOT.COD",
+        proc_name="_main",
+        proc_kind="FAR",
+        start_offset=0x10E,
+        end_offset=0x118,
+        original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+    ),
+)
+
+
 def _project_from_bytes(code: bytes):
     return angr.Project(
         io.BytesIO(code),
@@ -702,6 +806,18 @@ def test_query_interrupt_int21_vector_block_lift_matrix(case: MatrixBlockLiftCas
 
 @pytest.mark.parametrize("case", SHOW_SUMMARY_MATRIX_CASES, ids=lambda case: case.name)
 def test_show_summary_block_lift_matrix(case: MatrixBlockLiftCase):
+    entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
+    code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
+    project = _project_from_bytes(code)
+    block = project.factory.block(0x1000)
+    irsb_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)
+
+
+@pytest.mark.parametrize("case", MAIN_FOLD_VALUES_ARG_MATRIX_CASES, ids=lambda case: case.name)
+def test_main_fold_values_arg_block_lift_matrix(case: MatrixBlockLiftCase):
     entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=_X16_SAMPLES_DIR, proc_kind=case.proc_kind)
     code = _join_entries(entries, start_offset=case.start_offset, end_offset=case.end_offset)
     project = _project_from_bytes(code)

@@ -26,6 +26,7 @@ The intent is practical:
 | `cod/f14/CARR.COD` | `_InBoxLng` | near | `254653` B | long compare chain, first branch from signed high-word compare | Good for 32-bit-style bounds logic even before full decompiled-C recovery. |
 | `cod/f14/CARR.COD` | `_SetHook` | near | `254653` B | `return 1;`, hook state store, `93` / `106` message branches | Good for small state-toggle logic with an early-return path. |
 | `cod/f14/CARR.COD` | `_SetGear` | near | `254653` B | guard threshold `350`, message branches `73` / `52` | Good for guarded state-update logic with multiple early-return branches. |
+| `cod/f14/CARR.COD` | `_SetDLC` | near | `254653` B | state store plus `return a1;` | Tiny state-write helper; good cheap oracle for direct global stores and return-value preservation. |
 | `angr_platforms/x16_samples/ICOMDO.COM` | `_start` | tiny `.COM` | n/a in this table | `get_dos_version(); print_dos_string(...); exit(0);` | Best user-facing tiny runtime sample. More about helper-call quality than arithmetic logic. |
 | `angr_platforms/x16_samples/ISOD.EXE` | `_start` | small-model `.EXE` | paired with `ISOD.COD` | named DOS helpers plus startup constants | Useful bridge from tiny examples to real startup code. Still noisier than the small `.COD` set. |
 
@@ -70,22 +71,22 @@ matrix variants. Today it is useful in two ways:
 ## `_main` Matrix
 
 These are the same source-level `main` wrapper across the 10 sample matrix
-variants. Today it is useful as a decompiled-C consistency ladder for call
-sequence stability and folded-byte/word value flow around the final
-`fold_values(...)` return path.
+variants. Today it is useful in two ways:
+- decompiled-C consistency for call-sequence stability
+- block-lift consistency for `fold_values(g_info.video_mode, g_info.bios_kb & 0xFF)` argument setup
 
 | Example | Proc Kind | File Size | Current Logic Anchor | Notes |
 | --- | --- | ---: | --- | --- |
-| `angr_platforms/x16_samples/ISOD.COD` | near | `8527` B | `_main`, helper calls, `& 0xff00 |`, final return call | Small model `/Od` baseline. |
-| `angr_platforms/x16_samples/ISOT.COD` | near | `7596` B | `_main`, helper calls, `& 0xff00 |`, final return call | Small model optimized variant. |
-| `angr_platforms/x16_samples/ISOX.COD` | near | `7596` B | `_main`, helper calls, `& 0xff00 |`, final return call | Small model alternate optimized build. |
-| `angr_platforms/x16_samples/IMOD.COD` | far | `8676` B | `_main`, helper calls, `& 0xff00 |`, final return call | Medium model baseline. |
-| `angr_platforms/x16_samples/IMOT.COD` | far | `7760` B | `_main`, helper calls, `& 0xff00 |`, final return call | Medium model optimized variant. |
-| `angr_platforms/x16_samples/IMOX.COD` | far | `7760` B | `_main`, helper calls, `& 0xff00 |`, final return call | Medium model alternate optimized build. |
-| `angr_platforms/x16_samples/IHOD.COD` | far | `9006` B | `_main`, helper calls, `& 0xff00 |`, final return call | Huge model baseline. |
-| `angr_platforms/x16_samples/IHOT.COD` | far | `8042` B | `_main`, helper calls, `& 0xff00 |`, final return call | Huge model optimized variant. |
-| `angr_platforms/x16_samples/ILOD.COD` | far | `9006` B | `_main`, helper calls, `& 0xff00 |`, final return call | Large model baseline. |
-| `angr_platforms/x16_samples/ILOT.COD` | far | `8042` B | `_main`, helper calls, `& 0xff00 |`, final return call | Large model optimized variant. |
+| `angr_platforms/x16_samples/ISOD.COD` | near | `8527` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Small model `/Od` baseline. |
+| `angr_platforms/x16_samples/ISOT.COD` | near | `7596` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Small model optimized variant. |
+| `angr_platforms/x16_samples/ISOX.COD` | near | `7596` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Small model alternate optimized build. |
+| `angr_platforms/x16_samples/IMOD.COD` | far | `8676` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Medium model baseline. |
+| `angr_platforms/x16_samples/IMOT.COD` | far | `7760` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Medium model optimized variant. |
+| `angr_platforms/x16_samples/IMOX.COD` | far | `7760` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Medium model alternate optimized build. |
+| `angr_platforms/x16_samples/IHOD.COD` | far | `9006` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Huge model baseline. |
+| `angr_platforms/x16_samples/IHOT.COD` | far | `8042` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Huge model optimized variant. |
+| `angr_platforms/x16_samples/ILOD.COD` | far | `9006` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Large model baseline. |
+| `angr_platforms/x16_samples/ILOT.COD` | far | `8042` B | `_main`, helper calls, `& 0xff00 |`, `fold_values` arg pushes | Large model optimized variant. |
 
 ## Current Use
 
@@ -97,6 +98,10 @@ sequence stability and folded-byte/word value flow around the final
   call-setup prefix, which is a cleaner oracle for near/far ABI differences.
 - The `_main` matrix is the current decompiled-C consistency ladder for helper
   call ordering and folded byte/word flow across the same 10 variants.
+- The `_main` matrix now also has a block-lift ladder for the final
+  `fold_values(g_info.video_mode, g_info.bios_kb & 0xFF)` argument setup, which
+  is a cleaner oracle for byte-to-word reconstruction plus stack argument
+  stores before the final call.
 - The `query_interrupts` setup prefix is now also locked across all 10 sample-matrix variants at block-lift level:
   - `ISOD`, `ISOT`, `ISOX`
   - `IMOD`, `IMOT`, `IMOX`
