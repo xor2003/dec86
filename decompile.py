@@ -234,6 +234,8 @@ def _decompile_function(
         changed = True
     if _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals):
         changed = True
+    if _simplify_structured_c_expressions(dec.codegen):
+        changed = True
     if _attach_cod_variable_names(dec.codegen, cod_metadata):
         changed = True
     if _attach_cod_callee_names(dec.codegen, cod_metadata):
@@ -533,7 +535,19 @@ def _match_ss_stack_reference(node, project: angr.Project):
 def _replace_c_children(node, transform) -> bool:
     changed = False
 
-    for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "iffalse", "iftrue", "callee_target", "else_node"):
+    for attr in (
+        "lhs",
+        "rhs",
+        "expr",
+        "operand",
+        "condition",
+        "cond",
+        "iffalse",
+        "iftrue",
+        "callee_target",
+        "else_node",
+        "retval",
+    ):
         if not hasattr(node, attr):
             continue
         try:
@@ -596,6 +610,62 @@ def _replace_c_children(node, transform) -> bool:
                 setattr(node, "condition_and_nodes", new_pairs)
                 changed = True
 
+    return changed
+
+
+def _same_c_expression(lhs, rhs) -> bool:
+    if type(lhs) is not type(rhs):
+        return False
+
+    if isinstance(lhs, structured_c.CConstant):
+        return lhs.value == rhs.value
+
+    if isinstance(lhs, structured_c.CVariable):
+        lvar = getattr(lhs, "variable", None)
+        rvar = getattr(rhs, "variable", None)
+        if type(lvar) is not type(rvar):
+            return False
+        if isinstance(lvar, SimRegisterVariable):
+            return getattr(lvar, "reg", None) == getattr(rvar, "reg", None)
+        if isinstance(lvar, SimStackVariable):
+            return (
+                getattr(lvar, "base", None) == getattr(rvar, "base", None)
+                and getattr(lvar, "offset", None) == getattr(rvar, "offset", None)
+                and getattr(lvar, "size", None) == getattr(rvar, "size", None)
+            )
+        if isinstance(lvar, SimMemoryVariable):
+            return (
+                getattr(lvar, "addr", None) == getattr(rvar, "addr", None)
+                and getattr(lvar, "size", None) == getattr(rvar, "size", None)
+            )
+        return lvar == rvar
+
+    return lhs is rhs
+
+
+def _simplify_structured_c_expressions(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    def transform(node):
+        if isinstance(node, structured_c.CBinaryOp) and node.op == "Sub":
+            if _same_c_expression(node.lhs, node.rhs):
+                type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None)
+                if type_ is not None:
+                    return structured_c.CConstant(0, type_, codegen=codegen)
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    else:
+        changed = False
+
+    if _replace_c_children(root, transform):
+        changed = True
     return changed
 
 
