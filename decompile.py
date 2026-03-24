@@ -48,6 +48,7 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
+from angr.sim_type import SimTypeShort
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -206,7 +207,7 @@ def _decompile_function(
     api_style: str,
     binary_path: Path | None = None,
     cod_metadata: CODProcMetadata | None = None,
-    synthetic_globals: dict[int, str] | None = None,
+    synthetic_globals: dict[int, tuple[str, int]] | None = None,
 ) -> tuple[str, str]:
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
@@ -226,6 +227,8 @@ def _decompile_function(
     if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
         changed = True
     if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
+        changed = True
+    if _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals):
         changed = True
     if _attach_cod_variable_names(dec.codegen, cod_metadata):
         changed = True
@@ -408,6 +411,19 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
     return changed
 
 
+def _synthetic_global_entry(
+    synthetic_globals: dict[int, tuple[str, int]] | None, addr: int
+) -> tuple[str, int] | None:
+    if not synthetic_globals:
+        return None
+    entry = synthetic_globals.get(addr)
+    if entry is None:
+        return None
+    if isinstance(entry, tuple):
+        return entry
+    return entry, 1
+
+
 def _sanitize_cod_identifier(name: str) -> str:
     name = name.lstrip("_")
     if name.startswith("$") and "_" in name:
@@ -541,7 +557,7 @@ def _replace_c_children(node, transform) -> bool:
     return changed
 
 
-def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: dict[int, str] | None) -> bool:
+def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None) -> bool:
     if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
         return False
 
@@ -549,7 +565,8 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
 
     def transform(node):
         seg_name, linear = _match_segmented_dereference(node, project)
-        if seg_name != "ds" or linear not in synthetic_globals:
+        symbol = _synthetic_global_entry(synthetic_globals, linear)
+        if seg_name != "ds" or symbol is None:
             return node
 
         type_ = getattr(node, "type", None)
@@ -563,7 +580,8 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
         if existing is not None:
             return existing
 
-        name = _sanitize_cod_identifier(synthetic_globals[linear])
+        name, _width = symbol
+        name = _sanitize_cod_identifier(name)
         cvar = structured_c.CVariable(
             SimMemoryVariable(linear, size, name=name, region=codegen.cfunc.addr),
             variable_type=type_,
@@ -583,6 +601,98 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
 
     if _replace_c_children(root, transform):
         changed = True
+    return changed
+
+
+def _global_memory_addr(node) -> int | None:
+    if not isinstance(node, structured_c.CVariable):
+        return None
+    variable = getattr(node, "variable", None)
+    if not isinstance(variable, SimMemoryVariable):
+        return None
+    addr = getattr(variable, "addr", None)
+    return addr if isinstance(addr, int) else None
+
+
+def _high_byte_store_addr(node, project: angr.Project) -> int | None:
+    seg_name, linear = _match_segmented_dereference(node, project)
+    if seg_name != "ds":
+        return None
+    return linear
+
+
+def _make_word_global(codegen, addr: int, name: str):
+    return structured_c.CVariable(
+        SimMemoryVariable(addr, 2, name=name, region=codegen.cfunc.addr),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+
+
+def _coalesce_cod_word_global_statements(
+    project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None
+) -> bool:
+    if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    def visit(node):
+        nonlocal changed
+
+        if isinstance(node, structured_c.CStatements):
+            new_statements = []
+            i = 0
+            while i < len(node.statements):
+                stmt = node.statements[i]
+
+                if (
+                    i + 1 < len(node.statements)
+                    and isinstance(stmt, structured_c.CAssignment)
+                    and isinstance(node.statements[i + 1], structured_c.CAssignment)
+                ):
+                    next_stmt = node.statements[i + 1]
+                    base_addr = _global_memory_addr(stmt.lhs)
+                    next_addr = _high_byte_store_addr(next_stmt.lhs, project)
+                    symbol = _synthetic_global_entry(synthetic_globals, base_addr) if base_addr is not None else None
+
+                    if base_addr is not None and next_addr == base_addr + 1 and symbol is not None:
+                        raw_name, width = symbol
+                        name = _sanitize_cod_identifier(raw_name)
+
+                        if isinstance(stmt.rhs, structured_c.CConstant) and isinstance(next_stmt.rhs, structured_c.CConstant):
+                            value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
+                            new_statements.append(
+                                structured_c.CAssignment(
+                                    _make_word_global(codegen, base_addr, name),
+                                    structured_c.CConstant(value, SimTypeShort(False), codegen=codegen),
+                                    codegen=codegen,
+                                )
+                            )
+                            changed = True
+                            i += 2
+                            continue
+
+                        if width >= 2:
+                            changed = True
+                            new_statements.append(stmt)
+                            i += 2
+                            continue
+
+                visit(stmt)
+                new_statements.append(stmt)
+                i += 1
+
+            if len(new_statements) != len(node.statements):
+                node.statements = new_statements
+
+        elif isinstance(node, structured_c.CIfElse):
+            for _, body in node.condition_and_nodes:
+                visit(body)
+            if node.else_node is not None:
+                visit(node.else_node)
+
+    visit(codegen.cfunc.statements)
     return changed
 
 
