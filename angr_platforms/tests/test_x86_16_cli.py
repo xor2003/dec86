@@ -180,6 +180,8 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _SetGear" in result.stdout
     assert "int _SetGear()" in result.stdout
+    assert "[bp+0x4] = G" in result.stdout
+    assert "unsigned short G;  // [bp+0x2] G" in result.stdout
     assert "350" in result.stdout
     assert "v14 = 73;" in result.stdout
     assert "v14 = 52;" in result.stdout
@@ -192,8 +194,10 @@ def test_decompile_cli_recovers_setdlc_state_store():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _SetDLC" in result.stdout
     assert "int _SetDLC()" in result.stdout
-    assert "a1 >> 8" in result.stdout
-    assert "return a1;" in result.stdout
+    assert "[bp+0x4] = DLC" in result.stdout
+    assert "unsigned short DLC;  // [bp+0x4] DLC" in result.stdout
+    assert "DLC >> 8" in result.stdout
+    assert "return DLC;" in result.stdout
 
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
@@ -202,6 +206,8 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _TIDShowRange" in result.stdout
     assert "int _TIDShowRange(void)" in result.stdout
+    assert "[bp-0xc] = mseg" in result.stdout
+    assert "char mseg;  // [bp-0xc] mseg" in result.stdout
     assert "146" in result.stdout
     assert "21" in result.stdout
     assert "29" in result.stdout
