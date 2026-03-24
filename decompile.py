@@ -38,7 +38,9 @@ from angr_platforms.X86_16.analysis_helpers import (
     render_dos_int21_call,
 )
 from angr_platforms.X86_16.cod_extract import (
+    CODProcMetadata,
     extract_cod_function_entries,
+    extract_cod_proc_metadata,
     extract_small_two_arg_cod_logic_bytes,
     extract_simple_cod_logic_bytes,
     infer_cod_logic_start,
@@ -196,7 +198,13 @@ def _interesting_functions(cfg, *, limit: int):
 
 
 def _decompile_function(
-    project: angr.Project, cfg, function, timeout: int, api_style: str, binary_path: Path | None = None
+    project: angr.Project,
+    cfg,
+    function,
+    timeout: int,
+    api_style: str,
+    binary_path: Path | None = None,
+    cod_metadata: CODProcMetadata | None = None,
 ) -> tuple[str, str]:
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
@@ -214,7 +222,8 @@ def _decompile_function(
         return "empty", "Decompiler did not produce code."
     if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
         dec.codegen.regenerate_text()
-    return "ok", _format_known_helper_calls(project, function, dec.codegen.text, api_style, binary_path)
+    formatted = _format_known_helper_calls(project, function, dec.codegen.text, api_style, binary_path)
+    return "ok", _annotate_cod_proc_output(formatted, cod_metadata)
 
 
 def _helper_name(project: angr.Project, addr: int) -> str | None:
@@ -365,6 +374,42 @@ def _simplify_x86_16_conditions(c_text: str) -> str:
     return "\n".join(_simplify_condition_line(line) for line in c_text.splitlines())
 
 
+def _format_bp_disp(disp: int) -> str:
+    if disp >= 0:
+        return f"[bp+0x{disp:x}]"
+    return f"[bp-0x{-disp:x}]"
+
+
+def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> str:
+    if metadata is None:
+        return c_text
+
+    lines: list[str] = []
+    for line in c_text.splitlines():
+        match = re.search(r"// \[bp([+-])0x([0-9a-f]+)\]", line)
+        if match:
+            disp = int(match.group(2), 16)
+            if match.group(1) == "-":
+                disp = -disp
+            alias = metadata.stack_aliases.get(disp)
+            if alias is not None and not line.rstrip().endswith(f" {alias}"):
+                line = f"{line} {alias}"
+        lines.append(line)
+
+    comments: list[str] = []
+    if metadata.stack_aliases or metadata.call_names:
+        comments.append("/* COD annotations:")
+        for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: (item[0] < 0, item[0])):
+            comments.append(f" * {_format_bp_disp(disp)} = {name}")
+        if metadata.call_names:
+            comments.append(f" * calls = {', '.join(metadata.call_names)}")
+        comments.append(" */")
+
+    if comments:
+        return "\n".join(comments) + "\n\n" + "\n".join(lines)
+    return "\n".join(lines)
+
+
 def _format_known_helper_calls(
     project: angr.Project, function, c_text: str, api_style: str, binary_path: Path | None
 ) -> str:
@@ -504,8 +549,10 @@ def main() -> int:
 
     print(f"loading: {args.binary}", flush=True)
     function_label = None
+    cod_metadata = None
     if args.proc is not None:
         entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
+        cod_metadata = extract_cod_proc_metadata(args.binary, args.proc, args.proc_kind)
         proc_code = extract_small_two_arg_cod_logic_bytes(entries)
         if proc_code is None:
             proc_code = extract_simple_cod_logic_bytes(entries)
@@ -566,7 +613,9 @@ def main() -> int:
             print(_format_first_block_asm(project, func.addr))
 
         print("decompiling...", flush=True)
-        status, payload = _decompile_function(project, cfg, func, args.timeout, args.api_style, args.binary)
+        status, payload = _decompile_function(
+            project, cfg, func, args.timeout, args.api_style, args.binary, cod_metadata=cod_metadata
+        )
         if status != "ok":
             print(f"\nDecompilation {status}: {payload}")
             print("\n== asm fallback ==")
