@@ -47,6 +47,7 @@ from angr_platforms.X86_16.cod_extract import (
     join_cod_entries_with_synthetic_globals,
 )
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -205,6 +206,7 @@ def _decompile_function(
     api_style: str,
     binary_path: Path | None = None,
     cod_metadata: CODProcMetadata | None = None,
+    synthetic_globals: dict[int, str] | None = None,
 ) -> tuple[str, str]:
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
@@ -222,6 +224,8 @@ def _decompile_function(
         return "empty", "Decompiler did not produce code."
     changed = False
     if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
+        changed = True
+    if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
         changed = True
     if _attach_cod_variable_names(dec.codegen, cod_metadata):
         changed = True
@@ -401,6 +405,184 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
             unified.name = alias
             changed = True
 
+    return changed
+
+
+def _sanitize_cod_identifier(name: str) -> str:
+    name = name.lstrip("_")
+    if name.startswith("$") and "_" in name:
+        name = name.rsplit("_", 1)[-1]
+    name = re.sub(r"[^0-9A-Za-z_]", "_", name)
+    if not name:
+        return "data"
+    if name[0].isdigit():
+        return f"g_{name}"
+    return name
+
+
+def _structured_codegen_node(value) -> bool:
+    return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
+
+
+def _c_constant_value(node) -> int | None:
+    if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
+        return node.value
+    return None
+
+
+def _segment_reg_name(node, project: angr.Project) -> str | None:
+    if not isinstance(node, structured_c.CVariable):
+        return None
+    variable = getattr(node, "variable", None)
+    if not isinstance(variable, SimRegisterVariable):
+        return None
+    return project.arch.register_names.get(variable.reg)
+
+
+def _match_real_mode_linear_expr(node, project: angr.Project) -> tuple[str | None, int | None]:
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
+        return None, None
+
+    pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+    for maybe_mul, maybe_const in pairs:
+        linear = _c_constant_value(maybe_const)
+        if linear is None:
+            continue
+        if not isinstance(maybe_mul, structured_c.CBinaryOp) or maybe_mul.op != "Mul":
+            continue
+
+        mul_pairs = ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs))
+        for maybe_seg, maybe_scale in mul_pairs:
+            scale = _c_constant_value(maybe_scale)
+            if scale != 16:
+                continue
+            seg_name = _segment_reg_name(maybe_seg, project)
+            if seg_name is not None:
+                return seg_name, linear
+
+    return None, None
+
+
+def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | None, int | None]:
+    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        return None, None
+    operand = node.operand
+    if isinstance(operand, structured_c.CTypeCast):
+        operand = operand.expr
+    return _match_real_mode_linear_expr(operand, project)
+
+
+def _replace_c_children(node, transform) -> bool:
+    changed = False
+
+    for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "iffalse", "iftrue", "callee_target", "else_node"):
+        if not hasattr(node, attr):
+            continue
+        try:
+            value = getattr(node, attr)
+        except Exception:
+            continue
+        if _structured_codegen_node(value):
+            new_value = transform(value)
+            if new_value is not value:
+                setattr(node, attr, new_value)
+                changed = True
+                value = new_value
+            if _replace_c_children(value, transform):
+                changed = True
+
+    for attr in ("args", "operands", "statements"):
+        if not hasattr(node, attr):
+            continue
+        try:
+            items = getattr(node, attr)
+        except Exception:
+            continue
+        if not items:
+            continue
+        new_items = []
+        list_changed = False
+        for item in items:
+            if _structured_codegen_node(item):
+                new_item = transform(item)
+                if new_item is not item:
+                    list_changed = True
+                if _replace_c_children(new_item, transform):
+                    changed = True
+                new_items.append(new_item)
+            else:
+                new_items.append(item)
+        if list_changed:
+            setattr(node, attr, new_items)
+            changed = True
+
+    if hasattr(node, "condition_and_nodes"):
+        try:
+            pairs = getattr(node, "condition_and_nodes")
+        except Exception:
+            pairs = None
+        if pairs:
+            new_pairs = []
+            pair_changed = False
+            for cond, body in pairs:
+                new_cond = transform(cond) if _structured_codegen_node(cond) else cond
+                new_body = transform(body) if _structured_codegen_node(body) else body
+                if new_cond is not cond or new_body is not body:
+                    pair_changed = True
+                if _structured_codegen_node(new_cond) and _replace_c_children(new_cond, transform):
+                    changed = True
+                if _structured_codegen_node(new_body) and _replace_c_children(new_body, transform):
+                    changed = True
+                new_pairs.append((new_cond, new_body))
+            if pair_changed:
+                setattr(node, "condition_and_nodes", new_pairs)
+                changed = True
+
+    return changed
+
+
+def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: dict[int, str] | None) -> bool:
+    if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
+        return False
+
+    created: dict[tuple[int, int], structured_c.CVariable] = {}
+
+    def transform(node):
+        seg_name, linear = _match_segmented_dereference(node, project)
+        if seg_name != "ds" or linear not in synthetic_globals:
+            return node
+
+        type_ = getattr(node, "type", None)
+        if type_ is None:
+            return node
+
+        bits = getattr(type_, "size", None)
+        size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+        key = (linear, size)
+        existing = created.get(key)
+        if existing is not None:
+            return existing
+
+        name = _sanitize_cod_identifier(synthetic_globals[linear])
+        cvar = structured_c.CVariable(
+            SimMemoryVariable(linear, size, name=name, region=codegen.cfunc.addr),
+            variable_type=type_,
+            codegen=codegen,
+        )
+        created[key] = cvar
+        return cvar
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    else:
+        changed = False
+
+    if _replace_c_children(root, transform):
+        changed = True
     return changed
 
 
@@ -667,6 +849,7 @@ def main() -> int:
     print(f"loading: {args.binary}", flush=True)
     function_label = None
     cod_metadata = None
+    synthetic_globals = None
     if args.proc is not None:
         entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
         cod_metadata = extract_cod_proc_metadata(args.binary, args.proc, args.proc_kind)
@@ -675,9 +858,9 @@ def main() -> int:
             selected_entries = extract_simple_cod_logic_entries(entries)
         if selected_entries is None:
             logic_start = infer_cod_logic_start(entries)
-            proc_code, _synthetic_globals = join_cod_entries_with_synthetic_globals(entries, start_offset=logic_start)
+            proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(entries, start_offset=logic_start)
         else:
-            proc_code, _synthetic_globals = join_cod_entries_with_synthetic_globals(selected_entries)
+            proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(selected_entries)
         project = _build_project_from_bytes(
             proc_code,
             base_addr=args.base_addr,
@@ -733,7 +916,14 @@ def main() -> int:
 
         print("decompiling...", flush=True)
         status, payload = _decompile_function(
-            project, cfg, func, args.timeout, args.api_style, args.binary, cod_metadata=cod_metadata
+            project,
+            cfg,
+            func,
+            args.timeout,
+            args.api_style,
+            args.binary,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
         )
         if status != "ok":
             print(f"\nDecompilation {status}: {payload}")
