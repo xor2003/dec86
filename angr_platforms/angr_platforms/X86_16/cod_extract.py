@@ -114,6 +114,81 @@ def join_cod_entries(
     )
 
 
+def join_cod_entries_with_synthetic_globals(
+    entries: list[dict[str, object]],
+    *,
+    start_offset: int | None = None,
+    end_offset: int | None = None,
+    symbol_base: int = 0x7000,
+) -> tuple[bytes, dict[int, str]]:
+    global_re = re.compile(r"\b(?:BYTE|WORD|DWORD)\s+PTR\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
+    size_re = re.compile(r"\b(BYTE|WORD|DWORD)\s+PTR\b", re.IGNORECASE)
+
+    symbol_addrs: dict[str, int] = {}
+    addr_to_name: dict[int, str] = {}
+    next_addr = symbol_base
+    patched_chunks: list[bytes] = []
+
+    for entry in entries:
+        offset = int(entry["offset"])
+        if start_offset is not None and offset < start_offset:
+            continue
+        if end_offset is not None and offset >= end_offset:
+            continue
+
+        chunk = bytearray(entry["bytes"])
+        text = str(entry.get("text", ""))
+        patched = False
+
+        global_match = global_re.search(text)
+        size_match = size_re.search(text)
+        if global_match is not None and size_match is not None:
+            symbol = global_match.group(1)
+            width_name = size_match.group(1).upper()
+            width = {"BYTE": 1, "WORD": 2, "DWORD": 4}[width_name]
+
+            if symbol not in symbol_addrs:
+                align = min(width, 2)
+                if next_addr % align:
+                    next_addr += align - (next_addr % align)
+                symbol_addrs[symbol] = next_addr
+                addr_to_name[next_addr] = symbol
+                next_addr += width
+
+            target_addr = symbol_addrs[symbol]
+
+            prefix_len = 0
+            while prefix_len < len(chunk) and chunk[prefix_len] in {
+                0x26,
+                0x2E,
+                0x36,
+                0x3E,
+                0x64,
+                0x65,
+                0x66,
+                0x67,
+                0xF2,
+                0xF3,
+            }:
+                prefix_len += 1
+
+            if prefix_len < len(chunk):
+                opcode = chunk[prefix_len]
+
+                if opcode in {0xA0, 0xA1, 0xA2, 0xA3} and prefix_len + 2 < len(chunk):
+                    chunk[prefix_len + 1 : prefix_len + 3] = target_addr.to_bytes(2, "little")
+                    patched = True
+                elif prefix_len + 3 < len(chunk):
+                    modrm = chunk[prefix_len + 1]
+                    if ((modrm >> 6) & 0x3) == 0 and (modrm & 0x7) == 0x6:
+                        chunk[prefix_len + 2 : prefix_len + 4] = target_addr.to_bytes(2, "little")
+                        patched = True
+
+        patched_chunks.append(bytes(chunk) if patched else entry["bytes"])
+
+    return b"".join(patched_chunks), addr_to_name
+
+
 def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
     """
     For small MSC-style procedures extracted from .COD, skip a leading
@@ -130,7 +205,7 @@ def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
     return None
 
 
-def extract_simple_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | None:
+def extract_simple_cod_logic_entries(entries: list[dict[str, object]]) -> list[dict[str, object]] | None:
     """
     Normalize simple MSC-style framed procedures for decompilation.
 
@@ -173,10 +248,17 @@ def extract_simple_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | 
     if not saw_ret:
         return None
 
-    return b"".join(entry["bytes"] for entry in body_entries)
+    return body_entries
 
 
-def extract_small_two_arg_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | None:
+def extract_simple_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | None:
+    selected = extract_simple_cod_logic_entries(entries)
+    if selected is None:
+        return None
+    return b"".join(entry["bytes"] for entry in selected)
+
+
+def extract_small_two_arg_cod_logic_entries(entries: list[dict[str, object]]) -> list[dict[str, object]] | None:
     """
     Normalize tiny ``bp``-framed two-argument helpers.
 
@@ -224,4 +306,11 @@ def extract_small_two_arg_cod_logic_bytes(entries: list[dict[str, object]]) -> b
         return None
     if arg_disps - {4, 6}:
         return None
-    return b"".join(entry["bytes"] for entry in body_entries)
+    return body_entries
+
+
+def extract_small_two_arg_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | None:
+    selected = extract_small_two_arg_cod_logic_entries(entries)
+    if selected is None:
+        return None
+    return b"".join(entry["bytes"] for entry in selected)
