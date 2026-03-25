@@ -660,6 +660,14 @@ try:
         return project.arch.register_names.get(variable.reg)
 
     def _match_real_mode_linear_expr_8616(node, project) -> tuple[str | None, int | None]:
+        if isinstance(node, CBinaryOp) and node.op == "Mul":
+            for maybe_seg, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+                if _c_constant_value_8616(maybe_scale) != 16:
+                    continue
+                seg_name = _segment_reg_name_8616(maybe_seg, project)
+                if seg_name is not None:
+                    return seg_name, 0
+
         if not isinstance(node, CBinaryOp) or node.op != "Add":
             return None, None
 
@@ -843,6 +851,38 @@ try:
             codegen=codegen,
         )
 
+    def _same_c_expression_8616(lhs, rhs) -> bool:
+        if type(lhs) is not type(rhs):
+            return False
+        if isinstance(lhs, CConstant):
+            return lhs.value == rhs.value
+        if isinstance(lhs, CVariable):
+            lvar = getattr(lhs, "variable", None)
+            rvar = getattr(rhs, "variable", None)
+            if type(lvar) is not type(rvar):
+                return False
+            if isinstance(lvar, SimRegisterVariable):
+                return getattr(lvar, "reg", None) == getattr(rvar, "reg", None)
+            if isinstance(lvar, SimStackVariable):
+                return (
+                    getattr(lvar, "base", None) == getattr(rvar, "base", None)
+                    and getattr(lvar, "offset", None) == getattr(rvar, "offset", None)
+                    and getattr(lvar, "size", None) == getattr(rvar, "size", None)
+                )
+            if isinstance(lvar, SimMemoryVariable):
+                return (
+                    getattr(lvar, "addr", None) == getattr(rvar, "addr", None)
+                    and getattr(lvar, "size", None) == getattr(rvar, "size", None)
+                )
+        return lhs is rhs
+
+    def _is_shifted_high_byte_8616(high_expr, low_expr) -> bool:
+        if not isinstance(high_expr, CBinaryOp) or high_expr.op != "Shr":
+            return False
+        if _c_constant_value_8616(high_expr.rhs) != 8:
+            return False
+        return _same_c_expression_8616(high_expr.lhs, low_expr)
+
     def _coalesce_word_global_loads_8616(project, codegen) -> set[int]:
         if getattr(codegen, "cfunc", None) is None:
             return set()
@@ -907,24 +947,35 @@ try:
                         i + 1 < len(node.statements)
                         and isinstance(stmt, CAssignment)
                         and isinstance(node.statements[i + 1], CAssignment)
-                        and isinstance(stmt.rhs, CConstant)
-                        and isinstance(node.statements[i + 1].rhs, CConstant)
                     ):
                         next_stmt = node.statements[i + 1]
                         base_addr = lhs_addr(stmt.lhs)
                         next_addr = lhs_addr(next_stmt.lhs)
                         if base_addr is not None and next_addr == base_addr + 1:
-                            value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
-                            new_statements.append(
-                                CAssignment(
-                                    _make_word_global_8616(codegen, base_addr),
-                                    CConstant(value, SimTypeShort(False), codegen=codegen),
-                                    codegen=codegen,
+                            if isinstance(stmt.rhs, CConstant) and isinstance(next_stmt.rhs, CConstant):
+                                value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
+                                new_statements.append(
+                                    CAssignment(
+                                        _make_word_global_8616(codegen, base_addr),
+                                        CConstant(value, SimTypeShort(False), codegen=codegen),
+                                        codegen=codegen,
+                                    )
                                 )
-                            )
-                            changed_addrs.add(base_addr)
-                            i += 2
-                            continue
+                                changed_addrs.add(base_addr)
+                                i += 2
+                                continue
+
+                            if _is_shifted_high_byte_8616(next_stmt.rhs, stmt.rhs):
+                                new_statements.append(
+                                    CAssignment(
+                                        _make_word_global_8616(codegen, base_addr),
+                                        stmt.rhs,
+                                        codegen=codegen,
+                                    )
+                                )
+                                changed_addrs.add(base_addr)
+                                i += 2
+                                continue
 
                     visit(stmt)
                     new_statements.append(stmt)
