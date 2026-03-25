@@ -1109,6 +1109,133 @@ try:
             changed = True
         return changed
 
+    def _bool_cite_values_8616(node):
+        if not isinstance(node, CITE):
+            return None
+        iftrue = _c_constant_value_8616(node.iftrue)
+        iffalse = _c_constant_value_8616(node.iffalse)
+        if iftrue in (0, 1) and iffalse in (0, 1):
+            return iftrue, iffalse
+        return None
+
+    def _extract_bool_compare_term_8616(node):
+        negated = False
+        if isinstance(node, CUnaryOp) and node.op == "Not":
+            negated = True
+            node = node.operand
+        if not isinstance(node, CITE):
+            return None
+        values = _bool_cite_values_8616(node)
+        if values is None:
+            return None
+        if values == (1, 0):
+            effective_negated = negated
+        elif values == (0, 1):
+            effective_negated = not negated
+        else:
+            return None
+        compare = node.cond
+        if not isinstance(compare, CBinaryOp):
+            return None
+        if compare.op not in {"CmpGT", "CmpGE", "CmpLT", "CmpLE"}:
+            return None
+        return compare, effective_negated, node
+
+    def _make_bool_cite_8616(template: CITE, negated: bool, codegen):
+        values = _bool_cite_values_8616(template)
+        if values is None:
+            return template
+        zero = CConstant(0, getattr(template.iftrue, "type", None) or template.type, codegen=codegen)
+        one = CConstant(1, getattr(template.iftrue, "type", None) or template.type, codegen=codegen)
+        if negated:
+            return CITE(template.cond, zero, one, tags=getattr(template, "tags", None), codegen=codegen)
+        return CITE(template.cond, one, zero, tags=getattr(template, "tags", None), codegen=codegen)
+
+    def _invert_cmp_op_8616(op: str) -> str | None:
+        return {
+            "CmpGT": "CmpLE",
+            "CmpGE": "CmpLT",
+            "CmpLT": "CmpGE",
+            "CmpLE": "CmpGT",
+        }.get(op)
+
+    def _make_bool_expr_from_compare_8616(compare: CBinaryOp, negated: bool, codegen):
+        if negated:
+            inverted = _invert_cmp_op_8616(compare.op)
+            if inverted is not None:
+                return CBinaryOp(
+                    inverted,
+                    compare.lhs,
+                    compare.rhs,
+                    codegen=codegen,
+                    tags=getattr(compare, "tags", None),
+                )
+        return CBinaryOp(
+            compare.op,
+            compare.lhs,
+            compare.rhs,
+            codegen=codegen,
+            tags=getattr(compare, "tags", None),
+        )
+
+    def _fix_impossible_interval_guard_expr_8616(node, codegen):
+        if not isinstance(node, CBinaryOp) or node.op != "LogicalAnd":
+            return node
+        left_info = _extract_bool_compare_term_8616(node.lhs)
+        right_info = _extract_bool_compare_term_8616(node.rhs)
+        if left_info is None or right_info is None:
+            return node
+        left_cmp, left_negated, left_template = left_info
+        right_cmp, right_negated, right_template = right_info
+        if not _same_c_expression_8616(left_cmp.rhs, right_cmp.rhs):
+            return node
+
+        low_ops = {"CmpGT", "CmpGE"}
+        high_ops = {"CmpLT", "CmpLE"}
+
+        if left_cmp.op in low_ops and right_cmp.op in high_ops and not left_negated and not right_negated:
+            return CBinaryOp(
+                "LogicalAnd",
+                _make_bool_expr_from_compare_8616(left_cmp, True, codegen),
+                _make_bool_expr_from_compare_8616(right_cmp, True, codegen),
+                codegen=codegen,
+                tags=getattr(node, "tags", None),
+            )
+
+        if left_cmp.op in low_ops and right_cmp.op == "CmpGE" and not left_negated and right_negated:
+            return CBinaryOp(
+                "LogicalAnd",
+                _make_bool_expr_from_compare_8616(left_cmp, True, codegen),
+                _make_bool_expr_from_compare_8616(right_cmp, False, codegen),
+                codegen=codegen,
+                tags=getattr(node, "tags", None),
+            )
+
+        return node
+
+    def _fix_interval_guard_conditions_8616(codegen) -> bool:
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+
+        def transform(node):
+            fixed = _fix_impossible_interval_guard_expr_8616(node, codegen)
+            if fixed is not node:
+                return fixed
+            return node
+
+        root = codegen.cfunc.statements
+        new_root = transform(root)
+        if new_root is not root:
+            codegen.cfunc.statements = new_root
+            root = new_root
+            changed = True
+        else:
+            changed = False
+
+        if _replace_c_children_8616(root, transform):
+            changed = True
+        return changed
+
     def _postprocess_codegen_8616(project, codegen) -> bool:
         if getattr(codegen, "cfunc", None) is None:
             return False
@@ -1123,6 +1250,8 @@ try:
         if _prune_unused_unnamed_memory_declarations_8616(codegen):
             changed = True
         if _simplify_structured_expressions_8616(codegen):
+            changed = True
+        if _fix_interval_guard_conditions_8616(codegen):
             changed = True
         return changed
 
