@@ -90,6 +90,15 @@ class Eflags:
     def _mask_shift_count(self, count):
         return self._count8(count) & self.constant(0x1F, Type.int_8)
 
+    @staticmethod
+    def _const_u8_value(v):
+        if isinstance(v, int):
+            return v & 0xFF
+        try:
+            return v.value & 0xFF
+        except (AttributeError, ValueError):
+            return None
+
     def _ite(self, cond, when_true, when_false):
         cond = self.constant(cond, Type.int_1) if isinstance(cond, int) else cond.cast_to(Type.int_1)
         expr = self.lifter_instruction.irsb_c.ite(
@@ -287,6 +296,19 @@ class Eflags:
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_shl(self, v, c):
+        const_count = self._const_u8_value(c)
+        if const_count == 1:
+            flags = self.get_gpreg(reg16_t.FLAGS)
+            result = v << self.constant(1, Type.int_8)
+            cf = v[v.width - 1].cast_to(Type.int_1)
+            flags = self.set_carry(flags, cf)
+            flags = self.set_parity(flags, self.chk_parity(result))
+            flags = self.set_flag(flags, 4, self.constant(0, Type.int_1))
+            flags = self.set_zero(flags, (result == 0).cast_to(Type.int_1))
+            flags = self.set_sign(flags, result[v.width - 1].cast_to(Type.int_1))
+            flags = self.set_overflow(flags, (result[v.width - 1].cast_to(Type.int_1) ^ cf).cast_to(Type.int_1))
+            self.set_gpreg(reg16_t.FLAGS, flags)
+            return
         c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v.width
@@ -348,6 +370,18 @@ class Eflags:
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_shr(self, v, c):
+        const_count = self._const_u8_value(c)
+        if const_count == 1:
+            flags = self.get_gpreg(reg16_t.FLAGS)
+            result = v >> self.constant(1, Type.int_8)
+            flags = self.set_carry(flags, v[0].cast_to(Type.int_1))
+            flags = self.set_parity(flags, self.chk_parity(result))
+            flags = self.set_flag(flags, 4, self.constant(1, Type.int_1))
+            flags = self.set_zero(flags, (result == 0).cast_to(Type.int_1))
+            flags = self.set_sign(flags, result[v.width - 1].cast_to(Type.int_1))
+            flags = self.set_overflow(flags, v[v.width - 1].cast_to(Type.int_1))
+            self.set_gpreg(reg16_t.FLAGS, flags)
+            return
         c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v.width
@@ -373,6 +407,18 @@ class Eflags:
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_sar(self, v, c):
+        const_count = self._const_u8_value(c)
+        if const_count == 1:
+            flags = self.get_gpreg(reg16_t.FLAGS)
+            result = v.sar(self.constant(1, Type.int_8))
+            flags = self.set_carry(flags, v[0].cast_to(Type.int_1))
+            flags = self.set_parity(flags, self.chk_parity(result))
+            flags = self.set_flag(flags, 4, self.constant(1, Type.int_1))
+            flags = self.set_zero(flags, (result == 0).cast_to(Type.int_1))
+            flags = self.set_sign(flags, result[v.width - 1].cast_to(Type.int_1))
+            flags = self.set_overflow(flags, self.constant(0, Type.int_1))
+            self.set_gpreg(reg16_t.FLAGS, flags)
+            return
         c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v.width

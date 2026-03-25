@@ -24,6 +24,7 @@ ILOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOD.COD"
 ILOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOT.COD"
 IMOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOT.COD"
 IMOX_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOX.COD"
+SNAKE_EXE = REPO_ROOT / "examples" / "snake.EXE"
 
 
 def _run_decompile_proc(
@@ -264,6 +265,26 @@ def test_decompile_cli_recovers_setdlc_state_store():
     assert "DirectLiftControl = DLC;" in result.stdout
     assert "DLC >> 8" not in result.stdout
     assert "return DLC;" in result.stdout
+
+
+def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to_asm():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x13b2"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x13b2 sub_13b2" in result.stdout
+    assert "Decompilation empty" not in result.stdout
+    assert "== asm fallback ==" not in result.stdout
+    assert "unsigned short sub_13b2(void)" in result.stdout
+    assert "while (true)" in result.stdout
+    assert "v20 = v16 + v19;" in result.stdout
+    assert "v20 = v20 & 0xff00 | *((char *)(v26 * 16 + 0 + v25));" in result.stdout
 
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():

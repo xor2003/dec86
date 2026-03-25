@@ -221,6 +221,7 @@ try:
         _typehoon_lifter.TypeLifter._lift_SimTypePointer = _lift_simtype_pointer_16
 
     _orig_clinic_make_function_prototype = Clinic._make_function_prototype
+    _orig_clinic_simplify_function = Clinic._simplify_function
 
     def _simtype_for_stack_size(size):
         if size == 1:
@@ -372,6 +373,44 @@ try:
         return _orig_clinic_make_function_prototype(self, arg_list, variable_kb)
 
     Clinic._make_function_prototype = _make_function_prototype_8616
+
+    def _simplify_function_8616(
+        self,
+        ail_graph,
+        remove_dead_memdefs=False,
+        stack_arg_offsets=None,
+        unify_variables=False,
+        narrow_expressions=False,
+        only_consts=False,
+        fold_callexprs_into_conditions=False,
+        rewrite_ccalls=True,
+        rename_ccalls=True,
+        removed_vvar_ids=None,
+        arg_vvars=None,
+        preserve_vvar_ids=None,
+        max_iterations=None,
+    ):
+        cap = max_iterations if max_iterations is not None else self._simplification_max_iterations
+        for idx in range(cap):
+            simplified = self._simplify_function_once(
+                ail_graph,
+                remove_dead_memdefs=remove_dead_memdefs,
+                unify_variables=unify_variables,
+                stack_arg_offsets=stack_arg_offsets,
+                narrow_expressions=narrow_expressions and idx == 0,
+                only_consts=only_consts,
+                fold_callexprs_into_conditions=fold_callexprs_into_conditions,
+                rewrite_ccalls=rewrite_ccalls,
+                rename_ccalls=rename_ccalls,
+                removed_vvar_ids=removed_vvar_ids,
+                arg_vvars=arg_vvars,
+                preserve_vvar_ids=preserve_vvar_ids,
+            )
+            if not simplified:
+                break
+
+    if getattr(Clinic._simplify_function, "__name__", "") != "_simplify_function_8616":
+        Clinic._simplify_function = _simplify_function_8616
 
     _orig_cite_c_repr_chunks = CITE.c_repr_chunks
     _orig_cunaryop_c_repr_chunks_not = CUnaryOp._c_repr_chunks_not
@@ -1090,6 +1129,39 @@ try:
             return False
 
         def transform(node):
+            if (
+                isinstance(node, CBinaryOp)
+                and node.op in {"LogicalAnd", "LogicalOr"}
+                and _same_c_expression_8616(node.lhs, node.rhs)
+            ):
+                return node.lhs
+            if isinstance(node, CBinaryOp) and node.op in {"CmpEQ", "CmpNE"}:
+                if isinstance(node.rhs, CConstant) and node.rhs.value == 0:
+                    if (
+                        isinstance(node.lhs, CBinaryOp)
+                        and node.lhs.op == "Sub"
+                        and isinstance(node.lhs.rhs, CConstant)
+                    ):
+                        return CBinaryOp(
+                            node.op,
+                            node.lhs.lhs,
+                            node.lhs.rhs,
+                            codegen=codegen,
+                            tags=getattr(node, "tags", None),
+                        )
+                if isinstance(node.lhs, CConstant) and node.lhs.value == 0:
+                    if (
+                        isinstance(node.rhs, CBinaryOp)
+                        and node.rhs.op == "Sub"
+                        and isinstance(node.rhs.rhs, CConstant)
+                    ):
+                        return CBinaryOp(
+                            node.op,
+                            node.rhs.lhs,
+                            node.rhs.rhs,
+                            codegen=codegen,
+                            tags=getattr(node, "tags", None),
+                        )
             if isinstance(node, CBinaryOp) and node.op == "Sub" and _same_c_expression_8616(node.lhs, node.rhs):
                 type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None)
                 if type_ is not None:
@@ -1105,6 +1177,179 @@ try:
         else:
             changed = False
 
+        if _replace_c_children_8616(root, transform):
+            changed = True
+        return changed
+
+    def _extract_flag_test_info_8616(node):
+        invert = False
+        while True:
+            if isinstance(node, CUnaryOp) and node.op == "Not":
+                invert = not invert
+                node = node.operand
+                continue
+            if isinstance(node, CITE):
+                values = _bool_cite_values_8616(node)
+                if values == (1, 0):
+                    node = node.cond
+                    continue
+                if values == (0, 1):
+                    invert = not invert
+                    node = node.cond
+                    continue
+            break
+
+        if not isinstance(node, CBinaryOp) or node.op not in {"CmpEQ", "CmpNE"}:
+            return None
+
+        lhs = node.lhs
+        rhs = node.rhs
+        zero = None
+        masked = None
+        if isinstance(lhs, CBinaryOp) and lhs.op == "And" and isinstance(rhs, CConstant) and rhs.value == 0:
+            masked = lhs
+            zero = rhs
+        elif isinstance(rhs, CBinaryOp) and rhs.op == "And" and isinstance(lhs, CConstant) and lhs.value == 0:
+            masked = rhs
+            zero = lhs
+        if masked is None or zero is None:
+            return None
+
+        mask_lhs = masked.lhs
+        mask_rhs = masked.rhs
+        if isinstance(mask_lhs, CConstant) and isinstance(mask_lhs.value, int) and isinstance(mask_rhs, CVariable):
+            bit = mask_lhs.value
+            var = mask_rhs
+        elif isinstance(mask_rhs, CConstant) and isinstance(mask_rhs.value, int) and isinstance(mask_lhs, CVariable):
+            bit = mask_rhs.value
+            var = mask_lhs
+        else:
+            return None
+
+        predicate_negated = invert
+        if node.op == "CmpEQ":
+            predicate_negated = not predicate_negated
+        return var, bit, predicate_negated
+
+    def _extract_flag_predicate_from_expr_8616(node, bit: int):
+        if isinstance(node, CBinaryOp):
+            if node.op == "Mul":
+                if isinstance(node.lhs, CConstant) and node.lhs.value == bit:
+                    return node.rhs
+                if isinstance(node.rhs, CConstant) and node.rhs.value == bit:
+                    return node.lhs
+            if node.op in {"Or", "And"}:
+                lhs = _extract_flag_predicate_from_expr_8616(node.lhs, bit)
+                if lhs is not None:
+                    return lhs
+                rhs = _extract_flag_predicate_from_expr_8616(node.rhs, bit)
+                if rhs is not None:
+                    return rhs
+        return None
+
+    def _c_expr_uses_var_8616(node, target) -> bool:
+        if node is None:
+            return False
+        if isinstance(node, CVariable):
+            return _same_c_expression_8616(node, target)
+        for attr in (
+            "lhs",
+            "rhs",
+            "operand",
+            "cond",
+            "iftrue",
+            "iffalse",
+            "expr",
+            "condition",
+            "else_node",
+        ):
+            child = getattr(node, attr, None)
+            if hasattr(child, "__class__") and child.__class__.__name__.startswith("C"):
+                if _c_expr_uses_var_8616(child, target):
+                    return True
+        for attr in ("statements", "operands", "condition_and_nodes"):
+            child = getattr(node, attr, None)
+            if isinstance(child, list):
+                for item in child:
+                    if isinstance(item, tuple):
+                        for sub in item:
+                            if hasattr(sub, "__class__") and sub.__class__.__name__.startswith("C"):
+                                if _c_expr_uses_var_8616(sub, target):
+                                    return True
+                    elif hasattr(item, "__class__") and item.__class__.__name__.startswith("C"):
+                        if _c_expr_uses_var_8616(item, target):
+                            return True
+        return False
+
+    def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+
+        changed = False
+
+        def _last_assignment_in_stmt(stmt):
+            if isinstance(stmt, CAssignment):
+                return stmt, None
+            if isinstance(stmt, CStatements) and stmt.statements:
+                last = stmt.statements[-1]
+                if isinstance(last, CAssignment):
+                    return last, stmt
+            return None, None
+
+        def transform(node):
+            nonlocal changed
+            if not isinstance(node, CStatements):
+                return node
+
+            new_statements = []
+            statements = list(node.statements)
+            i = 0
+            while i < len(statements):
+                stmt = statements[i]
+                next_stmt = statements[i + 1] if i + 1 < len(statements) else None
+
+                matched = False
+                assign_stmt, assign_container = _last_assignment_in_stmt(stmt)
+                if (
+                    isinstance(assign_stmt, CAssignment)
+                    and isinstance(assign_stmt.lhs, CVariable)
+                    and type(next_stmt).__name__ == "CIfElse"
+                ):
+                    cond_nodes = getattr(next_stmt, "condition_and_nodes", None)
+                    if isinstance(cond_nodes, list) and cond_nodes:
+                        cond, _body = cond_nodes[0]
+                        info = _extract_flag_test_info_8616(cond)
+                        if info is not None:
+                            flag_var, bit, negate_predicate = info
+                            if _same_c_expression_8616(assign_stmt.lhs, flag_var):
+                                predicate = _extract_flag_predicate_from_expr_8616(assign_stmt.rhs, bit)
+                                if predicate is not None:
+                                    new_cond = (
+                                        CUnaryOp("Not", predicate, codegen=codegen)
+                                        if negate_predicate
+                                        else predicate
+                                    )
+                                    cond_nodes[0] = (new_cond, cond_nodes[0][1])
+                                    changed = True
+                                    later_uses = any(
+                                        _c_expr_uses_var_8616(rest, assign_stmt.lhs) for rest in statements[i + 1 :]
+                                    )
+                                    if not later_uses:
+                                        if assign_container is None:
+                                            matched = True
+                                        else:
+                                            assign_container.statements = assign_container.statements[:-1]
+
+                if not matched:
+                    new_statements.append(stmt)
+                i += 1
+
+            if len(new_statements) != len(node.statements):
+                node.statements = new_statements
+            return node
+
+        root = codegen.cfunc.statements
+        transform(root)
         if _replace_c_children_8616(root, transform):
             changed = True
         return changed
@@ -1251,6 +1496,8 @@ try:
             changed = True
         if _simplify_structured_expressions_8616(codegen):
             changed = True
+        if _rewrite_flag_condition_pairs_8616(codegen):
+            changed = True
         if _fix_interval_guard_conditions_8616(codegen):
             changed = True
         return changed
@@ -1268,3 +1515,56 @@ try:
         Decompiler._decompile = _decompile_8616
 except Exception:
     pass
+
+
+# Register SimProcedures for x86-16 dirty I/O helpers so runtime
+# execution returns deterministic defaults when no PortIO device is present.
+try:
+    import angr as _angr
+    from . import simprocs_io as _simprocs_io
+
+    _angr.SIM_PROCEDURES = getattr(_angr, 'SIM_PROCEDURES', {})
+    _arch_key = 'X86_16'
+    if _arch_key not in _angr.SIM_PROCEDURES:
+        _angr.SIM_PROCEDURES[_arch_key] = {}
+    _angr.SIM_PROCEDURES[_arch_key]['x86g_dirtyhelper_IN'] = _simprocs_io.X86DirtyIN
+    _angr.SIM_PROCEDURES[_arch_key]['x86g_dirtyhelper_OUT'] = _simprocs_io.X86DirtyOUT
+except Exception:
+    # Best-effort registration; if angr is absent or API differs, continue silently.
+    pass
+
+try:
+    # Patch angr's VEX dirty helpers for x86 to return deterministic defaults
+    # when no PortIO device is present. This overrides the engine-level helpers
+    # that otherwise emit symbolic IN_... values.
+    import angr.engines.vex.heavy.dirty as _dirty
+
+    def _patched_x86g_dirtyhelper_IN(state, portno, sz):
+        try:
+            szv = int(sz) if isinstance(sz, int) else int(state.solver.eval(sz))
+        except Exception:
+            szv = 32
+        if szv == 8:
+            return state.solver.BVV(0xFF, 8)
+        if szv == 16:
+            return state.solver.BVV(0xFFFF, 16)
+        return state.solver.BVV(0xFFFFFFFF, 32)
+
+    def _patched_x86g_dirtyhelper_OUT(state, portno, sz, val):
+        return None
+
+    _dirty.x86g_dirtyhelper_IN = _patched_x86g_dirtyhelper_IN
+    _dirty.x86g_dirtyhelper_OUT = _patched_x86g_dirtyhelper_OUT
+except Exception:
+    pass
+
+# Keep runtime monkeypatch logic in a small module to follow SRP.
+try:
+    from . import patch_dirty as _patch_dirty
+    _patch_dirty.apply_patch()
+except Exception:
+    pass
+
+# Do not wrap Clinic._make_callsites with SIGALRM-based timeouts here.
+# Raising out of Clinic causes angr resilience to drop decompilation results
+# and return an empty codegen, which is worse than a slow but honest decompile.
