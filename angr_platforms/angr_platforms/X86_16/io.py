@@ -35,15 +35,16 @@ class IO:
         return self.constant(addr, Type.int_16) if isinstance(addr, int) else addr.cast_to(Type.int_16)
 
     def in_io32(self, addr: int) -> int:
-        # In real mode we do not currently emulate concrete I/O devices. Model open-bus
-        # reads as all-ones, which matches the 80286 hardware suite expectation for IN.
-        return self.constant(0xFFFFFFFF, Type.int_32)
+        addr = self._port_arg(addr)
+        return self.lifter_instruction.dirty(Type.int_32, "x86g_dirtyhelper_IN", [addr, self.constant(32)])
 
     def in_io16(self, addr: int) -> int:
-        return self.constant(0xFFFF, Type.int_16)
+        addr = self._port_arg(addr)
+        return self.lifter_instruction.dirty(Type.int_16, "x86g_dirtyhelper_IN", [addr, self.constant(16)])
 
     def in_io8(self, addr: int) -> int:
-        return self.constant(0xFF, Type.int_8)
+        addr = self._port_arg(addr)
+        return self.lifter_instruction.dirty(Type.int_8, "x86g_dirtyhelper_IN", [addr, self.constant(8)])
 
     def out_io32(self, addr: int, value: int):
         addr = self._port_arg(addr)

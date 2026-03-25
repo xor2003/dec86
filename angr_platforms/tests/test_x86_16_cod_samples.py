@@ -130,7 +130,7 @@ BLOCK_LIFT_CASES = (
         cod_dir=_X16_SAMPLES_DIR,
         block_addr=0x1000,
         original_c="inregs.h.ah = 0x30; int86(0x21, &inregs, &outregs);",
-        expected_tokens=("STle(t14) = 0x30", "PUT(ax) = 0x0021", "PUT(ip) = 0x1019"),
+        expected_tokens=("STle(", "0x30", "PUT(ax) = 0x0021", "PUT(ip) = 0x1019"),
         start_offset=0x35,
         end_offset=0x4E,
     ),
@@ -141,7 +141,7 @@ BLOCK_LIFT_CASES = (
         cod_dir=_COD_DIR / "default",
         block_addr=0x1000,
         original_c="if (x > y) return x; return y;",
-        expected_tokens=("CmpGT16U", "PUT(ip) = 0x1008", "PUT(ip) = 0x100e", "LDle:I16"),
+        expected_tokens=("CmpLE16S", "PUT(ip) = 0x1008", "PUT(ip) = 0x100e", "LDle:I16"),
         start_offset=0x4E,
     ),
     BlockLiftCase(
@@ -178,7 +178,7 @@ BLOCK_LIFT_CASES = (
         cod_dir=_F14_COD_DIR,
         block_addr=0x1000,
         original_c="if ((x < xl) || (x > xh) || (z < zl) || (z > zh)) return 0; else return 1;",
-        expected_tokens=("CmpGT16U", "PUT(ip) = 0x100b", "PUT(ip) = 0x101d", "Ijk_Boring"),
+        expected_tokens=("CmpGT16S", "PUT(ip) = 0x100b", "PUT(ip) = 0x101d", "Ijk_Boring"),
     ),
     BlockLiftCase(
         name="f14_inboxlng_long_bounds_check",

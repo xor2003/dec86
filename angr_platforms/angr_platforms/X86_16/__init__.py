@@ -11,14 +11,19 @@ try:
     from angr.analyses.decompiler.return_maker import ReturnMaker
     from angr.analyses.decompiler.callsite_maker import CallSiteMaker
     from angr.analyses.decompiler.structured_codegen.c import (
+        CAssignment,
         CBinaryOp,
         CClosingObject,
         CConstant,
         CExpression,
+        CFunctionCall,
         CITE,
+        CStatements,
         CTypeCast,
         CUnaryOp,
+        CVariable,
     )
+    from angr.analyses.decompiler.decompiler import Decompiler
     from angr.analyses.reaching_definitions import rd_state as _rd_state
     from angr.analyses.variable_recovery import variable_recovery_base as _variable_recovery_base
     from angr.sim_type import SimTypeBottom, SimTypePointer
@@ -35,6 +40,7 @@ try:
     from angr.knowledge_plugins.functions.function import Function
     from angr.knowledge_plugins.variables.variable_manager import VariableManagerInternal
     from angr.sim_variable import SimMemoryVariable
+    from angr.sim_variable import SimRegisterVariable
     from angr.sim_variable import SimStackVariable
     from .annotations import ANNOTATION_KEY
     from .analysis_helpers import resolve_direct_call_target_from_block
@@ -634,5 +640,425 @@ try:
 
     if getattr(Function._init_prototype_and_calling_convention, "__name__", "") != "_init_proto_cc_8616":
         Function._init_prototype_and_calling_convention = _init_proto_cc_8616
+
+    _orig_decompiler_decompile = Decompiler._decompile
+
+    def _structured_codegen_node_8616(value) -> bool:
+        return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
+
+    def _c_constant_value_8616(node) -> int | None:
+        if isinstance(node, CConstant) and isinstance(node.value, int):
+            return node.value
+        return None
+
+    def _segment_reg_name_8616(node, project) -> str | None:
+        if not isinstance(node, CVariable):
+            return None
+        variable = getattr(node, "variable", None)
+        if not isinstance(variable, SimRegisterVariable):
+            return None
+        return project.arch.register_names.get(variable.reg)
+
+    def _match_real_mode_linear_expr_8616(node, project) -> tuple[str | None, int | None]:
+        if not isinstance(node, CBinaryOp) or node.op != "Add":
+            return None, None
+
+        for maybe_mul, maybe_const in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            linear = _c_constant_value_8616(maybe_const)
+            if linear is None:
+                continue
+            if not isinstance(maybe_mul, CBinaryOp) or maybe_mul.op != "Mul":
+                continue
+            for maybe_seg, maybe_scale in ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs)):
+                if _c_constant_value_8616(maybe_scale) != 16:
+                    continue
+                seg_name = _segment_reg_name_8616(maybe_seg, project)
+                if seg_name is not None:
+                    return seg_name, linear
+        return None, None
+
+    def _match_segmented_dereference_8616(node, project) -> tuple[str | None, int | None]:
+        if not isinstance(node, CUnaryOp) or node.op != "Dereference":
+            return None, None
+        operand = node.operand
+        if isinstance(operand, CTypeCast):
+            operand = operand.expr
+        return _match_real_mode_linear_expr_8616(operand, project)
+
+    def _replace_c_children_8616(node, transform) -> bool:
+        changed = False
+
+        for attr in (
+            "lhs",
+            "rhs",
+            "expr",
+            "operand",
+            "condition",
+            "cond",
+            "iffalse",
+            "iftrue",
+            "callee_target",
+            "else_node",
+            "retval",
+        ):
+            if not hasattr(node, attr):
+                continue
+            try:
+                value = getattr(node, attr)
+            except Exception:
+                continue
+            if _structured_codegen_node_8616(value):
+                new_value = transform(value)
+                if new_value is not value:
+                    setattr(node, attr, new_value)
+                    changed = True
+                    value = new_value
+                if _replace_c_children_8616(value, transform):
+                    changed = True
+
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(node, attr):
+                continue
+            try:
+                items = getattr(node, attr)
+            except Exception:
+                continue
+            if not items:
+                continue
+            new_items = []
+            list_changed = False
+            for item in items:
+                if _structured_codegen_node_8616(item):
+                    new_item = transform(item)
+                    if new_item is not item:
+                        list_changed = True
+                    if _replace_c_children_8616(new_item, transform):
+                        changed = True
+                    new_items.append(new_item)
+                else:
+                    new_items.append(item)
+            if list_changed:
+                setattr(node, attr, new_items)
+                changed = True
+
+        if hasattr(node, "condition_and_nodes"):
+            try:
+                pairs = getattr(node, "condition_and_nodes")
+            except Exception:
+                pairs = None
+            if pairs:
+                new_pairs = []
+                pair_changed = False
+                for cond, body in pairs:
+                    new_cond = transform(cond) if _structured_codegen_node_8616(cond) else cond
+                    new_body = transform(body) if _structured_codegen_node_8616(body) else body
+                    if new_cond is not cond or new_body is not body:
+                        pair_changed = True
+                    if _structured_codegen_node_8616(new_cond) and _replace_c_children_8616(new_cond, transform):
+                        changed = True
+                    if _structured_codegen_node_8616(new_body) and _replace_c_children_8616(new_body, transform):
+                        changed = True
+                    new_pairs.append((new_cond, new_body))
+                if pair_changed:
+                    setattr(node, "condition_and_nodes", new_pairs)
+                    changed = True
+
+        return changed
+
+    def _iter_c_nodes_deep_8616(node, seen: set[int] | None = None):
+        if seen is None:
+            seen = set()
+        if not _structured_codegen_node_8616(node):
+            return
+        node_id = id(node)
+        if node_id in seen:
+            return
+        seen.add(node_id)
+        yield node
+
+        for attr in dir(node):
+            if attr.startswith("_") or attr in {"codegen"}:
+                continue
+            try:
+                value = getattr(node, attr)
+            except Exception:
+                continue
+            if _structured_codegen_node_8616(value):
+                yield from _iter_c_nodes_deep_8616(value, seen)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    if _structured_codegen_node_8616(item):
+                        yield from _iter_c_nodes_deep_8616(item, seen)
+                    elif isinstance(item, tuple):
+                        for subitem in item:
+                            if _structured_codegen_node_8616(subitem):
+                                yield from _iter_c_nodes_deep_8616(subitem, seen)
+
+    def _global_memory_addr_8616(node) -> int | None:
+        if not isinstance(node, CVariable):
+            return None
+        variable = getattr(node, "variable", None)
+        if not isinstance(variable, SimMemoryVariable):
+            return None
+        addr = getattr(variable, "addr", None)
+        return addr if isinstance(addr, int) else None
+
+    def _global_load_addr_8616(node, project) -> int | None:
+        addr = _global_memory_addr_8616(node)
+        if addr is not None:
+            return addr
+        seg_name, linear = _match_segmented_dereference_8616(node, project)
+        if seg_name != "ds":
+            return None
+        return linear
+
+    def _match_scaled_high_byte_8616(node, project) -> int | None:
+        if not isinstance(node, CBinaryOp):
+            return None
+
+        if node.op == "Mul":
+            pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+            for maybe_load, maybe_scale in pairs:
+                if _c_constant_value_8616(maybe_scale) != 0x100:
+                    continue
+                addr = _global_load_addr_8616(maybe_load, project)
+                if addr is not None:
+                    return addr
+
+        if node.op == "Shl":
+            pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+            for maybe_load, maybe_scale in pairs:
+                if _c_constant_value_8616(maybe_scale) != 8:
+                    continue
+                addr = _global_load_addr_8616(maybe_load, project)
+                if addr is not None:
+                    return addr
+
+        return None
+
+    def _make_word_global_8616(codegen, addr: int):
+        return CVariable(
+            SimMemoryVariable(addr, 2, name=f"g_{addr:x}", region=codegen.cfunc.addr),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        )
+
+    def _coalesce_word_global_loads_8616(project, codegen) -> set[int]:
+        if getattr(codegen, "cfunc", None) is None:
+            return set()
+
+        created = {}
+        changed_addrs: set[int] = set()
+
+        def make_word_global(addr: int):
+            existing = created.get(addr)
+            if existing is not None:
+                return existing
+            cvar = _make_word_global_8616(codegen, addr)
+            created[addr] = cvar
+            return cvar
+
+        def transform(node):
+            if not isinstance(node, CBinaryOp) or node.op not in {"Or", "Add"}:
+                return node
+
+            for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+                low_addr = _global_load_addr_8616(low_expr, project)
+                if low_addr is None:
+                    continue
+                high_addr = _match_scaled_high_byte_8616(high_expr, project)
+                if high_addr != low_addr + 1:
+                    continue
+                changed_addrs.add(low_addr)
+                return make_word_global(low_addr)
+
+            return node
+
+        root = codegen.cfunc.statements
+        new_root = transform(root)
+        if new_root is not root:
+            codegen.cfunc.statements = new_root
+            root = new_root
+        _replace_c_children_8616(root, transform)
+        return changed_addrs
+
+    def _coalesce_word_global_constant_stores_8616(project, codegen) -> set[int]:
+        if getattr(codegen, "cfunc", None) is None:
+            return set()
+
+        changed_addrs: set[int] = set()
+
+        def lhs_addr(node):
+            addr = _global_memory_addr_8616(node)
+            if addr is not None:
+                return addr
+            seg_name, linear = _match_segmented_dereference_8616(node, project)
+            if seg_name != "ds":
+                return None
+            return linear
+
+        def visit(node):
+            if isinstance(node, CStatements):
+                new_statements = []
+                i = 0
+                while i < len(node.statements):
+                    stmt = node.statements[i]
+                    if (
+                        i + 1 < len(node.statements)
+                        and isinstance(stmt, CAssignment)
+                        and isinstance(node.statements[i + 1], CAssignment)
+                        and isinstance(stmt.rhs, CConstant)
+                        and isinstance(node.statements[i + 1].rhs, CConstant)
+                    ):
+                        next_stmt = node.statements[i + 1]
+                        base_addr = lhs_addr(stmt.lhs)
+                        next_addr = lhs_addr(next_stmt.lhs)
+                        if base_addr is not None and next_addr == base_addr + 1:
+                            value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
+                            new_statements.append(
+                                CAssignment(
+                                    _make_word_global_8616(codegen, base_addr),
+                                    CConstant(value, SimTypeShort(False), codegen=codegen),
+                                    codegen=codegen,
+                                )
+                            )
+                            changed_addrs.add(base_addr)
+                            i += 2
+                            continue
+
+                    visit(stmt)
+                    new_statements.append(stmt)
+                    i += 1
+
+                if len(new_statements) != len(node.statements):
+                    node.statements = new_statements
+
+            elif hasattr(node, "condition_and_nodes"):
+                for _, body in getattr(node, "condition_and_nodes", ()):
+                    visit(body)
+                else_node = getattr(node, "else_node", None)
+                if else_node is not None:
+                    visit(else_node)
+
+        visit(codegen.cfunc.statements)
+        return changed_addrs
+
+    def _apply_word_global_types_8616(codegen, addrs: set[int]) -> bool:
+        if not addrs or getattr(codegen, "cfunc", None) is None:
+            return False
+
+        changed = False
+        target_type = SimTypeShort(False)
+
+        for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+            if not isinstance(variable, SimMemoryVariable):
+                continue
+            if getattr(variable, "addr", None) not in addrs:
+                continue
+            if getattr(variable, "size", None) != 2:
+                variable.size = 2
+                changed = True
+            if getattr(cvar, "variable_type", None) != target_type:
+                cvar.variable_type = target_type
+                changed = True
+            unified = getattr(cvar, "unified_variable", None)
+            if unified is not None and getattr(unified, "size", None) != 2:
+                try:
+                    unified.size = 2
+                    changed = True
+                except Exception:
+                    pass
+
+        for cextern in getattr(codegen, "cexterns", ()) or ():
+            variable = getattr(cextern, "variable", None)
+            if not isinstance(variable, SimMemoryVariable):
+                continue
+            if getattr(variable, "addr", None) not in addrs:
+                continue
+            if getattr(variable, "size", None) != 2:
+                variable.size = 2
+                changed = True
+            if getattr(cextern, "variable_type", None) != target_type:
+                cextern.variable_type = target_type
+                changed = True
+
+        unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+        if isinstance(unified_locals, dict):
+            for variable, cvar_and_vartypes in list(unified_locals.items()):
+                if not isinstance(variable, SimMemoryVariable):
+                    continue
+                if getattr(variable, "addr", None) not in addrs:
+                    continue
+                if getattr(variable, "size", None) != 2:
+                    variable.size = 2
+                    changed = True
+                new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
+                if new_entries != cvar_and_vartypes:
+                    unified_locals[variable] = new_entries
+                    changed = True
+
+        return changed
+
+    def _prune_unused_unnamed_memory_declarations_8616(codegen) -> bool:
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+
+        used_variables: set[int] = set()
+        for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements):
+            if not isinstance(node, CVariable):
+                continue
+            variable = getattr(node, "variable", None)
+            if variable is not None:
+                used_variables.add(id(variable))
+            unified = getattr(node, "unified_variable", None)
+            if unified is not None:
+                used_variables.add(id(unified))
+
+        changed = False
+        variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            for variable in list(variables_in_use):
+                if not isinstance(variable, SimMemoryVariable):
+                    continue
+                name = getattr(variable, "name", None)
+                if not isinstance(name, str) or not name.startswith("g_"):
+                    continue
+                if id(variable) in used_variables:
+                    continue
+                cvar = variables_in_use[variable]
+                unified = getattr(cvar, "unified_variable", None)
+                if unified is not None and id(unified) in used_variables:
+                    continue
+                del variables_in_use[variable]
+                changed = True
+
+        return changed
+
+    def _postprocess_codegen_8616(project, codegen) -> bool:
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+
+        addrs = set()
+        addrs |= _coalesce_word_global_loads_8616(project, codegen)
+        addrs |= _coalesce_word_global_constant_stores_8616(project, codegen)
+
+        changed = bool(addrs)
+        if _apply_word_global_types_8616(codegen, addrs):
+            changed = True
+        if _prune_unused_unnamed_memory_declarations_8616(codegen):
+            changed = True
+        return changed
+
+    def _decompile_8616(self):
+        _orig_decompiler_decompile(self)
+        if (
+            self.project.arch.name == "86_16"
+            and self.codegen is not None
+            and _postprocess_codegen_8616(self.project, self.codegen)
+        ):
+            self.codegen.regenerate_text()
+
+    if getattr(Decompiler._decompile, "__name__", "") != "_decompile_8616":
+        Decompiler._decompile = _decompile_8616
 except Exception:
     pass
