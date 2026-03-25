@@ -391,6 +391,15 @@ try:
         max_iterations=None,
     ):
         cap = max_iterations if max_iterations is not None else self._simplification_max_iterations
+        if self.project.arch.name == "86_16":
+            block_count = len(ail_graph) if ail_graph is not None else 0
+            stmt_count = 0
+            if ail_graph is not None:
+                for block in ail_graph:
+                    stmt_count += len(getattr(block, "statements", ()))
+            if block_count <= 8 and stmt_count <= 80:
+                cap = min(cap, 2)
+                narrow_expressions = False
         for idx in range(cap):
             simplified = self._simplify_function_once(
                 ail_graph,
