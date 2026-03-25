@@ -228,12 +228,6 @@ def _decompile_function(
         changed = True
     if _attach_ss_stack_variables(project, dec.codegen):
         changed = True
-    if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
-        changed = True
-    if _attach_cod_global_declaration_names(dec.codegen, synthetic_globals):
-        changed = True
-    if _attach_cod_global_declaration_types(dec.codegen, synthetic_globals):
-        changed = True
     if _normalize_scalar_byte_register_types(dec.codegen):
         changed = True
     if _prune_unused_unnamed_memory_declarations(dec.codegen):
@@ -241,6 +235,12 @@ def _decompile_function(
     if _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals):
         changed = True
     if _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals):
+        changed = True
+    if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
+        changed = True
+    if _attach_cod_global_declaration_names(dec.codegen, synthetic_globals):
+        changed = True
+    if _attach_cod_global_declaration_types(dec.codegen, synthetic_globals):
         changed = True
     if _simplify_structured_c_expressions(dec.codegen):
         changed = True
@@ -839,6 +839,31 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
     created: dict[tuple[int, int], structured_c.CVariable] = {}
 
     def transform(node):
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            if isinstance(variable, SimMemoryVariable):
+                linear = getattr(variable, "addr", None)
+                symbol = _synthetic_global_entry(synthetic_globals, linear) if isinstance(linear, int) else None
+                if symbol is not None:
+                    type_ = getattr(node, "variable_type", None)
+                    if type_ is None:
+                        return node
+                    bits = getattr(type_, "size", None)
+                    size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+                    key = (linear, size)
+                    existing = created.get(key)
+                    if existing is not None:
+                        return existing
+                    name, _width = symbol
+                    name = _sanitize_cod_identifier(name)
+                    cvar = structured_c.CVariable(
+                        SimMemoryVariable(linear, size, name=name, region=codegen.cfunc.addr),
+                        variable_type=type_,
+                        codegen=codegen,
+                    )
+                    created[key] = cvar
+                    return cvar
+
         seg_name, linear = _match_segmented_dereference(node, project)
         symbol = _synthetic_global_entry(synthetic_globals, linear)
         if seg_name != "ds" or symbol is None:
