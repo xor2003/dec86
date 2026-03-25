@@ -6,15 +6,51 @@ import argparse
 import io
 import logging
 import os
-from pathlib import Path
 import re
 import resource
 import signal
 import sys
+import time
+from datetime import datetime
+from pathlib import Path
 
 
 _ROOT = Path(__file__).resolve().parent
 _VENV_PYTHON = _ROOT / "venv" / "bin" / "python"
+CURRENT_PROJECT: angr.Project | None = None
+START_TIME = time.perf_counter()
+LAST_STEP_TIME = START_TIME
+
+
+def log_step(step: str) -> None:
+    global LAST_STEP_TIME
+    now = time.perf_counter()
+    elapsed_total = now - START_TIME
+    since_last = now - LAST_STEP_TIME
+    LAST_STEP_TIME = now
+    timestamp = datetime.utcnow().isoformat()
+    print(f"[dbg][{timestamp}] {step} (total {elapsed_total:.2f}s, +{since_last:.2f}s)")
+    sys.stdout.flush()
+
+
+def _format_address(addr: int) -> str:
+    return f"{addr:#x}"
+
+
+class JumpkindLoggingHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if "Unsupported jumpkind" in msg and "address" in msg:
+            match = re.search(r"address\s+(0x[0-9a-fA-F]+|[0-9]+)", msg)
+            if match and CURRENT_PROJECT is not None:
+                try:
+                    addr = int(match.group(1), 0)
+                    asm = _format_first_block_asm(CURRENT_PROJECT, addr)
+                    print(f"[dbg][{datetime.utcnow().isoformat()}] NON-DECODED BLOCK {addr:#x}:\n{asm}")
+                except Exception as exc:
+                    print(f"[dbg] failed to format assembly for {msg}: {exc}")
+            else:
+                print(f"[dbg] {msg}")
 
 try:
     import angr
@@ -29,6 +65,7 @@ import angr_platforms.X86_16  # noqa: F401
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.analysis_helpers import (
+    DOS_SERVICE_BASE_ADDR,
     collect_dos_int21_calls,
     dos_helper_declarations,
     extend_cfg_for_far_calls,
@@ -67,6 +104,8 @@ def _parse_int(value: str) -> int:
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
     suffix = path.suffix.lower()
 
+    print(f"[dbg] build_project: path={path} suffix={suffix} force_blob={force_blob}")
+    sys.stdout.flush()
     if force_blob or suffix in {".bin", ".raw"}:
         return angr.Project(
             path,
@@ -92,7 +131,10 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
             simos="DOS",
         )
 
-    return angr.Project(path, auto_load_libs=False)
+    proj = angr.Project(path, auto_load_libs=False)
+    print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
+    sys.stdout.flush()
+    return proj
 
 
 def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) -> angr.Project:
@@ -106,6 +148,52 @@ def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) 
             "entry_point": entry_point,
         },
     )
+
+
+def _infer_x86_16_linear_region(project: angr.Project, start_addr: int, *, window: int) -> tuple[int, int]:
+    end_limit = start_addr + max(window, 1)
+    current = start_addr
+    ah = None
+
+    while current < end_limit:
+        try:
+            chunk = bytes(project.loader.memory.load(current, 16))
+        except Exception:
+            break
+        if not chunk:
+            break
+
+        insn = next(project.arch.capstone.disasm(chunk, current, 1), None)
+        if insn is None or insn.size <= 0:
+            break
+
+        text = f"{insn.mnemonic} {insn.op_str}".strip().lower()
+        if text.startswith("mov ah, "):
+            try:
+                ah = int(text.split(", ", 1)[1], 0)
+            except ValueError:
+                ah = None
+        elif text.startswith("mov ax, "):
+            try:
+                ax = int(text.split(", ", 1)[1], 0)
+            except ValueError:
+                ax = None
+            if ax is not None:
+                ah = (ax >> 8) & 0xFF
+
+        current += insn.size
+
+        if insn.mnemonic in {"ret", "retf", "iret"}:
+            break
+        if insn.mnemonic == "int":
+            if insn.op_str.lower() == "0x20":
+                break
+            if insn.op_str.lower() == "0x21" and ah == 0x4C:
+                break
+            if insn.op_str.lower() == "0x27":
+                break
+
+    return start_addr, max(start_addr + 1, current)
 
 
 def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
@@ -136,6 +224,8 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
 
 
 def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, window: int):
+    print(f"[dbg] recover_cfg: entry={hex(project.entry)} base_addr={hex(base_addr)} window={hex(window)} binary={binary_path}")
+    sys.stdout.flush()
     if binary_path.suffix.lower() == ".com":
         regions = [infer_com_region(binary_path, base_addr=base_addr, window=window, arch=project.arch)]
         cfg = project.analyses.CFGFast(
@@ -146,10 +236,14 @@ def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, wi
             force_complete_scan=False,
         )
     else:
+        print("[dbg] calling CFGFast (non-COM path)")
+        sys.stdout.flush()
         cfg = project.analyses.CFGFast(
             normalize=True,
             force_complete_scan=False,
         )
+        print("[dbg] CFGFast returned")
+        sys.stdout.flush()
 
     if project.arch.name == "86_16" and project.entry in cfg.functions:
         extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
@@ -189,14 +283,28 @@ def _format_first_block_asm(project: angr.Project, addr: int) -> str:
     return "\n".join(lines) if lines else "<no instructions>"
 
 
+def _function_skip_reason(function):
+    if getattr(function, "is_simprocedure", False):
+        return "SimProcedure (DOS helper)"
+    addr = getattr(function, "addr", None)
+    if isinstance(addr, int) and addr >= DOS_SERVICE_BASE_ADDR:
+        return "DOS service address"
+    return None
+
+
 def _interesting_functions(cfg, *, limit: int):
-    functions = [
-        function
-        for function in cfg.functions.values()
-        if not function.is_plt and not function.name.startswith("Unresolvable")
-    ]
-    functions.sort(key=lambda function: function.addr)
-    return functions[:limit], len(functions)
+    functions = []
+    skipped = 0
+    for function in sorted(cfg.functions.values(), key=lambda function: function.addr):
+        if function.is_plt or function.name.startswith("Unresolvable"):
+            continue
+        reason = _function_skip_reason(function)
+        if reason is not None:
+            print(f"[dbg] skipping {function.addr:#x} {function.name}: {reason}")
+            skipped += 1
+            continue
+        functions.append(function)
+    return functions[:limit], len(functions) + skipped
 
 
 def _decompile_function(
@@ -212,7 +320,15 @@ def _decompile_function(
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
     try:
+        print(f"[dbg] decompile_function: addr={hex(function.addr)} name={function.name}")
+        sys.stdout.flush()
+        # Ensure function is normalized before decompilation
+        if not function.normalized:
+            print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
+            function.normalize()
         dec = project.analyses.Decompiler(function, cfg=cfg)
+        print(f"[dbg] Decompiler returned for {hex(function.addr)}")
+        sys.stdout.flush()
     except _AnalysisTimeout:
         return "timeout", f"Timed out after {timeout}s."
     except Exception as ex:
@@ -252,6 +368,53 @@ def _decompile_function(
         dec.codegen.regenerate_text()
     formatted = _format_known_helper_calls(project, function, dec.codegen.text, api_style, binary_path)
     return "ok", _annotate_cod_proc_output(formatted, cod_metadata)
+
+
+def _function_complexity(function):
+    project = function.project
+    if project is None:
+        return 0, 0
+    block_addrs = sorted(getattr(function, "block_addrs_set", set()))
+    total_bytes = 0
+    for block_addr in block_addrs:
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        total_bytes += len(block.bytes)
+    return len(block_addrs), total_bytes
+
+
+def _decompile_function_with_stats(
+    project: angr.Project,
+    cfg,
+    function,
+    timeout: int,
+    api_style: str,
+    binary_path: Path | None = None,
+    cod_metadata: CODProcMetadata | None = None,
+    synthetic_globals: dict[int, tuple[str, int]] | None = None,
+):
+    block_count, byte_count = _function_complexity(function)
+    print(
+        f"[dbg] function complexity for {function.addr:#x} {function.name}: blocks={block_count}, bytes={byte_count}"
+    )
+    sys.stdout.flush()
+    start = time.perf_counter()
+    status, payload = _decompile_function(
+        project,
+        cfg,
+        function,
+        timeout,
+        api_style,
+        binary_path,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+    )
+    elapsed = time.perf_counter() - start
+    print(f"[dbg] decompilation time for {function.addr:#x} {function.name}: {elapsed:.2f}s")
+    sys.stdout.flush()
+    return status, payload, block_count, byte_count, elapsed
 
 
 def _helper_name(project: angr.Project, addr: int) -> str | None:
@@ -1689,7 +1852,10 @@ def main() -> int:
             if function_label is not None and args.addr == project.entry:
                 cfg, func = _recover_blob_entry_function(project, args.addr, timeout=args.timeout)
             else:
-                regions = [(args.addr, args.addr + args.window)]
+                if project.arch.name == "86_16":
+                    regions = [_infer_x86_16_linear_region(project, args.addr, window=args.window)]
+                else:
+                    regions = [(args.addr, args.addr + args.window)]
                 old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
                 signal.alarm(args.timeout)
                 try:
@@ -1720,7 +1886,7 @@ def main() -> int:
             print(_format_first_block_asm(project, func.addr))
 
         print("/* decompiling... */", flush=True)
-        status, payload = _decompile_function(
+        status, payload, *_ = _decompile_function_with_stats(
             project,
             cfg,
             func,
@@ -1764,7 +1930,7 @@ def main() -> int:
         print(f"/* arch: {project.arch.name} */")
         print(f"/* entry: {project.entry:#x} */")
         print(f"/* fallback function: {func.addr:#x} {func.name} */")
-        status, payload = _decompile_function(project, cfg, func, args.timeout, args.api_style, args.binary)
+        status, payload, *_ = _decompile_function_with_stats(project, cfg, func, args.timeout, args.api_style, args.binary)
         if status != "ok":
             print(f"\n/* Decompilation {status}: {payload} */")
             print("\n/* == asm fallback == */")
@@ -1803,17 +1969,30 @@ def main() -> int:
             print("/* -- asm -- */")
             print(_format_first_block_asm(project, function.addr))
 
-        status, payload = _decompile_function(project, cfg, function, args.timeout, args.api_style, args.binary)
+        status, payload, *_ = _decompile_function_with_stats(project, cfg, function, args.timeout, args.api_style, args.binary)
         if status == "ok":
             decompiled += 1
             print("/* -- c -- */")
             print(payload)
         else:
             failed += 1
-            print(f"-- {status} --")
-            print(payload)
-            print("-- asm fallback --")
-            print(_format_first_block_asm(project, function.addr))
+            asm_fallback = _format_first_block_asm(project, function.addr)
+            # If decompiler produced no code and there are no bytes for the
+            # function block, print a concise explanatory comment instead of
+            # an empty '...' body and an unhelpful asm fallback.
+            if status == "empty":
+                if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
+                    print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
+                else:
+                    print(f"-- {status} --")
+                    print(payload)
+                    print("-- asm fallback --")
+                    print(asm_fallback)
+            else:
+                print(f"-- {status} --")
+                print(payload)
+                print("-- asm fallback --")
+                print(asm_fallback)
 
     print(f"\nsummary: decompiled {decompiled}/{len(functions)} shown functions")
     if failed:
