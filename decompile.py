@@ -48,7 +48,7 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeShort
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -233,6 +233,8 @@ def _decompile_function(
     if _attach_cod_global_declaration_names(dec.codegen, synthetic_globals):
         changed = True
     if _attach_cod_global_declaration_types(dec.codegen, synthetic_globals):
+        changed = True
+    if _normalize_scalar_byte_register_types(dec.codegen):
         changed = True
     if _prune_unused_unnamed_memory_declarations(dec.codegen):
         changed = True
@@ -987,6 +989,53 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
                 variable.size = 2
                 changed = True
             new_entries = {(cvariable, new_type) for cvariable, _vartype in cvar_and_vartypes}
+            if new_entries != cvar_and_vartypes:
+                unified_locals[variable] = new_entries
+                changed = True
+
+    return changed
+
+
+def _normalize_scalar_byte_register_types(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    target_type = SimTypeChar()
+    changed = False
+
+    def is_suspicious_scalar_type(type_) -> bool:
+        if type_ is None:
+            return False
+        if getattr(type_, "size", None) == 8:
+            return False
+        type_name = type(type_).__name__
+        if "Pointer" in type_name or "Array" in type_name:
+            return True
+        rendered = str(type_)
+        return "[" in rendered or "*" in rendered
+
+    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        if not isinstance(variable, SimRegisterVariable):
+            continue
+        if getattr(variable, "size", None) != 1:
+            continue
+        current_type = getattr(cvar, "variable_type", None)
+        if not is_suspicious_scalar_type(current_type):
+            continue
+        if current_type != target_type:
+            cvar.variable_type = target_type
+            changed = True
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable, cvar_and_vartypes in list(unified_locals.items()):
+            if not isinstance(variable, SimRegisterVariable):
+                continue
+            if getattr(variable, "size", None) != 1:
+                continue
+            if not any(is_suspicious_scalar_type(vartype) for _cvariable, vartype in cvar_and_vartypes):
+                continue
+            new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
                 changed = True
