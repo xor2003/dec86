@@ -1582,6 +1582,7 @@ try:
         if flags_offset is None:
             return False
 
+        used_registers: set[int] = set()
         used_variables: set[int] = set()
 
         def collect_reads(node, *, assignment_lhs: bool = False):
@@ -1591,9 +1592,13 @@ try:
                 variable = getattr(node, "variable", None)
                 if variable is not None:
                     used_variables.add(id(variable))
+                    if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) is not None:
+                        used_registers.add(variable.reg)
                 unified = getattr(node, "unified_variable", None)
                 if unified is not None:
                     used_variables.add(id(unified))
+                    if isinstance(unified, SimRegisterVariable) and getattr(unified, "reg", None) is not None:
+                        used_registers.add(unified.reg)
                 return
 
             for attr in ("rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "callee_target", "else_node", "retval"):
@@ -1638,6 +1643,7 @@ try:
                             isinstance(variable, SimRegisterVariable)
                             and getattr(variable, "reg", None) == flags_offset
                             and id(variable) not in used_variables
+                            and getattr(variable, "reg", None) not in used_registers
                         ):
                             changed = True
                             continue
@@ -1649,6 +1655,134 @@ try:
                 if _structured_codegen_node_8616(child):
                     visit(child)
 
+            pairs = getattr(node, "condition_and_nodes", None)
+            if pairs:
+                for _cond, body in pairs:
+                    if _structured_codegen_node_8616(body):
+                        visit(body)
+
+        visit(codegen.cfunc.statements)
+        return changed
+
+    def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
+        if not _structured_codegen_node_8616(node):
+            return False
+        if isinstance(node, CVariable):
+            variable = getattr(node, "variable", None)
+            return isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) == reg_offset
+
+        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iftrue", "iffalse", "callee_target", "else_node", "retval"):
+            child = getattr(node, attr, None)
+            if _structured_codegen_node_8616(child) and _c_expr_uses_register_8616(child, reg_offset):
+                return True
+
+        for attr in ("args", "operands", "statements"):
+            seq = getattr(node, attr, None)
+            if not seq:
+                continue
+            for item in seq:
+                if _structured_codegen_node_8616(item) and _c_expr_uses_register_8616(item, reg_offset):
+                    return True
+                if isinstance(item, tuple):
+                    for subitem in item:
+                        if _structured_codegen_node_8616(subitem) and _c_expr_uses_register_8616(subitem, reg_offset):
+                            return True
+
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            for cond, body in pairs:
+                if _structured_codegen_node_8616(cond) and _c_expr_uses_register_8616(cond, reg_offset):
+                    return True
+                if _structured_codegen_node_8616(body) and _c_expr_uses_register_8616(body, reg_offset):
+                    return True
+
+        return False
+
+    def _stmt_reads_reg_before_write_8616(stmt, reg_offset: int) -> tuple[bool, bool]:
+        if not _structured_codegen_node_8616(stmt):
+            return False, False
+
+        if isinstance(stmt, CAssignment):
+            lhs = stmt.lhs
+            writes = (
+                isinstance(lhs, CVariable)
+                and isinstance(getattr(lhs, "variable", None), SimRegisterVariable)
+                and getattr(lhs.variable, "reg", None) == reg_offset
+            )
+            reads = _c_expr_uses_register_8616(stmt.rhs, reg_offset)
+            return reads, writes
+
+        if isinstance(stmt, CStatements):
+            for substmt in stmt.statements:
+                reads, writes = _stmt_reads_reg_before_write_8616(substmt, reg_offset)
+                if reads:
+                    return True, writes
+                if writes:
+                    return False, True
+            return False, False
+
+        if type(stmt).__name__ == "CIfElse":
+            cond_nodes = getattr(stmt, "condition_and_nodes", None) or ()
+            for cond, body in cond_nodes:
+                if _c_expr_uses_register_8616(cond, reg_offset):
+                    return True, False
+                reads, writes = _stmt_reads_reg_before_write_8616(body, reg_offset)
+                if reads:
+                    return True, writes
+            else_node = getattr(stmt, "else_node", None)
+            if else_node is not None:
+                reads, writes = _stmt_reads_reg_before_write_8616(else_node, reg_offset)
+                if reads:
+                    return True, writes
+            return False, False
+
+        if type(stmt).__name__ == "CWhileLoop":
+            cond = getattr(stmt, "condition", None)
+            if _structured_codegen_node_8616(cond) and _c_expr_uses_register_8616(cond, reg_offset):
+                return True, False
+            body = getattr(stmt, "body", None)
+            if body is not None:
+                return _stmt_reads_reg_before_write_8616(body, reg_offset)
+            return False, False
+
+        return _c_expr_uses_register_8616(stmt, reg_offset), False
+
+    def _prune_overwritten_flag_assignments_8616(project, codegen) -> bool:
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+
+        flags_offset = project.arch.registers.get("flags", (None, None))[0]
+        if flags_offset is None:
+            return False
+
+        changed = False
+
+        def visit(node):
+            nonlocal changed
+            if isinstance(node, CStatements):
+                new_statements = []
+                statements = list(node.statements)
+                for idx, stmt in enumerate(statements):
+                    remove = False
+                    if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
+                        variable = getattr(stmt.lhs, "variable", None)
+                        if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) == flags_offset:
+                            remainder = CStatements(statements[idx + 1 :], codegen=codegen)
+                            reads, _writes = _stmt_reads_reg_before_write_8616(remainder, flags_offset)
+                            if not reads:
+                                remove = True
+                    if not remove:
+                        new_statements.append(stmt)
+                        visit(stmt)
+                    else:
+                        changed = True
+                node.statements = new_statements
+                return
+
+            for attr in ("body", "else_node"):
+                child = getattr(node, attr, None)
+                if _structured_codegen_node_8616(child):
+                    visit(child)
             pairs = getattr(node, "condition_and_nodes", None)
             if pairs:
                 for _cond, body in pairs:
@@ -1676,6 +1810,8 @@ try:
         if _rewrite_flag_condition_pairs_8616(codegen):
             changed = True
         if _prune_unused_flag_assignments_8616(project, codegen):
+            changed = True
+        if _prune_overwritten_flag_assignments_8616(project, codegen):
             changed = True
         if _fix_interval_guard_conditions_8616(codegen):
             changed = True

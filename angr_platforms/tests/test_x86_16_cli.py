@@ -292,6 +292,8 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "v20 = v20 & 0xff00 | *((char *)(v26 * 16 + 0 + v25));" in result.stdout
     assert "if (!(char)v20)" in result.stdout
     assert "if (v27 & 64)" not in result.stdout
+    assert "v22 = ...;" not in result.stdout
+    assert "v27 = ...;" not in result.stdout
 
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
