@@ -1417,7 +1417,7 @@ class Instr16(InstrBase):
 
     def sar_rm16_1(self):
         rm16_s = self.get_rm16()
-        self.set_rm16(rm16_s.sar(1))
+        self.set_rm16(rm16_s.sar(self.emu.constant(1, Type.int_8)))
         self.emu.update_eflags_sar(rm16_s, 1)
 
     def sal_rm16_cl(self):
