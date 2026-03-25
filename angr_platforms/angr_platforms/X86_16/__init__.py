@@ -742,6 +742,7 @@ try:
             "operand",
             "condition",
             "cond",
+            "body",
             "iffalse",
             "iftrue",
             "callee_target",
@@ -895,6 +896,22 @@ try:
             return False
         if isinstance(lhs, CConstant):
             return lhs.value == rhs.value
+        if isinstance(lhs, CTypeCast):
+            return _same_c_expression_8616(lhs.expr, rhs.expr)
+        if isinstance(lhs, CUnaryOp):
+            return lhs.op == rhs.op and _same_c_expression_8616(lhs.operand, rhs.operand)
+        if isinstance(lhs, CBinaryOp):
+            return (
+                lhs.op == rhs.op
+                and _same_c_expression_8616(lhs.lhs, rhs.lhs)
+                and _same_c_expression_8616(lhs.rhs, rhs.rhs)
+            )
+        if isinstance(lhs, CITE):
+            return (
+                _same_c_expression_8616(lhs.cond, rhs.cond)
+                and _same_c_expression_8616(lhs.iftrue, rhs.iftrue)
+                and _same_c_expression_8616(lhs.iffalse, rhs.iffalse)
+            )
         if isinstance(lhs, CVariable):
             lvar = getattr(lhs, "variable", None)
             rvar = getattr(rhs, "variable", None)
@@ -1128,10 +1145,77 @@ try:
         if getattr(codegen, "cfunc", None) is None:
             return False
 
+        def _is_c_constant_int_8616(expr, value: int) -> bool:
+            return isinstance(expr, CConstant) and isinstance(expr.value, int) and expr.value == value
+
+        def _extract_same_zero_compare_expr_8616(expr):
+            if not isinstance(expr, CBinaryOp) or expr.op != "CmpEQ":
+                return None
+            if _is_c_constant_int_8616(expr.rhs, 0):
+                return expr.lhs
+            if _is_c_constant_int_8616(expr.lhs, 0):
+                return expr.rhs
+            return None
+
+        def _extract_zero_flag_source_expr_8616(expr):
+            if isinstance(expr, CBinaryOp):
+                if expr.op == "Mul":
+                    for maybe_logic, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                        if not _is_c_constant_int_8616(maybe_scale, 64):
+                            continue
+                        source_expr = _extract_same_zero_compare_expr_8616(maybe_logic)
+                        if source_expr is not None:
+                            return source_expr
+                        if not isinstance(maybe_logic, CBinaryOp) or maybe_logic.op != "LogicalAnd":
+                            continue
+                        lhs_expr = _extract_same_zero_compare_expr_8616(maybe_logic.lhs)
+                        rhs_expr = _extract_same_zero_compare_expr_8616(maybe_logic.rhs)
+                        if lhs_expr is not None and rhs_expr is not None and _same_c_expression_8616(lhs_expr, rhs_expr):
+                            return lhs_expr
+
+                for child in (expr.lhs, expr.rhs):
+                    if _structured_codegen_node_8616(child):
+                        extracted = _extract_zero_flag_source_expr_8616(child)
+                        if extracted is not None:
+                            return extracted
+
+            elif isinstance(expr, CUnaryOp):
+                child = getattr(expr, "operand", None)
+                if _structured_codegen_node_8616(child):
+                    return _extract_zero_flag_source_expr_8616(child)
+
+            elif isinstance(expr, CTypeCast):
+                child = getattr(expr, "expr", None)
+                if _structured_codegen_node_8616(child):
+                    return _extract_zero_flag_source_expr_8616(child)
+
+            return None
+
+        def _simplify_zero_flag_comparison_8616(expr):
+            if not isinstance(expr, CBinaryOp) or expr.op not in {"CmpEQ", "CmpNE"}:
+                return expr
+
+            if _is_c_constant_int_8616(expr.rhs, 0):
+                source = expr.lhs
+            elif _is_c_constant_int_8616(expr.lhs, 0):
+                source = expr.rhs
+            else:
+                return expr
+
+            source_expr = _extract_zero_flag_source_expr_8616(source)
+            if source_expr is None:
+                return expr
+            if expr.op == "CmpEQ":
+                return source_expr
+            return CUnaryOp("Not", source_expr, codegen=codegen)
+
         def transform(node):
+            simplified = _simplify_zero_flag_comparison_8616(node)
+            if simplified is not node:
+                return simplified
             if (
                 isinstance(node, CBinaryOp)
-                and node.op in {"LogicalAnd", "LogicalOr"}
+                and node.op in {"LogicalAnd", "LogicalOr", "And", "Or"}
                 and _same_c_expression_8616(node.lhs, node.rhs)
             ):
                 return node.lhs
@@ -1332,7 +1416,7 @@ try:
                                     cond_nodes[0] = (new_cond, cond_nodes[0][1])
                                     changed = True
                                     later_uses = any(
-                                        _c_expr_uses_var_8616(rest, assign_stmt.lhs) for rest in statements[i + 1 :]
+                                        _c_expr_uses_var_8616(rest, assign_stmt.lhs) for rest in statements[i + 2 :]
                                     )
                                     if not later_uses:
                                         if assign_container is None:
@@ -1481,6 +1565,90 @@ try:
             changed = True
         return changed
 
+    def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+
+        flags_offset = project.arch.registers.get("flags", (None, None))[0]
+        if flags_offset is None:
+            return False
+
+        used_variables: set[int] = set()
+
+        def collect_reads(node, *, assignment_lhs: bool = False):
+            if not _structured_codegen_node_8616(node):
+                return
+            if isinstance(node, CVariable) and not assignment_lhs:
+                variable = getattr(node, "variable", None)
+                if variable is not None:
+                    used_variables.add(id(variable))
+                unified = getattr(node, "unified_variable", None)
+                if unified is not None:
+                    used_variables.add(id(unified))
+                return
+
+            for attr in ("rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "callee_target", "else_node", "retval"):
+                child = getattr(node, attr, None)
+                if _structured_codegen_node_8616(child):
+                    collect_reads(child)
+            lhs = getattr(node, "lhs", None)
+            if _structured_codegen_node_8616(lhs):
+                collect_reads(lhs, assignment_lhs=isinstance(node, CAssignment))
+            for attr in ("args", "operands", "statements"):
+                seq = getattr(node, attr, None)
+                if not seq:
+                    continue
+                for item in seq:
+                    if _structured_codegen_node_8616(item):
+                        collect_reads(item)
+                    elif isinstance(item, tuple):
+                        for subitem in item:
+                            if _structured_codegen_node_8616(subitem):
+                                collect_reads(subitem)
+            pairs = getattr(node, "condition_and_nodes", None)
+            if pairs:
+                for cond, body in pairs:
+                    if _structured_codegen_node_8616(cond):
+                        collect_reads(cond)
+                    if _structured_codegen_node_8616(body):
+                        collect_reads(body)
+
+        collect_reads(codegen.cfunc.statements)
+
+        changed = False
+
+        def visit(node):
+            nonlocal changed
+            if isinstance(node, CStatements):
+                new_statements = []
+                for stmt in node.statements:
+                    visit(stmt)
+                    if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
+                        variable = getattr(stmt.lhs, "variable", None)
+                        if (
+                            isinstance(variable, SimRegisterVariable)
+                            and getattr(variable, "reg", None) == flags_offset
+                            and id(variable) not in used_variables
+                        ):
+                            changed = True
+                            continue
+                    new_statements.append(stmt)
+                node.statements = new_statements
+
+            for attr in ("body", "else_node"):
+                child = getattr(node, attr, None)
+                if _structured_codegen_node_8616(child):
+                    visit(child)
+
+            pairs = getattr(node, "condition_and_nodes", None)
+            if pairs:
+                for _cond, body in pairs:
+                    if _structured_codegen_node_8616(body):
+                        visit(body)
+
+        visit(codegen.cfunc.statements)
+        return changed
+
     def _postprocess_codegen_8616(project, codegen) -> bool:
         if getattr(codegen, "cfunc", None) is None:
             return False
@@ -1497,6 +1665,8 @@ try:
         if _simplify_structured_expressions_8616(codegen):
             changed = True
         if _rewrite_flag_condition_pairs_8616(codegen):
+            changed = True
+        if _prune_unused_flag_assignments_8616(project, codegen):
             changed = True
         if _fix_interval_guard_conditions_8616(codegen):
             changed = True

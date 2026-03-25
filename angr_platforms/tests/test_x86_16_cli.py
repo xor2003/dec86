@@ -238,10 +238,15 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "v12 = Alt;" in result.stdout or "v12 = g_7006;" in result.stdout
     assert "MinAlt != v12" in result.stdout
     assert "if (!(v13 & 4))" in result.stdout
+    assert "if (!(v17 & 1))" in result.stdout
+    assert "if (...)" not in result.stdout
     assert "Knots <= 350" in result.stdout
     assert "!(!(" not in result.stdout
     assert "28679" not in result.stdout
     assert "* 0x100" not in result.stdout
+    assert "v9 = ...;" not in result.stdout
+    assert "v11 = ...;" not in result.stdout
+    assert "v16 = ...;" not in result.stdout
     assert "v2 = &v3;" in result.stdout
     assert "v1 = 2;" in result.stdout
     assert "v0 = v14;" in result.stdout
@@ -285,6 +290,8 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "while (true)" in result.stdout
     assert "v20 = v16 + v19;" in result.stdout
     assert "v20 = v20 & 0xff00 | *((char *)(v26 * 16 + 0 + v25));" in result.stdout
+    assert "if (!(char)v20)" in result.stdout
+    assert "if (v27 & 64)" not in result.stdout
 
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
