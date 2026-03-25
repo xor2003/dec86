@@ -1085,6 +1085,30 @@ try:
 
         return changed
 
+    def _simplify_structured_expressions_8616(codegen) -> bool:
+        if getattr(codegen, "cfunc", None) is None:
+            return False
+
+        def transform(node):
+            if isinstance(node, CBinaryOp) and node.op == "Sub" and _same_c_expression_8616(node.lhs, node.rhs):
+                type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None)
+                if type_ is not None:
+                    return CConstant(0, type_, codegen=codegen)
+            return node
+
+        root = codegen.cfunc.statements
+        new_root = transform(root)
+        if new_root is not root:
+            codegen.cfunc.statements = new_root
+            root = new_root
+            changed = True
+        else:
+            changed = False
+
+        if _replace_c_children_8616(root, transform):
+            changed = True
+        return changed
+
     def _postprocess_codegen_8616(project, codegen) -> bool:
         if getattr(codegen, "cfunc", None) is None:
             return False
@@ -1097,6 +1121,8 @@ try:
         if _apply_word_global_types_8616(codegen, addrs):
             changed = True
         if _prune_unused_unnamed_memory_declarations_8616(codegen):
+            changed = True
+        if _simplify_structured_expressions_8616(codegen):
             changed = True
         return changed
 
