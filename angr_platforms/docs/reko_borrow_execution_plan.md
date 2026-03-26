@@ -32,6 +32,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - `snake.EXE:0x1287` also simplifies the `g_c2` high-byte update path to `v26 ± 1`
   - the remaining high-byte-preserving update path now collapses to `v26 ± 0x100` instead of raw byte/word scaffolding
   - the remaining `snake.EXE:0x1287` linear temp chain now collapses one step further to `g_c2 - 2` in the `<` path
+  - the `>` path in `snake.EXE:0x1287` now folds the `g_c2 + 1` / `+ 1` chain to `g_c2 + 2`
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
