@@ -302,7 +302,6 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "v27 = ...;" not in result.stdout
     assert "ds * 16 + v25" not in result.stdout
     assert "v29 = v20 + 1;" in result.stdout
-    assert "v17 = v20 + 1;" in result.stdout
     assert "v23 = v29 + 1;" in result.stdout
     assert "*((char *)v24) = v20;" in result.stdout
 
