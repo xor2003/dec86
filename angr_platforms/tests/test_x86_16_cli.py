@@ -293,11 +293,13 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "unsigned short writestringat(void)" in result.stdout
     assert "while (true)" in result.stdout
     assert "v20 = v16 + v19;" in result.stdout
-    assert "v20 = v20 & 0xff00 | *((char *)(ds * 16 + v25));" in result.stdout
+    assert "v20 = v20 & 0xff00 | *((char *)v25);" in result.stdout
     assert "if (!(char)v20)" in result.stdout
     assert "if (v27 & 64)" not in result.stdout
     assert "v22 = ...;" not in result.stdout
     assert "v27 = ...;" not in result.stdout
+    assert "ds * 16 + v25" not in result.stdout
+    assert "*((char *)v24) = v20;" in result.stdout
 
 
 def test_decompile_cli_recovers_snake_draw_data_labels():
