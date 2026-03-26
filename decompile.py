@@ -1310,6 +1310,60 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 break
         return aliases
 
+    def _collect_shift_extract_aliases(node):
+        aliases: dict[int, tuple[object, int]] = {}
+        for walk_node in _iter_c_nodes_deep(node):
+            if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                continue
+            if not _is_linear_register_temp(walk_node.lhs):
+                continue
+            rhs = _unwrap_c_casts(walk_node.rhs)
+            if not isinstance(rhs, structured_c.CBinaryOp) or rhs.op != "Shr":
+                continue
+            shift = _c_constant_value(_unwrap_c_casts(rhs.rhs))
+            base = _unwrap_c_casts(rhs.lhs)
+            if shift is None or not isinstance(shift, int):
+                continue
+            if not isinstance(base, structured_c.CBinaryOp) or base.op != "And":
+                continue
+            mask_lhs = _c_constant_value(_unwrap_c_casts(base.lhs))
+            mask_rhs = _c_constant_value(_unwrap_c_casts(base.rhs))
+            inner = None
+            if mask_lhs == 0xFF00:
+                inner = base.rhs
+            elif mask_rhs == 0xFF00:
+                inner = base.lhs
+            if inner is None:
+                continue
+            aliases[id(getattr(walk_node.lhs, "variable", None))] = (inner, shift)
+        return aliases
+
+    def _match_constant_high_byte_extract(node):
+        node = _unwrap_c_casts(node)
+        if isinstance(node, structured_c.CBinaryOp) and node.op == "And":
+            for maybe_inner, maybe_mask in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+                if _c_constant_value(_unwrap_c_casts(maybe_mask)) == 0xFF:
+                    inner_val = _match_constant_high_byte_extract(maybe_inner)
+                    if inner_val is not None:
+                        return inner_val
+        if not isinstance(node, structured_c.CBinaryOp) or node.op != "Shr":
+            return None
+        shift = _c_constant_value(_unwrap_c_casts(node.rhs))
+        inner = _unwrap_c_casts(node.lhs)
+        if shift != 8 or not isinstance(inner, structured_c.CBinaryOp) or inner.op != "Or":
+            return None
+        for maybe_const, maybe_other in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+            const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
+            other = _unwrap_c_casts(maybe_other)
+            if const_value is None or const_value & 0xFF:
+                continue
+            if isinstance(other, structured_c.CBinaryOp) and other.op == "And":
+                lhs_mask = _c_constant_value(_unwrap_c_casts(other.lhs))
+                rhs_mask = _c_constant_value(_unwrap_c_casts(other.rhs))
+                if lhs_mask == 0xFF or rhs_mask == 0xFF:
+                    return (const_value >> 8) & 0xFF
+        return None
+
     variable_use_counts: dict[int, int] = {}
     for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
         if not isinstance(walk_node, structured_c.CVariable):
@@ -1319,6 +1373,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             variable_use_counts[id(variable)] = variable_use_counts.get(id(variable), 0) + 1
 
     high_byte_aliases: dict[int, int] = {}
+    shift_extract_aliases: dict[int, tuple[object, int]] = {}
 
     def _is_dead_stack_address_init(stmt) -> bool:
         if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
@@ -1392,10 +1447,51 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
                     if type_ is not None:
                         return structured_c.CConstant(0, type_, codegen=codegen)
+                for maybe_inner, maybe_mask in ((lhs, rhs), (rhs, lhs)):
+                    if _c_constant_value(maybe_mask) != 0xFF:
+                        continue
+                    const_high = _match_constant_high_byte_extract(maybe_inner)
+                    if const_high is not None:
+                        type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+                        return structured_c.CConstant(const_high, type_, codegen=codegen)
+                    inner = _unwrap_c_casts(maybe_inner)
+                    if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Shr":
+                        shift = _c_constant_value(_unwrap_c_casts(inner.rhs))
+                        shifted = _unwrap_c_casts(inner.lhs)
+                        if isinstance(shifted, structured_c.CVariable):
+                            alias = shift_extract_aliases.get(id(getattr(shifted, "variable", None)))
+                            if alias is not None and isinstance(shift, int):
+                                base_expr, base_shift = alias
+                                total_shift = base_shift + shift
+                                simplified = structured_c.CBinaryOp(
+                                    "Shr",
+                                    base_expr,
+                                    structured_c.CConstant(total_shift, SimTypeShort(False), codegen=codegen),
+                                    codegen=codegen,
+                                )
+                                base_type = getattr(getattr(base_expr, "type", None), "size", None)
+                                if total_shift == 8 and base_type == 16:
+                                    return simplified
+                                return structured_c.CBinaryOp(
+                                    "And",
+                                    simplified,
+                                    structured_c.CConstant(0xFF, SimTypeShort(False), codegen=codegen),
+                                    codegen=codegen,
+                                )
             simplified_or = _simplify_zero_mul_or_expr(node, codegen)
             if simplified_or is not node:
                 return simplified_or
             if node.op == "Shr":
+                if isinstance(lhs, structured_c.CBinaryOp) and lhs.op == "Shr":
+                    inner_shift = _c_constant_value(_unwrap_c_casts(lhs.rhs))
+                    outer_shift = _c_constant_value(rhs)
+                    if isinstance(inner_shift, int) and isinstance(outer_shift, int):
+                        return structured_c.CBinaryOp(
+                            "Shr",
+                            lhs.lhs,
+                            structured_c.CConstant(inner_shift + outer_shift, SimTypeShort(False), codegen=codegen),
+                            codegen=codegen,
+                        )
                 if _is_c_constant_int(rhs, 8) and isinstance(lhs, structured_c.CVariable):
                     alias = high_byte_aliases.get(id(getattr(lhs, "variable", None)))
                     if alias is not None:
@@ -1437,6 +1533,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     for _ in range(3):
         iter_changed = False
         high_byte_aliases = _collect_high_byte_temp_constants(root)
+        shift_extract_aliases = _collect_shift_extract_aliases(root)
         new_root = transform(root)
         if new_root is not root:
             codegen.cfunc.statements = new_root
