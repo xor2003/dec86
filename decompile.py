@@ -1750,6 +1750,35 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             return _flatten_bitwise_terms(expr.lhs, op) + _flatten_bitwise_terms(expr.rhs, op)
         return [expr]
 
+    def _rewrite_and_over_or(node):
+        if not isinstance(node, structured_c.CBinaryOp) or node.op != "And":
+            return None
+        for or_expr, const_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            or_expr = _unwrap_c_casts(or_expr)
+            const_value = _c_constant_value(_unwrap_c_casts(const_expr))
+            if const_value is None or not isinstance(or_expr, structured_c.CBinaryOp) or or_expr.op != "Or":
+                continue
+            for and_expr, inner_const_expr in ((or_expr.lhs, or_expr.rhs), (or_expr.rhs, or_expr.lhs)):
+                inner_const = _c_constant_value(_unwrap_c_casts(inner_const_expr))
+                if inner_const is None or not isinstance(and_expr, structured_c.CBinaryOp) or and_expr.op != "And":
+                    continue
+                for inner_base, inner_mask_expr in ((and_expr.lhs, and_expr.rhs), (and_expr.rhs, and_expr.lhs)):
+                    inner_mask = _c_constant_value(_unwrap_c_casts(inner_mask_expr))
+                    if inner_mask is None:
+                        continue
+                    left = structured_c.CBinaryOp(
+                        "And",
+                        _unwrap_c_casts(inner_base),
+                        structured_c.CConstant(const_value, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    )
+                    right_const = inner_const & const_value
+                    if right_const == 0:
+                        return left
+                    right = structured_c.CConstant(right_const, SimTypeShort(False), codegen=codegen)
+                    return structured_c.CBinaryOp("Or", left, right, codegen=codegen)
+        return None
+
     def transform(node):
         if isinstance(node, structured_c.CTypeCast):
             target_type = getattr(node, "type", None)
@@ -1804,6 +1833,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     if result is not None:
                         type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
                         return structured_c.CConstant(result, type_, codegen=codegen)
+            rewritten_and = _rewrite_and_over_or(node)
+            if rewritten_and is not None:
+                return rewritten_and
             if node.op in {"And", "Or"}:
                 terms = _flatten_bitwise_terms(node, node.op)
                 const_value = None
