@@ -1446,6 +1446,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     shift_extract_aliases: dict[int, tuple[object, int]] = {}
     mask_shift_aliases: dict[int, tuple[object, int, int]] = {}
     copy_aliases: dict[int, object] = {}
+    linear_aliases: dict[int, object] = {}
 
     def _resolve_copy_alias_expr(node):
         current = _unwrap_c_casts(node)
@@ -1459,6 +1460,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 break
             seen.add(key)
             alias = copy_aliases.get(key)
+            if alias is None:
+                alias = linear_aliases.get(key)
             if alias is None:
                 break
             current = _unwrap_c_casts(alias)
@@ -1542,6 +1545,78 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 )
 
         return None
+
+    def _match_linear_word_delta_expr(node):
+        node = _unwrap_c_casts(node)
+
+        def _extract(expr):
+            expr = _unwrap_c_casts(expr)
+            if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
+                return None, int(expr.value)
+            if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
+                return expr, 0
+
+            left_base, left_delta = _extract(expr.lhs)
+            right_base, right_delta = _extract(expr.rhs)
+            if left_base is not None and right_base is not None:
+                if _same_c_expression(left_base, right_base) and expr.op == "Add":
+                    return left_base, left_delta + right_delta
+                return expr, 0
+            if left_base is not None:
+                if expr.op == "Add":
+                    return left_base, left_delta + right_delta
+                return left_base, left_delta - right_delta
+            if right_base is not None:
+                if expr.op == "Add":
+                    return right_base, left_delta + right_delta
+                return expr, 0
+            if expr.op == "Add":
+                return None, left_delta + right_delta
+            return None, left_delta - right_delta
+
+        base_expr, delta = _extract(node)
+        if base_expr is None or delta == 0:
+            return None
+        if not isinstance(delta, int):
+            return None
+
+        if delta > 0:
+            op = "Add"
+            magnitude = delta
+        else:
+            op = "Sub"
+            magnitude = -delta
+
+        return structured_c.CBinaryOp(
+            op,
+            base_expr,
+            structured_c.CConstant(magnitude, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    for _ in range(3):
+        changed = False
+        for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+            if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                continue
+            if not _is_linear_register_temp(walk_node.lhs):
+                continue
+            rhs = _unwrap_c_casts(walk_node.rhs)
+            if not isinstance(rhs, structured_c.CBinaryOp) or rhs.op not in {"Add", "Sub"}:
+                continue
+            resolved_rhs = _resolve_copy_alias_expr(rhs)
+            linear_rhs = _match_linear_word_delta_expr(resolved_rhs)
+            if linear_rhs is None:
+                continue
+            lhs_var = getattr(walk_node.lhs, "variable", None)
+            if lhs_var is None:
+                continue
+            key = id(lhs_var)
+            if linear_aliases.get(key) != linear_rhs:
+                linear_aliases[key] = linear_rhs
+                changed = True
+        if not changed:
+            break
 
     def _match_high_byte_preserving_word_expr(node):
         node = _unwrap_c_casts(node)
@@ -1649,9 +1724,17 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 delta = _match_word_plus_minus_one_expr(node)
                 if delta is not None:
                     return delta
+                linear = _match_linear_word_delta_expr(node)
+                if linear is not None:
+                    return linear
                 high_update = _match_high_byte_preserving_word_expr(node)
                 if high_update is not None:
                     return high_update
+            if node.op in {"Add", "Sub"}:
+                resolved = structured_c.CBinaryOp(node.op, lhs, rhs, codegen=codegen)
+                linear = _match_linear_word_delta_expr(resolved)
+                if linear is not None:
+                    return linear
             if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):
                 if isinstance(lhs.value, int) and isinstance(rhs.value, int):
                     result = None
