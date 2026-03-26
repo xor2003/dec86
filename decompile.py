@@ -3194,6 +3194,8 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
         return False
 
     changed = False
+    linear_defs: dict[int, tuple[object, int]] = {}
+
     def _is_linear_register_temp(cvar) -> bool:
         return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
             r"v\d+", getattr(cvar, "name", "")
@@ -3243,12 +3245,32 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             codegen=codegen,
         )
 
+    def _inline_known_linear_defs(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if variable is not None:
+                linear = linear_defs.get(id(variable))
+                if linear is not None:
+                    base_expr, delta = linear
+                    return _build_linear_expr(base_expr, delta, codegen)
+            return expr
+        if isinstance(expr, structured_c.CBinaryOp):
+            lhs = _inline_known_linear_defs(expr.lhs)
+            rhs = _inline_known_linear_defs(expr.rhs)
+            if lhs is not expr.lhs or rhs is not expr.rhs:
+                return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=codegen)
+        if isinstance(expr, structured_c.CUnaryOp):
+            operand = _inline_known_linear_defs(expr.operand)
+            if operand is not expr.operand:
+                return structured_c.CUnaryOp(expr.op, operand, codegen=codegen)
+        return expr
+
     def visit(node):
         nonlocal changed
 
         if isinstance(node, structured_c.CStatements):
             new_statements = []
-            linear_defs: dict[int, tuple[object, int]] = {}
             i = 0
             while i < len(node.statements):
                 stmt = node.statements[i]
@@ -3299,7 +3321,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                             linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
                         if temp_var is not None and id(temp_var) in linear_defs:
                             current_linear = linear_defs[id(temp_var)]
-                            rhs = _unwrap_c_casts(stmt.rhs)
+                            rhs = _inline_known_linear_defs(stmt.rhs)
                             if isinstance(rhs, structured_c.CBinaryOp) and rhs.op in {"Add", "Sub"}:
                                 if _same_c_expression(_unwrap_c_casts(rhs.lhs), stmt.lhs) or _same_c_expression(
                                     _unwrap_c_casts(rhs.rhs), stmt.lhs
