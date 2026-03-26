@@ -1383,6 +1383,31 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 break
         return aliases
 
+    def _collect_copy_aliases(node):
+        aliases: dict[int, object] = {}
+        for _ in range(3):
+            changed = False
+            for walk_node in _iter_c_nodes_deep(node):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    continue
+                if not _is_linear_register_temp(walk_node.lhs):
+                    continue
+                rhs = _unwrap_c_casts(walk_node.rhs)
+                if not isinstance(rhs, structured_c.CVariable):
+                    continue
+                lhs_var = getattr(walk_node.lhs, "variable", None)
+                rhs_var = getattr(rhs, "variable", None)
+                if lhs_var is None or rhs_var is None:
+                    continue
+                key = id(lhs_var)
+                value = aliases.get(id(rhs_var), rhs)
+                if aliases.get(key) != value:
+                    aliases[key] = value
+                    changed = True
+            if not changed:
+                break
+        return aliases
+
     def _match_constant_high_byte_extract(node):
         node = _unwrap_c_casts(node)
         if isinstance(node, structured_c.CBinaryOp) and node.op == "And":
@@ -1420,6 +1445,53 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     high_byte_aliases: dict[int, int] = {}
     shift_extract_aliases: dict[int, tuple[object, int]] = {}
     mask_shift_aliases: dict[int, tuple[object, int, int]] = {}
+    copy_aliases: dict[int, object] = {}
+
+    def _resolve_copy_alias_expr(node):
+        current = _unwrap_c_casts(node)
+        seen: set[int] = set()
+        while isinstance(current, structured_c.CVariable):
+            variable = getattr(current, "variable", None)
+            if variable is None:
+                break
+            key = id(variable)
+            if key in seen:
+                break
+            seen.add(key)
+            alias = copy_aliases.get(key)
+            if alias is None:
+                break
+            current = _unwrap_c_casts(alias)
+        return current
+
+    def _match_adjacent_byte_pair_var_expr(low_expr, high_expr):
+        low_expr = _resolve_copy_alias_expr(low_expr)
+        high_expr = _resolve_copy_alias_expr(high_expr)
+
+        if isinstance(high_expr, structured_c.CBinaryOp) and high_expr.op in {"Mul", "Shl"}:
+            for maybe_inner, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
+                scale = _c_constant_value(_unwrap_c_casts(maybe_scale))
+                if scale not in {8, 0x100}:
+                    continue
+                high_expr = _resolve_copy_alias_expr(maybe_inner)
+                break
+
+        low_var = getattr(low_expr, "variable", None) if isinstance(low_expr, structured_c.CVariable) else None
+        high_var = getattr(high_expr, "variable", None) if isinstance(high_expr, structured_c.CVariable) else None
+        if not isinstance(low_var, SimMemoryVariable) or not isinstance(high_var, SimMemoryVariable):
+            return None
+        if getattr(low_var, "region", None) != getattr(high_var, "region", None):
+            return None
+        if getattr(high_var, "addr", None) != getattr(low_var, "addr", None) + 1:
+            return None
+        low_name = getattr(low_var, "name", None)
+        if not isinstance(low_name, str) or not low_name:
+            low_name = f"field_{low_var.addr:x}"
+        return structured_c.CVariable(
+            SimMemoryVariable(low_var.addr, 2, name=_sanitize_cod_identifier(low_name), region=codegen.cfunc.addr),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        )
 
     def _is_dead_stack_address_init(stmt) -> bool:
         if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
@@ -1461,6 +1533,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         if isinstance(node, structured_c.CBinaryOp):
             lhs = _unwrap_c_casts(node.lhs)
             rhs = _unwrap_c_casts(node.rhs)
+            if node.op in {"Add", "Or"}:
+                widened = _match_adjacent_byte_pair_var_expr(lhs, rhs)
+                if widened is None:
+                    widened = _match_adjacent_byte_pair_var_expr(rhs, lhs)
+                if widened is not None:
+                    return widened
             if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):
                 if isinstance(lhs.value, int) and isinstance(rhs.value, int):
                     result = None
@@ -1619,6 +1697,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         high_byte_aliases = _collect_high_byte_temp_constants(root)
         shift_extract_aliases = _collect_shift_extract_aliases(root)
         mask_shift_aliases = _collect_mask_shift_aliases(root)
+        copy_aliases = _collect_copy_aliases(root)
         new_root = transform(root)
         if new_root is not root:
             codegen.cfunc.statements = new_root
@@ -3036,6 +3115,26 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
         return structured_c.CConstant(
             (low_unwrapped.value & 0xFF) | ((high_unwrapped.value & 0xFF) << 8),
             SimTypeShort(False),
+            codegen=codegen,
+        )
+
+    low_mem_addr = _global_memory_addr(low_unwrapped)
+    high_mem_addr = _global_memory_addr(high_unwrapped)
+    if (
+        isinstance(low_unwrapped, structured_c.CVariable)
+        and isinstance(high_unwrapped, structured_c.CVariable)
+        and isinstance(getattr(low_unwrapped, "variable", None), SimMemoryVariable)
+        and isinstance(getattr(high_unwrapped, "variable", None), SimMemoryVariable)
+        and low_mem_addr is not None
+        and high_mem_addr == low_mem_addr + 1
+    ):
+        low_var = getattr(low_unwrapped, "variable", None)
+        name = getattr(low_var, "name", None) if isinstance(low_var, SimMemoryVariable) else None
+        if not isinstance(name, str) or not name:
+            name = f"field_{low_mem_addr:x}"
+        return structured_c.CVariable(
+            SimMemoryVariable(low_mem_addr, 2, name=_sanitize_cod_identifier(name), region=codegen.cfunc.addr),
+            variable_type=SimTypeShort(False),
             codegen=codegen,
         )
 
