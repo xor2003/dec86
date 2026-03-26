@@ -344,6 +344,8 @@ def _decompile_function(
         changed = True
     if _attach_ss_stack_variables(project, dec.codegen):
         changed = True
+    if _coalesce_direct_ss_local_word_statements(project, dec.codegen):
+        changed = True
     if _normalize_scalar_byte_register_types(dec.codegen):
         changed = True
     if _prune_unused_unnamed_memory_declarations(dec.codegen):
@@ -701,6 +703,56 @@ def _match_ss_stack_reference(node, project: angr.Project):
         return stack_var, cvar
 
     return None
+
+
+def _flatten_c_add_terms(node):
+    if isinstance(node, structured_c.CTypeCast):
+        return _flatten_c_add_terms(node.expr)
+    if isinstance(node, structured_c.CBinaryOp) and node.op == "Add":
+        return _flatten_c_add_terms(node.lhs) + _flatten_c_add_terms(node.rhs)
+    return [node]
+
+
+def _match_ss_local_plus_const(node, project: angr.Project):
+    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        return None
+    operand = node.operand
+    if not isinstance(operand, structured_c.CTypeCast):
+        return None
+
+    seg_name = None
+    cvar = None
+    extra_offset = 0
+    for term in _flatten_c_add_terms(operand.expr):
+        if isinstance(term, structured_c.CBinaryOp) and term.op == "Mul":
+            local_seg = None
+            for maybe_seg, maybe_scale in ((term.lhs, term.rhs), (term.rhs, term.lhs)):
+                if _c_constant_value(maybe_scale) != 16:
+                    continue
+                local_seg = _segment_reg_name(maybe_seg, project)
+                if local_seg is not None:
+                    break
+            if local_seg is not None:
+                seg_name = local_seg
+                continue
+
+        constant = _c_constant_value(term)
+        if constant is not None:
+            extra_offset += constant
+            continue
+
+        inner = term
+        if isinstance(inner, structured_c.CTypeCast):
+            inner = inner.expr
+        if not isinstance(inner, structured_c.CUnaryOp) or inner.op != "Reference":
+            continue
+        if not isinstance(inner.operand, structured_c.CVariable):
+            continue
+        cvar = inner.operand
+
+    if seg_name != "ss" or cvar is None:
+        return None
+    return cvar, extra_offset
 
 
 def _replace_c_children(node, transform) -> bool:
@@ -1081,6 +1133,25 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     return changed
 
 
+def _unwrap_c_casts(node):
+    while isinstance(node, structured_c.CTypeCast):
+        node = node.expr
+    return node
+
+
+def _match_shift_right_8_expr(node):
+    node = _unwrap_c_casts(node)
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Shr":
+        return None
+    lhs = _unwrap_c_casts(node.lhs)
+    rhs = _unwrap_c_casts(node.rhs)
+    if _is_c_constant_int(rhs, 8):
+        return lhs
+    if _is_c_constant_int(lhs, 8):
+        return rhs
+    return None
+
+
 def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None) -> bool:
     if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
         return False
@@ -1455,6 +1526,110 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
                 changed = True
+    return changed
+
+
+def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
+    changed = False
+
+    variable = getattr(cvar, "variable", None)
+    if variable is None:
+        return False
+
+    if getattr(variable, "size", 0) < size:
+        variable.size = size
+        changed = True
+    if getattr(cvar, "variable_type", None) != type_:
+        cvar.variable_type = type_
+        changed = True
+
+    unified = getattr(cvar, "unified_variable", None)
+    if unified is not None and getattr(unified, "size", 0) < size:
+        try:
+            unified.size = size
+            changed = True
+        except Exception:
+            pass
+
+    variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        tracked = variables_in_use.get(variable)
+        if tracked is not None and getattr(tracked, "variable_type", None) != type_:
+            tracked.variable_type = type_
+            changed = True
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for tracked_var, cvar_and_vartypes in list(unified_locals.items()):
+            if tracked_var is not variable:
+                continue
+            new_entries = set()
+            for tracked_cvar, _vartype in cvar_and_vartypes:
+                if getattr(tracked_cvar, "variable_type", None) != type_:
+                    tracked_cvar.variable_type = type_
+                    changed = True
+                new_entries.add((tracked_cvar, type_))
+            if new_entries != cvar_and_vartypes:
+                unified_locals[tracked_var] = new_entries
+                changed = True
+            break
+
+    return changed
+
+
+def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+    target_type = SimTypeShort(False)
+
+    def visit(node):
+        nonlocal changed
+
+        if isinstance(node, structured_c.CStatements):
+            new_statements = []
+            i = 0
+            while i < len(node.statements):
+                stmt = node.statements[i]
+                if (
+                    i + 1 < len(node.statements)
+                    and isinstance(stmt, structured_c.CAssignment)
+                    and isinstance(stmt.lhs, structured_c.CVariable)
+                    and isinstance(node.statements[i + 1], structured_c.CAssignment)
+                ):
+                    next_stmt = node.statements[i + 1]
+                    matched = _match_ss_local_plus_const(next_stmt.lhs, project)
+                    if matched is not None:
+                        target_cvar, extra_offset = matched
+                        high_expr = _match_shift_right_8_expr(next_stmt.rhs)
+                        if (
+                            extra_offset == 1
+                            and _same_c_expression(target_cvar, stmt.lhs)
+                            and high_expr is not None
+                            and _same_c_expression(_unwrap_c_casts(high_expr), _unwrap_c_casts(stmt.rhs))
+                        ):
+                            if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, target_type):
+                                changed = True
+                            new_statements.append(stmt)
+                            changed = True
+                            i += 2
+                            continue
+
+                visit(stmt)
+                new_statements.append(stmt)
+                i += 1
+
+            if len(new_statements) != len(node.statements):
+                node.statements = new_statements
+
+        elif isinstance(node, structured_c.CIfElse):
+            for _cond, body in node.condition_and_nodes:
+                visit(body)
+            if node.else_node is not None:
+                visit(node.else_node)
+
+    visit(codegen.cfunc.statements)
     return changed
 
 
