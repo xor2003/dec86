@@ -342,35 +342,30 @@ def _decompile_function(
         return "empty", "Decompiler did not produce code."
     setattr(project, "_inertia_rewrite_cache", {})
     changed = False
-    if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
-        changed = True
-    if _attach_ss_stack_variables(project, dec.codegen):
-        changed = True
-    if _coalesce_direct_ss_local_word_statements(project, dec.codegen):
-        changed = True
-    if _normalize_scalar_byte_register_types(dec.codegen):
-        changed = True
-    if _prune_unused_unnamed_memory_declarations(dec.codegen):
-        changed = True
-    if _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals):
-        changed = True
-    if _coalesce_segmented_word_store_statements(project, dec.codegen):
-        changed = True
-    if _coalesce_segmented_word_load_expressions(project, dec.codegen):
-        changed = True
-    if _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals):
-        changed = True
-    if _attach_cod_global_names(project, dec.codegen, synthetic_globals):
-        changed = True
-    if _attach_cod_global_declaration_names(dec.codegen, synthetic_globals):
-        changed = True
-    if _attach_cod_global_declaration_types(dec.codegen, synthetic_globals):
-        changed = True
-    if _simplify_structured_c_expressions(dec.codegen):
-        changed = True
-    if _attach_cod_variable_names(dec.codegen, cod_metadata):
-        changed = True
-    if _attach_cod_callee_names(dec.codegen, cod_metadata):
+    rewrite_passes = (
+        lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
+        lambda: _attach_ss_stack_variables(project, dec.codegen),
+        lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
+        lambda: _normalize_scalar_byte_register_types(dec.codegen),
+        lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
+        lambda: _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals),
+        lambda: _coalesce_segmented_word_store_statements(project, dec.codegen),
+        lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
+        lambda: _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals),
+        lambda: _attach_cod_global_names(project, dec.codegen, synthetic_globals),
+        lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
+        lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
+        lambda: _simplify_structured_c_expressions(dec.codegen),
+        lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
+        lambda: _attach_cod_callee_names(dec.codegen, cod_metadata),
+    )
+    for _ in range(2):
+        iter_changed = False
+        for rewrite in rewrite_passes:
+            if rewrite():
+                iter_changed = True
+        if not iter_changed:
+            break
         changed = True
     if changed:
         dec.codegen.regenerate_text()
@@ -1155,18 +1150,18 @@ def _simplify_structured_c_expressions(codegen) -> bool:
 
         if isinstance(node, structured_c.CBinaryOp):
             if node.op in {"Add", "Or", "Xor"}:
-                if _is_c_constant_int(node.lhs, 0):
+                if _c_constant_value(_unwrap_c_casts(node.lhs)) == 0:
                     return node.rhs
-                if _is_c_constant_int(node.rhs, 0):
+                if _c_constant_value(_unwrap_c_casts(node.rhs)) == 0:
                     return node.lhs
             if node.op == "Mul":
-                if _is_c_constant_int(node.lhs, 0) or _is_c_constant_int(node.rhs, 0):
+                if _c_constant_value(_unwrap_c_casts(node.lhs)) == 0 or _c_constant_value(_unwrap_c_casts(node.rhs)) == 0:
                     type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
                     if type_ is not None:
                         return structured_c.CConstant(0, type_, codegen=codegen)
-                if _is_c_constant_int(node.lhs, 1):
+                if _c_constant_value(_unwrap_c_casts(node.lhs)) == 1:
                     return node.rhs
-                if _is_c_constant_int(node.rhs, 1):
+                if _c_constant_value(_unwrap_c_casts(node.rhs)) == 1:
                     return node.lhs
         simplified = _simplify_boolean_expr(node, codegen)
         if simplified is not node:
@@ -1875,14 +1870,30 @@ def _match_shifted_high_byte_addr_expr(node):
     if node.op == "Mul":
         pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
         for maybe_load, maybe_scale in pairs:
-            if _is_c_constant_int(_unwrap_c_casts(maybe_scale), 0x100):
+            if _c_constant_value(_unwrap_c_casts(maybe_scale)) == 0x100:
                 return _match_byte_load_addr_expr(_unwrap_c_casts(maybe_load))
 
     if node.op == "Shl":
         pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
         for maybe_load, maybe_scale in pairs:
-            if _is_c_constant_int(_unwrap_c_casts(maybe_scale), 8):
+            if _c_constant_value(_unwrap_c_casts(maybe_scale)) == 8:
                 return _match_byte_load_addr_expr(_unwrap_c_casts(maybe_load))
+
+    return None
+
+
+def _match_word_pair_low_addr_expr(node, project: angr.Project):
+    node = _unwrap_c_casts(node)
+    if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
+        return None
+
+    for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        low_addr_expr = _match_byte_load_addr_expr(_unwrap_c_casts(low_expr))
+        high_addr_expr = _match_shifted_high_byte_addr_expr(high_expr)
+        if low_addr_expr is None or high_addr_expr is None:
+            continue
+        if _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project):
+            return low_addr_expr
 
     return None
 
@@ -2012,6 +2023,14 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
             and _addr_exprs_are_same(low_addr_expr, word_addr_expr, project)
         ):
             return shifted_source
+
+    low_pair_addr = _match_word_pair_low_addr_expr(low_unwrapped, project)
+    if low_pair_addr is not None:
+        shifted_source = _match_shift_right_8_expr(high_rhs)
+        if shifted_source is not None:
+            word_addr_expr = _match_word_dereference_addr_expr(_unwrap_c_casts(shifted_source))
+            if word_addr_expr is not None and _addr_exprs_are_same(low_pair_addr, word_addr_expr, project):
+                return _make_word_dereference_from_addr_expr(codegen, project, low_pair_addr)
 
     low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
     high_addr_expr = _match_shifted_high_byte_addr_expr(high_rhs)
