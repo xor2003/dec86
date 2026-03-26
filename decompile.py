@@ -1249,6 +1249,36 @@ def _simplify_zero_flag_comparison(node, codegen):
 
 
 def _simplify_boolean_expr(node, codegen):
+    if isinstance(node, structured_c.CUnaryOp) and node.op == "Not":
+        operand = _unwrap_c_casts(node.operand)
+        if isinstance(operand, structured_c.CBinaryOp) and operand.op == "Sub":
+            lhs_const = _c_constant_value(_unwrap_c_casts(operand.lhs))
+            rhs_const = _c_constant_value(_unwrap_c_casts(operand.rhs))
+            if rhs_const is not None:
+                return structured_c.CBinaryOp(
+                    "CmpEQ",
+                    operand.lhs,
+                    structured_c.CConstant(
+                        rhs_const,
+                        getattr(operand.rhs, "type", None) or getattr(operand, "type", None) or SimTypeShort(False),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                    tags=getattr(node, "tags", None),
+                )
+            if lhs_const is not None:
+                return structured_c.CBinaryOp(
+                    "CmpEQ",
+                    operand.rhs,
+                    structured_c.CConstant(
+                        lhs_const,
+                        getattr(operand.lhs, "type", None) or getattr(operand, "type", None) or SimTypeShort(False),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                    tags=getattr(node, "tags", None),
+                )
+
     simplified = _simplify_zero_flag_comparison(node, codegen)
     if simplified is not node:
         return simplified
