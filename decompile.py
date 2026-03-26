@@ -377,6 +377,7 @@ def _decompile_function(
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
         lambda: _attach_segment_register_names(dec.codegen, project),
+        lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
         lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
@@ -830,6 +831,40 @@ def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | Non
     result = (classified.seg_name, classified.linear)
     cache[key] = result
     return result
+
+
+def _match_segment_register_based_dereference(node, project: angr.Project):
+    classified = _classify_segmented_dereference(node, project)
+    if classified is None or classified.addr_expr is None or classified.seg_name not in {"ds", "es"}:
+        return None
+
+    addr_expr = classified.addr_expr
+    base_terms = []
+    for term in _flatten_c_add_terms(addr_expr):
+        inner = _unwrap_c_casts(term)
+        if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Mul":
+            segment_scale = False
+            for maybe_seg, maybe_scale in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+                if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 16:
+                    continue
+                if _segment_reg_name(_unwrap_c_casts(maybe_seg), project) is not None:
+                    segment_scale = True
+                    break
+            if segment_scale:
+                continue
+
+        if _c_constant_value(inner) is not None:
+            continue
+
+        if isinstance(inner, structured_c.CVariable) and isinstance(getattr(inner, "variable", None), SimRegisterVariable):
+            base_terms.append(inner)
+            continue
+
+        return None
+
+    if len(base_terms) != 1:
+        return None
+    return classified, base_terms[0]
 
 
 def _match_ss_stack_reference(node, project: angr.Project):
@@ -1831,6 +1866,103 @@ def _attach_segment_register_names(codegen, project: angr.Project | None = None)
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
                 changed = True
+
+    return changed
+
+
+def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    eligible_bases: dict[int, tuple[structured_c.CVariable, set[int]]] = {}
+
+    def collect_candidate_bases() -> None:
+        for node in _iter_c_nodes_deep(codegen.cfunc.statements):
+            classified = _classify_segmented_dereference(node, project)
+            if classified is None or classified.addr_expr is None or classified.seg_name not in {"ds", "es"}:
+                continue
+
+            addr_expr = classified.addr_expr
+            base_terms = []
+            for term in _flatten_c_add_terms(addr_expr):
+                inner = _unwrap_c_casts(term)
+                if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Mul":
+                    segment_scale = False
+                    for maybe_seg, maybe_scale in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+                        if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 16:
+                            continue
+                        if _segment_reg_name(_unwrap_c_casts(maybe_seg), project) is not None:
+                            segment_scale = True
+                            break
+                    if segment_scale:
+                        continue
+
+                if _c_constant_value(inner) is not None:
+                    continue
+
+                if isinstance(inner, structured_c.CVariable) and isinstance(getattr(inner, "variable", None), SimRegisterVariable):
+                    base_terms.append(inner)
+                    continue
+
+                base_terms = []
+                break
+
+            if len(base_terms) != 1:
+                continue
+            base_var = getattr(base_terms[0], "variable", None)
+            if not isinstance(base_var, SimRegisterVariable):
+                continue
+            entry = eligible_bases.get(id(base_var))
+            if entry is None:
+                eligible_bases[id(base_var)] = (base_terms[0], {classified.extra_offset})
+            else:
+                entry[1].add(classified.extra_offset)
+
+    collect_candidate_bases()
+
+    def make_deref(base_expr, bits: int):
+        element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
+        ptr_type = SimTypePointer(element_type).with_arch(project.arch)
+        return structured_c.CUnaryOp(
+            "Dereference",
+            structured_c.CTypeCast(None, ptr_type, base_expr, codegen=codegen),
+            codegen=codegen,
+        )
+
+    def transform(node):
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return node
+        match = _match_segment_register_based_dereference(node, project)
+        if match is None:
+            return node
+        classified, base_expr = match
+        base_var = getattr(getattr(base_expr, "variable", None), "reg", None)
+        if base_var is None:
+            return node
+        eligible = eligible_bases.get(id(getattr(base_expr, "variable", None)))
+        if eligible is None or eligible[1] != {0}:
+            return node
+        type_ = getattr(node, "type", None)
+        bits = getattr(type_, "size", None)
+        if bits != 8:
+            return node
+        # Keep the segment register visible elsewhere, but treat the register base
+        # itself as the pointer value. This is the source-like shape we want.
+        return make_deref(base_expr, bits)
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    else:
+        changed = False
+
+    if _replace_c_children(root, transform):
+        changed = True
 
     return changed
 
