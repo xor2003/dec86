@@ -317,6 +317,7 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "* 2" in result.stdout
     assert "| 0" not in result.stdout
     assert "v10 = &v11;" not in result.stdout
+    assert "(unsigned int)&v1 + 1" not in result.stdout
     assert "sub_103b();" in result.stdout
 
 
