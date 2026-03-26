@@ -390,6 +390,7 @@ def _decompile_function(
         lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
         lambda: _attach_lst_data_names(project, dec.codegen, lst_metadata),
+        lambda: _collect_access_traits(project, dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(dec.codegen, cod_metadata),
         lambda: _simplify_structured_c_expressions(dec.codegen),
@@ -2174,6 +2175,80 @@ def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen
         changed = True
 
     return changed
+
+
+def _collect_access_traits(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    traits: dict[str, dict[tuple[object, ...], int]] = {
+        "base_const": {},
+        "base_stride": {},
+        "repeated_offsets": {},
+    }
+
+    def record(bucket: str, key: tuple[object, ...]) -> None:
+        store = traits[bucket]
+        store[key] = store.get(key, 0) + 1
+
+    def summarize_address(addr_expr):
+        base_terms: list[object] = []
+        offset = 0
+        stride_terms: list[tuple[object, int]] = []
+
+        for term in _flatten_c_add_terms(addr_expr):
+            inner = _unwrap_c_casts(term)
+            const_value = _c_constant_value(inner)
+            if const_value is not None:
+                offset += const_value
+                continue
+
+            if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Mul":
+                for maybe_index, maybe_stride in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+                    stride = _c_constant_value(_unwrap_c_casts(maybe_stride))
+                    if stride is None:
+                        continue
+                    index = _unwrap_c_casts(maybe_index)
+                    if isinstance(index, structured_c.CVariable):
+                        stride_terms.append((index, stride))
+                        break
+                else:
+                    base_terms.append(inner)
+                continue
+
+            if isinstance(inner, structured_c.CVariable):
+                base_terms.append(inner)
+                continue
+
+            base_terms.append(inner)
+
+        return base_terms, offset, stride_terms
+
+    for node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            continue
+
+        classified = _classify_segmented_dereference(node, project)
+        if classified is None:
+            continue
+
+        base_terms, offset, stride_terms = summarize_address(classified.addr_expr)
+        if len(base_terms) == 1 and isinstance(base_terms[0], structured_c.CVariable):
+            base_var = getattr(base_terms[0], "variable", None)
+            if isinstance(base_var, SimRegisterVariable):
+                record("base_const", (classified.seg_name, getattr(base_var, "reg", None), offset, getattr(node, "type", None)))
+                record("repeated_offsets", (classified.seg_name, getattr(base_var, "reg", None), offset))
+        for index_expr, stride in stride_terms:
+            index_var = getattr(index_expr, "variable", None)
+            if isinstance(index_var, SimRegisterVariable):
+                record("base_stride", (classified.seg_name, getattr(index_var, "reg", None), stride, offset, getattr(node, "type", None)))
+
+    cache = getattr(project, "_inertia_access_traits", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(project, "_inertia_access_traits", cache)
+    cache[getattr(codegen.cfunc, "addr", 0)] = traits
+    return False
 
 
 def _prune_unused_unnamed_memory_declarations(codegen) -> bool:
