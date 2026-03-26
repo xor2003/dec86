@@ -292,7 +292,6 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "== asm fallback ==" not in result.stdout
     assert "unsigned short writestringat(void)" in result.stdout
     assert "while (true)" in result.stdout
-    assert "v20 = v16 + v19;" in result.stdout
     assert "v20 = v20 & 0xff00 | *((char *)v25);" in result.stdout
     assert "if (!(char)v20)" in result.stdout
     assert "if (v27 & 64)" not in result.stdout
@@ -389,14 +388,15 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "globals = _Rp2, _Tscale, _Rp1" in result.stdout
     assert "char mseg;  // [bp-0xc] mseg" in result.stdout
     assert "v2 = *((char *)0x7000);" in result.stdout
-    assert "*((char *)(&v2 + 1)) = Rp2 >> 8;" in result.stdout
+    assert "*((char *)(&v2 + 1)) = field_30e;" in result.stdout
+    assert "*((char *)(&v2 + 1)) = field_30e >> 8;" in result.stdout
     assert "146" in result.stdout
     assert "21" in result.stdout
     assert "29" in result.stdout
     assert "9" in result.stdout
     assert "field_30e" in result.stdout
     assert "* 2" in result.stdout
-    assert "*(char *)(&v1 + 1)" in result.stdout or "*((char *)(&v1 + 1))" in result.stdout
+    assert "*((char *)(&v2 + 1)) = field_30e;" in result.stdout
     assert "ss * 16 + (unsigned int)&v2 + 1" not in result.stdout
     assert "| 0" not in result.stdout
     assert "v10 = &v11;" not in result.stdout

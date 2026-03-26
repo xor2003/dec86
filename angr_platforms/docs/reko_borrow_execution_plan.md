@@ -34,6 +34,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - the remaining `snake.EXE:0x1287` linear temp chain now collapses one step further to `g_c2 - 2` in the `<` path
   - the `>` path in `snake.EXE:0x1287` now folds the `g_c2 + 1` / `+ 1` chain to `g_c2 + 2`
   - the remaining `snake.EXE:0x1287` loop-counter recurrence (`v21 += 40`) is left as a separate statement-sequence cleanup target
+  - the hottest x86-16 expression matchers are now cached per decompilation run to cut repeated tree walks
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
