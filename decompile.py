@@ -867,6 +867,30 @@ def _match_segment_register_based_dereference(node, project: angr.Project):
     return classified, base_terms[0]
 
 
+def _strip_segment_scale_from_addr_expr(addr_expr, project: angr.Project):
+    kept_terms = []
+    for term in _flatten_c_add_terms(addr_expr):
+        inner = _unwrap_c_casts(term)
+        if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Mul":
+            segment_scale = False
+            for maybe_seg, maybe_scale in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+                if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 16:
+                    continue
+                if _segment_reg_name(_unwrap_c_casts(maybe_seg), project) is not None:
+                    segment_scale = True
+                    break
+            if segment_scale:
+                continue
+        kept_terms.append(term)
+
+    if not kept_terms:
+        return None
+    result = kept_terms[0]
+    for term in kept_terms[1:]:
+        result = structured_c.CBinaryOp("Add", result, term, codegen=getattr(term, "codegen", None))
+    return result
+
+
 def _match_ss_stack_reference(node, project: angr.Project):
     cache = _project_rewrite_cache(project).setdefault("ss_stack_reference", {})
     key = id(node)
@@ -1936,14 +1960,20 @@ def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen
             return node
         match = _match_segment_register_based_dereference(node, project)
         if match is None:
-            return node
-        classified, base_expr = match
-        base_var = getattr(getattr(base_expr, "variable", None), "reg", None)
-        if base_var is None:
-            return node
-        eligible = eligible_bases.get(id(getattr(base_expr, "variable", None)))
-        if eligible is None or eligible[1] != {0}:
-            return node
+            classified = _classify_segmented_dereference(node, project)
+            if classified is None or classified.seg_name != "es" or classified.addr_expr is None:
+                return node
+            base_expr = _strip_segment_scale_from_addr_expr(classified.addr_expr, project)
+            if base_expr is None:
+                return node
+        else:
+            classified, base_expr = match
+            base_var = getattr(getattr(base_expr, "variable", None), "reg", None)
+            if base_var is None:
+                return node
+            eligible = eligible_bases.get(id(getattr(base_expr, "variable", None)))
+            if eligible is None or eligible[1] != {0}:
+                return node
         type_ = getattr(node, "type", None)
         bits = getattr(type_, "size", None)
         if bits != 8:
