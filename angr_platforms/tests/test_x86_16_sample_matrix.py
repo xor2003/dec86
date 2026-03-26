@@ -262,6 +262,8 @@ def test_cod_access_traits_are_collected_for_segmented_proc():
     assert function_traits is not None
     assert function_traits["base_const"]
     assert any(key[0] == "ds" for key in function_traits["base_const"])
+    assert function_traits["repeated_offsets"]
+    assert ("ds", 6, 782) in function_traits["repeated_offsets"]
 
 
 def test_small_model_entry_function_decompiles_in_bounded_window():
