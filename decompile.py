@@ -3195,6 +3195,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
 
     changed = False
     linear_defs: dict[object, tuple[object, int]] = {}
+    shift_defs: dict[int, tuple[object, int]] = {}
 
     def _is_linear_register_temp(cvar) -> bool:
         return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
@@ -3245,6 +3246,16 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             codegen=codegen,
         )
 
+    def _build_shift_expr(base_expr, count, codegen):
+        if count == 0:
+            return base_expr
+        return structured_c.CBinaryOp(
+            "Shr",
+            base_expr,
+            structured_c.CConstant(count, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
     def _inline_known_linear_defs(expr):
         expr = _unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CVariable):
@@ -3263,6 +3274,46 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                 return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=codegen)
         if isinstance(expr, structured_c.CUnaryOp):
             operand = _inline_known_linear_defs(expr.operand)
+            if operand is not expr.operand:
+                return structured_c.CUnaryOp(expr.op, operand, codegen=codegen)
+        return expr
+
+    def _extract_shift_delta(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
+            return None, int(expr.value)
+        if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
+            return expr, 0
+        shift = _c_constant_value(_unwrap_c_casts(expr.rhs))
+        if not isinstance(shift, int):
+            return expr, 0
+        base = _unwrap_c_casts(expr.lhs)
+        if isinstance(base, structured_c.CVariable):
+            variable = getattr(base, "variable", None)
+            if variable is not None:
+                alias = shift_defs.get(id(variable))
+                if alias is not None:
+                    alias_base, alias_shift = alias
+                    return alias_base, alias_shift + shift
+        return base, shift
+
+    def _inline_known_shift_defs(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if variable is not None:
+                alias = shift_defs.get(id(variable))
+                if alias is not None:
+                    base_expr, count = alias
+                    return _build_shift_expr(base_expr, count, codegen)
+            return expr
+        if isinstance(expr, structured_c.CBinaryOp):
+            lhs = _inline_known_shift_defs(expr.lhs)
+            rhs = _inline_known_shift_defs(expr.rhs)
+            if lhs is not expr.lhs or rhs is not expr.rhs:
+                return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=codegen)
+        if isinstance(expr, structured_c.CUnaryOp):
+            operand = _inline_known_shift_defs(expr.operand)
             if operand is not expr.operand:
                 return structured_c.CUnaryOp(expr.op, operand, codegen=codegen)
         return expr
@@ -3287,7 +3338,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                     temp_use_count = variable_use_counts.get(id(temp_var), 0) if temp_var is not None else 0
 
                     if (
-                        temp_use_count == 1
+                        temp_use_count == 2
                         and _is_linear_register_temp(stmt.lhs)
                         and _is_linear_register_temp(next_stmt.lhs)
                     ):
@@ -3315,6 +3366,31 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                                 changed = True
                                 i += 2
                                 continue
+
+                    if (
+                        temp_use_count == 2
+                        and _is_linear_register_temp(stmt.lhs)
+                        and _is_linear_register_temp(next_stmt.lhs)
+                    ):
+                        stmt_shift_base, stmt_shift_count = _extract_shift_delta(stmt.rhs)
+                        next_shift_rhs = _unwrap_c_casts(next_stmt.rhs)
+                        if isinstance(next_shift_rhs, structured_c.CBinaryOp) and next_shift_rhs.op == "Shr":
+                            if _same_c_expression(_unwrap_c_casts(next_shift_rhs.lhs), stmt.lhs):
+                                next_shift_count = _c_constant_value(_unwrap_c_casts(next_shift_rhs.rhs))
+                                if isinstance(next_shift_count, int) and stmt_shift_count >= 0:
+                                    combined_shift = stmt_shift_count + next_shift_count
+                                    replacement = structured_c.CAssignment(
+                                        next_stmt.lhs,
+                                        _build_shift_expr(stmt_shift_base, combined_shift, codegen),
+                                        codegen=codegen,
+                                    )
+                                    shift_var = getattr(next_stmt.lhs, "variable", None)
+                                    if shift_var is not None:
+                                        shift_defs[id(shift_var)] = (stmt_shift_base, combined_shift)
+                                    new_statements.append(replacement)
+                                    changed = True
+                                    i += 2
+                                    continue
 
                     if _is_linear_register_temp(stmt.lhs):
                         stmt_base, stmt_delta = _extract_linear_delta(stmt.rhs)
