@@ -2209,6 +2209,23 @@ def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen
 
     collect_candidate_bases()
 
+    def _addr_expr_is_safe_projection(addr_expr) -> bool:
+        allowed_ops = {"Add", "Sub", "Mul", "And", "Or", "Xor", "Shl", "Shr", "Div"}
+
+        def _check(node) -> bool:
+            node = _unwrap_c_casts(node)
+            if _c_constant_value(node) is not None:
+                return True
+            if isinstance(node, structured_c.CVariable) and isinstance(getattr(node, "variable", None), SimRegisterVariable):
+                return True
+            if isinstance(node, structured_c.CUnaryOp) and node.op in {"Neg", "BitNot"}:
+                return _check(node.operand)
+            if isinstance(node, structured_c.CBinaryOp) and node.op in allowed_ops:
+                return _check(node.lhs) and _check(node.rhs)
+            return False
+
+        return _check(addr_expr)
+
     def make_deref(base_expr, bits: int):
         element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
@@ -2224,10 +2241,10 @@ def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen
         match = _match_segment_register_based_dereference(node, project)
         if match is None:
             classified = _classify_segmented_dereference(node, project)
-            if classified is None or classified.seg_name != "es" or classified.addr_expr is None:
+            if classified is None or classified.seg_name not in {"ds", "es"} or classified.addr_expr is None:
                 return node
             base_expr = _strip_segment_scale_from_addr_expr(classified.addr_expr, project)
-            if base_expr is None:
+            if base_expr is None or not _addr_expr_is_safe_projection(base_expr):
                 return node
         else:
             classified, base_expr = match
