@@ -1543,6 +1543,63 @@ def _simplify_structured_c_expressions(codegen) -> bool:
 
         return None
 
+    def _match_high_byte_preserving_word_expr(node):
+        node = _unwrap_c_casts(node)
+        if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
+            return None
+
+        def _strip_byte_cast(expr):
+            expr = _unwrap_c_casts(expr)
+            if isinstance(expr, structured_c.CTypeCast):
+                type_ = getattr(expr, "type", None)
+                if getattr(type_, "size", None) == 8:
+                    return _unwrap_c_casts(expr.expr)
+            return expr
+
+        for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            low_expr = _unwrap_c_casts(low_expr)
+            high_expr = _unwrap_c_casts(high_expr)
+            if not isinstance(low_expr, structured_c.CBinaryOp) or low_expr.op != "And":
+                continue
+
+            base_expr = None
+            for maybe_word, maybe_mask in ((low_expr.lhs, low_expr.rhs), (low_expr.rhs, low_expr.lhs)):
+                if _c_constant_value(_unwrap_c_casts(maybe_mask)) != 255:
+                    continue
+                base_expr = _unwrap_c_casts(maybe_word)
+                break
+            if base_expr is None:
+                continue
+
+            if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op != "Mul":
+                continue
+
+            for maybe_delta, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
+                if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 0x100:
+                    continue
+                delta_expr = _strip_byte_cast(maybe_delta)
+                if not isinstance(delta_expr, structured_c.CBinaryOp) or delta_expr.op not in {"Add", "Sub"}:
+                    continue
+
+                for maybe_inner, maybe_const in ((delta_expr.lhs, delta_expr.rhs), (delta_expr.rhs, delta_expr.lhs)):
+                    if _c_constant_value(_unwrap_c_casts(maybe_const)) != 1:
+                        continue
+                    inner = _strip_byte_cast(maybe_inner)
+                    if not isinstance(inner, structured_c.CBinaryOp) or inner.op != "Shr":
+                        continue
+                    if _c_constant_value(_unwrap_c_casts(inner.rhs)) != 8:
+                        continue
+                    if not _same_c_expression(_unwrap_c_casts(inner.lhs), base_expr):
+                        continue
+                    return structured_c.CBinaryOp(
+                        "Add" if delta_expr.op == "Add" else "Sub",
+                        base_expr,
+                        structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    )
+
+        return None
+
     def _is_dead_stack_address_init(stmt) -> bool:
         if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
             return False
@@ -1592,6 +1649,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 delta = _match_word_plus_minus_one_expr(node)
                 if delta is not None:
                     return delta
+                high_update = _match_high_byte_preserving_word_expr(node)
+                if high_update is not None:
+                    return high_update
             if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):
                 if isinstance(lhs.value, int) and isinstance(rhs.value, int):
                     result = None
