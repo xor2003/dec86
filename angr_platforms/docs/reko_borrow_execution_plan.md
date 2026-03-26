@@ -22,6 +22,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
+  - `snake.EXE:0x135c` / `0x1387` now recover coordinate projection as `(v4 >> 8) * 160 + (v4 & 255) * 2`
   - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
 
 ## Constraints
