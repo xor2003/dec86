@@ -1559,6 +1559,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     shift_extract_aliases: dict[int, tuple[object, int]] = {}
     mask_shift_aliases: dict[int, tuple[object, int, int]] = {}
     copy_aliases: dict[int, object] = {}
+    expr_aliases: dict[int, object] = {}
     linear_aliases: dict[int, object] = {}
     _no_match = object()
     adjacent_byte_pair_cache: dict[tuple[int, int], object] = {}
@@ -1566,9 +1567,14 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     linear_word_delta_cache: dict[int, object] = {}
     high_byte_preserving_word_cache: dict[int, object] = {}
 
-    def _resolve_copy_alias_expr(node):
+    def _resolve_copy_alias_expr(node, seen: set[int] | None = None):
         current = _unwrap_c_casts(node)
-        seen: set[int] = set()
+        if seen is None:
+            seen = set()
+        current_key = id(current)
+        if current_key in seen:
+            return current
+        seen.add(current_key)
         while isinstance(current, structured_c.CVariable):
             variable = getattr(current, "variable", None)
             if variable is None:
@@ -1579,9 +1585,34 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             seen.add(key)
             alias = copy_aliases.get(key)
             if alias is None:
-                break
+                alias = expr_aliases.get(key)
+                if alias is None:
+                    break
             current = _unwrap_c_casts(alias)
+        if isinstance(current, structured_c.CBinaryOp):
+            lhs = _resolve_copy_alias_expr(current.lhs, set(seen))
+            rhs = _resolve_copy_alias_expr(current.rhs, set(seen))
+            if lhs is not current.lhs or rhs is not current.rhs:
+                return structured_c.CBinaryOp(current.op, lhs, rhs, codegen=getattr(current, "codegen", None))
+        if isinstance(current, structured_c.CUnaryOp):
+            operand = _resolve_copy_alias_expr(current.operand, set(seen))
+            if operand is not current.operand:
+                return structured_c.CUnaryOp(current.op, operand, codegen=getattr(current, "codegen", None))
         return current
+
+    def _expr_is_safe_inline_candidate(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, (structured_c.CConstant, structured_c.CVariable)):
+            return True
+        if isinstance(expr, structured_c.CTypeCast):
+            return _expr_is_safe_inline_candidate(expr.expr)
+        if isinstance(expr, structured_c.CUnaryOp):
+            return expr.op in {"Neg", "Not"} and _expr_is_safe_inline_candidate(expr.operand)
+        if isinstance(expr, structured_c.CBinaryOp):
+            if expr.op not in {"Add", "Sub", "Mul", "And", "Or", "Xor", "Shl", "Shr"}:
+                return False
+            return _expr_is_safe_inline_candidate(expr.lhs) and _expr_is_safe_inline_candidate(expr.rhs)
+        return False
 
     def _match_adjacent_byte_pair_var_expr(low_expr, high_expr):
         key = (id(low_expr), id(high_expr))
@@ -3317,6 +3348,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
     changed = False
     linear_defs: dict[object, tuple[object, int]] = {}
     shift_defs: dict[int, tuple[object, int]] = {}
+    expr_aliases: dict[int, object] = {}
 
     def _is_linear_register_temp(cvar) -> bool:
         return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
@@ -3376,6 +3408,20 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             structured_c.CConstant(count, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
+
+    def _expr_is_safe_inline_candidate(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, (structured_c.CConstant, structured_c.CVariable)):
+            return True
+        if isinstance(expr, structured_c.CTypeCast):
+            return _expr_is_safe_inline_candidate(expr.expr)
+        if isinstance(expr, structured_c.CUnaryOp):
+            return expr.op in {"Neg", "Not"} and _expr_is_safe_inline_candidate(expr.operand)
+        if isinstance(expr, structured_c.CBinaryOp):
+            if expr.op not in {"Add", "Sub", "Mul", "And", "Or", "Xor", "Shl", "Shr"}:
+                return False
+            return _expr_is_safe_inline_candidate(expr.lhs) and _expr_is_safe_inline_candidate(expr.rhs)
+        return False
 
     def _inline_known_linear_defs(expr):
         expr = _unwrap_c_casts(expr)
@@ -3553,6 +3599,8 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                         if rhs is not stmt.rhs:
                             stmt = structured_c.CAssignment(stmt.lhs, rhs, codegen=codegen)
                             changed = True
+                        if temp_use_count == 1 and _expr_is_safe_inline_candidate(stmt.rhs):
+                            expr_aliases[id(temp_var)] = stmt.rhs
 
                 visit(stmt)
                 new_statements.append(stmt)
