@@ -3194,12 +3194,23 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
         return False
 
     changed = False
-    linear_defs: dict[int, tuple[object, int]] = {}
+    linear_defs: dict[object, tuple[object, int]] = {}
 
     def _is_linear_register_temp(cvar) -> bool:
         return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
             r"v\d+", getattr(cvar, "name", "")
         ) is not None
+
+    def _linear_temp_key(cvar):
+        if cvar is None:
+            return None
+        variable = getattr(cvar, "variable", None)
+        if variable is not None:
+            return id(variable)
+        name = getattr(cvar, "name", None)
+        if isinstance(name, str):
+            return name
+        return None
 
     variable_use_counts: dict[int, int] = {}
     for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
@@ -3251,6 +3262,10 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             variable = getattr(expr, "variable", None)
             if variable is not None:
                 linear = linear_defs.get(id(variable))
+                if linear is None:
+                    name = getattr(expr, "name", None)
+                    if isinstance(name, str):
+                        linear = linear_defs.get(name)
                 if linear is not None:
                     base_expr, delta = linear
                     return _build_linear_expr(base_expr, delta, codegen)
@@ -3319,9 +3334,18 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                         stmt_base, stmt_delta = _extract_linear_delta(stmt.rhs)
                         if stmt_base is not None:
                             linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
-                        if temp_var is not None and id(temp_var) in linear_defs:
-                            current_linear = linear_defs[id(temp_var)]
-                            rhs = _inline_known_linear_defs(stmt.rhs)
+                            temp_name = getattr(stmt.lhs, "name", None)
+                            if isinstance(temp_name, str):
+                                linear_defs[temp_name] = (stmt_base, stmt_delta)
+                        rhs = _inline_known_linear_defs(stmt.rhs)
+                        current_linear = None
+                        if temp_var is not None:
+                            current_linear = linear_defs.get(id(temp_var))
+                            if current_linear is None:
+                                temp_name = getattr(stmt.lhs, "name", None)
+                                if isinstance(temp_name, str):
+                                    current_linear = linear_defs.get(temp_name)
+                        if current_linear is not None:
                             if isinstance(rhs, structured_c.CBinaryOp) and rhs.op in {"Add", "Sub"}:
                                 if _same_c_expression(_unwrap_c_casts(rhs.lhs), stmt.lhs) or _same_c_expression(
                                     _unwrap_c_casts(rhs.rhs), stmt.lhs
@@ -3338,6 +3362,9 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                                             codegen=codegen,
                                         )
                                         changed = True
+                        if rhs is not stmt.rhs:
+                            stmt = structured_c.CAssignment(stmt.lhs, rhs, codegen=codegen)
+                            changed = True
 
                 visit(stmt)
                 new_statements.append(stmt)
