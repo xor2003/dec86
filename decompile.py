@@ -344,6 +344,7 @@ def _decompile_function(
     changed = False
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
+        lambda: _attach_segment_register_names(dec.codegen, project),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
         lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
@@ -1605,6 +1606,53 @@ def _normalize_scalar_byte_register_types(codegen) -> bool:
             if not any(is_suspicious_scalar_type(vartype) for _cvariable, vartype in cvar_and_vartypes):
                 continue
             new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
+            if new_entries != cvar_and_vartypes:
+                unified_locals[variable] = new_entries
+                changed = True
+
+    return changed
+
+
+def _attach_segment_register_names(codegen, project: angr.Project | None = None) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    desired_names = {"cs", "ds", "es", "ss", "fs", "gs"}
+    changed = False
+
+    def reg_name(variable) -> str | None:
+        if not isinstance(variable, SimRegisterVariable):
+            return None
+        if project is not None:
+            name = project.arch.register_names.get(getattr(variable, "reg", None))
+            if name in desired_names:
+                return name
+        name = getattr(variable, "name", None)
+        if isinstance(name, str) and name in desired_names:
+            return name
+        return None
+
+    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        name = reg_name(variable)
+        if name is None:
+            continue
+        if getattr(variable, "name", None) != name:
+            variable.name = name
+            changed = True
+        unified = getattr(cvar, "unified_variable", None)
+        if unified is not None and getattr(unified, "name", None) != name:
+            unified.name = name
+            changed = True
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable, cvar_and_vartypes in list(unified_locals.items()):
+            name = reg_name(variable)
+            if name is None:
+                continue
+            new_entries = set()
+            for cvariable, vartype in cvar_and_vartypes:
+                new_entries.add((cvariable, vartype))
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
                 changed = True
