@@ -1279,6 +1279,10 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     return node.rhs
                 if _c_constant_value(rhs) == 0:
                     return node.lhs
+            if node.op == "Xor" and _same_c_expression(lhs, rhs):
+                type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                if type_ is not None:
+                    return structured_c.CConstant(0, type_, codegen=codegen)
             if node.op == "Mul":
                 if _c_constant_value(lhs) == 0 or _c_constant_value(rhs) == 0:
                     type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
