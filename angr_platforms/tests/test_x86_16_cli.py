@@ -376,6 +376,9 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "field_30e_b" in result.stdout
     assert "field_30e_w" in result.stdout
     assert "* 2" in result.stdout
+    assert "*(char *)(&v2 + 1)" in result.stdout or "*((char *)(&v2 + 1))" in result.stdout
+    assert "*(char *)(&v1 + 1)" in result.stdout or "*((char *)(&v1 + 1))" in result.stdout
+    assert "ss * 16 + (unsigned int)&v2 + 1" not in result.stdout
     assert "| 0" not in result.stdout
     assert "v10 = &v11;" not in result.stdout
     assert "(unsigned int)&v1 + 1" not in result.stdout

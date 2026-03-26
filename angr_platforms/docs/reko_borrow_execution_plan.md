@@ -24,6 +24,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - a real `.COD` proc test now verifies that segmented access traits are actually recorded in the cache
   - the cache now also keeps repeated-offset evidence for later field/array recovery
   - repeated-offset evidence now drives narrow field-like names for stable segmented data accesses when no source label exists
+  - stack-side `ss + const` accesses now also rewrite to source-like pointer arithmetic instead of staying as raw real-mode segment math
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
