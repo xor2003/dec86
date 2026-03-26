@@ -33,6 +33,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - the remaining high-byte-preserving update path now collapses to `v26 ± 0x100` instead of raw byte/word scaffolding
   - the remaining `snake.EXE:0x1287` linear temp chain now collapses one step further to `g_c2 - 2` in the `<` path
   - the `>` path in `snake.EXE:0x1287` now folds the `g_c2 + 1` / `+ 1` chain to `g_c2 + 2`
+  - a narrow additive-chain fold now exists for shallow left-deep constant adds, which is useful groundwork for remaining source-like recurrence cleanup
   - the remaining `snake.EXE:0x1287` loop-counter recurrence (`v21 += 40`) is left as a separate statement-sequence cleanup target
   - a narrower recurrence cleanup pass now trims another copy/increment chain in `snake.EXE:0x1287` and reduces the decompilation time further without changing the remaining source-like shape
   - known linear temps can now be inlined into later expressions within the same block, which helps keep the remaining recurrence chains source-like without introducing broad alias rewrites
