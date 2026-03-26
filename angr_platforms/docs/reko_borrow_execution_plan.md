@@ -36,6 +36,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - `snake.EXE:0x135c` no longer prints `es * 16` in the `writecharat` byte-pointer write
   - `snake.EXE:0x1287` now keeps the source labels `field_0` and `field_1` while dropping raw `ds * 16` scaffolding
   - `snake.EXE:0x1287` now simplifies the guard to `if (!(field_0 & v17))`
+  - `snake.EXE:0x1287` now simplifies the guard further to `if (!field_0)`
   - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
 
 ## Constraints
