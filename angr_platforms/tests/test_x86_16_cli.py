@@ -300,6 +300,25 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "v27 = ...;" not in result.stdout
 
 
+def test_decompile_cli_recovers_snake_draw_data_labels():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x11d8"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x11d8 draw" in result.stdout
+    assert "unsigned short draw(void)" in result.stdout
+    assert "segmentcount" in result.stdout
+    assert "fruitactive = 1;" in result.stdout
+    assert "0xf4" not in result.stdout.lower()
+    assert "0xf5" not in result.stdout.lower()
+
+
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
     result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_TIDShowRange")
 
