@@ -85,7 +85,7 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-from angr.sim_type import SimTypeChar, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -351,6 +351,8 @@ def _decompile_function(
     if _prune_unused_unnamed_memory_declarations(dec.codegen):
         changed = True
     if _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals):
+        changed = True
+    if _coalesce_segmented_word_load_expressions(project, dec.codegen):
         changed = True
     if _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals):
         changed = True
@@ -1678,6 +1680,94 @@ def _match_scaled_high_byte(node, project: angr.Project) -> int | None:
     return None
 
 
+def _extract_dereference_addr_expr(node):
+    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        return None
+    operand = node.operand
+    if isinstance(operand, structured_c.CTypeCast):
+        return operand.expr
+    return operand
+
+
+def _match_byte_load_addr_expr(node):
+    addr_expr = _extract_dereference_addr_expr(node)
+    if addr_expr is None:
+        return None
+    type_ = getattr(node, "type", None)
+    bits = getattr(type_, "size", None)
+    if bits not in {8, None}:
+        return None
+    return addr_expr
+
+
+def _match_shifted_high_byte_addr_expr(node):
+    node = _unwrap_c_casts(node)
+    if not isinstance(node, structured_c.CBinaryOp):
+        return None
+
+    if node.op == "Mul":
+        pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+        for maybe_load, maybe_scale in pairs:
+            if _is_c_constant_int(_unwrap_c_casts(maybe_scale), 0x100):
+                return _match_byte_load_addr_expr(_unwrap_c_casts(maybe_load))
+
+    if node.op == "Shl":
+        pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+        for maybe_load, maybe_scale in pairs:
+            if _is_c_constant_int(_unwrap_c_casts(maybe_scale), 8):
+                return _match_byte_load_addr_expr(_unwrap_c_casts(maybe_load))
+
+    return None
+
+
+def _split_expr_const_offset(node):
+    terms = _flatten_c_add_terms(node)
+    const_sum = 0
+    others = []
+    for term in terms:
+        constant = _c_constant_value(_unwrap_c_casts(term))
+        if constant is not None:
+            const_sum += constant
+        else:
+            others.append(term)
+    return others, const_sum
+
+
+def _same_expression_list(lhs_terms, rhs_terms) -> bool:
+    if len(lhs_terms) != len(rhs_terms):
+        return False
+
+    used = [False] * len(rhs_terms)
+    for lhs in lhs_terms:
+        matched = False
+        for idx, rhs in enumerate(rhs_terms):
+            if used[idx]:
+                continue
+            if _same_c_expression(lhs, rhs):
+                used[idx] = True
+                matched = True
+                break
+        if not matched:
+            return False
+    return True
+
+
+def _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr) -> bool:
+    low_terms, low_const = _split_expr_const_offset(low_addr_expr)
+    high_terms, high_const = _split_expr_const_offset(high_addr_expr)
+    return _same_expression_list(low_terms, high_terms) and high_const == low_const + 1
+
+
+def _make_word_dereference_from_addr_expr(codegen, project: angr.Project, addr_expr):
+    word_type = SimTypeShort(False)
+    ptr_type = SimTypePointer(word_type).with_arch(project.arch)
+    return structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
+        codegen=codegen,
+    )
+
+
 def _high_byte_store_addr(node, project: angr.Project) -> int | None:
     seg_name, linear = _match_segmented_dereference(node, project)
     if seg_name != "ds":
@@ -1731,6 +1821,42 @@ def _coalesce_cod_word_global_loads(
                 continue
 
             return make_word_global(low_addr)
+
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    else:
+        changed = False
+
+    if _replace_c_children(root, transform):
+        changed = True
+    return changed
+
+
+def _coalesce_segmented_word_load_expressions(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    def transform(node):
+        if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
+            return node
+
+        for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            low_addr_expr = _match_byte_load_addr_expr(_unwrap_c_casts(low_expr))
+            if low_addr_expr is None:
+                continue
+
+            high_addr_expr = _match_shifted_high_byte_addr_expr(high_expr)
+            if high_addr_expr is None:
+                continue
+
+            if _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr):
+                return _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
 
         return node
 
