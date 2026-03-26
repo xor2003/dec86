@@ -23,6 +23,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - access traits for repeated `base + const` and `base + index * stride` segmented accesses are now collected and cached per decompilation run
   - a real `.COD` proc test now verifies that segmented access traits are actually recorded in the cache
   - the cache now also keeps repeated-offset evidence for later field/array recovery
+  - repeated-offset evidence now drives narrow field-like names for stable segmented data accesses when no source label exists
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
@@ -100,6 +101,7 @@ Primary targets:
 Goal:
 
 - infer field/array evidence from normalized addresses instead of guessing late
+- use repeated-offset evidence to name stable segmented data accesses when no source label is available
 
 What to implement:
 
