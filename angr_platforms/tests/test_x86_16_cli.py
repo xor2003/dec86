@@ -182,8 +182,8 @@ def test_decompile_cli_recovers_rotate_pt_logic():
     assert "unsigned short d;  // [bp+0x6] d" in result.stdout
     assert "d * -1" in result.stdout
     assert "0 + v12" not in result.stdout
-    assert "y = *((unsigned short *)(v13 * 16 + v12));" in result.stdout
-    assert "v3 = *((unsigned short *)(v13 * 16 + 2 + v12));" in result.stdout
+    assert "y = *((unsigned short *)(ds * 16 + v12));" in result.stdout
+    assert "v3 = *((unsigned short *)(ds * 16 + 2 + v12));" in result.stdout
     assert "* 0x100" not in result.stdout
     assert "sub_101f();" in result.stdout
 
@@ -293,7 +293,7 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "unsigned short sub_13b2(void)" in result.stdout
     assert "while (true)" in result.stdout
     assert "v20 = v16 + v19;" in result.stdout
-    assert "v20 = v20 & 0xff00 | *((char *)(v26 * 16 + v25));" in result.stdout
+    assert "v20 = v20 & 0xff00 | *((char *)(ds * 16 + v25));" in result.stdout
     assert "if (!(char)v20)" in result.stdout
     assert "if (v27 & 64)" not in result.stdout
     assert "v22 = ...;" not in result.stdout
