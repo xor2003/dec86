@@ -379,6 +379,7 @@ def _decompile_function(
         lambda: _attach_segment_register_names(dec.codegen, project),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
+        lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
         lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
@@ -2484,6 +2485,57 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
                 changed = True
+    return changed
+
+
+def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    def make_stack_deref(cvar, offset: int, bits: int):
+        element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
+        ptr_type = SimTypePointer(element_type).with_arch(project.arch)
+        base_ref = structured_c.CUnaryOp("Reference", cvar, codegen=codegen)
+        if offset:
+            addr_expr = structured_c.CBinaryOp(
+                "Add",
+                base_ref,
+                structured_c.CConstant(offset, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            )
+        else:
+            addr_expr = base_ref
+        return structured_c.CUnaryOp(
+            "Dereference",
+            structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
+            codegen=codegen,
+        )
+
+    def transform(node):
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return node
+        classified = _classify_segmented_dereference(node, project)
+        if classified is None or classified.kind != "stack" or classified.cvar is None:
+            return node
+        if classified.extra_offset <= 0:
+            return node
+        type_ = getattr(node, "type", None)
+        bits = getattr(type_, "size", None)
+        if bits not in {8, 16}:
+            return node
+        return make_stack_deref(classified.cvar, classified.extra_offset, bits)
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    if _replace_c_children(root, transform):
+        changed = True
+
     return changed
 
 
