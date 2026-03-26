@@ -33,6 +33,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - the remaining high-byte-preserving update path now collapses to `v26 ± 0x100` instead of raw byte/word scaffolding
   - the remaining `snake.EXE:0x1287` linear temp chain now collapses one step further to `g_c2 - 2` in the `<` path
   - the `>` path in `snake.EXE:0x1287` now folds the `g_c2 + 1` / `+ 1` chain to `g_c2 + 2`
+  - the remaining `snake.EXE:0x1287` additive tail now folds `v5 + 1 + 1` to `g_c2 + 0x100`, while the `v29 == 40` guard stays intact
   - a narrow additive-chain fold now exists for shallow left-deep constant adds, which is useful groundwork for remaining source-like recurrence cleanup
   - boolean cleanup now rewrites `!(x - c)` into `x == c` in stable cases, which already improved the remaining `snake.EXE:0x1287` guard
   - the remaining `snake.EXE:0x1287` loop-counter recurrence (`v21 += 40`) is left as a separate statement-sequence cleanup target
