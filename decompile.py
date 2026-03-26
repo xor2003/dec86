@@ -1439,31 +1439,39 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
             return node
 
-        for outer_expr, inner_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
-            outer_expr = _unwrap_c_casts(outer_expr)
-            inner_expr = _unwrap_c_casts(inner_expr)
-            if not isinstance(outer_expr, structured_c.CBinaryOp) or outer_expr.op != "Add":
-                continue
+        lhs = _unwrap_c_casts(node.lhs)
+        rhs = _unwrap_c_casts(node.rhs)
 
-            inner_const = _c_constant_value(_unwrap_c_casts(outer_expr.rhs))
-            outer_const = _c_constant_value(inner_expr)
-            if inner_const is None or outer_const is None:
-                continue
+        if isinstance(lhs, structured_c.CBinaryOp) and lhs.op == "Add":
+            lhs_const = _c_constant_value(_unwrap_c_casts(lhs.rhs))
+            rhs_const = _c_constant_value(rhs)
+            if lhs_const is not None and rhs_const is not None:
+                return structured_c.CBinaryOp(
+                    "Add",
+                    lhs.lhs,
+                    structured_c.CConstant(
+                        lhs_const + rhs_const,
+                        getattr(lhs.rhs, "type", None) or getattr(rhs, "type", None) or getattr(node, "type", None) or SimTypeShort(False),
+                        codegen=getattr(node, "codegen", None),
+                    ),
+                    codegen=getattr(node, "codegen", None),
+                )
 
-            base_expr = outer_expr.lhs
-            combined = inner_const + outer_const
-            const_type = (
-                getattr(outer_expr.rhs, "type", None)
-                or getattr(inner_expr, "type", None)
-                or getattr(node, "type", None)
-                or SimTypeShort(False)
-            )
-            return structured_c.CBinaryOp(
-                "Add",
-                base_expr,
-                structured_c.CConstant(combined, const_type, codegen=None),
-                codegen=getattr(node, "codegen", None),
-            )
+        if isinstance(rhs, structured_c.CBinaryOp) and rhs.op == "Add":
+            lhs_const = _c_constant_value(lhs)
+            rhs_const_a = _c_constant_value(_unwrap_c_casts(rhs.lhs))
+            rhs_const_b = _c_constant_value(_unwrap_c_casts(rhs.rhs))
+            if lhs_const is not None and rhs_const_a is not None and rhs_const_b is not None:
+                return structured_c.CBinaryOp(
+                    "Add",
+                    lhs,
+                    structured_c.CConstant(
+                        lhs_const + rhs_const_a + rhs_const_b,
+                        getattr(lhs, "type", None) or getattr(rhs.lhs, "type", None) or getattr(rhs.rhs, "type", None) or getattr(node, "type", None) or SimTypeShort(False),
+                        codegen=getattr(node, "codegen", None),
+                    ),
+                    codegen=getattr(node, "codegen", None),
+                )
 
         return node
 
