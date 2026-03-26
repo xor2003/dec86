@@ -3259,16 +3259,17 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
     def _inline_known_linear_defs(expr):
         expr = _unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CVariable):
+            linear = None
             variable = getattr(expr, "variable", None)
             if variable is not None:
                 linear = linear_defs.get(id(variable))
-                if linear is None:
-                    name = getattr(expr, "name", None)
-                    if isinstance(name, str):
-                        linear = linear_defs.get(name)
-                if linear is not None:
-                    base_expr, delta = linear
-                    return _build_linear_expr(base_expr, delta, codegen)
+            if linear is None:
+                name = getattr(expr, "name", None)
+                if isinstance(name, str):
+                    linear = linear_defs.get(name)
+            if linear is not None:
+                base_expr, delta = linear
+                return _build_linear_expr(base_expr, delta, codegen)
             return expr
         if isinstance(expr, structured_c.CBinaryOp):
             lhs = _inline_known_linear_defs(expr.lhs)
@@ -3341,10 +3342,10 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                         current_linear = None
                         if temp_var is not None:
                             current_linear = linear_defs.get(id(temp_var))
-                            if current_linear is None:
-                                temp_name = getattr(stmt.lhs, "name", None)
-                                if isinstance(temp_name, str):
-                                    current_linear = linear_defs.get(temp_name)
+                        if current_linear is None:
+                            temp_name = getattr(stmt.lhs, "name", None)
+                            if isinstance(temp_name, str):
+                                current_linear = linear_defs.get(temp_name)
                         if current_linear is not None:
                             if isinstance(rhs, structured_c.CBinaryOp) and rhs.op in {"Add", "Sub"}:
                                 if _same_c_expression(_unwrap_c_casts(rhs.lhs), stmt.lhs) or _same_c_expression(
