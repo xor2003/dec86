@@ -1531,8 +1531,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 return node.expr
 
         if isinstance(node, structured_c.CBinaryOp):
-            lhs = _unwrap_c_casts(node.lhs)
-            rhs = _unwrap_c_casts(node.rhs)
+            lhs = _resolve_copy_alias_expr(_unwrap_c_casts(node.lhs))
+            rhs = _resolve_copy_alias_expr(_unwrap_c_casts(node.rhs))
             if node.op in {"Add", "Or"}:
                 widened = _match_adjacent_byte_pair_var_expr(lhs, rhs)
                 if widened is None:
@@ -1566,6 +1566,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     return node.rhs
                 if _c_constant_value(rhs) == 0:
                     return node.lhs
+            if node.op in {"And", "Or"} and _same_c_expression(lhs, rhs):
+                return lhs
             if node.op == "Xor" and _same_c_expression(lhs, rhs):
                 type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
                 if type_ is not None:
