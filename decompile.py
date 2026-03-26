@@ -1749,6 +1749,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             rendered = str(target_type) if target_type is not None else ""
             if "[" in rendered and isinstance(node.expr, structured_c.CVariable):
                 return node.expr
+            if "[" in rendered and not isinstance(node.expr, structured_c.CConstant):
+                return node.expr
 
         if isinstance(node, structured_c.CBinaryOp):
             lhs = _resolve_copy_alias_expr(_unwrap_c_casts(node.lhs))
