@@ -984,7 +984,38 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
+    variable_use_counts: dict[int, int] = {}
+    for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if not isinstance(walk_node, structured_c.CVariable):
+            continue
+        variable = getattr(walk_node, "variable", None)
+        if variable is not None:
+            variable_use_counts[id(variable)] = variable_use_counts.get(id(variable), 0) + 1
+
+    def _is_dead_stack_address_init(stmt) -> bool:
+        if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
+            return False
+        lhs_var = getattr(stmt.lhs, "variable", None)
+        if not isinstance(lhs_var, SimStackVariable) or getattr(lhs_var, "base", None) != "bp":
+            return False
+        if variable_use_counts.get(id(lhs_var), 0) != 1:
+            return False
+        rhs = stmt.rhs
+        if not isinstance(rhs, structured_c.CUnaryOp) or rhs.op != "Reference":
+            return False
+        operand = rhs.operand
+        if not isinstance(operand, structured_c.CVariable):
+            return False
+        ref_var = getattr(operand, "variable", None)
+        return isinstance(ref_var, SimStackVariable) and getattr(ref_var, "base", None) == "bp"
+
     def transform(node):
+        if isinstance(node, structured_c.CTypeCast):
+            target_type = getattr(node, "type", None)
+            rendered = str(target_type) if target_type is not None else ""
+            if "[" in rendered and isinstance(node.expr, structured_c.CVariable):
+                return node.expr
+
         if isinstance(node, structured_c.CBinaryOp):
             if node.op in {"Add", "Or", "Xor"}:
                 if _is_c_constant_int(node.lhs, 0):
@@ -1010,6 +1041,27 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     return structured_c.CConstant(0, type_, codegen=codegen)
         return node
 
+    def prune_dead_stack_address_inits(node) -> bool:
+        changed = False
+        if isinstance(node, structured_c.CStatements):
+            new_statements = []
+            for stmt in node.statements:
+                if _is_dead_stack_address_init(stmt):
+                    changed = True
+                    continue
+                if prune_dead_stack_address_inits(stmt):
+                    changed = True
+                new_statements.append(stmt)
+            if len(new_statements) != len(node.statements):
+                node.statements = new_statements
+        elif isinstance(node, structured_c.CIfElse):
+            for _cond, body in node.condition_and_nodes:
+                if prune_dead_stack_address_inits(body):
+                    changed = True
+            if node.else_node is not None and prune_dead_stack_address_inits(node.else_node):
+                changed = True
+        return changed
+
     root = codegen.cfunc.statements
     changed = False
     for _ in range(3):
@@ -1020,6 +1072,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             root = new_root
             iter_changed = True
         if _replace_c_children(root, transform):
+            iter_changed = True
+        if prune_dead_stack_address_inits(root):
             iter_changed = True
         changed |= iter_changed
         if not iter_changed:
