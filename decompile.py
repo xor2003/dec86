@@ -1469,41 +1469,45 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
             return node
 
-        lhs = _unwrap_c_casts(node.lhs)
-        rhs = _unwrap_c_casts(node.rhs)
+        terms = []
 
-        if isinstance(lhs, structured_c.CBinaryOp) and lhs.op == "Add":
-            lhs_const = _c_constant_value(_unwrap_c_casts(lhs.rhs))
-            rhs_const = _c_constant_value(rhs)
-            if lhs_const is not None and rhs_const is not None:
-                return structured_c.CBinaryOp(
-                    "Add",
-                    lhs.lhs,
-                    structured_c.CConstant(
-                        lhs_const + rhs_const,
-                        getattr(lhs.rhs, "type", None) or getattr(rhs, "type", None) or getattr(node, "type", None) or SimTypeShort(False),
-                        codegen=getattr(node, "codegen", None),
-                    ),
-                    codegen=getattr(node, "codegen", None),
-                )
+        def _collect_add_terms(expr):
+            expr = _unwrap_c_casts(expr)
+            if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Add":
+                return _collect_add_terms(expr.lhs) + _collect_add_terms(expr.rhs)
+            return [expr]
 
-        if isinstance(rhs, structured_c.CBinaryOp) and rhs.op == "Add":
-            lhs_const = _c_constant_value(lhs)
-            rhs_const_a = _c_constant_value(_unwrap_c_casts(rhs.lhs))
-            rhs_const_b = _c_constant_value(_unwrap_c_casts(rhs.rhs))
-            if lhs_const is not None and rhs_const_a is not None and rhs_const_b is not None:
-                return structured_c.CBinaryOp(
-                    "Add",
-                    lhs,
-                    structured_c.CConstant(
-                        lhs_const + rhs_const_a + rhs_const_b,
-                        getattr(lhs, "type", None) or getattr(rhs.lhs, "type", None) or getattr(rhs.rhs, "type", None) or getattr(node, "type", None) or SimTypeShort(False),
-                        codegen=getattr(node, "codegen", None),
-                    ),
-                    codegen=getattr(node, "codegen", None),
-                )
+        terms = _collect_add_terms(node)
+        const_total = 0
+        const_type = None
+        base_terms = []
+        for term in terms:
+            const_value = _c_constant_value(term)
+            if const_value is not None:
+                const_total += const_value
+                const_type = const_type or getattr(term, "type", None)
+                continue
+            base_terms.append(term)
 
-        return node
+        if len(base_terms) != 1 or not terms:
+            return node
+
+        base_expr = base_terms[0]
+        if const_total == 0:
+            return base_expr
+
+        if const_type is None:
+            const_type = getattr(base_expr, "type", None) or getattr(node, "type", None) or SimTypeShort(False)
+        return structured_c.CBinaryOp(
+            "Add" if const_total > 0 else "Sub",
+            base_expr,
+            structured_c.CConstant(
+                const_total if const_total > 0 else -const_total,
+                const_type,
+                codegen=getattr(node, "codegen", None),
+            ),
+            codegen=getattr(node, "codegen", None),
+        )
 
     def _build_linear_expr(base_expr, delta, codegen):
         if delta == 0:
