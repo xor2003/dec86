@@ -1461,8 +1461,6 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             seen.add(key)
             alias = copy_aliases.get(key)
             if alias is None:
-                alias = linear_aliases.get(key)
-            if alias is None:
                 break
             current = _unwrap_c_casts(alias)
         return current
@@ -1547,17 +1545,29 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         return None
 
     def _match_linear_word_delta_expr(node):
-        node = _unwrap_c_casts(node)
+        node = _resolve_copy_alias_expr(_unwrap_c_casts(node))
 
-        def _extract(expr):
-            expr = _unwrap_c_casts(expr)
+        def _extract(expr, seen: set[int] | None = None):
+            expr = _resolve_copy_alias_expr(_unwrap_c_casts(expr))
+            if seen is None:
+                seen = set()
+            key = id(expr)
+            if key in seen:
+                return expr, 0
+            seen.add(key)
+            if isinstance(expr, structured_c.CVariable):
+                variable = getattr(expr, "variable", None)
+                if variable is not None:
+                    alias = linear_aliases.get(id(variable))
+                    if alias is not None:
+                        return _extract(alias, seen)
             if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
                 return None, int(expr.value)
             if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
                 return expr, 0
 
-            left_base, left_delta = _extract(expr.lhs)
-            right_base, right_delta = _extract(expr.rhs)
+            left_base, left_delta = _extract(expr.lhs, seen)
+            right_base, right_delta = _extract(expr.rhs, seen)
             if left_base is not None and right_base is not None:
                 if _same_c_expression(left_base, right_base) and expr.op == "Add":
                     return left_base, left_delta + right_delta
