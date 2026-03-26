@@ -1760,7 +1760,7 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
                             low_addr_expr is not None
                             and high_addr_expr is not None
                             and rhs_word is not None
-                            and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr)
+                            and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project)
                         ):
                             replacement = structured_c.CAssignment(
                                 _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
@@ -1919,7 +1919,36 @@ def _same_expression_list(lhs_terms, rhs_terms) -> bool:
     return True
 
 
-def _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr) -> bool:
+def _addr_exprs_are_same(low_addr_expr, high_addr_expr, project: angr.Project) -> bool:
+    low_class = _classify_segmented_addr_expr(low_addr_expr, project)
+    high_class = _classify_segmented_addr_expr(high_addr_expr, project)
+
+    if low_class is not None and high_class is not None:
+        if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
+            if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:
+                if _same_c_expression(low_class.cvar, high_class.cvar):
+                    return low_class.extra_offset == high_class.extra_offset
+            if low_class.kind in {"global", "extra", "segment_const"}:
+                return low_class.linear == high_class.linear
+
+    low_terms, low_const = _split_expr_const_offset(low_addr_expr)
+    high_terms, high_const = _split_expr_const_offset(high_addr_expr)
+    return low_const == high_const and _same_expression_list(low_terms, high_terms)
+
+
+def _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project: angr.Project | None = None) -> bool:
+    if project is not None:
+        low_class = _classify_segmented_addr_expr(low_addr_expr, project)
+        high_class = _classify_segmented_addr_expr(high_addr_expr, project)
+        if low_class is not None and high_class is not None:
+            if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
+                if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:
+                    if _same_c_expression(low_class.cvar, high_class.cvar):
+                        return high_class.extra_offset == low_class.extra_offset + 1
+                if low_class.kind in {"global", "extra", "segment_const"}:
+                    if low_class.linear is not None and high_class.linear is not None:
+                        return high_class.linear == low_class.linear + 1
+
     low_terms, low_const = _split_expr_const_offset(low_addr_expr)
     high_terms, high_const = _split_expr_const_offset(high_addr_expr)
     return _same_expression_list(low_terms, high_terms) and high_const == low_const + 1
@@ -1977,12 +2006,16 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
 
         low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
         word_addr_expr = _match_word_dereference_addr_expr(shifted_source)
-        if low_addr_expr is not None and word_addr_expr is not None and _same_c_expression(low_addr_expr, word_addr_expr):
+        if (
+            low_addr_expr is not None
+            and word_addr_expr is not None
+            and _addr_exprs_are_same(low_addr_expr, word_addr_expr, project)
+        ):
             return shifted_source
 
     low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
     high_addr_expr = _match_shifted_high_byte_addr_expr(high_rhs)
-    if low_addr_expr is not None and high_addr_expr is not None and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr):
+    if low_addr_expr is not None and high_addr_expr is not None and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project):
         return _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
 
     return None
@@ -2075,7 +2108,7 @@ def _coalesce_segmented_word_load_expressions(project: angr.Project, codegen) ->
             if high_addr_expr is None:
                 continue
 
-            if _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr):
+            if _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project):
                 return _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
 
         return node
