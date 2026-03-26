@@ -181,7 +181,8 @@ def test_decompile_cli_recovers_rotate_pt_logic():
     assert "calls = _CosB, _SinB" in result.stdout
     assert "unsigned short d;  // [bp+0x6] d" in result.stdout
     assert "d * -1" in result.stdout
-    assert "0 + v12" in result.stdout
+    assert "0 + v12" not in result.stdout
+    assert "2 + v12" in result.stdout
     assert "2 + v12" in result.stdout
     assert "sub_101f();" in result.stdout
 
