@@ -35,6 +35,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - the `>` path in `snake.EXE:0x1287` now folds the `g_c2 + 1` / `+ 1` chain to `g_c2 + 2`
   - the remaining `snake.EXE:0x1287` loop-counter recurrence (`v21 += 40`) is left as a separate statement-sequence cleanup target
   - a narrower recurrence cleanup pass now trims another copy/increment chain in `snake.EXE:0x1287` and reduces the decompilation time further without changing the remaining source-like shape
+  - bitwise mask recovery now also collapses one `snake.EXE:0x1287` flag-chain into source-like `v34` / `v35` forms instead of leaving the whole condition as raw mask scaffolding
   - the hottest x86-16 expression matchers are now cached per decompilation run to cut repeated tree walks
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
@@ -46,6 +47,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - `snake.EXE:0x1287` now simplifies the guard further to `if (!field_0)`
   - `snake.EXE:0x1287` also prunes the remaining `field_0`/`field_1` pair down to `field_0` in the guard path
   - `snake.EXE:0x1287` now folds the `g_c2 - 1` / `- 1` chain to `g_c2 - 2`
+  - `snake.EXE:0x1287` now also collapses a repeated bitmask update into source-like `v34` / `v35` forms and exposes the `v29 - 40` guard directly
   - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
 
 ## Constraints
