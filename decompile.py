@@ -3397,6 +3397,15 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                         if stmt_base is not None:
                             linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
                         rhs = _inline_known_linear_defs(stmt.rhs)
+                        inlined_base, inlined_delta = _extract_linear_delta(rhs)
+                        if inlined_base is not None and not _same_c_expression(rhs, stmt.rhs):
+                            stmt = structured_c.CAssignment(
+                                stmt.lhs,
+                                _build_linear_expr(inlined_base, inlined_delta, codegen),
+                                codegen=codegen,
+                            )
+                            rhs = stmt.rhs
+                            changed = True
                         current_linear = None
                         if temp_var is not None:
                             current_linear = linear_defs.get(id(temp_var))
