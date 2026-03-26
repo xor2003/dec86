@@ -391,6 +391,7 @@ def _decompile_function(
         lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
         lambda: _attach_lst_data_names(project, dec.codegen, lst_metadata),
         lambda: _collect_access_traits(project, dec.codegen),
+        lambda: _attach_access_trait_field_names(project, dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(dec.codegen, cod_metadata),
         lambda: _simplify_structured_c_expressions(dec.codegen),
@@ -1840,6 +1841,88 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
     return changed
 
 
+def _access_trait_field_name(offset: int, size: int) -> str:
+    suffix = "w" if size == 2 else "b"
+    return f"field_{offset:x}_{suffix}"
+
+
+def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    cache = getattr(project, "_inertia_access_traits", None)
+    if not isinstance(cache, dict):
+        return False
+    traits = cache.get(getattr(codegen.cfunc, "addr", None))
+    if not isinstance(traits, dict):
+        return False
+
+    repeated_offsets = {
+        key[2]
+        for key in traits.get("repeated_offsets", {})
+        if isinstance(key, tuple)
+        and len(key) >= 3
+        and key[0] in {"ds", "es"}
+        and isinstance(key[2], int)
+    }
+    if not repeated_offsets:
+        return False
+
+    created: dict[tuple[int, int], structured_c.CVariable] = {}
+    changed = False
+
+    def make_field_var(offset: int, size: int, name: str):
+        key = (offset, size)
+        existing = created.get(key)
+        if existing is not None:
+            return existing
+        cvar = structured_c.CVariable(
+            SimMemoryVariable(offset, size, name=_sanitize_cod_identifier(name), region=codegen.cfunc.addr),
+            variable_type=SimTypeChar() if size == 1 else SimTypeShort(False),
+            codegen=codegen,
+        )
+        created[key] = cvar
+        return cvar
+
+    def transform(node):
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            if isinstance(variable, SimMemoryVariable):
+                addr = getattr(variable, "addr", None)
+                if isinstance(addr, int) and addr in repeated_offsets:
+                    type_ = getattr(node, "variable_type", None)
+                    bits = getattr(type_, "size", None)
+                    size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+                    name = _access_trait_field_name(addr, size)
+                    return make_field_var(addr, size, name)
+
+        if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
+            classified = _classify_segmented_dereference(node, project)
+            if classified is None or classified.linear is None or classified.linear not in repeated_offsets:
+                return node
+            if classified.seg_name not in {"ds", "es"}:
+                return node
+            type_ = getattr(node, "type", None)
+            bits = getattr(type_, "size", None)
+            if bits not in {8, 16}:
+                return node
+            size = max(bits // project.arch.byte_width, 1)
+            name = _access_trait_field_name(classified.linear, size)
+            return make_field_var(classified.linear, size, name)
+
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    if _replace_c_children(root, transform):
+        changed = True
+    return changed
+
+
 def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMetadata | None) -> bool:
     if lst_metadata is None or getattr(codegen, "cfunc", None) is None:
         return False
@@ -2187,6 +2270,15 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
         "repeated_offsets": {},
     }
 
+    cache = getattr(project, "_inertia_access_traits", None)
+    if isinstance(cache, dict):
+        existing = cache.get(getattr(codegen.cfunc, "addr", None))
+        if isinstance(existing, dict):
+            for bucket, bucket_data in existing.items():
+                if bucket not in traits or not isinstance(bucket_data, dict):
+                    continue
+                traits[bucket].update(bucket_data)
+
     def record(bucket: str, key: tuple[object, ...]) -> None:
         store = traits[bucket]
         store[key] = store.get(key, 0) + 1
@@ -2247,7 +2339,6 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
         if count < 2:
             del traits["repeated_offsets"][key]
 
-    cache = getattr(project, "_inertia_access_traits", None)
     if not isinstance(cache, dict):
         cache = {}
         setattr(project, "_inertia_access_traits", cache)
