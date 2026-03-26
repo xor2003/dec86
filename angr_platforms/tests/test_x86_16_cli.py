@@ -359,6 +359,26 @@ def test_decompile_cli_recovers_snake_readcharat_listing_name():
     assert "(v4 & 255) * 2" in result.stdout
 
 
+def test_decompile_cli_recovers_snake_ds_pointer_arithmetic():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x1287"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1287 sub_1287" in result.stdout
+    assert "int sub_1287(void)" in result.stdout
+    assert "ds * 16" not in result.stdout
+    assert "field_0" in result.stdout
+    assert "field_1" in result.stdout
+    assert "readcharat();" in result.stdout
+    assert "writecharat();" in result.stdout
+
+
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
     result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_TIDShowRange")
 
