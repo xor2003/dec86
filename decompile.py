@@ -2243,6 +2243,10 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
             if isinstance(index_var, SimRegisterVariable):
                 record("base_stride", (classified.seg_name, getattr(index_var, "reg", None), stride, offset, getattr(node, "type", None)))
 
+    for key, count in list(traits["repeated_offsets"].items()):
+        if count < 2:
+            del traits["repeated_offsets"][key]
+
     cache = getattr(project, "_inertia_access_traits", None)
     if not isinstance(cache, dict):
         cache = {}
