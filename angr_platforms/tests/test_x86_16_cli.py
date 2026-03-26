@@ -287,10 +287,10 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "function: 0x13b2 sub_13b2" in result.stdout
+    assert "function: 0x13b2 writestringat" in result.stdout
     assert "Decompilation empty" not in result.stdout
     assert "== asm fallback ==" not in result.stdout
-    assert "unsigned short sub_13b2(void)" in result.stdout
+    assert "unsigned short writestringat(void)" in result.stdout
     assert "while (true)" in result.stdout
     assert "v20 = v16 + v19;" in result.stdout
     assert "v20 = v20 & 0xff00 | *((char *)(ds * 16 + v25));" in result.stdout
