@@ -11,6 +11,7 @@ import resource
 import signal
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -638,6 +639,17 @@ def _project_rewrite_cache(project: angr.Project) -> dict[str, dict[int, object]
     return cache
 
 
+@dataclass(frozen=True)
+class _SegmentedAccess:
+    kind: str
+    seg_name: str | None
+    linear: int | None = None
+    cvar: structured_c.CVariable | None = None
+    stack_var: SimStackVariable | None = None
+    extra_offset: int = 0
+    addr_expr: object | None = None
+
+
 def _segment_reg_name(node, project: angr.Project) -> str | None:
     cache = _project_rewrite_cache(project).setdefault("segment_reg_name", {})
     key = id(node)
@@ -656,36 +668,122 @@ def _segment_reg_name(node, project: angr.Project) -> str | None:
     return result
 
 
+def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAccess | None:
+    cache = _project_rewrite_cache(project).setdefault("segmented_addr_expr", {})
+    key = id(node)
+    if key in cache:
+        return cache[key]
+
+    seg_name = None
+    cvar = None
+    stack_var = None
+    const_offset = 0
+    other_terms = []
+
+    for term in _flatten_c_add_terms(node):
+        inner = _unwrap_c_casts(term)
+
+        if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Mul":
+            local_seg = None
+            for maybe_seg, maybe_scale in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+                if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 16:
+                    continue
+                local_seg = _segment_reg_name(_unwrap_c_casts(maybe_seg), project)
+                if local_seg is not None:
+                    break
+            if local_seg is not None:
+                seg_name = local_seg
+                continue
+
+        constant = _c_constant_value(inner)
+        if constant is not None:
+            const_offset += constant
+            continue
+
+        if isinstance(inner, structured_c.CUnaryOp) and inner.op == "Reference":
+            operand = _unwrap_c_casts(inner.operand)
+            if isinstance(operand, structured_c.CVariable):
+                cvar = operand
+                variable = getattr(operand, "variable", None)
+                if isinstance(variable, SimStackVariable):
+                    stack_var = variable
+                continue
+
+        other_terms.append(term)
+
+    if seg_name is None:
+        cache[key] = None
+        return None
+
+    if seg_name == "ss" and cvar is not None and not other_terms:
+        result = _SegmentedAccess(
+            "stack",
+            seg_name,
+            cvar=cvar,
+            stack_var=stack_var,
+            extra_offset=const_offset,
+            addr_expr=node,
+        )
+        cache[key] = result
+        return result
+
+    if cvar is None and not other_terms:
+        if seg_name == "ds":
+            kind = "global" if const_offset >= 0 else "unknown"
+            linear = const_offset if const_offset >= 0 else None
+        elif seg_name == "es":
+            kind = "extra"
+            linear = const_offset
+        else:
+            kind = "segment_const"
+            linear = const_offset
+        result = _SegmentedAccess(kind, seg_name, linear=linear, extra_offset=const_offset, addr_expr=node)
+        cache[key] = result
+        return result
+
+    result = _SegmentedAccess(
+        "unknown",
+        seg_name,
+        linear=const_offset if cvar is None else None,
+        cvar=cvar,
+        stack_var=stack_var,
+        extra_offset=const_offset,
+        addr_expr=node,
+    )
+    cache[key] = result
+    return result
+
+
+def _classify_segmented_dereference(node, project: angr.Project) -> _SegmentedAccess | None:
+    cache = _project_rewrite_cache(project).setdefault("segmented_dereference_class", {})
+    key = id(node)
+    if key in cache:
+        return cache[key]
+
+    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        cache[key] = None
+        return None
+    operand = node.operand
+    if isinstance(operand, structured_c.CTypeCast):
+        operand = operand.expr
+    result = _classify_segmented_addr_expr(operand, project)
+    cache[key] = result
+    return result
+
+
 def _match_real_mode_linear_expr(node, project: angr.Project) -> tuple[str | None, int | None]:
     cache = _project_rewrite_cache(project).setdefault("real_mode_linear_expr", {})
     key = id(node)
     if key in cache:
         return cache[key]
 
-    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
+    classified = _classify_segmented_addr_expr(node, project)
+    if classified is None or classified.kind not in {"global", "extra", "segment_const"}:
         cache[key] = (None, None)
         return None, None
-
-    pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
-    for maybe_mul, maybe_const in pairs:
-        linear = _c_constant_value(maybe_const)
-        if linear is None:
-            continue
-        if not isinstance(maybe_mul, structured_c.CBinaryOp) or maybe_mul.op != "Mul":
-            continue
-
-        mul_pairs = ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs))
-        for maybe_seg, maybe_scale in mul_pairs:
-            scale = _c_constant_value(maybe_scale)
-            if scale != 16:
-                continue
-            seg_name = _segment_reg_name(maybe_seg, project)
-            if seg_name is not None:
-                cache[key] = (seg_name, linear)
-                return seg_name, linear
-
-    cache[key] = (None, None)
-    return None, None
+    result = (classified.seg_name, classified.linear)
+    cache[key] = result
+    return result
 
 
 def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | None, int | None]:
@@ -694,13 +792,11 @@ def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | Non
     if key in cache:
         return cache[key]
 
-    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+    classified = _classify_segmented_dereference(node, project)
+    if classified is None or classified.linear is None:
         cache[key] = (None, None)
         return None, None
-    operand = node.operand
-    if isinstance(operand, structured_c.CTypeCast):
-        operand = operand.expr
-    result = _match_real_mode_linear_expr(operand, project)
+    result = (classified.seg_name, classified.linear)
     cache[key] = result
     return result
 
@@ -711,43 +807,11 @@ def _match_ss_stack_reference(node, project: angr.Project):
     if key in cache:
         return cache[key]
 
-    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
-        cache[key] = None
-        return None
-    operand = node.operand
-    if not isinstance(operand, structured_c.CTypeCast):
-        cache[key] = None
-        return None
-    expr = operand.expr
-    if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Add":
-        cache[key] = None
-        return None
-
-    for maybe_mul, other in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
-        if not isinstance(maybe_mul, structured_c.CBinaryOp) or maybe_mul.op != "Mul":
-            continue
-        seg_name = None
-        for maybe_seg, maybe_scale in ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs)):
-            if _c_constant_value(maybe_scale) != 16:
-                continue
-            seg_name = _segment_reg_name(maybe_seg, project)
-            if seg_name is not None:
-                break
-        if seg_name != "ss":
-            continue
-        if not isinstance(other, structured_c.CTypeCast):
-            continue
-        inner = other.expr
-        if not isinstance(inner, structured_c.CUnaryOp) or inner.op != "Reference":
-            continue
-        if not isinstance(inner.operand, structured_c.CVariable):
-            continue
-        cvar = inner.operand
-        stack_var = getattr(cvar, "variable", None)
-        if not isinstance(stack_var, SimStackVariable):
-            continue
-        cache[key] = (stack_var, cvar)
-        return stack_var, cvar
+    classified = _classify_segmented_dereference(node, project)
+    if classified is not None and classified.kind == "stack" and classified.extra_offset == 0 and classified.stack_var is not None:
+        result = (classified.stack_var, classified.cvar)
+        cache[key] = result
+        return result
 
     cache[key] = None
     return None
@@ -767,49 +831,13 @@ def _match_ss_local_plus_const(node, project: angr.Project):
     if key in cache:
         return cache[key]
 
-    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+    classified = _classify_segmented_dereference(node, project)
+    if classified is None or classified.kind != "stack" or classified.cvar is None:
         cache[key] = None
         return None
-    operand = node.operand
-    if not isinstance(operand, structured_c.CTypeCast):
-        cache[key] = None
-        return None
-
-    seg_name = None
-    cvar = None
-    extra_offset = 0
-    for term in _flatten_c_add_terms(operand.expr):
-        if isinstance(term, structured_c.CBinaryOp) and term.op == "Mul":
-            local_seg = None
-            for maybe_seg, maybe_scale in ((term.lhs, term.rhs), (term.rhs, term.lhs)):
-                if _c_constant_value(maybe_scale) != 16:
-                    continue
-                local_seg = _segment_reg_name(maybe_seg, project)
-                if local_seg is not None:
-                    break
-            if local_seg is not None:
-                seg_name = local_seg
-                continue
-
-        constant = _c_constant_value(term)
-        if constant is not None:
-            extra_offset += constant
-            continue
-
-        inner = term
-        if isinstance(inner, structured_c.CTypeCast):
-            inner = inner.expr
-        if not isinstance(inner, structured_c.CUnaryOp) or inner.op != "Reference":
-            continue
-        if not isinstance(inner.operand, structured_c.CVariable):
-            continue
-        cvar = inner.operand
-
-    if seg_name != "ss" or cvar is None:
-        cache[key] = None
-        return None
-    cache[key] = (cvar, extra_offset)
-    return cvar, extra_offset
+    result = (classified.cvar, classified.extra_offset)
+    cache[key] = result
+    return result
 
 
 def _replace_c_children(node, transform) -> bool:
@@ -1777,10 +1805,10 @@ def _global_load_addr(node, project: angr.Project) -> int | None:
     addr = _global_memory_addr(node)
     if addr is not None:
         return addr
-    seg_name, linear = _match_segmented_dereference(node, project)
-    if seg_name != "ds":
+    classified = _classify_segmented_dereference(node, project)
+    if classified is None or classified.kind != "global":
         return None
-    return linear
+    return classified.linear
 
 
 def _match_scaled_high_byte(node, project: angr.Project) -> int | None:
@@ -1961,10 +1989,10 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
 
 
 def _high_byte_store_addr(node, project: angr.Project) -> int | None:
-    seg_name, linear = _match_segmented_dereference(node, project)
-    if seg_name != "ds":
+    classified = _classify_segmented_dereference(node, project)
+    if classified is None or classified.kind != "global":
         return None
-    return linear
+    return classified.linear
 
 
 def _make_word_global(codegen, addr: int, name: str):
