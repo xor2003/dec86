@@ -3445,6 +3445,33 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                 return structured_c.CUnaryOp(expr.op, operand, codegen=codegen)
         return expr
 
+    def _inline_known_expr_aliases(expr, seen: set[int] | None = None):
+        expr = _unwrap_c_casts(expr)
+        if seen is None:
+            seen = set()
+        if isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if variable is None:
+                return expr
+            key = id(variable)
+            if key in seen:
+                return expr
+            seen.add(key)
+            alias = expr_aliases.get(key)
+            if alias is None:
+                return expr
+            return _inline_known_expr_aliases(alias, seen)
+        if isinstance(expr, structured_c.CBinaryOp):
+            lhs = _inline_known_expr_aliases(expr.lhs, set(seen))
+            rhs = _inline_known_expr_aliases(expr.rhs, set(seen))
+            if lhs is not expr.lhs or rhs is not expr.rhs:
+                return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
+        if isinstance(expr, structured_c.CUnaryOp):
+            operand = _inline_known_expr_aliases(expr.operand, set(seen))
+            if operand is not expr.operand:
+                return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
+        return expr
+
     def _extract_shift_delta(expr):
         expr = _unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
@@ -3560,6 +3587,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                                     continue
 
                     if _is_linear_register_temp(stmt.lhs):
+                        rhs = _inline_known_expr_aliases(stmt.rhs)
                         stmt_base, stmt_delta = _extract_linear_delta(stmt.rhs)
                         if stmt_base is not None:
                             linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
@@ -3567,7 +3595,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                             if not _same_c_expression(stmt.rhs, canonical_rhs):
                                 stmt = structured_c.CAssignment(stmt.lhs, canonical_rhs, codegen=codegen)
                                 changed = True
-                        rhs = _inline_known_linear_defs(stmt.rhs)
+                        rhs = _inline_known_linear_defs(rhs)
                         inlined_base, inlined_delta = _extract_linear_delta(rhs)
                         if inlined_base is not None and not _same_c_expression(rhs, stmt.rhs):
                             stmt = structured_c.CAssignment(
