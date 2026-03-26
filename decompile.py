@@ -2493,20 +2493,99 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
         return False
 
     changed = False
+    stack_pointer_aliases: dict[int, tuple[structured_c.CVariable, int]] = {}
+
+    def _is_linear_temp(cvar) -> bool:
+        return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", getattr(cvar, "name", "")) is not None
+
+    def _resolve_stack_pointer_alias(node):
+        node = _unwrap_c_casts(node)
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+                return node, 0
+            alias = stack_pointer_aliases.get(id(variable))
+            if alias is not None:
+                return alias
+            return None
+        if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
+            operand = _unwrap_c_casts(node.operand)
+            if isinstance(operand, structured_c.CVariable):
+                variable = getattr(operand, "variable", None)
+                if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+                    return operand, 0
+                alias = stack_pointer_aliases.get(id(variable))
+                if alias is not None:
+                    base_cvar, base_offset = alias
+                    return base_cvar, base_offset
+            return None
+        if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
+            lhs = _resolve_stack_pointer_alias(node.lhs)
+            rhs = _resolve_stack_pointer_alias(node.rhs)
+            lhs_const = _c_constant_value(_unwrap_c_casts(node.lhs))
+            rhs_const = _c_constant_value(_unwrap_c_casts(node.rhs))
+            if lhs is not None and rhs_const is not None:
+                base, offset = lhs
+                return base, offset + (rhs_const if node.op == "Add" else -rhs_const)
+            if rhs is not None and lhs_const is not None:
+                base, offset = rhs
+                return base, offset + lhs_const
+        return None
+
+    def _collect_stack_pointer_aliases() -> None:
+        aliases: dict[int, tuple[structured_c.CVariable, int]] = {}
+        for _ in range(3):
+            changed_local = False
+            for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    continue
+                if not _is_linear_temp(walk_node.lhs):
+                    continue
+                lhs_var = getattr(walk_node.lhs, "variable", None)
+                if lhs_var is None:
+                    continue
+                rhs = _unwrap_c_casts(walk_node.rhs)
+                resolved = _resolve_stack_pointer_alias(rhs)
+                if resolved is None:
+                    continue
+                if aliases.get(id(lhs_var)) != resolved:
+                    aliases[id(lhs_var)] = resolved
+                    changed_local = True
+            if not changed_local:
+                break
+        stack_pointer_aliases.update(aliases)
+
+    _collect_stack_pointer_aliases()
 
     def make_stack_deref(cvar, offset: int, bits: int):
         element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
         base_ref = structured_c.CUnaryOp("Reference", cvar, codegen=codegen)
-        if offset:
+        if offset > 0:
             addr_expr = structured_c.CBinaryOp(
                 "Add",
                 base_ref,
                 structured_c.CConstant(offset, SimTypeShort(False), codegen=codegen),
                 codegen=codegen,
             )
+        elif offset < 0:
+            addr_expr = structured_c.CBinaryOp(
+                "Sub",
+                base_ref,
+                structured_c.CConstant(-offset, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            )
         else:
             addr_expr = base_ref
+        return structured_c.CUnaryOp(
+            "Dereference",
+            structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
+            codegen=codegen,
+        )
+
+    def make_addr_deref(addr_expr, bits: int):
+        element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
+        ptr_type = SimTypePointer(element_type).with_arch(project.arch)
         return structured_c.CUnaryOp(
             "Dereference",
             structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
@@ -2518,14 +2597,26 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
             return node
         classified = _classify_segmented_dereference(node, project)
         if classified is None or classified.kind != "stack" or classified.cvar is None:
-            return node
-        if classified.extra_offset <= 0:
-            return node
+            if classified is None or classified.seg_name != "ss":
+                return node
+            addr_expr = _strip_segment_scale_from_addr_expr(getattr(classified, "addr_expr", None), project)
+            if addr_expr is None:
+                return node
+            type_ = getattr(node, "type", None)
+            bits = getattr(type_, "size", None)
+            if bits not in {8, 16}:
+                return node
+            return make_addr_deref(addr_expr, bits)
+        else:
+            if classified.extra_offset <= 0:
+                return node
+            cvar = classified.cvar
+            extra_offset = classified.extra_offset
         type_ = getattr(node, "type", None)
         bits = getattr(type_, "size", None)
         if bits not in {8, 16}:
             return node
-        return make_stack_deref(classified.cvar, classified.extra_offset, bits)
+        return make_stack_deref(cvar, extra_offset, bits)
 
     root = codegen.cfunc.statements
     new_root = transform(root)
