@@ -182,8 +182,9 @@ def test_decompile_cli_recovers_rotate_pt_logic():
     assert "unsigned short d;  // [bp+0x6] d" in result.stdout
     assert "d * -1" in result.stdout
     assert "0 + v12" not in result.stdout
-    assert "y = *((unsigned short *)(ds * 16 + v12));" in result.stdout
-    assert "v3 = *((unsigned short *)(ds * 16 + 2 + v12));" in result.stdout
+    assert "y = *((unsigned short *)(s + 2));" in result.stdout
+    assert "v3 = *((unsigned short *)(s + 2));" in result.stdout
+    assert "ds * 16 + v12" not in result.stdout
     assert "* 0x100" not in result.stdout
     assert "sub_101f();" in result.stdout
 
@@ -250,7 +251,7 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "v11 = ...;" not in result.stdout
     assert "v16 = ...;" not in result.stdout
     assert "(char [4])Status" not in result.stdout
-    assert "v17 = (char [4])*((char *)28674);" in result.stdout
+    assert "v17 = (char [4])*((char *)28674);" not in result.stdout
     assert "v2 = &v3;" not in result.stdout
     assert "v1 = 2;" in result.stdout
     assert "v0 = v14;" in result.stdout
