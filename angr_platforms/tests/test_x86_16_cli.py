@@ -336,7 +336,8 @@ def test_decompile_cli_recovers_snake_writecharat_pointer_access():
     assert "int writecharat(void)" in result.stdout
     assert "*((char *)(es * 16 +" not in result.stdout
     assert "*((char *)" in result.stdout
-    assert "0xa000" in result.stdout
+    assert "(v4 >> 8) * 160" in result.stdout
+    assert "(v4 & 255) * 2" in result.stdout
     assert "return" in result.stdout
 
 
@@ -354,7 +355,8 @@ def test_decompile_cli_recovers_snake_readcharat_listing_name():
     assert "function: 0x1387 readcharat" in result.stdout
     assert "int readcharat(void)" in result.stdout
     assert "== asm fallback ==" not in result.stdout
-    assert "0xa000" in result.stdout
+    assert "(v4 >> 8) * 160" in result.stdout
+    assert "(v4 & 255) * 2" in result.stdout
 
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
