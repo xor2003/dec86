@@ -84,6 +84,7 @@ from angr_platforms.X86_16.cod_extract import (
     infer_cod_logic_start,
     join_cod_entries_with_synthetic_globals,
 )
+from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
@@ -100,6 +101,30 @@ logging.getLogger("angr.analyses.analysis").setLevel(logging.CRITICAL)
 
 def _parse_int(value: str) -> int:
     return int(value, 0)
+
+
+def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | None:
+    lst_path = binary.with_suffix(".lst")
+    if not lst_path.exists():
+        return None
+
+    try:
+        metadata = extract_lst_metadata(lst_path)
+    except Exception as exc:
+        print(f"[dbg] failed to parse source listing {lst_path}: {exc}")
+        return None
+
+    data_base = getattr(getattr(project.loader, "main_object", None), "mapped_base", None)
+    code_base = project.entry
+    if data_base is None:
+        return None
+
+    for offset, name in metadata.data_labels.items():
+        project.kb.labels[data_base + offset] = name
+    for offset, name in metadata.code_labels.items():
+        project.kb.labels[code_base + offset] = name
+
+    return metadata
 
 
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
@@ -2669,6 +2694,7 @@ def main() -> int:
     function_label = None
     cod_metadata = None
     synthetic_globals = None
+    lst_metadata = None
     if args.proc is not None:
         entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
         cod_metadata = extract_cod_proc_metadata(args.binary, args.proc, args.proc_kind)
@@ -2696,6 +2722,7 @@ def main() -> int:
             base_addr=args.base_addr,
             entry_point=args.entry_point,
         )
+        lst_metadata = _load_lst_metadata(args.binary, project)
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
 
@@ -2726,6 +2753,10 @@ def main() -> int:
 
         if function_label is not None:
             func.name = function_label
+        elif lst_metadata is not None:
+            code_name = lst_metadata.code_labels.get(func.addr)
+            if code_name is not None:
+                func.name = code_name
 
         print(f"/* binary: {args.binary} */")
         print(f"/* arch: {project.arch.name} */")
@@ -2802,6 +2833,11 @@ def main() -> int:
 
     if function_label is not None and project.entry in cfg.functions:
         cfg.functions[project.entry].name = function_label
+    elif lst_metadata is not None:
+        for addr, func in cfg.functions.items():
+            code_name = lst_metadata.code_labels.get(addr)
+            if code_name is not None:
+                func.name = code_name
 
     functions, total_functions = _interesting_functions(cfg, limit=args.max_functions)
 
