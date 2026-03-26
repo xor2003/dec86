@@ -1194,6 +1194,27 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
+    def _is_linear_register_temp(cvar) -> bool:
+        return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(r"v\d+", getattr(cvar, "name", "")) is not None
+
+    def _collect_high_byte_temp_constants(node):
+        aliases: dict[int, int] = {}
+        for walk_node in _iter_c_nodes_deep(node):
+            if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                continue
+            if not _is_linear_register_temp(walk_node.lhs):
+                continue
+            rhs = _unwrap_c_casts(walk_node.rhs)
+            if not isinstance(rhs, structured_c.CBinaryOp) or rhs.op != "Or":
+                continue
+            for maybe_const, maybe_other in ((rhs.lhs, rhs.rhs), (rhs.rhs, rhs.lhs)):
+                const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
+                if const_value is None or const_value & 0xFF:
+                    continue
+                aliases[id(getattr(walk_node.lhs, "variable", None))] = const_value >> 8
+                break
+        return aliases
+
     variable_use_counts: dict[int, int] = {}
     for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
         if not isinstance(walk_node, structured_c.CVariable):
@@ -1201,6 +1222,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         variable = getattr(walk_node, "variable", None)
         if variable is not None:
             variable_use_counts[id(variable)] = variable_use_counts.get(id(variable), 0) + 1
+
+    high_byte_aliases: dict[int, int] = {}
 
     def _is_dead_stack_address_init(stmt) -> bool:
         if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
@@ -1227,23 +1250,58 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 return node.expr
 
         if isinstance(node, structured_c.CBinaryOp):
+            lhs = _unwrap_c_casts(node.lhs)
+            rhs = _unwrap_c_casts(node.rhs)
+            if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):
+                if isinstance(lhs.value, int) and isinstance(rhs.value, int):
+                    result = None
+                    if node.op == "Add":
+                        result = lhs.value + rhs.value
+                    elif node.op == "Sub":
+                        result = lhs.value - rhs.value
+                    elif node.op == "Mul":
+                        result = lhs.value * rhs.value
+                    elif node.op == "And":
+                        result = lhs.value & rhs.value
+                    elif node.op == "Or":
+                        result = lhs.value | rhs.value
+                    elif node.op == "Xor":
+                        result = lhs.value ^ rhs.value
+                    elif node.op == "Shl":
+                        result = lhs.value << rhs.value
+                    elif node.op == "Shr":
+                        result = lhs.value >> rhs.value
+                    if result is not None:
+                        type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+                        return structured_c.CConstant(result, type_, codegen=codegen)
             if node.op in {"Add", "Or", "Xor"}:
-                if _c_constant_value(_unwrap_c_casts(node.lhs)) == 0:
+                if _c_constant_value(lhs) == 0:
                     return node.rhs
-                if _c_constant_value(_unwrap_c_casts(node.rhs)) == 0:
+                if _c_constant_value(rhs) == 0:
                     return node.lhs
             if node.op == "Mul":
-                if _c_constant_value(_unwrap_c_casts(node.lhs)) == 0 or _c_constant_value(_unwrap_c_casts(node.rhs)) == 0:
+                if _c_constant_value(lhs) == 0 or _c_constant_value(rhs) == 0:
                     type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
                     if type_ is not None:
                         return structured_c.CConstant(0, type_, codegen=codegen)
-                if _c_constant_value(_unwrap_c_casts(node.lhs)) == 1:
+                if _c_constant_value(lhs) == 1:
                     return node.rhs
-                if _c_constant_value(_unwrap_c_casts(node.rhs)) == 1:
+                if _c_constant_value(rhs) == 1:
                     return node.lhs
+            if node.op == "And":
+                if _c_constant_value(lhs) == 0 or _c_constant_value(rhs) == 0:
+                    type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                    if type_ is not None:
+                        return structured_c.CConstant(0, type_, codegen=codegen)
             simplified_or = _simplify_zero_mul_or_expr(node, codegen)
             if simplified_or is not node:
                 return simplified_or
+            if node.op == "Shr":
+                if _is_c_constant_int(rhs, 8) and isinstance(lhs, structured_c.CVariable):
+                    alias = high_byte_aliases.get(id(getattr(lhs, "variable", None)))
+                    if alias is not None:
+                        type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+                        return structured_c.CConstant(alias, type_, codegen=codegen)
         simplified = _simplify_boolean_expr(node, codegen)
         if simplified is not node:
             return simplified
@@ -1279,6 +1337,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     changed = False
     for _ in range(3):
         iter_changed = False
+        high_byte_aliases = _collect_high_byte_temp_constants(root)
         new_root = transform(root)
         if new_root is not root:
             codegen.cfunc.statements = new_root
