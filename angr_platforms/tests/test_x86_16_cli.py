@@ -295,12 +295,14 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "while (true)" in result.stdout
     assert "v20 = v20 & 0xff00 | *((char *)v25);" in result.stdout
     assert "if (!(char)v20)" in result.stdout
-    assert "v6 = v5 >> 1;" in result.stdout
-    assert "v8 = v7 >> 1;" in result.stdout
-    assert "v9 = v8 >> 1;" in result.stdout
+    assert "v6 = (v4 & 0xff00) >> 1;" in result.stdout
+    assert "v8 = (v4 & 0xff00) >> 3;" in result.stdout
+    assert "v10 = (v4 & 0xff00) >> 5;" in result.stdout
+    assert "v13 = (v4 & 0xff00) >> 8;" in result.stdout
     assert "v22 = ...;" not in result.stdout
     assert "v27 = ...;" not in result.stdout
     assert "ds * 16 + v25" not in result.stdout
+    assert "v16 = (v12 >> 1 & 255) * ((v14 & 255 | 0xa000) >> 8 & 255);" in result.stdout
     assert "v29 = v20 + 1;" in result.stdout
     assert "v23 = v29 + 1;" in result.stdout
     assert "*((char *)v24) = v20;" in result.stdout
