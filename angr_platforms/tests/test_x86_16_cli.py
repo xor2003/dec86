@@ -321,6 +321,42 @@ def test_decompile_cli_recovers_snake_draw_data_labels():
     assert "0xf5" not in result.stdout.lower()
 
 
+def test_decompile_cli_recovers_snake_writecharat_pointer_access():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x135c"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x135c writecharat" in result.stdout
+    assert "int writecharat(void)" in result.stdout
+    assert "*((char *)(es * 16 +" not in result.stdout
+    assert "*((char *)" in result.stdout
+    assert "0xa000" in result.stdout
+    assert "return" in result.stdout
+
+
+def test_decompile_cli_recovers_snake_readcharat_listing_name():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x1387"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1387 readcharat" in result.stdout
+    assert "int readcharat(void)" in result.stdout
+    assert "== asm fallback ==" not in result.stdout
+    assert "0xa000" in result.stdout
+
+
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
     result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_TIDShowRange")
 

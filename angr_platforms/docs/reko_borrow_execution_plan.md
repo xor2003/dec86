@@ -11,9 +11,21 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
 - source-like C
 - eventual recompilability
 
+## Current Progress
+
+- Priority 1 is in place:
+  - segment-space classification is centralized in `decompile.py`
+  - `ss`/`ds`/`es` consumers now reuse the same cached classifier
+- Priority 2 is partially in place:
+  - byte-pair word load/store coalescing already consumes the classifier
+  - small safe segmented byte-pointer rewrites now exist for `snake`-style `ds/es` byte access
+- Current concrete wins:
+  - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
+  - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
+  - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
+
 ## Constraints
 
-- Rebuild ideas, not code.
 - Prefer repo-managed code over `.venv` hacks.
 - Favor earlier recovery improvements over printer-only cleanup.
 - Keep `ss`, `ds`, and `es` distinct until we can prove a safer collapse.
@@ -234,10 +246,12 @@ Reassess the current approach if any of these happen repeatedly:
 
 ## Immediate Next Steps
 
-1. Centralize segment-space classification in `decompile.py`.
-2. Rewrite existing `ss/ds` helpers to consume that classifier.
-3. Make projection-style load/store widening consume the classifier instead of doing fresh pattern matching.
+1. Extend the new byte-pointer rewrite only to other safe zero-offset base-register cases.
+2. Add more focused `snake`-family oracles so new source-like pointer output stays locked in.
+3. Start collecting lightweight access traits for repeated `base + const` uses under `ds/es`.
 4. Recheck:
+   - `writecharat`
+   - `readcharat`
    - `_TIDShowRange`
    - `_rotate_pt`
    - `_SetGear`
