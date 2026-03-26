@@ -36,7 +36,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - the remaining `snake.EXE:0x1287` loop-counter recurrence (`v21 += 40`) is left as a separate statement-sequence cleanup target
   - a narrower recurrence cleanup pass now trims another copy/increment chain in `snake.EXE:0x1287` and reduces the decompilation time further without changing the remaining source-like shape
   - known linear temps can now be inlined into later expressions within the same block, which helps keep the remaining recurrence chains source-like without introducing broad alias rewrites
-  - linear temp lookup now also falls back to the synthetic `vNN` name when the underlying temp object identity is not stable, which keeps the same-block recurrence cleanup working on more real code paths without broadening the alias pass
+  - the name-aware linear-temp fallback was tried, but rolled back after it introduced a `snake.EXE:0x13b2` regression, so the current safe path remains the original id-based lookup
   - bitwise mask recovery now also collapses one `snake.EXE:0x1287` flag-chain into source-like `v34` / `v35` forms instead of leaving the whole condition as raw mask scaffolding
   - the hottest x86-16 expression matchers are now cached per decompilation run to cut repeated tree walks
 - Current concrete wins:
