@@ -1435,6 +1435,19 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         ref_var = getattr(operand, "variable", None)
         return isinstance(ref_var, SimStackVariable) and getattr(ref_var, "base", None) == "bp"
 
+    def _is_redundant_self_copy(stmt) -> bool:
+        if not isinstance(stmt, structured_c.CAssignment):
+            return False
+        lhs = _unwrap_c_casts(stmt.lhs)
+        rhs = _unwrap_c_casts(stmt.rhs)
+        if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
+            return False
+        lhs_var = getattr(lhs, "variable", None)
+        rhs_var = getattr(rhs, "variable", None)
+        if lhs_var is None or rhs_var is None or lhs_var is not rhs_var:
+            return False
+        return _is_linear_register_temp(lhs)
+
     def transform(node):
         if isinstance(node, structured_c.CTypeCast):
             target_type = getattr(node, "type", None)
@@ -1568,6 +1581,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None)
                 if type_ is not None:
                     return structured_c.CConstant(0, type_, codegen=codegen)
+        if isinstance(node, structured_c.CAssignment) and _is_redundant_self_copy(node):
+            return structured_c.CConstant(0, getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None), codegen=codegen)
         return node
 
     def prune_dead_stack_address_inits(node) -> bool:
@@ -1576,6 +1591,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             new_statements = []
             for stmt in node.statements:
                 if _is_dead_stack_address_init(stmt):
+                    changed = True
+                    continue
+                if _is_redundant_self_copy(stmt):
                     changed = True
                     continue
                 if prune_dead_stack_address_inits(stmt):
