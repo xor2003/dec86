@@ -1843,8 +1843,7 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
 
 
 def _access_trait_field_name(offset: int, size: int) -> str:
-    suffix = "w" if size == 2 else "b"
-    return f"field_{offset:x}_{suffix}"
+    return f"field_{offset:x}"
 
 
 def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
