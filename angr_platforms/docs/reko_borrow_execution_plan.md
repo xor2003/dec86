@@ -28,12 +28,14 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - field-like names are now width-unified when the same offset is seen as both byte and word access
   - register-only `ds` pointer arithmetic in `snake`-style helpers now drops raw `ds * 16` scaffolding too
   - `es` byte-pointer arithmetic in `snake`-style helpers now also loses raw `es * 16` scaffolding when the rest of the projection is safe
+  - adjacent byte temporaries in `snake.EXE:0x1287` now collapse into a source-like word condition instead of `byte | byte * 0x100`
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
   - `snake.EXE:0x135c` / `0x1387` now recover coordinate projection as `(v4 >> 8) * 160 + (v4 & 255) * 2`
   - `snake.EXE:0x135c` no longer prints `es * 16` in the `writecharat` byte-pointer write
   - `snake.EXE:0x1287` now keeps the source labels `field_0` and `field_1` while dropping raw `ds * 16` scaffolding
+  - `snake.EXE:0x1287` now simplifies the guard to `if (!(field_0 & v17))`
   - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
 
 ## Constraints
