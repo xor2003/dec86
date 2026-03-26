@@ -1447,6 +1447,11 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     mask_shift_aliases: dict[int, tuple[object, int, int]] = {}
     copy_aliases: dict[int, object] = {}
     linear_aliases: dict[int, object] = {}
+    _no_match = object()
+    adjacent_byte_pair_cache: dict[tuple[int, int], object] = {}
+    word_plus_minus_one_cache: dict[int, object] = {}
+    linear_word_delta_cache: dict[int, object] = {}
+    high_byte_preserving_word_cache: dict[int, object] = {}
 
     def _resolve_copy_alias_expr(node):
         current = _unwrap_c_casts(node)
@@ -1466,6 +1471,10 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         return current
 
     def _match_adjacent_byte_pair_var_expr(low_expr, high_expr):
+        key = (id(low_expr), id(high_expr))
+        if key in adjacent_byte_pair_cache:
+            cached = adjacent_byte_pair_cache[key]
+            return None if cached is _no_match else cached
         low_expr = _resolve_copy_alias_expr(low_expr)
         high_expr = _resolve_copy_alias_expr(high_expr)
 
@@ -1480,23 +1489,33 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         low_var = getattr(low_expr, "variable", None) if isinstance(low_expr, structured_c.CVariable) else None
         high_var = getattr(high_expr, "variable", None) if isinstance(high_expr, structured_c.CVariable) else None
         if not isinstance(low_var, SimMemoryVariable) or not isinstance(high_var, SimMemoryVariable):
+            adjacent_byte_pair_cache[key] = _no_match
             return None
         if getattr(low_var, "region", None) != getattr(high_var, "region", None):
+            adjacent_byte_pair_cache[key] = _no_match
             return None
         if getattr(high_var, "addr", None) != getattr(low_var, "addr", None) + 1:
+            adjacent_byte_pair_cache[key] = _no_match
             return None
         low_name = getattr(low_var, "name", None)
         if not isinstance(low_name, str) or not low_name:
             low_name = f"field_{low_var.addr:x}"
-        return structured_c.CVariable(
+        result = structured_c.CVariable(
             SimMemoryVariable(low_var.addr, 2, name=_sanitize_cod_identifier(low_name), region=codegen.cfunc.addr),
             variable_type=SimTypeShort(False),
             codegen=codegen,
         )
+        adjacent_byte_pair_cache[key] = result
+        return result
 
     def _match_word_plus_minus_one_expr(node):
+        key = id(node)
+        if key in word_plus_minus_one_cache:
+            cached = word_plus_minus_one_cache[key]
+            return None if cached is _no_match else cached
         node = _unwrap_c_casts(node)
         if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
+            word_plus_minus_one_cache[key] = _no_match
             return None
 
         def _strip_byte_cast(expr):
@@ -1542,9 +1561,14 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     codegen=codegen,
                 )
 
+        word_plus_minus_one_cache[key] = _no_match
         return None
 
     def _match_linear_word_delta_expr(node):
+        key = id(node)
+        if key in linear_word_delta_cache:
+            cached = linear_word_delta_cache[key]
+            return None if cached is _no_match else cached
         node = _resolve_copy_alias_expr(_unwrap_c_casts(node))
 
         def _extract(expr, seen: set[int] | None = None):
@@ -1555,12 +1579,6 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             if key in seen:
                 return expr, 0
             seen.add(key)
-            if isinstance(expr, structured_c.CVariable):
-                variable = getattr(expr, "variable", None)
-                if variable is not None:
-                    alias = linear_aliases.get(id(variable))
-                    if alias is not None:
-                        return _extract(alias, seen)
             if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
                 return None, int(expr.value)
             if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
@@ -1586,8 +1604,10 @@ def _simplify_structured_c_expressions(codegen) -> bool:
 
         base_expr, delta = _extract(node)
         if base_expr is None or delta == 0:
+            linear_word_delta_cache[key] = _no_match
             return None
         if not isinstance(delta, int):
+            linear_word_delta_cache[key] = _no_match
             return None
 
         if delta > 0:
@@ -1597,12 +1617,14 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             op = "Sub"
             magnitude = -delta
 
-        return structured_c.CBinaryOp(
+        result = structured_c.CBinaryOp(
             op,
             base_expr,
             structured_c.CConstant(magnitude, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
+        linear_word_delta_cache[key] = result
+        return result
 
     for _ in range(3):
         changed = False
@@ -1629,8 +1651,13 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             break
 
     def _match_high_byte_preserving_word_expr(node):
+        key = id(node)
+        if key in high_byte_preserving_word_cache:
+            cached = high_byte_preserving_word_cache[key]
+            return None if cached is _no_match else cached
         node = _unwrap_c_casts(node)
         if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
+            high_byte_preserving_word_cache[key] = _no_match
             return None
 
         def _strip_byte_cast(expr):
@@ -1683,6 +1710,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                         codegen=codegen,
                     )
 
+        high_byte_preserving_word_cache[key] = _no_match
         return None
 
     def _is_dead_stack_address_init(stmt) -> bool:
