@@ -339,6 +339,7 @@ def _decompile_function(
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
+    setattr(project, "_inertia_rewrite_cache", {})
     changed = False
     if _attach_dos_pseudo_callees(project, function, dec.codegen, api_style):
         changed = True
@@ -351,6 +352,8 @@ def _decompile_function(
     if _prune_unused_unnamed_memory_declarations(dec.codegen):
         changed = True
     if _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals):
+        changed = True
+    if _coalesce_segmented_word_store_statements(project, dec.codegen):
         changed = True
     if _coalesce_segmented_word_load_expressions(project, dec.codegen):
         changed = True
@@ -627,17 +630,40 @@ def _c_constant_value(node) -> int | None:
     return None
 
 
+def _project_rewrite_cache(project: angr.Project) -> dict[str, dict[int, object]]:
+    cache = getattr(project, "_inertia_rewrite_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(project, "_inertia_rewrite_cache", cache)
+    return cache
+
+
 def _segment_reg_name(node, project: angr.Project) -> str | None:
+    cache = _project_rewrite_cache(project).setdefault("segment_reg_name", {})
+    key = id(node)
+    if key in cache:
+        return cache[key]
+
     if not isinstance(node, structured_c.CVariable):
+        cache[key] = None
         return None
     variable = getattr(node, "variable", None)
     if not isinstance(variable, SimRegisterVariable):
+        cache[key] = None
         return None
-    return project.arch.register_names.get(variable.reg)
+    result = project.arch.register_names.get(variable.reg)
+    cache[key] = result
+    return result
 
 
 def _match_real_mode_linear_expr(node, project: angr.Project) -> tuple[str | None, int | None]:
+    cache = _project_rewrite_cache(project).setdefault("real_mode_linear_expr", {})
+    key = id(node)
+    if key in cache:
+        return cache[key]
+
     if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
+        cache[key] = (None, None)
         return None, None
 
     pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
@@ -655,28 +681,46 @@ def _match_real_mode_linear_expr(node, project: angr.Project) -> tuple[str | Non
                 continue
             seg_name = _segment_reg_name(maybe_seg, project)
             if seg_name is not None:
+                cache[key] = (seg_name, linear)
                 return seg_name, linear
 
+    cache[key] = (None, None)
     return None, None
 
 
 def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | None, int | None]:
+    cache = _project_rewrite_cache(project).setdefault("segmented_dereference", {})
+    key = id(node)
+    if key in cache:
+        return cache[key]
+
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        cache[key] = (None, None)
         return None, None
     operand = node.operand
     if isinstance(operand, structured_c.CTypeCast):
         operand = operand.expr
-    return _match_real_mode_linear_expr(operand, project)
+    result = _match_real_mode_linear_expr(operand, project)
+    cache[key] = result
+    return result
 
 
 def _match_ss_stack_reference(node, project: angr.Project):
+    cache = _project_rewrite_cache(project).setdefault("ss_stack_reference", {})
+    key = id(node)
+    if key in cache:
+        return cache[key]
+
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        cache[key] = None
         return None
     operand = node.operand
     if not isinstance(operand, structured_c.CTypeCast):
+        cache[key] = None
         return None
     expr = operand.expr
     if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Add":
+        cache[key] = None
         return None
 
     for maybe_mul, other in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
@@ -702,8 +746,10 @@ def _match_ss_stack_reference(node, project: angr.Project):
         stack_var = getattr(cvar, "variable", None)
         if not isinstance(stack_var, SimStackVariable):
             continue
+        cache[key] = (stack_var, cvar)
         return stack_var, cvar
 
+    cache[key] = None
     return None
 
 
@@ -716,10 +762,17 @@ def _flatten_c_add_terms(node):
 
 
 def _match_ss_local_plus_const(node, project: angr.Project):
+    cache = _project_rewrite_cache(project).setdefault("ss_local_plus_const", {})
+    key = id(node)
+    if key in cache:
+        return cache[key]
+
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        cache[key] = None
         return None
     operand = node.operand
     if not isinstance(operand, structured_c.CTypeCast):
+        cache[key] = None
         return None
 
     seg_name = None
@@ -753,7 +806,9 @@ def _match_ss_local_plus_const(node, project: angr.Project):
         cvar = inner.operand
 
     if seg_name != "ss" or cvar is None:
+        cache[key] = None
         return None
+    cache[key] = (cvar, extra_offset)
     return cvar, extra_offset
 
 
@@ -1635,6 +1690,79 @@ def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) ->
     return changed
 
 
+def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+    target_type = SimTypeShort(False)
+
+    def visit(node):
+        nonlocal changed
+
+        if isinstance(node, structured_c.CStatements):
+            new_statements = []
+            i = 0
+            while i < len(node.statements):
+                stmt = node.statements[i]
+                next_stmt = node.statements[i + 1] if i + 1 < len(node.statements) else None
+
+                if isinstance(stmt, structured_c.CAssignment) and isinstance(next_stmt, structured_c.CAssignment):
+                    replacement = None
+
+                    if isinstance(stmt.lhs, structured_c.CVariable):
+                        matched = _match_ss_local_plus_const(next_stmt.lhs, project)
+                        if matched is not None:
+                            target_cvar, extra_offset = matched
+                            rhs_word = _match_word_rhs_from_byte_pair(stmt.rhs, next_stmt.rhs, codegen, project)
+                            if (
+                                extra_offset == 1
+                                and _same_c_expression(target_cvar, stmt.lhs)
+                                and rhs_word is not None
+                            ):
+                                if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, target_type):
+                                    changed = True
+                                replacement = structured_c.CAssignment(stmt.lhs, rhs_word, codegen=codegen)
+
+                    if replacement is None:
+                        low_addr_expr = _match_byte_store_addr_expr(stmt.lhs)
+                        high_addr_expr = _match_byte_store_addr_expr(next_stmt.lhs)
+                        rhs_word = _match_word_rhs_from_byte_pair(stmt.rhs, next_stmt.rhs, codegen, project)
+                        if (
+                            low_addr_expr is not None
+                            and high_addr_expr is not None
+                            and rhs_word is not None
+                            and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr)
+                        ):
+                            replacement = structured_c.CAssignment(
+                                _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
+                                rhs_word,
+                                codegen=codegen,
+                            )
+
+                    if replacement is not None:
+                        new_statements.append(replacement)
+                        changed = True
+                        i += 2
+                        continue
+
+                visit(stmt)
+                new_statements.append(stmt)
+                i += 1
+
+            if len(new_statements) != len(node.statements):
+                node.statements = new_statements
+
+        elif isinstance(node, structured_c.CIfElse):
+            for _cond, body in node.condition_and_nodes:
+                visit(body)
+            if node.else_node is not None:
+                visit(node.else_node)
+
+    visit(codegen.cfunc.statements)
+    return changed
+
+
 def _global_memory_addr(node) -> int | None:
     if not isinstance(node, structured_c.CVariable):
         return None
@@ -1696,6 +1824,17 @@ def _match_byte_load_addr_expr(node):
     type_ = getattr(node, "type", None)
     bits = getattr(type_, "size", None)
     if bits not in {8, None}:
+        return None
+    return addr_expr
+
+
+def _match_byte_store_addr_expr(node):
+    addr_expr = _extract_dereference_addr_expr(node)
+    if addr_expr is None:
+        return None
+    type_ = getattr(node, "type", None)
+    bits = getattr(type_, "size", None)
+    if bits != 8:
         return None
     return addr_expr
 
@@ -1766,6 +1905,59 @@ def _make_word_dereference_from_addr_expr(codegen, project: angr.Project, addr_e
         structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
         codegen=codegen,
     )
+
+
+def _match_word_dereference_addr_expr(node):
+    addr_expr = _extract_dereference_addr_expr(node)
+    if addr_expr is None:
+        return None
+    type_ = getattr(node, "type", None)
+    bits = getattr(type_, "size", None)
+    if bits != 16:
+        return None
+    return addr_expr
+
+
+def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Project):
+    low_unwrapped = _unwrap_c_casts(low_rhs)
+    high_unwrapped = _unwrap_c_casts(high_rhs)
+
+    if (
+        isinstance(low_unwrapped, structured_c.CConstant)
+        and isinstance(low_unwrapped.value, int)
+        and isinstance(high_unwrapped, structured_c.CConstant)
+        and isinstance(high_unwrapped.value, int)
+    ):
+        return structured_c.CConstant(
+            (low_unwrapped.value & 0xFF) | ((high_unwrapped.value & 0xFF) << 8),
+            SimTypeShort(False),
+            codegen=codegen,
+        )
+
+    shifted_source = _match_shift_right_8_expr(high_rhs)
+    if shifted_source is not None:
+        shifted_source = _unwrap_c_casts(shifted_source)
+        low_bits = getattr(getattr(low_unwrapped, "type", None), "size", None)
+        if (
+            _same_c_expression(_unwrap_c_casts(low_rhs), shifted_source)
+            and (
+                isinstance(low_unwrapped, (structured_c.CVariable, structured_c.CConstant))
+                or low_bits == 16
+            )
+        ):
+            return low_rhs
+
+        low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
+        word_addr_expr = _match_word_dereference_addr_expr(shifted_source)
+        if low_addr_expr is not None and word_addr_expr is not None and _same_c_expression(low_addr_expr, word_addr_expr):
+            return shifted_source
+
+    low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
+    high_addr_expr = _match_shifted_high_byte_addr_expr(high_rhs)
+    if low_addr_expr is not None and high_addr_expr is not None and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr):
+        return _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
+
+    return None
 
 
 def _high_byte_store_addr(node, project: angr.Project) -> int | None:
