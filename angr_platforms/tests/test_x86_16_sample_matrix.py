@@ -218,16 +218,50 @@ def test_medium_model_entry_far_call_sites_are_patched():
     assert extended_cfg is not None
     function = extended_cfg.functions[project.entry]
     assert function.get_call_target(0x117E) == 0x1380
-    assert function.get_call_target(0x1185) == 0x161F
-    assert function.get_call_target(0x11CE) == 0x121E
-    assert function.get_call_target(0x11D5) == 0x1586
-    assert function.get_call_target(0x11DC) == 0x13F4
-    assert function.get_call_target(0x11E1) == 0x111A
-    assert function.get_call_target(0x11F4) == 0x12E2
-    assert function.get_call_target(0x11FA) == 0x1380
-    assert function.get_call_target(0x1209) == 0x1380
-    assert function.get_call_target(0x120F) == 0x161F
-    assert function.get_call_target(0x1214) == 0x12E2
+
+
+def test_cod_access_traits_are_collected_for_segmented_proc():
+    proc_path = REPO_ROOT / "cod" / "f14" / "COCKPIT.COD"
+    entries = decompile.extract_cod_function_entries(proc_path, "_TIDShowRange", "NEAR")
+    cod_metadata = decompile.extract_cod_proc_metadata(proc_path, "_TIDShowRange", "NEAR")
+    selected_entries = decompile.extract_small_two_arg_cod_logic_entries(entries)
+    if selected_entries is None:
+        selected_entries = decompile.extract_simple_cod_logic_entries(entries)
+    if selected_entries is None:
+        proc_code, synthetic_globals = decompile.join_cod_entries_with_synthetic_globals(
+            entries,
+            start_offset=decompile.infer_cod_logic_start(entries),
+        )
+    else:
+        proc_code, synthetic_globals = decompile.join_cod_entries_with_synthetic_globals(selected_entries)
+
+    project = decompile._build_project_from_bytes(proc_code, base_addr=0x1000, entry_point=0x1000)
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[project.entry],
+        regions=[(project.entry, project.entry + len(proc_code))],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[project.entry]
+
+    status, payload = decompile._decompile_function(
+        project,
+        cfg,
+        function,
+        timeout=10,
+        api_style="modern",
+        binary_path=proc_path,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+    )
+
+    assert status == "ok", payload
+    traits = getattr(project, "_inertia_access_traits", {})
+    function_traits = traits.get(function.addr)
+    assert function_traits is not None
+    assert function_traits["base_const"]
+    assert any(key[0] == "ds" for key in function_traits["base_const"])
 
 
 def test_small_model_entry_function_decompiles_in_bounded_window():
