@@ -250,7 +250,7 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "v11 = ...;" not in result.stdout
     assert "v16 = ...;" not in result.stdout
     assert "(char [4])Status" not in result.stdout
-    assert "v17 = Status;" in result.stdout
+    assert "v17 = (char [4])*((char *)28674);" in result.stdout
     assert "v2 = &v3;" not in result.stdout
     assert "v1 = 2;" in result.stdout
     assert "v0 = v14;" in result.stdout
@@ -388,14 +388,14 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "[bp-0xc] = mseg" in result.stdout
     assert "globals = _Rp2, _Tscale, _Rp1" in result.stdout
     assert "char mseg;  // [bp-0xc] mseg" in result.stdout
-    assert "v2 = Rp2;" in result.stdout
+    assert "v2 = *((char *)0x7000);" in result.stdout
+    assert "*((char *)(&v2 + 1)) = Rp2 >> 8;" in result.stdout
     assert "146" in result.stdout
     assert "21" in result.stdout
     assert "29" in result.stdout
     assert "9" in result.stdout
     assert "field_30e" in result.stdout
     assert "* 2" in result.stdout
-    assert "*(char *)(&v2 + 1)" in result.stdout or "*((char *)(&v2 + 1))" in result.stdout
     assert "*(char *)(&v1 + 1)" in result.stdout or "*((char *)(&v1 + 1))" in result.stdout
     assert "ss * 16 + (unsigned int)&v2 + 1" not in result.stdout
     assert "| 0" not in result.stdout
