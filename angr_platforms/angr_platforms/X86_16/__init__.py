@@ -398,7 +398,7 @@ try:
                 for block in ail_graph:
                     stmt_count += len(getattr(block, "statements", ()))
             if block_count <= 8 and stmt_count <= 80:
-                cap = min(cap, 2)
+                cap = min(cap, 1)
                 narrow_expressions = False
         for idx in range(cap):
             simplified = self._simplify_function_once(
