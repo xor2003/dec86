@@ -289,7 +289,7 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "unsigned short sub_13b2(void)" in result.stdout
     assert "while (true)" in result.stdout
     assert "v20 = v16 + v19;" in result.stdout
-    assert "v20 = v20 & 0xff00 | *((char *)(v26 * 16 + 0 + v25));" in result.stdout
+    assert "v20 = v20 & 0xff00 | *((char *)(v26 * 16 + v25));" in result.stdout
     assert "if (!(char)v20)" in result.stdout
     assert "if (v27 & 64)" not in result.stdout
     assert "v22 = ...;" not in result.stdout
@@ -305,13 +305,14 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "[bp-0xc] = mseg" in result.stdout
     assert "globals = _Rp2, _Tscale, _Rp1" in result.stdout
     assert "char mseg;  // [bp-0xc] mseg" in result.stdout
-    assert "28673" in result.stdout
+    assert "v2 = Rp2;" in result.stdout
     assert "146" in result.stdout
     assert "21" in result.stdout
     assert "29" in result.stdout
     assert "9" in result.stdout
     assert "782" in result.stdout
     assert "* 2" in result.stdout
+    assert "| 0" not in result.stdout
     assert "sub_103b();" in result.stdout
 
 
