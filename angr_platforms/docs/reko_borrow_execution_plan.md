@@ -21,6 +21,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - small safe segmented byte-pointer rewrites now exist for `snake`-style `ds/es` byte access
 - Priority 3 has groundwork in place:
   - access traits for repeated `base + const` and `base + index * stride` segmented accesses are now collected and cached per decompilation run
+  - a real `.COD` proc test now verifies that segmented access traits are actually recorded in the cache
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
