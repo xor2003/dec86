@@ -1606,6 +1606,60 @@ def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMeta
         return False
 
     created: dict[tuple[int, int], structured_c.CVariable] = {}
+    temp_const_aliases: dict[int, int] = {}
+
+    def is_linear_temp(cvar) -> bool:
+        return (
+            isinstance(cvar, structured_c.CVariable)
+            and isinstance(getattr(cvar, "name", None), str)
+            and re.fullmatch(r"v\d+", getattr(cvar, "name", "")) is not None
+        )
+
+    def collect_temp_aliases() -> None:
+        aliases: dict[int, int] = {}
+        for _ in range(3):
+            changed = False
+            for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    continue
+                if not is_linear_temp(walk_node.lhs):
+                    continue
+                rhs = _unwrap_c_casts(walk_node.rhs)
+                value = None
+                if isinstance(rhs, structured_c.CConstant) and isinstance(rhs.value, int):
+                    value = rhs.value
+                elif isinstance(rhs, structured_c.CVariable):
+                    value = aliases.get(id(getattr(rhs, "variable", None)))
+                if value is None:
+                    continue
+                lhs_var = getattr(walk_node.lhs, "variable", None)
+                if lhs_var is None:
+                    continue
+                key = id(lhs_var)
+                if aliases.get(key) != value:
+                    aliases[key] = value
+                    changed = True
+            if not changed:
+                break
+        temp_const_aliases.update(aliases)
+
+    def resolved_constant_value(node) -> int | None:
+        node = _unwrap_c_casts(node)
+        constant = _c_constant_value(node)
+        if constant is not None:
+            return constant
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            if variable is not None:
+                return temp_const_aliases.get(id(variable))
+        if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
+            lhs = resolved_constant_value(node.lhs)
+            rhs = resolved_constant_value(node.rhs)
+            if lhs is not None and rhs is not None:
+                return lhs + rhs if node.op == "Add" else lhs - rhs
+        return None
+
+    collect_temp_aliases()
 
     def make_data_var(offset: int, size: int, label: str):
         key = (offset, size)
@@ -1624,28 +1678,54 @@ def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMeta
         if isinstance(node, structured_c.CVariable):
             variable = getattr(node, "variable", None)
             if isinstance(variable, SimMemoryVariable):
-                label = lst_metadata.data_labels.get(getattr(variable, "addr", None))
-                if label is not None:
+                addr = getattr(variable, "addr", None)
+                label = lst_metadata.data_labels.get(addr) if isinstance(addr, int) else None
+                if label is not None and isinstance(addr, int):
                     type_ = getattr(node, "variable_type", None)
-                    size = max(
-                        getattr(type_, "size", None) // project.arch.byte_width if getattr(type_, "size", None) else 1,
-                        1,
-                    )
-                    return make_data_var(int(variable.addr), size, label)
+                    bits = getattr(type_, "size", None)
+                    size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+                    return make_data_var(addr, size, label)
 
-        classified = _classify_segmented_dereference(node, project)
-        if classified is None or classified.seg_name != "ds" or classified.linear is None:
-            return node
-        label = _lst_data_label(lst_metadata, classified.linear)
-        if label is None:
-            return node
+        if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
+            operand = node.operand
+            if isinstance(operand, structured_c.CTypeCast):
+                operand = operand.expr
 
-        type_ = getattr(node, "type", None)
-        if type_ is None:
-            return node
-        bits = getattr(type_, "size", None)
-        size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
-        return make_data_var(classified.linear, size, label)
+            seg_name = None
+            linear = 0
+            saw_segment = False
+            other_terms: list[object] = []
+            for term in _flatten_c_add_terms(operand):
+                inner = _unwrap_c_casts(term)
+                if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Mul":
+                    for maybe_seg, maybe_scale in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+                        if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 16:
+                            continue
+                        name = _segment_reg_name(_unwrap_c_casts(maybe_seg), project)
+                        if name is not None:
+                            seg_name = name
+                            saw_segment = True
+                            break
+                    if saw_segment:
+                        continue
+
+                const_value = resolved_constant_value(inner)
+                if const_value is not None:
+                    linear += const_value
+                    continue
+
+                other_terms.append(inner)
+
+            if seg_name == "ds" and not other_terms:
+                label = _lst_data_label(lst_metadata, linear)
+                if label is not None:
+                    type_ = getattr(node, "type", None)
+                    if type_ is not None:
+                        bits = getattr(type_, "size", None)
+                        size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+                        return make_data_var(linear, size, label)
+
+        return node
 
     root = codegen.cfunc.statements
     new_root = transform(root)
