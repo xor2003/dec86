@@ -127,6 +127,12 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
     return metadata
 
 
+def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | None:
+    if metadata is None or offset is None:
+        return None
+    return metadata.data_labels.get(offset)
+
+
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
     suffix = path.suffix.lower()
 
@@ -342,6 +348,7 @@ def _decompile_function(
     binary_path: Path | None = None,
     cod_metadata: CODProcMetadata | None = None,
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
+    lst_metadata: LSTMetadata | None = None,
 ) -> tuple[str, str]:
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
@@ -381,6 +388,7 @@ def _decompile_function(
         lambda: _attach_cod_global_names(project, dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
+        lambda: _attach_lst_data_names(project, dec.codegen, lst_metadata),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(dec.codegen, cod_metadata),
         lambda: _simplify_structured_c_expressions(dec.codegen),
@@ -423,6 +431,7 @@ def _decompile_function_with_stats(
     binary_path: Path | None = None,
     cod_metadata: CODProcMetadata | None = None,
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
+    lst_metadata: LSTMetadata | None = None,
 ):
     block_count, byte_count = _function_complexity(function)
     print(
@@ -439,6 +448,7 @@ def _decompile_function_with_stats(
         binary_path,
         cod_metadata=cod_metadata,
         synthetic_globals=synthetic_globals,
+        lst_metadata=lst_metadata,
     )
     elapsed = time.perf_counter() - start
     print(f"[dbg] decompilation time for {function.addr:#x} {function.name}: {elapsed:.2f}s")
@@ -1588,6 +1598,66 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
                 unified_locals[variable] = new_entries
                 changed = True
 
+    return changed
+
+
+def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMetadata | None) -> bool:
+    if lst_metadata is None or getattr(codegen, "cfunc", None) is None:
+        return False
+
+    created: dict[tuple[int, int], structured_c.CVariable] = {}
+
+    def make_data_var(offset: int, size: int, label: str):
+        key = (offset, size)
+        existing = created.get(key)
+        if existing is not None:
+            return existing
+        cvar = structured_c.CVariable(
+            SimMemoryVariable(offset, size, name=_sanitize_cod_identifier(label), region=codegen.cfunc.addr),
+            variable_type=SimTypeChar() if size == 1 else SimTypeShort(False),
+            codegen=codegen,
+        )
+        created[key] = cvar
+        return cvar
+
+    def transform(node):
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            if isinstance(variable, SimMemoryVariable):
+                label = lst_metadata.data_labels.get(getattr(variable, "addr", None))
+                if label is not None:
+                    type_ = getattr(node, "variable_type", None)
+                    size = max(
+                        getattr(type_, "size", None) // project.arch.byte_width if getattr(type_, "size", None) else 1,
+                        1,
+                    )
+                    return make_data_var(int(variable.addr), size, label)
+
+        classified = _classify_segmented_dereference(node, project)
+        if classified is None or classified.seg_name != "ds" or classified.linear is None:
+            return node
+        label = _lst_data_label(lst_metadata, classified.linear)
+        if label is None:
+            return node
+
+        type_ = getattr(node, "type", None)
+        if type_ is None:
+            return node
+        bits = getattr(type_, "size", None)
+        size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+        return make_data_var(classified.linear, size, label)
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    else:
+        changed = False
+
+    if _replace_c_children(root, transform):
+        changed = True
     return changed
 
 
@@ -2777,6 +2847,7 @@ def main() -> int:
             args.binary,
             cod_metadata=cod_metadata,
             synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
         )
         if status != "ok":
             print(f"\n/* Decompilation {status}: {payload} */")
@@ -2812,7 +2883,15 @@ def main() -> int:
         print(f"/* arch: {project.arch.name} */")
         print(f"/* entry: {project.entry:#x} */")
         print(f"/* fallback function: {func.addr:#x} {func.name} */")
-        status, payload, *_ = _decompile_function_with_stats(project, cfg, func, args.timeout, args.api_style, args.binary)
+        status, payload, *_ = _decompile_function_with_stats(
+            project,
+            cfg,
+            func,
+            args.timeout,
+            args.api_style,
+            args.binary,
+            lst_metadata=lst_metadata,
+        )
         if status != "ok":
             print(f"\n/* Decompilation {status}: {payload} */")
             print("\n/* == asm fallback == */")
@@ -2856,7 +2935,15 @@ def main() -> int:
             print("/* -- asm -- */")
             print(_format_first_block_asm(project, function.addr))
 
-        status, payload, *_ = _decompile_function_with_stats(project, cfg, function, args.timeout, args.api_style, args.binary)
+        status, payload, *_ = _decompile_function_with_stats(
+            project,
+            cfg,
+            function,
+            args.timeout,
+            args.api_style,
+            args.binary,
+            lst_metadata=lst_metadata,
+        )
         if status == "ok":
             decompiled += 1
             print("/* -- c -- */")
