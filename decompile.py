@@ -1409,6 +1409,76 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 break
         return aliases
 
+    def _extract_linear_delta(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
+            return None, int(expr.value)
+        if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
+            return expr, 0
+
+        left_base, left_delta = _extract_linear_delta(expr.lhs)
+        right_base, right_delta = _extract_linear_delta(expr.rhs)
+        if left_base is not None and right_base is not None:
+            if _same_c_expression(left_base, right_base) and expr.op == "Add":
+                return left_base, left_delta + right_delta
+            return expr, 0
+        if left_base is not None:
+            if expr.op == "Add":
+                return left_base, left_delta + right_delta
+            return left_base, left_delta - right_delta
+        if right_base is not None:
+            if expr.op == "Add":
+                return right_base, left_delta + right_delta
+            return expr, 0
+        if expr.op == "Add":
+            return None, left_delta + right_delta
+        return None, left_delta - right_delta
+
+    def _fold_simple_add_constants(node):
+        node = _unwrap_c_casts(node)
+        if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
+            return node
+
+        for outer_expr, inner_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            outer_expr = _unwrap_c_casts(outer_expr)
+            inner_expr = _unwrap_c_casts(inner_expr)
+            if not isinstance(outer_expr, structured_c.CBinaryOp) or outer_expr.op != "Add":
+                continue
+
+            inner_const = _c_constant_value(_unwrap_c_casts(outer_expr.rhs))
+            outer_const = _c_constant_value(inner_expr)
+            if inner_const is None or outer_const is None:
+                continue
+
+            base_expr = outer_expr.lhs
+            combined = inner_const + outer_const
+            const_type = (
+                getattr(outer_expr.rhs, "type", None)
+                or getattr(inner_expr, "type", None)
+                or getattr(node, "type", None)
+                or SimTypeShort(False)
+            )
+            return structured_c.CBinaryOp(
+                "Add",
+                base_expr,
+                structured_c.CConstant(combined, const_type, codegen=None),
+                codegen=getattr(node, "codegen", None),
+            )
+
+        return node
+
+    def _build_linear_expr(base_expr, delta, codegen):
+        if delta == 0:
+            return base_expr
+        op = "Add" if delta > 0 else "Sub"
+        magnitude = delta if delta > 0 else -delta
+        return structured_c.CBinaryOp(
+            op,
+            base_expr,
+            structured_c.CConstant(magnitude, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
     def _match_constant_high_byte_extract(node):
         node = _unwrap_c_casts(node)
         if isinstance(node, structured_c.CBinaryOp) and node.op == "And":
@@ -1876,6 +1946,16 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     return node.rhs
                 if _c_constant_value(rhs) == 0:
                     return node.lhs
+            if node.op == "Add":
+                folded = _fold_simple_add_constants(node)
+                if folded is not node:
+                    return folded
+            if node.op == "Sub":
+                base_expr, delta = _extract_linear_delta(node)
+                if base_expr is not None:
+                    rebuilt = _build_linear_expr(base_expr, delta, codegen)
+                    if not _same_c_expression(rebuilt, node):
+                        return rebuilt
             if node.op in {"And", "Or"} and _same_c_expression(lhs, rhs):
                 return lhs
             if node.op == "Xor" and _same_c_expression(lhs, rhs):
@@ -3395,6 +3475,10 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                         stmt_base, stmt_delta = _extract_linear_delta(stmt.rhs)
                         if stmt_base is not None:
                             linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
+                            canonical_rhs = _build_linear_expr(stmt_base, stmt_delta, codegen)
+                            if not _same_c_expression(stmt.rhs, canonical_rhs):
+                                stmt = structured_c.CAssignment(stmt.lhs, canonical_rhs, codegen=codegen)
+                                changed = True
                         rhs = _inline_known_linear_defs(stmt.rhs)
                         inlined_base, inlined_delta = _extract_linear_delta(rhs)
                         if inlined_base is not None and not _same_c_expression(rhs, stmt.rhs):
