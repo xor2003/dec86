@@ -713,6 +713,7 @@ def _replace_c_children(node, transform) -> bool:
         "operand",
         "condition",
         "cond",
+        "body",
         "iffalse",
         "iftrue",
         "callee_target",
@@ -820,6 +821,19 @@ def _same_c_expression(lhs, rhs) -> bool:
 
     if isinstance(lhs, structured_c.CConstant):
         return lhs.value == rhs.value
+
+    if isinstance(lhs, structured_c.CTypeCast):
+        return _same_c_expression(lhs.expr, rhs.expr)
+
+    if isinstance(lhs, structured_c.CUnaryOp):
+        return lhs.op == rhs.op and _same_c_expression(lhs.operand, rhs.operand)
+
+    if isinstance(lhs, structured_c.CBinaryOp):
+        return (
+            lhs.op == rhs.op
+            and _same_c_expression(lhs.lhs, rhs.lhs)
+            and _same_c_expression(lhs.rhs, rhs.rhs)
+        )
 
     if isinstance(lhs, structured_c.CVariable):
         lvar = getattr(lhs, "variable", None)
@@ -971,6 +985,21 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         return False
 
     def transform(node):
+        if isinstance(node, structured_c.CBinaryOp):
+            if node.op in {"Add", "Or", "Xor"}:
+                if _is_c_constant_int(node.lhs, 0):
+                    return node.rhs
+                if _is_c_constant_int(node.rhs, 0):
+                    return node.lhs
+            if node.op == "Mul":
+                if _is_c_constant_int(node.lhs, 0) or _is_c_constant_int(node.rhs, 0):
+                    type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                    if type_ is not None:
+                        return structured_c.CConstant(0, type_, codegen=codegen)
+                if _is_c_constant_int(node.lhs, 1):
+                    return node.rhs
+                if _is_c_constant_int(node.rhs, 1):
+                    return node.lhs
         simplified = _simplify_boolean_expr(node, codegen)
         if simplified is not node:
             return simplified
@@ -982,16 +1011,19 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         return node
 
     root = codegen.cfunc.statements
-    new_root = transform(root)
-    if new_root is not root:
-        codegen.cfunc.statements = new_root
-        root = new_root
-        changed = True
-    else:
-        changed = False
-
-    if _replace_c_children(root, transform):
-        changed = True
+    changed = False
+    for _ in range(3):
+        iter_changed = False
+        new_root = transform(root)
+        if new_root is not root:
+            codegen.cfunc.statements = new_root
+            root = new_root
+            iter_changed = True
+        if _replace_c_children(root, transform):
+            iter_changed = True
+        changed |= iter_changed
+        if not iter_changed:
+            break
     return changed
 
 
