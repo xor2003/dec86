@@ -355,9 +355,9 @@ def _decompile_function(
         lambda: _attach_cod_global_names(project, dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
-        lambda: _simplify_structured_c_expressions(dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(dec.codegen, cod_metadata),
+        lambda: _simplify_structured_c_expressions(dec.codegen),
     )
     for _ in range(2):
         iter_changed = False
@@ -695,14 +695,14 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
             const_offset += constant
             continue
 
-        if isinstance(inner, structured_c.CUnaryOp) and inner.op == "Reference":
-            operand = _unwrap_c_casts(inner.operand)
-            if isinstance(operand, structured_c.CVariable):
-                cvar = operand
-                variable = getattr(operand, "variable", None)
-                if isinstance(variable, SimStackVariable):
-                    stack_var = variable
-                continue
+        matched_stack = _match_stack_cvar_and_offset(inner)
+        if matched_stack is not None:
+            cvar, stack_offset = matched_stack
+            variable = getattr(cvar, "variable", None)
+            if isinstance(variable, SimStackVariable):
+                stack_var = variable
+            const_offset += stack_offset
+            continue
 
         other_terms.append(term)
 
@@ -818,6 +818,40 @@ def _flatten_c_add_terms(node):
     if isinstance(node, structured_c.CBinaryOp) and node.op == "Add":
         return _flatten_c_add_terms(node.lhs) + _flatten_c_add_terms(node.rhs)
     return [node]
+
+
+def _match_stack_cvar_and_offset(node):
+    node = _unwrap_c_casts(node)
+
+    if isinstance(node, structured_c.CVariable):
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+            return node, 0
+        return None
+
+    if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
+        operand = _unwrap_c_casts(node.operand)
+        if isinstance(operand, structured_c.CVariable):
+            variable = getattr(operand, "variable", None)
+            if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+                return operand, 0
+        return None
+
+    if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
+        lhs = _match_stack_cvar_and_offset(node.lhs)
+        rhs = _match_stack_cvar_and_offset(node.rhs)
+        lhs_const = _c_constant_value(_unwrap_c_casts(node.lhs))
+        rhs_const = _c_constant_value(_unwrap_c_casts(node.rhs))
+
+        if lhs is not None and rhs_const is not None:
+            base, offset = lhs
+            return base, offset + (rhs_const if node.op == "Add" else -rhs_const)
+        if rhs is not None and lhs_const is not None:
+            base, offset = rhs
+            return base, offset + lhs_const
+        return None
+
+    return None
 
 
 def _match_ss_local_plus_const(node, project: angr.Project):
@@ -990,6 +1024,27 @@ def _same_c_expression(lhs, rhs) -> bool:
     return lhs is rhs
 
 
+def _same_c_storage(lhs, rhs) -> bool:
+    if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
+        return False
+
+    lvar = getattr(lhs, "variable", None)
+    rvar = getattr(rhs, "variable", None)
+    if type(lvar) is not type(rvar):
+        return False
+
+    if isinstance(lvar, SimRegisterVariable):
+        return getattr(lvar, "reg", None) == getattr(rvar, "reg", None)
+    if isinstance(lvar, SimStackVariable):
+        return (
+            getattr(lvar, "base", None) == getattr(rvar, "base", None)
+            and getattr(lvar, "offset", None) == getattr(rvar, "offset", None)
+        )
+    if isinstance(lvar, SimMemoryVariable):
+        return getattr(lvar, "addr", None) == getattr(rvar, "addr", None)
+    return lvar == rvar
+
+
 def _is_c_constant_int(node, value: int) -> bool:
     return isinstance(node, structured_c.CConstant) and isinstance(node.value, int) and node.value == value
 
@@ -1112,6 +1167,29 @@ def _simplify_boolean_expr(node, codegen):
     return node
 
 
+def _simplify_zero_mul_or_expr(node, codegen):
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Or":
+        return node
+
+    lhs = _unwrap_c_casts(node.lhs)
+    rhs = _unwrap_c_casts(node.rhs)
+
+    def is_zero_mul(expr):
+        if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Mul":
+            return False
+        return _c_constant_value(_unwrap_c_casts(expr.lhs)) == 0 or _c_constant_value(_unwrap_c_casts(expr.rhs)) == 0
+
+    if _c_constant_value(lhs) == 0:
+        return node.rhs
+    if _c_constant_value(rhs) == 0:
+        return node.lhs
+    if is_zero_mul(lhs):
+        return node.rhs
+    if is_zero_mul(rhs):
+        return node.lhs
+    return node
+
+
 def _simplify_structured_c_expressions(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
@@ -1163,6 +1241,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     return node.rhs
                 if _c_constant_value(_unwrap_c_casts(node.rhs)) == 1:
                     return node.lhs
+            simplified_or = _simplify_zero_mul_or_expr(node, codegen)
+            if simplified_or is not node:
+                return simplified_or
         simplified = _simplify_boolean_expr(node, codegen)
         if simplified is not node:
             return simplified
@@ -1685,7 +1766,7 @@ def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) ->
                         high_expr = _match_shift_right_8_expr(next_stmt.rhs)
                         if (
                             extra_offset == 1
-                            and _same_c_expression(target_cvar, stmt.lhs)
+                            and _same_c_storage(target_cvar, stmt.lhs)
                             and high_expr is not None
                             and _same_c_expression(_unwrap_c_casts(high_expr), _unwrap_c_casts(stmt.rhs))
                         ):
@@ -1740,7 +1821,7 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
                             rhs_word = _match_word_rhs_from_byte_pair(stmt.rhs, next_stmt.rhs, codegen, project)
                             if (
                                 extra_offset == 1
-                                and _same_c_expression(target_cvar, stmt.lhs)
+                                and _same_c_storage(target_cvar, stmt.lhs)
                                 and rhs_word is not None
                             ):
                                 if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, target_type):
