@@ -205,7 +205,7 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "g_7000 = Hook;" in result.stdout or "HookDown = Hook;" in result.stdout
     assert "if (Hook)" in result.stdout
     assert "if (!(...))" not in result.stdout
-    assert "v2 = &v3;" in result.stdout
+    assert "v2 = &v3;" not in result.stdout
     assert "v1 = 5;" in result.stdout
     assert "v0 = v8;" in result.stdout
     assert "v5 * 16" not in result.stdout
@@ -247,7 +247,9 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "v9 = ...;" not in result.stdout
     assert "v11 = ...;" not in result.stdout
     assert "v16 = ...;" not in result.stdout
-    assert "v2 = &v3;" in result.stdout
+    assert "(char [4])Status" not in result.stdout
+    assert "v17 = Status;" in result.stdout
+    assert "v2 = &v3;" not in result.stdout
     assert "v1 = 2;" in result.stdout
     assert "v0 = v14;" in result.stdout
     assert "v5 * 16" not in result.stdout
@@ -313,6 +315,7 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "782" in result.stdout
     assert "* 2" in result.stdout
     assert "| 0" not in result.stdout
+    assert "v10 = &v11;" not in result.stdout
     assert "sub_103b();" in result.stdout
 
 
