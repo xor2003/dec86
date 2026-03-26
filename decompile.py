@@ -1744,6 +1744,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             return False
         return _is_linear_register_temp(lhs)
 
+    def _flatten_bitwise_terms(expr, op):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CBinaryOp) and expr.op == op:
+            return _flatten_bitwise_terms(expr.lhs, op) + _flatten_bitwise_terms(expr.rhs, op)
+        return [expr]
+
     def transform(node):
         if isinstance(node, structured_c.CTypeCast):
             target_type = getattr(node, "type", None)
@@ -1798,6 +1804,41 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     if result is not None:
                         type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
                         return structured_c.CConstant(result, type_, codegen=codegen)
+            if node.op in {"And", "Or"}:
+                terms = _flatten_bitwise_terms(node, node.op)
+                const_value = None
+                const_type = None
+                non_constants = []
+                for term in terms:
+                    value = _c_constant_value(term)
+                    if value is None:
+                        non_constants.append(term)
+                        continue
+                    const_type = getattr(term, "type", None) or const_type
+                    if const_value is None:
+                        const_value = value
+                    elif node.op == "And":
+                        const_value &= value
+                    else:
+                        const_value |= value
+                if len(terms) > 2 or len(non_constants) != len(terms):
+                    rebuilt_terms = list(non_constants)
+                    if const_value is not None:
+                        if not ((node.op == "And" and const_value == -1) or (node.op == "Or" and const_value == 0)):
+                            rebuilt_terms.append(
+                                structured_c.CConstant(
+                                    const_value,
+                                    const_type or getattr(node, "type", None) or SimTypeShort(False),
+                                    codegen=codegen,
+                                )
+                            )
+                    if not rebuilt_terms:
+                        type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+                        return structured_c.CConstant(const_value if const_value is not None else 0, type_, codegen=codegen)
+                    result = rebuilt_terms[0]
+                    for term in rebuilt_terms[1:]:
+                        result = structured_c.CBinaryOp(node.op, result, term, codegen=codegen)
+                    return result
             if node.op in {"Add", "Or", "Xor"}:
                 if _c_constant_value(lhs) == 0:
                     return node.rhs
@@ -3175,6 +3216,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
 
         if isinstance(node, structured_c.CStatements):
             new_statements = []
+            linear_defs: dict[int, tuple[object, int]] = {}
             i = 0
             while i < len(node.statements):
                 stmt = node.statements[i]
@@ -3218,6 +3260,30 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                                 changed = True
                                 i += 2
                                 continue
+
+                    if _is_linear_register_temp(stmt.lhs):
+                        stmt_base, stmt_delta = _extract_linear_delta(stmt.rhs)
+                        if stmt_base is not None:
+                            linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
+                        if temp_var is not None and id(temp_var) in linear_defs:
+                            current_linear = linear_defs[id(temp_var)]
+                            rhs = _unwrap_c_casts(stmt.rhs)
+                            if isinstance(rhs, structured_c.CBinaryOp) and rhs.op in {"Add", "Sub"}:
+                                if _same_c_expression(_unwrap_c_casts(rhs.lhs), stmt.lhs) or _same_c_expression(
+                                    _unwrap_c_casts(rhs.rhs), stmt.lhs
+                                ):
+                                    current_delta = _c_constant_value(_unwrap_c_casts(rhs.lhs))
+                                    if current_delta is None:
+                                        current_delta = _c_constant_value(_unwrap_c_casts(rhs.rhs))
+                                    if isinstance(current_delta, int):
+                                        base_expr, base_delta = current_linear
+                                        combined = base_delta + current_delta if rhs.op == "Add" else base_delta - current_delta
+                                        stmt = structured_c.CAssignment(
+                                            stmt.lhs,
+                                            _build_linear_expr(base_expr, combined, codegen),
+                                            codegen=codegen,
+                                        )
+                                        changed = True
 
                 visit(stmt)
                 new_statements.append(stmt)
