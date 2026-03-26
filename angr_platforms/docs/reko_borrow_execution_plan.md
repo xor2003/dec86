@@ -29,6 +29,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - register-only `ds` pointer arithmetic in `snake`-style helpers now drops raw `ds * 16` scaffolding too
   - `es` byte-pointer arithmetic in `snake`-style helpers now also loses raw `es * 16` scaffolding when the rest of the projection is safe
   - adjacent byte temporaries in `snake.EXE:0x1287` now collapse into a source-like word condition instead of `byte | byte * 0x100`
+  - `snake.EXE:0x1287` also simplifies the `g_c2` high-byte update path to `v26 ± 1`
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
