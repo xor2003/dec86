@@ -31,6 +31,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - adjacent byte temporaries in `snake.EXE:0x1287` now collapse into a source-like word condition instead of `byte | byte * 0x100`
   - `snake.EXE:0x1287` also simplifies the `g_c2` high-byte update path to `v26 ± 1`
   - the remaining high-byte-preserving update path now collapses to `v26 ± 0x100` instead of raw byte/word scaffolding
+  - the remaining `snake.EXE:0x1287` linear temp chain now collapses one step further to `g_c2 - 2` in the `<` path
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
@@ -40,6 +41,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - `snake.EXE:0x1287` now simplifies the guard to `if (!(field_0 & v17))`
   - `snake.EXE:0x1287` now simplifies the guard further to `if (!field_0)`
   - `snake.EXE:0x1287` also prunes the remaining `field_0`/`field_1` pair down to `field_0` in the guard path
+  - `snake.EXE:0x1287` now folds the `g_c2 - 1` / `- 1` chain to `g_c2 - 2`
   - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
 
 ## Constraints
