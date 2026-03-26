@@ -381,6 +381,7 @@ def _decompile_function(
         lambda: _attach_ss_stack_variables(project, dec.codegen),
         lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
         lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
+        lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
         lambda: _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals),
@@ -3097,6 +3098,126 @@ def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) ->
                             changed = True
                             i += 2
                             continue
+
+                visit(stmt)
+                new_statements.append(stmt)
+                i += 1
+
+            if len(new_statements) != len(node.statements):
+                node.statements = new_statements
+
+        elif isinstance(node, structured_c.CIfElse):
+            for _cond, body in node.condition_and_nodes:
+                visit(body)
+            if node.else_node is not None:
+                visit(node.else_node)
+
+    visit(codegen.cfunc.statements)
+    return changed
+
+
+def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+    def _is_linear_register_temp(cvar) -> bool:
+        return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
+            r"v\d+", getattr(cvar, "name", "")
+        ) is not None
+
+    variable_use_counts: dict[int, int] = {}
+    for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if isinstance(walk_node, structured_c.CVariable):
+            variable = getattr(walk_node, "variable", None)
+            if variable is not None:
+                key = id(variable)
+                variable_use_counts[key] = variable_use_counts.get(key, 0) + 1
+
+    def _extract_linear_delta(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
+            return None, int(expr.value)
+        if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
+            return expr, 0
+        left_base, left_delta = _extract_linear_delta(expr.lhs)
+        right_base, right_delta = _extract_linear_delta(expr.rhs)
+        if left_base is not None and right_base is not None:
+            if _same_c_expression(left_base, right_base) and expr.op == "Add":
+                return left_base, left_delta + right_delta
+            return expr, 0
+        if left_base is not None:
+            if expr.op == "Add":
+                return left_base, left_delta + right_delta
+            return left_base, left_delta - right_delta
+        if right_base is not None:
+            if expr.op == "Add":
+                return right_base, left_delta + right_delta
+            return expr, 0
+        if expr.op == "Add":
+            return None, left_delta + right_delta
+        return None, left_delta - right_delta
+
+    def _build_linear_expr(base_expr, delta, codegen):
+        if delta == 0:
+            return base_expr
+        op = "Add" if delta > 0 else "Sub"
+        magnitude = delta if delta > 0 else -delta
+        return structured_c.CBinaryOp(
+            op,
+            base_expr,
+            structured_c.CConstant(magnitude, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    def visit(node):
+        nonlocal changed
+
+        if isinstance(node, structured_c.CStatements):
+            new_statements = []
+            i = 0
+            while i < len(node.statements):
+                stmt = node.statements[i]
+                next_stmt = node.statements[i + 1] if i + 1 < len(node.statements) else None
+
+                if (
+                    isinstance(stmt, structured_c.CAssignment)
+                    and isinstance(stmt.lhs, structured_c.CVariable)
+                    and isinstance(next_stmt, structured_c.CAssignment)
+                    and isinstance(next_stmt.lhs, structured_c.CVariable)
+                ):
+                    temp_var = getattr(stmt.lhs, "variable", None)
+                    temp_use_count = variable_use_counts.get(id(temp_var), 0) if temp_var is not None else 0
+
+                    if (
+                        temp_use_count == 1
+                        and _is_linear_register_temp(stmt.lhs)
+                        and _is_linear_register_temp(next_stmt.lhs)
+                    ):
+                        stmt_base, stmt_delta = _extract_linear_delta(stmt.rhs)
+                        next_rhs = _unwrap_c_casts(next_stmt.rhs)
+                        if isinstance(next_rhs, structured_c.CBinaryOp) and next_rhs.op in {"Add", "Sub"}:
+                            if _same_c_expression(_unwrap_c_casts(next_rhs.lhs), stmt.lhs):
+                                next_delta = _c_constant_value(_unwrap_c_casts(next_rhs.rhs))
+                                next_base = stmt_base
+                            elif _same_c_expression(_unwrap_c_casts(next_rhs.rhs), stmt.lhs):
+                                next_delta = _c_constant_value(_unwrap_c_casts(next_rhs.lhs))
+                                next_base = stmt_base
+                            else:
+                                next_delta = None
+                                next_base = None
+
+                            if next_base is not None and isinstance(next_delta, int):
+                                combined = stmt_delta + next_delta if next_rhs.op == "Add" else stmt_delta - next_delta
+                                replacement = structured_c.CAssignment(
+                                    next_stmt.lhs,
+                                    _build_linear_expr(next_base, combined, codegen),
+                                    codegen=codegen,
+                                )
+                                new_statements.append(replacement)
+                                changed = True
+                                i += 2
+                                continue
 
                 visit(stmt)
                 new_statements.append(stmt)
