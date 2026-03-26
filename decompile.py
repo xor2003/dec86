@@ -2854,7 +2854,6 @@ def _prune_unused_linear_register_declarations(codegen) -> bool:
 
     return changed
 
-
 def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
