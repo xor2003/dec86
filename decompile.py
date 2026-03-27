@@ -2406,16 +2406,28 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
         return False
 
     changed = False
-    target_type = SimTypeShort(False)
+    short_type = SimTypeShort(False)
+    char_type = SimTypeChar()
 
     def desired_type(variable):
         symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
         if symbol is None:
             return None
         _raw_name, width = symbol
-        if width == 2:
-            return target_type
+        if width == 1:
+            return char_type
+        if width >= 2:
+            return short_type
         return None
+
+    def desired_size(variable) -> int | None:
+        symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
+        if symbol is None:
+            return None
+        _raw_name, width = symbol
+        if width <= 1:
+            return 1
+        return 2
 
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
         if not isinstance(variable, SimMemoryVariable):
@@ -2423,16 +2435,17 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
         new_type = desired_type(variable)
         if new_type is None:
             continue
-        if getattr(variable, "size", None) != 2:
-            variable.size = 2
+        new_size = desired_size(variable)
+        if new_size is not None and getattr(variable, "size", None) != new_size:
+            variable.size = new_size
             changed = True
         if getattr(cvar, "variable_type", None) != new_type:
             cvar.variable_type = new_type
             changed = True
         unified = getattr(cvar, "unified_variable", None)
-        if unified is not None and getattr(unified, "size", None) != 2:
+        if unified is not None and new_size is not None and getattr(unified, "size", None) != new_size:
             try:
-                unified.size = 2
+                unified.size = new_size
                 changed = True
             except Exception:
                 pass
@@ -2444,8 +2457,9 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
         new_type = desired_type(variable)
         if new_type is None:
             continue
-        if getattr(variable, "size", None) != 2:
-            variable.size = 2
+        new_size = desired_size(variable)
+        if new_size is not None and getattr(variable, "size", None) != new_size:
+            variable.size = new_size
             changed = True
         if getattr(cextern, "variable_type", None) != new_type:
             cextern.variable_type = new_type
@@ -2459,8 +2473,9 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
             new_type = desired_type(variable)
             if new_type is None:
                 continue
-            if getattr(variable, "size", None) != 2:
-                variable.size = 2
+            new_size = desired_size(variable)
+            if new_size is not None and getattr(variable, "size", None) != new_size:
+                variable.size = new_size
                 changed = True
             new_entries = {(cvariable, new_type) for cvariable, _vartype in cvar_and_vartypes}
             if new_entries != cvar_and_vartypes:
