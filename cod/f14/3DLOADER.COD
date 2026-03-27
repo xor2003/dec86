@@ -1,0 +1,2735 @@
+;	Static Name Aliases
+;
+	TITLE   3dloader.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+PUBLIC  _PlaneDataSize
+PUBLIC  _MissileDataSize
+PUBLIC  _RadarDataSize
+PUBLIC  _planerecsize
+PUBLIC  _missilerecsize
+PUBLIC  _radarrecsize
+PUBLIC  _EMS3DObjectSlot
+EXTRN	_fseek:NEAR
+EXTRN	_sprintf:NEAR
+EXTRN	_EMSReleasePages:NEAR
+EXTRN	_fstrcpy:NEAR
+EXTRN	_InitAbort:NEAR
+EXTRN	_fclose:NEAR
+EXTRN	__dos_allocmem:NEAR
+EXTRN	_Message:NEAR
+EXTRN	_strcpy:NEAR
+EXTRN	_exit:NEAR
+EXTRN	_strcat:NEAR
+EXTRN	_itoa:NEAR
+EXTRN	_fopen:NEAR
+EXTRN	_LoadEMSObject:NEAR
+EXTRN	_fread:NEAR
+EXTRN	_PlaneDataList:DWORD
+EXTRN	_RadarDataList:DWORD
+EXTRN	_MissileDataList:DWORD
+EXTRN	_PlaneDataListCnt:WORD
+EXTRN	_RadarDataListCnt:WORD
+EXTRN	_MissileDataListCnt:WORD
+EXTRN	_EMSHANDLE:WORD
+_BSS      SEGMENT
+COMM NEAR	_PlaneListSeg:	BYTE:	 2
+COMM NEAR	_RadarListSeg:	BYTE:	 2
+COMM NEAR	_MissileListSeg:	BYTE:	 2
+_BSS      ENDS
+EXTRN	_ExitErrorCode:WORD
+EXTRN	_ConfigData:BYTE
+_BSS      SEGMENT
+COMM NEAR	_ntmp:	 1:	 10
+_BSS      ENDS
+EXTRN	_Txt:BYTE
+_DATA      SEGMENT
+$SG368	DB	'PlaneData List exceeds MAX_PLANE: %d %d',  00H
+$SG372	DB	'rb',  00H
+$SG373	DB	'F14PD01.DAT',  00H
+$SG375	DB	'Plane Data File Not Found',  00H
+$SG380	DB	'Plane Object %d Not Found: %s',  0aH,  00H
+	ORG	$+14
+$SG401	DB	'RadarData List exceeded MAX_RADAR_LIST_CNT',  00H
+$SG407	DB	'rb',  00H
+$SG408	DB	'F14RD01.DAT',  00H
+$SG410	DB	'Radar Data File Not Found',  00H
+$SG412	DB	'Radar Data File Read Error',  00H
+$SG421	DB	'MissileData List exceeded MAX_MISSILE_LIST_CNT',  00H
+$SG427	DB	'rb',  00H
+$SG428	DB	'F14MD01.DAT',  00H
+$SG430	DB	'Missile Data File Not Found',  00H
+$SG433	DB	'Missile Object %d Not Found: %s',  0aH,  00H
+$SG440	DB	'Bad Plane Pic Type < 0',  00H
+$SG444	DB	'Bad Plane Pic Type > PDLC',  00H
+$SG449	DB	'Bad Plane Pic Type < 0: ',  00H
+$SG451	DB	'Bad Plane Ptr type > PDLC',  00H
+$SG458	DB	'Bad Missile Type < 0: ',  00H
+$SG464	DB	'Bad Missile ID - Missile ID Not Found: ',  00H
+$SG471	DB	'Bad Radar Type < 0: ',  00H
+$SG477	DB	'Bad Radar ID - Radar ID Not Found: ',  00H
+$SG494	DB	'AMERB14.3DZ',  00H
+$SG495	DB	'AMERT9.3DZ',  00H
+$SG496	DB	'AMERT108.3DZ',  00H
+$SG497	DB	'AMERWIR.3DZ',  00H
+$SG498	DB	'AMERLIT.3DZ',  00H
+$SG499	DB	'ABL1.3DZ',  00H
+$SG500	DB	'ABL2.3DZ',  00H
+$SG501	DB	'ABL3.3DZ',  00H
+$SG502	DB	'ABL4.3DZ',  00H
+$SG503	DB	'AMERTMB5.3DZ',  00H
+$SG504	DB	'AMERTSB2.3DZ',  00H
+$SG505	DB	'AMERTST1.3DZ',  00H
+$SG506	DB	'AMERTSS4.3DZ',  00H
+$SG507	DB	'AMERWAKE.3DZ',  00H
+$SG509	DB	'NIMB08.3DZ',  00H
+$SG510	DB	'NIMNT06.3DZ',  00H
+$SG511	DB	'NIMT109.3DZ',  00H
+$SG512	DB	'WIREN.3DZ',  00H
+$SG513	DB	'LIGHTN.3DZ',  00H
+$SG514	DB	'NBL1.3DZ',  00H
+$SG515	DB	'NBL2.3DZ',  00H
+$SG516	DB	'NBL3.3DZ',  00H
+$SG517	DB	'NBL4.3DZ',  00H
+$SG518	DB	'NIMBM02.3DZ',  00H
+$SG519	DB	'NIMBS02.3DZ',  00H
+$SG520	DB	'NIMST02.3DZ',  00H
+$SG521	DB	'NIMBSS01.3DZ',  00H
+$SG522	DB	'NIMWAKE.3DZ',  00H
+$SG524	DB	'SARAB09.3DZ',  00H
+$SG525	DB	'SARATOW.3DZ',  00H
+$SG526	DB	'SARAT108.3DZ',  00H
+$SG527	DB	'WIRESR.3DZ',  00H
+$SG528	DB	'LIGHTSR.3DZ',  00H
+$SG529	DB	'SBL1.3DZ',  00H
+$SG530	DB	'SBL2.3DZ',  00H
+$SG531	DB	'SBL3.3DZ',  00H
+$SG532	DB	'SBL4.3DZ',  00H
+$SG533	DB	'SARABM03.3DZ',  00H
+$SG534	DB	'SARABS02.3DZ',  00H
+$SG535	DB	'SARATS01.3DZ',  00H
+$SG536	DB	'SARABSS1.3DZ',  00H
+$SG537	DB	'SARAWAKE.3DZ',  00H
+$SG539	DB	'F14L09B.3DZ',  00H
+$SG540	DB	'F14MNS1H.3DZ',  00H
+$SG541	DB	'F14MPS1H.3DZ',  00H
+$SG542	DB	'F14R09B.3DZ',  00H
+$SG543	DB	'F14SMLO2.3DZ',  00H
+$SG544	DB	'F14SMC01.3DZ',  00H
+$SG545	DB	'F14SMR01.3DZ',  00H
+$SG546	DB	'F14SMM03.3DZ',  00H
+$SG547	DB	'F14SMX01.3DZ',  00H
+$SG549	DB	'F14LT014.3DZ',  00H
+$SG550	DB	'F14RT014.3DZ',  00H
+$SG551	DB	'F14LT032.3DZ',  00H
+$SG552	DB	'F14RT032.3DZ',  00H
+$SG553	DB	'F14LT033.3DZ',  00H
+$SG554	DB	'F14RT033.3DZ',  00H
+$SG555	DB	'F14LT041.3DZ',  00H
+$SG556	DB	'F14RT041.3DZ',  00H
+$SG557	DB	'F14LT074.3DZ',  00H
+$SG558	DB	'F14RT074.3DZ',  00H
+$SG559	DB	'F14LT084.3DZ',  00H
+$SG560	DB	'F14RT084.3DZ',  00H
+$SG561	DB	'F14LT102.3DZ',  00H
+$SG562	DB	'F14RT102.3DZ',  00H
+$SG563	DB	'F14LT103.3DZ',  00H
+$SG564	DB	'F14RT103.3DZ',  00H
+$SG565	DB	'F14LT142.3DZ',  00H
+$SG566	DB	'F14RT142.3DZ',  00H
+$SG567	DB	'F14LT143.3DZ',  00H
+$SG568	DB	'F14RT143.3DZ',  00H
+$SG569	DB	'F14LT101.3DZ',  00H
+$SG570	DB	'F14RT101.3DZ',  00H
+$SG572	DB	'SDWNDR3.3DZ',  00H
+$SG573	DB	'SPARROW3.3DZ',  00H
+$SG574	DB	'PHOENIX.3DZ',  00H
+$SG575	DB	'FUELTANK.3DZ',  00H
+$SG576	DB	'HARPOON.3DZ',  00H
+$SG577	DB	'SDWNDR.3DZ',  00H
+$SG578	DB	'MK82.3DZ',  00H
+$SG580	DB	'SHADOW.3DZ',  00H
+$SG581	DB	'AMERCHUT.3DZ',  00H
+$SG582	DB	'RAMP02.3DZ',  00H
+$SG583	DB	'TRPLAAA.3DZ',  00H
+$SG584	DB	'CANOPY06.3DZ',  00H
+$SG585	DB	'CHAFF.3DZ',  00H
+$SG586	DB	'FLARE.3DZ',  00H
+$SG596	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG599	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG602	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG605	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG610	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG614	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG616	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG621	DB	'Special Object Not Found: %s',  0aH,  00H
+$SG626	DB	'Special Object Not Found: %s',  0aH,  00H
+	ORG	$-1776
+_PlaneDataSize	DW	03H
+_MissileDataSize	DW	03H
+_RadarDataSize	DW	02H
+_planerecsize	DW	034H
+_missilerecsize	DW	02cH
+_radarrecsize	DW	018H
+_EMS3DObjectSlot	DW	00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** //***************************************************************************
+; Line 1
+;|*** //	FILE: 3DLOADER.C
+;|*** //
+;|*** //	Fleet Defender - F14 Tomcat
+;|*** //	Author: Mike McDonald
+;|*** //
+;|*** //	Date: 8/23/93
+;|*** //
+;|*** //  Files Used:
+;|*** //				F14PD01.DAT   Planes/Boats/Objects characteristics file
+;|*** //              F14MD01.DAT   Missiles Characteristics file
+;|*** //              F14RD01.DAT   Radar Characteristics file
+;|*** //
+;|*** //***************************************************************************
+;|*** #include <stdio.h>
+; Line 15
+;|*** #include <fcntl.h>
+; Line 16
+;|*** #include <dos.h>
+; Line 17
+;|*** #include "types.h"
+; Line 18
+;|*** #include "io.h"
+; Line 19
+;|*** #include "world.h"
+; Line 20
+;|*** #include "sdata.h"
+; Line 21
+;|*** #include "f15defs.h"
+; Line 22
+;|*** 
+;|*** extern  char Txt [];
+;|*** extern int EMSHANDLE;
+;|*** extern int NEMSSEG;
+;|*** 
+;|*** struct rrec {
+;|*** 	int RadarEnumId;
+;|*** 	char name[10];
+;|*** 	int range;
+;|*** 	int detectiontype;
+;|*** 	int missiletype;
+;|*** 	int missilecount;
+;|*** 	int jam;
+;|*** 	int tewsnum;
+;|*** };
+;|*** 
+;|*** struct mrec {
+;|*** 	int MissileEnumId;
+;|*** 	char name[12];
+;|*** 	int range;
+;|*** 	int minrange;
+;|*** 	int maxalt;
+;|*** 	int speed;
+;|*** 	int homing;
+;|*** 	int maneuver;
+;|*** 	int cmeffect;
+;|*** 	int damage;
+;|*** 	char filename[12];
+;|*** 	int type;
+;|*** };
+;|*** 
+;|*** struct prec {
+;|*** 	int PlaneEnumId;
+;|*** 	char name[7];
+;|*** 	int speed;
+;|*** 	int maneuver;
+;|*** 	int rclass;
+;|*** 	char filename[13];
+;|*** 	int radarsig;
+;|*** 	int gun;
+;|*** 	int alignment;
+;|*** 	int ecm;
+;|*** 	int misl[3];
+;|*** 	int mcnt[3];
+;|*** 	int bclass;
+;|*** };
+;|*** 
+;|*** 
+;|*** #define MAX_PLANE_LIST_CNT		40
+;|*** #define MAX_RADAR_LIST_CNT		30
+;|*** #define MAX_MISSILE_LIST_CNT	30
+;|*** 
+;|*** int PlaneDataSize = (sizeof(struct PlaneData) >> 4) + 1;
+;|*** int MissileDataSize = (sizeof(struct MissileData) >> 4) + 1;
+;|*** int RadarDataSize = (sizeof(struct RadarData) >> 4) + 1;
+;|*** 
+;|*** int planerecsize = sizeof(struct prec);
+;|*** int missilerecsize = sizeof(struct mrec);
+;|*** int radarrecsize = sizeof(struct rrec);
+;|*** 
+;|*** int EMS3DObjectSlot=0;
+;|*** unsigned int PlaneListSeg;
+;|*** unsigned int RadarListSeg;
+;|*** unsigned int MissileListSeg;
+;|*** 
+;|*** extern int EMSHANDLE;
+;|*** extern int NEMSSEG;
+;|*** extern int ExitErrorCode;
+;|*** 
+;|*** extern confData ConfigData;
+;|*** 
+;|*** 
+;|*** char far *fstrcpy(char far *D, char far *S);
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** int Load3DPlaneInfo(int PlaneEnumId)
+;|*** {
+; Line 100
+	PUBLIC	_Load3DPlaneInfo
+_Load3DPlaneInfo	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 44 		sub	sp,68
+	*** 000006	56 			push	si
+;	i = -12
+;	PlaneId = -68
+;	PlaneDataFile = -66
+;	recseek = -4
+;	planerec = -64
+;	missile0 = -8
+;	missile1 = -10
+;	returnval = -6
+;	PlaneEnumId = 4
+;|*** 	int i;
+;|*** 	int PlaneId=-1;
+; Line 102
+	*** 000007	c7 46 bc ff ff 		mov	WORD PTR [bp-68],-1	;PlaneId
+;|*** 	FILE *PlaneDataFile;
+;|*** 	long recseek;
+;|*** 	struct prec planerec;
+;|*** 	int missile0, missile1;
+;|*** 	int returnval;
+;|*** 
+;|*** 
+;|*** 	//************************************************************
+;|*** 	// CHANGE THIS YOU LOOSER!!!
+;|*** 
+;|*** 	if ((PlaneDataListCnt+1)>MAX_PLANE_LIST_CNT) {
+; Line 113
+	*** 00000c	a1 00 00 		mov	ax,WORD PTR _PlaneDataListCnt
+	*** 00000f	40 			inc	ax
+	*** 000010	3d 28 00 		cmp	ax,40
+	*** 000013	7e 2b 			jle	$I367
+;|*** 		sprintf(Txt,"PlaneData List exceeds MAX_PLANE: %d %d",PlaneDataListCnt,
+;|*** 				MAX_PLANE_LIST_CNT);
+; Line 115
+	*** 000015	b8 28 00 		mov	ax,40
+	*** 000018	50 			push	ax
+	*** 000019	ff 36 00 00 		push	WORD PTR _PlaneDataListCnt
+	*** 00001d	b8 00 00 		mov	ax,OFFSET DGROUP:$SG368
+	*** 000020	50 			push	ax
+	*** 000021	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000024	50 			push	ax
+	*** 000025	e8 00 00 		call	_sprintf
+	*** 000028	83 c4 08 		add	sp,8
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 116
+	*** 00002b	2b c0 			sub	ax,ax
+	*** 00002d	50 			push	ax
+	*** 00002e	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000031	50 			push	ax
+	*** 000032	e8 00 00 		call	_Message
+	*** 000035	83 c4 04 		add	sp,4
+;|*** 		return(-1);
+; Line 117
+					$L20000:
+	*** 000038	b8 ff ff 		mov	ax,-1
+	*** 00003b	5e 			pop	si
+	*** 00003c	8b e5 			mov	sp,bp
+	*** 00003e	5d 			pop	bp
+	*** 00003f	c3 			ret	
+;|*** 	}
+; Line 118
+;|*** 
+;|*** 	PlaneId = PlaneSeek(PlaneEnumId);
+; Line 120
+					$I367:
+;|*** 
+;|*** 	if (PlaneId != -1) return PlaneId;
+; Line 122
+	*** 000040	ff 76 04 		push	WORD PTR [bp+4]	;PlaneEnumId
+	*** 000043	e8 00 00 		call	_PlaneSeek
+	*** 000046	83 c4 02 		add	sp,2
+	*** 000049	89 46 bc 		mov	WORD PTR [bp-68],ax	;PlaneId
+	*** 00004c	40 			inc	ax
+	*** 00004d	74 09 			je	$I371
+	*** 00004f	8b 46 bc 		mov	ax,WORD PTR [bp-68]	;PlaneId
+	*** 000052	5e 			pop	si
+	*** 000053	8b e5 			mov	sp,bp
+	*** 000055	5d 			pop	bp
+	*** 000056	c3 			ret	
+;|*** 
+;|*** 	PlaneDataFile = fopen("F14PD01.DAT","rb");
+; Line 124
+	*** 000057	90 			nop	
+					$I371:
+;|*** 
+;|*** 	// Make Sure this NEVER happens - This should be a FATAL_ERROR
+;|*** 	if (PlaneDataFile==NULL) {
+; Line 127
+	*** 000058	b8 28 00 		mov	ax,OFFSET DGROUP:$SG372
+	*** 00005b	50 			push	ax
+	*** 00005c	b8 2b 00 		mov	ax,OFFSET DGROUP:$SG373
+	*** 00005f	50 			push	ax
+	*** 000060	e8 00 00 		call	_fopen
+	*** 000063	83 c4 04 		add	sp,4
+	*** 000066	89 46 be 		mov	WORD PTR [bp-66],ax	;PlaneDataFile
+	*** 000069	0b c0 			or	ax,ax
+	*** 00006b	75 15 			jne	$I374
+;|*** 		Message("Plane Data File Not Found",DEBUG_MSG);
+; Line 128
+	*** 00006d	50 			push	ax
+	*** 00006e	b8 37 00 		mov	ax,OFFSET DGROUP:$SG375
+	*** 000071	50 			push	ax
+	*** 000072	e8 00 00 		call	_Message
+	*** 000075	83 c4 04 		add	sp,4
+;|*** 		exit(-1);
+; Line 129
+	*** 000078	b8 ff ff 		mov	ax,-1
+	*** 00007b	50 			push	ax
+	*** 00007c	e8 00 00 		call	_exit
+	*** 00007f	83 c4 02 		add	sp,2
+;|*** 	}
+; Line 130
+;|*** 
+;|*** 	recseek = (long)(PlaneEnumId * planerecsize);
+; Line 132
+					$I374:
+;|*** 	fseek(PlaneDataFile,recseek,SEEK_SET);
+; Line 133
+	*** 000082	2b c0 			sub	ax,ax
+	*** 000084	50 			push	ax
+	*** 000085	8b 46 04 		mov	ax,WORD PTR [bp+4]	;PlaneEnumId
+	*** 000088	f7 2e 76 00 		imul	WORD PTR _planerecsize
+	*** 00008c	99 			cwd	
+	*** 00008d	89 46 fc 		mov	WORD PTR [bp-4],ax	;recseek
+	*** 000090	89 56 fe 		mov	WORD PTR [bp-2],dx
+	*** 000093	52 			push	dx
+	*** 000094	50 			push	ax
+	*** 000095	ff 76 be 		push	WORD PTR [bp-66]	;PlaneDataFile
+	*** 000098	e8 00 00 		call	_fseek
+	*** 00009b	83 c4 08 		add	sp,8
+;|*** 	if (feof(PlaneDataFile))
+; Line 134
+	*** 00009e	8b 5e be 		mov	bx,WORD PTR [bp-66]	;PlaneDataFile
+	*** 0000a1	f6 47 06 10 		test	BYTE PTR [bx+6],16
+	*** 0000a5	75 91 			jne	$L20000
+;|*** 		return -1;
+;|*** 	fread(&planerec,planerecsize,1,PlaneDataFile);
+; Line 136
+	*** 0000a7	53 			push	bx
+	*** 0000a8	b8 01 00 		mov	ax,1
+	*** 0000ab	50 			push	ax
+	*** 0000ac	ff 36 76 00 		push	WORD PTR _planerecsize
+	*** 0000b0	8d 46 c0 		lea	ax,WORD PTR [bp-64]	;planerec
+	*** 0000b3	50 			push	ax
+	*** 0000b4	e8 00 00 		call	_fread
+	*** 0000b7	83 c4 08 		add	sp,8
+;|*** 
+;|*** 	// Make Sure this NEVER happens - This should be a FATAL_ERROR
+;|*** 	if (!LoadEMSObject(planerec.filename,EMS3DObjectSlot)) {
+; Line 139
+	*** 0000ba	ff 36 7c 00 		push	WORD PTR _EMS3DObjectSlot
+	*** 0000be	8d 46 d0 		lea	ax,WORD PTR [bp-48]
+	*** 0000c1	50 			push	ax
+	*** 0000c2	e8 00 00 		call	_LoadEMSObject
+	*** 0000c5	83 c4 04 		add	sp,4
+	*** 0000c8	0b c0 			or	ax,ax
+	*** 0000ca	75 22 			jne	$I379
+;|*** 		sprintf(Txt,"Plane Object %d Not Found: %s\n",planerec.PlaneEnumId,planerec.filename);
+; Line 140
+	*** 0000cc	8d 46 d0 		lea	ax,WORD PTR [bp-48]
+	*** 0000cf	50 			push	ax
+	*** 0000d0	ff 76 c0 		push	WORD PTR [bp-64]	;planerec
+	*** 0000d3	b8 51 00 		mov	ax,OFFSET DGROUP:$SG380
+	*** 0000d6	50 			push	ax
+	*** 0000d7	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0000da	50 			push	ax
+	*** 0000db	e8 00 00 		call	_sprintf
+	*** 0000de	83 c4 08 		add	sp,8
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 141
+	*** 0000e1	2b c0 			sub	ax,ax
+	*** 0000e3	50 			push	ax
+	*** 0000e4	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0000e7	50 			push	ax
+	*** 0000e8	e8 00 00 		call	_Message
+	*** 0000eb	83 c4 04 		add	sp,4
+;|*** 	}
+; Line 142
+;|*** 	PlaneDataList[PlaneDataListCnt].objslot = EMS3DObjectSlot;
+; Line 143
+					$I379:
+	*** 0000ee	b8 28 00 		mov	ax,40
+	*** 0000f1	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 0000f5	8b f0 			mov	si,ax
+	*** 0000f7	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 0000fb	a1 7c 00 		mov	ax,WORD PTR _EMS3DObjectSlot
+	*** 0000fe	26 89 40 10 		mov	WORD PTR es:[bx+16][si],ax
+;|*** 	EMS3DObjectSlot++;
+; Line 144
+	*** 000102	ff 06 7c 00 		inc	WORD PTR _EMS3DObjectSlot
+;|*** 
+;|*** 
+;|*** 	PlaneDataList[PlaneDataListCnt].PlaneEnumId = planerec.PlaneEnumId;
+; Line 147
+	*** 000106	b8 28 00 		mov	ax,40
+	*** 000109	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 00010d	8b d8 			mov	bx,ax
+	*** 00010f	c4 36 00 00 		les	si,DWORD PTR _PlaneDataList
+	*** 000113	8b 46 c0 		mov	ax,WORD PTR [bp-64]	;planerec
+	*** 000116	26 89 00 		mov	WORD PTR es:[bx][si],ax
+;|*** 	fstrcpy(PlaneDataList[PlaneDataListCnt].name,planerec.name);
+; Line 148
+	*** 000119	8d 46 c2 		lea	ax,WORD PTR [bp-62]
+	*** 00011c	16 			push	ss
+	*** 00011d	50 			push	ax
+	*** 00011e	b8 28 00 		mov	ax,40
+	*** 000121	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 000125	03 06 00 00 		add	ax,WORD PTR _PlaneDataList
+	*** 000129	8b 16 02 00 		mov	dx,WORD PTR _PlaneDataList+2
+	*** 00012d	40 			inc	ax
+	*** 00012e	40 			inc	ax
+	*** 00012f	52 			push	dx
+	*** 000130	50 			push	ax
+	*** 000131	e8 00 00 		call	_fstrcpy
+	*** 000134	83 c4 08 		add	sp,8
+;|*** 	PlaneDataList[PlaneDataListCnt].speed = planerec.speed;
+; Line 149
+	*** 000137	b8 28 00 		mov	ax,40
+	*** 00013a	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 00013e	8b f0 			mov	si,ax
+	*** 000140	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000144	8b 46 ca 		mov	ax,WORD PTR [bp-54]
+	*** 000147	26 89 40 0a 		mov	WORD PTR es:[bx+10][si],ax
+;|*** 	PlaneDataList[PlaneDataListCnt].maneuver = planerec.maneuver;
+; Line 150
+	*** 00014b	b8 28 00 		mov	ax,40
+	*** 00014e	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 000152	8b f0 			mov	si,ax
+	*** 000154	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000158	8b 46 cc 		mov	ax,WORD PTR [bp-52]
+	*** 00015b	26 89 40 0c 		mov	WORD PTR es:[bx+12][si],ax
+;|*** 
+;|*** 	// Get Radar class and store radar - look up missile info also
+;|*** 	// when storing radar - store missile
+;|*** 
+;|*** 	RadarAdd(planerec.rclass);
+; Line 155
+	*** 00015f	ff 76 ce 		push	WORD PTR [bp-50]
+	*** 000162	e8 00 00 		call	_RadarAdd
+	*** 000165	83 c4 02 		add	sp,2
+;|*** 
+;|*** 	PlaneDataList[PlaneDataListCnt].rclass = planerec.rclass;
+; Line 157
+	*** 000168	b8 28 00 		mov	ax,40
+	*** 00016b	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 00016f	8b f0 			mov	si,ax
+	*** 000171	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000175	8b 46 ce 		mov	ax,WORD PTR [bp-50]
+	*** 000178	26 89 40 0e 		mov	WORD PTR es:[bx+14][si],ax
+;|*** 
+;|*** 	PlaneDataList[PlaneDataListCnt].radarsig = planerec.radarsig;
+; Line 159
+	*** 00017c	b8 28 00 		mov	ax,40
+	*** 00017f	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 000183	8b f0 			mov	si,ax
+	*** 000185	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000189	8b 46 de 		mov	ax,WORD PTR [bp-34]
+	*** 00018c	26 89 40 12 		mov	WORD PTR es:[bx+18][si],ax
+;|*** 	PlaneDataList[PlaneDataListCnt].gun = planerec.gun;
+; Line 160
+	*** 000190	b8 28 00 		mov	ax,40
+	*** 000193	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 000197	8b f0 			mov	si,ax
+	*** 000199	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 00019d	8b 46 e0 		mov	ax,WORD PTR [bp-32]
+	*** 0001a0	26 89 40 14 		mov	WORD PTR es:[bx+20][si],ax
+;|*** 	PlaneDataList[PlaneDataListCnt].alignment = planerec.alignment;
+; Line 161
+	*** 0001a4	b8 28 00 		mov	ax,40
+	*** 0001a7	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 0001ab	8b f0 			mov	si,ax
+	*** 0001ad	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 0001b1	8b 46 e2 		mov	ax,WORD PTR [bp-30]
+	*** 0001b4	26 89 40 16 		mov	WORD PTR es:[bx+22][si],ax
+;|*** 	PlaneDataList[PlaneDataListCnt].ecm = planerec.ecm;
+; Line 162
+	*** 0001b8	b8 28 00 		mov	ax,40
+	*** 0001bb	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 0001bf	8b f0 			mov	si,ax
+	*** 0001c1	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 0001c5	8b 46 e4 		mov	ax,WORD PTR [bp-28]
+	*** 0001c8	26 89 40 18 		mov	WORD PTR es:[bx+24][si],ax
+;|*** 
+;|*** 
+;|*** 	missile0 = MissileAdd(planerec.misl[0]);
+; Line 165
+	*** 0001cc	ff 76 e6 		push	WORD PTR [bp-26]
+	*** 0001cf	e8 00 00 		call	_MissileAdd
+	*** 0001d2	83 c4 02 		add	sp,2
+	*** 0001d5	89 46 f8 		mov	WORD PTR [bp-8],ax	;missile0
+;|*** 	PlaneDataList[PlaneDataListCnt].misl[0] = planerec.misl[0];
+; Line 166
+	*** 0001d8	b8 28 00 		mov	ax,40
+	*** 0001db	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 0001df	8b f0 			mov	si,ax
+	*** 0001e1	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 0001e5	8b 46 e6 		mov	ax,WORD PTR [bp-26]
+	*** 0001e8	26 89 40 1a 		mov	WORD PTR es:[bx+26][si],ax
+;|*** 	missile1 = MissileAdd(planerec.misl[1]);
+; Line 167
+	*** 0001ec	ff 76 e8 		push	WORD PTR [bp-24]
+	*** 0001ef	e8 00 00 		call	_MissileAdd
+	*** 0001f2	83 c4 02 		add	sp,2
+;|*** 	PlaneDataList[PlaneDataListCnt].misl[1] = planerec.misl[1];
+; Line 168
+	*** 0001f5	b8 28 00 		mov	ax,40
+	*** 0001f8	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 0001fc	8b f0 			mov	si,ax
+	*** 0001fe	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000202	8b 46 e8 		mov	ax,WORD PTR [bp-24]
+	*** 000205	26 89 40 1c 		mov	WORD PTR es:[bx+28][si],ax
+;|*** 	missile1 = MissileAdd(planerec.misl[2]);
+; Line 169
+	*** 000209	ff 76 ea 		push	WORD PTR [bp-22]
+	*** 00020c	e8 00 00 		call	_MissileAdd
+	*** 00020f	83 c4 02 		add	sp,2
+	*** 000212	89 46 f6 		mov	WORD PTR [bp-10],ax	;missile1
+;|*** 	PlaneDataList[PlaneDataListCnt].misl[2] = planerec.misl[2];
+; Line 170
+	*** 000215	b8 28 00 		mov	ax,40
+	*** 000218	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 00021c	8b f0 			mov	si,ax
+	*** 00021e	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000222	8b 46 ea 		mov	ax,WORD PTR [bp-22]
+	*** 000225	26 89 40 1e 		mov	WORD PTR es:[bx+30][si],ax
+;|*** 
+;|*** 
+;|*** 	// Get Missile class and store missile(s)
+;|*** 	PlaneDataList[PlaneDataListCnt].mcnt[0] = planerec.mcnt[0];
+; Line 174
+	*** 000229	b8 28 00 		mov	ax,40
+	*** 00022c	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 000230	8b f0 			mov	si,ax
+	*** 000232	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000236	8b 46 ec 		mov	ax,WORD PTR [bp-20]
+	*** 000239	26 89 40 20 		mov	WORD PTR es:[bx+32][si],ax
+;|*** 	PlaneDataList[PlaneDataListCnt].mcnt[1] = planerec.mcnt[1];
+; Line 175
+	*** 00023d	b8 28 00 		mov	ax,40
+	*** 000240	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 000244	8b f0 			mov	si,ax
+	*** 000246	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 00024a	8b 46 ee 		mov	ax,WORD PTR [bp-18]
+	*** 00024d	26 89 40 22 		mov	WORD PTR es:[bx+34][si],ax
+;|*** 	PlaneDataList[PlaneDataListCnt].mcnt[2] = planerec.mcnt[2];
+; Line 176
+	*** 000251	b8 28 00 		mov	ax,40
+	*** 000254	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 000258	8b f0 			mov	si,ax
+	*** 00025a	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 00025e	8b 46 f0 		mov	ax,WORD PTR [bp-16]
+	*** 000261	26 89 40 24 		mov	WORD PTR es:[bx+36][si],ax
+;|*** 
+;|*** 	PlaneDataList[PlaneDataListCnt].bclass = planerec.bclass;
+; Line 178
+	*** 000265	b8 28 00 		mov	ax,40
+	*** 000268	f7 2e 00 00 		imul	WORD PTR _PlaneDataListCnt
+	*** 00026c	8b f0 			mov	si,ax
+	*** 00026e	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 000272	8b 46 f2 		mov	ax,WORD PTR [bp-14]
+	*** 000275	26 89 40 26 		mov	WORD PTR es:[bx+38][si],ax
+;|*** 
+;|*** 	PlaneDataListCnt++;
+; Line 180
+	*** 000279	ff 06 00 00 		inc	WORD PTR _PlaneDataListCnt
+;|*** 
+;|*** 	fclose(PlaneDataFile);
+; Line 182
+	*** 00027d	ff 76 be 		push	WORD PTR [bp-66]	;PlaneDataFile
+	*** 000280	e8 00 00 		call	_fclose
+	*** 000283	83 c4 02 		add	sp,2
+;|*** 	returnval = PlaneDataListCnt -1;
+; Line 183
+	*** 000286	a1 00 00 		mov	ax,WORD PTR _PlaneDataListCnt
+	*** 000289	48 			dec	ax
+	*** 00028a	89 46 fa 		mov	WORD PTR [bp-6],ax	;returnval
+;|*** 
+;|*** 	if(missile0 < 0)   /*  Negative Value indicates Cruise Missile, number is index into planes array   SRE  */
+; Line 185
+	*** 00028d	83 7e f8 00 		cmp	WORD PTR [bp-8],0	;missile0
+	*** 000291	7d 0c 			jge	$I383
+;|*** 		Load3DPlaneInfo(-missile0);
+; Line 186
+	*** 000293	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;missile0
+	*** 000296	f7 d8 			neg	ax
+	*** 000298	50 			push	ax
+	*** 000299	e8 64 fd 		call	_Load3DPlaneInfo
+	*** 00029c	83 c4 02 		add	sp,2
+;|*** 	if(missile1 < 0)
+; Line 187
+					$I383:
+	*** 00029f	83 7e f6 00 		cmp	WORD PTR [bp-10],0	;missile1
+	*** 0002a3	7d 0c 			jge	$I384
+;|*** 		Load3DPlaneInfo(-missile1);
+; Line 188
+	*** 0002a5	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;missile1
+	*** 0002a8	f7 d8 			neg	ax
+	*** 0002aa	50 			push	ax
+	*** 0002ab	e8 52 fd 		call	_Load3DPlaneInfo
+	*** 0002ae	83 c4 02 		add	sp,2
+;|*** 
+;|*** 	return (returnval);
+; Line 190
+					$I384:
+	*** 0002b1	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;returnval
+;|*** }
+; Line 191
+	*** 0002b4	5e 			pop	si
+	*** 0002b5	8b e5 			mov	sp,bp
+	*** 0002b7	5d 			pop	bp
+	*** 0002b8	c3 			ret	
+	*** 0002b9	90 			nop	
+
+_Load3DPlaneInfo	ENDP
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** int PlaneSeek(int PlaneEnumId)
+;|*** {
+; Line 196
+	PUBLIC	_PlaneSeek
+_PlaneSeek	PROC NEAR
+	*** 0002ba	55 			push	bp
+	*** 0002bb	8b ec 			mov	bp,sp
+	*** 0002bd	83 ec 04 		sub	sp,4
+	*** 0002c0	56 			push	si
+;	i = -4
+;	cnt = -2
+;	PlaneEnumId = 4
+;|*** 	int i;
+;|*** 	int cnt=-1;
+; Line 198
+	*** 0002c1	c7 46 fe ff ff 		mov	WORD PTR [bp-2],-1	;cnt
+;|*** 
+;|*** 	for (i=0; i<PlaneDataListCnt; i++) {
+; Line 200
+	*** 0002c6	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+	*** 0002cb	eb 04 			jmp	SHORT $F389
+;|*** 		if (PlaneDataList[i].PlaneEnumId == PlaneEnumId) {
+;|*** 			cnt=i;
+;|*** 			break;
+;|*** 		}
+; Line 204
+;|*** 	}
+; Line 205
+	*** 0002cd	90 			nop	
+					$FC390:
+	*** 0002ce	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+					$F389:
+	*** 0002d1	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 0002d4	39 06 00 00 		cmp	WORD PTR _PlaneDataListCnt,ax
+	*** 0002d8	7e 19 			jle	$FB391
+;|*** 		if (PlaneDataList[i].PlaneEnumId == PlaneEnumId) {
+; Line 201
+	*** 0002da	b9 28 00 		mov	cx,40
+	*** 0002dd	f7 e9 			imul	cx
+	*** 0002df	8b d8 			mov	bx,ax
+	*** 0002e1	c4 36 00 00 		les	si,DWORD PTR _PlaneDataList
+	*** 0002e5	8b 46 04 		mov	ax,WORD PTR [bp+4]	;PlaneEnumId
+	*** 0002e8	26 39 00 		cmp	WORD PTR es:[bx][si],ax
+	*** 0002eb	75 e1 			jne	$FC390
+;|*** 			cnt=i;
+; Line 202
+	*** 0002ed	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 0002f0	89 46 fe 		mov	WORD PTR [bp-2],ax	;cnt
+;|*** 			break;
+; Line 203
+					$FB391:
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 	return (cnt);
+; Line 207
+	*** 0002f3	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;cnt
+;|*** }
+; Line 208
+	*** 0002f6	5e 			pop	si
+	*** 0002f7	8b e5 			mov	sp,bp
+	*** 0002f9	5d 			pop	bp
+	*** 0002fa	c3 			ret	
+	*** 0002fb	90 			nop	
+
+_PlaneSeek	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** int RadarAdd(int RadarEnumId)
+;|*** {
+; Line 212
+	PUBLIC	_RadarAdd
+_RadarAdd	PROC NEAR
+	*** 0002fc	55 			push	bp
+	*** 0002fd	8b ec 			mov	bp,sp
+	*** 0002ff	83 ec 22 		sub	sp,34
+	*** 000302	56 			push	si
+;	i = -30
+;	cnt = -28
+;	RadarDataFile = -26
+;	radarrecseek = -34
+;	radarrec = -24
+;	RadarEnumId = 4
+;|*** 	int i;
+;|*** 	int cnt=-1;
+; Line 214
+	*** 000303	c7 46 e4 ff ff 		mov	WORD PTR [bp-28],-1	;cnt
+;|*** 	FILE *RadarDataFile;
+;|*** 	long radarrecseek;
+;|*** 	struct rrec radarrec;
+;|*** 
+;|*** 	// RadarAdd will search the loaded radar characteristics for the RadarEnumId
+;|*** 	// If the radar is found, true is returned
+;|*** 	// If the radar is not found, the characteristics is loaded and true returned
+;|*** 	// If a radar is not found in the file, then return false
+;|*** 
+;|*** 	if ((RadarDataListCnt+1) > MAX_RADAR_LIST_CNT) {
+; Line 224
+	*** 000308	a1 00 00 		mov	ax,WORD PTR _RadarDataListCnt
+	*** 00030b	40 			inc	ax
+	*** 00030c	3d 1e 00 		cmp	ax,30
+	*** 00030f	7e 15 			jle	$I400
+;|*** 		Message("RadarData List exceeded MAX_RADAR_LIST_CNT",DEBUG_MSG);
+; Line 225
+	*** 000311	2b c0 			sub	ax,ax
+	*** 000313	50 			push	ax
+	*** 000314	b8 7e 00 		mov	ax,OFFSET DGROUP:$SG401
+	*** 000317	50 			push	ax
+	*** 000318	e8 00 00 		call	_Message
+	*** 00031b	83 c4 04 		add	sp,4
+;|*** 		return(-1);
+; Line 226
+	*** 00031e	b8 ff ff 		mov	ax,-1
+	*** 000321	5e 			pop	si
+	*** 000322	8b e5 			mov	sp,bp
+	*** 000324	5d 			pop	bp
+	*** 000325	c3 			ret	
+;|*** 	}
+; Line 227
+;|*** 
+;|*** 	for (i=0; i<RadarDataListCnt; i++) {
+; Line 229
+					$I400:
+	*** 000326	c7 46 e2 00 00 		mov	WORD PTR [bp-30],0	;i
+	*** 00032b	eb 04 			jmp	SHORT $F402
+;|*** 		if (RadarDataList[i].RadarEnumId == RadarEnumId) {
+;|*** 			cnt=i;
+;|*** 			break;
+;|*** 		}
+; Line 233
+;|*** 	}
+; Line 234
+	*** 00032d	90 			nop	
+					$FC403:
+	*** 00032e	ff 46 e2 		inc	WORD PTR [bp-30]	;i
+					$F402:
+	*** 000331	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;i
+	*** 000334	39 06 00 00 		cmp	WORD PTR _RadarDataListCnt,ax
+	*** 000338	7e 19 			jle	$FB404
+;|*** 		if (RadarDataList[i].RadarEnumId == RadarEnumId) {
+; Line 230
+	*** 00033a	b9 18 00 		mov	cx,24
+	*** 00033d	f7 e9 			imul	cx
+	*** 00033f	8b d8 			mov	bx,ax
+	*** 000341	c4 36 00 00 		les	si,DWORD PTR _RadarDataList
+	*** 000345	8b 46 04 		mov	ax,WORD PTR [bp+4]	;RadarEnumId
+	*** 000348	26 39 00 		cmp	WORD PTR es:[bx][si],ax
+	*** 00034b	75 e1 			jne	$FC403
+;|*** 			cnt=i;
+; Line 231
+	*** 00034d	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;i
+	*** 000350	89 46 e4 		mov	WORD PTR [bp-28],ax	;cnt
+;|*** 			break;
+; Line 232
+					$FB404:
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 	if (cnt != -1) return(1);
+; Line 236
+	*** 000353	83 7e e4 ff 		cmp	WORD PTR [bp-28],-1	;cnt
+	*** 000357	74 03 			je	$JCC855
+	*** 000359	e9 48 01 		jmp	$L20001
+					$JCC855:
+;|*** 
+;|*** 	// Search file for Radar Entry
+;|*** 	RadarDataFile = fopen("F14RD01.DAT","rb");
+;|*** 
+;|*** 	if (RadarDataFile==NULL) {
+; Line 241
+	*** 00035c	b8 a9 00 		mov	ax,OFFSET DGROUP:$SG407
+	*** 00035f	50 			push	ax
+	*** 000360	b8 ac 00 		mov	ax,OFFSET DGROUP:$SG408
+	*** 000363	50 			push	ax
+	*** 000364	e8 00 00 		call	_fopen
+	*** 000367	83 c4 04 		add	sp,4
+	*** 00036a	89 46 e6 		mov	WORD PTR [bp-26],ax	;RadarDataFile
+	*** 00036d	0b c0 			or	ax,ax
+	*** 00036f	75 15 			jne	$I409
+;|*** 		Message("Radar Data File Not Found",DEBUG_MSG);
+; Line 242
+	*** 000371	50 			push	ax
+	*** 000372	b8 b8 00 		mov	ax,OFFSET DGROUP:$SG410
+	*** 000375	50 			push	ax
+	*** 000376	e8 00 00 		call	_Message
+	*** 000379	83 c4 04 		add	sp,4
+;|*** 		exit(-1);
+; Line 243
+	*** 00037c	b8 ff ff 		mov	ax,-1
+	*** 00037f	50 			push	ax
+	*** 000380	e8 00 00 		call	_exit
+	*** 000383	83 c4 02 		add	sp,2
+;|*** 	}
+; Line 244
+;|*** 
+;|*** 	radarrecseek = (long)(RadarEnumId * radarrecsize);
+; Line 246
+					$I409:
+;|*** 	fseek(RadarDataFile,radarrecseek,SEEK_SET);
+; Line 247
+	*** 000386	2b c0 			sub	ax,ax
+	*** 000388	50 			push	ax
+	*** 000389	a1 7a 00 		mov	ax,WORD PTR _radarrecsize
+	*** 00038c	f7 6e 04 		imul	WORD PTR [bp+4]	;RadarEnumId
+	*** 00038f	99 			cwd	
+	*** 000390	89 46 de 		mov	WORD PTR [bp-34],ax	;radarrecseek
+	*** 000393	89 56 e0 		mov	WORD PTR [bp-32],dx
+	*** 000396	52 			push	dx
+	*** 000397	50 			push	ax
+	*** 000398	ff 76 e6 		push	WORD PTR [bp-26]	;RadarDataFile
+	*** 00039b	e8 00 00 		call	_fseek
+	*** 00039e	83 c4 08 		add	sp,8
+;|*** 	// If EOF, then we have a problem, invalid ID, return error
+;|*** 	if (feof(RadarDataFile)) {
+; Line 249
+	*** 0003a1	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;RadarDataFile
+	*** 0003a4	f6 47 06 10 		test	BYTE PTR [bx+6],16
+	*** 0003a8	74 1e 			je	$I411
+;|*** 		Message("Radar Data File Read Error",DEBUG_MSG);
+; Line 250
+	*** 0003aa	2b c0 			sub	ax,ax
+	*** 0003ac	50 			push	ax
+	*** 0003ad	b9 d2 00 		mov	cx,OFFSET DGROUP:$SG412
+	*** 0003b0	51 			push	cx
+	*** 0003b1	e8 00 00 		call	_Message
+	*** 0003b4	83 c4 04 		add	sp,4
+;|*** 		fclose(RadarDataFile);
+; Line 251
+	*** 0003b7	ff 76 e6 		push	WORD PTR [bp-26]	;RadarDataFile
+	*** 0003ba	e8 00 00 		call	_fclose
+	*** 0003bd	83 c4 02 		add	sp,2
+;|*** 		return (0);
+; Line 252
+	*** 0003c0	2b c0 			sub	ax,ax
+	*** 0003c2	5e 			pop	si
+	*** 0003c3	8b e5 			mov	sp,bp
+	*** 0003c5	5d 			pop	bp
+	*** 0003c6	c3 			ret	
+;|*** 	}
+; Line 253
+;|*** 
+;|*** 	fread(&radarrec,radarrecsize,1,RadarDataFile);
+; Line 255
+	*** 0003c7	90 			nop	
+					$I411:
+	*** 0003c8	53 			push	bx
+	*** 0003c9	b8 01 00 		mov	ax,1
+	*** 0003cc	50 			push	ax
+	*** 0003cd	ff 36 7a 00 		push	WORD PTR _radarrecsize
+	*** 0003d1	8d 46 e8 		lea	ax,WORD PTR [bp-24]	;radarrec
+	*** 0003d4	50 			push	ax
+	*** 0003d5	e8 00 00 		call	_fread
+	*** 0003d8	83 c4 08 		add	sp,8
+;|*** 
+;|*** 	RadarDataList[RadarDataListCnt].RadarEnumId = radarrec.RadarEnumId;
+; Line 257
+	*** 0003db	b8 18 00 		mov	ax,24
+	*** 0003de	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 0003e2	8b d8 			mov	bx,ax
+	*** 0003e4	c4 36 00 00 		les	si,DWORD PTR _RadarDataList
+	*** 0003e8	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;radarrec
+	*** 0003eb	26 89 00 		mov	WORD PTR es:[bx][si],ax
+;|*** 	fstrcpy(RadarDataList[RadarDataListCnt].name,radarrec.name);
+; Line 258
+	*** 0003ee	8d 46 ea 		lea	ax,WORD PTR [bp-22]
+	*** 0003f1	16 			push	ss
+	*** 0003f2	50 			push	ax
+	*** 0003f3	b8 18 00 		mov	ax,24
+	*** 0003f6	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 0003fa	03 06 00 00 		add	ax,WORD PTR _RadarDataList
+	*** 0003fe	8b 16 02 00 		mov	dx,WORD PTR _RadarDataList+2
+	*** 000402	40 			inc	ax
+	*** 000403	40 			inc	ax
+	*** 000404	52 			push	dx
+	*** 000405	50 			push	ax
+	*** 000406	e8 00 00 		call	_fstrcpy
+	*** 000409	83 c4 08 		add	sp,8
+;|*** 	RadarDataList[RadarDataListCnt].range = ((radarrec.range * 16)/10);
+; Line 259
+	*** 00040c	b8 18 00 		mov	ax,24
+	*** 00040f	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 000413	8b f0 			mov	si,ax
+	*** 000415	c4 1e 00 00 		les	bx,DWORD PTR _RadarDataList
+	*** 000419	8b 46 f4 		mov	ax,WORD PTR [bp-12]
+	*** 00041c	b1 04 			mov	cl,4
+	*** 00041e	d3 e0 			shl	ax,cl
+	*** 000420	b9 0a 00 		mov	cx,10
+	*** 000423	99 			cwd	
+	*** 000424	f7 f9 			idiv	cx
+	*** 000426	26 89 40 0c 		mov	WORD PTR es:[bx+12][si],ax
+;|*** 	RadarDataList[RadarDataListCnt].detectiontype = radarrec.detectiontype;
+; Line 260
+	*** 00042a	b8 18 00 		mov	ax,24
+	*** 00042d	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 000431	8b f0 			mov	si,ax
+	*** 000433	c4 1e 00 00 		les	bx,DWORD PTR _RadarDataList
+	*** 000437	8b 46 f6 		mov	ax,WORD PTR [bp-10]
+	*** 00043a	26 89 40 0e 		mov	WORD PTR es:[bx+14][si],ax
+;|*** 
+;|*** 	// Check if missile is there, if not add type
+;|*** 	MissileAdd(radarrec.missiletype);
+; Line 263
+	*** 00043e	ff 76 f8 		push	WORD PTR [bp-8]
+	*** 000441	e8 00 00 		call	_MissileAdd
+	*** 000444	83 c4 02 		add	sp,2
+;|*** 	RadarDataList[RadarDataListCnt].missiletype = radarrec.missiletype;
+; Line 264
+	*** 000447	b8 18 00 		mov	ax,24
+	*** 00044a	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 00044e	8b f0 			mov	si,ax
+	*** 000450	c4 1e 00 00 		les	bx,DWORD PTR _RadarDataList
+	*** 000454	8b 46 f8 		mov	ax,WORD PTR [bp-8]
+	*** 000457	26 89 40 10 		mov	WORD PTR es:[bx+16][si],ax
+;|*** 
+;|*** 	RadarDataList[RadarDataListCnt].missilecount = radarrec.missilecount;
+; Line 266
+	*** 00045b	b8 18 00 		mov	ax,24
+	*** 00045e	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 000462	8b f0 			mov	si,ax
+	*** 000464	c4 1e 00 00 		les	bx,DWORD PTR _RadarDataList
+	*** 000468	8b 46 fa 		mov	ax,WORD PTR [bp-6]
+	*** 00046b	26 89 40 12 		mov	WORD PTR es:[bx+18][si],ax
+;|*** 	RadarDataList[RadarDataListCnt].jam = radarrec.jam;
+; Line 267
+	*** 00046f	b8 18 00 		mov	ax,24
+	*** 000472	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 000476	8b f0 			mov	si,ax
+	*** 000478	c4 1e 00 00 		les	bx,DWORD PTR _RadarDataList
+	*** 00047c	8b 46 fc 		mov	ax,WORD PTR [bp-4]
+	*** 00047f	26 89 40 14 		mov	WORD PTR es:[bx+20][si],ax
+;|*** 	RadarDataList[RadarDataListCnt].tewsnum = radarrec.tewsnum;
+; Line 268
+	*** 000483	b8 18 00 		mov	ax,24
+	*** 000486	f7 2e 00 00 		imul	WORD PTR _RadarDataListCnt
+	*** 00048a	8b f0 			mov	si,ax
+	*** 00048c	c4 1e 00 00 		les	bx,DWORD PTR _RadarDataList
+	*** 000490	8b 46 fe 		mov	ax,WORD PTR [bp-2]
+	*** 000493	26 89 40 16 		mov	WORD PTR es:[bx+22][si],ax
+;|*** 
+;|*** 	RadarDataListCnt++;
+; Line 270
+	*** 000497	ff 06 00 00 		inc	WORD PTR _RadarDataListCnt
+;|*** 	fclose(RadarDataFile);
+; Line 271
+	*** 00049b	ff 76 e6 		push	WORD PTR [bp-26]	;RadarDataFile
+	*** 00049e	e8 00 00 		call	_fclose
+	*** 0004a1	83 c4 02 		add	sp,2
+;|*** 	return (1);
+; Line 272
+					$L20001:
+	*** 0004a4	b8 01 00 		mov	ax,1
+;|*** }
+; Line 273
+	*** 0004a7	5e 			pop	si
+	*** 0004a8	8b e5 			mov	sp,bp
+	*** 0004aa	5d 			pop	bp
+	*** 0004ab	c3 			ret	
+
+_RadarAdd	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** int MissileAdd(int MissileEnumId)
+;|*** {
+; Line 277
+	PUBLIC	_MissileAdd
+_MissileAdd	PROC NEAR
+	*** 0004ac	55 			push	bp
+	*** 0004ad	8b ec 			mov	bp,sp
+	*** 0004af	83 ec 36 		sub	sp,54
+	*** 0004b2	57 			push	di
+	*** 0004b3	56 			push	si
+;	i = -54
+;	cnt = -48
+;	MissileDataFile = -46
+;	missilerecseek = -52
+;	missilerec = -44
+;	MissileEnumId = 4
+;|*** 	int i;
+;|*** 	int cnt=-1;
+; Line 279
+	*** 0004b4	c7 46 d0 ff ff 		mov	WORD PTR [bp-48],-1	;cnt
+;|*** 	FILE *MissileDataFile;
+;|*** 	long missilerecseek;
+;|*** 	struct mrec missilerec;
+;|*** 
+;|*** 	if ((MissileDataListCnt+1) > MAX_MISSILE_LIST_CNT) {
+; Line 284
+	*** 0004b9	a1 00 00 		mov	ax,WORD PTR _MissileDataListCnt
+	*** 0004bc	40 			inc	ax
+	*** 0004bd	3d 1e 00 		cmp	ax,30
+	*** 0004c0	7e 16 			jle	$I420
+;|*** 		Message("MissileData List exceeded MAX_MISSILE_LIST_CNT",DEBUG_MSG);
+; Line 285
+	*** 0004c2	2b c0 			sub	ax,ax
+	*** 0004c4	50 			push	ax
+	*** 0004c5	b8 ed 00 		mov	ax,OFFSET DGROUP:$SG421
+	*** 0004c8	50 			push	ax
+	*** 0004c9	e8 00 00 		call	_Message
+	*** 0004cc	83 c4 04 		add	sp,4
+;|*** 		return(-1);
+; Line 286
+	*** 0004cf	b8 ff ff 		mov	ax,-1
+	*** 0004d2	5e 			pop	si
+	*** 0004d3	5f 			pop	di
+	*** 0004d4	8b e5 			mov	sp,bp
+	*** 0004d6	5d 			pop	bp
+	*** 0004d7	c3 			ret	
+;|*** 	}
+; Line 287
+;|*** 
+;|*** 
+;|*** 	for (i=0; i<MissileDataListCnt; i++) {
+; Line 290
+					$I420:
+	*** 0004d8	c7 46 ca 00 00 		mov	WORD PTR [bp-54],0	;i
+	*** 0004dd	eb 04 			jmp	SHORT $F422
+;|*** 		if (MissileDataList[i].MissileEnumId == MissileEnumId) {
+;|*** 			cnt=i;
+;|*** 			break;
+;|*** 		}
+; Line 294
+;|*** 	}
+; Line 295
+	*** 0004df	90 			nop	
+					$FC423:
+	*** 0004e0	ff 46 ca 		inc	WORD PTR [bp-54]	;i
+					$F422:
+	*** 0004e3	8b 46 ca 		mov	ax,WORD PTR [bp-54]	;i
+	*** 0004e6	39 06 00 00 		cmp	WORD PTR _MissileDataListCnt,ax
+	*** 0004ea	7e 19 			jle	$FB424
+;|*** 		if (MissileDataList[i].MissileEnumId == MissileEnumId) {
+; Line 291
+	*** 0004ec	b9 22 00 		mov	cx,34
+	*** 0004ef	f7 e9 			imul	cx
+	*** 0004f1	8b d8 			mov	bx,ax
+	*** 0004f3	c4 36 00 00 		les	si,DWORD PTR _MissileDataList
+	*** 0004f7	8b 46 04 		mov	ax,WORD PTR [bp+4]	;MissileEnumId
+	*** 0004fa	26 39 00 		cmp	WORD PTR es:[bx][si],ax
+	*** 0004fd	75 e1 			jne	$FC423
+;|*** 			cnt=i;
+; Line 292
+	*** 0004ff	8b 46 ca 		mov	ax,WORD PTR [bp-54]	;i
+	*** 000502	89 46 d0 		mov	WORD PTR [bp-48],ax	;cnt
+;|*** 			break;
+; Line 293
+					$FB424:
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 	if (cnt != -1) return(1);
+; Line 297
+	*** 000505	83 7e d0 ff 		cmp	WORD PTR [bp-48],-1	;cnt
+	*** 000509	74 03 			je	$JCC1289
+	*** 00050b	e9 ce 01 		jmp	$I434
+					$JCC1289:
+;|*** 
+;|*** 	// Search file for Missile Entry
+;|*** 	MissileDataFile = fopen("F14MD01.DAT","rb");
+;|*** 
+;|*** 	if (MissileDataFile==NULL) {
+; Line 302
+	*** 00050e	b8 1c 01 		mov	ax,OFFSET DGROUP:$SG427
+	*** 000511	50 			push	ax
+	*** 000512	b8 1f 01 		mov	ax,OFFSET DGROUP:$SG428
+	*** 000515	50 			push	ax
+	*** 000516	e8 00 00 		call	_fopen
+	*** 000519	83 c4 04 		add	sp,4
+	*** 00051c	89 46 d2 		mov	WORD PTR [bp-46],ax	;MissileDataFile
+	*** 00051f	0b c0 			or	ax,ax
+	*** 000521	75 15 			jne	$I429
+;|*** 		Message("Missile Data File Not Found",DEBUG_MSG);
+; Line 303
+	*** 000523	50 			push	ax
+	*** 000524	b8 2b 01 		mov	ax,OFFSET DGROUP:$SG430
+	*** 000527	50 			push	ax
+	*** 000528	e8 00 00 		call	_Message
+	*** 00052b	83 c4 04 		add	sp,4
+;|*** 		exit(-1);
+; Line 304
+	*** 00052e	b8 ff ff 		mov	ax,-1
+	*** 000531	50 			push	ax
+	*** 000532	e8 00 00 		call	_exit
+	*** 000535	83 c4 02 		add	sp,2
+;|*** 	}
+; Line 305
+;|*** 
+;|*** 	missilerecseek = (long)(MissileEnumId * missilerecsize);
+; Line 307
+					$I429:
+;|*** 	fseek(MissileDataFile,missilerecseek,SEEK_SET);
+; Line 308
+	*** 000538	2b c0 			sub	ax,ax
+	*** 00053a	50 			push	ax
+	*** 00053b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;MissileEnumId
+	*** 00053e	f7 2e 78 00 		imul	WORD PTR _missilerecsize
+	*** 000542	99 			cwd	
+	*** 000543	89 46 cc 		mov	WORD PTR [bp-52],ax	;missilerecseek
+	*** 000546	89 56 ce 		mov	WORD PTR [bp-50],dx
+	*** 000549	52 			push	dx
+	*** 00054a	50 			push	ax
+	*** 00054b	ff 76 d2 		push	WORD PTR [bp-46]	;MissileDataFile
+	*** 00054e	e8 00 00 		call	_fseek
+	*** 000551	83 c4 08 		add	sp,8
+;|*** 	// If EOF, then we have a problem, invalid ID, return error
+;|*** 	if (feof(MissileDataFile)) {
+; Line 310
+	*** 000554	8b 5e d2 		mov	bx,WORD PTR [bp-46]	;MissileDataFile
+	*** 000557	f6 47 06 10 		test	BYTE PTR [bx+6],16
+	*** 00055b	74 0f 			je	$I431
+;|*** 		fclose(MissileDataFile);
+; Line 311
+	*** 00055d	53 			push	bx
+	*** 00055e	e8 00 00 		call	_fclose
+	*** 000561	83 c4 02 		add	sp,2
+;|*** 		return (0);
+; Line 312
+	*** 000564	2b c0 			sub	ax,ax
+	*** 000566	5e 			pop	si
+	*** 000567	5f 			pop	di
+	*** 000568	8b e5 			mov	sp,bp
+	*** 00056a	5d 			pop	bp
+	*** 00056b	c3 			ret	
+;|*** 	}
+; Line 313
+;|*** 	fread(&missilerec,missilerecsize,1,MissileDataFile);
+; Line 314
+					$I431:
+	*** 00056c	53 			push	bx
+	*** 00056d	b8 01 00 		mov	ax,1
+	*** 000570	50 			push	ax
+	*** 000571	ff 36 78 00 		push	WORD PTR _missilerecsize
+	*** 000575	8d 46 d4 		lea	ax,WORD PTR [bp-44]	;missilerec
+	*** 000578	50 			push	ax
+	*** 000579	e8 00 00 		call	_fread
+	*** 00057c	83 c4 08 		add	sp,8
+;|*** 
+;|*** 	MissileDataList[MissileDataListCnt].MissileEnumId = missilerec.MissileEnumId;
+; Line 316
+	*** 00057f	b8 22 00 		mov	ax,34
+	*** 000582	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 000586	8b d8 			mov	bx,ax
+	*** 000588	c4 36 00 00 		les	si,DWORD PTR _MissileDataList
+	*** 00058c	8b 46 d4 		mov	ax,WORD PTR [bp-44]	;missilerec
+	*** 00058f	26 89 00 		mov	WORD PTR es:[bx][si],ax
+;|*** 	fstrcpy(MissileDataList[MissileDataListCnt].name,missilerec.name);
+; Line 317
+	*** 000592	8d 46 d6 		lea	ax,WORD PTR [bp-42]
+	*** 000595	16 			push	ss
+	*** 000596	50 			push	ax
+	*** 000597	b8 22 00 		mov	ax,34
+	*** 00059a	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 00059e	03 06 00 00 		add	ax,WORD PTR _MissileDataList
+	*** 0005a2	8b 16 02 00 		mov	dx,WORD PTR _MissileDataList+2
+	*** 0005a6	40 			inc	ax
+	*** 0005a7	40 			inc	ax
+	*** 0005a8	52 			push	dx
+	*** 0005a9	50 			push	ax
+	*** 0005aa	e8 00 00 		call	_fstrcpy
+	*** 0005ad	83 c4 08 		add	sp,8
+;|*** 	MissileDataList[MissileDataListCnt].range = ((missilerec.range*16)/10);  // KLUDE - nmi-to-km
+; Line 318
+	*** 0005b0	b8 22 00 		mov	ax,34
+	*** 0005b3	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 0005b7	8b f0 			mov	si,ax
+	*** 0005b9	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 0005bd	8b 46 e2 		mov	ax,WORD PTR [bp-30]
+	*** 0005c0	b1 04 			mov	cl,4
+	*** 0005c2	d3 e0 			shl	ax,cl
+	*** 0005c4	bf 0a 00 		mov	di,10
+	*** 0005c7	99 			cwd	
+	*** 0005c8	f7 ff 			idiv	di
+	*** 0005ca	26 89 40 0e 		mov	WORD PTR es:[bx+14][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].minrange = ((missilerec.minrange*16)/10);
+; Line 319
+	*** 0005ce	b8 22 00 		mov	ax,34
+	*** 0005d1	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 0005d5	8b f0 			mov	si,ax
+	*** 0005d7	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 0005db	8b 46 e4 		mov	ax,WORD PTR [bp-28]
+	*** 0005de	d3 e0 			shl	ax,cl
+	*** 0005e0	99 			cwd	
+	*** 0005e1	f7 ff 			idiv	di
+	*** 0005e3	26 89 40 10 		mov	WORD PTR es:[bx+16][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].maxalt = missilerec.maxalt;
+; Line 320
+	*** 0005e7	b8 22 00 		mov	ax,34
+	*** 0005ea	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 0005ee	8b f0 			mov	si,ax
+	*** 0005f0	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 0005f4	8b 46 e6 		mov	ax,WORD PTR [bp-26]
+	*** 0005f7	26 89 40 12 		mov	WORD PTR es:[bx+18][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].speed = missilerec.speed;
+; Line 321
+	*** 0005fb	b8 22 00 		mov	ax,34
+	*** 0005fe	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 000602	8b f0 			mov	si,ax
+	*** 000604	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 000608	8b 46 e8 		mov	ax,WORD PTR [bp-24]
+	*** 00060b	26 89 40 14 		mov	WORD PTR es:[bx+20][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].homing = missilerec.homing;
+; Line 322
+	*** 00060f	b8 22 00 		mov	ax,34
+	*** 000612	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 000616	8b f0 			mov	si,ax
+	*** 000618	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 00061c	8b 46 ea 		mov	ax,WORD PTR [bp-22]
+	*** 00061f	26 89 40 16 		mov	WORD PTR es:[bx+22][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].maneuver = missilerec.maneuver;
+; Line 323
+	*** 000623	b8 22 00 		mov	ax,34
+	*** 000626	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 00062a	8b f0 			mov	si,ax
+	*** 00062c	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 000630	8b 46 ec 		mov	ax,WORD PTR [bp-20]
+	*** 000633	26 89 40 18 		mov	WORD PTR es:[bx+24][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].cmeffect = missilerec.cmeffect;
+; Line 324
+	*** 000637	b8 22 00 		mov	ax,34
+	*** 00063a	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 00063e	8b f0 			mov	si,ax
+	*** 000640	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 000644	8b 46 ee 		mov	ax,WORD PTR [bp-18]
+	*** 000647	26 89 40 1a 		mov	WORD PTR es:[bx+26][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].damage = missilerec.damage;
+; Line 325
+	*** 00064b	b8 22 00 		mov	ax,34
+	*** 00064e	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 000652	8b f0 			mov	si,ax
+	*** 000654	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 000658	8b 46 f0 		mov	ax,WORD PTR [bp-16]
+	*** 00065b	26 89 40 1c 		mov	WORD PTR es:[bx+28][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].objslot = EMS3DObjectSlot;
+; Line 326
+	*** 00065f	b8 22 00 		mov	ax,34
+	*** 000662	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 000666	8b f0 			mov	si,ax
+	*** 000668	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 00066c	a1 7c 00 		mov	ax,WORD PTR _EMS3DObjectSlot
+	*** 00066f	26 89 40 1e 		mov	WORD PTR es:[bx+30][si],ax
+;|*** 	MissileDataList[MissileDataListCnt].type = missilerec.type;
+; Line 327
+	*** 000673	b8 22 00 		mov	ax,34
+	*** 000676	f7 2e 00 00 		imul	WORD PTR _MissileDataListCnt
+	*** 00067a	8b f0 			mov	si,ax
+	*** 00067c	c4 1e 00 00 		les	bx,DWORD PTR _MissileDataList
+	*** 000680	8b 46 fe 		mov	ax,WORD PTR [bp-2]
+	*** 000683	26 89 40 20 		mov	WORD PTR es:[bx+32][si],ax
+;|*** 
+;|*** 	// Make Sure this NEVER happens - This should be a FATAL_ERROR
+;|*** 	if (!LoadEMSObject(missilerec.filename,EMS3DObjectSlot)) {
+; Line 330
+	*** 000687	ff 36 7c 00 		push	WORD PTR _EMS3DObjectSlot
+	*** 00068b	8d 46 f2 		lea	ax,WORD PTR [bp-14]
+	*** 00068e	50 			push	ax
+	*** 00068f	e8 00 00 		call	_LoadEMSObject
+	*** 000692	83 c4 04 		add	sp,4
+	*** 000695	0b c0 			or	ax,ax
+	*** 000697	75 22 			jne	$I432
+;|*** 		sprintf(Txt,"Missile Object %d Not Found: %s\n",missilerec.MissileEnumId,missilerec.filename);
+; Line 331
+	*** 000699	8d 46 f2 		lea	ax,WORD PTR [bp-14]
+	*** 00069c	50 			push	ax
+	*** 00069d	ff 76 d4 		push	WORD PTR [bp-44]	;missilerec
+	*** 0006a0	b8 47 01 		mov	ax,OFFSET DGROUP:$SG433
+	*** 0006a3	50 			push	ax
+	*** 0006a4	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0006a7	50 			push	ax
+	*** 0006a8	e8 00 00 		call	_sprintf
+	*** 0006ab	83 c4 08 		add	sp,8
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 332
+	*** 0006ae	2b c0 			sub	ax,ax
+	*** 0006b0	50 			push	ax
+	*** 0006b1	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0006b4	50 			push	ax
+	*** 0006b5	e8 00 00 		call	_Message
+	*** 0006b8	83 c4 04 		add	sp,4
+;|*** 	}
+; Line 333
+;|*** 
+;|*** 	EMS3DObjectSlot++;
+; Line 335
+					$I432:
+	*** 0006bb	ff 06 7c 00 		inc	WORD PTR _EMS3DObjectSlot
+;|*** 	MissileDataListCnt++;
+; Line 336
+	*** 0006bf	ff 06 00 00 		inc	WORD PTR _MissileDataListCnt
+;|*** 	fclose(MissileDataFile);
+; Line 337
+	*** 0006c3	ff 76 d2 		push	WORD PTR [bp-46]	;MissileDataFile
+	*** 0006c6	e8 00 00 		call	_fclose
+	*** 0006c9	83 c4 02 		add	sp,2
+;|*** 
+;|*** 	if(missilerec.type < 0)
+; Line 339
+	*** 0006cc	83 7e fe 00 		cmp	WORD PTR [bp-2],0
+	*** 0006d0	7d 0a 			jge	$I434
+;|*** 		return(missilerec.type);
+; Line 340
+	*** 0006d2	8b 46 fe 		mov	ax,WORD PTR [bp-2]
+	*** 0006d5	5e 			pop	si
+	*** 0006d6	5f 			pop	di
+	*** 0006d7	8b e5 			mov	sp,bp
+	*** 0006d9	5d 			pop	bp
+	*** 0006da	c3 			ret	
+;|*** 
+;|*** 	return(1);
+; Line 342
+	*** 0006db	90 			nop	
+					$I434:
+	*** 0006dc	b8 01 00 		mov	ax,1
+;|*** }
+; Line 343
+	*** 0006df	5e 			pop	si
+	*** 0006e0	5f 			pop	di
+	*** 0006e1	8b e5 			mov	sp,bp
+	*** 0006e3	5d 			pop	bp
+	*** 0006e4	c3 			ret	
+	*** 0006e5	90 			nop	
+
+_MissileAdd	ENDP
+;|*** 
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** int GetPicType(int PlaneNo)
+;|*** {
+; Line 349
+	PUBLIC	_GetPicType
+_GetPicType	PROC NEAR
+	*** 0006e6	55 			push	bp
+	*** 0006e7	8b ec 			mov	bp,sp
+	*** 0006e9	56 			push	si
+;	PlaneNo = 4
+;|*** 	if (PlaneNo <0) {
+; Line 350
+	*** 0006ea	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;PlaneNo
+	*** 0006ee	7d 40 			jge	$I438
+;|*** 		TXT("Bad Plane Pic Type < 0");
+; Line 351
+	*** 0006f0	b8 68 01 		mov	ax,OFFSET DGROUP:$SG440
+	*** 0006f3	50 			push	ax
+	*** 0006f4	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0006f7	50 			push	ax
+	*** 0006f8	e8 00 00 		call	_strcpy
+	*** 0006fb	83 c4 04 		add	sp,4
+;|*** 		TXN(PlaneNo);
+; Line 352
+	*** 0006fe	b8 0a 00 		mov	ax,10
+	*** 000701	50 			push	ax
+	*** 000702	b8 00 00 		mov	ax,OFFSET DGROUP:_ntmp
+	*** 000705	50 			push	ax
+	*** 000706	ff 76 04 		push	WORD PTR [bp+4]	;PlaneNo
+	*** 000709	e8 00 00 		call	_itoa
+	*** 00070c	83 c4 06 		add	sp,6
+	*** 00070f	50 			push	ax
+	*** 000710	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000713	50 			push	ax
+	*** 000714	e8 00 00 		call	_strcat
+	*** 000717	83 c4 04 		add	sp,4
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 353
+	*** 00071a	2b c0 			sub	ax,ax
+	*** 00071c	50 			push	ax
+	*** 00071d	b8 00 00 		mov	ax,OFFSET _Txt
+					$L20002:
+	*** 000720	50 			push	ax
+	*** 000721	e8 00 00 		call	_Message
+	*** 000724	83 c4 04 		add	sp,4
+;|*** 		return -1;
+; Line 354
+	*** 000727	b8 ff ff 		mov	ax,-1
+	*** 00072a	5e 			pop	si
+	*** 00072b	8b e5 			mov	sp,bp
+	*** 00072d	5d 			pop	bp
+	*** 00072e	c3 			ret	
+;|*** 	}
+; Line 355
+;|*** 
+;|*** 	if (PlaneNo > PlaneDataListCnt) {
+; Line 357
+	*** 00072f	90 			nop	
+					$I438:
+	*** 000730	8b 46 04 		mov	ax,WORD PTR [bp+4]	;PlaneNo
+	*** 000733	39 06 00 00 		cmp	WORD PTR _PlaneDataListCnt,ax
+	*** 000737	7d 09 			jge	$I443
+;|*** 		Message("Bad Plane Pic Type > PDLC",DEBUG_MSG);
+; Line 358
+	*** 000739	2b c0 			sub	ax,ax
+	*** 00073b	50 			push	ax
+	*** 00073c	b8 7f 01 		mov	ax,OFFSET DGROUP:$SG444
+	*** 00073f	eb df 			jmp	SHORT $L20002
+;|*** 		return -1;
+;|*** 	}
+; Line 360
+;|*** 
+;|*** 	return(PlaneDataList[PlaneNo].objslot);
+; Line 362
+	*** 000741	90 			nop	
+					$I443:
+	*** 000742	b8 28 00 		mov	ax,40
+	*** 000745	f7 6e 04 		imul	WORD PTR [bp+4]	;PlaneNo
+	*** 000748	8b f0 			mov	si,ax
+	*** 00074a	c4 1e 00 00 		les	bx,DWORD PTR _PlaneDataList
+	*** 00074e	26 8b 40 10 		mov	ax,WORD PTR es:[bx+16][si]
+;|*** }
+; Line 363
+	*** 000752	5e 			pop	si
+	*** 000753	8b e5 			mov	sp,bp
+	*** 000755	5d 			pop	bp
+	*** 000756	c3 			ret	
+	*** 000757	90 			nop	
+
+_GetPicType	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** struct PlaneData far *GetPlanePtr(int PlaneNo)
+;|*** {
+; Line 367
+	PUBLIC	_GetPlanePtr
+_GetPlanePtr	PROC NEAR
+	*** 000758	55 			push	bp
+	*** 000759	8b ec 			mov	bp,sp
+;	PlaneNo = 4
+;|*** 
+;|*** 	if (PlaneNo <0) {
+; Line 369
+	*** 00075b	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;PlaneNo
+	*** 00075f	7d 39 			jge	$I448
+;|*** 		TXT("Bad Plane Pic Type < 0: ");
+; Line 370
+	*** 000761	b8 99 01 		mov	ax,OFFSET DGROUP:$SG449
+	*** 000764	50 			push	ax
+	*** 000765	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000768	50 			push	ax
+					$L20003:
+	*** 000769	e8 00 00 		call	_strcpy
+	*** 00076c	8b e5 			mov	sp,bp
+;|*** 		TXN(PlaneNo);
+; Line 371
+	*** 00076e	b8 0a 00 		mov	ax,10
+	*** 000771	50 			push	ax
+	*** 000772	b8 00 00 		mov	ax,OFFSET DGROUP:_ntmp
+	*** 000775	50 			push	ax
+	*** 000776	ff 76 04 		push	WORD PTR [bp+4]	;PlaneNo
+	*** 000779	e8 00 00 		call	_itoa
+	*** 00077c	8b e5 			mov	sp,bp
+	*** 00077e	50 			push	ax
+	*** 00077f	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000782	50 			push	ax
+	*** 000783	e8 00 00 		call	_strcat
+	*** 000786	8b e5 			mov	sp,bp
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 372
+	*** 000788	2b c0 			sub	ax,ax
+	*** 00078a	50 			push	ax
+	*** 00078b	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00078e	50 			push	ax
+	*** 00078f	e8 00 00 		call	_Message
+	*** 000792	8b e5 			mov	sp,bp
+;|*** 		return (NULL);
+; Line 373
+	*** 000794	2b c0 			sub	ax,ax
+	*** 000796	99 			cwd	
+	*** 000797	5d 			pop	bp
+	*** 000798	c3 			ret	
+;|*** 	}
+; Line 374
+;|*** 
+;|*** 	if (PlaneNo > PlaneDataListCnt) {
+; Line 376
+	*** 000799	90 			nop	
+					$I448:
+	*** 00079a	8b 46 04 		mov	ax,WORD PTR [bp+4]	;PlaneNo
+	*** 00079d	39 06 00 00 		cmp	WORD PTR _PlaneDataListCnt,ax
+	*** 0007a1	7d 0b 			jge	$I450
+;|*** 		TXT("Bad Plane Ptr type > PDLC");
+; Line 377
+	*** 0007a3	b9 b2 01 		mov	cx,OFFSET DGROUP:$SG451
+	*** 0007a6	51 			push	cx
+	*** 0007a7	b9 00 00 		mov	cx,OFFSET _Txt
+	*** 0007aa	51 			push	cx
+	*** 0007ab	eb bc 			jmp	SHORT $L20003
+;|*** 		TXN(PlaneNo);
+;|*** 		Message(Txt,DEBUG_MSG);
+;|*** 		return (NULL);
+;|*** 	}
+; Line 381
+;|*** 	return &(PlaneDataList[PlaneNo]);
+; Line 382
+	*** 0007ad	90 			nop	
+					$I450:
+	*** 0007ae	b8 28 00 		mov	ax,40
+	*** 0007b1	f7 6e 04 		imul	WORD PTR [bp+4]	;PlaneNo
+	*** 0007b4	03 06 00 00 		add	ax,WORD PTR _PlaneDataList
+	*** 0007b8	8b 16 02 00 		mov	dx,WORD PTR _PlaneDataList+2
+;|*** }
+; Line 383
+	*** 0007bc	5d 			pop	bp
+	*** 0007bd	c3 			ret	
+
+_GetPlanePtr	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** struct MissileData far *GetMissilePtr(int MissileNo)
+;|*** {
+; Line 387
+	PUBLIC	_GetMissilePtr
+_GetMissilePtr	PROC NEAR
+	*** 0007be	55 			push	bp
+	*** 0007bf	8b ec 			mov	bp,sp
+	*** 0007c1	83 ec 04 		sub	sp,4
+	*** 0007c4	56 			push	si
+;	i = -4
+;	FoundNo = -2
+;	MissileNo = 4
+;|*** 	int i;
+;|*** 	int FoundNo=-1;
+; Line 389
+	*** 0007c5	c7 46 fe ff ff 		mov	WORD PTR [bp-2],-1	;FoundNo
+;|*** 
+;|*** 	if (MissileNo <0) {
+; Line 391
+	*** 0007ca	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;MissileNo
+	*** 0007ce	7d 40 			jge	$I457
+;|*** 		TXT("Bad Missile Type < 0: ");
+; Line 392
+	*** 0007d0	b8 cc 01 		mov	ax,OFFSET DGROUP:$SG458
+					$L20004:
+	*** 0007d3	50 			push	ax
+	*** 0007d4	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0007d7	50 			push	ax
+	*** 0007d8	e8 00 00 		call	_strcpy
+	*** 0007db	83 c4 04 		add	sp,4
+;|*** 		TXN(MissileNo);
+; Line 393
+	*** 0007de	b8 0a 00 		mov	ax,10
+	*** 0007e1	50 			push	ax
+	*** 0007e2	b8 00 00 		mov	ax,OFFSET DGROUP:_ntmp
+	*** 0007e5	50 			push	ax
+	*** 0007e6	ff 76 04 		push	WORD PTR [bp+4]	;MissileNo
+	*** 0007e9	e8 00 00 		call	_itoa
+	*** 0007ec	83 c4 06 		add	sp,6
+	*** 0007ef	50 			push	ax
+	*** 0007f0	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0007f3	50 			push	ax
+	*** 0007f4	e8 00 00 		call	_strcat
+	*** 0007f7	83 c4 04 		add	sp,4
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 394
+	*** 0007fa	2b c0 			sub	ax,ax
+	*** 0007fc	50 			push	ax
+	*** 0007fd	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000800	50 			push	ax
+	*** 000801	e8 00 00 		call	_Message
+	*** 000804	83 c4 04 		add	sp,4
+;|*** 		return (NULL);
+; Line 395
+	*** 000807	2b c0 			sub	ax,ax
+	*** 000809	99 			cwd	
+	*** 00080a	5e 			pop	si
+	*** 00080b	8b e5 			mov	sp,bp
+	*** 00080d	5d 			pop	bp
+	*** 00080e	c3 			ret	
+;|*** 	}
+; Line 396
+;|*** 
+;|*** 	for (i=0; i<MissileDataListCnt; i++) {
+; Line 398
+	*** 00080f	90 			nop	
+					$I457:
+	*** 000810	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+	*** 000815	eb 04 			jmp	SHORT $F459
+;|*** 		if (MissileDataList[i].MissileEnumId == MissileNo) {
+;|*** 			FoundNo = i;
+;|*** 			break;
+;|*** 		}
+; Line 402
+;|*** 	}
+; Line 403
+	*** 000817	90 			nop	
+					$FC460:
+	*** 000818	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+					$F459:
+	*** 00081b	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 00081e	39 06 00 00 		cmp	WORD PTR _MissileDataListCnt,ax
+	*** 000822	7e 19 			jle	$FB461
+;|*** 		if (MissileDataList[i].MissileEnumId == MissileNo) {
+; Line 399
+	*** 000824	b9 22 00 		mov	cx,34
+	*** 000827	f7 e9 			imul	cx
+	*** 000829	8b d8 			mov	bx,ax
+	*** 00082b	c4 36 00 00 		les	si,DWORD PTR _MissileDataList
+	*** 00082f	8b 46 04 		mov	ax,WORD PTR [bp+4]	;MissileNo
+	*** 000832	26 39 00 		cmp	WORD PTR es:[bx][si],ax
+	*** 000835	75 e1 			jne	$FC460
+;|*** 			FoundNo = i;
+; Line 400
+	*** 000837	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 00083a	89 46 fe 		mov	WORD PTR [bp-2],ax	;FoundNo
+;|*** 			break;
+; Line 401
+					$FB461:
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 	if (FoundNo == -1) {
+; Line 405
+	*** 00083d	83 7e fe ff 		cmp	WORD PTR [bp-2],-1	;FoundNo
+	*** 000841	75 05 			jne	$I463
+;|*** 		TXT("Bad Missile ID - Missile ID Not Found: ");
+; Line 406
+	*** 000843	b8 e3 01 		mov	ax,OFFSET DGROUP:$SG464
+	*** 000846	eb 8b 			jmp	SHORT $L20004
+;|*** 		TXN(MissileNo);
+;|*** 		Message(Txt,DEBUG_MSG);
+;|*** 		return (NULL);
+;|*** 	}
+; Line 410
+;|*** 	return &(MissileDataList[FoundNo]);
+; Line 411
+					$I463:
+	*** 000848	b8 22 00 		mov	ax,34
+	*** 00084b	f7 6e fe 		imul	WORD PTR [bp-2]	;FoundNo
+	*** 00084e	03 06 00 00 		add	ax,WORD PTR _MissileDataList
+	*** 000852	8b 16 02 00 		mov	dx,WORD PTR _MissileDataList+2
+;|*** }
+; Line 412
+	*** 000856	5e 			pop	si
+	*** 000857	8b e5 			mov	sp,bp
+	*** 000859	5d 			pop	bp
+	*** 00085a	c3 			ret	
+	*** 00085b	90 			nop	
+
+_GetMissilePtr	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** struct RadarData far *GetRadarPtr(int RadarNo)
+;|*** {
+; Line 416
+	PUBLIC	_GetRadarPtr
+_GetRadarPtr	PROC NEAR
+	*** 00085c	55 			push	bp
+	*** 00085d	8b ec 			mov	bp,sp
+	*** 00085f	83 ec 04 		sub	sp,4
+	*** 000862	56 			push	si
+;	i = -4
+;	FoundNo = -2
+;	RadarNo = 4
+;|*** 	int i;
+;|*** 	int FoundNo=-1;
+; Line 418
+	*** 000863	c7 46 fe ff ff 		mov	WORD PTR [bp-2],-1	;FoundNo
+;|*** 
+;|*** 	if (RadarNo <0) {
+; Line 420
+	*** 000868	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;RadarNo
+	*** 00086c	7d 40 			jge	$I470
+;|*** 		TXT("Bad Radar Type < 0: ");
+; Line 421
+	*** 00086e	b8 0b 02 		mov	ax,OFFSET DGROUP:$SG471
+					$L20005:
+	*** 000871	50 			push	ax
+	*** 000872	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000875	50 			push	ax
+	*** 000876	e8 00 00 		call	_strcpy
+	*** 000879	83 c4 04 		add	sp,4
+;|*** 		TXN(RadarNo);
+; Line 422
+	*** 00087c	b8 0a 00 		mov	ax,10
+	*** 00087f	50 			push	ax
+	*** 000880	b8 00 00 		mov	ax,OFFSET DGROUP:_ntmp
+	*** 000883	50 			push	ax
+	*** 000884	ff 76 04 		push	WORD PTR [bp+4]	;RadarNo
+	*** 000887	e8 00 00 		call	_itoa
+	*** 00088a	83 c4 06 		add	sp,6
+	*** 00088d	50 			push	ax
+	*** 00088e	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000891	50 			push	ax
+	*** 000892	e8 00 00 		call	_strcat
+	*** 000895	83 c4 04 		add	sp,4
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 423
+	*** 000898	2b c0 			sub	ax,ax
+	*** 00089a	50 			push	ax
+	*** 00089b	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00089e	50 			push	ax
+	*** 00089f	e8 00 00 		call	_Message
+	*** 0008a2	83 c4 04 		add	sp,4
+;|*** 		return (NULL);
+; Line 424
+	*** 0008a5	2b c0 			sub	ax,ax
+	*** 0008a7	99 			cwd	
+	*** 0008a8	5e 			pop	si
+	*** 0008a9	8b e5 			mov	sp,bp
+	*** 0008ab	5d 			pop	bp
+	*** 0008ac	c3 			ret	
+;|*** 	}
+; Line 425
+;|*** 
+;|*** 	for (i=0; i<RadarDataListCnt; i++) {
+; Line 427
+	*** 0008ad	90 			nop	
+					$I470:
+	*** 0008ae	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+	*** 0008b3	eb 04 			jmp	SHORT $F472
+;|*** 		if (RadarDataList[i].RadarEnumId == RadarNo) {
+;|*** 			FoundNo = i;
+;|*** 			break;
+;|*** 		}
+; Line 431
+;|*** 	}
+; Line 432
+	*** 0008b5	90 			nop	
+					$FC473:
+	*** 0008b6	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+					$F472:
+	*** 0008b9	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 0008bc	39 06 00 00 		cmp	WORD PTR _RadarDataListCnt,ax
+	*** 0008c0	7e 19 			jle	$FB474
+;|*** 		if (RadarDataList[i].RadarEnumId == RadarNo) {
+; Line 428
+	*** 0008c2	b9 18 00 		mov	cx,24
+	*** 0008c5	f7 e9 			imul	cx
+	*** 0008c7	8b d8 			mov	bx,ax
+	*** 0008c9	c4 36 00 00 		les	si,DWORD PTR _RadarDataList
+	*** 0008cd	8b 46 04 		mov	ax,WORD PTR [bp+4]	;RadarNo
+	*** 0008d0	26 39 00 		cmp	WORD PTR es:[bx][si],ax
+	*** 0008d3	75 e1 			jne	$FC473
+;|*** 			FoundNo = i;
+; Line 429
+	*** 0008d5	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 0008d8	89 46 fe 		mov	WORD PTR [bp-2],ax	;FoundNo
+;|*** 			break;
+; Line 430
+					$FB474:
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 	if (FoundNo == -1) {
+; Line 434
+	*** 0008db	83 7e fe ff 		cmp	WORD PTR [bp-2],-1	;FoundNo
+	*** 0008df	75 05 			jne	$I476
+;|*** 		TXT("Bad Radar ID - Radar ID Not Found: ");
+; Line 435
+	*** 0008e1	b8 20 02 		mov	ax,OFFSET DGROUP:$SG477
+	*** 0008e4	eb 8b 			jmp	SHORT $L20005
+;|*** 		TXN(RadarNo);
+;|*** 		Message(Txt,DEBUG_MSG);
+;|*** 		return (NULL);
+;|*** 	}
+; Line 439
+;|*** 	return &(RadarDataList[FoundNo]);
+; Line 440
+					$I476:
+	*** 0008e6	b8 18 00 		mov	ax,24
+	*** 0008e9	f7 6e fe 		imul	WORD PTR [bp-2]	;FoundNo
+	*** 0008ec	03 06 00 00 		add	ax,WORD PTR _RadarDataList
+	*** 0008f0	8b 16 02 00 		mov	dx,WORD PTR _RadarDataList+2
+;|*** }
+; Line 441
+	*** 0008f4	5e 			pop	si
+	*** 0008f5	8b e5 			mov	sp,bp
+	*** 0008f7	5d 			pop	bp
+	*** 0008f8	c3 			ret	
+	*** 0008f9	90 			nop	
+
+_GetRadarPtr	ENDP
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** int Release3DMemory()
+;|*** {
+; Line 446
+	PUBLIC	_Release3DMemory
+_Release3DMemory	PROC NEAR
+;|*** 	if (EMSHANDLE)
+; Line 447
+	*** 0008fa	83 3e 00 00 00 		cmp	WORD PTR _EMSHANDLE,0
+	*** 0008ff	74 0a 			je	$I480
+;|*** 		EMSReleasePages(EMSHANDLE);
+; Line 448
+	*** 000901	ff 36 00 00 		push	WORD PTR _EMSHANDLE
+	*** 000905	e8 00 00 		call	_EMSReleasePages
+	*** 000908	83 c4 02 		add	sp,2
+;|*** }
+; Line 449
+					$I480:
+	*** 00090b	c3 			ret	
+
+_Release3DMemory	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** int Init3DPlanes()
+;|*** {
+; Line 453
+	PUBLIC	_Init3DPlanes
+_Init3DPlanes	PROC NEAR
+;|*** 	// FATAL_ERROR
+;|*** 	if (_dos_allocmem((PlaneDataSize*MAX_PLANE_LIST_CNT),&PlaneListSeg)) {
+; Line 455
+	*** 00090c	b8 00 00 		mov	ax,OFFSET DGROUP:_PlaneListSeg
+	*** 00090f	50 			push	ax
+	*** 000910	b8 28 00 		mov	ax,40
+	*** 000913	f7 2e 70 00 		imul	WORD PTR _PlaneDataSize
+	*** 000917	50 			push	ax
+	*** 000918	e8 00 00 		call	__dos_allocmem
+	*** 00091b	83 c4 04 		add	sp,4
+	*** 00091e	0b c0 			or	ax,ax
+	*** 000920	74 09 			je	$I484
+;|*** 		ExitErrorCode=-12;
+; Line 456
+	*** 000922	c7 06 00 00 f4 ff 	mov	WORD PTR _ExitErrorCode,-12
+;|*** 		InitAbort();
+; Line 457
+	*** 000928	e8 00 00 		call	_InitAbort
+;|*** 	}
+; Line 458
+;|*** 	FP_SEG(PlaneDataList) = PlaneListSeg;
+; Line 459
+					$I484:
+	*** 00092b	a1 00 00 		mov	ax,WORD PTR _PlaneListSeg
+	*** 00092e	a3 02 00 		mov	WORD PTR _PlaneDataList+2,ax
+;|*** 	FP_OFF(PlaneDataList) = 0;
+; Line 460
+	*** 000931	c7 06 00 00 00 00 	mov	WORD PTR _PlaneDataList,0
+;|*** 
+;|*** 	if (_dos_allocmem((RadarDataSize*MAX_RADAR_LIST_CNT),&RadarListSeg)) {
+; Line 462
+	*** 000937	b8 00 00 		mov	ax,OFFSET DGROUP:_RadarListSeg
+	*** 00093a	50 			push	ax
+	*** 00093b	b8 1e 00 		mov	ax,30
+	*** 00093e	f7 2e 74 00 		imul	WORD PTR _RadarDataSize
+	*** 000942	50 			push	ax
+	*** 000943	e8 00 00 		call	__dos_allocmem
+	*** 000946	83 c4 04 		add	sp,4
+	*** 000949	0b c0 			or	ax,ax
+	*** 00094b	74 09 			je	$I486
+;|*** 		ExitErrorCode=-16;
+; Line 463
+	*** 00094d	c7 06 00 00 f0 ff 	mov	WORD PTR _ExitErrorCode,-16
+;|*** 		InitAbort();
+; Line 464
+	*** 000953	e8 00 00 		call	_InitAbort
+;|*** 	}
+; Line 465
+;|*** 	FP_SEG(RadarDataList) = RadarListSeg;
+; Line 466
+					$I486:
+	*** 000956	a1 00 00 		mov	ax,WORD PTR _RadarListSeg
+	*** 000959	a3 02 00 		mov	WORD PTR _RadarDataList+2,ax
+;|*** 	FP_OFF(RadarDataList) = 0;
+; Line 467
+	*** 00095c	c7 06 00 00 00 00 	mov	WORD PTR _RadarDataList,0
+;|*** 
+;|*** 	if (_dos_allocmem((MissileDataSize*MAX_MISSILE_LIST_CNT),&MissileListSeg)) {
+; Line 469
+	*** 000962	b8 00 00 		mov	ax,OFFSET DGROUP:_MissileListSeg
+	*** 000965	50 			push	ax
+	*** 000966	b8 1e 00 		mov	ax,30
+	*** 000969	f7 2e 72 00 		imul	WORD PTR _MissileDataSize
+	*** 00096d	50 			push	ax
+	*** 00096e	e8 00 00 		call	__dos_allocmem
+	*** 000971	83 c4 04 		add	sp,4
+	*** 000974	0b c0 			or	ax,ax
+	*** 000976	74 09 			je	$I487
+;|*** 		ExitErrorCode=-14;
+; Line 470
+	*** 000978	c7 06 00 00 f2 ff 	mov	WORD PTR _ExitErrorCode,-14
+;|*** 		InitAbort();
+; Line 471
+	*** 00097e	e8 00 00 		call	_InitAbort
+;|*** 	}
+; Line 472
+;|*** 	FP_SEG(MissileDataList) = MissileListSeg;
+; Line 473
+					$I487:
+	*** 000981	a1 00 00 		mov	ax,WORD PTR _MissileListSeg
+	*** 000984	a3 02 00 		mov	WORD PTR _MissileDataList+2,ax
+;|*** 	FP_OFF(MissileDataList) = 0;
+; Line 474
+	*** 000987	c7 06 00 00 00 00 	mov	WORD PTR _MissileDataList,0
+;|*** }
+; Line 475
+	*** 00098d	c3 			ret	
+
+_Init3DPlanes	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** int LoadSpecialObjects()
+;|*** {
+; Line 479
+	PUBLIC	_LoadSpecialObjects
+_LoadSpecialObjects	PROC NEAR
+	*** 00098e	55 			push	bp
+	*** 00098f	8b ec 			mov	bp,sp
+	*** 000991	81 ec b8 00 		sub	sp,184
+	*** 000995	57 			push	di
+	*** 000996	56 			push	si
+;	MiscSpecial = -182
+;	CarrierSaratoga = -134
+;	CoolF14Objects = -18
+;	CoolF14Tails = -90
+;	i = -106
+;	j = -164
+;	squad = -184
+;	CarrierAmerica = -162
+;	Missiles = -104
+;	CarrierNimitz = -46
+;|*** 	int i,j,squad;
+;|*** 
+;|*** 	char *CarrierAmerica[14] = {
+;|*** 		"AMERB14.3DZ",		// Base - Level 1
+; Line 483
+	*** 000997	c7 86 5e ff 44 02 	mov	WORD PTR [bp-162],OFFSET DGROUP:$SG494	;CarrierAmerica
+;|*** 		"AMERT9.3DZ",		// Tower - Level 1 & 2
+; Line 484
+	*** 00099d	c7 86 60 ff 50 02 	mov	WORD PTR [bp-160],OFFSET DGROUP:$SG495
+;|*** 		"AMERT108.3DZ",		// Deck - Level 1 & 2
+; Line 485
+	*** 0009a3	c7 86 62 ff 5b 02 	mov	WORD PTR [bp-158],OFFSET DGROUP:$SG496
+;|*** 		"AMERWIR.3DZ",		// Wires
+; Line 486
+	*** 0009a9	c7 86 64 ff 68 02 	mov	WORD PTR [bp-156],OFFSET DGROUP:$SG497
+;|*** 		"AMERLIT.3DZ",		// Ball
+; Line 487
+	*** 0009af	c7 86 66 ff 74 02 	mov	WORD PTR [bp-154],OFFSET DGROUP:$SG498
+;|*** 		"ABL1.3DZ",	  		// Blast Door 1
+; Line 488
+	*** 0009b5	c7 86 68 ff 80 02 	mov	WORD PTR [bp-152],OFFSET DGROUP:$SG499
+;|*** 		"ABL2.3DZ",	   		// Blast Door 2
+; Line 489
+	*** 0009bb	c7 86 6a ff 89 02 	mov	WORD PTR [bp-150],OFFSET DGROUP:$SG500
+;|*** 		"ABL3.3DZ",	   		// Blast Door 3
+; Line 490
+	*** 0009c1	c7 86 6c ff 92 02 	mov	WORD PTR [bp-148],OFFSET DGROUP:$SG501
+;|*** 		"ABL4.3DZ",			// Blast Door 4
+; Line 491
+	*** 0009c7	c7 86 6e ff 9b 02 	mov	WORD PTR [bp-146],OFFSET DGROUP:$SG502
+;|*** 		"AMERTMB5.3DZ",		// Base - Level 2
+; Line 492
+	*** 0009cd	c7 86 70 ff a4 02 	mov	WORD PTR [bp-144],OFFSET DGROUP:$SG503
+;|*** 		"AMERTSB2.3DZ",		// Base - Level 3
+; Line 493
+	*** 0009d3	c7 86 72 ff b1 02 	mov	WORD PTR [bp-142],OFFSET DGROUP:$SG504
+;|*** 		"AMERTST1.3DZ",		// Tower - Level 3
+; Line 494
+	*** 0009d9	c7 86 74 ff be 02 	mov	WORD PTR [bp-140],OFFSET DGROUP:$SG505
+;|*** 		"AMERTSS4.3DZ",		// Carrier - Level 4
+; Line 495
+	*** 0009df	c7 86 76 ff cb 02 	mov	WORD PTR [bp-138],OFFSET DGROUP:$SG506
+;|*** 		"AMERWAKE.3DZ"		// Wake
+;|*** 	};
+; Line 497
+	*** 0009e5	c7 86 78 ff d8 02 	mov	WORD PTR [bp-136],OFFSET DGROUP:$SG507
+;|*** 
+;|*** 	char *CarrierNimitz[14] = {
+;|*** 		"NIMB08.3DZ",		// Base - Level 1
+; Line 500
+	*** 0009eb	c7 46 d2 e5 02 		mov	WORD PTR [bp-46],OFFSET DGROUP:$SG509	;CarrierNimitz
+;|*** 		"NIMNT06.3DZ",		// Tower - Level 1 & 2
+; Line 501
+	*** 0009f0	c7 46 d4 f0 02 		mov	WORD PTR [bp-44],OFFSET DGROUP:$SG510
+;|*** 		"NIMT109.3DZ",		// Deck - Level 1 & 2
+; Line 502
+	*** 0009f5	c7 46 d6 fc 02 		mov	WORD PTR [bp-42],OFFSET DGROUP:$SG511
+;|*** 		"WIREN.3DZ",		// Wires
+; Line 503
+	*** 0009fa	c7 46 d8 08 03 		mov	WORD PTR [bp-40],OFFSET DGROUP:$SG512
+;|*** 		"LIGHTN.3DZ",		// Ball
+; Line 504
+	*** 0009ff	c7 46 da 12 03 		mov	WORD PTR [bp-38],OFFSET DGROUP:$SG513
+;|*** 		"NBL1.3DZ",			// Blast Door 1
+; Line 505
+	*** 000a04	c7 46 dc 1d 03 		mov	WORD PTR [bp-36],OFFSET DGROUP:$SG514
+;|*** 		"NBL2.3DZ",			// Blast Door 2
+; Line 506
+	*** 000a09	c7 46 de 26 03 		mov	WORD PTR [bp-34],OFFSET DGROUP:$SG515
+;|*** 		"NBL3.3DZ",			// Blast Door 3
+; Line 507
+	*** 000a0e	c7 46 e0 2f 03 		mov	WORD PTR [bp-32],OFFSET DGROUP:$SG516
+;|*** 		"NBL4.3DZ",	 		// Blast Door 4
+; Line 508
+	*** 000a13	c7 46 e2 38 03 		mov	WORD PTR [bp-30],OFFSET DGROUP:$SG517
+;|*** 		"NIMBM02.3DZ",		// Base - Level 2
+; Line 509
+	*** 000a18	c7 46 e4 41 03 		mov	WORD PTR [bp-28],OFFSET DGROUP:$SG518
+;|*** 		"NIMBS02.3DZ",		// Base - Level 3
+; Line 510
+	*** 000a1d	c7 46 e6 4d 03 		mov	WORD PTR [bp-26],OFFSET DGROUP:$SG519
+;|*** 		"NIMST02.3DZ",		// Tower - Level 3
+; Line 511
+	*** 000a22	c7 46 e8 59 03 		mov	WORD PTR [bp-24],OFFSET DGROUP:$SG520
+;|*** 		"NIMBSS01.3DZ",		// Carrier - Level 4
+; Line 512
+	*** 000a27	c7 46 ea 65 03 		mov	WORD PTR [bp-22],OFFSET DGROUP:$SG521
+;|*** 		"NIMWAKE.3DZ"		// Wake
+;|*** 	};
+; Line 514
+	*** 000a2c	c7 46 ec 72 03 		mov	WORD PTR [bp-20],OFFSET DGROUP:$SG522
+;|*** 
+;|*** 	char *CarrierSaratoga[14] = {
+;|*** 		"SARAB09.3DZ",		// Base - Level 1
+; Line 517
+	*** 000a31	c7 86 7a ff 7e 03 	mov	WORD PTR [bp-134],OFFSET DGROUP:$SG524	;CarrierSaratoga
+;|*** 		"SARATOW.3DZ",		// Tower - Level 1 & 2
+; Line 518
+	*** 000a37	c7 86 7c ff 8a 03 	mov	WORD PTR [bp-132],OFFSET DGROUP:$SG525
+;|*** 		"SARAT108.3DZ",		// Deck - Level 1 & 2
+; Line 519
+	*** 000a3d	c7 86 7e ff 96 03 	mov	WORD PTR [bp-130],OFFSET DGROUP:$SG526
+;|*** 		"WIRESR.3DZ",		// Wires
+; Line 520
+	*** 000a43	c7 46 80 a3 03 		mov	WORD PTR [bp-128],OFFSET DGROUP:$SG527
+;|*** 		"LIGHTSR.3DZ",		// Ball
+; Line 521
+	*** 000a48	c7 46 82 ae 03 		mov	WORD PTR [bp-126],OFFSET DGROUP:$SG528
+;|*** 		"SBL1.3DZ",			// Blast Door 1
+; Line 522
+	*** 000a4d	c7 46 84 ba 03 		mov	WORD PTR [bp-124],OFFSET DGROUP:$SG529
+;|*** 		"SBL2.3DZ",			// Blast Door 2
+; Line 523
+	*** 000a52	c7 46 86 c3 03 		mov	WORD PTR [bp-122],OFFSET DGROUP:$SG530
+;|*** 		"SBL3.3DZ",			// Blast Door 3
+; Line 524
+	*** 000a57	c7 46 88 cc 03 		mov	WORD PTR [bp-120],OFFSET DGROUP:$SG531
+;|*** 		"SBL4.3DZ",			// Blast Door 4
+; Line 525
+	*** 000a5c	c7 46 8a d5 03 		mov	WORD PTR [bp-118],OFFSET DGROUP:$SG532
+;|*** 		"SARABM03.3DZ",		// Base - Level 2
+; Line 526
+	*** 000a61	c7 46 8c de 03 		mov	WORD PTR [bp-116],OFFSET DGROUP:$SG533
+;|*** 		"SARABS02.3DZ",		// Base - Level 3
+; Line 527
+	*** 000a66	c7 46 8e eb 03 		mov	WORD PTR [bp-114],OFFSET DGROUP:$SG534
+;|*** 		"SARATS01.3DZ",		// Tower - Level 3
+; Line 528
+	*** 000a6b	c7 46 90 f8 03 		mov	WORD PTR [bp-112],OFFSET DGROUP:$SG535
+;|*** 		"SARABSS1.3DZ",		// Carrier - Level 4
+; Line 529
+	*** 000a70	c7 46 92 05 04 		mov	WORD PTR [bp-110],OFFSET DGROUP:$SG536
+;|*** 		"SARAWAKE.3DZ"		// Wake
+;|*** 	};
+; Line 531
+	*** 000a75	c7 46 94 12 04 		mov	WORD PTR [bp-108],OFFSET DGROUP:$SG537
+;|*** 
+;|*** 	char *CoolF14Objects[9] = {
+;|*** 		"F14L09B.3DZ",
+; Line 534
+	*** 000a7a	c7 46 ee 1f 04 		mov	WORD PTR [bp-18],OFFSET DGROUP:$SG539	;CoolF14Objects
+;|*** 		"F14MNS1H.3DZ",
+; Line 535
+	*** 000a7f	c7 46 f0 2b 04 		mov	WORD PTR [bp-16],OFFSET DGROUP:$SG540
+;|*** 		"F14MPS1H.3DZ",
+; Line 536
+	*** 000a84	c7 46 f2 38 04 		mov	WORD PTR [bp-14],OFFSET DGROUP:$SG541
+;|*** 		"F14R09B.3DZ",
+; Line 537
+	*** 000a89	c7 46 f4 45 04 		mov	WORD PTR [bp-12],OFFSET DGROUP:$SG542
+;|*** 		"F14SMLO2.3DZ",
+; Line 538
+	*** 000a8e	c7 46 f6 51 04 		mov	WORD PTR [bp-10],OFFSET DGROUP:$SG543
+;|*** 		"F14SMC01.3DZ",
+; Line 539
+	*** 000a93	c7 46 f8 5e 04 		mov	WORD PTR [bp-8],OFFSET DGROUP:$SG544
+;|*** 		"F14SMR01.3DZ",
+; Line 540
+	*** 000a98	c7 46 fa 6b 04 		mov	WORD PTR [bp-6],OFFSET DGROUP:$SG545
+;|*** 		"F14SMM03.3DZ",
+; Line 541
+	*** 000a9d	c7 46 fc 78 04 		mov	WORD PTR [bp-4],OFFSET DGROUP:$SG546
+;|*** 		"F14SMX01.3DZ",
+; Line 542
+	*** 000aa2	c7 46 fe 85 04 		mov	WORD PTR [bp-2],OFFSET DGROUP:$SG547
+;|*** 	};
+;|*** 
+;|*** 	char *CoolF14Tails[22] = {
+;|*** //		"F14LTSAN.3DZ",
+;|*** //		"F14RTSAN.3DZ",
+;|*** 		"F14LT014.3DZ",	// Tophatters VF-14
+; Line 548
+	*** 000aa7	c7 46 a6 92 04 		mov	WORD PTR [bp-90],OFFSET DGROUP:$SG549	;CoolF14Tails
+;|*** 		"F14RT014.3DZ",
+; Line 549
+	*** 000aac	c7 46 a8 9f 04 		mov	WORD PTR [bp-88],OFFSET DGROUP:$SG550
+;|*** 		"F14LT032.3DZ", // Swordsman  VF-32
+; Line 550
+	*** 000ab1	c7 46 aa ac 04 		mov	WORD PTR [bp-86],OFFSET DGROUP:$SG551
+;|*** 		"F14RT032.3DZ",
+; Line 551
+	*** 000ab6	c7 46 ac b9 04 		mov	WORD PTR [bp-84],OFFSET DGROUP:$SG552
+;|*** 		"F14LT033.3DZ",	// Starfighters VF-33
+; Line 552
+	*** 000abb	c7 46 ae c6 04 		mov	WORD PTR [bp-82],OFFSET DGROUP:$SG553
+;|*** 		"F14RT033.3DZ",
+; Line 553
+	*** 000ac0	c7 46 b0 d3 04 		mov	WORD PTR [bp-80],OFFSET DGROUP:$SG554
+;|*** 		"F14LT041.3DZ",	// Black Aces	VF-41
+; Line 554
+	*** 000ac5	c7 46 b2 e0 04 		mov	WORD PTR [bp-78],OFFSET DGROUP:$SG555
+;|*** 		"F14RT041.3DZ",
+; Line 555
+	*** 000aca	c7 46 b4 ed 04 		mov	WORD PTR [bp-76],OFFSET DGROUP:$SG556
+;|*** 		"F14LT074.3DZ",	// Be-Devilers	VF-74
+; Line 556
+	*** 000acf	c7 46 b6 fa 04 		mov	WORD PTR [bp-74],OFFSET DGROUP:$SG557
+;|*** 		"F14RT074.3DZ",
+; Line 557
+	*** 000ad4	c7 46 b8 07 05 		mov	WORD PTR [bp-72],OFFSET DGROUP:$SG558
+;|*** 		"F14LT084.3DZ",	// Jolly Rogers VF-84
+; Line 558
+	*** 000ad9	c7 46 ba 14 05 		mov	WORD PTR [bp-70],OFFSET DGROUP:$SG559
+;|*** 		"F14RT084.3DZ",
+; Line 559
+	*** 000ade	c7 46 bc 21 05 		mov	WORD PTR [bp-68],OFFSET DGROUP:$SG560
+;|*** 		"F14LT102.3DZ",	// Diamondbacks	VF-102
+; Line 560
+	*** 000ae3	c7 46 be 2e 05 		mov	WORD PTR [bp-66],OFFSET DGROUP:$SG561
+;|*** 		"F14RT102.3DZ",
+; Line 561
+	*** 000ae8	c7 46 c0 3b 05 		mov	WORD PTR [bp-64],OFFSET DGROUP:$SG562
+;|*** 		"F14LT103.3DZ",	// Sluggers VF-103
+; Line 562
+	*** 000aed	c7 46 c2 48 05 		mov	WORD PTR [bp-62],OFFSET DGROUP:$SG563
+;|*** 		"F14RT103.3DZ",
+; Line 563
+	*** 000af2	c7 46 c4 55 05 		mov	WORD PTR [bp-60],OFFSET DGROUP:$SG564
+;|*** 		"F14LT142.3DZ",	// Ghostriders VF-142
+; Line 564
+	*** 000af7	c7 46 c6 62 05 		mov	WORD PTR [bp-58],OFFSET DGROUP:$SG565
+;|*** 		"F14RT142.3DZ",
+; Line 565
+	*** 000afc	c7 46 c8 6f 05 		mov	WORD PTR [bp-56],OFFSET DGROUP:$SG566
+;|*** 		"F14LT143.3DZ",	// Pukin' Dogs VF-143
+; Line 566
+	*** 000b01	c7 46 ca 7c 05 		mov	WORD PTR [bp-54],OFFSET DGROUP:$SG567
+;|*** 		"F14RT143.3DZ",
+; Line 567
+	*** 000b06	c7 46 cc 89 05 		mov	WORD PTR [bp-52],OFFSET DGROUP:$SG568
+;|*** 		"F14LT101.3DZ",
+; Line 568
+	*** 000b0b	c7 46 ce 96 05 		mov	WORD PTR [bp-50],OFFSET DGROUP:$SG569
+;|*** 		"F14RT101.3DZ"
+;|*** 	};
+; Line 570
+	*** 000b10	c7 46 d0 a3 05 		mov	WORD PTR [bp-48],OFFSET DGROUP:$SG570
+;|*** 
+;|*** 	char *Missiles[7] = {
+;|*** 		"SDWNDR3.3DZ",
+; Line 573
+	*** 000b15	c7 46 98 b0 05 		mov	WORD PTR [bp-104],OFFSET DGROUP:$SG572	;Missiles
+;|*** 		"SPARROW3.3DZ",
+; Line 574
+	*** 000b1a	c7 46 9a bc 05 		mov	WORD PTR [bp-102],OFFSET DGROUP:$SG573
+;|*** 		"PHOENIX.3DZ",
+; Line 575
+	*** 000b1f	c7 46 9c c9 05 		mov	WORD PTR [bp-100],OFFSET DGROUP:$SG574
+;|*** 		"FUELTANK.3DZ",
+; Line 576
+	*** 000b24	c7 46 9e d5 05 		mov	WORD PTR [bp-98],OFFSET DGROUP:$SG575
+;|*** 		"HARPOON.3DZ",
+; Line 577
+	*** 000b29	c7 46 a0 e2 05 		mov	WORD PTR [bp-96],OFFSET DGROUP:$SG576
+;|*** 		"SDWNDR.3DZ",
+; Line 578
+	*** 000b2e	c7 46 a2 ee 05 		mov	WORD PTR [bp-94],OFFSET DGROUP:$SG577
+;|*** 		"MK82.3DZ"
+;|*** 	};
+; Line 580
+	*** 000b33	c7 46 a4 f9 05 		mov	WORD PTR [bp-92],OFFSET DGROUP:$SG578
+;|*** 
+;|*** 	char *MiscSpecial[9] = {
+;|*** 		"SHADOW.3DZ",
+; Line 583
+	*** 000b38	c7 86 4a ff 02 06 	mov	WORD PTR [bp-182],OFFSET DGROUP:$SG580	;MiscSpecial
+;|*** 		"AMERCHUT.3DZ",
+; Line 584
+	*** 000b3e	c7 86 4c ff 0d 06 	mov	WORD PTR [bp-180],OFFSET DGROUP:$SG581
+;|*** 		"RAMP02.3DZ",
+; Line 585
+	*** 000b44	c7 86 4e ff 1a 06 	mov	WORD PTR [bp-178],OFFSET DGROUP:$SG582
+;|*** 		"TRPLAAA.3DZ",
+; Line 586
+	*** 000b4a	c7 86 50 ff 25 06 	mov	WORD PTR [bp-176],OFFSET DGROUP:$SG583
+;|*** 		"CANOPY06.3DZ",
+; Line 587
+	*** 000b50	c7 86 52 ff 31 06 	mov	WORD PTR [bp-174],OFFSET DGROUP:$SG584
+;|*** 		"CHAFF.3DZ",
+; Line 588
+	*** 000b56	c7 86 54 ff 3e 06 	mov	WORD PTR [bp-172],OFFSET DGROUP:$SG585
+;|*** 		"FLARE.3DZ"
+;|*** 	};
+; Line 590
+	*** 000b5c	c7 86 56 ff 48 06 	mov	WORD PTR [bp-170],OFFSET DGROUP:$SG586
+	*** 000b62	2b c0 			sub	ax,ax
+	*** 000b64	b9 04 00 		mov	cx,4
+	*** 000b67	8d be 58 ff 		lea	di,WORD PTR [bp-168]
+	*** 000b6b	16 			push	ss
+	*** 000b6c	07 			pop	es
+	*** 000b6d	f3 			rep
+	*** 000b6e	aa 			stosb
+;|*** 
+;|*** 	// Load Carrier
+;|*** 	for (i=0; i<14; i++) {
+; Line 593
+	*** 000b6f	c7 46 96 00 00 		mov	WORD PTR [bp-106],0	;i
+	*** 000b74	eb 38 			jmp	SHORT $F587
+;|*** 		switch(ConfigData.Carrier) {
+;|*** 			case 0:
+; Line 595
+					$SC594:
+;|*** 				if (!LoadEMSObject(CarrierAmerica[i],i)) {
+; Line 596
+	*** 000b76	ff 76 96 		push	WORD PTR [bp-106]	;i
+	*** 000b79	8b 76 96 		mov	si,WORD PTR [bp-106]	;i
+	*** 000b7c	d1 e6 			shl	si,1
+	*** 000b7e	ff b2 5e ff 		push	WORD PTR [bp-162][si]
+	*** 000b82	e8 00 00 		call	_LoadEMSObject
+	*** 000b85	83 c4 04 		add	sp,4
+	*** 000b88	0b c0 			or	ax,ax
+	*** 000b8a	75 1f 			jne	$FC588
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierAmerica[i]);
+; Line 597
+	*** 000b8c	ff b2 5e ff 		push	WORD PTR [bp-162][si]
+	*** 000b90	b8 52 06 		mov	ax,OFFSET DGROUP:$SG596
+					$L20009:
+	*** 000b93	50 			push	ax
+	*** 000b94	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000b97	50 			push	ax
+	*** 000b98	e8 00 00 		call	_sprintf
+	*** 000b9b	83 c4 06 		add	sp,6
+;|*** 					Message(Txt,DEBUG_MSG);
+; Line 598
+	*** 000b9e	2b c0 			sub	ax,ax
+	*** 000ba0	50 			push	ax
+	*** 000ba1	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000ba4	50 			push	ax
+	*** 000ba5	e8 00 00 		call	_Message
+	*** 000ba8	83 c4 04 		add	sp,4
+;|*** 				}
+; Line 599
+;|*** 			break;
+;|*** 			case 1:
+;|*** 		   		if (!LoadEMSObject(CarrierNimitz[i],i)) {
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierNimitz[i]);
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 			case 2:
+;|*** 				if (!LoadEMSObject(CarrierSaratoga[i],i)) {
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierSaratoga[i]);
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 			default:
+;|***    				if (!LoadEMSObject(CarrierAmerica[i],i)) {
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierAmerica[i]);
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 		}
+;|*** 	}
+; Line 620
+					$FC588:
+	*** 000bab	ff 46 96 		inc	WORD PTR [bp-106]	;i
+					$F587:
+	*** 000bae	83 7e 96 0e 		cmp	WORD PTR [bp-106],14	;i
+	*** 000bb2	7d 6a 			jge	$FB589
+;|*** 		switch(ConfigData.Carrier) {
+; Line 594
+	*** 000bb4	a1 16 00 		mov	ax,WORD PTR _ConfigData+22
+	*** 000bb7	0b c0 			or	ax,ax
+	*** 000bb9	74 bb 			je	$SC594
+	*** 000bbb	48 			dec	ax
+	*** 000bbc	74 22 			je	$SC597
+	*** 000bbe	48 			dec	ax
+	*** 000bbf	74 3d 			je	$SC600
+;|*** 			case 0:
+;|*** 				if (!LoadEMSObject(CarrierAmerica[i],i)) {
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierAmerica[i]);
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 			case 1:
+;|*** 		   		if (!LoadEMSObject(CarrierNimitz[i],i)) {
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierNimitz[i]);
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 			case 2:
+;|*** 				if (!LoadEMSObject(CarrierSaratoga[i],i)) {
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierSaratoga[i]);
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 			default:
+;|***    				if (!LoadEMSObject(CarrierAmerica[i],i)) {
+; Line 614
+	*** 000bc1	ff 76 96 		push	WORD PTR [bp-106]	;i
+	*** 000bc4	8b 76 96 		mov	si,WORD PTR [bp-106]	;i
+	*** 000bc7	d1 e6 			shl	si,1
+	*** 000bc9	ff b2 5e ff 		push	WORD PTR [bp-162][si]
+	*** 000bcd	e8 00 00 		call	_LoadEMSObject
+	*** 000bd0	83 c4 04 		add	sp,4
+	*** 000bd3	0b c0 			or	ax,ax
+	*** 000bd5	75 d4 			jne	$FC588
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierAmerica[i]);
+; Line 615
+	*** 000bd7	ff b2 5e ff 		push	WORD PTR [bp-162][si]
+	*** 000bdb	b8 ac 06 		mov	ax,OFFSET DGROUP:$SG605
+	*** 000bde	eb b3 			jmp	SHORT $L20009
+;|*** 			case 1:
+; Line 601
+					$SC597:
+;|*** 		   		if (!LoadEMSObject(CarrierNimitz[i],i)) {
+; Line 602
+	*** 000be0	ff 76 96 		push	WORD PTR [bp-106]	;i
+	*** 000be3	8b 76 96 		mov	si,WORD PTR [bp-106]	;i
+	*** 000be6	d1 e6 			shl	si,1
+	*** 000be8	ff 72 d2 		push	WORD PTR [bp-46][si]
+	*** 000beb	e8 00 00 		call	_LoadEMSObject
+	*** 000bee	83 c4 04 		add	sp,4
+	*** 000bf1	0b c0 			or	ax,ax
+	*** 000bf3	75 b6 			jne	$FC588
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierNimitz[i]);
+; Line 603
+	*** 000bf5	ff 72 d2 		push	WORD PTR [bp-46][si]
+	*** 000bf8	b8 70 06 		mov	ax,OFFSET DGROUP:$SG599
+	*** 000bfb	eb 96 			jmp	SHORT $L20009
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 			case 2:
+; Line 607
+	*** 000bfd	90 			nop	
+					$SC600:
+;|*** 				if (!LoadEMSObject(CarrierSaratoga[i],i)) {
+; Line 608
+	*** 000bfe	ff 76 96 		push	WORD PTR [bp-106]	;i
+	*** 000c01	8b 76 96 		mov	si,WORD PTR [bp-106]	;i
+	*** 000c04	d1 e6 			shl	si,1
+	*** 000c06	ff b2 7a ff 		push	WORD PTR [bp-134][si]
+	*** 000c0a	e8 00 00 		call	_LoadEMSObject
+	*** 000c0d	83 c4 04 		add	sp,4
+	*** 000c10	0b c0 			or	ax,ax
+	*** 000c12	75 97 			jne	$FC588
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierSaratoga[i]);
+; Line 609
+	*** 000c14	ff b2 7a ff 		push	WORD PTR [bp-134][si]
+	*** 000c18	b8 8e 06 		mov	ax,OFFSET DGROUP:$SG602
+	*** 000c1b	e9 75 ff 		jmp	$L20009
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 			default:
+; Line 613
+					$FB589:
+;|***    				if (!LoadEMSObject(CarrierAmerica[i],i)) {
+;|*** 					sprintf(Txt,"Special Object Not Found: %s\n",CarrierAmerica[i]);
+;|*** 					Message(Txt,DEBUG_MSG);
+;|*** 				}
+;|*** 			break;
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 	// Load F-14
+;|*** 
+;|*** 	for (j=0,i=14; i<23; j++,i++) {
+; Line 624
+	*** 000c1e	c7 86 5c ff 00 00 	mov	WORD PTR [bp-164],0	;j
+	*** 000c24	c7 46 96 0e 00 		mov	WORD PTR [bp-106],14	;i
+					$FC607:
+;|***    		if (!LoadEMSObject(CoolF14Objects[j],i)) {
+; Line 625
+	*** 000c29	ff 76 96 		push	WORD PTR [bp-106]	;i
+	*** 000c2c	8b b6 5c ff 		mov	si,WORD PTR [bp-164]	;j
+	*** 000c30	d1 e6 			shl	si,1
+	*** 000c32	ff 72 ee 		push	WORD PTR [bp-18][si]
+	*** 000c35	e8 00 00 		call	_LoadEMSObject
+	*** 000c38	83 c4 04 		add	sp,4
+	*** 000c3b	0b c0 			or	ax,ax
+	*** 000c3d	75 1e 			jne	$L20006
+;|*** 			sprintf(Txt,"Special Object Not Found: %s\n",CoolF14Objects[j]);
+; Line 626
+	*** 000c3f	ff 72 ee 		push	WORD PTR [bp-18][si]
+	*** 000c42	b8 ca 06 		mov	ax,OFFSET DGROUP:$SG610
+	*** 000c45	50 			push	ax
+	*** 000c46	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000c49	50 			push	ax
+	*** 000c4a	e8 00 00 		call	_sprintf
+	*** 000c4d	83 c4 06 		add	sp,6
+;|*** 			Message(Txt,DEBUG_MSG);
+; Line 627
+	*** 000c50	2b c0 			sub	ax,ax
+	*** 000c52	50 			push	ax
+	*** 000c53	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000c56	50 			push	ax
+	*** 000c57	e8 00 00 		call	_Message
+	*** 000c5a	83 c4 04 		add	sp,4
+;|*** 		}
+; Line 628
+;|*** 	}
+; Line 629
+					$L20006:
+	*** 000c5d	ff 86 5c ff 		inc	WORD PTR [bp-164]	;j
+	*** 000c61	ff 46 96 		inc	WORD PTR [bp-106]	;i
+	*** 000c64	83 7e 96 17 		cmp	WORD PTR [bp-106],23	;i
+	*** 000c68	7c bf 			jl	$FC607
+;|*** 
+;|*** 	// Load F-14 Squadron
+;|*** 
+;|*** 	squad = ConfigData.Squadron;
+;|*** 	if (squad<0) squad = 20;
+; Line 634
+	*** 000c6a	a1 18 00 		mov	ax,WORD PTR _ConfigData+24
+	*** 000c6d	89 86 48 ff 		mov	WORD PTR [bp-184],ax	;squad
+	*** 000c71	0b c0 			or	ax,ax
+	*** 000c73	7d 06 			jge	$I611
+	*** 000c75	c7 86 48 ff 14 00 	mov	WORD PTR [bp-184],20	;squad
+;|*** 	if (squad>9) squad = 20;
+; Line 635
+					$I611:
+	*** 000c7b	83 be 48 ff 09 		cmp	WORD PTR [bp-184],9	;squad
+	*** 000c80	7e 06 			jle	$I612
+	*** 000c82	c7 86 48 ff 14 00 	mov	WORD PTR [bp-184],20	;squad
+;|*** 	squad = squad * 2;
+; Line 636
+					$I612:
+;|*** 
+;|***    	if (!LoadEMSObject(CoolF14Tails[squad],23)) {
+; Line 638
+	*** 000c88	b8 17 00 		mov	ax,23
+	*** 000c8b	50 			push	ax
+	*** 000c8c	d1 a6 48 ff 		shl	WORD PTR [bp-184],1	;squad
+	*** 000c90	8b b6 48 ff 		mov	si,WORD PTR [bp-184]	;squad
+	*** 000c94	d1 e6 			shl	si,1
+	*** 000c96	ff 72 a6 		push	WORD PTR [bp-90][si]
+	*** 000c99	e8 00 00 		call	_LoadEMSObject
+	*** 000c9c	83 c4 04 		add	sp,4
+	*** 000c9f	0b c0 			or	ax,ax
+	*** 000ca1	75 1e 			jne	$I613
+;|*** 		sprintf(Txt,"Special Object Not Found: %s\n",CoolF14Tails[squad]);
+; Line 639
+	*** 000ca3	ff 72 a6 		push	WORD PTR [bp-90][si]
+	*** 000ca6	b8 e8 06 		mov	ax,OFFSET DGROUP:$SG614
+	*** 000ca9	50 			push	ax
+	*** 000caa	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000cad	50 			push	ax
+	*** 000cae	e8 00 00 		call	_sprintf
+	*** 000cb1	83 c4 06 		add	sp,6
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 640
+	*** 000cb4	2b c0 			sub	ax,ax
+	*** 000cb6	50 			push	ax
+	*** 000cb7	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000cba	50 			push	ax
+	*** 000cbb	e8 00 00 		call	_Message
+	*** 000cbe	83 c4 04 		add	sp,4
+;|*** 	}
+; Line 641
+;|*** 
+;|*** 
+;|***    	if (!LoadEMSObject(CoolF14Tails[squad+1],24)) {
+; Line 644
+					$I613:
+	*** 000cc1	b8 18 00 		mov	ax,24
+	*** 000cc4	50 			push	ax
+	*** 000cc5	8b b6 48 ff 		mov	si,WORD PTR [bp-184]	;squad
+	*** 000cc9	d1 e6 			shl	si,1
+	*** 000ccb	ff 72 a8 		push	WORD PTR [bp-88][si]
+	*** 000cce	e8 00 00 		call	_LoadEMSObject
+	*** 000cd1	83 c4 04 		add	sp,4
+	*** 000cd4	0b c0 			or	ax,ax
+	*** 000cd6	75 1e 			jne	$I615
+;|*** 		sprintf(Txt,"Special Object Not Found: %s\n",CoolF14Tails[squad+1]);
+; Line 645
+	*** 000cd8	ff 72 a8 		push	WORD PTR [bp-88][si]
+	*** 000cdb	b8 06 07 		mov	ax,OFFSET DGROUP:$SG616
+	*** 000cde	50 			push	ax
+	*** 000cdf	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000ce2	50 			push	ax
+	*** 000ce3	e8 00 00 		call	_sprintf
+	*** 000ce6	83 c4 06 		add	sp,6
+;|*** 		Message(Txt,DEBUG_MSG);
+; Line 646
+	*** 000ce9	2b c0 			sub	ax,ax
+	*** 000ceb	50 			push	ax
+	*** 000cec	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000cef	50 			push	ax
+	*** 000cf0	e8 00 00 		call	_Message
+	*** 000cf3	83 c4 04 		add	sp,4
+;|*** 	}
+; Line 647
+;|*** 
+;|*** 	// Load Missiles
+;|*** 
+;|*** 	for (j=0,i=25; i<32; j++,i++) {
+; Line 651
+					$I615:
+	*** 000cf6	c7 86 5c ff 00 00 	mov	WORD PTR [bp-164],0	;j
+	*** 000cfc	c7 46 96 19 00 		mov	WORD PTR [bp-106],25	;i
+					$FC618:
+;|***    		if (!LoadEMSObject(Missiles[j],i)) {
+; Line 652
+	*** 000d01	ff 76 96 		push	WORD PTR [bp-106]	;i
+	*** 000d04	8b b6 5c ff 		mov	si,WORD PTR [bp-164]	;j
+	*** 000d08	d1 e6 			shl	si,1
+	*** 000d0a	ff 72 98 		push	WORD PTR [bp-104][si]
+	*** 000d0d	e8 00 00 		call	_LoadEMSObject
+	*** 000d10	83 c4 04 		add	sp,4
+	*** 000d13	0b c0 			or	ax,ax
+	*** 000d15	75 1e 			jne	$L20007
+;|*** 			sprintf(Txt,"Special Object Not Found: %s\n",Missiles[j]);
+; Line 653
+	*** 000d17	ff 72 98 		push	WORD PTR [bp-104][si]
+	*** 000d1a	b8 24 07 		mov	ax,OFFSET DGROUP:$SG621
+	*** 000d1d	50 			push	ax
+	*** 000d1e	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000d21	50 			push	ax
+	*** 000d22	e8 00 00 		call	_sprintf
+	*** 000d25	83 c4 06 		add	sp,6
+;|*** 			Message(Txt,DEBUG_MSG);
+; Line 654
+	*** 000d28	2b c0 			sub	ax,ax
+	*** 000d2a	50 			push	ax
+	*** 000d2b	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000d2e	50 			push	ax
+	*** 000d2f	e8 00 00 		call	_Message
+	*** 000d32	83 c4 04 		add	sp,4
+;|*** 		}
+; Line 655
+;|*** 	}
+; Line 656
+					$L20007:
+	*** 000d35	ff 86 5c ff 		inc	WORD PTR [bp-164]	;j
+	*** 000d39	ff 46 96 		inc	WORD PTR [bp-106]	;i
+	*** 000d3c	83 7e 96 20 		cmp	WORD PTR [bp-106],32	;i
+	*** 000d40	7c bf 			jl	$FC618
+;|*** 
+;|*** 	// Misc.
+;|*** 
+;|*** 	for (j=0,i=32; i<39; j++,i++) {
+; Line 660
+	*** 000d42	c7 86 5c ff 00 00 	mov	WORD PTR [bp-164],0	;j
+	*** 000d48	c7 46 96 20 00 		mov	WORD PTR [bp-106],32	;i
+					$FC623:
+;|***    		if (!LoadEMSObject(MiscSpecial[j],i)) {
+; Line 661
+	*** 000d4d	ff 76 96 		push	WORD PTR [bp-106]	;i
+	*** 000d50	8b b6 5c ff 		mov	si,WORD PTR [bp-164]	;j
+	*** 000d54	d1 e6 			shl	si,1
+	*** 000d56	ff b2 4a ff 		push	WORD PTR [bp-182][si]
+	*** 000d5a	e8 00 00 		call	_LoadEMSObject
+	*** 000d5d	83 c4 04 		add	sp,4
+	*** 000d60	0b c0 			or	ax,ax
+	*** 000d62	75 1f 			jne	$L20008
+;|*** 			sprintf(Txt,"Special Object Not Found: %s\n",MiscSpecial[j]);
+; Line 662
+	*** 000d64	ff b2 4a ff 		push	WORD PTR [bp-182][si]
+	*** 000d68	b8 42 07 		mov	ax,OFFSET DGROUP:$SG626
+	*** 000d6b	50 			push	ax
+	*** 000d6c	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000d6f	50 			push	ax
+	*** 000d70	e8 00 00 		call	_sprintf
+	*** 000d73	83 c4 06 		add	sp,6
+;|*** 			Message(Txt,DEBUG_MSG);
+; Line 663
+	*** 000d76	2b c0 			sub	ax,ax
+	*** 000d78	50 			push	ax
+	*** 000d79	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000d7c	50 			push	ax
+	*** 000d7d	e8 00 00 		call	_Message
+	*** 000d80	83 c4 04 		add	sp,4
+;|*** 		}
+; Line 664
+;|*** 	}
+; Line 665
+					$L20008:
+	*** 000d83	ff 86 5c ff 		inc	WORD PTR [bp-164]	;j
+	*** 000d87	ff 46 96 		inc	WORD PTR [bp-106]	;i
+	*** 000d8a	83 7e 96 27 		cmp	WORD PTR [bp-106],39	;i
+	*** 000d8e	7c bd 			jl	$FC623
+;|*** 
+;|*** 	EMS3DObjectSlot=39;
+; Line 667
+	*** 000d90	c7 06 7c 00 27 00 	mov	WORD PTR _EMS3DObjectSlot,39
+;|*** 	MissileAdd(ML_AIM54C);
+; Line 668
+	*** 000d96	b8 30 00 		mov	ax,48
+	*** 000d99	50 			push	ax
+	*** 000d9a	e8 0f f7 		call	_MissileAdd
+	*** 000d9d	83 c4 02 		add	sp,2
+;|*** 	MissileAdd(ML_AIM7M);
+; Line 669
+	*** 000da0	b8 2e 00 		mov	ax,46
+	*** 000da3	50 			push	ax
+	*** 000da4	e8 05 f7 		call	_MissileAdd
+	*** 000da7	83 c4 02 		add	sp,2
+;|*** 	MissileAdd(ML_AIM9M);
+; Line 670
+	*** 000daa	b8 2f 00 		mov	ax,47
+	*** 000dad	50 			push	ax
+	*** 000dae	e8 fb f6 		call	_MissileAdd
+	*** 000db1	83 c4 02 		add	sp,2
+;|*** }
+; Line 671
+	*** 000db4	5e 			pop	si
+	*** 000db5	5f 			pop	di
+	*** 000db6	8b e5 			mov	sp,bp
+	*** 000db8	5d 			pop	bp
+	*** 000db9	c3 			ret	
+
+_LoadSpecialObjects	ENDP
+_TEXT	ENDS
+END
+;|*** 
+;|*** 

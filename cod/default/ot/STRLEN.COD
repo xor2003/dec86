@@ -1,0 +1,86 @@
+;	Static Name Aliases
+;
+	TITLE   STRLEN.C
+	NAME    STRLEN
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	__chkstk:NEAR
+_DATA      SEGMENT
+$SG103	DB	'test',  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** main()
+;|*** { char *s = "test";
+; Line 2
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 02 00 		mov	ax,2
+	*** 000006	e8 00 00 		call	__chkstk
+;	s = -2
+	*** 000009	c7 46 fe 00 00 		mov	WORD PTR [bp-2],OFFSET DGROUP:$SG103	;s
+;|*** 
+;|*** 	strlen(s);
+; Line 4
+	*** 00000e	b8 00 00 		mov	ax,OFFSET DGROUP:$SG103
+	*** 000011	50 			push	ax
+	*** 000012	e8 00 00 		call	_strlen
+;|*** }
+; Line 5
+	*** 000015	8b e5 			mov	sp,bp
+	*** 000017	5d 			pop	bp
+	*** 000018	c3 			ret	
+	*** 000019	90 			nop	
+
+_main	ENDP
+;|*** 
+;|*** strlen(char *s)
+;|*** { int n = 0;
+; Line 8
+	PUBLIC	_strlen
+_strlen	PROC NEAR
+	*** 00001a	55 			push	bp
+	*** 00001b	8b ec 			mov	bp,sp
+	*** 00001d	b8 02 00 		mov	ax,2
+	*** 000020	e8 00 00 		call	__chkstk
+;	s = 4
+;	n = -2
+	*** 000023	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;n
+;|*** 
+;|*** 	while (*s++)
+; Line 10
+	*** 000028	eb 03 			jmp	SHORT $L20001
+					$FC109:
+;|*** 	  n++;
+; Line 11
+	*** 00002a	ff 46 fe 		inc	WORD PTR [bp-2]	;n
+					$L20001:
+	*** 00002d	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;s
+	*** 000030	ff 46 04 		inc	WORD PTR [bp+4]	;s
+	*** 000033	80 3f 00 		cmp	BYTE PTR [bx],0
+	*** 000036	75 f2 			jne	$FC109
+;|*** 	return (n);
+; Line 12
+	*** 000038	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;n
+	*** 00003b	8b e5 			mov	sp,bp
+	*** 00003d	5d 			pop	bp
+	*** 00003e	c3 			ret	
+	*** 00003f	90 			nop	
+
+_strlen	ENDP
+_TEXT	ENDS
+END
+;|*** }

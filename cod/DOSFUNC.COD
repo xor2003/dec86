@@ -1,0 +1,1387 @@
+;	Static Name Aliases
+;
+;	$S393__assertstring	EQU	_assertstring
+;	$S424_rin	EQU	rin
+;	$S425_rout	EQU	rout
+;	$S426_sreg	EQU	sreg
+	TITLE   dosfunc.c
+	NAME    dosfunc
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_sprintf:NEAR
+EXTRN	_sizeString:NEAR
+EXTRN	_intdos:NEAR
+EXTRN	_strcat:NEAR
+EXTRN	_intdosx:NEAR
+EXTRN	_abort:NEAR
+EXTRN	_fflush:NEAR
+EXTRN	_strlen:NEAR
+EXTRN	_fprintf:NEAR
+EXTRN	_INFO:NEAR
+EXTRN	_ERROR:NEAR
+EXTRN	_DEBUG:NEAR
+_BSS      SEGMENT
+COMM NEAR	_exeLoadParams:	BYTE:	 22
+COMM NEAR	_ovlLoadParams:	BYTE:	 4
+EXTRN	__psp:WORD
+EXTRN	__iob:BYTE
+_BSS      ENDS
+_DATA      SEGMENT
+$SG431	DB	'dosfunc.c',  00H
+$SG432	DB	'err == rout.x.ax',  00H
+$SG434	DB	'dos_alloc: error allocating %up (%lu): error 0x%x, max avail'
+	DB	' %u',  00H
+	ORG	$+41
+$SG439	DB	'dos_free: error freeing segment 0x%x: error 0x%x',  00H
+$SG445	DB	'dosfunc.c',  00H
+$SG446	DB	'err == rout.x.ax',  00H
+$SG448	DB	'dos_resize: error resizing segment 0x%x to %u - error 0x%x m'
+	DB	'ax avail %u',  00H
+$SG452	DB	'dos_getfree(): unexpected: succeeded in allocating 0xffff pa'
+	DB	'ragraphs?',  00H
+$SG483	DB	'dos_loadprog(): loading %s and executing with cmdline ''%Fs'''
+	DB	00H
+$SG485	DB	'dos_loadprog(): loading %s with cmdline ''%Fs''',  00H
+$SG487	DB	'dos_loadprog(): loading %s at segment 0x%x as overlay',  00H
+$SG489	DB	'dos_loadprog(): unsupported load type: 0x%hx',  00H
+$SG491	DB	'dos_loadprog: unable to load %s at 0x%x, error 0x%x',  00H
+$SG492	DB	'dos_loadprog(): success, ax = 0x%x, cs:ip = %X:%X, ss:sp = %'
+	DB	'X:%X',  00H
+$SG528	DB	'Walking the MCB chain, LoL @ %p',  00H
+$SG537	DB	'desc = ''%.8Fs''',  00H
+$SG544	DB	' <--- free',  00H
+$SG546	DB	' <--- DOS',  00H
+$SG548	DB	'#%03d [0x%04x]: pid = 0x%04x, size = %05up, %s',  00H
+$SG550	DB	'unexpected MCB type: %Xh',  00H
+$SG553	DB	'summary: total %s',  00H
+$SG555	DB	', alloc %s',  00H
+$SG556	DB	', free %s',  00H
+$SG557	DB	'%s',  00H
+$SG574	DB	'unexpected MCB type: %Xh',  00H
+	ORG	$-787
+$S393__assertstring	DB	'Assertion failed: %s, file %s, line %d',  0aH,  00H
+_DATA      ENDS
+_BSS      SEGMENT
+	ORG	$+22
+$S424_rin	DW 07H DUP (?)
+	ORG	$-28
+$S425_rout	DW 07H DUP (?)
+	ORG	$-22
+$S426_sreg	DW 04H DUP (?)
+_BSS      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "dosfunc.h"
+;|*** #include "inttype.h"
+;|*** #include "output.h"
+;|*** #include "memory.h"
+;|*** #include "util.h"
+;|*** #include "offsets.h"
+;|*** 
+;|*** #include <STDIO.H>
+;|*** #include <DOS.H>
+;|*** #include <STDDEF.H>
+;|*** #include <STDLIB.H>
+;|*** #include <ASSERT.H>
+;|*** 
+;|*** typedef enum {
+;|***     DOSF_ALLOCMEM = 0x48,
+;|***     DOSF_FREEMEM = 0x49,
+;|***     DOSF_RESIZEMEM = 0x4a,
+;|***     DOSF_LOADPROG = 0x4b,
+;|***     DOSF_RETURNCODE = 0x4d,
+;|***     DOSF_SYSVARS = 0x52,
+;|*** } DosFunctions;
+;|*** 
+;|*** typedef enum {
+;|***     DOSERR_NONE = 0x00, // (0)   no error
+;|***     DOSERR_INVFUNC = 0x01, // (1)   function number invalid
+;|***     DOSERR_FILENF = 0x02, // (2)   file not found
+;|***     DOSERR_PATHNF = 0x03, // (3)   path not found
+;|***     DOSERR_HANDLES = 0x04, // (4)   too many open files (no handles available)
+;|***     DOSERR_ACCESS = 0x05, // (5)   access denied
+;|***     DOSERR_BADHANDLE = 0x06, // (6)   invalid handle
+;|***     DOSERR_MCBDEST = 0x07, // (7)   memory control block destroyed
+;|***     DOSERR_NOMEM = 0x08, // (8)   insufficient memory
+;|***     DOSERR_MCBINV = 0x09, // (9)   memory block address invalid
+;|***     DOSERR_ENVINV = 0x0A, // (10)  environment invalid (usually >32K in length)
+;|***     DOSERR_FMTINV = 0x0B, // (11)  format invalid
+;|***     DOSERR_AXSCODEINV = 0x0C, // (12)  access code invalid
+;|***     DOSERR_DATAINV = 0x0D, // (13)  data invalid
+;|***     DOSERR_RESERVED = 0x0E, // (14)  reserved
+;|***     DOSERR_OFLOW = 0x0E, // (14)  (PTS-DOS 6.51+, S/DOS 1.0+) fixup overflow
+;|***     DOSERR_DRIVEINV = 0x0F, // (15)  invalid drive
+;|***     DOSERR_RMDIRCUR = 0x10, // (16)  attempted to remove current directory
+;|***     DOSERR_NSAMEDEV = 0x11, // (17)  not same device
+;|***     DOSERR_FILESNMORE = 0x12, // (18)  no more files
+;|*** } DosError;
+;|*** 
+;|*** #define PID_NONE 0
+;|*** #define PID_DOS 8
+;|*** 
+;|*** static union REGS rin, rout;
+;|*** static struct SREGS sreg;
+;|*** 
+;|*** uint16 dos_alloc(const size_t paragraphs) {
+; Line 52
+	PUBLIC	_dos_alloc
+_dos_alloc	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 02 		sub	sp,2
+;	paragraphs = 4
+;	err = -2
+;|***     int err;
+;|***     rin.h.ah = DOSF_ALLOCMEM;
+; Line 54
+	*** 000006	c6 06 17 00 48 		mov	BYTE PTR $S424_rin+1,72
+;|***     rin.x.bx = paragraphs;
+; Line 55
+	*** 00000b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;paragraphs
+	*** 00000e	a3 18 00 		mov	WORD PTR $S424_rin+2,ax
+;|***     err = intdos(&rin, &rout);
+; Line 56
+	*** 000011	b8 08 00 		mov	ax,OFFSET DGROUP:$S425_rout
+	*** 000014	50 			push	ax
+	*** 000015	b8 16 00 		mov	ax,OFFSET DGROUP:$S424_rin
+	*** 000018	50 			push	ax
+	*** 000019	e8 00 00 		call	_intdos
+	*** 00001c	83 c4 04 		add	sp,4
+	*** 00001f	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+;|***     assert(err == rout.x.ax);
+; Line 57
+	*** 000022	a1 08 00 		mov	ax,WORD PTR $S425_rout
+	*** 000025	39 46 fe 		cmp	WORD PTR [bp-2],ax	;err
+	*** 000028	74 27 			je	$I430
+	*** 00002a	b8 39 00 		mov	ax,57
+	*** 00002d	50 			push	ax
+	*** 00002e	b8 00 00 		mov	ax,OFFSET DGROUP:$SG431
+	*** 000031	50 			push	ax
+	*** 000032	b8 0a 00 		mov	ax,OFFSET DGROUP:$SG432
+	*** 000035	50 			push	ax
+	*** 000036	b8 5c 00 		mov	ax,OFFSET DGROUP:$S393__assertstring
+	*** 000039	50 			push	ax
+	*** 00003a	b8 10 00 		mov	ax,OFFSET __iob+16
+	*** 00003d	50 			push	ax
+	*** 00003e	e8 00 00 		call	_fprintf
+	*** 000041	83 c4 0a 		add	sp,10
+	*** 000044	b8 10 00 		mov	ax,OFFSET __iob+16
+	*** 000047	50 			push	ax
+	*** 000048	e8 00 00 		call	_fflush
+	*** 00004b	83 c4 02 		add	sp,2
+	*** 00004e	e8 00 00 		call	_abort
+					$I430:
+;|***     if (rout.x.cflag != 0) {
+; Line 58
+	*** 000051	83 3e 14 00 00 		cmp	WORD PTR $S425_rout+12,0
+	*** 000056	74 2b 			je	$I433
+;|***         ERROR("dos_alloc: error allocating %up (%lu): error 0x%x, max avail %u", paragraphs, PARA_TO_BYTES(paragraphs), (int)err, rout.x.bx);
+; Line 59
+	*** 000058	ff 36 0a 00 		push	WORD PTR $S425_rout+2
+	*** 00005c	ff 76 fe 		push	WORD PTR [bp-2]	;err
+	*** 00005f	8b 46 04 		mov	ax,WORD PTR [bp+4]	;paragraphs
+	*** 000062	2b d2 			sub	dx,dx
+	*** 000064	b1 04 			mov	cl,4
+					$L20000:
+	*** 000066	d1 e0 			shl	ax,1
+	*** 000068	d1 d2 			rcl	dx,1
+	*** 00006a	fe c9 			dec	cl
+	*** 00006c	74 02 			je	$L20001
+	*** 00006e	eb f6 			jmp	SHORT $L20000
+					$L20001:
+	*** 000070	52 			push	dx
+	*** 000071	50 			push	ax
+	*** 000072	ff 76 04 		push	WORD PTR [bp+4]	;paragraphs
+	*** 000075	b8 1b 00 		mov	ax,OFFSET DGROUP:$SG434
+	*** 000078	50 			push	ax
+	*** 000079	e8 00 00 		call	_ERROR
+	*** 00007c	83 c4 0c 		add	sp,12
+;|***         return 0;
+; Line 60
+	*** 00007f	2b c0 			sub	ax,ax
+	*** 000081	eb 05 			jmp	SHORT $EX428
+;|***     }
+; Line 61
+;|***     return rout.x.ax;
+; Line 62
+					$I433:
+	*** 000083	a1 08 00 		mov	ax,WORD PTR $S425_rout
+	*** 000086	eb 00 			jmp	SHORT $EX428
+;|*** }
+; Line 63
+					$EX428:
+	*** 000088	8b e5 			mov	sp,bp
+	*** 00008a	5d 			pop	bp
+	*** 00008b	c3 			ret	
+
+_dos_alloc	ENDP
+;|*** 
+;|*** int dos_free(const uint16 segment) {
+; Line 65
+	PUBLIC	_dos_free
+_dos_free	PROC NEAR
+	*** 00008c	55 			push	bp
+	*** 00008d	8b ec 			mov	bp,sp
+	*** 00008f	83 ec 02 		sub	sp,2
+;	segment = 4
+;	err = -2
+;|***     int err;
+;|***     rin.h.ah = DOSF_FREEMEM;
+; Line 67
+	*** 000092	c6 06 17 00 49 		mov	BYTE PTR $S424_rin+1,73
+;|***     sreg.es = segment;
+; Line 68
+	*** 000097	8b 46 04 		mov	ax,WORD PTR [bp+4]	;segment
+	*** 00009a	a3 00 00 		mov	WORD PTR $S426_sreg,ax
+;|***     err = intdosx(&rin, &rout, &sreg);
+; Line 69
+	*** 00009d	b8 00 00 		mov	ax,OFFSET DGROUP:$S426_sreg
+	*** 0000a0	50 			push	ax
+	*** 0000a1	b8 08 00 		mov	ax,OFFSET DGROUP:$S425_rout
+	*** 0000a4	50 			push	ax
+	*** 0000a5	b8 16 00 		mov	ax,OFFSET DGROUP:$S424_rin
+	*** 0000a8	50 			push	ax
+	*** 0000a9	e8 00 00 		call	_intdosx
+	*** 0000ac	83 c4 06 		add	sp,6
+	*** 0000af	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+;|***     // RBIL: "Apparently [int 21/49hhj] never returns an error 07h, despite official docs; DOS 2.1+ code contains only an error 09h exit. 
+;|***     // DOS 2.1-6.0 does not coalesce adjacent free blocks when a block is freed, only when a block is allocated or resized. 
+;|***     // The code for this function is identical in DOS 2.1-6.0 except for calls to start/end a critical section in DOS 3.0+""
+;|***     if (rout.x.cflag != 0) {
+; Line 73
+	*** 0000b2	83 3e 14 00 00 		cmp	WORD PTR $S425_rout+12,0
+	*** 0000b7	74 13 			je	$I438
+;|***         ERROR("dos_free: error freeing segment 0x%x: error 0x%x", segment, (int)err);
+; Line 74
+	*** 0000b9	50 			push	ax
+	*** 0000ba	ff 76 04 		push	WORD PTR [bp+4]	;segment
+	*** 0000bd	b8 84 00 		mov	ax,OFFSET DGROUP:$SG439
+	*** 0000c0	50 			push	ax
+	*** 0000c1	e8 00 00 		call	_ERROR
+	*** 0000c4	83 c4 06 		add	sp,6
+;|***         return err;
+; Line 75
+	*** 0000c7	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;err
+	*** 0000ca	eb 04 			jmp	SHORT $EX436
+;|***     }
+; Line 76
+;|***     return 0;
+; Line 77
+					$I438:
+	*** 0000cc	2b c0 			sub	ax,ax
+	*** 0000ce	eb 00 			jmp	SHORT $EX436
+;|*** }
+; Line 78
+					$EX436:
+	*** 0000d0	8b e5 			mov	sp,bp
+	*** 0000d2	5d 			pop	bp
+	*** 0000d3	c3 			ret	
+
+_dos_free	ENDP
+;|*** 
+;|*** uint16 dos_resize(const uint16 segment, uint16 newsize) {
+; Line 80
+	PUBLIC	_dos_resize
+_dos_resize	PROC NEAR
+	*** 0000d4	55 			push	bp
+	*** 0000d5	8b ec 			mov	bp,sp
+	*** 0000d7	83 ec 02 		sub	sp,2
+;	segment = 4
+;	newsize = 6
+;	err = -2
+;|***     int err;
+;|***     rin.h.ah = DOSF_RESIZEMEM;
+; Line 82
+	*** 0000da	c6 06 17 00 4a 		mov	BYTE PTR $S424_rin+1,74
+;|***     rin.x.bx = newsize;
+; Line 83
+	*** 0000df	8b 46 06 		mov	ax,WORD PTR [bp+6]	;newsize
+	*** 0000e2	a3 18 00 		mov	WORD PTR $S424_rin+2,ax
+;|***     sreg.es = segment;
+; Line 84
+	*** 0000e5	8b 46 04 		mov	ax,WORD PTR [bp+4]	;segment
+	*** 0000e8	a3 00 00 		mov	WORD PTR $S426_sreg,ax
+;|***     err = intdosx(&rin, &rout, &sreg);
+; Line 85
+	*** 0000eb	b8 00 00 		mov	ax,OFFSET DGROUP:$S426_sreg
+	*** 0000ee	50 			push	ax
+	*** 0000ef	b8 08 00 		mov	ax,OFFSET DGROUP:$S425_rout
+	*** 0000f2	50 			push	ax
+	*** 0000f3	b8 16 00 		mov	ax,OFFSET DGROUP:$S424_rin
+	*** 0000f6	50 			push	ax
+	*** 0000f7	e8 00 00 		call	_intdosx
+	*** 0000fa	83 c4 06 		add	sp,6
+	*** 0000fd	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+;|***     assert(err == rout.x.ax);
+; Line 86
+	*** 000100	a1 08 00 		mov	ax,WORD PTR $S425_rout
+	*** 000103	39 46 fe 		cmp	WORD PTR [bp-2],ax	;err
+	*** 000106	74 27 			je	$I444
+	*** 000108	b8 56 00 		mov	ax,86
+	*** 00010b	50 			push	ax
+	*** 00010c	b8 b5 00 		mov	ax,OFFSET DGROUP:$SG445
+	*** 00010f	50 			push	ax
+	*** 000110	b8 bf 00 		mov	ax,OFFSET DGROUP:$SG446
+	*** 000113	50 			push	ax
+	*** 000114	b8 5c 00 		mov	ax,OFFSET DGROUP:$S393__assertstring
+	*** 000117	50 			push	ax
+	*** 000118	b8 10 00 		mov	ax,OFFSET __iob+16
+	*** 00011b	50 			push	ax
+	*** 00011c	e8 00 00 		call	_fprintf
+	*** 00011f	83 c4 0a 		add	sp,10
+	*** 000122	b8 10 00 		mov	ax,OFFSET __iob+16
+	*** 000125	50 			push	ax
+	*** 000126	e8 00 00 		call	_fflush
+	*** 000129	83 c4 02 		add	sp,2
+	*** 00012c	e8 00 00 		call	_abort
+					$I444:
+;|***     if (rout.x.cflag != 0) {
+; Line 87
+	*** 00012f	83 3e 14 00 00 		cmp	WORD PTR $S425_rout+12,0
+	*** 000134	74 1d 			je	$I447
+;|***         ERROR("dos_resize: error resizing segment 0x%x to %u - error 0x%x max avail %u", segment, newsize, rout.x.ax, rout.x.bx);
+; Line 88
+	*** 000136	ff 36 0a 00 		push	WORD PTR $S425_rout+2
+	*** 00013a	ff 36 08 00 		push	WORD PTR $S425_rout
+	*** 00013e	ff 76 06 		push	WORD PTR [bp+6]	;newsize
+	*** 000141	ff 76 04 		push	WORD PTR [bp+4]	;segment
+	*** 000144	b8 d0 00 		mov	ax,OFFSET DGROUP:$SG448
+	*** 000147	50 			push	ax
+	*** 000148	e8 00 00 		call	_ERROR
+	*** 00014b	83 c4 0a 		add	sp,10
+;|***         return rout.x.bx;
+; Line 89
+	*** 00014e	a1 0a 00 		mov	ax,WORD PTR $S425_rout+2
+	*** 000151	eb 04 			jmp	SHORT $EX442
+;|***     }
+; Line 90
+;|***     return 0;
+; Line 91
+					$I447:
+	*** 000153	2b c0 			sub	ax,ax
+	*** 000155	eb 00 			jmp	SHORT $EX442
+;|*** }
+; Line 92
+					$EX442:
+	*** 000157	8b e5 			mov	sp,bp
+	*** 000159	5d 			pop	bp
+	*** 00015a	c3 			ret	
+
+_dos_resize	ENDP
+;|*** 
+;|*** size_t dos_getfree(void) {
+; Line 94
+	PUBLIC	_dos_getfree
+_dos_getfree	PROC NEAR
+	*** 00015b	55 			push	bp
+	*** 00015c	8b ec 			mov	bp,sp
+	*** 00015e	83 ec 02 		sub	sp,2
+;	err = -2
+;|***     int err;
+;|***     rin.h.ah = DOSF_ALLOCMEM;
+; Line 96
+	*** 000161	c6 06 17 00 48 		mov	BYTE PTR $S424_rin+1,72
+;|***     rin.x.bx = 0xffff; // 1,048,560 bytes
+; Line 97
+	*** 000166	c7 06 18 00 ff ff 	mov	WORD PTR $S424_rin+2,-1
+;|***     err = intdos(&rin, &rout);
+; Line 98
+	*** 00016c	b8 08 00 		mov	ax,OFFSET DGROUP:$S425_rout
+	*** 00016f	50 			push	ax
+	*** 000170	b8 16 00 		mov	ax,OFFSET DGROUP:$S424_rin
+	*** 000173	50 			push	ax
+	*** 000174	e8 00 00 		call	_intdos
+	*** 000177	83 c4 04 		add	sp,4
+	*** 00017a	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+;|***     // we expect the call to fail
+;|***     if (rout.x.cflag == 0) {
+; Line 100
+	*** 00017d	83 3e 14 00 00 		cmp	WORD PTR $S425_rout+12,0
+	*** 000182	75 0e 			jne	$I451
+;|***         ERROR("dos_getfree(): unexpected: succeeded in allocating 0xffff paragraphs?");
+; Line 101
+	*** 000184	b8 18 01 		mov	ax,OFFSET DGROUP:$SG452
+	*** 000187	50 			push	ax
+	*** 000188	e8 00 00 		call	_ERROR
+	*** 00018b	83 c4 02 		add	sp,2
+;|***         return 0;
+; Line 102
+	*** 00018e	2b c0 			sub	ax,ax
+	*** 000190	eb 05 			jmp	SHORT $EX449
+;|***     }
+; Line 103
+;|***     return rout.x.bx;
+; Line 104
+					$I451:
+	*** 000192	a1 0a 00 		mov	ax,WORD PTR $S425_rout+2
+	*** 000195	eb 00 			jmp	SHORT $EX449
+;|*** }
+; Line 105
+					$EX449:
+	*** 000197	8b e5 			mov	sp,bp
+	*** 000199	5d 			pop	bp
+	*** 00019a	c3 			ret	
+
+_dos_getfree	ENDP
+;|*** 
+;|*** // Format of EXEC parameter block for AL=00h,01h,04h: 
+;|*** // Offset Size Description (Table 01590) 
+;|*** // 00h WORD segment of environment to copy for child process (copy caller's environment if 0000h) 
+;|*** // 02h DWORD pointer to command tail to be copied into child's PSP 
+;|*** // 06h DWORD pointer to first FCB to be copied into child's PSP 
+;|*** // 0Ah DWORD pointer to second FCB to be copied into child's PSP 
+;|*** // 0Eh DWORD (AL=01h) will hold subprogram's initial SS:SP on return 
+;|*** // 12h DWORD (AL=01h) will hold entry point (CS:IP) on return
+;|*** #pragma pack(1)
+;|*** struct {
+;|***     uint16 envSegment;
+;|***     uint16 cmdlineOffset;
+;|***     uint16 cmdlineSegment;
+;|***     uint16 fcb1Offset;
+;|***     uint16 fcb1Segment;
+;|***     uint16 fcb2Offset;
+;|***     uint16 fcb2Segment;
+;|***     uint16 sp;
+;|***     uint16 ss;
+;|***     uint16 ip;
+;|***     uint16 cs;
+;|*** } exeLoadParams;
+;|*** 
+;|*** #pragma pack(1)
+;|*** struct {
+;|***     uint16 segment;
+;|***     uint16 reloc;
+;|*** } ovlLoadParams;
+;|*** 
+;|*** #define DOS_LOAD_EXEC 0
+;|*** #define DOS_LOAD_NOEXEC 1
+;|*** #define DOS_LOAD_OVL 3
+;|*** 
+;|*** static int loadprog(const char* file, const uint16 segment, const uint8 type, const char FAR* cmdline) {
+; Line 140
+loadprog	PROC NEAR
+	*** 00019b	55 			push	bp
+	*** 00019c	8b ec 			mov	bp,sp
+	*** 00019e	83 ec 02 		sub	sp,2
+;	file = 4
+;	segment = 6
+;	type = 8
+;	cmdline = 10
+;	err = -2
+;|***     int err;
+;|***     rin.h.ah = DOSF_LOADPROG;
+; Line 142
+	*** 0001a1	c6 06 17 00 4b 		mov	BYTE PTR $S424_rin+1,75
+;|***     rin.h.al = type;
+; Line 143
+	*** 0001a6	8a 46 08 		mov	al,BYTE PTR [bp+8]	;type
+	*** 0001a9	a2 16 00 		mov	BYTE PTR $S424_rin,al
+;|***     rin.x.dx = (unsigned int)file;
+; Line 144
+	*** 0001ac	8b 46 04 		mov	ax,WORD PTR [bp+4]	;file
+	*** 0001af	a3 1c 00 		mov	WORD PTR $S424_rin+6,ax
+;|***     switch (type)
+; Line 145
+	*** 0001b2	8a 46 08 		mov	al,BYTE PTR [bp+8]	;type
+	*** 0001b5	2a e4 			sub	ah,ah
+	*** 0001b7	e9 8f 00 		jmp	$S477
+;|***     {
+; Line 146
+;|***     case DOS_LOAD_EXEC:
+; Line 147
+					$SC481:
+;|***     case DOS_LOAD_NOEXEC:
+;|***         exeLoadParams.envSegment = 0; // 0 - copy caller's environment
+; Line 149
+	*** 0001ba	c7 06 00 00 00 00 	mov	WORD PTR _exeLoadParams,0
+;|***         exeLoadParams.cmdlineOffset = FP_OFF(cmdline);
+; Line 150
+	*** 0001c0	8b 46 0a 		mov	ax,WORD PTR [bp+10]	;cmdline
+	*** 0001c3	a3 02 00 		mov	WORD PTR _exeLoadParams+2,ax
+;|***         exeLoadParams.cmdlineSegment = FP_SEG(cmdline);
+; Line 151
+	*** 0001c6	8b 46 0c 		mov	ax,WORD PTR [bp+12]
+	*** 0001c9	a3 04 00 		mov	WORD PTR _exeLoadParams+4,ax
+;|***         // the two FCBs are located at offsets 0x5c and 0x6c in this program's PSP
+;|***         exeLoadParams.fcb1Offset = 0x5c;
+; Line 153
+	*** 0001cc	c7 06 06 00 5c 00 	mov	WORD PTR _exeLoadParams+6,92
+;|***         exeLoadParams.fcb1Segment = _psp;
+; Line 154
+	*** 0001d2	a1 00 00 		mov	ax,__psp
+	*** 0001d5	a3 08 00 		mov	WORD PTR _exeLoadParams+8,ax
+;|***         exeLoadParams.fcb2Offset = 0x6c;
+; Line 155
+	*** 0001d8	c7 06 0a 00 6c 00 	mov	WORD PTR _exeLoadParams+10,108
+;|***         exeLoadParams.fcb2Segment = _psp;
+; Line 156
+	*** 0001de	a3 0c 00 		mov	WORD PTR _exeLoadParams+12,ax
+;|***         rin.x.bx = (unsigned int)&exeLoadParams;
+; Line 157
+	*** 0001e1	c7 06 18 00 00 00 	mov	WORD PTR $S424_rin+2,OFFSET DGROUP:_exeLoadParams
+;|***         if (DOS_LOAD_EXEC)
+; Line 158
+	*** 0001e7	eb 15 			jmp	SHORT $I482
+;|***             DEBUG("dos_loadprog(): loading %s and executing with cmdline '%Fs'", file, cmdline);
+; Line 159
+	*** 0001e9	ff 76 0c 		push	WORD PTR [bp+12]
+	*** 0001ec	ff 76 0a 		push	WORD PTR [bp+10]	;cmdline
+	*** 0001ef	ff 76 04 		push	WORD PTR [bp+4]	;file
+	*** 0001f2	b8 5e 01 		mov	ax,OFFSET DGROUP:$SG483
+	*** 0001f5	50 			push	ax
+	*** 0001f6	e8 00 00 		call	_DEBUG
+	*** 0001f9	83 c4 08 		add	sp,8
+;|***         else
+; Line 160
+	*** 0001fc	eb 13 			jmp	SHORT $I484
+					$I482:
+;|***             DEBUG("dos_loadprog(): loading %s with cmdline '%Fs'", file, cmdline);            
+; Line 161
+	*** 0001fe	ff 76 0c 		push	WORD PTR [bp+12]
+	*** 000201	ff 76 0a 		push	WORD PTR [bp+10]	;cmdline
+	*** 000204	ff 76 04 		push	WORD PTR [bp+4]	;file
+	*** 000207	b8 9a 01 		mov	ax,OFFSET DGROUP:$SG485
+	*** 00020a	50 			push	ax
+	*** 00020b	e8 00 00 		call	_DEBUG
+	*** 00020e	83 c4 08 		add	sp,8
+					$I484:
+;|***         break;
+; Line 162
+	*** 000211	eb 45 			jmp	SHORT $SB478
+;|***     case DOS_LOAD_OVL:
+; Line 163
+					$SC486:
+;|***         ovlLoadParams.segment = segment;
+; Line 164
+	*** 000213	8b 46 06 		mov	ax,WORD PTR [bp+6]	;segment
+	*** 000216	a3 00 00 		mov	WORD PTR _ovlLoadParams,ax
+;|***         ovlLoadParams.reloc = segment; // no idea, original does the same
+; Line 165
+	*** 000219	a3 02 00 		mov	WORD PTR _ovlLoadParams+2,ax
+;|***         rin.x.bx = (unsigned int)&ovlLoadParams;
+; Line 166
+	*** 00021c	c7 06 18 00 00 00 	mov	WORD PTR $S424_rin+2,OFFSET DGROUP:_ovlLoadParams
+;|***         INFO("dos_loadprog(): loading %s at segment 0x%x as overlay", file, segment);
+; Line 167
+	*** 000222	50 			push	ax
+	*** 000223	ff 76 04 		push	WORD PTR [bp+4]	;file
+	*** 000226	b8 c8 01 		mov	ax,OFFSET DGROUP:$SG487
+	*** 000229	50 			push	ax
+	*** 00022a	e8 00 00 		call	_INFO
+	*** 00022d	83 c4 06 		add	sp,6
+;|***         break;
+; Line 168
+	*** 000230	eb 26 			jmp	SHORT $SB478
+;|***     default:
+; Line 169
+					$SD488:
+;|***         ERROR("dos_loadprog(): unsupported load type: 0x%hx", type);
+; Line 170
+	*** 000232	8a 46 08 		mov	al,BYTE PTR [bp+8]	;type
+	*** 000235	2a e4 			sub	ah,ah
+	*** 000237	50 			push	ax
+	*** 000238	b8 fe 01 		mov	ax,OFFSET DGROUP:$SG489
+	*** 00023b	50 			push	ax
+	*** 00023c	e8 00 00 		call	_ERROR
+	*** 00023f	83 c4 04 		add	sp,4
+;|***         return DOSERR_INVFUNC;
+; Line 171
+	*** 000242	b8 01 00 		mov	ax,1
+	*** 000245	eb 61 			jmp	SHORT $EX475
+;|***     }
+; Line 172
+	*** 000247	eb 0f 			jmp	SHORT $SB478
+					$S477:
+	*** 000249	3d 01 00 		cmp	ax,1
+	*** 00024c	77 03 			ja	$JCC588
+	*** 00024e	e9 69 ff 		jmp	$SC481
+					$JCC588:
+	*** 000251	3d 03 00 		cmp	ax,3
+	*** 000254	74 bd 			je	$SC486
+	*** 000256	eb da 			jmp	SHORT $SD488
+					$SB478:
+;|***     err = intdos(&rin, &rout);
+; Line 173
+	*** 000258	b8 08 00 		mov	ax,OFFSET DGROUP:$S425_rout
+	*** 00025b	50 			push	ax
+	*** 00025c	b8 16 00 		mov	ax,OFFSET DGROUP:$S424_rin
+	*** 00025f	50 			push	ax
+	*** 000260	e8 00 00 		call	_intdos
+	*** 000263	83 c4 04 		add	sp,4
+	*** 000266	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+;|***     if (rout.x.cflag != 0) {
+; Line 174
+	*** 000269	83 3e 14 00 00 		cmp	WORD PTR $S425_rout+12,0
+	*** 00026e	74 16 			je	$I490
+;|***         ERROR("dos_loadprog: unable to load %s at 0x%x, error 0x%x", file, segment, err);
+; Line 175
+	*** 000270	50 			push	ax
+	*** 000271	ff 76 06 		push	WORD PTR [bp+6]	;segment
+	*** 000274	ff 76 04 		push	WORD PTR [bp+4]	;file
+	*** 000277	b8 2b 02 		mov	ax,OFFSET DGROUP:$SG491
+	*** 00027a	50 			push	ax
+	*** 00027b	e8 00 00 		call	_ERROR
+	*** 00027e	83 c4 08 		add	sp,8
+;|***         return err;
+; Line 176
+	*** 000281	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;err
+	*** 000284	eb 22 			jmp	SHORT $EX475
+;|***     }
+; Line 177
+;|***     DEBUG("dos_loadprog(): success, ax = 0x%x, cs:ip = %X:%X, ss:sp = %X:%X", rout.x.ax, 
+; Line 178
+					$I490:
+;|***         exeLoadParams.cs, exeLoadParams.ip, exeLoadParams.ss, exeLoadParams.sp);
+; Line 179
+	*** 000286	ff 36 0e 00 		push	WORD PTR _exeLoadParams+14
+	*** 00028a	ff 36 10 00 		push	WORD PTR _exeLoadParams+16
+	*** 00028e	ff 36 12 00 		push	WORD PTR _exeLoadParams+18
+	*** 000292	ff 36 14 00 		push	WORD PTR _exeLoadParams+20
+	*** 000296	ff 36 08 00 		push	WORD PTR $S425_rout
+	*** 00029a	b8 5f 02 		mov	ax,OFFSET DGROUP:$SG492
+	*** 00029d	50 			push	ax
+	*** 00029e	e8 00 00 		call	_DEBUG
+	*** 0002a1	83 c4 0c 		add	sp,12
+;|***     return 0;
+; Line 180
+	*** 0002a4	2b c0 			sub	ax,ax
+	*** 0002a6	eb 00 			jmp	SHORT $EX475
+;|*** }
+; Line 181
+					$EX475:
+	*** 0002a8	8b e5 			mov	sp,bp
+	*** 0002aa	5d 			pop	bp
+	*** 0002ab	c3 			ret	
+
+loadprog	ENDP
+;|*** 
+;|*** int dos_loadOverlay(const char* file, const uint16 segment) {
+; Line 183
+	PUBLIC	_dos_loadOverlay
+_dos_loadOverlay	PROC NEAR
+	*** 0002ac	55 			push	bp
+	*** 0002ad	8b ec 			mov	bp,sp
+;	file = 4
+;	segment = 6
+;|***     return loadprog(file, segment, DOS_LOAD_OVL, NULL);
+; Line 184
+	*** 0002af	2b c0 			sub	ax,ax
+	*** 0002b1	50 			push	ax
+	*** 0002b2	50 			push	ax
+	*** 0002b3	b8 03 00 		mov	ax,3
+	*** 0002b6	50 			push	ax
+	*** 0002b7	ff 76 06 		push	WORD PTR [bp+6]	;segment
+	*** 0002ba	ff 76 04 		push	WORD PTR [bp+4]	;file
+	*** 0002bd	e8 db fe 		call	loadprog
+	*** 0002c0	83 c4 0a 		add	sp,10
+	*** 0002c3	eb 00 			jmp	SHORT $EX495
+;|*** }
+; Line 185
+					$EX495:
+	*** 0002c5	8b e5 			mov	sp,bp
+	*** 0002c7	5d 			pop	bp
+	*** 0002c8	c3 			ret	
+
+_dos_loadOverlay	ENDP
+;|*** 
+;|*** int dos_runProgram(const char* file, const char FAR* cmdline) {
+; Line 187
+	PUBLIC	_dos_runProgram
+_dos_runProgram	PROC NEAR
+	*** 0002c9	55 			push	bp
+	*** 0002ca	8b ec 			mov	bp,sp
+;	file = 4
+;	cmdline = 6
+;|***     return loadprog(file, 0, DOS_LOAD_EXEC, cmdline);
+; Line 188
+	*** 0002cc	ff 76 08 		push	WORD PTR [bp+8]
+	*** 0002cf	ff 76 06 		push	WORD PTR [bp+6]	;cmdline
+	*** 0002d2	2b c0 			sub	ax,ax
+	*** 0002d4	50 			push	ax
+	*** 0002d5	50 			push	ax
+	*** 0002d6	ff 76 04 		push	WORD PTR [bp+4]	;file
+	*** 0002d9	e8 bf fe 		call	loadprog
+	*** 0002dc	83 c4 0a 		add	sp,10
+	*** 0002df	eb 00 			jmp	SHORT $EX498
+;|*** }
+; Line 189
+					$EX498:
+	*** 0002e1	8b e5 			mov	sp,bp
+	*** 0002e3	5d 			pop	bp
+	*** 0002e4	c3 			ret	
+
+_dos_runProgram	ENDP
+;|*** 
+;|*** int dos_loadProgram(const char* file, const char FAR* cmdline, uint16 *cs, uint16 *ss) {
+; Line 191
+	PUBLIC	_dos_loadProgram
+_dos_loadProgram	PROC NEAR
+	*** 0002e5	55 			push	bp
+	*** 0002e6	8b ec 			mov	bp,sp
+	*** 0002e8	83 ec 02 		sub	sp,2
+;	file = 4
+;	cmdline = 6
+;	cs = 10
+;	ss = 12
+;	err = -2
+;|***     int err;
+;|***     if ((err = loadprog(file, 0, DOS_LOAD_NOEXEC, cmdline)) != 0)
+; Line 193
+	*** 0002eb	ff 76 08 		push	WORD PTR [bp+8]
+	*** 0002ee	ff 76 06 		push	WORD PTR [bp+6]	;cmdline
+	*** 0002f1	b8 01 00 		mov	ax,1
+	*** 0002f4	50 			push	ax
+	*** 0002f5	2b c0 			sub	ax,ax
+	*** 0002f7	50 			push	ax
+	*** 0002f8	ff 76 04 		push	WORD PTR [bp+4]	;file
+	*** 0002fb	e8 9d fe 		call	loadprog
+	*** 0002fe	83 c4 0a 		add	sp,10
+	*** 000301	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+	*** 000304	0b c0 			or	ax,ax
+	*** 000306	74 02 			je	$I505
+;|***         return err;
+; Line 194
+	*** 000308	eb 14 			jmp	SHORT $EX503
+;|***     *cs = exeLoadParams.cs;
+; Line 195
+					$I505:
+	*** 00030a	8b 5e 0a 		mov	bx,WORD PTR [bp+10]	;cs
+	*** 00030d	a1 14 00 		mov	ax,WORD PTR _exeLoadParams+20
+	*** 000310	89 07 			mov	WORD PTR [bx],ax
+;|***     *ss = exeLoadParams.ss;
+; Line 196
+	*** 000312	8b 5e 0c 		mov	bx,WORD PTR [bp+12]	;ss
+	*** 000315	a1 10 00 		mov	ax,WORD PTR _exeLoadParams+16
+	*** 000318	89 07 			mov	WORD PTR [bx],ax
+;|***     return 0;
+; Line 197
+	*** 00031a	2b c0 			sub	ax,ax
+	*** 00031c	eb 00 			jmp	SHORT $EX503
+;|*** }
+; Line 198
+					$EX503:
+	*** 00031e	8b e5 			mov	sp,bp
+	*** 000320	5d 			pop	bp
+	*** 000321	c3 			ret	
+
+_dos_loadProgram	ENDP
+;|*** 
+;|*** int dos_getReturnCode(void) {
+; Line 200
+	PUBLIC	_dos_getReturnCode
+_dos_getReturnCode	PROC NEAR
+	*** 000322	55 			push	bp
+	*** 000323	8b ec 			mov	bp,sp
+	*** 000325	83 ec 02 		sub	sp,2
+;	err = -2
+;|***     int err;
+;|***     rin.h.ah = DOSF_RETURNCODE;
+; Line 202
+	*** 000328	c6 06 17 00 4d 		mov	BYTE PTR $S424_rin+1,77
+;|***     err = intdos(&rin, &rout);
+; Line 203
+	*** 00032d	b8 08 00 		mov	ax,OFFSET DGROUP:$S425_rout
+	*** 000330	50 			push	ax
+	*** 000331	b8 16 00 		mov	ax,OFFSET DGROUP:$S424_rin
+	*** 000334	50 			push	ax
+	*** 000335	e8 00 00 		call	_intdos
+	*** 000338	83 c4 04 		add	sp,4
+	*** 00033b	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+;|***     // AH = termination type
+;|***     // 00h normal (INT 20,INT 21/AH=00h, or INT 21/AH=4Ch)
+;|***     // 01h control-C abort
+;|***     // 02h critical error abort
+;|***     // 03h terminate and stay resident (INT 21/AH=31h or INT 27)
+;|***     // AL = return code
+;|***     return rout.h.al;
+; Line 210
+	*** 00033e	a0 08 00 		mov	al,BYTE PTR $S425_rout
+	*** 000341	2a e4 			sub	ah,ah
+	*** 000343	eb 00 			jmp	SHORT $EX506
+;|*** }
+; Line 211
+					$EX506:
+	*** 000345	8b e5 			mov	sp,bp
+	*** 000347	5d 			pop	bp
+	*** 000348	c3 			ret	
+
+_dos_getReturnCode	ENDP
+;|*** 
+;|*** uint16 dos_getProcessId(void) {
+; Line 213
+	PUBLIC	_dos_getProcessId
+_dos_getProcessId	PROC NEAR
+	*** 000349	55 			push	bp
+;|*** 
+;|*** }
+; Line 215
+	*** 00034a	5d 			pop	bp
+	*** 00034b	c3 			ret	
+
+_dos_getProcessId	ENDP
+;|*** 
+;|*** int dos_setProcessId(const uint16 pid) {
+; Line 217
+	PUBLIC	_dos_setProcessId
+_dos_setProcessId	PROC NEAR
+	*** 00034c	55 			push	bp
+;	pid = 4
+;|*** 
+;|*** }
+; Line 219
+	*** 00034d	5d 			pop	bp
+	*** 00034e	c3 			ret	
+
+_dos_setProcessId	ENDP
+;|*** 
+;|*** #pragma pack(1)
+;|*** struct MCB {
+;|***     char type;
+;|***     uint16 pid;
+;|***     uint16 size;
+;|***     uint8 reserved[3];
+;|***     char desc[8];
+;|*** };
+;|*** 
+;|*** static uint8 FAR* dos_sysvars(void) {
+; Line 230
+dos_sysvars	PROC NEAR
+	*** 00034f	55 			push	bp
+	*** 000350	8b ec 			mov	bp,sp
+;|***     rin.h.ah = DOSF_SYSVARS; 
+; Line 231
+	*** 000352	c6 06 17 00 52 		mov	BYTE PTR $S424_rin+1,82
+;|***     intdosx(&rin, &rout, &sreg);
+; Line 232
+	*** 000357	b8 00 00 		mov	ax,OFFSET DGROUP:$S426_sreg
+	*** 00035a	50 			push	ax
+	*** 00035b	b8 08 00 		mov	ax,OFFSET DGROUP:$S425_rout
+	*** 00035e	50 			push	ax
+	*** 00035f	b8 16 00 		mov	ax,OFFSET DGROUP:$S424_rin
+	*** 000362	50 			push	ax
+	*** 000363	e8 00 00 		call	_intdosx
+	*** 000366	83 c4 06 		add	sp,6
+;|***     return MK_FP(sreg.es, rout.x.bx);
+; Line 233
+	*** 000369	8b 16 00 00 		mov	dx,WORD PTR $S426_sreg
+	*** 00036d	a1 0a 00 		mov	ax,WORD PTR $S425_rout+2
+	*** 000370	eb 00 			jmp	SHORT $EX518
+;|*** }
+; Line 234
+					$EX518:
+	*** 000372	8b e5 			mov	sp,bp
+	*** 000374	5d 			pop	bp
+	*** 000375	c3 			ret	
+
+dos_sysvars	ENDP
+;|*** 
+;|*** void dos_mcbInfo(void) {
+; Line 236
+	PUBLIC	_dos_mcbInfo
+_dos_mcbInfo	PROC NEAR
+	*** 000376	55 			push	bp
+	*** 000377	8b ec 			mov	bp,sp
+	*** 000379	81 ec 92 00 		sub	sp,146
+	*** 00037d	56 			push	si
+;	segment = -8
+;	lol = -142
+;	mcb = -6
+;	total = -10
+;	alloc = -146
+;	free = -2
+;	i = -144
+;	strbuf = -138
+;|***     uint16 segment = 0;
+; Line 237
+	*** 00037e	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;segment
+;|***     uint8 FAR *lol = NULL;
+; Line 238
+	*** 000383	2b c0 			sub	ax,ax
+	*** 000385	89 86 74 ff 		mov	WORD PTR [bp-140],ax
+	*** 000389	89 86 72 ff 		mov	WORD PTR [bp-142],ax	;lol
+;|***     struct MCB FAR *mcb = NULL;
+; Line 239
+	*** 00038d	89 46 fc 		mov	WORD PTR [bp-4],ax
+	*** 000390	89 46 fa 		mov	WORD PTR [bp-6],ax	;mcb
+;|***     size_t total = 0, alloc = 0, free = 0;
+; Line 240
+	*** 000393	89 46 f6 		mov	WORD PTR [bp-10],ax	;total
+	*** 000396	89 86 6e ff 		mov	WORD PTR [bp-146],ax	;alloc
+	*** 00039a	89 46 fe 		mov	WORD PTR [bp-2],ax	;free
+;|***     int i = 0;
+; Line 241
+	*** 00039d	89 86 70 ff 		mov	WORD PTR [bp-144],ax	;i
+;|***     char strbuf[128];
+;|***     // get segment of first mcb from list of lists
+;|***     lol = dos_sysvars();
+; Line 244
+	*** 0003a1	e8 ab ff 		call	dos_sysvars
+	*** 0003a4	89 86 72 ff 		mov	WORD PTR [bp-142],ax	;lol
+	*** 0003a8	89 96 74 ff 		mov	WORD PTR [bp-140],dx
+;|***     // first mcb's segment is in LoL at offset -2
+;|***     segment = *((uint16 FAR*)(lol - 2));
+; Line 246
+	*** 0003ac	c4 9e 72 ff 		les	bx,DWORD PTR [bp-142]	;lol
+	*** 0003b0	26 8b 47 fe 		mov	ax,WORD PTR es:[bx-2]
+	*** 0003b4	89 46 f8 		mov	WORD PTR [bp-8],ax	;segment
+;|***     mcb = MK_FP(segment, 0);
+; Line 247
+	*** 0003b7	8b d0 			mov	dx,ax
+	*** 0003b9	2b c0 			sub	ax,ax
+	*** 0003bb	89 46 fa 		mov	WORD PTR [bp-6],ax	;mcb
+	*** 0003be	89 56 fc 		mov	WORD PTR [bp-4],dx
+;|***     INFO("Walking the MCB chain, LoL @ %p", lol);
+; Line 248
+	*** 0003c1	06 			push	es
+	*** 0003c2	53 			push	bx
+	*** 0003c3	b8 a0 02 		mov	ax,OFFSET DGROUP:$SG528
+	*** 0003c6	50 			push	ax
+	*** 0003c7	e8 00 00 		call	_INFO
+	*** 0003ca	83 c4 06 		add	sp,6
+;|***     while (mcb) {
+; Line 249
+					$FC530:
+	*** 0003cd	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;mcb
+	*** 0003d0	0b 46 fc 		or	ax,WORD PTR [bp-4]
+	*** 0003d3	75 03 			jne	$JCC979
+	*** 0003d5	e9 f0 00 		jmp	$FB531
+					$JCC979:
+;|***         switch (mcb->type) {
+; Line 250
+	*** 0003d8	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 0003db	26 8a 07 		mov	al,BYTE PTR es:[bx]
+	*** 0003de	98 			cbw	
+	*** 0003df	e9 a8 00 		jmp	$S532
+;|***         case 'M':
+; Line 251
+					$SC536:
+;|***         case 'Z':
+;|***             total += mcb->size;
+; Line 253
+	*** 0003e2	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 0003e5	26 8b 47 03 		mov	ax,WORD PTR es:[bx+3]
+	*** 0003e9	01 46 f6 		add	WORD PTR [bp-10],ax	;total
+;|***             sprintf(strbuf, "desc = '%.8Fs'", mcb->desc);
+; Line 254
+	*** 0003ec	8b c3 			mov	ax,bx
+	*** 0003ee	8c c2 			mov	dx,es
+	*** 0003f0	05 08 00 		add	ax,8
+	*** 0003f3	52 			push	dx
+	*** 0003f4	50 			push	ax
+	*** 0003f5	b8 c0 02 		mov	ax,OFFSET DGROUP:$SG537
+	*** 0003f8	50 			push	ax
+	*** 0003f9	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 0003fd	50 			push	ax
+	*** 0003fe	e8 00 00 		call	_sprintf
+	*** 000401	83 c4 08 		add	sp,8
+;|***             switch(mcb->pid) {
+; Line 255
+	*** 000404	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 000407	26 8b 47 01 		mov	ax,WORD PTR es:[bx+1]
+	*** 00040b	eb 37 			jmp	SHORT $S538
+;|***             case PID_NONE:
+; Line 256
+					$SC542:
+;|***                 strcat(strbuf, " <--- free");
+; Line 257
+	*** 00040d	b8 cf 02 		mov	ax,OFFSET DGROUP:$SG544
+	*** 000410	50 			push	ax
+	*** 000411	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 000415	50 			push	ax
+	*** 000416	e8 00 00 		call	_strcat
+	*** 000419	83 c4 04 		add	sp,4
+;|***                 free += mcb->size;
+; Line 258
+	*** 00041c	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 00041f	26 8b 47 03 		mov	ax,WORD PTR es:[bx+3]
+	*** 000423	01 46 fe 		add	WORD PTR [bp-2],ax	;free
+;|***                 break;
+; Line 259
+	*** 000426	eb 27 			jmp	SHORT $SB539
+;|***             case PID_DOS:
+; Line 260
+					$SC545:
+;|***                 strcat(strbuf, " <--- DOS");
+; Line 261
+	*** 000428	b8 da 02 		mov	ax,OFFSET DGROUP:$SG546
+	*** 00042b	50 			push	ax
+	*** 00042c	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 000430	50 			push	ax
+	*** 000431	e8 00 00 		call	_strcat
+	*** 000434	83 c4 04 		add	sp,4
+;|***                 // fall through
+;|***             default:
+; Line 263
+					$SD547:
+;|***                 alloc += mcb->size;
+; Line 264
+	*** 000437	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 00043a	26 8b 47 03 		mov	ax,WORD PTR es:[bx+3]
+	*** 00043e	01 86 6e ff 		add	WORD PTR [bp-146],ax	;alloc
+;|***             }
+; Line 265
+	*** 000442	eb 0b 			jmp	SHORT $SB539
+					$S538:
+	*** 000444	0b c0 			or	ax,ax
+	*** 000446	74 c5 			je	$SC542
+	*** 000448	3d 08 00 		cmp	ax,8
+	*** 00044b	74 db 			je	$SC545
+	*** 00044d	eb e8 			jmp	SHORT $SD547
+					$SB539:
+;|***             INFO("#%03d [0x%04x]: pid = 0x%04x, size = %05up, %s", i++, segment, mcb->pid, mcb->size, strbuf);
+; Line 266
+	*** 00044f	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 000453	50 			push	ax
+	*** 000454	26 ff 77 03 		push	WORD PTR es:[bx+3]
+	*** 000458	26 ff 77 01 		push	WORD PTR es:[bx+1]
+	*** 00045c	ff 76 f8 		push	WORD PTR [bp-8]	;segment
+	*** 00045f	ff b6 70 ff 		push	WORD PTR [bp-144]	;i
+	*** 000463	ff 86 70 ff 		inc	WORD PTR [bp-144]	;i
+	*** 000467	b8 e4 02 		mov	ax,OFFSET DGROUP:$SG548
+	*** 00046a	50 			push	ax
+	*** 00046b	e8 00 00 		call	_INFO
+	*** 00046e	83 c4 0c 		add	sp,12
+;|***             break;
+; Line 267
+	*** 000471	eb 29 			jmp	SHORT $SB533
+;|***         default:
+; Line 268
+					$SD549:
+;|***             ERROR("unexpected MCB type: %Xh", mcb->type);
+; Line 269
+	*** 000473	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 000476	26 8a 07 		mov	al,BYTE PTR es:[bx]
+	*** 000479	98 			cbw	
+	*** 00047a	50 			push	ax
+	*** 00047b	b8 13 03 		mov	ax,OFFSET DGROUP:$SG550
+	*** 00047e	50 			push	ax
+	*** 00047f	e8 00 00 		call	_ERROR
+	*** 000482	83 c4 04 		add	sp,4
+;|***             return;
+; Line 270
+	*** 000485	e9 b5 00 		jmp	$EX519
+;|***         }
+; Line 271
+	*** 000488	eb 12 			jmp	SHORT $SB533
+					$S532:
+	*** 00048a	3d 4d 00 		cmp	ax,77
+	*** 00048d	75 03 			jne	$JCC1165
+	*** 00048f	e9 50 ff 		jmp	$SC536
+					$JCC1165:
+	*** 000492	3d 5a 00 		cmp	ax,90
+	*** 000495	75 03 			jne	$JCC1173
+	*** 000497	e9 48 ff 		jmp	$SC536
+					$JCC1173:
+	*** 00049a	eb d7 			jmp	SHORT $SD549
+					$SB533:
+;|***         if (mcb->type == 'Z') { // last mcb
+; Line 272
+	*** 00049c	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 00049f	26 80 3f 5a 		cmp	BYTE PTR es:[bx],90
+	*** 0004a3	75 0a 			jne	$I551
+;|***             mcb = NULL;
+; Line 273
+	*** 0004a5	2b c0 			sub	ax,ax
+	*** 0004a7	89 46 fc 		mov	WORD PTR [bp-4],ax
+	*** 0004aa	89 46 fa 		mov	WORD PTR [bp-6],ax	;mcb
+;|***         }
+; Line 274
+;|***         else { // next mcb
+; Line 275
+	*** 0004ad	eb 16 			jmp	SHORT $I552
+					$I551:
+;|***             segment += mcb->size + 1;
+; Line 276
+	*** 0004af	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;mcb
+	*** 0004b2	26 8b 47 03 		mov	ax,WORD PTR es:[bx+3]
+	*** 0004b6	40 			inc	ax
+	*** 0004b7	01 46 f8 		add	WORD PTR [bp-8],ax	;segment
+;|***             mcb = MK_FP(segment, 0);
+; Line 277
+	*** 0004ba	8b 56 f8 		mov	dx,WORD PTR [bp-8]	;segment
+	*** 0004bd	2b c0 			sub	ax,ax
+	*** 0004bf	89 46 fa 		mov	WORD PTR [bp-6],ax	;mcb
+	*** 0004c2	89 56 fc 		mov	WORD PTR [bp-4],dx
+;|***         }
+; Line 278
+					$I552:
+;|***     }
+; Line 279
+	*** 0004c5	e9 05 ff 		jmp	$FC530
+					$FB531:
+;|***     sprintf(strbuf, "summary: total %s", sizeString(total));
+; Line 280
+	*** 0004c8	ff 76 f6 		push	WORD PTR [bp-10]	;total
+	*** 0004cb	e8 00 00 		call	_sizeString
+	*** 0004ce	83 c4 02 		add	sp,2
+	*** 0004d1	50 			push	ax
+	*** 0004d2	b8 2c 03 		mov	ax,OFFSET DGROUP:$SG553
+	*** 0004d5	50 			push	ax
+	*** 0004d6	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 0004da	50 			push	ax
+	*** 0004db	e8 00 00 		call	_sprintf
+	*** 0004de	83 c4 06 		add	sp,6
+;|***     sprintf(strbuf + strlen(strbuf), ", alloc %s", sizeString(alloc));
+; Line 281
+	*** 0004e1	ff b6 6e ff 		push	WORD PTR [bp-146]	;alloc
+	*** 0004e5	e8 00 00 		call	_sizeString
+	*** 0004e8	83 c4 02 		add	sp,2
+	*** 0004eb	50 			push	ax
+	*** 0004ec	b8 3e 03 		mov	ax,OFFSET DGROUP:$SG555
+	*** 0004ef	50 			push	ax
+	*** 0004f0	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 0004f4	50 			push	ax
+	*** 0004f5	e8 00 00 		call	_strlen
+	*** 0004f8	83 c4 02 		add	sp,2
+	*** 0004fb	8b f0 			mov	si,ax
+	*** 0004fd	8d 82 76 ff 		lea	ax,[bp-138][si]
+	*** 000501	50 			push	ax
+	*** 000502	e8 00 00 		call	_sprintf
+	*** 000505	83 c4 06 		add	sp,6
+;|***     sprintf(strbuf + strlen(strbuf), ", free %s",  sizeString(free));
+; Line 282
+	*** 000508	ff 76 fe 		push	WORD PTR [bp-2]	;free
+	*** 00050b	e8 00 00 		call	_sizeString
+	*** 00050e	83 c4 02 		add	sp,2
+	*** 000511	50 			push	ax
+	*** 000512	b8 49 03 		mov	ax,OFFSET DGROUP:$SG556
+	*** 000515	50 			push	ax
+	*** 000516	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 00051a	50 			push	ax
+	*** 00051b	e8 00 00 		call	_strlen
+	*** 00051e	83 c4 02 		add	sp,2
+	*** 000521	8b f0 			mov	si,ax
+	*** 000523	8d 82 76 ff 		lea	ax,[bp-138][si]
+	*** 000527	50 			push	ax
+	*** 000528	e8 00 00 		call	_sprintf
+	*** 00052b	83 c4 06 		add	sp,6
+;|***     INFO("%s", strbuf);
+; Line 283
+	*** 00052e	8d 86 76 ff 		lea	ax,WORD PTR [bp-138]	;strbuf
+	*** 000532	50 			push	ax
+	*** 000533	b8 53 03 		mov	ax,OFFSET DGROUP:$SG557
+	*** 000536	50 			push	ax
+	*** 000537	e8 00 00 		call	_INFO
+	*** 00053a	83 c4 04 		add	sp,4
+;|*** }
+; Line 284
+					$EX519:
+	*** 00053d	5e 			pop	si
+	*** 00053e	8b e5 			mov	sp,bp
+	*** 000540	5d 			pop	bp
+	*** 000541	c3 			ret	
+
+_dos_mcbInfo	ENDP
+;|*** 
+;|*** uint16 dos_lastFreeBlock(void) {
+; Line 286
+	PUBLIC	_dos_lastFreeBlock
+_dos_lastFreeBlock	PROC NEAR
+	*** 000542	55 			push	bp
+	*** 000543	8b ec 			mov	bp,sp
+	*** 000545	83 ec 0a 		sub	sp,10
+;	segment = -6
+;	lol = -10
+;	mcb = -4
+;|***     uint16 segment = 0;
+; Line 287
+	*** 000548	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;segment
+;|***     uint8 FAR *lol = NULL;
+; Line 288
+	*** 00054d	2b c0 			sub	ax,ax
+	*** 00054f	89 46 f8 		mov	WORD PTR [bp-8],ax
+	*** 000552	89 46 f6 		mov	WORD PTR [bp-10],ax	;lol
+;|***     struct MCB FAR *mcb = NULL;
+; Line 289
+	*** 000555	89 46 fe 		mov	WORD PTR [bp-2],ax
+	*** 000558	89 46 fc 		mov	WORD PTR [bp-4],ax	;mcb
+;|***     // get segment of first mcb from list of lists
+;|***     lol = dos_sysvars();
+; Line 291
+	*** 00055b	e8 f1 fd 		call	dos_sysvars
+	*** 00055e	89 46 f6 		mov	WORD PTR [bp-10],ax	;lol
+	*** 000561	89 56 f8 		mov	WORD PTR [bp-8],dx
+;|***     // first mcb's segment is in LoL at offset -2
+;|***     segment = *((uint16 FAR*)(lol - 2));
+; Line 293
+	*** 000564	c4 5e f6 		les	bx,DWORD PTR [bp-10]	;lol
+	*** 000567	26 8b 47 fe 		mov	ax,WORD PTR es:[bx-2]
+	*** 00056b	89 46 fa 		mov	WORD PTR [bp-6],ax	;segment
+;|***     mcb = MK_FP(segment, 0);
+; Line 294
+	*** 00056e	8b d0 			mov	dx,ax
+	*** 000570	2b c0 			sub	ax,ax
+	*** 000572	89 46 fc 		mov	WORD PTR [bp-4],ax	;mcb
+	*** 000575	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     while (mcb) {
+; Line 295
+					$FC563:
+	*** 000578	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;mcb
+	*** 00057b	0b 46 fe 		or	ax,WORD PTR [bp-2]
+	*** 00057e	74 6f 			je	$FB564
+;|***         switch (mcb->type) {
+; Line 296
+	*** 000580	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;mcb
+	*** 000583	26 8a 07 		mov	al,BYTE PTR es:[bx]
+	*** 000586	98 			cbw	
+	*** 000587	eb 2f 			jmp	SHORT $S565
+;|***         case 'M':
+; Line 297
+					$SC569:
+;|***             break;
+; Line 298
+	*** 000589	eb 39 			jmp	SHORT $SB566
+;|***         case 'Z':
+; Line 299
+					$SC570:
+;|***             if (mcb->pid == PID_NONE)
+; Line 300
+	*** 00058b	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;mcb
+	*** 00058e	26 83 7f 01 00 		cmp	WORD PTR es:[bx+1],0
+	*** 000593	75 07 			jne	$I571
+;|***                 return segment;
+; Line 301
+	*** 000595	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;segment
+	*** 000598	eb 59 			jmp	SHORT $EX558
+;|***             else
+; Line 302
+	*** 00059a	eb 04 			jmp	SHORT $I572
+					$I571:
+;|***                 return 0;
+; Line 303
+	*** 00059c	2b c0 			sub	ax,ax
+	*** 00059e	eb 53 			jmp	SHORT $EX558
+					$I572:
+;|***             break;
+; Line 304
+	*** 0005a0	eb 22 			jmp	SHORT $SB566
+;|***         default:
+; Line 305
+					$SD573:
+;|***             ERROR("unexpected MCB type: %Xh", mcb->type);
+; Line 306
+	*** 0005a2	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;mcb
+	*** 0005a5	26 8a 07 		mov	al,BYTE PTR es:[bx]
+	*** 0005a8	98 			cbw	
+	*** 0005a9	50 			push	ax
+	*** 0005aa	b8 56 03 		mov	ax,OFFSET DGROUP:$SG574
+	*** 0005ad	50 			push	ax
+	*** 0005ae	e8 00 00 		call	_ERROR
+	*** 0005b1	83 c4 04 		add	sp,4
+;|***             return;
+; Line 307
+	*** 0005b4	eb 3d 			jmp	SHORT $EX558
+;|***         }
+; Line 308
+	*** 0005b6	eb 0c 			jmp	SHORT $SB566
+					$S565:
+	*** 0005b8	3d 4d 00 		cmp	ax,77
+	*** 0005bb	74 cc 			je	$SC569
+	*** 0005bd	3d 5a 00 		cmp	ax,90
+	*** 0005c0	74 c9 			je	$SC570
+	*** 0005c2	eb de 			jmp	SHORT $SD573
+					$SB566:
+;|***         if (mcb->type == 'Z') { // last mcb
+; Line 309
+	*** 0005c4	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;mcb
+	*** 0005c7	26 80 3f 5a 		cmp	BYTE PTR es:[bx],90
+	*** 0005cb	75 0a 			jne	$I575
+;|***             mcb = NULL;
+; Line 310
+	*** 0005cd	2b c0 			sub	ax,ax
+	*** 0005cf	89 46 fe 		mov	WORD PTR [bp-2],ax
+	*** 0005d2	89 46 fc 		mov	WORD PTR [bp-4],ax	;mcb
+;|***         }
+; Line 311
+;|***         else { // next mcb
+; Line 312
+	*** 0005d5	eb 16 			jmp	SHORT $I576
+					$I575:
+;|***             segment += mcb->size + 1;
+; Line 313
+	*** 0005d7	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;mcb
+	*** 0005da	26 8b 47 03 		mov	ax,WORD PTR es:[bx+3]
+	*** 0005de	40 			inc	ax
+	*** 0005df	01 46 fa 		add	WORD PTR [bp-6],ax	;segment
+;|***             mcb = MK_FP(segment, 0);
+; Line 314
+	*** 0005e2	8b 56 fa 		mov	dx,WORD PTR [bp-6]	;segment
+	*** 0005e5	2b c0 			sub	ax,ax
+	*** 0005e7	89 46 fc 		mov	WORD PTR [bp-4],ax	;mcb
+	*** 0005ea	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***         }
+; Line 315
+					$I576:
+;|***     }
+; Line 316
+	*** 0005ed	eb 89 			jmp	SHORT $FC563
+					$FB564:
+;|***     return 0;
+; Line 317
+	*** 0005ef	2b c0 			sub	ax,ax
+	*** 0005f1	eb 00 			jmp	SHORT $EX558
+;|*** }
+; Line 318
+					$EX558:
+	*** 0005f3	8b e5 			mov	sp,bp
+	*** 0005f5	5d 			pop	bp
+	*** 0005f6	c3 			ret	
+
+_dos_lastFreeBlock	ENDP
+;|*** 
+;|*** size_t dos_envSize(void) {
+; Line 320
+	PUBLIC	_dos_envSize
+_dos_envSize	PROC NEAR
+	*** 0005f7	55 			push	bp
+	*** 0005f8	8b ec 			mov	bp,sp
+	*** 0005fa	83 ec 06 		sub	sp,6
+;	envSegment = -6
+;	envMcb = -4
+;|***     const size_t envSegment = *(const uint16 FAR*)MK_FP(_psp, 0x2c);
+; Line 321
+	*** 0005fd	8b 16 00 00 		mov	dx,__psp
+	*** 000601	2b c0 			sub	ax,ax
+	*** 000603	0c 2c 			or	al,44
+	*** 000605	8e c2 			mov	es,dx
+	*** 000607	8b d8 			mov	bx,ax
+	*** 000609	26 8b 07 		mov	ax,WORD PTR es:[bx]
+	*** 00060c	89 46 fa 		mov	WORD PTR [bp-6],ax	;envSegment
+;|***     const struct MCB FAR *envMcb = MK_FP(envSegment - 1, 0);
+; Line 322
+	*** 00060f	48 			dec	ax
+	*** 000610	8b d0 			mov	dx,ax
+	*** 000612	2b c0 			sub	ax,ax
+	*** 000614	89 46 fc 		mov	WORD PTR [bp-4],ax	;envMcb
+	*** 000617	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     return envMcb->size;
+; Line 323
+	*** 00061a	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;envMcb
+	*** 00061d	26 8b 47 03 		mov	ax,WORD PTR es:[bx+3]
+	*** 000621	eb 00 			jmp	SHORT $EX577
+;|*** }
+; Line 324
+					$EX577:
+	*** 000623	8b e5 			mov	sp,bp
+	*** 000625	5d 			pop	bp
+	*** 000626	c3 			ret	
+
+_dos_envSize	ENDP
+	*** 000627	90 			nop	
+_TEXT	ENDS
+END

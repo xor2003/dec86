@@ -1,0 +1,212 @@
+;	Static Name Aliases
+;
+	TITLE   BENCHSHO.C
+	NAME    BENCHSHO
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_printf:NEAR
+EXTRN	_scanf:NEAR
+EXTRN	__chkstk:NEAR
+_DATA      SEGMENT
+$SG165	DB	'%ld',  00H
+$SG166	DB	'executing %ld iterations',  0aH,  00H
+$SG167	DB	'%ld',  00H
+$SG168	DB	'%ld',  00H
+$SG175	DB	'a=%d',  0aH,  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /* benchsho - benchmark for  short  integers
+;|***  * Thomas Plum, Plum Hall Inc, 609-927-3770
+;|***  * If machine traps overflow, use an  unsigned  type
+;|***  * Let  T  be the execution time in milliseconds
+;|***  * Then  average time per operator  =  T/major  usec
+;|***  * (Because the inner loop has exactly 1000 operations)
+;|***  */
+;|*** #define STOR_CL auto
+;|*** #define TYPE short
+;|*** #include <stdio.h>
+;|*** 
+;|*** main(int ac, char *av[])
+;|*** { STOR_CL TYPE a, b, c;
+; Line 13
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 0e 00 		mov	ax,14
+	*** 000006	e8 00 00 		call	__chkstk
+;	ac = 4
+;	av = 6
+;	a = -2
+;	b = -4
+;	c = -6
+;	d = -10
+;	major = -14
+;|***   long d, major;
+;|*** 
+;|*** 	scanf ("%ld", &major);
+; Line 16
+	*** 000009	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;major
+	*** 00000c	50 			push	ax
+	*** 00000d	b8 00 00 		mov	ax,OFFSET DGROUP:$SG165
+	*** 000010	50 			push	ax
+	*** 000011	e8 00 00 		call	_scanf
+	*** 000014	83 c4 04 		add	sp,4
+;|***         printf("executing %ld iterations\n", major);
+; Line 17
+	*** 000017	ff 76 f4 		push	WORD PTR [bp-12]
+	*** 00001a	ff 76 f2 		push	WORD PTR [bp-14]	;major
+	*** 00001d	b8 04 00 		mov	ax,OFFSET DGROUP:$SG166
+	*** 000020	50 			push	ax
+	*** 000021	e8 00 00 		call	_printf
+	*** 000024	83 c4 06 		add	sp,6
+;|*** 	scanf ("%ld", &a);
+; Line 18
+	*** 000027	8d 46 fe 		lea	ax,WORD PTR [bp-2]	;a
+	*** 00002a	50 			push	ax
+	*** 00002b	b8 1e 00 		mov	ax,OFFSET DGROUP:$SG167
+	*** 00002e	50 			push	ax
+	*** 00002f	e8 00 00 		call	_scanf
+	*** 000032	83 c4 04 		add	sp,4
+;|*** 	scanf ("%ld", &b);
+; Line 19
+	*** 000035	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;b
+	*** 000038	50 			push	ax
+	*** 000039	b8 22 00 		mov	ax,OFFSET DGROUP:$SG168
+	*** 00003c	50 			push	ax
+	*** 00003d	e8 00 00 		call	_scanf
+	*** 000040	83 c4 04 		add	sp,4
+;|*** 	for (d = 1; d <= major; ++d)
+; Line 20
+	*** 000043	c7 46 f6 01 00 		mov	WORD PTR [bp-10],1	;d
+	*** 000048	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0
+	*** 00004d	eb 67 			jmp	SHORT $F169
+	*** 00004f	90 			nop	
+					$L20002:
+	*** 000050	2b c0 			sub	ax,ax
+					$L20003:
+	*** 000052	89 46 fe 		mov	WORD PTR [bp-2],ax	;a
+;|*** 	{
+;|***                 /* inner loop executes 1000 selected operations */
+;|***                 for (c = 1; c <= 40; ++c)
+;|*** 		{
+;|***                         a = a + b + c;
+;|***                         b = a >> 1;
+;|***                         a = b % 10;
+;|***                         a = b == c;
+;|***                         b = a | c;
+; Line 29
+	*** 000055	0b 46 fa 		or	ax,WORD PTR [bp-6]	;c
+	*** 000058	89 46 fc 		mov	WORD PTR [bp-4],ax	;b
+;|***                         a = !b;
+; Line 30
+	*** 00005b	3d 01 00 		cmp	ax,1
+	*** 00005e	1b c0 			sbb	ax,ax
+	*** 000060	f7 d8 			neg	ax
+	*** 000062	89 46 fe 		mov	WORD PTR [bp-2],ax	;a
+;|***                         b = a + c;
+; Line 31
+	*** 000065	03 46 fa 		add	ax,WORD PTR [bp-6]	;c
+	*** 000068	89 46 fc 		mov	WORD PTR [bp-4],ax	;b
+;|***                         a = b > c;
+; Line 32
+	*** 00006b	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;c
+	*** 00006e	39 46 fc 		cmp	WORD PTR [bp-4],ax	;b
+	*** 000071	7e 05 			jle	$L20006
+	*** 000073	b8 01 00 		mov	ax,1
+	*** 000076	eb 02 			jmp	SHORT $L20007
+					$L20006:
+	*** 000078	2b c0 			sub	ax,ax
+					$L20007:
+	*** 00007a	89 46 fe 		mov	WORD PTR [bp-2],ax	;a
+;|*** 		}
+; Line 33
+	*** 00007d	ff 46 fa 		inc	WORD PTR [bp-6]	;c
+					$F172:
+	*** 000080	83 7e fa 28 		cmp	WORD PTR [bp-6],40	;c
+	*** 000084	7f 28 			jg	$FC170
+;|*** 		{
+; Line 24
+;|***                         a = a + b + c;
+; Line 25
+	*** 000086	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;a
+	*** 000089	03 46 fc 		add	ax,WORD PTR [bp-4]	;b
+	*** 00008c	03 46 fa 		add	ax,WORD PTR [bp-6]	;c
+	*** 00008f	89 46 fe 		mov	WORD PTR [bp-2],ax	;a
+;|***                         b = a >> 1;
+; Line 26
+	*** 000092	d1 f8 			sar	ax,1
+	*** 000094	89 46 fc 		mov	WORD PTR [bp-4],ax	;b
+;|***                         a = b % 10;
+; Line 27
+	*** 000097	99 			cwd	
+	*** 000098	b9 0a 00 		mov	cx,10
+	*** 00009b	f7 f9 			idiv	cx
+	*** 00009d	89 56 fe 		mov	WORD PTR [bp-2],dx	;a
+;|***                         a = b == c;
+; Line 28
+	*** 0000a0	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;c
+	*** 0000a3	39 46 fc 		cmp	WORD PTR [bp-4],ax	;b
+	*** 0000a6	75 a8 			jne	$L20002
+	*** 0000a8	b8 01 00 		mov	ax,1
+	*** 0000ab	eb a5 			jmp	SHORT $L20003
+	*** 0000ad	90 			nop	
+					$FC170:
+	*** 0000ae	83 46 f6 01 		add	WORD PTR [bp-10],1	;d
+	*** 0000b2	83 56 f8 00 		adc	WORD PTR [bp-8],0
+					$F169:
+	*** 0000b6	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;major
+	*** 0000b9	8b 56 f4 		mov	dx,WORD PTR [bp-12]
+	*** 0000bc	39 56 f8 		cmp	WORD PTR [bp-8],dx
+	*** 0000bf	7f 0f 			jg	$FB171
+	*** 0000c1	7c 05 			jl	$L20001
+	*** 0000c3	39 46 f6 		cmp	WORD PTR [bp-10],ax	;d
+	*** 0000c6	77 08 			ja	$FB171
+					$L20001:
+;|*** 	{
+; Line 21
+;|***                 /* inner loop executes 1000 selected operations */
+;|***                 for (c = 1; c <= 40; ++c)
+; Line 23
+	*** 0000c8	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;c
+	*** 0000cd	eb b1 			jmp	SHORT $F172
+	*** 0000cf	90 			nop	
+					$FB171:
+;|*** 		{
+;|***                         a = a + b + c;
+;|***                         b = a >> 1;
+;|***                         a = b % 10;
+;|***                         a = b == c;
+;|***                         b = a | c;
+;|***                         a = !b;
+;|***                         b = a + c;
+;|***                         a = b > c;
+;|*** 		}
+;|*** 	}
+;|***         printf("a=%d\n", a);
+; Line 35
+	*** 0000d0	ff 76 fe 		push	WORD PTR [bp-2]	;a
+	*** 0000d3	b8 26 00 		mov	ax,OFFSET DGROUP:$SG175
+	*** 0000d6	50 			push	ax
+	*** 0000d7	e8 00 00 		call	_printf
+;|***   }
+; Line 36
+	*** 0000da	8b e5 			mov	sp,bp
+	*** 0000dc	5d 			pop	bp
+	*** 0000dd	c3 			ret	
+
+_main	ENDP
+_TEXT	ENDS
+END

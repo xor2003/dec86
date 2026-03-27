@@ -1,0 +1,905 @@
+;	Static Name Aliases
+;
+	TITLE   start0.c
+	NAME    start0
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_rand:NEAR
+EXTRN	_writeWorld:NEAR
+EXTRN	_audio_jump_64:FAR
+EXTRN	_srand:NEAR
+EXTRN	_audio_jump_65:FAR
+EXTRN	_audio_jump_67:FAR
+EXTRN	_askRepeatMission:NEAR
+EXTRN	_checkDiskA:NEAR
+EXTRN	_missionDecode:NEAR
+EXTRN	_printMission:NEAR
+EXTRN	_openShowPic:NEAR
+EXTRN	_loadPic:NEAR
+EXTRN	_copyJoystickData:FAR
+EXTRN	_loadOverlay:NEAR
+EXTRN	_setTimerIrqHandler:NEAR
+EXTRN	_gfx_jump_3c_setMode13:FAR
+EXTRN	_setupOverlaySlots:NEAR
+EXTRN	_restoreTimerIrqHandler:NEAR
+EXTRN	_gfx_jump_3d_null:FAR
+EXTRN	_gfx_jump_44_setDac:FAR
+EXTRN	_allocBuffer:NEAR
+EXTRN	_gfx_jump_45_retrace:FAR
+EXTRN	_clearRect:NEAR
+EXTRN	_gfx_jump_46_retrace2:FAR
+EXTRN	_pilotSelect:NEAR
+EXTRN	_gfx_jump_4b_storeBufPtr:FAR
+EXTRN	_installCBreakHandler:NEAR
+EXTRN	_exit:NEAR
+EXTRN	_gfx_jump_4e_getVal:FAR
+EXTRN	_restoreCbreakHandler:NEAR
+EXTRN	_initGraphics:NEAR
+EXTRN	_gfx_jump_50_null:FAR
+EXTRN	_gfx_jump_52:FAR
+EXTRN	_getch:NEAR
+EXTRN	_clearKeybuf:NEAR
+EXTRN	_waitMdaCgaStatus:NEAR
+EXTRN	_gfx_jump_17_bufSize:FAR
+EXTRN	_misc_jump_5a_keybuf:FAR
+EXTRN	_misc_jump_5b_getkey:FAR
+EXTRN	_missionGenerate:NEAR
+EXTRN	_misc_jump_5e_clearKeyFlags:FAR
+EXTRN	_showPic640:NEAR
+EXTRN	_missionSelect:NEAR
+EXTRN	_timerCounter:BYTE
+EXTRN	_needSplash:DWORD
+EXTRN	_hercFlag:BYTE
+EXTRN	_missionPick:WORD
+EXTRN	_noJoy80:BYTE
+EXTRN	_exitCode:BYTE
+EXTRN	_aLabs_pic:BYTE
+EXTRN	_aAdv_pic:BYTE
+EXTRN	_aEgraphic_exe:BYTE
+EXTRN	_aTitle640_pic:BYTE
+EXTRN	_aTitle16_pic:BYTE
+EXTRN	_aF15_spr:BYTE
+EXTRN	_aF15_spr_0:BYTE
+EXTRN	_aTemp_wld:BYTE
+EXTRN	_bufPtr:WORD
+EXTRN	_joyDone:BYTE
+EXTRN	_iacaSuFlag0Ptr:DWORD
+EXTRN	_commData:DWORD
+EXTRN	_gameData:DWORD
+EXTRN	_menuSprites:WORD
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "inttype.h"
+;|*** #include "offsets.h"
+;|*** #include "pointers.h"
+;|*** #include "comm.h"
+;|*** #include "gfx.h"
+;|*** #include "slot.h"
+;|*** #include "const.h"
+;|*** #include "debug.h"
+;|*** #include "start.h"
+;|*** 
+;|*** #include <dos.h>
+;|*** 
+;|*** int main(void) 
+;|*** {
+; Line 14
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 1c 		sub	sp,28
+	*** 000006	56 			push	si
+;	unused = -22
+;	introStage = -2
+;	commPtr = -6
+;	difficulty = -8
+;	theater = -28
+;	bufSize = -24
+;	register si = isPcSpeaker
+;|***     /* TODO: fix stack frame layout
+;|***     uint16 pad1; // 0
+;|***     uint16 var_4; // 4
+;|***     uint16 theater; // 6
+;|***     uint16 pad2; // 8
+;|***     uint16 pad3; // a
+;|***     uint16 difficulty; // c
+;|***     uint16 pad4; // e
+;|***     struct FarPointer iacaPtr; //12
+;|***     uint16 pad5; // 14
+;|***     uint8 pad6; // 15
+;|***     uint8 var_16; // 16
+;|***     uint16 pad7; // 18
+;|***     uint16 pad8; // 1a
+;|***     register int i; 
+;|***     */
+;|***     uint8 unused[0xe];
+;|***     uint8 introStage;
+;|***     uint16 FAR *commPtr;
+;|***     uint16 difficulty;
+;|***     int16 theater;
+;|***     uint16 bufSize;
+;|***     register bool isPcSpeaker;
+;|*** 
+;|***     TRACE(("main: entering", difficulty, theater, bufSize));
+;|***     /* 0x17 */
+;|***     FP_SEG(needSplash) = SEG_LOWMEM;
+; Line 41
+	*** 000007	c7 06 02 00 00 00 	mov	WORD PTR _needSplash+2,0
+;|***     FP_OFF(needSplash) = OFF_IACA_NEEDSPLASH;
+; Line 42
+	*** 00000d	c7 06 00 00 f2 04 	mov	WORD PTR _needSplash,1266
+;|***     FP_SEG(iacaSuFlag0Ptr) = SEG_LOWMEM;
+; Line 43
+	*** 000013	c7 06 02 00 00 00 	mov	WORD PTR _iacaSuFlag0Ptr+2,0
+;|***     FP_OFF(iacaSuFlag0Ptr) = OFF_IACA_FLAG2;
+; Line 44
+	*** 000019	c7 06 00 00 f4 04 	mov	WORD PTR _iacaSuFlag0Ptr,1268
+;|***     FP_SEG(commPtr) = SEG_LOWMEM;
+; Line 45
+	*** 00001f	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0
+;|***     FP_OFF(commPtr) = OFF_IACA_START;
+; Line 46
+	*** 000024	c7 46 fa f0 04 		mov	WORD PTR [bp-6],1264	;commPtr
+;|***     /* 0x39 */
+;|***     FP_SEG(commData) = *commPtr;
+; Line 48
+	*** 000029	c4 5e fa 		les	bx,DWORD PTR [bp-6]	;commPtr
+	*** 00002c	26 8b 07 		mov	ax,WORD PTR es:[bx]
+	*** 00002f	a3 02 00 		mov	WORD PTR _commData+2,ax
+;|***     FP_OFF(commData) = 0;
+; Line 49
+	*** 000032	c7 06 00 00 00 00 	mov	WORD PTR _commData,0
+;|***     FP_SEG(gameData) = *commPtr;
+; Line 50
+	*** 000038	26 8b 07 		mov	ax,WORD PTR es:[bx]
+	*** 00003b	a3 02 00 		mov	WORD PTR _gameData+2,ax
+;|***     FP_OFF(gameData) = COMM_GAMEDATA_OFFSET;
+; Line 51
+	*** 00003e	c7 06 00 00 0e 12 	mov	WORD PTR _gameData,4622
+;|***     /* 0x54 */
+;|***     TRACE(("main: installing cbreak handler"));
+;|***     installCBreakHandler();
+; Line 54
+	*** 000044	e8 00 00 		call	_installCBreakHandler
+;|***     TRACE(("main: setting up overlays"));
+;|***     setupOverlaySlots(commData->miscOvlAddr);
+; Line 56
+	*** 000047	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00004b	26 ff 77 1e 		push	WORD PTR es:[bx+30]
+	*** 00004f	e8 00 00 		call	_setupOverlaySlots
+	*** 000052	83 c4 02 		add	sp,2
+;|***     setupOverlaySlots(commData->gfxOvlAddr);
+; Line 57
+	*** 000055	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000059	26 ff 77 1a 		push	WORD PTR es:[bx+26]
+	*** 00005d	e8 00 00 		call	_setupOverlaySlots
+	*** 000060	83 c4 02 		add	sp,2
+;|***     setupOverlaySlots(commData->sndOvlAddr);
+; Line 58
+	*** 000063	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000067	26 ff 77 1c 		push	WORD PTR es:[bx+28]
+	*** 00006b	e8 00 00 		call	_setupOverlaySlots
+	*** 00006e	83 c4 02 		add	sp,2
+;|***     /* 0x81 */
+;|***     TRACE(("main: slot 4b"));
+;|***     gfx_jump_4b_storeBufPtr(commData->gfxInitResult, 2);
+; Line 61
+	*** 000071	b8 02 00 		mov	ax,2
+	*** 000074	50 			push	ax
+	*** 000075	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000079	26 ff 77 20 		push	WORD PTR es:[bx+32]
+	*** 00007d	9a 00 00 00 00 		call	FAR PTR _gfx_jump_4b_storeBufPtr
+	*** 000082	83 c4 04 		add	sp,4
+;|***     hercFlag = commData->setupMono;
+; Line 62
+	*** 000085	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000089	26 8a 47 24 		mov	al,BYTE PTR es:[bx+36]
+	*** 00008d	a2 00 00 		mov	_hercFlag,al
+;|***     TRACE(("main: init graphics"));
+;|***     initGraphics();
+; Line 64
+	*** 000090	e8 00 00 		call	_initGraphics
+;|***     /* 0xa3 */
+;|***     TRACE(("main: init audio"));
+;|***     audio_jump_65();
+; Line 67
+	*** 000093	9a 00 00 00 00 		call	FAR PTR _audio_jump_65
+;|***     audio_jump_64(0, 0);
+; Line 68
+	*** 000098	2b c0 			sub	ax,ax
+	*** 00009a	50 			push	ax
+	*** 00009b	50 			push	ax
+	*** 00009c	9a 00 00 00 00 		call	FAR PTR _audio_jump_64
+	*** 0000a1	83 c4 04 		add	sp,4
+;|***     /* 0xb4 */
+;|***     if (*needSplash == 1) {
+; Line 70
+	*** 0000a4	c4 1e 00 00 		les	bx,DWORD PTR _needSplash
+	*** 0000a8	26 83 3f 01 		cmp	WORD PTR es:[bx],1
+	*** 0000ac	74 03 			je	$JCC172
+	*** 0000ae	e9 d9 01 		jmp	$I1586
+					$JCC172:
+;|***         TRACE(("main: doing splash"));
+;|***         /* 0xc1 doSplash:  */
+;|***         gameData->flag1 = 1;
+; Line 73
+	*** 0000b1	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0000b5	26 c7 47 4e 01 00 	mov	WORD PTR es:[bx+78],1
+;|***         gameData->difficulty = 0xffff;
+; Line 74
+	*** 0000bb	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0000bf	26 c7 47 3e ff ff 	mov	WORD PTR es:[bx+62],-1
+;|***         gameData->theater = 0xffff;
+; Line 75
+	*** 0000c5	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0000c9	26 c7 47 38 ff ff 	mov	WORD PTR es:[bx+56],-1
+;|***         gfx_jump_3d_null(5);
+; Line 76
+	*** 0000cf	b8 05 00 		mov	ax,5
+	*** 0000d2	50 			push	ax
+	*** 0000d3	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3d_null
+	*** 0000d8	83 c4 02 		add	sp,2
+;|***         /* 0xeb */
+;|***         TRACE(("main: showing labs"));
+;|***         openShowPic(aLabs_pic, 0);
+; Line 79
+	*** 0000db	2b c0 			sub	ax,ax
+	*** 0000dd	50 			push	ax
+	*** 0000de	b8 00 00 		mov	ax,OFFSET _aLabs_pic
+	*** 0000e1	50 			push	ax
+	*** 0000e2	e8 00 00 		call	_openShowPic
+	*** 0000e5	83 c4 04 		add	sp,4
+;|***         gfx_jump_50_null();
+; Line 80
+	*** 0000e8	9a 00 00 00 00 		call	FAR PTR _gfx_jump_50_null
+;|***         /* 0xfd */
+;|***         TRACE(("main: setting timer irq handler"));
+;|***         setTimerIrqHandler();
+; Line 83
+	*** 0000ed	e8 00 00 		call	_setTimerIrqHandler
+;|***         /* 0x100 */
+;|***         for (timerCounter = 0; timerCounter < MPS_TIMEOUT;) {
+; Line 85
+	*** 0000f0	c6 06 00 00 00 		mov	BYTE PTR _timerCounter,0
+					$FC1567:
+	*** 0000f5	80 3e 00 00 78 		cmp	BYTE PTR _timerCounter,120
+	*** 0000fa	73 12 			jae	$FB1568
+;|***             if (misc_jump_5a_keybuf() == 0) {
+; Line 86
+	*** 0000fc	9a 00 00 00 00 		call	FAR PTR _misc_jump_5a_keybuf
+	*** 000101	0b c0 			or	ax,ax
+	*** 000103	75 07 			jne	$I1569
+;|***                 misc_jump_5b_getkey();
+; Line 87
+	*** 000105	9a 00 00 00 00 		call	FAR PTR _misc_jump_5b_getkey
+;|***                 break;
+; Line 88
+	*** 00010a	eb 02 			jmp	SHORT $FB1568
+;|***             }
+; Line 89
+;|***         }
+; Line 90
+					$I1569:
+	*** 00010c	eb e7 			jmp	SHORT $FC1567
+					$FB1568:
+;|***         /* 0x11e */
+;|***         if (timerCounter >= MPS_TIMEOUT) { // key was not pressed, show adv.pic
+; Line 92
+	*** 00010e	80 3e 00 00 78 		cmp	BYTE PTR _timerCounter,120
+	*** 000113	72 57 			jb	$FB1573
+;|***             // 0x125
+;|***             gfx_jump_45_retrace();
+; Line 94
+	*** 000115	9a 00 00 00 00 		call	FAR PTR _gfx_jump_45_retrace
+;|***             gfx_jump_3d_null(0xf);
+; Line 95
+	*** 00011a	b8 0f 00 		mov	ax,15
+	*** 00011d	50 			push	ax
+	*** 00011e	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3d_null
+	*** 000123	83 c4 02 		add	sp,2
+;|***             /* 0x13d */
+;|***             TRACE(("main: showing adv"));
+;|***             openShowPic(aAdv_pic, 0);
+; Line 98
+	*** 000126	2b c0 			sub	ax,ax
+	*** 000128	50 			push	ax
+	*** 000129	b8 00 00 		mov	ax,OFFSET _aAdv_pic
+	*** 00012c	50 			push	ax
+	*** 00012d	e8 00 00 		call	_openShowPic
+	*** 000130	83 c4 04 		add	sp,4
+;|***             gfx_jump_50_null();
+; Line 99
+	*** 000133	9a 00 00 00 00 		call	FAR PTR _gfx_jump_50_null
+;|***             gfx_jump_46_retrace2();
+; Line 100
+	*** 000138	9a 00 00 00 00 		call	FAR PTR _gfx_jump_46_retrace2
+;|***             /* 0x14d */
+;|***             for (introStage = 0; introStage < 2; introStage++) {
+; Line 102
+	*** 00013d	c6 46 fe 00 		mov	BYTE PTR [bp-2],0	;introStage
+	*** 000141	eb 03 			jmp	SHORT $F1571
+					$FC1572:
+	*** 000143	fe 46 fe 		inc	BYTE PTR [bp-2]	;introStage
+					$F1571:
+	*** 000146	80 7e fe 02 		cmp	BYTE PTR [bp-2],2	;introStage
+	*** 00014a	73 20 			jae	$FB1573
+;|***                 for (timerCounter = 0; timerCounter < ADV_TIMEOUT;) {
+; Line 103
+	*** 00014c	c6 06 00 00 00 		mov	BYTE PTR _timerCounter,0
+					$FC1575:
+	*** 000151	80 3e 00 00 b4 		cmp	BYTE PTR _timerCounter,180
+	*** 000156	73 12 			jae	$FB1576
+;|***                     if (misc_jump_5a_keybuf() == 0) {
+; Line 104
+	*** 000158	9a 00 00 00 00 		call	FAR PTR _misc_jump_5a_keybuf
+	*** 00015d	0b c0 			or	ax,ax
+	*** 00015f	75 07 			jne	$I1577
+;|***                         misc_jump_5b_getkey();
+; Line 105
+	*** 000161	9a 00 00 00 00 		call	FAR PTR _misc_jump_5b_getkey
+;|***                         goto checkEga;
+; Line 106
+	*** 000166	eb 04 			jmp	SHORT $FB1573
+;|***                     }
+; Line 107
+;|***                 }
+; Line 108
+					$I1577:
+	*** 000168	eb e7 			jmp	SHORT $FC1575
+					$FB1576:
+;|***             }
+; Line 109
+	*** 00016a	eb d7 			jmp	SHORT $FC1572
+					$FB1573:
+;|***         }
+; Line 110
+;|*** 
+;|***         /* 0x17c */
+;|***         TRACE(("main: checking ega"));
+;|*** checkEga:
+;|***         if (commData->gfxModeNum >= 2 && (*MAKEFAR(uint8, SEG_BDA, OFF_BDA_EGASWITCH) & 0xf) == 9) {
+; Line 115
+	*** 00016c	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000170	26 83 7f 78 02 		cmp	WORD PTR es:[bx+120],2
+	*** 000175	72 3e 			jb	$I1579
+	*** 000177	bb 40 00 		mov	bx,64
+	*** 00017a	8e c3 			mov	es,bx
+	*** 00017c	bb 88 00 		mov	bx,136
+	*** 00017f	26 8a 07 		mov	al,BYTE PTR es:[bx]
+	*** 000182	24 0f 			and	al,15
+	*** 000184	3c 09 			cmp	al,9
+	*** 000186	75 2d 			jne	$I1579
+;|***             TRACE(("main: switching to ega for title"));
+;|***             /* 0x19c */
+;|***             if (commData->gfxModeNum != 2) {
+; Line 118
+	*** 000188	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00018c	26 83 7f 78 02 		cmp	WORD PTR es:[bx+120],2
+	*** 000191	74 11 			je	$I1580
+;|***                 setupOverlaySlots(loadOverlay(aEgraphic_exe));
+; Line 119
+	*** 000193	b8 00 00 		mov	ax,OFFSET _aEgraphic_exe
+	*** 000196	50 			push	ax
+	*** 000197	e8 00 00 		call	_loadOverlay
+	*** 00019a	83 c4 02 		add	sp,2
+	*** 00019d	50 			push	ax
+	*** 00019e	e8 00 00 		call	_setupOverlaySlots
+	*** 0001a1	83 c4 02 		add	sp,2
+;|***             }
+; Line 120
+;|***             /* 0x1b4 */
+;|***             gfx_jump_45_retrace();
+; Line 122
+					$I1580:
+	*** 0001a4	9a 00 00 00 00 		call	FAR PTR _gfx_jump_45_retrace
+;|***             /* 0x1bd */
+;|***             showPic640(aTitle640_pic);
+; Line 124
+	*** 0001a9	b8 00 00 		mov	ax,OFFSET _aTitle640_pic
+	*** 0001ac	50 			push	ax
+	*** 0001ad	e8 00 00 		call	_showPic640
+	*** 0001b0	83 c4 02 		add	sp,2
+;|***         }
+; Line 125
+;|***         /* 0x1c5 */
+;|***         else {
+; Line 127
+	*** 0001b3	eb 3f 			jmp	SHORT $I1581
+					$I1579:
+;|***             TRACE(("main: doing 16color title"));
+;|***             gfx_jump_3d_null(1);
+; Line 129
+	*** 0001b5	b8 01 00 		mov	ax,1
+	*** 0001b8	50 			push	ax
+	*** 0001b9	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3d_null
+	*** 0001be	83 c4 02 		add	sp,2
+;|***             gfx_jump_45_retrace();
+; Line 130
+	*** 0001c1	9a 00 00 00 00 		call	FAR PTR _gfx_jump_45_retrace
+;|***             openShowPic(aTitle16_pic, 0);
+; Line 131
+	*** 0001c6	2b c0 			sub	ax,ax
+	*** 0001c8	50 			push	ax
+	*** 0001c9	b8 00 00 		mov	ax,OFFSET _aTitle16_pic
+	*** 0001cc	50 			push	ax
+	*** 0001cd	e8 00 00 		call	_openShowPic
+	*** 0001d0	83 c4 04 		add	sp,4
+;|***             gfx_jump_50_null();
+; Line 132
+	*** 0001d3	9a 00 00 00 00 		call	FAR PTR _gfx_jump_50_null
+;|***             /* 0x1ec */
+;|***             gfx_jump_44_setDac(commData->gfxModeNum >= 3 ? 4 : 3);
+; Line 134
+	*** 0001d8	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 0001dc	26 83 7f 78 03 		cmp	WORD PTR es:[bx+120],3
+	*** 0001e1	72 05 			jb	$L20000
+	*** 0001e3	b8 04 00 		mov	ax,4
+	*** 0001e6	eb 03 			jmp	SHORT $L20001
+					$L20000:
+	*** 0001e8	b8 03 00 		mov	ax,3
+					$L20001:
+	*** 0001eb	50 			push	ax
+	*** 0001ec	9a 00 00 00 00 		call	FAR PTR _gfx_jump_44_setDac
+	*** 0001f1	83 c4 02 		add	sp,2
+;|***         }
+; Line 135
+					$I1581:
+;|***         /* 0x204 */
+;|***         TRACE(("main: waiting for mda/cga"));
+;|***         waitMdaCgaStatus(4);
+; Line 138
+	*** 0001f4	b8 04 00 		mov	ax,4
+	*** 0001f7	50 			push	ax
+	*** 0001f8	e8 00 00 		call	_waitMdaCgaStatus
+	*** 0001fb	83 c4 02 		add	sp,2
+;|***         /* 0x20e - 0x225 */
+;|***         isPcSpeaker = commData->sndOvlName[0] == 'I' || commData->sndOvlName[0] == 'i';
+; Line 140
+	*** 0001fe	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000202	26 80 7f 0d 49 		cmp	BYTE PTR es:[bx+13],73
+	*** 000207	74 07 			je	$L20004
+	*** 000209	26 80 7f 0d 69 		cmp	BYTE PTR es:[bx+13],105
+	*** 00020e	75 05 			jne	$L20002
+					$L20004:
+	*** 000210	b8 01 00 		mov	ax,1
+	*** 000213	eb 02 			jmp	SHORT $L20003
+					$L20002:
+	*** 000215	2b c0 			sub	ax,ax
+					$L20003:
+	*** 000217	8b f0 			mov	si,ax
+;|***         /* 0x229 */
+;|***         TRACE(("main: check pc speaker"));
+;|***         if (isPcSpeaker != 0) restoreTimerIrqHandler();
+; Line 143
+	*** 000219	0b f6 			or	si,si
+	*** 00021b	74 03 			je	$I1582
+	*** 00021d	e8 00 00 		call	_restoreTimerIrqHandler
+;|***         /* 0x230 */
+;|***         TRACE(("main: doing audio thing"));
+; Line 145
+					$I1582:
+;|***         audio_jump_67();
+; Line 146
+	*** 000220	9a 00 00 00 00 		call	FAR PTR _audio_jump_67
+;|***         if (isPcSpeaker == 0) restoreTimerIrqHandler();
+; Line 147
+	*** 000225	0b f6 			or	si,si
+	*** 000227	75 03 			jne	$I1583
+	*** 000229	e8 00 00 		call	_restoreTimerIrqHandler
+;|***         /* 0x23c */
+;|***         if (commData->gfxModeNum >= 2 && (*MAKEFAR(uint8, SEG_BDA, OFF_BDA_EGASWITCH) & 0xf) == 9) {
+; Line 149
+					$I1583:
+	*** 00022c	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000230	26 83 7f 78 02 		cmp	WORD PTR es:[bx+120],2
+	*** 000235	72 45 			jb	$I1584
+	*** 000237	bb 40 00 		mov	bx,64
+	*** 00023a	8e c3 			mov	es,bx
+	*** 00023c	bb 88 00 		mov	bx,136
+	*** 00023f	26 8a 07 		mov	al,BYTE PTR es:[bx]
+	*** 000242	24 0f 			and	al,15
+	*** 000244	3c 09 			cmp	al,9
+	*** 000246	75 34 			jne	$I1584
+;|***             TRACE(("main: restoring old overlay after title"));
+;|***             gfx_jump_44_setDac(2);
+; Line 151
+	*** 000248	b8 02 00 		mov	ax,2
+	*** 00024b	50 			push	ax
+	*** 00024c	9a 00 00 00 00 		call	FAR PTR _gfx_jump_44_setDac
+	*** 000251	83 c4 02 		add	sp,2
+;|***             /* 0x264 */
+;|***             getch();
+; Line 153
+	*** 000254	e8 00 00 		call	_getch
+;|***             /* 0x26f */
+;|***             setupOverlaySlots(commData->gfxOvlAddr); /* restore temporarily shadowed overlay? */
+; Line 155
+	*** 000257	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00025b	26 ff 77 1a 		push	WORD PTR es:[bx+26]
+	*** 00025f	e8 00 00 		call	_setupOverlaySlots
+	*** 000262	83 c4 02 		add	sp,2
+;|***             gfx_jump_45_retrace();
+; Line 156
+	*** 000265	9a 00 00 00 00 		call	FAR PTR _gfx_jump_45_retrace
+;|***             /* 0x282 */
+;|***             gfx_jump_3c_setMode13(commData->setupMono);
+; Line 158
+	*** 00026a	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00026e	26 ff 77 24 		push	WORD PTR es:[bx+36]
+	*** 000272	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3c_setMode13
+	*** 000277	83 c4 02 		add	sp,2
+;|***         }
+; Line 159
+;|***         /* 0x28c */
+;|***         else {
+; Line 161
+	*** 00027a	eb 0e 			jmp	SHORT $I1586
+					$I1584:
+;|***             TRACE(("main: after 16 title"));
+;|***             gfx_jump_44_setDac(0);
+; Line 163
+	*** 00027c	2b c0 			sub	ax,ax
+	*** 00027e	50 			push	ax
+	*** 00027f	9a 00 00 00 00 		call	FAR PTR _gfx_jump_44_setDac
+	*** 000284	83 c4 02 		add	sp,2
+;|***             getch();
+; Line 164
+	*** 000287	e8 00 00 		call	_getch
+;|***         }
+; Line 165
+					$I1586:
+;|***     }
+; Line 166
+;|*** 
+;|***     TRACE(("main: setting difficulty and theater"));
+;|***     /* 0x29a */
+;|***     difficulty = gameData->difficulty;
+; Line 170
+	*** 00028a	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00028e	26 8b 47 3e 		mov	ax,WORD PTR es:[bx+62]
+	*** 000292	89 46 f8 		mov	WORD PTR [bp-8],ax	;difficulty
+;|***     theater = gameData->theater;
+; Line 171
+	*** 000295	26 8b 47 38 		mov	ax,WORD PTR es:[bx+56]
+	*** 000299	89 46 e4 		mov	WORD PTR [bp-28],ax	;theater
+;|***     /* 0x2ac */
+;|***     if (commData->gfxModeChar == 0 && gameData->flag1 == 0 && gameData->theater < 4 &&
+;|***             ++(gameData->theater) == 4) {
+; Line 174
+	*** 00029c	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 0002a0	26 83 7f 30 00 		cmp	WORD PTR es:[bx+48],0
+	*** 0002a5	75 36 			jne	$I1588
+	*** 0002a7	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0002ab	26 83 7f 4e 00 		cmp	WORD PTR es:[bx+78],0
+	*** 0002b0	75 2b 			jne	$I1588
+	*** 0002b2	26 83 7f 38 04 		cmp	WORD PTR es:[bx+56],4
+	*** 0002b7	73 24 			jae	$I1588
+	*** 0002b9	26 ff 47 38 		inc	WORD PTR es:[bx+56]
+	*** 0002bd	26 83 7f 38 04 		cmp	WORD PTR es:[bx+56],4
+	*** 0002c2	75 19 			jne	$I1588
+;|***         /* 0x2d8 */
+;|***         gameData->theater = 0;
+; Line 176
+	*** 0002c4	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0002c8	26 c7 47 38 00 00 	mov	WORD PTR es:[bx+56],0
+;|***         /* 0x2de */
+;|***         if (gameData->difficulty < 3) {
+; Line 178
+	*** 0002ce	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0002d2	26 83 7f 3e 03 		cmp	WORD PTR es:[bx+62],3
+	*** 0002d7	7d 04 			jge	$I1588
+;|***             /* 0x2e9 */
+;|***             gameData->difficulty++;
+; Line 180
+	*** 0002d9	26 ff 47 3e 		inc	WORD PTR es:[bx+62]
+;|***         }
+; Line 181
+;|***     }
+; Line 182
+					$I1588:
+;|*** 
+;|***     TRACE(("main: setting up kbd/joy"));
+;|***     /* 0x2ed */
+;|***     clearKeybuf();
+; Line 186
+	*** 0002dd	e8 00 00 		call	_clearKeybuf
+;|***     /* 0x2f4 */
+;|***     if (commData->setupUseJoy == 1) {
+; Line 188
+	*** 0002e0	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 0002e4	26 83 7f 72 01 		cmp	WORD PTR es:[bx+114],1
+	*** 0002e9	75 13 			jne	$I1589
+;|***         /*
+;|***             This data of length 0x14 is copied in su.exe at seg0001(683):d1 from dseg(692):eb4 to COMM:48, then later this copies it from there onto the stack (???)
+;|***             1CC2:0CDE     6D 01 6D 01 00 00 00 00 73 01 73 01 00 00 00 00  m.m.....s.s.....
+;|***             1CC2:0CEE     6E 01 6E 01 00 00 00 00 01 00 01 00 00 00 00 00  n.n.............
+;|***         */
+;|***        copyJoystickData(commData->joyData);
+; Line 194
+	*** 0002eb	8b c3 			mov	ax,bx
+	*** 0002ed	8c c2 			mov	dx,es
+	*** 0002ef	05 48 00 		add	ax,72
+	*** 0002f2	52 			push	dx
+	*** 0002f3	50 			push	ax
+	*** 0002f4	9a 00 00 00 00 		call	FAR PTR _copyJoystickData
+	*** 0002f9	83 c4 04 		add	sp,4
+;|***     }
+; Line 195
+;|***     /* 0x30e */
+;|***     else {
+; Line 197
+	*** 0002fc	eb 08 			jmp	SHORT $I1590
+					$I1589:
+;|***         noJoy80[0] = noJoy80[1] = 0x80;
+; Line 198
+	*** 0002fe	b0 80 			mov	al,128
+	*** 000300	a2 01 00 		mov	BYTE PTR _noJoy80+1,al
+	*** 000303	a2 00 00 		mov	BYTE PTR _noJoy80,al
+;|***     }
+; Line 199
+					$I1590:
+;|***     TRACE(("main: init pilot/mission"));
+;|***     /* 0x316 */
+;|***     joyDone[0] = 1;
+; Line 202
+	*** 000306	c6 06 00 00 01 		mov	BYTE PTR _joyDone,1
+;|***     bufSize = gfx_jump_17_bufSize();
+; Line 203
+	*** 00030b	9a 00 00 00 00 		call	FAR PTR _gfx_jump_17_bufSize
+	*** 000310	89 46 e8 		mov	WORD PTR [bp-24],ax	;bufSize
+;|***     /* 0x32a */
+;|***     menuSprites = allocBuffer(bufSize);
+; Line 205
+	*** 000313	50 			push	ax
+	*** 000314	e8 00 00 		call	_allocBuffer
+	*** 000317	83 c4 02 		add	sp,2
+	*** 00031a	a3 00 00 		mov	_menuSprites,ax
+;|***     pilotSelect(*needSplash);
+; Line 206
+	*** 00031d	c4 1e 00 00 		les	bx,DWORD PTR _needSplash
+	*** 000321	26 ff 37 		push	WORD PTR es:[bx]
+	*** 000324	e8 00 00 		call	_pilotSelect
+	*** 000327	83 c4 02 		add	sp,2
+;|***     TRACE(("main: pilot selected"));
+;|***     missionSelect();
+; Line 208
+	*** 00032a	e8 00 00 		call	_missionSelect
+;|***     TRACE(("main: mission selected"));
+;|***     /* 0x33d */
+;|***     gameData->flag3 = 1;
+; Line 211
+	*** 00032d	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000331	26 c7 47 3c 01 00 	mov	WORD PTR es:[bx+60],1
+;|***     gameData->flag4 = 1;
+; Line 212
+	*** 000337	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00033b	26 c7 47 3a 01 00 	mov	WORD PTR es:[bx+58],1
+;|***     gameData->flag1 = 0;
+; Line 213
+	*** 000341	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000345	26 c7 47 4e 00 00 	mov	WORD PTR es:[bx+78],0
+;|***     commData->setup1 = 1;
+; Line 214
+	*** 00034b	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00034f	26 c7 47 22 01 00 	mov	WORD PTR es:[bx+34],1
+;|***     /* 0x365, check if same diff and thea picked as last time */
+;|***     if (gameData->difficulty == difficulty && gameData->theater == theater && missionPick == 0xffff && askRepeatMission() != 0) 
+; Line 216
+	*** 000355	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000359	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;difficulty
+	*** 00035c	26 39 47 3e 		cmp	WORD PTR es:[bx+62],ax
+	*** 000360	75 19 			jne	$I1591
+	*** 000362	26 8b 47 38 		mov	ax,WORD PTR es:[bx+56]
+	*** 000366	39 46 e4 		cmp	WORD PTR [bp-28],ax	;theater
+	*** 000369	75 10 			jne	$I1591
+	*** 00036b	83 3e 00 00 ff 		cmp	WORD PTR _missionPick,-1
+	*** 000370	75 09 			jne	$I1591
+	*** 000372	e8 00 00 		call	_askRepeatMission
+	*** 000375	0b c0 			or	ax,ax
+	*** 000377	74 02 			je	$I1591
+;|***         goto doSrand;
+; Line 217
+	*** 000379	eb 0b 			jmp	SHORT $doSrand1592
+;|***     /* 0x38b */
+;|***     gameData->rand = rand();
+; Line 219
+					$I1591:
+	*** 00037b	e8 00 00 		call	_rand
+	*** 00037e	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000382	26 89 47 42 		mov	WORD PTR es:[bx+66],ax
+;|***     /* 0x396 */
+;|*** doSrand:
+; Line 221
+					$doSrand1592:
+;|***     TRACE(("main: mission decoding"));
+;|***     srand(gameData->rand);
+; Line 223
+	*** 000386	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00038a	26 ff 77 42 		push	WORD PTR es:[bx+66]
+	*** 00038e	e8 00 00 		call	_srand
+	*** 000391	83 c4 02 		add	sp,2
+;|***     missionDecode();
+; Line 224
+	*** 000394	e8 00 00 		call	_missionDecode
+;|***     TRACE(("main: mission generation"));
+;|***     missionGenerate();
+; Line 226
+	*** 000397	e8 00 00 		call	_missionGenerate
+;|***     /* 0x3aa */
+;|***     if (gameData->difficulty != DIFFICULTY_DEMO) {
+; Line 228
+	*** 00039a	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00039e	26 83 7f 3e 04 		cmp	WORD PTR es:[bx+62],4
+	*** 0003a3	74 03 			je	$I1593
+;|***         TRACE(("main: printing mission"));
+;|***         printMission();
+; Line 230
+	*** 0003a5	e8 00 00 		call	_printMission
+;|***     }
+; Line 231
+;|***     /* 0x3b8 */
+;|***     TRACE(("main: checking disk"));
+; Line 233
+					$I1593:
+;|***     checkDiskA();
+; Line 234
+	*** 0003a8	e8 00 00 		call	_checkDiskA
+;|***     exitCode[0] = 0xc;
+; Line 235
+	*** 0003ab	c6 06 00 00 0c 		mov	BYTE PTR _exitCode,12
+;|***     /* 0x3c0 */
+;|***     TRACE(("main: restoring cbreak handler and clearing splash"));
+;|***     restoreCbreakHandler();
+; Line 238
+	*** 0003b0	e8 00 00 		call	_restoreCbreakHandler
+;|***     *needSplash = 0;
+; Line 239
+	*** 0003b3	c4 1e 00 00 		les	bx,DWORD PTR _needSplash
+	*** 0003b7	26 c7 07 00 00 		mov	WORD PTR es:[bx],0
+;|***     gfx_jump_3d_null(8);
+; Line 240
+	*** 0003bc	b8 08 00 		mov	ax,8
+	*** 0003bf	50 			push	ax
+	*** 0003c0	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3d_null
+	*** 0003c5	83 c4 02 		add	sp,2
+;|***     /* 0x3d8 */
+;|***     TRACE(("main: loading sprites"));
+;|***     if (gfx_jump_4e_getVal() == 0) {
+; Line 243
+	*** 0003c8	9a 00 00 00 00 		call	FAR PTR _gfx_jump_4e_getVal
+	*** 0003cd	0b c0 			or	ax,ax
+	*** 0003cf	75 10 			jne	$I1594
+;|***         openShowPic(aF15_spr, 2);
+; Line 244
+	*** 0003d1	b8 02 00 		mov	ax,2
+	*** 0003d4	50 			push	ax
+	*** 0003d5	b8 00 00 		mov	ax,OFFSET _aF15_spr
+	*** 0003d8	50 			push	ax
+	*** 0003d9	e8 00 00 		call	_openShowPic
+	*** 0003dc	83 c4 04 		add	sp,4
+;|***     }
+; Line 245
+;|***     /* 0x3f1 */
+;|***     else {
+; Line 247
+	*** 0003df	eb 12 			jmp	SHORT $I1595
+					$I1594:
+;|***         loadPic(aF15_spr_0, commData->gfxInitResult);
+; Line 248
+	*** 0003e1	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 0003e5	26 ff 77 20 		push	WORD PTR es:[bx+32]
+	*** 0003e9	b8 00 00 		mov	ax,OFFSET _aF15_spr_0
+	*** 0003ec	50 			push	ax
+	*** 0003ed	e8 00 00 		call	_loadPic
+	*** 0003f0	83 c4 04 		add	sp,4
+;|***     }
+; Line 249
+					$I1595:
+;|***     // 403
+;|***     TRACE(("main: write world"));
+;|***     writeWorld(aTemp_wld);
+; Line 252
+	*** 0003f3	b8 00 00 		mov	ax,OFFSET _aTemp_wld
+	*** 0003f6	50 			push	ax
+	*** 0003f7	e8 00 00 		call	_writeWorld
+	*** 0003fa	83 c4 02 		add	sp,2
+;|***     commData->setupDone = 3;
+; Line 253
+	*** 0003fd	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000401	26 c7 47 26 03 00 	mov	WORD PTR es:[bx+38],3
+;|***     commData->unk2 = 0;
+; Line 254
+	*** 000407	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00040b	26 c7 47 28 00 00 	mov	WORD PTR es:[bx+40],0
+;|***     commData->unk3 = 0;
+; Line 255
+	*** 000411	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000415	26 c7 47 2c 00 00 	mov	WORD PTR es:[bx+44],0
+;|***     /* 0x42f */
+;|***     if (gameData->flag3 > 1) {
+; Line 257
+	*** 00041b	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00041f	26 83 7f 3c 01 		cmp	WORD PTR es:[bx+60],1
+	*** 000424	76 0c 			jbe	$I1596
+;|***         /* 0x43a */
+;|***         commData->gfxModeChar = 1;
+; Line 259
+	*** 000426	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00042a	26 c7 47 30 01 00 	mov	WORD PTR es:[bx+48],1
+;|***     }
+; Line 260
+;|***     /* 0x446 */
+;|***     else {
+; Line 262
+	*** 000430	eb 0a 			jmp	SHORT $I1597
+					$I1596:
+;|***         commData->gfxModeChar = 0;
+; Line 263
+	*** 000432	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000436	26 c7 47 30 00 00 	mov	WORD PTR es:[bx+48],0
+;|***     }
+; Line 264
+					$I1597:
+;|***     /* 0x44c */
+;|***     TRACE(("main: clearing keyflags and screen"));
+;|***     misc_jump_5e_clearKeyFlags();
+; Line 267
+	*** 00043c	9a 00 00 00 00 		call	FAR PTR _misc_jump_5e_clearKeyFlags
+;|***     // 461
+;|***     clearRect(bufPtr, 0, 0, SCREEN_MAXX, SCREEN_MAXY);
+; Line 269
+	*** 000441	b8 c7 00 		mov	ax,199
+	*** 000444	50 			push	ax
+	*** 000445	b8 3f 01 		mov	ax,319
+	*** 000448	50 			push	ax
+	*** 000449	2b c0 			sub	ax,ax
+	*** 00044b	50 			push	ax
+	*** 00044c	50 			push	ax
+	*** 00044d	ff 36 00 00 		push	WORD PTR _bufPtr
+	*** 000451	e8 00 00 		call	_clearRect
+	*** 000454	83 c4 0a 		add	sp,10
+;|***     gfx_jump_52(0);
+; Line 270
+	*** 000457	2b c0 			sub	ax,ax
+	*** 000459	50 			push	ax
+	*** 00045a	9a 00 00 00 00 		call	FAR PTR _gfx_jump_52
+	*** 00045f	83 c4 02 		add	sp,2
+;|***     /* 0x478 */
+;|***     TRACE(("main: exiting with code %hd", exitCode[0]));
+;|*** #ifdef DEBUG
+;|***     log_close();
+;|*** #endif
+;|***     exit(exitCode[0]);
+; Line 276
+	*** 000462	a0 00 00 		mov	al,BYTE PTR _exitCode
+	*** 000465	2a e4 			sub	ah,ah
+	*** 000467	50 			push	ax
+	*** 000468	e8 00 00 		call	_exit
+	*** 00046b	83 c4 02 		add	sp,2
+;|***     /* 0x482 */
+;|*** }; Line 278
+	*** 00046e	5e 			pop	si
+	*** 00046f	8b e5 			mov	sp,bp
+	*** 000471	5d 			pop	bp
+	*** 000472	c3 			ret	
+
+_main	ENDP
+	*** 000473	90 			nop	
+_TEXT	ENDS
+END

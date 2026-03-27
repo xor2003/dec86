@@ -1,0 +1,2107 @@
+;	Static Name Aliases
+;
+	TITLE   egame11.c
+	NAME    egame11
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_gfx_jump_44_setDac:FAR
+EXTRN	_gfx_jump_45_retrace:FAR
+EXTRN	_loadF15DgtlBin:NEAR
+EXTRN	_gfx_jump_46_retrace2:FAR
+EXTRN	_sub_19E44:NEAR
+EXTRN	_getch:NEAR
+EXTRN	_DrawHUDElement:NEAR
+EXTRN	_gfx_jump_4b_storeBufPtr:FAR
+EXTRN	_memcpy:NEAR
+EXTRN	_gfx_jump_4c:FAR
+EXTRN	_sub_13C3B:NEAR
+EXTRN	_drawSomeStrings:NEAR
+EXTRN	_movedata:NEAR
+EXTRN	_gfx_jump_4f:FAR
+EXTRN	_setTimerIrqHandler:NEAR
+EXTRN	_restoreTimerIrqHandler:NEAR
+EXTRN	_fclose:NEAR
+EXTRN	_openBlitClosePic:NEAR
+EXTRN	_strcpy:NEAR
+EXTRN	_fopen:NEAR
+EXTRN	_misc_jump_5b_getkey:FAR
+EXTRN	_fread:NEAR
+EXTRN	_sub_12278:NEAR
+EXTRN	_audio_jump_64:FAR
+EXTRN	_audio_jump_65:FAR
+EXTRN	_gfx_jump_2a:FAR
+EXTRN	_sub_121C6:NEAR
+EXTRN	_setInt9Handler:FAR
+EXTRN	_load15Flt3d3:NEAR
+EXTRN	_restoreInt9Handler:FAR
+EXTRN	_gfx_jump_3f_modecode:FAR
+EXTRN	_gfx_jump_0_alloc:FAR
+EXTRN	_segread:NEAR
+EXTRN	_setupDac:NEAR
+EXTRN	_sizes3dt:BYTE
+EXTRN	_buf1_3dt:BYTE
+EXTRN	_scenarioPlh:BYTE
+EXTRN	_byte_34197:BYTE
+EXTRN	_matrix3dt:BYTE
+EXTRN	_buf2_3dt:BYTE
+EXTRN	_a256pit_pic:BYTE
+EXTRN	_buf3_3dt:BYTE
+EXTRN	_word_33DD0:BYTE
+EXTRN	_aCockpit_pic:BYTE
+EXTRN	_val_3dt:BYTE
+EXTRN	_size3d3_4:WORD
+EXTRN	_byte_3A900:BYTE
+EXTRN	_size3d3_5:WORD
+EXTRN	_size3d3_6:WORD
+EXTRN	_size3d3_3:WORD
+EXTRN	_sign3dg:WORD
+EXTRN	_word_3C046:WORD
+EXTRN	_unk_33E1A:BYTE
+EXTRN	_word_3401A:WORD
+EXTRN	_g_ViewY:DWORD
+EXTRN	_a_3d3:BYTE
+EXTRN	_byte_3B7FC:BYTE
+EXTRN	_aRb:BYTE
+EXTRN	_word_3AA5C:WORD
+EXTRN	_aOpenErrorOn_3d3:BYTE
+EXTRN	_byte_3BE3E:BYTE
+EXTRN	_g_planes:BYTE
+EXTRN	_aBadObjFileFormat_:BYTE
+EXTRN	_aObjectDataTooBig_:BYTE
+EXTRN	_byte_3BE80:BYTE
+EXTRN	_buf3d3_1:BYTE
+EXTRN	_word_3C0A2:BYTE
+EXTRN	_aRb_0:BYTE
+EXTRN	_aPhoto_3d3:BYTE
+EXTRN	_waypoints:BYTE
+EXTRN	_aPleaseInsertF15DiskB:BYTE
+EXTRN	_byte_3C16E:BYTE
+EXTRN	_aRb_1:BYTE
+EXTRN	_aPhoto_3d3_0:BYTE
+EXTRN	_byte_3AFAC:BYTE
+EXTRN	_matrix3dt_2:BYTE
+EXTRN	_aObjdataOverflow:BYTE
+EXTRN	_a_3dt:BYTE
+EXTRN	_buf3d3_2:BYTE
+EXTRN	_aRb_2:BYTE
+EXTRN	_word_3B144:WORD
+EXTRN	_word_336FC:WORD
+EXTRN	_aOpenErrorOn_3dt:BYTE
+EXTRN	_g_viewX_:WORD
+EXTRN	_aBadTileFileFormat_:BYTE
+EXTRN	_g_playerTargetIndex:WORD
+EXTRN	_aTooManyTiles_:BYTE
+EXTRN	_word_3B14A:BYTE
+EXTRN	_flt15_buf2:BYTE
+EXTRN	_byte_3BEC4:BYTE
+EXTRN	_aTooMuchTileData:BYTE
+EXTRN	_a_3dg:BYTE
+EXTRN	_sign3d3:WORD
+EXTRN	_aRb_3:BYTE
+EXTRN	_unk_34121:BYTE
+EXTRN	_buf3d3_3:BYTE
+EXTRN	_g_viewY_:WORD
+EXTRN	_word_3BED2:WORD
+EXTRN	_aBadGridFileFormat_:BYTE
+EXTRN	_unk_3B202:BYTE
+EXTRN	_word_3C69E:WORD
+EXTRN	_byte_3BED8:BYTE
+EXTRN	_commData:DWORD
+EXTRN	_dword_38FE2:DWORD
+EXTRN	_fileHandle:WORD
+EXTRN	_farPointer:DWORD
+EXTRN	_gameData:DWORD
+EXTRN	_byte_3BFA4:BYTE
+EXTRN	_word_38FFA:WORD
+EXTRN	_word_3C00C:WORD
+EXTRN	_buf4_3dg:BYTE
+EXTRN	_size3d3_7:WORD
+EXTRN	_flagFarToNear:WORD
+EXTRN	_buf3_3dg:BYTE
+COMM FAR	_byte_228D0:	 1:	 44500
+EXTRN	_buf2_3dg:BYTE
+COMM FAR	_byte_2D6A4:	 1:	 21004
+EXTRN	_byte_32933:BYTE
+EXTRN	_size3d3:WORD
+EXTRN	_buf1_3dg:BYTE
+EXTRN	_buf3d3:BYTE
+EXTRN	_g_ViewX:DWORD
+EXTRN	_size3d3_2:WORD
+EXTRN	_f15DgtlResult:WORD
+EXTRN	_sign3dt:WORD
+EXTRN	_byte_3C02A:BYTE
+EXTRN	_regnStr:WORD
+CONST      SEGMENT
+$T20000	DW SEG _byte_228D0 
+CONST      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** // seg000 debug code (/Zi)
+;|*** #include "debug.h"
+;|*** #include "egame.h"
+;|*** #include "offsets.h"
+;|*** #include "pointers.h"
+;|*** #include "slot.h"
+;|*** #include "const.h"
+;|*** #include "comm.h"
+;|*** 
+;|*** #include <dos.h>
+;|*** #include <stdio.h>
+;|*** #include <string.h>
+;|*** 
+;|*** // far arrays found in seg004 in the original executable
+;|*** unsigned char far byte_228D0[0xadd4];
+;|*** unsigned char far byte_2D6A4[0x4844+0x9c8];
+;|*** 
+;|*** // ==== seg000:0x147 ====
+;|*** void drawCockpit() {
+; Line 19
+	PUBLIC	_drawCockpit
+_drawCockpit	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+;|***     InitializeCockpitData();
+; Line 20
+	*** 000003	e8 00 00 		call	_InitializeCockpitData
+;|***     load15Flt3d3();
+; Line 21
+	*** 000006	e8 00 00 		call	_load15Flt3d3
+;|***     // 0x162
+;|***     strcpy(regnStr, scenarioPlh[gameData->theater]);
+; Line 23
+	*** 000009	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00000d	26 8b 5f 38 		mov	bx,WORD PTR es:[bx+56]
+	*** 000011	d1 e3 			shl	bx,1
+	*** 000013	ff b7 00 00 		push	WORD PTR _scenarioPlh[bx]
+	*** 000017	ff 36 00 00 		push	WORD PTR _regnStr
+	*** 00001b	e8 00 00 		call	_strcpy
+	*** 00001e	83 c4 04 		add	sp,4
+;|***     sub_121C6();
+; Line 24
+	*** 000021	e8 00 00 		call	_sub_121C6
+;|***     // 0x16e
+;|***     f15DgtlResult = loadF15DgtlBin();
+; Line 26
+	*** 000024	e8 00 00 		call	_loadF15DgtlBin
+	*** 000027	a3 00 00 		mov	_f15DgtlResult,ax
+;|***     // 0x179
+;|***     byte_34197 = byte_228D0[0x2f];
+; Line 28
+	*** 00002a	8e 06 00 00 		mov	es,$T20000
+	*** 00002e	26 a0 2f 00 		mov	al,BYTE PTR es:_byte_228D0+47
+	*** 000032	a2 00 00 		mov	_byte_34197,al
+;|***     // 17c
+;|***     if ((byte_32933 = gfx_jump_4c()) != 0) {
+; Line 30
+	*** 000035	9a 00 00 00 00 		call	FAR PTR _gfx_jump_4c
+	*** 00003a	a2 00 00 		mov	_byte_32933,al
+	*** 00003d	0a c0 			or	al,al
+	*** 00003f	74 03 			je	$I1959
+;|***         setupDac();
+; Line 31
+	*** 000041	e8 00 00 		call	_setupDac
+;|***     }
+; Line 32
+;|***      gfx_jump_44_setDac(1);
+; Line 33
+					$I1959:
+	*** 000044	b8 01 00 		mov	ax,1
+	*** 000047	50 			push	ax
+	*** 000048	9a 00 00 00 00 		call	FAR PTR _gfx_jump_44_setDac
+	*** 00004d	83 c4 02 		add	sp,2
+;|***      gfx_jump_45_retrace();
+; Line 34
+	*** 000050	9a 00 00 00 00 		call	FAR PTR _gfx_jump_45_retrace
+;|***      // 1a1
+;|***      if (gfx_jump_3f_modecode() == 3) {
+; Line 36
+	*** 000055	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3f_modecode
+	*** 00005a	3d 03 00 		cmp	ax,3
+	*** 00005d	75 10 			jne	$I1960
+;|***         openBlitClosePic(a256pit_pic, 1);
+; Line 37
+	*** 00005f	b8 01 00 		mov	ax,1
+	*** 000062	50 			push	ax
+	*** 000063	b8 00 00 		mov	ax,OFFSET _a256pit_pic
+	*** 000066	50 			push	ax
+	*** 000067	e8 00 00 		call	_openBlitClosePic
+	*** 00006a	83 c4 04 		add	sp,4
+;|***      }
+; Line 38
+;|***      else {
+; Line 39
+	*** 00006d	eb 0e 			jmp	SHORT $I1961
+					$I1960:
+;|***         openBlitClosePic(aCockpit_pic, 1);
+; Line 40
+	*** 00006f	b8 01 00 		mov	ax,1
+	*** 000072	50 			push	ax
+	*** 000073	b8 00 00 		mov	ax,OFFSET _aCockpit_pic
+	*** 000076	50 			push	ax
+	*** 000077	e8 00 00 		call	_openBlitClosePic
+	*** 00007a	83 c4 04 		add	sp,4
+;|***      }
+; Line 41
+					$I1961:
+;|***      // 1df
+;|***      gfx_jump_2a(1, 0, 0x60, 0, 0, 0x60, 0x140, 0x68);
+; Line 43
+	*** 00007d	b8 68 00 		mov	ax,104
+	*** 000080	50 			push	ax
+	*** 000081	b8 40 01 		mov	ax,320
+	*** 000084	50 			push	ax
+	*** 000085	b8 60 00 		mov	ax,96
+	*** 000088	50 			push	ax
+	*** 000089	2b c0 			sub	ax,ax
+	*** 00008b	50 			push	ax
+	*** 00008c	50 			push	ax
+	*** 00008d	b8 60 00 		mov	ax,96
+	*** 000090	50 			push	ax
+	*** 000091	2b c0 			sub	ax,ax
+	*** 000093	50 			push	ax
+	*** 000094	b8 01 00 		mov	ax,1
+	*** 000097	50 			push	ax
+	*** 000098	9a 00 00 00 00 		call	FAR PTR _gfx_jump_2a
+	*** 00009d	83 c4 10 		add	sp,16
+;|***      gfx_jump_2a(1, 0, 0x60, 2, 0, 0x60, 0x140, 0x68);
+; Line 44
+	*** 0000a0	b8 68 00 		mov	ax,104
+	*** 0000a3	50 			push	ax
+	*** 0000a4	b8 40 01 		mov	ax,320
+	*** 0000a7	50 			push	ax
+	*** 0000a8	b8 60 00 		mov	ax,96
+	*** 0000ab	50 			push	ax
+	*** 0000ac	2b c0 			sub	ax,ax
+	*** 0000ae	50 			push	ax
+	*** 0000af	b8 02 00 		mov	ax,2
+	*** 0000b2	50 			push	ax
+	*** 0000b3	b8 60 00 		mov	ax,96
+	*** 0000b6	50 			push	ax
+	*** 0000b7	2b c0 			sub	ax,ax
+	*** 0000b9	50 			push	ax
+	*** 0000ba	b8 01 00 		mov	ax,1
+	*** 0000bd	50 			push	ax
+	*** 0000be	9a 00 00 00 00 		call	FAR PTR _gfx_jump_2a
+	*** 0000c3	83 c4 10 		add	sp,16
+;|*** }
+; Line 45
+	*** 0000c6	8b e5 			mov	sp,bp
+	*** 0000c8	5d 			pop	bp
+	*** 0000c9	c3 			ret	
+
+_drawCockpit	ENDP
+;|*** 
+;|*** // ==== seg000:0x211 ====
+;|*** int MainGameLoop() {
+; Line 48
+	PUBLIC	_MainGameLoop
+_MainGameLoop	PROC NEAR
+	*** 0000ca	55 			push	bp
+	*** 0000cb	8b ec 			mov	bp,sp
+;|***     FP_OFF(dword_38FE2) = OFF_BDA_FLOPPYMOTOR; // floppy motor runtime in bda???
+; Line 49
+	*** 0000cd	c7 06 00 00 40 04 	mov	WORD PTR _dword_38FE2,1088
+;|***     FP_SEG(dword_38FE2) = 0;
+; Line 50
+	*** 0000d3	c7 06 02 00 00 00 	mov	WORD PTR _dword_38FE2+2,0
+;|***     // 224
+;|***     if (*dword_38FE2 > 1) {
+; Line 52
+	*** 0000d9	c4 1e 00 00 		les	bx,DWORD PTR _dword_38FE2
+	*** 0000dd	26 80 3f 01 		cmp	BYTE PTR es:[bx],1
+	*** 0000e1	76 04 			jbe	$I1963
+;|***         *dword_38FE2 = 1;
+; Line 53
+	*** 0000e3	26 c6 07 01 		mov	BYTE PTR es:[bx],1
+;|***     }
+; Line 54
+;|***     audio_jump_65();
+; Line 55
+					$I1963:
+	*** 0000e7	9a 00 00 00 00 		call	FAR PTR _audio_jump_65
+;|***     // 241
+;|***     audio_jump_64(*(int16 FAR*)(OFF_IACA_UNK), f15DgtlResult);
+; Line 57
+	*** 0000ec	ff 36 00 00 		push	WORD PTR _f15DgtlResult
+	*** 0000f0	2b db 			sub	bx,bx
+	*** 0000f2	8e c3 			mov	es,bx
+	*** 0000f4	bb fe 04 		mov	bx,1278
+	*** 0000f7	26 ff 37 		push	WORD PTR es:[bx]
+	*** 0000fa	9a 00 00 00 00 		call	FAR PTR _audio_jump_64
+	*** 0000ff	83 c4 04 		add	sp,4
+;|***     setTimerIrqHandler();
+; Line 58
+	*** 000102	e8 00 00 		call	_setTimerIrqHandler
+;|***     // 250
+;|***     if (commData->setupUseJoy == 0) {
+; Line 60
+	*** 000105	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000109	26 83 7f 72 00 		cmp	WORD PTR es:[bx+114],0
+	*** 00010e	75 05 			jne	$I1964
+;|***         setInt9Handler();
+; Line 61
+	*** 000110	9a 00 00 00 00 		call	FAR PTR _setInt9Handler
+;|***     }
+; Line 62
+;|***     sub_13C3B();
+; Line 63
+					$I1964:
+	*** 000115	e8 00 00 		call	_sub_13C3B
+;|***     moveDataFar();
+; Line 64
+	*** 000118	e8 00 00 		call	_moveDataFar
+;|***     // 266
+;|***     if (commData->setupUseJoy == 0) {
+; Line 66
+	*** 00011b	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00011f	26 83 7f 72 00 		cmp	WORD PTR es:[bx+114],0
+	*** 000124	75 05 			jne	$I1965
+;|***         restoreInt9Handler();
+; Line 67
+	*** 000126	9a 00 00 00 00 		call	FAR PTR _restoreInt9Handler
+;|***     }
+; Line 68
+;|***     // 276
+;|***     gfx_jump_4f(1);
+; Line 70
+					$I1965:
+	*** 00012b	b8 01 00 		mov	ax,1
+	*** 00012e	50 			push	ax
+	*** 00012f	9a 00 00 00 00 		call	FAR PTR _gfx_jump_4f
+	*** 000134	83 c4 02 		add	sp,2
+;|***     sub_12278(2);
+; Line 71
+	*** 000137	b8 02 00 		mov	ax,2
+	*** 00013a	50 			push	ax
+	*** 00013b	e8 00 00 		call	_sub_12278
+	*** 00013e	83 c4 02 		add	sp,2
+;|***     restoreTimerIrqHandler();
+; Line 72
+	*** 000141	e8 00 00 		call	_restoreTimerIrqHandler
+;|***     audio_jump_65();
+; Line 73
+	*** 000144	9a 00 00 00 00 		call	FAR PTR _audio_jump_65
+;|*** }
+; Line 74
+	*** 000149	8b e5 			mov	sp,bp
+	*** 00014b	5d 			pop	bp
+	*** 00014c	c3 			ret	
+
+_MainGameLoop	ENDP
+;|*** 
+;|*** // ==== seg000:0x29a ====
+;|*** void gfxInit() {
+; Line 77
+	PUBLIC	_gfxInit
+_gfxInit	PROC NEAR
+	*** 00014d	55 			push	bp
+	*** 00014e	8b ec 			mov	bp,sp
+	*** 000150	83 ec 02 		sub	sp,2
+;	var_2 = -2
+;|***     int var_2;
+;|***     gfx_jump_0_alloc(0);
+; Line 79
+	*** 000153	2b c0 			sub	ax,ax
+	*** 000155	50 			push	ax
+	*** 000156	9a 00 00 00 00 		call	FAR PTR _gfx_jump_0_alloc
+	*** 00015b	83 c4 02 		add	sp,2
+;|***     var_2 = gfx_jump_0_alloc(1);
+; Line 80
+	*** 00015e	b8 01 00 		mov	ax,1
+	*** 000161	50 			push	ax
+	*** 000162	9a 00 00 00 00 		call	FAR PTR _gfx_jump_0_alloc
+	*** 000167	83 c4 02 		add	sp,2
+	*** 00016a	89 46 fe 		mov	WORD PTR [bp-2],ax	;var_2
+;|***     gfx_jump_4b_storeBufPtr(var_2, 1);
+; Line 81
+	*** 00016d	b8 01 00 		mov	ax,1
+	*** 000170	50 			push	ax
+	*** 000171	ff 76 fe 		push	WORD PTR [bp-2]	;var_2
+	*** 000174	9a 00 00 00 00 		call	FAR PTR _gfx_jump_4b_storeBufPtr
+	*** 000179	83 c4 04 		add	sp,4
+;|***     gfx_jump_4b_storeBufPtr(commData->gfxInitResult, 2);
+; Line 82
+	*** 00017c	b8 02 00 		mov	ax,2
+	*** 00017f	50 			push	ax
+	*** 000180	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000184	26 ff 77 20 		push	WORD PTR es:[bx+32]
+	*** 000188	9a 00 00 00 00 		call	FAR PTR _gfx_jump_4b_storeBufPtr
+	*** 00018d	83 c4 04 		add	sp,4
+;|*** }
+; Line 83
+	*** 000190	8b e5 			mov	sp,bp
+	*** 000192	5d 			pop	bp
+	*** 000193	c3 			ret	
+
+_gfxInit	ENDP
+;|*** 
+;|*** // ==== seg000:0x1e0e ====
+;|*** int InitializeCockpitData() {
+; Line 86
+	PUBLIC	_InitializeCockpitData
+_InitializeCockpitData	PROC NEAR
+	*** 000194	55 			push	bp
+	*** 000195	8b ec 			mov	bp,sp
+	*** 000197	83 ec 04 		sub	sp,4
+	*** 00019a	56 			push	si
+;	var_2 = -2
+;	var_4 = -4
+;|***     int var_2, var_4;
+;|***     setCommWorldbufPtr();
+; Line 88
+	*** 00019b	e8 00 00 		call	_setCommWorldbufPtr
+;|***     flagFarToNear = 1;
+; Line 89
+	*** 00019e	c7 06 00 00 01 00 	mov	WORD PTR _flagFarToNear,1
+;|***     // 1e1e
+;|***     moveStuff();
+; Line 91
+	*** 0001a4	e8 00 00 		call	_moveStuff
+;|***     word_3C0A2[0] = 0x98be;
+; Line 92
+	*** 0001a7	c7 06 00 00 be 98 	mov	WORD PTR _word_3C0A2,-26434
+;|***     var_2 = 1;
+; Line 93
+	*** 0001ad	c7 46 fe 01 00 		mov	WORD PTR [bp-2],1	;var_2
+;|***     // 1e2c
+;|***     for (var_4 = 0; var_4 < 750; ++var_4) {
+; Line 95
+	*** 0001b2	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_4
+	*** 0001b7	eb 03 			jmp	SHORT $F1971
+					$FC1972:
+	*** 0001b9	ff 46 fc 		inc	WORD PTR [bp-4]	;var_4
+					$F1971:
+	*** 0001bc	81 7e fc ee 02 		cmp	WORD PTR [bp-4],750	;var_4
+	*** 0001c1	7d 24 			jge	$FB1973
+;|***         // 1e40
+;|***         if (byte_3C16E[var_4] == 0 && var_2 < 100) {
+; Line 97
+	*** 0001c3	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;var_4
+	*** 0001c6	80 bf 00 00 00 		cmp	BYTE PTR _byte_3C16E[bx],0
+	*** 0001cb	75 18 			jne	$I1974
+	*** 0001cd	83 7e fe 64 		cmp	WORD PTR [bp-2],100	;var_2
+	*** 0001d1	7d 12 			jge	$I1974
+;|***             word_3C0A2[var_2++] = var_4 + 0x98bf;
+; Line 98
+	*** 0001d3	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;var_2
+	*** 0001d6	ff 46 fe 		inc	WORD PTR [bp-2]	;var_2
+	*** 0001d9	d1 e3 			shl	bx,1
+	*** 0001db	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_4
+	*** 0001de	05 bf 98 		add	ax,-26433
+	*** 0001e1	89 87 00 00 		mov	WORD PTR _word_3C0A2[bx],ax
+;|***         }
+; Line 99
+;|***     } // 1e61
+; Line 100
+					$I1974:
+	*** 0001e5	eb d2 			jmp	SHORT $FC1972
+					$FB1973:
+;|***     if (gameData->difficulty != 0) { //1e6c
+; Line 101
+	*** 0001e7	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0001eb	26 83 7f 3e 00 		cmp	WORD PTR es:[bx+62],0
+	*** 0001f0	74 4e 			je	$I1975
+;|***         // 1e8c
+;|***         g_ViewX = ((int32)(g_planes[g_playerTargetIndex].field_0) << 5) + 2;
+; Line 103
+	*** 0001f2	8b 36 00 00 		mov	si,_g_playerTargetIndex
+	*** 0001f6	b1 04 			mov	cl,4
+	*** 0001f8	d3 e6 			shl	si,cl
+	*** 0001fa	8b 84 00 00 		mov	ax,WORD PTR _g_planes[si]
+	*** 0001fe	2b d2 			sub	dx,dx
+	*** 000200	b1 05 			mov	cl,5
+					$L20001:
+	*** 000202	d1 e0 			shl	ax,1
+	*** 000204	d1 d2 			rcl	dx,1
+	*** 000206	fe c9 			dec	cl
+	*** 000208	74 02 			je	$L20002
+	*** 00020a	eb f6 			jmp	SHORT $L20001
+					$L20002:
+	*** 00020c	05 02 00 		add	ax,2
+	*** 00020f	83 d2 00 		adc	dx,0
+	*** 000212	a3 00 00 		mov	WORD PTR _g_ViewX,ax
+	*** 000215	89 16 02 00 		mov	WORD PTR _g_ViewX+2,dx
+;|***         // 1eb1
+;|***         g_ViewY = (0x8000 - (int32)(g_planes[g_playerTargetIndex].field_2)) << 5;
+; Line 105
+	*** 000219	8b 84 02 00 		mov	ax,WORD PTR _g_planes[si+2]
+	*** 00021d	2b d2 			sub	dx,dx
+	*** 00021f	2d 00 80 		sub	ax,-32768
+	*** 000222	1b d2 			sbb	dx,dx
+	*** 000224	f7 d8 			neg	ax
+	*** 000226	83 d2 00 		adc	dx,0
+	*** 000229	f7 da 			neg	dx
+	*** 00022b	b1 05 			mov	cl,5
+					$L20003:
+	*** 00022d	d1 e0 			shl	ax,1
+	*** 00022f	d1 d2 			rcl	dx,1
+	*** 000231	fe c9 			dec	cl
+	*** 000233	74 02 			je	$L20004
+	*** 000235	eb f6 			jmp	SHORT $L20003
+					$L20004:
+	*** 000237	a3 00 00 		mov	WORD PTR _g_ViewY,ax
+	*** 00023a	89 16 02 00 		mov	WORD PTR _g_ViewY+2,dx
+;|***     }
+; Line 106
+;|***     else { // 1eba
+; Line 107
+	*** 00023e	eb 42 			jmp	SHORT $I1976
+					$I1975:
+;|***         // 1ed1
+;|***         g_ViewX = ((int32)waypoints[0].x << 5) + 2;
+; Line 109
+	*** 000240	a1 00 00 		mov	ax,WORD PTR _waypoints
+	*** 000243	2b d2 			sub	dx,dx
+	*** 000245	b1 05 			mov	cl,5
+					$L20005:
+	*** 000247	d1 e0 			shl	ax,1
+	*** 000249	d1 d2 			rcl	dx,1
+	*** 00024b	fe c9 			dec	cl
+	*** 00024d	74 02 			je	$L20006
+	*** 00024f	eb f6 			jmp	SHORT $L20005
+					$L20006:
+	*** 000251	05 02 00 		add	ax,2
+	*** 000254	83 d2 00 		adc	dx,0
+	*** 000257	a3 00 00 		mov	WORD PTR _g_ViewX,ax
+	*** 00025a	89 16 02 00 		mov	WORD PTR _g_ViewX+2,dx
+;|***         // 1ef5
+;|***         g_ViewY = (0x8000 - (int32)waypoints[0].y) << 5;
+; Line 111
+	*** 00025e	a1 02 00 		mov	ax,WORD PTR _waypoints+2
+	*** 000261	2b d2 			sub	dx,dx
+	*** 000263	2d 00 80 		sub	ax,-32768
+	*** 000266	1b d2 			sbb	dx,dx
+	*** 000268	f7 d8 			neg	ax
+	*** 00026a	83 d2 00 		adc	dx,0
+	*** 00026d	f7 da 			neg	dx
+	*** 00026f	b1 05 			mov	cl,5
+					$L20007:
+	*** 000271	d1 e0 			shl	ax,1
+	*** 000273	d1 d2 			rcl	dx,1
+	*** 000275	fe c9 			dec	cl
+	*** 000277	74 02 			je	$L20008
+	*** 000279	eb f6 			jmp	SHORT $L20007
+					$L20008:
+	*** 00027b	a3 00 00 		mov	WORD PTR _g_ViewY,ax
+	*** 00027e	89 16 02 00 		mov	WORD PTR _g_ViewY+2,dx
+;|***     } // 1efc
+; Line 112
+					$I1976:
+;|***     // 1f15
+;|***     g_viewX_ = (g_ViewX + 0x10) >> 5;
+; Line 114
+	*** 000282	a1 00 00 		mov	ax,WORD PTR _g_ViewX
+	*** 000285	8b 16 02 00 		mov	dx,WORD PTR _g_ViewX+2
+	*** 000289	05 10 00 		add	ax,16
+	*** 00028c	83 d2 00 		adc	dx,0
+	*** 00028f	b1 05 			mov	cl,5
+					$L20009:
+	*** 000291	d1 fa 			sar	dx,1
+	*** 000293	d1 d8 			rcr	ax,1
+	*** 000295	fe c9 			dec	cl
+	*** 000297	74 02 			je	$L20010
+	*** 000299	eb f6 			jmp	SHORT $L20009
+					$L20010:
+	*** 00029b	a3 00 00 		mov	_g_viewX_,ax
+;|***     // 1f36
+;|***     g_viewY_ = 0x8000 - ((g_ViewY + 0x10) >> 5);
+; Line 116
+	*** 00029e	a1 00 00 		mov	ax,WORD PTR _g_ViewY
+	*** 0002a1	8b 16 02 00 		mov	dx,WORD PTR _g_ViewY+2
+	*** 0002a5	05 10 00 		add	ax,16
+	*** 0002a8	83 d2 00 		adc	dx,0
+	*** 0002ab	b1 05 			mov	cl,5
+					$L20011:
+	*** 0002ad	d1 fa 			sar	dx,1
+	*** 0002af	d1 d8 			rcr	ax,1
+	*** 0002b1	fe c9 			dec	cl
+	*** 0002b3	74 02 			je	$L20012
+	*** 0002b5	eb f6 			jmp	SHORT $L20011
+					$L20012:
+	*** 0002b7	2d 00 80 		sub	ax,-32768
+	*** 0002ba	f7 d8 			neg	ax
+	*** 0002bc	a3 00 00 		mov	_g_viewY_,ax
+;|*** }
+; Line 117
+	*** 0002bf	5e 			pop	si
+	*** 0002c0	8b e5 			mov	sp,bp
+	*** 0002c2	5d 			pop	bp
+	*** 0002c3	c3 			ret	
+
+_InitializeCockpitData	ENDP
+;|*** 
+;|*** // ==== seg000:0x2049 ====
+;|*** int moveDataFar() {
+; Line 120
+	PUBLIC	_moveDataFar
+_moveDataFar	PROC NEAR
+	*** 0002c4	55 			push	bp
+	*** 0002c5	8b ec 			mov	bp,sp
+	*** 0002c7	83 ec 04 		sub	sp,4
+;	unused1 = -2
+;	unused2 = -4
+;|***     int unused1, unused2;
+;|***     setCommWorldbufPtr();
+; Line 122
+	*** 0002ca	e8 00 00 		call	_setCommWorldbufPtr
+;|***     flagFarToNear = 0;
+; Line 123
+	*** 0002cd	c7 06 00 00 00 00 	mov	WORD PTR _flagFarToNear,0
+;|***     moveStuff();
+; Line 124
+	*** 0002d3	e8 00 00 		call	_moveStuff
+;|***     // 2063
+;|***     moveNearFar(byte_3B7FC, 0x600);
+; Line 126
+	*** 0002d6	b8 00 06 		mov	ax,1536
+	*** 0002d9	50 			push	ax
+	*** 0002da	b8 00 00 		mov	ax,OFFSET _byte_3B7FC
+	*** 0002dd	50 			push	ax
+	*** 0002de	e8 00 00 		call	_moveNearFar
+	*** 0002e1	83 c4 04 		add	sp,4
+;|*** }
+; Line 127
+	*** 0002e4	8b e5 			mov	sp,bp
+	*** 0002e6	5d 			pop	bp
+	*** 0002e7	c3 			ret	
+
+_moveDataFar	ENDP
+;|*** 
+;|*** // ==== seg000:0x206d ====
+;|*** int moveStuff() {
+; Line 130
+	PUBLIC	_moveStuff
+_moveStuff	PROC NEAR
+	*** 0002e8	55 			push	bp
+	*** 0002e9	8b ec 			mov	bp,sp
+;|***     moveNearFar(byte_3C02A, 1);
+; Line 131
+	*** 0002eb	b8 01 00 		mov	ax,1
+	*** 0002ee	50 			push	ax
+	*** 0002ef	b8 00 00 		mov	ax,OFFSET _byte_3C02A
+	*** 0002f2	50 			push	ax
+	*** 0002f3	e8 00 00 		call	_moveNearFar
+	*** 0002f6	83 c4 04 		add	sp,4
+;|***     moveNearFar(byte_3BEC4, 1);
+; Line 132
+	*** 0002f9	b8 01 00 		mov	ax,1
+	*** 0002fc	50 			push	ax
+	*** 0002fd	b8 00 00 		mov	ax,OFFSET _byte_3BEC4
+	*** 000300	50 			push	ax
+	*** 000301	e8 00 00 		call	_moveNearFar
+	*** 000304	83 c4 04 		add	sp,4
+;|***     // 2094
+;|***     moveNearFar(&word_3BED2, 2);
+; Line 134
+	*** 000307	b8 02 00 		mov	ax,2
+	*** 00030a	50 			push	ax
+	*** 00030b	b8 00 00 		mov	ax,OFFSET _word_3BED2
+	*** 00030e	50 			push	ax
+	*** 00030f	e8 00 00 		call	_moveNearFar
+	*** 000312	83 c4 04 		add	sp,4
+;|***     moveNearFar(&word_38FFA, 2);
+; Line 135
+	*** 000315	b8 02 00 		mov	ax,2
+	*** 000318	50 			push	ax
+	*** 000319	b8 00 00 		mov	ax,OFFSET _word_38FFA
+	*** 00031c	50 			push	ax
+	*** 00031d	e8 00 00 		call	_moveNearFar
+	*** 000320	83 c4 04 		add	sp,4
+;|***     moveNearFar(&word_3C69E, 2);
+; Line 136
+	*** 000323	b8 02 00 		mov	ax,2
+	*** 000326	50 			push	ax
+	*** 000327	b8 00 00 		mov	ax,OFFSET _word_3C69E
+	*** 00032a	50 			push	ax
+	*** 00032b	e8 00 00 		call	_moveNearFar
+	*** 00032e	83 c4 04 		add	sp,4
+;|***     // 20c2
+;|***     moveNearFar(&word_3AA5C, word_3BED2 * 16);
+; Line 138
+	*** 000331	a1 00 00 		mov	ax,_word_3BED2
+	*** 000334	b1 04 			mov	cl,4
+	*** 000336	d3 e0 			shl	ax,cl
+	*** 000338	50 			push	ax
+	*** 000339	b8 00 00 		mov	ax,OFFSET _word_3AA5C
+	*** 00033c	50 			push	ax
+	*** 00033d	e8 00 00 		call	_moveNearFar
+	*** 000340	83 c4 04 		add	sp,4
+;|***     moveNearFar(&word_3C046, 2);
+; Line 139
+	*** 000343	b8 02 00 		mov	ax,2
+	*** 000346	50 			push	ax
+	*** 000347	b8 00 00 		mov	ax,OFFSET _word_3C046
+	*** 00034a	50 			push	ax
+	*** 00034b	e8 00 00 		call	_moveNearFar
+	*** 00034e	83 c4 04 		add	sp,4
+;|***     moveNearFar(unk_3B202, word_3C046 * 0x24);
+; Line 140
+	*** 000351	b8 24 00 		mov	ax,36
+	*** 000354	f7 2e 00 00 		imul	WORD PTR _word_3C046
+	*** 000358	50 			push	ax
+	*** 000359	b8 00 00 		mov	ax,OFFSET _unk_3B202
+	*** 00035c	50 			push	ax
+	*** 00035d	e8 00 00 		call	_moveNearFar
+	*** 000360	83 c4 04 		add	sp,4
+;|***     // 20f0
+;|***     moveNearFar(byte_3BFA4, 0x64);
+; Line 142
+	*** 000363	b8 64 00 		mov	ax,100
+	*** 000366	50 			push	ax
+	*** 000367	b8 00 00 		mov	ax,OFFSET _byte_3BFA4
+	*** 00036a	50 			push	ax
+	*** 00036b	e8 00 00 		call	_moveNearFar
+	*** 00036e	83 c4 04 		add	sp,4
+;|***     moveNearFar(byte_3BED8, 0x64);
+; Line 143
+	*** 000371	b8 64 00 		mov	ax,100
+	*** 000374	50 			push	ax
+	*** 000375	b8 00 00 		mov	ax,OFFSET _byte_3BED8
+	*** 000378	50 			push	ax
+	*** 000379	e8 00 00 		call	_moveNearFar
+	*** 00037c	83 c4 04 		add	sp,4
+;|***     moveNearFar(byte_3C16E, 0x2ee);
+; Line 144
+	*** 00037f	b8 ee 02 		mov	ax,750
+	*** 000382	50 			push	ax
+	*** 000383	b8 00 00 		mov	ax,OFFSET _byte_3C16E
+	*** 000386	50 			push	ax
+	*** 000387	e8 00 00 		call	_moveNearFar
+	*** 00038a	83 c4 04 		add	sp,4
+;|***     // 211a
+;|***     moveNearFar(byte_3AFAC, 0x100);
+; Line 146
+	*** 00038d	b8 00 01 		mov	ax,256
+	*** 000390	50 			push	ax
+	*** 000391	b8 00 00 		mov	ax,OFFSET _byte_3AFAC
+	*** 000394	50 			push	ax
+	*** 000395	e8 00 00 		call	_moveNearFar
+	*** 000398	83 c4 04 		add	sp,4
+;|***     moveNearFar(&word_3C00C, 2);
+; Line 147
+	*** 00039b	b8 02 00 		mov	ax,2
+	*** 00039e	50 			push	ax
+	*** 00039f	b8 00 00 		mov	ax,OFFSET _word_3C00C
+	*** 0003a2	50 			push	ax
+	*** 0003a3	e8 00 00 		call	_moveNearFar
+	*** 0003a6	83 c4 04 		add	sp,4
+;|***     moveNearFar(&word_336FC, 2);
+; Line 148
+	*** 0003a9	b8 02 00 		mov	ax,2
+	*** 0003ac	50 			push	ax
+	*** 0003ad	b8 00 00 		mov	ax,OFFSET _word_336FC
+	*** 0003b0	50 			push	ax
+	*** 0003b1	e8 00 00 		call	_moveNearFar
+	*** 0003b4	83 c4 04 		add	sp,4
+;|***     // 2144
+;|***     moveNearFar(waypoints, 0x10);
+; Line 150
+	*** 0003b7	b8 10 00 		mov	ax,16
+	*** 0003ba	50 			push	ax
+	*** 0003bb	b8 00 00 		mov	ax,OFFSET _waypoints
+	*** 0003be	50 			push	ax
+	*** 0003bf	e8 00 00 		call	_moveNearFar
+	*** 0003c2	83 c4 04 		add	sp,4
+;|***     moveNearFar(&word_3B144, 0x24);
+; Line 151
+	*** 0003c5	b8 24 00 		mov	ax,36
+	*** 0003c8	50 			push	ax
+	*** 0003c9	b8 00 00 		mov	ax,OFFSET _word_3B144
+	*** 0003cc	50 			push	ax
+	*** 0003cd	e8 00 00 		call	_moveNearFar
+	*** 0003d0	83 c4 04 		add	sp,4
+;|*** }
+; Line 152
+	*** 0003d3	8b e5 			mov	sp,bp
+	*** 0003d5	5d 			pop	bp
+	*** 0003d6	c3 			ret	
+
+_moveStuff	ENDP
+;|*** 
+;|*** // ==== seg000:0x215c ====
+;|*** int moveNearFar(void *nearPtr, int count) {
+; Line 155
+	PUBLIC	_moveNearFar
+_moveNearFar	PROC NEAR
+	*** 0003d7	55 			push	bp
+	*** 0003d8	8b ec 			mov	bp,sp
+	*** 0003da	83 ec 04 		sub	sp,4
+;	farPtr = -4
+;	nearPtr = 4
+;	count = 6
+;|***     void FAR *farPtr = nearPtr;
+; Line 156
+	*** 0003dd	8b 46 04 		mov	ax,WORD PTR [bp+4]	;nearPtr
+	*** 0003e0	89 46 fc 		mov	WORD PTR [bp-4],ax	;farPtr
+	*** 0003e3	8c 5e fe 		mov	WORD PTR [bp-2],ds
+;|***     if (flagFarToNear != 0) { // 2172
+; Line 157
+	*** 0003e6	83 3e 00 00 00 		cmp	WORD PTR _flagFarToNear,0
+	*** 0003eb	74 15 			je	$I1985
+;|***         movedata(FP_SEG(farPointer), FP_OFF(farPointer), FP_SEG(farPtr), FP_OFF(farPtr), count);
+; Line 158
+	*** 0003ed	ff 76 06 		push	WORD PTR [bp+6]	;count
+	*** 0003f0	50 			push	ax
+	*** 0003f1	1e 			push	ds
+	*** 0003f2	ff 36 00 00 		push	WORD PTR _farPointer
+	*** 0003f6	ff 36 02 00 		push	WORD PTR _farPointer+2
+	*** 0003fa	e8 00 00 		call	_movedata
+	*** 0003fd	83 c4 0a 		add	sp,10
+;|***     }
+; Line 159
+;|***     else { // 2187
+; Line 160
+	*** 000400	eb 17 			jmp	SHORT $I1986
+					$I1985:
+;|***         movedata(FP_SEG(farPtr), FP_OFF(farPtr), FP_SEG(farPointer), FP_OFF(farPointer), count);
+; Line 161
+	*** 000402	ff 76 06 		push	WORD PTR [bp+6]	;count
+	*** 000405	ff 36 00 00 		push	WORD PTR _farPointer
+	*** 000409	ff 36 02 00 		push	WORD PTR _farPointer+2
+	*** 00040d	ff 76 fc 		push	WORD PTR [bp-4]	;farPtr
+	*** 000410	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 000413	e8 00 00 		call	_movedata
+	*** 000416	83 c4 0a 		add	sp,10
+;|***     } // 219e
+; Line 162
+					$I1986:
+;|***     farPointer += count;
+; Line 163
+	*** 000419	8b 46 06 		mov	ax,WORD PTR [bp+6]	;count
+	*** 00041c	01 06 00 00 		add	WORD PTR _farPointer,ax
+;|*** }
+; Line 164
+	*** 000420	8b e5 			mov	sp,bp
+	*** 000422	5d 			pop	bp
+	*** 000423	c3 			ret	
+
+_moveNearFar	ENDP
+;|*** 
+;|*** // ==== seg000:0x21a9 ====
+;|*** int setCommWorldbufPtr() {
+; Line 167
+	PUBLIC	_setCommWorldbufPtr
+_setCommWorldbufPtr	PROC NEAR
+	*** 000424	55 			push	bp
+	*** 000425	8b ec 			mov	bp,sp
+;|***     farPointer = (uint8 FAR*)&commData->worlBuf;
+; Line 168
+	*** 000427	a1 00 00 		mov	ax,WORD PTR _commData
+	*** 00042a	8b 16 02 00 		mov	dx,WORD PTR _commData+2
+	*** 00042e	05 7a 00 		add	ax,122
+	*** 000431	a3 00 00 		mov	WORD PTR _farPointer,ax
+	*** 000434	89 16 02 00 		mov	WORD PTR _farPointer+2,dx
+;|***     return 0;
+; Line 169
+	*** 000438	2b c0 			sub	ax,ax
+	*** 00043a	eb 00 			jmp	SHORT $EX1987
+;|*** }
+; Line 170
+					$EX1987:
+	*** 00043c	8b e5 			mov	sp,bp
+	*** 00043e	5d 			pop	bp
+	*** 00043f	c3 			ret	
+
+_setCommWorldbufPtr	ENDP
+;|*** 
+;|*** // ==== seg000:0x2874 ====
+;|*** int load3DAll() {
+; Line 173
+	PUBLIC	_load3DAll
+_load3DAll	PROC NEAR
+	*** 000440	55 			push	bp
+	*** 000441	8b ec 			mov	bp,sp
+;|***     load3DG();
+; Line 174
+	*** 000443	e8 00 00 		call	_load3DG
+;|***     load3DT(regnStr);
+; Line 175
+	*** 000446	ff 36 00 00 		push	WORD PTR _regnStr
+	*** 00044a	e8 00 00 		call	_load3DT
+	*** 00044d	83 c4 02 		add	sp,2
+;|***     load3D3(regnStr);
+; Line 176
+	*** 000450	ff 36 00 00 		push	WORD PTR _regnStr
+	*** 000454	e8 00 00 		call	_load3D3
+	*** 000457	83 c4 02 		add	sp,2
+;|***     word_3401A = 0;
+; Line 177
+	*** 00045a	c7 06 00 00 00 00 	mov	WORD PTR _word_3401A,0
+;|*** }
+; Line 178
+	*** 000460	8b e5 			mov	sp,bp
+	*** 000462	5d 			pop	bp
+	*** 000463	c3 			ret	
+
+_load3DAll	ENDP
+;|*** 
+;|*** // ==== seg000:0x2898 ====
+;|*** void load3D3(char *arg_0) {
+; Line 181
+	PUBLIC	_load3D3
+_load3D3	PROC NEAR
+	*** 000464	55 			push	bp
+	*** 000465	8b ec 			mov	bp,sp
+	*** 000467	83 ec 18 		sub	sp,24
+	*** 00046a	56 			push	si
+;	arg_0 = 4
+;	var_E = -20
+;	var_16 = -24
+;	var_8 = -8
+;	var_10 = -14
+;	var_18 = -10
+;	var_12 = -16
+;	var_A = -12
+;|***     uint8 FAR *var_E;
+;|***     uint8 FAR *var_16;
+;|***     struct SREGS var_8;
+;|***     int var_10, var_18, var_12;
+;|***     int var_A;
+;|***     strcpyFromDot(arg_0, a_3d3);
+; Line 187
+	*** 00046b	b8 00 00 		mov	ax,OFFSET _a_3d3
+	*** 00046e	50 			push	ax
+	*** 00046f	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 000472	e8 00 00 		call	_strcpyFromDot
+	*** 000475	83 c4 04 		add	sp,4
+;|***     // 28b9
+;|***     if ((fileHandle = fopen(arg_0, aRb)) == NULL) {
+; Line 189
+	*** 000478	b8 00 00 		mov	ax,OFFSET _aRb
+	*** 00047b	50 			push	ax
+	*** 00047c	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 00047f	e8 00 00 		call	_fopen
+	*** 000482	83 c4 04 		add	sp,4
+	*** 000485	a3 00 00 		mov	_fileHandle,ax
+	*** 000488	0b c0 			or	ax,ax
+	*** 00048a	75 0d 			jne	$I1998
+;|***         printError(aOpenErrorOn_3d3);
+; Line 190
+	*** 00048c	b8 00 00 		mov	ax,OFFSET _aOpenErrorOn_3d3
+	*** 00048f	50 			push	ax
+	*** 000490	e8 00 00 		call	_printError
+	*** 000493	83 c4 02 		add	sp,2
+;|***         return;
+; Line 191
+	*** 000496	e9 b0 03 		jmp	$I2019
+;|***     }
+; Line 192
+;|***     // 28dd
+;|***     fread(&sign3d3, 2, 1, fileHandle);
+; Line 194
+					$I1998:
+	*** 000499	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00049d	b8 01 00 		mov	ax,1
+	*** 0004a0	50 			push	ax
+	*** 0004a1	b8 02 00 		mov	ax,2
+	*** 0004a4	50 			push	ax
+	*** 0004a5	b8 00 00 		mov	ax,OFFSET _sign3d3
+	*** 0004a8	50 			push	ax
+	*** 0004a9	e8 00 00 		call	_fread
+	*** 0004ac	83 c4 08 		add	sp,8
+;|***     if (sign3d3 != SIGNATURE_3D3) {
+; Line 195
+	*** 0004af	81 3e 00 00 33 33 	cmp	WORD PTR _sign3d3,13107
+	*** 0004b5	74 17 			je	$I1999
+;|***         // 28ef
+;|***         printError(aBadObjFileFormat_);
+; Line 197
+	*** 0004b7	b8 00 00 		mov	ax,OFFSET _aBadObjFileFormat_
+	*** 0004ba	50 			push	ax
+	*** 0004bb	e8 00 00 		call	_printError
+	*** 0004be	83 c4 02 		add	sp,2
+;|***         fclose(fileHandle);
+; Line 198
+	*** 0004c1	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0004c5	e8 00 00 		call	_fclose
+	*** 0004c8	83 c4 02 		add	sp,2
+;|***         return;
+; Line 199
+	*** 0004cb	e9 7b 03 		jmp	$I2019
+;|***     } // 2902
+; Line 200
+;|***     // 2912
+;|***     fread(&size3d3, 2, 1, fileHandle);
+; Line 202
+					$I1999:
+	*** 0004ce	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0004d2	b8 01 00 		mov	ax,1
+	*** 0004d5	50 			push	ax
+	*** 0004d6	b8 02 00 		mov	ax,2
+	*** 0004d9	50 			push	ax
+	*** 0004da	b8 00 00 		mov	ax,OFFSET _size3d3
+	*** 0004dd	50 			push	ax
+	*** 0004de	e8 00 00 		call	_fread
+	*** 0004e1	83 c4 08 		add	sp,8
+;|***     fread(buf3d3, 2, size3d3, fileHandle);
+; Line 203
+	*** 0004e4	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0004e8	ff 36 00 00 		push	WORD PTR _size3d3
+	*** 0004ec	b8 02 00 		mov	ax,2
+	*** 0004ef	50 			push	ax
+	*** 0004f0	b8 00 00 		mov	ax,OFFSET _buf3d3
+	*** 0004f3	50 			push	ax
+	*** 0004f4	e8 00 00 		call	_fread
+	*** 0004f7	83 c4 08 		add	sp,8
+;|***     fread(&size3d3_2, 2, 1, fileHandle);
+; Line 204
+	*** 0004fa	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0004fe	b8 01 00 		mov	ax,1
+	*** 000501	50 			push	ax
+	*** 000502	b8 02 00 		mov	ax,2
+	*** 000505	50 			push	ax
+	*** 000506	b8 00 00 		mov	ax,OFFSET _size3d3_2
+	*** 000509	50 			push	ax
+	*** 00050a	e8 00 00 		call	_fread
+	*** 00050d	83 c4 08 		add	sp,8
+;|***     // 2944
+;|***     if (size3d3_2 > 0xadd4) {
+; Line 206
+	*** 000510	81 3e 00 00 d4 ad 	cmp	WORD PTR _size3d3_2,-21036
+	*** 000516	76 17 			jbe	$I2000
+;|***         printError(aObjectDataTooBig_);
+; Line 207
+	*** 000518	b8 00 00 		mov	ax,OFFSET _aObjectDataTooBig_
+	*** 00051b	50 			push	ax
+	*** 00051c	e8 00 00 		call	_printError
+	*** 00051f	83 c4 02 		add	sp,2
+;|***         fclose(fileHandle);
+; Line 208
+	*** 000522	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000526	e8 00 00 		call	_fclose
+	*** 000529	83 c4 02 		add	sp,2
+;|***         return;
+; Line 209
+	*** 00052c	e9 1a 03 		jmp	$I2019
+;|***     } // 2963
+; Line 210
+;|***     var_E = byte_228D0 + size3d3_2;
+; Line 211
+					$I2000:
+	*** 00052f	a1 00 00 		mov	ax,_size3d3_2
+	*** 000532	05 00 00 		add	ax,OFFSET _byte_228D0
+	*** 000535	89 46 ec 		mov	WORD PTR [bp-20],ax	;var_E
+	*** 000538	c7 46 ee 00 00 		mov	WORD PTR [bp-18],SEG _byte_228D0
+;|***     buf3d3[size3d3] = size3d3_2;
+; Line 212
+	*** 00053d	8b 1e 00 00 		mov	bx,_size3d3
+	*** 000541	d1 e3 			shl	bx,1
+	*** 000543	a1 00 00 		mov	ax,_size3d3_2
+	*** 000546	89 87 00 00 		mov	WORD PTR _buf3d3[bx],ax
+;|***     segread(&var_8);
+; Line 213
+	*** 00054a	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;var_8
+	*** 00054d	50 			push	ax
+	*** 00054e	e8 00 00 		call	_segread
+	*** 000551	83 c4 02 		add	sp,2
+;|***     // 2988
+;|***     for (var_16 = byte_228D0; size3d3_2 != 0; size3d3_2 -= var_A, var_16+=0x800) { // 29a6
+; Line 215
+	*** 000554	c7 46 e8 00 00 		mov	WORD PTR [bp-24],OFFSET _byte_228D0	;var_16
+	*** 000559	c7 46 ea 00 00 		mov	WORD PTR [bp-22],SEG _byte_228D0
+	*** 00055e	eb 0b 			jmp	SHORT $F2001
+					$FC2002:
+	*** 000560	8b 46 f4 		mov	ax,WORD PTR [bp-12]	;var_A
+	*** 000563	29 06 00 00 		sub	_size3d3_2,ax
+	*** 000567	80 46 e9 08 		add	BYTE PTR [bp-23],8
+					$F2001:
+	*** 00056b	83 3e 00 00 00 		cmp	WORD PTR _size3d3_2,0
+	*** 000570	74 3b 			je	$FB2003
+;|***         // 29b3
+;|***         var_A = (size3d3_2 >= 0x800) ? 0x800 : size3d3_2;
+; Line 217
+	*** 000572	a1 00 00 		mov	ax,_size3d3_2
+	*** 000575	2d 00 08 		sub	ax,2048
+	*** 000578	1b c9 			sbb	cx,cx
+	*** 00057a	23 c1 			and	ax,cx
+	*** 00057c	80 c4 08 		add	ah,8
+	*** 00057f	89 46 f4 		mov	WORD PTR [bp-12],ax	;var_A
+;|***         fread(flt15_buf2, 1, var_A, fileHandle);
+; Line 218
+	*** 000582	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000586	50 			push	ax
+	*** 000587	b8 01 00 		mov	ax,1
+	*** 00058a	50 			push	ax
+	*** 00058b	b8 00 00 		mov	ax,OFFSET _flt15_buf2
+	*** 00058e	50 			push	ax
+	*** 00058f	e8 00 00 		call	_fread
+	*** 000592	83 c4 08 		add	sp,8
+;|***         movedata(var_8.ds, (uint16)flt15_buf2, FP_SEG(var_16), FP_OFF(var_16), var_A);
+; Line 219
+	*** 000595	ff 76 f4 		push	WORD PTR [bp-12]	;var_A
+	*** 000598	ff 76 e8 		push	WORD PTR [bp-24]	;var_16
+	*** 00059b	ff 76 ea 		push	WORD PTR [bp-22]
+	*** 00059e	b8 00 00 		mov	ax,OFFSET _flt15_buf2
+	*** 0005a1	50 			push	ax
+	*** 0005a2	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 0005a5	e8 00 00 		call	_movedata
+	*** 0005a8	83 c4 0a 		add	sp,10
+;|***     } // 29e1
+; Line 220
+	*** 0005ab	eb b3 			jmp	SHORT $FC2002
+					$FB2003:
+;|***     fread(&size3d3_3, 1, 1, fileHandle);
+; Line 221
+	*** 0005ad	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0005b1	b8 01 00 		mov	ax,1
+	*** 0005b4	50 			push	ax
+	*** 0005b5	50 			push	ax
+	*** 0005b6	b8 00 00 		mov	ax,OFFSET _size3d3_3
+	*** 0005b9	50 			push	ax
+	*** 0005ba	e8 00 00 		call	_fread
+	*** 0005bd	83 c4 08 		add	sp,8
+;|***     if (size3d3_3 != 0) { // 29fe
+; Line 222
+	*** 0005c0	83 3e 00 00 00 		cmp	WORD PTR _size3d3_3,0
+	*** 0005c5	75 03 			jne	$JCC1477
+	*** 0005c7	e9 bd 00 		jmp	$I2004
+					$JCC1477:
+;|***         fread(buf3d3_1, 1, size3d3_3, fileHandle);
+; Line 223
+	*** 0005ca	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0005ce	ff 36 00 00 		push	WORD PTR _size3d3_3
+	*** 0005d2	b8 01 00 		mov	ax,1
+	*** 0005d5	50 			push	ax
+	*** 0005d6	b8 00 00 		mov	ax,OFFSET _buf3d3_1
+	*** 0005d9	50 			push	ax
+	*** 0005da	e8 00 00 		call	_fread
+	*** 0005dd	83 c4 08 		add	sp,8
+;|***         fread(buf3d3_2, 1, size3d3_3, fileHandle);
+; Line 224
+	*** 0005e0	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0005e4	ff 36 00 00 		push	WORD PTR _size3d3_3
+	*** 0005e8	b8 01 00 		mov	ax,1
+	*** 0005eb	50 			push	ax
+	*** 0005ec	b8 00 00 		mov	ax,OFFSET _buf3d3_2
+	*** 0005ef	50 			push	ax
+	*** 0005f0	e8 00 00 		call	_fread
+	*** 0005f3	83 c4 08 		add	sp,8
+;|***         fread(buf3d3_3, 1, size3d3_3, fileHandle);
+; Line 225
+	*** 0005f6	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0005fa	ff 36 00 00 		push	WORD PTR _size3d3_3
+	*** 0005fe	b8 01 00 		mov	ax,1
+	*** 000601	50 			push	ax
+	*** 000602	b8 00 00 		mov	ax,OFFSET _buf3d3_3
+	*** 000605	50 			push	ax
+	*** 000606	e8 00 00 		call	_fread
+	*** 000609	83 c4 08 		add	sp,8
+;|***         // 2a4d
+;|***         fread(&size3d3_4, 1, 1, fileHandle);
+; Line 227
+	*** 00060c	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000610	b8 01 00 		mov	ax,1
+	*** 000613	50 			push	ax
+	*** 000614	50 			push	ax
+	*** 000615	b8 00 00 		mov	ax,OFFSET _size3d3_4
+	*** 000618	50 			push	ax
+	*** 000619	e8 00 00 		call	_fread
+	*** 00061c	83 c4 08 		add	sp,8
+;|***         fread(&byte_3B7FC[0x600], 2, size3d3_4, fileHandle);
+; Line 228
+	*** 00061f	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000623	ff 36 00 00 		push	WORD PTR _size3d3_4
+	*** 000627	b8 02 00 		mov	ax,2
+	*** 00062a	50 			push	ax
+	*** 00062b	b8 00 06 		mov	ax,OFFSET _byte_3B7FC+1536
+	*** 00062e	50 			push	ax
+	*** 00062f	e8 00 00 		call	_fread
+	*** 000632	83 c4 08 		add	sp,8
+;|***         fread(&size3d3_5, 1, 1, fileHandle);
+; Line 229
+	*** 000635	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000639	b8 01 00 		mov	ax,1
+	*** 00063c	50 			push	ax
+	*** 00063d	50 			push	ax
+	*** 00063e	b8 00 00 		mov	ax,OFFSET _size3d3_5
+	*** 000641	50 			push	ax
+	*** 000642	e8 00 00 		call	_fread
+	*** 000645	83 c4 08 		add	sp,8
+;|***         fread(byte_3BE3E, 2, size3d3_5, fileHandle);
+; Line 230
+	*** 000648	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00064c	ff 36 00 00 		push	WORD PTR _size3d3_5
+	*** 000650	b8 02 00 		mov	ax,2
+	*** 000653	50 			push	ax
+	*** 000654	b8 00 00 		mov	ax,OFFSET _byte_3BE3E
+	*** 000657	50 			push	ax
+	*** 000658	e8 00 00 		call	_fread
+	*** 00065b	83 c4 08 		add	sp,8
+;|***         // 2a9f
+;|***         fread(&size3d3_6, 1, 1, fileHandle);
+; Line 232
+	*** 00065e	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000662	b8 01 00 		mov	ax,1
+	*** 000665	50 			push	ax
+	*** 000666	50 			push	ax
+	*** 000667	b8 00 00 		mov	ax,OFFSET _size3d3_6
+	*** 00066a	50 			push	ax
+	*** 00066b	e8 00 00 		call	_fread
+	*** 00066e	83 c4 08 		add	sp,8
+;|***         fread(byte_3BE80, 2, size3d3_6, fileHandle);
+; Line 233
+	*** 000671	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000675	ff 36 00 00 		push	WORD PTR _size3d3_6
+	*** 000679	b8 02 00 		mov	ax,2
+	*** 00067c	50 			push	ax
+	*** 00067d	b8 00 00 		mov	ax,OFFSET _byte_3BE80
+	*** 000680	50 			push	ax
+	*** 000681	e8 00 00 		call	_fread
+	*** 000684	83 c4 08 		add	sp,8
+;|***     } // 2abb
+; Line 234
+;|***     fclose(fileHandle);
+; Line 235
+					$I2004:
+	*** 000687	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00068b	e8 00 00 		call	_fclose
+	*** 00068e	83 c4 02 		add	sp,2
+;|***     while ((fileHandle = fopen(aPhoto_3d3, aRb_0)) == NULL) {
+; Line 236
+					$FC2006:
+	*** 000691	b8 00 00 		mov	ax,OFFSET _aRb_0
+	*** 000694	50 			push	ax
+	*** 000695	b8 00 00 		mov	ax,OFFSET _aPhoto_3d3
+	*** 000698	50 			push	ax
+	*** 000699	e8 00 00 		call	_fopen
+	*** 00069c	83 c4 04 		add	sp,4
+	*** 00069f	a3 00 00 		mov	_fileHandle,ax
+	*** 0006a2	0b c0 			or	ax,ax
+	*** 0006a4	75 40 			jne	$FB2007
+;|***         // 2add
+;|***         sub_19E44(0);
+; Line 238
+	*** 0006a6	2b c0 			sub	ax,ax
+	*** 0006a8	50 			push	ax
+	*** 0006a9	e8 00 00 		call	_sub_19E44
+	*** 0006ac	83 c4 02 		add	sp,2
+;|***         DrawHUDElement(0, 0x28, 0x13f, 0x2d);
+; Line 239
+	*** 0006af	b8 2d 00 		mov	ax,45
+	*** 0006b2	50 			push	ax
+	*** 0006b3	b8 3f 01 		mov	ax,319
+	*** 0006b6	50 			push	ax
+	*** 0006b7	b8 28 00 		mov	ax,40
+	*** 0006ba	50 			push	ax
+	*** 0006bb	2b c0 			sub	ax,ax
+	*** 0006bd	50 			push	ax
+	*** 0006be	e8 00 00 		call	_DrawHUDElement
+	*** 0006c1	83 c4 08 		add	sp,8
+;|***         drawSomeStrings(aPleaseInsertF15DiskB, 0x6c, 0x28, 0x0f);
+; Line 240
+	*** 0006c4	b8 0f 00 		mov	ax,15
+	*** 0006c7	50 			push	ax
+	*** 0006c8	b8 28 00 		mov	ax,40
+	*** 0006cb	50 			push	ax
+	*** 0006cc	b8 6c 00 		mov	ax,108
+	*** 0006cf	50 			push	ax
+	*** 0006d0	b8 00 00 		mov	ax,OFFSET _aPleaseInsertF15DiskB
+	*** 0006d3	50 			push	ax
+	*** 0006d4	e8 00 00 		call	_drawSomeStrings
+	*** 0006d7	83 c4 08 		add	sp,8
+;|***         gfx_jump_46_retrace2();
+; Line 241
+	*** 0006da	9a 00 00 00 00 		call	FAR PTR _gfx_jump_46_retrace2
+;|***         misc_jump_5b_getkey();
+; Line 242
+	*** 0006df	9a 00 00 00 00 		call	FAR PTR _misc_jump_5b_getkey
+;|***     } // 2b1a
+; Line 243
+	*** 0006e4	eb ab 			jmp	SHORT $FC2006
+					$FB2007:
+;|***     gfx_jump_45_retrace();
+; Line 244
+	*** 0006e6	9a 00 00 00 00 		call	FAR PTR _gfx_jump_45_retrace
+;|***     for (var_10 = 0; var_10 < 2; var_10++) { // 2b32
+; Line 245
+	*** 0006eb	c7 46 f2 00 00 		mov	WORD PTR [bp-14],0	;var_10
+	*** 0006f0	eb 03 			jmp	SHORT $F2008
+					$FC2009:
+	*** 0006f2	ff 46 f2 		inc	WORD PTR [bp-14]	;var_10
+					$F2008:
+	*** 0006f5	83 7e f2 02 		cmp	WORD PTR [bp-14],2	;var_10
+	*** 0006f9	7c 03 			jl	$JCC1785
+	*** 0006fb	e9 31 01 		jmp	$FB2010
+					$JCC1785:
+;|***         // 2b45
+;|***         if ((var_18 = word_3B14A[var_10 * 0x9] >> 8) != 0) { // 2b4c
+; Line 247
+	*** 0006fe	b8 12 00 		mov	ax,18
+	*** 000701	f7 6e f2 		imul	WORD PTR [bp-14]	;var_10
+	*** 000704	8b d8 			mov	bx,ax
+	*** 000706	8b 87 00 00 		mov	ax,WORD PTR _word_3B14A[bx]
+	*** 00070a	b1 08 			mov	cl,8
+	*** 00070c	d3 f8 			sar	ax,cl
+	*** 00070e	89 46 f6 		mov	WORD PTR [bp-10],ax	;var_18
+	*** 000711	0b c0 			or	ax,ax
+	*** 000713	75 03 			jne	$JCC1811
+	*** 000715	e9 14 01 		jmp	$I2011
+					$JCC1811:
+;|***             fileHandle = fopen(aPhoto_3d3_0, aRb_1);
+; Line 248
+	*** 000718	b8 00 00 		mov	ax,OFFSET _aRb_1
+	*** 00071b	50 			push	ax
+	*** 00071c	b8 00 00 		mov	ax,OFFSET _aPhoto_3d3_0
+	*** 00071f	50 			push	ax
+	*** 000720	e8 00 00 		call	_fopen
+	*** 000723	83 c4 04 		add	sp,4
+	*** 000726	a3 00 00 		mov	_fileHandle,ax
+;|***             fread(&sign3d3, 2, 1, fileHandle);
+; Line 249
+	*** 000729	50 			push	ax
+	*** 00072a	b8 01 00 		mov	ax,1
+	*** 00072d	50 			push	ax
+	*** 00072e	b8 02 00 		mov	ax,2
+	*** 000731	50 			push	ax
+	*** 000732	b8 00 00 		mov	ax,OFFSET _sign3d3
+	*** 000735	50 			push	ax
+	*** 000736	e8 00 00 		call	_fread
+	*** 000739	83 c4 08 		add	sp,8
+;|***             fread(&size3d3_7, 2, 1, fileHandle);
+; Line 250
+	*** 00073c	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000740	b8 01 00 		mov	ax,1
+	*** 000743	50 			push	ax
+	*** 000744	b8 02 00 		mov	ax,2
+	*** 000747	50 			push	ax
+	*** 000748	b8 00 00 		mov	ax,OFFSET _size3d3_7
+	*** 00074b	50 			push	ax
+	*** 00074c	e8 00 00 		call	_fread
+	*** 00074f	83 c4 08 		add	sp,8
+;|***             fread(word_33DD0, 2, size3d3_7, fileHandle);
+; Line 251
+	*** 000752	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000756	ff 36 00 00 		push	WORD PTR _size3d3_7
+	*** 00075a	b8 02 00 		mov	ax,2
+	*** 00075d	50 			push	ax
+	*** 00075e	b8 00 00 		mov	ax,OFFSET _word_33DD0
+	*** 000761	50 			push	ax
+	*** 000762	e8 00 00 		call	_fread
+	*** 000765	83 c4 08 		add	sp,8
+;|***             // 2bac
+;|***             fread(&size3d3_7, 2, 1, fileHandle);
+; Line 253
+	*** 000768	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00076c	b8 01 00 		mov	ax,1
+	*** 00076f	50 			push	ax
+	*** 000770	b8 02 00 		mov	ax,2
+	*** 000773	50 			push	ax
+	*** 000774	b8 00 00 		mov	ax,OFFSET _size3d3_7
+	*** 000777	50 			push	ax
+	*** 000778	e8 00 00 		call	_fread
+	*** 00077b	83 c4 08 		add	sp,8
+;|***             word_33DD0[size3d3_7] = size3d3_2;
+; Line 254
+	*** 00077e	8b 1e 00 00 		mov	bx,_size3d3_7
+	*** 000782	d1 e3 			shl	bx,1
+	*** 000784	a1 00 00 		mov	ax,_size3d3_2
+	*** 000787	89 87 00 00 		mov	WORD PTR _word_33DD0[bx],ax
+;|***             // 2bbf
+;|***             for (var_12 = 0; var_12 <= var_18; var_12++) {
+; Line 256
+	*** 00078b	c7 46 f0 00 00 		mov	WORD PTR [bp-16],0	;var_12
+	*** 000790	eb 03 			jmp	SHORT $F2012
+					$FC2013:
+	*** 000792	ff 46 f0 		inc	WORD PTR [bp-16]	;var_12
+					$F2012:
+	*** 000795	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;var_18
+	*** 000798	39 46 f0 		cmp	WORD PTR [bp-16],ax	;var_12
+	*** 00079b	7f 6b 			jg	$FB2014
+;|***                 // 2bde
+;|***                 var_A = word_33DD0[var_12+1] - word_33DD0[var_12];
+; Line 258
+	*** 00079d	8b 76 f0 		mov	si,WORD PTR [bp-16]	;var_12
+	*** 0007a0	d1 e6 			shl	si,1
+	*** 0007a2	8b 84 02 00 		mov	ax,WORD PTR _word_33DD0[si+2]
+	*** 0007a6	2b 84 00 00 		sub	ax,WORD PTR _word_33DD0[si]
+	*** 0007aa	89 46 f4 		mov	WORD PTR [bp-12],ax	;var_A
+;|***                 // 2be1
+;|***                 while (var_A > 0x800) {
+; Line 260
+					$FC2016:
+	*** 0007ad	81 7e f4 00 08 		cmp	WORD PTR [bp-12],2048	;var_A
+	*** 0007b2	7e 1d 			jle	$FB2017
+;|***                     fread(flt15_buf2, 1, 0x800, fileHandle);
+; Line 261
+	*** 0007b4	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0007b8	b8 00 08 		mov	ax,2048
+	*** 0007bb	50 			push	ax
+	*** 0007bc	b8 01 00 		mov	ax,1
+	*** 0007bf	50 			push	ax
+	*** 0007c0	b8 00 00 		mov	ax,OFFSET _flt15_buf2
+	*** 0007c3	50 			push	ax
+	*** 0007c4	e8 00 00 		call	_fread
+	*** 0007c7	83 c4 08 		add	sp,8
+;|***                     var_A -= 0x800;
+; Line 262
+	*** 0007ca	81 6e f4 00 08 		sub	WORD PTR [bp-12],2048	;var_A
+;|***                 } // 2c05
+; Line 263
+	*** 0007cf	eb dc 			jmp	SHORT $FC2016
+					$FB2017:
+;|***                 segread(&var_8);
+; Line 264
+	*** 0007d1	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;var_8
+	*** 0007d4	50 			push	ax
+	*** 0007d5	e8 00 00 		call	_segread
+	*** 0007d8	83 c4 02 		add	sp,2
+;|***                 fread(flt15_buf2, 1, var_A, fileHandle);
+; Line 265
+	*** 0007db	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0007df	ff 76 f4 		push	WORD PTR [bp-12]	;var_A
+	*** 0007e2	b8 01 00 		mov	ax,1
+	*** 0007e5	50 			push	ax
+	*** 0007e6	b8 00 00 		mov	ax,OFFSET _flt15_buf2
+	*** 0007e9	50 			push	ax
+	*** 0007ea	e8 00 00 		call	_fread
+	*** 0007ed	83 c4 08 		add	sp,8
+;|***                 // 2c34
+;|***                 movedata(var_8.ds, (uint16)flt15_buf2, FP_SEG(var_E), FP_OFF(var_E), var_A);
+; Line 267
+	*** 0007f0	ff 76 f4 		push	WORD PTR [bp-12]	;var_A
+	*** 0007f3	ff 76 ec 		push	WORD PTR [bp-20]	;var_E
+	*** 0007f6	ff 76 ee 		push	WORD PTR [bp-18]
+	*** 0007f9	b8 00 00 		mov	ax,OFFSET _flt15_buf2
+	*** 0007fc	50 			push	ax
+	*** 0007fd	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 000800	e8 00 00 		call	_movedata
+	*** 000803	83 c4 0a 		add	sp,10
+;|***             } // 2c3c
+; Line 268
+	*** 000806	eb 8a 			jmp	SHORT $FC2013
+					$FB2014:
+;|***             var_E += var_A;
+; Line 269
+	*** 000808	8b 46 f4 		mov	ax,WORD PTR [bp-12]	;var_A
+	*** 00080b	01 46 ec 		add	WORD PTR [bp-20],ax	;var_E
+;|***             if (var_10 == 0) {
+; Line 270
+	*** 00080e	83 7e f2 00 		cmp	WORD PTR [bp-14],0	;var_10
+	*** 000812	75 0e 			jne	$I2018
+;|***                 // 2c52
+;|***                 buf3d3[size3d3+1] = buf3d3[size3d3] + var_A;
+; Line 272
+	*** 000814	8b 36 00 00 		mov	si,_size3d3
+	*** 000818	d1 e6 			shl	si,1
+	*** 00081a	03 84 00 00 		add	ax,WORD PTR _buf3d3[si]
+	*** 00081e	89 84 02 00 		mov	WORD PTR _buf3d3[si+2],ax
+;|***             } // 2c56
+; Line 273
+;|***             fclose(fileHandle);
+; Line 274
+					$I2018:
+	*** 000822	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000826	e8 00 00 		call	_fclose
+	*** 000829	83 c4 02 		add	sp,2
+;|***         } // 2c60
+; Line 275
+;|***     } // 2c63
+; Line 276
+					$I2011:
+	*** 00082c	e9 c3 fe 		jmp	$FC2009
+					$FB2010:
+;|***     // 2c6e
+;|***     if (var_E - byte_228D0 > 0xadd4) {
+; Line 278
+	*** 00082f	8b 46 ec 		mov	ax,WORD PTR [bp-20]	;var_E
+	*** 000832	b9 00 00 		mov	cx,OFFSET _byte_228D0
+	*** 000835	bb 00 00 		mov	bx,SEG _byte_228D0
+	*** 000838	2b c1 			sub	ax,cx
+	*** 00083a	3d d4 ad 		cmp	ax,-21036
+	*** 00083d	76 0a 			jbe	$I2019
+;|***         printError(aObjdataOverflow);
+; Line 279
+	*** 00083f	b8 00 00 		mov	ax,OFFSET _aObjdataOverflow
+	*** 000842	50 			push	ax
+	*** 000843	e8 00 00 		call	_printError
+	*** 000846	83 c4 02 		add	sp,2
+;|***     }
+; Line 280
+;|*** }
+; Line 281
+					$I2019:
+	*** 000849	5e 			pop	si
+	*** 00084a	8b e5 			mov	sp,bp
+	*** 00084c	5d 			pop	bp
+	*** 00084d	c3 			ret	
+
+_load3D3	ENDP
+;|*** 
+;|*** // ==== seg000:0x2c82 ====
+;|*** void load3DT(char *arg_0) {
+; Line 284
+	PUBLIC	_load3DT
+_load3DT	PROC NEAR
+	*** 00084e	55 			push	bp
+	*** 00084f	8b ec 			mov	bp,sp
+	*** 000851	83 ec 0a 		sub	sp,10
+	*** 000854	56 			push	si
+;	arg_0 = 4
+;	var_2 = -6
+;	var_4 = -8
+;	var_6 = -10
+;	var_8 = -2
+;	var_A = -4
+;|***     int var_2, var_4, var_6, var_8, var_A;
+;|***     strcpyFromDot(arg_0, a_3dt);
+; Line 286
+	*** 000855	b8 00 00 		mov	ax,OFFSET _a_3dt
+	*** 000858	50 			push	ax
+	*** 000859	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 00085c	e8 00 00 		call	_strcpyFromDot
+	*** 00085f	83 c4 04 		add	sp,4
+;|***     // 2ca3
+;|***     if ((fileHandle = fopen(arg_0, aRb_2)) == NULL) {
+; Line 288
+	*** 000862	b8 00 00 		mov	ax,OFFSET _aRb_2
+	*** 000865	50 			push	ax
+	*** 000866	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 000869	e8 00 00 		call	_fopen
+	*** 00086c	83 c4 04 		add	sp,4
+	*** 00086f	a3 00 00 		mov	_fileHandle,ax
+	*** 000872	0b c0 			or	ax,ax
+	*** 000874	75 0d 			jne	$I2027
+;|***         printError(aOpenErrorOn_3dt);
+; Line 289
+	*** 000876	b8 00 00 		mov	ax,OFFSET _aOpenErrorOn_3dt
+	*** 000879	50 			push	ax
+	*** 00087a	e8 00 00 		call	_printError
+	*** 00087d	83 c4 02 		add	sp,2
+;|***         return;
+; Line 290
+	*** 000880	e9 98 01 		jmp	$EX2021
+;|***     }
+; Line 291
+;|***     // 2cc7
+;|***     fread(&sign3dt, 2, 1, fileHandle);
+; Line 293
+					$I2027:
+	*** 000883	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000887	b8 01 00 		mov	ax,1
+	*** 00088a	50 			push	ax
+	*** 00088b	b8 02 00 		mov	ax,2
+	*** 00088e	50 			push	ax
+	*** 00088f	b8 00 00 		mov	ax,OFFSET _sign3dt
+	*** 000892	50 			push	ax
+	*** 000893	e8 00 00 		call	_fread
+	*** 000896	83 c4 08 		add	sp,8
+;|***     if (sign3dt != SIGNATURE_3DT) { // 2cd5
+; Line 294
+	*** 000899	81 3e 00 00 31 31 	cmp	WORD PTR _sign3dt,12593
+	*** 00089f	74 17 			je	$I2028
+;|***         printError(aBadTileFileFormat_);
+; Line 295
+	*** 0008a1	b8 00 00 		mov	ax,OFFSET _aBadTileFileFormat_
+	*** 0008a4	50 			push	ax
+	*** 0008a5	e8 00 00 		call	_printError
+	*** 0008a8	83 c4 02 		add	sp,2
+;|***         fclose(fileHandle);
+; Line 296
+	*** 0008ab	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0008af	e8 00 00 		call	_fclose
+	*** 0008b2	83 c4 02 		add	sp,2
+;|***         return;
+; Line 297
+	*** 0008b5	e9 63 01 		jmp	$EX2021
+;|***     } // 2cec
+; Line 298
+;|***     fread(sizes3dt, 2, 5, fileHandle);
+; Line 299
+					$I2028:
+	*** 0008b8	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0008bc	b8 05 00 		mov	ax,5
+	*** 0008bf	50 			push	ax
+	*** 0008c0	b8 02 00 		mov	ax,2
+	*** 0008c3	50 			push	ax
+	*** 0008c4	b8 00 00 		mov	ax,OFFSET _sizes3dt
+	*** 0008c7	50 			push	ax
+	*** 0008c8	e8 00 00 		call	_fread
+	*** 0008cb	83 c4 08 		add	sp,8
+;|***     // 2d02
+;|***     for (var_4 = 0; var_4 < 5; var_4++) {
+; Line 301
+	*** 0008ce	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;var_4
+	*** 0008d3	eb 03 			jmp	SHORT $F2029
+					$FC2030:
+	*** 0008d5	ff 46 f8 		inc	WORD PTR [bp-8]	;var_4
+					$F2029:
+	*** 0008d8	83 7e f8 05 		cmp	WORD PTR [bp-8],5	;var_4
+	*** 0008dc	7d 3d 			jge	$FB2031
+;|***         if (sizes3dt[var_4] > 0x20) {
+; Line 302
+	*** 0008de	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;var_4
+	*** 0008e1	d1 e3 			shl	bx,1
+	*** 0008e3	83 bf 00 00 20 		cmp	WORD PTR _sizes3dt[bx],32
+	*** 0008e8	76 0d 			jbe	$I2032
+;|***             printError(aTooManyTiles_);
+; Line 303
+	*** 0008ea	b8 00 00 		mov	ax,OFFSET _aTooManyTiles_
+	*** 0008ed	50 			push	ax
+	*** 0008ee	e8 00 00 		call	_printError
+	*** 0008f1	83 c4 02 		add	sp,2
+;|***             return;
+; Line 304
+	*** 0008f4	e9 24 01 		jmp	$EX2021
+;|***         } // 2d2b
+; Line 305
+;|***         // 2d47
+;|***         fread(matrix3dt[var_4], 2, sizes3dt[var_4], fileHandle);
+; Line 307
+					$I2032:
+	*** 0008f7	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0008fb	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;var_4
+	*** 0008fe	d1 e3 			shl	bx,1
+	*** 000900	ff b7 00 00 		push	WORD PTR _sizes3dt[bx]
+	*** 000904	b8 02 00 		mov	ax,2
+	*** 000907	50 			push	ax
+	*** 000908	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;var_4
+	*** 00090b	b1 06 			mov	cl,6
+	*** 00090d	d3 e0 			shl	ax,cl
+	*** 00090f	05 00 00 		add	ax,OFFSET _matrix3dt
+	*** 000912	50 			push	ax
+	*** 000913	e8 00 00 		call	_fread
+	*** 000916	83 c4 08 		add	sp,8
+;|***     } // 2d4f
+; Line 308
+	*** 000919	eb ba 			jmp	SHORT $FC2030
+					$FB2031:
+;|***     var_6 = 0;
+; Line 309
+	*** 00091b	c7 46 f6 00 00 		mov	WORD PTR [bp-10],0	;var_6
+;|***     for (var_4 = 0; var_4 < 5; var_4++) { // 2d67
+; Line 310
+	*** 000920	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;var_4
+	*** 000925	eb 03 			jmp	SHORT $F2033
+					$FC2034:
+	*** 000927	ff 46 f8 		inc	WORD PTR [bp-8]	;var_4
+					$F2033:
+	*** 00092a	83 7e f8 05 		cmp	WORD PTR [bp-8],5	;var_4
+	*** 00092e	7c 03 			jl	$JCC2350
+	*** 000930	e9 de 00 		jmp	$FB2035
+					$JCC2350:
+;|***         for (var_8 = 0; sizes3dt[var_4] > var_8; var_8++) {
+; Line 311
+	*** 000933	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_8
+	*** 000938	eb 03 			jmp	SHORT $F2036
+					$FC2037:
+	*** 00093a	ff 46 fe 		inc	WORD PTR [bp-2]	;var_8
+					$F2036:
+	*** 00093d	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;var_4
+	*** 000940	d1 e3 			shl	bx,1
+	*** 000942	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;var_8
+	*** 000945	39 87 00 00 		cmp	WORD PTR _sizes3dt[bx],ax
+	*** 000949	77 03 			ja	$JCC2377
+	*** 00094b	e9 c0 00 		jmp	$FB2038
+					$JCC2377:
+;|***             // 2d93
+;|***             matrix3dt_2[var_4][var_8] = (int16)(buf1_3dt + var_6);
+; Line 313
+	*** 00094e	8b 76 f8 		mov	si,WORD PTR [bp-8]	;var_4
+	*** 000951	b1 06 			mov	cl,6
+	*** 000953	d3 e6 			shl	si,cl
+	*** 000955	8b d8 			mov	bx,ax
+	*** 000957	d1 e3 			shl	bx,1
+	*** 000959	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;var_6
+	*** 00095c	05 00 00 		add	ax,OFFSET _buf1_3dt
+	*** 00095f	89 80 00 00 		mov	WORD PTR _matrix3dt_2[bx][si],ax
+;|***             // 2d97
+;|***             for (var_A = 0; matrix3dt[var_4][var_8] > var_A; var_A++) { // 2db9
+; Line 315
+	*** 000963	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_A
+	*** 000968	eb 03 			jmp	SHORT $F2039
+					$FC2040:
+	*** 00096a	ff 46 fc 		inc	WORD PTR [bp-4]	;var_A
+					$F2039:
+	*** 00096d	8b 76 f8 		mov	si,WORD PTR [bp-8]	;var_4
+	*** 000970	b1 06 			mov	cl,6
+	*** 000972	d3 e6 			shl	si,cl
+	*** 000974	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;var_8
+	*** 000977	d1 e3 			shl	bx,1
+	*** 000979	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_A
+	*** 00097c	39 80 00 00 		cmp	WORD PTR _matrix3dt[bx][si],ax
+	*** 000980	77 03 			ja	$JCC2432
+	*** 000982	e9 86 00 		jmp	$FB2041
+					$JCC2432:
+;|***                 if (var_6 > MAX_TILE_DATA) {
+; Line 316
+	*** 000985	81 7e f6 a0 0f 		cmp	WORD PTR [bp-10],4000	;var_6
+	*** 00098a	7e 0d 			jle	$I2042
+;|***                     printError(aTooMuchTileData);
+; Line 317
+	*** 00098c	b8 00 00 		mov	ax,OFFSET _aTooMuchTileData
+	*** 00098f	50 			push	ax
+	*** 000990	e8 00 00 		call	_printError
+	*** 000993	83 c4 02 		add	sp,2
+;|***                     return;
+; Line 318
+	*** 000996	e9 82 00 		jmp	$EX2021
+;|***                 } // 2dcd
+; Line 319
+;|***                 fread(buf1_3dt + var_6, 2, 1, fileHandle);
+; Line 320
+					$I2042:
+	*** 000999	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00099d	b8 01 00 		mov	ax,1
+	*** 0009a0	50 			push	ax
+	*** 0009a1	b8 02 00 		mov	ax,2
+	*** 0009a4	50 			push	ax
+	*** 0009a5	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;var_6
+	*** 0009a8	05 00 00 		add	ax,OFFSET _buf1_3dt
+	*** 0009ab	50 			push	ax
+	*** 0009ac	e8 00 00 		call	_fread
+	*** 0009af	83 c4 08 		add	sp,8
+;|***                 fread(buf2_3dt + var_6, 2, 1, fileHandle);
+; Line 321
+	*** 0009b2	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0009b6	b8 01 00 		mov	ax,1
+	*** 0009b9	50 			push	ax
+	*** 0009ba	b8 02 00 		mov	ax,2
+	*** 0009bd	50 			push	ax
+	*** 0009be	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;var_6
+	*** 0009c1	05 00 00 		add	ax,OFFSET _buf2_3dt
+	*** 0009c4	50 			push	ax
+	*** 0009c5	e8 00 00 		call	_fread
+	*** 0009c8	83 c4 08 		add	sp,8
+;|***                 fread(buf3_3dt + var_6, 2, 1, fileHandle);
+; Line 322
+	*** 0009cb	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0009cf	b8 01 00 		mov	ax,1
+	*** 0009d2	50 			push	ax
+	*** 0009d3	b8 02 00 		mov	ax,2
+	*** 0009d6	50 			push	ax
+	*** 0009d7	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;var_6
+	*** 0009da	05 00 00 		add	ax,OFFSET _buf3_3dt
+	*** 0009dd	50 			push	ax
+	*** 0009de	e8 00 00 		call	_fread
+	*** 0009e1	83 c4 08 		add	sp,8
+;|***                 fread(&var_2, 2, 1, fileHandle);
+; Line 323
+	*** 0009e4	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0009e8	b8 01 00 		mov	ax,1
+	*** 0009eb	50 			push	ax
+	*** 0009ec	b8 02 00 		mov	ax,2
+	*** 0009ef	50 			push	ax
+	*** 0009f0	8d 46 fa 		lea	ax,WORD PTR [bp-6]	;var_2
+	*** 0009f3	50 			push	ax
+	*** 0009f4	e8 00 00 		call	_fread
+	*** 0009f7	83 c4 08 		add	sp,8
+;|***                 val_3dt[var_6] = var_2;
+; Line 324
+	*** 0009fa	8b 5e f6 		mov	bx,WORD PTR [bp-10]	;var_6
+	*** 0009fd	8a 46 fa 		mov	al,BYTE PTR [bp-6]	;var_2
+	*** 000a00	88 87 00 00 		mov	BYTE PTR _val_3dt[bx],al
+;|***                 var_6 += 7;
+; Line 325
+	*** 000a04	83 46 f6 07 		add	WORD PTR [bp-10],7	;var_6
+;|***                 // 2e3c
+;|***             }
+; Line 327
+	*** 000a08	e9 5f ff 		jmp	$FC2040
+					$FB2041:
+;|***             // 2e3f
+;|***         }
+; Line 329
+	*** 000a0b	e9 2c ff 		jmp	$FC2037
+					$FB2038:
+;|***         // 2e42
+;|***     } // 2e45
+; Line 331
+	*** 000a0e	e9 16 ff 		jmp	$FC2034
+					$FB2035:
+;|***     fclose(fileHandle);
+; Line 332
+	*** 000a11	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000a15	e8 00 00 		call	_fclose
+	*** 000a18	83 c4 02 		add	sp,2
+;|*** }
+; Line 333
+					$EX2021:
+	*** 000a1b	5e 			pop	si
+	*** 000a1c	8b e5 			mov	sp,bp
+	*** 000a1e	5d 			pop	bp
+	*** 000a1f	c3 			ret	
+
+_load3DT	ENDP
+;|*** 
+;|*** // ==== seg000:0x2e54 ====
+;|*** int load3DG() {
+; Line 336
+	PUBLIC	_load3DG
+_load3DG	PROC NEAR
+	*** 000a20	55 			push	bp
+	*** 000a21	8b ec 			mov	bp,sp
+	*** 000a23	83 ec 06 		sub	sp,6
+;	unused_1 = -2
+;	unused_2 = -4
+;	unused_3 = -6
+;|***     int unused_1, unused_2, unused_3;
+;|***     strcpyFromDot(regnStr, a_3dg);
+; Line 338
+	*** 000a26	b8 00 00 		mov	ax,OFFSET _a_3dg
+	*** 000a29	50 			push	ax
+	*** 000a2a	ff 36 00 00 		push	WORD PTR _regnStr
+	*** 000a2e	e8 00 00 		call	_strcpyFromDot
+	*** 000a31	83 c4 04 		add	sp,4
+;|***     // 2e68
+;|***     while ((fileHandle = fopen(regnStr, aRb_3)) == NULL) {
+; Line 340
+					$FC2048:
+	*** 000a34	b8 00 00 		mov	ax,OFFSET _aRb_3
+	*** 000a37	50 			push	ax
+	*** 000a38	ff 36 00 00 		push	WORD PTR _regnStr
+	*** 000a3c	e8 00 00 		call	_fopen
+	*** 000a3f	83 c4 04 		add	sp,4
+	*** 000a42	a3 00 00 		mov	_fileHandle,ax
+	*** 000a45	0b c0 			or	ax,ax
+	*** 000a47	75 38 			jne	$FB2049
+;|***         drawSomeStrings(aPleaseInsertF15DiskB, 0x68, 0x28, 0x0f);
+; Line 341
+	*** 000a49	b8 0f 00 		mov	ax,15
+	*** 000a4c	50 			push	ax
+	*** 000a4d	b8 28 00 		mov	ax,40
+	*** 000a50	50 			push	ax
+	*** 000a51	b8 68 00 		mov	ax,104
+	*** 000a54	50 			push	ax
+	*** 000a55	b8 00 00 		mov	ax,OFFSET _aPleaseInsertF15DiskB
+	*** 000a58	50 			push	ax
+	*** 000a59	e8 00 00 		call	_drawSomeStrings
+	*** 000a5c	83 c4 08 		add	sp,8
+;|***         drawSomeStrings(unk_34121, 0x68, 0x32, 0x0f);
+; Line 342
+	*** 000a5f	b8 0f 00 		mov	ax,15
+	*** 000a62	50 			push	ax
+	*** 000a63	b8 32 00 		mov	ax,50
+	*** 000a66	50 			push	ax
+	*** 000a67	b8 68 00 		mov	ax,104
+	*** 000a6a	50 			push	ax
+	*** 000a6b	b8 00 00 		mov	ax,OFFSET _unk_34121
+	*** 000a6e	50 			push	ax
+	*** 000a6f	e8 00 00 		call	_drawSomeStrings
+	*** 000a72	83 c4 08 		add	sp,8
+;|***         gfx_jump_46_retrace2();
+; Line 343
+	*** 000a75	9a 00 00 00 00 		call	FAR PTR _gfx_jump_46_retrace2
+;|***         misc_jump_5b_getkey();
+; Line 344
+	*** 000a7a	9a 00 00 00 00 		call	FAR PTR _misc_jump_5b_getkey
+;|***     } 
+; Line 345
+	*** 000a7f	eb b3 			jmp	SHORT $FC2048
+					$FB2049:
+;|***     // 2eb5
+;|***     gfx_jump_45_retrace();
+; Line 347
+	*** 000a81	9a 00 00 00 00 		call	FAR PTR _gfx_jump_45_retrace
+;|***     fread(&sign3dg, 2, 1, fileHandle);
+; Line 348
+	*** 000a86	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000a8a	b8 01 00 		mov	ax,1
+	*** 000a8d	50 			push	ax
+	*** 000a8e	b8 02 00 		mov	ax,2
+	*** 000a91	50 			push	ax
+	*** 000a92	b8 00 00 		mov	ax,OFFSET _sign3dg
+	*** 000a95	50 			push	ax
+	*** 000a96	e8 00 00 		call	_fread
+	*** 000a99	83 c4 08 		add	sp,8
+;|***     // 2ed0
+;|***     if (sign3dg != SIGNATURE_3DG) {
+; Line 350
+	*** 000a9c	81 3e 00 00 32 32 	cmp	WORD PTR _sign3dg,12850
+	*** 000aa2	74 17 			je	$I2050
+;|***         printError(aBadGridFileFormat_);
+; Line 351
+	*** 000aa4	b8 00 00 		mov	ax,OFFSET _aBadGridFileFormat_
+	*** 000aa7	50 			push	ax
+	*** 000aa8	e8 00 00 		call	_printError
+	*** 000aab	83 c4 02 		add	sp,2
+;|***         fclose(fileHandle);
+; Line 352
+	*** 000aae	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000ab2	e8 00 00 		call	_fclose
+	*** 000ab5	83 c4 02 		add	sp,2
+;|***         return;
+; Line 353
+	*** 000ab8	e9 99 00 		jmp	$EX2043
+;|***     }
+; Line 354
+;|***     // 2eef
+;|***     fread(buf1_3dg, 1, 0x10, fileHandle);
+; Line 356
+					$I2050:
+	*** 000abb	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000abf	b8 10 00 		mov	ax,16
+	*** 000ac2	50 			push	ax
+	*** 000ac3	b8 01 00 		mov	ax,1
+	*** 000ac6	50 			push	ax
+	*** 000ac7	b8 00 00 		mov	ax,OFFSET _buf1_3dg
+	*** 000aca	50 			push	ax
+	*** 000acb	e8 00 00 		call	_fread
+	*** 000ace	83 c4 08 		add	sp,8
+;|***     fread(buf1_3dg, 1, 0x100, fileHandle);
+; Line 357
+	*** 000ad1	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000ad5	b8 00 01 		mov	ax,256
+	*** 000ad8	50 			push	ax
+	*** 000ad9	b8 01 00 		mov	ax,1
+	*** 000adc	50 			push	ax
+	*** 000add	b8 00 00 		mov	ax,OFFSET _buf1_3dg
+	*** 000ae0	50 			push	ax
+	*** 000ae1	e8 00 00 		call	_fread
+	*** 000ae4	83 c4 08 		add	sp,8
+;|***     fread(buf2_3dg, 1, 0x200, fileHandle);
+; Line 358
+	*** 000ae7	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000aeb	b8 00 02 		mov	ax,512
+	*** 000aee	50 			push	ax
+	*** 000aef	b8 01 00 		mov	ax,1
+	*** 000af2	50 			push	ax
+	*** 000af3	b8 00 00 		mov	ax,OFFSET _buf2_3dg
+	*** 000af6	50 			push	ax
+	*** 000af7	e8 00 00 		call	_fread
+	*** 000afa	83 c4 08 		add	sp,8
+;|***     fread(buf3_3dg, 1, 0x200, fileHandle);
+; Line 359
+	*** 000afd	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000b01	b8 00 02 		mov	ax,512
+	*** 000b04	50 			push	ax
+	*** 000b05	b8 01 00 		mov	ax,1
+	*** 000b08	50 			push	ax
+	*** 000b09	b8 00 00 		mov	ax,OFFSET _buf3_3dg
+	*** 000b0c	50 			push	ax
+	*** 000b0d	e8 00 00 		call	_fread
+	*** 000b10	83 c4 08 		add	sp,8
+;|***     fread(buf4_3dg, 1, 0x200, fileHandle);
+; Line 360
+	*** 000b13	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000b17	b8 00 02 		mov	ax,512
+	*** 000b1a	50 			push	ax
+	*** 000b1b	b8 01 00 		mov	ax,1
+	*** 000b1e	50 			push	ax
+	*** 000b1f	b8 00 00 		mov	ax,OFFSET _buf4_3dg
+	*** 000b22	50 			push	ax
+	*** 000b23	e8 00 00 		call	_fread
+	*** 000b26	83 c4 08 		add	sp,8
+;|***     // 2f61
+;|***     fclose(fileHandle);
+; Line 362
+	*** 000b29	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000b2d	e8 00 00 		call	_fclose
+	*** 000b30	83 c4 02 		add	sp,2
+;|***     memcpy(byte_3A900, unk_33E1A + ((gameData->theater & 7) * 64), 64);
+; Line 363
+	*** 000b33	b8 40 00 		mov	ax,64
+	*** 000b36	50 			push	ax
+	*** 000b37	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000b3b	26 8b 47 38 		mov	ax,WORD PTR es:[bx+56]
+	*** 000b3f	25 07 00 		and	ax,7
+	*** 000b42	b1 06 			mov	cl,6
+	*** 000b44	d3 e0 			shl	ax,cl
+	*** 000b46	05 00 00 		add	ax,OFFSET _unk_33E1A
+	*** 000b49	50 			push	ax
+	*** 000b4a	b8 00 00 		mov	ax,OFFSET _byte_3A900
+	*** 000b4d	50 			push	ax
+	*** 000b4e	e8 00 00 		call	_memcpy
+	*** 000b51	83 c4 06 		add	sp,6
+;|***     // 2f88
+;|*** }
+; Line 365
+					$EX2043:
+	*** 000b54	8b e5 			mov	sp,bp
+	*** 000b56	5d 			pop	bp
+	*** 000b57	c3 			ret	
+
+_load3DG	ENDP
+;|*** 
+;|*** // ==== seg000:0x2f8c ====
+;|*** int printError(char *msg) {
+; Line 368
+	PUBLIC	_printError
+_printError	PROC NEAR
+	*** 000b58	55 			push	bp
+	*** 000b59	8b ec 			mov	bp,sp
+;	msg = 4
+;|***     gfx_jump_46_retrace2();
+; Line 369
+	*** 000b5b	9a 00 00 00 00 		call	FAR PTR _gfx_jump_46_retrace2
+;|***     drawSomeStrings(msg, 0, 0x60, 0xf);
+; Line 370
+	*** 000b60	b8 0f 00 		mov	ax,15
+	*** 000b63	50 			push	ax
+	*** 000b64	b8 60 00 		mov	ax,96
+	*** 000b67	50 			push	ax
+	*** 000b68	2b c0 			sub	ax,ax
+	*** 000b6a	50 			push	ax
+	*** 000b6b	ff 76 04 		push	WORD PTR [bp+4]	;msg
+	*** 000b6e	e8 00 00 		call	_drawSomeStrings
+	*** 000b71	83 c4 08 		add	sp,8
+;|***     getch();
+; Line 371
+	*** 000b74	e8 00 00 		call	_getch
+;|*** }
+; Line 372
+	*** 000b77	8b e5 			mov	sp,bp
+	*** 000b79	5d 			pop	bp
+	*** 000b7a	c3 			ret	
+
+_printError	ENDP
+;|*** 
+;|*** // ==== seg000:0x2faf ====
+;|*** int strcpyFromDot(char *arg_0, char *arg_2) {
+; Line 375
+	PUBLIC	_strcpyFromDot
+_strcpyFromDot	PROC NEAR
+	*** 000b7b	55 			push	bp
+	*** 000b7c	8b ec 			mov	bp,sp
+	*** 000b7e	83 ec 02 		sub	sp,2
+;	arg_0 = 4
+;	arg_2 = 6
+;	var_2 = -2
+;|***     char var_2;
+;|***     while ((var_2 = *arg_0) != '.' && var_2 != 0) {
+; Line 377
+					$FC2059:
+	*** 000b81	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;arg_0
+	*** 000b84	8a 07 			mov	al,BYTE PTR [bx]
+	*** 000b86	88 46 fe 		mov	BYTE PTR [bp-2],al	;var_2
+	*** 000b89	3c 2e 			cmp	al,46
+	*** 000b8b	74 09 			je	$FB2060
+	*** 000b8d	0a c0 			or	al,al
+	*** 000b8f	74 05 			je	$FB2060
+;|***         arg_0++;
+; Line 378
+	*** 000b91	ff 46 04 		inc	WORD PTR [bp+4]	;arg_0
+;|***     } // 2fca
+; Line 379
+	*** 000b94	eb eb 			jmp	SHORT $FC2059
+					$FB2060:
+;|***     strcpy(arg_0, arg_2);
+; Line 380
+	*** 000b96	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 000b99	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 000b9c	e8 00 00 		call	_strcpy
+	*** 000b9f	83 c4 04 		add	sp,4
+;|*** }
+; Line 381
+	*** 000ba2	8b e5 			mov	sp,bp
+	*** 000ba4	5d 			pop	bp
+	*** 000ba5	c3 			ret	
+
+_strcpyFromDot	ENDP
+_TEXT	ENDS
+END
+;|*** 

@@ -1,0 +1,55 @@
+;	Static Name Aliases
+;
+	TITLE   biosfunc.c
+	NAME    biosfunc
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "biosfunc.h"
+;|*** #include "memory.h"
+;|*** #include "pointers.h"
+;|*** #include "inttype.h"
+;|*** #include "offsets.h"
+;|*** 
+;|*** void bios_clearkeyflags() {
+; Line 7
+	PUBLIC	_bios_clearkeyflags
+_bios_clearkeyflags	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 04 		sub	sp,4
+;	bios_keyflags = -4
+;|***     uint16 FAR *bios_keyflags = MK_FP(SEG_LOWMEM, OFF_BDA_KEYFLAGS);
+; Line 8
+	*** 000006	c7 46 fc 17 04 		mov	WORD PTR [bp-4],1047	;bios_keyflags
+	*** 00000b	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0
+;|***     *bios_keyflags = 0;    
+; Line 9
+	*** 000010	2b db 			sub	bx,bx
+	*** 000012	8e c3 			mov	es,bx
+	*** 000014	bb 17 04 		mov	bx,1047
+	*** 000017	26 8c 07 		mov	WORD PTR es:[bx],es
+;|*** }; Line 10
+	*** 00001a	8b e5 			mov	sp,bp
+	*** 00001c	5d 			pop	bp
+	*** 00001d	c3 			ret	
+
+_bios_clearkeyflags	ENDP
+_TEXT	ENDS
+END

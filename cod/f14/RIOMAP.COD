@@ -1,0 +1,3416 @@
+;	Static Name Aliases
+;
+	TITLE   riomap.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+PUBLIC  _NextRioTime
+PUBLIC  _iconmode
+EXTRN	_fseek:NEAR
+EXTRN	_SndSounds:FAR
+EXTRN	_CenterPrint:NEAR
+EXTRN	_itoa:NEAR
+EXTRN	_DrawLine:FAR
+EXTRN	_pstrlen:NEAR
+EXTRN	_RectCopy:FAR
+EXTRN	_RpPrint:FAR
+EXTRN	_LoadPicture:NEAR
+EXTRN	_ScreenOff:FAR
+EXTRN	_UpdateOurWPS:NEAR
+EXTRN	_GetQHeight:NEAR
+EXTRN	_ScreenOn:FAR
+EXTRN	_InitScottFlight:NEAR
+EXTRN	_RectFill:FAR
+EXTRN	_LoadPalNoPic:NEAR
+EXTRN	_MulDiv:NEAR
+EXTRN	_LoadNewCockpit:NEAR
+EXTRN	_WaitTicks:NEAR
+EXTRN	_ClearPage:FAR
+EXTRN	_toupper:NEAR
+EXTRN	__aNNalshl:NEAR
+EXTRN	_MouseSETUP:NEAR
+EXTRN	_ScaleRotate:NEAR
+EXTRN	__bios_keybrd:NEAR
+EXTRN	_MouseSHOW:FAR
+EXTRN	_isspace:NEAR
+EXTRN	_MouseHIDE:FAR
+EXTRN	_isprint:NEAR
+EXTRN	_MouseHITS:FAR
+EXTRN	_FontHeight:FAR
+EXTRN	_MapInBank:NEAR
+EXTRN	_fclose:NEAR
+EXTRN	_TacScaleRotate256:NEAR
+EXTRN	_kbhit:NEAR
+EXTRN	_fopen:NEAR
+EXTRN	_InBox:NEAR
+EXTRN	_fread:NEAR
+EXTRN	_Rp3:WORD
+_BSS      SEGMENT
+COMM NEAR	_ntmp:	 1:	 10
+_BSS      ENDS
+EXTRN	_Txt:BYTE
+EXTRN	_Status:WORD
+EXTRN	_wps:BYTE
+EXTRN	_aipaths:BYTE
+EXTRN	_View:WORD
+EXTRN	_ps:BYTE
+EXTRN	_PxLng:DWORD
+EXTRN	_PyLng:DWORD
+EXTRN	_MouseSprite:WORD
+EXTRN	_OurHead:WORD
+EXTRN	_OurPath:WORD
+EXTRN	_whichourcarr:WORD
+EXTRN	_OurAlt:WORD
+EXTRN	_Alt:WORD
+EXTRN	_lastmsgview:WORD
+EXTRN	_MouseX:WORD
+EXTRN	_ConfigData:BYTE
+EXTRN	_MouseY:WORD
+EXTRN	_AIWingMan:WORD
+EXTRN	_GRPAGE0:BYTE
+EXTRN	_Rp1:WORD
+EXTRN	_Rp2:WORD
+_DATA      SEGMENT
+	ORG	$+4
+$SG929	DB	'CARRIER',  00H
+$SG936	DB	'WINGMAN',  00H
+$SG940	DB	'PLAYER',  00H
+$SG944	DB	'WAYPOINTS',  00H
+$SG987	DB	'rb',  00H
+$SG988	DB	'mission.f14',  00H
+$SG994	DB	'map-sprt.PIC',  00H
+$SG1000	DB	'map-cape.PIC',  00H
+$SG1002	DB	'map-med.PIC',  00H
+$SG1004	DB	'map-us.PIC',  00H
+$SG1006	DB	'map-us.PIC',  00H
+$SG1030	DB	'PRESS ANY KEY TO CONTINUE',  00H
+$SG1041	DB	'USE LEFT MOUSE BUTTON TO RE-POSITION YOUR PLANE',  00H
+$SG1055	DB	'F14ORG01.PIC',  00H
+	ORG	$-199
+_NextRioTime	DW	00H
+_iconmode	DW	00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include <stdio.h>
+; Line 1
+;|*** #include <stdlib.h>
+; Line 2
+;|*** #include <bios.h>
+; Line 3
+;|*** #include <dos.h>
+; Line 4
+;|*** #include "types.h"
+; Line 5
+;|*** #include "library.h"
+; Line 6
+;|*** #include "keycodes.h"
+; Line 7
+;|*** #include "world.h"
+; Line 8
+;|*** #include "sdata.h"
+; Line 9
+;|*** #include "sounds.h"
+; Line 10
+;|*** #include "common.h"
+; Line 11
+;|*** #include "f15defs.h"
+; Line 12
+;|*** #include "cockpit.h"
+; Line 13
+;|*** #include "awg9.h"
+; Line 14
+;|*** #include "armt.h"
+; Line 15
+;|*** #include "planeai.h"
+; Line 16
+;|*** #include "setup.h"
+; Line 17
+;|*** 
+;|*** extern  long	 PxLng,PyLng;
+;|*** extern  UWORD	 MouseSprite;
+;|*** extern	int      OurHead;
+;|*** extern	int      sx,sy,sz;
+;|*** extern	UWORD    Rtime;
+;|*** extern  int	whichourcarr;
+;|*** extern	UWORD	OurAlt;
+;|*** extern  UWORD   Alt;
+;|*** extern int 	lastmsgview;
+;|*** 
+;|*** extern confData ConfigData;
+;|*** 
+;|*** extern struct PlaneData far *GetPlanePtr(int PlaneNo);
+;|*** extern struct MissileData far *GetMissilePtr(int MissileNo);
+;|*** extern struct RadarData far *GetRadarPtr(int RadarNo);
+;|*** 
+;|*** extern   int AIWingMan;
+;|*** extern  int     whichourcarr;     // holds value for which boat our carrier
+;|*** 
+;|*** extern	UWORD   GRPAGE0[];
+;|*** extern   RPS   *Rp1;
+;|*** extern   RPS   *Rp2;
+;|*** extern   RPS   *Rp3;
+;|*** 
+;|*** //***************************************************************************
+;|*** 
+;|*** #define  RPLNCOLOR 1
+;|*** #define  WPLNCOLOR 2
+;|*** #define  WPTCOLOR 3
+;|*** #define  CARCOLOR 4
+;|*** #define  MSGCOLOR 3
+;|*** #define  TXTCOLOR 4
+;|*** 
+;|*** 
+;|*** #define  RESUMEXL 259
+;|*** #define  RESUMEYL 172
+;|*** #define  RESUMEXH 316
+;|*** #define  RESUMEYH 188
+;|*** 
+;|*** #define  OBJXL 265
+;|*** #define  OBJYL 136
+;|*** #define  OBJXH 316
+;|*** #define  OBJYH 148
+;|*** 
+;|*** #define  TELEXL 265
+;|*** #define  TELEYL 152
+;|*** #define  TELEXH 316
+;|*** #define  TELEYH 164
+;|*** 
+;|*** #define  TXTXL 40
+;|*** #define  TXTYL 64
+;|*** #define  TXTXH 220
+;|*** #define  TXTYH 164
+;|*** #define  TXTWID TXTXH-TXTXL+1
+;|*** #define  TXTHT TXTYH-TXTYL+1
+;|*** 
+;|*** #define  RPLNXL 267
+;|*** #define  RPLNYL 28
+;|*** #define  RPLNXH 277
+;|*** #define  RPLNYH 38
+;|*** #define  RPLNWID RPLNXH-RPLNXL+1
+;|*** #define  RPLNHT RPLNYH-RPLNYL+1
+;|*** #define  RPLNXMID ((RPLNXH+RPLNXL)/2)
+;|*** #define  RPLNYMID ((RPLNYH+RPLNYL)/2)
+;|*** 
+;|*** 
+;|*** #define  WPLNXL 267
+;|*** #define  WPLNYL 42
+;|*** #define  WPLNXH 277
+;|*** #define  WPLNYH 52
+;|*** #define  WPLNWID WPLNXH-WPLNXL+1
+;|*** #define  WPLNHT WPLNYH-WPLNYL+1
+;|*** #define  WPLNXMID ((WPLNXH+WPLNXL)/2)
+;|*** #define  WPLNYMID ((WPLNYH+WPLNYL)/2)
+;|*** 
+;|*** #define  CARXL 268
+;|*** #define  CARYL 56
+;|*** #define  CARXH 275
+;|*** #define  CARYH 67
+;|*** #define  CARWID CARXH-CARXL+1
+;|*** #define  CARHT CARYH-CARYL+1
+;|*** #define  CARXMID ((CARXH+CARXL)/2)
+;|*** #define  CARYMID ((CARYH+CARYL)/2)
+;|*** 
+;|*** 
+;|*** //**********************************************************************
+;|*** int NextRioTime=0;
+;|*** int   iconmode=0;
+;|*** BigRioDot(RPS *Rp,int x, int y, int color)
+;|*** {
+; Line 108
+	PUBLIC	_BigRioDot
+_BigRioDot	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+;	color = 10
+;	y = 8
+;	x = 6
+;	Rp = 4
+;|***    RectFill(Rp, x-1, y-1, 3, 3, color);
+; Line 109
+	*** 000003	ff 76 0a 		push	WORD PTR [bp+10]	;color
+	*** 000006	b8 03 00 		mov	ax,3
+	*** 000009	50 			push	ax
+	*** 00000a	50 			push	ax
+	*** 00000b	8b 46 08 		mov	ax,WORD PTR [bp+8]	;y
+	*** 00000e	48 			dec	ax
+	*** 00000f	50 			push	ax
+	*** 000010	8b 46 06 		mov	ax,WORD PTR [bp+6]	;x
+	*** 000013	48 			dec	ax
+	*** 000014	50 			push	ax
+	*** 000015	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 000018	9a 00 00 00 00 		call	FAR PTR _RectFill
+;|*** }
+; Line 110
+	*** 00001d	8b e5 			mov	sp,bp
+	*** 00001f	5d 			pop	bp
+	*** 000020	c3 			ret	
+	*** 000021	90 			nop	
+
+_BigRioDot	ENDP
+;|*** WpsStar(RPS *Rp,int x, int y, int color)
+;|*** {
+; Line 112
+	PUBLIC	_WpsStar
+_WpsStar	PROC NEAR
+	*** 000022	55 			push	bp
+	*** 000023	8b ec 			mov	bp,sp
+;	color = 10
+;	y = 8
+;	x = 6
+;	Rp = 4
+;|***    DrawLine(Rp, x-1,y,x+1,y,color);
+; Line 113
+	*** 000025	ff 76 0a 		push	WORD PTR [bp+10]	;color
+	*** 000028	ff 76 08 		push	WORD PTR [bp+8]	;y
+	*** 00002b	8b 46 06 		mov	ax,WORD PTR [bp+6]	;x
+	*** 00002e	40 			inc	ax
+	*** 00002f	50 			push	ax
+	*** 000030	ff 76 08 		push	WORD PTR [bp+8]	;y
+	*** 000033	8b 46 06 		mov	ax,WORD PTR [bp+6]	;x
+	*** 000036	48 			dec	ax
+	*** 000037	50 			push	ax
+	*** 000038	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 00003b	9a 00 00 00 00 		call	FAR PTR _DrawLine
+	*** 000040	8b e5 			mov	sp,bp
+;|***    DrawLine(Rp, x,y-1,x,y+1,color);
+; Line 114
+	*** 000042	ff 76 0a 		push	WORD PTR [bp+10]	;color
+	*** 000045	8b 46 08 		mov	ax,WORD PTR [bp+8]	;y
+	*** 000048	40 			inc	ax
+	*** 000049	50 			push	ax
+	*** 00004a	ff 76 06 		push	WORD PTR [bp+6]	;x
+	*** 00004d	8b 46 08 		mov	ax,WORD PTR [bp+8]	;y
+	*** 000050	48 			dec	ax
+	*** 000051	50 			push	ax
+	*** 000052	ff 76 06 		push	WORD PTR [bp+6]	;x
+	*** 000055	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 000058	9a 00 00 00 00 		call	FAR PTR _DrawLine
+;|*** }
+; Line 115
+	*** 00005d	8b e5 			mov	sp,bp
+	*** 00005f	5d 			pop	bp
+	*** 000060	c3 			ret	
+	*** 000061	90 			nop	
+
+_WpsStar	ENDP
+;|*** 
+;|*** extern    struct _path_ aipaths[];
+;|*** DrawRioWayPoints(RPS *Rp,int type)
+;|*** {
+; Line 119
+	PUBLIC	_DrawRioWayPoints
+_DrawRioWayPoints	PROC NEAR
+	*** 000062	55 			push	bp
+	*** 000063	8b ec 			mov	bp,sp
+	*** 000065	83 ec 08 		sub	sp,8
+	*** 000068	57 			push	di
+	*** 000069	56 			push	si
+;	cnt = -4
+;	i = -6
+;	Wpx = -8
+;	Wpy = -2
+;	type = 6
+;	Rp = 4
+;|***    int   cnt,i;
+;|***    int   Wpx,Wpy;
+;|*** 
+;|***    cnt= aipaths[OurPath].numWPs;
+; Line 123
+	*** 00006a	b1 03 			mov	cl,3
+	*** 00006c	8b 1e 00 00 		mov	bx,WORD PTR _OurPath
+	*** 000070	d3 e3 			shl	bx,cl
+	*** 000072	8b 87 06 00 		mov	ax,WORD PTR _aipaths[bx+6]
+	*** 000076	89 46 fc 		mov	WORD PTR [bp-4],ax	;cnt
+;|*** 
+;|***    if (type==-1)
+; Line 125
+	*** 000079	83 7e 06 ff 		cmp	WORD PTR [bp+6],-1	;type
+	*** 00007d	74 03 			je	$JCC125
+	*** 00007f	e9 d8 00 		jmp	$I856
+					$JCC125:
+;|***       {
+; Line 126
+;|***       for (i=1;i<cnt;i++)
+; Line 127
+	*** 000082	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;i
+	*** 000087	eb 04 			jmp	SHORT $F857
+	*** 000089	90 			nop	
+					$FC858:
+	*** 00008a	ff 46 fa 		inc	WORD PTR [bp-6]	;i
+					$F857:
+	*** 00008d	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;cnt
+	*** 000090	39 46 fa 		cmp	WORD PTR [bp-6],ax	;i
+	*** 000093	7c 03 			jl	$JCC147
+	*** 000095	e9 8c 01 		jmp	$FB864
+					$JCC147:
+;|***          {
+; Line 128
+;|***          Wpx=((wps[i].xL) >> 12);
+; Line 129
+	*** 000098	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;i
+	*** 00009b	8b c3 			mov	ax,bx
+	*** 00009d	d1 e3 			shl	bx,1
+	*** 00009f	03 d8 			add	bx,ax
+	*** 0000a1	d1 e3 			shl	bx,1
+	*** 0000a3	d1 e3 			shl	bx,1
+	*** 0000a5	8b 87 04 00 		mov	ax,WORD PTR _wps[bx+4]
+	*** 0000a9	8b 97 06 00 		mov	dx,WORD PTR _wps[bx+6]
+	*** 0000ad	8a c4 			mov	al,ah
+	*** 0000af	8a e2 			mov	ah,dl
+	*** 0000b1	8a d6 			mov	dl,dh
+	*** 0000b3	d0 e6 			shl	dh,1
+	*** 0000b5	1a f6 			sbb	dh,dh
+	*** 0000b7	d1 fa 			sar	dx,1
+	*** 0000b9	d1 d8 			rcr	ax,1
+	*** 0000bb	d1 fa 			sar	dx,1
+	*** 0000bd	d1 d8 			rcr	ax,1
+	*** 0000bf	d1 fa 			sar	dx,1
+	*** 0000c1	d1 d8 			rcr	ax,1
+	*** 0000c3	d1 fa 			sar	dx,1
+	*** 0000c5	d1 d8 			rcr	ax,1
+	*** 0000c7	89 46 f8 		mov	WORD PTR [bp-8],ax	;Wpx
+;|***          Wpy=((wps[i].yL) >> 12);
+;|***          Wpy=MulDiv(Wpy,192,256);
+; Line 131
+	*** 0000ca	b8 00 01 		mov	ax,256
+	*** 0000cd	50 			push	ax
+	*** 0000ce	b8 c0 00 		mov	ax,192
+	*** 0000d1	50 			push	ax
+	*** 0000d2	8b 87 08 00 		mov	ax,WORD PTR _wps[bx+8]
+	*** 0000d6	8b 97 0a 00 		mov	dx,WORD PTR _wps[bx+10]
+	*** 0000da	8a c4 			mov	al,ah
+	*** 0000dc	8a e2 			mov	ah,dl
+	*** 0000de	8a d6 			mov	dl,dh
+	*** 0000e0	d0 e6 			shl	dh,1
+	*** 0000e2	1a f6 			sbb	dh,dh
+	*** 0000e4	d1 fa 			sar	dx,1
+	*** 0000e6	d1 d8 			rcr	ax,1
+	*** 0000e8	d1 fa 			sar	dx,1
+	*** 0000ea	d1 d8 			rcr	ax,1
+	*** 0000ec	d1 fa 			sar	dx,1
+	*** 0000ee	d1 d8 			rcr	ax,1
+	*** 0000f0	d1 fa 			sar	dx,1
+	*** 0000f2	d1 d8 			rcr	ax,1
+	*** 0000f4	50 			push	ax
+	*** 0000f5	e8 00 00 		call	_MulDiv
+	*** 0000f8	83 c4 06 		add	sp,6
+	*** 0000fb	89 46 fe 		mov	WORD PTR [bp-2],ax	;Wpy
+;|***          TXTN(i);
+; Line 132
+	*** 0000fe	b8 0a 00 		mov	ax,10
+	*** 000101	50 			push	ax
+	*** 000102	b9 00 00 		mov	cx,OFFSET _Txt
+	*** 000105	51 			push	cx
+	*** 000106	ff 76 fa 		push	WORD PTR [bp-6]	;i
+	*** 000109	e8 00 00 		call	_itoa
+	*** 00010c	83 c4 06 		add	sp,6
+;|***          SetAPen(Rp,WPTCOLOR);
+; Line 133
+	*** 00010f	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 000112	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***          RpPrint (Rp, Wpx-2,Wpy-2,Txt);
+; Line 134
+	*** 000117	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00011a	50 			push	ax
+	*** 00011b	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;Wpy
+	*** 00011e	48 			dec	ax
+	*** 00011f	48 			dec	ax
+	*** 000120	50 			push	ax
+	*** 000121	8b 4e f8 		mov	cx,WORD PTR [bp-8]	;Wpx
+	*** 000124	49 			dec	cx
+	*** 000125	49 			dec	cx
+	*** 000126	51 			push	cx
+	*** 000127	53 			push	bx
+	*** 000128	8b f0 			mov	si,ax
+	*** 00012a	8b f9 			mov	di,cx
+	*** 00012c	9a 00 00 00 00 		call	FAR PTR _RpPrint
+	*** 000131	83 c4 08 		add	sp,8
+;|***          RectCopy(Rp,Wpx-2,Wpy-2,10,10,Rp1,Wpx-2,Wpy-2);
+; Line 135
+	*** 000134	56 			push	si
+	*** 000135	57 			push	di
+	*** 000136	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 00013a	b8 0a 00 		mov	ax,10
+	*** 00013d	50 			push	ax
+	*** 00013e	50 			push	ax
+	*** 00013f	56 			push	si
+	*** 000140	57 			push	di
+	*** 000141	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 000144	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000149	83 c4 10 		add	sp,16
+;|***          WaitTicks(30);
+; Line 136
+	*** 00014c	b8 1e 00 		mov	ax,30
+	*** 00014f	50 			push	ax
+	*** 000150	e8 00 00 		call	_WaitTicks
+	*** 000153	83 c4 02 		add	sp,2
+;|***          }
+; Line 137
+	*** 000156	e9 31 ff 		jmp	$FC858
+	*** 000159	90 			nop	
+					$I856:
+	*** 00015a	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;i
+	*** 00015f	eb 17 			jmp	SHORT $F862
+	*** 000161	90 			nop	
+					$I865:
+;|***       return;
+;|***       }
+;|*** 
+;|*** 
+;|***    for (i=1;i<cnt;i++)
+;|***       {
+;|***       Wpx=((wps[i].xL) >> 12);
+;|***       Wpy=((wps[i].yL) >> 12);
+;|***       Wpy=MulDiv(Wpy,192,256);
+;|***       if (type)
+;|***          {
+;|***          TXTN(i);
+;|***          SetAPen(Rp,WPTCOLOR);
+;|***          RpPrint (Rp, Wpx-2,Wpy-2,Txt);
+;|***          }
+;|***       else
+;|***          {
+; Line 154
+;|***          WpsStar(Rp,Wpx,Wpy,WPTCOLOR);
+; Line 155
+	*** 000162	b8 03 00 		mov	ax,3
+	*** 000165	50 			push	ax
+	*** 000166	ff 76 fe 		push	WORD PTR [bp-2]	;Wpy
+	*** 000169	ff 76 f8 		push	WORD PTR [bp-8]	;Wpx
+	*** 00016c	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 00016f	e8 b0 fe 		call	_WpsStar
+					$L20001:
+	*** 000172	83 c4 08 		add	sp,8
+;|***          }
+; Line 156
+;|***       }
+; Line 157
+	*** 000175	ff 46 fa 		inc	WORD PTR [bp-6]	;i
+					$F862:
+	*** 000178	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;cnt
+	*** 00017b	39 46 fa 		cmp	WORD PTR [bp-6],ax	;i
+	*** 00017e	7c 03 			jl	$JCC382
+	*** 000180	e9 a1 00 		jmp	$FB864
+					$JCC382:
+;|***       {
+; Line 143
+;|***       Wpx=((wps[i].xL) >> 12);
+; Line 144
+	*** 000183	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;i
+	*** 000186	8b c3 			mov	ax,bx
+	*** 000188	d1 e3 			shl	bx,1
+	*** 00018a	03 d8 			add	bx,ax
+	*** 00018c	d1 e3 			shl	bx,1
+	*** 00018e	d1 e3 			shl	bx,1
+	*** 000190	8b 87 04 00 		mov	ax,WORD PTR _wps[bx+4]
+	*** 000194	8b 97 06 00 		mov	dx,WORD PTR _wps[bx+6]
+	*** 000198	8a c4 			mov	al,ah
+	*** 00019a	8a e2 			mov	ah,dl
+	*** 00019c	8a d6 			mov	dl,dh
+	*** 00019e	d0 e6 			shl	dh,1
+	*** 0001a0	1a f6 			sbb	dh,dh
+	*** 0001a2	d1 fa 			sar	dx,1
+	*** 0001a4	d1 d8 			rcr	ax,1
+	*** 0001a6	d1 fa 			sar	dx,1
+	*** 0001a8	d1 d8 			rcr	ax,1
+	*** 0001aa	d1 fa 			sar	dx,1
+	*** 0001ac	d1 d8 			rcr	ax,1
+	*** 0001ae	d1 fa 			sar	dx,1
+	*** 0001b0	d1 d8 			rcr	ax,1
+	*** 0001b2	89 46 f8 		mov	WORD PTR [bp-8],ax	;Wpx
+;|***       Wpy=((wps[i].yL) >> 12);
+;|***       Wpy=MulDiv(Wpy,192,256);
+; Line 146
+	*** 0001b5	b8 00 01 		mov	ax,256
+	*** 0001b8	50 			push	ax
+	*** 0001b9	b8 c0 00 		mov	ax,192
+	*** 0001bc	50 			push	ax
+	*** 0001bd	8b 87 08 00 		mov	ax,WORD PTR _wps[bx+8]
+	*** 0001c1	8b 97 0a 00 		mov	dx,WORD PTR _wps[bx+10]
+	*** 0001c5	8a c4 			mov	al,ah
+	*** 0001c7	8a e2 			mov	ah,dl
+	*** 0001c9	8a d6 			mov	dl,dh
+	*** 0001cb	d0 e6 			shl	dh,1
+	*** 0001cd	1a f6 			sbb	dh,dh
+	*** 0001cf	d1 fa 			sar	dx,1
+	*** 0001d1	d1 d8 			rcr	ax,1
+	*** 0001d3	d1 fa 			sar	dx,1
+	*** 0001d5	d1 d8 			rcr	ax,1
+	*** 0001d7	d1 fa 			sar	dx,1
+	*** 0001d9	d1 d8 			rcr	ax,1
+	*** 0001db	d1 fa 			sar	dx,1
+	*** 0001dd	d1 d8 			rcr	ax,1
+	*** 0001df	50 			push	ax
+	*** 0001e0	e8 00 00 		call	_MulDiv
+	*** 0001e3	83 c4 06 		add	sp,6
+	*** 0001e6	89 46 fe 		mov	WORD PTR [bp-2],ax	;Wpy
+;|***       if (type)
+; Line 147
+	*** 0001e9	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;type
+	*** 0001ed	75 03 			jne	$JCC493
+	*** 0001ef	e9 70 ff 		jmp	$I865
+					$JCC493:
+;|***          {
+; Line 148
+;|***          TXTN(i);
+; Line 149
+	*** 0001f2	b8 0a 00 		mov	ax,10
+	*** 0001f5	50 			push	ax
+	*** 0001f6	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0001f9	50 			push	ax
+	*** 0001fa	ff 76 fa 		push	WORD PTR [bp-6]	;i
+	*** 0001fd	e8 00 00 		call	_itoa
+	*** 000200	83 c4 06 		add	sp,6
+;|***          SetAPen(Rp,WPTCOLOR);
+; Line 150
+	*** 000203	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 000206	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***          RpPrint (Rp, Wpx-2,Wpy-2,Txt);
+; Line 151
+	*** 00020b	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00020e	50 			push	ax
+	*** 00020f	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;Wpy
+	*** 000212	48 			dec	ax
+	*** 000213	48 			dec	ax
+	*** 000214	50 			push	ax
+	*** 000215	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;Wpx
+	*** 000218	48 			dec	ax
+	*** 000219	48 			dec	ax
+	*** 00021a	50 			push	ax
+	*** 00021b	53 			push	bx
+	*** 00021c	9a 00 00 00 00 		call	FAR PTR _RpPrint
+	*** 000221	e9 4e ff 		jmp	$L20001
+					$FB864:
+;|***          }
+;|***       else
+;|***          {
+;|***          WpsStar(Rp,Wpx,Wpy,WPTCOLOR);
+;|***          }
+;|***       }
+;|*** }
+; Line 158
+	*** 000224	5e 			pop	si
+	*** 000225	5f 			pop	di
+	*** 000226	8b e5 			mov	sp,bp
+	*** 000228	5d 			pop	bp
+	*** 000229	c3 			ret	
+
+_DrawRioWayPoints	ENDP
+;|*** 
+;|*** GetToken(char *S, char *D)
+;|*** {
+; Line 161
+	PUBLIC	_GetToken
+_GetToken	PROC NEAR
+	*** 00022a	55 			push	bp
+	*** 00022b	8b ec 			mov	bp,sp
+	*** 00022d	83 ec 02 		sub	sp,2
+;	l = -2
+;	D = 6
+;	S = 4
+;|***    int l;
+;|***    l=0;
+; Line 163
+	*** 000230	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;l
+;|*** 
+;|*** 
+;|***    while (isspace(*(S)))
+; Line 166
+	*** 000235	eb 14 			jmp	SHORT $L20002
+	*** 000237	90 			nop	
+					$FC874:
+;|***       {
+; Line 167
+;|***       *(D++)=*(S++);
+; Line 168
+	*** 000238	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;S
+	*** 00023b	8a 07 			mov	al,BYTE PTR [bx]
+	*** 00023d	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;D
+	*** 000240	88 07 			mov	BYTE PTR [bx],al
+	*** 000242	ff 46 04 		inc	WORD PTR [bp+4]	;S
+	*** 000245	ff 46 06 		inc	WORD PTR [bp+6]	;D
+;|***       l++;
+; Line 169
+	*** 000248	ff 46 fe 		inc	WORD PTR [bp-2]	;l
+;|***       }
+; Line 170
+					$L20002:
+	*** 00024b	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;S
+	*** 00024e	8a 07 			mov	al,BYTE PTR [bx]
+	*** 000250	98 			cbw	
+	*** 000251	50 			push	ax
+	*** 000252	e8 00 00 		call	_isspace
+	*** 000255	83 c4 02 		add	sp,2
+	*** 000258	0b c0 			or	ax,ax
+	*** 00025a	75 dc 			jne	$FC874
+;|***    while (  isprint(*(S))&&(isspace(*(S))==0) )
+; Line 171
+	*** 00025c	eb 24 			jmp	SHORT $L20003
+					$FC878:
+	*** 00025e	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;S
+	*** 000261	8a 07 			mov	al,BYTE PTR [bx]
+	*** 000263	98 			cbw	
+	*** 000264	50 			push	ax
+	*** 000265	e8 00 00 		call	_isspace
+	*** 000268	83 c4 02 		add	sp,2
+	*** 00026b	0b c0 			or	ax,ax
+	*** 00026d	75 24 			jne	$FB879
+;|***       {
+; Line 172
+;|***       *(D++)=*(S++);
+; Line 173
+	*** 00026f	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;S
+	*** 000272	8a 07 			mov	al,BYTE PTR [bx]
+	*** 000274	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;D
+	*** 000277	88 07 			mov	BYTE PTR [bx],al
+	*** 000279	ff 46 04 		inc	WORD PTR [bp+4]	;S
+	*** 00027c	ff 46 06 		inc	WORD PTR [bp+6]	;D
+;|***       l++;
+; Line 174
+	*** 00027f	ff 46 fe 		inc	WORD PTR [bp-2]	;l
+;|***       }
+; Line 175
+					$L20003:
+	*** 000282	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;S
+	*** 000285	8a 07 			mov	al,BYTE PTR [bx]
+	*** 000287	98 			cbw	
+	*** 000288	50 			push	ax
+	*** 000289	e8 00 00 		call	_isprint
+	*** 00028c	83 c4 02 		add	sp,2
+	*** 00028f	0b c0 			or	ax,ax
+	*** 000291	75 cb 			jne	$FC878
+					$FB879:
+;|*** 
+;|***    *(D)=0;
+; Line 177
+	*** 000293	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;D
+	*** 000296	c6 07 00 		mov	BYTE PTR [bx],0
+;|***    return(l);
+; Line 178
+	*** 000299	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;l
+;|*** }
+; Line 179
+	*** 00029c	8b e5 			mov	sp,bp
+	*** 00029e	5d 			pop	bp
+	*** 00029f	c3 			ret	
+
+_GetToken	ENDP
+;|*** 
+;|*** TextInTheBox(RPS *Rp,char *S, int xl, int yl, int xh, int yh, int color)
+;|*** {
+; Line 182
+	PUBLIC	_TextInTheBox
+_TextInTheBox	PROC NEAR
+	*** 0002a0	55 			push	bp
+	*** 0002a1	8b ec 			mov	bp,sp
+	*** 0002a3	81 ec 88 00 		sub	sp,136
+	*** 0002a7	56 			push	si
+;	oldcolor = -136
+;	fontht = -4
+;	i = -130
+;	j = -132
+;	l = -134
+;	tl = -2
+;	T = -124
+;	Xp = -126
+;	Yp = -128
+;	color = 16
+;	yh = 14
+;	xh = 12
+;	yl = 10
+;	xl = 8
+;	S = 6
+;	Rp = 4
+;|***    int   i,j,l,tl;
+;|***    char T[120];
+;|***    int   Xp,Yp;
+;|***    int   oldcolor;
+;|***    int   fontht;
+;|*** 
+;|***    oldcolor=Rp->APen;
+; Line 189
+	*** 0002a8	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 0002ab	8b 47 0c 		mov	ax,WORD PTR [bx+12]
+	*** 0002ae	89 86 78 ff 		mov	WORD PTR [bp-136],ax	;oldcolor
+;|***    Rp->APen=color;
+; Line 190
+	*** 0002b2	8b 46 10 		mov	ax,WORD PTR [bp+16]	;color
+	*** 0002b5	89 47 0c 		mov	WORD PTR [bx+12],ax
+;|*** 
+;|***    xl+=6;
+; Line 192
+	*** 0002b8	83 46 08 06 		add	WORD PTR [bp+8],6	;xl
+;|***    yl+=6;
+;|***    xh-=6;
+; Line 194
+	*** 0002bc	83 6e 0c 06 		sub	WORD PTR [bp+12],6	;xh
+;|***    yh-=6;
+; Line 195
+	*** 0002c0	83 6e 0e 06 		sub	WORD PTR [bp+14],6	;yh
+;|*** 
+;|***    fontht=FontHeight(Rp->FontNr);
+; Line 197
+	*** 0002c4	ff 77 10 		push	WORD PTR [bx+16]
+	*** 0002c7	9a 00 00 00 00 		call	FAR PTR _FontHeight
+	*** 0002cc	83 c4 02 		add	sp,2
+	*** 0002cf	89 46 fc 		mov	WORD PTR [bp-4],ax	;fontht
+;|*** 
+;|***    Yp= yl;
+; Line 199
+	*** 0002d2	83 46 0a 06 		add	WORD PTR [bp+10],6	;yl
+	*** 0002d6	8b 46 0a 		mov	ax,WORD PTR [bp+10]	;yl
+	*** 0002d9	89 46 80 		mov	WORD PTR [bp-128],ax	;Yp
+;|***    i=0;
+; Line 200
+	*** 0002dc	c7 86 7e ff 00 00 	mov	WORD PTR [bp-130],0	;i
+;|***    while (1)
+; Line 201
+	*** 0002e2	e9 a9 00 		jmp	$I910
+	*** 0002e5	90 			nop	
+					$FC899:
+;|***       {
+; Line 202
+;|***       if ((Yp+fontht)>yh) break;
+;|***       Xp=xl;
+; Line 204
+	*** 0002e6	8b 46 08 		mov	ax,WORD PTR [bp+8]	;xl
+	*** 0002e9	89 46 82 		mov	WORD PTR [bp-126],ax	;Xp
+;|***       j=i;
+; Line 205
+	*** 0002ec	8b 86 7e ff 		mov	ax,WORD PTR [bp-130]	;i
+	*** 0002f0	89 86 7c ff 		mov	WORD PTR [bp-132],ax	;j
+;|***       l=0;
+; Line 206
+	*** 0002f4	c7 86 7a ff 00 00 	mov	WORD PTR [bp-134],0	;l
+;|***       while (isspace(*(S+j)))
+; Line 207
+	*** 0002fa	eb 04 			jmp	SHORT $L20004
+					$FC903:
+;|***          j++;
+; Line 208
+	*** 0002fc	ff 86 7c ff 		inc	WORD PTR [bp-132]	;j
+					$L20004:
+	*** 000300	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;S
+	*** 000303	8b b6 7c ff 		mov	si,WORD PTR [bp-132]	;j
+	*** 000307	8a 00 			mov	al,BYTE PTR [bx][si]
+	*** 000309	98 			cbw	
+	*** 00030a	50 			push	ax
+	*** 00030b	e8 00 00 		call	_isspace
+	*** 00030e	83 c4 02 		add	sp,2
+	*** 000311	0b c0 			or	ax,ax
+	*** 000313	75 e7 			jne	$FC903
+;|***       while (tl=GetToken(S+j,&T[l]))
+; Line 209
+					$FC906:
+	*** 000315	8b b6 7a ff 		mov	si,WORD PTR [bp-134]	;l
+	*** 000319	8d 42 84 		lea	ax,WORD PTR [bp-124][si]
+	*** 00031c	50 			push	ax
+	*** 00031d	8b 46 06 		mov	ax,WORD PTR [bp+6]	;S
+	*** 000320	03 86 7c ff 		add	ax,WORD PTR [bp-132]	;j
+	*** 000324	50 			push	ax
+	*** 000325	e8 02 ff 		call	_GetToken
+	*** 000328	83 c4 04 		add	sp,4
+	*** 00032b	89 46 fe 		mov	WORD PTR [bp-2],ax	;tl
+	*** 00032e	0b c0 			or	ax,ax
+	*** 000330	74 15 			je	$FB907
+;|***          {
+; Line 210
+;|***          if ( (Xp+pstrlen(Rp,T))>xh  ) break;
+; Line 211
+	*** 000332	8d 46 84 		lea	ax,WORD PTR [bp-124]	;T
+	*** 000335	50 			push	ax
+	*** 000336	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 000339	e8 00 00 		call	_pstrlen
+	*** 00033c	83 c4 04 		add	sp,4
+	*** 00033f	03 46 82 		add	ax,WORD PTR [bp-126]	;Xp
+	*** 000342	3b 46 0c 		cmp	ax,WORD PTR [bp+12]	;xh
+	*** 000345	7e 39 			jle	$I909
+					$FB907:
+;|***          j+=tl;
+;|***          l+=tl;
+;|***          }
+;|***       T[l]=0;
+; Line 215
+	*** 000347	8b b6 7a ff 		mov	si,WORD PTR [bp-134]	;l
+	*** 00034b	c6 42 84 00 		mov	BYTE PTR [bp-124][si],0
+;|***       SetAPen(Rp,TXTCOLOR);
+; Line 216
+	*** 00034f	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 000352	c7 47 0c 04 00 		mov	WORD PTR [bx+12],4
+;|***       RpPrint(Rp,Xp,Yp,T);
+; Line 217
+	*** 000357	8d 46 84 		lea	ax,WORD PTR [bp-124]	;T
+	*** 00035a	50 			push	ax
+	*** 00035b	ff 76 80 		push	WORD PTR [bp-128]	;Yp
+	*** 00035e	ff 76 82 		push	WORD PTR [bp-126]	;Xp
+	*** 000361	53 			push	bx
+	*** 000362	9a 00 00 00 00 		call	FAR PTR _RpPrint
+	*** 000367	83 c4 08 		add	sp,8
+;|***       Yp+=fontht;
+; Line 218
+	*** 00036a	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;fontht
+	*** 00036d	01 46 80 		add	WORD PTR [bp-128],ax	;Yp
+;|***       i=j;
+; Line 219
+	*** 000370	8b 86 7c ff 		mov	ax,WORD PTR [bp-132]	;j
+	*** 000374	89 86 7e ff 		mov	WORD PTR [bp-130],ax	;i
+;|***       if (tl==0) break;
+; Line 220
+	*** 000378	83 7e fe 00 		cmp	WORD PTR [bp-2],0	;tl
+	*** 00037c	75 10 			jne	$I910
+	*** 00037e	eb 1c 			jmp	SHORT $FB900
+;|***          j+=tl;
+; Line 212
+					$I909:
+	*** 000380	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;tl
+	*** 000383	01 86 7c ff 		add	WORD PTR [bp-132],ax	;j
+;|***          l+=tl;
+; Line 213
+	*** 000387	01 86 7a ff 		add	WORD PTR [bp-134],ax	;l
+;|***          }
+; Line 214
+	*** 00038b	eb 88 			jmp	SHORT $FC906
+;|***       T[l]=0;
+;|***       SetAPen(Rp,TXTCOLOR);
+;|***       RpPrint(Rp,Xp,Yp,T);
+;|***       Yp+=fontht;
+;|***       i=j;
+;|***       if (tl==0) break;
+;|***       }
+; Line 221
+	*** 00038d	90 			nop	
+					$I910:
+	*** 00038e	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;fontht
+	*** 000391	03 46 80 		add	ax,WORD PTR [bp-128]	;Yp
+	*** 000394	3b 46 0e 		cmp	ax,WORD PTR [bp+14]	;yh
+	*** 000397	7f 03 			jg	$JCC919
+	*** 000399	e9 4a ff 		jmp	$FC899
+					$JCC919:
+					$FB900:
+;|***    Rp->APen=oldcolor;
+; Line 222
+	*** 00039c	8b 86 78 ff 		mov	ax,WORD PTR [bp-136]	;oldcolor
+	*** 0003a0	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 0003a3	89 47 0c 		mov	WORD PTR [bx+12],ax
+;|*** }
+; Line 223
+	*** 0003a6	5e 			pop	si
+	*** 0003a7	8b e5 			mov	sp,bp
+	*** 0003a9	5d 			pop	bp
+	*** 0003aa	c3 			ret	
+	*** 0003ab	90 			nop	
+
+_TextInTheBox	ENDP
+;|*** 
+;|*** //int   RioFont=0;
+;|*** 
+;|*** DrawRioMapInfo(RPS *Rp,int force)
+;|*** {
+; Line 228
+	PUBLIC	_DrawRioMapInfo
+_DrawRioMapInfo	PROC NEAR
+	*** 0003ac	55 			push	bp
+	*** 0003ad	8b ec 			mov	bp,sp
+	*** 0003af	83 ec 18 		sub	sp,24
+;	Myx = -18
+;	Myy = -24
+;	Wngx = -2
+;	Wngy = -4
+;	Carx = -16
+;	Cary = -22
+;	time = -20
+;	i = -8
+;	TY = -12
+;	WngHead = -14
+;	CarHead = -6
+;	force = 6
+;	Rp = 4
+;|***    int   Myx,Myy;
+;|***    int   Wngx,Wngy;
+;|***    int   Carx,Cary;
+;|***    int   time,i;
+;|***    long  TY;
+;|***    int   WngHead;
+;|***    int   CarHead;
+;|*** 
+;|***    if (force==-1)
+; Line 237
+	*** 0003b2	83 7e 06 ff 		cmp	WORD PTR [bp+6],-1	;force
+	*** 0003b6	74 03 			je	$JCC950
+	*** 0003b8	e9 53 05 		jmp	$I926
+					$JCC950:
+;|***       {
+; Line 238
+;|***       MouseHIDE();
+; Line 239
+	*** 0003bb	9a 00 00 00 00 		call	FAR PTR _MouseHIDE
+;|*** 
+;|***       Myx=(PxLng >> 12);
+; Line 241
+	*** 0003c0	a1 00 00 		mov	ax,WORD PTR _PxLng
+	*** 0003c3	8b 16 02 00 		mov	dx,WORD PTR _PxLng+2
+	*** 0003c7	8a c4 			mov	al,ah
+	*** 0003c9	8a e2 			mov	ah,dl
+	*** 0003cb	8a d6 			mov	dl,dh
+	*** 0003cd	d0 e6 			shl	dh,1
+	*** 0003cf	1a f6 			sbb	dh,dh
+	*** 0003d1	d1 fa 			sar	dx,1
+	*** 0003d3	d1 d8 			rcr	ax,1
+	*** 0003d5	d1 fa 			sar	dx,1
+	*** 0003d7	d1 d8 			rcr	ax,1
+	*** 0003d9	d1 fa 			sar	dx,1
+	*** 0003db	d1 d8 			rcr	ax,1
+	*** 0003dd	d1 fa 			sar	dx,1
+	*** 0003df	d1 d8 			rcr	ax,1
+	*** 0003e1	89 46 ee 		mov	WORD PTR [bp-18],ax	;Myx
+;|***       TY=(0x100000L-PyLng);
+;|***       TY>>=12;
+; Line 243
+	*** 0003e4	2b c0 			sub	ax,ax
+	*** 0003e6	ba 10 00 		mov	dx,16
+	*** 0003e9	2b 06 00 00 		sub	ax,WORD PTR _PyLng
+	*** 0003ed	1b 16 02 00 		sbb	dx,WORD PTR _PyLng+2
+	*** 0003f1	8a c4 			mov	al,ah
+	*** 0003f3	8a e2 			mov	ah,dl
+	*** 0003f5	8a d6 			mov	dl,dh
+	*** 0003f7	d0 e6 			shl	dh,1
+	*** 0003f9	1a f6 			sbb	dh,dh
+	*** 0003fb	d1 fa 			sar	dx,1
+	*** 0003fd	d1 d8 			rcr	ax,1
+	*** 0003ff	d1 fa 			sar	dx,1
+	*** 000401	d1 d8 			rcr	ax,1
+	*** 000403	d1 fa 			sar	dx,1
+	*** 000405	d1 d8 			rcr	ax,1
+	*** 000407	d1 fa 			sar	dx,1
+	*** 000409	d1 d8 			rcr	ax,1
+;|***       Myy=TY;
+;|***       Myy=MulDiv(Myy,192,256);
+; Line 245
+	*** 00040b	b9 00 01 		mov	cx,256
+	*** 00040e	51 			push	cx
+	*** 00040f	bb c0 00 		mov	bx,192
+	*** 000412	53 			push	bx
+	*** 000413	50 			push	ax
+	*** 000414	e8 00 00 		call	_MulDiv
+	*** 000417	83 c4 06 		add	sp,6
+	*** 00041a	89 46 e8 		mov	WORD PTR [bp-24],ax	;Myy
+;|*** 
+;|***       // get wingman x,y, carrier x,y
+;|*** 	  if (AIWingMan != -999) {
+; Line 248
+	*** 00041d	81 3e 00 00 19 fc 	cmp	WORD PTR _AIWingMan,-999
+	*** 000423	74 7b 			je	$I928
+;|***       	if (ps[AIWingMan].status & ALIVE)
+; Line 249
+	*** 000425	b8 28 00 		mov	ax,40
+	*** 000428	f7 2e 00 00 		imul	WORD PTR _AIWingMan
+	*** 00042c	8b d8 			mov	bx,ax
+	*** 00042e	f6 87 18 00 01 		test	BYTE PTR _ps[bx+24],1
+	*** 000433	74 6b 			je	$I928
+;|***          	{
+; Line 250
+;|***          	Wngx=(ps[AIWingMan].xL >> 12);
+; Line 251
+	*** 000435	8b 87 08 00 		mov	ax,WORD PTR _ps[bx+8]
+	*** 000439	8b 97 0a 00 		mov	dx,WORD PTR _ps[bx+10]
+	*** 00043d	8a c4 			mov	al,ah
+	*** 00043f	8a e2 			mov	ah,dl
+	*** 000441	8a d6 			mov	dl,dh
+	*** 000443	d0 e6 			shl	dh,1
+	*** 000445	1a f6 			sbb	dh,dh
+	*** 000447	d1 fa 			sar	dx,1
+	*** 000449	d1 d8 			rcr	ax,1
+	*** 00044b	d1 fa 			sar	dx,1
+	*** 00044d	d1 d8 			rcr	ax,1
+	*** 00044f	d1 fa 			sar	dx,1
+	*** 000451	d1 d8 			rcr	ax,1
+	*** 000453	d1 fa 			sar	dx,1
+	*** 000455	d1 d8 			rcr	ax,1
+	*** 000457	89 46 fe 		mov	WORD PTR [bp-2],ax	;Wngx
+;|***          	Wngy=(ps[AIWingMan].yL >> 12);
+;|***          	Wngy=MulDiv(Wngy,192,256);
+; Line 253
+	*** 00045a	b8 00 01 		mov	ax,256
+	*** 00045d	50 			push	ax
+	*** 00045e	b8 c0 00 		mov	ax,192
+	*** 000461	50 			push	ax
+	*** 000462	8b 87 0c 00 		mov	ax,WORD PTR _ps[bx+12]
+	*** 000466	8b 97 0e 00 		mov	dx,WORD PTR _ps[bx+14]
+	*** 00046a	8a c4 			mov	al,ah
+	*** 00046c	8a e2 			mov	ah,dl
+	*** 00046e	8a d6 			mov	dl,dh
+	*** 000470	d0 e6 			shl	dh,1
+	*** 000472	1a f6 			sbb	dh,dh
+	*** 000474	d1 fa 			sar	dx,1
+	*** 000476	d1 d8 			rcr	ax,1
+	*** 000478	d1 fa 			sar	dx,1
+	*** 00047a	d1 d8 			rcr	ax,1
+	*** 00047c	d1 fa 			sar	dx,1
+	*** 00047e	d1 d8 			rcr	ax,1
+	*** 000480	d1 fa 			sar	dx,1
+	*** 000482	d1 d8 			rcr	ax,1
+	*** 000484	50 			push	ax
+	*** 000485	e8 00 00 		call	_MulDiv
+	*** 000488	83 c4 06 		add	sp,6
+	*** 00048b	89 46 fc 		mov	WORD PTR [bp-4],ax	;Wngy
+;|***          	WngHead=-ps[AIWingMan].head;
+; Line 254
+	*** 00048e	b8 28 00 		mov	ax,40
+	*** 000491	f7 2e 00 00 		imul	WORD PTR _AIWingMan
+	*** 000495	8b d8 			mov	bx,ax
+	*** 000497	8b 87 10 00 		mov	ax,WORD PTR _ps[bx+16]
+	*** 00049b	f7 d8 			neg	ax
+	*** 00049d	89 46 f2 		mov	WORD PTR [bp-14],ax	;WngHead
+;|***          	}
+; Line 255
+;|*** 	  }
+; Line 256
+					$I928:
+;|*** 
+;|***       Carx=(ps[whichourcarr].xL >> 12);
+; Line 258
+	*** 0004a0	b8 28 00 		mov	ax,40
+	*** 0004a3	f7 2e 00 00 		imul	WORD PTR _whichourcarr
+	*** 0004a7	8b d8 			mov	bx,ax
+	*** 0004a9	8b 87 08 00 		mov	ax,WORD PTR _ps[bx+8]
+	*** 0004ad	8b 97 0a 00 		mov	dx,WORD PTR _ps[bx+10]
+	*** 0004b1	8a c4 			mov	al,ah
+	*** 0004b3	8a e2 			mov	ah,dl
+	*** 0004b5	8a d6 			mov	dl,dh
+	*** 0004b7	d0 e6 			shl	dh,1
+	*** 0004b9	1a f6 			sbb	dh,dh
+	*** 0004bb	d1 fa 			sar	dx,1
+	*** 0004bd	d1 d8 			rcr	ax,1
+	*** 0004bf	d1 fa 			sar	dx,1
+	*** 0004c1	d1 d8 			rcr	ax,1
+	*** 0004c3	d1 fa 			sar	dx,1
+	*** 0004c5	d1 d8 			rcr	ax,1
+	*** 0004c7	d1 fa 			sar	dx,1
+	*** 0004c9	d1 d8 			rcr	ax,1
+	*** 0004cb	89 46 f0 		mov	WORD PTR [bp-16],ax	;Carx
+;|***       Cary=(ps[whichourcarr].yL >> 12);
+;|***       Cary=MulDiv(Cary,192,256);
+; Line 260
+	*** 0004ce	b8 00 01 		mov	ax,256
+	*** 0004d1	50 			push	ax
+	*** 0004d2	b9 c0 00 		mov	cx,192
+	*** 0004d5	51 			push	cx
+	*** 0004d6	8b 87 0c 00 		mov	ax,WORD PTR _ps[bx+12]
+	*** 0004da	8b 97 0e 00 		mov	dx,WORD PTR _ps[bx+14]
+	*** 0004de	8a c4 			mov	al,ah
+	*** 0004e0	8a e2 			mov	ah,dl
+	*** 0004e2	8a d6 			mov	dl,dh
+	*** 0004e4	d0 e6 			shl	dh,1
+	*** 0004e6	1a f6 			sbb	dh,dh
+	*** 0004e8	d1 fa 			sar	dx,1
+	*** 0004ea	d1 d8 			rcr	ax,1
+	*** 0004ec	d1 fa 			sar	dx,1
+	*** 0004ee	d1 d8 			rcr	ax,1
+	*** 0004f0	d1 fa 			sar	dx,1
+	*** 0004f2	d1 d8 			rcr	ax,1
+	*** 0004f4	d1 fa 			sar	dx,1
+	*** 0004f6	d1 d8 			rcr	ax,1
+	*** 0004f8	50 			push	ax
+	*** 0004f9	e8 00 00 		call	_MulDiv
+	*** 0004fc	83 c4 06 		add	sp,6
+	*** 0004ff	89 46 ea 		mov	WORD PTR [bp-22],ax	;Cary
+;|*** 
+;|***       RectCopy (Rp3, 0,0,256,200,Rp2,0,0);
+; Line 262
+	*** 000502	2b c0 			sub	ax,ax
+	*** 000504	50 			push	ax
+	*** 000505	50 			push	ax
+	*** 000506	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 00050a	b9 c8 00 		mov	cx,200
+	*** 00050d	51 			push	cx
+	*** 00050e	ba 00 01 		mov	dx,256
+	*** 000511	52 			push	dx
+	*** 000512	50 			push	ax
+	*** 000513	50 			push	ax
+	*** 000514	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 000518	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 00051d	83 c4 10 		add	sp,16
+;|*** 
+;|***       SetAPen(Rp,MSGCOLOR);
+; Line 264
+	*** 000520	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 000523	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***       RpPrint (Rp, 20,192,"CARRIER");
+; Line 265
+	*** 000528	b8 04 00 		mov	ax,OFFSET DGROUP:$SG929
+	*** 00052b	50 			push	ax
+	*** 00052c	b8 c0 00 		mov	ax,192
+	*** 00052f	50 			push	ax
+	*** 000530	b8 14 00 		mov	ax,20
+	*** 000533	50 			push	ax
+	*** 000534	53 			push	bx
+	*** 000535	9a 00 00 00 00 		call	FAR PTR _RpPrint
+	*** 00053a	83 c4 08 		add	sp,8
+;|***       RectCopy (Rp2, 0,0,320,200,Rp1,0,0);
+; Line 266
+	*** 00053d	2b c0 			sub	ax,ax
+	*** 00053f	50 			push	ax
+	*** 000540	50 			push	ax
+	*** 000541	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000545	b9 c8 00 		mov	cx,200
+	*** 000548	51 			push	cx
+	*** 000549	b9 40 01 		mov	cx,320
+	*** 00054c	51 			push	cx
+	*** 00054d	50 			push	ax
+	*** 00054e	50 			push	ax
+	*** 00054f	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000553	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000558	83 c4 10 		add	sp,16
+;|***       BigRioDot(Rp2,Carx, Cary, CARCOLOR);
+; Line 267
+	*** 00055b	b8 04 00 		mov	ax,4
+	*** 00055e	50 			push	ax
+	*** 00055f	ff 76 ea 		push	WORD PTR [bp-22]	;Cary
+	*** 000562	ff 76 f0 		push	WORD PTR [bp-16]	;Carx
+	*** 000565	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000569	e8 94 fa 		call	_BigRioDot
+	*** 00056c	83 c4 08 		add	sp,8
+;|***       for (i=0;i<3;i++)
+; Line 268
+	*** 00056f	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;i
+					$FC931:
+;|***          {
+; Line 269
+;|***          ScaleRotate(GRPAGE0[2],CARXMID,CARYMID,CARWID,CARHT,Rp1,Carx,Cary,0x100,0,0,0);
+; Line 270
+	*** 000574	2b c0 			sub	ax,ax
+	*** 000576	50 			push	ax
+	*** 000577	50 			push	ax
+	*** 000578	50 			push	ax
+	*** 000579	b8 00 01 		mov	ax,256
+	*** 00057c	50 			push	ax
+	*** 00057d	ff 76 ea 		push	WORD PTR [bp-22]	;Cary
+	*** 000580	ff 76 f0 		push	WORD PTR [bp-16]	;Carx
+	*** 000583	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000587	b8 0c 00 		mov	ax,12
+	*** 00058a	50 			push	ax
+	*** 00058b	b8 08 00 		mov	ax,8
+	*** 00058e	50 			push	ax
+	*** 00058f	b8 3d 00 		mov	ax,61
+	*** 000592	50 			push	ax
+	*** 000593	b8 0f 01 		mov	ax,271
+	*** 000596	50 			push	ax
+	*** 000597	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 00059b	e8 00 00 		call	_ScaleRotate
+	*** 00059e	83 c4 18 		add	sp,24
+;|***          WaitTicks(20);
+; Line 271
+	*** 0005a1	b8 14 00 		mov	ax,20
+	*** 0005a4	50 			push	ax
+	*** 0005a5	e8 00 00 		call	_WaitTicks
+	*** 0005a8	83 c4 02 		add	sp,2
+;|***          RectCopy(Rp2,Carx-10,Cary-10,20,20,Rp1,Carx-10,Cary-10);
+; Line 272
+	*** 0005ab	8b 46 ea 		mov	ax,WORD PTR [bp-22]	;Cary
+	*** 0005ae	2d 0a 00 		sub	ax,10
+	*** 0005b1	50 			push	ax
+	*** 0005b2	8b 4e f0 		mov	cx,WORD PTR [bp-16]	;Carx
+	*** 0005b5	83 e9 0a 		sub	cx,10
+	*** 0005b8	51 			push	cx
+	*** 0005b9	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 0005bd	ba 14 00 		mov	dx,20
+	*** 0005c0	52 			push	dx
+	*** 0005c1	52 			push	dx
+	*** 0005c2	50 			push	ax
+	*** 0005c3	51 			push	cx
+	*** 0005c4	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 0005c8	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 0005cd	83 c4 10 		add	sp,16
+;|***          WaitTicks(20);
+; Line 273
+	*** 0005d0	b8 14 00 		mov	ax,20
+	*** 0005d3	50 			push	ax
+	*** 0005d4	e8 00 00 		call	_WaitTicks
+	*** 0005d7	83 c4 02 		add	sp,2
+;|***          }
+; Line 274
+	*** 0005da	ff 46 f8 		inc	WORD PTR [bp-8]	;i
+	*** 0005dd	83 7e f8 03 		cmp	WORD PTR [bp-8],3	;i
+	*** 0005e1	7c 91 			jl	$FC931
+;|***       ScaleRotate(GRPAGE0[2],CARXMID,CARYMID,CARWID,CARHT,Rp2,Carx,Cary,0x100,0,0,0);
+; Line 275
+	*** 0005e3	2b c0 			sub	ax,ax
+	*** 0005e5	50 			push	ax
+	*** 0005e6	50 			push	ax
+	*** 0005e7	50 			push	ax
+	*** 0005e8	b9 00 01 		mov	cx,256
+	*** 0005eb	51 			push	cx
+	*** 0005ec	ff 76 ea 		push	WORD PTR [bp-22]	;Cary
+	*** 0005ef	ff 76 f0 		push	WORD PTR [bp-16]	;Carx
+	*** 0005f2	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 0005f6	b9 0c 00 		mov	cx,12
+	*** 0005f9	51 			push	cx
+	*** 0005fa	ba 08 00 		mov	dx,8
+	*** 0005fd	52 			push	dx
+	*** 0005fe	bb 3d 00 		mov	bx,61
+	*** 000601	53 			push	bx
+	*** 000602	bb 0f 01 		mov	bx,271
+	*** 000605	53 			push	bx
+	*** 000606	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 00060a	e8 00 00 		call	_ScaleRotate
+	*** 00060d	83 c4 18 		add	sp,24
+;|*** 
+;|*** 	  if (AIWingMan != -999) {
+; Line 277
+	*** 000610	81 3e 00 00 19 fc 	cmp	WORD PTR _AIWingMan,-999
+	*** 000616	75 03 			jne	$JCC1558
+	*** 000618	e9 22 01 		jmp	$I935
+					$JCC1558:
+;|***       	if (ps[AIWingMan].status & ALIVE)
+; Line 278
+	*** 00061b	b8 28 00 		mov	ax,40
+	*** 00061e	f7 2e 00 00 		imul	WORD PTR _AIWingMan
+	*** 000622	8b d8 			mov	bx,ax
+	*** 000624	f6 87 18 00 01 		test	BYTE PTR _ps[bx+24],1
+	*** 000629	75 03 			jne	$JCC1577
+	*** 00062b	e9 0f 01 		jmp	$I935
+					$JCC1577:
+;|***          	{
+; Line 279
+;|***          	RectCopy (Rp3, 0,192,320,8,Rp2,0,192);
+; Line 280
+	*** 00062e	b8 c0 00 		mov	ax,192
+	*** 000631	50 			push	ax
+	*** 000632	2b c9 			sub	cx,cx
+	*** 000634	51 			push	cx
+	*** 000635	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000639	ba 08 00 		mov	dx,8
+	*** 00063c	52 			push	dx
+	*** 00063d	ba 40 01 		mov	dx,320
+	*** 000640	52 			push	dx
+	*** 000641	50 			push	ax
+	*** 000642	51 			push	cx
+	*** 000643	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 000647	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 00064c	83 c4 10 		add	sp,16
+;|***          	BigRioDot(Rp2,Wngx, Wngy, WPLNCOLOR);
+; Line 281
+	*** 00064f	b8 02 00 		mov	ax,2
+	*** 000652	50 			push	ax
+	*** 000653	ff 76 fc 		push	WORD PTR [bp-4]	;Wngy
+	*** 000656	ff 76 fe 		push	WORD PTR [bp-2]	;Wngx
+	*** 000659	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 00065d	e8 a0 f9 		call	_BigRioDot
+	*** 000660	83 c4 08 		add	sp,8
+;|***          	SetAPen(Rp,MSGCOLOR);
+; Line 282
+	*** 000663	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 000666	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***          	RpPrint (Rp, 20,192,"WINGMAN");
+; Line 283
+	*** 00066b	b8 0c 00 		mov	ax,OFFSET DGROUP:$SG936
+	*** 00066e	50 			push	ax
+	*** 00066f	b8 c0 00 		mov	ax,192
+	*** 000672	50 			push	ax
+	*** 000673	b8 14 00 		mov	ax,20
+	*** 000676	50 			push	ax
+	*** 000677	53 			push	bx
+	*** 000678	9a 00 00 00 00 		call	FAR PTR _RpPrint
+	*** 00067d	83 c4 08 		add	sp,8
+;|***          	RectCopy (Rp2, 0,0,320,200,Rp1,0,0);
+; Line 284
+	*** 000680	2b c0 			sub	ax,ax
+	*** 000682	50 			push	ax
+	*** 000683	50 			push	ax
+	*** 000684	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000688	b9 c8 00 		mov	cx,200
+	*** 00068b	51 			push	cx
+	*** 00068c	b9 40 01 		mov	cx,320
+	*** 00068f	51 			push	cx
+	*** 000690	50 			push	ax
+	*** 000691	50 			push	ax
+	*** 000692	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000696	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 00069b	83 c4 10 		add	sp,16
+;|***          	for (i=0;i<3;i++)
+; Line 285
+	*** 00069e	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;i
+					$FC938:
+;|***             	{
+; Line 286
+;|***             	ScaleRotate(GRPAGE0[2],WPLNXMID,WPLNYMID,WPLNWID,WPLNHT,Rp1,Wngx,Wngy,0x100,WngHead,0,0);
+; Line 287
+	*** 0006a3	2b c0 			sub	ax,ax
+	*** 0006a5	50 			push	ax
+	*** 0006a6	50 			push	ax
+	*** 0006a7	ff 76 f2 		push	WORD PTR [bp-14]	;WngHead
+	*** 0006aa	b8 00 01 		mov	ax,256
+	*** 0006ad	50 			push	ax
+	*** 0006ae	ff 76 fc 		push	WORD PTR [bp-4]	;Wngy
+	*** 0006b1	ff 76 fe 		push	WORD PTR [bp-2]	;Wngx
+	*** 0006b4	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 0006b8	b8 0b 00 		mov	ax,11
+	*** 0006bb	50 			push	ax
+	*** 0006bc	50 			push	ax
+	*** 0006bd	b8 2f 00 		mov	ax,47
+	*** 0006c0	50 			push	ax
+	*** 0006c1	b8 10 01 		mov	ax,272
+	*** 0006c4	50 			push	ax
+	*** 0006c5	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 0006c9	e8 00 00 		call	_ScaleRotate
+	*** 0006cc	83 c4 18 		add	sp,24
+;|***             	WaitTicks(20);
+; Line 288
+	*** 0006cf	b8 14 00 		mov	ax,20
+	*** 0006d2	50 			push	ax
+	*** 0006d3	e8 00 00 		call	_WaitTicks
+	*** 0006d6	83 c4 02 		add	sp,2
+;|***             	RectCopy(Rp2,Wngx-10,Wngy-10,20,20,Rp1,Wngx-10,Wngy-10);
+; Line 289
+	*** 0006d9	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;Wngy
+	*** 0006dc	2d 0a 00 		sub	ax,10
+	*** 0006df	50 			push	ax
+	*** 0006e0	8b 4e fe 		mov	cx,WORD PTR [bp-2]	;Wngx
+	*** 0006e3	83 e9 0a 		sub	cx,10
+	*** 0006e6	51 			push	cx
+	*** 0006e7	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 0006eb	ba 14 00 		mov	dx,20
+	*** 0006ee	52 			push	dx
+	*** 0006ef	52 			push	dx
+	*** 0006f0	50 			push	ax
+	*** 0006f1	51 			push	cx
+	*** 0006f2	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 0006f6	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 0006fb	83 c4 10 		add	sp,16
+;|***             	WaitTicks(20);
+; Line 290
+	*** 0006fe	b8 14 00 		mov	ax,20
+	*** 000701	50 			push	ax
+	*** 000702	e8 00 00 		call	_WaitTicks
+	*** 000705	83 c4 02 		add	sp,2
+;|***             	}
+; Line 291
+	*** 000708	ff 46 f8 		inc	WORD PTR [bp-8]	;i
+	*** 00070b	83 7e f8 03 		cmp	WORD PTR [bp-8],3	;i
+	*** 00070f	7c 92 			jl	$FC938
+;|***          	ScaleRotate(GRPAGE0[2],WPLNXMID,WPLNYMID,WPLNWID,WPLNHT,Rp2,Wngx,Wngy,0x100,WngHead,0,0);
+; Line 292
+	*** 000711	2b c0 			sub	ax,ax
+	*** 000713	50 			push	ax
+	*** 000714	50 			push	ax
+	*** 000715	ff 76 f2 		push	WORD PTR [bp-14]	;WngHead
+	*** 000718	b8 00 01 		mov	ax,256
+	*** 00071b	50 			push	ax
+	*** 00071c	ff 76 fc 		push	WORD PTR [bp-4]	;Wngy
+	*** 00071f	ff 76 fe 		push	WORD PTR [bp-2]	;Wngx
+	*** 000722	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000726	b8 0b 00 		mov	ax,11
+	*** 000729	50 			push	ax
+	*** 00072a	50 			push	ax
+	*** 00072b	b8 2f 00 		mov	ax,47
+	*** 00072e	50 			push	ax
+	*** 00072f	b8 10 01 		mov	ax,272
+	*** 000732	50 			push	ax
+	*** 000733	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 000737	e8 00 00 		call	_ScaleRotate
+	*** 00073a	83 c4 18 		add	sp,24
+;|***          	}
+; Line 293
+;|*** 	  }
+; Line 294
+					$I935:
+;|*** 
+;|***       RectCopy (Rp3, 0,192,320,8,Rp2,0,192);
+; Line 296
+	*** 00073d	b8 c0 00 		mov	ax,192
+	*** 000740	50 			push	ax
+	*** 000741	2b c9 			sub	cx,cx
+	*** 000743	51 			push	cx
+	*** 000744	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000748	ba 08 00 		mov	dx,8
+	*** 00074b	52 			push	dx
+	*** 00074c	ba 40 01 		mov	dx,320
+	*** 00074f	52 			push	dx
+	*** 000750	50 			push	ax
+	*** 000751	51 			push	cx
+	*** 000752	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 000756	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 00075b	83 c4 10 		add	sp,16
+;|***       BigRioDot(Rp2,Myx, Myy, RPLNCOLOR);
+; Line 297
+	*** 00075e	b8 01 00 		mov	ax,1
+	*** 000761	50 			push	ax
+	*** 000762	ff 76 e8 		push	WORD PTR [bp-24]	;Myy
+	*** 000765	ff 76 ee 		push	WORD PTR [bp-18]	;Myx
+	*** 000768	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 00076c	e8 91 f8 		call	_BigRioDot
+	*** 00076f	83 c4 08 		add	sp,8
+;|***       SetAPen(Rp,MSGCOLOR);
+; Line 298
+	*** 000772	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 000775	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***       RpPrint (Rp, 20,192,"PLAYER");
+; Line 299
+	*** 00077a	b8 14 00 		mov	ax,OFFSET DGROUP:$SG940
+	*** 00077d	50 			push	ax
+	*** 00077e	b8 c0 00 		mov	ax,192
+	*** 000781	50 			push	ax
+	*** 000782	b8 14 00 		mov	ax,20
+	*** 000785	50 			push	ax
+	*** 000786	53 			push	bx
+	*** 000787	9a 00 00 00 00 		call	FAR PTR _RpPrint
+	*** 00078c	83 c4 08 		add	sp,8
+;|***       RectCopy (Rp2, 0,0,320,200,Rp1,0,0);
+; Line 300
+	*** 00078f	2b c0 			sub	ax,ax
+	*** 000791	50 			push	ax
+	*** 000792	50 			push	ax
+	*** 000793	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000797	b9 c8 00 		mov	cx,200
+	*** 00079a	51 			push	cx
+	*** 00079b	b9 40 01 		mov	cx,320
+	*** 00079e	51 			push	cx
+	*** 00079f	50 			push	ax
+	*** 0007a0	50 			push	ax
+	*** 0007a1	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 0007a5	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 0007aa	83 c4 10 		add	sp,16
+;|*** 
+;|***       for (i=0;i<3;i++)
+; Line 302
+	*** 0007ad	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;i
+					$FC942:
+;|***          {
+; Line 303
+;|***          ScaleRotate(GRPAGE0[2],RPLNXMID,RPLNYMID,RPLNWID,RPLNHT,Rp1,Myx,Myy,0x100,-OurHead,0,0);
+; Line 304
+	*** 0007b2	2b c0 			sub	ax,ax
+	*** 0007b4	50 			push	ax
+	*** 0007b5	50 			push	ax
+	*** 0007b6	a1 00 00 		mov	ax,WORD PTR _OurHead
+	*** 0007b9	f7 d8 			neg	ax
+	*** 0007bb	50 			push	ax
+	*** 0007bc	b8 00 01 		mov	ax,256
+	*** 0007bf	50 			push	ax
+	*** 0007c0	ff 76 e8 		push	WORD PTR [bp-24]	;Myy
+	*** 0007c3	ff 76 ee 		push	WORD PTR [bp-18]	;Myx
+	*** 0007c6	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 0007ca	b8 0b 00 		mov	ax,11
+	*** 0007cd	50 			push	ax
+	*** 0007ce	50 			push	ax
+	*** 0007cf	b8 21 00 		mov	ax,33
+	*** 0007d2	50 			push	ax
+	*** 0007d3	b8 10 01 		mov	ax,272
+	*** 0007d6	50 			push	ax
+	*** 0007d7	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 0007db	e8 00 00 		call	_ScaleRotate
+	*** 0007de	83 c4 18 		add	sp,24
+;|***          WaitTicks(20);
+; Line 305
+	*** 0007e1	b8 14 00 		mov	ax,20
+	*** 0007e4	50 			push	ax
+	*** 0007e5	e8 00 00 		call	_WaitTicks
+	*** 0007e8	83 c4 02 		add	sp,2
+;|***          RectCopy(Rp2,Myx-10,Myy-10,20,20,Rp1,Myx-10,Myy-10);
+; Line 306
+	*** 0007eb	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;Myy
+	*** 0007ee	2d 0a 00 		sub	ax,10
+	*** 0007f1	50 			push	ax
+	*** 0007f2	8b 4e ee 		mov	cx,WORD PTR [bp-18]	;Myx
+	*** 0007f5	83 e9 0a 		sub	cx,10
+	*** 0007f8	51 			push	cx
+	*** 0007f9	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 0007fd	ba 14 00 		mov	dx,20
+	*** 000800	52 			push	dx
+	*** 000801	52 			push	dx
+	*** 000802	50 			push	ax
+	*** 000803	51 			push	cx
+	*** 000804	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000808	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 00080d	83 c4 10 		add	sp,16
+;|***          WaitTicks(20);
+; Line 307
+	*** 000810	b8 14 00 		mov	ax,20
+	*** 000813	50 			push	ax
+	*** 000814	e8 00 00 		call	_WaitTicks
+	*** 000817	83 c4 02 		add	sp,2
+;|***          }
+; Line 308
+	*** 00081a	ff 46 f8 		inc	WORD PTR [bp-8]	;i
+	*** 00081d	83 7e f8 03 		cmp	WORD PTR [bp-8],3	;i
+	*** 000821	7c 8f 			jl	$FC942
+;|***       ScaleRotate(GRPAGE0[2],RPLNXMID,RPLNYMID,RPLNWID,RPLNHT,Rp2,Myx,Myy,0x100,-OurHead,0,0);
+; Line 309
+	*** 000823	2b c0 			sub	ax,ax
+	*** 000825	50 			push	ax
+	*** 000826	50 			push	ax
+	*** 000827	8b 0e 00 00 		mov	cx,WORD PTR _OurHead
+	*** 00082b	f7 d9 			neg	cx
+	*** 00082d	51 			push	cx
+	*** 00082e	b9 00 01 		mov	cx,256
+	*** 000831	51 			push	cx
+	*** 000832	ff 76 e8 		push	WORD PTR [bp-24]	;Myy
+	*** 000835	ff 76 ee 		push	WORD PTR [bp-18]	;Myx
+	*** 000838	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 00083c	b9 0b 00 		mov	cx,11
+	*** 00083f	51 			push	cx
+	*** 000840	51 			push	cx
+	*** 000841	b9 21 00 		mov	cx,33
+	*** 000844	51 			push	cx
+	*** 000845	b9 10 01 		mov	cx,272
+	*** 000848	51 			push	cx
+	*** 000849	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 00084d	e8 00 00 		call	_ScaleRotate
+	*** 000850	83 c4 18 		add	sp,24
+;|*** 
+;|***       RectCopy (Rp3, 0,192,320,8,Rp2,0,192);
+; Line 311
+	*** 000853	b8 c0 00 		mov	ax,192
+	*** 000856	50 			push	ax
+	*** 000857	2b c9 			sub	cx,cx
+	*** 000859	51 			push	cx
+	*** 00085a	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 00085e	ba 08 00 		mov	dx,8
+	*** 000861	52 			push	dx
+	*** 000862	bb 40 01 		mov	bx,320
+	*** 000865	53 			push	bx
+	*** 000866	50 			push	ax
+	*** 000867	51 			push	cx
+	*** 000868	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 00086c	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000871	83 c4 10 		add	sp,16
+;|***       SetAPen(Rp,MSGCOLOR);
+; Line 312
+	*** 000874	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;Rp
+	*** 000877	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***       RpPrint (Rp, 20,192,"WAYPOINTS");
+; Line 313
+	*** 00087c	b8 1b 00 		mov	ax,OFFSET DGROUP:$SG944
+	*** 00087f	50 			push	ax
+	*** 000880	b8 c0 00 		mov	ax,192
+	*** 000883	50 			push	ax
+	*** 000884	b9 14 00 		mov	cx,20
+	*** 000887	51 			push	cx
+	*** 000888	53 			push	bx
+	*** 000889	9a 00 00 00 00 		call	FAR PTR _RpPrint
+	*** 00088e	83 c4 08 		add	sp,8
+;|***       RectCopy (Rp2, 0,0,320,200,Rp1,0,0);
+; Line 314
+	*** 000891	2b c0 			sub	ax,ax
+	*** 000893	50 			push	ax
+	*** 000894	50 			push	ax
+	*** 000895	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000899	b9 c8 00 		mov	cx,200
+	*** 00089c	51 			push	cx
+	*** 00089d	ba 40 01 		mov	dx,320
+	*** 0008a0	52 			push	dx
+	*** 0008a1	50 			push	ax
+	*** 0008a2	50 			push	ax
+	*** 0008a3	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 0008a7	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 0008ac	83 c4 10 		add	sp,16
+;|***       DrawRioWayPoints(Rp,-1);
+; Line 315
+	*** 0008af	b8 ff ff 		mov	ax,-1
+	*** 0008b2	50 			push	ax
+	*** 0008b3	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 0008b6	e8 a9 f7 		call	_DrawRioWayPoints
+	*** 0008b9	83 c4 04 		add	sp,4
+;|***       WaitTicks(20);
+; Line 316
+	*** 0008bc	b8 14 00 		mov	ax,20
+	*** 0008bf	50 			push	ax
+	*** 0008c0	e8 00 00 		call	_WaitTicks
+	*** 0008c3	83 c4 02 		add	sp,2
+;|***       RectCopy (Rp3, 0,192,320,8,Rp2,0,192);
+; Line 317
+	*** 0008c6	b8 c0 00 		mov	ax,192
+	*** 0008c9	50 			push	ax
+	*** 0008ca	2b c9 			sub	cx,cx
+	*** 0008cc	51 			push	cx
+	*** 0008cd	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 0008d1	ba 08 00 		mov	dx,8
+	*** 0008d4	52 			push	dx
+	*** 0008d5	ba 40 01 		mov	dx,320
+	*** 0008d8	52 			push	dx
+	*** 0008d9	50 			push	ax
+	*** 0008da	51 			push	cx
+	*** 0008db	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 0008df	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 0008e4	83 c4 10 		add	sp,16
+;|***       RectCopy (Rp2, 0,0,320,200,Rp1,0,0);
+; Line 318
+	*** 0008e7	2b c0 			sub	ax,ax
+	*** 0008e9	50 			push	ax
+	*** 0008ea	50 			push	ax
+	*** 0008eb	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 0008ef	b9 c8 00 		mov	cx,200
+	*** 0008f2	51 			push	cx
+	*** 0008f3	b9 40 01 		mov	cx,320
+	*** 0008f6	51 			push	cx
+	*** 0008f7	50 			push	ax
+	*** 0008f8	50 			push	ax
+	*** 0008f9	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 0008fd	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000902	83 c4 10 		add	sp,16
+;|*** 
+;|***       MouseSHOW();
+; Line 320
+	*** 000905	9a 00 00 00 00 		call	FAR PTR _MouseSHOW
+;|*** 
+;|***       return;
+; Line 322
+	*** 00090a	8b e5 			mov	sp,bp
+	*** 00090c	5d 			pop	bp
+	*** 00090d	c3 			ret	
+;|*** 
+;|***       }
+; Line 324
+;|*** 
+;|*** 
+;|***    if ( force|| (NextRioTime>60)  )
+; Line 327
+					$I926:
+	*** 00090e	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;force
+	*** 000912	75 0a 			jne	$I946
+	*** 000914	83 3e 00 00 3c 		cmp	WORD PTR _NextRioTime,60
+	*** 000919	7f 03 			jg	$JCC2329
+	*** 00091b	e9 8b 02 		jmp	$I945
+					$JCC2329:
+					$I946:
+;|***       {
+; Line 328
+;|***       NextRioTime=0;
+;|***       iconmode^=1;
+; Line 330
+	*** 00091e	80 36 02 00 01 		xor	BYTE PTR _iconmode,1
+;|*** 
+;|***       RectCopy (Rp3, 0,0,256,200,Rp2,0,0);
+; Line 332
+	*** 000923	2b c0 			sub	ax,ax
+	*** 000925	a3 00 00 		mov	WORD PTR _NextRioTime,ax
+	*** 000928	50 			push	ax
+	*** 000929	50 			push	ax
+	*** 00092a	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 00092e	b9 c8 00 		mov	cx,200
+	*** 000931	51 			push	cx
+	*** 000932	b9 00 01 		mov	cx,256
+	*** 000935	51 			push	cx
+	*** 000936	50 			push	ax
+	*** 000937	50 			push	ax
+	*** 000938	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 00093c	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000941	83 c4 10 		add	sp,16
+;|*** 
+;|***       Myx=(PxLng >> 12);
+; Line 334
+	*** 000944	a1 00 00 		mov	ax,WORD PTR _PxLng
+	*** 000947	8b 16 02 00 		mov	dx,WORD PTR _PxLng+2
+	*** 00094b	8a c4 			mov	al,ah
+	*** 00094d	8a e2 			mov	ah,dl
+	*** 00094f	8a d6 			mov	dl,dh
+	*** 000951	d0 e6 			shl	dh,1
+	*** 000953	1a f6 			sbb	dh,dh
+	*** 000955	d1 fa 			sar	dx,1
+	*** 000957	d1 d8 			rcr	ax,1
+	*** 000959	d1 fa 			sar	dx,1
+	*** 00095b	d1 d8 			rcr	ax,1
+	*** 00095d	d1 fa 			sar	dx,1
+	*** 00095f	d1 d8 			rcr	ax,1
+	*** 000961	d1 fa 			sar	dx,1
+	*** 000963	d1 d8 			rcr	ax,1
+	*** 000965	89 46 ee 		mov	WORD PTR [bp-18],ax	;Myx
+;|***       TY=(0x100000L-PyLng);
+;|***       TY>>=12;
+; Line 336
+	*** 000968	2b c0 			sub	ax,ax
+	*** 00096a	ba 10 00 		mov	dx,16
+	*** 00096d	2b 06 00 00 		sub	ax,WORD PTR _PyLng
+	*** 000971	1b 16 02 00 		sbb	dx,WORD PTR _PyLng+2
+	*** 000975	8a c4 			mov	al,ah
+	*** 000977	8a e2 			mov	ah,dl
+	*** 000979	8a d6 			mov	dl,dh
+	*** 00097b	d0 e6 			shl	dh,1
+	*** 00097d	1a f6 			sbb	dh,dh
+	*** 00097f	d1 fa 			sar	dx,1
+	*** 000981	d1 d8 			rcr	ax,1
+	*** 000983	d1 fa 			sar	dx,1
+	*** 000985	d1 d8 			rcr	ax,1
+	*** 000987	d1 fa 			sar	dx,1
+	*** 000989	d1 d8 			rcr	ax,1
+	*** 00098b	d1 fa 			sar	dx,1
+	*** 00098d	d1 d8 			rcr	ax,1
+;|***       Myy=TY;
+;|***       Myy=MulDiv(Myy,192,256);
+; Line 338
+	*** 00098f	b9 00 01 		mov	cx,256
+	*** 000992	51 			push	cx
+	*** 000993	bb c0 00 		mov	bx,192
+	*** 000996	53 			push	bx
+	*** 000997	50 			push	ax
+	*** 000998	e8 00 00 		call	_MulDiv
+	*** 00099b	83 c4 06 		add	sp,6
+	*** 00099e	89 46 e8 		mov	WORD PTR [bp-24],ax	;Myy
+;|*** 
+;|*** // get wingman x,y, carrier x,y
+;|*** 	  if (AIWingMan != -999) {
+; Line 341
+	*** 0009a1	81 3e 00 00 19 fc 	cmp	WORD PTR _AIWingMan,-999
+	*** 0009a7	74 69 			je	$I948
+;|***       	if (ps[AIWingMan].status & ALIVE)
+; Line 342
+	*** 0009a9	b8 28 00 		mov	ax,40
+	*** 0009ac	f7 2e 00 00 		imul	WORD PTR _AIWingMan
+	*** 0009b0	8b d8 			mov	bx,ax
+	*** 0009b2	f6 87 18 00 01 		test	BYTE PTR _ps[bx+24],1
+	*** 0009b7	74 59 			je	$I948
+;|***          	{
+; Line 343
+;|***          	Wngx=(ps[AIWingMan].xL >> 12);
+; Line 344
+	*** 0009b9	8b 87 08 00 		mov	ax,WORD PTR _ps[bx+8]
+	*** 0009bd	8b 97 0a 00 		mov	dx,WORD PTR _ps[bx+10]
+	*** 0009c1	8a c4 			mov	al,ah
+	*** 0009c3	8a e2 			mov	ah,dl
+	*** 0009c5	8a d6 			mov	dl,dh
+	*** 0009c7	d0 e6 			shl	dh,1
+	*** 0009c9	1a f6 			sbb	dh,dh
+	*** 0009cb	d1 fa 			sar	dx,1
+	*** 0009cd	d1 d8 			rcr	ax,1
+	*** 0009cf	d1 fa 			sar	dx,1
+	*** 0009d1	d1 d8 			rcr	ax,1
+	*** 0009d3	d1 fa 			sar	dx,1
+	*** 0009d5	d1 d8 			rcr	ax,1
+	*** 0009d7	d1 fa 			sar	dx,1
+	*** 0009d9	d1 d8 			rcr	ax,1
+	*** 0009db	89 46 fe 		mov	WORD PTR [bp-2],ax	;Wngx
+;|***          	Wngy=(ps[AIWingMan].yL >> 12);
+;|***          	Wngy=MulDiv(Wngy,192,256);
+; Line 346
+	*** 0009de	b8 00 01 		mov	ax,256
+	*** 0009e1	50 			push	ax
+	*** 0009e2	b8 c0 00 		mov	ax,192
+	*** 0009e5	50 			push	ax
+	*** 0009e6	8b 87 0c 00 		mov	ax,WORD PTR _ps[bx+12]
+	*** 0009ea	8b 97 0e 00 		mov	dx,WORD PTR _ps[bx+14]
+	*** 0009ee	8a c4 			mov	al,ah
+	*** 0009f0	8a e2 			mov	ah,dl
+	*** 0009f2	8a d6 			mov	dl,dh
+	*** 0009f4	d0 e6 			shl	dh,1
+	*** 0009f6	1a f6 			sbb	dh,dh
+	*** 0009f8	d1 fa 			sar	dx,1
+	*** 0009fa	d1 d8 			rcr	ax,1
+	*** 0009fc	d1 fa 			sar	dx,1
+	*** 0009fe	d1 d8 			rcr	ax,1
+	*** 000a00	d1 fa 			sar	dx,1
+	*** 000a02	d1 d8 			rcr	ax,1
+	*** 000a04	d1 fa 			sar	dx,1
+	*** 000a06	d1 d8 			rcr	ax,1
+	*** 000a08	50 			push	ax
+	*** 000a09	e8 00 00 		call	_MulDiv
+	*** 000a0c	83 c4 06 		add	sp,6
+	*** 000a0f	89 46 fc 		mov	WORD PTR [bp-4],ax	;Wngy
+;|***          	}
+; Line 347
+;|*** 	  }
+; Line 348
+					$I948:
+;|*** 
+;|***       Carx=(ps[whichourcarr].xL >> 12);
+; Line 350
+	*** 000a12	b8 28 00 		mov	ax,40
+	*** 000a15	f7 2e 00 00 		imul	WORD PTR _whichourcarr
+	*** 000a19	8b d8 			mov	bx,ax
+	*** 000a1b	8b 87 08 00 		mov	ax,WORD PTR _ps[bx+8]
+	*** 000a1f	8b 97 0a 00 		mov	dx,WORD PTR _ps[bx+10]
+	*** 000a23	8a c4 			mov	al,ah
+	*** 000a25	8a e2 			mov	ah,dl
+	*** 000a27	8a d6 			mov	dl,dh
+	*** 000a29	d0 e6 			shl	dh,1
+	*** 000a2b	1a f6 			sbb	dh,dh
+	*** 000a2d	d1 fa 			sar	dx,1
+	*** 000a2f	d1 d8 			rcr	ax,1
+	*** 000a31	d1 fa 			sar	dx,1
+	*** 000a33	d1 d8 			rcr	ax,1
+	*** 000a35	d1 fa 			sar	dx,1
+	*** 000a37	d1 d8 			rcr	ax,1
+	*** 000a39	d1 fa 			sar	dx,1
+	*** 000a3b	d1 d8 			rcr	ax,1
+	*** 000a3d	89 46 f0 		mov	WORD PTR [bp-16],ax	;Carx
+;|***       Cary=(ps[whichourcarr].yL >> 12);
+;|***       Cary=MulDiv(Cary,192,256);
+; Line 352
+	*** 000a40	b8 00 01 		mov	ax,256
+	*** 000a43	50 			push	ax
+	*** 000a44	b9 c0 00 		mov	cx,192
+	*** 000a47	51 			push	cx
+	*** 000a48	8b 87 0c 00 		mov	ax,WORD PTR _ps[bx+12]
+	*** 000a4c	8b 97 0e 00 		mov	dx,WORD PTR _ps[bx+14]
+	*** 000a50	8a c4 			mov	al,ah
+	*** 000a52	8a e2 			mov	ah,dl
+	*** 000a54	8a d6 			mov	dl,dh
+	*** 000a56	d0 e6 			shl	dh,1
+	*** 000a58	1a f6 			sbb	dh,dh
+	*** 000a5a	d1 fa 			sar	dx,1
+	*** 000a5c	d1 d8 			rcr	ax,1
+	*** 000a5e	d1 fa 			sar	dx,1
+	*** 000a60	d1 d8 			rcr	ax,1
+	*** 000a62	d1 fa 			sar	dx,1
+	*** 000a64	d1 d8 			rcr	ax,1
+	*** 000a66	d1 fa 			sar	dx,1
+	*** 000a68	d1 d8 			rcr	ax,1
+	*** 000a6a	50 			push	ax
+	*** 000a6b	e8 00 00 		call	_MulDiv
+	*** 000a6e	83 c4 06 		add	sp,6
+	*** 000a71	89 46 ea 		mov	WORD PTR [bp-22],ax	;Cary
+;|*** 
+;|*** 
+;|*** 
+;|*** // and waypoint info
+;|*** 
+;|***       if (iconmode)
+; Line 358
+	*** 000a74	83 3e 02 00 00 		cmp	WORD PTR _iconmode,0
+	*** 000a79	75 03 			jne	$JCC2681
+	*** 000a7b	e9 a2 00 		jmp	$I949
+					$JCC2681:
+;|***          {
+; Line 359
+;|***          ScaleRotate(GRPAGE0[2],CARXMID,CARYMID,CARWID,CARHT,Rp2,Carx,Cary,0x100,0,0,0);
+; Line 360
+	*** 000a7e	2b c0 			sub	ax,ax
+	*** 000a80	50 			push	ax
+	*** 000a81	50 			push	ax
+	*** 000a82	50 			push	ax
+	*** 000a83	b9 00 01 		mov	cx,256
+	*** 000a86	51 			push	cx
+	*** 000a87	ff 76 ea 		push	WORD PTR [bp-22]	;Cary
+	*** 000a8a	ff 76 f0 		push	WORD PTR [bp-16]	;Carx
+	*** 000a8d	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000a91	ba 0c 00 		mov	dx,12
+	*** 000a94	52 			push	dx
+	*** 000a95	ba 08 00 		mov	dx,8
+	*** 000a98	52 			push	dx
+	*** 000a99	ba 3d 00 		mov	dx,61
+	*** 000a9c	52 			push	dx
+	*** 000a9d	ba 0f 01 		mov	dx,271
+	*** 000aa0	52 			push	dx
+	*** 000aa1	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 000aa5	e8 00 00 		call	_ScaleRotate
+	*** 000aa8	83 c4 18 		add	sp,24
+;|*** 
+;|*** 		if (AIWingMan != -999) {
+; Line 362
+	*** 000aab	81 3e 00 00 19 fc 	cmp	WORD PTR _AIWingMan,-999
+	*** 000ab1	74 3c 			je	$I951
+;|*** 	         if (ps[AIWingMan].status & ALIVE)
+; Line 363
+	*** 000ab3	b8 28 00 		mov	ax,40
+	*** 000ab6	f7 2e 00 00 		imul	WORD PTR _AIWingMan
+	*** 000aba	8b d8 			mov	bx,ax
+	*** 000abc	f6 87 18 00 01 		test	BYTE PTR _ps[bx+24],1
+	*** 000ac1	74 2c 			je	$I951
+;|***     	        ScaleRotate(GRPAGE0[2],WPLNXMID,WPLNYMID,WPLNWID,WPLNHT,Rp2,Wngx,Wngy,0x100,WngHead,0,0);
+; Line 364
+	*** 000ac3	2b c0 			sub	ax,ax
+	*** 000ac5	50 			push	ax
+	*** 000ac6	50 			push	ax
+	*** 000ac7	ff 76 f2 		push	WORD PTR [bp-14]	;WngHead
+	*** 000aca	b8 00 01 		mov	ax,256
+	*** 000acd	50 			push	ax
+	*** 000ace	ff 76 fc 		push	WORD PTR [bp-4]	;Wngy
+	*** 000ad1	ff 76 fe 		push	WORD PTR [bp-2]	;Wngx
+	*** 000ad4	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000ad8	b8 0b 00 		mov	ax,11
+	*** 000adb	50 			push	ax
+	*** 000adc	50 			push	ax
+	*** 000add	b8 2f 00 		mov	ax,47
+	*** 000ae0	50 			push	ax
+	*** 000ae1	b8 10 01 		mov	ax,272
+	*** 000ae4	50 			push	ax
+	*** 000ae5	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 000ae9	e8 00 00 		call	_ScaleRotate
+	*** 000aec	83 c4 18 		add	sp,24
+;|*** 		}
+; Line 365
+					$I951:
+;|***          ScaleRotate(GRPAGE0[2],RPLNXMID,RPLNYMID,RPLNWID,RPLNHT,Rp2,Myx,Myy,0x100,-OurHead,0,0);
+; Line 366
+	*** 000aef	2b c0 			sub	ax,ax
+	*** 000af1	50 			push	ax
+	*** 000af2	50 			push	ax
+	*** 000af3	a1 00 00 		mov	ax,WORD PTR _OurHead
+	*** 000af6	f7 d8 			neg	ax
+	*** 000af8	50 			push	ax
+	*** 000af9	b8 00 01 		mov	ax,256
+	*** 000afc	50 			push	ax
+	*** 000afd	ff 76 e8 		push	WORD PTR [bp-24]	;Myy
+	*** 000b00	ff 76 ee 		push	WORD PTR [bp-18]	;Myx
+	*** 000b03	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000b07	b8 0b 00 		mov	ax,11
+	*** 000b0a	50 			push	ax
+	*** 000b0b	50 			push	ax
+	*** 000b0c	b8 21 00 		mov	ax,33
+	*** 000b0f	50 			push	ax
+	*** 000b10	b8 10 01 		mov	ax,272
+	*** 000b13	50 			push	ax
+	*** 000b14	ff 36 04 00 		push	WORD PTR _GRPAGE0+4
+	*** 000b18	e8 00 00 		call	_ScaleRotate
+	*** 000b1b	83 c4 18 		add	sp,24
+;|***          }
+; Line 367
+;|***       else
+; Line 368
+	*** 000b1e	eb 54 			jmp	SHORT $I952
+					$I949:
+;|***          {
+; Line 369
+;|***          BigRioDot(Rp2,Carx, Cary, CARCOLOR);
+; Line 370
+	*** 000b20	b8 04 00 		mov	ax,4
+	*** 000b23	50 			push	ax
+	*** 000b24	ff 76 ea 		push	WORD PTR [bp-22]	;Cary
+	*** 000b27	ff 76 f0 		push	WORD PTR [bp-16]	;Carx
+	*** 000b2a	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000b2e	e8 cf f4 		call	_BigRioDot
+	*** 000b31	83 c4 08 		add	sp,8
+;|*** 
+;|*** 		if (AIWingMan != -999) {
+; Line 372
+	*** 000b34	81 3e 00 00 19 fc 	cmp	WORD PTR _AIWingMan,-999
+	*** 000b3a	74 24 			je	$I954
+;|***          if (ps[AIWingMan].status & ALIVE)
+; Line 373
+	*** 000b3c	b8 28 00 		mov	ax,40
+	*** 000b3f	f7 2e 00 00 		imul	WORD PTR _AIWingMan
+	*** 000b43	8b d8 			mov	bx,ax
+	*** 000b45	f6 87 18 00 01 		test	BYTE PTR _ps[bx+24],1
+	*** 000b4a	74 14 			je	$I954
+;|***             BigRioDot(Rp2,Wngx, Wngy, WPLNCOLOR);
+; Line 374
+	*** 000b4c	b8 02 00 		mov	ax,2
+	*** 000b4f	50 			push	ax
+	*** 000b50	ff 76 fc 		push	WORD PTR [bp-4]	;Wngy
+	*** 000b53	ff 76 fe 		push	WORD PTR [bp-2]	;Wngx
+	*** 000b56	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000b5a	e8 a3 f4 		call	_BigRioDot
+	*** 000b5d	83 c4 08 		add	sp,8
+;|*** 		}
+; Line 375
+					$I954:
+;|***          BigRioDot(Rp2,Myx, Myy, RPLNCOLOR);
+; Line 376
+	*** 000b60	b8 01 00 		mov	ax,1
+	*** 000b63	50 			push	ax
+	*** 000b64	ff 76 e8 		push	WORD PTR [bp-24]	;Myy
+	*** 000b67	ff 76 ee 		push	WORD PTR [bp-18]	;Myx
+	*** 000b6a	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000b6e	e8 8f f4 		call	_BigRioDot
+	*** 000b71	83 c4 08 		add	sp,8
+;|***          }
+; Line 377
+					$I952:
+;|***       DrawRioWayPoints(Rp,iconmode);
+; Line 378
+	*** 000b74	ff 36 02 00 		push	WORD PTR _iconmode
+	*** 000b78	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 000b7b	e8 e4 f4 		call	_DrawRioWayPoints
+	*** 000b7e	83 c4 04 		add	sp,4
+;|*** 
+;|***       MouseHIDE();
+; Line 380
+	*** 000b81	9a 00 00 00 00 		call	FAR PTR _MouseHIDE
+;|***       RectCopy (Rp2, 0,0,320,200,Rp1,0,0);
+; Line 381
+	*** 000b86	2b c0 			sub	ax,ax
+	*** 000b88	50 			push	ax
+	*** 000b89	50 			push	ax
+	*** 000b8a	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000b8e	b9 c8 00 		mov	cx,200
+	*** 000b91	51 			push	cx
+	*** 000b92	b9 40 01 		mov	cx,320
+	*** 000b95	51 			push	cx
+	*** 000b96	50 			push	ax
+	*** 000b97	50 			push	ax
+	*** 000b98	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000b9c	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000ba1	83 c4 10 		add	sp,16
+;|***       MouseSHOW();
+; Line 382
+	*** 000ba4	9a 00 00 00 00 		call	FAR PTR _MouseSHOW
+;|*** 
+;|***       }
+; Line 384
+;|*** 
+;|***    if (force==0)
+; Line 386
+					$I945:
+	*** 000ba9	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;force
+	*** 000bad	75 0b 			jne	$I955
+;|***       {
+; Line 387
+;|***       WaitTicks(1);
+; Line 388
+	*** 000baf	b8 01 00 		mov	ax,1
+	*** 000bb2	50 			push	ax
+	*** 000bb3	e8 00 00 		call	_WaitTicks
+;|***       NextRioTime++;
+; Line 389
+	*** 000bb6	ff 06 00 00 		inc	WORD PTR _NextRioTime
+;|***       }
+; Line 390
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** }
+; Line 395
+					$I955:
+	*** 000bba	8b e5 			mov	sp,bp
+	*** 000bbc	5d 			pop	bp
+	*** 000bbd	c3 			ret	
+
+_DrawRioMapInfo	ENDP
+;|*** //**********************************************************************
+;|*** 
+;|*** RioMap()
+;|*** {
+; Line 399
+	PUBLIC	_RioMap
+_RioMap	PROC NEAR
+	*** 000bbe	55 			push	bp
+	*** 000bbf	8b ec 			mov	bp,sp
+	*** 000bc1	81 ec ec 01 		sub	sp,492
+	*** 000bc5	56 			push	si
+;	j = -472
+;	val = -282
+;	a = -22
+;	b = -24
+;	key = -466
+;	ssi = -492
+;	rri = -490
+;	psi = -488
+;	tempmissile = -486
+;	tempplane = -292
+;	MapX = -288
+;	MapY = -458
+;	Rpdef = -20
+;	Rtemp = -464
+;	DST = -478
+;	SRC = -462
+;	done = -284
+;	MyMouseHits = -454
+;	xpos = -470
+;	ypos = -474
+;	mseg = -482
+;	GroundH = -452
+;	S = -280
+;	File = -2
+;	start_data = -450
+;	size = -480
+;	i = -468
+;|***     int size,i,j,val,a,b;
+;|*** 	int key=0;
+;|***     struct Sams   *ssi;
+;|***     struct Radars *rri;
+;|***     struct Planes *psi;
+;|*** 	struct MissileData far *tempmissile;
+;|*** 	struct PlaneData far *tempplane;
+;|*** 	long MapX;
+;|*** 	long MapY;
+;|*** 	RPS Rpdef  =  {1, 0,0, 319,199, JAM3, GREEN, BLACK, 2};
+; Line 409
+	*** 000bc6	c7 46 f2 3f 01 		mov	WORD PTR [bp-14],319
+	*** 000bcb	c7 46 f4 c7 00 		mov	WORD PTR [bp-12],199
+	*** 000bd0	b8 02 00 		mov	ax,2
+	*** 000bd3	89 46 f6 		mov	WORD PTR [bp-10],ax
+	*** 000bd6	89 46 f8 		mov	WORD PTR [bp-8],ax
+	*** 000bd9	89 46 fc 		mov	WORD PTR [bp-4],ax
+;|*** 	RPS *Rtemp  = &Rpdef;
+; Line 410
+	*** 000bdc	8d 46 ec 		lea	ax,WORD PTR [bp-20]	;Rpdef
+	*** 000bdf	89 86 30 fe 		mov	WORD PTR [bp-464],ax	;Rtemp
+;|*** 	char far *DST;
+;|*** 	char far *SRC;
+;|*** 	int done=0;
+;|*** 	int MyMouseHits=0;
+; Line 414
+	*** 000be3	2b c9 			sub	cx,cx
+	*** 000be5	89 8e 2e fe 		mov	WORD PTR [bp-466],cx	;key
+	*** 000be9	89 4e ee 		mov	WORD PTR [bp-18],cx
+	*** 000bec	89 4e f0 		mov	WORD PTR [bp-16],cx
+	*** 000bef	89 4e fa 		mov	WORD PTR [bp-6],cx
+	*** 000bf2	89 8e e4 fe 		mov	WORD PTR [bp-284],cx	;done
+	*** 000bf6	89 8e 3a fe 		mov	WORD PTR [bp-454],cx	;MyMouseHits
+;|*** 	int xpos;
+;|*** 	int ypos;
+;|*** 	int mseg;
+;|*** 	int GroundH;
+;|***    char S[255];
+;|***    FILE    *File;
+;|*** 	struct _missionHeader_ start_data;
+;|*** 
+;|*** 
+;|***    UpdateOurWPS(-999, 1);
+; Line 424
+	*** 000bfa	b9 01 00 		mov	cx,1
+	*** 000bfd	89 4e ec 		mov	WORD PTR [bp-20],cx	;Rpdef
+	*** 000c00	51 			push	cx
+	*** 000c01	b8 19 fc 		mov	ax,-999
+	*** 000c04	50 			push	ax
+	*** 000c05	e8 00 00 		call	_UpdateOurWPS
+	*** 000c08	83 c4 04 		add	sp,4
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|***    if ((File = fopen ("mission.f14", "rb")) != NULL)
+; Line 429
+	*** 000c0b	b8 25 00 		mov	ax,OFFSET DGROUP:$SG987
+	*** 000c0e	50 			push	ax
+	*** 000c0f	b8 28 00 		mov	ax,OFFSET DGROUP:$SG988
+	*** 000c12	50 			push	ax
+	*** 000c13	e8 00 00 		call	_fopen
+	*** 000c16	83 c4 04 		add	sp,4
+	*** 000c19	89 46 fe 		mov	WORD PTR [bp-2],ax	;File
+	*** 000c1c	0b c0 			or	ax,ax
+	*** 000c1e	75 03 			jne	$JCC3102
+	*** 000c20	e9 81 00 		jmp	$I986
+					$JCC3102:
+;|***       {
+; Line 430
+;|***       fread (&start_data, sizeof (struct _missionHeader_), 1, File);
+; Line 431
+	*** 000c23	50 			push	ax
+	*** 000c24	b9 01 00 		mov	cx,1
+	*** 000c27	51 			push	cx
+	*** 000c28	ba 9e 00 		mov	dx,158
+	*** 000c2b	52 			push	dx
+	*** 000c2c	8d 96 3e fe 		lea	dx,WORD PTR [bp-450]	;start_data
+	*** 000c30	52 			push	dx
+	*** 000c31	e8 00 00 		call	_fread
+	*** 000c34	83 c4 08 		add	sp,8
+;|*** 
+;|***       fseek  (File, start_data.goalLoc, SEEK_SET) ;
+; Line 433
+	*** 000c37	2b c0 			sub	ax,ax
+	*** 000c39	50 			push	ax
+	*** 000c3a	ff b6 c6 fe 		push	WORD PTR [bp-314]
+	*** 000c3e	ff b6 c4 fe 		push	WORD PTR [bp-316]
+	*** 000c42	ff 76 fe 		push	WORD PTR [bp-2]	;File
+	*** 000c45	e8 00 00 		call	_fseek
+	*** 000c48	83 c4 08 		add	sp,8
+;|***       fread (S, sizeof(char),start_data.goalLen, File);
+; Line 434
+	*** 000c4b	ff 76 fe 		push	WORD PTR [bp-2]	;File
+	*** 000c4e	ff b6 c8 fe 		push	WORD PTR [bp-312]
+	*** 000c52	b8 01 00 		mov	ax,1
+	*** 000c55	50 			push	ax
+	*** 000c56	8d 86 e8 fe 		lea	ax,WORD PTR [bp-280]	;S
+	*** 000c5a	50 			push	ax
+	*** 000c5b	e8 00 00 		call	_fread
+	*** 000c5e	83 c4 08 		add	sp,8
+;|***       fclose(File);
+; Line 435
+	*** 000c61	ff 76 fe 		push	WORD PTR [bp-2]	;File
+	*** 000c64	e8 00 00 		call	_fclose
+	*** 000c67	83 c4 02 		add	sp,2
+;|***       for (i=0;i<start_data.goalLen;i++)
+; Line 436
+	*** 000c6a	c7 86 2c fe 00 00 	mov	WORD PTR [bp-468],0	;i
+	*** 000c70	eb 18 			jmp	SHORT $F989
+	*** 000c72	90 			nop	
+	*** 000c73	90 			nop	
+					$FC990:
+;|***          S[i]=toupper(S[i]);
+; Line 437
+	*** 000c74	8b f0 			mov	si,ax
+	*** 000c76	8a 82 e8 fe 		mov	al,BYTE PTR [bp-280][si]
+	*** 000c7a	98 			cbw	
+	*** 000c7b	50 			push	ax
+	*** 000c7c	e8 00 00 		call	_toupper
+	*** 000c7f	83 c4 02 		add	sp,2
+	*** 000c82	88 82 e8 fe 		mov	BYTE PTR [bp-280][si],al
+	*** 000c86	ff 86 2c fe 		inc	WORD PTR [bp-468]	;i
+					$F989:
+	*** 000c8a	8b 86 2c fe 		mov	ax,WORD PTR [bp-468]	;i
+	*** 000c8e	39 86 c8 fe 		cmp	WORD PTR [bp-312],ax
+	*** 000c92	7f e0 			jg	$FC990
+;|***       S[start_data.goalLen]=0;
+;|***       S[254]=0;
+; Line 439
+	*** 000c94	2a c0 			sub	al,al
+	*** 000c96	8b b6 c8 fe 		mov	si,WORD PTR [bp-312]
+	*** 000c9a	88 82 e8 fe 		mov	BYTE PTR [bp-280][si],al
+	*** 000c9e	88 46 e6 		mov	BYTE PTR [bp-26],al
+;|***       }
+; Line 440
+;|***    else
+; Line 441
+	*** 000ca1	eb 06 			jmp	SHORT $I992
+	*** 000ca3	90 			nop	
+					$I986:
+;|***       {
+; Line 442
+;|***       S[0]=0;
+; Line 443
+	*** 000ca4	c6 86 e8 fe 00 		mov	BYTE PTR [bp-280],0	;S
+;|***       }
+; Line 444
+					$I992:
+;|*** 
+;|*** 	MouseSETUP(MouseSprite,0,0);
+; Line 446
+	*** 000ca9	2b c0 			sub	ax,ax
+	*** 000cab	50 			push	ax
+	*** 000cac	50 			push	ax
+	*** 000cad	ff 36 00 00 		push	WORD PTR _MouseSprite
+	*** 000cb1	e8 00 00 		call	_MouseSETUP
+	*** 000cb4	83 c4 06 		add	sp,6
+;|*** 	ScreenOff();
+; Line 447
+	*** 000cb7	9a 00 00 00 00 		call	FAR PTR _ScreenOff
+;|***    	SndSounds(N_Pause);
+; Line 448
+	*** 000cbc	b8 06 00 		mov	ax,6
+	*** 000cbf	50 			push	ax
+	*** 000cc0	9a 00 00 00 00 		call	FAR PTR _SndSounds
+	*** 000cc5	83 c4 02 		add	sp,2
+;|*** 
+;|*** //	RioTop(Rtemp, PxLng,(0x100000-PyLng), 0x100);
+;|*** 
+;|***    LoadPicture(2,"map-sprt.PIC");
+; Line 452
+	*** 000cc8	b8 34 00 		mov	ax,OFFSET DGROUP:$SG994
+	*** 000ccb	50 			push	ax
+	*** 000ccc	b8 02 00 		mov	ax,2
+	*** 000ccf	50 			push	ax
+	*** 000cd0	e8 00 00 		call	_LoadPicture
+	*** 000cd3	83 c4 04 		add	sp,4
+;|*** 
+;|*** 	switch(ConfigData.World) {
+; Line 454
+	*** 000cd6	a1 1a 00 		mov	ax,WORD PTR _ConfigData+26
+	*** 000cd9	0b c0 			or	ax,ax
+	*** 000cdb	74 11 			je	$SC999
+	*** 000cdd	48 			dec	ax
+	*** 000cde	75 03 			jne	$JCC3294
+	*** 000ce0	e9 8b 00 		jmp	$SC1001
+					$JCC3294:
+	*** 000ce3	48 			dec	ax
+	*** 000ce4	75 03 			jne	$JCC3300
+	*** 000ce6	e9 8b 00 		jmp	$SC1003
+					$JCC3300:
+;|*** 		case 0:
+;|*** 			LoadPicture(1,"map-cape.PIC");
+;|*** 		break;
+;|*** 		case 1:
+;|*** 			LoadPicture(1,"map-med.PIC");
+;|*** 		break;
+;|*** 		case 2:
+;|*** 			LoadPicture(1,"map-us.PIC");
+;|*** 		break;
+;|*** 		default:
+;|*** 			LoadPicture(1,"map-us.PIC");
+; Line 465
+	*** 000ce9	b8 65 00 		mov	ax,OFFSET DGROUP:$SG1006
+	*** 000cec	eb 03 			jmp	SHORT $L20010
+;|*** 		case 0:
+; Line 455
+					$SC999:
+;|*** 			LoadPicture(1,"map-cape.PIC");
+; Line 456
+	*** 000cee	b8 41 00 		mov	ax,OFFSET DGROUP:$SG1000
+					$L20010:
+	*** 000cf1	50 			push	ax
+	*** 000cf2	b8 01 00 		mov	ax,1
+	*** 000cf5	50 			push	ax
+	*** 000cf6	e8 00 00 		call	_LoadPicture
+	*** 000cf9	83 c4 04 		add	sp,4
+;|*** 		break;
+;|*** 		case 1:
+;|*** 			LoadPicture(1,"map-med.PIC");
+;|*** 		break;
+;|*** 		case 2:
+;|*** 			LoadPicture(1,"map-us.PIC");
+;|*** 		break;
+;|*** 		default:
+;|*** 			LoadPicture(1,"map-us.PIC");
+;|*** 		break;
+;|*** 	}
+;|***    RectCopy (Rp2, 0,0,256,200,Rp3,0,0);
+; Line 468
+	*** 000cfc	2b c0 			sub	ax,ax
+	*** 000cfe	50 			push	ax
+	*** 000cff	50 			push	ax
+	*** 000d00	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 000d04	b9 c8 00 		mov	cx,200
+	*** 000d07	51 			push	cx
+	*** 000d08	b9 00 01 		mov	cx,256
+	*** 000d0b	51 			push	cx
+	*** 000d0c	50 			push	ax
+	*** 000d0d	50 			push	ax
+	*** 000d0e	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000d12	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000d17	83 c4 10 		add	sp,16
+;|*** 
+;|***    if (Status & TRAINING)
+; Line 470
+	*** 000d1a	f6 06 01 00 10 		test	BYTE PTR _Status+1,16
+	*** 000d1f	74 22 			je	$I1007
+;|***       {
+; Line 471
+;|***       RectCopy (Rp3,TELEXL,TELEYL,TELEXH-TELEXL+1,TELEYH-TELEYL+1,
+;|***                   Rp2,TELEXL,TELEYL);
+; Line 473
+	*** 000d21	b8 98 00 		mov	ax,152
+	*** 000d24	50 			push	ax
+	*** 000d25	b9 09 01 		mov	cx,265
+	*** 000d28	51 			push	cx
+	*** 000d29	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000d2d	ba 0d 00 		mov	dx,13
+	*** 000d30	52 			push	dx
+	*** 000d31	ba 34 00 		mov	dx,52
+	*** 000d34	52 			push	dx
+	*** 000d35	50 			push	ax
+	*** 000d36	51 			push	cx
+	*** 000d37	ff 36 00 00 		push	WORD PTR _Rp3
+	*** 000d3b	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000d40	83 c4 10 		add	sp,16
+;|***       }
+; Line 474
+;|***    DrawRioMapInfo(Rtemp,1);
+; Line 475
+					$I1007:
+	*** 000d43	b8 01 00 		mov	ax,1
+	*** 000d46	50 			push	ax
+	*** 000d47	ff b6 30 fe 		push	WORD PTR [bp-464]	;Rtemp
+	*** 000d4b	e8 5e f6 		call	_DrawRioMapInfo
+	*** 000d4e	83 c4 04 		add	sp,4
+;|*** 
+;|*** 	ScreenOn();
+; Line 477
+	*** 000d51	9a 00 00 00 00 		call	FAR PTR _ScreenOn
+;|*** 	MouseSHOW();
+; Line 478
+	*** 000d56	9a 00 00 00 00 		call	FAR PTR _MouseSHOW
+;|*** 
+;|*** 	while (kbhit()) _bios_keybrd (_KEYBRD_READ); /* Flush kbd buffer */
+; Line 480
+					$FC1010:
+	*** 000d5b	e8 00 00 		call	_kbhit
+	*** 000d5e	0b c0 			or	ax,ax
+	*** 000d60	74 18 			je	$FB1011
+	*** 000d62	2b c0 			sub	ax,ax
+	*** 000d64	50 			push	ax
+	*** 000d65	e8 00 00 		call	__bios_keybrd
+	*** 000d68	83 c4 02 		add	sp,2
+	*** 000d6b	eb ee 			jmp	SHORT $FC1010
+;|*** 		case 1:
+; Line 458
+	*** 000d6d	90 			nop	
+					$SC1001:
+;|*** 			LoadPicture(1,"map-med.PIC");
+; Line 459
+	*** 000d6e	b8 4e 00 		mov	ax,OFFSET DGROUP:$SG1002
+	*** 000d71	e9 7d ff 		jmp	$L20010
+;|*** 		break;
+;|*** 		case 2:
+; Line 461
+					$SC1003:
+;|*** 			LoadPicture(1,"map-us.PIC");
+; Line 462
+	*** 000d74	b8 5a 00 		mov	ax,OFFSET DGROUP:$SG1004
+	*** 000d77	e9 77 ff 		jmp	$L20010
+;|*** 		break;
+;|*** 		default:
+; Line 464
+					$FB1011:
+;|*** 			LoadPicture(1,"map-us.PIC");
+;|*** 		break;
+;|*** 	}
+;|***    RectCopy (Rp2, 0,0,256,200,Rp3,0,0);
+;|*** 
+;|***    if (Status & TRAINING)
+;|***       {
+;|***       RectCopy (Rp3,TELEXL,TELEYL,TELEXH-TELEXL+1,TELEYH-TELEYL+1,
+;|***                   Rp2,TELEXL,TELEYL);
+;|***       }
+;|***    DrawRioMapInfo(Rtemp,1);
+;|*** 
+;|*** 	ScreenOn();
+;|*** 	MouseSHOW();
+;|*** 
+;|*** 	while (kbhit()) _bios_keybrd (_KEYBRD_READ); /* Flush kbd buffer */
+;|*** 
+;|***    done=0;
+; Line 482
+	*** 000d7a	c7 86 e4 fe 00 00 	mov	WORD PTR [bp-284],0	;done
+;|*** 	while (!done)
+; Line 483
+					$FC1013:
+	*** 000d80	83 be e4 fe 00 		cmp	WORD PTR [bp-284],0	;done
+	*** 000d85	74 03 			je	$JCC3461
+	*** 000d87	e9 28 03 		jmp	$FB1014
+					$JCC3461:
+;|***       {
+; Line 484
+;|*** 		key=0;
+; Line 485
+	*** 000d8a	c7 86 2e fe 00 00 	mov	WORD PTR [bp-466],0	;key
+;|*** 		MyMouseHits=0;
+;|*** 		MyMouseHits = MouseHITS();
+; Line 487
+	*** 000d90	9a 00 00 00 00 		call	FAR PTR _MouseHITS
+	*** 000d95	89 86 3a fe 		mov	WORD PTR [bp-454],ax	;MyMouseHits
+;|*** 
+;|*** 		if (kbhit())
+; Line 489
+	*** 000d99	e8 00 00 		call	_kbhit
+	*** 000d9c	0b c0 			or	ax,ax
+	*** 000d9e	74 0d 			je	$I1015
+;|*** 			key = _bios_keybrd (_KEYBRD_READ);
+; Line 490
+	*** 000da0	2b c0 			sub	ax,ax
+	*** 000da2	50 			push	ax
+	*** 000da3	e8 00 00 		call	__bios_keybrd
+	*** 000da6	83 c4 02 		add	sp,2
+	*** 000da9	89 86 2e fe 		mov	WORD PTR [bp-466],ax	;key
+;|*** 
+;|***       if (key==0)
+; Line 492
+					$I1015:
+	*** 000dad	83 be 2e fe 00 		cmp	WORD PTR [bp-466],0	;key
+	*** 000db2	75 7f 			jne	$I1021
+;|***          {
+; Line 493
+;|***          if (MyMouseHits & 1)
+; Line 494
+	*** 000db4	f6 86 3a fe 01 		test	BYTE PTR [bp-454],1	;MyMouseHits
+	*** 000db9	74 78 			je	$I1021
+;|***             {
+; Line 495
+;|***             if (InBox(MouseX,MouseY,RESUMEXL,RESUMEYL,RESUMEXH,RESUMEYH))
+; Line 496
+	*** 000dbb	b8 bc 00 		mov	ax,188
+	*** 000dbe	50 			push	ax
+	*** 000dbf	b8 3c 01 		mov	ax,316
+	*** 000dc2	50 			push	ax
+	*** 000dc3	b8 ac 00 		mov	ax,172
+	*** 000dc6	50 			push	ax
+	*** 000dc7	b8 03 01 		mov	ax,259
+	*** 000dca	50 			push	ax
+	*** 000dcb	ff 36 00 00 		push	WORD PTR _MouseY
+	*** 000dcf	ff 36 00 00 		push	WORD PTR _MouseX
+	*** 000dd3	e8 00 00 		call	_InBox
+	*** 000dd6	83 c4 0c 		add	sp,12
+	*** 000dd9	0b c0 			or	ax,ax
+	*** 000ddb	74 06 			je	$I1019
+;|***                key=ESCKEY;
+; Line 497
+	*** 000ddd	c7 86 2e fe 1b 01 	mov	WORD PTR [bp-466],283	;key
+;|*** 
+;|***             if (InBox(MouseX,MouseY,OBJXL,OBJYL,OBJXH,OBJYH))
+; Line 499
+					$I1019:
+	*** 000de3	b8 94 00 		mov	ax,148
+	*** 000de6	50 			push	ax
+	*** 000de7	b8 3c 01 		mov	ax,316
+	*** 000dea	50 			push	ax
+	*** 000deb	b8 88 00 		mov	ax,136
+	*** 000dee	50 			push	ax
+	*** 000def	b8 09 01 		mov	ax,265
+	*** 000df2	50 			push	ax
+	*** 000df3	ff 36 00 00 		push	WORD PTR _MouseY
+	*** 000df7	ff 36 00 00 		push	WORD PTR _MouseX
+	*** 000dfb	e8 00 00 		call	_InBox
+	*** 000dfe	83 c4 0c 		add	sp,12
+	*** 000e01	0b c0 			or	ax,ax
+	*** 000e03	74 06 			je	$I1020
+;|***                key=BKEY;
+; Line 500
+	*** 000e05	c7 86 2e fe 62 30 	mov	WORD PTR [bp-466],12386	;key
+;|*** 
+;|***             if (InBox(MouseX,MouseY,TELEXL,TELEYL,TELEXH,TELEYH))
+; Line 502
+					$I1020:
+	*** 000e0b	b8 a4 00 		mov	ax,164
+	*** 000e0e	50 			push	ax
+	*** 000e0f	b8 3c 01 		mov	ax,316
+	*** 000e12	50 			push	ax
+	*** 000e13	b8 98 00 		mov	ax,152
+	*** 000e16	50 			push	ax
+	*** 000e17	b8 09 01 		mov	ax,265
+	*** 000e1a	50 			push	ax
+	*** 000e1b	ff 36 00 00 		push	WORD PTR _MouseY
+	*** 000e1f	ff 36 00 00 		push	WORD PTR _MouseX
+	*** 000e23	e8 00 00 		call	_InBox
+	*** 000e26	83 c4 0c 		add	sp,12
+	*** 000e29	0b c0 			or	ax,ax
+	*** 000e2b	74 06 			je	$I1021
+;|***                key=PKEY;
+; Line 503
+	*** 000e2d	c7 86 2e fe 70 19 	mov	WORD PTR [bp-466],6512	;key
+;|*** 
+;|***             }
+; Line 505
+					$I1021:
+;|***          }
+; Line 506
+;|*** 
+;|***       if (key)
+; Line 508
+	*** 000e33	83 be 2e fe 00 		cmp	WORD PTR [bp-466],0	;key
+	*** 000e38	74 24 			je	$SB1024
+;|***          {
+; Line 509
+;|***          switch (key)
+; Line 510
+	*** 000e3a	8b 86 2e fe 		mov	ax,WORD PTR [bp-466]	;key
+	*** 000e3e	2d 1b 01 		sub	ax,283
+	*** 000e41	74 17 			je	$SC1027
+	*** 000e43	2d 57 12 		sub	ax,4695
+	*** 000e46	74 12 			je	$SC1027
+	*** 000e48	2d fe 05 		sub	ax,1534
+	*** 000e4b	75 03 			jne	$JCC3659
+	*** 000e4d	e9 3a 01 		jmp	$SC1039
+					$JCC3659:
+	*** 000e50	2d f2 16 		sub	ax,5874
+	*** 000e53	74 1b 			je	$SC1028
+	*** 000e55	2d cd 04 		sub	ax,1229
+	*** 000e58	75 04 			jne	$SB1024
+;|***             {
+; Line 511
+;|*** //            case FKEY:
+;|*** //               RioFont++;
+;|*** //               Rtemp->FontNr=RioFont;
+;|*** //               DrawRioMapInfo(Rtemp,1);
+;|*** //               break;
+;|***             case ESCKEY:
+; Line 517
+					$SC1027:
+;|***             case SLASH:
+;|***             case RKEY:
+;|***                done++;
+; Line 520
+	*** 000e5a	ff 86 e4 fe 		inc	WORD PTR [bp-284]	;done
+;|***                break;
+; Line 521
+					$SB1024:
+;|***             case BKEY:
+;|***                DrawRioMapInfo(Rtemp,-1);
+;|***                RectFill(Rp2, TXTXL, TXTYL,TXTWID,TXTHT,0);
+;|***                RectFill(Rp2, TXTXL+1, TXTYL+1,TXTWID-2,TXTHT-2,TXTCOLOR);
+;|***                RectFill(Rp2, TXTXL+2, TXTYL+2,TXTWID-4,TXTHT-4,0);
+;|***                TextInTheBox(Rtemp,S,TXTXL, TXTYL, TXTXH,TXTYH, 255);
+;|***                SetAPen(Rtemp,MSGCOLOR);
+;|***                CenterPrint (Rtemp, (TXTXL+TXTXH)/2,TXTYH-10,"PRESS ANY KEY TO CONTINUE");
+;|***                MouseHIDE();
+;|***                RectCopy (Rp2, TXTXL, TXTYL,TXTWID,TXTHT, Rp1,TXTXL, TXTYL);
+;|***                while (1)
+;|***                   {
+;|*** 		            MyMouseHits=0;
+;|*** 		            MyMouseHits = MouseHITS();
+;|*** 		            if (kbhit()) break;
+;|***                   if (MyMouseHits&3) break;
+;|***                   }
+;|***             	while (kbhit()) _bios_keybrd (_KEYBRD_READ); /* Flush kbd buffer */
+;|***                MouseHITS();   // flush mouse
+;|*** 	            MyMouseHits=0;
+;|***                DrawRioMapInfo(Rtemp,1);
+;|***                MouseSHOW();
+;|***                break;
+;|***             case PKEY:
+;|***                // if in training only
+;|***                if (Status & TRAINING)
+;|***                   {
+;|***                   MouseHIDE();
+;|***                   SetAPen(Rtemp,MSGCOLOR);
+;|***                   CenterPrint (Rtemp, 160,192,"USE LEFT MOUSE BUTTON TO RE-POSITION YOUR PLANE");
+;|***                   RectCopy (Rtemp, 0,192,320,8,Rp1,0,192);
+;|***                   MouseSHOW();
+;|***                   while (1)
+;|***                      {
+;|*** 		               key=0;
+;|*** 		               MyMouseHits=0;
+;|*** 		               MyMouseHits = MouseHITS();
+;|*** 		               if (kbhit())
+;|*** 			               key = _bios_keybrd (_KEYBRD_READ);
+;|***                      if (key==ESCKEY) break;
+;|***                      if (MyMouseHits&1)
+;|***                         {
+;|***                         if ((MouseX<256)&&(MouseY<192))
+;|***                            {
+;|*** 			                  PxLng = MouseX;
+;|*** 			                  PxLng = (PxLng << 12);
+;|*** 			                  PyLng = MulDiv(256,MouseY,192);
+;|*** 			                  PyLng = (PyLng << 12);
+;|*** 			                  PyLng = (0x100000 - (PyLng));
+;|*** 
+;|*** 			                  GroundH = GetQHeight(PxLng,(0x100000-PyLng));
+;|*** 
+;|*** 			                  if ((GroundH+500) > OurAlt)
+;|***                               {
+;|*** 				                  OurAlt = GroundH + 500;
+;|*** 				                  Alt = OurAlt >> 2;
+;|*** 				                  InitScottFlight();
+;|***    			                  }
+;|***                            }
+;|***                         break;
+;|***                         }
+;|***                      }
+;|***                   DrawRioMapInfo(Rtemp,1);
+;|***                   }
+;|***                break;
+;|***             }
+;|***          }
+; Line 588
+;|***       DrawRioMapInfo(Rtemp,0);
+; Line 589
+	*** 000e5e	2b c0 			sub	ax,ax
+	*** 000e60	50 			push	ax
+	*** 000e61	ff b6 30 fe 		push	WORD PTR [bp-464]	;Rtemp
+	*** 000e65	e8 44 f5 		call	_DrawRioMapInfo
+	*** 000e68	83 c4 04 		add	sp,4
+;|***       }
+; Line 590
+	*** 000e6b	e9 12 ff 		jmp	$FC1013
+;|***             case BKEY:
+; Line 522
+	*** 000e6e	90 			nop	
+	*** 000e6f	90 			nop	
+					$SC1028:
+;|***                DrawRioMapInfo(Rtemp,-1);
+; Line 523
+	*** 000e70	b8 ff ff 		mov	ax,-1
+	*** 000e73	50 			push	ax
+	*** 000e74	ff b6 30 fe 		push	WORD PTR [bp-464]	;Rtemp
+	*** 000e78	e8 31 f5 		call	_DrawRioMapInfo
+	*** 000e7b	83 c4 04 		add	sp,4
+;|***                RectFill(Rp2, TXTXL, TXTYL,TXTWID,TXTHT,0);
+; Line 524
+	*** 000e7e	2b c0 			sub	ax,ax
+	*** 000e80	50 			push	ax
+	*** 000e81	b9 65 00 		mov	cx,101
+	*** 000e84	51 			push	cx
+	*** 000e85	ba b5 00 		mov	dx,181
+	*** 000e88	52 			push	dx
+	*** 000e89	bb 40 00 		mov	bx,64
+	*** 000e8c	53 			push	bx
+	*** 000e8d	be 28 00 		mov	si,40
+	*** 000e90	56 			push	si
+	*** 000e91	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000e95	9a 00 00 00 00 		call	FAR PTR _RectFill
+	*** 000e9a	83 c4 0c 		add	sp,12
+;|***                RectFill(Rp2, TXTXL+1, TXTYL+1,TXTWID-2,TXTHT-2,TXTCOLOR);
+; Line 525
+	*** 000e9d	b8 04 00 		mov	ax,4
+	*** 000ea0	50 			push	ax
+	*** 000ea1	b8 63 00 		mov	ax,99
+	*** 000ea4	50 			push	ax
+	*** 000ea5	b8 b3 00 		mov	ax,179
+	*** 000ea8	50 			push	ax
+	*** 000ea9	b8 41 00 		mov	ax,65
+	*** 000eac	50 			push	ax
+	*** 000ead	b8 29 00 		mov	ax,41
+	*** 000eb0	50 			push	ax
+	*** 000eb1	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000eb5	9a 00 00 00 00 		call	FAR PTR _RectFill
+	*** 000eba	83 c4 0c 		add	sp,12
+;|***                RectFill(Rp2, TXTXL+2, TXTYL+2,TXTWID-4,TXTHT-4,0);
+; Line 526
+	*** 000ebd	2b c0 			sub	ax,ax
+	*** 000ebf	50 			push	ax
+	*** 000ec0	b8 61 00 		mov	ax,97
+	*** 000ec3	50 			push	ax
+	*** 000ec4	b8 b1 00 		mov	ax,177
+	*** 000ec7	50 			push	ax
+	*** 000ec8	b8 42 00 		mov	ax,66
+	*** 000ecb	50 			push	ax
+	*** 000ecc	b8 2a 00 		mov	ax,42
+	*** 000ecf	50 			push	ax
+	*** 000ed0	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000ed4	9a 00 00 00 00 		call	FAR PTR _RectFill
+	*** 000ed9	83 c4 0c 		add	sp,12
+;|***                TextInTheBox(Rtemp,S,TXTXL, TXTYL, TXTXH,TXTYH, 255);
+; Line 527
+	*** 000edc	b8 ff 00 		mov	ax,255
+	*** 000edf	50 			push	ax
+	*** 000ee0	b8 a4 00 		mov	ax,164
+	*** 000ee3	50 			push	ax
+	*** 000ee4	b8 dc 00 		mov	ax,220
+	*** 000ee7	50 			push	ax
+	*** 000ee8	b8 40 00 		mov	ax,64
+	*** 000eeb	50 			push	ax
+	*** 000eec	56 			push	si
+	*** 000eed	8d 8e e8 fe 		lea	cx,WORD PTR [bp-280]	;S
+	*** 000ef1	51 			push	cx
+	*** 000ef2	ff b6 30 fe 		push	WORD PTR [bp-464]	;Rtemp
+	*** 000ef6	e8 a7 f3 		call	_TextInTheBox
+	*** 000ef9	83 c4 0e 		add	sp,14
+;|***                SetAPen(Rtemp,MSGCOLOR);
+; Line 528
+	*** 000efc	8b 9e 30 fe 		mov	bx,WORD PTR [bp-464]	;Rtemp
+	*** 000f00	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***                CenterPrint (Rtemp, (TXTXL+TXTXH)/2,TXTYH-10,"PRESS ANY KEY TO CONTINUE");
+; Line 529
+	*** 000f05	b8 70 00 		mov	ax,OFFSET DGROUP:$SG1030
+	*** 000f08	50 			push	ax
+	*** 000f09	b8 9a 00 		mov	ax,154
+	*** 000f0c	50 			push	ax
+	*** 000f0d	b8 82 00 		mov	ax,130
+	*** 000f10	50 			push	ax
+	*** 000f11	53 			push	bx
+	*** 000f12	e8 00 00 		call	_CenterPrint
+	*** 000f15	83 c4 08 		add	sp,8
+;|***                MouseHIDE();
+; Line 530
+	*** 000f18	9a 00 00 00 00 		call	FAR PTR _MouseHIDE
+;|***                RectCopy (Rp2, TXTXL, TXTYL,TXTWID,TXTHT, Rp1,TXTXL, TXTYL);
+; Line 531
+	*** 000f1d	b8 40 00 		mov	ax,64
+	*** 000f20	50 			push	ax
+	*** 000f21	56 			push	si
+	*** 000f22	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000f26	b9 65 00 		mov	cx,101
+	*** 000f29	51 			push	cx
+	*** 000f2a	b9 b5 00 		mov	cx,181
+	*** 000f2d	51 			push	cx
+	*** 000f2e	50 			push	ax
+	*** 000f2f	56 			push	si
+	*** 000f30	ff 36 00 00 		push	WORD PTR _Rp2
+	*** 000f34	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000f39	83 c4 10 		add	sp,16
+;|***                while (1)
+; Line 532
+					$FC1032:
+;|***                   {
+; Line 533
+;|*** 		            MyMouseHits=0;
+;|*** 		            MyMouseHits = MouseHITS();
+; Line 535
+	*** 000f3c	9a 00 00 00 00 		call	FAR PTR _MouseHITS
+	*** 000f41	89 86 3a fe 		mov	WORD PTR [bp-454],ax	;MyMouseHits
+;|*** 		            if (kbhit()) break;
+; Line 536
+	*** 000f45	e8 00 00 		call	_kbhit
+	*** 000f48	0b c0 			or	ax,ax
+	*** 000f4a	74 12 			je	$I1034
+					$FB1033:
+;|***                   if (MyMouseHits&3) break;
+;|***                   }
+;|***             	while (kbhit()) _bios_keybrd (_KEYBRD_READ); /* Flush kbd buffer */
+; Line 539
+	*** 000f4c	e8 00 00 		call	_kbhit
+	*** 000f4f	0b c0 			or	ax,ax
+	*** 000f51	74 15 			je	$FB1038
+	*** 000f53	2b c0 			sub	ax,ax
+	*** 000f55	50 			push	ax
+	*** 000f56	e8 00 00 		call	__bios_keybrd
+	*** 000f59	83 c4 02 		add	sp,2
+	*** 000f5c	eb ee 			jmp	SHORT $FB1033
+;|***                   if (MyMouseHits&3) break;
+; Line 537
+					$I1034:
+	*** 000f5e	f6 86 3a fe 03 		test	BYTE PTR [bp-454],3	;MyMouseHits
+	*** 000f63	74 d7 			je	$FC1032
+	*** 000f65	eb e5 			jmp	SHORT $FB1033
+	*** 000f67	90 			nop	
+					$FB1038:
+;|***                   }
+;|***             	while (kbhit()) _bios_keybrd (_KEYBRD_READ); /* Flush kbd buffer */
+;|***                MouseHITS();   // flush mouse
+; Line 540
+	*** 000f68	9a 00 00 00 00 		call	FAR PTR _MouseHITS
+;|*** 	            MyMouseHits=0;
+; Line 541
+	*** 000f6d	c7 86 3a fe 00 00 	mov	WORD PTR [bp-454],0	;MyMouseHits
+;|***                DrawRioMapInfo(Rtemp,1);
+; Line 542
+	*** 000f73	b8 01 00 		mov	ax,1
+	*** 000f76	50 			push	ax
+	*** 000f77	ff b6 30 fe 		push	WORD PTR [bp-464]	;Rtemp
+	*** 000f7b	e8 2e f4 		call	_DrawRioMapInfo
+	*** 000f7e	83 c4 04 		add	sp,4
+;|***                MouseSHOW();
+; Line 543
+	*** 000f81	9a 00 00 00 00 		call	FAR PTR _MouseSHOW
+;|***                break;
+; Line 544
+	*** 000f86	e9 d5 fe 		jmp	$SB1024
+;|***             case PKEY:
+; Line 545
+	*** 000f89	90 			nop	
+					$SC1039:
+;|***                // if in training only
+;|***                if (Status & TRAINING)
+; Line 547
+	*** 000f8a	f6 06 01 00 10 		test	BYTE PTR _Status+1,16
+	*** 000f8f	75 03 			jne	$JCC3983
+	*** 000f91	e9 ca fe 		jmp	$SB1024
+					$JCC3983:
+;|***                   {
+; Line 548
+;|***                   MouseHIDE();
+; Line 549
+	*** 000f94	9a 00 00 00 00 		call	FAR PTR _MouseHIDE
+;|***                   SetAPen(Rtemp,MSGCOLOR);
+; Line 550
+	*** 000f99	8b 9e 30 fe 		mov	bx,WORD PTR [bp-464]	;Rtemp
+	*** 000f9d	c7 47 0c 03 00 		mov	WORD PTR [bx+12],3
+;|***                   CenterPrint (Rtemp, 160,192,"USE LEFT MOUSE BUTTON TO RE-POSITION YOUR PLANE");
+; Line 551
+	*** 000fa2	b8 8a 00 		mov	ax,OFFSET DGROUP:$SG1041
+	*** 000fa5	50 			push	ax
+	*** 000fa6	b8 c0 00 		mov	ax,192
+	*** 000fa9	50 			push	ax
+	*** 000faa	b9 a0 00 		mov	cx,160
+	*** 000fad	51 			push	cx
+	*** 000fae	53 			push	bx
+	*** 000faf	e8 00 00 		call	_CenterPrint
+	*** 000fb2	83 c4 08 		add	sp,8
+;|***                   RectCopy (Rtemp, 0,192,320,8,Rp1,0,192);
+; Line 552
+	*** 000fb5	b8 c0 00 		mov	ax,192
+	*** 000fb8	50 			push	ax
+	*** 000fb9	2b c9 			sub	cx,cx
+	*** 000fbb	51 			push	cx
+	*** 000fbc	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 000fc0	ba 08 00 		mov	dx,8
+	*** 000fc3	52 			push	dx
+	*** 000fc4	ba 40 01 		mov	dx,320
+	*** 000fc7	52 			push	dx
+	*** 000fc8	50 			push	ax
+	*** 000fc9	51 			push	cx
+	*** 000fca	ff b6 30 fe 		push	WORD PTR [bp-464]	;Rtemp
+	*** 000fce	9a 00 00 00 00 		call	FAR PTR _RectCopy
+	*** 000fd3	83 c4 10 		add	sp,16
+;|***                   MouseSHOW();
+; Line 553
+	*** 000fd6	9a 00 00 00 00 		call	FAR PTR _MouseSHOW
+;|***                   while (1)
+; Line 554
+					$FC1043:
+;|***                      {
+; Line 555
+;|*** 		               key=0;
+; Line 556
+	*** 000fdb	c7 86 2e fe 00 00 	mov	WORD PTR [bp-466],0	;key
+;|*** 		               MyMouseHits=0;
+;|*** 		               MyMouseHits = MouseHITS();
+; Line 558
+	*** 000fe1	9a 00 00 00 00 		call	FAR PTR _MouseHITS
+	*** 000fe6	89 86 3a fe 		mov	WORD PTR [bp-454],ax	;MyMouseHits
+;|*** 		               if (kbhit())
+; Line 559
+	*** 000fea	e8 00 00 		call	_kbhit
+	*** 000fed	0b c0 			or	ax,ax
+	*** 000fef	74 0d 			je	$I1045
+;|*** 			               key = _bios_keybrd (_KEYBRD_READ);
+; Line 560
+	*** 000ff1	2b c0 			sub	ax,ax
+	*** 000ff3	50 			push	ax
+	*** 000ff4	e8 00 00 		call	__bios_keybrd
+	*** 000ff7	83 c4 02 		add	sp,2
+	*** 000ffa	89 86 2e fe 		mov	WORD PTR [bp-466],ax	;key
+;|***                      if (key==ESCKEY) break;
+; Line 561
+					$I1045:
+	*** 000ffe	81 be 2e fe 1b 01 	cmp	WORD PTR [bp-466],283	;key
+	*** 001004	75 12 			jne	$I1046
+					$FB1044:
+;|***                      if (MyMouseHits&1)
+;|***                         {
+;|***                         if ((MouseX<256)&&(MouseY<192))
+;|***                            {
+;|*** 			                  PxLng = MouseX;
+;|*** 			                  PxLng = (PxLng << 12);
+;|*** 			                  PyLng = MulDiv(256,MouseY,192);
+;|*** 			                  PyLng = (PyLng << 12);
+;|*** 			                  PyLng = (0x100000 - (PyLng));
+;|*** 
+;|*** 			                  GroundH = GetQHeight(PxLng,(0x100000-PyLng));
+;|*** 
+;|*** 			                  if ((GroundH+500) > OurAlt)
+;|***                               {
+;|*** 				                  OurAlt = GroundH + 500;
+;|*** 				                  Alt = OurAlt >> 2;
+;|*** 				                  InitScottFlight();
+;|***    			                  }
+;|***                            }
+;|***                         break;
+;|***                         }
+;|***                      }
+;|***                   DrawRioMapInfo(Rtemp,1);
+; Line 584
+	*** 001006	b8 01 00 		mov	ax,1
+	*** 001009	50 			push	ax
+	*** 00100a	ff b6 30 fe 		push	WORD PTR [bp-464]	;Rtemp
+	*** 00100e	e8 9b f3 		call	_DrawRioMapInfo
+	*** 001011	83 c4 04 		add	sp,4
+;|***                   }
+; Line 585
+;|***                break;
+; Line 586
+	*** 001014	e9 47 fe 		jmp	$SB1024
+;|***                      if (MyMouseHits&1)
+; Line 562
+	*** 001017	90 			nop	
+					$I1046:
+	*** 001018	f6 86 3a fe 01 		test	BYTE PTR [bp-454],1	;MyMouseHits
+	*** 00101d	74 bc 			je	$FC1043
+;|***                         {
+; Line 563
+;|***                         if ((MouseX<256)&&(MouseY<192))
+; Line 564
+	*** 00101f	81 3e 00 00 00 01 	cmp	WORD PTR _MouseX,256
+	*** 001025	7d df 			jge	$FB1044
+	*** 001027	81 3e 00 00 c0 00 	cmp	WORD PTR _MouseY,192
+	*** 00102d	7d d7 			jge	$FB1044
+;|***                            {
+; Line 565
+;|*** 			                  PxLng = MouseX;
+; Line 566
+	*** 00102f	a1 00 00 		mov	ax,WORD PTR _MouseX
+	*** 001032	99 			cwd	
+	*** 001033	a3 00 00 		mov	WORD PTR _PxLng,ax
+	*** 001036	89 16 02 00 		mov	WORD PTR _PxLng+2,dx
+;|*** 			                  PxLng = (PxLng << 12);
+; Line 567
+	*** 00103a	b0 0c 			mov	al,12
+	*** 00103c	50 			push	ax
+	*** 00103d	b9 00 00 		mov	cx,OFFSET _PxLng
+	*** 001040	51 			push	cx
+	*** 001041	e8 00 00 		call	__aNNalshl
+;|*** 			                  PyLng = MulDiv(256,MouseY,192);
+; Line 568
+	*** 001044	b8 c0 00 		mov	ax,192
+	*** 001047	50 			push	ax
+	*** 001048	ff 36 00 00 		push	WORD PTR _MouseY
+	*** 00104c	b8 00 01 		mov	ax,256
+	*** 00104f	50 			push	ax
+	*** 001050	e8 00 00 		call	_MulDiv
+	*** 001053	83 c4 06 		add	sp,6
+	*** 001056	99 			cwd	
+	*** 001057	a3 00 00 		mov	WORD PTR _PyLng,ax
+	*** 00105a	89 16 02 00 		mov	WORD PTR _PyLng+2,dx
+;|*** 			                  PyLng = (PyLng << 12);
+;|*** 			                  PyLng = (0x100000 - (PyLng));
+;|*** 
+;|*** 			                  GroundH = GetQHeight(PxLng,(0x100000-PyLng));
+; Line 572
+	*** 00105e	b0 0c 			mov	al,12
+	*** 001060	50 			push	ax
+	*** 001061	b8 00 00 		mov	ax,OFFSET _PyLng
+	*** 001064	50 			push	ax
+	*** 001065	e8 00 00 		call	__aNNalshl
+	*** 001068	2b c9 			sub	cx,cx
+	*** 00106a	bb 10 00 		mov	bx,16
+	*** 00106d	2b c8 			sub	cx,ax
+	*** 00106f	1b da 			sbb	bx,dx
+	*** 001071	89 0e 00 00 		mov	WORD PTR _PyLng,cx
+	*** 001075	89 1e 02 00 		mov	WORD PTR _PyLng+2,bx
+	*** 001079	2b c0 			sub	ax,ax
+	*** 00107b	ba 10 00 		mov	dx,16
+	*** 00107e	2b c1 			sub	ax,cx
+	*** 001080	1b d3 			sbb	dx,bx
+	*** 001082	52 			push	dx
+	*** 001083	50 			push	ax
+	*** 001084	ff 36 02 00 		push	WORD PTR _PxLng+2
+	*** 001088	ff 36 00 00 		push	WORD PTR _PxLng
+	*** 00108c	e8 00 00 		call	_GetQHeight
+	*** 00108f	83 c4 08 		add	sp,8
+	*** 001092	89 86 3c fe 		mov	WORD PTR [bp-452],ax	;GroundH
+;|*** 
+;|*** 			                  if ((GroundH+500) > OurAlt)
+; Line 574
+	*** 001096	05 f4 01 		add	ax,500
+	*** 001099	3b 06 00 00 		cmp	ax,WORD PTR _OurAlt
+	*** 00109d	77 03 			ja	$JCC4253
+	*** 00109f	e9 64 ff 		jmp	$FB1044
+					$JCC4253:
+;|***                               {
+; Line 575
+;|*** 				                  OurAlt = GroundH + 500;
+; Line 576
+	*** 0010a2	a3 00 00 		mov	WORD PTR _OurAlt,ax
+;|*** 				                  Alt = OurAlt >> 2;
+; Line 577
+	*** 0010a5	d1 e8 			shr	ax,1
+	*** 0010a7	d1 e8 			shr	ax,1
+	*** 0010a9	a3 00 00 		mov	WORD PTR _Alt,ax
+;|*** 				                  InitScottFlight();
+; Line 578
+	*** 0010ac	e8 00 00 		call	_InitScottFlight
+;|***    			                  }
+; Line 579
+;|***                            }
+; Line 580
+;|***                         break;
+; Line 581
+	*** 0010af	e9 54 ff 		jmp	$FB1044
+					$FB1014:
+;|***                         }
+;|***                      }
+;|***                   DrawRioMapInfo(Rtemp,1);
+;|***                   }
+;|***                break;
+;|***             }
+;|***          }
+;|***       DrawRioMapInfo(Rtemp,0);
+;|***       }
+;|*** 
+;|*** 	MouseHIDE();
+; Line 592
+	*** 0010b2	9a 00 00 00 00 		call	FAR PTR _MouseHIDE
+;|*** 	ScreenOff();
+; Line 593
+	*** 0010b7	9a 00 00 00 00 		call	FAR PTR _ScreenOff
+;|*** 	lastmsgview=-1;
+; Line 594
+	*** 0010bc	c7 06 00 00 ff ff 	mov	WORD PTR _lastmsgview,-1
+;|*** 
+;|*** 	if (View<FRONTAL) {
+; Line 596
+	*** 0010c2	83 3e 00 00 46 		cmp	WORD PTR _View,70
+	*** 0010c7	7d 05 			jge	$I1052
+;|***     	LoadNewCockpit();
+; Line 597
+	*** 0010c9	e8 00 00 		call	_LoadNewCockpit
+;|*** 	} else {
+; Line 598
+	*** 0010cc	eb 16 			jmp	SHORT $I1054
+					$I1052:
+;|***        	ClearPage(0, BLACK);
+; Line 599
+	*** 0010ce	2b c0 			sub	ax,ax
+	*** 0010d0	50 			push	ax
+	*** 0010d1	50 			push	ax
+	*** 0010d2	9a 00 00 00 00 		call	FAR PTR _ClearPage
+	*** 0010d7	83 c4 04 		add	sp,4
+;|*** 		LoadPalNoPic("F14ORG01.PIC");
+; Line 600
+	*** 0010da	b8 ba 00 		mov	ax,OFFSET DGROUP:$SG1055
+	*** 0010dd	50 			push	ax
+	*** 0010de	e8 00 00 		call	_LoadPalNoPic
+	*** 0010e1	83 c4 02 		add	sp,2
+;|*** 	}
+; Line 601
+					$I1054:
+;|*** 	SndSounds(N_UnPause);
+; Line 602
+	*** 0010e4	b8 07 00 		mov	ax,7
+	*** 0010e7	50 			push	ax
+	*** 0010e8	9a 00 00 00 00 		call	FAR PTR _SndSounds
+	*** 0010ed	83 c4 02 		add	sp,2
+;|***     return 1;
+; Line 603
+	*** 0010f0	b8 01 00 		mov	ax,1
+;|*** 
+;|*** 
+;|*** #if 0
+;|*** 		// Re-position our plane
+;|*** 
+;|*** 		if (MyMouseHits & 2) {
+;|*** 			PxLng = MouseX;
+;|*** 			PyLng = MouseY;
+;|*** 			PyLng += PyLng/3;
+;|*** 			PxLng = (PxLng << 12);
+;|*** 			PyLng = (0x100000 - (PyLng << 12));
+;|*** 
+;|*** 			GroundH = GetQHeight(PxLng,(0x100000-PyLng));
+;|*** 
+;|*** 			if ((GroundH+500) > OurAlt) {
+;|*** 				OurAlt = GroundH + 500;
+;|*** 				Alt = OurAlt >> 2;
+;|*** 				InitScottFlight();
+;|*** 			}
+;|*** 
+;|*** 			MapX = PxLng >> 12;
+;|***    			MapY = (0x100000 - PyLng) >> 12;
+;|*** 			MapY -= MapY/4;
+;|*** 
+;|*** 			if ((mseg=MapInEMSSprite(MISCSPRTSEG,1))) {
+;|*** 				ScaleRotate(mseg,(214+5),(62+5),10,10,Rtemp,(int)MapX,
+;|*** 							(int)MapY,0x0100,0,0,0);
+;|*** 			}
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** 	MapX = 0L;
+;|*** 	MapY = 0L;
+;|*** 
+;|*** 	MapX = PxLng >> 12;
+;|*** 	MapY = (0x100000 - PyLng) >> 12;
+;|*** 	MapY -= (MapY/4);
+;|*** 
+;|*** 	if ((mseg=MapInEMSSprite(MISCSPRTSEG,1))) {
+;|*** 		ScaleRotate(mseg,(214+5),(62+5),10,10,Rtemp,(int)MapX,
+;|*** 			(int)MapY,0x0100,0,0,0);
+;|*** 	}
+;|*** 
+;|***     for (i=0, psi=ps; i<MAXPLANE; i++, psi++) {
+;|***         if ((psi->status&ACTIVE) && (psi->status&ALIVE)) {
+;|*** 			MapX = psi->xL >> 12;
+;|*** 			MapY = (0x100000 - psi->yL) >> 12;
+;|*** 			MapY -= MapY/4;
+;|***             a = (psi->head-OurHead) + 0x0800;
+;|*** 			tempplane = GetPlanePtr(psi->type);
+;|*** 
+;|*** 			if (psi->status & FRIENDLY)
+;|*** 				b=2;
+;|*** 			else
+;|*** 				b=0;
+;|*** 
+;|*** 			xpos = 154 + (((a>>12)&15)*10);
+;|*** 
+;|*** 			switch(tempplane->bclass) {
+;|*** 				case FIGHTER_OBJCLASS:
+;|*** 					if (b==2)
+;|*** 						ypos=22;
+;|*** 					else
+;|*** 						ypos=82;
+;|*** 				break;
+;|*** 				case BOMBER_OBJCLASS:
+;|*** 					if (b==2)
+;|*** 						ypos=42;
+;|*** 					else
+;|*** 						ypos=102;
+;|*** 				break;
+;|*** 				case CARRIER_OBJCLASS:
+;|*** 					if (b==2) {
+;|*** 						ypos=52;
+;|*** 					} else {
+;|*** 						xpos=194;
+;|*** 						ypos=62;
+;|*** 					}
+;|*** 				break;
+;|*** 				case SHIP_OBJCLASS:
+;|*** 					if (b==2) {
+;|*** 						xpos=154;
+;|*** 						ypos=22;
+;|*** 					} else {
+;|*** 						xpos=194;
+;|*** 						ypos=62;
+;|*** 					}
+;|*** 				break;
+;|*** 				case CMISSILE_OBJCLASS:
+;|*** 					if (b==2)
+;|*** 						ypos=22;
+;|*** 					else
+;|*** 						ypos=72;
+;|*** 				break;
+;|*** 				default:
+;|*** 					if (b==2)
+;|*** 						ypos=22;
+;|*** 					else
+;|*** 						ypos=82;
+;|*** 				break;
+;|*** 
+;|*** 			}
+;|*** 			if ((mseg=MapInEMSSprite(MISCSPRTSEG,1))) {
+;|*** 				ScaleRotate(mseg,(xpos+5),(ypos+5),10,10,Rtemp,(Rtemp->XBgn+(int)MapX),
+;|*** 							(Rtemp->YBgn+(int)MapY),0x0100,0,0,0);
+;|*** 			}
+;|*** 		}
+;|***     }
+;|*** 
+;|*** 	for (i=0; i<4; i++) {
+;|*** 		MapX = wps[i].xL >> 12;
+;|*** 		MapY = wps[i].yL >> 12;
+;|*** 		MapY -= MapY/4;
+;|*** 		RectFill(Rtemp,(int)MapX-3,(int)MapY-3,2,2,6);
+;|*** 	}
+;|*** 
+;|*** 
+;|*** 	while (kbhit()) _bios_keybrd (_KEYBRD_READ); /* Flush kbd buffer */
+;|*** 
+;|*** 	while (!done) {
+;|*** 		key=0;
+;|*** 		MyMouseHits=0;
+;|*** 		MyMouseHits = MouseHITS();
+;|*** 
+;|*** 		if (kbhit())
+;|*** 			key = _bios_keybrd (_KEYBRD_READ);
+;|*** 
+;|*** 		if (key) {
+;|*** 			switch (key) {
+;|***          		case ESCKEY:
+;|*** 				case SLASH:
+;|*** 					done++;
+;|*** 				break;
+;|***          		default:
+;|***             	break;
+;|*** 			}
+;|*** 		}
+;|*** 
+;|*** 		// Re-position our plane
+;|*** 
+;|*** 		if (MyMouseHits & 2) {
+;|*** 			PxLng = MouseX;
+;|*** 			PyLng = MouseY;
+;|*** 			PyLng += PyLng/3;
+;|*** 			PxLng = (PxLng << 12);
+;|*** 			PyLng = (0x100000 - (PyLng << 12));
+;|*** 
+;|*** 			GroundH = GetQHeight(PxLng,(0x100000-PyLng));
+;|*** 
+;|*** 			if ((GroundH+500) > OurAlt) {
+;|*** 				OurAlt = GroundH + 500;
+;|*** 				Alt = OurAlt >> 2;
+;|*** 				InitScottFlight();
+;|*** 			}
+;|*** 
+;|*** 			MapX = PxLng >> 12;
+;|***    			MapY = (0x100000 - PyLng) >> 12;
+;|*** 			MapY -= MapY/4;
+;|*** 
+;|*** 			if ((mseg=MapInEMSSprite(MISCSPRTSEG,1))) {
+;|*** 				ScaleRotate(mseg,(214+5),(62+5),10,10,Rtemp,(int)MapX,
+;|*** 							(int)MapY,0x0100,0,0,0);
+;|*** 			}
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 
+;|*** 	MouseHIDE();
+;|*** 	ScreenOff();
+;|*** 	lastmsgview=-1;
+;|*** 
+;|*** 	if (View<FRONTAL) {
+;|***     	LoadNewCockpit();
+;|*** 	} else {
+;|***        	ClearPage(0, BLACK);
+;|*** 		LoadPalNoPic("F14ORG01.PIC");
+;|*** 	}
+;|*** 	SndSounds(N_UnPause);
+;|***     return 1;
+;|*** #endif
+;|*** 
+;|*** }
+; Line 807
+	*** 0010f3	5e 			pop	si
+	*** 0010f4	8b e5 			mov	sp,bp
+	*** 0010f6	5d 			pop	bp
+	*** 0010f7	c3 			ret	
+
+_RioMap	ENDP
+;|*** 
+;|*** 
+;|*** #define  HMAPBANK 0
+;|*** 
+;|*** RioTop(RPS *Rp, long X, long Z, int zoom )
+;|*** {
+; Line 813
+	PUBLIC	_RioTop
+_RioTop	PROC NEAR
+	*** 0010f8	55 			push	bp
+	*** 0010f9	8b ec 			mov	bp,sp
+	*** 0010fb	83 ec 12 		sub	sp,18
+;	XP = -10
+;	ZP = -12
+;	WID = -4
+;	HT = -14
+;	XDC = -18
+;	YDC = -2
+;	PTR = -8
+;	SEG = -16
+;	zoom = 14
+;	Z = 10
+;	X = 6
+;	Rp = 4
+;|***    int   XP,ZP;
+;|***    int   WID,HT,XDC,YDC;
+;|***    char far *PTR;
+;|***    int   SEG;
+;|*** 
+;|***    XP= (X>>12);
+; Line 819
+	*** 0010fe	8b 46 06 		mov	ax,WORD PTR [bp+6]	;X
+	*** 001101	8b 56 08 		mov	dx,WORD PTR [bp+8]
+	*** 001104	8a c4 			mov	al,ah
+	*** 001106	8a e2 			mov	ah,dl
+	*** 001108	8a d6 			mov	dl,dh
+	*** 00110a	d0 e6 			shl	dh,1
+	*** 00110c	1a f6 			sbb	dh,dh
+;|***    ZP= (Z>>12);
+; Line 820
+	*** 00110e	8b 46 0a 		mov	ax,WORD PTR [bp+10]	;Z
+	*** 001111	8b 56 0c 		mov	dx,WORD PTR [bp+12]
+	*** 001114	8a c4 			mov	al,ah
+	*** 001116	8a e2 			mov	ah,dl
+;|***    WID = Rp->Width1+1;
+;|***    HT  = Rp->Length1+1;
+;|***    XDC= Rp->XBgn+WID/2;
+;|***    YDC= Rp->YBgn+HT/2;
+;|*** 
+;|***    FP_OFF(PTR)=0;
+;|***    FP_SEG(PTR)=SEG=MapInBank(HMAPBANK);
+; Line 827
+	*** 001118	2b c0 			sub	ax,ax
+	*** 00111a	50 			push	ax
+	*** 00111b	e8 00 00 		call	_MapInBank
+	*** 00111e	83 c4 02 		add	sp,2
+;|*** 
+;|***    TacScaleRotate256(SEG, (255/2),(191/2),255,191,Rp,(320/2),(200/2), 0x0100, 0,0x52,0);
+; Line 829
+	*** 001121	2b c9 			sub	cx,cx
+	*** 001123	51 			push	cx
+	*** 001124	ba 52 00 		mov	dx,82
+	*** 001127	52 			push	dx
+	*** 001128	51 			push	cx
+	*** 001129	b9 00 01 		mov	cx,256
+	*** 00112c	51 			push	cx
+	*** 00112d	b9 64 00 		mov	cx,100
+	*** 001130	51 			push	cx
+	*** 001131	b9 a0 00 		mov	cx,160
+	*** 001134	51 			push	cx
+	*** 001135	ff 76 04 		push	WORD PTR [bp+4]	;Rp
+	*** 001138	b9 bf 00 		mov	cx,191
+	*** 00113b	51 			push	cx
+	*** 00113c	b9 ff 00 		mov	cx,255
+	*** 00113f	51 			push	cx
+	*** 001140	b9 5f 00 		mov	cx,95
+	*** 001143	51 			push	cx
+	*** 001144	b9 7f 00 		mov	cx,127
+	*** 001147	51 			push	cx
+	*** 001148	50 			push	ax
+	*** 001149	e8 00 00 		call	_TacScaleRotate256
+;|*** 
+;|*** }
+; Line 831
+	*** 00114c	8b e5 			mov	sp,bp
+	*** 00114e	5d 			pop	bp
+	*** 00114f	c3 			ret	
+
+_RioTop	ENDP
+_TEXT	ENDS
+END
+;|*** 

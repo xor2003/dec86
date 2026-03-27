@@ -1,0 +1,238 @@
+;	Static Name Aliases
+;
+	TITLE   billasm.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+EXTRN	_SinB:NEAR
+EXTRN	_CosB:NEAR
+EXTRN	_MOUSE:BYTE
+EXTRN	_MouseX:WORD
+EXTRN	_MouseY:WORD
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** //************************************************************************
+; Line 1
+;|*** //*
+;|*** //*    BILLASM.C
+;|*** //*
+;|*** //*    Inline assembly routines since Andy refuses to switch to C6.0
+;|*** //*
+;|*** //*    Author: W. Becker
+;|*** //*
+;|*** //*    F-15 III
+;|*** //*    Microprose Software, Inc.
+;|*** //*    180 Lakefront Drive
+;|*** //*    Hunt Valley, Maryland  21030
+;|*** //*
+;|*** //*************************************************************************
+;|*** 
+;|*** extern   char  MOUSE;
+;|*** extern   int   MouseX, MouseY;
+;|*** 
+;|*** rotate_pt(int *s, int *d, int ang)
+;|*** {
+; Line 20
+	PUBLIC	_rotate_pt
+_rotate_pt	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 04 		sub	sp,4
+	*** 000006	57 			push	di
+	*** 000007	56 			push	si
+;	x = -2
+;	y = -4
+;	ang = 8
+;	d = 6
+;	s = 4
+;|*** 	int   SinB(),CosB();
+;|*** 	int   x, y;
+;|*** 
+;|*** 	x = s[0];
+; Line 24
+	*** 000008	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;s
+	*** 00000b	8b 07 			mov	ax,WORD PTR [bx]
+	*** 00000d	89 46 fe 		mov	WORD PTR [bp-2],ax	;x
+;|*** 	y = s[1];
+; Line 25
+	*** 000010	8b 47 02 		mov	ax,WORD PTR [bx+2]
+	*** 000013	89 46 fc 		mov	WORD PTR [bp-4],ax	;y
+;|*** 
+;|*** 	_asm {
+; Line 27
+;|***       mov   ax,ang
+; Line 28
+	*** 000016	8b 46 08 		mov	ax,WORD PTR [bp+8]	;ang
+;|***       neg   ax
+; Line 29
+	*** 000019	f7 d8 			neg	ax
+;|***       push  ax
+; Line 30
+	*** 00001b	50 			push	ax
+;|***       call  CosB        ; CosB(OurRoll)
+; Line 31
+	*** 00001c	e8 00 00 		call	_CosB
+;|***       mov   si,ax
+; Line 32
+	*** 00001f	8b f0 			mov	si,ax
+;|***       call  SinB
+; Line 33
+	*** 000021	e8 00 00 		call	_SinB
+;|***       add   sp,2        ; SinB(OurRoll)
+; Line 34
+	*** 000024	83 c4 02 		add	sp,2
+;|***       mov   di,ax
+; Line 35
+	*** 000027	8b f8 			mov	di,ax
+;|*** 
+;|***       mov   bx,s
+; Line 37
+	*** 000029	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;s
+;|***       imul  y
+; Line 38
+	*** 00002c	f7 6e fc 		imul	WORD PTR [bp-4]	;y
+;|***       shl   ax,1
+; Line 39
+	*** 00002f	d1 e0 			shl	ax,1
+;|***       rcl   dx,1
+; Line 40
+	*** 000031	d1 d2 			rcl	dx,1
+;|***       mov   cx,dx       ; y*SinB(OurRoll)
+; Line 41
+	*** 000033	8b ca 			mov	cx,dx
+;|*** 
+;|***       mov   ax,si
+; Line 43
+	*** 000035	8b c6 			mov	ax,si
+;|***       imul  x
+; Line 44
+	*** 000037	f7 6e fe 		imul	WORD PTR [bp-2]	;x
+;|***       shl   ax,1
+; Line 45
+	*** 00003a	d1 e0 			shl	ax,1
+;|***       rcl   dx,1        ; x*CosB(ourRoll)
+; Line 46
+	*** 00003c	d1 d2 			rcl	dx,1
+;|***       sub   dx,cx
+; Line 47
+	*** 00003e	2b d1 			sub	dx,cx
+;|*** 
+;|***       mov   bx,d
+; Line 49
+	*** 000040	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;d
+;|***       mov   [bx+0],dx   ; dx = x'
+; Line 50
+	*** 000043	89 17 			mov	WORD PTR [bx],dx
+;|*** 
+;|***       mov   ax,si
+; Line 52
+	*** 000045	8b c6 			mov	ax,si
+;|***       imul  y
+; Line 53
+	*** 000047	f7 6e fc 		imul	WORD PTR [bp-4]	;y
+;|***       shl   ax,1
+; Line 54
+	*** 00004a	d1 e0 			shl	ax,1
+;|***       rcl   dx,1
+; Line 55
+	*** 00004c	d1 d2 			rcl	dx,1
+;|***       mov   cx,dx       ; y*CosB(OurRoll)
+; Line 56
+	*** 00004e	8b ca 			mov	cx,dx
+;|*** 
+;|***       mov   ax,di
+; Line 58
+	*** 000050	8b c7 			mov	ax,di
+;|***       imul  x
+; Line 59
+	*** 000052	f7 6e fe 		imul	WORD PTR [bp-2]	;x
+;|***       shl   ax,1
+; Line 60
+	*** 000055	d1 e0 			shl	ax,1
+;|***       rcl   dx,1        ; x*SinB(OurRoll)
+; Line 61
+	*** 000057	d1 d2 			rcl	dx,1
+;|***       add   dx,cx
+; Line 62
+	*** 000059	03 d1 			add	dx,cx
+;|***       mov   [bx+2],dx   ; dx = y'
+; Line 63
+	*** 00005b	89 57 02 		mov	WORD PTR [bx+2],dx
+;|*** 
+;|***    }
+; Line 65
+;|*** }
+; Line 66
+	*** 00005e	5e 			pop	si
+	*** 00005f	5f 			pop	di
+	*** 000060	8b e5 			mov	sp,bp
+	*** 000062	5d 			pop	bp
+	*** 000063	c3 			ret	
+
+_rotate_pt	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** MousePOS(int x, int y)
+;|*** {
+; Line 70
+	PUBLIC	_MousePOS
+_MousePOS	PROC NEAR
+	*** 000064	55 			push	bp
+	*** 000065	8b ec 			mov	bp,sp
+;	y = 6
+;	x = 4
+;|***    if (!MOUSE) return 0;
+; Line 71
+	*** 000067	80 3e 00 00 00 		cmp	BYTE PTR _MOUSE,0
+	*** 00006c	75 06 			jne	$I116
+	*** 00006e	2b c0 			sub	ax,ax
+	*** 000070	8b e5 			mov	sp,bp
+	*** 000072	5d 			pop	bp
+	*** 000073	c3 			ret	
+;|*** 
+;|***    _asm {
+; Line 73
+					$I116:
+;|***       mov   ax,4
+; Line 74
+	*** 000074	b8 04 00 		mov	ax,4
+;|***       mov   cx,x
+; Line 75
+	*** 000077	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;x
+;|***       shl   cx,1
+; Line 76
+	*** 00007a	d1 e1 			shl	cx,1
+;|***       mov   MouseX,cx
+; Line 77
+	*** 00007c	89 0e 00 00 		mov	WORD PTR _MouseX,cx
+;|***       mov   dx,y
+; Line 78
+	*** 000080	8b 56 06 		mov	dx,WORD PTR [bp+6]	;y
+;|***       mov   MouseY,dx
+; Line 79
+	*** 000083	89 16 00 00 		mov	WORD PTR _MouseY,dx
+;|***       int   33h         ; set mouse cursor position
+; Line 80
+	*** 000087	cd 33 			int	51
+;|***    }
+; Line 81
+;|*** }
+; Line 82
+	*** 000089	8b e5 			mov	sp,bp
+	*** 00008b	5d 			pop	bp
+	*** 00008c	c3 			ret	
+	*** 00008d	90 			nop	
+
+_MousePOS	ENDP
+_TEXT	ENDS
+END
+;|*** 

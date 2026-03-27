@@ -1,0 +1,367 @@
+;	Static Name Aliases
+;
+	TITLE   savemode.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+PUBLIC  __current_mode
+PUBLIC  __current_video_mode
+PUBLIC  __current_video_font
+PUBLIC  __current_video_rows
+_DATA      SEGMENT
+__current_mode	DW	01H
+__current_video_mode	DW	03H
+__current_video_font	DW	012H
+__current_video_rows	DW	019H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** 
+; Line 1
+;|*** 
+;|*** /*
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** 
+;|***     Routine Name:	save_video_state
+;|*** 			restore_video_state
+;|*** 
+;|*** 
+;|***     Routine Description:
+;|*** 			preserves & restores VGA & above video state
+;|*** 
+;|*** 
+;|***     Enhancements Needed:
+;|*** 
+;|*** 
+;|***     Argument Description:
+;|*** 			void
+;|*** 
+;|*** 
+;|***     Return Value:	void
+;|*** 
+;|***     Globals Used:       _current_mode, _current_video_mode,
+;|***                         _current_video_font, _current_video_rows
+;|*** 
+;|***     Globals Modified:	None
+;|*** 
+;|***     Local Variable Descriptions:
+;|*** 
+;|*** 
+;|***     Modifications:
+;|*** 	Date		Name		Purpose
+;|*** 
+;|*** 
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** */
+;|*** 
+;|*** 
+;|*** #define EGA		0
+;|*** #define VGA		1
+;|*** 
+;|*** 
+;|*** int _current_mode = VGA ;
+;|*** 
+;|*** int _current_video_mode = 3, _current_video_font = 0x12 ;
+;|*** int _current_video_rows = 25 ;
+;|*** 
+;|*** void save_video_state (void) {
+; Line 48
+	PUBLIC	_save_video_state
+_save_video_state	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 48 		sub	sp,72
+;	num_blocks = -72
+;	return_val = -2
+;	table = -70
+;	ptable = -6
+;|*** 
+;|*** int num_blocks, return_val ;
+;|*** 
+;|*** 
+;|*** char table[64], far *ptable = table ;
+; Line 53
+	*** 000006	8d 46 ba 		lea	ax,WORD PTR [bp-70]	;table
+	*** 000009	89 46 fa 		mov	WORD PTR [bp-6],ax	;ptable
+	*** 00000c	8c 56 fc 		mov	WORD PTR [bp-4],ss
+;|*** 
+;|*** 
+;|*** 	_asm {
+; Line 56
+;|*** 
+;|*** 		mov	ah, 1ch
+; Line 58
+	*** 00000f	b4 1c 			mov	ah,28
+;|*** 		mov	al, 0
+; Line 59
+	*** 000011	b0 00 			mov	al,0
+;|*** 		mov	cx, 111b
+; Line 60
+	*** 000013	b9 07 00 		mov	cx,7
+;|*** 
+;|*** 		int	10h
+; Line 62
+	*** 000016	cd 10 			int	16
+;|*** 
+;|*** 		mov	num_blocks, bx
+; Line 64
+	*** 000018	89 5e b8 		mov	WORD PTR [bp-72],bx	;num_blocks
+;|*** 
+;|*** 		mov	return_val, ax
+; Line 66
+	*** 00001b	89 46 fe 		mov	WORD PTR [bp-2],ax	;return_val
+;|*** 
+;|*** 	}
+; Line 68
+;|*** 
+;|*** 	if ( (return_val & 0xff) != 0x1c) {
+; Line 70
+	*** 00001e	8a 46 fe 		mov	al,BYTE PTR [bp-2]	;return_val
+	*** 000021	2a e4 			sub	ah,ah
+	*** 000023	3d 1c 00 		cmp	ax,28
+	*** 000026	74 0a 			je	$I110
+;|*** 		_current_mode = EGA ;
+; Line 71
+	*** 000028	c7 06 00 00 00 00 	mov	WORD PTR __current_mode,0
+;|*** 
+;|*** 		return ;
+; Line 73
+	*** 00002e	8b e5 			mov	sp,bp
+	*** 000030	5d 			pop	bp
+	*** 000031	c3 			ret	
+;|*** 	}
+; Line 74
+;|*** 
+;|*** 
+;|*** 	_asm {
+; Line 77
+					$I110:
+;|*** 		mov	ah, 1bh
+; Line 78
+	*** 000032	b4 1b 			mov	ah,27
+;|*** 		mov	bx, 0
+; Line 79
+	*** 000034	bb 00 00 		mov	bx,0
+;|*** 		les	di, ptable
+; Line 80
+	*** 000037	c4 7e fa 		les	di,DWORD PTR [bp-6]	;ptable
+;|*** 
+;|*** 		int	10h
+; Line 82
+	*** 00003a	cd 10 			int	16
+;|*** 
+;|*** 	}
+; Line 84
+;|*** 
+;|*** 
+;|*** 	_current_video_mode = table[4] ;
+;|*** 
+;|*** 
+;|*** 	if ( (_current_video_mode <= 3) || (_current_video_mode == 7) ) {
+; Line 90
+	*** 00003c	8a 46 be 		mov	al,BYTE PTR [bp-66]
+	*** 00003f	98 			cbw	
+	*** 000040	a3 02 00 		mov	WORD PTR __current_video_mode,ax
+	*** 000043	3d 03 00 		cmp	ax,3
+	*** 000046	7e 05 			jle	$I112
+	*** 000048	3d 07 00 		cmp	ax,7
+	*** 00004b	75 27 			jne	$I111
+					$I112:
+;|*** 		if (table[35] == 8) /* 8x8 font */
+; Line 91
+	*** 00004d	80 7e dd 08 		cmp	BYTE PTR [bp-35],8
+	*** 000051	74 5d 			je	$L20000
+	*** 000053	80 7e dd 0e 		cmp	BYTE PTR [bp-35],14
+	*** 000057	75 0b 			jne	$I115
+;|*** 			_current_video_font = 0x12 ;
+;|*** 		    else if (table[35] == 14) /* 8x14 font */
+;|*** 			_current_video_font = 0x11 ;
+; Line 94
+	*** 000059	c7 06 04 00 11 00 	mov	WORD PTR __current_video_font,17
+;|*** 		    else if (table[35] == 16) /* 8x16 font */
+; Line 95
+	*** 00005f	8b e5 			mov	sp,bp
+	*** 000061	5d 			pop	bp
+	*** 000062	c3 			ret	
+	*** 000063	90 			nop	
+					$I115:
+	*** 000064	80 7e dd 10 		cmp	BYTE PTR [bp-35],16
+	*** 000068	75 40 			jne	$I124
+;|*** 			_current_video_font = 0x14 ;
+; Line 96
+	*** 00006a	c7 06 04 00 14 00 	mov	WORD PTR __current_video_font,20
+;|*** 
+;|*** 		    else {
+; Line 98
+	*** 000070	8b e5 			mov	sp,bp
+	*** 000072	5d 			pop	bp
+	*** 000073	c3 			ret	
+					$I111:
+;|*** 			_current_video_mode = 3 ;
+;|*** 			_current_video_font = 0x12 ;
+;|*** 
+;|*** 		}
+;|*** 		}
+;|*** 	    else {
+;|*** 
+;|*** 		_current_video_rows = table[34] ;
+; Line 106
+	*** 000074	8a 46 dc 		mov	al,BYTE PTR [bp-36]
+	*** 000077	98 			cbw	
+	*** 000078	a3 06 00 		mov	WORD PTR __current_video_rows,ax
+;|*** 
+;|*** 		if (table[35] == 8) /* 8x8 font */
+; Line 108
+	*** 00007b	80 7e dd 08 		cmp	BYTE PTR [bp-35],8
+	*** 00007f	75 0b 			jne	$I120
+;|*** 			_current_video_font = 0x23 ;
+; Line 109
+	*** 000081	c7 06 04 00 23 00 	mov	WORD PTR __current_video_font,35
+;|*** 		    else if (table[35] == 14) /* 8x14 font */
+; Line 110
+	*** 000087	8b e5 			mov	sp,bp
+	*** 000089	5d 			pop	bp
+	*** 00008a	c3 			ret	
+	*** 00008b	90 			nop	
+					$I120:
+	*** 00008c	80 7e dd 0e 		cmp	BYTE PTR [bp-35],14
+	*** 000090	75 0a 			jne	$I122
+;|*** 			_current_video_font = 0x22 ;
+; Line 111
+	*** 000092	c7 06 04 00 22 00 	mov	WORD PTR __current_video_font,34
+;|*** 		    else if (table[35] == 16) /* 8x16 font */
+; Line 112
+	*** 000098	8b e5 			mov	sp,bp
+	*** 00009a	5d 			pop	bp
+	*** 00009b	c3 			ret	
+					$I122:
+	*** 00009c	80 7e dd 10 		cmp	BYTE PTR [bp-35],16
+	*** 0000a0	75 08 			jne	$I124
+;|*** 			_current_video_font = 0x24 ;
+; Line 113
+	*** 0000a2	c7 06 04 00 24 00 	mov	WORD PTR __current_video_font,36
+;|*** 
+;|*** 		    else {
+; Line 115
+	*** 0000a8	eb 0c 			jmp	SHORT $I125
+					$I124:
+;|*** 			_current_video_mode = 3 ;
+; Line 116
+	*** 0000aa	c7 06 02 00 03 00 	mov	WORD PTR __current_video_mode,3
+;|*** 			_current_video_font = 0x12 ;
+; Line 117
+					$L20000:
+	*** 0000b0	c7 06 04 00 12 00 	mov	WORD PTR __current_video_font,18
+;|*** 
+;|*** 		}
+; Line 119
+					$I125:
+;|*** 
+;|*** 
+;|*** 	}
+; Line 122
+;|*** 
+;|*** 
+;|*** 
+;|*** }
+; Line 126
+	*** 0000b6	8b e5 			mov	sp,bp
+	*** 0000b8	5d 			pop	bp
+	*** 0000b9	c3 			ret	
+
+_save_video_state	ENDP
+;|*** 
+;|*** 
+;|*** void restore_video_state (void) {
+; Line 129
+	PUBLIC	_restore_video_state
+_restore_video_state	PROC NEAR
+	*** 0000ba	55 			push	bp
+	*** 0000bb	8b ec 			mov	bp,sp
+	*** 0000bd	83 ec 0a 		sub	sp,10
+;	num_blocks = -10
+;	return_val = -2
+;	font = -6
+;	mode = -4
+;	rows = -8
+;|*** 
+;|*** int num_blocks, return_val ;
+;|*** int font, mode, rows ;
+;|*** 
+;|*** 
+;|***         if (_current_mode == EGA)
+; Line 135
+	*** 0000c0	83 3e 00 00 00 		cmp	WORD PTR __current_mode,0
+	*** 0000c5	74 25 			je	$EX127
+;|***                 return ;
+;|*** 
+;|*** 
+;|*** 	font = _current_video_font ;
+; Line 139
+	*** 0000c7	a1 04 00 		mov	ax,WORD PTR __current_video_font
+	*** 0000ca	89 46 fa 		mov	WORD PTR [bp-6],ax	;font
+;|*** 	mode = _current_video_mode ;
+; Line 140
+	*** 0000cd	a1 02 00 		mov	ax,WORD PTR __current_video_mode
+	*** 0000d0	89 46 fc 		mov	WORD PTR [bp-4],ax	;mode
+;|*** 	rows = _current_video_rows ;
+; Line 141
+	*** 0000d3	a1 06 00 		mov	ax,WORD PTR __current_video_rows
+	*** 0000d6	89 46 f8 		mov	WORD PTR [bp-8],ax	;rows
+;|*** 
+;|*** 
+;|*** 	_asm {
+; Line 144
+;|*** 
+;|*** 		mov	ah, 0
+; Line 146
+	*** 0000d9	b4 00 			mov	ah,0
+;|*** 		mov	al, byte ptr mode
+; Line 147
+	*** 0000db	8a 46 fc 		mov	al,BYTE PTR [bp-4]	;mode
+;|*** 
+;|*** 		int	10h
+; Line 149
+	*** 0000de	cd 10 			int	16
+;|*** 
+;|*** 
+;|*** 		mov	ah, 11h
+; Line 152
+	*** 0000e0	b4 11 			mov	ah,17
+;|*** 		mov	al, byte ptr font
+; Line 153
+	*** 0000e2	8a 46 fa 		mov	al,BYTE PTR [bp-6]	;font
+;|*** 		mov	bl, 0
+; Line 154
+	*** 0000e5	b3 00 			mov	bl,0
+;|*** 		mov	dl, byte ptr rows
+; Line 155
+	*** 0000e7	8a 56 f8 		mov	dl,BYTE PTR [bp-8]	;rows
+;|*** 
+;|*** 		int	10h
+; Line 157
+	*** 0000ea	cd 10 			int	16
+;|*** 
+;|*** 	}
+; Line 159
+;|*** 
+;|*** 
+;|*** }
+; Line 162
+					$EX127:
+	*** 0000ec	8b e5 			mov	sp,bp
+	*** 0000ee	5d 			pop	bp
+	*** 0000ef	c3 			ret	
+
+_restore_video_state	ENDP
+_TEXT	ENDS
+END

@@ -1,0 +1,3492 @@
+;	Static Name Aliases
+;
+	TITLE   egame12.c
+	NAME    egame12
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_sub_13B96:NEAR
+EXTRN	_sub_19E44:NEAR
+EXTRN	_DrawHUDElement:NEAR
+EXTRN	__kbhit:NEAR
+EXTRN	___bios_keybrd:NEAR
+EXTRN	_itoa:NEAR
+EXTRN	_strcat:NEAR
+EXTRN	_tempStrcpy:NEAR
+EXTRN	_PrepareToExit:NEAR
+EXTRN	_strcpy:NEAR
+EXTRN	_sub_151F9:NEAR
+EXTRN	_sub_15237:NEAR
+EXTRN	_UpdateRotationMatrix:NEAR
+EXTRN	_TransformAndProjectObject_2:NEAR
+EXTRN	_sub_15557:NEAR
+EXTRN	_UpdateThrottleState:NEAR
+EXTRN	_sub_1606C:NEAR
+EXTRN	_sub_12278:NEAR
+EXTRN	_sub_1613B:NEAR
+EXTRN	_sub_2265B:FAR
+EXTRN	_sub_2267E:FAR
+EXTRN	_gfx_jump_2a:FAR
+EXTRN	_audio_jump_6a:FAR
+EXTRN	_sub_1CF64:NEAR
+EXTRN	_forceRange:NEAR
+EXTRN	_Dist2D:NEAR
+EXTRN	_ARCTAN:NEAR
+EXTRN	__aNlmul:NEAR
+EXTRN	_sinX:NEAR
+EXTRN	_cosX:NEAR
+EXTRN	_abs_word:NEAR
+EXTRN	__aNldiv:NEAR
+EXTRN	_randlmul:NEAR
+EXTRN	_makeSound:NEAR
+EXTRN	_abs:NEAR
+EXTRN	_FixedPointMul:NEAR
+EXTRN	_sub_1DB9C:NEAR
+EXTRN	_sub_13B86:NEAR
+EXTRN	_word_330BE:WORD
+EXTRN	_word_330C2:WORD
+EXTRN	_g_frameRateScaling:WORD
+EXTRN	_word_3A8FE:WORD
+EXTRN	_word_3C040:WORD
+EXTRN	_g_velocity:WORD
+EXTRN	_stru_33402:BYTE
+EXTRN	_noJoy80:BYTE
+EXTRN	_word_33442:WORD
+EXTRN	_noJoy80_2:BYTE
+EXTRN	_g_ViewY:DWORD
+EXTRN	_stru_3A95A:BYTE
+EXTRN	_byte_37F98:BYTE
+EXTRN	_g_knots:WORD
+EXTRN	_byte_37F99:BYTE
+EXTRN	_word_3BE3C:WORD
+EXTRN	_word_336E8:WORD
+EXTRN	_g_planes:BYTE
+EXTRN	_word_336EA:WORD
+EXTRN	_word_336EC:WORD
+EXTRN	_g_closestThreatIndex:WORD
+EXTRN	_keyValue:WORD
+EXTRN	_word_3BE92:WORD
+EXTRN	_g_thrust:WORD
+EXTRN	_off_38334:WORD
+EXTRN	_waypoints:BYTE
+EXTRN	_word_336F2:WORD
+EXTRN	_word_3AFA8:WORD
+EXTRN	_waypointIndex:WORD
+EXTRN	_off_3834C:WORD
+EXTRN	_g_currentWeaponType:WORD
+EXTRN	_word_336F6:WORD
+EXTRN	_off_38364:WORD
+EXTRN	_byte_37FEC:BYTE
+EXTRN	_word_3BEBC:WORD
+EXTRN	_word_3BEBE:WORD
+EXTRN	_unk_3806E:BYTE
+EXTRN	_word_3C5A4:WORD
+EXTRN	_g_viewX_:WORD
+EXTRN	_word_3C5A6:WORD
+EXTRN	_g_playerTargetIndex:WORD
+EXTRN	_word_33702:WORD
+EXTRN	_word_3BEC8:WORD
+EXTRN	_strBuf:BYTE
+EXTRN	_word_3B15A:WORD
+EXTRN	_word_3BECC:WORD
+EXTRN	_word_3BECE:WORD
+EXTRN	_word_38080:WORD
+EXTRN	_word_38084:WORD
+EXTRN	_word_38FC4:WORD
+EXTRN	_g_viewY_:WORD
+EXTRN	_word_38602:WORD
+EXTRN	_word_3370E:WORD
+EXTRN	_word_3808C:WORD
+EXTRN	_word_38090:WORD
+EXTRN	_word_3B204:BYTE
+EXTRN	_unk_38092:BYTE
+EXTRN	_word_33712:WORD
+EXTRN	_word_3B206:BYTE
+EXTRN	_word_3809A:WORD
+EXTRN	_unk_38FD0:BYTE
+EXTRN	_word_3809C:WORD
+EXTRN	_byte_3C6A0:BYTE
+EXTRN	_word_380A0:WORD
+EXTRN	_g_gees:WORD
+EXTRN	_word_380A2:WORD
+EXTRN	_word_3C6A4:WORD
+EXTRN	_word_380A4:WORD
+EXTRN	_commData:DWORD
+EXTRN	_word_38FDE:WORD
+EXTRN	_g_gunHits:WORD
+EXTRN	_word_380A6:WORD
+EXTRN	_word_38FE0:WORD
+EXTRN	_word_380AA:WORD
+EXTRN	_word_3C6AC:WORD
+EXTRN	_word_380AC:WORD
+EXTRN	_word_38FE8:WORD
+EXTRN	_g_ourHead:WORD
+EXTRN	_g_ourPitch:WORD
+EXTRN	_word_3C8B6:WORD
+EXTRN	_g_ourRoll:WORD
+EXTRN	_gameData:DWORD
+EXTRN	_g_viewZ:WORD
+EXTRN	_word_380D0:WORD
+EXTRN	_word_3B4DA:WORD
+EXTRN	_byte_380DD:BYTE
+EXTRN	_word_3C00E:WORD
+EXTRN	_g_setThrust:WORD
+EXTRN	_word_33098:WORD
+EXTRN	_word_380E2:WORD
+EXTRN	_g_playerPlaneFlags:WORD
+EXTRN	_keyScancode:WORD
+EXTRN	_word_39606:WORD
+EXTRN	_exitCode:BYTE
+EXTRN	_g_autopilotAltitude:WORD
+EXTRN	_g_ViewX:DWORD
+EXTRN	_g_missionStatus:WORD
+_DATA      SEGMENT
+$SG2028	DB	'Landing gear raised',  00H
+$SG2030	DB	'Brakes on',  00H
+$SG2067	DB	'.',  00H
+$SG2068	DB	'G',  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** // seg000 debug code (/Zi)
+;|*** #include "debug.h"
+;|*** #include "egame.h"
+;|*** #include "offsets.h"
+;|*** #include "pointers.h"
+;|*** #include "slot.h"
+;|*** #include "const.h"
+;|*** #include "comm.h"
+;|*** 
+;|*** #include <dos.h>
+;|*** #include <stdio.h>
+;|*** #include <string.h>
+;|*** 
+;|*** // ==== seg000:0x3f72 ====
+;|*** int otherKeyDispatch(void) {
+; Line 15
+	PUBLIC	_otherKeyDispatch
+_otherKeyDispatch	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 3c 		sub	sp,60
+	*** 000006	57 			push	di
+	*** 000007	56 			push	si
+;	temp_4 = -24
+;	temp_5 = -28
+;	var_3E = -4
+;	var_3C = -52
+;	var_38 = -14
+;	var_34 = -58
+;	var_32 = -46
+;	var_2C = -44
+;	var_2A = -36
+;	var_28 = -12
+;	var_24 = -50
+;	var_22 = -38
+;	var_20 = -32
+;	var_1A = -30
+;	var_18 = -8
+;	var_16 = -56
+;	var_14 = -42
+;	var_10 = -26
+;	var_E = -40
+;	var_C = -34
+;	temp_si = -6
+;	temp_di = -10
+;	temp_ax = -48
+;	temp_bx = -54
+;	temp_cx = -2
+;	temp_long_dx_ax = -22
+;	temp_2 = -16
+;	temp_3 = -18
+;|***     // Local variables corresponding to the stack frame (sub sp, 3Eh)
+;|***     int16 var_3E, var_3C, var_38, var_34, var_32, var_2C, var_2A, var_28,
+;|***      var_24, var_22, var_20, var_1A, var_18, var_16, var_14, var_10,
+;|***      var_E, var_C;
+;|*** 
+;|***     // Allocate stack, unused
+;|***     int16 temp_si;
+;|***     int16 temp_di;
+;|***     int16 temp_ax, temp_bx, temp_cx;
+;|***     int32 temp_long_dx_ax;
+;|***     int16 temp_2, temp_3, temp_4, temp_5;
+;|*** 
+;|***     // seg000:3F7A
+;|***     if (word_3BECC == 0) {
+; Line 29
+	*** 000008	83 3e 00 00 00 		cmp	WORD PTR _word_3BECC,0
+	*** 00000d	75 76 			jne	$I1986
+;|***         // seg000:3F81
+;|***         g_thrust = 
+;|***         g_setThrust = 
+;|***         g_velocity = 
+;|***         word_380D0 = 
+;|***         g_viewZ = 
+;|***         g_ourRoll = 
+;|***         g_ourPitch = 0;
+; Line 37
+	*** 00000f	2b c0 			sub	ax,ax
+	*** 000011	a3 00 00 		mov	_g_ourPitch,ax
+	*** 000014	a3 00 00 		mov	_g_ourRoll,ax
+	*** 000017	a3 00 00 		mov	_g_viewZ,ax
+	*** 00001a	a3 00 00 		mov	_word_380D0,ax
+	*** 00001d	a3 00 00 		mov	_g_velocity,ax
+	*** 000020	a3 00 00 		mov	_g_setThrust,ax
+	*** 000023	a3 00 00 		mov	_g_thrust,ax
+;|*** 
+;|***         // seg000:3F9C
+;|***         if (gameData->difficulty == 0) {
+; Line 40
+	*** 000026	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00002a	26 39 47 3e 		cmp	WORD PTR es:[bx+62],ax
+	*** 00002e	75 18 			jne	$I1987
+;|***             
+;|***             // seg000:3FA2
+;|***             g_ourHead = ((g_viewY_ - (waypoints[1].y)) < 0x8000) ? 0 : 0x8000;
+; Line 43
+	*** 000030	a1 00 00 		mov	ax,_g_viewY_
+	*** 000033	2b 06 06 00 		sub	ax,WORD PTR _waypoints+6
+	*** 000037	3d 00 80 		cmp	ax,-32768
+	*** 00003a	73 04 			jae	$L20000
+	*** 00003c	2b c0 			sub	ax,ax
+	*** 00003e	eb 03 			jmp	SHORT $L20001
+					$L20000:
+	*** 000040	b8 00 80 		mov	ax,-32768
+					$L20001:
+	*** 000043	a3 00 00 		mov	_g_ourHead,ax
+;|***         } else {
+; Line 44
+	*** 000046	eb 1c 			jmp	SHORT $I1988
+					$I1987:
+;|***             // seg000:3FBA
+;|***             g_ourHead = (gameData->theater == 6)
+;|***                ? 0  // If true, the result is 0
+;|***                : ((gameData->theater & 1) ? 0 : 0x8000); // Else, evaluate the second condition
+; Line 48
+	*** 000048	26 83 7f 38 06 		cmp	WORD PTR es:[bx+56],6
+	*** 00004d	75 04 			jne	$L20002
+	*** 00004f	2b c0 			sub	ax,ax
+	*** 000051	eb 0e 			jmp	SHORT $L20005
+					$L20002:
+	*** 000053	26 f6 47 38 01 		test	BYTE PTR es:[bx+56],1
+	*** 000058	74 04 			je	$L20004
+	*** 00005a	2b c0 			sub	ax,ax
+	*** 00005c	eb 03 			jmp	SHORT $L20005
+					$L20004:
+	*** 00005e	b8 00 80 		mov	ax,-32768
+					$L20005:
+	*** 000061	a3 00 00 		mov	_g_ourHead,ax
+;|***         }
+; Line 49
+					$I1988:
+;|*** 
+;|***         // seg000:3FDE
+;|***         if (g_planes[g_playerTargetIndex].field_6 & 0x200) {
+; Line 52
+	*** 000064	8b 1e 00 00 		mov	bx,_g_playerTargetIndex
+	*** 000068	b1 04 			mov	cl,4
+	*** 00006a	d3 e3 			shl	bx,cl
+	*** 00006c	f7 87 06 00 00 02 	test	WORD PTR _g_planes[bx+6],512
+	*** 000072	74 05 			je	$I1989
+;|***             // seg000:3FE6
+;|***             *((unsigned char*)&g_ourHead + 1) += 4;
+; Line 54
+	*** 000074	80 06 01 00 04 		add	BYTE PTR _g_ourHead+1,4
+;|***         }
+; Line 55
+;|*** 
+;|***         // seg000:3FEB
+;|***         UpdateRotationMatrix();
+; Line 58
+					$I1989:
+	*** 000079	e8 00 00 		call	_UpdateRotationMatrix
+;|***         // seg000:3FEE
+;|***         UpdateThrottleState();
+; Line 60
+	*** 00007c	e8 00 00 		call	_UpdateThrottleState
+;|***         // seg000:3FF1
+;|***         word_3BECC = 1;
+; Line 62
+	*** 00007f	c7 06 00 00 01 00 	mov	WORD PTR _word_3BECC,1
+;|***     }
+; Line 63
+;|*** 
+;|***     // seg000:3FF7
+;|***     keyScancode = 0;
+; Line 66
+					$I1986:
+	*** 000085	c7 06 00 00 00 00 	mov	WORD PTR _keyScancode,0
+;|***     // seg000:3FFD
+;|***     if (_kbhit()) {
+; Line 68
+	*** 00008b	e8 00 00 		call	__kbhit
+	*** 00008e	0b c0 			or	ax,ax
+	*** 000090	74 1e 			je	$I1993
+;|***         // seg000:4007
+;|***         keyScancode = __bios_keybrd(0);
+; Line 70
+	*** 000092	2b c0 			sub	ax,ax
+	*** 000094	50 			push	ax
+	*** 000095	e8 00 00 		call	___bios_keybrd
+	*** 000098	83 c4 02 		add	sp,2
+	*** 00009b	a3 00 00 		mov	_keyScancode,ax
+;|***         // seg000:4010
+;|***         if (word_336EA == 1) {
+; Line 72
+	*** 00009e	83 3e 00 00 01 		cmp	WORD PTR _word_336EA,1
+	*** 0000a3	75 0b 			jne	$I1993
+;|***             // seg000:4019
+;|***             word_3370E = 
+;|***             word_336EA = 
+;|***             keyValue = 0;
+; Line 76
+	*** 0000a5	2b c0 			sub	ax,ax
+	*** 0000a7	a3 00 00 		mov	_keyValue,ax
+	*** 0000aa	a3 00 00 		mov	_word_336EA,ax
+	*** 0000ad	a3 00 00 		mov	_word_3370E,ax
+;|***         }
+; Line 77
+;|***     }
+; Line 78
+					$I1993:
+;|*** 
+;|***     // seg000:4022
+;|***     while (_kbhit()) {
+; Line 81
+	*** 0000b0	e8 00 00 		call	__kbhit
+	*** 0000b3	0b c0 			or	ax,ax
+	*** 0000b5	74 0b 			je	$FB1996
+;|***         // seg000:402C
+;|***         __bios_keybrd(0); // Flush keyboard buffer
+; Line 83
+	*** 0000b7	2b c0 			sub	ax,ax
+	*** 0000b9	50 			push	ax
+	*** 0000ba	e8 00 00 		call	___bios_keybrd
+	*** 0000bd	83 c4 02 		add	sp,2
+;|***     }
+; Line 84
+	*** 0000c0	eb ee 			jmp	SHORT $I1993
+					$FB1996:
+;|*** 
+;|***     // Main key dispatch logic
+;|***     // seg000:4037
+;|***     switch (keyScancode) {
+; Line 88
+	*** 0000c2	a1 00 00 		mov	ax,_keyScancode
+	*** 0000c5	e9 b1 01 		jmp	$S1997
+;|***         // seg000:41F5
+;|***         case 0x0C2D: // Minus
+; Line 90
+					$SC2001:
+;|***             // seg000:403A
+;|***             g_setThrust = sub_1CF64(g_setThrust - 10, 0, 100);
+; Line 92
+	*** 0000c8	b8 64 00 		mov	ax,100
+	*** 0000cb	50 			push	ax
+	*** 0000cc	2b c0 			sub	ax,ax
+	*** 0000ce	50 			push	ax
+	*** 0000cf	a1 00 00 		mov	ax,_g_setThrust
+	*** 0000d2	2d 0a 00 		sub	ax,10
+	*** 0000d5	50 			push	ax
+	*** 0000d6	e8 00 00 		call	_sub_1CF64
+	*** 0000d9	83 c4 06 		add	sp,6
+	*** 0000dc	a3 00 00 		mov	_g_setThrust,ax
+;|***             // seg000:4051
+;|***             UpdateThrottleState();
+; Line 94
+	*** 0000df	e8 00 00 		call	_UpdateThrottleState
+;|***             // seg000:4054
+;|***             goto switch_break;
+; Line 96
+	*** 0000e2	e9 e7 01 		jmp	$SB1998
+;|***         // seg000:420D
+;|***         case 0x0D3D: // Equal
+; Line 98
+					$SC2003:
+;|***             // seg000:4057
+;|***             g_setThrust = sub_1CF64(g_setThrust + ((g_setThrust < 10) ? 5 : 10), 0, 100);
+; Line 100
+	*** 0000e5	b8 64 00 		mov	ax,100
+	*** 0000e8	50 			push	ax
+	*** 0000e9	2b c0 			sub	ax,ax
+	*** 0000eb	50 			push	ax
+	*** 0000ec	83 3e 00 00 0a 		cmp	WORD PTR _g_setThrust,10
+	*** 0000f1	7d 05 			jge	$L20006
+	*** 0000f3	b8 05 00 		mov	ax,5
+	*** 0000f6	eb 03 			jmp	SHORT $L20007
+					$L20006:
+	*** 0000f8	b8 0a 00 		mov	ax,10
+					$L20007:
+	*** 0000fb	03 06 00 00 		add	ax,_g_setThrust
+	*** 0000ff	50 			push	ax
+	*** 000100	e8 00 00 		call	_sub_1CF64
+	*** 000103	83 c4 06 		add	sp,6
+	*** 000106	a3 00 00 		mov	_g_setThrust,ax
+;|***             // seg000:407B
+;|***             UpdateThrottleState();
+; Line 102
+	*** 000109	e8 00 00 		call	_UpdateThrottleState
+;|***             // seg000:407E
+;|***             *((unsigned char*)&g_playerPlaneFlags) &= 0xF7; // ~8
+; Line 104
+	*** 00010c	80 26 00 00 f7 		and	BYTE PTR _g_playerPlaneFlags,247
+;|***             // seg000:4083
+;|***             goto switch_break;
+; Line 106
+	*** 000111	e9 b8 01 		jmp	$SB1998
+;|***         // seg000:421C
+;|***         case 0x1E61: // A
+; Line 108
+					$SC2004:
+;|***             // seg000:4086
+;|***             g_setThrust = 0x90;
+; Line 110
+	*** 000114	c7 06 00 00 90 00 	mov	WORD PTR _g_setThrust,144
+;|***             // seg000:408C
+;|***             UpdateThrottleState();
+; Line 112
+	*** 00011a	e8 00 00 		call	_UpdateThrottleState
+;|***             // seg000:408F
+;|***             *((unsigned char*)&g_playerPlaneFlags) &= 0xF7; // ~8
+; Line 114
+	*** 00011d	80 26 00 00 f7 		and	BYTE PTR _g_playerPlaneFlags,247
+;|***             // seg000:4094
+;|***             goto switch_break;
+; Line 116
+	*** 000122	e9 a7 01 		jmp	$SB1998
+;|***         // seg000:4205
+;|***         case 0x0D2B: // Shift-Equal
+; Line 118
+					$SC2005:
+;|***             // seg000:4097
+;|***             g_setThrust = 100;
+; Line 120
+	*** 000125	c7 06 00 00 64 00 	mov	WORD PTR _g_setThrust,100
+;|***             // seg000:409D
+;|***             UpdateThrottleState();
+; Line 122
+	*** 00012b	e8 00 00 		call	_UpdateThrottleState
+;|***             // seg000:40A0
+;|***             *((unsigned char*)&g_playerPlaneFlags) &= 0xF7; // ~8
+; Line 124
+	*** 00012e	80 26 00 00 f7 		and	BYTE PTR _g_playerPlaneFlags,247
+;|***             // seg000:40A5
+;|***             goto post_key_B_check;
+; Line 126
+	*** 000133	eb 1e 			jmp	SHORT $post_key_B_check2006
+;|***         // seg000:41FD
+;|***         case 0x0C5F: // Shift-Minus
+; Line 128
+					$SC2007:
+;|***             // seg000:40A7
+;|***             g_setThrust = 0;
+; Line 130
+	*** 000135	c7 06 00 00 00 00 	mov	WORD PTR _g_setThrust,0
+;|***             // seg000:40B4
+;|***             makeSound(0x10, 0);
+; Line 132
+	*** 00013b	2b c0 			sub	ax,ax
+	*** 00013d	50 			push	ax
+	*** 00013e	b8 10 00 		mov	ax,16
+	*** 000141	50 			push	ax
+	*** 000142	e8 00 00 		call	_makeSound
+	*** 000145	83 c4 04 		add	sp,4
+;|***             // seg000:40BA
+;|***             UpdateThrottleState();
+; Line 134
+	*** 000148	e8 00 00 		call	_UpdateThrottleState
+;|***             // seg000:40BD
+;|***             goto switch_break;
+; Line 136
+	*** 00014b	e9 7e 01 		jmp	$SB1998
+;|***         // seg000:4234
+;|***         case 0x3062: // B
+; Line 138
+					$SC2008:
+;|***             // seg000:40C0
+;|***             *((unsigned char*)&g_playerPlaneFlags) ^= 8;
+; Line 140
+	*** 00014e	80 36 00 00 08 		xor	BYTE PTR _g_playerPlaneFlags,8
+;|***         // seg000:40C5
+;|***         post_key_B_check:
+; Line 142
+					$post_key_B_check2006:
+;|***             // seg000:40C5
+;|***             if (!(*((unsigned char*)&g_playerPlaneFlags) & 8) && word_3BEBE != 0 && g_setThrust == 100) {
+; Line 144
+	*** 000153	f6 06 00 00 08 		test	BYTE PTR _g_playerPlaneFlags,8
+	*** 000158	75 22 			jne	$I2009
+	*** 00015a	83 3e 00 00 00 		cmp	WORD PTR _word_3BEBE,0
+	*** 00015f	74 1b 			je	$I2009
+	*** 000161	83 3e 00 00 64 		cmp	WORD PTR _g_setThrust,100
+	*** 000166	75 14 			jne	$I2009
+;|***                 // seg000:40DA
+;|***                 g_velocity = 0x546;
+; Line 146
+	*** 000168	c7 06 00 00 46 05 	mov	WORD PTR _g_velocity,1350
+;|***                 // seg000:40E8
+;|***                 makeSound(0x1C, 2);
+; Line 148
+	*** 00016e	b8 02 00 		mov	ax,2
+	*** 000171	50 			push	ax
+	*** 000172	b8 1c 00 		mov	ax,28
+	*** 000175	50 			push	ax
+	*** 000176	e8 00 00 		call	_makeSound
+	*** 000179	83 c4 04 		add	sp,4
+;|***             }
+; Line 149
+;|***             // seg000:40EE
+;|***             goto switch_break;
+; Line 151
+					$I2009:
+	*** 00017c	e9 4d 01 		jmp	$SB1998
+;|***         // seg000:4224
+;|***         case 0x2400: // Alt-J
+; Line 153
+					$SC2010:
+;|***             // seg000:40F1
+;|***             if (word_380E2 == 0) {
+; Line 155
+	*** 00017f	83 3e 00 00 00 		cmp	WORD PTR _word_380E2,0
+	*** 000184	75 0b 			jne	$I2011
+;|***                 // seg000:40F8
+;|***                 sub_2265B();
+; Line 157
+	*** 000186	9a 00 00 00 00 		call	FAR PTR _sub_2265B
+;|***                 // seg000:40FD
+;|***                 word_380E2 = 40;
+; Line 159
+	*** 00018b	c7 06 00 00 28 00 	mov	WORD PTR _word_380E2,40
+;|***             }
+; Line 160
+;|***             // seg000:4103
+;|***             goto switch_break;
+; Line 162
+					$I2011:
+	*** 000191	e9 38 01 		jmp	$SB1998
+;|***         // seg000:41EB
+;|***         case 0x1000: // Alt-Q
+; Line 164
+					$SC2012:
+;|***             // seg000:410A
+;|***             PrepareToExit(1);
+; Line 166
+	*** 000194	b8 01 00 		mov	ax,1
+	*** 000197	50 			push	ax
+	*** 000198	e8 00 00 		call	_PrepareToExit
+	*** 00019b	83 c4 02 		add	sp,2
+;|***             // seg000:4110
+;|***             exitCode = 0;
+; Line 168
+	*** 00019e	c6 06 00 00 00 		mov	BYTE PTR _exitCode,0
+;|***             // seg000:4115
+;|***             goto switch_break;
+; Line 170
+	*** 0001a3	e9 26 01 		jmp	$SB1998
+;|***         // seg000:422C
+;|***         case 0x3000: // Alt-B
+; Line 172
+					$SC2013:
+;|***             // seg000:4118
+;|***             if (word_330C2 != 0) {
+; Line 174
+	*** 0001a6	83 3e 00 00 00 		cmp	WORD PTR _word_330C2,0
+	*** 0001ab	74 2a 			je	$I2014
+;|***                 // seg000:4141
+;|***                 gfx_jump_2a(off_38364[0], 0, 0x61, off_38334[0], 0, 0x61, 0x140, 0x67);
+; Line 176
+	*** 0001ad	b8 67 00 		mov	ax,103
+	*** 0001b0	50 			push	ax
+	*** 0001b1	b8 40 01 		mov	ax,320
+	*** 0001b4	50 			push	ax
+	*** 0001b5	b8 61 00 		mov	ax,97
+	*** 0001b8	50 			push	ax
+	*** 0001b9	2b c0 			sub	ax,ax
+	*** 0001bb	50 			push	ax
+	*** 0001bc	8b 1e 00 00 		mov	bx,_off_38334
+	*** 0001c0	ff 37 			push	WORD PTR [bx]
+	*** 0001c2	b8 61 00 		mov	ax,97
+	*** 0001c5	50 			push	ax
+	*** 0001c6	2b c0 			sub	ax,ax
+	*** 0001c8	50 			push	ax
+	*** 0001c9	8b 1e 00 00 		mov	bx,_off_38364
+	*** 0001cd	ff 37 			push	WORD PTR [bx]
+	*** 0001cf	9a 00 00 00 00 		call	FAR PTR _gfx_jump_2a
+	*** 0001d4	83 c4 10 		add	sp,16
+;|***             }
+; Line 177
+;|***             // seg000:414C
+;|***             sub_19E44(0);
+; Line 179
+					$I2014:
+	*** 0001d7	2b c0 			sub	ax,ax
+	*** 0001d9	50 			push	ax
+	*** 0001da	e8 00 00 		call	_sub_19E44
+	*** 0001dd	83 c4 02 		add	sp,2
+;|***             // seg000:415E
+;|***             DrawHUDElement(0, 0, 0x13F, 0xC7);
+; Line 181
+	*** 0001e0	b8 c7 00 		mov	ax,199
+	*** 0001e3	50 			push	ax
+	*** 0001e4	b8 3f 01 		mov	ax,319
+	*** 0001e7	50 			push	ax
+	*** 0001e8	2b c0 			sub	ax,ax
+	*** 0001ea	50 			push	ax
+	*** 0001eb	50 			push	ax
+	*** 0001ec	e8 00 00 		call	_DrawHUDElement
+	*** 0001ef	83 c4 08 		add	sp,8
+;|***             // seg000:417B
+;|***             TransformAndProjectObject_2(0, 0, 0x71, 0x37, 0x0C, 7, 0);
+; Line 183
+	*** 0001f2	2b c0 			sub	ax,ax
+	*** 0001f4	50 			push	ax
+	*** 0001f5	b8 07 00 		mov	ax,7
+	*** 0001f8	50 			push	ax
+	*** 0001f9	b8 0c 00 		mov	ax,12
+	*** 0001fc	50 			push	ax
+	*** 0001fd	b8 37 00 		mov	ax,55
+	*** 000200	50 			push	ax
+	*** 000201	b8 71 00 		mov	ax,113
+	*** 000204	50 			push	ax
+	*** 000205	2b c0 			sub	ax,ax
+	*** 000207	50 			push	ax
+	*** 000208	50 			push	ax
+	*** 000209	e8 00 00 		call	_TransformAndProjectObject_2
+	*** 00020c	83 c4 0e 		add	sp,14
+;|***             // seg000:4181
+;|***             sub_1613B();
+; Line 185
+	*** 00020f	e8 00 00 		call	_sub_1613B
+;|***             // seg000:4184
+;|***             if (word_330C2 != 0) {
+; Line 187
+	*** 000212	83 3e 00 00 00 		cmp	WORD PTR _word_330C2,0
+	*** 000217	74 57 			je	$I2015
+;|***                 // seg000:41AD
+;|***                 gfx_jump_2a(off_38364[0], 0, 0x61, off_38334[0], 0, 0x61, 0x140, 0x67);
+; Line 189
+	*** 000219	b8 67 00 		mov	ax,103
+	*** 00021c	50 			push	ax
+	*** 00021d	b8 40 01 		mov	ax,320
+	*** 000220	50 			push	ax
+	*** 000221	b8 61 00 		mov	ax,97
+	*** 000224	50 			push	ax
+	*** 000225	2b c0 			sub	ax,ax
+	*** 000227	50 			push	ax
+	*** 000228	8b 1e 00 00 		mov	bx,_off_38334
+	*** 00022c	ff 37 			push	WORD PTR [bx]
+	*** 00022e	b8 61 00 		mov	ax,97
+	*** 000231	50 			push	ax
+	*** 000232	2b c0 			sub	ax,ax
+	*** 000234	50 			push	ax
+	*** 000235	8b 1e 00 00 		mov	bx,_off_38364
+	*** 000239	ff 37 			push	WORD PTR [bx]
+	*** 00023b	9a 00 00 00 00 		call	FAR PTR _gfx_jump_2a
+	*** 000240	83 c4 10 		add	sp,16
+;|***                 // seg000:41D7
+;|***                 gfx_jump_2a(off_38364[0], 0, 0x61, off_3834C[0], 0, 0x61, 0x140, 0x67);
+; Line 191
+	*** 000243	b8 67 00 		mov	ax,103
+	*** 000246	50 			push	ax
+	*** 000247	b8 40 01 		mov	ax,320
+	*** 00024a	50 			push	ax
+	*** 00024b	b8 61 00 		mov	ax,97
+	*** 00024e	50 			push	ax
+	*** 00024f	2b c0 			sub	ax,ax
+	*** 000251	50 			push	ax
+	*** 000252	8b 1e 00 00 		mov	bx,_off_3834C
+	*** 000256	ff 37 			push	WORD PTR [bx]
+	*** 000258	b8 61 00 		mov	ax,97
+	*** 00025b	50 			push	ax
+	*** 00025c	2b c0 			sub	ax,ax
+	*** 00025e	50 			push	ax
+	*** 00025f	8b 1e 00 00 		mov	bx,_off_38364
+	*** 000263	ff 37 			push	WORD PTR [bx]
+	*** 000265	9a 00 00 00 00 		call	FAR PTR _gfx_jump_2a
+	*** 00026a	83 c4 10 		add	sp,16
+;|***                 // seg000:41DF
+;|***                 UpdateThrottleState();
+; Line 193
+	*** 00026d	e8 00 00 		call	_UpdateThrottleState
+;|***             }
+; Line 194
+;|***             // seg000:41E2
+;|***             goto switch_break;
+; Line 196
+					$I2015:
+	*** 000270	eb 5a 			jmp	SHORT $SB1998
+;|***         // seg000:4217
+;|***         case 0x1900: // Alt-P
+; Line 198
+					$SC2016:
+;|***             // seg000:41E4
+;|***             sub_1613B();
+; Line 200
+	*** 000272	e8 00 00 		call	_sub_1613B
+;|***             // seg000:41E7
+;|***             goto switch_break;
+; Line 202
+	*** 000275	eb 55 			jmp	SHORT $SB1998
+;|***     }
+; Line 203
+	*** 000277	eb 53 			jmp	SHORT $SB1998
+					$S1997:
+	*** 000279	3d 00 10 		cmp	ax,4096
+	*** 00027c	75 03 			jne	$JCC636
+	*** 00027e	e9 13 ff 		jmp	$SC2012
+					$JCC636:
+	*** 000281	77 22 			ja	$L20008
+	*** 000283	3d 2d 0c 		cmp	ax,3117
+	*** 000286	75 03 			jne	$JCC646
+	*** 000288	e9 3d fe 		jmp	$SC2001
+					$JCC646:
+	*** 00028b	3d 5f 0c 		cmp	ax,3167
+	*** 00028e	75 03 			jne	$JCC654
+	*** 000290	e9 a2 fe 		jmp	$SC2007
+					$JCC654:
+	*** 000293	3d 2b 0d 		cmp	ax,3371
+	*** 000296	75 03 			jne	$JCC662
+	*** 000298	e9 8a fe 		jmp	$SC2005
+					$JCC662:
+	*** 00029b	3d 3d 0d 		cmp	ax,3389
+	*** 00029e	75 03 			jne	$JCC670
+	*** 0002a0	e9 42 fe 		jmp	$SC2003
+					$JCC670:
+	*** 0002a3	eb 27 			jmp	SHORT $SB1998
+					$L20008:
+	*** 0002a5	3d 00 19 		cmp	ax,6400
+	*** 0002a8	74 c8 			je	$SC2016
+	*** 0002aa	3d 61 1e 		cmp	ax,7777
+	*** 0002ad	75 03 			jne	$JCC685
+	*** 0002af	e9 62 fe 		jmp	$SC2004
+					$JCC685:
+	*** 0002b2	3d 00 24 		cmp	ax,9216
+	*** 0002b5	75 03 			jne	$JCC693
+	*** 0002b7	e9 c5 fe 		jmp	$SC2010
+					$JCC693:
+	*** 0002ba	3d 00 30 		cmp	ax,12288
+	*** 0002bd	75 03 			jne	$JCC701
+	*** 0002bf	e9 e4 fe 		jmp	$SC2013
+					$JCC701:
+	*** 0002c2	3d 62 30 		cmp	ax,12386
+	*** 0002c5	75 03 			jne	$JCC709
+	*** 0002c7	e9 84 fe 		jmp	$SC2008
+					$JCC709:
+	*** 0002ca	eb 00 			jmp	SHORT $SB1998
+					$SB1998:
+;|*** 
+;|*** // seg000:423E
+;|*** switch_break:
+;|***     // seg000:423E
+;|***     if (word_380E2 > 0) {
+; Line 208
+	*** 0002cc	83 3e 00 00 00 		cmp	WORD PTR _word_380E2,0
+	*** 0002d1	74 04 			je	$I2017
+;|***         // seg000:4245
+;|***         word_380E2--;
+; Line 210
+	*** 0002d3	ff 0e 00 00 		dec	WORD PTR _word_380E2
+;|***     }
+; Line 211
+;|*** 
+;|***     // seg000:4249
+;|***     if (g_setThrust != 0 && g_thrust == 0) {
+; Line 214
+					$I2017:
+	*** 0002d7	83 3e 00 00 00 		cmp	WORD PTR _g_setThrust,0
+	*** 0002dc	74 15 			je	$I2018
+	*** 0002de	83 3e 00 00 00 		cmp	WORD PTR _g_thrust,0
+	*** 0002e3	75 0e 			jne	$I2018
+;|***         // seg000:425F
+;|***         makeSound(0x0E, 2);
+; Line 216
+	*** 0002e5	b8 02 00 		mov	ax,2
+	*** 0002e8	50 			push	ax
+	*** 0002e9	b8 0e 00 		mov	ax,14
+	*** 0002ec	50 			push	ax
+	*** 0002ed	e8 00 00 		call	_makeSound
+	*** 0002f0	83 c4 04 		add	sp,4
+;|***     }
+; Line 217
+;|*** 
+;|***     // seg000:4265
+;|***     if (word_330BE != 0) {
+; Line 220
+					$I2018:
+	*** 0002f3	83 3e 00 00 00 		cmp	WORD PTR _word_330BE,0
+	*** 0002f8	74 0c 			je	$I2019
+;|***         // seg000:426C
+;|***         noJoy80 = 0;
+; Line 222
+	*** 0002fa	c6 06 00 00 00 		mov	BYTE PTR _noJoy80,0
+;|***         // seg000:4271
+;|***         noJoy80_2 = 0;
+; Line 224
+	*** 0002ff	c6 06 00 00 00 		mov	BYTE PTR _noJoy80_2,0
+;|***     } else {
+; Line 225
+	*** 000304	eb 3e 			jmp	SHORT $I2022
+					$I2019:
+;|***         // seg000:427C
+;|***         if (commData->setupUseJoy != 0) {
+; Line 227
+	*** 000306	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00030a	26 83 7f 72 00 		cmp	WORD PTR es:[bx+114],0
+	*** 00030f	74 07 			je	$I2021
+;|***             // seg000:4283
+;|***             sub_2267E();
+; Line 229
+	*** 000311	9a 00 00 00 00 		call	FAR PTR _sub_2267E
+;|***         } else {
+; Line 230
+	*** 000316	eb 2c 			jmp	SHORT $I2022
+					$I2021:
+;|***            
+;|***             // seg000:4294
+;|***             //temp_si = word_38602 + 1;
+;|***             noJoy80 = (unsigned char)(((int)((unsigned char)byte_37F98 - 0x80) * (word_38602 + 1)) / 3) - 0x80;
+; Line 234
+	*** 000318	8b 36 00 00 		mov	si,_word_38602
+	*** 00031c	46 			inc	si
+	*** 00031d	a0 00 00 		mov	al,_byte_37F98
+	*** 000320	2a e4 			sub	ah,ah
+	*** 000322	2d 80 00 		sub	ax,128
+	*** 000325	f7 ee 			imul	si
+	*** 000327	99 			cwd	
+	*** 000328	b9 03 00 		mov	cx,3
+	*** 00032b	f7 f9 			idiv	cx
+	*** 00032d	2c 80 			sub	al,128
+	*** 00032f	a2 00 00 		mov	_noJoy80,al
+;|***            
+;|***             // seg000:42A9
+;|***             noJoy80_2 = (unsigned char)(((int)((unsigned char)byte_37F99 - 0x80) * (word_38602 + 1)) / 3) - 0x80;
+; Line 237
+	*** 000332	a0 00 00 		mov	al,_byte_37F99
+	*** 000335	2a e4 			sub	ah,ah
+	*** 000337	2d 80 00 		sub	ax,128
+	*** 00033a	f7 ee 			imul	si
+	*** 00033c	99 			cwd	
+	*** 00033d	f7 f9 			idiv	cx
+	*** 00033f	2c 80 			sub	al,128
+	*** 000341	a2 00 00 		mov	_noJoy80_2,al
+;|***         }
+; Line 238
+					$I2022:
+;|***     }
+; Line 239
+;|*** 
+;|***     // seg000:42B6
+;|***     word_3C00E = ((uint16)noJoy80 >> 4) - 8;
+; Line 242
+	*** 000344	a0 00 00 		mov	al,_noJoy80
+	*** 000347	2a e4 			sub	ah,ah
+	*** 000349	b1 04 			mov	cl,4
+	*** 00034b	d3 e8 			shr	ax,cl
+	*** 00034d	2d 08 00 		sub	ax,8
+	*** 000350	a3 00 00 		mov	_word_3C00E,ax
+;|***     // seg000:42C5
+;|***     if (word_3C00E < 0) word_3C00E++;
+; Line 244
+	*** 000353	0b c0 			or	ax,ax
+	*** 000355	7d 04 			jge	$I2023
+	*** 000357	ff 06 00 00 		inc	WORD PTR _word_3C00E
+;|*** 
+;|***     // seg000:42CD
+;|***     word_3C5A4 = ((uint16)noJoy80_2 >> 4) - 8;
+; Line 247
+					$I2023:
+	*** 00035b	a0 00 00 		mov	al,_noJoy80_2
+	*** 00035e	2a e4 			sub	ah,ah
+	*** 000360	b1 04 			mov	cl,4
+	*** 000362	d3 e8 			shr	ax,cl
+	*** 000364	2d 08 00 		sub	ax,8
+	*** 000367	a3 00 00 		mov	_word_3C5A4,ax
+;|***     // seg000:42DC
+;|***     if (word_3C5A4 < 0) word_3C5A4++;
+; Line 249
+	*** 00036a	0b c0 			or	ax,ax
+	*** 00036c	7d 04 			jge	$I2024
+	*** 00036e	ff 06 00 00 		inc	WORD PTR _word_3C5A4
+;|***     
+;|***     // seg000:42E4
+;|***     word_3C00E = -((abs(word_3C00E) + 2) * word_3C00E) * 2;
+; Line 252
+					$I2024:
+	*** 000372	ff 36 00 00 		push	WORD PTR _word_3C00E
+	*** 000376	e8 00 00 		call	_abs
+	*** 000379	83 c4 02 		add	sp,2
+	*** 00037c	05 02 00 		add	ax,2
+	*** 00037f	f7 2e 00 00 		imul	WORD PTR _word_3C00E
+	*** 000383	f7 d8 			neg	ax
+	*** 000385	d1 e0 			shl	ax,1
+	*** 000387	a3 00 00 		mov	_word_3C00E,ax
+;|***     // seg000:42FC
+;|***     word_3C5A4 *= 6;
+; Line 254
+	*** 00038a	b8 06 00 		mov	ax,6
+	*** 00038d	f7 2e 00 00 		imul	WORD PTR _word_3C5A4
+	*** 000391	a3 00 00 		mov	_word_3C5A4,ax
+;|***     // seg000:4306
+;|***     if (word_3C5A4 < 0) {
+; Line 256
+	*** 000394	0b c0 			or	ax,ax
+	*** 000396	7d 09 			jge	$I2025
+;|***         // seg000:430E
+;|***         word_3C5A4 /= 2;
+; Line 258
+	*** 000398	b9 02 00 		mov	cx,2
+	*** 00039b	99 			cwd	
+	*** 00039c	f7 f9 			idiv	cx
+	*** 00039e	a3 00 00 		mov	_word_3C5A4,ax
+;|***     }
+; Line 259
+;|***     
+;|***     // seg000:4316
+;|***     if (word_3BEBE == g_viewZ && word_3C5A4 < 0 && g_ourPitch <= 0) {
+; Line 262
+					$I2025:
+	*** 0003a1	a1 00 00 		mov	ax,_g_viewZ
+	*** 0003a4	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 0003a8	75 14 			jne	$I2026
+	*** 0003aa	83 3e 00 00 00 		cmp	WORD PTR _word_3C5A4,0
+	*** 0003af	7d 0d 			jge	$I2026
+	*** 0003b1	83 3e 00 00 00 		cmp	WORD PTR _g_ourPitch,0
+	*** 0003b6	7f 06 			jg	$I2026
+;|***         // seg000:432A
+;|***         word_3C5A4 = 0;
+; Line 264
+	*** 0003b8	c7 06 00 00 00 00 	mov	WORD PTR _word_3C5A4,0
+;|***     }
+; Line 265
+;|*** 
+;|***     // seg000:4330
+;|***     if (g_knots > 0x15E && !(*((unsigned char*)&g_playerPlaneFlags) & 1) && word_336EC != 0) {
+; Line 268
+					$I2026:
+	*** 0003be	81 3e 00 00 5e 01 	cmp	WORD PTR _g_knots,350
+	*** 0003c4	7e 31 			jle	$I2027
+	*** 0003c6	f6 06 00 00 01 		test	BYTE PTR _g_playerPlaneFlags,1
+	*** 0003cb	75 2a 			jne	$I2027
+	*** 0003cd	83 3e 00 00 00 		cmp	WORD PTR _word_336EC,0
+	*** 0003d2	74 23 			je	$I2027
+;|***         // seg000:4346
+;|***         word_336EC = 0;
+; Line 270
+	*** 0003d4	c7 06 00 00 00 00 	mov	WORD PTR _word_336EC,0
+;|***         // seg000:434C
+;|***         *((unsigned char*)&g_playerPlaneFlags) |= 1;
+; Line 272
+	*** 0003da	80 0e 00 00 01 		or	BYTE PTR _g_playerPlaneFlags,1
+;|***         // seg000:4355
+;|***         tempStrcpy("Landing gear raised");
+; Line 274
+	*** 0003df	b8 00 00 		mov	ax,OFFSET DGROUP:$SG2028
+	*** 0003e2	50 			push	ax
+	*** 0003e3	e8 00 00 		call	_tempStrcpy
+	*** 0003e6	83 c4 02 		add	sp,2
+;|***         // seg000:4363
+;|***         makeSound(0x20, 2);
+; Line 276
+	*** 0003e9	b8 02 00 		mov	ax,2
+	*** 0003ec	50 			push	ax
+	*** 0003ed	b8 20 00 		mov	ax,32
+	*** 0003f0	50 			push	ax
+	*** 0003f1	e8 00 00 		call	_makeSound
+	*** 0003f4	83 c4 04 		add	sp,4
+;|***     }
+; Line 277
+;|***     
+;|***     // seg000:4369
+;|***     if (word_3BEBE == g_viewZ && g_setThrust == 0 && !(*((unsigned char*)&g_playerPlaneFlags) & 8)) {
+; Line 280
+					$I2027:
+	*** 0003f7	a1 00 00 		mov	ax,_g_viewZ
+	*** 0003fa	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 0003fe	75 1d 			jne	$I2029
+	*** 000400	83 3e 00 00 00 		cmp	WORD PTR _g_setThrust,0
+	*** 000405	75 16 			jne	$I2029
+	*** 000407	f6 06 00 00 08 		test	BYTE PTR _g_playerPlaneFlags,8
+	*** 00040c	75 0f 			jne	$I2029
+;|***         // seg000:4380
+;|***         *((unsigned char*)&g_playerPlaneFlags) |= 8;
+; Line 282
+	*** 00040e	80 0e 00 00 08 		or	BYTE PTR _g_playerPlaneFlags,8
+;|***         // seg000:4389
+;|***         tempStrcpy("Brakes on");
+; Line 284
+	*** 000413	b8 14 00 		mov	ax,OFFSET DGROUP:$SG2030
+	*** 000416	50 			push	ax
+	*** 000417	e8 00 00 		call	_tempStrcpy
+	*** 00041a	83 c4 02 		add	sp,2
+;|***     }
+; Line 285
+;|*** 
+;|***     // seg000:438F
+;|***     if (word_3C00E != 0 || word_3C5A4 != 0) {
+; Line 288
+					$I2029:
+	*** 00041d	83 3e 00 00 00 		cmp	WORD PTR _word_3C00E,0
+	*** 000422	75 07 			jne	$I2032
+	*** 000424	83 3e 00 00 00 		cmp	WORD PTR _word_3C5A4,0
+	*** 000429	74 06 			je	$I2031
+					$I2032:
+;|***         // seg000:439D
+;|***         g_autopilotAltitude = 0;
+; Line 290
+	*** 00042b	c7 06 00 00 00 00 	mov	WORD PTR _g_autopilotAltitude,0
+;|***     }
+; Line 291
+;|***     
+;|***     // seg000:43A3
+;|***     if (g_autopilotAltitude != 0)
+; Line 294
+					$I2031:
+	*** 000431	83 3e 00 00 00 		cmp	WORD PTR _g_autopilotAltitude,0
+	*** 000436	75 03 			jne	$JCC1078
+	*** 000438	e9 77 03 		jmp	$I2045
+					$JCC1078:
+;|***     {
+; Line 295
+;|***         // seg000:43AD
+;|***         var_2C = (word_336EA != 0) ? (int16)((word_38FE0 & 0xF) << 8) - 0x800
+;|***                                    : 0;
+; Line 298
+	*** 00043b	83 3e 00 00 00 		cmp	WORD PTR _word_336EA,0
+	*** 000440	74 11 			je	$L20009
+	*** 000442	a1 00 00 		mov	ax,_word_38FE0
+	*** 000445	25 0f 00 		and	ax,15
+	*** 000448	8b c8 			mov	cx,ax
+	*** 00044a	8a e1 			mov	ah,cl
+	*** 00044c	2a c0 			sub	al,al
+	*** 00044e	2d 00 08 		sub	ax,2048
+	*** 000451	eb 02 			jmp	SHORT $L20010
+					$L20009:
+	*** 000453	2b c0 			sub	ax,ax
+					$L20010:
+	*** 000455	89 46 d4 		mov	WORD PTR [bp-44],ax	;var_2C
+;|*** 
+;|***         // seg000:43DE
+;|***         var_2C = forceRange(var_2C - g_ourHead + word_3BE92, 0xEC00, 0x1400) * 2;
+; Line 301
+	*** 000458	b8 00 14 		mov	ax,5120
+	*** 00045b	50 			push	ax
+	*** 00045c	b8 00 ec 		mov	ax,-5120
+	*** 00045f	50 			push	ax
+	*** 000460	8b 46 d4 		mov	ax,WORD PTR [bp-44]	;var_2C
+	*** 000463	2b 06 00 00 		sub	ax,_g_ourHead
+	*** 000467	03 06 00 00 		add	ax,_word_3BE92
+	*** 00046b	50 			push	ax
+	*** 00046c	e8 00 00 		call	_forceRange
+	*** 00046f	83 c4 06 		add	sp,6
+	*** 000472	d1 e0 			shl	ax,1
+	*** 000474	89 46 d4 		mov	WORD PTR [bp-44],ax	;var_2C
+;|*** 
+;|***         // seg000:43FD
+;|***         word_3C00E = -sub_1CF64((var_2C - g_ourRoll) >> 6, -24, 24);
+; Line 304
+	*** 000477	b8 18 00 		mov	ax,24
+	*** 00047a	50 			push	ax
+	*** 00047b	b8 e8 ff 		mov	ax,-24
+	*** 00047e	50 			push	ax
+	*** 00047f	8b 46 d4 		mov	ax,WORD PTR [bp-44]	;var_2C
+	*** 000482	2b 06 00 00 		sub	ax,_g_ourRoll
+	*** 000486	b1 06 			mov	cl,6
+	*** 000488	d3 f8 			sar	ax,cl
+	*** 00048a	50 			push	ax
+	*** 00048b	e8 00 00 		call	_sub_1CF64
+	*** 00048e	83 c4 06 		add	sp,6
+	*** 000491	f7 d8 			neg	ax
+	*** 000493	a3 00 00 		mov	_word_3C00E,ax
+;|*** 
+;|***         // seg000:4420
+;|***         var_14 = forceRange(((g_autopilotAltitude - g_viewZ) << 4) - word_38FC4, 0xEC00, 0xC00);
+; Line 307
+	*** 000496	b8 00 0c 		mov	ax,3072
+	*** 000499	50 			push	ax
+	*** 00049a	b8 00 ec 		mov	ax,-5120
+	*** 00049d	50 			push	ax
+	*** 00049e	a1 00 00 		mov	ax,_g_autopilotAltitude
+	*** 0004a1	2b 06 00 00 		sub	ax,_g_viewZ
+	*** 0004a5	b1 04 			mov	cl,4
+	*** 0004a7	d3 e0 			shl	ax,cl
+	*** 0004a9	2b 06 00 00 		sub	ax,_word_38FC4
+	*** 0004ad	50 			push	ax
+	*** 0004ae	e8 00 00 		call	_forceRange
+	*** 0004b1	83 c4 06 		add	sp,6
+	*** 0004b4	89 46 d6 		mov	WORD PTR [bp-42],ax	;var_14
+;|*** 
+;|***         // seg000:443D
+;|***         word_3C5A4 = sub_1CF64((var_14 - g_ourPitch) >> 7, -8, 8);
+; Line 310
+	*** 0004b7	b8 08 00 		mov	ax,8
+	*** 0004ba	50 			push	ax
+	*** 0004bb	b8 f8 ff 		mov	ax,-8
+	*** 0004be	50 			push	ax
+	*** 0004bf	8b 46 d6 		mov	ax,WORD PTR [bp-42]	;var_14
+	*** 0004c2	2b 06 00 00 		sub	ax,_g_ourPitch
+	*** 0004c6	b1 07 			mov	cl,7
+	*** 0004c8	d3 f8 			sar	ax,cl
+	*** 0004ca	50 			push	ax
+	*** 0004cb	e8 00 00 		call	_sub_1CF64
+	*** 0004ce	83 c4 06 		add	sp,6
+	*** 0004d1	a3 00 00 		mov	_word_3C5A4,ax
+;|*** 
+;|***         // seg000:4446
+;|***         if (waypointIndex == 3)
+; Line 313
+	*** 0004d4	83 3e 00 00 03 		cmp	WORD PTR _waypointIndex,3
+	*** 0004d9	74 03 			je	$JCC1241
+	*** 0004db	e9 d4 02 		jmp	$I2045
+					$JCC1241:
+;|***         {
+; Line 314
+;|***             // seg000:4450
+;|***             var_3E = word_3AFA8;
+; Line 316
+	*** 0004de	a1 00 00 		mov	ax,_word_3AFA8
+	*** 0004e1	89 46 fc 		mov	WORD PTR [bp-4],ax	;var_3E
+;|***             // seg000:4456
+;|***             var_10 = word_3B15A;
+; Line 318
+	*** 0004e4	a1 00 00 		mov	ax,_word_3B15A
+	*** 0004e7	89 46 e6 		mov	WORD PTR [bp-26],ax	;var_10
+;|*** 
+;|***             // seg000:4462
+;|***             var_2A = g_planes[var_10].field_0 - g_viewX_;
+; Line 321
+	*** 0004ea	8b f0 			mov	si,ax
+	*** 0004ec	b1 04 			mov	cl,4
+	*** 0004ee	d3 e6 			shl	si,cl
+	*** 0004f0	8b 84 00 00 		mov	ax,WORD PTR _g_planes[si]
+	*** 0004f4	2b 06 00 00 		sub	ax,_g_viewX_
+	*** 0004f8	89 46 dc 		mov	WORD PTR [bp-36],ax	;var_2A
+;|***             // seg000:446D
+;|***             var_34 = g_planes[var_10].field_2 - g_viewY_;
+; Line 323
+	*** 0004fb	8b 84 02 00 		mov	ax,WORD PTR _g_planes[si+2]
+	*** 0004ff	2b 06 00 00 		sub	ax,_g_viewY_
+	*** 000503	89 46 c6 		mov	WORD PTR [bp-58],ax	;var_34
+;|*** 
+;|***             // seg000:4478
+;|***             if (!(g_planes[var_10].field_6 & 0x200))
+; Line 326
+	*** 000506	f7 84 06 00 00 02 	test	WORD PTR _g_planes[si+6],512
+	*** 00050c	75 0c 			jne	$I2035
+;|***             {
+; Line 327
+;|***                 // seg000:4481
+;|***                 var_3E = -abs_word(var_34);
+; Line 329
+	*** 00050e	50 			push	ax
+	*** 00050f	e8 00 00 		call	_abs_word
+	*** 000512	83 c4 02 		add	sp,2
+	*** 000515	f7 d8 			neg	ax
+	*** 000517	89 46 fc 		mov	WORD PTR [bp-4],ax	;var_3E
+;|***             }
+; Line 330
+;|*** 
+;|***             // seg000:4493
+;|***             var_34 += ((g_planes[var_10].field_6 & 0x200) ? 0x1E : 0x40) * var_3E;
+; Line 333
+					$I2035:
+	*** 00051a	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;var_10
+	*** 00051d	b1 04 			mov	cl,4
+	*** 00051f	d3 e3 			shl	bx,cl
+	*** 000521	f7 87 06 00 00 02 	test	WORD PTR _g_planes[bx+6],512
+	*** 000527	74 05 			je	$L20011
+	*** 000529	b8 1e 00 		mov	ax,30
+	*** 00052c	eb 03 			jmp	SHORT $L20012
+					$L20011:
+	*** 00052e	b8 40 00 		mov	ax,64
+					$L20012:
+	*** 000531	f7 6e fc 		imul	WORD PTR [bp-4]	;var_3E
+	*** 000534	01 46 c6 		add	WORD PTR [bp-58],ax	;var_34
+;|*** 
+;|***             // seg000:44A9
+;|***             var_2C = abs(g_ourHead);
+; Line 336
+	*** 000537	ff 36 00 00 		push	WORD PTR _g_ourHead
+	*** 00053b	e8 00 00 		call	_abs
+	*** 00053e	83 c4 02 		add	sp,2
+	*** 000541	89 46 d4 		mov	WORD PTR [bp-44],ax	;var_2C
+;|***             // seg000:44B6
+;|***             if (var_3E == -1)
+; Line 338
+	*** 000544	83 7e fc ff 		cmp	WORD PTR [bp-4],-1	;var_3E
+	*** 000548	75 20 			jne	$I2036
+;|***             {
+; Line 339
+;|***                 // seg000:44BC
+;|***                 var_2A = -var_2A;
+; Line 341
+	*** 00054a	8b 46 dc 		mov	ax,WORD PTR [bp-36]	;var_2A
+	*** 00054d	f7 d8 			neg	ax
+	*** 00054f	89 46 dc 		mov	WORD PTR [bp-36],ax	;var_2A
+;|***                 // seg000:44C4
+;|***                 var_34 = -var_34;
+; Line 343
+	*** 000552	8b 46 c6 		mov	ax,WORD PTR [bp-58]	;var_34
+	*** 000555	f7 d8 			neg	ax
+	*** 000557	89 46 c6 		mov	WORD PTR [bp-58],ax	;var_34
+;|***                 // seg000:44D3
+;|***                 var_2C = abs(g_ourHead - 0x8000);
+; Line 345
+	*** 00055a	a1 00 00 		mov	ax,_g_ourHead
+	*** 00055d	2d 00 80 		sub	ax,-32768
+	*** 000560	50 			push	ax
+	*** 000561	e8 00 00 		call	_abs
+	*** 000564	83 c4 02 		add	sp,2
+	*** 000567	89 46 d4 		mov	WORD PTR [bp-44],ax	;var_2C
+;|***             }
+; Line 346
+;|*** 
+;|***             // seg000:4514
+;|***             var_14 = sub_1CF64((abs(var_2A) + abs(var_34)) * 2 + var_2C / 32, 50, 0x1000);
+; Line 349
+					$I2036:
+	*** 00056a	b8 00 10 		mov	ax,4096
+	*** 00056d	50 			push	ax
+	*** 00056e	b8 32 00 		mov	ax,50
+	*** 000571	50 			push	ax
+	*** 000572	ff 76 c6 		push	WORD PTR [bp-58]	;var_34
+	*** 000575	e8 00 00 		call	_abs
+	*** 000578	83 c4 02 		add	sp,2
+	*** 00057b	ff 76 dc 		push	WORD PTR [bp-36]	;var_2A
+	*** 00057e	8b f0 			mov	si,ax
+	*** 000580	e8 00 00 		call	_abs
+	*** 000583	83 c4 02 		add	sp,2
+	*** 000586	03 c6 			add	ax,si
+	*** 000588	d1 e0 			shl	ax,1
+	*** 00058a	8b c8 			mov	cx,ax
+	*** 00058c	8b 46 d4 		mov	ax,WORD PTR [bp-44]	;var_2C
+	*** 00058f	8b d9 			mov	bx,cx
+	*** 000591	99 			cwd	
+	*** 000592	33 c2 			xor	ax,dx
+	*** 000594	2b c2 			sub	ax,dx
+	*** 000596	b9 05 00 		mov	cx,5
+	*** 000599	d3 f8 			sar	ax,cl
+	*** 00059b	33 c2 			xor	ax,dx
+	*** 00059d	2b c2 			sub	ax,dx
+	*** 00059f	03 d8 			add	bx,ax
+	*** 0005a1	53 			push	bx
+	*** 0005a2	e8 00 00 		call	_sub_1CF64
+	*** 0005a5	83 c4 06 		add	sp,6
+	*** 0005a8	89 46 d6 		mov	WORD PTR [bp-42],ax	;var_14
+;|***             // seg000:451D
+;|***             if (var_14 < 0x1000)
+; Line 351
+	*** 0005ab	3d 00 10 		cmp	ax,4096
+	*** 0005ae	7d 03 			jge	$I2037
+;|***             {
+; Line 352
+;|***                 // seg000:4522
+;|***                 sub_1DB9C();
+; Line 354
+	*** 0005b0	e8 00 00 		call	_sub_1DB9C
+;|***             }
+; Line 355
+;|*** 
+;|***             // seg000:452C
+;|***             if (g_planes[var_10].field_6 & 0x200)
+; Line 358
+					$I2037:
+	*** 0005b3	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;var_10
+	*** 0005b6	b1 04 			mov	cl,4
+	*** 0005b8	d3 e3 			shl	bx,cl
+	*** 0005ba	f7 87 06 00 00 02 	test	WORD PTR _g_planes[bx+6],512
+	*** 0005c0	74 04 			je	$I2038
+;|***             {
+; Line 359
+;|***                 // seg000:4534
+;|***                 var_14 += 100;
+; Line 361
+	*** 0005c2	83 46 d6 64 		add	WORD PTR [bp-42],100	;var_14
+;|***             }
+; Line 362
+;|*** 
+;|***             // seg000:4538
+;|***             if (word_33702 != 0 && abs(var_2C) < 0x200)
+; Line 365
+					$I2038:
+	*** 0005c6	83 3e 00 00 00 		cmp	WORD PTR _word_33702,0
+	*** 0005cb	74 13 			je	$I2039
+	*** 0005cd	ff 76 d4 		push	WORD PTR [bp-44]	;var_2C
+	*** 0005d0	e8 00 00 		call	_abs
+	*** 0005d3	83 c4 02 		add	sp,2
+	*** 0005d6	3d 00 02 		cmp	ax,512
+	*** 0005d9	7d 05 			jge	$I2039
+;|***             {
+; Line 366
+;|***                 // seg000:454D
+;|***                 var_14 = -20;
+; Line 368
+	*** 0005db	c7 46 d6 ec ff 		mov	WORD PTR [bp-42],-20	;var_14
+;|***             }
+; Line 369
+;|*** 
+;|***             // seg000:4552
+;|***             var_34 = g_planes[var_10].field_2 + (((g_planes[var_10].field_6 & 0x200) ? 0x1C : 0x38) * var_3E);
+; Line 372
+					$I2039:
+	*** 0005e0	8b 76 e6 		mov	si,WORD PTR [bp-26]	;var_10
+	*** 0005e3	b1 04 			mov	cl,4
+	*** 0005e5	d3 e6 			shl	si,cl
+	*** 0005e7	f7 84 06 00 00 02 	test	WORD PTR _g_planes[si+6],512
+	*** 0005ed	74 05 			je	$L20013
+	*** 0005ef	b8 1c 00 		mov	ax,28
+	*** 0005f2	eb 03 			jmp	SHORT $L20014
+					$L20013:
+	*** 0005f4	b8 38 00 		mov	ax,56
+					$L20014:
+	*** 0005f7	f7 6e fc 		imul	WORD PTR [bp-4]	;var_3E
+	*** 0005fa	03 84 02 00 		add	ax,WORD PTR _g_planes[si+2]
+	*** 0005fe	89 46 c6 		mov	WORD PTR [bp-58],ax	;var_34
+;|*** 
+;|***             // seg000:459F
+;|***             var_34 += sub_1CF64((abs(var_2A) * 4) + (var_2C / 16), 0, 0xC00) * var_3E;
+; Line 375
+	*** 000601	b8 00 0c 		mov	ax,3072
+	*** 000604	50 			push	ax
+	*** 000605	2b c0 			sub	ax,ax
+	*** 000607	50 			push	ax
+	*** 000608	ff 76 dc 		push	WORD PTR [bp-36]	;var_2A
+	*** 00060b	e8 00 00 		call	_abs
+	*** 00060e	83 c4 02 		add	sp,2
+	*** 000611	d1 e0 			shl	ax,1
+	*** 000613	d1 e0 			shl	ax,1
+	*** 000615	8b c8 			mov	cx,ax
+	*** 000617	8b 46 d4 		mov	ax,WORD PTR [bp-44]	;var_2C
+	*** 00061a	8b d9 			mov	bx,cx
+	*** 00061c	99 			cwd	
+	*** 00061d	33 c2 			xor	ax,dx
+	*** 00061f	2b c2 			sub	ax,dx
+	*** 000621	b9 04 00 		mov	cx,4
+	*** 000624	d3 f8 			sar	ax,cl
+	*** 000626	33 c2 			xor	ax,dx
+	*** 000628	2b c2 			sub	ax,dx
+	*** 00062a	03 c3 			add	ax,bx
+	*** 00062c	50 			push	ax
+	*** 00062d	e8 00 00 		call	_sub_1CF64
+	*** 000630	83 c4 06 		add	sp,6
+	*** 000633	f7 6e fc 		imul	WORD PTR [bp-4]	;var_3E
+	*** 000636	01 46 c6 		add	WORD PTR [bp-58],ax	;var_34
+;|*** 
+;|***             // seg000:45AB
+;|***             *((unsigned char *)&g_playerPlaneFlags) &= 0xF7;
+; Line 378
+	*** 000639	80 26 00 00 f7 		and	BYTE PTR _g_playerPlaneFlags,247
+;|*** 
+;|***             // seg000:45B0
+;|***             if (var_2C > 0x4000)
+; Line 381
+	*** 00063e	81 7e d4 00 40 		cmp	WORD PTR [bp-44],16384	;var_2C
+	*** 000643	7e 15 			jle	$I2040
+;|***             {
+; Line 382
+;|***                 // seg000:45BE
+;|***                 var_2A = g_planes[var_10].field_0;
+; Line 384
+	*** 000645	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;var_10
+	*** 000648	b1 04 			mov	cl,4
+	*** 00064a	d3 e3 			shl	bx,cl
+	*** 00064c	8b 87 00 00 		mov	ax,WORD PTR _g_planes[bx]
+	*** 000650	89 46 dc 		mov	WORD PTR [bp-36],ax	;var_2A
+;|***                 // seg000:45C5
+;|***                 var_14 = 0x1000;
+; Line 386
+	*** 000653	c7 46 d6 00 10 		mov	WORD PTR [bp-42],4096	;var_14
+;|***             }
+; Line 387
+;|***             else
+; Line 388
+	*** 000658	eb 28 			jmp	SHORT $I2042
+					$I2040:
+;|***             {
+; Line 389
+;|***                 // seg000:45CC
+;|***                 var_2A = g_planes[var_10].field_0 + (var_2A * var_3E * 2);
+; Line 391
+	*** 00065a	8b 46 dc 		mov	ax,WORD PTR [bp-36]	;var_2A
+	*** 00065d	f7 6e fc 		imul	WORD PTR [bp-4]	;var_3E
+	*** 000660	d1 e0 			shl	ax,1
+	*** 000662	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;var_10
+	*** 000665	b1 04 			mov	cl,4
+	*** 000667	d3 e3 			shl	bx,cl
+	*** 000669	03 87 00 00 		add	ax,WORD PTR _g_planes[bx]
+	*** 00066d	89 46 dc 		mov	WORD PTR [bp-36],ax	;var_2A
+;|***                 // seg000:45E5
+;|***                 if (g_setThrust * 80 < g_knots)
+; Line 393
+	*** 000670	b8 50 00 		mov	ax,80
+	*** 000673	f7 2e 00 00 		imul	WORD PTR _g_setThrust
+	*** 000677	3b 06 00 00 		cmp	ax,_g_knots
+	*** 00067b	7d 05 			jge	$I2042
+;|***                 {
+; Line 394
+;|***                     // seg000:45EF
+;|***                     *((unsigned char *)&g_playerPlaneFlags) |= 8;
+; Line 396
+	*** 00067d	80 0e 00 00 08 		or	BYTE PTR _g_playerPlaneFlags,8
+;|***                 }
+; Line 397
+;|***             }
+; Line 398
+					$I2042:
+;|*** 
+;|***             // seg000:4603
+;|***             var_E = ARCTAN(var_2A - g_viewX_, g_viewY_ - var_34);
+; Line 401
+	*** 000682	a1 00 00 		mov	ax,_g_viewY_
+	*** 000685	2b 46 c6 		sub	ax,WORD PTR [bp-58]	;var_34
+	*** 000688	50 			push	ax
+	*** 000689	8b 46 dc 		mov	ax,WORD PTR [bp-36]	;var_2A
+	*** 00068c	2b 06 00 00 		sub	ax,_g_viewX_
+	*** 000690	50 			push	ax
+	*** 000691	e8 00 00 		call	_ARCTAN
+	*** 000694	83 c4 04 		add	sp,4
+	*** 000697	89 46 d8 		mov	WORD PTR [bp-40],ax	;var_E
+;|***             // seg000:460C
+;|***             var_3C = (int16)g_knots / 16;
+; Line 403
+	*** 00069a	a1 00 00 		mov	ax,_g_knots
+	*** 00069d	99 			cwd	
+	*** 00069e	33 c2 			xor	ax,dx
+	*** 0006a0	2b c2 			sub	ax,dx
+	*** 0006a2	b9 04 00 		mov	cx,4
+	*** 0006a5	d3 f8 			sar	ax,cl
+	*** 0006a7	33 c2 			xor	ax,dx
+	*** 0006a9	2b c2 			sub	ax,dx
+	*** 0006ab	89 46 cc 		mov	WORD PTR [bp-52],ax	;var_3C
+;|*** 
+;|***             // seg000:4638
+;|***             var_2C = forceRange(var_E - g_ourHead, (-var_3C) << 8, var_3C << 8) * 2;
+; Line 406
+	*** 0006ae	8a 66 cc 		mov	ah,BYTE PTR [bp-52]	;var_3C
+	*** 0006b1	2a c0 			sub	al,al
+	*** 0006b3	50 			push	ax
+	*** 0006b4	8b 46 cc 		mov	ax,WORD PTR [bp-52]	;var_3C
+	*** 0006b7	f7 d8 			neg	ax
+	*** 0006b9	8a e8 			mov	ch,al
+	*** 0006bb	2a c9 			sub	cl,cl
+	*** 0006bd	51 			push	cx
+	*** 0006be	8b 46 d8 		mov	ax,WORD PTR [bp-40]	;var_E
+	*** 0006c1	2b 06 00 00 		sub	ax,_g_ourHead
+	*** 0006c5	50 			push	ax
+	*** 0006c6	e8 00 00 		call	_forceRange
+	*** 0006c9	83 c4 06 		add	sp,6
+	*** 0006cc	d1 e0 			shl	ax,1
+	*** 0006ce	89 46 d4 		mov	WORD PTR [bp-44],ax	;var_2C
+;|*** 
+;|***             // seg000:4643
+;|***             if (word_33702 != 0)
+; Line 409
+	*** 0006d1	83 3e 00 00 00 		cmp	WORD PTR _word_33702,0
+	*** 0006d6	74 05 			je	$I2043
+;|***             {
+; Line 410
+;|***                 // seg000:464A
+;|***                 var_2C = 0;
+; Line 412
+	*** 0006d8	c7 46 d4 00 00 		mov	WORD PTR [bp-44],0	;var_2C
+;|***             }
+; Line 413
+;|*** 
+;|***             // seg000:4663
+;|***             word_3C00E = -sub_1CF64((var_2C - g_ourRoll) >> 6, -32, 32);
+; Line 416
+					$I2043:
+	*** 0006dd	b8 20 00 		mov	ax,32
+	*** 0006e0	50 			push	ax
+	*** 0006e1	b8 e0 ff 		mov	ax,-32
+	*** 0006e4	50 			push	ax
+	*** 0006e5	8b 46 d4 		mov	ax,WORD PTR [bp-44]	;var_2C
+	*** 0006e8	2b 06 00 00 		sub	ax,_g_ourRoll
+	*** 0006ec	b1 06 			mov	cl,6
+	*** 0006ee	d3 f8 			sar	ax,cl
+	*** 0006f0	50 			push	ax
+	*** 0006f1	e8 00 00 		call	_sub_1CF64
+	*** 0006f4	83 c4 06 		add	sp,6
+	*** 0006f7	f7 d8 			neg	ax
+	*** 0006f9	a3 00 00 		mov	_word_3C00E,ax
+;|*** 
+;|***             // seg000:46A5
+;|***             g_setThrust = sub_1CF64((var_14 / 64) + (abs(var_2C) / 128), 35, 80);
+; Line 419
+	*** 0006fc	b8 50 00 		mov	ax,80
+	*** 0006ff	50 			push	ax
+	*** 000700	b8 23 00 		mov	ax,35
+	*** 000703	50 			push	ax
+	*** 000704	ff 76 d4 		push	WORD PTR [bp-44]	;var_2C
+	*** 000707	e8 00 00 		call	_abs
+	*** 00070a	83 c4 02 		add	sp,2
+	*** 00070d	99 			cwd	
+	*** 00070e	33 c2 			xor	ax,dx
+	*** 000710	2b c2 			sub	ax,dx
+	*** 000712	b9 07 00 		mov	cx,7
+	*** 000715	d3 f8 			sar	ax,cl
+	*** 000717	33 c2 			xor	ax,dx
+	*** 000719	2b c2 			sub	ax,dx
+	*** 00071b	8b c8 			mov	cx,ax
+	*** 00071d	8b 46 d6 		mov	ax,WORD PTR [bp-42]	;var_14
+	*** 000720	8b d9 			mov	bx,cx
+	*** 000722	99 			cwd	
+	*** 000723	33 c2 			xor	ax,dx
+	*** 000725	2b c2 			sub	ax,dx
+	*** 000727	b9 06 00 		mov	cx,6
+	*** 00072a	d3 f8 			sar	ax,cl
+	*** 00072c	33 c2 			xor	ax,dx
+	*** 00072e	2b c2 			sub	ax,dx
+	*** 000730	03 d8 			add	bx,ax
+	*** 000732	53 			push	bx
+	*** 000733	e8 00 00 		call	_sub_1CF64
+	*** 000736	83 c4 06 		add	sp,6
+	*** 000739	a3 00 00 		mov	_g_setThrust,ax
+;|***             // seg000:46AE
+;|***             UpdateThrottleState();
+; Line 421
+	*** 00073c	e8 00 00 		call	_UpdateThrottleState
+;|*** 
+;|***             // seg000:46CF
+;|***             var_14 = forceRange(((var_14 - g_viewZ) >> 3) + (word_38FC4 >> 7), -24, 24);
+; Line 424
+	*** 00073f	b8 18 00 		mov	ax,24
+	*** 000742	50 			push	ax
+	*** 000743	b8 e8 ff 		mov	ax,-24
+	*** 000746	50 			push	ax
+	*** 000747	8b 46 d6 		mov	ax,WORD PTR [bp-42]	;var_14
+	*** 00074a	2b 06 00 00 		sub	ax,_g_viewZ
+	*** 00074e	b1 03 			mov	cl,3
+	*** 000750	d3 f8 			sar	ax,cl
+	*** 000752	8b 16 00 00 		mov	dx,_word_38FC4
+	*** 000756	b1 07 			mov	cl,7
+	*** 000758	d3 fa 			sar	dx,cl
+	*** 00075a	03 c2 			add	ax,dx
+	*** 00075c	50 			push	ax
+	*** 00075d	e8 00 00 		call	_forceRange
+	*** 000760	83 c4 06 		add	sp,6
+	*** 000763	89 46 d6 		mov	WORD PTR [bp-42],ax	;var_14
+;|*** 
+;|***             // seg000:46EE
+;|***             word_3C5A4 = sub_1CF64(var_14 - (g_ourPitch >> 7), -16, 16);
+; Line 427
+	*** 000766	b8 10 00 		mov	ax,16
+	*** 000769	50 			push	ax
+	*** 00076a	b8 f0 ff 		mov	ax,-16
+	*** 00076d	50 			push	ax
+	*** 00076e	8b 46 d6 		mov	ax,WORD PTR [bp-42]	;var_14
+	*** 000771	8b 16 00 00 		mov	dx,_g_ourPitch
+	*** 000775	b1 07 			mov	cl,7
+	*** 000777	d3 fa 			sar	dx,cl
+	*** 000779	2b c2 			sub	ax,dx
+	*** 00077b	50 			push	ax
+	*** 00077c	e8 00 00 		call	_sub_1CF64
+	*** 00077f	83 c4 06 		add	sp,6
+	*** 000782	a3 00 00 		mov	_word_3C5A4,ax
+;|*** 
+;|***             // seg000:46F7
+;|***             if (g_knots < 0x15E)
+; Line 430
+	*** 000785	81 3e 00 00 5e 01 	cmp	WORD PTR _g_knots,350
+	*** 00078b	7d 05 			jge	$I2044
+;|***             {
+; Line 431
+;|***                 // seg000:46FF
+;|***                 *((unsigned char *)&g_playerPlaneFlags) &= 0xFE;
+; Line 433
+	*** 00078d	80 26 00 00 fe 		and	BYTE PTR _g_playerPlaneFlags,254
+;|***             }
+; Line 434
+;|*** 
+;|***             // seg000:4704
+;|***             if (word_3BEBE == g_viewZ)
+; Line 437
+					$I2044:
+	*** 000792	a1 00 00 		mov	ax,_g_viewZ
+	*** 000795	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 000799	75 17 			jne	$I2045
+;|***             {
+; Line 438
+;|***                 // seg000:470D
+;|***                 g_setThrust = 0;
+; Line 440
+	*** 00079b	c7 06 00 00 00 00 	mov	WORD PTR _g_setThrust,0
+;|***                 // seg000:4713
+;|***                 word_3C00E = 0;
+; Line 442
+	*** 0007a1	c7 06 00 00 00 00 	mov	WORD PTR _word_3C00E,0
+;|***                 // seg000:4719
+;|***                 g_playerPlaneFlags |= 8;
+; Line 444
+	*** 0007a7	80 0e 00 00 08 		or	BYTE PTR _g_playerPlaneFlags,8
+;|***                 // seg000:471E
+;|***                 word_3C5A4 = 0;
+; Line 446
+	*** 0007ac	c7 06 00 00 00 00 	mov	WORD PTR _word_3C5A4,0
+;|***             }
+; Line 447
+;|***         }
+; Line 448
+					$I2045:
+;|***     }
+; Line 449
+;|***     // seg000:4724
+;|***     if (gameData->unk4 != 0) {
+; Line 451
+	*** 0007b2	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0007b6	26 83 7f 40 00 		cmp	WORD PTR es:[bx+64],0
+	*** 0007bb	74 24 			je	$I2046
+;|***         // seg000:473F
+;|***         var_24 = ((int32)g_knots * (1000 - g_viewZ)) >> 15;
+; Line 453
+	*** 0007bd	a1 00 00 		mov	ax,_g_knots
+	*** 0007c0	99 			cwd	
+	*** 0007c1	52 			push	dx
+	*** 0007c2	50 			push	ax
+	*** 0007c3	b8 e8 03 		mov	ax,1000
+	*** 0007c6	2b 06 00 00 		sub	ax,_g_viewZ
+	*** 0007ca	99 			cwd	
+	*** 0007cb	52 			push	dx
+	*** 0007cc	50 			push	ax
+	*** 0007cd	e8 00 00 		call	__aNlmul
+	*** 0007d0	b1 0f 			mov	cl,15
+					$L20015:
+	*** 0007d2	d1 fa 			sar	dx,1
+	*** 0007d4	d1 d8 			rcr	ax,1
+	*** 0007d6	fe c9 			dec	cl
+	*** 0007d8	74 02 			je	$L20016
+	*** 0007da	eb f6 			jmp	SHORT $L20015
+					$L20016:
+	*** 0007dc	89 46 ce 		mov	WORD PTR [bp-50],ax	;var_24
+;|***     } else {
+; Line 454
+	*** 0007df	eb 05 			jmp	SHORT $I2047
+					$I2046:
+;|***         // seg000:4753
+;|***         var_24 = 0;
+; Line 456
+	*** 0007e1	c7 46 ce 00 00 		mov	WORD PTR [bp-50],0	;var_24
+;|***     }
+; Line 457
+					$I2047:
+;|***     
+;|***     // seg000:4758
+;|***     if (!((g_playerPlaneFlags) & 1)) {
+; Line 460
+	*** 0007e6	f6 06 00 00 01 		test	BYTE PTR _g_playerPlaneFlags,1
+	*** 0007eb	75 1b 			jne	$I2048
+;|***         // seg000:4771
+;|***         var_24 += sub_1CF64((g_knots - 200) >> 5, 0, 32);
+; Line 462
+	*** 0007ed	b8 20 00 		mov	ax,32
+	*** 0007f0	50 			push	ax
+	*** 0007f1	2b c0 			sub	ax,ax
+	*** 0007f3	50 			push	ax
+	*** 0007f4	a1 00 00 		mov	ax,_g_knots
+	*** 0007f7	2d c8 00 		sub	ax,200
+	*** 0007fa	b1 05 			mov	cl,5
+	*** 0007fc	d3 f8 			sar	ax,cl
+	*** 0007fe	50 			push	ax
+	*** 0007ff	e8 00 00 		call	_sub_1CF64
+	*** 000802	83 c4 06 		add	sp,6
+	*** 000805	01 46 ce 		add	WORD PTR [bp-50],ax	;var_24
+;|***     }
+; Line 463
+;|***     
+;|***     // seg000:477A
+;|***     if (var_24 > 0 && ((uint16)word_3BEBE) < ((uint16)g_viewZ)) {
+; Line 466
+					$I2048:
+	*** 000808	83 7e ce 00 		cmp	WORD PTR [bp-50],0	;var_24
+	*** 00080c	7e 33 			jle	$I2049
+	*** 00080e	a1 00 00 		mov	ax,_g_viewZ
+	*** 000811	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 000815	73 2a 			jae	$I2049
+;|***         // seg000:478C
+;|***         word_3C00E += randlmul(var_24) - (var_24 >> 1);
+; Line 468
+	*** 000817	ff 76 ce 		push	WORD PTR [bp-50]	;var_24
+	*** 00081a	e8 00 00 		call	_randlmul
+	*** 00081d	83 c4 02 		add	sp,2
+	*** 000820	8b 4e ce 		mov	cx,WORD PTR [bp-50]	;var_24
+	*** 000823	d1 f9 			sar	cx,1
+	*** 000825	2b c1 			sub	ax,cx
+	*** 000827	01 06 00 00 		add	_word_3C00E,ax
+;|***         // seg000:47A0
+;|***         word_3C5A4 += (randlmul(var_24) - (var_24 >> 1)) >> 1;
+; Line 470
+	*** 00082b	ff 76 ce 		push	WORD PTR [bp-50]	;var_24
+	*** 00082e	e8 00 00 		call	_randlmul
+	*** 000831	83 c4 02 		add	sp,2
+	*** 000834	8b 4e ce 		mov	cx,WORD PTR [bp-50]	;var_24
+	*** 000837	d1 f9 			sar	cx,1
+	*** 000839	2b c1 			sub	ax,cx
+	*** 00083b	d1 f8 			sar	ax,1
+	*** 00083d	01 06 00 00 		add	_word_3C5A4,ax
+;|***     }
+; Line 471
+;|***     
+;|***     // seg000:47B3
+;|***     if ((g_playerPlaneFlags & 1) && word_3C5A4 <= 0 && ((uint16)g_velocity) < ((uint16)word_3A8FE) && gameData->unk4 < 2 && abs(g_ourRoll) < 0x3000 && word_38FE8 == 0) {
+; Line 474
+					$I2049:
+	*** 000841	f6 06 00 00 01 		test	BYTE PTR _g_playerPlaneFlags,1
+	*** 000846	74 61 			je	$I2051
+	*** 000848	83 3e 00 00 00 		cmp	WORD PTR _word_3C5A4,0
+	*** 00084d	7f 5a 			jg	$I2051
+	*** 00084f	a1 00 00 		mov	ax,_word_3A8FE
+	*** 000852	39 06 00 00 		cmp	_g_velocity,ax
+	*** 000856	73 51 			jae	$I2051
+	*** 000858	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 00085c	26 83 7f 40 02 		cmp	WORD PTR es:[bx+64],2
+	*** 000861	73 46 			jae	$I2051
+	*** 000863	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 000867	e8 00 00 		call	_abs
+	*** 00086a	83 c4 02 		add	sp,2
+	*** 00086d	3d 00 30 		cmp	ax,12288
+	*** 000870	7d 37 			jge	$I2051
+	*** 000872	83 3e 00 00 00 		cmp	WORD PTR _word_38FE8,0
+	*** 000877	75 30 			jne	$I2051
+;|***         // seg000:47EB
+;|***         var_14 = ((((word_38FC4) - (g_ourPitch)) >> 2) - g_viewZ + 300) >> 2;
+; Line 476
+	*** 000879	a1 00 00 		mov	ax,_word_38FC4
+	*** 00087c	2b 06 00 00 		sub	ax,_g_ourPitch
+	*** 000880	d1 f8 			sar	ax,1
+	*** 000882	d1 f8 			sar	ax,1
+	*** 000884	2b 06 00 00 		sub	ax,_g_viewZ
+	*** 000888	05 2c 01 		add	ax,300
+	*** 00088b	d1 f8 			sar	ax,1
+	*** 00088d	d1 f8 			sar	ax,1
+	*** 00088f	89 46 d6 		mov	WORD PTR [bp-42],ax	;var_14
+;|***         // seg000:4804
+;|***         if (var_14 > 0) {
+; Line 478
+	*** 000892	0b c0 			or	ax,ax
+	*** 000894	7e 13 			jle	$I2051
+;|***             // seg000:4812
+;|***             word_3C5A4 = sub_1CF64(var_14, 0, 32);
+; Line 480
+	*** 000896	b8 20 00 		mov	ax,32
+	*** 000899	50 			push	ax
+	*** 00089a	2b c0 			sub	ax,ax
+	*** 00089c	50 			push	ax
+	*** 00089d	ff 76 d6 		push	WORD PTR [bp-42]	;var_14
+	*** 0008a0	e8 00 00 		call	_sub_1CF64
+	*** 0008a3	83 c4 06 		add	sp,6
+	*** 0008a6	a3 00 00 		mov	_word_3C5A4,ax
+;|***         }
+; Line 481
+;|***     }
+; Line 482
+					$I2051:
+;|***     
+;|***     // seg000:481B
+;|***     if (word_3BE3C != 0) {
+; Line 485
+	*** 0008a9	83 3e 00 00 00 		cmp	WORD PTR _word_3BE3C,0
+	*** 0008ae	75 03 			jne	$JCC2222
+	*** 0008b0	e9 33 01 		jmp	$I2057
+					$JCC2222:
+;	bailout_index = -60
+;|***         //int16 pitch_input_modifier;
+;|***         //int16 stall_decay_effect;
+;|***         int16 bailout_index;
+;|*** 
+;|***         // seg000:4825
+;|***         word_3C00E = 0x40;
+; Line 491
+	*** 0008b3	c7 06 00 00 40 00 	mov	WORD PTR _word_3C00E,64
+;|*** 
+;|***         // seg000:482B
+;|***         word_3C5A4 = (abs(g_ourRoll) > 0x4000) ? 0x10 : -8; // pitch_input_modifier
+; Line 494
+	*** 0008b9	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 0008bd	e8 00 00 		call	_abs
+	*** 0008c0	83 c4 02 		add	sp,2
+	*** 0008c3	3d 00 40 		cmp	ax,16384
+	*** 0008c6	7e 05 			jle	$L20018
+	*** 0008c8	b8 10 00 		mov	ax,16
+	*** 0008cb	eb 03 			jmp	SHORT $L20019
+					$L20018:
+	*** 0008cd	b8 f8 ff 		mov	ax,-8
+					$L20019:
+	*** 0008d0	a3 00 00 		mov	_word_3C5A4,ax
+;|***         
+;|***         // seg000:4864
+;|***         //word_3BE3C++;
+;|***         word_3C040 += sub_1CF64(
+;|***             - (++word_3BE3C - 0x20),
+;|***             (int16)0xFF00 / g_frameRateScaling,
+;|***             (int16)0x80 / g_frameRateScaling
+;|***         );
+; Line 502
+	*** 0008d3	b8 80 00 		mov	ax,128
+	*** 0008d6	99 			cwd	
+	*** 0008d7	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 0008db	f7 f9 			idiv	cx
+	*** 0008dd	50 			push	ax
+	*** 0008de	b8 00 ff 		mov	ax,-256
+	*** 0008e1	99 			cwd	
+	*** 0008e2	f7 f9 			idiv	cx
+	*** 0008e4	50 			push	ax
+	*** 0008e5	ff 06 00 00 		inc	WORD PTR _word_3BE3C
+	*** 0008e9	a1 00 00 		mov	ax,_word_3BE3C
+	*** 0008ec	2d 20 00 		sub	ax,32
+	*** 0008ef	f7 d8 			neg	ax
+	*** 0008f1	50 			push	ax
+	*** 0008f2	e8 00 00 		call	_sub_1CF64
+	*** 0008f5	83 c4 06 		add	sp,6
+	*** 0008f8	01 06 00 00 		add	_word_3C040,ax
+;|***         //word_3C040 += stall_decay_effect;
+;|*** 
+;|***         // seg000:486E
+;|***         if (word_3C040 < 0) {
+; Line 506
+	*** 0008fc	79 16 			jns	$I2055
+;|***             // seg000:4870
+;|***             word_3C040 = 0;
+; Line 508
+	*** 0008fe	c7 06 00 00 00 00 	mov	WORD PTR _word_3C040,0
+;|***             // seg000:4876
+;|***             if ((word_38FE0 & 7) == 0) {
+; Line 510
+	*** 000904	f6 06 00 00 07 		test	BYTE PTR _word_38FE0,7
+	*** 000909	75 09 			jne	$I2055
+;|***                 // seg000:4880
+;|***                 PrepareToExit(0);
+; Line 512
+	*** 00090b	2b c0 			sub	ax,ax
+	*** 00090d	50 			push	ax
+	*** 00090e	e8 00 00 		call	_PrepareToExit
+	*** 000911	83 c4 02 		add	sp,2
+;|***             }
+; Line 513
+;|***         }
+; Line 514
+					$I2055:
+;|*** 
+;|***         // seg000:4886
+;|***         if (g_viewZ == 0 && word_336F6 == -1) {
+; Line 517
+	*** 000914	83 3e 00 00 00 		cmp	WORD PTR _g_viewZ,0
+	*** 000919	75 44 			jne	$I2056
+	*** 00091b	83 3e 00 00 ff 		cmp	WORD PTR _word_336F6,-1
+	*** 000920	75 3d 			jne	$I2056
+;|***             // seg000:4894
+;|***             word_336F6 = 0;
+; Line 519
+	*** 000922	c7 06 00 00 00 00 	mov	WORD PTR _word_336F6,0
+;|***             // seg000:489A
+;|***             g_planes[0].field_0 = g_viewX_;
+; Line 521
+	*** 000928	a1 00 00 		mov	ax,_g_viewX_
+	*** 00092b	a3 00 00 		mov	WORD PTR _g_planes,ax
+;|***             // seg000:48A0
+;|***             g_planes[0].field_2 = g_viewY_;
+; Line 523
+	*** 00092e	a1 00 00 		mov	ax,_g_viewY_
+	*** 000931	a3 02 00 		mov	WORD PTR _g_planes+2,ax
+;|***             // seg000:48A6
+;|***             word_3BEBC = g_viewX_;
+; Line 525
+	*** 000934	a1 00 00 		mov	ax,_g_viewX_
+	*** 000937	a3 00 00 		mov	_word_3BEBC,ax
+;|***             // seg000:48AC
+;|***             word_3BEC8 = g_viewY_;
+; Line 527
+	*** 00093a	a1 00 00 		mov	ax,_g_viewY_
+	*** 00093d	a3 00 00 		mov	_word_3BEC8,ax
+;|***             // seg000:48B2
+;|***             word_3BECE = 0;
+; Line 529
+	*** 000940	c7 06 00 00 00 00 	mov	WORD PTR _word_3BECE,0
+;|***             // seg000:48B8
+;|***             word_39606 = -8;
+; Line 531
+	*** 000946	c7 06 00 00 f8 ff 	mov	WORD PTR _word_39606,-8
+;|***             // seg000:48C3
+;|***             makeSound(2, 2);
+; Line 533
+	*** 00094c	b8 02 00 		mov	ax,2
+	*** 00094f	50 			push	ax
+	*** 000950	50 			push	ax
+	*** 000951	e8 00 00 		call	_makeSound
+	*** 000954	83 c4 04 		add	sp,4
+;|***             // seg000:48CB
+;|***             g_setThrust = 
+;|***             g_velocity = 0;
+; Line 536
+	*** 000957	2b c0 			sub	ax,ax
+	*** 000959	a3 00 00 		mov	_g_velocity,ax
+	*** 00095c	a3 00 00 		mov	_g_setThrust,ax
+;|***         }
+; Line 537
+;|*** 
+;|***         // seg000:48D1
+;|***         if ((word_3BE3C & 0xFFFC) == 0x10 && (word_336E8 & 3) == 1) {
+; Line 540
+					$I2056:
+	*** 00095f	a1 00 00 		mov	ax,_word_3BE3C
+	*** 000962	24 fc 			and	al,252
+	*** 000964	3d 10 00 		cmp	ax,16
+	*** 000967	75 7d 			jne	$I2057
+	*** 000969	a0 00 00 		mov	al,BYTE PTR _word_336E8
+	*** 00096c	24 03 			and	al,3
+	*** 00096e	3c 01 			cmp	al,1
+	*** 000970	75 74 			jne	$I2057
+;|***             // seg000:48E4
+;|***             word_336F6 = -1;
+; Line 542
+	*** 000972	c7 06 00 00 ff ff 	mov	WORD PTR _word_336F6,-1
+;|*** 
+;|***             // seg000:48ED
+;|***             bailout_index = ((uint16)word_336E8 / 2) & 7;
+; Line 545
+	*** 000978	a1 00 00 		mov	ax,_word_336E8
+	*** 00097b	d1 e8 			shr	ax,1
+	*** 00097d	25 07 00 		and	ax,7
+	*** 000980	89 46 c4 		mov	WORD PTR [bp-60],ax	;bailout_index
+;|*** 
+;|***             // seg000:48FB
+;|***             stru_33402[bailout_index].field_0 = g_viewX_;
+; Line 548
+	*** 000983	8b f0 			mov	si,ax
+	*** 000985	b1 03 			mov	cl,3
+	*** 000987	d3 e6 			shl	si,cl
+	*** 000989	a1 00 00 		mov	ax,_g_viewX_
+	*** 00098c	89 84 00 00 		mov	WORD PTR _stru_33402[si],ax
+;|***             // seg000:4902
+;|***             stru_33402[bailout_index].field_2 = g_viewY_;
+; Line 550
+	*** 000990	a1 00 00 		mov	ax,_g_viewY_
+	*** 000993	89 84 02 00 		mov	WORD PTR _stru_33402[si+2],ax
+;|***             // seg000:4909
+;|***             stru_33402[bailout_index].field_4 = g_viewZ;
+; Line 552
+	*** 000997	a1 00 00 		mov	ax,_g_viewZ
+	*** 00099a	89 84 04 00 		mov	WORD PTR _stru_33402[si+4],ax
+;|*** 
+;|***             // seg000:4914
+;|***             stru_33402[bailout_index].field_6 = randlmul(0x20) << 11;
+; Line 555
+	*** 00099e	b8 20 00 		mov	ax,32
+	*** 0009a1	50 			push	ax
+	*** 0009a2	e8 00 00 		call	_randlmul
+	*** 0009a5	83 c4 02 		add	sp,2
+	*** 0009a8	b1 0b 			mov	cl,11
+	*** 0009aa	d3 e0 			shl	ax,cl
+	*** 0009ac	89 84 06 00 		mov	WORD PTR _stru_33402[si+6],ax
+;|*** 
+;|***             // seg000:4922
+;|***             word_33442 = bailout_index;
+; Line 558
+	*** 0009b0	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;bailout_index
+	*** 0009b3	a3 00 00 		mov	_word_33442,ax
+;|***             // seg000:4928
+;|***             word_3BEBC = g_viewX_;
+; Line 560
+	*** 0009b6	a1 00 00 		mov	ax,_g_viewX_
+	*** 0009b9	a3 00 00 		mov	_word_3BEBC,ax
+;|***             // seg000:492E
+;|***             word_3BEC8 = g_viewY_;
+; Line 562
+	*** 0009bc	a1 00 00 		mov	ax,_g_viewY_
+	*** 0009bf	a3 00 00 		mov	_word_3BEC8,ax
+;|***             // seg000:4934
+;|***             word_3BECE = g_viewZ;
+; Line 564
+	*** 0009c2	a1 00 00 		mov	ax,_g_viewZ
+	*** 0009c5	a3 00 00 		mov	_word_3BECE,ax
+;|***             // seg000:493A
+;|***             word_39606 = -8;
+; Line 566
+	*** 0009c8	c7 06 00 00 f8 ff 	mov	WORD PTR _word_39606,-8
+;|***             // seg000:4947
+;|***             makeSound(0, 2);
+; Line 568
+	*** 0009ce	b8 02 00 		mov	ax,2
+	*** 0009d1	50 			push	ax
+	*** 0009d2	2b c0 			sub	ax,ax
+	*** 0009d4	50 			push	ax
+	*** 0009d5	e8 00 00 		call	_makeSound
+	*** 0009d8	83 c4 04 		add	sp,4
+;|*** 
+;|***             // seg000:494D
+;|***             g_ourPitch = -0x4000;
+; Line 571
+	*** 0009db	c7 06 00 00 00 c0 	mov	WORD PTR _g_ourPitch,-16384
+;|***             // seg000:4953
+;|***             byte_380DD = 1;
+; Line 573
+	*** 0009e1	c6 06 00 00 01 		mov	BYTE PTR _byte_380DD,1
+;|***         }
+; Line 574
+;|***     }
+; Line 575
+					$I2057:
+;|***     
+;|***     // seg000:4958
+;|***     if (g_gunHits != 0) {
+; Line 578
+	*** 0009e6	83 3e 00 00 00 		cmp	WORD PTR _g_gunHits,0
+	*** 0009eb	74 25 			je	$I2059
+;|***         // seg000:496D
+;|***         if (g_setThrust > -((g_gunHits * 4) - 0x90)) {
+; Line 580
+	*** 0009ed	a1 00 00 		mov	ax,_g_gunHits
+	*** 0009f0	d1 e0 			shl	ax,1
+	*** 0009f2	d1 e0 			shl	ax,1
+	*** 0009f4	2d 90 00 		sub	ax,144
+	*** 0009f7	f7 d8 			neg	ax
+	*** 0009f9	8b f0 			mov	si,ax
+	*** 0009fb	39 36 00 00 		cmp	_g_setThrust,si
+	*** 0009ff	7e 11 			jle	$I2059
+;|***             // seg000:4973
+;|***             g_setThrust = -((g_gunHits * 4) - 0x90);
+; Line 582
+	*** 000a01	89 36 00 00 		mov	_g_setThrust,si
+;|***             // seg000:4977
+;|***             if (g_setThrust < 0)
+; Line 584
+	*** 000a05	0b f6 			or	si,si
+	*** 000a07	7d 06 			jge	$I2060
+;|***                 // seg000:497B
+;|***                 g_setThrust = 0;
+; Line 586
+	*** 000a09	c7 06 00 00 00 00 	mov	WORD PTR _g_setThrust,0
+;|***             // seg000:4981
+;|***             UpdateThrottleState();
+; Line 588
+					$I2060:
+	*** 000a0f	e8 00 00 		call	_UpdateThrottleState
+;|***         }
+; Line 589
+;|***     }
+; Line 590
+					$I2059:
+;|***     
+;|***     // seg000:4984
+;|***     g_thrust += ((g_setThrust - g_thrust) / 4) / ((int16)g_frameRateScaling);
+; Line 593
+	*** 000a12	a1 00 00 		mov	ax,_g_setThrust
+	*** 000a15	2b 06 00 00 		sub	ax,_g_thrust
+	*** 000a19	99 			cwd	
+	*** 000a1a	33 c2 			xor	ax,dx
+	*** 000a1c	2b c2 			sub	ax,dx
+	*** 000a1e	b9 02 00 		mov	cx,2
+	*** 000a21	d3 f8 			sar	ax,cl
+	*** 000a23	33 c2 			xor	ax,dx
+	*** 000a25	2b c2 			sub	ax,dx
+	*** 000a27	99 			cwd	
+	*** 000a28	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 000a2c	f7 f9 			idiv	cx
+	*** 000a2e	01 06 00 00 		add	_g_thrust,ax
+;|***     // seg000:49A7
+;|***     if (g_setThrust > g_thrust) g_thrust++;
+; Line 595
+	*** 000a32	a1 00 00 		mov	ax,_g_thrust
+	*** 000a35	39 06 00 00 		cmp	_g_setThrust,ax
+	*** 000a39	7e 04 			jle	$I2061
+	*** 000a3b	ff 06 00 00 		inc	WORD PTR _g_thrust
+;|***     // seg000:49B4
+;|***     if (g_setThrust < g_thrust) g_thrust = g_setThrust;
+; Line 597
+					$I2061:
+	*** 000a3f	a1 00 00 		mov	ax,_g_thrust
+	*** 000a42	39 06 00 00 		cmp	_g_setThrust,ax
+	*** 000a46	7d 06 			jge	$I2062
+	*** 000a48	a1 00 00 		mov	ax,_g_setThrust
+	*** 000a4b	a3 00 00 		mov	_g_thrust,ax
+;|*** 
+;|***     // seg000:49C0
+;|***     if ((((uint16)word_336E8) % ((uint16)(g_frameRateScaling << 1))) == 0 && g_setThrust != 0 && word_336EA == 0) {
+; Line 600
+					$I2062:
+	*** 000a4e	a1 00 00 		mov	ax,_word_336E8
+	*** 000a51	2b d2 			sub	dx,dx
+	*** 000a53	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 000a57	d1 e1 			shl	cx,1
+	*** 000a59	f7 f1 			div	cx
+	*** 000a5b	0b d2 			or	dx,dx
+	*** 000a5d	75 23 			jne	$I2063
+	*** 000a5f	83 3e 00 00 00 		cmp	WORD PTR _g_setThrust,0
+	*** 000a64	74 1c 			je	$I2063
+	*** 000a66	83 3e 00 00 00 		cmp	WORD PTR _word_336EA,0
+	*** 000a6b	75 15 			jne	$I2063
+;|***         // seg000:49ED
+;|***         word_33098 -= ((g_setThrust * g_setThrust) / 750) + 2;
+; Line 602
+	*** 000a6d	a1 00 00 		mov	ax,_g_setThrust
+	*** 000a70	f7 e8 			imul	ax
+	*** 000a72	99 			cwd	
+	*** 000a73	b9 ee 02 		mov	cx,750
+	*** 000a76	f7 f9 			idiv	cx
+	*** 000a78	05 02 00 		add	ax,2
+	*** 000a7b	29 06 00 00 		sub	_word_33098,ax
+;|***         // seg000:49F1
+;|***         sub_1606C();
+; Line 604
+	*** 000a7f	e8 00 00 		call	_sub_1606C
+;|***     }
+; Line 605
+;|***     
+;|***     // seg000:49F4
+;|***     if (word_33098 <= 0) {
+; Line 608
+					$I2063:
+	*** 000a82	83 3e 00 00 00 		cmp	WORD PTR _word_33098,0
+	*** 000a87	7f 0c 			jg	$I2064
+;|***         // seg000:49FB
+;|***         g_thrust = 0;
+; Line 610
+	*** 000a89	c7 06 00 00 00 00 	mov	WORD PTR _g_thrust,0
+;|***         // seg000:4A01
+;|***         word_33098 = 0;
+; Line 612
+	*** 000a8f	c7 06 00 00 00 00 	mov	WORD PTR _word_33098,0
+;|***     }
+; Line 613
+;|*** 
+;|***     // seg000:4A07
+;|***     g_gees = byte_37FEC[(abs(g_ourRoll) >> 8) & 0x7f];
+; Line 616
+					$I2064:
+	*** 000a95	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 000a99	e8 00 00 		call	_abs
+	*** 000a9c	83 c4 02 		add	sp,2
+	*** 000a9f	8b d8 			mov	bx,ax
+	*** 000aa1	b1 08 			mov	cl,8
+	*** 000aa3	d3 fb 			sar	bx,cl
+	*** 000aa5	83 e3 7f 		and	bx,127
+	*** 000aa8	8a 87 00 00 		mov	al,BYTE PTR _byte_37FEC[bx]
+	*** 000aac	2a e4 			sub	ah,ah
+	*** 000aae	a3 00 00 		mov	_g_gees,ax
+;|***     // seg000:4A23
+;|***     if (((uint16)word_3BEBE) < ((uint16)g_viewZ)) {
+; Line 618
+	*** 000ab1	a1 00 00 		mov	ax,_g_viewZ
+	*** 000ab4	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 000ab8	73 0c 			jae	$I2065
+;|***         // seg000:4A34
+;|***         g_gees += word_3C5A4 / 2;
+; Line 620
+	*** 000aba	a1 00 00 		mov	ax,_word_3C5A4
+	*** 000abd	99 			cwd	
+	*** 000abe	2b c2 			sub	ax,dx
+	*** 000ac0	d1 f8 			sar	ax,1
+	*** 000ac2	01 06 00 00 		add	_g_gees,ax
+;|***     }
+; Line 621
+;|***     
+;|***     // seg000:4A38
+;|***     if (g_gees > 0x80) {
+; Line 624
+					$I2065:
+	*** 000ac6	81 3e 00 00 80 00 	cmp	WORD PTR _g_gees,128
+	*** 000acc	7e 35 			jle	$I2066
+;|***         // seg000:4A40
+;|***         g_gees = 0x80;
+; Line 626
+	*** 000ace	c7 06 00 00 80 00 	mov	WORD PTR _g_gees,128
+;|***         // seg000:4A6C
+;|***         word_3C5A4 = sub_1CF64(0x80 - byte_37FEC[(abs(g_ourRoll) >> 8) & 0x7f], 0, word_3C5A4);
+; Line 628
+	*** 000ad4	ff 36 00 00 		push	WORD PTR _word_3C5A4
+	*** 000ad8	2b c0 			sub	ax,ax
+	*** 000ada	50 			push	ax
+	*** 000adb	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 000adf	e8 00 00 		call	_abs
+	*** 000ae2	83 c4 02 		add	sp,2
+	*** 000ae5	8b d8 			mov	bx,ax
+	*** 000ae7	b1 08 			mov	cl,8
+	*** 000ae9	d3 fb 			sar	bx,cl
+	*** 000aeb	83 e3 7f 		and	bx,127
+	*** 000aee	8a 87 00 00 		mov	al,BYTE PTR _byte_37FEC[bx]
+	*** 000af2	2a e4 			sub	ah,ah
+	*** 000af4	2d 80 00 		sub	ax,128
+	*** 000af7	f7 d8 			neg	ax
+	*** 000af9	50 			push	ax
+	*** 000afa	e8 00 00 		call	_sub_1CF64
+	*** 000afd	83 c4 06 		add	sp,6
+	*** 000b00	a3 00 00 		mov	_word_3C5A4,ax
+;|***     }
+; Line 629
+;|***     
+;|***     
+;|***     // seg000:4A9A
+;|***     strcpy(unk_38FD0, itoa(g_gees / 16, strBuf, 10));
+; Line 633
+					$I2066:
+	*** 000b03	b8 0a 00 		mov	ax,10
+	*** 000b06	50 			push	ax
+	*** 000b07	b8 00 00 		mov	ax,OFFSET _strBuf
+	*** 000b0a	50 			push	ax
+	*** 000b0b	a1 00 00 		mov	ax,_g_gees
+	*** 000b0e	99 			cwd	
+	*** 000b0f	33 c2 			xor	ax,dx
+	*** 000b11	2b c2 			sub	ax,dx
+	*** 000b13	b9 04 00 		mov	cx,4
+	*** 000b16	d3 f8 			sar	ax,cl
+	*** 000b18	33 c2 			xor	ax,dx
+	*** 000b1a	2b c2 			sub	ax,dx
+	*** 000b1c	50 			push	ax
+	*** 000b1d	e8 00 00 		call	_itoa
+	*** 000b20	83 c4 06 		add	sp,6
+	*** 000b23	50 			push	ax
+	*** 000b24	b8 00 00 		mov	ax,OFFSET _unk_38FD0
+	*** 000b27	50 			push	ax
+	*** 000b28	e8 00 00 		call	_strcpy
+	*** 000b2b	83 c4 04 		add	sp,4
+;|***     // seg000:4AA8
+;|***     strcat(unk_38FD0, ".");
+; Line 635
+	*** 000b2e	b8 1e 00 		mov	ax,OFFSET DGROUP:$SG2067
+	*** 000b31	50 			push	ax
+	*** 000b32	b8 00 00 		mov	ax,OFFSET _unk_38FD0
+	*** 000b35	50 			push	ax
+	*** 000b36	e8 00 00 		call	_strcat
+	*** 000b39	83 c4 04 		add	sp,4
+;|***     
+;|***     // seg000:4AD3
+;|***     strcat(unk_38FD0, itoa((abs(g_gees) & 0xF) >> 1, strBuf, 10));
+; Line 638
+	*** 000b3c	b8 0a 00 		mov	ax,10
+	*** 000b3f	50 			push	ax
+	*** 000b40	b8 00 00 		mov	ax,OFFSET _strBuf
+	*** 000b43	50 			push	ax
+	*** 000b44	ff 36 00 00 		push	WORD PTR _g_gees
+	*** 000b48	e8 00 00 		call	_abs
+	*** 000b4b	83 c4 02 		add	sp,2
+	*** 000b4e	2a e4 			sub	ah,ah
+	*** 000b50	25 0f 00 		and	ax,15
+	*** 000b53	d1 e8 			shr	ax,1
+	*** 000b55	50 			push	ax
+	*** 000b56	e8 00 00 		call	_itoa
+	*** 000b59	83 c4 06 		add	sp,6
+	*** 000b5c	50 			push	ax
+	*** 000b5d	b8 00 00 		mov	ax,OFFSET _unk_38FD0
+	*** 000b60	50 			push	ax
+	*** 000b61	e8 00 00 		call	_strcat
+	*** 000b64	83 c4 04 		add	sp,4
+;|***     // seg000:4AE1
+;|***     strcat(unk_38FD0, "G");
+; Line 640
+	*** 000b67	b8 20 00 		mov	ax,OFFSET DGROUP:$SG2068
+	*** 000b6a	50 			push	ax
+	*** 000b6b	b8 00 00 		mov	ax,OFFSET _unk_38FD0
+	*** 000b6e	50 			push	ax
+	*** 000b6f	e8 00 00 		call	_strcat
+	*** 000b72	83 c4 04 		add	sp,4
+;|*** 
+;|***     // seg000:4AFB
+;|***     var_32 = (((int32)(g_thrust - sinX(g_ourPitch, 80))) * ((int32)800)) / ((int32)100);
+; Line 643
+	*** 000b75	b8 64 00 		mov	ax,100
+	*** 000b78	99 			cwd	
+	*** 000b79	52 			push	dx
+	*** 000b7a	50 			push	ax
+	*** 000b7b	b8 20 03 		mov	ax,800
+	*** 000b7e	99 			cwd	
+	*** 000b7f	52 			push	dx
+	*** 000b80	50 			push	ax
+	*** 000b81	b8 50 00 		mov	ax,80
+	*** 000b84	50 			push	ax
+	*** 000b85	ff 36 00 00 		push	WORD PTR _g_ourPitch
+	*** 000b89	e8 00 00 		call	_sinX
+	*** 000b8c	83 c4 04 		add	sp,4
+	*** 000b8f	8b c8 			mov	cx,ax
+	*** 000b91	a1 00 00 		mov	ax,_g_thrust
+	*** 000b94	2b c1 			sub	ax,cx
+	*** 000b96	99 			cwd	
+	*** 000b97	52 			push	dx
+	*** 000b98	50 			push	ax
+	*** 000b99	e8 00 00 		call	__aNlmul
+	*** 000b9c	52 			push	dx
+	*** 000b9d	50 			push	ax
+	*** 000b9e	e8 00 00 		call	__aNldiv
+	*** 000ba1	89 46 d2 		mov	WORD PTR [bp-46],ax	;var_32
+;|***     
+;|***     // seg000:4B16
+;|***     word_3C5A6 = 100;
+; Line 646
+	*** 000ba4	c7 06 00 00 64 00 	mov	WORD PTR _word_3C5A6,100
+;|***     // seg000:4B30
+;|***     var_32 = ((int32)(((uint16)g_viewZ >> 7) + 0x0400) * (int32)var_32) >> 10;
+; Line 648
+	*** 000baa	99 			cwd	
+	*** 000bab	52 			push	dx
+	*** 000bac	50 			push	ax
+	*** 000bad	a1 00 00 		mov	ax,_g_viewZ
+	*** 000bb0	b1 07 			mov	cl,7
+	*** 000bb2	d3 e8 			shr	ax,cl
+	*** 000bb4	80 c4 04 		add	ah,4
+	*** 000bb7	2b c9 			sub	cx,cx
+	*** 000bb9	51 			push	cx
+	*** 000bba	50 			push	ax
+	*** 000bbb	e8 00 00 		call	__aNlmul
+	*** 000bbe	b1 0a 			mov	cl,10
+					$L20021:
+	*** 000bc0	d1 fa 			sar	dx,1
+	*** 000bc2	d1 d8 			rcr	ax,1
+	*** 000bc4	fe c9 			dec	cl
+	*** 000bc6	74 02 			je	$L20022
+	*** 000bc8	eb f6 			jmp	SHORT $L20021
+					$L20022:
+	*** 000bca	89 46 d2 		mov	WORD PTR [bp-46],ax	;var_32
+;|***      
+;|***     // seg000:4B56
+;|***     word_3C5A6 = ((int32)100 * (int32)(((uint16)word_380D0 >> 6) + 0x0400)) >> 10;
+; Line 651
+	*** 000bcd	b8 64 00 		mov	ax,100
+	*** 000bd0	99 			cwd	
+	*** 000bd1	52 			push	dx
+	*** 000bd2	50 			push	ax
+	*** 000bd3	a1 00 00 		mov	ax,_word_380D0
+	*** 000bd6	b1 06 			mov	cl,6
+	*** 000bd8	d3 e8 			shr	ax,cl
+	*** 000bda	80 c4 04 		add	ah,4
+	*** 000bdd	2b c9 			sub	cx,cx
+	*** 000bdf	51 			push	cx
+	*** 000be0	50 			push	ax
+	*** 000be1	e8 00 00 		call	__aNlmul
+	*** 000be4	b1 0a 			mov	cl,10
+					$L20023:
+	*** 000be6	d1 fa 			sar	dx,1
+	*** 000be8	d1 d8 			rcr	ax,1
+	*** 000bea	fe c9 			dec	cl
+	*** 000bec	74 02 			je	$L20024
+	*** 000bee	eb f6 			jmp	SHORT $L20023
+					$L20024:
+	*** 000bf0	a3 00 00 		mov	_word_3C5A6,ax
+;|***     
+;|***     // seg000:4B83
+;|***     var_32 = ((int32)var_32) * ((int32)(-((word_33098 >> 9) - 100))) / (int32)90;
+; Line 654
+	*** 000bf3	b8 5a 00 		mov	ax,90
+	*** 000bf6	99 			cwd	
+	*** 000bf7	52 			push	dx
+	*** 000bf8	50 			push	ax
+	*** 000bf9	8b 46 d2 		mov	ax,WORD PTR [bp-46]	;var_32
+	*** 000bfc	99 			cwd	
+	*** 000bfd	52 			push	dx
+	*** 000bfe	50 			push	ax
+	*** 000bff	a1 00 00 		mov	ax,_word_33098
+	*** 000c02	b1 09 			mov	cl,9
+	*** 000c04	d3 f8 			sar	ax,cl
+	*** 000c06	2d 64 00 		sub	ax,100
+	*** 000c09	f7 d8 			neg	ax
+	*** 000c0b	99 			cwd	
+	*** 000c0c	52 			push	dx
+	*** 000c0d	50 			push	ax
+	*** 000c0e	e8 00 00 		call	__aNlmul
+	*** 000c11	52 			push	dx
+	*** 000c12	50 			push	ax
+	*** 000c13	e8 00 00 		call	__aNldiv
+	*** 000c16	89 46 d2 		mov	WORD PTR [bp-46],ax	;var_32
+;|***     
+;|***     // seg000:4B9E
+;|***     var_32 = (((int32)var_32) * ((int32)(128 - g_gees))) >> 7;
+; Line 657
+	*** 000c19	b8 80 00 		mov	ax,128
+	*** 000c1c	2b 06 00 00 		sub	ax,_g_gees
+	*** 000c20	99 			cwd	
+	*** 000c21	52 			push	dx
+	*** 000c22	50 			push	ax
+	*** 000c23	8b 46 d2 		mov	ax,WORD PTR [bp-46]	;var_32
+	*** 000c26	99 			cwd	
+	*** 000c27	52 			push	dx
+	*** 000c28	50 			push	ax
+	*** 000c29	e8 00 00 		call	__aNlmul
+	*** 000c2c	b1 07 			mov	cl,7
+					$L20025:
+	*** 000c2e	d1 fa 			sar	dx,1
+	*** 000c30	d1 d8 			rcr	ax,1
+	*** 000c32	fe c9 			dec	cl
+	*** 000c34	74 02 			je	$L20026
+	*** 000c36	eb f6 			jmp	SHORT $L20025
+					$L20026:
+	*** 000c38	89 46 d2 		mov	WORD PTR [bp-46],ax	;var_32
+;|***     
+;|***     // seg000:4BC7
+;|***     word_3C5A6 = ((int32)sub_15557(g_gees * 4) * (int32)word_3C5A6) >> 3;
+; Line 660
+	*** 000c3b	a1 00 00 		mov	ax,_word_3C5A6
+	*** 000c3e	99 			cwd	
+	*** 000c3f	52 			push	dx
+	*** 000c40	50 			push	ax
+	*** 000c41	a1 00 00 		mov	ax,_g_gees
+	*** 000c44	d1 e0 			shl	ax,1
+	*** 000c46	d1 e0 			shl	ax,1
+	*** 000c48	50 			push	ax
+	*** 000c49	e8 00 00 		call	_sub_15557
+	*** 000c4c	83 c4 02 		add	sp,2
+	*** 000c4f	99 			cwd	
+	*** 000c50	52 			push	dx
+	*** 000c51	50 			push	ax
+	*** 000c52	e8 00 00 		call	__aNlmul
+	*** 000c55	b1 03 			mov	cl,3
+					$L20027:
+	*** 000c57	d1 fa 			sar	dx,1
+	*** 000c59	d1 d8 			rcr	ax,1
+	*** 000c5b	fe c9 			dec	cl
+	*** 000c5d	74 02 			je	$L20028
+	*** 000c5f	eb f6 			jmp	SHORT $L20027
+					$L20028:
+	*** 000c61	a3 00 00 		mov	_word_3C5A6,ax
+;|***     // seg000:4BDA
+;|***     word_3C5A6 = abs(word_3C5A6);
+; Line 662
+	*** 000c64	50 			push	ax
+	*** 000c65	e8 00 00 		call	_abs
+	*** 000c68	83 c4 02 		add	sp,2
+	*** 000c6b	a3 00 00 		mov	_word_3C5A6,ax
+;|*** 
+;|***     // seg000:4BE3
+;|***     if (!(*((unsigned char*)&g_playerPlaneFlags) & 1)) {
+; Line 665
+	*** 000c6e	f6 06 00 00 01 		test	BYTE PTR _g_playerPlaneFlags,1
+	*** 000c73	75 0a 			jne	$I2069
+;|***         // seg000:4BEA
+;|***         var_32 -= var_32 >> 3;
+; Line 667
+	*** 000c75	8b 46 d2 		mov	ax,WORD PTR [bp-46]	;var_32
+	*** 000c78	b1 03 			mov	cl,3
+	*** 000c7a	d3 f8 			sar	ax,cl
+	*** 000c7c	29 46 d2 		sub	WORD PTR [bp-46],ax	;var_32
+;|***     }
+; Line 668
+;|***     
+;|***     // seg000:4BF4
+;|***     word_3A8FE = word_3C5A6 * 27;
+; Line 671
+					$I2069:
+	*** 000c7f	b8 1b 00 		mov	ax,27
+	*** 000c82	f7 2e 00 00 		imul	WORD PTR _word_3C5A6
+	*** 000c86	a3 00 00 		mov	_word_3A8FE,ax
+;|***     // seg000:4C08
+;|***     var_1A = sub_1CF64(var_32, 0, 900) * 27;
+; Line 673
+	*** 000c89	b8 84 03 		mov	ax,900
+	*** 000c8c	50 			push	ax
+	*** 000c8d	2b c0 			sub	ax,ax
+	*** 000c8f	50 			push	ax
+	*** 000c90	ff 76 d2 		push	WORD PTR [bp-46]	;var_32
+	*** 000c93	e8 00 00 		call	_sub_1CF64
+	*** 000c96	83 c4 06 		add	sp,6
+	*** 000c99	b9 1b 00 		mov	cx,27
+	*** 000c9c	f7 e9 			imul	cx
+	*** 000c9e	89 46 e2 		mov	WORD PTR [bp-30],ax	;var_1A
+;|***     
+;|***     // seg000:4C39
+;|***     g_velocity += ((((int32)var_1A - g_velocity) / 16) / (int32)g_frameRateScaling);
+; Line 676
+	*** 000ca1	a1 00 00 		mov	ax,_g_frameRateScaling
+	*** 000ca4	99 			cwd	
+	*** 000ca5	52 			push	dx
+	*** 000ca6	50 			push	ax
+	*** 000ca7	b8 10 00 		mov	ax,16
+	*** 000caa	99 			cwd	
+	*** 000cab	52 			push	dx
+	*** 000cac	50 			push	ax
+	*** 000cad	a1 00 00 		mov	ax,_g_velocity
+	*** 000cb0	99 			cwd	
+	*** 000cb1	8b c8 			mov	cx,ax
+	*** 000cb3	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;var_1A
+	*** 000cb6	8b da 			mov	bx,dx
+	*** 000cb8	99 			cwd	
+	*** 000cb9	2b c1 			sub	ax,cx
+	*** 000cbb	1b d3 			sbb	dx,bx
+	*** 000cbd	52 			push	dx
+	*** 000cbe	50 			push	ax
+	*** 000cbf	e8 00 00 		call	__aNldiv
+	*** 000cc2	52 			push	dx
+	*** 000cc3	50 			push	ax
+	*** 000cc4	e8 00 00 		call	__aNldiv
+	*** 000cc7	01 06 00 00 		add	_g_velocity,ax
+;|***     
+;|***     // seg000:4C5F
+;|***     word_3B4DA = ((int32)word_3A8FE * 3072) / (abs(g_velocity) + 1);
+; Line 679
+	*** 000ccb	ff 36 00 00 		push	WORD PTR _g_velocity
+	*** 000ccf	e8 00 00 		call	_abs
+	*** 000cd2	83 c4 02 		add	sp,2
+	*** 000cd5	40 			inc	ax
+	*** 000cd6	99 			cwd	
+	*** 000cd7	52 			push	dx
+	*** 000cd8	50 			push	ax
+	*** 000cd9	b8 00 0c 		mov	ax,3072
+	*** 000cdc	99 			cwd	
+	*** 000cdd	52 			push	dx
+	*** 000cde	50 			push	ax
+	*** 000cdf	a1 00 00 		mov	ax,_word_3A8FE
+	*** 000ce2	99 			cwd	
+	*** 000ce3	52 			push	dx
+	*** 000ce4	50 			push	ax
+	*** 000ce5	e8 00 00 		call	__aNlmul
+	*** 000ce8	52 			push	dx
+	*** 000ce9	50 			push	ax
+	*** 000cea	e8 00 00 		call	__aNldiv
+	*** 000ced	a3 00 00 		mov	_word_3B4DA,ax
+;|***     // seg000:4C65
+;|***     if ((uint16)word_3B4DA > 0x2000) word_3B4DA = 0x2000;
+; Line 681
+	*** 000cf0	3d 00 20 		cmp	ax,8192
+	*** 000cf3	76 06 			jbe	$I2070
+	*** 000cf5	c7 06 00 00 00 20 	mov	WORD PTR _word_3B4DA,8192
+;|***     
+;|***     // seg000:4C7B
+;|***     word_38FC4 = cosX(g_ourRoll, word_3B4DA - 0x300);
+; Line 684
+					$I2070:
+	*** 000cfb	a1 00 00 		mov	ax,_word_3B4DA
+	*** 000cfe	2d 00 03 		sub	ax,768
+	*** 000d01	50 			push	ax
+	*** 000d02	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 000d06	e8 00 00 		call	_cosX
+	*** 000d09	83 c4 04 		add	sp,4
+	*** 000d0c	a3 00 00 		mov	_word_38FC4,ax
+;|***     
+;|***     // seg000:4C84
+;|***     if (*((unsigned char*)&g_playerPlaneFlags) & 8) {
+; Line 687
+	*** 000d0f	f6 06 00 00 08 		test	BYTE PTR _g_playerPlaneFlags,8
+	*** 000d14	74 55 			je	$I2074
+;|***         // seg000:4C8B
+;|***         if (word_3BEBE == g_viewZ) {
+; Line 689
+	*** 000d16	a1 00 00 		mov	ax,_g_viewZ
+	*** 000d19	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 000d1d	75 3b 			jne	$I2072
+;|***             // seg000:4CB0
+;|***             g_velocity -= (-((gameData->unk4 * 8) - 32) * 27) / g_frameRateScaling;
+; Line 691
+	*** 000d1f	b9 1b 00 		mov	cx,27
+	*** 000d22	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000d26	26 8b 47 40 		mov	ax,WORD PTR es:[bx+64]
+	*** 000d2a	8b d1 			mov	dx,cx
+	*** 000d2c	b1 03 			mov	cl,3
+	*** 000d2e	d3 e0 			shl	ax,cl
+	*** 000d30	2d 20 00 		sub	ax,32
+	*** 000d33	f7 d8 			neg	ax
+	*** 000d35	8b ca 			mov	cx,dx
+	*** 000d37	f7 e1 			mul	cx
+	*** 000d39	2b d2 			sub	dx,dx
+	*** 000d3b	f7 36 00 00 		div	WORD PTR _g_frameRateScaling
+	*** 000d3f	29 06 00 00 		sub	_g_velocity,ax
+;|***             // seg000:4CB8
+;|***             if (word_3BEBE != 0 && (uint16)g_velocity < 0x1B0) {
+; Line 693
+	*** 000d43	83 3e 00 00 00 		cmp	WORD PTR _word_3BEBE,0
+	*** 000d48	74 0e 			je	$I2073
+	*** 000d4a	81 3e 00 00 b0 01 	cmp	WORD PTR _g_velocity,432
+	*** 000d50	73 06 			jae	$I2073
+;|***                  // seg000:4CC7
+;|***                  g_velocity = 0;
+; Line 695
+	*** 000d52	c7 06 00 00 00 00 	mov	WORD PTR _g_velocity,0
+;|***             }
+; Line 696
+;|***         } else {
+; Line 697
+					$I2073:
+	*** 000d58	eb 11 			jmp	SHORT $I2074
+					$I2072:
+;|***              // seg000:4CD8
+;|***              g_velocity -= ((uint16)g_velocity >> 4) / g_frameRateScaling;
+; Line 699
+	*** 000d5a	a1 00 00 		mov	ax,_g_velocity
+	*** 000d5d	b1 04 			mov	cl,4
+	*** 000d5f	d3 e8 			shr	ax,cl
+	*** 000d61	2b d2 			sub	dx,dx
+	*** 000d63	f7 36 00 00 		div	WORD PTR _g_frameRateScaling
+	*** 000d67	29 06 00 00 		sub	_g_velocity,ax
+;|***         }
+; Line 700
+					$I2074:
+;|***     }
+; Line 701
+;|***     
+;|***     // seg000:4CE0
+;|***     if ((uint16)g_velocity > 0xAFC8) g_velocity = 0;
+; Line 704
+	*** 000d6b	81 3e 00 00 c8 af 	cmp	WORD PTR _g_velocity,-20536
+	*** 000d71	76 06 			jbe	$I2075
+	*** 000d73	c7 06 00 00 00 00 	mov	WORD PTR _g_velocity,0
+;|***     
+;|***     // seg000:4CF6
+;|***     var_22 = cosX(g_ourPitch, g_velocity);
+; Line 707
+					$I2075:
+	*** 000d79	ff 36 00 00 		push	WORD PTR _g_velocity
+	*** 000d7d	ff 36 00 00 		push	WORD PTR _g_ourPitch
+	*** 000d81	e8 00 00 		call	_cosX
+	*** 000d84	83 c4 04 		add	sp,4
+	*** 000d87	89 46 da 		mov	WORD PTR [bp-38],ax	;var_22
+;|***     // seg000:4D07
+;|***     g_knots = (uint16)g_velocity / 27;
+; Line 709
+	*** 000d8a	a1 00 00 		mov	ax,_g_velocity
+	*** 000d8d	2b d2 			sub	dx,dx
+	*** 000d8f	b9 1b 00 		mov	cx,27
+	*** 000d92	f7 f1 			div	cx
+	*** 000d94	a3 00 00 		mov	_g_knots,ax
+;|***     
+;|***     // seg000:4D11
+;|***     audio_jump_6a(g_knots, g_thrust);
+; Line 712
+	*** 000d97	ff 36 00 00 		push	WORD PTR _g_thrust
+	*** 000d9b	50 			push	ax
+	*** 000d9c	9a 00 00 00 00 		call	FAR PTR _audio_jump_6a
+	*** 000da1	83 c4 04 		add	sp,4
+;|***     
+;|***     // seg000:4D47
+;|***     var_18 = (((int32)sinX(g_ourRoll, g_gees << 4)) << 7) / ((int32)((int16)((uint16)g_velocity >> 9) + 0x20));
+; Line 715
+	*** 000da4	a1 00 00 		mov	ax,_g_velocity
+	*** 000da7	b1 09 			mov	cl,9
+	*** 000da9	d3 e8 			shr	ax,cl
+	*** 000dab	05 20 00 		add	ax,32
+	*** 000dae	99 			cwd	
+	*** 000daf	52 			push	dx
+	*** 000db0	50 			push	ax
+	*** 000db1	a1 00 00 		mov	ax,_g_gees
+	*** 000db4	b1 04 			mov	cl,4
+	*** 000db6	d3 e0 			shl	ax,cl
+	*** 000db8	50 			push	ax
+	*** 000db9	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 000dbd	e8 00 00 		call	_sinX
+	*** 000dc0	83 c4 04 		add	sp,4
+	*** 000dc3	99 			cwd	
+	*** 000dc4	b1 07 			mov	cl,7
+					$L20029:
+	*** 000dc6	d1 e0 			shl	ax,1
+	*** 000dc8	d1 d2 			rcl	dx,1
+	*** 000dca	fe c9 			dec	cl
+	*** 000dcc	74 02 			je	$L20030
+	*** 000dce	eb f6 			jmp	SHORT $L20029
+					$L20030:
+	*** 000dd0	52 			push	dx
+	*** 000dd1	50 			push	ax
+	*** 000dd2	e8 00 00 		call	__aNldiv
+	*** 000dd5	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_18
+;|*** 
+;|***     // seg000:4D52
+;|***     var_18 = cosX(g_ourPitch, var_18);
+; Line 718
+	*** 000dd8	50 			push	ax
+	*** 000dd9	ff 36 00 00 		push	WORD PTR _g_ourPitch
+	*** 000ddd	e8 00 00 		call	_cosX
+	*** 000de0	83 c4 04 		add	sp,4
+	*** 000de3	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_18
+;|***     
+;|***     // seg000:4D5B
+;|***     if (word_3BEBE == g_viewZ) {
+; Line 721
+	*** 000de6	a1 00 00 		mov	ax,_g_viewZ
+	*** 000de9	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 000ded	75 21 			jne	$I2077
+;|***         // seg000:4D64
+;|***         var_18 = (word_3C00E * -1) << 6;
+; Line 723
+	*** 000def	a1 00 00 		mov	ax,_word_3C00E
+	*** 000df2	f7 d8 			neg	ax
+	*** 000df4	b1 06 			mov	cl,6
+	*** 000df6	d3 e0 			shl	ax,cl
+	*** 000df8	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_18
+;|***         // seg000:4D70
+;|***         word_3C00E = 0;
+; Line 725
+	*** 000dfb	c7 06 00 00 00 00 	mov	WORD PTR _word_3C00E,0
+;|***         // seg000:4D76
+;|***         if (g_knots < word_3C5A6) {
+; Line 727
+	*** 000e01	a1 00 00 		mov	ax,_word_3C5A6
+	*** 000e04	39 06 00 00 		cmp	_g_knots,ax
+	*** 000e08	7d 06 			jge	$I2077
+;|***             // seg000:4D7F
+;|***             word_3C5A4 = 0;
+; Line 729
+	*** 000e0a	c7 06 00 00 00 00 	mov	WORD PTR _word_3C5A4,0
+;|***         }
+; Line 730
+;|***     }
+; Line 731
+					$I2077:
+;|***     
+;|***     // seg000:4D85
+;|***     if (word_38FDE != 0) {
+; Line 734
+	*** 000e10	83 3e 00 00 00 		cmp	WORD PTR _word_38FDE,0
+	*** 000e15	74 12 			je	$I2078
+;|***         // seg000:4D8C
+;|***         word_3C5A4 = -2000 - g_ourPitch;
+; Line 736
+	*** 000e17	b8 30 f8 		mov	ax,-2000
+	*** 000e1a	2b 06 00 00 		sub	ax,_g_ourPitch
+	*** 000e1e	a3 00 00 		mov	_word_3C5A4,ax
+;|***         // seg000:4D96
+;|***         g_velocity = 
+;|***         g_setThrust = 0;
+; Line 739
+	*** 000e21	2b c0 			sub	ax,ax
+	*** 000e23	a3 00 00 		mov	_g_setThrust,ax
+	*** 000e26	a3 00 00 		mov	_g_velocity,ax
+;|***     }
+; Line 740
+;|***     
+;|***     // seg000:4DB6
+;|***     var_28 = (((int32)word_3C00E) << 7) / ((int32)g_frameRateScaling);
+; Line 743
+					$I2078:
+	*** 000e29	a1 00 00 		mov	ax,_g_frameRateScaling
+	*** 000e2c	99 			cwd	
+	*** 000e2d	52 			push	dx
+	*** 000e2e	50 			push	ax
+	*** 000e2f	a1 00 00 		mov	ax,_word_3C00E
+	*** 000e32	99 			cwd	
+	*** 000e33	b1 07 			mov	cl,7
+					$L20031:
+	*** 000e35	d1 e0 			shl	ax,1
+	*** 000e37	d1 d2 			rcl	dx,1
+	*** 000e39	fe c9 			dec	cl
+	*** 000e3b	74 02 			je	$L20032
+	*** 000e3d	eb f6 			jmp	SHORT $L20031
+					$L20032:
+	*** 000e3f	52 			push	dx
+	*** 000e40	50 			push	ax
+	*** 000e41	e8 00 00 		call	__aNldiv
+	*** 000e44	89 46 f4 		mov	WORD PTR [bp-12],ax	;var_28
+;|***     // seg000:4DBC
+;|***     if (var_28 != 0) {
+; Line 745
+	*** 000e47	0b c0 			or	ax,ax
+	*** 000e49	74 2c 			je	$I2079
+;|***         // seg000:4DC1
+;|***         word_380AC = word_380A4 = sub_13B86(var_28);
+; Line 747
+	*** 000e4b	50 			push	ax
+	*** 000e4c	e8 00 00 		call	_sub_13B86
+	*** 000e4f	83 c4 02 		add	sp,2
+	*** 000e52	a3 00 00 		mov	_word_380A4,ax
+	*** 000e55	a3 00 00 		mov	_word_380AC,ax
+;|***         // seg000:4DD0
+;|***         word_380A6 = sub_13B96(var_28);
+; Line 749
+	*** 000e58	ff 76 f4 		push	WORD PTR [bp-12]	;var_28
+	*** 000e5b	e8 00 00 		call	_sub_13B96
+	*** 000e5e	83 c4 02 		add	sp,2
+	*** 000e61	a3 00 00 		mov	_word_380A6,ax
+;|***         // seg000:4DD9
+;|***         word_380AA = -word_380A6;
+; Line 751
+	*** 000e64	f7 d8 			neg	ax
+	*** 000e66	a3 00 00 		mov	_word_380AA,ax
+;|***         // seg000:4DE6
+;|***         sub_151F9(unk_3806E, &word_380A4);
+; Line 753
+	*** 000e69	b8 00 00 		mov	ax,OFFSET _word_380A4
+	*** 000e6c	50 			push	ax
+	*** 000e6d	b8 00 00 		mov	ax,OFFSET _unk_3806E
+	*** 000e70	50 			push	ax
+	*** 000e71	e8 00 00 		call	_sub_151F9
+	*** 000e74	83 c4 04 		add	sp,4
+;|***     }
+; Line 754
+;|***     
+;|***     // seg000:4DF8
+;|***     var_20 = (int16)((int32)word_3C5A4 << 7) / g_frameRateScaling;
+; Line 757
+					$I2079:
+	*** 000e77	a1 00 00 		mov	ax,_word_3C5A4
+	*** 000e7a	b1 07 			mov	cl,7
+	*** 000e7c	d3 e0 			shl	ax,cl
+	*** 000e7e	99 			cwd	
+	*** 000e7f	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 000e83	f7 f9 			idiv	cx
+	*** 000e85	89 46 e0 		mov	WORD PTR [bp-32],ax	;var_20
+;|***     // seg000:4DFD
+;|***     if (var_20 != 0) {
+; Line 759
+	*** 000e88	0b c0 			or	ax,ax
+	*** 000e8a	74 2c 			je	$I2080
+;|***         // seg000:4E02
+;|***         word_380A2 = word_3809A = sub_13B86(var_20);
+; Line 761
+	*** 000e8c	50 			push	ax
+	*** 000e8d	e8 00 00 		call	_sub_13B86
+	*** 000e90	83 c4 02 		add	sp,2
+	*** 000e93	a3 00 00 		mov	_word_3809A,ax
+	*** 000e96	a3 00 00 		mov	_word_380A2,ax
+;|***         // seg000:4E11
+;|***         word_380A0 = sub_13B96(var_20);
+; Line 763
+	*** 000e99	ff 76 e0 		push	WORD PTR [bp-32]	;var_20
+	*** 000e9c	e8 00 00 		call	_sub_13B96
+	*** 000e9f	83 c4 02 		add	sp,2
+	*** 000ea2	a3 00 00 		mov	_word_380A0,ax
+;|***         // seg000:4E1A
+;|***         word_3809C = -word_380A0;
+; Line 765
+	*** 000ea5	f7 d8 			neg	ax
+	*** 000ea7	a3 00 00 		mov	_word_3809C,ax
+;|***         // seg000:4E27
+;|***         sub_151F9(unk_3806E, unk_38092);
+; Line 767
+	*** 000eaa	b8 00 00 		mov	ax,OFFSET _unk_38092
+	*** 000ead	50 			push	ax
+	*** 000eae	b8 00 00 		mov	ax,OFFSET _unk_3806E
+	*** 000eb1	50 			push	ax
+	*** 000eb2	e8 00 00 		call	_sub_151F9
+	*** 000eb5	83 c4 04 		add	sp,4
+;|***     }
+; Line 768
+;|***     
+;|***     // seg000:4E35
+;|***     var_16 = (int16)var_18 / g_frameRateScaling;
+; Line 771
+					$I2080:
+	*** 000eb8	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;var_18
+	*** 000ebb	99 			cwd	
+	*** 000ebc	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 000ec0	f7 f9 			idiv	cx
+	*** 000ec2	89 46 c8 		mov	WORD PTR [bp-56],ax	;var_16
+;|***     // seg000:4E3A
+;|***     if (var_16 != 0) {
+; Line 773
+	*** 000ec5	0b c0 			or	ax,ax
+	*** 000ec7	74 2c 			je	$I2081
+;|***         // seg000:4E3F
+;|***         word_38090 = word_38080 = sub_13B86(var_16);
+; Line 775
+	*** 000ec9	50 			push	ax
+	*** 000eca	e8 00 00 		call	_sub_13B86
+	*** 000ecd	83 c4 02 		add	sp,2
+	*** 000ed0	a3 00 00 		mov	_word_38080,ax
+	*** 000ed3	a3 00 00 		mov	_word_38090,ax
+;|***         // seg000:4E4E
+;|***         word_38084 = sub_13B96(var_16);
+; Line 777
+	*** 000ed6	ff 76 c8 		push	WORD PTR [bp-56]	;var_16
+	*** 000ed9	e8 00 00 		call	_sub_13B96
+	*** 000edc	83 c4 02 		add	sp,2
+	*** 000edf	a3 00 00 		mov	_word_38084,ax
+;|***         // seg000:4E57
+;|***         word_3808C = -word_38084;
+; Line 779
+	*** 000ee2	f7 d8 			neg	ax
+	*** 000ee4	a3 00 00 		mov	_word_3808C,ax
+;|***         // seg000:4E64
+;|***         sub_151F9(&word_38080, unk_3806E);
+; Line 781
+	*** 000ee7	b8 00 00 		mov	ax,OFFSET _unk_3806E
+	*** 000eea	50 			push	ax
+	*** 000eeb	b8 00 00 		mov	ax,OFFSET _word_38080
+	*** 000eee	50 			push	ax
+	*** 000eef	e8 00 00 		call	_sub_151F9
+	*** 000ef2	83 c4 04 		add	sp,4
+;|***     }
+; Line 782
+;|***     
+;|***     // seg000:4E6A
+;|***     sub_15237();
+; Line 785
+					$I2081:
+	*** 000ef5	e8 00 00 		call	_sub_15237
+;|*** 
+;|***     // seg000:4E6D
+;|***     if ((uint16)g_velocity > (uint16)word_3A8FE && (uint16)word_3BEBE < (uint16)g_viewZ) {
+; Line 788
+	*** 000ef8	a1 00 00 		mov	ax,_word_3A8FE
+	*** 000efb	39 06 00 00 		cmp	_g_velocity,ax
+	*** 000eff	76 50 			jbe	$I2083
+	*** 000f01	a1 00 00 		mov	ax,_g_viewZ
+	*** 000f04	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 000f08	73 47 			jae	$I2083
+;|***         // seg000:4E9A
+;|***         g_ourPitch -= ((uint16)word_3A8FE - (uint16)g_velocity) >> ((gameData->unk4 == 2 || g_gunHits > 8) ? 1 : 2);
+; Line 790
+	*** 000f0a	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000f0e	26 83 7f 40 02 		cmp	WORD PTR es:[bx+64],2
+	*** 000f13	74 07 			je	$L20035
+	*** 000f15	83 3e 00 00 08 		cmp	WORD PTR _g_gunHits,8
+	*** 000f1a	7e 04 			jle	$L20033
+					$L20035:
+	*** 000f1c	b1 01 			mov	cl,1
+	*** 000f1e	eb 02 			jmp	SHORT $L20034
+					$L20033:
+	*** 000f20	b1 02 			mov	cl,2
+					$L20034:
+	*** 000f22	a1 00 00 		mov	ax,_word_3A8FE
+	*** 000f25	2b 06 00 00 		sub	ax,_g_velocity
+	*** 000f29	d3 e8 			shr	ax,cl
+	*** 000f2b	29 06 00 00 		sub	_g_ourPitch,ax
+;|***         // seg000:4EA4
+;|***         byte_380DD = 1;
+; Line 792
+	*** 000f2f	c6 06 00 00 01 		mov	BYTE PTR _byte_380DD,1
+;|***         // seg000:4EA9
+;|***         if (g_ourPitch < 0 || (uint16)g_viewZ < 200) {
+; Line 794
+	*** 000f34	83 3e 00 00 00 		cmp	WORD PTR _g_ourPitch,0
+	*** 000f39	7c 08 			jl	$I2084
+	*** 000f3b	81 3e 00 00 c8 00 	cmp	WORD PTR _g_viewZ,200
+	*** 000f41	73 0e 			jae	$I2083
+					$I2084:
+;|***             // seg000:4EC0
+;|***             makeSound(0x14, 1);
+; Line 796
+	*** 000f43	b8 01 00 		mov	ax,1
+	*** 000f46	50 			push	ax
+	*** 000f47	b8 14 00 		mov	ax,20
+	*** 000f4a	50 			push	ax
+	*** 000f4b	e8 00 00 		call	_makeSound
+	*** 000f4e	83 c4 04 		add	sp,4
+;|***         }
+; Line 797
+;|***     }
+; Line 798
+					$I2083:
+;|*** 
+;|***     // seg000:4EC6
+;|***     if (word_3BEBE == g_viewZ) {
+; Line 801
+	*** 000f51	a1 00 00 		mov	ax,_g_viewZ
+	*** 000f54	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 000f58	75 36 			jne	$I2087
+;|***         // seg000:4ECF
+;|***         if (g_ourRoll != 0) {
+; Line 803
+	*** 000f5a	83 3e 00 00 00 		cmp	WORD PTR _g_ourRoll,0
+	*** 000f5f	74 0b 			je	$I2086
+;|***             // seg000:4ED6
+;|***             g_ourRoll = 0;
+; Line 805
+	*** 000f61	c7 06 00 00 00 00 	mov	WORD PTR _g_ourRoll,0
+;|***             // seg000:4EDC
+;|***             byte_380DD = 1;
+; Line 807
+	*** 000f67	c6 06 00 00 01 		mov	BYTE PTR _byte_380DD,1
+;|***         }
+; Line 808
+;|***         // seg000:4EE1
+;|***         if (g_ourPitch < 0 || (g_ourPitch > 0 && g_knots < word_3C5A6)) {
+; Line 810
+					$I2086:
+	*** 000f6c	83 3e 00 00 00 		cmp	WORD PTR _g_ourPitch,0
+	*** 000f71	7c 0b 			jl	$I2088
+	*** 000f73	7e 1b 			jle	$I2087
+	*** 000f75	a1 00 00 		mov	ax,_word_3C5A6
+	*** 000f78	39 06 00 00 		cmp	_g_knots,ax
+	*** 000f7c	7d 12 			jge	$I2087
+					$I2088:
+;|***             // seg000:4EF3
+;|***             if (word_38FDE == 0) {
+; Line 812
+	*** 000f7e	83 3e 00 00 00 		cmp	WORD PTR _word_38FDE,0
+	*** 000f83	75 06 			jne	$I2089
+;|***                 // seg000:4EFA
+;|***                 g_ourPitch = 0;
+; Line 814
+	*** 000f85	c7 06 00 00 00 00 	mov	WORD PTR _g_ourPitch,0
+;|***             }
+; Line 815
+;|***             // seg000:4F00
+;|***             byte_380DD = 1;
+; Line 817
+					$I2089:
+	*** 000f8b	c6 06 00 00 01 		mov	BYTE PTR _byte_380DD,1
+;|***         }
+; Line 818
+;|***     }
+; Line 819
+					$I2087:
+;|*** 
+;|***     // seg000:4F05
+;|***     word_38FDE = 0;
+; Line 822
+	*** 000f90	c7 06 00 00 00 00 	mov	WORD PTR _word_38FDE,0
+;|*** 
+;|***     // seg000:4F0B
+;|***     byte_3C6A0 = ( (abs(g_ourPitch)) - (abs(g_ourRoll) / 2) > 0x1000) ? 1 : 0;
+; Line 825
+	*** 000f96	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 000f9a	e8 00 00 		call	_abs
+	*** 000f9d	83 c4 02 		add	sp,2
+	*** 000fa0	99 			cwd	
+	*** 000fa1	2b c2 			sub	ax,dx
+	*** 000fa3	d1 f8 			sar	ax,1
+	*** 000fa5	ff 36 00 00 		push	WORD PTR _g_ourPitch
+	*** 000fa9	8b f0 			mov	si,ax
+	*** 000fab	e8 00 00 		call	_abs
+	*** 000fae	83 c4 02 		add	sp,2
+	*** 000fb1	2b c6 			sub	ax,si
+	*** 000fb3	3d 00 10 		cmp	ax,4096
+	*** 000fb6	7e 04 			jle	$L20036
+	*** 000fb8	b0 01 			mov	al,1
+	*** 000fba	eb 02 			jmp	SHORT $L20037
+					$L20036:
+	*** 000fbc	2a c0 			sub	al,al
+					$L20037:
+	*** 000fbe	a2 00 00 		mov	_byte_3C6A0,al
+;|***     
+;|***     // seg000:4F36
+;|***     if (byte_380DD) {
+; Line 828
+	*** 000fc1	80 3e 00 00 00 		cmp	BYTE PTR _byte_380DD,0
+	*** 000fc6	74 03 			je	$I2090
+;|***         // seg000:4F3D
+;|***         UpdateRotationMatrix();
+; Line 830
+	*** 000fc8	e8 00 00 		call	_UpdateRotationMatrix
+;|***     }
+; Line 831
+;|***     
+;|***     // seg000:4F40
+;|***     var_C = word_380D0;
+; Line 834
+					$I2090:
+	*** 000fcb	a1 00 00 		mov	ax,_word_380D0
+	*** 000fce	89 46 de 		mov	WORD PTR [bp-34],ax	;var_C
+;|***     // seg000:4F60
+;|***     word_3C8B6 = FixedPointMul((((uint16)g_velocity) / 10), sub_13B96(g_ourPitch - word_38FC4));
+; Line 836
+	*** 000fd1	a1 00 00 		mov	ax,_g_ourPitch
+	*** 000fd4	2b 06 00 00 		sub	ax,_word_38FC4
+	*** 000fd8	50 			push	ax
+	*** 000fd9	e8 00 00 		call	_sub_13B96
+	*** 000fdc	83 c4 02 		add	sp,2
+	*** 000fdf	50 			push	ax
+	*** 000fe0	a1 00 00 		mov	ax,_g_velocity
+	*** 000fe3	2b d2 			sub	dx,dx
+	*** 000fe5	b9 0a 00 		mov	cx,10
+	*** 000fe8	f7 f1 			div	cx
+	*** 000fea	50 			push	ax
+	*** 000feb	e8 00 00 		call	_FixedPointMul
+	*** 000fee	83 c4 04 		add	sp,4
+	*** 000ff1	a3 00 00 		mov	_word_3C8B6,ax
+;|*** 
+;|***     // seg000:4F69
+;|***     if (word_33712 == 0) {
+; Line 839
+	*** 000ff4	83 3e 00 00 00 		cmp	WORD PTR _word_33712,0
+	*** 000ff9	75 5f 			jne	$I2091
+;|***         // seg000:4F75
+;|***         word_380D0 += (word_3C8B6 / g_frameRateScaling);
+; Line 841
+	*** 000ffb	99 			cwd	
+	*** 000ffc	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 001000	f7 f9 			idiv	cx
+	*** 001002	01 06 00 00 		add	_word_380D0,ax
+;|***         
+;|***         // seg000:4F9A
+;|***         g_ViewX += FixedPointMul(var_22, sub_13B96(g_ourHead)) / 10 / g_frameRateScaling;
+; Line 844
+	*** 001006	ff 36 00 00 		push	WORD PTR _g_ourHead
+	*** 00100a	e8 00 00 		call	_sub_13B96
+	*** 00100d	83 c4 02 		add	sp,2
+	*** 001010	50 			push	ax
+	*** 001011	ff 76 da 		push	WORD PTR [bp-38]	;var_22
+	*** 001014	e8 00 00 		call	_FixedPointMul
+	*** 001017	83 c4 04 		add	sp,4
+	*** 00101a	99 			cwd	
+	*** 00101b	b9 0a 00 		mov	cx,10
+	*** 00101e	f7 f9 			idiv	cx
+	*** 001020	99 			cwd	
+	*** 001021	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 001025	f7 f9 			idiv	cx
+	*** 001027	99 			cwd	
+	*** 001028	01 06 00 00 		add	WORD PTR _g_ViewX,ax
+	*** 00102c	11 16 02 00 		adc	WORD PTR _g_ViewX+2,dx
+;|*** 
+;|***         // seg000:4FC4
+;|***         g_ViewY += FixedPointMul(var_22, sub_13B86(g_ourHead)) / 10 / g_frameRateScaling;
+; Line 847
+	*** 001030	ff 36 00 00 		push	WORD PTR _g_ourHead
+	*** 001034	e8 00 00 		call	_sub_13B86
+	*** 001037	83 c4 02 		add	sp,2
+	*** 00103a	50 			push	ax
+	*** 00103b	ff 76 da 		push	WORD PTR [bp-38]	;var_22
+	*** 00103e	e8 00 00 		call	_FixedPointMul
+	*** 001041	83 c4 04 		add	sp,4
+	*** 001044	99 			cwd	
+	*** 001045	b9 0a 00 		mov	cx,10
+	*** 001048	f7 f9 			idiv	cx
+	*** 00104a	99 			cwd	
+	*** 00104b	8b 0e 00 00 		mov	cx,_g_frameRateScaling
+	*** 00104f	f7 f9 			idiv	cx
+	*** 001051	99 			cwd	
+	*** 001052	01 06 00 00 		add	WORD PTR _g_ViewY,ax
+	*** 001056	11 16 02 00 		adc	WORD PTR _g_ViewY+2,dx
+;|***     }
+; Line 848
+;|***     
+;|***     // seg000:4FCF
+;|***     if ((uint16)word_380D0 > 0xf230 || (uint16)word_380D0 < (uint16)word_3BEBE) {
+; Line 851
+					$I2091:
+	*** 00105a	81 3e 00 00 30 f2 	cmp	WORD PTR _word_380D0,-3536
+	*** 001060	77 09 			ja	$I2093
+	*** 001062	a1 00 00 		mov	ax,_word_380D0
+	*** 001065	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 001069	76 06 			jbe	$I2092
+					$I2093:
+;|***         // seg000:4FE0
+;|***         word_380D0 = word_3BEBE;
+; Line 853
+	*** 00106b	a1 00 00 		mov	ax,_word_3BEBE
+	*** 00106e	a3 00 00 		mov	_word_380D0,ax
+;|***     }
+; Line 854
+;|***     // seg000:4FE6
+;|***     if (word_380D0 > 0xEA60) word_380D0 = 0xEA60;
+; Line 856
+					$I2092:
+	*** 001071	81 3e 00 00 60 ea 	cmp	WORD PTR _word_380D0,-5536
+	*** 001077	76 06 			jbe	$I2094
+	*** 001079	c7 06 00 00 60 ea 	mov	WORD PTR _word_380D0,-5536
+;|***     
+;|***     // seg000:4FF4
+;|***     if (word_380D0 < 0x2000) {
+; Line 859
+					$I2094:
+	*** 00107f	81 3e 00 00 00 20 	cmp	WORD PTR _word_380D0,8192
+	*** 001085	73 08 			jae	$I2095
+;|***         // seg000:4FFC
+;|***         g_viewZ = word_380D0;
+; Line 861
+	*** 001087	a1 00 00 		mov	ax,_word_380D0
+	*** 00108a	a3 00 00 		mov	_g_viewZ,ax
+;|***     } else if (word_380D0 < 0x4000) {
+; Line 862
+	*** 00108d	eb 28 			jmp	SHORT $I2098
+					$I2095:
+	*** 00108f	81 3e 00 00 00 40 	cmp	WORD PTR _word_380D0,16384
+	*** 001095	73 10 			jae	$I2097
+;|***         // seg000:500C
+;|***         g_viewZ = ((word_380D0 - 0x2000) >> 1) + 0x2000;
+; Line 864
+	*** 001097	a1 00 00 		mov	ax,_word_380D0
+	*** 00109a	2d 00 20 		sub	ax,8192
+	*** 00109d	d1 e8 			shr	ax,1
+	*** 00109f	80 c4 20 		add	ah,32
+	*** 0010a2	a3 00 00 		mov	_g_viewZ,ax
+;|***     } else {
+; Line 865
+	*** 0010a5	eb 10 			jmp	SHORT $I2098
+					$I2097:
+;|***         // seg000:501C
+;|***         g_viewZ = ((word_380D0 - 0x4000) >> 2) + 0x3000;
+; Line 867
+	*** 0010a7	a1 00 00 		mov	ax,_word_380D0
+	*** 0010aa	2d 00 40 		sub	ax,16384
+	*** 0010ad	d1 e8 			shr	ax,1
+	*** 0010af	d1 e8 			shr	ax,1
+	*** 0010b1	80 c4 30 		add	ah,48
+	*** 0010b4	a3 00 00 		mov	_g_viewZ,ax
+;|***     }
+; Line 868
+					$I2098:
+;|*** 
+;|***     // seg000:502C
+;|***     if (word_3BEBE == g_viewZ) {
+; Line 871
+	*** 0010b7	a1 00 00 		mov	ax,_g_viewZ
+	*** 0010ba	39 06 00 00 		cmp	_word_3BEBE,ax
+	*** 0010be	74 03 			je	$JCC4286
+	*** 0010c0	e9 a7 00 		jmp	$I2099
+					$JCC4286:
+;|***         // seg000:5038
+;|***         if (var_C > word_3BEBE && word_33702 != 0) {
+; Line 873
+	*** 0010c3	a1 00 00 		mov	ax,_word_3BEBE
+	*** 0010c6	39 46 de 		cmp	WORD PTR [bp-34],ax	;var_C
+	*** 0010c9	7f 03 			jg	$JCC4297
+	*** 0010cb	e9 96 00 		jmp	$I2101
+					$JCC4297:
+	*** 0010ce	83 3e 00 00 00 		cmp	WORD PTR _word_33702,0
+	*** 0010d3	75 03 			jne	$JCC4307
+	*** 0010d5	e9 8c 00 		jmp	$I2101
+					$JCC4307:
+;|***             // seg000:5055
+;|***             makeSound(0xC, 2);
+; Line 875
+	*** 0010d8	b8 02 00 		mov	ax,2
+	*** 0010db	50 			push	ax
+	*** 0010dc	b8 0c 00 		mov	ax,12
+	*** 0010df	50 			push	ax
+	*** 0010e0	e8 00 00 		call	_makeSound
+	*** 0010e3	83 c4 04 		add	sp,4
+;|***             //temp_bx = g_closestThreatIndex << 4;
+;|*** 
+;|***             // seg000:5063
+;|***             if ((( ((g_planes[g_closestThreatIndex].field_6 & 0x200) ? 0x100 : 0x80) 
+;|***                 < ((int16)(-word_3C8B6 * g_missionStatus) / 2))) || 
+;|***                 ((gameData->unk4 != 0 && 
+;|***                     (((g_playerPlaneFlags & 1)!=0) || 
+;|***                         (((int16)abs(g_ourRoll)) > (int16)((0x30 / (g_missionStatus + 1)) << 8))) ))) {
+; Line 883
+	*** 0010e6	8b 1e 00 00 		mov	bx,_g_closestThreatIndex
+	*** 0010ea	b1 04 			mov	cl,4
+	*** 0010ec	d3 e3 			shl	bx,cl
+	*** 0010ee	f7 87 06 00 00 02 	test	WORD PTR _g_planes[bx+6],512
+	*** 0010f4	74 05 			je	$L20038
+	*** 0010f6	b8 00 01 		mov	ax,256
+	*** 0010f9	eb 03 			jmp	SHORT $L20039
+					$L20038:
+	*** 0010fb	b8 80 00 		mov	ax,128
+					$L20039:
+	*** 0010fe	8b c8 			mov	cx,ax
+	*** 001100	a1 00 00 		mov	ax,_word_3C8B6
+	*** 001103	f7 d8 			neg	ax
+	*** 001105	f7 2e 00 00 		imul	WORD PTR _g_missionStatus
+	*** 001109	99 			cwd	
+	*** 00110a	2b c2 			sub	ax,dx
+	*** 00110c	d1 f8 			sar	ax,1
+	*** 00110e	3b c8 			cmp	cx,ax
+	*** 001110	7c 31 			jl	$I2103
+	*** 001112	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 001116	26 83 7f 40 00 		cmp	WORD PTR es:[bx+64],0
+	*** 00111b	74 47 			je	$I2101
+	*** 00111d	f6 06 00 00 01 		test	BYTE PTR _g_playerPlaneFlags,1
+	*** 001122	75 1f 			jne	$I2103
+	*** 001124	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 001128	e8 00 00 		call	_abs
+	*** 00112b	83 c4 02 		add	sp,2
+	*** 00112e	8b c8 			mov	cx,ax
+	*** 001130	b8 30 00 		mov	ax,48
+	*** 001133	99 			cwd	
+	*** 001134	8b 1e 00 00 		mov	bx,_g_missionStatus
+	*** 001138	43 			inc	bx
+	*** 001139	f7 fb 			idiv	bx
+	*** 00113b	8a f0 			mov	dh,al
+	*** 00113d	2a d2 			sub	dl,dl
+	*** 00113f	3b d1 			cmp	dx,cx
+	*** 001141	7d 21 			jge	$I2101
+					$I2103:
+;|***                             // seg000:50B8
+;|***                             makeSound(0, 2);
+; Line 885
+	*** 001143	b8 02 00 		mov	ax,2
+	*** 001146	50 			push	ax
+	*** 001147	2b c0 			sub	ax,ax
+	*** 001149	50 			push	ax
+	*** 00114a	e8 00 00 		call	_makeSound
+	*** 00114d	83 c4 04 		add	sp,4
+;|***                             // seg000:50C9
+;|***                             sub_12278(0x3C);
+; Line 887
+	*** 001150	b8 3c 00 		mov	ax,60
+	*** 001153	50 			push	ax
+	*** 001154	e8 00 00 		call	_sub_12278
+	*** 001157	83 c4 02 		add	sp,2
+;|***                             // seg000:50D3
+;|***                             PrepareToExit(5);
+; Line 889
+	*** 00115a	b8 05 00 		mov	ax,5
+	*** 00115d	50 			push	ax
+	*** 00115e	e8 00 00 		call	_PrepareToExit
+	*** 001161	83 c4 02 		add	sp,2
+;|***             }
+; Line 890
+;|***         }
+; Line 891
+					$I2101:
+;|***         // seg000:50D9
+;|***         word_3C8B6 = 0;
+; Line 893
+	*** 001164	c7 06 00 00 00 00 	mov	WORD PTR _word_3C8B6,0
+;|***     }
+; Line 894
+;|***     
+;|***     // seg000:50DF
+;|***     var_38 = word_336E8 & 0xF;
+; Line 897
+					$I2099:
+	*** 00116a	a1 00 00 		mov	ax,_word_336E8
+	*** 00116d	25 0f 00 		and	ax,15
+	*** 001170	89 46 f2 		mov	WORD PTR [bp-14],ax	;var_38
+;|***     // seg000:50EE
+;|***     stru_3A95A[var_38].field_A = g_ourHead;
+; Line 899
+	*** 001173	8b f0 			mov	si,ax
+	*** 001175	b1 04 			mov	cl,4
+	*** 001177	d3 e6 			shl	si,cl
+	*** 001179	a1 00 00 		mov	ax,_g_ourHead
+	*** 00117c	89 84 0a 00 		mov	WORD PTR _stru_3A95A[si+10],ax
+;|***     // seg000:50F5
+;|***     stru_3A95A[var_38].field_C = g_ourPitch;
+; Line 901
+	*** 001180	a1 00 00 		mov	ax,_g_ourPitch
+	*** 001183	89 84 0c 00 		mov	WORD PTR _stru_3A95A[si+12],ax
+;|***     // seg000:50FC
+;|***     stru_3A95A[var_38].field_E = g_ourRoll;
+; Line 903
+	*** 001187	a1 00 00 		mov	ax,_g_ourRoll
+	*** 00118a	89 84 0e 00 		mov	WORD PTR _stru_3A95A[si+14],ax
+;|***     // seg000:510A
+;|***     *(int32*)&stru_3A95A[var_38].field_0 = g_ViewX;
+; Line 905
+	*** 00118e	a1 00 00 		mov	ax,WORD PTR _g_ViewX
+	*** 001191	8b 16 02 00 		mov	dx,WORD PTR _g_ViewX+2
+	*** 001195	89 84 00 00 		mov	WORD PTR _stru_3A95A[si],ax
+	*** 001199	89 94 02 00 		mov	WORD PTR _stru_3A95A[si+2],dx
+;|***     // seg000:5119
+;|***     *(int32*)&stru_3A95A[var_38].field_4 = g_ViewY;
+; Line 907
+	*** 00119d	a1 00 00 		mov	ax,WORD PTR _g_ViewY
+	*** 0011a0	8b 16 02 00 		mov	dx,WORD PTR _g_ViewY+2
+	*** 0011a4	89 84 04 00 		mov	WORD PTR _stru_3A95A[si+4],ax
+	*** 0011a8	89 94 06 00 		mov	WORD PTR _stru_3A95A[si+6],dx
+;|***     // seg000:5121
+;|***     stru_3A95A[var_38].field_8 = g_viewZ;
+; Line 909
+	*** 0011ac	a1 00 00 		mov	ax,_g_viewZ
+	*** 0011af	89 84 08 00 		mov	WORD PTR _stru_3A95A[si+8],ax
+;|*** 
+;|***     // seg000:5128
+;|***     if (g_currentWeaponType == 1) {
+; Line 912
+	*** 0011b3	83 3e 00 00 01 		cmp	WORD PTR _g_currentWeaponType,1
+	*** 0011b8	74 03 			je	$JCC4536
+	*** 0011ba	e9 c1 00 		jmp	$I2104
+					$JCC4536:
+;|***         // seg000:5132
+;|***         if (word_336F2 >= 0) {
+; Line 914
+	*** 0011bd	83 3e 00 00 00 		cmp	WORD PTR _word_336F2,0
+	*** 0011c2	7c 3a 			jl	$I2105
+;|***             // TODO struct
+;|***             // seg000:5168
+;|***             var_38 = sub_1CF64((Dist2D(g_viewX_ - word_3B204[word_336F2 * 0x12], g_viewY_ - word_3B206[word_336F2 * 0x12]) * g_frameRateScaling) >> 8, 0, 12);
+; Line 917
+	*** 0011c4	b8 24 00 		mov	ax,36
+	*** 0011c7	f7 2e 00 00 		imul	WORD PTR _word_336F2
+	*** 0011cb	8b f0 			mov	si,ax
+	*** 0011cd	b8 0c 00 		mov	ax,12
+	*** 0011d0	50 			push	ax
+	*** 0011d1	2b c0 			sub	ax,ax
+	*** 0011d3	50 			push	ax
+	*** 0011d4	a1 00 00 		mov	ax,_g_viewY_
+	*** 0011d7	2b 84 00 00 		sub	ax,WORD PTR _word_3B206[si]
+	*** 0011db	50 			push	ax
+	*** 0011dc	a1 00 00 		mov	ax,_g_viewX_
+	*** 0011df	2b 84 00 00 		sub	ax,WORD PTR _word_3B204[si]
+	*** 0011e3	50 			push	ax
+	*** 0011e4	e8 00 00 		call	_Dist2D
+	*** 0011e7	83 c4 04 		add	sp,4
+	*** 0011ea	f7 2e 00 00 		imul	WORD PTR _g_frameRateScaling
+	*** 0011ee	b1 08 			mov	cl,8
+	*** 0011f0	d3 f8 			sar	ax,cl
+	*** 0011f2	50 			push	ax
+	*** 0011f3	e8 00 00 		call	_sub_1CF64
+	*** 0011f6	83 c4 06 		add	sp,6
+	*** 0011f9	89 46 f2 		mov	WORD PTR [bp-14],ax	;var_38
+;|*** 
+;|***         } else {
+; Line 919
+	*** 0011fc	eb 07 			jmp	SHORT $I2106
+					$I2105:
+;|***             // seg000:5173
+;|***             var_38 = g_frameRateScaling - 1;
+; Line 921
+	*** 0011fe	a1 00 00 		mov	ax,_g_frameRateScaling
+	*** 001201	48 			dec	ax
+	*** 001202	89 46 f2 		mov	WORD PTR [bp-14],ax	;var_38
+;|***         }
+; Line 922
+					$I2106:
+;|*** 
+;|***         // seg000:517A
+;|***         var_38 = (word_336E8 - var_38) & 0xF;
+; Line 925
+	*** 001205	a1 00 00 		mov	ax,_word_336E8
+	*** 001208	2b 46 f2 		sub	ax,WORD PTR [bp-14]	;var_38
+	*** 00120b	25 0f 00 		and	ax,15
+	*** 00120e	89 46 f2 		mov	WORD PTR [bp-14],ax	;var_38
+;|***         
+;|***         // seg000:518C
+;|***         var_2C = g_ourHead - stru_3A95A[var_38].field_A;
+; Line 928
+	*** 001211	8b f0 			mov	si,ax
+	*** 001213	b1 04 			mov	cl,4
+	*** 001215	d3 e6 			shl	si,cl
+	*** 001217	a1 00 00 		mov	ax,_g_ourHead
+	*** 00121a	2b 84 0a 00 		sub	ax,WORD PTR _stru_3A95A[si+10]
+	*** 00121e	89 46 d4 		mov	WORD PTR [bp-44],ax	;var_2C
+;|***         // seg000:5196
+;|***         var_14 = g_ourPitch - stru_3A95A[var_38].field_C;
+; Line 930
+	*** 001221	a1 00 00 		mov	ax,_g_ourPitch
+	*** 001224	2b 84 0c 00 		sub	ax,WORD PTR _stru_3A95A[si+12]
+	*** 001228	89 46 d6 		mov	WORD PTR [bp-42],ax	;var_14
+;|***  
+;|***         // seg000:51BF
+;|***         word_3C6A4 = cosX(g_ourRoll, ((-var_2C) >> 2)) + sinX(g_ourRoll, (var_14 >> 2));
+; Line 933
+	*** 00122b	d1 f8 			sar	ax,1
+	*** 00122d	d1 f8 			sar	ax,1
+	*** 00122f	50 			push	ax
+	*** 001230	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 001234	e8 00 00 		call	_sinX
+	*** 001237	83 c4 04 		add	sp,4
+	*** 00123a	8b 4e d4 		mov	cx,WORD PTR [bp-44]	;var_2C
+	*** 00123d	f7 d9 			neg	cx
+	*** 00123f	d1 f9 			sar	cx,1
+	*** 001241	d1 f9 			sar	cx,1
+	*** 001243	51 			push	cx
+	*** 001244	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 001248	8b f8 			mov	di,ax
+	*** 00124a	e8 00 00 		call	_cosX
+	*** 00124d	83 c4 04 		add	sp,4
+	*** 001250	03 c7 			add	ax,di
+	*** 001252	a3 00 00 		mov	_word_3C6A4,ax
+;|*** 
+;|***         // seg000:51E8
+;|***         word_3C6AC = sinX(g_ourRoll, (var_2C >> 2)) + cosX(g_ourRoll, (var_14 >> 1));
+; Line 936
+	*** 001255	8b 46 d6 		mov	ax,WORD PTR [bp-42]	;var_14
+	*** 001258	d1 f8 			sar	ax,1
+	*** 00125a	50 			push	ax
+	*** 00125b	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 00125f	e8 00 00 		call	_cosX
+	*** 001262	83 c4 04 		add	sp,4
+	*** 001265	8b 4e d4 		mov	cx,WORD PTR [bp-44]	;var_2C
+	*** 001268	d1 f9 			sar	cx,1
+	*** 00126a	d1 f9 			sar	cx,1
+	*** 00126c	51 			push	cx
+	*** 00126d	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 001271	8b f8 			mov	di,ax
+	*** 001273	e8 00 00 		call	_sinX
+	*** 001276	83 c4 04 		add	sp,4
+	*** 001279	03 c7 			add	ax,di
+	*** 00127b	a3 00 00 		mov	_word_3C6AC,ax
+;|***     }
+; Line 937
+;|*** 
+;|***     // seg000:51F8
+;|*** } // 51f9
+; Line 940
+					$I2104:
+	*** 00127e	5e 			pop	si
+	*** 00127f	5f 			pop	di
+	*** 001280	8b e5 			mov	sp,bp
+	*** 001282	5d 			pop	bp
+	*** 001283	c3 			ret	
+
+_otherKeyDispatch	ENDP
+_TEXT	ENDS
+END

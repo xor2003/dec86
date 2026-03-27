@@ -1,0 +1,23 @@
+
+ Start  Stop   Length Name               Class
+
+ 00000H 00092H 00093H _TEXT              CODE
+ 00094H 00094H 00000H _DATA              DATA
+ 00094H 00094H 00000H _BSS               BSS
+
+
+Detailed map of segments
+
+ 0000:0000 0093 C=CODE   S=_TEXT          G=(none)  M=MATRIXMU.C ACBP=28
+ 0009:0004 0000 C=DATA   S=_DATA          G=DGROUP  M=MATRIXMU.C ACBP=48
+ 0009:0004 0000 C=BSS    S=_BSS           G=DGROUP  M=MATRIXMU.C ACBP=48
+
+  Address         Publics by Name
+
+ 0000:007B idle  _MAIN
+
+  Address         Publics by Value
+
+ 0000:007B idle  _MAIN
+
+

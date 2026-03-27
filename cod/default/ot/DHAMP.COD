@@ -1,0 +1,1107 @@
+;	Static Name Aliases
+;
+;	$S205_j	EQU	j
+	TITLE   DHAMP.C
+	NAME    DHAMP
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_printf:NEAR
+EXTRN	_exit:NEAR
+EXTRN	__chkstk:NEAR
+EXTRN	__flsbuf:NEAR
+EXTRN	_fclose:NEAR
+EXTRN	_fopen:NEAR
+EXTRN	__fac:QWORD
+_BSS      SEGMENT
+COMM NEAR	_results:	BYTE:	 20
+EXTRN	__fltused:NEAR
+_BSS      ENDS
+_DATA      SEGMENT
+$SG175	DB	'Start...%c',  0aH,  0aH,  00H
+$SG185	DB	0aH, 'cresult = %d',  0aH,  00H
+$SG188	DB	0aH, 'iresult = %d',  0aH,  00H
+$SG190	DB	0aH, 'uresult = %u',  0aH,  00H
+$SG192	DB	0aH, 'lresult = %ld',  00H
+$SG193	DB	0aH, ' square = %ld',  0aH,  00H
+$SG195	DB	0aH, 'dresult = %f',  0aH,  00H
+$SG196	DB	'  dmath = %f',  0aH,  00H
+$SG199	DB	08H, '   copy = %d',  00H
+$SG201	DB	0aH,  0aH, '...End%c',  00H
+	ORG	$+5
+$SG244	DB	'0123456789abcdef',  00H
+$SG245	DB	'0123456789abcdee',  00H
+$SG265	DB	'Disk I/O test',  00H
+$SG267	DB	'w',  00H
+$SG268	DB	'zyxw.vut',  00H
+$SG269	DB	'Cannot open file',  00H
+	ORG	$-80
+$S205_j	DD	01H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /*      The dhampstone benchmark.  Written by Jack purdum. */
+;|*** /*      version 1.0, August 1,1985                         */
+;|*** 
+;|*** #include "stdio.h"
+;|*** 
+;|*** #define BELL 7          /* ASCII BELL code */
+;|*** #define FIB 24
+;|*** #define TINY 100
+;|*** #define MAXINT 179
+;|*** #define LITTLE 1000
+;|*** #define SMALL 9000
+;|*** #define PRECISION .000001
+;|*** #define FILENAME "zyxw.vut"
+;|*** #define NUMTEST 6
+;|*** 
+;|*** #ifndef ERR
+;|***     #define ERR -1
+;|*** #endif
+;|*** 
+;|*** struct
+;|***     {
+;|***     int cresult;
+;|***     int iresult;
+;|***     int cprsult;
+;|***     unsigned uresult;
+;|***     long lresult;
+;|***     double dresult;
+;|***     } results;
+;|*** 
+;|*** main()
+;|*** {
+; Line 31
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 d6 00 		mov	ax,214
+	*** 000006	e8 00 00 		call	__chkstk
+	*** 000009	57 			push	di
+	*** 00000a	56 			push	si
+;	buf1 = -114
+;	buf2 = -214
+;	i = -6
+;	square = -4
+;	dmath = -14
+;|*** char buf1[TINY], buf2[TINY];
+;|*** int i = 0;
+; Line 33
+	*** 00000b	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;i
+;|*** unsigned fib ();
+;|*** long square, sq ();
+;|*** double dmath, sroot (), dply ();
+;|*** 
+;|*** printf("Start...%c\n\n",BELL);
+; Line 38
+	*** 000010	b8 07 00 		mov	ax,7
+	*** 000013	50 			push	ax
+	*** 000014	b8 00 00 		mov	ax,OFFSET DGROUP:$SG175
+	*** 000017	50 			push	ax
+	*** 000018	e8 00 00 		call	_printf
+	*** 00001b	83 c4 04 		add	sp,4
+;|*** while (i < NUMTEST)
+; Line 39
+					$FC177:
+	*** 00001e	83 7e fa 06 		cmp	WORD PTR [bp-6],6	;i
+	*** 000022	7c 03 			jl	$JCC34
+	*** 000024	e9 37 01 		jmp	$FB178
+					$JCC34:
+;|***     {
+; Line 40
+;|***     switch (i)
+; Line 41
+	*** 000027	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;i
+	*** 00002a	0b c0 			or	ax,ax
+	*** 00002c	74 22 			je	$SC183
+	*** 00002e	3d 01 00 		cmp	ax,1
+	*** 000031	74 3f 			je	$SC186
+	*** 000033	3d 02 00 		cmp	ax,2
+	*** 000036	74 46 			je	$SC189
+	*** 000038	3d 03 00 		cmp	ax,3
+	*** 00003b	74 55 			je	$SC191
+	*** 00003d	3d 04 00 		cmp	ax,4
+	*** 000040	75 03 			jne	$JCC64
+	*** 000042	e9 97 00 		jmp	$SC194
+					$JCC64:
+	*** 000045	3d 05 00 		cmp	ax,5
+	*** 000048	75 03 			jne	$JCC72
+	*** 00004a	e9 03 01 		jmp	$SC197
+					$JCC72:
+;|***         {
+;|***     case (0):                                   /* Character test       */
+;|***         results.cresult = stest (buf1,buf2);
+;|***         printf ("\ncresult = %d\n",results.cresult);
+;|***         break;
+;|***     case (1):                                   /* Integer test         */
+;|***         results.iresult = intest ();
+;|***         printf ("\niresult = %d\n",results.iresult);
+;|***         break;
+;|***     case (2):                                   /* Unsigned test        */
+;|***         results.uresult = fib (FIB);
+;|***         printf ("\nuresult = %u\n",results.uresult);
+;|***         break;
+;|***     case (3):                                   /* Long test            */
+;|***         square = 0L;
+;|***         results.lresult = sq (square);
+;|***         square = sq (results.lresult);          /* Check the value      */
+;|***         printf ("\nlresult = %ld",results.lresult);
+;|***         printf ("\n square = %ld\n",square);
+;|***         break;
+;|***     case (4):                                   /* Double test          */
+;|***         results.dresult = sroot ((double) results.lresult);
+;|***         printf ("\ndresult = %f\n",results.dresult);
+;|***         dmath = dply (results.dresult);
+;|***         printf ("  dmath = %f\n",dmath);
+;|***         break;
+;|***     case (5):                                   /* Disk copy            */
+;|***         results.cprsult = mcopy ();
+;|***         printf ("\b   copy = %d",results.cprsult);
+;|***         break;
+;|***     default:
+;|***         break;
+; Line 73
+	*** 00004d	eb 1e 			jmp	SHORT $SB180
+	*** 00004f	90 			nop	
+					$SC183:
+;|***         results.cresult = stest (buf1,buf2);
+; Line 44
+	*** 000050	8d 86 2a ff 		lea	ax,WORD PTR [bp-214]	;buf2
+	*** 000054	50 			push	ax
+	*** 000055	8d 46 8e 		lea	ax,WORD PTR [bp-114]	;buf1
+	*** 000058	50 			push	ax
+	*** 000059	e8 00 00 		call	_stest
+	*** 00005c	83 c4 04 		add	sp,4
+	*** 00005f	a3 00 00 		mov	WORD PTR _results,ax
+;|***         printf ("\ncresult = %d\n",results.cresult);
+; Line 45
+	*** 000062	50 			push	ax
+	*** 000063	b8 0d 00 		mov	ax,OFFSET DGROUP:$SG185
+					$L20009:
+	*** 000066	50 			push	ax
+	*** 000067	e8 00 00 		call	_printf
+	*** 00006a	83 c4 04 		add	sp,4
+;|***         break;
+; Line 46
+					$SB180:
+;|***     case (1):                                   /* Integer test         */
+;|***         results.iresult = intest ();
+;|***         printf ("\niresult = %d\n",results.iresult);
+;|***         break;
+;|***     case (2):                                   /* Unsigned test        */
+;|***         results.uresult = fib (FIB);
+;|***         printf ("\nuresult = %u\n",results.uresult);
+;|***         break;
+;|***     case (3):                                   /* Long test            */
+;|***         square = 0L;
+;|***         results.lresult = sq (square);
+;|***         square = sq (results.lresult);          /* Check the value      */
+;|***         printf ("\nlresult = %ld",results.lresult);
+;|***         printf ("\n square = %ld\n",square);
+;|***         break;
+;|***     case (4):                                   /* Double test          */
+;|***         results.dresult = sroot ((double) results.lresult);
+;|***         printf ("\ndresult = %f\n",results.dresult);
+;|***         dmath = dply (results.dresult);
+;|***         printf ("  dmath = %f\n",dmath);
+;|***         break;
+;|***     case (5):                                   /* Disk copy            */
+;|***         results.cprsult = mcopy ();
+;|***         printf ("\b   copy = %d",results.cprsult);
+;|***         break;
+;|***     default:
+;|***         break;
+;|***         }
+;|***     ++i;
+; Line 75
+	*** 00006d	ff 46 fa 		inc	WORD PTR [bp-6]	;i
+;|***     }                                           /* End while i          */
+; Line 76
+	*** 000070	eb ac 			jmp	SHORT $FC177
+					$SC186:
+;|***         results.iresult = intest ();
+; Line 48
+	*** 000072	e8 00 00 		call	_intest
+	*** 000075	a3 02 00 		mov	WORD PTR _results+2,ax
+;|***         printf ("\niresult = %d\n",results.iresult);
+; Line 49
+	*** 000078	50 			push	ax
+	*** 000079	b8 1c 00 		mov	ax,OFFSET DGROUP:$SG188
+	*** 00007c	eb e8 			jmp	SHORT $L20009
+					$SC189:
+;|***         break;
+;|***     case (2):                                   /* Unsigned test        */
+;|***         results.uresult = fib (FIB);
+; Line 52
+	*** 00007e	b8 18 00 		mov	ax,24
+	*** 000081	50 			push	ax
+	*** 000082	e8 00 00 		call	_fib
+	*** 000085	83 c4 02 		add	sp,2
+	*** 000088	a3 06 00 		mov	WORD PTR _results+6,ax
+;|***         printf ("\nuresult = %u\n",results.uresult);
+; Line 53
+	*** 00008b	50 			push	ax
+	*** 00008c	b8 2b 00 		mov	ax,OFFSET DGROUP:$SG190
+	*** 00008f	eb d5 			jmp	SHORT $L20009
+	*** 000091	90 			nop	
+					$SC191:
+;|***         break;
+;|***     case (3):                                   /* Long test            */
+;|***         square = 0L;
+; Line 56
+	*** 000092	2b c0 			sub	ax,ax
+	*** 000094	89 46 fe 		mov	WORD PTR [bp-2],ax
+	*** 000097	89 46 fc 		mov	WORD PTR [bp-4],ax	;square
+;|***         results.lresult = sq (square);
+; Line 57
+	*** 00009a	50 			push	ax
+	*** 00009b	50 			push	ax
+	*** 00009c	e8 00 00 		call	_sq
+	*** 00009f	83 c4 04 		add	sp,4
+	*** 0000a2	a3 08 00 		mov	WORD PTR _results+8,ax
+	*** 0000a5	89 16 0a 00 		mov	WORD PTR _results+10,dx
+;|***         square = sq (results.lresult);          /* Check the value      */
+; Line 58
+	*** 0000a9	52 			push	dx
+	*** 0000aa	50 			push	ax
+	*** 0000ab	e8 00 00 		call	_sq
+	*** 0000ae	83 c4 04 		add	sp,4
+	*** 0000b1	89 46 fc 		mov	WORD PTR [bp-4],ax	;square
+	*** 0000b4	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***         printf ("\nlresult = %ld",results.lresult);
+; Line 59
+	*** 0000b7	ff 36 0a 00 		push	WORD PTR _results+10
+	*** 0000bb	ff 36 08 00 		push	WORD PTR _results+8
+	*** 0000bf	b8 3a 00 		mov	ax,OFFSET DGROUP:$SG192
+	*** 0000c2	50 			push	ax
+	*** 0000c3	e8 00 00 		call	_printf
+	*** 0000c6	83 c4 06 		add	sp,6
+;|***         printf ("\n square = %ld\n",square);
+; Line 60
+	*** 0000c9	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 0000cc	ff 76 fc 		push	WORD PTR [bp-4]	;square
+	*** 0000cf	b8 49 00 		mov	ax,OFFSET DGROUP:$SG193
+	*** 0000d2	50 			push	ax
+	*** 0000d3	e8 00 00 		call	_printf
+	*** 0000d6	83 c4 06 		add	sp,6
+;|***         break;
+; Line 61
+	*** 0000d9	eb 92 			jmp	SHORT $SB180
+	*** 0000db	90 			nop	
+					$SC194:
+;|***     case (4):                                   /* Double test          */
+;|***         results.dresult = sroot ((double) results.lresult);
+; Line 63
+	*** 0000dc	9b db 06 08 00 		fild	DWORD PTR _results+8
+	*** 0000e1	83 ec 08 		sub	sp,8
+	*** 0000e4	8b dc 			mov	bx,sp
+	*** 0000e6	9b dd 1f 		fstp	QWORD PTR [bx]
+	*** 0000e9	90 9b 			fwait	
+	*** 0000eb	e8 00 00 		call	_sroot
+	*** 0000ee	83 c4 08 		add	sp,8
+	*** 0000f1	bf 0c 00 		mov	di,OFFSET DGROUP:_results+12
+	*** 0000f4	8b f0 			mov	si,ax
+	*** 0000f6	1e 			push	ds
+	*** 0000f7	07 			pop	es
+	*** 0000f8	a5 			movsw
+	*** 0000f9	a5 			movsw
+	*** 0000fa	a5 			movsw
+	*** 0000fb	a5 			movsw
+;|***         printf ("\ndresult = %f\n",results.dresult);
+; Line 64
+	*** 0000fc	ff 36 12 00 		push	WORD PTR _results+18
+	*** 000100	ff 36 10 00 		push	WORD PTR _results+16
+	*** 000104	ff 36 0e 00 		push	WORD PTR _results+14
+	*** 000108	ff 36 0c 00 		push	WORD PTR _results+12
+	*** 00010c	b8 59 00 		mov	ax,OFFSET DGROUP:$SG195
+	*** 00010f	50 			push	ax
+	*** 000110	e8 00 00 		call	_printf
+	*** 000113	83 c4 0a 		add	sp,10
+;|***         dmath = dply (results.dresult);
+; Line 65
+	*** 000116	ff 36 12 00 		push	WORD PTR _results+18
+	*** 00011a	ff 36 10 00 		push	WORD PTR _results+16
+	*** 00011e	ff 36 0e 00 		push	WORD PTR _results+14
+	*** 000122	ff 36 0c 00 		push	WORD PTR _results+12
+	*** 000126	e8 00 00 		call	_dply
+	*** 000129	83 c4 08 		add	sp,8
+	*** 00012c	8d 7e f2 		lea	di,WORD PTR [bp-14]	;dmath
+	*** 00012f	8b f0 			mov	si,ax
+	*** 000131	16 			push	ss
+	*** 000132	07 			pop	es
+	*** 000133	a5 			movsw
+	*** 000134	a5 			movsw
+	*** 000135	a5 			movsw
+	*** 000136	a5 			movsw
+;|***         printf ("  dmath = %f\n",dmath);
+; Line 66
+	*** 000137	ff 76 f8 		push	WORD PTR [bp-8]
+	*** 00013a	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 00013d	ff 76 f4 		push	WORD PTR [bp-12]
+	*** 000140	ff 76 f2 		push	WORD PTR [bp-14]	;dmath
+	*** 000143	b8 68 00 		mov	ax,OFFSET DGROUP:$SG196
+	*** 000146	50 			push	ax
+	*** 000147	e8 00 00 		call	_printf
+	*** 00014a	83 c4 0a 		add	sp,10
+;|***         break;
+; Line 67
+	*** 00014d	e9 1d ff 		jmp	$SB180
+					$SC197:
+;|***     case (5):                                   /* Disk copy            */
+;|***         results.cprsult = mcopy ();
+; Line 69
+	*** 000150	e8 00 00 		call	_mcopy
+	*** 000153	a3 04 00 		mov	WORD PTR _results+4,ax
+;|***         printf ("\b   copy = %d",results.cprsult);
+; Line 70
+	*** 000156	50 			push	ax
+	*** 000157	b8 76 00 		mov	ax,OFFSET DGROUP:$SG199
+	*** 00015a	e9 09 ff 		jmp	$L20009
+	*** 00015d	90 			nop	
+					$FB178:
+;|***         break;
+;|***     default:
+;|***         break;
+;|***         }
+;|***     ++i;
+;|***     }                                           /* End while i          */
+;|*** printf ("\n\n...End%c",BELL);
+; Line 77
+	*** 00015e	b8 07 00 		mov	ax,7
+	*** 000161	50 			push	ax
+	*** 000162	b8 84 00 		mov	ax,OFFSET DGROUP:$SG201
+	*** 000165	50 			push	ax
+	*** 000166	e8 00 00 		call	_printf
+	*** 000169	83 c4 04 		add	sp,4
+;|*** }
+; Line 78
+	*** 00016c	5e 			pop	si
+	*** 00016d	5f 			pop	di
+	*** 00016e	8b e5 			mov	sp,bp
+	*** 000170	5d 			pop	bp
+	*** 000171	c3 			ret	
+
+_main	ENDP
+;|*** 
+;|*** long sq (big)           /* Function to square a number by iteration */
+;|*** long big;
+; Line 81
+	PUBLIC	_sq
+_sq	PROC NEAR
+	*** 000172	55 			push	bp
+	*** 000173	8b ec 			mov	bp,sp
+	*** 000175	b8 02 00 		mov	ax,2
+	*** 000178	e8 00 00 		call	__chkstk
+;|*** {
+; Line 82
+;	big = 4
+;	i = -2
+;|*** int i;
+;|*** static long j = 1L;
+;|*** 
+;|*** if (!big)
+; Line 86
+	*** 00017b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;big
+	*** 00017e	0b 46 06 		or	ax,WORD PTR [bp+6]
+	*** 000181	75 2b 			jne	$I206
+;|***     for (i = 0; i < SMALL; ++i)
+; Line 87
+	*** 000183	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;i
+	*** 000188	eb 03 			jmp	SHORT $F207
+					$FC208:
+	*** 00018a	ff 46 fe 		inc	WORD PTR [bp-2]	;i
+					$F207:
+	*** 00018d	81 7e fe 28 23 		cmp	WORD PTR [bp-2],9000	;i
+	*** 000192	7d 40 			jge	$I210
+;|***         {
+; Line 88
+;|***         big += j;
+; Line 89
+	*** 000194	a1 90 00 		mov	ax,WORD PTR $S205_j
+	*** 000197	8b 16 92 00 		mov	dx,WORD PTR $S205_j+2
+	*** 00019b	01 46 04 		add	WORD PTR [bp+4],ax	;big
+	*** 00019e	11 56 06 		adc	WORD PTR [bp+6],dx
+;|***         j += 2;
+; Line 90
+	*** 0001a1	83 06 90 00 02 		add	WORD PTR $S205_j,2
+	*** 0001a6	83 16 92 00 00 		adc	WORD PTR $S205_j+2,0
+;|***         }
+; Line 91
+	*** 0001ab	eb dd 			jmp	SHORT $FC208
+	*** 0001ad	90 			nop	
+					$I206:
+;|*** else
+;|***     for (i = 0; i < SMALL; ++i)
+; Line 93
+	*** 0001ae	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;i
+					$FC212:
+;|***         {
+; Line 94
+;|***         j -= 2;
+; Line 95
+	*** 0001b3	83 2e 90 00 02 		sub	WORD PTR $S205_j,2
+	*** 0001b8	83 1e 92 00 00 		sbb	WORD PTR $S205_j+2,0
+;|***         big -= j;
+; Line 96
+	*** 0001bd	a1 90 00 		mov	ax,WORD PTR $S205_j
+	*** 0001c0	8b 16 92 00 		mov	dx,WORD PTR $S205_j+2
+	*** 0001c4	29 46 04 		sub	WORD PTR [bp+4],ax	;big
+	*** 0001c7	19 56 06 		sbb	WORD PTR [bp+6],dx
+;|***         }
+; Line 97
+	*** 0001ca	ff 46 fe 		inc	WORD PTR [bp-2]	;i
+	*** 0001cd	81 7e fe 28 23 		cmp	WORD PTR [bp-2],9000	;i
+	*** 0001d2	7c df 			jl	$FC212
+					$I210:
+;|*** return (big);
+; Line 98
+	*** 0001d4	8b 46 04 		mov	ax,WORD PTR [bp+4]	;big
+	*** 0001d7	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 0001da	8b e5 			mov	sp,bp
+	*** 0001dc	5d 			pop	bp
+	*** 0001dd	c3 			ret	
+
+_sq	ENDP
+;|*** }
+;|*** 
+;|*** double sroot (num)      /* Find square root of number */
+;|*** double num;
+; Line 102
+_TEXT      ENDS
+CONST      SEGMENT
+$T20001	DQ	04000000000000000r    ;	2.000000000000000
+$T20002	DQ	03eb0c6f7a0b5ed8dr    ;	1.000000000000000E-06
+CONST      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+	PUBLIC	_sroot
+_sroot	PROC NEAR
+	*** 0001de	55 			push	bp
+	*** 0001df	8b ec 			mov	bp,sp
+	*** 0001e1	b8 12 00 		mov	ax,18
+	*** 0001e4	e8 00 00 		call	__chkstk
+	*** 0001e7	57 			push	di
+	*** 0001e8	56 			push	si
+;|*** {
+; Line 103
+;	num = 4
+;	temp1 = -8
+;	temp2 = -16
+;|*** double temp1, temp2, abs ();
+;|*** 
+;|*** temp2 = num / 2.0;
+; Line 106
+	*** 0001e9	9b dd 46 04 		fld	QWORD PTR [bp+4]	;num
+	*** 0001ed	9b dc 36 00 00 		fdiv	QWORD PTR $T20001
+	*** 0001f2	9b dd 5e f0 		fstp	QWORD PTR [bp-16]	;temp2
+	*** 0001f6	90 9b 			fwait	
+;|*** temp1 = num;
+; Line 107
+	*** 0001f8	8d 7e f8 		lea	di,WORD PTR [bp-8]	;temp1
+	*** 0001fb	8d 76 04 		lea	si,WORD PTR [bp+4]	;num
+	*** 0001fe	16 			push	ss
+	*** 0001ff	07 			pop	es
+	*** 000200	a5 			movsw
+	*** 000201	a5 			movsw
+	*** 000202	a5 			movsw
+	*** 000203	a5 			movsw
+;|*** while (temp1 > PRECISION * temp2)
+; Line 108
+	*** 000204	eb 44 			jmp	SHORT $L20013
+					$FC220:
+;|***     {
+; Line 109
+;|***     temp1 = (num / temp2) - temp2;
+; Line 110
+	*** 000206	9b dd 46 04 		fld	QWORD PTR [bp+4]	;num
+	*** 00020a	9b dc 76 f0 		fdiv	QWORD PTR [bp-16]	;temp2
+	*** 00020e	9b dc 66 f0 		fsub	QWORD PTR [bp-16]	;temp2
+	*** 000212	9b dd 5e f8 		fstp	QWORD PTR [bp-8]	;temp1
+	*** 000216	90 9b 			fwait	
+;|***     temp1 = abs (temp1);
+; Line 111
+	*** 000218	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 00021b	ff 76 fc 		push	WORD PTR [bp-4]
+	*** 00021e	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 000221	ff 76 f8 		push	WORD PTR [bp-8]	;temp1
+	*** 000224	e8 00 00 		call	_abs
+	*** 000227	83 c4 08 		add	sp,8
+	*** 00022a	8d 7e f8 		lea	di,WORD PTR [bp-8]	;temp1
+	*** 00022d	8b f0 			mov	si,ax
+	*** 00022f	16 			push	ss
+	*** 000230	07 			pop	es
+	*** 000231	a5 			movsw
+	*** 000232	a5 			movsw
+	*** 000233	a5 			movsw
+	*** 000234	a5 			movsw
+;|***     temp2 = ((num / temp2) + temp2) / 2.0;
+; Line 112
+	*** 000235	9b dd 46 04 		fld	QWORD PTR [bp+4]	;num
+	*** 000239	9b dc 76 f0 		fdiv	QWORD PTR [bp-16]	;temp2
+	*** 00023d	9b dc 46 f0 		fadd	QWORD PTR [bp-16]	;temp2
+	*** 000241	9b dc 36 00 00 		fdiv	QWORD PTR $T20001
+	*** 000246	9b dd 5e f0 		fstp	QWORD PTR [bp-16]	;temp2
+;|***     }
+; Line 113
+					$L20013:
+	*** 00024a	9b dd 46 f0 		fld	QWORD PTR [bp-16]	;temp2
+	*** 00024e	9b dc 0e 08 00 		fmul	QWORD PTR $T20002
+	*** 000253	9b dc 56 f8 		fcom	QWORD PTR [bp-8]	;temp1
+	*** 000257	9b dd d8 		fstp	ST(0)
+	*** 00025a	9b dd 7e ee 		fstsw	WORD PTR [bp-18]
+	*** 00025e	90 9b 			fwait	
+	*** 000260	8a 66 ef 		mov	ah,BYTE PTR [bp-17]
+	*** 000263	9e 			sahf	
+	*** 000264	72 a0 			jb	$FC220
+;|*** return (temp2);
+; Line 114
+	*** 000266	9b dd 46 f0 		fld	QWORD PTR [bp-16]	;temp2
+	*** 00026a	9b dd 1e 00 00 		fstp	QWORD PTR __fac
+	*** 00026f	b8 00 00 		mov	ax,OFFSET __fac
+	*** 000272	90 9b 			fwait	
+	*** 000274	5e 			pop	si
+	*** 000275	5f 			pop	di
+	*** 000276	8b e5 			mov	sp,bp
+	*** 000278	5d 			pop	bp
+	*** 000279	c3 			ret	
+
+_sroot	ENDP
+;|*** }
+;|*** 
+;|*** double abs (x)          /* Absolute value of a double */
+;|*** double x;
+; Line 118
+_TEXT      ENDS
+CONST      SEGMENT
+$T20006	DQ	0000000000r    ;	.0000000000000000
+CONST      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+	PUBLIC	_abs
+_abs	PROC NEAR
+	*** 00027a	55 			push	bp
+	*** 00027b	8b ec 			mov	bp,sp
+	*** 00027d	b8 02 00 		mov	ax,2
+	*** 000280	e8 00 00 		call	__chkstk
+;|*** {
+; Line 119
+;	x = 4
+;|*** 
+;|*** return (x < 0 ? -x : x);
+; Line 121
+	*** 000283	9b dd 46 04 		fld	QWORD PTR [bp+4]	;x
+	*** 000287	9b dc 16 10 00 		fcom	QWORD PTR $T20006
+	*** 00028c	9b dd d8 		fstp	ST(0)
+	*** 00028f	9b dd 7e fe 		fstsw	WORD PTR [bp-2]
+	*** 000293	90 9b 			fwait	
+	*** 000295	8a 66 ff 		mov	ah,BYTE PTR [bp-1]
+	*** 000298	9e 			sahf	
+	*** 000299	73 09 			jae	$L20004
+	*** 00029b	9b dd 46 04 		fld	QWORD PTR [bp+4]	;x
+	*** 00029f	9b d9 e0 		fchs	
+	*** 0002a2	eb 04 			jmp	SHORT $L20005
+					$L20004:
+	*** 0002a4	9b dd 46 04 		fld	QWORD PTR [bp+4]	;x
+					$L20005:
+	*** 0002a8	9b dd 1e 00 00 		fstp	QWORD PTR __fac
+	*** 0002ad	b8 00 00 		mov	ax,OFFSET __fac
+	*** 0002b0	90 9b 			fwait	
+	*** 0002b2	8b e5 			mov	sp,bp
+	*** 0002b4	5d 			pop	bp
+	*** 0002b5	c3 			ret	
+
+_abs	ENDP
+;|*** }
+;|*** 
+;|*** double dply (x)         /* Exercise some doubles */
+;|*** double x;
+; Line 125
+	PUBLIC	_dply
+_dply	PROC NEAR
+	*** 0002b6	55 			push	bp
+	*** 0002b7	8b ec 			mov	bp,sp
+	*** 0002b9	b8 0a 00 		mov	ax,10
+	*** 0002bc	e8 00 00 		call	__chkstk
+;|*** {
+; Line 126
+;	x = 4
+;	i = -10
+;	y = -8
+;|*** int i = TINY;
+; Line 127
+	*** 0002bf	c7 46 f6 64 00 		mov	WORD PTR [bp-10],100	;i
+;|*** double y;
+;|*** 
+;|*** while (i--)
+; Line 130
+	*** 0002c4	eb 76 			jmp	SHORT $L20014
+					$FC229:
+;|***     {
+; Line 131
+;|***     y = x * x * x * x * x * x * x;
+; Line 132
+	*** 0002c6	9b dd 46 04 		fld	QWORD PTR [bp+4]	;x
+	*** 0002ca	9b dc 4e 04 		fmul	QWORD PTR [bp+4]	;x
+	*** 0002ce	9b dc 4e 04 		fmul	QWORD PTR [bp+4]	;x
+	*** 0002d2	9b dc 4e 04 		fmul	QWORD PTR [bp+4]	;x
+	*** 0002d6	9b dc 4e 04 		fmul	QWORD PTR [bp+4]	;x
+	*** 0002da	9b dc 4e 04 		fmul	QWORD PTR [bp+4]	;x
+	*** 0002de	9b dc 4e 04 		fmul	QWORD PTR [bp+4]	;x
+	*** 0002e2	9b dd 56 f8 		fst	QWORD PTR [bp-8]	;y
+;|***     y = y / x / x / x / x / x / x;
+; Line 133
+	*** 0002e6	9b dc 76 04 		fdiv	QWORD PTR [bp+4]	;x
+	*** 0002ea	9b dc 76 04 		fdiv	QWORD PTR [bp+4]	;x
+	*** 0002ee	9b dc 76 04 		fdiv	QWORD PTR [bp+4]	;x
+	*** 0002f2	9b dc 76 04 		fdiv	QWORD PTR [bp+4]	;x
+	*** 0002f6	9b dc 76 04 		fdiv	QWORD PTR [bp+4]	;x
+	*** 0002fa	9b dc 76 04 		fdiv	QWORD PTR [bp+4]	;x
+	*** 0002fe	9b dd 56 f8 		fst	QWORD PTR [bp-8]	;y
+;|*** 
+;|***     y = y + x + x + x + x + x + x;
+; Line 135
+	*** 000302	9b dc 46 04 		fadd	QWORD PTR [bp+4]	;x
+	*** 000306	9b dc 46 04 		fadd	QWORD PTR [bp+4]	;x
+	*** 00030a	9b dc 46 04 		fadd	QWORD PTR [bp+4]	;x
+	*** 00030e	9b dc 46 04 		fadd	QWORD PTR [bp+4]	;x
+	*** 000312	9b dc 46 04 		fadd	QWORD PTR [bp+4]	;x
+	*** 000316	9b dc 46 04 		fadd	QWORD PTR [bp+4]	;x
+	*** 00031a	9b dd 56 f8 		fst	QWORD PTR [bp-8]	;y
+;|***     y = y - x - x - x - x - x - x;
+; Line 136
+	*** 00031e	9b dc 66 04 		fsub	QWORD PTR [bp+4]	;x
+	*** 000322	9b dc 66 04 		fsub	QWORD PTR [bp+4]	;x
+	*** 000326	9b dc 66 04 		fsub	QWORD PTR [bp+4]	;x
+	*** 00032a	9b dc 66 04 		fsub	QWORD PTR [bp+4]	;x
+	*** 00032e	9b dc 66 04 		fsub	QWORD PTR [bp+4]	;x
+	*** 000332	9b dc 66 04 		fsub	QWORD PTR [bp+4]	;x
+	*** 000336	9b dd 5e f8 		fstp	QWORD PTR [bp-8]	;y
+	*** 00033a	90 9b 			fwait	
+;|***     }
+; Line 137
+					$L20014:
+	*** 00033c	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;i
+	*** 00033f	ff 4e f6 		dec	WORD PTR [bp-10]	;i
+	*** 000342	0b c0 			or	ax,ax
+	*** 000344	74 03 			je	$JCC836
+	*** 000346	e9 7d ff 		jmp	$FC229
+					$JCC836:
+;|*** return (y);
+; Line 138
+	*** 000349	9b dd 46 f8 		fld	QWORD PTR [bp-8]	;y
+	*** 00034d	9b dd 1e 00 00 		fstp	QWORD PTR __fac
+	*** 000352	b8 00 00 		mov	ax,OFFSET __fac
+	*** 000355	90 9b 			fwait	
+	*** 000357	8b e5 			mov	sp,bp
+	*** 000359	5d 			pop	bp
+	*** 00035a	c3 			ret	
+	*** 00035b	90 			nop	
+
+_dply	ENDP
+;|*** }
+;|*** 
+;|*** unsigned fib (x)        /* Common Fibonacci function */
+;|*** int x;
+; Line 142
+	PUBLIC	_fib
+_fib	PROC NEAR
+	*** 00035c	55 			push	bp
+	*** 00035d	8b ec 			mov	bp,sp
+	*** 00035f	33 c0 			xor	ax,ax
+	*** 000361	e8 00 00 		call	__chkstk
+	*** 000364	56 			push	si
+;|*** {
+; Line 143
+;	x = 4
+;|*** 
+;|*** if (x > 2)
+; Line 145
+	*** 000365	83 7e 04 02 		cmp	WORD PTR [bp+4],2	;x
+	*** 000369	7e 1f 			jle	$I233
+;|***     return (fib (x-1) + fib (x-2));
+; Line 146
+	*** 00036b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 00036e	2d 02 00 		sub	ax,2
+	*** 000371	50 			push	ax
+	*** 000372	e8 e7 ff 		call	_fib
+	*** 000375	83 c4 02 		add	sp,2
+	*** 000378	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;x
+	*** 00037b	49 			dec	cx
+	*** 00037c	51 			push	cx
+	*** 00037d	8b f0 			mov	si,ax
+	*** 00037f	e8 da ff 		call	_fib
+	*** 000382	83 c4 02 		add	sp,2
+	*** 000385	03 c6 			add	ax,si
+	*** 000387	5e 			pop	si
+	*** 000388	5d 			pop	bp
+	*** 000389	c3 			ret	
+					$I233:
+;|*** else
+;|***     return (1);
+; Line 148
+	*** 00038a	b8 01 00 		mov	ax,1
+	*** 00038d	5e 			pop	si
+	*** 00038e	5d 			pop	bp
+	*** 00038f	c3 			ret	
+
+_fib	ENDP
+;|*** }
+;|*** 
+;|*** int stest (b1,b2)       /* String test using strcpy() and strcmp() */
+;|*** char *b1, *b2;
+; Line 152
+	PUBLIC	_stest
+_stest	PROC NEAR
+	*** 000390	55 			push	bp
+	*** 000391	8b ec 			mov	bp,sp
+	*** 000393	b8 04 00 		mov	ax,4
+	*** 000396	e8 00 00 		call	__chkstk
+;|*** {
+; Line 153
+;	b1 = 4
+;	b2 = 6
+;	i = -2
+;	j = -4
+;|*** int i,j;
+;|*** void mstrcpy ();
+;|*** 
+;|*** for (i = 0, j = 0; i < SMALL; ++i)
+; Line 157
+	*** 000399	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;i
+	*** 00039e	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;j
+	*** 0003a3	eb 2d 			jmp	SHORT $F241
+	*** 0003a5	90 			nop	
+					$FC242:
+;|***     {
+; Line 158
+;|***     mstrcpy (b1, "0123456789abcdef");
+; Line 159
+	*** 0003a6	b8 94 00 		mov	ax,OFFSET DGROUP:$SG244
+	*** 0003a9	50 			push	ax
+	*** 0003aa	ff 76 04 		push	WORD PTR [bp+4]	;b1
+	*** 0003ad	e8 00 00 		call	_mstrcpy
+	*** 0003b0	83 c4 04 		add	sp,4
+;|***     mstrcpy (b2, "0123456789abcdee"); /* Note it's a different string. */
+; Line 160
+	*** 0003b3	b8 a5 00 		mov	ax,OFFSET DGROUP:$SG245
+	*** 0003b6	50 			push	ax
+	*** 0003b7	ff 76 06 		push	WORD PTR [bp+6]	;b2
+	*** 0003ba	e8 00 00 		call	_mstrcpy
+	*** 0003bd	83 c4 04 		add	sp,4
+;|***     j += mstrcmp (b1,b2);
+; Line 161
+	*** 0003c0	ff 76 06 		push	WORD PTR [bp+6]	;b2
+	*** 0003c3	ff 76 04 		push	WORD PTR [bp+4]	;b1
+	*** 0003c6	e8 00 00 		call	_mstrcmp
+	*** 0003c9	83 c4 04 		add	sp,4
+	*** 0003cc	01 46 fc 		add	WORD PTR [bp-4],ax	;j
+;|***     }
+; Line 162
+	*** 0003cf	ff 46 fe 		inc	WORD PTR [bp-2]	;i
+					$F241:
+	*** 0003d2	81 7e fe 28 23 		cmp	WORD PTR [bp-2],9000	;i
+	*** 0003d7	7c cd 			jl	$FC242
+;|*** return (j);
+; Line 163
+	*** 0003d9	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;j
+	*** 0003dc	8b e5 			mov	sp,bp
+	*** 0003de	5d 			pop	bp
+	*** 0003df	c3 			ret	
+
+_stest	ENDP
+;|*** }
+;|*** 
+;|*** int mstrcmp (c,d)       /* External string compare */
+;|*** char *c, *d;
+; Line 167
+	PUBLIC	_mstrcmp
+_mstrcmp	PROC NEAR
+	*** 0003e0	55 			push	bp
+	*** 0003e1	8b ec 			mov	bp,sp
+	*** 0003e3	b8 02 00 		mov	ax,2
+	*** 0003e6	e8 00 00 		call	__chkstk
+;|*** {
+; Line 168
+;	c = 4
+;	d = 6
+;|*** 
+;|*** while (*c == *d)
+; Line 170
+	*** 0003e9	eb 13 			jmp	SHORT $L20016
+	*** 0003eb	90 			nop	
+					$FC251:
+;|***     {
+; Line 171
+;|***     if (!*c)
+; Line 172
+	*** 0003ec	80 7e fe 00 		cmp	BYTE PTR [bp-2],0
+	*** 0003f0	75 06 			jne	$I253
+;|***         return (0);
+; Line 173
+	*** 0003f2	2b c0 			sub	ax,ax
+	*** 0003f4	8b e5 			mov	sp,bp
+	*** 0003f6	5d 			pop	bp
+	*** 0003f7	c3 			ret	
+					$I253:
+	*** 0003f8	ff 46 04 		inc	WORD PTR [bp+4]	;c
+;|***     ++c;
+;|***     ++d;
+; Line 175
+	*** 0003fb	ff 46 06 		inc	WORD PTR [bp+6]	;d
+;|***     }
+; Line 176
+					$L20016:
+	*** 0003fe	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;c
+	*** 000401	8a 07 			mov	al,BYTE PTR [bx]
+	*** 000403	88 46 fe 		mov	BYTE PTR [bp-2],al
+	*** 000406	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;d
+	*** 000409	38 07 			cmp	BYTE PTR [bx],al
+	*** 00040b	74 df 			je	$FC251
+;|*** return (*c - *d);
+; Line 177
+	*** 00040d	8a 07 			mov	al,BYTE PTR [bx]
+	*** 00040f	98 			cbw	
+	*** 000410	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;c
+	*** 000413	8b c8 			mov	cx,ax
+	*** 000415	8a 07 			mov	al,BYTE PTR [bx]
+	*** 000417	98 			cbw	
+	*** 000418	2b c1 			sub	ax,cx
+	*** 00041a	8b e5 			mov	sp,bp
+	*** 00041c	5d 			pop	bp
+	*** 00041d	c3 			ret	
+
+_mstrcmp	ENDP
+;|*** }
+;|*** 
+;|*** void mstrcpy (c,d)      /* External string copy */
+;|*** char *c, *d;
+; Line 181
+	PUBLIC	_mstrcpy
+_mstrcpy	PROC NEAR
+	*** 00041e	55 			push	bp
+	*** 00041f	8b ec 			mov	bp,sp
+	*** 000421	33 c0 			xor	ax,ax
+	*** 000423	e8 00 00 		call	__chkstk
+	*** 000426	56 			push	si
+;|*** {
+; Line 182
+;	c = 4
+;	d = 6
+;|*** 
+;|*** while (*c++ = *d++)
+; Line 184
+					$FC258:
+	*** 000427	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;c
+	*** 00042a	ff 46 04 		inc	WORD PTR [bp+4]	;c
+	*** 00042d	8b 76 06 		mov	si,WORD PTR [bp+6]	;d
+	*** 000430	ff 46 06 		inc	WORD PTR [bp+6]	;d
+	*** 000433	8a 04 			mov	al,BYTE PTR [si]
+	*** 000435	88 07 			mov	BYTE PTR [bx],al
+	*** 000437	0a c0 			or	al,al
+	*** 000439	75 ec 			jne	$FC258
+;|***     ;
+;|*** }
+; Line 186
+	*** 00043b	5e 			pop	si
+	*** 00043c	5d 			pop	bp
+	*** 00043d	c3 			ret	
+
+_mstrcpy	ENDP
+;|*** 
+;|*** int mcopy ()            /* Disk copy.  Test assumes file doesn't exist */
+;|*** {
+; Line 189
+	PUBLIC	_mcopy
+_mcopy	PROC NEAR
+	*** 00043e	55 			push	bp
+	*** 00043f	8b ec 			mov	bp,sp
+	*** 000441	b8 6a 00 		mov	ax,106
+	*** 000444	e8 00 00 		call	__chkstk
+	*** 000447	56 			push	si
+;	fp = -2
+;	buf = -106
+;	i = -4
+;	j = -6
+;|*** FILE *fp, *fopen ();
+;|*** char buf[TINY];
+;|*** int i, j;
+;|*** 
+;|*** mstrcpy (buf, "Disk I/O test");
+; Line 194
+	*** 000448	b8 b6 00 		mov	ax,OFFSET DGROUP:$SG265
+	*** 00044b	50 			push	ax
+	*** 00044c	8d 46 96 		lea	ax,WORD PTR [bp-106]	;buf
+	*** 00044f	50 			push	ax
+	*** 000450	e8 cb ff 		call	_mstrcpy
+	*** 000453	83 c4 04 		add	sp,4
+;|*** if ((fp = fopen(FILENAME,"w")) == NULL)
+; Line 195
+	*** 000456	b8 c4 00 		mov	ax,OFFSET DGROUP:$SG267
+	*** 000459	50 			push	ax
+	*** 00045a	b8 c6 00 		mov	ax,OFFSET DGROUP:$SG268
+	*** 00045d	50 			push	ax
+	*** 00045e	e8 00 00 		call	_fopen
+	*** 000461	83 c4 04 		add	sp,4
+	*** 000464	89 46 fe 		mov	WORD PTR [bp-2],ax	;fp
+	*** 000467	0b c0 			or	ax,ax
+	*** 000469	75 14 			jne	$I266
+;|***     {
+; Line 196
+;|***     printf ("Cannot open file");
+; Line 197
+	*** 00046b	b8 cf 00 		mov	ax,OFFSET DGROUP:$SG269
+	*** 00046e	50 			push	ax
+	*** 00046f	e8 00 00 		call	_printf
+	*** 000472	83 c4 02 		add	sp,2
+;|***     exit (ERR);
+; Line 198
+	*** 000475	b8 ff ff 		mov	ax,-1
+	*** 000478	50 			push	ax
+	*** 000479	e8 00 00 		call	_exit
+	*** 00047c	83 c4 02 		add	sp,2
+;|***     }
+; Line 199
+;|*** i = 0;
+; Line 200
+					$I266:
+	*** 00047f	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+;|*** while (++i < LITTLE)
+; Line 201
+	*** 000484	eb 3e 			jmp	SHORT $L20017
+					$FC272:
+;|***     for (j = 0; buf[j]; ++j)
+; Line 202
+	*** 000486	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;j
+	*** 00048b	eb 15 			jmp	SHORT $F274
+	*** 00048d	90 			nop	
+					$L20007:
+	*** 00048e	ff 76 fe 		push	WORD PTR [bp-2]	;fp
+	*** 000491	8b 76 fa 		mov	si,WORD PTR [bp-6]	;j
+	*** 000494	8a 42 96 		mov	al,[bp-106][si]
+	*** 000497	98 			cbw	
+	*** 000498	50 			push	ax
+	*** 000499	e8 00 00 		call	__flsbuf
+	*** 00049c	83 c4 04 		add	sp,4
+					$FC275:
+	*** 00049f	ff 46 fa 		inc	WORD PTR [bp-6]	;j
+					$F274:
+	*** 0004a2	8b 76 fa 		mov	si,WORD PTR [bp-6]	;j
+	*** 0004a5	80 7a 96 00 		cmp	BYTE PTR [bp-106][si],0
+	*** 0004a9	74 19 			je	$L20017
+;|***         putc (buf[j], fp);
+; Line 203
+	*** 0004ab	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;fp
+	*** 0004ae	ff 4f 02 		dec	WORD PTR [bx+2]
+	*** 0004b1	78 db 			js	$L20007
+	*** 0004b3	8b 76 fa 		mov	si,WORD PTR [bp-6]	;j
+	*** 0004b6	8a 42 96 		mov	al,[bp-106][si]
+	*** 0004b9	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;fp
+	*** 0004bc	8b 37 			mov	si,WORD PTR [bx]
+	*** 0004be	ff 07 			inc	WORD PTR [bx]
+	*** 0004c0	88 04 			mov	BYTE PTR [si],al
+	*** 0004c2	eb db 			jmp	SHORT $FC275
+					$L20017:
+	*** 0004c4	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+	*** 0004c7	81 7e fc e8 03 		cmp	WORD PTR [bp-4],1000	;i
+	*** 0004cc	7c b8 			jl	$FC272
+;|*** fclose (fp);
+; Line 204
+	*** 0004ce	ff 76 fe 		push	WORD PTR [bp-2]	;fp
+	*** 0004d1	e8 00 00 		call	_fclose
+	*** 0004d4	83 c4 02 		add	sp,2
+;|*** return (i);
+; Line 205
+	*** 0004d7	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 0004da	5e 			pop	si
+	*** 0004db	8b e5 			mov	sp,bp
+	*** 0004dd	5d 			pop	bp
+	*** 0004de	c3 			ret	
+	*** 0004df	90 			nop	
+
+_mcopy	ENDP
+;|*** }
+;|*** 
+;|*** int intest ()           /* Square an integer by iteration */
+;|*** {
+; Line 209
+	PUBLIC	_intest
+_intest	PROC NEAR
+	*** 0004e0	55 			push	bp
+	*** 0004e1	8b ec 			mov	bp,sp
+	*** 0004e3	b8 08 00 		mov	ax,8
+	*** 0004e6	e8 00 00 		call	__chkstk
+;	i = -4
+;	j = -6
+;	k = -8
+;	sum = -2
+;|*** int i, j, k, sum;
+;|*** 
+;|*** for (i = 0; i < LITTLE; ++i)
+; Line 212
+	*** 0004e9	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+	*** 0004ee	eb 19 			jmp	SHORT $F282
+					$FC286:
+	*** 0004f0	ff 46 fa 		inc	WORD PTR [bp-6]	;j
+					$F285:
+	*** 0004f3	81 7e fa b3 00 		cmp	WORD PTR [bp-6],179	;j
+	*** 0004f8	7d 0c 			jge	$FC283
+;|***     {
+;|***     sum = 0;
+;|***     for (j = 0, k = 1; j < MAXINT; ++j)
+;|***         {
+; Line 216
+;|***         sum += k;
+; Line 217
+	*** 0004fa	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;k
+	*** 0004fd	01 46 fe 		add	WORD PTR [bp-2],ax	;sum
+;|***         k += 2;
+; Line 218
+	*** 000500	83 46 f8 02 		add	WORD PTR [bp-8],2	;k
+;|***         }
+; Line 219
+	*** 000504	eb ea 			jmp	SHORT $FC286
+					$FC283:
+	*** 000506	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+					$F282:
+	*** 000509	81 7e fc e8 03 		cmp	WORD PTR [bp-4],1000	;i
+	*** 00050e	7d 12 			jge	$FB284
+;|***     {
+; Line 213
+;|***     sum = 0;
+; Line 214
+	*** 000510	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;sum
+;|***     for (j = 0, k = 1; j < MAXINT; ++j)
+; Line 215
+	*** 000515	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;j
+	*** 00051a	c7 46 f8 01 00 		mov	WORD PTR [bp-8],1	;k
+	*** 00051f	eb d2 			jmp	SHORT $F285
+	*** 000521	90 			nop	
+					$FB284:
+;|***         {
+;|***         sum += k;
+;|***         k += 2;
+;|***         }
+;|***     }
+;|*** return (sum);
+; Line 221
+	*** 000522	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;sum
+	*** 000525	8b e5 			mov	sp,bp
+	*** 000527	5d 			pop	bp
+	*** 000528	c3 			ret	
+	*** 000529	90 			nop	
+
+_intest	ENDP
+_TEXT	ENDS
+END
+;|*** }

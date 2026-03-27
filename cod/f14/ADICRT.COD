@@ -1,0 +1,388 @@
+;	Static Name Aliases
+;
+;	$S1336_pos	EQU	pos
+;	$S1337_t1	EQU	t1
+;	$S1340_ypos	EQU	ypos
+;	$S1341_ypos2	EQU	ypos2
+	TITLE   adicrt.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+EXTRN	_MapInEMSSprite:NEAR
+EXTRN	_DrawPoly:FAR
+EXTRN	_TransRectCopy:NEAR
+EXTRN	_RectFill:FAR
+EXTRN	_rotate_pt:NEAR
+EXTRN	_RpCRT:WORD
+EXTRN	_OurRoll:WORD
+EXTRN	_OurPitch:WORD
+_BSS      SEGMENT
+COMM NEAR	_ntmp:	 1:	 10
+_BSS      ENDS
+_DATA      SEGMENT
+$S1340_ypos	DW	0ffe2H
+$S1341_ypos2	DW	0fff6H
+_DATA      ENDS
+_BSS      SEGMENT
+$S1336_pos	DW 01H DUP (?)
+$S1337_t1	DW 01H DUP (?)
+_BSS      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include <dos.h>
+; Line 1
+;|*** #include <stdlib.h>
+; Line 2
+;|*** #include <string.h>
+; Line 3
+;|*** 
+;|*** #include "library.h"
+; Line 5
+;|*** /*
+;|*** ÉÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»
+;|*** º********************   MPS Labs Graphic Library   *********************º
+;|*** ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶
+;|*** º  File:  Library.h														º
+;|*** º																		º
+;|*** º  Auth:  David McKibbin												º
+;|*** º																		º
+;|*** º  Edit:  dtm   July 20, 1992         1:18 pm							º
+;|*** º																		º
+;|*** º  Note:  HEADER definitions for MPSLIB?.LIB							º
+;|*** º																		º
+;|*** ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶
+;|*** º   Copyright (c) 1991 by MicroProse Software, All Rights Reserved.		º
+;|*** ÈÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼
+;|*** */
+;|*** 
+;|*** #ifndef EXEC_TYPES_H
+;|*** #include "types.h"
+; Line 19
+;|*** #include "world.h"
+; Line 6
+;|*** #include "sdata.h"
+; Line 7
+;|*** #include "Cockpit.h"
+; Line 8
+;|*** #include "f15defs.h"
+; Line 9
+;|*** #include "awg9.h"
+; Line 10
+;|*** #include "armt.h"
+; Line 11
+;|*** #include "proto.h"
+; Line 12
+;|*** 
+;|*** #define 	DEG			182
+;|*** #define		PL_GAP		10
+;|*** #define		PL_CTR_X	CRTXCENT
+;|*** #define		PL_CTR_Y	CRTYCENT
+;|*** 
+;|*** 
+;|*** extern  struct RastPort *RpCRT;
+;|*** 
+;|*** extern COORD    Px,Py;
+;|*** extern unsigned Alt;
+;|*** extern int      OurHead;
+;|*** extern int      sx,sy,sz;
+;|*** extern UWORD    Rtime;
+;|*** extern int 		OurRoll;
+;|*** extern int 		OurPitch;
+;|*** 
+;|*** int AdiCrt(int CrtNr)
+;|*** {
+; Line 31
+	PUBLIC	_AdiCrt
+_AdiCrt	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 52 		sub	sp,82
+	*** 000006	56 			push	si
+;	p3 = -22
+;	p4 = -40
+;	p5 = -42
+;	p6 = -44
+;	p7 = -62
+;	p8 = -64
+;	x1 = -68
+;	x2 = -72
+;	y1 = -70
+;	y2 = -78
+;	i = -66
+;	basedeg = -76
+;	pts = -60
+;	a = -16
+;	t = -38
+;	mseg = -80
+;	xpos = -74
+;	xpos2 = -82
+;	p1 = -18
+;	p2 = -20
+;	CrtNr = 4
+;|*** 	static pos;
+;|*** 	static int t1;
+;|*** 	int xpos=0;
+;|*** 	int xpos2=25;
+; Line 35
+	*** 000007	c7 46 ae 19 00 		mov	WORD PTR [bp-82],25	;xpos2
+;|*** 	static int ypos=-30;
+;|*** 	static int ypos2=-10;
+;|*** 	int p1,p2,p3,p4;
+;|*** 	int p5,p6,p7,p8;
+;|*** 	int x1,x2,y1,y2;
+;|*** 	int i;
+;|*** 	int basedeg;
+;|*** 	int pts[4][2];
+;|*** 
+;|*** 	int a[4][2] =
+;|*** 	{
+;|*** 		{ -15, 10 },
+;|*** 		{  15, 10 },
+; Line 48
+	*** 00000c	b8 0a 00 		mov	ax,10
+	*** 00000f	89 46 f2 		mov	WORD PTR [bp-14],ax
+	*** 000012	89 46 f6 		mov	WORD PTR [bp-10],ax
+;|*** 		{  15,  0 },
+; Line 49
+	*** 000015	b8 0f 00 		mov	ax,15
+	*** 000018	89 46 f4 		mov	WORD PTR [bp-12],ax
+	*** 00001b	89 46 f8 		mov	WORD PTR [bp-8],ax
+;|*** 		{ -15,  0 }
+; Line 50
+	*** 00001e	b8 f1 ff 		mov	ax,-15
+	*** 000021	89 46 f0 		mov	WORD PTR [bp-16],ax	;a
+	*** 000024	89 46 fc 		mov	WORD PTR [bp-4],ax
+;|*** 	};
+;|*** 
+;|*** 	int t[8] = {0,0,0,0,0,0,0,0};
+;|*** 	int mseg;
+;|*** 
+;|*** 	RectFill(RpCRT, 0,0, RpCRT->Width1+1,RpCRT->Length1+1, BLACK);
+; Line 56
+	*** 000027	2b c0 			sub	ax,ax
+	*** 000029	89 46 b6 		mov	WORD PTR [bp-74],ax	;xpos
+	*** 00002c	89 46 fa 		mov	WORD PTR [bp-6],ax
+	*** 00002f	89 46 fe 		mov	WORD PTR [bp-2],ax
+	*** 000032	89 46 da 		mov	WORD PTR [bp-38],ax	;t
+	*** 000035	89 46 dc 		mov	WORD PTR [bp-36],ax
+	*** 000038	89 46 de 		mov	WORD PTR [bp-34],ax
+	*** 00003b	89 46 e0 		mov	WORD PTR [bp-32],ax
+	*** 00003e	89 46 e2 		mov	WORD PTR [bp-30],ax
+	*** 000041	89 46 e4 		mov	WORD PTR [bp-28],ax
+	*** 000044	89 46 e6 		mov	WORD PTR [bp-26],ax
+	*** 000047	89 46 e8 		mov	WORD PTR [bp-24],ax
+	*** 00004a	50 			push	ax
+	*** 00004b	8b 1e 00 00 		mov	bx,WORD PTR _RpCRT
+	*** 00004f	8b 47 08 		mov	ax,WORD PTR [bx+8]
+	*** 000052	40 			inc	ax
+	*** 000053	50 			push	ax
+	*** 000054	8b 47 06 		mov	ax,WORD PTR [bx+6]
+	*** 000057	40 			inc	ax
+	*** 000058	50 			push	ax
+	*** 000059	2b c0 			sub	ax,ax
+	*** 00005b	50 			push	ax
+	*** 00005c	50 			push	ax
+	*** 00005d	53 			push	bx
+	*** 00005e	9a 00 00 00 00 		call	FAR PTR _RectFill
+	*** 000063	83 c4 0c 		add	sp,12
+;|*** 
+;|*** 	if (mseg=MapInEMSSprite(MISCSPRTSEG,0)) {
+; Line 58
+	*** 000066	2b c0 			sub	ax,ax
+	*** 000068	50 			push	ax
+	*** 000069	b9 02 00 		mov	cx,2
+	*** 00006c	51 			push	cx
+	*** 00006d	e8 00 00 		call	_MapInEMSSprite
+	*** 000070	83 c4 04 		add	sp,4
+	*** 000073	89 46 b0 		mov	WORD PTR [bp-80],ax	;mseg
+	*** 000076	0b c0 			or	ax,ax
+	*** 000078	74 26 			je	$I1361
+;|*** 		TransRectCopy(mseg,37,35,24,21,RpCRT,227,140,0);
+; Line 59
+	*** 00007a	2b c9 			sub	cx,cx
+	*** 00007c	51 			push	cx
+	*** 00007d	b9 8c 00 		mov	cx,140
+	*** 000080	51 			push	cx
+	*** 000081	b9 e3 00 		mov	cx,227
+	*** 000084	51 			push	cx
+	*** 000085	ff 36 00 00 		push	WORD PTR _RpCRT
+	*** 000089	b9 15 00 		mov	cx,21
+	*** 00008c	51 			push	cx
+	*** 00008d	b9 18 00 		mov	cx,24
+	*** 000090	51 			push	cx
+	*** 000091	b9 23 00 		mov	cx,35
+	*** 000094	51 			push	cx
+	*** 000095	b9 25 00 		mov	cx,37
+	*** 000098	51 			push	cx
+	*** 000099	50 			push	ax
+	*** 00009a	e8 00 00 		call	_TransRectCopy
+	*** 00009d	83 c4 12 		add	sp,18
+;|*** 	}
+; Line 60
+;|*** 
+;|*** 	basedeg = (OurPitch / DEG);
+; Line 62
+					$I1361:
+;|*** 
+;|*** 	if (basedeg >0) {
+; Line 64
+	*** 0000a0	a1 00 00 		mov	ax,WORD PTR _OurPitch
+	*** 0000a3	b9 b6 00 		mov	cx,182
+	*** 0000a6	99 			cwd	
+	*** 0000a7	f7 f9 			idiv	cx
+	*** 0000a9	89 46 b4 		mov	WORD PTR [bp-76],ax	;basedeg
+	*** 0000ac	0b c0 			or	ax,ax
+	*** 0000ae	7e 06 			jle	$I1363
+;|*** 		a[2][1]+= basedeg;
+; Line 65
+	*** 0000b0	01 46 fa 		add	WORD PTR [bp-6],ax
+;|*** 		a[3][1]+= basedeg;
+; Line 66
+	*** 0000b3	01 46 fe 		add	WORD PTR [bp-2],ax
+;|*** 	}
+; Line 67
+;|*** 	if (basedeg <0) {
+; Line 68
+					$I1363:
+	*** 0000b6	0b c0 			or	ax,ax
+	*** 0000b8	7d 06 			jge	$I1364
+;|*** 		a[2][1]+=basedeg;
+; Line 69
+	*** 0000ba	01 46 fa 		add	WORD PTR [bp-6],ax
+;|*** 		a[3][1]+=basedeg;
+; Line 70
+	*** 0000bd	01 46 fe 		add	WORD PTR [bp-2],ax
+;|*** 	}
+; Line 71
+;|*** 
+;|*** 	/* Sky area */
+;|*** 	for (i=0; i<4; i++)
+; Line 74
+					$I1364:
+	*** 0000c0	c7 46 be 00 00 		mov	WORD PTR [bp-66],0	;i
+					$FC1366:
+;|*** 		rotate_pt(a[i],pts[i],OurRoll);
+; Line 75
+	*** 0000c5	ff 36 00 00 		push	WORD PTR _OurRoll
+	*** 0000c9	8b 76 be 		mov	si,WORD PTR [bp-66]	;i
+	*** 0000cc	d1 e6 			shl	si,1
+	*** 0000ce	d1 e6 			shl	si,1
+	*** 0000d0	8d 42 c4 		lea	ax,WORD PTR [bp-60][si]
+	*** 0000d3	50 			push	ax
+	*** 0000d4	8d 42 f0 		lea	ax,WORD PTR [bp-16][si]
+	*** 0000d7	50 			push	ax
+	*** 0000d8	e8 00 00 		call	_rotate_pt
+	*** 0000db	83 c4 06 		add	sp,6
+	*** 0000de	ff 46 be 		inc	WORD PTR [bp-66]	;i
+	*** 0000e1	83 7e be 04 		cmp	WORD PTR [bp-66],4	;i
+	*** 0000e5	7c de 			jl	$FC1366
+;|*** 
+;|*** 	t[0] = pts[0][0]+13;
+; Line 77
+	*** 0000e7	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;pts
+	*** 0000ea	05 0d 00 		add	ax,13
+	*** 0000ed	89 46 da 		mov	WORD PTR [bp-38],ax	;t
+;|*** 	t[1] = pts[0][1]+13;
+; Line 78
+	*** 0000f0	8b 46 c6 		mov	ax,WORD PTR [bp-58]
+	*** 0000f3	05 0d 00 		add	ax,13
+	*** 0000f6	89 46 dc 		mov	WORD PTR [bp-36],ax
+;|*** 	t[2] = pts[1][0]+13;
+; Line 79
+	*** 0000f9	8b 46 c8 		mov	ax,WORD PTR [bp-56]
+	*** 0000fc	05 0d 00 		add	ax,13
+	*** 0000ff	89 46 de 		mov	WORD PTR [bp-34],ax
+;|*** 	t[3] = pts[1][1]+13;
+; Line 80
+	*** 000102	8b 46 ca 		mov	ax,WORD PTR [bp-54]
+	*** 000105	05 0d 00 		add	ax,13
+	*** 000108	89 46 e0 		mov	WORD PTR [bp-32],ax
+;|*** 	t[4] = pts[2][0]+13;
+; Line 81
+	*** 00010b	8b 46 cc 		mov	ax,WORD PTR [bp-52]
+	*** 00010e	05 0d 00 		add	ax,13
+	*** 000111	89 46 e2 		mov	WORD PTR [bp-30],ax
+;|*** 	t[5] = pts[2][1]+13;
+; Line 82
+	*** 000114	8b 46 ce 		mov	ax,WORD PTR [bp-50]
+	*** 000117	05 0d 00 		add	ax,13
+	*** 00011a	89 46 e4 		mov	WORD PTR [bp-28],ax
+;|*** 	t[6] = pts[3][0]+13;
+; Line 83
+	*** 00011d	8b 46 d0 		mov	ax,WORD PTR [bp-48]
+	*** 000120	05 0d 00 		add	ax,13
+	*** 000123	89 46 e6 		mov	WORD PTR [bp-26],ax
+;|*** 	t[7] = pts[3][1]+13;
+; Line 84
+	*** 000126	8b 46 d2 		mov	ax,WORD PTR [bp-46]
+	*** 000129	05 0d 00 		add	ax,13
+	*** 00012c	89 46 e8 		mov	WORD PTR [bp-24],ax
+;|*** 
+;|*** 	DrawPoly(RpCRT,4,t,BLACK);
+; Line 86
+	*** 00012f	2b c0 			sub	ax,ax
+	*** 000131	50 			push	ax
+	*** 000132	8d 4e da 		lea	cx,WORD PTR [bp-38]	;t
+	*** 000135	51 			push	cx
+	*** 000136	b9 04 00 		mov	cx,4
+	*** 000139	51 			push	cx
+	*** 00013a	ff 36 00 00 		push	WORD PTR _RpCRT
+	*** 00013e	9a 00 00 00 00 		call	FAR PTR _DrawPoly
+	*** 000143	83 c4 08 		add	sp,8
+;|*** 
+;|*** 	if (mseg=MapInEMSSprite(MISCSPRTSEG,0)) {
+; Line 88
+	*** 000146	2b c0 			sub	ax,ax
+	*** 000148	50 			push	ax
+	*** 000149	b9 02 00 		mov	cx,2
+	*** 00014c	51 			push	cx
+	*** 00014d	e8 00 00 		call	_MapInEMSSprite
+	*** 000150	83 c4 04 		add	sp,4
+	*** 000153	89 46 b0 		mov	WORD PTR [bp-80],ax	;mseg
+	*** 000156	0b c0 			or	ax,ax
+	*** 000158	74 26 			je	$I1369
+;|*** 		TransRectCopy(mseg,66,35,8,10,RpCRT,235,150,0);
+; Line 89
+	*** 00015a	2b c9 			sub	cx,cx
+	*** 00015c	51 			push	cx
+	*** 00015d	b9 96 00 		mov	cx,150
+	*** 000160	51 			push	cx
+	*** 000161	b9 eb 00 		mov	cx,235
+	*** 000164	51 			push	cx
+	*** 000165	ff 36 00 00 		push	WORD PTR _RpCRT
+	*** 000169	b9 0a 00 		mov	cx,10
+	*** 00016c	51 			push	cx
+	*** 00016d	b9 08 00 		mov	cx,8
+	*** 000170	51 			push	cx
+	*** 000171	b9 23 00 		mov	cx,35
+	*** 000174	51 			push	cx
+	*** 000175	b9 42 00 		mov	cx,66
+	*** 000178	51 			push	cx
+	*** 000179	50 			push	ax
+	*** 00017a	e8 00 00 		call	_TransRectCopy
+	*** 00017d	83 c4 12 		add	sp,18
+;|*** 	}
+; Line 90
+;|*** 
+;|*** }
+; Line 92
+					$I1369:
+	*** 000180	5e 			pop	si
+	*** 000181	8b e5 			mov	sp,bp
+	*** 000183	5d 			pop	bp
+	*** 000184	c3 			ret	
+	*** 000185	90 			nop	
+
+_AdiCrt	ENDP
+_TEXT	ENDS
+END
+;|*** 

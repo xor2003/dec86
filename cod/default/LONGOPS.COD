@@ -1,0 +1,112 @@
+;	Static Name Aliases
+;
+	TITLE   LONGOPS.C
+	NAME    LONGOPS
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	__chkstk:NEAR
+EXTRN	__aNNalmul:NEAR
+EXTRN	__aNNaldiv:NEAR
+EXTRN	__aNNalrem:NEAR
+EXTRN	__aNNalshl:NEAR
+EXTRN	__aNNalshr:NEAR
+EXTRN	_printf:NEAR
+_DATA      SEGMENT
+$SG105	DB	'a = %ld, b = %ld',  0aH,  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #define TYPE long
+;|*** 
+;|*** main()
+;|*** { TYPE a, b;
+; Line 4
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 08 00 		mov	ax,8
+	*** 000006	e8 00 00 		call	__chkstk
+;	a = -4
+;	b = -8
+;|*** 
+;|*** 	a = 255;
+; Line 6
+	*** 000009	c7 46 fc ff 00 		mov	WORD PTR [bp-4],255	;a
+	*** 00000e	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0
+;|*** 	b = 143;
+; Line 7
+	*** 000013	c7 46 f8 8f 00 		mov	WORD PTR [bp-8],143	;b
+	*** 000018	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0
+;|*** 	b = a + b;
+; Line 8
+	*** 00001d	81 46 f8 ff 00 		add	WORD PTR [bp-8],255	;b
+	*** 000022	83 56 fa 00 		adc	WORD PTR [bp-6],0
+;|*** 	a = a - b;
+; Line 9
+	*** 000026	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;b
+	*** 000029	8b 56 fa 		mov	dx,WORD PTR [bp-6]
+	*** 00002c	29 46 fc 		sub	WORD PTR [bp-4],ax	;a
+	*** 00002f	19 56 fe 		sbb	WORD PTR [bp-2],dx
+;|*** 	a = a * b;
+; Line 10
+	*** 000032	52 			push	dx
+	*** 000033	50 			push	ax
+	*** 000034	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;a
+	*** 000037	50 			push	ax
+	*** 000038	e8 00 00 		call	__aNNalmul
+;|*** 	b = b / a;
+; Line 11
+	*** 00003b	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 00003e	ff 76 fc 		push	WORD PTR [bp-4]	;a
+	*** 000041	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;b
+	*** 000044	50 			push	ax
+	*** 000045	e8 00 00 		call	__aNNaldiv
+;|*** 	b = b % a;
+; Line 12
+	*** 000048	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 00004b	ff 76 fc 		push	WORD PTR [bp-4]	;a
+	*** 00004e	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;b
+	*** 000051	50 			push	ax
+	*** 000052	e8 00 00 		call	__aNNalrem
+;|*** 	a = a << 5;
+; Line 13
+	*** 000055	b0 05 			mov	al,5
+	*** 000057	50 			push	ax
+	*** 000058	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;a
+	*** 00005b	50 			push	ax
+	*** 00005c	e8 00 00 		call	__aNNalshl
+;|*** 	b = b >> a;
+; Line 14
+	*** 00005f	ff 76 fc 		push	WORD PTR [bp-4]	;a
+	*** 000062	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;b
+	*** 000065	50 			push	ax
+	*** 000066	e8 00 00 		call	__aNNalshr
+;|*** 	printf ("a = %ld, b = %ld\n", a, b);
+; Line 15
+	*** 000069	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 00006c	ff 76 f8 		push	WORD PTR [bp-8]	;b
+	*** 00006f	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 000072	ff 76 fc 		push	WORD PTR [bp-4]	;a
+	*** 000075	b8 00 00 		mov	ax,OFFSET DGROUP:$SG105
+	*** 000078	50 			push	ax
+	*** 000079	e8 00 00 		call	_printf
+;|*** }; Line 16
+	*** 00007c	8b e5 			mov	sp,bp
+	*** 00007e	5d 			pop	bp
+	*** 00007f	c3 			ret	
+
+_main	ENDP
+_TEXT	ENDS
+END

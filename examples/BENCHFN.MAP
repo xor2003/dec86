@@ -1,0 +1,33 @@
+
+ Start  Stop   Length Name               Class
+
+ 00000H 000C2H 000C3H _TEXT              CODE
+ 000C4H 00107H 00044H _DATA              DATA
+ 00108H 00108H 00000H _BSS               BSS
+
+
+Detailed map of segments
+
+ 0000:0000 00C3 C=CODE   S=_TEXT          G=(none)  M=BENCHFN.C  ACBP=28
+ 000C:0004 0044 C=DATA   S=_DATA          G=DGROUP  M=BENCHFN.C  ACBP=48
+ 000C:0048 0000 C=BSS    S=_BSS           G=DGROUP  M=BENCHFN.C  ACBP=48
+
+  Address         Publics by Name
+
+ 0000:004B idle  _F0
+ 0000:0028 idle  _F1
+ 0000:0005 idle  _F2
+ 0000:0000 idle  _F3
+ 0000:006B idle  _MAIN
+
+  Address         Publics by Value
+
+ 0000:0000 idle  _F3
+ 0000:0005 idle  _F2
+ 0000:0028 idle  _F1
+ 0000:004B idle  _F0
+ 0000:006B idle  _MAIN
+
+Error: Undefined symbol _PRINTF in module BENCHFN.C
+Error: Undefined symbol _SCANF in module BENCHFN.C
+

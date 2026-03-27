@@ -1,0 +1,85 @@
+;	Static Name Aliases
+;
+	TITLE   TESTLONG.C
+	NAME    TESTLONG
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_printf:NEAR
+EXTRN	_scanf:NEAR
+EXTRN	__chkstk:NEAR
+_DATA      SEGMENT
+$SG160	DB	'%d',  00H
+$SG161	DB	'%d',  00H
+$SG162	DB	'%d %d',  00H
+$SG163	DB	'%ld %ld',  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include <stdio.h>
+;|*** 
+;|*** main()
+;|*** { long a, d;
+; Line 4
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 08 00 		mov	ax,8
+	*** 000006	e8 00 00 		call	__chkstk
+;	a = -4
+;	d = -8
+;|*** 
+;|*** 	scanf ("%d", &d);
+; Line 6
+	*** 000009	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;d
+	*** 00000c	50 			push	ax
+	*** 00000d	b8 00 00 		mov	ax,OFFSET DGROUP:$SG160
+	*** 000010	50 			push	ax
+	*** 000011	e8 00 00 		call	_scanf
+	*** 000014	83 c4 04 		add	sp,4
+;|*** 	scanf ("%d", &a);
+; Line 7
+	*** 000017	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;a
+	*** 00001a	50 			push	ax
+	*** 00001b	b8 03 00 		mov	ax,OFFSET DGROUP:$SG161
+	*** 00001e	50 			push	ax
+	*** 00001f	e8 00 00 		call	_scanf
+	*** 000022	83 c4 04 		add	sp,4
+;|*** 	scanf ("%d %d", &a, &d);
+; Line 8
+	*** 000025	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;d
+	*** 000028	50 			push	ax
+	*** 000029	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;a
+	*** 00002c	50 			push	ax
+	*** 00002d	b8 06 00 		mov	ax,OFFSET DGROUP:$SG162
+	*** 000030	50 			push	ax
+	*** 000031	e8 00 00 		call	_scanf
+	*** 000034	83 c4 06 		add	sp,6
+;|*** 	printf ("%ld %ld", a, d);
+; Line 9
+	*** 000037	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 00003a	ff 76 f8 		push	WORD PTR [bp-8]	;d
+	*** 00003d	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 000040	ff 76 fc 		push	WORD PTR [bp-4]	;a
+	*** 000043	b8 0c 00 		mov	ax,OFFSET DGROUP:$SG163
+	*** 000046	50 			push	ax
+	*** 000047	e8 00 00 		call	_printf
+;|*** }; Line 10
+	*** 00004a	8b e5 			mov	sp,bp
+	*** 00004c	5d 			pop	bp
+	*** 00004d	c3 			ret	
+
+_main	ENDP
+_TEXT	ENDS
+END

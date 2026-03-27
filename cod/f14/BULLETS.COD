@@ -1,0 +1,2607 @@
+;	Static Name Aliases
+;
+	TITLE   bullets.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+EXTRN	_AirKill:NEAR
+EXTRN	_StartASmoke:NEAR
+EXTRN	_Langle:NEAR
+EXTRN	_sinX:NEAR
+EXTRN	_labs:NEAR
+EXTRN	_DrawLine:FAR
+EXTRN	_strcpy:NEAR
+EXTRN	_cosX:NEAR
+EXTRN	_DamageMe:NEAR
+EXTRN	_EngageTrain:NEAR
+EXTRN	_DamageAI:NEAR
+EXTRN	_TrgMul:NEAR
+EXTRN	__fstrcat:NEAR
+EXTRN	_LDist2D:NEAR
+EXTRN	_ARCTAN:NEAR
+EXTRN	__aNldiv:NEAR
+EXTRN	_Dist2D:NEAR
+EXTRN	_GetSquadLeader:NEAR
+EXTRN	__aNNalshl:NEAR
+EXTRN	__aNNalmul:NEAR
+EXTRN	_sinXL:NEAR
+EXTRN	_GetPlanePtr:NEAR
+EXTRN	_GetWingName:NEAR
+EXTRN	_lproject:NEAR
+EXTRN	_FriendMatch:NEAR
+EXTRN	_rng:NEAR
+EXTRN	_LogIt:NEAR
+EXTRN	_strcat:NEAR
+EXTRN	_abs:NEAR
+EXTRN	_Dist3D:NEAR
+EXTRN	_Sound:NEAR
+EXTRN	_Message:NEAR
+EXTRN	_OnTheDeck:NEAR
+_BSS      SEGMENT
+COMM NEAR	_ntmp:	 1:	 10
+_BSS      ENDS
+EXTRN	_Txt:BYTE
+EXTRN	_Rounds:WORD
+EXTRN	_Diff:WORD
+EXTRN	_ejected:WORD
+EXTRN	_FrameRate:WORD
+EXTRN	_trs:BYTE
+_BSS      SEGMENT
+COMM NEAR	_TargetObj:	BYTE:	 2
+_BSS      ENDS
+EXTRN	_PxLng:DWORD
+EXTRN	_PyLng:DWORD
+EXTRN	_Rp3D:WORD
+EXTRN	_NPLANES:WORD
+EXTRN	_OurHead:WORD
+EXTRN	_OurPitch:WORD
+EXTRN	_ps:BYTE
+EXTRN	_Alt:WORD
+EXTRN	_Rtime:WORD
+EXTRN	_sx:WORD
+EXTRN	_sy:WORD
+EXTRN	_KEYPRINT:WORD
+EXTRN	_ORDNANCE:BYTE
+EXTRN	_bv:BYTE
+_BSS      SEGMENT
+COMM NEAR	_Firing:	BYTE:	 2
+COMM NEAR	_NTRACE:	BYTE:	 2
+COMM NEAR	_NTRACE2:	BYTE:	 2
+COMM NEAR	_FIRST_ENEMY_TRACE:	BYTE:	 2
+COMM NEAR	_LastRate:	BYTE:	 2
+_BSS      ENDS
+EXTRN	_DOINVISIBLE:WORD
+_BSS      SEGMENT
+COMM NEAR	_TSpeed:	BYTE:	 2
+_BSS      ENDS
+EXTRN	_FPARAMS:BYTE
+EXTRN	_ENEMYNODIE:WORD
+_DATA      SEGMENT
+$SG1401	DB	' destroyed by ',  00H
+$SG1403	DB	'wingman ',  00H
+$SG1404	DB	'gunfire',  00H
+$SG1409	DB	' destroyed by ',  00H
+$SG1411	DB	'wingman ',  00H
+$SG1412	DB	'gunfire',  00H
+$SG1419	DB	'Hit by gunfire',  00H
+$SG1434	DB	'OPPS! ',  00H
+$SG1435	DB	'Splash ',  00H
+$SG1437	DB	'!',  00H
+$SG1441	DB	'(Wingman)Splash ',  00H
+$SG1442	DB	'!',  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /*  File:   BULLETS.C                             */
+; Line 1
+;|*** /*  Author: Sid Meier / Andy Hollis               */
+;|*** /*                                                */
+;|*** /*  Start, Track and Render bullet tracers        */
+;|*** 
+;|*** #include <stdlib.h>
+; Line 6
+;|*** #include	<stdio.h>
+; Line 7
+;|*** #include <bios.h>
+; Line 8
+;|*** #include <dos.h>
+; Line 9
+;|*** #include "library.h"
+; Line 10
+;|*** /*
+;|*** ÉÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»
+;|*** º********************   MPS Labs Graphic Library   *********************º
+;|*** ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶
+;|*** º  File:  Library.h														º
+;|*** º																		º
+;|*** º  Auth:  David McKibbin												º
+;|*** º																		º
+;|*** º  Edit:  dtm   July 20, 1992         1:18 pm							º
+;|*** º																		º
+;|*** º  Note:  HEADER definitions for MPSLIB?.LIB							º
+;|*** º																		º
+;|*** ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶
+;|*** º   Copyright (c) 1991 by MicroProse Software, All Rights Reserved.		º
+;|*** ÈÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼
+;|*** */
+;|*** 
+;|*** #ifndef EXEC_TYPES_H
+;|*** #include "types.h"
+; Line 19
+;|*** #include "world.h"
+; Line 11
+;|*** #include "sdata.h"
+; Line 12
+;|*** #include "Cockpit.h"
+; Line 13
+;|*** #include "sounds.h"
+; Line 14
+;|*** #include "f15defs.h"
+; Line 15
+;|*** #include "keycodes.h"
+; Line 16
+;|*** #include "armt.h"
+; Line 17
+;|*** #include "event.h"
+; Line 18
+;|*** #include "proto.h"
+; Line 19
+;|*** #include "setup.h"
+; Line 20
+;|*** 
+;|*** #define S2L(a) ((long) a<<HTOV)
+;|*** //#define GUNTEST 1
+;|*** 
+;|*** struct CloseObj *TargetObj, *CheckTargetHit ();
+;|*** 
+;|*** extern  int     sotnum;
+;|*** extern  COORD   Px,Py;
+;|*** extern  long    PxLng,PyLng;
+;|*** extern  SWORD	Knots;
+;|*** extern  RPS     *Rp3D;
+;|*** extern  int     OurHead,OurPitch;
+;|*** extern  UWORD   Alt;
+;|*** extern  int     Rtime;
+;|*** extern  char    Txt[50];
+;|*** extern  int     sx,sy,sz;
+;|*** extern  UWORD   KEYPRINT;
+;|*** extern  int 	LastCall;
+;|*** 
+;|*** extern struct PlaneData far *GetPlanePtr(int PlaneNo);
+;|*** 
+;|*** int     Firing;
+;|*** int     NTRACE,NTRACE2,FIRST_ENEMY_TRACE;
+;|*** int     LastRate;
+;|*** int     TSpeed;
+;|*** 
+;|*** extern struct FPARAM{
+;|*** 	long	X;
+;|***   	long	Y;
+;|*** 	long	Z;
+;|*** 	long	VEL[3];
+;|*** 	int	MAT[9];
+;|*** } FPARAMS;
+;|*** 
+;|*** 
+;|*** //****************************************************************************
+;|*** //
+;|*** //  HOW IT ALL WORKS:
+;|*** //
+;|*** //  One-player game - Elements of the "trs" array below FIRST_ENEMY_TRACE are
+;|*** //  the player's bullets and track against enemy planes or ground targets.
+;|*** //  Those equal to and above the limit, up to NTRACE2 are enemy firing at you
+;|*** //
+;|*** //  Front/Back Seat - same as above
+;|*** //
+;|*** //  Two-player WingMan - Now we two sets of each.  The bullets from 0 to
+;|*** //  NTRACE are your bullets.  Those from NTRACE to 2*NTRACE are your wingy's
+;|*** //  bullets.  The next four, starting at FIRST_ENEMY_TRACE are shots at you.
+;|*** //  The last four are shots at your wingman.
+;|*** //
+;|*** //  Head-to-Head -
+;|*** //
+;|*** 
+;|*** // NTRACE is set according to the framerate so that there are enough tracer
+;|*** // slots for each one to be active for one second.
+;|*** // "docannon" cycles through the slots every frame.
+;|*** //
+;|*** //****************************************************************************
+;|*** 
+;|*** //***************************************************************************
+;|*** InitCannonRate ()
+;|*** {
+; Line 82
+	PUBLIC	_InitCannonRate
+_InitCannonRate	PROC NEAR
+;|*** 
+;|***     LastRate = FrameRate;
+;|*** 
+;|***     NTRACE =  rng (LastRate, 3,16);
+; Line 86
+	*** 000000	b8 10 00 		mov	ax,16
+	*** 000003	50 			push	ax
+	*** 000004	b8 03 00 		mov	ax,3
+	*** 000007	50 			push	ax
+	*** 000008	a1 00 00 		mov	ax,WORD PTR _FrameRate
+	*** 00000b	a3 00 00 		mov	WORD PTR _LastRate,ax
+	*** 00000e	50 			push	ax
+	*** 00000f	e8 00 00 		call	_rng
+	*** 000012	83 c4 06 		add	sp,6
+	*** 000015	a3 00 00 		mov	WORD PTR _NTRACE,ax
+;|*** 
+;|***     NTRACE2 = (NTRACE+4);
+; Line 88
+	*** 000018	05 04 00 		add	ax,4
+	*** 00001b	a3 00 00 		mov	WORD PTR _NTRACE2,ax
+;|*** 
+;|***     FIRST_ENEMY_TRACE = NTRACE;
+; Line 90
+	*** 00001e	a1 00 00 		mov	ax,WORD PTR _NTRACE
+	*** 000021	a3 00 00 		mov	WORD PTR _FIRST_ENEMY_TRACE,ax
+;|*** 
+;|***     TSpeed = ((3-Diff)*1000 + 3000)/4/LastRate;
+; Line 92
+	*** 000024	b9 fa 00 		mov	cx,250
+	*** 000027	b8 06 00 		mov	ax,6
+	*** 00002a	2b 06 00 00 		sub	ax,WORD PTR _Diff
+	*** 00002e	f7 e9 			imul	cx
+	*** 000030	99 			cwd	
+	*** 000031	f7 3e 00 00 		idiv	WORD PTR _LastRate
+	*** 000035	a3 00 00 		mov	WORD PTR _TSpeed,ax
+;|*** }
+; Line 93
+	*** 000038	c3 			ret	
+	*** 000039	90 			nop	
+
+_InitCannonRate	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** docannon ()
+;|*** {
+; Line 97
+	PUBLIC	_docannon
+_docannon	PROC NEAR
+;	n = -6
+;	i = -2
+;	tspd = -4
+;|***     int n,i,tspd;
+;|*** 
+;|***     if ((KEYPRINT==ENTER) && (Rounds>0) && !ejected) {
+; Line 100
+	*** 00003a	81 3e 00 00 0d 1c 	cmp	WORD PTR _KEYPRINT,7181
+	*** 000040	75 70 			jne	$I1339
+	*** 000042	83 3e 00 00 00 		cmp	WORD PTR _Rounds,0
+	*** 000047	7e 69 			jle	$I1339
+	*** 000049	83 3e 00 00 00 		cmp	WORD PTR _ejected,0
+	*** 00004e	75 62 			jne	$I1339
+;|***         Rounds = rng(Rounds-40/LastRate, 0,1000);
+; Line 101
+	*** 000050	b8 e8 03 		mov	ax,1000
+	*** 000053	50 			push	ax
+	*** 000054	2b c0 			sub	ax,ax
+	*** 000056	50 			push	ax
+	*** 000057	b8 d8 ff 		mov	ax,-40
+	*** 00005a	99 			cwd	
+	*** 00005b	f7 3e 00 00 		idiv	WORD PTR _LastRate
+	*** 00005f	03 06 00 00 		add	ax,WORD PTR _Rounds
+	*** 000063	50 			push	ax
+	*** 000064	e8 00 00 		call	_rng
+	*** 000067	83 c4 06 		add	sp,6
+	*** 00006a	a3 00 00 		mov	WORD PTR _Rounds,ax
+;|***         Sound(N_VulcanCannon,2,0);
+; Line 102
+	*** 00006d	2b c0 			sub	ax,ax
+	*** 00006f	50 			push	ax
+	*** 000070	b8 02 00 		mov	ax,2
+	*** 000073	50 			push	ax
+	*** 000074	b8 0d 00 		mov	ax,13
+	*** 000077	50 			push	ax
+	*** 000078	e8 00 00 		call	_Sound
+	*** 00007b	83 c4 06 		add	sp,6
+;|***         firecannon (PxLng, 0x100000-PyLng, Alt, OurHead, OurPitch, 1);
+; Line 103
+	*** 00007e	b8 01 00 		mov	ax,1
+	*** 000081	50 			push	ax
+	*** 000082	ff 36 00 00 		push	WORD PTR _OurPitch
+	*** 000086	ff 36 00 00 		push	WORD PTR _OurHead
+	*** 00008a	ff 36 00 00 		push	WORD PTR _Alt
+	*** 00008e	2b c9 			sub	cx,cx
+	*** 000090	ba 10 00 		mov	dx,16
+	*** 000093	2b 0e 00 00 		sub	cx,WORD PTR _PyLng
+	*** 000097	1b 16 02 00 		sbb	dx,WORD PTR _PyLng+2
+	*** 00009b	52 			push	dx
+	*** 00009c	51 			push	cx
+	*** 00009d	ff 36 02 00 		push	WORD PTR _PxLng+2
+	*** 0000a1	ff 36 00 00 		push	WORD PTR _PxLng
+	*** 0000a5	e8 00 00 		call	_firecannon
+	*** 0000a8	83 c4 10 		add	sp,16
+;|***         Firing = TRUE;
+; Line 104
+	*** 0000ab	c7 06 00 00 01 00 	mov	WORD PTR _Firing,1
+;|***     } else {
+; Line 105
+	*** 0000b1	c3 			ret	
+					$I1339:
+;|***         n = (Rtime % NTRACE);
+;|***         trs[n].x = 0;
+; Line 107
+	*** 0000b2	a1 00 00 		mov	ax,WORD PTR _Rtime
+	*** 0000b5	99 			cwd	
+	*** 0000b6	f7 3e 00 00 		idiv	WORD PTR _NTRACE
+	*** 0000ba	8b c2 			mov	ax,dx
+	*** 0000bc	b9 12 00 		mov	cx,18
+	*** 0000bf	f7 e9 			imul	cx
+	*** 0000c1	8b d8 			mov	bx,ax
+	*** 0000c3	2b c0 			sub	ax,ax
+	*** 0000c5	89 87 02 00 		mov	WORD PTR _trs[bx+2],ax
+	*** 0000c9	89 87 00 00 		mov	WORD PTR _trs[bx],ax
+;|***         Firing = FALSE;
+; Line 108
+	*** 0000cd	a3 00 00 		mov	WORD PTR _Firing,ax
+;|***     }
+; Line 109
+;|*** }
+; Line 110
+	*** 0000d0	c3 			ret	
+	*** 0000d1	90 			nop	
+
+_docannon	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** firecannon (long x, long y, int z, int Head, int Pitch, int local)
+;|*** {
+; Line 114
+	PUBLIC	_firecannon
+_firecannon	PROC NEAR
+	*** 0000d2	55 			push	bp
+	*** 0000d3	8b ec 			mov	bp,sp
+	*** 0000d5	83 ec 04 		sub	sp,4
+	*** 0000d8	56 			push	si
+;	n = -4
+;	tspd = -2
+;	local = 18
+;	Pitch = 16
+;	Head = 14
+;	z = 12
+;	y = 8
+;	x = 4
+;|***     int n, tspd;
+;|*** 
+;|***     n = Rtime % NTRACE;
+; Line 117
+	*** 0000d9	a1 00 00 		mov	ax,WORD PTR _Rtime
+	*** 0000dc	99 			cwd	
+	*** 0000dd	f7 3e 00 00 		idiv	WORD PTR _NTRACE
+	*** 0000e1	89 56 fc 		mov	WORD PTR [bp-4],dx	;n
+;|***     if (!local) n+= NTRACE;
+; Line 118
+	*** 0000e4	83 7e 12 00 		cmp	WORD PTR [bp+18],0	;local
+	*** 0000e8	75 07 			jne	$I1352
+	*** 0000ea	03 16 00 00 		add	dx,WORD PTR _NTRACE
+	*** 0000ee	89 56 fc 		mov	WORD PTR [bp-4],dx	;n
+;|*** 
+;|***     tspd = TSpeed;
+; Line 120
+					$I1352:
+;|***     trs[n].dz = sinX (Pitch, tspd);
+; Line 121
+	*** 0000f1	a1 00 00 		mov	ax,WORD PTR _TSpeed
+	*** 0000f4	89 46 fe 		mov	WORD PTR [bp-2],ax	;tspd
+	*** 0000f7	50 			push	ax
+	*** 0000f8	ff 76 10 		push	WORD PTR [bp+16]	;Pitch
+	*** 0000fb	e8 00 00 		call	_sinX
+	*** 0000fe	83 c4 04 		add	sp,4
+	*** 000101	8b c8 			mov	cx,ax
+	*** 000103	b8 12 00 		mov	ax,18
+	*** 000106	f7 6e fc 		imul	WORD PTR [bp-4]	;n
+	*** 000109	8b d8 			mov	bx,ax
+	*** 00010b	89 8f 0e 00 		mov	WORD PTR _trs[bx+14],cx
+;|*** 
+;|***     tspd = cosX (Pitch, tspd);
+;|***     trs[n].dx = sinX (Head, tspd);
+; Line 124
+	*** 00010f	ff 76 fe 		push	WORD PTR [bp-2]	;tspd
+	*** 000112	ff 76 10 		push	WORD PTR [bp+16]	;Pitch
+	*** 000115	8b f0 			mov	si,ax
+	*** 000117	e8 00 00 		call	_cosX
+	*** 00011a	83 c4 04 		add	sp,4
+	*** 00011d	89 46 fe 		mov	WORD PTR [bp-2],ax	;tspd
+	*** 000120	50 			push	ax
+	*** 000121	ff 76 0e 		push	WORD PTR [bp+14]	;Head
+	*** 000124	e8 00 00 		call	_sinX
+	*** 000127	83 c4 04 		add	sp,4
+	*** 00012a	89 84 0a 00 		mov	WORD PTR _trs[si+10],ax
+;|***     trs[n].dy = -cosX (Head, tspd);
+; Line 125
+	*** 00012e	ff 76 fe 		push	WORD PTR [bp-2]	;tspd
+	*** 000131	ff 76 0e 		push	WORD PTR [bp+14]	;Head
+	*** 000134	e8 00 00 		call	_cosX
+	*** 000137	83 c4 04 		add	sp,4
+	*** 00013a	f7 d8 			neg	ax
+	*** 00013c	89 84 0c 00 		mov	WORD PTR _trs[si+12],ax
+;|*** 
+;|***     trs[n].x = x /*+ (trs[n].dx)*/;
+; Line 127
+	*** 000140	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 000143	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000146	89 84 00 00 		mov	WORD PTR _trs[si],ax
+	*** 00014a	89 94 02 00 		mov	WORD PTR _trs[si+2],dx
+;|***     trs[n].y = y /*+ (trs[n].dy)*/;
+; Line 128
+	*** 00014e	8b 46 08 		mov	ax,WORD PTR [bp+8]	;y
+	*** 000151	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 000154	89 84 04 00 		mov	WORD PTR _trs[si+4],ax
+	*** 000158	89 94 06 00 		mov	WORD PTR _trs[si+6],dx
+;|***     trs[n].z = z /*+ (trs[n].dz)*/;
+; Line 129
+	*** 00015c	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;z
+	*** 00015f	89 84 08 00 		mov	WORD PTR _trs[si+8],ax
+;|*** 	trs[n].firedby = -1;
+; Line 130
+	*** 000163	c7 84 10 00 ff ff 	mov	WORD PTR _trs[si+16],-1
+;|*** }
+; Line 131
+	*** 000169	5e 			pop	si
+	*** 00016a	8b e5 			mov	sp,bp
+	*** 00016c	5d 			pop	bp
+	*** 00016d	c3 			ret	
+
+_firecannon	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** dotracers ()
+;|*** {
+; Line 135
+	PUBLIC	_dotracers
+_dotracers	PROC NEAR
+	*** 00016e	55 			push	bp
+	*** 00016f	8b ec 			mov	bp,sp
+	*** 000171	83 ec 04 		sub	sp,4
+	*** 000174	56 			push	si
+;	i = -4
+;	d = -2
+;|***     int i, d;
+;|*** 
+;|***     if (Rtime==4) InitCannonRate ();    // re-init after a couple frames
+; Line 138
+	*** 000175	83 3e 00 00 04 		cmp	WORD PTR _Rtime,4
+	*** 00017a	75 03 			jne	$I1359
+	*** 00017c	e8 81 fe 		call	_InitCannonRate
+;|*** 
+;|***     for (i=0; i<NTRACE2; i++) {
+; Line 140
+					$I1359:
+	*** 00017f	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+	*** 000184	e9 ae 00 		jmp	$F1360
+	*** 000187	90 			nop	
+					$FC1361:
+;|*** /*		if(i == sotnum) {
+;|*** 			sprintf(Txt, "NX1 %d %ld", i, trs[i].x);
+;|*** 			Message(Txt,DEBUG_MSG);
+;|*** 		}  */
+;|***         if (trs[i].x) {
+; Line 145
+	*** 000188	b9 12 00 		mov	cx,18
+	*** 00018b	f7 e9 			imul	cx
+	*** 00018d	8b d8 			mov	bx,ax
+	*** 00018f	8b 87 02 00 		mov	ax,WORD PTR _trs[bx+2]
+	*** 000193	0b 87 00 00 		or	ax,WORD PTR _trs[bx]
+	*** 000197	75 03 			jne	$JCC407
+	*** 000199	e9 96 00 		jmp	$L20008
+					$JCC407:
+;|***             if (trs[i].z<-trs[i].dz) {
+; Line 146
+	*** 00019c	8b 87 0e 00 		mov	ax,WORD PTR _trs[bx+14]
+	*** 0001a0	f7 d8 			neg	ax
+	*** 0001a2	3b 87 08 00 		cmp	ax,WORD PTR _trs[bx+8]
+	*** 0001a6	7e 60 			jle	$I1364
+;|***                 d = (trs[i].z*32768L) /-trs[i].dz;
+; Line 147
+	*** 0001a8	99 			cwd	
+	*** 0001a9	52 			push	dx
+	*** 0001aa	50 			push	ax
+	*** 0001ab	8b 87 08 00 		mov	ax,WORD PTR _trs[bx+8]
+	*** 0001af	99 			cwd	
+	*** 0001b0	8a f2 			mov	dh,dl
+	*** 0001b2	8a d4 			mov	dl,ah
+	*** 0001b4	8a e0 			mov	ah,al
+	*** 0001b6	2a c0 			sub	al,al
+	*** 0001b8	d1 e0 			shl	ax,1
+	*** 0001ba	d1 d2 			rcl	dx,1
+	*** 0001bc	d1 e0 			shl	ax,1
+	*** 0001be	d1 d2 			rcl	dx,1
+	*** 0001c0	d1 e0 			shl	ax,1
+	*** 0001c2	d1 d2 			rcl	dx,1
+	*** 0001c4	d1 e0 			shl	ax,1
+	*** 0001c6	d1 d2 			rcl	dx,1
+	*** 0001c8	d1 e0 			shl	ax,1
+	*** 0001ca	d1 d2 			rcl	dx,1
+	*** 0001cc	d1 e0 			shl	ax,1
+	*** 0001ce	d1 d2 			rcl	dx,1
+	*** 0001d0	d1 e0 			shl	ax,1
+	*** 0001d2	d1 d2 			rcl	dx,1
+	*** 0001d4	52 			push	dx
+	*** 0001d5	50 			push	ax
+	*** 0001d6	8b f3 			mov	si,bx
+	*** 0001d8	e8 00 00 		call	__aNldiv
+	*** 0001db	89 46 fe 		mov	WORD PTR [bp-2],ax	;d
+;|*** 
+;|***                 trs[i].dx = TrgMul (trs[i].dx, d);    /* interpolate for Z intercept */
+; Line 149
+	*** 0001de	50 			push	ax
+	*** 0001df	ff b4 0a 00 		push	WORD PTR _trs[si+10]
+	*** 0001e3	e8 00 00 		call	_TrgMul
+	*** 0001e6	83 c4 04 		add	sp,4
+	*** 0001e9	89 84 0a 00 		mov	WORD PTR _trs[si+10],ax
+;|***                 trs[i].dy = TrgMul (trs[i].dy, d);
+; Line 150
+	*** 0001ed	ff 76 fe 		push	WORD PTR [bp-2]	;d
+	*** 0001f0	ff b4 0c 00 		push	WORD PTR _trs[si+12]
+	*** 0001f4	e8 00 00 		call	_TrgMul
+	*** 0001f7	83 c4 04 		add	sp,4
+	*** 0001fa	89 84 0c 00 		mov	WORD PTR _trs[si+12],ax
+;|***                 trs[i].dz = -trs[i].z;
+; Line 151
+	*** 0001fe	8b 84 08 00 		mov	ax,WORD PTR _trs[si+8]
+	*** 000202	f7 d8 			neg	ax
+	*** 000204	89 84 0e 00 		mov	WORD PTR _trs[si+14],ax
+;|***             }
+; Line 152
+;|*** 
+;|***             trs[i].x += trs[i].dx;
+; Line 154
+					$I1364:
+	*** 000208	b8 12 00 		mov	ax,18
+	*** 00020b	f7 6e fc 		imul	WORD PTR [bp-4]	;i
+	*** 00020e	8b d8 			mov	bx,ax
+	*** 000210	8b 87 0a 00 		mov	ax,WORD PTR _trs[bx+10]
+	*** 000214	99 			cwd	
+	*** 000215	01 87 00 00 		add	WORD PTR _trs[bx],ax
+	*** 000219	11 97 02 00 		adc	WORD PTR _trs[bx+2],dx
+;|***             trs[i].y += trs[i].dy;
+; Line 155
+	*** 00021d	8b 87 0c 00 		mov	ax,WORD PTR _trs[bx+12]
+	*** 000221	99 			cwd	
+	*** 000222	01 87 04 00 		add	WORD PTR _trs[bx+4],ax
+	*** 000226	11 97 06 00 		adc	WORD PTR _trs[bx+6],dx
+;|***             trs[i].z += trs[i].dz;
+; Line 156
+	*** 00022a	8b 87 0e 00 		mov	ax,WORD PTR _trs[bx+14]
+	*** 00022e	01 87 08 00 		add	WORD PTR _trs[bx+8],ax
+;|***         }
+; Line 157
+;|***     }
+; Line 158
+					$L20008:
+	*** 000232	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+					$F1360:
+	*** 000235	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 000238	39 06 00 00 		cmp	WORD PTR _NTRACE2,ax
+	*** 00023c	7e 03 			jle	$JCC572
+	*** 00023e	e9 47 ff 		jmp	$FC1361
+					$JCC572:
+;|***     TrackBullets ();
+; Line 159
+	*** 000241	e8 00 00 		call	_TrackBullets
+;|*** }
+; Line 160
+	*** 000244	5e 			pop	si
+	*** 000245	8b e5 			mov	sp,bp
+	*** 000247	5d 			pop	bp
+	*** 000248	c3 			ret	
+	*** 000249	90 			nop	
+
+_dotracers	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** TrackBullets()
+;|*** {
+; Line 164
+	PUBLIC	_TrackBullets
+_TrackBullets	PROC NEAR
+	*** 00024a	55 			push	bp
+	*** 00024b	8b ec 			mov	bp,sp
+	*** 00024d	83 ec 28 		sub	sp,40
+	*** 000250	57 			push	di
+	*** 000251	56 			push	si
+;	size = -28
+;	i = -24
+;	j = -26
+;	n = -36
+;	r = -6
+;	angl = -4
+;	cnt = -8
+;	dx = -30
+;	dy = -34
+;	targt = -2
+;	tsize = -38
+;	Radii = -22
+;	planetemp = -12
+;	src = -14
+;	crashstat = -32
+;|***     int size,i,j,n;
+;|***     int r,angl, cnt;
+;|***     int dx,dy,targt,tsize;
+;|***     int Radii[] = {50, 25, 17, 13};  // 50/(Diff+1)
+; Line 168
+	*** 000252	c7 46 ea 32 00 		mov	WORD PTR [bp-22],50	;Radii
+	*** 000257	c7 46 ec 19 00 		mov	WORD PTR [bp-20],25
+	*** 00025c	c7 46 ee 11 00 		mov	WORD PTR [bp-18],17
+	*** 000261	c7 46 f0 0d 00 		mov	WORD PTR [bp-16],13
+;|*** 	struct PlaneData far *planetemp;
+;|*** 	int src;
+;|*** 	int crashstat;
+;|*** 
+;|*** 	/* Process bullets */
+;|*** 
+;|***     ORDNANCE[W_CANNON].area = Radii[Diff];
+; Line 175
+	*** 000266	8b 36 00 00 		mov	si,WORD PTR _Diff
+	*** 00026a	d1 e6 			shl	si,1
+	*** 00026c	8a 42 ea 		mov	al,BYTE PTR [bp-22][si]
+	*** 00026f	a2 0c 02 		mov	BYTE PTR _ORDNANCE+524,al
+;|*** 
+;|***     tsize = TSpeed + Radii[Diff];   // 50 feet @ diff==3
+; Line 177
+	*** 000272	8b 42 ea 		mov	ax,WORD PTR [bp-22][si]
+	*** 000275	03 06 00 00 		add	ax,WORD PTR _TSpeed
+	*** 000279	89 46 da 		mov	WORD PTR [bp-38],ax	;tsize
+;|*** 
+;|***     for (i=0; i<NTRACE2; i++) {
+; Line 179
+	*** 00027c	c7 46 e8 00 00 		mov	WORD PTR [bp-24],0	;i
+	*** 000281	e9 6e 06 		jmp	$F1383
+					$I1398:
+;|***         if (trs[i].x) {
+;|***             if (i<FIRST_ENEMY_TRACE) {
+;|***                 for (j=0; j<NPLANES; j++) {
+;|***                     if ((ps[j].status&(ACTIVE+CRASH))==ACTIVE) {
+;|***                         n = BulletDist (ps[j].xL, ps[j].yL, ps[j].alt, trs+i);
+;|***                         if (n<(tsize* 2)) {
+;|***                             ps[j].status |= PANIC;
+;|*** 
+;|*** //                            if (n<(tsize>>2)) {
+;|***                             if (n<tsize) {
+;|*** 								if(CheckBulletBetter(ps[j].xL, ps[j].yL, ps[j].alt, trs+i, j)) {
+;|*** 									src = trs[i].firedby;
+;|*** 									if((!(DOINVISIBLE||ENEMYNODIE)) && (bv[j].Behavior != EngageTrain)) {
+;|*** 										if(Rtime & 0x1) {
+;|*** 											crashstat = ps[j].status & CRASH;
+;|*** 											DamageAI(j);
+;|*** 											if(crashstat != (ps[j].status & CRASH)) {
+;|*** 												LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 	                    	                	TXA (" destroyed by ");
+;|***     	                    	            	if (i>=NTRACE) TXA ("wingman ");
+;|***         	                    	        	TXA ("gunfire");
+;|***             	                    	    	Message (Txt,GAME_MSG);
+;|***                 	                    		trs[i].x = 0;
+;|*** 											}
+;|*** 											else {
+;|*** 												LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 205
+	*** 000284	2b c0 			sub	ax,ax
+	*** 000286	50 			push	ax
+	*** 000287	50 			push	ax
+	*** 000288	50 			push	ax
+	*** 000289	b8 19 fc 		mov	ax,-999
+	*** 00028c	50 			push	ax
+	*** 00028d	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 000290	b8 28 00 		mov	ax,40
+	*** 000293	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 000296	8b d8 			mov	bx,ax
+	*** 000298	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 00029c	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0002a0	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0002a4	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0002a8	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 0002ac	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 0002af	b8 09 00 		mov	ax,9
+	*** 0002b2	50 			push	ax
+	*** 0002b3	e8 00 00 		call	_LogIt
+	*** 0002b6	83 c4 18 		add	sp,24
+;|*** 											}
+; Line 206
+;|*** 										}
+; Line 207
+;|*** 										else {
+; Line 208
+	*** 0002b9	e9 ff 00 		jmp	$I1413
+					$I1397:
+;|*** 							        		AirKill (j);
+; Line 209
+	*** 0002bc	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 0002bf	e8 00 00 		call	_AirKill
+	*** 0002c2	83 c4 02 		add	sp,2
+;|*** //											LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 211
+	*** 0002c5	2b c0 			sub	ax,ax
+	*** 0002c7	50 			push	ax
+	*** 0002c8	50 			push	ax
+	*** 0002c9	50 			push	ax
+	*** 0002ca	b8 19 fc 		mov	ax,-999
+	*** 0002cd	50 			push	ax
+	*** 0002ce	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 0002d1	b8 28 00 		mov	ax,40
+	*** 0002d4	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 0002d7	8b d8 			mov	bx,ax
+	*** 0002d9	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 0002dd	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0002e1	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0002e5	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0002e9	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 0002ed	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 0002f0	b8 12 00 		mov	ax,18
+	*** 0002f3	50 			push	ax
+	*** 0002f4	e8 00 00 		call	_LogIt
+	*** 0002f7	83 c4 18 		add	sp,24
+;|***                     	                	TXA (" destroyed by ");
+; Line 212
+	*** 0002fa	b8 20 00 		mov	ax,OFFSET DGROUP:$SG1409
+	*** 0002fd	50 			push	ax
+	*** 0002fe	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000301	50 			push	ax
+	*** 000302	e8 00 00 		call	_strcat
+	*** 000305	83 c4 04 		add	sp,4
+;|***                         	            	if (i>=NTRACE) TXA ("wingman ");
+; Line 213
+	*** 000308	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;i
+	*** 00030b	39 06 00 00 		cmp	WORD PTR _NTRACE,ax
+	*** 00030f	7f 0e 			jg	$I1410
+	*** 000311	b8 2f 00 		mov	ax,OFFSET DGROUP:$SG1411
+	*** 000314	50 			push	ax
+	*** 000315	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000318	50 			push	ax
+	*** 000319	e8 00 00 		call	_strcat
+	*** 00031c	83 c4 04 		add	sp,4
+;|***                             	        	TXA ("gunfire");
+; Line 214
+					$I1410:
+	*** 00031f	b8 38 00 		mov	ax,OFFSET DGROUP:$SG1412
+					$L20009:
+	*** 000322	50 			push	ax
+	*** 000323	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000326	50 			push	ax
+	*** 000327	e8 00 00 		call	_strcat
+	*** 00032a	83 c4 04 		add	sp,4
+;|***                                 	    	Message (Txt,GAME_MSG);
+; Line 215
+	*** 00032d	b8 04 00 		mov	ax,4
+	*** 000330	50 			push	ax
+	*** 000331	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000334	50 			push	ax
+	*** 000335	e8 00 00 		call	_Message
+	*** 000338	83 c4 04 		add	sp,4
+;|***                                     		trs[i].x = 0;
+; Line 216
+	*** 00033b	b8 12 00 		mov	ax,18
+	*** 00033e	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000341	8b d8 			mov	bx,ax
+	*** 000343	2b c0 			sub	ax,ax
+	*** 000345	89 87 02 00 		mov	WORD PTR _trs[bx+2],ax
+	*** 000349	89 87 00 00 		mov	WORD PTR _trs[bx],ax
+;|*** 										}
+; Line 217
+;|*** 									}
+; Line 218
+;|*** 									else {
+; Line 219
+	*** 00034d	eb 6c 			jmp	SHORT $I1413
+	*** 00034f	90 			nop	
+					$I1396:
+;|*** 										LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 220
+	*** 000350	2b c0 			sub	ax,ax
+	*** 000352	50 			push	ax
+	*** 000353	2b c9 			sub	cx,cx
+	*** 000355	51 			push	cx
+	*** 000356	51 			push	cx
+	*** 000357	b9 19 fc 		mov	cx,-999
+	*** 00035a	51 			push	cx
+	*** 00035b	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 00035e	b8 28 00 		mov	ax,40
+	*** 000361	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 000364	8b d8 			mov	bx,ax
+	*** 000366	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 00036a	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 00036e	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 000372	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 000376	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 00037a	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 00037d	b8 09 00 		mov	ax,9
+	*** 000380	50 			push	ax
+	*** 000381	8b f3 			mov	si,bx
+	*** 000383	e8 00 00 		call	_LogIt
+	*** 000386	83 c4 18 		add	sp,24
+;|*** 										StartASmoke( ps[j].xL, ps[j].alt,ps[j].yL, AIRXPLO, 10 );
+; Line 221
+	*** 000389	b8 0a 00 		mov	ax,10
+	*** 00038c	50 			push	ax
+	*** 00038d	2b c9 			sub	cx,cx
+	*** 00038f	51 			push	cx
+	*** 000390	ff b4 0e 00 		push	WORD PTR _ps[si+14]
+	*** 000394	ff b4 0c 00 		push	WORD PTR _ps[si+12]
+	*** 000398	ff b4 06 00 		push	WORD PTR _ps[si+6]
+	*** 00039c	ff b4 0a 00 		push	WORD PTR _ps[si+10]
+	*** 0003a0	ff b4 08 00 		push	WORD PTR _ps[si+8]
+	*** 0003a4	e8 00 00 		call	_StartASmoke
+	*** 0003a7	83 c4 0e 		add	sp,14
+;|***     									Sound(N_FarExplo,2,0);
+; Line 222
+	*** 0003aa	2b c0 			sub	ax,ax
+	*** 0003ac	50 			push	ax
+	*** 0003ad	b8 02 00 		mov	ax,2
+	*** 0003b0	50 			push	ax
+	*** 0003b1	b8 0a 00 		mov	ax,10
+	*** 0003b4	50 			push	ax
+	*** 0003b5	e8 00 00 		call	_Sound
+	*** 0003b8	83 c4 06 		add	sp,6
+;|*** 									}
+; Line 223
+					$I1413:
+;|*** 								}
+; Line 224
+;|***                             }
+; Line 225
+;|***                         }
+; Line 226
+;|***                     }
+; Line 227
+;|***                 }
+; Line 228
+	*** 0003bb	ff 46 e6 		inc	WORD PTR [bp-26]	;j
+					$F1388:
+	*** 0003be	8b 46 e6 		mov	ax,WORD PTR [bp-26]	;j
+	*** 0003c1	39 06 00 00 		cmp	WORD PTR _NPLANES,ax
+	*** 0003c5	7f 03 			jg	$JCC965
+	*** 0003c7	e9 0c 05 		jmp	$FB1423
+					$JCC965:
+;|***                     if ((ps[j].status&(ACTIVE+CRASH))==ACTIVE) {
+; Line 183
+	*** 0003ca	b9 28 00 		mov	cx,40
+	*** 0003cd	f7 e9 			imul	cx
+	*** 0003cf	8b d8 			mov	bx,ax
+	*** 0003d1	8a 87 18 00 		mov	al,BYTE PTR _ps[bx+24]
+	*** 0003d5	24 22 			and	al,34
+	*** 0003d7	3c 02 			cmp	al,2
+	*** 0003d9	75 e0 			jne	$I1413
+;|***                         n = BulletDist (ps[j].xL, ps[j].yL, ps[j].alt, trs+i);
+;|***                         if (n<(tsize* 2)) {
+; Line 185
+	*** 0003db	b8 12 00 		mov	ax,18
+	*** 0003de	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 0003e1	8b c8 			mov	cx,ax
+	*** 0003e3	05 00 00 		add	ax,OFFSET _trs
+	*** 0003e6	50 			push	ax
+	*** 0003e7	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 0003eb	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0003ef	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0003f3	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0003f7	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 0003fb	8b f0 			mov	si,ax
+	*** 0003fd	8b f9 			mov	di,cx
+	*** 0003ff	89 5e d8 		mov	WORD PTR [bp-40],bx
+	*** 000402	e8 00 00 		call	_BulletDist
+	*** 000405	83 c4 0c 		add	sp,12
+	*** 000408	89 46 dc 		mov	WORD PTR [bp-36],ax	;n
+	*** 00040b	8b 4e da 		mov	cx,WORD PTR [bp-38]	;tsize
+	*** 00040e	d1 e1 			shl	cx,1
+	*** 000410	3b c1 			cmp	ax,cx
+	*** 000412	7d a7 			jge	$I1413
+;|***                             ps[j].status |= PANIC;
+; Line 186
+	*** 000414	8b 5e d8 		mov	bx,WORD PTR [bp-40]
+	*** 000417	80 8f 18 00 10 		or	BYTE PTR _ps[bx+24],16
+;|*** 
+;|*** //                            if (n<(tsize>>2)) {
+;|***                             if (n<tsize) {
+; Line 189
+	*** 00041c	3b 46 da 		cmp	ax,WORD PTR [bp-38]	;tsize
+	*** 00041f	7d 9a 			jge	$I1413
+;|*** 								if(CheckBulletBetter(ps[j].xL, ps[j].yL, ps[j].alt, trs+i, j)) {
+; Line 190
+	*** 000421	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 000424	56 			push	si
+	*** 000425	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 000429	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 00042d	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 000431	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 000435	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 000439	e8 00 00 		call	_CheckBulletBetter
+	*** 00043c	83 c4 0e 		add	sp,14
+	*** 00043f	0b c0 			or	ax,ax
+	*** 000441	75 03 			jne	$JCC1089
+	*** 000443	e9 75 ff 		jmp	$I1413
+					$JCC1089:
+;|*** 									src = trs[i].firedby;
+; Line 191
+	*** 000446	8b 85 10 00 		mov	ax,WORD PTR _trs[di+16]
+	*** 00044a	89 46 f2 		mov	WORD PTR [bp-14],ax	;src
+;|*** 									if((!(DOINVISIBLE||ENEMYNODIE)) && (bv[j].Behavior != EngageTrain)) {
+; Line 192
+	*** 00044d	83 3e 00 00 00 		cmp	WORD PTR _DOINVISIBLE,0
+	*** 000452	74 03 			je	$JCC1106
+	*** 000454	e9 f9 fe 		jmp	$I1396
+					$JCC1106:
+	*** 000457	83 3e 00 00 00 		cmp	WORD PTR _ENEMYNODIE,0
+	*** 00045c	74 03 			je	$JCC1116
+	*** 00045e	e9 ef fe 		jmp	$I1396
+					$JCC1116:
+	*** 000461	b8 2e 00 		mov	ax,46
+	*** 000464	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 000467	8b d8 			mov	bx,ax
+	*** 000469	81 bf 00 00 00 00 	cmp	WORD PTR _bv[bx],OFFSET _EngageTrain
+	*** 00046f	75 03 			jne	$JCC1135
+	*** 000471	e9 dc fe 		jmp	$I1396
+					$JCC1135:
+;|*** 										if(Rtime & 0x1) {
+; Line 193
+	*** 000474	f6 06 00 00 01 		test	BYTE PTR _Rtime,1
+	*** 000479	75 03 			jne	$JCC1145
+	*** 00047b	e9 3e fe 		jmp	$I1397
+					$JCC1145:
+;|*** 											crashstat = ps[j].status & CRASH;
+; Line 194
+	*** 00047e	8b 5e d8 		mov	bx,WORD PTR [bp-40]
+	*** 000481	8a 87 18 00 		mov	al,BYTE PTR _ps[bx+24]
+	*** 000485	25 20 00 		and	ax,32
+	*** 000488	89 46 e0 		mov	WORD PTR [bp-32],ax	;crashstat
+;|*** 											DamageAI(j);
+; Line 195
+	*** 00048b	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 00048e	e8 00 00 		call	_DamageAI
+	*** 000491	83 c4 02 		add	sp,2
+;|*** 											if(crashstat != (ps[j].status & CRASH)) {
+; Line 196
+	*** 000494	8b 5e d8 		mov	bx,WORD PTR [bp-40]
+	*** 000497	8a 87 18 00 		mov	al,BYTE PTR _ps[bx+24]
+	*** 00049b	25 20 00 		and	ax,32
+	*** 00049e	3b 46 e0 		cmp	ax,WORD PTR [bp-32]	;crashstat
+	*** 0004a1	75 03 			jne	$JCC1185
+	*** 0004a3	e9 de fd 		jmp	$I1398
+					$JCC1185:
+;|*** 												LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 197
+	*** 0004a6	2b c0 			sub	ax,ax
+	*** 0004a8	50 			push	ax
+	*** 0004a9	50 			push	ax
+	*** 0004aa	50 			push	ax
+	*** 0004ab	b8 19 fc 		mov	ax,-999
+	*** 0004ae	50 			push	ax
+	*** 0004af	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 0004b2	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 0004b6	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0004ba	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0004be	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0004c2	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 0004c6	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 0004c9	b8 12 00 		mov	ax,18
+	*** 0004cc	50 			push	ax
+	*** 0004cd	e8 00 00 		call	_LogIt
+	*** 0004d0	83 c4 18 		add	sp,24
+;|*** 	                    	                	TXA (" destroyed by ");
+; Line 198
+	*** 0004d3	b8 00 00 		mov	ax,OFFSET DGROUP:$SG1401
+	*** 0004d6	50 			push	ax
+	*** 0004d7	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0004da	50 			push	ax
+	*** 0004db	e8 00 00 		call	_strcat
+	*** 0004de	83 c4 04 		add	sp,4
+;|***     	                    	            	if (i>=NTRACE) TXA ("wingman ");
+; Line 199
+	*** 0004e1	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;i
+	*** 0004e4	39 06 00 00 		cmp	WORD PTR _NTRACE,ax
+	*** 0004e8	7f 0e 			jg	$I1402
+	*** 0004ea	b8 0f 00 		mov	ax,OFFSET DGROUP:$SG1403
+	*** 0004ed	50 			push	ax
+	*** 0004ee	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0004f1	50 			push	ax
+	*** 0004f2	e8 00 00 		call	_strcat
+	*** 0004f5	83 c4 04 		add	sp,4
+;|***         	                    	        	TXA ("gunfire");
+; Line 200
+					$I1402:
+	*** 0004f8	b8 18 00 		mov	ax,OFFSET DGROUP:$SG1404
+	*** 0004fb	e9 24 fe 		jmp	$L20009
+					$I1387:
+;|***             	                    	    	Message (Txt,GAME_MSG);
+;|***                 	                    		trs[i].x = 0;
+;|*** 											}
+;|*** 											else {
+;|*** 												LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											}
+;|*** 										}
+;|*** 										else {
+;|*** 							        		AirKill (j);
+;|*** //											LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|***                     	                	TXA (" destroyed by ");
+;|***                         	            	if (i>=NTRACE) TXA ("wingman ");
+;|***                             	        	TXA ("gunfire");
+;|***                                 	    	Message (Txt,GAME_MSG);
+;|***                                     		trs[i].x = 0;
+;|*** 										}
+;|*** 									}
+;|*** 									else {
+;|*** 										LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 										StartASmoke( ps[j].xL, ps[j].alt,ps[j].yL, AIRXPLO, 10 );
+;|***     									Sound(N_FarExplo,2,0);
+;|*** 									}
+;|*** 								}
+;|***                             }
+;|***                         }
+;|***                     }
+;|***                 }
+;|***             } else {
+;|*** 
+;|***                 n = BulletDist (PxLng, 0x100000-PyLng, Alt, trs+i);
+;|*** 
+;|***                 if (n<(tsize * 2)) {
+; Line 233
+	*** 0004fe	8b c1 			mov	ax,cx
+	*** 000500	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000503	8b c8 			mov	cx,ax
+	*** 000505	05 00 00 		add	ax,OFFSET _trs
+	*** 000508	50 			push	ax
+	*** 000509	ff 36 00 00 		push	WORD PTR _Alt
+	*** 00050d	2b d2 			sub	dx,dx
+	*** 00050f	bb 10 00 		mov	bx,16
+	*** 000512	2b 16 00 00 		sub	dx,WORD PTR _PyLng
+	*** 000516	1b 1e 02 00 		sbb	bx,WORD PTR _PyLng+2
+	*** 00051a	53 			push	bx
+	*** 00051b	52 			push	dx
+	*** 00051c	ff 36 02 00 		push	WORD PTR _PxLng+2
+	*** 000520	ff 36 00 00 		push	WORD PTR _PxLng
+	*** 000524	8b f0 			mov	si,ax
+	*** 000526	8b f9 			mov	di,cx
+	*** 000528	e8 00 00 		call	_BulletDist
+	*** 00052b	83 c4 0c 		add	sp,12
+	*** 00052e	89 46 dc 		mov	WORD PTR [bp-36],ax	;n
+	*** 000531	8b 4e da 		mov	cx,WORD PTR [bp-38]	;tsize
+	*** 000534	d1 e1 			shl	cx,1
+	*** 000536	3b c1 			cmp	ax,cx
+	*** 000538	7c 03 			jl	$JCC1336
+	*** 00053a	e9 93 00 		jmp	$I1417
+					$JCC1336:
+;|*** 					if(CheckBulletBetter(PxLng, 0x100000-PyLng, Alt, trs+i, -1)) {
+; Line 234
+	*** 00053d	b8 ff ff 		mov	ax,-1
+	*** 000540	50 			push	ax
+	*** 000541	56 			push	si
+	*** 000542	ff 36 00 00 		push	WORD PTR _Alt
+	*** 000546	2b c9 			sub	cx,cx
+	*** 000548	ba 10 00 		mov	dx,16
+	*** 00054b	2b 0e 00 00 		sub	cx,WORD PTR _PyLng
+	*** 00054f	1b 16 02 00 		sbb	dx,WORD PTR _PyLng+2
+	*** 000553	52 			push	dx
+	*** 000554	51 			push	cx
+	*** 000555	ff 36 02 00 		push	WORD PTR _PxLng+2
+	*** 000559	ff 36 00 00 		push	WORD PTR _PxLng
+	*** 00055d	e8 00 00 		call	_CheckBulletBetter
+	*** 000560	83 c4 0e 		add	sp,14
+	*** 000563	0b c0 			or	ax,ax
+	*** 000565	74 69 			je	$I1417
+;|*** 	                    TXT ("Hit by gunfire");
+; Line 235
+	*** 000567	b8 40 00 		mov	ax,OFFSET DGROUP:$SG1419
+	*** 00056a	50 			push	ax
+	*** 00056b	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00056e	50 			push	ax
+	*** 00056f	e8 00 00 		call	_strcpy
+	*** 000572	83 c4 04 		add	sp,4
+;|***     	                Message (Txt,GAME_MSG);
+; Line 236
+	*** 000575	b8 04 00 		mov	ax,4
+	*** 000578	50 			push	ax
+	*** 000579	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00057c	50 			push	ax
+	*** 00057d	e8 00 00 		call	_Message
+	*** 000580	83 c4 04 		add	sp,4
+;|*** 						src = trs[i].firedby;
+; Line 237
+	*** 000583	8b 85 10 00 		mov	ax,WORD PTR _trs[di+16]
+	*** 000587	89 46 f2 		mov	WORD PTR [bp-14],ax	;src
+;|*** 						// We were hit by med guns
+;|***         	            DamageMe(2);
+; Line 239
+	*** 00058a	b8 02 00 		mov	ax,2
+	*** 00058d	50 			push	ax
+	*** 00058e	e8 00 00 		call	_DamageMe
+	*** 000591	83 c4 02 		add	sp,2
+;|*** 						LogIt (SLG_AIR_BULLET_HIT, -1, PxLng, (0x100000-PyLng), Alt, src, -999, 0L, LOG_AIR);
+; Line 240
+	*** 000594	2b c0 			sub	ax,ax
+	*** 000596	50 			push	ax
+	*** 000597	50 			push	ax
+	*** 000598	50 			push	ax
+	*** 000599	b8 19 fc 		mov	ax,-999
+	*** 00059c	50 			push	ax
+	*** 00059d	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 0005a0	ff 36 00 00 		push	WORD PTR _Alt
+	*** 0005a4	2b c0 			sub	ax,ax
+	*** 0005a6	ba 10 00 		mov	dx,16
+	*** 0005a9	2b 06 00 00 		sub	ax,WORD PTR _PyLng
+	*** 0005ad	1b 16 02 00 		sbb	dx,WORD PTR _PyLng+2
+	*** 0005b1	52 			push	dx
+	*** 0005b2	50 			push	ax
+	*** 0005b3	ff 36 02 00 		push	WORD PTR _PxLng+2
+	*** 0005b7	ff 36 00 00 		push	WORD PTR _PxLng
+	*** 0005bb	b8 ff ff 		mov	ax,-1
+	*** 0005be	50 			push	ax
+	*** 0005bf	b8 09 00 		mov	ax,9
+	*** 0005c2	50 			push	ax
+	*** 0005c3	e8 00 00 		call	_LogIt
+	*** 0005c6	83 c4 18 		add	sp,24
+;|*** /*
+;|*** #if OLDLOGDATA
+;|***             	        LogIt (AAAHIT, 1);
+;|*** #else
+;|*** 						LogIt(E_HIT, 0, EHC_GUN, PxLng, PyLng);
+;|*** #endif  */
+;|*** 	                    trs[i].x = 0;
+; Line 247
+	*** 0005c9	2b c0 			sub	ax,ax
+	*** 0005cb	89 44 02 		mov	WORD PTR [si+2],ax
+	*** 0005ce	89 04 			mov	WORD PTR [si],ax
+;|***     	            }
+; Line 248
+;|*** 				}
+; Line 249
+					$I1417:
+;|***                 for (j=0; j<NPLANES; j++) {
+; Line 250
+	*** 0005d0	c7 46 e6 00 00 		mov	WORD PTR [bp-26],0	;j
+	*** 0005d5	e9 5c 01 		jmp	$F1421
+					$I1431:
+;|***                     if ((ps[j].status&(ACTIVE+CRASH))==ACTIVE) {
+;|***                         n = BulletDist (ps[j].xL, ps[j].yL, ps[j].alt, trs+i);
+;|***                         if (n<(tsize* 2)) {
+;|***                             ps[j].status |= PANIC;
+;|*** 
+;|***                             if ((n<tsize) && (trs[i].firedby != j)) {
+;|*** 								if(CheckBulletBetter(ps[j].xL, ps[j].yL, ps[j].alt, trs+i, j)) {
+;|*** 
+;|*** //									Message("Plane Hit By Bullets",DEBUG_MSG);
+;|*** 									src = trs[i].firedby;
+;|*** 									if((!(DOINVISIBLE||ENEMYNODIE)) && (bv[j].Behavior != EngageTrain)) {
+;|*** 										if((bv[j].leader == -1) || (Rtime & 0x1)) {
+;|*** 											crashstat = ps[j].status & CRASH;
+;|*** 											DamageAI(j);
+;|*** 											if(crashstat != (ps[j].status & CRASH)) {
+;|*** 												LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 												if(GetSquadLeader(trs[i].firedby) == -1) {
+;|*** 													GetWingName(trs[i].firedby, Txt);
+;|*** //													TXT("(Wingman)Splash ");
+;|*** 
+;|*** 													if(ps[j].status & FRIENDLY)
+;|*** 														TXA("OPPS! ");
+;|*** 
+;|*** 													TXA("Splash ");
+;|*** 													planetemp = GetPlanePtr(ps[j].type);
+;|*** 										    		FTXA (planetemp->name);
+;|*** 													TXA ("!");
+;|*** 													Message(Txt,WINGMAN_MSG);
+;|*** 												}
+;|*** 											}
+;|*** 											else {
+;|*** 												LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 282
+	*** 0005d8	2b c0 			sub	ax,ax
+	*** 0005da	50 			push	ax
+	*** 0005db	50 			push	ax
+	*** 0005dc	50 			push	ax
+	*** 0005dd	b8 19 fc 		mov	ax,-999
+	*** 0005e0	50 			push	ax
+	*** 0005e1	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 0005e4	b8 28 00 		mov	ax,40
+	*** 0005e7	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 0005ea	8b d8 			mov	bx,ax
+	*** 0005ec	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 0005f0	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0005f4	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0005f8	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0005fc	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 000600	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 000603	b8 09 00 		mov	ax,9
+	*** 000606	50 			push	ax
+	*** 000607	e8 00 00 		call	_LogIt
+	*** 00060a	83 c4 18 		add	sp,24
+;|*** 											}
+; Line 283
+;|*** 										}
+; Line 284
+;|*** 										else {
+; Line 285
+	*** 00060d	e9 0f 01 		jmp	$I1443
+					$I1429:
+;|*** 						        			AirKill (j);
+; Line 286
+	*** 000610	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 000613	e8 00 00 		call	_AirKill
+	*** 000616	83 c4 02 		add	sp,2
+;|*** //											LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 288
+	*** 000619	2b c0 			sub	ax,ax
+	*** 00061b	50 			push	ax
+	*** 00061c	50 			push	ax
+	*** 00061d	50 			push	ax
+	*** 00061e	b8 19 fc 		mov	ax,-999
+	*** 000621	50 			push	ax
+	*** 000622	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 000625	b8 28 00 		mov	ax,40
+	*** 000628	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 00062b	8b d8 			mov	bx,ax
+	*** 00062d	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 000631	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 000635	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 000639	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 00063d	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 000641	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 000644	b8 12 00 		mov	ax,18
+	*** 000647	50 			push	ax
+	*** 000648	8b f3 			mov	si,bx
+	*** 00064a	e8 00 00 		call	_LogIt
+	*** 00064d	83 c4 18 		add	sp,24
+;|*** 											if(GetSquadLeader(trs[i].firedby) == -1) {
+; Line 289
+	*** 000650	b8 12 00 		mov	ax,18
+	*** 000653	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000656	8b d8 			mov	bx,ax
+	*** 000658	ff b7 10 00 		push	WORD PTR _trs[bx+16]
+	*** 00065c	e8 00 00 		call	_GetSquadLeader
+	*** 00065f	83 c4 02 		add	sp,2
+	*** 000662	40 			inc	ax
+	*** 000663	74 03 			je	$JCC1635
+	*** 000665	e9 b7 00 		jmp	$I1443
+					$JCC1635:
+;|*** 												TXT("(Wingman)Splash ");
+; Line 290
+	*** 000668	b8 60 00 		mov	ax,OFFSET DGROUP:$SG1441
+	*** 00066b	50 			push	ax
+	*** 00066c	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00066f	50 			push	ax
+	*** 000670	e8 00 00 		call	_strcpy
+	*** 000673	83 c4 04 		add	sp,4
+;|*** 												planetemp = GetPlanePtr(ps[j].type);
+;|*** 									    		FTXA (planetemp->name);
+; Line 292
+	*** 000676	ff b4 16 00 		push	WORD PTR _ps[si+22]
+	*** 00067a	e8 00 00 		call	_GetPlanePtr
+	*** 00067d	83 c4 02 		add	sp,2
+	*** 000680	89 46 f4 		mov	WORD PTR [bp-12],ax	;planetemp
+	*** 000683	89 56 f6 		mov	WORD PTR [bp-10],dx
+	*** 000686	40 			inc	ax
+	*** 000687	40 			inc	ax
+	*** 000688	52 			push	dx
+	*** 000689	50 			push	ax
+	*** 00068a	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00068d	1e 			push	ds
+	*** 00068e	50 			push	ax
+	*** 00068f	e8 00 00 		call	__fstrcat
+	*** 000692	83 c4 08 		add	sp,8
+;|*** 												TXA ("!");
+; Line 293
+	*** 000695	b8 71 00 		mov	ax,OFFSET DGROUP:$SG1442
+					$L20010:
+	*** 000698	50 			push	ax
+	*** 000699	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00069c	50 			push	ax
+	*** 00069d	e8 00 00 		call	_strcat
+	*** 0006a0	83 c4 04 		add	sp,4
+;|*** 												Message(Txt,WINGMAN_MSG);
+; Line 294
+	*** 0006a3	b8 03 00 		mov	ax,3
+	*** 0006a6	50 			push	ax
+	*** 0006a7	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0006aa	50 			push	ax
+	*** 0006ab	e8 00 00 		call	_Message
+	*** 0006ae	83 c4 04 		add	sp,4
+;|*** 											}
+; Line 295
+;|*** 										}
+; Line 296
+;|*** 									}
+; Line 297
+;|*** 									else {
+; Line 298
+	*** 0006b1	eb 6c 			jmp	SHORT $I1443
+	*** 0006b3	90 			nop	
+					$I1428:
+;|*** 										LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 299
+	*** 0006b4	2b c0 			sub	ax,ax
+	*** 0006b6	50 			push	ax
+	*** 0006b7	2b c9 			sub	cx,cx
+	*** 0006b9	51 			push	cx
+	*** 0006ba	51 			push	cx
+	*** 0006bb	b9 19 fc 		mov	cx,-999
+	*** 0006be	51 			push	cx
+	*** 0006bf	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 0006c2	b8 28 00 		mov	ax,40
+	*** 0006c5	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 0006c8	8b d8 			mov	bx,ax
+	*** 0006ca	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 0006ce	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0006d2	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0006d6	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0006da	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 0006de	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 0006e1	b8 09 00 		mov	ax,9
+	*** 0006e4	50 			push	ax
+	*** 0006e5	8b f3 			mov	si,bx
+	*** 0006e7	e8 00 00 		call	_LogIt
+	*** 0006ea	83 c4 18 		add	sp,24
+;|*** 										StartASmoke( ps[j].xL, ps[j].alt,ps[j].yL, AIRXPLO, 10 );
+; Line 300
+	*** 0006ed	b8 0a 00 		mov	ax,10
+	*** 0006f0	50 			push	ax
+	*** 0006f1	2b c9 			sub	cx,cx
+	*** 0006f3	51 			push	cx
+	*** 0006f4	ff b4 0e 00 		push	WORD PTR _ps[si+14]
+	*** 0006f8	ff b4 0c 00 		push	WORD PTR _ps[si+12]
+	*** 0006fc	ff b4 06 00 		push	WORD PTR _ps[si+6]
+	*** 000700	ff b4 0a 00 		push	WORD PTR _ps[si+10]
+	*** 000704	ff b4 08 00 		push	WORD PTR _ps[si+8]
+	*** 000708	e8 00 00 		call	_StartASmoke
+	*** 00070b	83 c4 0e 		add	sp,14
+;|***     									Sound(N_FarExplo, 2,0);
+; Line 301
+	*** 00070e	2b c0 			sub	ax,ax
+	*** 000710	50 			push	ax
+	*** 000711	b8 02 00 		mov	ax,2
+	*** 000714	50 			push	ax
+	*** 000715	b8 0a 00 		mov	ax,10
+	*** 000718	50 			push	ax
+	*** 000719	e8 00 00 		call	_Sound
+	*** 00071c	83 c4 06 		add	sp,6
+;|*** 									}
+; Line 302
+					$I1443:
+;|***                                 	trs[i].x = 0;
+; Line 303
+	*** 00071f	b8 12 00 		mov	ax,18
+	*** 000722	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000725	8b d8 			mov	bx,ax
+	*** 000727	2b c0 			sub	ax,ax
+	*** 000729	89 87 02 00 		mov	WORD PTR _trs[bx+2],ax
+	*** 00072d	89 87 00 00 		mov	WORD PTR _trs[bx],ax
+;|*** 								}
+; Line 304
+;|***                             }
+; Line 305
+					$I1427:
+;|***                         }
+; Line 306
+;|***                     }
+; Line 307
+;|***                 }
+; Line 308
+	*** 000731	ff 46 e6 		inc	WORD PTR [bp-26]	;j
+					$F1421:
+	*** 000734	8b 46 e6 		mov	ax,WORD PTR [bp-26]	;j
+	*** 000737	39 06 00 00 		cmp	WORD PTR _NPLANES,ax
+	*** 00073b	7f 03 			jg	$JCC1851
+	*** 00073d	e9 96 01 		jmp	$FB1423
+					$JCC1851:
+;|***                     if ((ps[j].status&(ACTIVE+CRASH))==ACTIVE) {
+; Line 251
+	*** 000740	b9 28 00 		mov	cx,40
+	*** 000743	f7 e9 			imul	cx
+	*** 000745	8b d8 			mov	bx,ax
+	*** 000747	8a 87 18 00 		mov	al,BYTE PTR _ps[bx+24]
+	*** 00074b	24 22 			and	al,34
+	*** 00074d	3c 02 			cmp	al,2
+	*** 00074f	75 e0 			jne	$I1427
+;|***                         n = BulletDist (ps[j].xL, ps[j].yL, ps[j].alt, trs+i);
+;|***                         if (n<(tsize* 2)) {
+; Line 253
+	*** 000751	b8 12 00 		mov	ax,18
+	*** 000754	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000757	8b c8 			mov	cx,ax
+	*** 000759	05 00 00 		add	ax,OFFSET _trs
+	*** 00075c	50 			push	ax
+	*** 00075d	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 000761	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 000765	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 000769	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 00076d	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 000771	8b f0 			mov	si,ax
+	*** 000773	8b f9 			mov	di,cx
+	*** 000775	89 5e d8 		mov	WORD PTR [bp-40],bx
+	*** 000778	e8 00 00 		call	_BulletDist
+	*** 00077b	83 c4 0c 		add	sp,12
+	*** 00077e	89 46 dc 		mov	WORD PTR [bp-36],ax	;n
+	*** 000781	8b 4e da 		mov	cx,WORD PTR [bp-38]	;tsize
+	*** 000784	d1 e1 			shl	cx,1
+	*** 000786	3b c1 			cmp	ax,cx
+	*** 000788	7d a7 			jge	$I1427
+;|***                             ps[j].status |= PANIC;
+; Line 254
+	*** 00078a	8b 5e d8 		mov	bx,WORD PTR [bp-40]
+	*** 00078d	80 8f 18 00 10 		or	BYTE PTR _ps[bx+24],16
+;|*** 
+;|***                             if ((n<tsize) && (trs[i].firedby != j)) {
+; Line 256
+	*** 000792	3b 46 da 		cmp	ax,WORD PTR [bp-38]	;tsize
+	*** 000795	7d 9a 			jge	$I1427
+	*** 000797	8b 46 e6 		mov	ax,WORD PTR [bp-26]	;j
+	*** 00079a	39 85 10 00 		cmp	WORD PTR _trs[di+16],ax
+	*** 00079e	74 91 			je	$I1427
+;|*** 								if(CheckBulletBetter(ps[j].xL, ps[j].yL, ps[j].alt, trs+i, j)) {
+; Line 257
+	*** 0007a0	50 			push	ax
+	*** 0007a1	56 			push	si
+	*** 0007a2	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 0007a6	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0007aa	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0007ae	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0007b2	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 0007b6	e8 00 00 		call	_CheckBulletBetter
+	*** 0007b9	83 c4 0e 		add	sp,14
+	*** 0007bc	0b c0 			or	ax,ax
+	*** 0007be	75 03 			jne	$JCC1982
+	*** 0007c0	e9 6e ff 		jmp	$I1427
+					$JCC1982:
+;|*** 
+;|*** //									Message("Plane Hit By Bullets",DEBUG_MSG);
+;|*** 									src = trs[i].firedby;
+; Line 260
+	*** 0007c3	8b 85 10 00 		mov	ax,WORD PTR _trs[di+16]
+	*** 0007c7	89 46 f2 		mov	WORD PTR [bp-14],ax	;src
+;|*** 									if((!(DOINVISIBLE||ENEMYNODIE)) && (bv[j].Behavior != EngageTrain)) {
+; Line 261
+	*** 0007ca	83 3e 00 00 00 		cmp	WORD PTR _DOINVISIBLE,0
+	*** 0007cf	74 03 			je	$JCC1999
+	*** 0007d1	e9 e0 fe 		jmp	$I1428
+					$JCC1999:
+	*** 0007d4	83 3e 00 00 00 		cmp	WORD PTR _ENEMYNODIE,0
+	*** 0007d9	74 03 			je	$JCC2009
+	*** 0007db	e9 d6 fe 		jmp	$I1428
+					$JCC2009:
+	*** 0007de	b8 2e 00 		mov	ax,46
+	*** 0007e1	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 0007e4	8b d8 			mov	bx,ax
+	*** 0007e6	81 bf 00 00 00 00 	cmp	WORD PTR _bv[bx],OFFSET _EngageTrain
+	*** 0007ec	75 03 			jne	$JCC2028
+	*** 0007ee	e9 c3 fe 		jmp	$I1428
+					$JCC2028:
+;|*** 										if((bv[j].leader == -1) || (Rtime & 0x1)) {
+; Line 262
+	*** 0007f1	83 bf 02 00 ff 		cmp	WORD PTR _bv[bx+2],-1
+	*** 0007f6	74 0a 			je	$I1430
+	*** 0007f8	f6 06 00 00 01 		test	BYTE PTR _Rtime,1
+	*** 0007fd	75 03 			jne	$JCC2045
+	*** 0007ff	e9 0e fe 		jmp	$I1429
+					$JCC2045:
+					$I1430:
+;|*** 											crashstat = ps[j].status & CRASH;
+; Line 263
+	*** 000802	b8 28 00 		mov	ax,40
+	*** 000805	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 000808	8b d8 			mov	bx,ax
+	*** 00080a	8a 87 18 00 		mov	al,BYTE PTR _ps[bx+24]
+	*** 00080e	25 20 00 		and	ax,32
+	*** 000811	89 46 e0 		mov	WORD PTR [bp-32],ax	;crashstat
+;|*** 											DamageAI(j);
+; Line 264
+	*** 000814	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 000817	8b f3 			mov	si,bx
+	*** 000819	e8 00 00 		call	_DamageAI
+	*** 00081c	83 c4 02 		add	sp,2
+;|*** 											if(crashstat != (ps[j].status & CRASH)) {
+; Line 265
+	*** 00081f	8a 84 18 00 		mov	al,BYTE PTR _ps[si+24]
+	*** 000823	25 20 00 		and	ax,32
+	*** 000826	3b 46 e0 		cmp	ax,WORD PTR [bp-32]	;crashstat
+	*** 000829	75 03 			jne	$JCC2089
+	*** 00082b	e9 aa fd 		jmp	$I1431
+					$JCC2089:
+;|*** 												LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+; Line 266
+	*** 00082e	2b c0 			sub	ax,ax
+	*** 000830	50 			push	ax
+	*** 000831	2b c9 			sub	cx,cx
+	*** 000833	51 			push	cx
+	*** 000834	51 			push	cx
+	*** 000835	b9 19 fc 		mov	cx,-999
+	*** 000838	51 			push	cx
+	*** 000839	ff 76 f2 		push	WORD PTR [bp-14]	;src
+	*** 00083c	ff b4 06 00 		push	WORD PTR _ps[si+6]
+	*** 000840	ff b4 0e 00 		push	WORD PTR _ps[si+14]
+	*** 000844	ff b4 0c 00 		push	WORD PTR _ps[si+12]
+	*** 000848	ff b4 0a 00 		push	WORD PTR _ps[si+10]
+	*** 00084c	ff b4 08 00 		push	WORD PTR _ps[si+8]
+	*** 000850	ff 76 e6 		push	WORD PTR [bp-26]	;j
+	*** 000853	b9 12 00 		mov	cx,18
+	*** 000856	51 			push	cx
+	*** 000857	e8 00 00 		call	_LogIt
+	*** 00085a	83 c4 18 		add	sp,24
+;|*** 												if(GetSquadLeader(trs[i].firedby) == -1) {
+; Line 267
+	*** 00085d	b8 12 00 		mov	ax,18
+	*** 000860	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000863	8b d8 			mov	bx,ax
+	*** 000865	ff b7 10 00 		push	WORD PTR _trs[bx+16]
+	*** 000869	8b fb 			mov	di,bx
+	*** 00086b	e8 00 00 		call	_GetSquadLeader
+	*** 00086e	83 c4 02 		add	sp,2
+	*** 000871	40 			inc	ax
+	*** 000872	74 03 			je	$JCC2162
+	*** 000874	e9 a8 fe 		jmp	$I1443
+					$JCC2162:
+;|*** 													GetWingName(trs[i].firedby, Txt);
+; Line 268
+	*** 000877	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 00087a	50 			push	ax
+	*** 00087b	ff b5 10 00 		push	WORD PTR _trs[di+16]
+	*** 00087f	e8 00 00 		call	_GetWingName
+	*** 000882	83 c4 04 		add	sp,4
+;|*** //													TXT("(Wingman)Splash ");
+;|*** 
+;|*** 													if(ps[j].status & FRIENDLY)
+; Line 271
+	*** 000885	f6 84 19 00 04 		test	BYTE PTR _ps[si+25],4
+	*** 00088a	74 0e 			je	$I1433
+;|*** 														TXA("OPPS! ");
+; Line 272
+	*** 00088c	b8 4f 00 		mov	ax,OFFSET DGROUP:$SG1434
+	*** 00088f	50 			push	ax
+	*** 000890	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 000893	50 			push	ax
+	*** 000894	e8 00 00 		call	_strcat
+	*** 000897	83 c4 04 		add	sp,4
+;|*** 
+;|*** 													TXA("Splash ");
+; Line 274
+					$I1433:
+	*** 00089a	b8 56 00 		mov	ax,OFFSET DGROUP:$SG1435
+	*** 00089d	50 			push	ax
+	*** 00089e	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0008a1	50 			push	ax
+	*** 0008a2	e8 00 00 		call	_strcat
+	*** 0008a5	83 c4 04 		add	sp,4
+;|*** 													planetemp = GetPlanePtr(ps[j].type);
+;|*** 										    		FTXA (planetemp->name);
+; Line 276
+	*** 0008a8	b8 28 00 		mov	ax,40
+	*** 0008ab	f7 6e e6 		imul	WORD PTR [bp-26]	;j
+	*** 0008ae	8b d8 			mov	bx,ax
+	*** 0008b0	ff b7 16 00 		push	WORD PTR _ps[bx+22]
+	*** 0008b4	e8 00 00 		call	_GetPlanePtr
+	*** 0008b7	83 c4 02 		add	sp,2
+	*** 0008ba	89 46 f4 		mov	WORD PTR [bp-12],ax	;planetemp
+	*** 0008bd	89 56 f6 		mov	WORD PTR [bp-10],dx
+	*** 0008c0	40 			inc	ax
+	*** 0008c1	40 			inc	ax
+	*** 0008c2	52 			push	dx
+	*** 0008c3	50 			push	ax
+	*** 0008c4	b8 00 00 		mov	ax,OFFSET _Txt
+	*** 0008c7	1e 			push	ds
+	*** 0008c8	50 			push	ax
+	*** 0008c9	e8 00 00 		call	__fstrcat
+	*** 0008cc	83 c4 08 		add	sp,8
+;|*** 													TXA ("!");
+; Line 277
+	*** 0008cf	b8 5e 00 		mov	ax,OFFSET DGROUP:$SG1437
+	*** 0008d2	e9 c3 fd 		jmp	$L20010
+	*** 0008d5	90 			nop	
+					$FB1423:
+;|*** 													Message(Txt,WINGMAN_MSG);
+;|*** 												}
+;|*** 											}
+;|*** 											else {
+;|*** 												LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											}
+;|*** 										}
+;|*** 										else {
+;|*** 						        			AirKill (j);
+;|*** //											LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											if(GetSquadLeader(trs[i].firedby) == -1) {
+;|*** 												TXT("(Wingman)Splash ");
+;|*** 												planetemp = GetPlanePtr(ps[j].type);
+;|*** 									    		FTXA (planetemp->name);
+;|*** 												TXA ("!");
+;|*** 												Message(Txt,WINGMAN_MSG);
+;|*** 											}
+;|*** 										}
+;|*** 									}
+;|*** 									else {
+;|*** 										LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 										StartASmoke( ps[j].xL, ps[j].alt,ps[j].yL, AIRXPLO, 10 );
+;|***     									Sound(N_FarExplo, 2,0);
+;|*** 									}
+;|***                                 	trs[i].x = 0;
+;|*** 								}
+;|***                             }
+;|***                         }
+;|***                     }
+;|***                 }
+;|***             }
+; Line 309
+;|*** 
+;|*** /* Did bullet hit the ground ? */
+;|***             if (trs[i].z==0) {
+; Line 312
+	*** 0008d6	b8 12 00 		mov	ax,18
+	*** 0008d9	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 0008dc	8b d8 			mov	bx,ax
+	*** 0008de	83 bf 08 00 00 		cmp	WORD PTR _trs[bx+8],0
+	*** 0008e3	75 0a 			jne	$I1444
+;|*** #if 0
+;|***                 while ((TargetObj=CheckTargetHit (trs[i].x, trs[i].y, ORDNANCE+W_CANNON)) !=NULL) {
+;|***                     GroundKill ();
+;|***                     TXA (" destroyed by ");
+;|***                     if (i>=NTRACE) TXA (" wingman ");
+;|***                     TXA ("gunfire");
+;|***                     Message (Txt,GAME_MSG);
+;|***                 }
+;|*** #endif
+;|*** 
+;|***                 trs[i].x = 0;
+; Line 323
+	*** 0008e5	2b c0 			sub	ax,ax
+	*** 0008e7	89 87 02 00 		mov	WORD PTR _trs[bx+2],ax
+	*** 0008eb	89 87 00 00 		mov	WORD PTR _trs[bx],ax
+;|***             }
+; Line 324
+;|***         }
+; Line 325
+					$I1444:
+;|***     }
+; Line 326
+	*** 0008ef	ff 46 e8 		inc	WORD PTR [bp-24]	;i
+					$F1383:
+	*** 0008f2	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;i
+	*** 0008f5	39 06 00 00 		cmp	WORD PTR _NTRACE2,ax
+	*** 0008f9	7e 25 			jle	$FB1385
+;|***         if (trs[i].x) {
+; Line 180
+	*** 0008fb	b9 12 00 		mov	cx,18
+	*** 0008fe	f7 e9 			imul	cx
+	*** 000900	8b d8 			mov	bx,ax
+	*** 000902	8b 87 02 00 		mov	ax,WORD PTR _trs[bx+2]
+	*** 000906	0b 87 00 00 		or	ax,WORD PTR _trs[bx]
+	*** 00090a	74 e3 			je	$I1444
+;|***             if (i<FIRST_ENEMY_TRACE) {
+; Line 181
+	*** 00090c	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;i
+	*** 00090f	39 06 00 00 		cmp	WORD PTR _FIRST_ENEMY_TRACE,ax
+	*** 000913	7f 03 			jg	$JCC2323
+	*** 000915	e9 e6 fb 		jmp	$I1387
+					$JCC2323:
+;|***                 for (j=0; j<NPLANES; j++) {
+; Line 182
+	*** 000918	c7 46 e6 00 00 		mov	WORD PTR [bp-26],0	;j
+	*** 00091d	e9 9e fa 		jmp	$F1388
+					$FB1385:
+;|***                     if ((ps[j].status&(ACTIVE+CRASH))==ACTIVE) {
+;|***                         n = BulletDist (ps[j].xL, ps[j].yL, ps[j].alt, trs+i);
+;|***                         if (n<(tsize* 2)) {
+;|***                             ps[j].status |= PANIC;
+;|*** 
+;|*** //                            if (n<(tsize>>2)) {
+;|***                             if (n<tsize) {
+;|*** 								if(CheckBulletBetter(ps[j].xL, ps[j].yL, ps[j].alt, trs+i, j)) {
+;|*** 									src = trs[i].firedby;
+;|*** 									if((!(DOINVISIBLE||ENEMYNODIE)) && (bv[j].Behavior != EngageTrain)) {
+;|*** 										if(Rtime & 0x1) {
+;|*** 											crashstat = ps[j].status & CRASH;
+;|*** 											DamageAI(j);
+;|*** 											if(crashstat != (ps[j].status & CRASH)) {
+;|*** 												LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 	                    	                	TXA (" destroyed by ");
+;|***     	                    	            	if (i>=NTRACE) TXA ("wingman ");
+;|***         	                    	        	TXA ("gunfire");
+;|***             	                    	    	Message (Txt,GAME_MSG);
+;|***                 	                    		trs[i].x = 0;
+;|*** 											}
+;|*** 											else {
+;|*** 												LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											}
+;|*** 										}
+;|*** 										else {
+;|*** 							        		AirKill (j);
+;|*** //											LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|***                     	                	TXA (" destroyed by ");
+;|***                         	            	if (i>=NTRACE) TXA ("wingman ");
+;|***                             	        	TXA ("gunfire");
+;|***                                 	    	Message (Txt,GAME_MSG);
+;|***                                     		trs[i].x = 0;
+;|*** 										}
+;|*** 									}
+;|*** 									else {
+;|*** 										LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 										StartASmoke( ps[j].xL, ps[j].alt,ps[j].yL, AIRXPLO, 10 );
+;|***     									Sound(N_FarExplo,2,0);
+;|*** 									}
+;|*** 								}
+;|***                             }
+;|***                         }
+;|***                     }
+;|***                 }
+;|***             } else {
+;|*** 
+;|***                 n = BulletDist (PxLng, 0x100000-PyLng, Alt, trs+i);
+;|*** 
+;|***                 if (n<(tsize * 2)) {
+;|*** 					if(CheckBulletBetter(PxLng, 0x100000-PyLng, Alt, trs+i, -1)) {
+;|*** 	                    TXT ("Hit by gunfire");
+;|***     	                Message (Txt,GAME_MSG);
+;|*** 						src = trs[i].firedby;
+;|*** 						// We were hit by med guns
+;|***         	            DamageMe(2);
+;|*** 						LogIt (SLG_AIR_BULLET_HIT, -1, PxLng, (0x100000-PyLng), Alt, src, -999, 0L, LOG_AIR);
+;|*** /*
+;|*** #if OLDLOGDATA
+;|***             	        LogIt (AAAHIT, 1);
+;|*** #else
+;|*** 						LogIt(E_HIT, 0, EHC_GUN, PxLng, PyLng);
+;|*** #endif  */
+;|*** 	                    trs[i].x = 0;
+;|***     	            }
+;|*** 				}
+;|***                 for (j=0; j<NPLANES; j++) {
+;|***                     if ((ps[j].status&(ACTIVE+CRASH))==ACTIVE) {
+;|***                         n = BulletDist (ps[j].xL, ps[j].yL, ps[j].alt, trs+i);
+;|***                         if (n<(tsize* 2)) {
+;|***                             ps[j].status |= PANIC;
+;|*** 
+;|***                             if ((n<tsize) && (trs[i].firedby != j)) {
+;|*** 								if(CheckBulletBetter(ps[j].xL, ps[j].yL, ps[j].alt, trs+i, j)) {
+;|*** 
+;|*** //									Message("Plane Hit By Bullets",DEBUG_MSG);
+;|*** 									src = trs[i].firedby;
+;|*** 									if((!(DOINVISIBLE||ENEMYNODIE)) && (bv[j].Behavior != EngageTrain)) {
+;|*** 										if((bv[j].leader == -1) || (Rtime & 0x1)) {
+;|*** 											crashstat = ps[j].status & CRASH;
+;|*** 											DamageAI(j);
+;|*** 											if(crashstat != (ps[j].status & CRASH)) {
+;|*** 												LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 												if(GetSquadLeader(trs[i].firedby) == -1) {
+;|*** 													GetWingName(trs[i].firedby, Txt);
+;|*** //													TXT("(Wingman)Splash ");
+;|*** 
+;|*** 													if(ps[j].status & FRIENDLY)
+;|*** 														TXA("OPPS! ");
+;|*** 
+;|*** 													TXA("Splash ");
+;|*** 													planetemp = GetPlanePtr(ps[j].type);
+;|*** 										    		FTXA (planetemp->name);
+;|*** 													TXA ("!");
+;|*** 													Message(Txt,WINGMAN_MSG);
+;|*** 												}
+;|*** 											}
+;|*** 											else {
+;|*** 												LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											}
+;|*** 										}
+;|*** 										else {
+;|*** 						        			AirKill (j);
+;|*** //											LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											LogIt (SLG_AIR_DESTROYED_BULLET, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 											if(GetSquadLeader(trs[i].firedby) == -1) {
+;|*** 												TXT("(Wingman)Splash ");
+;|*** 												planetemp = GetPlanePtr(ps[j].type);
+;|*** 									    		FTXA (planetemp->name);
+;|*** 												TXA ("!");
+;|*** 												Message(Txt,WINGMAN_MSG);
+;|*** 											}
+;|*** 										}
+;|*** 									}
+;|*** 									else {
+;|*** 										LogIt (SLG_AIR_BULLET_HIT, j, ps[j].xL, ps[j].yL, ps[j].alt, src, -999, 0L, LOG_AIR);
+;|*** 										StartASmoke( ps[j].xL, ps[j].alt,ps[j].yL, AIRXPLO, 10 );
+;|***     									Sound(N_FarExplo, 2,0);
+;|*** 									}
+;|***                                 	trs[i].x = 0;
+;|*** 								}
+;|***                             }
+;|***                         }
+;|***                     }
+;|***                 }
+;|***             }
+;|*** 
+;|*** /* Did bullet hit the ground ? */
+;|***             if (trs[i].z==0) {
+;|*** #if 0
+;|***                 while ((TargetObj=CheckTargetHit (trs[i].x, trs[i].y, ORDNANCE+W_CANNON)) !=NULL) {
+;|***                     GroundKill ();
+;|***                     TXA (" destroyed by ");
+;|***                     if (i>=NTRACE) TXA (" wingman ");
+;|***                     TXA ("gunfire");
+;|***                     Message (Txt,GAME_MSG);
+;|***                 }
+;|*** #endif
+;|*** 
+;|***                 trs[i].x = 0;
+;|***             }
+;|***         }
+;|***     }
+;|*** }
+; Line 327
+	*** 000920	5e 			pop	si
+	*** 000921	5f 			pop	di
+	*** 000922	8b e5 			mov	sp,bp
+	*** 000924	5d 			pop	bp
+	*** 000925	c3 			ret	
+
+_TrackBullets	ENDP
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** DrawBullets()
+;|*** {
+; Line 332
+	PUBLIC	_DrawBullets
+_DrawBullets	PROC NEAR
+	*** 000926	55 			push	bp
+	*** 000927	8b ec 			mov	bp,sp
+	*** 000929	83 ec 06 		sub	sp,6
+	*** 00092c	56 			push	si
+;	i = -2
+;	ssx = -4
+;	ssy = -6
+;|***     int i, ssx,ssy;
+;|*** 
+;|***     for (i=0; i<NTRACE2; i++) {
+; Line 335
+	*** 00092d	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;i
+	*** 000932	eb 21 			jmp	SHORT $F1450
+					$L20001:
+	*** 000934	b8 5c 00 		mov	ax,92
+					$L20002:
+	*** 000937	50 			push	ax
+	*** 000938	ff 76 fa 		push	WORD PTR [bp-6]	;ssy
+	*** 00093b	ff 76 fc 		push	WORD PTR [bp-4]	;ssx
+	*** 00093e	ff 36 00 00 		push	WORD PTR _sy
+	*** 000942	ff 36 00 00 		push	WORD PTR _sx
+	*** 000946	ff 36 00 00 		push	WORD PTR _Rp3D
+	*** 00094a	9a 00 00 00 00 		call	FAR PTR _DrawLine
+	*** 00094f	83 c4 0c 		add	sp,12
+;|***         if (trs[i].x) {
+;|***             lproject (trs[i].x, trs[i].y, trs[i].z);
+;|***             ssx=sx; ssy=sy;
+;|***             lproject ((trs[i].x+(trs[i].dx>>2))&~3, (trs[i].y+(trs[i].dy>>2))&~3, (trs[i].z+(trs[i].dz>>2))&~3);
+;|*** 
+;|***             if (sx!=-1  && ssx!=-1) {
+;|***                 DrawLine (Rp3D, sx,sy, ssx,ssy, i<FIRST_ENEMY_TRACE ? ORANGEFLAME:BLUEFLAME);
+;|***             }
+; Line 343
+;|***         }
+; Line 344
+					$I1455:
+;|***     }
+; Line 345
+	*** 000952	ff 46 fe 		inc	WORD PTR [bp-2]	;i
+					$F1450:
+	*** 000955	a1 00 00 		mov	ax,WORD PTR _NTRACE2
+	*** 000958	39 46 fe 		cmp	WORD PTR [bp-2],ax	;i
+	*** 00095b	7c 03 			jl	$JCC2395
+	*** 00095d	e9 9e 00 		jmp	$FB1452
+					$JCC2395:
+;|***         if (trs[i].x) {
+; Line 336
+	*** 000960	b8 12 00 		mov	ax,18
+	*** 000963	f7 6e fe 		imul	WORD PTR [bp-2]	;i
+	*** 000966	8b d8 			mov	bx,ax
+	*** 000968	8b 87 02 00 		mov	ax,WORD PTR _trs[bx+2]
+	*** 00096c	0b 87 00 00 		or	ax,WORD PTR _trs[bx]
+	*** 000970	74 e0 			je	$I1455
+;|***             lproject (trs[i].x, trs[i].y, trs[i].z);
+; Line 337
+	*** 000972	ff b7 08 00 		push	WORD PTR _trs[bx+8]
+	*** 000976	ff b7 06 00 		push	WORD PTR _trs[bx+6]
+	*** 00097a	ff b7 04 00 		push	WORD PTR _trs[bx+4]
+	*** 00097e	ff b7 02 00 		push	WORD PTR _trs[bx+2]
+	*** 000982	ff b7 00 00 		push	WORD PTR _trs[bx]
+	*** 000986	8b f3 			mov	si,bx
+	*** 000988	e8 00 00 		call	_lproject
+	*** 00098b	83 c4 0a 		add	sp,10
+;|***             ssx=sx; ssy=sy;
+; Line 338
+	*** 00098e	a1 00 00 		mov	ax,WORD PTR _sx
+	*** 000991	89 46 fc 		mov	WORD PTR [bp-4],ax	;ssx
+	*** 000994	a1 00 00 		mov	ax,WORD PTR _sy
+	*** 000997	89 46 fa 		mov	WORD PTR [bp-6],ax	;ssy
+;|***             lproject ((trs[i].x+(trs[i].dx>>2))&~3, (trs[i].y+(trs[i].dy>>2))&~3, (trs[i].z+(trs[i].dz>>2))&~3);
+; Line 339
+	*** 00099a	8b 84 0e 00 		mov	ax,WORD PTR _trs[si+14]
+	*** 00099e	d1 f8 			sar	ax,1
+	*** 0009a0	d1 f8 			sar	ax,1
+	*** 0009a2	03 84 08 00 		add	ax,WORD PTR _trs[si+8]
+	*** 0009a6	24 fc 			and	al,252
+	*** 0009a8	50 			push	ax
+	*** 0009a9	8b 84 0c 00 		mov	ax,WORD PTR _trs[si+12]
+	*** 0009ad	d1 f8 			sar	ax,1
+	*** 0009af	d1 f8 			sar	ax,1
+	*** 0009b1	99 			cwd	
+	*** 0009b2	03 84 04 00 		add	ax,WORD PTR _trs[si+4]
+	*** 0009b6	13 94 06 00 		adc	dx,WORD PTR _trs[si+6]
+	*** 0009ba	24 fc 			and	al,252
+	*** 0009bc	52 			push	dx
+	*** 0009bd	50 			push	ax
+	*** 0009be	8b 84 0a 00 		mov	ax,WORD PTR _trs[si+10]
+	*** 0009c2	d1 f8 			sar	ax,1
+	*** 0009c4	d1 f8 			sar	ax,1
+	*** 0009c6	99 			cwd	
+	*** 0009c7	03 84 00 00 		add	ax,WORD PTR _trs[si]
+	*** 0009cb	13 94 02 00 		adc	dx,WORD PTR _trs[si+2]
+	*** 0009cf	24 fc 			and	al,252
+	*** 0009d1	52 			push	dx
+	*** 0009d2	50 			push	ax
+	*** 0009d3	e8 00 00 		call	_lproject
+	*** 0009d6	83 c4 0a 		add	sp,10
+;|*** 
+;|***             if (sx!=-1  && ssx!=-1) {
+; Line 341
+	*** 0009d9	83 3e 00 00 ff 		cmp	WORD PTR _sx,-1
+	*** 0009de	75 03 			jne	$JCC2526
+	*** 0009e0	e9 6f ff 		jmp	$I1455
+					$JCC2526:
+	*** 0009e3	83 7e fc ff 		cmp	WORD PTR [bp-4],-1	;ssx
+	*** 0009e7	75 03 			jne	$JCC2535
+	*** 0009e9	e9 66 ff 		jmp	$I1455
+					$JCC2535:
+;|***                 DrawLine (Rp3D, sx,sy, ssx,ssy, i<FIRST_ENEMY_TRACE ? ORANGEFLAME:BLUEFLAME);
+; Line 342
+	*** 0009ec	a1 00 00 		mov	ax,WORD PTR _FIRST_ENEMY_TRACE
+	*** 0009ef	39 46 fe 		cmp	WORD PTR [bp-2],ax	;i
+	*** 0009f2	7d 03 			jge	$JCC2546
+	*** 0009f4	e9 3d ff 		jmp	$L20001
+					$JCC2546:
+	*** 0009f7	b8 5d 00 		mov	ax,93
+	*** 0009fa	e9 3a ff 		jmp	$L20002
+	*** 0009fd	90 			nop	
+					$FB1452:
+;|***             }
+;|***         }
+;|***     }
+;|*** }
+; Line 346
+	*** 0009fe	5e 			pop	si
+	*** 0009ff	8b e5 			mov	sp,bp
+	*** 000a01	5d 			pop	bp
+	*** 000a02	c3 			ret	
+	*** 000a03	90 			nop	
+
+_DrawBullets	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** BulletDist(long x, long y, int z, struct Tracer *t)
+;|*** {
+; Line 350
+	PUBLIC	_BulletDist
+_BulletDist	PROC NEAR
+	*** 000a04	55 			push	bp
+	*** 000a05	8b ec 			mov	bp,sp
+	*** 000a07	83 ec 0a 		sub	sp,10
+;	dx = -4
+;	dy = -8
+;	dz = -10
+;	t = 14
+;	z = 12
+;	y = 8
+;	x = 4
+;|***     long    dx, dy;
+;|***     int     dz;
+;|*** 
+;|***     dx = labs (x-t->x);
+; Line 354
+	*** 000a0a	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 000a0d	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000a10	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000a13	2b 07 			sub	ax,WORD PTR [bx]
+	*** 000a15	1b 57 02 		sbb	dx,WORD PTR [bx+2]
+	*** 000a18	52 			push	dx
+	*** 000a19	50 			push	ax
+	*** 000a1a	e8 00 00 		call	_labs
+	*** 000a1d	83 c4 04 		add	sp,4
+	*** 000a20	89 46 fc 		mov	WORD PTR [bp-4],ax	;dx
+	*** 000a23	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     dy = labs (y-t->y);
+; Line 355
+	*** 000a26	8b 46 08 		mov	ax,WORD PTR [bp+8]	;y
+	*** 000a29	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 000a2c	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000a2f	2b 47 04 		sub	ax,WORD PTR [bx+4]
+	*** 000a32	1b 57 06 		sbb	dx,WORD PTR [bx+6]
+	*** 000a35	52 			push	dx
+	*** 000a36	50 			push	ax
+	*** 000a37	e8 00 00 		call	_labs
+	*** 000a3a	83 c4 04 		add	sp,4
+	*** 000a3d	89 46 f8 		mov	WORD PTR [bp-8],ax	;dy
+	*** 000a40	89 56 fa 		mov	WORD PTR [bp-6],dx
+;|***     dz = abs (z-t->z);
+;|*** 
+;|***     if (dx+dy+dz >= 23000L) {
+; Line 358
+	*** 000a43	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;z
+	*** 000a46	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000a49	2b 47 08 		sub	ax,WORD PTR [bx+8]
+	*** 000a4c	50 			push	ax
+	*** 000a4d	e8 00 00 		call	_abs
+	*** 000a50	83 c4 02 		add	sp,2
+	*** 000a53	89 46 f6 		mov	WORD PTR [bp-10],ax	;dz
+	*** 000a56	99 			cwd	
+	*** 000a57	03 46 fc 		add	ax,WORD PTR [bp-4]	;dx
+	*** 000a5a	13 56 fe 		adc	dx,WORD PTR [bp-2]
+	*** 000a5d	03 46 f8 		add	ax,WORD PTR [bp-8]	;dy
+	*** 000a60	13 56 fa 		adc	dx,WORD PTR [bp-6]
+	*** 000a63	0b d2 			or	dx,dx
+	*** 000a65	7c 0f 			jl	$I1464
+	*** 000a67	7f 05 			jg	$L20003
+	*** 000a69	3d d8 59 		cmp	ax,23000
+	*** 000a6c	72 08 			jb	$I1464
+					$L20003:
+;|***         return 32767;
+; Line 359
+	*** 000a6e	b8 ff 7f 		mov	ax,32767
+	*** 000a71	8b e5 			mov	sp,bp
+	*** 000a73	5d 			pop	bp
+	*** 000a74	c3 			ret	
+	*** 000a75	90 			nop	
+					$I1464:
+;|***     } else {
+;|***         return (Dist3D ((int)dx, (int)dy, dz));
+; Line 361
+	*** 000a76	ff 76 f6 		push	WORD PTR [bp-10]	;dz
+	*** 000a79	ff 76 f8 		push	WORD PTR [bp-8]	;dy
+	*** 000a7c	ff 76 fc 		push	WORD PTR [bp-4]	;dx
+	*** 000a7f	e8 00 00 		call	_Dist3D
+;|***     }
+; Line 362
+;|*** }
+; Line 363
+	*** 000a82	8b e5 			mov	sp,bp
+	*** 000a84	5d 			pop	bp
+	*** 000a85	c3 			ret	
+
+_BulletDist	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** int CheckBulletBetter(long x, long y, int z, struct Tracer *t, int targnum)
+;|*** {
+; Line 367
+	PUBLIC	_CheckBulletBetter
+_CheckBulletBetter	PROC NEAR
+	*** 000a86	55 			push	bp
+	*** 000a87	8b ec 			mov	bp,sp
+	*** 000a89	83 ec 32 		sub	sp,50
+	*** 000a8c	57 			push	di
+	*** 000a8d	56 			push	si
+;	dx = -34
+;	dy = -42
+;	dz = -50
+;	xydval = -24
+;	xyzdval = -6
+;	xyangle = -20
+;	xyzpitch = -8
+;	trshead = -30
+;	trspitch = -2
+;	trsxydist = -48
+;	conewidth = -16
+;	coneheight = -46
+;	dwidth = -12
+;	dheight = -38
+;	whofired = -18
+;	ptargettype = -28
+;	targnum = 16
+;	t = 14
+;	z = 12
+;	y = 8
+;	x = 4
+;|***     long    dx, dy;
+;|***     int     dz;
+;|*** 	long	xydval;
+;|*** 	long	xyzdval;
+;|*** 	int		xyangle;
+;|*** 	int		xyzpitch;
+;|*** 	int		trshead;
+;|*** 	int		trspitch;
+;|*** 	int		trsxydist;
+;|*** 	long	conewidth;
+;|*** 	long	coneheight;
+;|*** 	long	dwidth;
+;|*** 	long	dheight;
+;|*** 	int     whofired;
+;|*** //	struct plane  far *ptargettype;
+;|*** 	struct PlaneData far *ptargettype;
+;|*** 
+;|*** 
+;|*** 
+;|*** 	whofired = t->firedby;
+;|*** 	if(whofired >= 0) {
+; Line 388
+	*** 000a8e	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000a91	8b 47 10 		mov	ax,WORD PTR [bx+16]
+	*** 000a94	89 46 ee 		mov	WORD PTR [bp-18],ax	;whofired
+	*** 000a97	0b c0 			or	ax,ax
+	*** 000a99	7c 33 			jl	$I1490
+;|*** 		ptargettype = GetPlanePtr(ps[t->firedby].type);
+;|*** 
+;|*** 		if((ptargettype->gun == 1) || (ptargettype->gun == 3))
+; Line 391
+	*** 000a9b	b9 28 00 		mov	cx,40
+	*** 000a9e	f7 e9 			imul	cx
+	*** 000aa0	8b d8 			mov	bx,ax
+	*** 000aa2	ff b7 16 00 		push	WORD PTR _ps[bx+22]
+	*** 000aa6	e8 00 00 		call	_GetPlanePtr
+	*** 000aa9	83 c4 02 		add	sp,2
+	*** 000aac	8e c2 			mov	es,dx
+	*** 000aae	8b d8 			mov	bx,ax
+	*** 000ab0	89 5e e4 		mov	WORD PTR [bp-28],bx	;ptargettype
+	*** 000ab3	8c 46 e6 		mov	WORD PTR [bp-26],es
+	*** 000ab6	26 83 7f 14 01 		cmp	WORD PTR es:[bx+20],1
+	*** 000abb	74 07 			je	$I1491
+	*** 000abd	26 83 7f 14 03 		cmp	WORD PTR es:[bx+20],3
+	*** 000ac2	75 0a 			jne	$I1490
+					$I1491:
+;|*** 			return (1);
+; Line 392
+	*** 000ac4	b8 01 00 		mov	ax,1
+	*** 000ac7	5e 			pop	si
+	*** 000ac8	5f 			pop	di
+	*** 000ac9	8b e5 			mov	sp,bp
+	*** 000acb	5d 			pop	bp
+	*** 000acc	c3 			ret	
+;|*** 	}
+; Line 393
+	*** 000acd	90 			nop	
+					$I1490:
+;|*** 
+;|*** 	conewidth = 6;
+;|*** 	coneheight = 6;
+; Line 396
+	*** 000ace	b8 06 00 		mov	ax,6
+	*** 000ad1	99 			cwd	
+	*** 000ad2	89 46 f0 		mov	WORD PTR [bp-16],ax	;conewidth
+	*** 000ad5	89 56 f2 		mov	WORD PTR [bp-14],dx
+	*** 000ad8	89 46 d2 		mov	WORD PTR [bp-46],ax	;coneheight
+	*** 000adb	89 56 d4 		mov	WORD PTR [bp-44],dx
+;|*** 
+;|*** 	if(whofired != -1) {
+; Line 398
+	*** 000ade	83 7e ee ff 		cmp	WORD PTR [bp-18],-1	;whofired
+	*** 000ae2	74 7e 			je	$I1492
+;|*** 		if (targnum>=0) {
+; Line 399
+	*** 000ae4	83 7e 10 00 		cmp	WORD PTR [bp+16],0	;targnum
+	*** 000ae8	7c 18 			jl	$I1493
+;|*** 			ptargettype = GetPlanePtr(ps[targnum].type);
+; Line 400
+	*** 000aea	b8 28 00 		mov	ax,40
+	*** 000aed	f7 6e 10 		imul	WORD PTR [bp+16]	;targnum
+	*** 000af0	8b d8 			mov	bx,ax
+	*** 000af2	ff b7 16 00 		push	WORD PTR _ps[bx+22]
+	*** 000af6	e8 00 00 		call	_GetPlanePtr
+	*** 000af9	83 c4 02 		add	sp,2
+	*** 000afc	89 46 e4 		mov	WORD PTR [bp-28],ax	;ptargettype
+	*** 000aff	89 56 e6 		mov	WORD PTR [bp-26],dx
+;|*** 		}
+; Line 401
+;|*** 		if(whofired > NPLANES) {
+; Line 402
+					$I1493:
+	*** 000b02	8b 46 ee 		mov	ax,WORD PTR [bp-18]	;whofired
+	*** 000b05	39 06 00 00 		cmp	WORD PTR _NPLANES,ax
+	*** 000b09	7d 25 			jge	$I1494
+;|*** 			if(IsDeckPlane(whofired, targnum))
+; Line 403
+	*** 000b0b	ff 76 10 		push	WORD PTR [bp+16]	;targnum
+	*** 000b0e	50 			push	ax
+	*** 000b0f	e8 00 00 		call	_IsDeckPlane
+	*** 000b12	83 c4 04 		add	sp,4
+	*** 000b15	0b c0 			or	ax,ax
+	*** 000b17	74 09 			je	$I1495
+;|*** 				return(0);
+; Line 404
+					$L20012:
+	*** 000b19	2b c0 			sub	ax,ax
+	*** 000b1b	5e 			pop	si
+	*** 000b1c	5f 			pop	di
+	*** 000b1d	8b e5 			mov	sp,bp
+	*** 000b1f	5d 			pop	bp
+	*** 000b20	c3 			ret	
+;|*** 
+;|*** 			conewidth = conewidth<<5;
+; Line 406
+	*** 000b21	90 			nop	
+					$I1495:
+	*** 000b22	b0 05 			mov	al,5
+	*** 000b24	50 			push	ax
+	*** 000b25	8d 4e f0 		lea	cx,WORD PTR [bp-16]	;conewidth
+	*** 000b28	51 			push	cx
+	*** 000b29	e8 00 00 		call	__aNNalshl
+;|*** 			coneheight = coneheight<<5;
+; Line 407
+	*** 000b2c	b0 05 			mov	al,5
+	*** 000b2e	eb 0c 			jmp	SHORT $L20013
+					$I1494:
+;|*** 		}
+;|*** 		else {
+;|*** 			conewidth = conewidth<<3;    /*  was 3  */
+; Line 410
+	*** 000b30	b0 03 			mov	al,3
+	*** 000b32	50 			push	ax
+	*** 000b33	8d 4e f0 		lea	cx,WORD PTR [bp-16]	;conewidth
+	*** 000b36	51 			push	cx
+	*** 000b37	e8 00 00 		call	__aNNalshl
+;|*** 			coneheight = coneheight<<3;  /*  was 3  */
+; Line 411
+	*** 000b3a	b0 03 			mov	al,3
+					$L20013:
+	*** 000b3c	50 			push	ax
+	*** 000b3d	8d 46 d2 		lea	ax,WORD PTR [bp-46]	;coneheight
+	*** 000b40	50 			push	ax
+	*** 000b41	e8 00 00 		call	__aNNalshl
+;|*** 		}
+; Line 412
+;|*** 		if (targnum>=0) {
+; Line 413
+	*** 000b44	83 7e 10 00 		cmp	WORD PTR [bp+16],0	;targnum
+	*** 000b48	7c 70 			jl	$I1503
+;|*** 			if(ptargettype->maneuver < 2) {
+; Line 414
+	*** 000b4a	c4 5e e4 		les	bx,DWORD PTR [bp-28]	;ptargettype
+	*** 000b4d	26 83 7f 0c 02 		cmp	WORD PTR es:[bx+12],2
+	*** 000b52	7d 66 			jge	$I1503
+;|*** 				conewidth = conewidth<<1;
+; Line 415
+	*** 000b54	d1 66 f0 		shl	WORD PTR [bp-16],1	;conewidth
+	*** 000b57	d1 56 f2 		rcl	WORD PTR [bp-14],1
+;|*** 				coneheight = coneheight<<1;
+; Line 416
+	*** 000b5a	d1 66 d2 		shl	WORD PTR [bp-46],1	;coneheight
+	*** 000b5d	d1 56 d4 		rcl	WORD PTR [bp-44],1
+;|*** 			}
+; Line 417
+;|*** 		}
+; Line 418
+;|*** 	} else {
+; Line 419
+	*** 000b60	eb 58 			jmp	SHORT $I1503
+					$I1492:
+;|*** 		ptargettype = GetPlanePtr(ps[targnum].type);
+; Line 420
+	*** 000b62	b8 28 00 		mov	ax,40
+	*** 000b65	f7 6e 10 		imul	WORD PTR [bp+16]	;targnum
+	*** 000b68	8b d8 			mov	bx,ax
+	*** 000b6a	ff b7 16 00 		push	WORD PTR _ps[bx+22]
+	*** 000b6e	e8 00 00 		call	_GetPlanePtr
+	*** 000b71	83 c4 02 		add	sp,2
+	*** 000b74	89 46 e4 		mov	WORD PTR [bp-28],ax	;ptargettype
+	*** 000b77	89 56 e6 		mov	WORD PTR [bp-26],dx
+;|*** 		if (targnum>=0) {
+; Line 421
+	*** 000b7a	83 7e 10 00 		cmp	WORD PTR [bp+16],0	;targnum
+	*** 000b7e	7c 26 			jl	$I1500
+;|*** 			if(ptargettype->maneuver < 2) {
+; Line 422
+	*** 000b80	c4 5e e4 		les	bx,DWORD PTR [bp-28]	;ptargettype
+	*** 000b83	26 83 7f 0c 02 		cmp	WORD PTR es:[bx+12],2
+	*** 000b88	7d 1c 			jge	$I1500
+;|*** 				conewidth *= 5;
+; Line 423
+	*** 000b8a	b8 05 00 		mov	ax,5
+	*** 000b8d	99 			cwd	
+	*** 000b8e	52 			push	dx
+	*** 000b8f	50 			push	ax
+	*** 000b90	8d 4e f0 		lea	cx,WORD PTR [bp-16]	;conewidth
+	*** 000b93	51 			push	cx
+	*** 000b94	e8 00 00 		call	__aNNalmul
+;|*** 				coneheight *= 5;
+; Line 424
+	*** 000b97	b8 05 00 		mov	ax,5
+	*** 000b9a	99 			cwd	
+	*** 000b9b	52 			push	dx
+	*** 000b9c	50 			push	ax
+	*** 000b9d	8d 46 d2 		lea	ax,WORD PTR [bp-46]	;coneheight
+	*** 000ba0	50 			push	ax
+	*** 000ba1	e8 00 00 		call	__aNNalmul
+;|*** 			} else {
+; Line 425
+	*** 000ba4	eb 14 			jmp	SHORT $I1503
+					$I1500:
+;|*** 				conewidth = conewidth<<2;
+;|*** 				coneheight = coneheight<<2;
+;|*** 			}
+;|*** 		}
+;|*** 		else {
+;|*** 			conewidth = conewidth<<2;
+; Line 431
+	*** 000ba6	b0 02 			mov	al,2
+	*** 000ba8	50 			push	ax
+	*** 000ba9	8d 4e f0 		lea	cx,WORD PTR [bp-16]	;conewidth
+	*** 000bac	51 			push	cx
+	*** 000bad	e8 00 00 		call	__aNNalshl
+;|*** 			coneheight = coneheight<<2;
+; Line 432
+	*** 000bb0	b0 02 			mov	al,2
+	*** 000bb2	50 			push	ax
+	*** 000bb3	8d 46 d2 		lea	ax,WORD PTR [bp-46]	;coneheight
+	*** 000bb6	50 			push	ax
+	*** 000bb7	e8 00 00 		call	__aNNalshl
+;|*** 		}
+; Line 433
+					$I1503:
+;|*** 	}
+; Line 434
+;|*** 
+;|***     dx = labs (x-t->x);
+; Line 436
+	*** 000bba	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 000bbd	8b 56 06 		mov	dx,WORD PTR [bp+6]
+	*** 000bc0	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000bc3	2b 07 			sub	ax,WORD PTR [bx]
+	*** 000bc5	1b 57 02 		sbb	dx,WORD PTR [bx+2]
+	*** 000bc8	52 			push	dx
+	*** 000bc9	50 			push	ax
+	*** 000bca	e8 00 00 		call	_labs
+	*** 000bcd	83 c4 04 		add	sp,4
+	*** 000bd0	89 46 de 		mov	WORD PTR [bp-34],ax	;dx
+	*** 000bd3	89 56 e0 		mov	WORD PTR [bp-32],dx
+;|***     dy = labs (y-t->y);
+; Line 437
+	*** 000bd6	8b 46 08 		mov	ax,WORD PTR [bp+8]	;y
+	*** 000bd9	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 000bdc	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000bdf	2b 47 04 		sub	ax,WORD PTR [bx+4]
+	*** 000be2	1b 57 06 		sbb	dx,WORD PTR [bx+6]
+	*** 000be5	52 			push	dx
+	*** 000be6	50 			push	ax
+	*** 000be7	e8 00 00 		call	_labs
+	*** 000bea	83 c4 04 		add	sp,4
+	*** 000bed	89 46 d6 		mov	WORD PTR [bp-42],ax	;dy
+	*** 000bf0	89 56 d8 		mov	WORD PTR [bp-40],dx
+;|***     dz = abs (z-t->z);
+; Line 438
+	*** 000bf3	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;z
+	*** 000bf6	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000bf9	2b 47 08 		sub	ax,WORD PTR [bx+8]
+	*** 000bfc	50 			push	ax
+	*** 000bfd	e8 00 00 		call	_abs
+	*** 000c00	83 c4 02 		add	sp,2
+	*** 000c03	89 46 ce 		mov	WORD PTR [bp-50],ax	;dz
+;|*** 
+;|*** 	trshead = angle(t->dx, t->dy);
+; Line 440
+	*** 000c06	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000c09	ff 77 0c 		push	WORD PTR [bx+12]
+	*** 000c0c	ff 77 0a 		push	WORD PTR [bx+10]
+	*** 000c0f	e8 00 00 		call	_ARCTAN
+	*** 000c12	83 c4 04 		add	sp,4
+	*** 000c15	89 46 e2 		mov	WORD PTR [bp-30],ax	;trshead
+;|*** 	trsxydist = Dist2D(t->dx, t->dy);
+; Line 441
+	*** 000c18	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000c1b	ff 77 0c 		push	WORD PTR [bx+12]
+	*** 000c1e	ff 77 0a 		push	WORD PTR [bx+10]
+	*** 000c21	e8 00 00 		call	_Dist2D
+	*** 000c24	83 c4 04 		add	sp,4
+	*** 000c27	89 46 d0 		mov	WORD PTR [bp-48],ax	;trsxydist
+;|*** 	xydval = LDist2D(dx, dy);
+; Line 442
+	*** 000c2a	ff 76 d8 		push	WORD PTR [bp-40]
+	*** 000c2d	ff 76 d6 		push	WORD PTR [bp-42]	;dy
+	*** 000c30	ff 76 e0 		push	WORD PTR [bp-32]
+	*** 000c33	ff 76 de 		push	WORD PTR [bp-34]	;dx
+	*** 000c36	e8 00 00 		call	_LDist2D
+	*** 000c39	83 c4 08 		add	sp,8
+	*** 000c3c	89 46 e8 		mov	WORD PTR [bp-24],ax	;xydval
+	*** 000c3f	89 56 ea 		mov	WORD PTR [bp-22],dx
+;|*** 	xyangle = Langle(dx, -dy);
+; Line 443
+	*** 000c42	8b 46 d6 		mov	ax,WORD PTR [bp-42]	;dy
+	*** 000c45	8b 56 d8 		mov	dx,WORD PTR [bp-40]
+	*** 000c48	f7 d8 			neg	ax
+	*** 000c4a	83 d2 00 		adc	dx,0
+	*** 000c4d	f7 da 			neg	dx
+	*** 000c4f	52 			push	dx
+	*** 000c50	50 			push	ax
+	*** 000c51	ff 76 e0 		push	WORD PTR [bp-32]
+	*** 000c54	ff 76 de 		push	WORD PTR [bp-34]	;dx
+	*** 000c57	e8 00 00 		call	_Langle
+	*** 000c5a	83 c4 08 		add	sp,8
+	*** 000c5d	89 46 ec 		mov	WORD PTR [bp-20],ax	;xyangle
+;|*** 	xyangle = xyangle - trshead;
+;|***     dwidth = sinXL(xyangle, xydval);
+;|*** 
+;|*** 	if(labs(dwidth) < conewidth) {
+; Line 447
+	*** 000c60	ff 76 ea 		push	WORD PTR [bp-22]
+	*** 000c63	ff 76 e8 		push	WORD PTR [bp-24]	;xydval
+	*** 000c66	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;trshead
+	*** 000c69	29 46 ec 		sub	WORD PTR [bp-20],ax	;xyangle
+	*** 000c6c	ff 76 ec 		push	WORD PTR [bp-20]	;xyangle
+	*** 000c6f	e8 00 00 		call	_sinXL
+	*** 000c72	83 c4 06 		add	sp,6
+	*** 000c75	89 46 f4 		mov	WORD PTR [bp-12],ax	;dwidth
+	*** 000c78	89 56 f6 		mov	WORD PTR [bp-10],dx
+	*** 000c7b	52 			push	dx
+	*** 000c7c	50 			push	ax
+	*** 000c7d	e8 00 00 		call	_labs
+	*** 000c80	83 c4 04 		add	sp,4
+	*** 000c83	3b 56 f2 		cmp	dx,WORD PTR [bp-14]
+	*** 000c86	7e 03 			jle	$JCC3206
+	*** 000c88	e9 8e fe 		jmp	$L20012
+					$JCC3206:
+	*** 000c8b	7c 08 			jl	$L20006
+	*** 000c8d	3b 46 f0 		cmp	ax,WORD PTR [bp-16]	;conewidth
+	*** 000c90	72 03 			jb	$JCC3216
+	*** 000c92	e9 84 fe 		jmp	$L20012
+					$JCC3216:
+					$L20006:
+;|*** 		trspitch = angle(t->dz, trsxydist);
+; Line 448
+	*** 000c95	ff 76 d0 		push	WORD PTR [bp-48]	;trsxydist
+	*** 000c98	8b 5e 0e 		mov	bx,WORD PTR [bp+14]	;t
+	*** 000c9b	ff 77 0e 		push	WORD PTR [bx+14]
+	*** 000c9e	e8 00 00 		call	_ARCTAN
+	*** 000ca1	83 c4 04 		add	sp,4
+	*** 000ca4	89 46 fe 		mov	WORD PTR [bp-2],ax	;trspitch
+;|*** 		xyzpitch = Langle((long)dz, xydval);
+; Line 449
+	*** 000ca7	ff 76 ea 		push	WORD PTR [bp-22]
+	*** 000caa	ff 76 e8 		push	WORD PTR [bp-24]	;xydval
+	*** 000cad	8b 46 ce 		mov	ax,WORD PTR [bp-50]	;dz
+	*** 000cb0	99 			cwd	
+	*** 000cb1	52 			push	dx
+	*** 000cb2	50 			push	ax
+	*** 000cb3	8b f0 			mov	si,ax
+	*** 000cb5	8b fa 			mov	di,dx
+	*** 000cb7	e8 00 00 		call	_Langle
+	*** 000cba	83 c4 08 		add	sp,8
+	*** 000cbd	89 46 f8 		mov	WORD PTR [bp-8],ax	;xyzpitch
+;|*** 		xyzpitch = xyzpitch - trspitch;
+;|*** 		xyzdval = LDist2D((long)dz, xydval);
+;|*** 	    dheight = sinXL(xyzpitch, xyzdval);
+;|*** 		if(labs(dheight) < coneheight) {
+; Line 453
+	*** 000cc0	ff 76 ea 		push	WORD PTR [bp-22]
+	*** 000cc3	ff 76 e8 		push	WORD PTR [bp-24]	;xydval
+	*** 000cc6	57 			push	di
+	*** 000cc7	56 			push	si
+	*** 000cc8	e8 00 00 		call	_LDist2D
+	*** 000ccb	83 c4 08 		add	sp,8
+	*** 000cce	89 46 fa 		mov	WORD PTR [bp-6],ax	;xyzdval
+	*** 000cd1	89 56 fc 		mov	WORD PTR [bp-4],dx
+	*** 000cd4	52 			push	dx
+	*** 000cd5	50 			push	ax
+	*** 000cd6	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;trspitch
+	*** 000cd9	29 46 f8 		sub	WORD PTR [bp-8],ax	;xyzpitch
+	*** 000cdc	ff 76 f8 		push	WORD PTR [bp-8]	;xyzpitch
+	*** 000cdf	e8 00 00 		call	_sinXL
+	*** 000ce2	83 c4 06 		add	sp,6
+	*** 000ce5	89 46 da 		mov	WORD PTR [bp-38],ax	;dheight
+	*** 000ce8	89 56 dc 		mov	WORD PTR [bp-36],dx
+	*** 000ceb	52 			push	dx
+	*** 000cec	50 			push	ax
+	*** 000ced	e8 00 00 		call	_labs
+	*** 000cf0	83 c4 04 		add	sp,4
+	*** 000cf3	3b 56 d4 		cmp	dx,WORD PTR [bp-44]
+	*** 000cf6	7e 03 			jle	$JCC3318
+	*** 000cf8	e9 1e fe 		jmp	$L20012
+					$JCC3318:
+	*** 000cfb	7d 03 			jge	$JCC3323
+	*** 000cfd	e9 c4 fd 		jmp	$I1491
+					$JCC3323:
+	*** 000d00	3b 46 d2 		cmp	ax,WORD PTR [bp-46]	;coneheight
+	*** 000d03	72 03 			jb	$JCC3331
+	*** 000d05	e9 11 fe 		jmp	$L20012
+					$JCC3331:
+	*** 000d08	e9 b9 fd 		jmp	$I1491
+	*** 000d0b	90 			nop	
+
+_CheckBulletBetter	ENDP
+;|*** 			return(1);
+;|*** 		}
+;|*** 		else {
+;|*** #ifdef GUNTEST
+;|*** 			if(GetSquadLeader(whofired) == -1) {
+;|*** 				sprintf(Txt, "CH %ld, %ld, T %d", coneheight, dheight, targnum);
+;|*** 				Message(Txt,DEBUG_MSG);
+;|*** 			}
+;|*** #endif
+;|*** 			return(0);
+;|*** 		}
+;|*** 	}
+;|*** 	else {
+;|*** #ifdef GUNTEST
+;|*** 		if(GetSquadLeader(whofired) == -1) {
+;|*** 			sprintf(Txt, "CW %ld, %ld, T %d, a %x, d %ld", conewidth, dwidth, targnum, xyangle, xydval);
+;|*** 			Message(Txt,DEBUG_MSG);
+;|*** 		}
+;|*** #endif
+;|*** 		return(0);
+;|*** 	}
+;|*** 
+;|*** 	return(0);
+;|*** }
+;|*** 
+;|*** //***************************************************************************
+;|*** int IsDeckPlane(int whofired, int targnum)
+;|*** {
+; Line 481
+	PUBLIC	_IsDeckPlane
+_IsDeckPlane	PROC NEAR
+	*** 000d0c	55 			push	bp
+	*** 000d0d	8b ec 			mov	bp,sp
+;	targnum = 6
+;	whofired = 4
+;|*** 	if(!FriendMatch(whofired, targnum))
+; Line 482
+	*** 000d0f	ff 76 06 		push	WORD PTR [bp+6]	;targnum
+	*** 000d12	ff 76 04 		push	WORD PTR [bp+4]	;whofired
+	*** 000d15	e8 00 00 		call	_FriendMatch
+	*** 000d18	8b e5 			mov	sp,bp
+	*** 000d1a	0b c0 			or	ax,ax
+	*** 000d1c	75 06 			jne	$I1513
+;|*** 		return(0);
+; Line 483
+					$L20015:
+	*** 000d1e	2b c0 			sub	ax,ax
+	*** 000d20	8b e5 			mov	sp,bp
+	*** 000d22	5d 			pop	bp
+	*** 000d23	c3 			ret	
+;|*** 
+;|*** 	if(targnum == -1) {
+; Line 485
+					$I1513:
+	*** 000d24	83 7e 06 ff 		cmp	WORD PTR [bp+6],-1	;targnum
+	*** 000d28	75 28 			jne	$I1514
+;|*** 		if (OnTheDeck(FPARAMS.X, FPARAMS.Y, FPARAMS.Z))
+; Line 486
+	*** 000d2a	ff 36 0a 00 		push	WORD PTR _FPARAMS+10
+	*** 000d2e	ff 36 08 00 		push	WORD PTR _FPARAMS+8
+	*** 000d32	ff 36 06 00 		push	WORD PTR _FPARAMS+6
+	*** 000d36	ff 36 04 00 		push	WORD PTR _FPARAMS+4
+	*** 000d3a	ff 36 02 00 		push	WORD PTR _FPARAMS+2
+	*** 000d3e	ff 36 00 00 		push	WORD PTR _FPARAMS
+	*** 000d42	e8 00 00 		call	_OnTheDeck
+	*** 000d45	8b e5 			mov	sp,bp
+	*** 000d47	0b c0 			or	ax,ax
+	*** 000d49	74 d3 			je	$L20015
+;|*** 			return(1);
+; Line 487
+					$L20016:
+	*** 000d4b	b8 01 00 		mov	ax,1
+	*** 000d4e	8b e5 			mov	sp,bp
+	*** 000d50	5d 			pop	bp
+	*** 000d51	c3 			ret	
+					$I1514:
+;|*** 	}
+;|*** 	else {
+;|*** 		if((ps[targnum].status & TAKEOFF) || (bv[targnum].basespeed == 0))
+; Line 490
+	*** 000d52	b8 28 00 		mov	ax,40
+	*** 000d55	f7 6e 06 		imul	WORD PTR [bp+6]	;targnum
+	*** 000d58	8b d8 			mov	bx,ax
+	*** 000d5a	f6 87 19 00 80 		test	BYTE PTR _ps[bx+25],128
+	*** 000d5f	75 ea 			jne	$L20016
+	*** 000d61	b8 2e 00 		mov	ax,46
+	*** 000d64	f7 6e 06 		imul	WORD PTR [bp+6]	;targnum
+	*** 000d67	8b d8 			mov	bx,ax
+	*** 000d69	83 bf 12 00 00 		cmp	WORD PTR _bv[bx+18],0
+	*** 000d6e	75 ae 			jne	$L20015
+	*** 000d70	eb d9 			jmp	SHORT $L20016
+
+_IsDeckPlane	ENDP
+_TEXT	ENDS
+END
+;|*** 			return(1);
+;|*** 	}
+;|*** 	return(0);
+;|*** }
+;|*** 
