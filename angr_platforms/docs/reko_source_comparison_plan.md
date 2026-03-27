@@ -181,6 +181,9 @@ Inertia now collects access traits and uses them for narrow field-style output:
 - repeated offsets
 - simple `base + const`
 - some `base + index * stride` evidence
+- some stable `base + index * stride` cases are good candidates for future
+  array-like object naming, but that remains a guarded extension rather than a
+  currently enabled rewrite
 
 This already feeds visible improvements like `field_30e`-style recovery and is
 a real partial implementation of the `AddressTraitCollector` direction.
