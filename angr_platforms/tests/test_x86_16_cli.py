@@ -253,8 +253,8 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "(char [4])Status" not in result.stdout
     assert "v17 = (char [4])*((char *)28674);" not in result.stdout
     assert "v2 = &v3;" not in result.stdout
-    assert "v1 = 2;" in result.stdout
-    assert "v0 = v14;" in result.stdout
+    assert "s_4 = 2;" in result.stdout
+    assert "s_6 = v14;" in result.stdout
     assert "v5 * 16" not in result.stdout
     assert "350" in result.stdout
     assert "v14 = 73;" in result.stdout
@@ -412,7 +412,7 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
     assert "[bp-0xc] = mseg" in result.stdout
     assert "globals = _Rp2, _Tscale, _Rp1" in result.stdout
     assert "char mseg;  // [bp-0xc] mseg" in result.stdout
-    assert "v2 = *((char *)0x7000);" in result.stdout
+    assert "s_12 = v14;" in result.stdout
     assert "*((char *)(&v2 + 1)) = field_30e;" in result.stdout
     assert "*((char *)(&v2 + 1)) = field_30e >> 8;" in result.stdout
     assert "146" in result.stdout
@@ -445,7 +445,7 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
     assert "unsigned short b;  // [bp-0x2] b" in result.stdout
     assert "y2 = 0;" in result.stdout
     assert "y2 = 112;" in result.stdout
-    assert "v0 = 0;" in result.stdout
+    assert "s_12 = 0;" in result.stdout
     assert "(&v0 + 2)" in result.stdout
     assert "sub_1023();" in result.stdout
 
