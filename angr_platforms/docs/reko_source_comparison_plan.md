@@ -212,7 +212,8 @@ Inertia now performs some real typed/object-like rewrites:
 - promoted stack objects now get `arg_` / `local_` names
 - promoted stack objects now preserve their recovered byte/word width instead of
   being forced through one generic promoted shape
-- synthetic globals from `.COD` metadata can become named memory variables
+- synthetic globals from `.COD` metadata can become named memory variables and
+  keep their recovered byte/word widths in declarations
 - some declaration widths are already recovered to `unsigned short`
 
 This is not complete, but it is already beyond pure pretty-printing.
