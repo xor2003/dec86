@@ -196,6 +196,8 @@ alias/value recovery for:
 - one-use expression aliases
 - recurrence cleanup
 - temp-chain folding
+- tiny always-on algebraic identities like `x ^ x -> 0`, `x - 0 -> x`, and
+  `0 + x -> x`
 - boolean cleanup like `!(x - c) -> x == c`
 - some high-byte and byte-pair guard recovery
 
