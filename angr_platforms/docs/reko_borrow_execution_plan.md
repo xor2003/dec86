@@ -52,6 +52,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - `snake.EXE:0x135c` / `0x1387` now recover coordinate projection as `(v4 >> 8) * 160 + (v4 & 255) * 2`
   - `snake.EXE:0x135c` no longer prints `es * 16` in the `writecharat` byte-pointer write
   - promoted stack slots now get source-like local names instead of generic temp scaffolding when they are recovered as real stack objects
+  - positive stack offsets now prefer `arg_`-style names and negative stack offsets prefer `local_`-style names when the existing label is still a generic temp
   - `snake.EXE:0x1287` now keeps the source labels `field_0` and `field_1` while dropping raw `ds * 16` scaffolding
   - `snake.EXE:0x1287` now simplifies the guard to `if (!(field_0 & v17))`
   - `snake.EXE:0x1287` now simplifies the guard further to `if (!field_0)`
