@@ -365,6 +365,24 @@ def test_decompile_cli_recovers_snake_readcharat_listing_name():
     assert "(v4 & 255) * 2" in result.stdout
 
 
+def test_decompile_cli_recovers_snake_fruitgeneration_with_phoenix_fallback():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x1131"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1131 fruitgeneration" in result.stdout
+    assert "unsigned short fruitgeneration(void)" in result.stdout
+    assert "== asm fallback ==" not in result.stdout
+    assert "bios_int1a_clock();" in result.stdout
+    assert "readcharat();" in result.stdout
+
+
 def test_decompile_cli_recovers_snake_ds_pointer_arithmetic():
     result = subprocess.run(
         [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x1287"],

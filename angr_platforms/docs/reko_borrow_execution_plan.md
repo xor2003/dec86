@@ -46,6 +46,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - the hottest x86-16 expression matchers are now cached per decompilation run to cut repeated tree walks
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
+  - `snake.EXE:0x1131` now recovers via a Phoenix structurer retry when the default structurer returns empty codegen, bringing whole-binary `snake.exe` to `18/18` shown functions
   - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
   - `snake.EXE:0x135c` / `0x1387` now recover coordinate projection as `(v4 >> 8) * 160 + (v4 & 255) * 2`
   - `snake.EXE:0x135c` no longer prints `es * 16` in the `writecharat` byte-pointer write
