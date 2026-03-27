@@ -2985,15 +2985,18 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
             continue
 
         base_terms, offset, stride_terms = summarize_address(classified.addr_expr)
+        type_ = getattr(node, "type", None)
+        bits = getattr(type_, "size", None)
+        access_size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
         if len(base_terms) == 1 and isinstance(base_terms[0], structured_c.CVariable):
             base_var = getattr(base_terms[0], "variable", None)
             if isinstance(base_var, SimRegisterVariable):
-                record("base_const", (classified.seg_name, getattr(base_var, "reg", None), offset, getattr(node, "type", None)))
+                record("base_const", (classified.seg_name, getattr(base_var, "reg", None), offset, access_size))
                 record("repeated_offsets", (classified.seg_name, getattr(base_var, "reg", None), offset))
         for index_expr, stride in stride_terms:
             index_var = getattr(index_expr, "variable", None)
             if isinstance(index_var, SimRegisterVariable):
-                record("base_stride", (classified.seg_name, getattr(index_var, "reg", None), stride, offset, getattr(node, "type", None)))
+                record("base_stride", (classified.seg_name, getattr(index_var, "reg", None), stride, offset, access_size))
 
     for key, count in list(traits["repeated_offsets"].items()):
         if count < 2:
