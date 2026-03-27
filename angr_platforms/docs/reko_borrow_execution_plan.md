@@ -37,6 +37,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - a narrow additive-chain fold now exists for shallow left-deep constant adds, which is useful groundwork for remaining source-like recurrence cleanup
   - boolean cleanup now rewrites `!(x - c)` into `x == c` in stable cases, which already improved the remaining `snake.EXE:0x1287` guard
   - the remaining `snake.EXE:0x1287` loop-counter recurrence (`v21 += 40`) is left as a separate statement-sequence cleanup target
+  - recovered stack objects now keep a simple type-width helper so later type evidence can reuse the actual stack width instead of hardcoding every promoted slot to the same shape
   - a narrower recurrence cleanup pass now trims another copy/increment chain in `snake.EXE:0x1287` and reduces the decompilation time further without changing the remaining source-like shape
   - known linear temps can now be inlined into later expressions within the same block, which helps keep the remaining recurrence chains source-like without introducing broad alias rewrites
   - one-use expression aliases can now be inlined safely inside the recurrence pass, which helps later mask and add cleanup see the simpler rhs directly
