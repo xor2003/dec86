@@ -1376,6 +1376,12 @@ def _simplify_basic_algebraic_identities(codegen) -> bool:
             if _c_constant_value(rhs) == 0:
                 return node.lhs
 
+        if node.op == "Or":
+            if _c_constant_value(lhs) == 0:
+                return node.rhs
+            if _c_constant_value(rhs) == 0:
+                return node.lhs
+
         return node
 
     root = codegen.cfunc.statements
