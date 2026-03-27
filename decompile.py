@@ -2052,6 +2052,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     return node.rhs
                 if _c_constant_value(rhs) == 0:
                     return node.lhs
+            if node.op == "Sub":
+                if _c_constant_value(rhs) == 0:
+                    return node.lhs
             if node.op == "Add":
                 folded = _fold_simple_add_constants(node)
                 if folded is not node:
