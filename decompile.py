@@ -3050,14 +3050,16 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
     created: dict[tuple[int, int], structured_c.CVariable] = {}
     promoted: set[tuple[int, int]] = set()
 
-    def _stack_local_name(offset: int) -> str:
-        return f"local_{offset:x}"
+    def _stack_object_name(offset: int) -> str:
+        if offset >= 0:
+            return f"arg_{offset:x}"
+        return f"local_{-offset:x}"
 
     def _stack_local_name_or_existing(*names: str | None, offset: int) -> str:
         for name in names:
             if isinstance(name, str) and name and not re.fullmatch(r"(?:v\d+|vvar_\d+)", name):
                 return name
-        return _stack_local_name(offset)
+        return _stack_object_name(offset)
 
     def transform(node):
         nonlocal promoted
