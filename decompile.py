@@ -403,6 +403,7 @@ def _decompile_function(
         lambda: _attach_access_trait_field_names(project, dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(dec.codegen, cod_metadata),
+        lambda: _simplify_basic_algebraic_identities(dec.codegen),
     )
     if enable_structured_simplify:
         structured_simplify_failed = [False]
@@ -1347,6 +1348,47 @@ def _simplify_zero_mul_or_expr(node, codegen):
     if is_zero_mul(rhs):
         return node.lhs
     return node
+
+
+def _simplify_basic_algebraic_identities(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    def transform(node):
+        if not isinstance(node, structured_c.CBinaryOp):
+            return node
+
+        lhs = _unwrap_c_casts(node.lhs)
+        rhs = _unwrap_c_casts(node.rhs)
+
+        if node.op == "Xor" and _same_c_expression(lhs, rhs):
+            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
+            return structured_c.CConstant(0, type_, codegen=codegen)
+
+        if node.op == "Sub" and _c_constant_value(rhs) == 0:
+            return node.lhs
+
+        if node.op == "Add":
+            if _c_constant_value(lhs) == 0:
+                return node.rhs
+            if _c_constant_value(rhs) == 0:
+                return node.lhs
+
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+
+    if _replace_c_children(root, transform):
+        changed = True
+
+    return changed
 
 
 def _simplify_structured_c_expressions(codegen) -> bool:
