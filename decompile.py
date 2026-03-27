@@ -3111,23 +3111,25 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
     if _replace_c_children(root, transform):
         changed = True
 
-    target_type = SimTypeShort(False)
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
         if getattr(variable, "base", None) != "bp":
             continue
-        key = (getattr(variable, "offset", None), 2)
-        if key not in promoted:
+        offset = getattr(variable, "offset", None)
+        matching = [size for promoted_offset, size in promoted if promoted_offset == offset]
+        if not matching:
             continue
-        if getattr(variable, "size", 0) < 2:
-            variable.size = 2
+        size = max(matching)
+        target_type = _stack_type_for_size(size)
+        if getattr(variable, "size", 0) < size:
+            variable.size = size
             changed = True
         if getattr(cvar, "variable_type", None) != target_type:
             cvar.variable_type = target_type
             changed = True
         unified = getattr(cvar, "unified_variable", None)
-        if unified is not None and getattr(unified, "size", 0) < 2:
+        if unified is not None and getattr(unified, "size", 0) < size:
             try:
-                unified.size = 2
+                unified.size = size
                 changed = True
             except Exception:
                 pass
@@ -3137,9 +3139,12 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
         for variable, cvar_and_vartypes in list(unified_locals.items()):
             if getattr(variable, "base", None) != "bp":
                 continue
-            key = (getattr(variable, "offset", None), 2)
-            if key not in promoted:
+            offset = getattr(variable, "offset", None)
+            matching = [size for promoted_offset, size in promoted if promoted_offset == offset]
+            if not matching:
                 continue
+            size = max(matching)
+            target_type = _stack_type_for_size(size)
             new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
