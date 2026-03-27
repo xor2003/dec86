@@ -349,6 +349,7 @@ def _decompile_function(
     cod_metadata: CODProcMetadata | None = None,
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
     lst_metadata: LSTMetadata | None = None,
+    enable_structured_simplify: bool = True,
 ) -> tuple[str, str]:
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
@@ -396,8 +397,9 @@ def _decompile_function(
         lambda: _attach_access_trait_field_names(project, dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(dec.codegen, cod_metadata),
-        lambda: _simplify_structured_c_expressions(dec.codegen),
     )
+    if enable_structured_simplify:
+        rewrite_passes += (lambda: _simplify_structured_c_expressions(dec.codegen),)
     for _ in range(2):
         iter_changed = False
         for rewrite in rewrite_passes:
@@ -437,6 +439,7 @@ def _decompile_function_with_stats(
     cod_metadata: CODProcMetadata | None = None,
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
     lst_metadata: LSTMetadata | None = None,
+    enable_structured_simplify: bool = True,
 ):
     block_count, byte_count = _function_complexity(function)
     print(
@@ -454,6 +457,7 @@ def _decompile_function_with_stats(
         cod_metadata=cod_metadata,
         synthetic_globals=synthetic_globals,
         lst_metadata=lst_metadata,
+        enable_structured_simplify=enable_structured_simplify,
     )
     elapsed = time.perf_counter() - start
     print(f"[dbg] decompilation time for {function.addr:#x} {function.name}: {elapsed:.2f}s")
@@ -1469,15 +1473,27 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
             return node
 
-        terms = []
-
         def _collect_add_terms(expr):
-            expr = _unwrap_c_casts(expr)
-            if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Add":
-                return _collect_add_terms(expr.lhs) + _collect_add_terms(expr.rhs)
-            return [expr]
+            terms = []
+            stack = [_unwrap_c_casts(expr)]
+            seen: set[int] = set()
+            while stack:
+                current = _unwrap_c_casts(stack.pop())
+                key = id(current)
+                if key in seen:
+                    terms.append(current)
+                    continue
+                seen.add(key)
+                if isinstance(current, structured_c.CBinaryOp) and current.op == "Add":
+                    stack.append(current.rhs)
+                    stack.append(current.lhs)
+                else:
+                    terms.append(current)
+            return terms
 
         terms = _collect_add_terms(node)
+        if len(terms) > 8:
+            return node
         const_total = 0
         const_type = None
         base_terms = []
@@ -1589,15 +1605,6 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 if alias is None:
                     break
             current = _unwrap_c_casts(alias)
-        if isinstance(current, structured_c.CBinaryOp):
-            lhs = _resolve_copy_alias_expr(current.lhs, set(seen))
-            rhs = _resolve_copy_alias_expr(current.rhs, set(seen))
-            if lhs is not current.lhs or rhs is not current.rhs:
-                return structured_c.CBinaryOp(current.op, lhs, rhs, codegen=getattr(current, "codegen", None))
-        if isinstance(current, structured_c.CUnaryOp):
-            operand = _resolve_copy_alias_expr(current.operand, set(seen))
-            if operand is not current.operand:
-                return structured_c.CUnaryOp(current.op, operand, codegen=getattr(current, "codegen", None))
         return current
 
     def _expr_is_safe_inline_candidate(expr):
@@ -4610,6 +4617,7 @@ def main() -> int:
             args.api_style,
             args.binary,
             lst_metadata=lst_metadata,
+            enable_structured_simplify=args.addr is not None,
         )
         if status == "ok":
             decompiled += 1
