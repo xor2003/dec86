@@ -1,0 +1,166 @@
+;	Static Name Aliases
+;
+	TITLE   FIBO.C
+	NAME    FIBO
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_printf:NEAR
+EXTRN	_scanf:NEAR
+EXTRN	__chkstk:NEAR
+EXTRN	_exit:NEAR
+_DATA      SEGMENT
+$SG163	DB	'Input number of iterations: ',  00H
+$SG164	DB	'%d',  00H
+$SG168	DB	'Input number: ',  00H
+$SG169	DB	'%d',  00H
+$SG170	DB	'fibonacci(%d) = %u',  0aH,  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /* Fibonacci */
+;|*** 
+;|*** #include <stdio.h>
+;|*** 
+;|*** int main()
+;|*** { int i, numtimes, number;
+; Line 6
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 08 00 		mov	ax,8
+	*** 000006	e8 00 00 		call	__chkstk
+;	i = -6
+;	numtimes = -2
+;	number = -4
+;	value = -8
+;|***   unsigned value, fib();
+;|*** 
+;|***     printf("Input number of iterations: ");
+; Line 9
+	*** 000009	b8 00 00 		mov	ax,OFFSET DGROUP:$SG163
+	*** 00000c	50 			push	ax
+	*** 00000d	e8 00 00 		call	_printf
+	*** 000010	83 c4 02 		add	sp,2
+;|***     scanf ("%d", &numtimes);
+; Line 10
+	*** 000013	8d 46 fe 		lea	ax,WORD PTR [bp-2]	;numtimes
+	*** 000016	50 			push	ax
+	*** 000017	b8 1d 00 		mov	ax,OFFSET DGROUP:$SG164
+	*** 00001a	50 			push	ax
+	*** 00001b	e8 00 00 		call	_scanf
+	*** 00001e	83 c4 04 		add	sp,4
+;|***     for (i = 1; i <= numtimes; i++)
+; Line 11
+	*** 000021	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;i
+	*** 000026	eb 35 			jmp	SHORT $F165
+					$FC166:
+;|***     {
+; Line 12
+;|*** 	printf ("Input number: ");
+; Line 13
+	*** 000028	b8 20 00 		mov	ax,OFFSET DGROUP:$SG168
+	*** 00002b	50 			push	ax
+	*** 00002c	e8 00 00 		call	_printf
+	*** 00002f	83 c4 02 		add	sp,2
+;|*** 	scanf ("%d", &number);
+; Line 14
+	*** 000032	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;number
+	*** 000035	50 			push	ax
+	*** 000036	b8 2f 00 		mov	ax,OFFSET DGROUP:$SG169
+	*** 000039	50 			push	ax
+	*** 00003a	e8 00 00 		call	_scanf
+	*** 00003d	83 c4 04 		add	sp,4
+;|*** 	value = fib(number);
+; Line 15
+	*** 000040	ff 76 fc 		push	WORD PTR [bp-4]	;number
+	*** 000043	e8 00 00 		call	_fib
+	*** 000046	83 c4 02 		add	sp,2
+	*** 000049	89 46 f8 		mov	WORD PTR [bp-8],ax	;value
+;|*** 	printf("fibonacci(%d) = %u\n", number, value);
+; Line 16
+	*** 00004c	50 			push	ax
+	*** 00004d	ff 76 fc 		push	WORD PTR [bp-4]	;number
+	*** 000050	b8 32 00 		mov	ax,OFFSET DGROUP:$SG170
+	*** 000053	50 			push	ax
+	*** 000054	e8 00 00 		call	_printf
+	*** 000057	83 c4 06 		add	sp,6
+;|***     }
+; Line 17
+	*** 00005a	ff 46 fa 		inc	WORD PTR [bp-6]	;i
+					$F165:
+	*** 00005d	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;numtimes
+	*** 000060	39 46 fa 		cmp	WORD PTR [bp-6],ax	;i
+	*** 000063	7e c3 			jle	$FC166
+;|***     exit(0);
+; Line 18
+	*** 000065	2b c0 			sub	ax,ax
+	*** 000067	50 			push	ax
+	*** 000068	e8 00 00 		call	_exit
+;|*** }
+; Line 19
+	*** 00006b	8b e5 			mov	sp,bp
+	*** 00006d	5d 			pop	bp
+	*** 00006e	c3 			ret	
+	*** 00006f	90 			nop	
+
+_main	ENDP
+;|*** 
+;|*** unsigned fib(x) 		/* compute fibonacci number recursively */
+;|*** int x;
+; Line 22
+	PUBLIC	_fib
+_fib	PROC NEAR
+	*** 000070	55 			push	bp
+	*** 000071	8b ec 			mov	bp,sp
+	*** 000073	33 c0 			xor	ax,ax
+	*** 000075	e8 00 00 		call	__chkstk
+	*** 000078	56 			push	si
+;|*** {
+; Line 23
+;	x = 4
+;|***     if (x > 2)
+; Line 24
+	*** 000079	83 7e 04 02 		cmp	WORD PTR [bp+4],2	;x
+	*** 00007d	7e 1f 			jle	$I174
+;|*** 	return (fib(x - 1) + fib(x - 2));
+; Line 25
+	*** 00007f	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 000082	2d 02 00 		sub	ax,2
+	*** 000085	50 			push	ax
+	*** 000086	e8 e7 ff 		call	_fib
+	*** 000089	83 c4 02 		add	sp,2
+	*** 00008c	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;x
+	*** 00008f	49 			dec	cx
+	*** 000090	51 			push	cx
+	*** 000091	8b f0 			mov	si,ax
+	*** 000093	e8 da ff 		call	_fib
+	*** 000096	83 c4 02 		add	sp,2
+	*** 000099	03 c6 			add	ax,si
+	*** 00009b	5e 			pop	si
+	*** 00009c	5d 			pop	bp
+	*** 00009d	c3 			ret	
+					$I174:
+;|***     else
+;|*** 	return (1);
+; Line 27
+	*** 00009e	b8 01 00 		mov	ax,1
+	*** 0000a1	5e 			pop	si
+	*** 0000a2	5d 			pop	bp
+	*** 0000a3	c3 			ret	
+
+_fib	ENDP
+_TEXT	ENDS
+END
+;|*** }

@@ -1,0 +1,267 @@
+;	Static Name Aliases
+;
+	TITLE   egame0.c
+	NAME    egame0
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_gfxInit:NEAR
+EXTRN	_setupOverlaySlots:NEAR
+EXTRN	_exit:NEAR
+EXTRN	_installCBreakHandler:NEAR
+EXTRN	_restoreCBreakHandler:NEAR
+EXTRN	_gfx_jump_0c:FAR
+EXTRN	_gfx_jump_52:FAR
+EXTRN	_sub_21A7E:FAR
+EXTRN	_restoreJoystickData:FAR
+EXTRN	_copyJoystickData:FAR
+EXTRN	_gfx_jump_3d_null:FAR
+EXTRN	_int86:NEAR
+EXTRN	_drawCockpit:NEAR
+EXTRN	_MainGameLoop:NEAR
+EXTRN	_noJoy80:BYTE
+EXTRN	_noJoy80_2:BYTE
+EXTRN	_commData:DWORD
+EXTRN	_regs:BYTE
+EXTRN	_gfxBufPtr:WORD
+EXTRN	_gameData:DWORD
+EXTRN	_hercFlag:BYTE
+EXTRN	_exitCode:BYTE
+EXTRN	_gfxModeUnset:WORD
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** // egame.exe main function
+;|*** #include "debug.h"
+;|*** #include "egame.h"
+;|*** #include "offsets.h"
+;|*** #include "pointers.h"
+;|*** #include "slot.h"
+;|*** #include "const.h"
+;|*** 
+;|*** #include <dos.h>
+;|*** 
+;|*** // ==== seg000:0x10 ====
+;|*** int main(void) {
+; Line 12
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 04 		sub	sp,4
+;	commPtr = -4
+;|***     uint16 FAR *commPtr;
+;|***     FP_SEG(commPtr) = SEG_LOWMEM;
+; Line 14
+	*** 000006	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0
+;|***     FP_OFF(commPtr) = OFF_IACA_START;
+; Line 15
+	*** 00000b	c7 46 fc f0 04 		mov	WORD PTR [bp-4],1264	;commPtr
+;|***     FP_SEG(commData) = *commPtr;
+; Line 16
+	*** 000010	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;commPtr
+	*** 000013	26 8b 07 		mov	ax,WORD PTR es:[bx]
+	*** 000016	a3 02 00 		mov	WORD PTR _commData+2,ax
+;|***     FP_OFF(commData) = 0;
+; Line 17
+	*** 000019	c7 06 00 00 00 00 	mov	WORD PTR _commData,0
+;|***     FP_SEG(gameData) = *commPtr;
+; Line 18
+	*** 00001f	26 8b 07 		mov	ax,WORD PTR es:[bx]
+	*** 000022	a3 02 00 		mov	WORD PTR _gameData+2,ax
+;|***     FP_OFF(gameData) = COMM_GAMEDATA_OFFSET;
+; Line 19
+	*** 000025	c7 06 00 00 0e 12 	mov	WORD PTR _gameData,4622
+;|***     // 0x43
+;|***     setupOverlaySlots(commData->gfxOvlAddr);
+; Line 21
+	*** 00002b	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00002f	26 ff 77 1a 		push	WORD PTR es:[bx+26]
+	*** 000033	e8 00 00 		call	_setupOverlaySlots
+	*** 000036	83 c4 02 		add	sp,2
+;|***     setupOverlaySlots(commData->miscOvlAddr);
+; Line 22
+	*** 000039	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00003d	26 ff 77 1e 		push	WORD PTR es:[bx+30]
+	*** 000041	e8 00 00 		call	_setupOverlaySlots
+	*** 000044	83 c4 02 		add	sp,2
+;|***     setupOverlaySlots(commData->sndOvlAddr); 
+; Line 23
+	*** 000047	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 00004b	26 ff 77 1c 		push	WORD PTR es:[bx+28]
+	*** 00004f	e8 00 00 		call	_setupOverlaySlots
+	*** 000052	83 c4 02 		add	sp,2
+;|***     // 0x6d
+;|***     hercFlag = commData->setupMono;
+; Line 25
+	*** 000055	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000059	26 8a 47 24 		mov	al,BYTE PTR es:[bx+36]
+	*** 00005d	a2 00 00 		mov	_hercFlag,al
+;|***     gfxModeUnset = commData->gfxModeNum == 0;
+; Line 26
+	*** 000060	26 83 7f 78 01 		cmp	WORD PTR es:[bx+120],1
+	*** 000065	1b c0 			sbb	ax,ax
+	*** 000067	f7 d8 			neg	ax
+	*** 000069	a3 00 00 		mov	_gfxModeUnset,ax
+;|***     // 0x7c
+;|***     installCBreakHandler();
+; Line 28
+	*** 00006c	e8 00 00 		call	_installCBreakHandler
+;|***     if (commData->setupUseJoy == 1) {
+; Line 29
+	*** 00006f	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000073	26 83 7f 72 01 		cmp	WORD PTR es:[bx+114],1
+	*** 000078	75 13 			jne	$I1927
+;|***         // 0x93
+;|***         copyJoystickData(commData->joyData);
+; Line 31
+	*** 00007a	8b c3 			mov	ax,bx
+	*** 00007c	8c c2 			mov	dx,es
+	*** 00007e	05 48 00 		add	ax,72
+	*** 000081	52 			push	dx
+	*** 000082	50 			push	ax
+	*** 000083	9a 00 00 00 00 		call	FAR PTR _copyJoystickData
+	*** 000088	83 c4 04 		add	sp,4
+;|***     }
+; Line 32
+;|***     else { // 0x9d
+; Line 33
+	*** 00008b	eb 08 			jmp	SHORT $I1928
+					$I1927:
+;|***         noJoy80 = noJoy80_2 = 0x80;
+; Line 34
+	*** 00008d	b0 80 			mov	al,128
+	*** 00008f	a2 00 00 		mov	_noJoy80_2,al
+	*** 000092	a2 00 00 		mov	_noJoy80,al
+;|***     }
+; Line 35
+					$I1928:
+;|***     // 0xa5
+;|***     gfxInit();
+; Line 37
+	*** 000095	e8 00 00 		call	_gfxInit
+;|***     gfx_jump_0c();
+; Line 38
+	*** 000098	9a 00 00 00 00 		call	FAR PTR _gfx_jump_0c
+;|***     gfx_jump_52(commData->setupMono);
+; Line 39
+	*** 00009d	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 0000a1	26 ff 77 24 		push	WORD PTR es:[bx+36]
+	*** 0000a5	9a 00 00 00 00 		call	FAR PTR _gfx_jump_52
+	*** 0000aa	83 c4 02 		add	sp,2
+;|***     if (gameData->theater < 2) { // 0xc8
+; Line 40
+	*** 0000ad	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0000b1	26 83 7f 38 02 		cmp	WORD PTR es:[bx+56],2
+	*** 0000b6	73 0e 			jae	$I1929
+;|***         gfx_jump_3d_null(0xc);
+; Line 41
+	*** 0000b8	b8 0c 00 		mov	ax,12
+	*** 0000bb	50 			push	ax
+	*** 0000bc	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3d_null
+	*** 0000c1	83 c4 02 		add	sp,2
+;|***     }
+; Line 42
+;|***     else { // 0xd6
+; Line 43
+	*** 0000c4	eb 0c 			jmp	SHORT $I1930
+					$I1929:
+;|***         gfx_jump_3d_null(0x10);
+; Line 44
+	*** 0000c6	b8 10 00 		mov	ax,16
+	*** 0000c9	50 			push	ax
+	*** 0000ca	9a 00 00 00 00 		call	FAR PTR _gfx_jump_3d_null
+	*** 0000cf	83 c4 02 		add	sp,2
+;|***     }
+; Line 45
+					$I1930:
+;|***     // 0xea
+;|***     gfxBufPtr = commData->gfxInitResult;
+; Line 47
+	*** 0000d2	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 0000d6	26 8b 47 20 		mov	ax,WORD PTR es:[bx+32]
+	*** 0000da	a3 00 00 		mov	_gfxBufPtr,ax
+;|***     sub_21A7E();
+; Line 48
+	*** 0000dd	9a 00 00 00 00 		call	FAR PTR _sub_21A7E
+;|***     drawCockpit();
+; Line 49
+	*** 0000e2	e8 00 00 		call	_drawCockpit
+;|***     MainGameLoop();
+; Line 50
+	*** 0000e5	e8 00 00 		call	_MainGameLoop
+;|***     if (commData->setupUseJoy == 1) {
+; Line 51
+	*** 0000e8	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 0000ec	26 83 7f 72 01 		cmp	WORD PTR es:[bx+114],1
+	*** 0000f1	75 11 			jne	$I1931
+;|***         // 10c
+;|***         restoreJoystickData(commData->joyData);
+; Line 53
+	*** 0000f3	8b c3 			mov	ax,bx
+	*** 0000f5	8c c2 			mov	dx,es
+	*** 0000f7	05 48 00 		add	ax,72
+	*** 0000fa	52 			push	dx
+	*** 0000fb	50 			push	ax
+	*** 0000fc	9a 00 00 00 00 		call	FAR PTR _restoreJoystickData
+	*** 000101	83 c4 04 		add	sp,4
+;|***     }
+; Line 54
+;|***     restoreCBreakHandler();
+; Line 55
+					$I1931:
+	*** 000104	e8 00 00 		call	_restoreCBreakHandler
+;|***     if (exitCode == 0) {
+; Line 56
+	*** 000107	80 3e 00 00 00 		cmp	BYTE PTR _exitCode,0
+	*** 00010c	75 19 			jne	$I1932
+;|***         regs.h.ah = 0;
+; Line 57
+	*** 00010e	c6 06 01 00 00 		mov	BYTE PTR _regs+1,0
+;|***         regs.h.al = 3;
+; Line 58
+	*** 000113	c6 06 00 00 03 		mov	BYTE PTR _regs,3
+;|***         // 0x131
+;|***         int86(IRQ_VIDEO, &regs, &regs);
+; Line 60
+	*** 000118	b8 00 00 		mov	ax,OFFSET _regs
+	*** 00011b	50 			push	ax
+	*** 00011c	50 			push	ax
+	*** 00011d	b8 10 00 		mov	ax,16
+	*** 000120	50 			push	ax
+	*** 000121	e8 00 00 		call	_int86
+	*** 000124	83 c4 06 		add	sp,6
+;|***     }
+; Line 61
+;|***     // 13d
+;|***     exit(exitCode);
+; Line 63
+					$I1932:
+	*** 000127	a0 00 00 		mov	al,_exitCode
+	*** 00012a	2a e4 			sub	ah,ah
+	*** 00012c	50 			push	ax
+	*** 00012d	e8 00 00 		call	_exit
+	*** 000130	83 c4 02 		add	sp,2
+;|*** }
+; Line 64
+	*** 000133	8b e5 			mov	sp,bp
+	*** 000135	5d 			pop	bp
+	*** 000136	c3 			ret	
+
+_main	ENDP
+	*** 000137	90 			nop	
+_TEXT	ENDS
+END

@@ -1,0 +1,3409 @@
+;	Static Name Aliases
+;
+;	$S767_BadWeather	EQU	BadWeather
+;	$S791_LASTHEIGHT	EQU	LASTHEIGHT
+;	$S974_Angle1	EQU	Angle1
+	TITLE   nhorz.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+PUBLIC  _GREYSEG
+PUBLIC  _CLOUDSEG
+PUBLIC  _GRYSFHTTBL
+PUBLIC  _cldhndl
+PUBLIC  _CLOUDHEIGHT
+PUBLIC  _CLOUDTHICK
+PUBLIC  _LASTSTACK
+PUBLIC  _FARSTACK
+PUBLIC  _ABOVECLOUDS
+PUBLIC  _GRNDDETAIL
+PUBLIC  _OVERCAST
+PUBLIC  _SKYDETAIL
+PUBLIC  _WORLDDETAIL
+PUBLIC  _MTNRAD
+PUBLIC  _STKWID
+PUBLIC  _GFLSH
+PUBLIC  _MYWID
+EXTRN	_ASinB:NEAR
+EXTRN	_ACosB:NEAR
+EXTRN	_ReadEMSPCXSize:NEAR
+EXTRN	_labs:NEAR
+EXTRN	_DrawCarrier:NEAR
+EXTRN	_DrawCoolF14:NEAR
+EXTRN	_NXSLine:NEAR
+EXTRN	_DrawMissile:NEAR
+EXTRN	_MapIn3dObjects:NEAR
+EXTRN	_GetQHeight:NEAR
+EXTRN	_NXSADDLine:NEAR
+EXTRN	_DrawASmoke:NEAR
+EXTRN	_fmemfill:NEAR
+EXTRN	_DrawShadow:NEAR
+EXTRN	_DrawTexPlane:NEAR
+EXTRN	_MakeMatRPH:NEAR
+EXTRN	_DrawChute:NEAR
+EXTRN	_NDraw3DObject:NEAR
+EXTRN	_DrawDecoy:NEAR
+EXTRN	_DrawRegBoat:NEAR
+EXTRN	_MyWaterline2:NEAR
+EXTRN	_Message:NEAR
+EXTRN	_MyWaterline:NEAR
+EXTRN	__dos_close:NEAR
+EXTRN	_Dist3D:NEAR
+EXTRN	__aNlmul:NEAR
+EXTRN	_NScaleLine:NEAR
+EXTRN	__aNNalshr:NEAR
+EXTRN	_Rotate:NEAR
+EXTRN	_abs:NEAR
+EXTRN	__dos_open:NEAR
+EXTRN	__dos_read:NEAR
+EXTRN	_MapEmsFile:NEAR
+EXTRN	_FrameRate:WORD
+EXTRN	_NGXLO:WORD
+EXTRN	_NGYLO:WORD
+EXTRN	_NGXHI:WORD
+EXTRN	_NGYHI:WORD
+EXTRN	_NGYMID:WORD
+EXTRN	_HorzHeave:WORD
+EXTRN	_GRPAGE0:BYTE
+EXTRN	_Seg3D:WORD
+EXTRN	_Nviewmat:BYTE
+EXTRN	_CLOUDAMNT:WORD
+EXTRN	_ViewZ:WORD
+_BSS      SEGMENT
+COMM NEAR	_GrndAnimVals:	 2:	 32
+_BSS      ENDS
+EXTRN	_GRTBLSEG:BYTE
+COMM FAR	_OBJECTS:	 6:	 1536
+_BSS      SEGMENT
+COMM NEAR	_GroundObjectScale:	 2:	 200
+_BSS      ENDS
+EXTRN	_gt:BYTE
+_BSS      SEGMENT
+COMM NEAR	_GroundObjectNames:	 1:	 640
+_BSS      ENDS
+EXTRN	_NGTARGETS:WORD
+COMM FAR	_STACK3D:	 18:	 52
+_BSS      SEGMENT
+COMM NEAR	_FLSHXOFF:	BYTE:	 2
+COMM NEAR	_FLSHZOFF:	BYTE:	 2
+COMM NEAR	_ADDRESS:	 2:	 320
+_BSS      ENDS
+EXTRN	_ViewX:DWORD
+EXTRN	_ViewY:DWORD
+EXTRN	_AAFIRE:BYTE
+_DATA      SEGMENT
+	ORG	$+34
+$SG775	DB	'cldwtr5.pcx',  00H
+$SG777	DB	'wld.gry',  00H
+	ORG	$+34
+$SG929	DB	'Error',  00H
+	ORG	$-94
+_GREYSEG	DW	0a000H
+_CLOUDSEG	DW	0a000H
+_cldhndl	DW	00H
+_CLOUDHEIGHT	DW	01fd6H
+_CLOUDTHICK	DW	01f4H
+_LASTSTACK	DW	00H
+_FARSTACK	DW	0ffffH
+_ABOVECLOUDS	DW	00H
+_GRNDDETAIL	DW	01H
+_OVERCAST	DW	00H
+_SKYDETAIL	DW	01H
+_WORLDDETAIL	DW	00H
+_MTNRAD	DW	06H
+_STKWID	DW	02H
+_GFLSH	DW	00H
+_MYWID	DW	0d0H
+$S767_BadWeather	DW	00H
+	ORG	$+20
+_GRYSFHTTBL	DW	0800H
+	DW	01000H
+	DW	01800H
+	DW	02000H
+	DW	02800H
+	DW	03000H
+	DW	03800H
+	DW	04000H
+	DW	04800H
+	DW	05000H
+	DW	05800H
+	DW	06000H
+	DW	06800H
+	DW	07000H
+	DW	07000H
+	DW	07000H
+$S791_LASTHEIGHT	DW	0ffffH
+	ORG	$+6
+$S974_Angle1	DW	00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "stdio.h"
+; Line 1
+;|*** #include <stdlib.h>
+; Line 2
+;|*** #include <dos.h>
+; Line 3
+;|*** #include "library.h"
+; Line 4
+;|*** /*
+;|*** ÉÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»
+;|*** º********************   MPS Labs Graphic Library   *********************º
+;|*** ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶
+;|*** º  File:  Library.h														º
+;|*** º																		º
+;|*** º  Auth:  David McKibbin												º
+;|*** º																		º
+;|*** º  Edit:  dtm   July 20, 1992         1:18 pm							º
+;|*** º																		º
+;|*** º  Note:  HEADER definitions for MPSLIB?.LIB							º
+;|*** º																		º
+;|*** ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶
+;|*** º   Copyright (c) 1991 by MicroProse Software, All Rights Reserved.		º
+;|*** ÈÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼
+;|*** */
+;|*** 
+;|*** #ifndef EXEC_TYPES_H
+;|*** #include "types.h"
+; Line 19
+;|*** #include "world.h"
+; Line 5
+;|*** #include "f15defs.h"
+; Line 6
+;|*** #include <fcntl.h>
+; Line 7
+;|*** #include "planeai.h"
+; Line 8
+;|*** #include "3dobjdefs.h"
+; Line 9
+;|*** 
+;|*** extern UWORD   *PalPtr3D;
+;|*** extern	long	ViewX,ViewY;
+;|*** 
+;|*** extern UBYTE far AAFIRE[];
+;|*** extern int FrameRate;
+;|*** 
+;|*** extern	long labs(long V);
+;|*** 
+;|*** UWORD	GREYSEG =0xA000;
+;|*** UWORD   CLOUDSEG=0xA000;
+;|*** 
+;|*** extern   int   NGXLO;
+;|*** extern   int   NGYLO;
+;|*** extern   int   NGXHI;
+;|*** extern   int   NGYHI;
+;|*** extern   int   NGXMID;
+;|*** extern   int   NGYMID;
+;|*** extern	long	NXSLine( long A, int E, int LN, int HT, int M );
+;|*** extern	long	NXSADDLine( int C, int HT, int M );
+;|*** 
+;|*** int   cldhndl=0;
+;|*** 
+;|*** extern	struct RastPort    *Rp;
+;|*** extern	int	GMODE;
+;|*** extern	int	GRPAGE;
+;|*** extern	int	GRPAGE0[];
+;|*** extern	int	GXLO;
+;|*** extern	int	GYLO;
+;|*** extern	int	GXHI;
+;|*** extern	int	GYHI;
+;|*** extern	int	GXMID;
+;|*** extern	int	GYMID;
+;|*** extern  int     detected;
+;|*** extern  UWORD   Seg3D;
+;|*** extern	int	Nviewmat[];
+;|*** extern  int     CLOUDAMNT;
+;|*** extern  int     ViewZ;
+;|*** 
+;|*** int GrndAnimVals[32];
+;|*** 
+;|*** extern int BelowDeck;
+;|*** 
+;|*** extern   char far GRTBLSEG[];
+;|*** 
+;|*** 
+;|*** UWORD	CLOUDHEIGHT=8150;
+;|*** // UWORD	CLOUDHEIGHT=125;
+;|*** int		CLOUDTHICK=500;
+;|*** 
+;|*** struct OBJ3D far OBJECTS[96][16];
+;|*** int   GroundObjectScale[200];
+;|*** char  GroundObjectNames[32][20];
+;|*** 
+;|*** 
+;|*** 
+;|*** struct STK3D{
+;|*** 	int OBJ;
+;|*** 	int X;
+;|*** 	int Y;
+;|*** 	int Z;
+;|***     int ID;
+;|*** 	int NXT;
+;|*** 	UWORD DST;
+;|*** 	int TYPE;
+;|*** 	int SCL;
+;|*** } far STACK3D[52];
+;|*** 
+;|*** LASTSTACK=0;
+;|*** FARSTACK=-1;
+;|*** 
+;|*** 
+;|*** int ABOVECLOUDS=0;
+;|*** int	GRNDDETAIL=1;
+;|*** int	OVERCAST=0;
+;|*** int SKYDETAIL=1;
+;|*** int WORLDDETAIL=0;
+;|*** 
+;|*** #define Width2 160
+;|*** 
+;|*** #define MTNTILE 95
+;|*** 
+;|*** int	MTNRAD= 6;
+;|*** int	STKWID= 2;
+;|*** int	FLSHXOFF;
+;|*** int	FLSHZOFF;
+;|*** int	GFLSH=0;
+;|*** struct	SNRM{
+;|*** 	int	NI;
+;|*** 	int	NJ;
+;|*** 	int	NK;
+;|*** 	long	D;
+;|*** };
+;|*** 
+;|*** UWORD ADDRESS[320];
+;|*** 
+;|*** int	MYWID=208;
+;|*** #define MYHT	304
+;|*** 
+;|*** //***************************************************************************
+;|*** ChangeWeather()
+;|*** {
+; Line 111
+	PUBLIC	_ChangeWeather
+_ChangeWeather	PROC NEAR
+;|*** 	static int BadWeather=0;
+;|*** 
+;|*** 	if (BadWeather) {
+; Line 114
+	*** 000000	83 3e 20 00 00 		cmp	WORD PTR $S767_BadWeather,0
+	*** 000005	74 13 			je	$I768
+;|*** 		CLOUDHEIGHT=8150;
+; Line 115
+	*** 000007	c7 06 06 00 d6 1f 	mov	WORD PTR _CLOUDHEIGHT,8150
+;|*** 		CLOUDTHICK=500;
+; Line 116
+	*** 00000d	c7 06 08 00 f4 01 	mov	WORD PTR _CLOUDTHICK,500
+;|*** 		BadWeather=0;
+; Line 117
+	*** 000013	c7 06 20 00 00 00 	mov	WORD PTR $S767_BadWeather,0
+;|*** 	} else {
+; Line 118
+	*** 000019	c3 			ret	
+					$I768:
+;|*** 		CLOUDHEIGHT=125;
+; Line 119
+	*** 00001a	c7 06 06 00 7d 00 	mov	WORD PTR _CLOUDHEIGHT,125
+;|*** 		CLOUDTHICK=1000;
+; Line 120
+	*** 000020	c7 06 08 00 e8 03 	mov	WORD PTR _CLOUDTHICK,1000
+;|*** 		BadWeather=1;
+; Line 121
+	*** 000026	c7 06 20 00 01 00 	mov	WORD PTR $S767_BadWeather,1
+;|*** 	}
+; Line 122
+;|*** }
+; Line 123
+	*** 00002c	c3 			ret	
+	*** 00002d	90 			nop	
+
+_ChangeWeather	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** LoadClouds()
+;|*** {
+; Line 127
+	PUBLIC	_LoadClouds
+_LoadClouds	PROC NEAR
+	*** 00002e	55 			push	bp
+	*** 00002f	8b ec 			mov	bp,sp
+	*** 000031	83 ec 04 		sub	sp,4
+;	DHNDL = -2
+;	len = -4
+;|*** 	int	DHNDL;
+;|*** 	unsigned 	len;
+;|*** 
+;|*** 	cldhndl=ReadEMSPCXSize("cldwtr5.pcx",0,256,256);
+; Line 131
+	*** 000034	b8 00 01 		mov	ax,256
+	*** 000037	50 			push	ax
+	*** 000038	50 			push	ax
+	*** 000039	2b c0 			sub	ax,ax
+	*** 00003b	50 			push	ax
+	*** 00003c	b8 22 00 		mov	ax,OFFSET DGROUP:$SG775
+	*** 00003f	50 			push	ax
+	*** 000040	e8 00 00 		call	_ReadEMSPCXSize
+	*** 000043	83 c4 08 		add	sp,8
+	*** 000046	a3 04 00 		mov	WORD PTR _cldhndl,ax
+;|*** 	if(_dos_open("wld.gry",O_RDONLY,&DHNDL)==0) {
+; Line 132
+	*** 000049	8d 46 fe 		lea	ax,WORD PTR [bp-2]	;DHNDL
+	*** 00004c	50 			push	ax
+	*** 00004d	2b c9 			sub	cx,cx
+	*** 00004f	51 			push	cx
+	*** 000050	ba 2e 00 		mov	dx,OFFSET DGROUP:$SG777
+	*** 000053	52 			push	dx
+	*** 000054	e8 00 00 		call	__dos_open
+	*** 000057	83 c4 06 		add	sp,6
+	*** 00005a	0b c0 			or	ax,ax
+	*** 00005c	75 1f 			jne	$I776
+;|*** 		_dos_read(DHNDL,GRTBLSEG,16*256,&len);
+; Line 133
+	*** 00005e	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;len
+	*** 000061	50 			push	ax
+	*** 000062	b8 00 10 		mov	ax,4096
+	*** 000065	50 			push	ax
+	*** 000066	b8 00 00 		mov	ax,OFFSET _GRTBLSEG
+	*** 000069	b9 00 00 		mov	cx,SEG _GRTBLSEG
+	*** 00006c	51 			push	cx
+	*** 00006d	50 			push	ax
+	*** 00006e	ff 76 fe 		push	WORD PTR [bp-2]	;DHNDL
+	*** 000071	e8 00 00 		call	__dos_read
+	*** 000074	83 c4 0a 		add	sp,10
+;|*** 		_dos_close(DHNDL);
+; Line 134
+	*** 000077	ff 76 fe 		push	WORD PTR [bp-2]	;DHNDL
+	*** 00007a	e8 00 00 		call	__dos_close
+;|*** 	}
+; Line 135
+;|*** }
+; Line 136
+					$I776:
+	*** 00007d	8b e5 			mov	sp,bp
+	*** 00007f	5d 			pop	bp
+	*** 000080	c3 			ret	
+	*** 000081	90 			nop	
+
+_LoadClouds	ENDP
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** int   GRYSFHTTBL[16]={
+;|***    0x800,0x1000,0x1800,0x2000,
+;|***    0x2800,0x3000,0x3800,0x4000,
+;|***    0x4800,0x5000,0x5800,0x6000,
+;|***    0x6800,0x7000,0x7000,0x7000,
+;|*** };
+;|*** 
+;|*** extern   int   HorzHeave;
+;|*** 
+;|*** NHorz(long XC,long ZC,int YC,int HEAD,int PITCH,int ROLL,int ARIEL,UWORD BUFFER, int HRES)
+;|*** {
+; Line 150
+	PUBLIC	_NHorz
+_NHorz	PROC NEAR
+	*** 000082	55 			push	bp
+	*** 000083	8b ec 			mov	bp,sp
+	*** 000085	81 ec 12 03 		sub	sp,786
+	*** 000089	57 			push	di
+	*** 00008a	56 			push	si
+;	ADDRESS = -716
+;	i = -732
+;	P = -4
+;	XS = -750
+;	ZS = -762
+;	XADD = -10
+;	ZADD = -60
+;	FA = -724
+;	FB = -728
+;	HT = -756
+;	CHT = -784
+;	FC = -730
+;	FD = -738
+;	FE = -746
+;	FF = -754
+;	ARADD = -752
+;	M = -758
+;	LinesToDo = -6
+;	T1DEL = -736
+;	T2DEL = -744
+;	DELSWITCH = -720
+;	W = -718
+;	CXS = -780
+;	CYS = -782
+;	CXADD = -64
+;	CYADD = -70
+;	ZD = -778
+;	XZD = -76
+;	YM = -74
+;	XM = -68
+;	N = -776
+;	S = -56
+;	ADDBASE = -62
+;	NWID = -14
+;	GSEG = -72
+;	GRY = -12
+;	MSK = -740
+;	SHFT = -66
+;	MYM = -16
+;	HRES = 24
+;	BUFFER = 22
+;	ARIEL = 20
+;	ROLL = 18
+;	PITCH = 16
+;	HEAD = 14
+;	YC = 12
+;	ZC = 8
+;	XC = 4
+;|***     static int LASTHEIGHT=-1;
+;|*** 	UWORD ADDRESS[320];
+;|*** 	int	i;
+;|*** 	void far *P;
+;|*** 	long XS,ZS,XADD,ZADD;
+;|*** 	long FA,FB;
+;|*** 	int	 HT,CHT,FC,FD,FE,FF;
+;|*** 	int	 ARADD,M;
+;|***     int  LinesToDo;
+;|*** 	long T1DEL,T2DEL;
+;|*** 	int	 DELSWITCH;
+;|*** 	int	 W,CXS,CYS,CXADD,CYADD,ZD,XZD;
+;|*** 	int	 YM,XM;
+;|*** 	char N[13],S[40];
+;|***     int  ADDBASE;
+;|*** 	int	 NWID;
+;|*** 	int  GSEG;
+;|*** 	int  GRY;
+;|*** 	int  MSK,SHFT;
+;|*** 	int	 MYM;
+;|*** 
+;|*** 
+;|*** 	XZD=1;
+; Line 173
+	*** 00008b	c7 46 b4 01 00 		mov	WORD PTR [bp-76],1	;XZD
+;|*** 	ZD= 64;
+; Line 174
+	*** 000090	c7 86 f6 fc 40 00 	mov	WORD PTR [bp-778],64	;ZD
+;|*** 
+;|*** 	CLOUDSEG=MapEmsFile(cldhndl, 0);
+; Line 176
+	*** 000096	2b c0 			sub	ax,ax
+	*** 000098	50 			push	ax
+	*** 000099	ff 36 04 00 		push	WORD PTR _cldhndl
+	*** 00009d	e8 00 00 		call	_MapEmsFile
+	*** 0000a0	83 c4 04 		add	sp,4
+	*** 0000a3	a3 02 00 		mov	WORD PTR _CLOUDSEG,ax
+;|*** 
+;|*** 	HT= 2*YC;  /* Why ?? */
+; Line 178
+	*** 0000a6	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;YC
+	*** 0000a9	d1 e0 			shl	ax,1
+	*** 0000ab	89 86 0c fd 		mov	WORD PTR [bp-756],ax	;HT
+;|*** 
+;|*** 
+;|***    HRES=SKYDETAIL;
+; Line 181
+	*** 0000af	8b 0e 14 00 		mov	cx,WORD PTR _SKYDETAIL
+	*** 0000b3	89 4e 18 		mov	WORD PTR [bp+24],cx	;HRES
+;|*** 
+;|*** 
+;|*** 	ABOVECLOUDS=0;
+; Line 184
+	*** 0000b6	c7 06 0e 00 00 00 	mov	WORD PTR _ABOVECLOUDS,0
+;|*** 	CHT = CLOUDHEIGHT - HT;
+; Line 185
+	*** 0000bc	2b 06 06 00 		sub	ax,WORD PTR _CLOUDHEIGHT
+	*** 0000c0	f7 d8 			neg	ax
+	*** 0000c2	89 86 f0 fc 		mov	WORD PTR [bp-784],ax	;CHT
+;|*** 	if (CHT<0) {
+; Line 186
+	*** 0000c6	0b c0 			or	ax,ax
+	*** 0000c8	7d 0e 			jge	$I832
+;|*** 		CHT= -(CHT>>1);
+; Line 187
+	*** 0000ca	d1 f8 			sar	ax,1
+	*** 0000cc	f7 d8 			neg	ax
+	*** 0000ce	89 86 f0 fc 		mov	WORD PTR [bp-784],ax	;CHT
+;|*** 		ABOVECLOUDS=1;
+; Line 188
+	*** 0000d2	c7 06 0e 00 01 00 	mov	WORD PTR _ABOVECLOUDS,1
+;|*** 	}
+; Line 189
+;|*** 
+;|*** 	CLOUDAMNT = (CHT<CLOUDTHICK) ? (100 - (CHT/(CLOUDTHICK/100))) : 0;
+; Line 191
+					$I832:
+	*** 0000d8	39 06 08 00 		cmp	WORD PTR _CLOUDTHICK,ax
+	*** 0000dc	7f 04 			jg	$L20000
+	*** 0000de	2b c0 			sub	ax,ax
+	*** 0000e0	eb 15 			jmp	SHORT $L20001
+					$L20000:
+	*** 0000e2	a1 08 00 		mov	ax,WORD PTR _CLOUDTHICK
+	*** 0000e5	b9 9c ff 		mov	cx,-100
+	*** 0000e8	99 			cwd	
+	*** 0000e9	f7 f9 			idiv	cx
+	*** 0000eb	8b c8 			mov	cx,ax
+	*** 0000ed	8b 86 f0 fc 		mov	ax,WORD PTR [bp-784]	;CHT
+	*** 0000f1	99 			cwd	
+	*** 0000f2	f7 f9 			idiv	cx
+	*** 0000f4	05 64 00 		add	ax,100
+					$L20001:
+	*** 0000f7	a3 00 00 		mov	WORD PTR _CLOUDAMNT,ax
+;|*** 
+;|*** 	if (SKYDETAIL==0) (CLOUDAMNT>>=2);
+; Line 193
+	*** 0000fa	83 3e 14 00 00 		cmp	WORD PTR _SKYDETAIL,0
+	*** 0000ff	75 06 			jne	$I833
+	*** 000101	b1 02 			mov	cl,2
+	*** 000103	d3 3e 00 00 		sar	WORD PTR _CLOUDAMNT,cl
+;|*** 
+;|***     ARADD = YC/8;
+; Line 195
+					$I833:
+;|*** 	if (ARADD<4) ARADD=4;
+; Line 196
+	*** 000107	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;YC
+	*** 00010a	99 			cwd	
+	*** 00010b	33 c2 			xor	ax,dx
+	*** 00010d	2b c2 			sub	ax,dx
+	*** 00010f	b9 03 00 		mov	cx,3
+	*** 000112	d3 f8 			sar	ax,cl
+	*** 000114	33 c2 			xor	ax,dx
+	*** 000116	2b c2 			sub	ax,dx
+	*** 000118	89 86 10 fd 		mov	WORD PTR [bp-752],ax	;ARADD
+	*** 00011c	3d 04 00 		cmp	ax,4
+	*** 00011f	7d 06 			jge	$I834
+	*** 000121	c7 86 10 fd 04 00 	mov	WORD PTR [bp-752],4	;ARADD
+;|*** 
+;|*** 	if (ARADD>28) ARADD=28;
+; Line 198
+					$I834:
+	*** 000127	83 be 10 fd 1c 		cmp	WORD PTR [bp-752],28	;ARADD
+	*** 00012c	7e 06 			jle	$I835
+	*** 00012e	c7 86 10 fd 1c 00 	mov	WORD PTR [bp-752],28	;ARADD
+;|*** 
+;|***     LinesToDo= NGYHI-NGYMID+2;
+; Line 200
+					$I835:
+;|***     if (NGYMID-NGYLO >LinesToDo) LinesToDo=NGYMID-NGYLO;
+; Line 201
+	*** 000134	a1 00 00 		mov	ax,WORD PTR _NGYHI
+	*** 000137	2b 06 00 00 		sub	ax,WORD PTR _NGYMID
+	*** 00013b	40 			inc	ax
+	*** 00013c	40 			inc	ax
+	*** 00013d	89 46 fa 		mov	WORD PTR [bp-6],ax	;LinesToDo
+	*** 000140	8b 0e 00 00 		mov	cx,WORD PTR _NGYMID
+	*** 000144	2b 0e 00 00 		sub	cx,WORD PTR _NGYLO
+	*** 000148	3b c1 			cmp	ax,cx
+	*** 00014a	7d 03 			jge	$I836
+	*** 00014c	89 4e fa 		mov	WORD PTR [bp-6],cx	;LinesToDo
+;|*** 
+;|*** 	NWID= (((NGXHI-NGXLO)+7)&0xfff8);
+; Line 203
+					$I836:
+	*** 00014f	a1 00 00 		mov	ax,WORD PTR _NGXHI
+	*** 000152	2b 06 00 00 		sub	ax,WORD PTR _NGXLO
+	*** 000156	05 07 00 		add	ax,7
+	*** 000159	24 f8 			and	al,248
+	*** 00015b	89 46 f2 		mov	WORD PTR [bp-14],ax	;NWID
+;|*** 
+;|*** 	YM= abs(ASinB((128*(NWID/2))/160,ROLL))+abs(ACosB(LinesToDo,ROLL));
+;|*** 	if (YM>152) YM=152;
+; Line 206
+	*** 00015e	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 000161	99 			cwd	
+	*** 000162	2b c2 			sub	ax,dx
+	*** 000164	d1 f8 			sar	ax,1
+	*** 000166	b1 07 			mov	cl,7
+	*** 000168	d3 e0 			shl	ax,cl
+	*** 00016a	b9 a0 00 		mov	cx,160
+	*** 00016d	99 			cwd	
+	*** 00016e	f7 f9 			idiv	cx
+	*** 000170	50 			push	ax
+	*** 000171	e8 00 00 		call	_ASinB
+	*** 000174	83 c4 04 		add	sp,4
+	*** 000177	50 			push	ax
+	*** 000178	e8 00 00 		call	_abs
+	*** 00017b	83 c4 02 		add	sp,2
+	*** 00017e	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 000181	ff 76 fa 		push	WORD PTR [bp-6]	;LinesToDo
+	*** 000184	8b f0 			mov	si,ax
+	*** 000186	e8 00 00 		call	_ACosB
+	*** 000189	83 c4 04 		add	sp,4
+	*** 00018c	50 			push	ax
+	*** 00018d	e8 00 00 		call	_abs
+	*** 000190	83 c4 02 		add	sp,2
+	*** 000193	03 f0 			add	si,ax
+	*** 000195	89 76 b6 		mov	WORD PTR [bp-74],si	;YM
+	*** 000198	81 fe 98 00 		cmp	si,152
+	*** 00019c	7e 05 			jle	$I839
+	*** 00019e	c7 46 b6 98 00 		mov	WORD PTR [bp-74],152	;YM
+;|*** 	if (YM<LinesToDo) YM=LinesToDo;
+; Line 207
+					$I839:
+	*** 0001a3	8b 46 b6 		mov	ax,WORD PTR [bp-74]	;YM
+	*** 0001a6	39 46 fa 		cmp	WORD PTR [bp-6],ax	;LinesToDo
+	*** 0001a9	7e 06 			jle	$I840
+	*** 0001ab	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;LinesToDo
+	*** 0001ae	89 46 b6 		mov	WORD PTR [bp-74],ax	;YM
+;|*** 
+;|*** 	XM= abs(ACosB((NWID/2)+8,ROLL))+abs(ASinB((148*LinesToDo)/100,ROLL));
+; Line 209
+					$I840:
+;|*** 	if (XM>208) XM=208;
+; Line 210
+	*** 0001b1	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 0001b4	b8 94 00 		mov	ax,148
+	*** 0001b7	f7 6e fa 		imul	WORD PTR [bp-6]	;LinesToDo
+	*** 0001ba	b9 64 00 		mov	cx,100
+	*** 0001bd	99 			cwd	
+	*** 0001be	f7 f9 			idiv	cx
+	*** 0001c0	50 			push	ax
+	*** 0001c1	e8 00 00 		call	_ASinB
+	*** 0001c4	83 c4 04 		add	sp,4
+	*** 0001c7	50 			push	ax
+	*** 0001c8	e8 00 00 		call	_abs
+	*** 0001cb	83 c4 02 		add	sp,2
+	*** 0001ce	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 0001d1	8b c8 			mov	cx,ax
+	*** 0001d3	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;NWID
+	*** 0001d6	99 			cwd	
+	*** 0001d7	2b c2 			sub	ax,dx
+	*** 0001d9	d1 f8 			sar	ax,1
+	*** 0001db	05 08 00 		add	ax,8
+	*** 0001de	50 			push	ax
+	*** 0001df	8b f1 			mov	si,cx
+	*** 0001e1	e8 00 00 		call	_ACosB
+	*** 0001e4	83 c4 04 		add	sp,4
+	*** 0001e7	50 			push	ax
+	*** 0001e8	e8 00 00 		call	_abs
+	*** 0001eb	83 c4 02 		add	sp,2
+	*** 0001ee	03 f0 			add	si,ax
+	*** 0001f0	89 76 bc 		mov	WORD PTR [bp-68],si	;XM
+	*** 0001f3	81 fe d0 00 		cmp	si,208
+	*** 0001f7	7e 05 			jle	$I841
+	*** 0001f9	c7 46 bc d0 00 		mov	WORD PTR [bp-68],208	;XM
+;|*** 	if (XM<160) XM=160;
+; Line 211
+					$I841:
+	*** 0001fe	81 7e bc a0 00 		cmp	WORD PTR [bp-68],160	;XM
+	*** 000203	7d 05 			jge	$I842
+	*** 000205	c7 46 bc a0 00 		mov	WORD PTR [bp-68],160	;XM
+;|*** 
+;|*** 	MYWID=XM;
+; Line 213
+					$I842:
+	*** 00020a	8b 46 bc 		mov	ax,WORD PTR [bp-68]	;XM
+	*** 00020d	a3 1e 00 		mov	WORD PTR _MYWID,ax
+;|*** 
+;|*** 	i= ACosB(MYWID,HEAD)+ ASinB(ACosB(256/XZD,PITCH),HEAD);
+;|*** 	FA= (long)(i)<<10;
+; Line 216
+	*** 000210	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 000213	ff 76 10 		push	WORD PTR [bp+16]	;PITCH
+	*** 000216	b8 00 01 		mov	ax,256
+	*** 000219	99 			cwd	
+	*** 00021a	f7 7e b4 		idiv	WORD PTR [bp-76]	;XZD
+	*** 00021d	50 			push	ax
+	*** 00021e	8b f0 			mov	si,ax
+	*** 000220	e8 00 00 		call	_ACosB
+	*** 000223	83 c4 04 		add	sp,4
+	*** 000226	50 			push	ax
+	*** 000227	e8 00 00 		call	_ASinB
+	*** 00022a	83 c4 04 		add	sp,4
+	*** 00022d	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 000230	ff 76 bc 		push	WORD PTR [bp-68]	;XM
+	*** 000233	8b f8 			mov	di,ax
+	*** 000235	e8 00 00 		call	_ACosB
+	*** 000238	83 c4 04 		add	sp,4
+	*** 00023b	03 c7 			add	ax,di
+	*** 00023d	89 86 24 fd 		mov	WORD PTR [bp-732],ax	;i
+	*** 000241	99 			cwd	
+	*** 000242	8a f2 			mov	dh,dl
+	*** 000244	8a d4 			mov	dl,ah
+	*** 000246	8a e0 			mov	ah,al
+	*** 000248	2a c0 			sub	al,al
+	*** 00024a	d1 e0 			shl	ax,1
+	*** 00024c	d1 d2 			rcl	dx,1
+	*** 00024e	d1 e0 			shl	ax,1
+	*** 000250	d1 d2 			rcl	dx,1
+	*** 000252	89 86 2c fd 		mov	WORD PTR [bp-724],ax	;FA
+	*** 000256	89 96 2e fd 		mov	WORD PTR [bp-722],dx
+;|*** 	i= ASinB(-MYWID,HEAD)+ ACosB(ACosB(256/XZD,PITCH),HEAD);
+;|*** 	FB= (long)(i)<<10;
+; Line 218
+	*** 00025a	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 00025d	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000260	f7 d8 			neg	ax
+	*** 000262	50 			push	ax
+	*** 000263	e8 00 00 		call	_ASinB
+	*** 000266	83 c4 04 		add	sp,4
+	*** 000269	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 00026c	ff 76 10 		push	WORD PTR [bp+16]	;PITCH
+	*** 00026f	56 			push	si
+	*** 000270	8b f0 			mov	si,ax
+	*** 000272	e8 00 00 		call	_ACosB
+	*** 000275	83 c4 04 		add	sp,4
+	*** 000278	50 			push	ax
+	*** 000279	e8 00 00 		call	_ACosB
+	*** 00027c	83 c4 04 		add	sp,4
+	*** 00027f	03 c6 			add	ax,si
+	*** 000281	89 86 24 fd 		mov	WORD PTR [bp-732],ax	;i
+	*** 000285	99 			cwd	
+	*** 000286	8a f2 			mov	dh,dl
+	*** 000288	8a d4 			mov	dl,ah
+	*** 00028a	8a e0 			mov	ah,al
+	*** 00028c	2a c0 			sub	al,al
+	*** 00028e	d1 e0 			shl	ax,1
+	*** 000290	d1 d2 			rcl	dx,1
+	*** 000292	d1 e0 			shl	ax,1
+	*** 000294	d1 d2 			rcl	dx,1
+	*** 000296	89 86 28 fd 		mov	WORD PTR [bp-728],ax	;FB
+	*** 00029a	89 96 2a fd 		mov	WORD PTR [bp-726],dx
+;|*** 
+;|*** 	FC= ACosB(-2048,HEAD);
+; Line 220
+	*** 00029e	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 0002a1	b8 00 f8 		mov	ax,-2048
+	*** 0002a4	50 			push	ax
+	*** 0002a5	e8 00 00 		call	_ACosB
+	*** 0002a8	83 c4 04 		add	sp,4
+	*** 0002ab	89 86 26 fd 		mov	WORD PTR [bp-730],ax	;FC
+;|*** 	FD= ASinB(2048,HEAD);
+; Line 221
+	*** 0002af	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 0002b2	b8 00 08 		mov	ax,2048
+	*** 0002b5	50 			push	ax
+	*** 0002b6	e8 00 00 		call	_ASinB
+	*** 0002b9	83 c4 04 		add	sp,4
+	*** 0002bc	89 86 1e fd 		mov	WORD PTR [bp-738],ax	;FD
+;|*** 
+;|*** 	FE= -ASinB(ASinB(1024,PITCH),HEAD);
+; Line 223
+	*** 0002c0	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 0002c3	ff 76 10 		push	WORD PTR [bp+16]	;PITCH
+	*** 0002c6	b8 00 04 		mov	ax,1024
+	*** 0002c9	50 			push	ax
+	*** 0002ca	e8 00 00 		call	_ASinB
+	*** 0002cd	83 c4 04 		add	sp,4
+	*** 0002d0	50 			push	ax
+	*** 0002d1	e8 00 00 		call	_ASinB
+	*** 0002d4	83 c4 04 		add	sp,4
+	*** 0002d7	f7 d8 			neg	ax
+	*** 0002d9	89 86 16 fd 		mov	WORD PTR [bp-746],ax	;FE
+;|*** 	FF= -ACosB(ASinB(1024,PITCH),HEAD);
+; Line 224
+	*** 0002dd	ff 76 0e 		push	WORD PTR [bp+14]	;HEAD
+	*** 0002e0	ff 76 10 		push	WORD PTR [bp+16]	;PITCH
+	*** 0002e3	b8 00 04 		mov	ax,1024
+	*** 0002e6	50 			push	ax
+	*** 0002e7	e8 00 00 		call	_ASinB
+	*** 0002ea	83 c4 04 		add	sp,4
+	*** 0002ed	50 			push	ax
+	*** 0002ee	e8 00 00 		call	_ACosB
+	*** 0002f1	83 c4 04 		add	sp,4
+	*** 0002f4	f7 d8 			neg	ax
+	*** 0002f6	89 86 0e fd 		mov	WORD PTR [bp-754],ax	;FF
+;|*** 
+;|*** 	for (i=152-YM;i<=(152+YM);i++) {
+; Line 226
+	*** 0002fa	b8 98 00 		mov	ax,152
+	*** 0002fd	2b 46 b6 		sub	ax,WORD PTR [bp-74]	;YM
+	*** 000300	89 86 24 fd 		mov	WORD PTR [bp-732],ax	;i
+	*** 000304	e9 97 00 		jmp	$F843
+	*** 000307	90 			nop	
+					$L20002:
+	*** 000308	b8 fe ff 		mov	ax,-2
+					$L20003:
+	*** 00030b	89 86 0a fd 		mov	WORD PTR [bp-758],ax	;M
+;|*** 		M= ACosB( 4*(MYHT/2-i)/3, PITCH)+ASinB(256/XZD,PITCH);
+;|***         M--;
+;|*** 
+;|*** 		M+= HorzHeave;
+;|*** 
+;|*** 
+;|***       if (!ABOVECLOUDS)
+;|***          {
+;|***          M+= (HT/300);
+;|***          }
+;|*** 
+;|*** 
+;|*** 		MYM=M;
+;|*** 		if (abs(M)<2) M= (M<0)? -2:2;
+;|*** 
+;|***       if (SKYDETAIL==0)
+; Line 242
+					$I847:
+	*** 00030f	83 3e 14 00 00 		cmp	WORD PTR _SKYDETAIL,0
+	*** 000314	74 03 			je	$JCC788
+	*** 000316	e9 0d 01 		jmp	$I848
+					$JCC788:
+;|***          {
+; Line 243
+;|***          FP_SEG(P)=BUFFER;
+; Line 244
+	*** 000319	8b 46 16 		mov	ax,WORD PTR [bp+22]	;BUFFER
+	*** 00031c	89 46 fe 		mov	WORD PTR [bp-2],ax
+;|***          FP_OFF(P)=MYWID*(i);
+; Line 245
+	*** 00031f	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000322	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 000326	89 46 fc 		mov	WORD PTR [bp-4],ax	;P
+;|***          if (M>0)
+; Line 246
+	*** 000329	83 be 0a fd 00 		cmp	WORD PTR [bp-758],0	;M
+	*** 00032e	7e 12 			jle	$I849
+;|***             {
+; Line 247
+;|***             GRY= (M<8)? 0x80+(M&15):0x88;
+; Line 248
+	*** 000330	83 be 0a fd 08 		cmp	WORD PTR [bp-758],8	;M
+	*** 000335	7c 05 			jl	$L20004
+	*** 000337	b8 88 00 		mov	ax,136
+	*** 00033a	eb 40 			jmp	SHORT $L20009
+					$L20004:
+	*** 00033c	8a 86 0a fd 		mov	al,BYTE PTR [bp-758]	;M
+	*** 000340	eb 34 			jmp	SHORT $L20037
+					$I849:
+;|***             }
+;|***          else
+;|***             {
+; Line 251
+;|***             GRY= ((-M)<12)? 0xf0+((-M)&15):0xfc;
+; Line 252
+	*** 000342	83 be 0a fd f4 		cmp	WORD PTR [bp-758],-12	;M
+	*** 000347	7f 05 			jg	$L20006
+	*** 000349	b8 fc 00 		mov	ax,252
+	*** 00034c	eb 0c 			jmp	SHORT $L20007
+					$L20006:
+	*** 00034e	8b 86 0a fd 		mov	ax,WORD PTR [bp-758]	;M
+	*** 000352	f7 d8 			neg	ax
+	*** 000354	25 0f 00 		and	ax,15
+	*** 000357	05 f0 00 		add	ax,240
+					$L20007:
+	*** 00035a	89 46 f4 		mov	WORD PTR [bp-12],ax	;GRY
+;|***             if (ABOVECLOUDS)
+; Line 253
+	*** 00035d	83 3e 0e 00 00 		cmp	WORD PTR _ABOVECLOUDS,0
+	*** 000362	74 1b 			je	$I851
+;|***                GRY= ((-M)<3)? 0x80+((-M)&15):0x82;
+; Line 254
+	*** 000364	83 be 0a fd fd 		cmp	WORD PTR [bp-758],-3	;M
+	*** 000369	7f 05 			jg	$L20008
+	*** 00036b	b8 82 00 		mov	ax,130
+	*** 00036e	eb 0c 			jmp	SHORT $L20009
+					$L20008:
+	*** 000370	8b 86 0a fd 		mov	ax,WORD PTR [bp-758]	;M
+	*** 000374	f7 d8 			neg	ax
+					$L20037:
+	*** 000376	25 0f 00 		and	ax,15
+	*** 000379	05 80 00 		add	ax,128
+					$L20009:
+	*** 00037c	89 46 f4 		mov	WORD PTR [bp-12],ax	;GRY
+;|*** 
+;|***             }
+; Line 256
+					$I851:
+;|***          GRY= (GRY<<8)|GRY;
+;|***          fmemfill(P,GRY,MYWID); // remember to grey out the 0x84
+; Line 258
+	*** 00037f	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 000383	8a 66 f4 		mov	ah,BYTE PTR [bp-12]	;GRY
+					$L20028:
+	*** 000386	2a c0 			sub	al,al
+	*** 000388	09 46 f4 		or	WORD PTR [bp-12],ax	;GRY
+	*** 00038b	ff 76 f4 		push	WORD PTR [bp-12]	;GRY
+	*** 00038e	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 000391	ff 76 fc 		push	WORD PTR [bp-4]	;P
+	*** 000394	e8 00 00 		call	_fmemfill
+	*** 000397	83 c4 08 		add	sp,8
+;|***          continue;
+; Line 259
+					$FC844:
+	*** 00039a	ff 86 24 fd 		inc	WORD PTR [bp-732]	;i
+					$F843:
+	*** 00039e	8b 46 b6 		mov	ax,WORD PTR [bp-74]	;YM
+	*** 0003a1	05 98 00 		add	ax,152
+	*** 0003a4	3b 86 24 fd 		cmp	ax,WORD PTR [bp-732]	;i
+	*** 0003a8	7d 03 			jge	$JCC936
+	*** 0003aa	e9 c3 08 		jmp	$FB845
+					$JCC936:
+;|*** 		M= ACosB( 4*(MYHT/2-i)/3, PITCH)+ASinB(256/XZD,PITCH);
+; Line 227
+	*** 0003ad	ff 76 10 		push	WORD PTR [bp+16]	;PITCH
+	*** 0003b0	b8 00 01 		mov	ax,256
+	*** 0003b3	99 			cwd	
+	*** 0003b4	f7 7e b4 		idiv	WORD PTR [bp-76]	;XZD
+	*** 0003b7	50 			push	ax
+	*** 0003b8	e8 00 00 		call	_ASinB
+	*** 0003bb	83 c4 04 		add	sp,4
+	*** 0003be	ff 76 10 		push	WORD PTR [bp+16]	;PITCH
+	*** 0003c1	8b c8 			mov	cx,ax
+	*** 0003c3	b8 98 00 		mov	ax,152
+	*** 0003c6	2b 86 24 fd 		sub	ax,WORD PTR [bp-732]	;i
+	*** 0003ca	d1 e0 			shl	ax,1
+	*** 0003cc	d1 e0 			shl	ax,1
+	*** 0003ce	bb 03 00 		mov	bx,3
+	*** 0003d1	99 			cwd	
+	*** 0003d2	f7 fb 			idiv	bx
+	*** 0003d4	50 			push	ax
+	*** 0003d5	8b f1 			mov	si,cx
+	*** 0003d7	e8 00 00 		call	_ACosB
+	*** 0003da	83 c4 04 		add	sp,4
+	*** 0003dd	03 f0 			add	si,ax
+	*** 0003df	89 b6 0a fd 		mov	WORD PTR [bp-758],si	;M
+;|***         M--;
+;|*** 
+;|*** 		M+= HorzHeave;
+; Line 230
+	*** 0003e3	a1 00 00 		mov	ax,WORD PTR _HorzHeave
+	*** 0003e6	48 			dec	ax
+	*** 0003e7	01 86 0a fd 		add	WORD PTR [bp-758],ax	;M
+;|*** 
+;|*** 
+;|***       if (!ABOVECLOUDS)
+; Line 233
+	*** 0003eb	83 3e 0e 00 00 		cmp	WORD PTR _ABOVECLOUDS,0
+	*** 0003f0	75 0e 			jne	$I846
+;|***          {
+; Line 234
+;|***          M+= (HT/300);
+; Line 235
+	*** 0003f2	8b 86 0c fd 		mov	ax,WORD PTR [bp-756]	;HT
+	*** 0003f6	b9 2c 01 		mov	cx,300
+	*** 0003f9	99 			cwd	
+	*** 0003fa	f7 f9 			idiv	cx
+	*** 0003fc	01 86 0a fd 		add	WORD PTR [bp-758],ax	;M
+;|***          }
+; Line 236
+;|*** 
+;|*** 
+;|*** 		MYM=M;
+; Line 239
+					$I846:
+;|*** 		if (abs(M)<2) M= (M<0)? -2:2;
+; Line 240
+	*** 000400	8b 86 0a fd 		mov	ax,WORD PTR [bp-758]	;M
+	*** 000404	89 46 f0 		mov	WORD PTR [bp-16],ax	;MYM
+	*** 000407	50 			push	ax
+	*** 000408	e8 00 00 		call	_abs
+	*** 00040b	83 c4 02 		add	sp,2
+	*** 00040e	3d 02 00 		cmp	ax,2
+	*** 000411	7c 03 			jl	$JCC1041
+	*** 000413	e9 f9 fe 		jmp	$I847
+					$JCC1041:
+	*** 000416	83 7e f0 00 		cmp	WORD PTR [bp-16],0	;MYM
+	*** 00041a	7d 03 			jge	$JCC1050
+	*** 00041c	e9 e9 fe 		jmp	$L20002
+					$JCC1050:
+	*** 00041f	b8 02 00 		mov	ax,2
+	*** 000422	e9 e6 fe 		jmp	$L20003
+;|*** 
+;|***       if (SKYDETAIL==0)
+;|***          {
+;|***          FP_SEG(P)=BUFFER;
+;|***          FP_OFF(P)=MYWID*(i);
+;|***          if (M>0)
+;|***             {
+;|***             GRY= (M<8)? 0x80+(M&15):0x88;
+;|***             }
+;|***          else
+;|***             {
+;|***             GRY= ((-M)<12)? 0xf0+((-M)&15):0xfc;
+;|***             if (ABOVECLOUDS)
+;|***                GRY= ((-M)<3)? 0x80+((-M)&15):0x82;
+;|*** 
+;|***             }
+;|***          GRY= (GRY<<8)|GRY;
+;|***          fmemfill(P,GRY,MYWID); // remember to grey out the 0x84
+;|***          continue;
+;|***          }
+; Line 260
+;|*** 
+;|***       if (M>0) {
+; Line 262
+	*** 000425	90 			nop	
+					$I848:
+	*** 000426	83 be 0a fd 00 		cmp	WORD PTR [bp-758],0	;M
+	*** 00042b	7f 03 			jg	$JCC1067
+	*** 00042d	e9 d4 02 		jmp	$I853
+					$JCC1067:
+;|*** 			if (ABOVECLOUDS || (SKYDETAIL==0)) {
+; Line 263
+	*** 000430	83 3e 0e 00 00 		cmp	WORD PTR _ABOVECLOUDS,0
+	*** 000435	75 07 			jne	$I855
+	*** 000437	83 3e 14 00 00 		cmp	WORD PTR _SKYDETAIL,0
+	*** 00043c	75 32 			jne	$I854
+					$I855:
+;|***             	FP_SEG(P)=BUFFER;
+; Line 264
+	*** 00043e	8b 46 16 		mov	ax,WORD PTR [bp+22]	;BUFFER
+	*** 000441	89 46 fe 		mov	WORD PTR [bp-2],ax
+;|***             	FP_OFF(P)=MYWID*(i);
+; Line 265
+	*** 000444	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000447	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 00044b	89 46 fc 		mov	WORD PTR [bp-4],ax	;P
+;|***             	GRY= (M<16)? 0x80+(M&15):0x8f;
+;|***             	GRY= (GRY<<8)|GRY;
+;|***             	fmemfill(P,GRY,MYWID); // remember to grey out the 0x84
+; Line 268
+	*** 00044e	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 000452	83 be 0a fd 10 		cmp	WORD PTR [bp-758],16	;M
+	*** 000457	7c 05 			jl	$L20010
+	*** 000459	b8 8f 00 		mov	ax,143
+	*** 00045c	eb 0a 			jmp	SHORT $L20011
+					$L20010:
+	*** 00045e	8a 86 0a fd 		mov	al,BYTE PTR [bp-758]	;M
+	*** 000462	25 0f 00 		and	ax,15
+	*** 000465	05 80 00 		add	ax,128
+					$L20011:
+	*** 000468	89 46 f4 		mov	WORD PTR [bp-12],ax	;GRY
+	*** 00046b	8a e0 			mov	ah,al
+	*** 00046d	e9 16 ff 		jmp	$L20028
+					$I854:
+;|*** 			} else {
+;|*** 				XS= NXSLine( FA, FE, (4*(MYHT/2-i)/3), CHT, M );
+; Line 270
+	*** 000470	ff b6 0a fd 		push	WORD PTR [bp-758]	;M
+	*** 000474	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 000478	b8 98 00 		mov	ax,152
+	*** 00047b	2b 86 24 fd 		sub	ax,WORD PTR [bp-732]	;i
+	*** 00047f	d1 e0 			shl	ax,1
+	*** 000481	d1 e0 			shl	ax,1
+	*** 000483	b9 03 00 		mov	cx,3
+	*** 000486	99 			cwd	
+	*** 000487	f7 f9 			idiv	cx
+	*** 000489	50 			push	ax
+	*** 00048a	ff b6 16 fd 		push	WORD PTR [bp-746]	;FE
+	*** 00048e	ff b6 2e fd 		push	WORD PTR [bp-722]
+	*** 000492	ff b6 2c fd 		push	WORD PTR [bp-724]	;FA
+	*** 000496	8b f0 			mov	si,ax
+	*** 000498	e8 00 00 		call	_NXSLine
+	*** 00049b	83 c4 0c 		add	sp,12
+	*** 00049e	89 86 12 fd 		mov	WORD PTR [bp-750],ax	;XS
+	*** 0004a2	89 96 14 fd 		mov	WORD PTR [bp-748],dx
+;|*** 				ZS= NXSLine( FB, FF, (4*(MYHT/2-i)/3), CHT, M );
+; Line 271
+	*** 0004a6	ff b6 0a fd 		push	WORD PTR [bp-758]	;M
+	*** 0004aa	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 0004ae	56 			push	si
+	*** 0004af	ff b6 0e fd 		push	WORD PTR [bp-754]	;FF
+	*** 0004b3	ff b6 2a fd 		push	WORD PTR [bp-726]
+	*** 0004b7	ff b6 28 fd 		push	WORD PTR [bp-728]	;FB
+	*** 0004bb	e8 00 00 		call	_NXSLine
+	*** 0004be	83 c4 0c 		add	sp,12
+	*** 0004c1	89 86 06 fd 		mov	WORD PTR [bp-762],ax	;ZS
+	*** 0004c5	89 96 08 fd 		mov	WORD PTR [bp-760],dx
+;|*** 				XADD= NXSADDLine( FC, CHT, M );
+; Line 272
+	*** 0004c9	ff b6 0a fd 		push	WORD PTR [bp-758]	;M
+	*** 0004cd	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 0004d1	ff b6 26 fd 		push	WORD PTR [bp-730]	;FC
+	*** 0004d5	e8 00 00 		call	_NXSADDLine
+	*** 0004d8	83 c4 06 		add	sp,6
+	*** 0004db	89 46 f6 		mov	WORD PTR [bp-10],ax	;XADD
+	*** 0004de	89 56 f8 		mov	WORD PTR [bp-8],dx
+;|*** 				ZADD= NXSADDLine( FD, CHT, M );
+; Line 273
+	*** 0004e1	ff b6 0a fd 		push	WORD PTR [bp-758]	;M
+	*** 0004e5	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 0004e9	ff b6 1e fd 		push	WORD PTR [bp-738]	;FD
+	*** 0004ed	e8 00 00 		call	_NXSADDLine
+	*** 0004f0	83 c4 06 		add	sp,6
+	*** 0004f3	89 46 c4 		mov	WORD PTR [bp-60],ax	;ZADD
+	*** 0004f6	89 56 c6 		mov	WORD PTR [bp-58],dx
+;|*** 				XS= XS<<1;
+; Line 274
+	*** 0004f9	d1 a6 12 fd 		shl	WORD PTR [bp-750],1	;XS
+	*** 0004fd	d1 96 14 fd 		rcl	WORD PTR [bp-748],1
+;|*** 				ZS= ZS<<1;
+; Line 275
+	*** 000501	d1 a6 06 fd 		shl	WORD PTR [bp-762],1	;ZS
+	*** 000505	d1 96 08 fd 		rcl	WORD PTR [bp-760],1
+;|*** 
+;|*** 				GRY=2048;
+; Line 277
+	*** 000509	c7 46 f4 00 08 		mov	WORD PTR [bp-12],2048	;GRY
+;|*** 
+;|*** 				MSK=0x7f;
+; Line 279
+	*** 00050e	c7 86 1c fd 7f 00 	mov	WORD PTR [bp-740],127	;MSK
+;|*** //            	SHFT=max( abs((int)(XADD>>13)),abs((int)(ZADD>>13)) );
+;|*** 				DELSWITCH=0;
+; Line 281
+	*** 000514	c7 86 30 fd 00 00 	mov	WORD PTR [bp-720],0	;DELSWITCH
+;|*** 
+;|*** 				if (SHFT>0x200) {
+; Line 283
+	*** 00051a	81 7e be 00 02 		cmp	WORD PTR [bp-66],512	;SHFT
+	*** 00051f	7e 0c 			jle	$I857
+;|*** 					DELSWITCH++;
+; Line 284
+	*** 000521	c7 86 30 fd 01 00 	mov	WORD PTR [bp-720],1	;DELSWITCH
+;|*** 					MSK>>=1;
+; Line 285
+	*** 000527	c7 86 1c fd 3f 00 	mov	WORD PTR [bp-740],63	;MSK
+;|*** 				}
+; Line 286
+;|*** 				if (SHFT>0x400) {
+; Line 287
+					$I857:
+	*** 00052d	81 7e be 00 04 		cmp	WORD PTR [bp-66],1024	;SHFT
+	*** 000532	7e 08 			jle	$I858
+;|*** 					DELSWITCH++;
+; Line 288
+	*** 000534	ff 86 30 fd 		inc	WORD PTR [bp-720]	;DELSWITCH
+;|*** 					MSK>>=1;
+; Line 289
+	*** 000538	d1 be 1c fd 		sar	WORD PTR [bp-740],1	;MSK
+;|*** 				}
+; Line 290
+;|***             	if (SHFT>0x800) {
+; Line 291
+					$I858:
+	*** 00053c	81 7e be 00 08 		cmp	WORD PTR [bp-66],2048	;SHFT
+	*** 000541	7e 08 			jle	$I859
+;|***                		DELSWITCH++;
+; Line 292
+	*** 000543	ff 86 30 fd 		inc	WORD PTR [bp-720]	;DELSWITCH
+;|***               	 	MSK>>=1;
+; Line 293
+	*** 000547	d1 be 1c fd 		sar	WORD PTR [bp-740],1	;MSK
+;|*** 				}
+; Line 294
+;|*** 
+;|***             	MSK=0;
+; Line 296
+					$I859:
+	*** 00054b	c7 86 1c fd 00 00 	mov	WORD PTR [bp-740],0	;MSK
+;|***             	if (abs(MYM)<16) {
+; Line 297
+	*** 000551	ff 76 f0 		push	WORD PTR [bp-16]	;MYM
+	*** 000554	e8 00 00 		call	_abs
+	*** 000557	83 c4 02 		add	sp,2
+	*** 00055a	3d 10 00 		cmp	ax,16
+	*** 00055d	7d 23 			jge	$I860
+;|***                		P=GRTBLSEG;
+; Line 298
+	*** 00055f	c7 46 fc 00 00 		mov	WORD PTR [bp-4],OFFSET _GRTBLSEG	;P
+	*** 000564	c7 46 fe 00 00 		mov	WORD PTR [bp-2],SEG _GRTBLSEG
+;|***                		MSK=16*(15-abs(MYM))+FP_SEG(P);
+; Line 299
+	*** 000569	ff 76 f0 		push	WORD PTR [bp-16]	;MYM
+	*** 00056c	e8 00 00 		call	_abs
+	*** 00056f	83 c4 02 		add	sp,2
+	*** 000572	2d 0f 00 		sub	ax,15
+	*** 000575	f7 d8 			neg	ax
+	*** 000577	b1 04 			mov	cl,4
+	*** 000579	d3 e0 			shl	ax,cl
+	*** 00057b	03 46 fe 		add	ax,WORD PTR [bp-2]
+	*** 00057e	89 86 1c fd 		mov	WORD PTR [bp-740],ax	;MSK
+;|*** 				}
+; Line 300
+;|*** 
+;|*** 
+;|***          if (HRES==1)
+; Line 303
+					$I860:
+	*** 000582	83 7e 18 01 		cmp	WORD PTR [bp+24],1	;HRES
+	*** 000586	74 03 			je	$JCC1414
+	*** 000588	e9 bd 00 		jmp	$I861
+					$JCC1414:
+;|***             {
+; Line 304
+;|***             MyWaterline2((int)((XS-(XC<<1))>>(13)),(int)((ZS-(ZC<<1))>>(13)),
+;|***                         (int)(XADD>>(13)),(int)(ZADD>>(13)),
+;|***                         CLOUDSEG+(GRY), MYWID*(i), BUFFER,
+;|***                         MSK, MYWID );
+; Line 308
+	*** 00058b	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 00058f	ff b6 1c fd 		push	WORD PTR [bp-740]	;MSK
+	*** 000593	ff 76 16 		push	WORD PTR [bp+22]	;BUFFER
+	*** 000596	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000599	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 00059d	50 			push	ax
+	*** 00059e	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 0005a1	03 46 f4 		add	ax,WORD PTR [bp-12]	;GRY
+	*** 0005a4	50 			push	ax
+	*** 0005a5	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;ZADD
+	*** 0005a8	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 0005ab	8a c4 			mov	al,ah
+	*** 0005ad	8a e2 			mov	ah,dl
+	*** 0005af	8a d6 			mov	dl,dh
+	*** 0005b1	d0 e6 			shl	dh,1
+	*** 0005b3	1a f6 			sbb	dh,dh
+	*** 0005b5	d1 fa 			sar	dx,1
+	*** 0005b7	d1 d8 			rcr	ax,1
+	*** 0005b9	d1 fa 			sar	dx,1
+	*** 0005bb	d1 d8 			rcr	ax,1
+	*** 0005bd	d1 fa 			sar	dx,1
+	*** 0005bf	d1 d8 			rcr	ax,1
+	*** 0005c1	d1 fa 			sar	dx,1
+	*** 0005c3	d1 d8 			rcr	ax,1
+	*** 0005c5	d1 fa 			sar	dx,1
+	*** 0005c7	d1 d8 			rcr	ax,1
+	*** 0005c9	50 			push	ax
+	*** 0005ca	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;XADD
+	*** 0005cd	8b 56 f8 		mov	dx,WORD PTR [bp-8]
+	*** 0005d0	8a c4 			mov	al,ah
+	*** 0005d2	8a e2 			mov	ah,dl
+	*** 0005d4	8a d6 			mov	dl,dh
+	*** 0005d6	d0 e6 			shl	dh,1
+	*** 0005d8	1a f6 			sbb	dh,dh
+	*** 0005da	d1 fa 			sar	dx,1
+	*** 0005dc	d1 d8 			rcr	ax,1
+	*** 0005de	d1 fa 			sar	dx,1
+	*** 0005e0	d1 d8 			rcr	ax,1
+	*** 0005e2	d1 fa 			sar	dx,1
+	*** 0005e4	d1 d8 			rcr	ax,1
+	*** 0005e6	d1 fa 			sar	dx,1
+	*** 0005e8	d1 d8 			rcr	ax,1
+	*** 0005ea	d1 fa 			sar	dx,1
+	*** 0005ec	d1 d8 			rcr	ax,1
+	*** 0005ee	50 			push	ax
+	*** 0005ef	8b 86 06 fd 		mov	ax,WORD PTR [bp-762]	;ZS
+	*** 0005f3	8b 96 08 fd 		mov	dx,WORD PTR [bp-760]
+	*** 0005f7	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;ZC
+	*** 0005fa	8b 5e 0a 		mov	bx,WORD PTR [bp+10]
+	*** 0005fd	d1 e1 			shl	cx,1
+	*** 0005ff	d1 d3 			rcl	bx,1
+	*** 000601	2b c1 			sub	ax,cx
+	*** 000603	1b d3 			sbb	dx,bx
+	*** 000605	8a c4 			mov	al,ah
+	*** 000607	8a e2 			mov	ah,dl
+	*** 000609	8a d6 			mov	dl,dh
+	*** 00060b	d0 e6 			shl	dh,1
+	*** 00060d	1a f6 			sbb	dh,dh
+	*** 00060f	d1 fa 			sar	dx,1
+	*** 000611	d1 d8 			rcr	ax,1
+	*** 000613	d1 fa 			sar	dx,1
+	*** 000615	d1 d8 			rcr	ax,1
+	*** 000617	d1 fa 			sar	dx,1
+	*** 000619	d1 d8 			rcr	ax,1
+	*** 00061b	d1 fa 			sar	dx,1
+	*** 00061d	d1 d8 			rcr	ax,1
+	*** 00061f	d1 fa 			sar	dx,1
+	*** 000621	d1 d8 			rcr	ax,1
+	*** 000623	50 			push	ax
+	*** 000624	8b 86 12 fd 		mov	ax,WORD PTR [bp-750]	;XS
+	*** 000628	8b 96 14 fd 		mov	dx,WORD PTR [bp-748]
+	*** 00062c	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;XC
+	*** 00062f	8b 5e 06 		mov	bx,WORD PTR [bp+6]
+	*** 000632	d1 e1 			shl	cx,1
+	*** 000634	d1 d3 			rcl	bx,1
+	*** 000636	2b c1 			sub	ax,cx
+	*** 000638	1b d3 			sbb	dx,bx
+	*** 00063a	8a c4 			mov	al,ah
+	*** 00063c	8a e2 			mov	ah,dl
+	*** 00063e	8a d6 			mov	dl,dh
+	*** 000640	d0 e6 			shl	dh,1
+	*** 000642	1a f6 			sbb	dh,dh
+	*** 000644	e9 71 05 		jmp	$L20036
+	*** 000647	90 			nop	
+					$I861:
+;|***             }
+;|***          else
+;|***             {
+; Line 311
+;|***             MyWaterline((int)((XS-(XC<<1))>>(13)),(int)((ZS-(ZC<<1))>>(13)),
+;|***                         (int)(XADD>>(13)),(int)(ZADD>>(13)),
+;|***                         CLOUDSEG+(GRY), MYWID*(i), BUFFER,
+;|***                         MSK, MYWID );
+; Line 315
+	*** 000648	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 00064c	ff b6 1c fd 		push	WORD PTR [bp-740]	;MSK
+	*** 000650	ff 76 16 		push	WORD PTR [bp+22]	;BUFFER
+	*** 000653	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000656	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 00065a	50 			push	ax
+	*** 00065b	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 00065e	03 46 f4 		add	ax,WORD PTR [bp-12]	;GRY
+	*** 000661	50 			push	ax
+	*** 000662	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;ZADD
+	*** 000665	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 000668	8a c4 			mov	al,ah
+	*** 00066a	8a e2 			mov	ah,dl
+	*** 00066c	8a d6 			mov	dl,dh
+	*** 00066e	d0 e6 			shl	dh,1
+	*** 000670	1a f6 			sbb	dh,dh
+	*** 000672	d1 fa 			sar	dx,1
+	*** 000674	d1 d8 			rcr	ax,1
+	*** 000676	d1 fa 			sar	dx,1
+	*** 000678	d1 d8 			rcr	ax,1
+	*** 00067a	d1 fa 			sar	dx,1
+	*** 00067c	d1 d8 			rcr	ax,1
+	*** 00067e	d1 fa 			sar	dx,1
+	*** 000680	d1 d8 			rcr	ax,1
+	*** 000682	d1 fa 			sar	dx,1
+	*** 000684	d1 d8 			rcr	ax,1
+	*** 000686	50 			push	ax
+	*** 000687	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;XADD
+	*** 00068a	8b 56 f8 		mov	dx,WORD PTR [bp-8]
+	*** 00068d	8a c4 			mov	al,ah
+	*** 00068f	8a e2 			mov	ah,dl
+	*** 000691	8a d6 			mov	dl,dh
+	*** 000693	d0 e6 			shl	dh,1
+	*** 000695	1a f6 			sbb	dh,dh
+	*** 000697	d1 fa 			sar	dx,1
+	*** 000699	d1 d8 			rcr	ax,1
+	*** 00069b	d1 fa 			sar	dx,1
+	*** 00069d	d1 d8 			rcr	ax,1
+	*** 00069f	d1 fa 			sar	dx,1
+	*** 0006a1	d1 d8 			rcr	ax,1
+	*** 0006a3	d1 fa 			sar	dx,1
+	*** 0006a5	d1 d8 			rcr	ax,1
+	*** 0006a7	d1 fa 			sar	dx,1
+	*** 0006a9	d1 d8 			rcr	ax,1
+	*** 0006ab	50 			push	ax
+	*** 0006ac	8b 86 06 fd 		mov	ax,WORD PTR [bp-762]	;ZS
+	*** 0006b0	8b 96 08 fd 		mov	dx,WORD PTR [bp-760]
+	*** 0006b4	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;ZC
+	*** 0006b7	8b 5e 0a 		mov	bx,WORD PTR [bp+10]
+	*** 0006ba	d1 e1 			shl	cx,1
+	*** 0006bc	d1 d3 			rcl	bx,1
+	*** 0006be	2b c1 			sub	ax,cx
+	*** 0006c0	1b d3 			sbb	dx,bx
+	*** 0006c2	8a c4 			mov	al,ah
+	*** 0006c4	8a e2 			mov	ah,dl
+	*** 0006c6	8a d6 			mov	dl,dh
+	*** 0006c8	d0 e6 			shl	dh,1
+	*** 0006ca	1a f6 			sbb	dh,dh
+	*** 0006cc	d1 fa 			sar	dx,1
+	*** 0006ce	d1 d8 			rcr	ax,1
+	*** 0006d0	d1 fa 			sar	dx,1
+	*** 0006d2	d1 d8 			rcr	ax,1
+	*** 0006d4	d1 fa 			sar	dx,1
+	*** 0006d6	d1 d8 			rcr	ax,1
+	*** 0006d8	d1 fa 			sar	dx,1
+	*** 0006da	d1 d8 			rcr	ax,1
+	*** 0006dc	d1 fa 			sar	dx,1
+	*** 0006de	d1 d8 			rcr	ax,1
+	*** 0006e0	50 			push	ax
+	*** 0006e1	8b 86 12 fd 		mov	ax,WORD PTR [bp-750]	;XS
+	*** 0006e5	8b 96 14 fd 		mov	dx,WORD PTR [bp-748]
+	*** 0006e9	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;XC
+	*** 0006ec	8b 5e 06 		mov	bx,WORD PTR [bp+6]
+	*** 0006ef	d1 e1 			shl	cx,1
+	*** 0006f1	d1 d3 			rcl	bx,1
+	*** 0006f3	2b c1 			sub	ax,cx
+	*** 0006f5	1b d3 			sbb	dx,bx
+	*** 0006f7	8a c4 			mov	al,ah
+	*** 0006f9	8a e2 			mov	ah,dl
+	*** 0006fb	8a d6 			mov	dl,dh
+	*** 0006fd	d0 e6 			shl	dh,1
+	*** 0006ff	1a f6 			sbb	dh,dh
+	*** 000701	e9 61 05 		jmp	$L20040
+					$I853:
+;|*** 
+;|***             }
+;|*** 
+;|*** 			}
+;|*** 		} else {
+;|*** 			GSEG= (ABOVECLOUDS)? CLOUDSEG+2056:CLOUDSEG+8;
+; Line 321
+	*** 000704	83 3e 0e 00 00 		cmp	WORD PTR _ABOVECLOUDS,0
+	*** 000709	74 09 			je	$L20012
+	*** 00070b	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 00070e	05 08 08 		add	ax,2056
+	*** 000711	eb 07 			jmp	SHORT $L20013
+	*** 000713	90 			nop	
+					$L20012:
+	*** 000714	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 000717	05 08 00 		add	ax,8
+					$L20013:
+	*** 00071a	89 46 b8 		mov	WORD PTR [bp-72],ax	;GSEG
+;|*** 			if (ABOVECLOUDS) {
+; Line 322
+	*** 00071d	83 3e 0e 00 00 		cmp	WORD PTR _ABOVECLOUDS,0
+	*** 000722	75 03 			jne	$JCC1826
+	*** 000724	e9 85 02 		jmp	$I866
+					$JCC1826:
+;|*** 				XS= NXSLine( FA, FE, (4*(MYHT/2-i)/3), CHT, -M );
+; Line 323
+	*** 000727	8b 86 0a fd 		mov	ax,WORD PTR [bp-758]	;M
+	*** 00072b	f7 d8 			neg	ax
+	*** 00072d	50 			push	ax
+	*** 00072e	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 000732	8b c8 			mov	cx,ax
+	*** 000734	b8 98 00 		mov	ax,152
+	*** 000737	2b 86 24 fd 		sub	ax,WORD PTR [bp-732]	;i
+	*** 00073b	d1 e0 			shl	ax,1
+	*** 00073d	d1 e0 			shl	ax,1
+	*** 00073f	bb 03 00 		mov	bx,3
+	*** 000742	99 			cwd	
+	*** 000743	f7 fb 			idiv	bx
+	*** 000745	50 			push	ax
+	*** 000746	ff b6 16 fd 		push	WORD PTR [bp-746]	;FE
+	*** 00074a	ff b6 2e fd 		push	WORD PTR [bp-722]
+	*** 00074e	ff b6 2c fd 		push	WORD PTR [bp-724]	;FA
+	*** 000752	8b f0 			mov	si,ax
+	*** 000754	8b f9 			mov	di,cx
+	*** 000756	e8 00 00 		call	_NXSLine
+	*** 000759	83 c4 0c 		add	sp,12
+	*** 00075c	89 86 12 fd 		mov	WORD PTR [bp-750],ax	;XS
+	*** 000760	89 96 14 fd 		mov	WORD PTR [bp-748],dx
+;|*** 				ZS= NXSLine( FB, FF, (4*(MYHT/2-i)/3), CHT, -M );
+; Line 324
+	*** 000764	57 			push	di
+	*** 000765	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 000769	56 			push	si
+	*** 00076a	ff b6 0e fd 		push	WORD PTR [bp-754]	;FF
+	*** 00076e	ff b6 2a fd 		push	WORD PTR [bp-726]
+	*** 000772	ff b6 28 fd 		push	WORD PTR [bp-728]	;FB
+	*** 000776	e8 00 00 		call	_NXSLine
+	*** 000779	83 c4 0c 		add	sp,12
+	*** 00077c	89 86 06 fd 		mov	WORD PTR [bp-762],ax	;ZS
+	*** 000780	89 96 08 fd 		mov	WORD PTR [bp-760],dx
+;|*** 				XADD= NXSADDLine( FC, CHT, -M );
+; Line 325
+	*** 000784	57 			push	di
+	*** 000785	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 000789	ff b6 26 fd 		push	WORD PTR [bp-730]	;FC
+	*** 00078d	e8 00 00 		call	_NXSADDLine
+	*** 000790	83 c4 06 		add	sp,6
+	*** 000793	89 46 f6 		mov	WORD PTR [bp-10],ax	;XADD
+	*** 000796	89 56 f8 		mov	WORD PTR [bp-8],dx
+;|*** 				ZADD= NXSADDLine( FD, CHT, -M );
+; Line 326
+	*** 000799	57 			push	di
+	*** 00079a	ff b6 f0 fc 		push	WORD PTR [bp-784]	;CHT
+	*** 00079e	ff b6 1e fd 		push	WORD PTR [bp-738]	;FD
+	*** 0007a2	e8 00 00 		call	_NXSADDLine
+	*** 0007a5	83 c4 06 		add	sp,6
+	*** 0007a8	89 46 c4 		mov	WORD PTR [bp-60],ax	;ZADD
+	*** 0007ab	89 56 c6 		mov	WORD PTR [bp-58],dx
+;|*** 				XS= XS<<1;
+; Line 327
+	*** 0007ae	d1 a6 12 fd 		shl	WORD PTR [bp-750],1	;XS
+	*** 0007b2	d1 96 14 fd 		rcl	WORD PTR [bp-748],1
+;|*** 				ZS= ZS<<1;
+; Line 328
+	*** 0007b6	d1 a6 06 fd 		shl	WORD PTR [bp-762],1	;ZS
+	*** 0007ba	d1 96 08 fd 		rcl	WORD PTR [bp-760],1
+;|*** 				GRY=2056;
+; Line 329
+	*** 0007be	c7 46 f4 08 08 		mov	WORD PTR [bp-12],2056	;GRY
+;|*** 				MSK=0x7f;
+; Line 330
+	*** 0007c3	c7 86 1c fd 7f 00 	mov	WORD PTR [bp-740],127	;MSK
+;|*** //            	SHFT=max( abs((int)(XADD>>11)),abs((int)(ZADD>>11)) );
+;|*** 
+;|*** 				DELSWITCH=0;
+; Line 333
+	*** 0007c9	c7 86 30 fd 00 00 	mov	WORD PTR [bp-720],0	;DELSWITCH
+;|***             	if (SHFT>0x200) {
+; Line 334
+	*** 0007cf	81 7e be 00 02 		cmp	WORD PTR [bp-66],512	;SHFT
+	*** 0007d4	7e 0c 			jle	$I867
+;|***                		DELSWITCH++;
+; Line 335
+	*** 0007d6	c7 86 30 fd 01 00 	mov	WORD PTR [bp-720],1	;DELSWITCH
+;|***                		MSK>>=1;
+; Line 336
+	*** 0007dc	c7 86 1c fd 3f 00 	mov	WORD PTR [bp-740],63	;MSK
+;|*** 				}
+; Line 337
+;|*** 
+;|*** 				if (SHFT>0x400) {
+; Line 339
+					$I867:
+	*** 0007e2	81 7e be 00 04 		cmp	WORD PTR [bp-66],1024	;SHFT
+	*** 0007e7	7e 08 			jle	$I868
+;|***     				DELSWITCH++;
+; Line 340
+	*** 0007e9	ff 86 30 fd 		inc	WORD PTR [bp-720]	;DELSWITCH
+;|***     				MSK>>=1;
+; Line 341
+	*** 0007ed	d1 be 1c fd 		sar	WORD PTR [bp-740],1	;MSK
+;|*** 				}
+; Line 342
+;|*** 				if (SHFT>0x800)	{
+; Line 343
+					$I868:
+	*** 0007f1	81 7e be 00 08 		cmp	WORD PTR [bp-66],2048	;SHFT
+	*** 0007f6	7e 08 			jle	$I869
+;|***     				DELSWITCH++;
+; Line 344
+	*** 0007f8	ff 86 30 fd 		inc	WORD PTR [bp-720]	;DELSWITCH
+;|***     				MSK>>=1;
+; Line 345
+	*** 0007fc	d1 be 1c fd 		sar	WORD PTR [bp-740],1	;MSK
+;|*** 				}
+; Line 346
+;|*** 
+;|*** 				MSK=0;
+; Line 348
+					$I869:
+	*** 000800	c7 86 1c fd 00 00 	mov	WORD PTR [bp-740],0	;MSK
+;|*** 				if (abs(MYM)<16) {
+; Line 349
+	*** 000806	ff 76 f0 		push	WORD PTR [bp-16]	;MYM
+	*** 000809	e8 00 00 		call	_abs
+	*** 00080c	83 c4 02 		add	sp,2
+	*** 00080f	3d 10 00 		cmp	ax,16
+	*** 000812	7d 23 			jge	$I870
+;|***     				P=GRTBLSEG;
+; Line 350
+	*** 000814	c7 46 fc 00 00 		mov	WORD PTR [bp-4],OFFSET _GRTBLSEG	;P
+	*** 000819	c7 46 fe 00 00 		mov	WORD PTR [bp-2],SEG _GRTBLSEG
+;|***     				MSK=16*(15-abs(MYM))+FP_SEG(P);
+; Line 351
+	*** 00081e	ff 76 f0 		push	WORD PTR [bp-16]	;MYM
+	*** 000821	e8 00 00 		call	_abs
+	*** 000824	83 c4 02 		add	sp,2
+	*** 000827	2d 0f 00 		sub	ax,15
+	*** 00082a	f7 d8 			neg	ax
+	*** 00082c	b1 04 			mov	cl,4
+	*** 00082e	d3 e0 			shl	ax,cl
+	*** 000830	03 46 fe 		add	ax,WORD PTR [bp-2]
+	*** 000833	89 86 1c fd 		mov	WORD PTR [bp-740],ax	;MSK
+;|*** 				}
+; Line 352
+;|*** 
+;|***          if (HRES==1)
+; Line 354
+					$I870:
+	*** 000837	83 7e 18 01 		cmp	WORD PTR [bp+24],1	;HRES
+	*** 00083b	74 03 			je	$JCC2107
+	*** 00083d	e9 b4 00 		jmp	$I871
+					$JCC2107:
+;|***             {
+; Line 355
+;|*** 				MyWaterline2((int)((XS-(XC<<1))>>(11)),(int)((ZS-(ZC<<1))>>(11)),
+;|***                            (int)(XADD>>(11)),(int)(ZADD>>(11)),
+;|***                            CLOUDSEG+(GRY), MYWID*(i), BUFFER,
+;|***                            MSK, MYWID );
+; Line 359
+	*** 000840	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 000844	ff b6 1c fd 		push	WORD PTR [bp-740]	;MSK
+	*** 000848	ff 76 16 		push	WORD PTR [bp+22]	;BUFFER
+	*** 00084b	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 00084e	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 000852	50 			push	ax
+	*** 000853	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 000856	03 46 f4 		add	ax,WORD PTR [bp-12]	;GRY
+	*** 000859	50 			push	ax
+	*** 00085a	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;ZADD
+	*** 00085d	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 000860	8a c4 			mov	al,ah
+	*** 000862	8a e2 			mov	ah,dl
+	*** 000864	8a d6 			mov	dl,dh
+	*** 000866	d0 e6 			shl	dh,1
+	*** 000868	1a f6 			sbb	dh,dh
+	*** 00086a	d1 fa 			sar	dx,1
+	*** 00086c	d1 d8 			rcr	ax,1
+	*** 00086e	d1 fa 			sar	dx,1
+	*** 000870	d1 d8 			rcr	ax,1
+	*** 000872	d1 fa 			sar	dx,1
+	*** 000874	d1 d8 			rcr	ax,1
+	*** 000876	50 			push	ax
+	*** 000877	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;XADD
+	*** 00087a	8b 56 f8 		mov	dx,WORD PTR [bp-8]
+	*** 00087d	8a c4 			mov	al,ah
+	*** 00087f	8a e2 			mov	ah,dl
+	*** 000881	8a d6 			mov	dl,dh
+	*** 000883	d0 e6 			shl	dh,1
+	*** 000885	1a f6 			sbb	dh,dh
+	*** 000887	d1 fa 			sar	dx,1
+	*** 000889	d1 d8 			rcr	ax,1
+	*** 00088b	d1 fa 			sar	dx,1
+	*** 00088d	d1 d8 			rcr	ax,1
+	*** 00088f	d1 fa 			sar	dx,1
+	*** 000891	d1 d8 			rcr	ax,1
+	*** 000893	50 			push	ax
+	*** 000894	8b 86 06 fd 		mov	ax,WORD PTR [bp-762]	;ZS
+	*** 000898	8b 96 08 fd 		mov	dx,WORD PTR [bp-760]
+	*** 00089c	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;ZC
+	*** 00089f	8b 5e 0a 		mov	bx,WORD PTR [bp+10]
+	*** 0008a2	d1 e1 			shl	cx,1
+	*** 0008a4	d1 d3 			rcl	bx,1
+	*** 0008a6	2b c1 			sub	ax,cx
+	*** 0008a8	1b d3 			sbb	dx,bx
+	*** 0008aa	8a c4 			mov	al,ah
+	*** 0008ac	8a e2 			mov	ah,dl
+	*** 0008ae	8a d6 			mov	dl,dh
+	*** 0008b0	d0 e6 			shl	dh,1
+	*** 0008b2	1a f6 			sbb	dh,dh
+	*** 0008b4	d1 fa 			sar	dx,1
+	*** 0008b6	d1 d8 			rcr	ax,1
+	*** 0008b8	d1 fa 			sar	dx,1
+	*** 0008ba	d1 d8 			rcr	ax,1
+	*** 0008bc	d1 fa 			sar	dx,1
+	*** 0008be	d1 d8 			rcr	ax,1
+	*** 0008c0	50 			push	ax
+	*** 0008c1	8b 86 12 fd 		mov	ax,WORD PTR [bp-750]	;XS
+	*** 0008c5	8b 96 14 fd 		mov	dx,WORD PTR [bp-748]
+	*** 0008c9	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;XC
+	*** 0008cc	8b 5e 06 		mov	bx,WORD PTR [bp+6]
+	*** 0008cf	d1 e1 			shl	cx,1
+	*** 0008d1	d1 d3 			rcl	bx,1
+	*** 0008d3	2b c1 			sub	ax,cx
+	*** 0008d5	1b d3 			sbb	dx,bx
+	*** 0008d7	8a c4 			mov	al,ah
+	*** 0008d9	8a e2 			mov	ah,dl
+	*** 0008db	8a d6 			mov	dl,dh
+	*** 0008dd	d0 e6 			shl	dh,1
+	*** 0008df	1a f6 			sbb	dh,dh
+					$L20039:
+	*** 0008e1	d1 fa 			sar	dx,1
+	*** 0008e3	d1 d8 			rcr	ax,1
+	*** 0008e5	d1 fa 			sar	dx,1
+	*** 0008e7	d1 d8 			rcr	ax,1
+	*** 0008e9	d1 fa 			sar	dx,1
+	*** 0008eb	d1 d8 			rcr	ax,1
+	*** 0008ed	50 			push	ax
+	*** 0008ee	e8 00 00 		call	_MyWaterline2
+	*** 0008f1	e9 b1 00 		jmp	$L20035
+					$I871:
+;|*** 
+;|***             }
+;|***          else
+;|***             {
+; Line 363
+;|*** 				MyWaterline((int)((XS-(XC<<1))>>(11)),(int)((ZS-(ZC<<1))>>(11)),
+;|***                            (int)(XADD>>(11)),(int)(ZADD>>(11)),
+;|***                            CLOUDSEG+(GRY), MYWID*(i), BUFFER,
+;|***                            MSK, MYWID );
+; Line 367
+	*** 0008f4	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 0008f8	ff b6 1c fd 		push	WORD PTR [bp-740]	;MSK
+	*** 0008fc	ff 76 16 		push	WORD PTR [bp+22]	;BUFFER
+	*** 0008ff	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000902	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 000906	50 			push	ax
+	*** 000907	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 00090a	03 46 f4 		add	ax,WORD PTR [bp-12]	;GRY
+	*** 00090d	50 			push	ax
+	*** 00090e	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;ZADD
+	*** 000911	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 000914	8a c4 			mov	al,ah
+	*** 000916	8a e2 			mov	ah,dl
+	*** 000918	8a d6 			mov	dl,dh
+	*** 00091a	d0 e6 			shl	dh,1
+	*** 00091c	1a f6 			sbb	dh,dh
+	*** 00091e	d1 fa 			sar	dx,1
+	*** 000920	d1 d8 			rcr	ax,1
+	*** 000922	d1 fa 			sar	dx,1
+	*** 000924	d1 d8 			rcr	ax,1
+	*** 000926	d1 fa 			sar	dx,1
+	*** 000928	d1 d8 			rcr	ax,1
+	*** 00092a	50 			push	ax
+	*** 00092b	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;XADD
+	*** 00092e	8b 56 f8 		mov	dx,WORD PTR [bp-8]
+	*** 000931	8a c4 			mov	al,ah
+	*** 000933	8a e2 			mov	ah,dl
+	*** 000935	8a d6 			mov	dl,dh
+	*** 000937	d0 e6 			shl	dh,1
+	*** 000939	1a f6 			sbb	dh,dh
+	*** 00093b	d1 fa 			sar	dx,1
+	*** 00093d	d1 d8 			rcr	ax,1
+	*** 00093f	d1 fa 			sar	dx,1
+	*** 000941	d1 d8 			rcr	ax,1
+	*** 000943	d1 fa 			sar	dx,1
+	*** 000945	d1 d8 			rcr	ax,1
+	*** 000947	50 			push	ax
+	*** 000948	8b 86 06 fd 		mov	ax,WORD PTR [bp-762]	;ZS
+	*** 00094c	8b 96 08 fd 		mov	dx,WORD PTR [bp-760]
+	*** 000950	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;ZC
+	*** 000953	8b 5e 0a 		mov	bx,WORD PTR [bp+10]
+	*** 000956	d1 e1 			shl	cx,1
+	*** 000958	d1 d3 			rcl	bx,1
+	*** 00095a	2b c1 			sub	ax,cx
+	*** 00095c	1b d3 			sbb	dx,bx
+	*** 00095e	8a c4 			mov	al,ah
+	*** 000960	8a e2 			mov	ah,dl
+	*** 000962	8a d6 			mov	dl,dh
+	*** 000964	d0 e6 			shl	dh,1
+	*** 000966	1a f6 			sbb	dh,dh
+	*** 000968	d1 fa 			sar	dx,1
+	*** 00096a	d1 d8 			rcr	ax,1
+	*** 00096c	d1 fa 			sar	dx,1
+	*** 00096e	d1 d8 			rcr	ax,1
+	*** 000970	d1 fa 			sar	dx,1
+	*** 000972	d1 d8 			rcr	ax,1
+	*** 000974	50 			push	ax
+	*** 000975	8b 86 12 fd 		mov	ax,WORD PTR [bp-750]	;XS
+	*** 000979	8b 96 14 fd 		mov	dx,WORD PTR [bp-748]
+	*** 00097d	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;XC
+	*** 000980	8b 5e 06 		mov	bx,WORD PTR [bp+6]
+	*** 000983	d1 e1 			shl	cx,1
+	*** 000985	d1 d3 			rcl	bx,1
+	*** 000987	2b c1 			sub	ax,cx
+	*** 000989	1b d3 			sbb	dx,bx
+	*** 00098b	8a c4 			mov	al,ah
+	*** 00098d	8a e2 			mov	ah,dl
+	*** 00098f	8a d6 			mov	dl,dh
+	*** 000991	d0 e6 			shl	dh,1
+	*** 000993	1a f6 			sbb	dh,dh
+					$L20038:
+	*** 000995	d1 fa 			sar	dx,1
+	*** 000997	d1 d8 			rcr	ax,1
+	*** 000999	d1 fa 			sar	dx,1
+	*** 00099b	d1 d8 			rcr	ax,1
+	*** 00099d	d1 fa 			sar	dx,1
+	*** 00099f	d1 d8 			rcr	ax,1
+	*** 0009a1	50 			push	ax
+	*** 0009a2	e8 00 00 		call	_MyWaterline
+					$L20035:
+	*** 0009a5	83 c4 12 		add	sp,18
+;|*** 
+;|***             }
+; Line 369
+;|*** 			} else {
+; Line 370
+	*** 0009a8	e9 ef f9 		jmp	$FC844
+	*** 0009ab	90 			nop	
+					$I866:
+;|*** 				XS= NXSLine( FA, FE, (4*(MYHT/2-i)/3), HT, -M );
+; Line 371
+	*** 0009ac	8b 86 0a fd 		mov	ax,WORD PTR [bp-758]	;M
+	*** 0009b0	f7 d8 			neg	ax
+	*** 0009b2	50 			push	ax
+	*** 0009b3	ff b6 0c fd 		push	WORD PTR [bp-756]	;HT
+	*** 0009b7	8b c8 			mov	cx,ax
+	*** 0009b9	b8 98 00 		mov	ax,152
+	*** 0009bc	2b 86 24 fd 		sub	ax,WORD PTR [bp-732]	;i
+	*** 0009c0	d1 e0 			shl	ax,1
+	*** 0009c2	d1 e0 			shl	ax,1
+	*** 0009c4	bb 03 00 		mov	bx,3
+	*** 0009c7	99 			cwd	
+	*** 0009c8	f7 fb 			idiv	bx
+	*** 0009ca	50 			push	ax
+	*** 0009cb	ff b6 16 fd 		push	WORD PTR [bp-746]	;FE
+	*** 0009cf	ff b6 2e fd 		push	WORD PTR [bp-722]
+	*** 0009d3	ff b6 2c fd 		push	WORD PTR [bp-724]	;FA
+	*** 0009d7	8b f0 			mov	si,ax
+	*** 0009d9	8b f9 			mov	di,cx
+	*** 0009db	e8 00 00 		call	_NXSLine
+	*** 0009de	83 c4 0c 		add	sp,12
+	*** 0009e1	89 86 12 fd 		mov	WORD PTR [bp-750],ax	;XS
+	*** 0009e5	89 96 14 fd 		mov	WORD PTR [bp-748],dx
+;|*** 				ZS= NXSLine( FB, FF, (4*(MYHT/2-i)/3), HT, -M );
+; Line 372
+	*** 0009e9	57 			push	di
+	*** 0009ea	ff b6 0c fd 		push	WORD PTR [bp-756]	;HT
+	*** 0009ee	56 			push	si
+	*** 0009ef	ff b6 0e fd 		push	WORD PTR [bp-754]	;FF
+	*** 0009f3	ff b6 2a fd 		push	WORD PTR [bp-726]
+	*** 0009f7	ff b6 28 fd 		push	WORD PTR [bp-728]	;FB
+	*** 0009fb	e8 00 00 		call	_NXSLine
+	*** 0009fe	83 c4 0c 		add	sp,12
+	*** 000a01	89 86 06 fd 		mov	WORD PTR [bp-762],ax	;ZS
+	*** 000a05	89 96 08 fd 		mov	WORD PTR [bp-760],dx
+;|*** 				XADD= NXSADDLine( FC, HT, -M );
+; Line 373
+	*** 000a09	57 			push	di
+	*** 000a0a	ff b6 0c fd 		push	WORD PTR [bp-756]	;HT
+	*** 000a0e	ff b6 26 fd 		push	WORD PTR [bp-730]	;FC
+	*** 000a12	e8 00 00 		call	_NXSADDLine
+	*** 000a15	83 c4 06 		add	sp,6
+	*** 000a18	89 46 f6 		mov	WORD PTR [bp-10],ax	;XADD
+	*** 000a1b	89 56 f8 		mov	WORD PTR [bp-8],dx
+;|*** 				ZADD= NXSADDLine( FD, HT, -M );
+; Line 374
+	*** 000a1e	57 			push	di
+	*** 000a1f	ff b6 0c fd 		push	WORD PTR [bp-756]	;HT
+	*** 000a23	ff b6 1e fd 		push	WORD PTR [bp-738]	;FD
+	*** 000a27	e8 00 00 		call	_NXSADDLine
+	*** 000a2a	83 c4 06 		add	sp,6
+	*** 000a2d	89 46 c4 		mov	WORD PTR [bp-60],ax	;ZADD
+	*** 000a30	89 56 c6 		mov	WORD PTR [bp-58],dx
+;|*** 				XS= XS<<1;
+; Line 375
+	*** 000a33	d1 a6 12 fd 		shl	WORD PTR [bp-750],1	;XS
+	*** 000a37	d1 96 14 fd 		rcl	WORD PTR [bp-748],1
+;|*** 				ZS= ZS<<1;
+; Line 376
+	*** 000a3b	d1 a6 06 fd 		shl	WORD PTR [bp-762],1	;ZS
+	*** 000a3f	d1 96 08 fd 		rcl	WORD PTR [bp-760],1
+;|*** 				GRY=8;
+; Line 377
+	*** 000a43	c7 46 f4 08 00 		mov	WORD PTR [bp-12],8	;GRY
+;|*** 
+;|***             	SHFT=max( abs((int)(XADD>>6)),abs((int)(ZADD>>6)) );
+; Line 379
+	*** 000a48	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;XADD
+	*** 000a4b	8b 56 f8 		mov	dx,WORD PTR [bp-8]
+	*** 000a4e	d1 fa 			sar	dx,1
+	*** 000a50	d1 d8 			rcr	ax,1
+	*** 000a52	d1 fa 			sar	dx,1
+	*** 000a54	d1 d8 			rcr	ax,1
+	*** 000a56	d1 fa 			sar	dx,1
+	*** 000a58	d1 d8 			rcr	ax,1
+	*** 000a5a	d1 fa 			sar	dx,1
+	*** 000a5c	d1 d8 			rcr	ax,1
+	*** 000a5e	d1 fa 			sar	dx,1
+	*** 000a60	d1 d8 			rcr	ax,1
+	*** 000a62	d1 fa 			sar	dx,1
+	*** 000a64	d1 d8 			rcr	ax,1
+	*** 000a66	50 			push	ax
+	*** 000a67	8b f0 			mov	si,ax
+	*** 000a69	e8 00 00 		call	_abs
+	*** 000a6c	83 c4 02 		add	sp,2
+	*** 000a6f	8b 4e c4 		mov	cx,WORD PTR [bp-60]	;ZADD
+	*** 000a72	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 000a75	d1 fa 			sar	dx,1
+	*** 000a77	d1 d9 			rcr	cx,1
+	*** 000a79	d1 fa 			sar	dx,1
+	*** 000a7b	d1 d9 			rcr	cx,1
+	*** 000a7d	d1 fa 			sar	dx,1
+	*** 000a7f	d1 d9 			rcr	cx,1
+	*** 000a81	d1 fa 			sar	dx,1
+	*** 000a83	d1 d9 			rcr	cx,1
+	*** 000a85	d1 fa 			sar	dx,1
+	*** 000a87	d1 d9 			rcr	cx,1
+	*** 000a89	d1 fa 			sar	dx,1
+	*** 000a8b	d1 d9 			rcr	cx,1
+	*** 000a8d	51 			push	cx
+	*** 000a8e	8b f8 			mov	di,ax
+	*** 000a90	e8 00 00 		call	_abs
+	*** 000a93	83 c4 02 		add	sp,2
+	*** 000a96	89 b6 ee fc 		mov	WORD PTR [bp-786],si
+	*** 000a9a	3b c7 			cmp	ax,di
+	*** 000a9c	7d 04 			jge	$L20014
+	*** 000a9e	56 			push	si
+	*** 000a9f	eb 20 			jmp	SHORT $L20030
+	*** 000aa1	90 			nop	
+					$L20014:
+	*** 000aa2	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;ZADD
+	*** 000aa5	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 000aa8	d1 fa 			sar	dx,1
+	*** 000aaa	d1 d8 			rcr	ax,1
+	*** 000aac	d1 fa 			sar	dx,1
+	*** 000aae	d1 d8 			rcr	ax,1
+	*** 000ab0	d1 fa 			sar	dx,1
+	*** 000ab2	d1 d8 			rcr	ax,1
+	*** 000ab4	d1 fa 			sar	dx,1
+	*** 000ab6	d1 d8 			rcr	ax,1
+	*** 000ab8	d1 fa 			sar	dx,1
+	*** 000aba	d1 d8 			rcr	ax,1
+	*** 000abc	d1 fa 			sar	dx,1
+	*** 000abe	d1 d8 			rcr	ax,1
+	*** 000ac0	50 			push	ax
+					$L20030:
+	*** 000ac1	e8 00 00 		call	_abs
+	*** 000ac4	83 c4 02 		add	sp,2
+	*** 000ac7	89 46 be 		mov	WORD PTR [bp-66],ax	;SHFT
+;|*** 
+;|***             	MSK=0;
+; Line 381
+	*** 000aca	c7 86 1c fd 00 00 	mov	WORD PTR [bp-740],0	;MSK
+;|***             	if (abs(M)<ARADD) {
+; Line 382
+	*** 000ad0	ff b6 0a fd 		push	WORD PTR [bp-758]	;M
+	*** 000ad4	e8 00 00 		call	_abs
+	*** 000ad7	83 c4 02 		add	sp,2
+	*** 000ada	3b 86 10 fd 		cmp	ax,WORD PTR [bp-752]	;ARADD
+	*** 000ade	7d 2e 			jge	$I874
+;|***                		MSK=(ARADD-abs(M))/2;
+; Line 383
+	*** 000ae0	ff b6 0a fd 		push	WORD PTR [bp-758]	;M
+	*** 000ae4	e8 00 00 		call	_abs
+	*** 000ae7	83 c4 02 		add	sp,2
+	*** 000aea	2b 86 10 fd 		sub	ax,WORD PTR [bp-752]	;ARADD
+	*** 000aee	f7 d8 			neg	ax
+	*** 000af0	99 			cwd	
+	*** 000af1	2b c2 			sub	ax,dx
+	*** 000af3	d1 f8 			sar	ax,1
+	*** 000af5	89 86 1c fd 		mov	WORD PTR [bp-740],ax	;MSK
+;|***                		P=GRTBLSEG;
+; Line 384
+	*** 000af9	c7 46 fc 00 00 		mov	WORD PTR [bp-4],OFFSET _GRTBLSEG	;P
+	*** 000afe	c7 46 fe 00 00 		mov	WORD PTR [bp-2],SEG _GRTBLSEG
+;|***                		MSK= 16*(MSK)+FP_SEG(P);
+; Line 385
+	*** 000b03	b1 04 			mov	cl,4
+	*** 000b05	d3 e0 			shl	ax,cl
+	*** 000b07	03 46 fe 		add	ax,WORD PTR [bp-2]
+	*** 000b0a	89 86 1c fd 		mov	WORD PTR [bp-740],ax	;MSK
+;|*** 				}
+; Line 386
+;|*** /*
+;|***             	for (MSK=0;MSK<13;MSK++) {
+;|***                		if (GRYSFHTTBL[MSK]>SHFT) break;
+;|***                	}
+;|***             	P=GRTBLSEG;
+;|***             	if (abs(MYM)<7)	{
+;|***                	if (MSK<(15-2*abs(MYM)))
+;|***                   	MSK=(15-2*abs(MYM));
+;|***                	}
+;|***             	if (MSK)
+;|***                	MSK= 16*(MSK)+FP_SEG(P);
+;|*** */
+;|*** 
+;|***          if (HRES==1)
+; Line 400
+					$I874:
+	*** 000b0e	83 7e 18 01 		cmp	WORD PTR [bp+24],1	;HRES
+	*** 000b12	74 03 			je	$JCC2834
+	*** 000b14	e9 ad 00 		jmp	$I875
+					$JCC2834:
+;|***             {
+; Line 401
+;|*** 				MyWaterline2((int)((XS-(XC<<1))>>(6)),(int)((ZS-(ZC<<1))>>(6)),
+;|***                            (int)(XADD>>(6)),(int)(ZADD>>(6)),
+;|***                            CLOUDSEG+(GRY), MYWID*(i), BUFFER,
+;|***                            MSK, MYWID );
+; Line 405
+	*** 000b17	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 000b1b	ff b6 1c fd 		push	WORD PTR [bp-740]	;MSK
+	*** 000b1f	ff 76 16 		push	WORD PTR [bp+22]	;BUFFER
+	*** 000b22	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000b25	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 000b29	50 			push	ax
+	*** 000b2a	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 000b2d	03 46 f4 		add	ax,WORD PTR [bp-12]	;GRY
+	*** 000b30	50 			push	ax
+	*** 000b31	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;ZADD
+	*** 000b34	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 000b37	d1 fa 			sar	dx,1
+	*** 000b39	d1 d8 			rcr	ax,1
+	*** 000b3b	d1 fa 			sar	dx,1
+	*** 000b3d	d1 d8 			rcr	ax,1
+	*** 000b3f	d1 fa 			sar	dx,1
+	*** 000b41	d1 d8 			rcr	ax,1
+	*** 000b43	d1 fa 			sar	dx,1
+	*** 000b45	d1 d8 			rcr	ax,1
+	*** 000b47	d1 fa 			sar	dx,1
+	*** 000b49	d1 d8 			rcr	ax,1
+	*** 000b4b	d1 fa 			sar	dx,1
+	*** 000b4d	d1 d8 			rcr	ax,1
+	*** 000b4f	50 			push	ax
+	*** 000b50	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;XADD
+	*** 000b53	8b 56 f8 		mov	dx,WORD PTR [bp-8]
+	*** 000b56	d1 fa 			sar	dx,1
+	*** 000b58	d1 d8 			rcr	ax,1
+	*** 000b5a	d1 fa 			sar	dx,1
+	*** 000b5c	d1 d8 			rcr	ax,1
+	*** 000b5e	d1 fa 			sar	dx,1
+	*** 000b60	d1 d8 			rcr	ax,1
+	*** 000b62	d1 fa 			sar	dx,1
+	*** 000b64	d1 d8 			rcr	ax,1
+	*** 000b66	d1 fa 			sar	dx,1
+	*** 000b68	d1 d8 			rcr	ax,1
+	*** 000b6a	d1 fa 			sar	dx,1
+	*** 000b6c	d1 d8 			rcr	ax,1
+	*** 000b6e	50 			push	ax
+	*** 000b6f	8b 86 06 fd 		mov	ax,WORD PTR [bp-762]	;ZS
+	*** 000b73	8b 96 08 fd 		mov	dx,WORD PTR [bp-760]
+	*** 000b77	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;ZC
+	*** 000b7a	8b 5e 0a 		mov	bx,WORD PTR [bp+10]
+	*** 000b7d	d1 e1 			shl	cx,1
+	*** 000b7f	d1 d3 			rcl	bx,1
+	*** 000b81	2b c1 			sub	ax,cx
+	*** 000b83	1b d3 			sbb	dx,bx
+	*** 000b85	d1 fa 			sar	dx,1
+	*** 000b87	d1 d8 			rcr	ax,1
+	*** 000b89	d1 fa 			sar	dx,1
+	*** 000b8b	d1 d8 			rcr	ax,1
+	*** 000b8d	d1 fa 			sar	dx,1
+	*** 000b8f	d1 d8 			rcr	ax,1
+	*** 000b91	d1 fa 			sar	dx,1
+	*** 000b93	d1 d8 			rcr	ax,1
+	*** 000b95	d1 fa 			sar	dx,1
+	*** 000b97	d1 d8 			rcr	ax,1
+	*** 000b99	d1 fa 			sar	dx,1
+	*** 000b9b	d1 d8 			rcr	ax,1
+	*** 000b9d	50 			push	ax
+	*** 000b9e	8b 86 12 fd 		mov	ax,WORD PTR [bp-750]	;XS
+	*** 000ba2	8b 96 14 fd 		mov	dx,WORD PTR [bp-748]
+	*** 000ba6	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;XC
+	*** 000ba9	8b 5e 06 		mov	bx,WORD PTR [bp+6]
+	*** 000bac	d1 e1 			shl	cx,1
+	*** 000bae	d1 d3 			rcl	bx,1
+	*** 000bb0	2b c1 			sub	ax,cx
+	*** 000bb2	1b d3 			sbb	dx,bx
+	*** 000bb4	d1 fa 			sar	dx,1
+	*** 000bb6	d1 d8 			rcr	ax,1
+					$L20036:
+	*** 000bb8	d1 fa 			sar	dx,1
+	*** 000bba	d1 d8 			rcr	ax,1
+	*** 000bbc	d1 fa 			sar	dx,1
+	*** 000bbe	d1 d8 			rcr	ax,1
+	*** 000bc0	e9 1e fd 		jmp	$L20039
+	*** 000bc3	90 			nop	
+					$I875:
+;|***             }
+;|***          else
+;|***             {
+; Line 408
+;|*** 				MyWaterline((int)((XS-(XC<<1))>>(6)),(int)((ZS-(ZC<<1))>>(6)),
+;|***                            (int)(XADD>>(6)),(int)(ZADD>>(6)),
+;|***                            CLOUDSEG+(GRY), MYWID*(i), BUFFER,
+;|***                            MSK, MYWID );
+; Line 412
+	*** 000bc4	ff 36 1e 00 		push	WORD PTR _MYWID
+	*** 000bc8	ff b6 1c fd 		push	WORD PTR [bp-740]	;MSK
+	*** 000bcc	ff 76 16 		push	WORD PTR [bp+22]	;BUFFER
+	*** 000bcf	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000bd2	f7 ae 24 fd 		imul	WORD PTR [bp-732]	;i
+	*** 000bd6	50 			push	ax
+	*** 000bd7	a1 02 00 		mov	ax,WORD PTR _CLOUDSEG
+	*** 000bda	03 46 f4 		add	ax,WORD PTR [bp-12]	;GRY
+	*** 000bdd	50 			push	ax
+	*** 000bde	8b 46 c4 		mov	ax,WORD PTR [bp-60]	;ZADD
+	*** 000be1	8b 56 c6 		mov	dx,WORD PTR [bp-58]
+	*** 000be4	d1 fa 			sar	dx,1
+	*** 000be6	d1 d8 			rcr	ax,1
+	*** 000be8	d1 fa 			sar	dx,1
+	*** 000bea	d1 d8 			rcr	ax,1
+	*** 000bec	d1 fa 			sar	dx,1
+	*** 000bee	d1 d8 			rcr	ax,1
+	*** 000bf0	d1 fa 			sar	dx,1
+	*** 000bf2	d1 d8 			rcr	ax,1
+	*** 000bf4	d1 fa 			sar	dx,1
+	*** 000bf6	d1 d8 			rcr	ax,1
+	*** 000bf8	d1 fa 			sar	dx,1
+	*** 000bfa	d1 d8 			rcr	ax,1
+	*** 000bfc	50 			push	ax
+	*** 000bfd	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;XADD
+	*** 000c00	8b 56 f8 		mov	dx,WORD PTR [bp-8]
+	*** 000c03	d1 fa 			sar	dx,1
+	*** 000c05	d1 d8 			rcr	ax,1
+	*** 000c07	d1 fa 			sar	dx,1
+	*** 000c09	d1 d8 			rcr	ax,1
+	*** 000c0b	d1 fa 			sar	dx,1
+	*** 000c0d	d1 d8 			rcr	ax,1
+	*** 000c0f	d1 fa 			sar	dx,1
+	*** 000c11	d1 d8 			rcr	ax,1
+	*** 000c13	d1 fa 			sar	dx,1
+	*** 000c15	d1 d8 			rcr	ax,1
+	*** 000c17	d1 fa 			sar	dx,1
+	*** 000c19	d1 d8 			rcr	ax,1
+	*** 000c1b	50 			push	ax
+	*** 000c1c	8b 86 06 fd 		mov	ax,WORD PTR [bp-762]	;ZS
+	*** 000c20	8b 96 08 fd 		mov	dx,WORD PTR [bp-760]
+	*** 000c24	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;ZC
+	*** 000c27	8b 5e 0a 		mov	bx,WORD PTR [bp+10]
+	*** 000c2a	d1 e1 			shl	cx,1
+	*** 000c2c	d1 d3 			rcl	bx,1
+	*** 000c2e	2b c1 			sub	ax,cx
+	*** 000c30	1b d3 			sbb	dx,bx
+	*** 000c32	d1 fa 			sar	dx,1
+	*** 000c34	d1 d8 			rcr	ax,1
+	*** 000c36	d1 fa 			sar	dx,1
+	*** 000c38	d1 d8 			rcr	ax,1
+	*** 000c3a	d1 fa 			sar	dx,1
+	*** 000c3c	d1 d8 			rcr	ax,1
+	*** 000c3e	d1 fa 			sar	dx,1
+	*** 000c40	d1 d8 			rcr	ax,1
+	*** 000c42	d1 fa 			sar	dx,1
+	*** 000c44	d1 d8 			rcr	ax,1
+	*** 000c46	d1 fa 			sar	dx,1
+	*** 000c48	d1 d8 			rcr	ax,1
+	*** 000c4a	50 			push	ax
+	*** 000c4b	8b 86 12 fd 		mov	ax,WORD PTR [bp-750]	;XS
+	*** 000c4f	8b 96 14 fd 		mov	dx,WORD PTR [bp-748]
+	*** 000c53	8b 4e 04 		mov	cx,WORD PTR [bp+4]	;XC
+	*** 000c56	8b 5e 06 		mov	bx,WORD PTR [bp+6]
+	*** 000c59	d1 e1 			shl	cx,1
+	*** 000c5b	d1 d3 			rcl	bx,1
+	*** 000c5d	2b c1 			sub	ax,cx
+	*** 000c5f	1b d3 			sbb	dx,bx
+	*** 000c61	d1 fa 			sar	dx,1
+	*** 000c63	d1 d8 			rcr	ax,1
+					$L20040:
+	*** 000c65	d1 fa 			sar	dx,1
+	*** 000c67	d1 d8 			rcr	ax,1
+	*** 000c69	d1 fa 			sar	dx,1
+	*** 000c6b	d1 d8 			rcr	ax,1
+	*** 000c6d	e9 25 fd 		jmp	$L20038
+					$FB845:
+;|*** 
+;|***             }
+;|*** 
+;|*** 			}
+;|*** 		}
+;|*** 	}
+;|*** 
+;|*** 		if (1) {
+; Line 420
+;|*** 			W=NWID /*MYWID*/;
+;|*** 			// make the address table
+;|*** 
+;|*** 			CXADD= ACosB(32*2,ROLL);
+; Line 424
+	*** 000c70	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 000c73	b8 40 00 		mov	ax,64
+	*** 000c76	50 			push	ax
+	*** 000c77	e8 00 00 		call	_ACosB
+	*** 000c7a	83 c4 04 		add	sp,4
+	*** 000c7d	89 46 c0 		mov	WORD PTR [bp-64],ax	;CXADD
+;|*** 			CYADD= ASinB(24*2,ROLL);
+;|*** 			CXS= (-W/2)*CXADD;
+; Line 426
+	*** 000c80	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;NWID
+	*** 000c83	89 86 32 fd 		mov	WORD PTR [bp-718],ax	;W
+	*** 000c87	99 			cwd	
+	*** 000c88	2b c2 			sub	ax,dx
+	*** 000c8a	d1 f8 			sar	ax,1
+	*** 000c8c	8b c8 			mov	cx,ax
+	*** 000c8e	f7 6e c0 		imul	WORD PTR [bp-64]	;CXADD
+	*** 000c91	f7 d8 			neg	ax
+	*** 000c93	89 86 f4 fc 		mov	WORD PTR [bp-780],ax	;CXS
+;|*** 			CYS= (-W/2)*CYADD;
+; Line 427
+	*** 000c97	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 000c9a	b8 30 00 		mov	ax,48
+	*** 000c9d	50 			push	ax
+	*** 000c9e	8b f1 			mov	si,cx
+	*** 000ca0	e8 00 00 		call	_ASinB
+	*** 000ca3	83 c4 04 		add	sp,4
+	*** 000ca6	89 46 ba 		mov	WORD PTR [bp-70],ax	;CYADD
+	*** 000ca9	f7 ee 			imul	si
+	*** 000cab	f7 d8 			neg	ax
+	*** 000cad	89 86 f2 fc 		mov	WORD PTR [bp-782],ax	;CYS
+;|*** 
+;|*** 			for (i=0;i<W;i++) {
+; Line 429
+	*** 000cb1	c7 86 24 fd 00 00 	mov	WORD PTR [bp-732],0	;i
+	*** 000cb7	eb 3b 			jmp	SHORT $F878
+	*** 000cb9	90 			nop	
+					$FC879:
+;|*** 				ADDRESS[i]= MYWID*(CYS/ZD)+ (CXS/(2*ZD));
+; Line 430
+	*** 000cba	8b 86 f4 fc 		mov	ax,WORD PTR [bp-780]	;CXS
+	*** 000cbe	8b 8e f6 fc 		mov	cx,WORD PTR [bp-778]	;ZD
+	*** 000cc2	d1 e1 			shl	cx,1
+	*** 000cc4	99 			cwd	
+	*** 000cc5	f7 f9 			idiv	cx
+	*** 000cc7	8b c8 			mov	cx,ax
+	*** 000cc9	8b 86 f2 fc 		mov	ax,WORD PTR [bp-782]	;CYS
+	*** 000ccd	99 			cwd	
+	*** 000cce	f7 be f6 fc 		idiv	WORD PTR [bp-778]	;ZD
+	*** 000cd2	f7 2e 1e 00 		imul	WORD PTR _MYWID
+	*** 000cd6	03 c8 			add	cx,ax
+	*** 000cd8	8b b6 24 fd 		mov	si,WORD PTR [bp-732]	;i
+	*** 000cdc	d1 e6 			shl	si,1
+	*** 000cde	89 8a 34 fd 		mov	WORD PTR [bp-716][si],cx
+;|*** 				CXS+= CXADD;
+; Line 431
+	*** 000ce2	8b 46 c0 		mov	ax,WORD PTR [bp-64]	;CXADD
+	*** 000ce5	01 86 f4 fc 		add	WORD PTR [bp-780],ax	;CXS
+;|*** 				CYS+= CYADD;
+; Line 432
+	*** 000ce9	8b 46 ba 		mov	ax,WORD PTR [bp-70]	;CYADD
+	*** 000cec	01 86 f2 fc 		add	WORD PTR [bp-782],ax	;CYS
+;|*** 			}
+; Line 433
+	*** 000cf0	ff 86 24 fd 		inc	WORD PTR [bp-732]	;i
+					$F878:
+	*** 000cf4	8b 86 24 fd 		mov	ax,WORD PTR [bp-732]	;i
+	*** 000cf8	39 86 32 fd 		cmp	WORD PTR [bp-718],ax	;W
+	*** 000cfc	7f bc 			jg	$FC879
+;|*** 
+;|*** 			// draw all the lines
+;|*** 			for (i=NGYLO;i<=NGYHI;i++) {
+; Line 436
+	*** 000cfe	a1 00 00 		mov	ax,WORD PTR _NGYLO
+	*** 000d01	89 86 24 fd 		mov	WORD PTR [bp-732],ax	;i
+	*** 000d05	eb 67 			jmp	SHORT $F881
+	*** 000d07	90 			nop	
+					$FC882:
+;|*** 				ADDBASE= MYWID*(ACosB(i-NGYMID,ROLL)+MYHT/2)+ ASinB((-2*(i-NGYMID))/3,ROLL)+ MYWID/2;
+; Line 437
+	*** 000d08	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 000d0b	2b 06 00 00 		sub	ax,WORD PTR _NGYMID
+	*** 000d0f	f7 d8 			neg	ax
+	*** 000d11	d1 e0 			shl	ax,1
+	*** 000d13	b9 03 00 		mov	cx,3
+	*** 000d16	99 			cwd	
+	*** 000d17	f7 f9 			idiv	cx
+	*** 000d19	50 			push	ax
+	*** 000d1a	e8 00 00 		call	_ASinB
+	*** 000d1d	83 c4 04 		add	sp,4
+	*** 000d20	ff 76 12 		push	WORD PTR [bp+18]	;ROLL
+	*** 000d23	8b 8e 24 fd 		mov	cx,WORD PTR [bp-732]	;i
+	*** 000d27	2b 0e 00 00 		sub	cx,WORD PTR _NGYMID
+	*** 000d2b	51 			push	cx
+	*** 000d2c	8b f0 			mov	si,ax
+	*** 000d2e	e8 00 00 		call	_ACosB
+	*** 000d31	83 c4 04 		add	sp,4
+	*** 000d34	05 98 00 		add	ax,152
+	*** 000d37	f7 2e 1e 00 		imul	WORD PTR _MYWID
+	*** 000d3b	03 f0 			add	si,ax
+	*** 000d3d	a1 1e 00 		mov	ax,WORD PTR _MYWID
+	*** 000d40	99 			cwd	
+	*** 000d41	2b c2 			sub	ax,dx
+	*** 000d43	d1 f8 			sar	ax,1
+	*** 000d45	03 c6 			add	ax,si
+	*** 000d47	89 46 c2 		mov	WORD PTR [bp-62],ax	;ADDBASE
+;|*** 
+;|***    			NScaleLine( BUFFER, ADDBASE, ADDRESS,
+;|***                         NGXLO, i, NWID, GRPAGE0[1] );
+; Line 440
+	*** 000d4a	ff 36 02 00 		push	WORD PTR _GRPAGE0+2
+	*** 000d4e	ff 76 f2 		push	WORD PTR [bp-14]	;NWID
+	*** 000d51	ff b6 24 fd 		push	WORD PTR [bp-732]	;i
+	*** 000d55	ff 36 00 00 		push	WORD PTR _NGXLO
+	*** 000d59	8d 86 34 fd 		lea	ax,WORD PTR [bp-716]	;ADDRESS
+	*** 000d5d	50 			push	ax
+	*** 000d5e	ff 76 c2 		push	WORD PTR [bp-62]	;ADDBASE
+	*** 000d61	ff 76 16 		push	WORD PTR [bp+22]	;BUFFER
+	*** 000d64	e8 00 00 		call	_NScaleLine
+	*** 000d67	83 c4 0e 		add	sp,14
+;|*** 
+;|*** //            	if (HRES) {
+;|*** //				   	NScaleLine2( BUFFER, ADDBASE,
+;|*** //								   	ADDRESS, NGXLO/*160-W/2*/, i, NWID/*W*/, GRPAGE0[1] );
+;|*** //				} else {
+;|*** //   					NScaleLine( BUFFER, ADDBASE,
+;|*** //									ADDRESS, NGXLO/*160-W/2*/, i, NWID/*W*/, GRPAGE0[1] );
+;|*** //				}
+;|*** //
+;|*** 
+;|*** 
+;|***          }
+; Line 452
+	*** 000d6a	ff 86 24 fd 		inc	WORD PTR [bp-732]	;i
+					$F881:
+	*** 000d6e	8b 86 24 fd 		mov	ax,WORD PTR [bp-732]	;i
+	*** 000d72	39 06 00 00 		cmp	WORD PTR _NGYHI,ax
+	*** 000d76	7d 90 			jge	$FC882
+;|*** 		}
+; Line 453
+;|*** }
+; Line 454
+	*** 000d78	5e 			pop	si
+	*** 000d79	5f 			pop	di
+	*** 000d7a	8b e5 			mov	sp,bp
+	*** 000d7c	5d 			pop	bp
+	*** 000d7d	c3 			ret	
+
+_NHorz	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** EndStack3D()
+;|*** {
+; Line 458
+_TEXT      ENDS
+CONST      SEGMENT
+$T20016	DW SEG _STACK3D 
+CONST      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+	PUBLIC	_EndStack3D
+_EndStack3D	PROC NEAR
+	*** 000d7e	55 			push	bp
+	*** 000d7f	8b ec 			mov	bp,sp
+	*** 000d81	83 ec 22 		sub	sp,34
+	*** 000d84	57 			push	di
+	*** 000d85	56 			push	si
+;	i = -24
+;	SCL = -4
+;	SHFT = -10
+;	t1 = -8
+;	t2 = -14
+;	t3 = -18
+;	X = -20
+;	Y = -22
+;	Z = -26
+;|*** 	int	    i;
+;|*** 	long SCL;
+;|*** 	int	SHFT;
+;|*** 	long	t1,t2,t3;
+;|*** 	int		X,Y,Z;
+;|*** 
+;|*** 	for (i=FARSTACK;i!=-1;) {
+; Line 465
+	*** 000d86	a1 0c 00 		mov	ax,WORD PTR _FARSTACK
+					$L20043:
+	*** 000d89	89 46 e8 		mov	WORD PTR [bp-24],ax	;i
+	*** 000d8c	3d ff ff 		cmp	ax,-1
+	*** 000d8f	75 03 			jne	$JCC3471
+	*** 000d91	e9 46 03 		jmp	$FB898
+					$JCC3471:
+;|*** 		SCL= STACK3D[i].SCL;
+; Line 466
+	*** 000d94	b8 12 00 		mov	ax,18
+	*** 000d97	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000d9a	8b d8 			mov	bx,ax
+	*** 000d9c	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000da0	26 8b 87 10 00 		mov	ax,WORD PTR es:_STACK3D[bx+16]
+	*** 000da5	99 			cwd	
+	*** 000da6	89 46 fc 		mov	WORD PTR [bp-4],ax	;SCL
+	*** 000da9	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 		X= STACK3D[i].X;
+; Line 467
+	*** 000dac	26 8b 8f 02 00 		mov	cx,WORD PTR es:_STACK3D[bx+2]
+	*** 000db1	89 4e ec 		mov	WORD PTR [bp-20],cx	;X
+;|*** 		Y= STACK3D[i].Y;
+; Line 468
+	*** 000db4	26 8b b7 04 00 		mov	si,WORD PTR es:_STACK3D[bx+4]
+	*** 000db9	89 76 ea 		mov	WORD PTR [bp-22],si	;Y
+;|*** 		Z= STACK3D[i].Z;
+; Line 469
+	*** 000dbc	26 8b bf 06 00 		mov	di,WORD PTR es:_STACK3D[bx+6]
+	*** 000dc1	89 7e e6 		mov	WORD PTR [bp-26],di	;Z
+;|*** 		if ( SCL>1 )
+; Line 470
+	*** 000dc4	0b d2 			or	dx,dx
+	*** 000dc6	7d 03 			jge	$JCC3526
+	*** 000dc8	e9 e2 00 		jmp	$I902
+					$JCC3526:
+	*** 000dcb	7f 08 			jg	$L20017
+	*** 000dcd	3d 01 00 		cmp	ax,1
+	*** 000dd0	77 03 			ja	$JCC3536
+	*** 000dd2	e9 d8 00 		jmp	$I902
+					$JCC3536:
+					$L20017:
+;|*** 			{
+; Line 471
+;|*** 			t1= X;
+;|*** 			t1*= SCL;
+; Line 473
+	*** 000dd5	52 			push	dx
+	*** 000dd6	50 			push	ax
+	*** 000dd7	8b d8 			mov	bx,ax
+	*** 000dd9	8b c1 			mov	ax,cx
+	*** 000ddb	8b ca 			mov	cx,dx
+	*** 000ddd	99 			cwd	
+	*** 000dde	52 			push	dx
+	*** 000ddf	50 			push	ax
+	*** 000de0	89 5e e2 		mov	WORD PTR [bp-30],bx
+	*** 000de3	89 4e e4 		mov	WORD PTR [bp-28],cx
+	*** 000de6	e8 00 00 		call	__aNlmul
+	*** 000de9	89 46 f8 		mov	WORD PTR [bp-8],ax	;t1
+	*** 000dec	89 56 fa 		mov	WORD PTR [bp-6],dx
+;|*** 			t2= Y;
+;|*** 			t2*= SCL;
+; Line 475
+	*** 000def	ff 76 e4 		push	WORD PTR [bp-28]
+	*** 000df2	ff 76 e2 		push	WORD PTR [bp-30]
+	*** 000df5	8b c8 			mov	cx,ax
+	*** 000df7	8b c6 			mov	ax,si
+	*** 000df9	8b da 			mov	bx,dx
+	*** 000dfb	99 			cwd	
+	*** 000dfc	52 			push	dx
+	*** 000dfd	50 			push	ax
+	*** 000dfe	8b f1 			mov	si,cx
+	*** 000e00	89 76 de 		mov	WORD PTR [bp-34],si
+	*** 000e03	89 5e e0 		mov	WORD PTR [bp-32],bx
+	*** 000e06	e8 00 00 		call	__aNlmul
+	*** 000e09	89 46 f2 		mov	WORD PTR [bp-14],ax	;t2
+	*** 000e0c	89 56 f4 		mov	WORD PTR [bp-12],dx
+;|*** 			t3= Z;
+;|*** 			t3*= SCL;
+; Line 477
+	*** 000e0f	ff 76 e4 		push	WORD PTR [bp-28]
+	*** 000e12	ff 76 e2 		push	WORD PTR [bp-30]
+	*** 000e15	8b c7 			mov	ax,di
+	*** 000e17	99 			cwd	
+	*** 000e18	52 			push	dx
+	*** 000e19	50 			push	ax
+	*** 000e1a	e8 00 00 		call	__aNlmul
+	*** 000e1d	89 46 ee 		mov	WORD PTR [bp-18],ax	;t3
+	*** 000e20	89 56 f0 		mov	WORD PTR [bp-16],dx
+;|*** 			if ((labs(t1) > 6000) || (labs(t2) > 6000) || (labs(t3) > 6000))
+; Line 478
+	*** 000e23	ff 76 e0 		push	WORD PTR [bp-32]
+	*** 000e26	ff 76 de 		push	WORD PTR [bp-34]
+	*** 000e29	e8 00 00 		call	_labs
+	*** 000e2c	83 c4 04 		add	sp,4
+	*** 000e2f	0b d2 			or	dx,dx
+	*** 000e31	7f 35 			jg	$L20021
+	*** 000e33	7c 05 			jl	$L20019
+	*** 000e35	3d 70 17 		cmp	ax,6000
+	*** 000e38	77 2e 			ja	$L20021
+					$L20019:
+	*** 000e3a	ff 76 f4 		push	WORD PTR [bp-12]
+	*** 000e3d	ff 76 f2 		push	WORD PTR [bp-14]	;t2
+	*** 000e40	e8 00 00 		call	_labs
+	*** 000e43	83 c4 04 		add	sp,4
+	*** 000e46	0b d2 			or	dx,dx
+	*** 000e48	7f 1e 			jg	$L20021
+	*** 000e4a	7c 05 			jl	$L20020
+	*** 000e4c	3d 70 17 		cmp	ax,6000
+	*** 000e4f	77 17 			ja	$L20021
+					$L20020:
+	*** 000e51	ff 76 f0 		push	WORD PTR [bp-16]
+	*** 000e54	ff 76 ee 		push	WORD PTR [bp-18]	;t3
+	*** 000e57	e8 00 00 		call	_labs
+	*** 000e5a	83 c4 04 		add	sp,4
+	*** 000e5d	0b d2 			or	dx,dx
+	*** 000e5f	7c 35 			jl	$I900
+	*** 000e61	7f 05 			jg	$L20021
+	*** 000e63	3d 70 17 		cmp	ax,6000
+	*** 000e66	76 2e 			jbe	$I900
+					$L20021:
+;|*** 				{
+; Line 479
+;|*** 				X= (t1 >>= 3);
+; Line 480
+	*** 000e68	b0 03 			mov	al,3
+	*** 000e6a	50 			push	ax
+	*** 000e6b	8d 4e f8 		lea	cx,WORD PTR [bp-8]	;t1
+	*** 000e6e	51 			push	cx
+	*** 000e6f	e8 00 00 		call	__aNNalshr
+	*** 000e72	89 46 ec 		mov	WORD PTR [bp-20],ax	;X
+;|*** 				Y= (t2 >>= 3);
+; Line 481
+	*** 000e75	b0 03 			mov	al,3
+	*** 000e77	50 			push	ax
+	*** 000e78	8d 4e f2 		lea	cx,WORD PTR [bp-14]	;t2
+	*** 000e7b	51 			push	cx
+	*** 000e7c	e8 00 00 		call	__aNNalshr
+	*** 000e7f	89 46 ea 		mov	WORD PTR [bp-22],ax	;Y
+;|*** 				Z= (t3 >>= 3);
+; Line 482
+	*** 000e82	b0 03 			mov	al,3
+	*** 000e84	50 			push	ax
+	*** 000e85	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;t3
+	*** 000e88	50 			push	ax
+	*** 000e89	e8 00 00 		call	__aNNalshr
+	*** 000e8c	89 46 e6 		mov	WORD PTR [bp-26],ax	;Z
+;|*** 				SHFT= 3;
+; Line 483
+	*** 000e8f	c7 46 f6 03 00 		mov	WORD PTR [bp-10],3	;SHFT
+;|*** 				}
+; Line 484
+;|*** 			else
+; Line 485
+	*** 000e94	eb 17 			jmp	SHORT $I902
+					$I900:
+;|*** 				{
+; Line 486
+;|*** 				X=t1;
+; Line 487
+	*** 000e96	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;t1
+	*** 000e99	89 46 ec 		mov	WORD PTR [bp-20],ax	;X
+;|*** 				Y=t2;
+; Line 488
+	*** 000e9c	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;t2
+	*** 000e9f	89 46 ea 		mov	WORD PTR [bp-22],ax	;Y
+;|*** 				Z=t3;
+; Line 489
+	*** 000ea2	8b 46 ee 		mov	ax,WORD PTR [bp-18]	;t3
+	*** 000ea5	89 46 e6 		mov	WORD PTR [bp-26],ax	;Z
+;|*** 				SHFT=0;
+; Line 490
+	*** 000ea8	c7 46 f6 00 00 		mov	WORD PTR [bp-10],0	;SHFT
+;|*** 				}
+; Line 491
+					$I902:
+;|*** 			}
+; Line 492
+;|*** 
+;|*** 		switch(STACK3D[i].TYPE) {
+; Line 494
+	*** 000ead	b8 12 00 		mov	ax,18
+	*** 000eb0	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000eb3	8b d8 			mov	bx,ax
+	*** 000eb5	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000eb9	26 8b 87 0e 00 		mov	ax,WORD PTR es:_STACK3D[bx+14]
+	*** 000ebe	e9 77 01 		jmp	$S903
+;|*** 			case CARRIER_OBJ_1:
+; Line 495
+	*** 000ec1	90 			nop	
+					$SC907:
+;|*** 			case CARRIER_OBJ_2:
+;|*** 			case CARRIER_OBJ_6:
+;|*** 			case CARRIER_OBJ_7:
+;|*** 			case CARRIER_OBJ_8:
+;|*** 			case CARRIER_OBJ_9:
+;|*** 			case CARRIER_OBJ_10:
+;|*** 			case CARRIER_OBJ_11:
+;|*** 				DrawCarrier(X, Y, Z,STACK3D[i].ID,SHFT,STACK3D[i].TYPE);
+; Line 503
+	*** 000ec2	b8 12 00 		mov	ax,18
+	*** 000ec5	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000ec8	8b d8 			mov	bx,ax
+	*** 000eca	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000ece	26 ff b7 0e 00 		push	WORD PTR es:_STACK3D[bx+14]
+	*** 000ed3	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000ed6	26 ff b7 08 00 		push	WORD PTR es:_STACK3D[bx+8]
+	*** 000edb	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000ede	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000ee1	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000ee4	e8 00 00 		call	_DrawCarrier
+					$L20041:
+	*** 000ee7	83 c4 0c 		add	sp,12
+;|*** 			break;
+; Line 504
+					$SB904:
+;|*** 			case COOLF14_OBJ:
+;|*** 				DrawCoolF14(X, Y, Z,SHFT);
+;|*** 			break;
+;|*** 
+;|*** 			case MISSILE_OBJ:
+;|***                 DrawMissile(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+;|*** 			break;
+;|*** 			case SPRTXPL_OBJ:
+;|*** 				if (MapIn3dObjects((STACK3D[i].OBJ >>8))) {
+;|*** 					DrawASmoke(X, Y, Z, STACK3D[i].ID, 1,SHFT);
+;|*** 				}
+;|*** 			break;
+;|*** 			case SHADOW_OBJ:
+;|*** 				DrawShadow(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+;|*** 			break;
+;|*** 			case PLANES_OBJ:
+;|*** 				DrawTexPlane(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+;|*** 			break;
+;|*** 			case CHUTE_OBJ:
+;|*** 				DrawChute(STACK3D[i].OBJ, X, Y, Z,SHFT);
+;|*** 			break;
+;|*** 			case FLARE_OBJ:
+;|*** 			case CHAFF_OBJ:
+;|*** 				DrawDecoy(STACK3D[i].OBJ, X, Y, Z,SHFT);
+;|*** 			break;
+;|*** 			case REG_BOAT_OBJ:
+;|*** 				DrawRegBoat(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+;|*** 			break;
+;|*** 			default:
+;|*** 				Message("Error",DEBUG_MSG);
+;|*** 			break;
+;|*** 		}
+;|*** 		i=STACK3D[i].NXT;
+; Line 537
+	*** 000eea	b8 12 00 		mov	ax,18
+	*** 000eed	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000ef0	8b d8 			mov	bx,ax
+	*** 000ef2	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000ef6	26 8b 87 0a 00 		mov	ax,WORD PTR es:_STACK3D[bx+10]
+	*** 000efb	e9 8b fe 		jmp	$L20043
+;|*** 			case COOLF14_OBJ:
+; Line 505
+					$SC909:
+;|*** 				DrawCoolF14(X, Y, Z,SHFT);
+; Line 506
+	*** 000efe	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000f01	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000f04	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000f07	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000f0a	e8 00 00 		call	_DrawCoolF14
+	*** 000f0d	83 c4 08 		add	sp,8
+;|*** 			break;
+; Line 507
+	*** 000f10	eb d8 			jmp	SHORT $SB904
+;|*** 
+;|*** 			case MISSILE_OBJ:
+; Line 509
+					$SC911:
+;|***                 DrawMissile(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+; Line 510
+	*** 000f12	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000f15	b8 12 00 		mov	ax,18
+	*** 000f18	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000f1b	8b d8 			mov	bx,ax
+	*** 000f1d	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000f21	26 ff b7 08 00 		push	WORD PTR es:_STACK3D[bx+8]
+	*** 000f26	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000f29	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000f2c	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000f2f	26 ff b7 00 00 		push	WORD PTR es:_STACK3D[bx]
+	*** 000f34	e8 00 00 		call	_DrawMissile
+	*** 000f37	eb ae 			jmp	SHORT $L20041
+;|*** 			break;
+;|*** 			case SPRTXPL_OBJ:
+; Line 512
+	*** 000f39	90 			nop	
+					$SC913:
+;|*** 				if (MapIn3dObjects((STACK3D[i].OBJ >>8))) {
+; Line 513
+	*** 000f3a	b8 12 00 		mov	ax,18
+	*** 000f3d	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000f40	8b d8 			mov	bx,ax
+	*** 000f42	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000f46	26 8a 87 01 00 		mov	al,BYTE PTR es:_STACK3D[bx+1]
+	*** 000f4b	98 			cbw	
+	*** 000f4c	50 			push	ax
+	*** 000f4d	8b f3 			mov	si,bx
+	*** 000f4f	e8 00 00 		call	_MapIn3dObjects
+	*** 000f52	83 c4 02 		add	sp,2
+	*** 000f55	0b c0 			or	ax,ax
+	*** 000f57	74 91 			je	$SB904
+;|*** 					DrawASmoke(X, Y, Z, STACK3D[i].ID, 1,SHFT);
+; Line 514
+	*** 000f59	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000f5c	b8 01 00 		mov	ax,1
+	*** 000f5f	50 			push	ax
+	*** 000f60	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000f64	26 ff b4 08 00 		push	WORD PTR es:_STACK3D[si+8]
+	*** 000f69	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000f6c	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000f6f	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000f72	e8 00 00 		call	_DrawASmoke
+	*** 000f75	e9 6f ff 		jmp	$L20041
+;|*** 				}
+;|*** 			break;
+;|*** 			case SHADOW_OBJ:
+; Line 517
+					$SC917:
+;|*** 				DrawShadow(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+; Line 518
+	*** 000f78	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000f7b	b8 12 00 		mov	ax,18
+	*** 000f7e	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000f81	8b d8 			mov	bx,ax
+	*** 000f83	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000f87	26 ff b7 08 00 		push	WORD PTR es:_STACK3D[bx+8]
+	*** 000f8c	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000f8f	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000f92	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000f95	26 ff b7 00 00 		push	WORD PTR es:_STACK3D[bx]
+	*** 000f9a	e8 00 00 		call	_DrawShadow
+	*** 000f9d	e9 47 ff 		jmp	$L20041
+;|*** 			break;
+;|*** 			case PLANES_OBJ:
+; Line 520
+					$SC919:
+;|*** 				DrawTexPlane(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+; Line 521
+	*** 000fa0	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000fa3	b8 12 00 		mov	ax,18
+	*** 000fa6	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000fa9	8b d8 			mov	bx,ax
+	*** 000fab	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000faf	26 ff b7 08 00 		push	WORD PTR es:_STACK3D[bx+8]
+	*** 000fb4	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000fb7	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000fba	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000fbd	26 ff b7 00 00 		push	WORD PTR es:_STACK3D[bx]
+	*** 000fc2	e8 00 00 		call	_DrawTexPlane
+	*** 000fc5	e9 1f ff 		jmp	$L20041
+;|*** 			break;
+;|*** 			case CHUTE_OBJ:
+; Line 523
+					$SC921:
+;|*** 				DrawChute(STACK3D[i].OBJ, X, Y, Z,SHFT);
+; Line 524
+	*** 000fc8	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000fcb	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000fce	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000fd1	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000fd4	b8 12 00 		mov	ax,18
+	*** 000fd7	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 000fda	8b d8 			mov	bx,ax
+	*** 000fdc	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 000fe0	26 ff b7 00 00 		push	WORD PTR es:_STACK3D[bx]
+	*** 000fe5	e8 00 00 		call	_DrawChute
+					$L20042:
+	*** 000fe8	83 c4 0a 		add	sp,10
+;|*** 			break;
+; Line 525
+	*** 000feb	e9 fc fe 		jmp	$SB904
+;|*** 			case FLARE_OBJ:
+; Line 526
+					$SC923:
+;|*** 			case CHAFF_OBJ:
+;|*** 				DrawDecoy(STACK3D[i].OBJ, X, Y, Z,SHFT);
+; Line 528
+	*** 000fee	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 000ff1	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 000ff4	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 000ff7	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 000ffa	b8 12 00 		mov	ax,18
+	*** 000ffd	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 001000	8b d8 			mov	bx,ax
+	*** 001002	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 001006	26 ff b7 00 00 		push	WORD PTR es:_STACK3D[bx]
+	*** 00100b	e8 00 00 		call	_DrawDecoy
+	*** 00100e	eb d8 			jmp	SHORT $L20042
+;|*** 			break;
+;|*** 			case REG_BOAT_OBJ:
+; Line 530
+					$SC925:
+;|*** 				DrawRegBoat(STACK3D[i].OBJ, X, Y, Z, STACK3D[i].ID,SHFT);
+; Line 531
+	*** 001010	ff 76 f6 		push	WORD PTR [bp-10]	;SHFT
+	*** 001013	b8 12 00 		mov	ax,18
+	*** 001016	f7 6e e8 		imul	WORD PTR [bp-24]	;i
+	*** 001019	8b d8 			mov	bx,ax
+	*** 00101b	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 00101f	26 ff b7 08 00 		push	WORD PTR es:_STACK3D[bx+8]
+	*** 001024	ff 76 e6 		push	WORD PTR [bp-26]	;Z
+	*** 001027	ff 76 ea 		push	WORD PTR [bp-22]	;Y
+	*** 00102a	ff 76 ec 		push	WORD PTR [bp-20]	;X
+	*** 00102d	26 ff b7 00 00 		push	WORD PTR es:_STACK3D[bx]
+	*** 001032	e8 00 00 		call	_DrawRegBoat
+	*** 001035	e9 af fe 		jmp	$L20041
+;|*** 			break;
+;|*** 			default:
+; Line 533
+					$S903:
+	*** 001038	3d 5a 00 		cmp	ax,90
+	*** 00103b	74 d3 			je	$SC925
+	*** 00103d	77 7b 			ja	$SD927
+	*** 00103f	3c 32 			cmp	al,50
+	*** 001041	74 85 			je	$SC921
+	*** 001043	7f 61 			jg	$L20023
+	*** 001045	fe c8 			dec	al
+	*** 001047	3d 27 00 		cmp	ax,39
+	*** 00104a	77 6e 			ja	$SD927
+	*** 00104c	d1 e0 			shl	ax,1
+	*** 00104e	93 			xchg	ax,bx
+	*** 00104f	2e ff a7 56 10 		jmp	WORD PTR cs:$L20024[bx]
+	*** 001054	90 			nop	
+	*** 001055	90 			nop	
+					$L20024:
+	*** 001056	c2 0e 				DW	$SC907
+	*** 001058	c2 0e 				DW	$SC907
+	*** 00105a	ba 10 				DW	$SD927
+	*** 00105c	ba 10 				DW	$SD927
+	*** 00105e	ba 10 				DW	$SD927
+	*** 001060	c2 0e 				DW	$SC907
+	*** 001062	c2 0e 				DW	$SC907
+	*** 001064	c2 0e 				DW	$SC907
+	*** 001066	c2 0e 				DW	$SC907
+	*** 001068	c2 0e 				DW	$SC907
+	*** 00106a	c2 0e 				DW	$SC907
+	*** 00106c	ba 10 				DW	$SD927
+	*** 00106e	ba 10 				DW	$SD927
+	*** 001070	ba 10 				DW	$SD927
+	*** 001072	ba 10 				DW	$SD927
+	*** 001074	ba 10 				DW	$SD927
+	*** 001076	ba 10 				DW	$SD927
+	*** 001078	ba 10 				DW	$SD927
+	*** 00107a	ba 10 				DW	$SD927
+	*** 00107c	ba 10 				DW	$SD927
+	*** 00107e	ba 10 				DW	$SD927
+	*** 001080	ba 10 				DW	$SD927
+	*** 001082	ba 10 				DW	$SD927
+	*** 001084	ba 10 				DW	$SD927
+	*** 001086	ba 10 				DW	$SD927
+	*** 001088	ba 10 				DW	$SD927
+	*** 00108a	ba 10 				DW	$SD927
+	*** 00108c	ba 10 				DW	$SD927
+	*** 00108e	ba 10 				DW	$SD927
+	*** 001090	fe 0e 				DW	$SC909
+	*** 001092	ba 10 				DW	$SD927
+	*** 001094	ba 10 				DW	$SD927
+	*** 001096	ba 10 				DW	$SD927
+	*** 001098	ba 10 				DW	$SD927
+	*** 00109a	ba 10 				DW	$SD927
+	*** 00109c	ba 10 				DW	$SD927
+	*** 00109e	ba 10 				DW	$SD927
+	*** 0010a0	ba 10 				DW	$SD927
+	*** 0010a2	ba 10 				DW	$SD927
+	*** 0010a4	a0 0f 				DW	$SC919
+					$L20023:
+	*** 0010a6	3c 3c 			cmp	al,60
+	*** 0010a8	75 03 			jne	$JCC4264
+	*** 0010aa	e9 cb fe 		jmp	$SC917
+					$JCC4264:
+	*** 0010ad	7f 1b 			jg	$L20025
+	*** 0010af	2c 37 			sub	al,55
+	*** 0010b1	7c 07 			jl	$SD927
+	*** 0010b3	fe c8 			dec	al
+	*** 0010b5	7f 03 			jg	$JCC4277
+	*** 0010b7	e9 34 ff 		jmp	$SC923
+					$JCC4277:
+					$SD927:
+;|*** 				Message("Error",DEBUG_MSG);
+; Line 534
+	*** 0010ba	2b c0 			sub	ax,ax
+	*** 0010bc	50 			push	ax
+	*** 0010bd	b8 58 00 		mov	ax,OFFSET DGROUP:$SG929
+	*** 0010c0	50 			push	ax
+	*** 0010c1	e8 00 00 		call	_Message
+	*** 0010c4	83 c4 04 		add	sp,4
+;|*** 			break;
+; Line 535
+	*** 0010c7	e9 20 fe 		jmp	$SB904
+					$L20025:
+	*** 0010ca	2c 46 			sub	al,70
+	*** 0010cc	75 03 			jne	$JCC4300
+	*** 0010ce	e9 41 fe 		jmp	$SC911
+					$JCC4300:
+	*** 0010d1	2c 0a 			sub	al,10
+	*** 0010d3	75 03 			jne	$JCC4307
+	*** 0010d5	e9 62 fe 		jmp	$SC913
+					$JCC4307:
+	*** 0010d8	eb e0 			jmp	SHORT $SD927
+					$FB898:
+;|*** 		}
+;|*** 		i=STACK3D[i].NXT;
+;|*** 	}
+;|*** 
+;|*** 	LASTSTACK=0;
+; Line 540
+	*** 0010da	c7 06 0a 00 00 00 	mov	WORD PTR _LASTSTACK,0
+;|*** 	FARSTACK=-1;
+; Line 541
+	*** 0010e0	c7 06 0c 00 ff ff 	mov	WORD PTR _FARSTACK,-1
+;|*** 
+;|*** }
+; Line 543
+	*** 0010e6	5e 			pop	si
+	*** 0010e7	5f 			pop	di
+	*** 0010e8	8b e5 			mov	sp,bp
+	*** 0010ea	5d 			pop	bp
+	*** 0010eb	c3 			ret	
+
+_EndStack3D	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** Stack3Dobject(int OBJ, int X, int Y, int Z, int ID, UWORD SCL, int objtype)
+;|*** {
+; Line 547
+	PUBLIC	_Stack3Dobject
+_Stack3Dobject	PROC NEAR
+	*** 0010ec	55 			push	bp
+	*** 0010ed	8b ec 			mov	bp,sp
+	*** 0010ef	83 ec 0c 		sub	sp,12
+;	i = -8
+;	prev = -12
+;	DST = -10
+;	V = -6
+;	objtype = 16
+;	SCL = 14
+;	ID = 12
+;	Z = 10
+;	Y = 8
+;	X = 6
+;	OBJ = 4
+;|*** 	int	i,prev;
+;|*** 	UWORD DST;
+;|*** 	int	V[3];
+;|*** 
+;|*** 	if (LASTSTACK>49) return 0;
+; Line 552
+	*** 0010f2	83 3e 0a 00 31 		cmp	WORD PTR _LASTSTACK,49
+	*** 0010f7	7e 07 			jle	$I943
+	*** 0010f9	2b c0 			sub	ax,ax
+	*** 0010fb	8b e5 			mov	sp,bp
+	*** 0010fd	5d 			pop	bp
+	*** 0010fe	c3 			ret	
+;|*** 
+;|*** 	DST=Dist3D(X,Y,Z);
+; Line 554
+	*** 0010ff	90 			nop	
+					$I943:
+	*** 001100	ff 76 0a 		push	WORD PTR [bp+10]	;Z
+	*** 001103	ff 76 08 		push	WORD PTR [bp+8]	;Y
+	*** 001106	ff 76 06 		push	WORD PTR [bp+6]	;X
+	*** 001109	e8 00 00 		call	_Dist3D
+	*** 00110c	83 c4 06 		add	sp,6
+	*** 00110f	89 46 f6 		mov	WORD PTR [bp-10],ax	;DST
+;|*** 
+;|*** 	/* Mike KLUDGE */
+;|*** 
+;|*** 	if (objtype == CARRIER_OBJ_2) {
+; Line 558
+	*** 001112	83 7e 10 02 		cmp	WORD PTR [bp+16],2	;objtype
+	*** 001116	75 0a 			jne	$I946
+;|*** 		if (DST < 30000)
+; Line 559
+	*** 001118	3d 30 75 		cmp	ax,30000
+	*** 00111b	73 05 			jae	$I946
+;|*** 			DST += 2000;
+; Line 560
+	*** 00111d	81 46 f6 d0 07 		add	WORD PTR [bp-10],2000	;DST
+;|*** 	}
+; Line 561
+					$I946:
+;|*** 
+;|*** 	if (objtype == CARRIER_OBJ_1)
+; Line 563
+	*** 001122	83 7e 10 01 		cmp	WORD PTR [bp+16],1	;objtype
+	*** 001126	75 1a 			jne	$I950
+;|*** 	{
+; Line 564
+;|*** 		if (ViewZ < (66/4))
+; Line 565
+	*** 001128	83 3e 00 00 10 		cmp	WORD PTR _ViewZ,16
+	*** 00112d	7d 07 			jge	$I948
+;|*** 		{
+; Line 566
+;|*** 			DST=0;
+; Line 567
+	*** 00112f	c7 46 f6 00 00 		mov	WORD PTR [bp-10],0	;DST
+;|*** #ifdef YEP
+;|*** 			if ((DST-=1000) < 0)
+;|*** 			{
+;|*** 				DST = 0;
+;|*** 			}
+;|*** #endif
+;|*** 		} else
+; Line 574
+	*** 001134	eb 0c 			jmp	SHORT $I950
+					$I948:
+;|*** 		{
+; Line 575
+;|*** 			if (DST < 30000)
+; Line 576
+	*** 001136	81 7e f6 30 75 		cmp	WORD PTR [bp-10],30000	;DST
+	*** 00113b	73 05 			jae	$I950
+;|*** 				DST+=1000;
+; Line 577
+	*** 00113d	81 46 f6 e8 03 		add	WORD PTR [bp-10],1000	;DST
+;|*** 		}
+; Line 578
+					$I950:
+;|*** 	}
+; Line 579
+;|*** 
+;|*** 	V[0]=X;
+; Line 581
+	*** 001142	8b 46 06 		mov	ax,WORD PTR [bp+6]	;X
+	*** 001145	89 46 fa 		mov	WORD PTR [bp-6],ax	;V
+;|*** 	V[1]=Y;
+; Line 582
+	*** 001148	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;Y
+	*** 00114b	89 4e fc 		mov	WORD PTR [bp-4],cx
+;|*** 	V[2]=Z;
+; Line 583
+	*** 00114e	8b 56 0a 		mov	dx,WORD PTR [bp+10]	;Z
+	*** 001151	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 	Rotate(V,Nviewmat);
+; Line 584
+	*** 001154	bb 00 00 		mov	bx,OFFSET _Nviewmat
+	*** 001157	53 			push	bx
+	*** 001158	8d 5e fa 		lea	bx,WORD PTR [bp-6]	;V
+	*** 00115b	53 			push	bx
+	*** 00115c	e8 00 00 		call	_Rotate
+	*** 00115f	83 c4 04 		add	sp,4
+;|*** 	V[2]+= 500;
+; Line 585
+	*** 001162	81 46 fe f4 01 		add	WORD PTR [bp-2],500
+;|*** 
+;|*** //	if (abs(V[0]/2)>(V[2])) return 0;
+;|*** //	if (abs(V[1]/2)>(V[2])) return 0;
+;|*** 
+;|*** 	STACK3D[LASTSTACK].OBJ=OBJ;
+; Line 590
+	*** 001167	b8 12 00 		mov	ax,18
+	*** 00116a	f7 2e 0a 00 		imul	WORD PTR _LASTSTACK
+	*** 00116e	8b d8 			mov	bx,ax
+	*** 001170	8e 06 00 00 		mov	es,WORD PTR $T20016
+	*** 001174	8b 46 04 		mov	ax,WORD PTR [bp+4]	;OBJ
+	*** 001177	26 89 87 00 00 		mov	WORD PTR es:_STACK3D[bx],ax
+;|*** 	STACK3D[LASTSTACK].X=X;
+; Line 591
+	*** 00117c	8b 46 06 		mov	ax,WORD PTR [bp+6]	;X
+	*** 00117f	26 89 87 02 00 		mov	WORD PTR es:_STACK3D[bx+2],ax
+;|*** 	STACK3D[LASTSTACK].Y=Y;
+; Line 592
+	*** 001184	8b 46 08 		mov	ax,WORD PTR [bp+8]	;Y
+	*** 001187	26 89 87 04 00 		mov	WORD PTR es:_STACK3D[bx+4],ax
+;|*** 	STACK3D[LASTSTACK].Z=Z;
+; Line 593
+	*** 00118c	8b 46 0a 		mov	ax,WORD PTR [bp+10]	;Z
+	*** 00118f	26 89 87 06 00 		mov	WORD PTR es:_STACK3D[bx+6],ax
+;|*** 	STACK3D[LASTSTACK].ID=ID;
+; Line 594
+	*** 001194	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;ID
+	*** 001197	26 89 87 08 00 		mov	WORD PTR es:_STACK3D[bx+8],ax
+;|*** 	STACK3D[LASTSTACK].NXT=-1;
+; Line 595
+	*** 00119c	26 c7 87 0a 00 ff ff 	mov	WORD PTR es:_STACK3D[bx+10],-1
+;|*** 	STACK3D[LASTSTACK].DST=DST;
+; Line 596
+	*** 0011a3	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;DST
+	*** 0011a6	26 89 87 0c 00 		mov	WORD PTR es:_STACK3D[bx+12],ax
+;|*** 	STACK3D[LASTSTACK].TYPE=objtype;
+; Line 597
+	*** 0011ab	8b 46 10 		mov	ax,WORD PTR [bp+16]	;objtype
+	*** 0011ae	26 89 87 0e 00 		mov	WORD PTR es:_STACK3D[bx+14],ax
+;|*** 	STACK3D[LASTSTACK].SCL=SCL;
+; Line 598
+	*** 0011b3	8b 46 0e 		mov	ax,WORD PTR [bp+14]	;SCL
+	*** 0011b6	26 89 87 10 00 		mov	WORD PTR es:_STACK3D[bx+16],ax
+;|*** 
+;|*** 	if (LASTSTACK==0) {
+; Line 600
+	*** 0011bb	83 3e 0a 00 00 		cmp	WORD PTR _LASTSTACK,0
+	*** 0011c0	75 12 			jne	$I952
+;|*** 		FARSTACK=0;
+; Line 601
+	*** 0011c2	c7 06 0c 00 00 00 	mov	WORD PTR _FARSTACK,0
+;|*** 		LASTSTACK++;
+; Line 602
+					$L20044:
+	*** 0011c8	ff 06 0a 00 		inc	WORD PTR _LASTSTACK
+;|*** 		return 1;
+; Line 603
+	*** 0011cc	b8 01 00 		mov	ax,1
+	*** 0011cf	8b e5 			mov	sp,bp
+	*** 0011d1	5d 			pop	bp
+	*** 0011d2	c3 			ret	
+;|*** 	}
+; Line 604
+;|*** 
+;|*** 	for (i=FARSTACK,prev=-1;i!=-1;) {
+; Line 606
+	*** 0011d3	90 			nop	
+					$I952:
+	*** 0011d4	a1 0c 00 		mov	ax,WORD PTR _FARSTACK
+	*** 0011d7	89 46 f8 		mov	WORD PTR [bp-8],ax	;i
+	*** 0011da	c7 46 f4 ff ff 		mov	WORD PTR [bp-12],-1	;prev
+					$FC954:
+	*** 0011df	3d ff ff 		cmp	ax,-1
+	*** 0011e2	74 12 			je	$FB955
+;|*** 
+;|*** 		if (DST>STACK3D[i].DST) break;
+; Line 608
+	*** 0011e4	b8 12 00 		mov	ax,18
+	*** 0011e7	f7 6e f8 		imul	WORD PTR [bp-8]	;i
+	*** 0011ea	8b d8 			mov	bx,ax
+	*** 0011ec	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;DST
+	*** 0011ef	26 39 87 0c 00 		cmp	WORD PTR es:_STACK3D[bx+12],ax
+	*** 0011f4	73 20 			jae	$I956
+					$FB955:
+;|*** 		prev=i;
+;|*** 		i=STACK3D[i].NXT;
+;|*** 	}
+;|*** 	STACK3D[LASTSTACK].NXT=i;
+; Line 612
+	*** 0011f6	b8 12 00 		mov	ax,18
+	*** 0011f9	f7 2e 0a 00 		imul	WORD PTR _LASTSTACK
+	*** 0011fd	8b d8 			mov	bx,ax
+	*** 0011ff	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;i
+	*** 001202	26 89 87 0a 00 		mov	WORD PTR es:_STACK3D[bx+10],ax
+;|*** 
+;|*** 	if (prev==-1)
+; Line 614
+	*** 001207	83 7e f4 ff 		cmp	WORD PTR [bp-12],-1	;prev
+	*** 00120b	75 21 			jne	$I957
+;|*** 		FARSTACK=LASTSTACK;
+; Line 615
+	*** 00120d	a1 0a 00 		mov	ax,WORD PTR _LASTSTACK
+	*** 001210	a3 0c 00 		mov	WORD PTR _FARSTACK,ax
+;|*** 	else
+; Line 616
+	*** 001213	eb b3 			jmp	SHORT $L20044
+;|*** 		prev=i;
+; Line 609
+	*** 001215	90 			nop	
+					$I956:
+;|*** 		i=STACK3D[i].NXT;
+; Line 610
+	*** 001216	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;i
+	*** 001219	89 46 f4 		mov	WORD PTR [bp-12],ax	;prev
+	*** 00121c	b9 12 00 		mov	cx,18
+	*** 00121f	f7 e9 			imul	cx
+	*** 001221	8b d8 			mov	bx,ax
+	*** 001223	26 8b 87 0a 00 		mov	ax,WORD PTR es:_STACK3D[bx+10]
+	*** 001228	89 46 f8 		mov	WORD PTR [bp-8],ax	;i
+;|*** 	}
+; Line 611
+	*** 00122b	eb b2 			jmp	SHORT $FC954
+	*** 00122d	90 			nop	
+					$I957:
+;|*** 	STACK3D[LASTSTACK].NXT=i;
+;|*** 
+;|*** 	if (prev==-1)
+;|*** 		FARSTACK=LASTSTACK;
+;|*** 	else
+;|*** 		STACK3D[prev].NXT=LASTSTACK;
+; Line 617
+	*** 00122e	b8 12 00 		mov	ax,18
+	*** 001231	f7 6e f4 		imul	WORD PTR [bp-12]	;prev
+	*** 001234	8b d8 			mov	bx,ax
+	*** 001236	a1 0a 00 		mov	ax,WORD PTR _LASTSTACK
+	*** 001239	26 89 87 0a 00 		mov	WORD PTR es:_STACK3D[bx+10],ax
+	*** 00123e	eb 88 			jmp	SHORT $L20044
+;|*** 	LASTSTACK++;
+;|*** 
+;|***     return 1;
+;|*** }
+; Line 621
+
+_Stack3Dobject	ENDP
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** DrawAAA()
+;|*** {
+; Line 626
+	PUBLIC	_DrawAAA
+_DrawAAA	PROC NEAR
+	*** 001240	55 			push	bp
+	*** 001241	8b ec 			mov	bp,sp
+	*** 001243	83 ec 44 		sub	sp,68
+	*** 001246	56 			push	si
+;	dx = -40
+;	dy = -54
+;	dz = -66
+;	t1 = -28
+;	t2 = -34
+;	cnt = -24
+;	acnt = -30
+;	adx = -50
+;	ady = -64
+;	Save = -68
+;	VM = -22
+;	Angle2 = -36
+;	Fred = -4
+;|*** 	long dx, dy;
+;|*** 	int dz;
+;|*** 	long t1;
+;|*** 	long t2;
+;|*** 	int cnt;
+;|*** 	int acnt;
+;|*** 	int adx[] = { 525, 525,   0, -525, -525};
+;|*** 	int ady[] = {-525, 525,   0,  525, -525};
+; Line 634
+	*** 001247	b8 0d 02 		mov	ax,525
+	*** 00124a	89 46 ce 		mov	WORD PTR [bp-50],ax	;adx
+	*** 00124d	89 46 d0 		mov	WORD PTR [bp-48],ax
+	*** 001250	89 46 c2 		mov	WORD PTR [bp-62],ax
+	*** 001253	89 46 c6 		mov	WORD PTR [bp-58],ax
+	*** 001256	b8 f3 fd 		mov	ax,-525
+	*** 001259	89 46 d4 		mov	WORD PTR [bp-44],ax
+	*** 00125c	89 46 d6 		mov	WORD PTR [bp-42],ax
+	*** 00125f	89 46 c0 		mov	WORD PTR [bp-64],ax	;ady
+	*** 001262	89 46 c8 		mov	WORD PTR [bp-56],ax
+;|***     UWORD       Save;
+;|***     int        VM[9];
+;|***     int        Angle2;
+;|*** 
+;|***     UBYTE far  *Fred=AAFIRE;
+; Line 639
+	*** 001265	c7 46 fc 00 00 		mov	WORD PTR [bp-4],OFFSET _AAFIRE	;Fred
+	*** 00126a	c7 46 fe 00 00 		mov	WORD PTR [bp-2],SEG _AAFIRE
+;|***     static UWORD Angle1=0;
+;|*** 
+;|***     Save = Seg3D;
+; Line 642
+	*** 00126f	a1 00 00 		mov	ax,WORD PTR _Seg3D
+	*** 001272	89 46 bc 		mov	WORD PTR [bp-68],ax	;Save
+;|***     Seg3D = FP_SEG(Fred);
+; Line 643
+	*** 001275	8b 46 fe 		mov	ax,WORD PTR [bp-2]
+	*** 001278	a3 00 00 		mov	WORD PTR _Seg3D,ax
+;|*** 
+;|*** 	for(cnt = 0; cnt < NGTARGETS; cnt ++) {
+; Line 645
+	*** 00127b	2b c0 			sub	ax,ax
+	*** 00127d	89 46 d2 		mov	WORD PTR [bp-46],ax
+	*** 001280	89 46 c4 		mov	WORD PTR [bp-60],ax
+	*** 001283	89 46 e8 		mov	WORD PTR [bp-24],ax	;cnt
+	*** 001286	e9 f8 00 		jmp	$F975
+;|*** 		if(gt[cnt].gflags & AAA_FIRING) {
+;|*** 			dz = GetQHeight (gt[cnt].x, gt[cnt].y) - ViewZ;
+;|*** 			if (abs(dz) > 0x3ffe)
+;|*** 				continue;
+;|*** 			for(acnt = 0; acnt < 5; acnt++) {
+;|*** 
+;|*** 				dx = (gt[cnt].x + (long)adx[acnt]) - ViewX;
+;|*** 		    	dy = ViewY - (0x100000L-(gt[cnt].y + (long)ady[acnt]));
+;|*** 
+;|*** 				t1 = labs(dy);
+;|*** 				if (t1>0x3fff)
+;|*** 					continue;
+;|*** 				t1 = labs(dx);
+; Line 658
+	*** 001289	90 			nop	
+					$I984:
+;|*** 				if (t1>0x3fff)
+; Line 659
+	*** 00128a	ff 76 da 		push	WORD PTR [bp-38]
+	*** 00128d	ff 76 d8 		push	WORD PTR [bp-40]	;dx
+	*** 001290	e8 00 00 		call	_labs
+	*** 001293	83 c4 04 		add	sp,4
+	*** 001296	89 46 e4 		mov	WORD PTR [bp-28],ax	;t1
+	*** 001299	89 56 e6 		mov	WORD PTR [bp-26],dx
+	*** 00129c	0b d2 			or	dx,dx
+	*** 00129e	7d 03 			jge	$JCC4766
+	*** 0012a0	e9 81 00 		jmp	$I985
+					$JCC4766:
+	*** 0012a3	7f 05 			jg	$FC982
+	*** 0012a5	3d ff 3f 		cmp	ax,16383
+	*** 0012a8	76 7a 			jbe	$I985
+;|*** 					continue;
+; Line 660
+					$FC982:
+	*** 0012aa	ff 46 e2 		inc	WORD PTR [bp-30]	;acnt
+					$F981:
+	*** 0012ad	83 7e e2 05 		cmp	WORD PTR [bp-30],5	;acnt
+	*** 0012b1	7c 03 			jl	$JCC4785
+	*** 0012b3	e9 c8 00 		jmp	$FB983
+					$JCC4785:
+;|*** 				dx = (gt[cnt].x + (long)adx[acnt]) - ViewX;
+; Line 652
+	*** 0012b6	8b 76 e2 		mov	si,WORD PTR [bp-30]	;acnt
+	*** 0012b9	d1 e6 			shl	si,1
+	*** 0012bb	8b 42 ce 		mov	ax,WORD PTR [bp-50][si]
+	*** 0012be	99 			cwd	
+	*** 0012bf	8b 5e e8 		mov	bx,WORD PTR [bp-24]	;cnt
+	*** 0012c2	8b cb 			mov	cx,bx
+	*** 0012c4	d1 e3 			shl	bx,1
+	*** 0012c6	03 d9 			add	bx,cx
+	*** 0012c8	d1 e3 			shl	bx,1
+	*** 0012ca	d1 e3 			shl	bx,1
+	*** 0012cc	03 87 00 00 		add	ax,WORD PTR _gt[bx]
+	*** 0012d0	13 97 02 00 		adc	dx,WORD PTR _gt[bx+2]
+	*** 0012d4	2b 06 00 00 		sub	ax,WORD PTR _ViewX
+	*** 0012d8	1b 16 02 00 		sbb	dx,WORD PTR _ViewX+2
+	*** 0012dc	89 46 d8 		mov	WORD PTR [bp-40],ax	;dx
+	*** 0012df	89 56 da 		mov	WORD PTR [bp-38],dx
+;|*** 		    	dy = ViewY - (0x100000L-(gt[cnt].y + (long)ady[acnt]));
+; Line 653
+	*** 0012e2	8b 42 c0 		mov	ax,WORD PTR [bp-64][si]
+	*** 0012e5	99 			cwd	
+	*** 0012e6	03 87 04 00 		add	ax,WORD PTR _gt[bx+4]
+	*** 0012ea	13 97 06 00 		adc	dx,WORD PTR _gt[bx+6]
+	*** 0012ee	03 06 00 00 		add	ax,WORD PTR _ViewY
+	*** 0012f2	13 16 02 00 		adc	dx,WORD PTR _ViewY+2
+	*** 0012f6	2d 00 00 		sub	ax,0
+	*** 0012f9	83 da 10 		sbb	dx,16
+	*** 0012fc	89 46 ca 		mov	WORD PTR [bp-54],ax	;dy
+	*** 0012ff	89 56 cc 		mov	WORD PTR [bp-52],dx
+;|*** 
+;|*** 				t1 = labs(dy);
+;|*** 				if (t1>0x3fff)
+; Line 656
+	*** 001302	52 			push	dx
+	*** 001303	50 			push	ax
+	*** 001304	e8 00 00 		call	_labs
+	*** 001307	83 c4 04 		add	sp,4
+	*** 00130a	89 46 e4 		mov	WORD PTR [bp-28],ax	;t1
+	*** 00130d	89 56 e6 		mov	WORD PTR [bp-26],dx
+	*** 001310	0b d2 			or	dx,dx
+	*** 001312	7d 03 			jge	$JCC4882
+	*** 001314	e9 73 ff 		jmp	$I984
+					$JCC4882:
+	*** 001317	7f 91 			jg	$FC982
+	*** 001319	3d ff 3f 		cmp	ax,16383
+	*** 00131c	77 03 			ja	$JCC4892
+	*** 00131e	e9 69 ff 		jmp	$I984
+					$JCC4892:
+;|*** 					continue;
+; Line 657
+	*** 001321	eb 87 			jmp	SHORT $FC982
+;|*** 				t1 = labs(dx);
+;|*** 				if (t1>0x3fff)
+;|*** 					continue;
+;|*** 
+;|***         		Angle2 = (Angle1+((cnt + (acnt<<2))&15)*512)&8191;
+; Line 662
+	*** 001323	90 			nop	
+					$I985:
+	*** 001324	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;acnt
+	*** 001327	d1 e0 			shl	ax,1
+	*** 001329	d1 e0 			shl	ax,1
+	*** 00132b	03 46 e8 		add	ax,WORD PTR [bp-24]	;cnt
+	*** 00132e	8b c8 			mov	cx,ax
+	*** 001330	8a e0 			mov	ah,al
+	*** 001332	d0 e4 			shl	ah,1
+	*** 001334	2a c0 			sub	al,al
+	*** 001336	03 06 5e 00 		add	ax,WORD PTR $S974_Angle1
+	*** 00133a	80 e4 1f 		and	ah,31
+	*** 00133d	89 46 dc 		mov	WORD PTR [bp-36],ax	;Angle2
+;|***         		MakeMatRPH (0, 5471, ((cnt + (acnt<<2))&15)*0x1000, VM);
+; Line 663
+	*** 001340	8d 46 ea 		lea	ax,WORD PTR [bp-22]	;VM
+	*** 001343	50 			push	ax
+	*** 001344	8a e9 			mov	ch,cl
+	*** 001346	2a c9 			sub	cl,cl
+	*** 001348	8b d1 			mov	dx,cx
+	*** 00134a	b1 04 			mov	cl,4
+	*** 00134c	d3 e2 			shl	dx,cl
+	*** 00134e	52 			push	dx
+	*** 00134f	b9 5f 15 		mov	cx,5471
+	*** 001352	51 			push	cx
+	*** 001353	2b c9 			sub	cx,cx
+	*** 001355	51 			push	cx
+	*** 001356	e8 00 00 		call	_MakeMatRPH
+	*** 001359	83 c4 08 		add	sp,8
+;|***         		NDraw3DObject(N3DZ_AAA, (int)dx, dz, (int)dy, VM, &Angle2, 0);
+; Line 664
+	*** 00135c	2b c0 			sub	ax,ax
+	*** 00135e	50 			push	ax
+	*** 00135f	8d 46 dc 		lea	ax,WORD PTR [bp-36]	;Angle2
+	*** 001362	50 			push	ax
+	*** 001363	8d 46 ea 		lea	ax,WORD PTR [bp-22]	;VM
+	*** 001366	50 			push	ax
+	*** 001367	ff 76 ca 		push	WORD PTR [bp-54]	;dy
+	*** 00136a	ff 76 be 		push	WORD PTR [bp-66]	;dz
+	*** 00136d	ff 76 d8 		push	WORD PTR [bp-40]	;dx
+	*** 001370	b8 23 00 		mov	ax,35
+	*** 001373	50 			push	ax
+	*** 001374	e8 00 00 		call	_NDraw3DObject
+	*** 001377	83 c4 0e 		add	sp,14
+;|*** 			}
+; Line 665
+	*** 00137a	e9 2d ff 		jmp	$FC982
+	*** 00137d	90 			nop	
+					$FB983:
+;|*** 		}
+; Line 666
+;|*** 	}
+; Line 667
+	*** 00137e	ff 46 e8 		inc	WORD PTR [bp-24]	;cnt
+					$F975:
+	*** 001381	a1 00 00 		mov	ax,WORD PTR _NGTARGETS
+	*** 001384	39 46 e8 		cmp	WORD PTR [bp-24],ax	;cnt
+	*** 001387	7d 45 			jge	$FB977
+;|*** 		if(gt[cnt].gflags & AAA_FIRING) {
+; Line 646
+	*** 001389	8b 5e e8 		mov	bx,WORD PTR [bp-24]	;cnt
+	*** 00138c	8b c3 			mov	ax,bx
+	*** 00138e	d1 e3 			shl	bx,1
+	*** 001390	03 d8 			add	bx,ax
+	*** 001392	d1 e3 			shl	bx,1
+	*** 001394	d1 e3 			shl	bx,1
+	*** 001396	f6 87 0b 00 40 		test	BYTE PTR _gt[bx+11],64
+	*** 00139b	74 e1 			je	$FB983
+;|*** 			dz = GetQHeight (gt[cnt].x, gt[cnt].y) - ViewZ;
+;|*** 			if (abs(dz) > 0x3ffe)
+; Line 648
+	*** 00139d	ff b7 06 00 		push	WORD PTR _gt[bx+6]
+	*** 0013a1	ff b7 04 00 		push	WORD PTR _gt[bx+4]
+	*** 0013a5	ff b7 02 00 		push	WORD PTR _gt[bx+2]
+	*** 0013a9	ff b7 00 00 		push	WORD PTR _gt[bx]
+	*** 0013ad	e8 00 00 		call	_GetQHeight
+	*** 0013b0	83 c4 08 		add	sp,8
+	*** 0013b3	2b 06 00 00 		sub	ax,WORD PTR _ViewZ
+	*** 0013b7	89 46 be 		mov	WORD PTR [bp-66],ax	;dz
+	*** 0013ba	50 			push	ax
+	*** 0013bb	e8 00 00 		call	_abs
+	*** 0013be	83 c4 02 		add	sp,2
+	*** 0013c1	3d fe 3f 		cmp	ax,16382
+	*** 0013c4	7f b8 			jg	$FB983
+;|*** 				continue;
+;|*** 			for(acnt = 0; acnt < 5; acnt++) {
+; Line 650
+	*** 0013c6	c7 46 e2 00 00 		mov	WORD PTR [bp-30],0	;acnt
+	*** 0013cb	e9 df fe 		jmp	$F981
+					$FB977:
+;|*** 
+;|*** 				dx = (gt[cnt].x + (long)adx[acnt]) - ViewX;
+;|*** 		    	dy = ViewY - (0x100000L-(gt[cnt].y + (long)ady[acnt]));
+;|*** 
+;|*** 				t1 = labs(dy);
+;|*** 				if (t1>0x3fff)
+;|*** 					continue;
+;|*** 				t1 = labs(dx);
+;|*** 				if (t1>0x3fff)
+;|*** 					continue;
+;|*** 
+;|***         		Angle2 = (Angle1+((cnt + (acnt<<2))&15)*512)&8191;
+;|***         		MakeMatRPH (0, 5471, ((cnt + (acnt<<2))&15)*0x1000, VM);
+;|***         		NDraw3DObject(N3DZ_AAA, (int)dx, dz, (int)dy, VM, &Angle2, 0);
+;|*** 			}
+;|*** 		}
+;|*** 	}
+;|*** 
+;|***     Angle1 += 2048/FrameRate;
+; Line 669
+	*** 0013ce	b8 00 08 		mov	ax,2048
+	*** 0013d1	99 			cwd	
+	*** 0013d2	f7 3e 00 00 		idiv	WORD PTR _FrameRate
+	*** 0013d6	01 06 5e 00 		add	WORD PTR $S974_Angle1,ax
+;|***     Seg3D = Save;
+; Line 670
+	*** 0013da	8b 46 bc 		mov	ax,WORD PTR [bp-68]	;Save
+	*** 0013dd	a3 00 00 		mov	WORD PTR _Seg3D,ax
+;|*** }
+; Line 671
+	*** 0013e0	5e 			pop	si
+	*** 0013e1	8b e5 			mov	sp,bp
+	*** 0013e3	5d 			pop	bp
+	*** 0013e4	c3 			ret	
+	*** 0013e5	90 			nop	
+
+_DrawAAA	ENDP
+_TEXT	ENDS
+END
+;|*** 
+;|*** 

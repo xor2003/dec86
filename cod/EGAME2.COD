@@ -1,0 +1,438 @@
+;	Static Name Aliases
+;
+	TITLE   egame2.c
+	NAME    egame2
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_openFile:NEAR
+EXTRN	_createFile:NEAR
+EXTRN	_closeFile:NEAR
+EXTRN	_readFile1:NEAR
+EXTRN	_movedata:NEAR
+EXTRN	_readFile2:NEAR
+EXTRN	_sub_1DF4F:NEAR
+EXTRN	_fclose:NEAR
+EXTRN	_fopen:NEAR
+EXTRN	_fread:NEAR
+EXTRN	_GameLoopUpdate:NEAR
+EXTRN	_InitializeGameSettings:NEAR
+EXTRN	_load3DAll:NEAR
+EXTRN	_printError:NEAR
+EXTRN	_strcpyFromDot:NEAR
+EXTRN	_segread:NEAR
+EXTRN	_flt15_word1:WORD
+EXTRN	_flt15_buf1:BYTE
+EXTRN	_flt15_size:WORD
+EXTRN	_a_3d3_0:BYTE
+EXTRN	_aRb_4:BYTE
+EXTRN	_aOpenErrorOn_3d3_0:BYTE
+EXTRN	_a15flt_xxx:BYTE
+EXTRN	_flt15_buf2:BYTE
+EXTRN	_byte_3790C:BYTE
+EXTRN	_fileHandle:WORD
+EXTRN	_byte_2D6A4:BYTE
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** // seg000 optimized code (/Ot)
+;|*** #include "debug.h"
+;|*** #include "egame.h"
+;|*** #include "offsets.h"
+;|*** #include "pointers.h"
+;|*** #include "slot.h"
+;|*** #include "const.h"
+;|*** 
+;|*** #include <dos.h>
+;|*** #include <memory.h>
+;|*** 
+;|*** // ==== seg002:0xa ====
+;|*** int far sub_21A7A() {
+; Line 13
+	PUBLIC	_sub_21A7A
+_sub_21A7A	PROC FAR
+;|***     GameLoopUpdate();
+; Line 14
+	*** 000000	e8 00 00 		call	_GameLoopUpdate
+;|*** }
+; Line 15
+	*** 000003	cb 			ret	
+
+_sub_21A7A	ENDP
+;|*** 
+;|*** // ==== seg002:0xe ====
+;|*** void far sub_21A7E() {
+; Line 18
+	PUBLIC	_sub_21A7E
+_sub_21A7E	PROC FAR
+;|***     InitializeGameSettings();
+; Line 19
+	*** 000004	e8 00 00 		call	_InitializeGameSettings
+;|*** }
+; Line 20
+	*** 000007	cb 			ret	
+
+_sub_21A7E	ENDP
+;|*** 
+;|*** // ==== seg000:0x21c6 ====
+;|*** int sub_121C6() {
+; Line 23
+	PUBLIC	_sub_121C6
+_sub_121C6	PROC NEAR
+;|***     return load3DAll();
+; Line 24
+	*** 000008	e8 00 00 		call	_load3DAll
+	*** 00000b	c3 			ret	
+
+_sub_121C6	ENDP
+;|*** }
+;|*** 
+;|*** // ==== seg000:0x2278 ====
+;|*** int sub_12278(int arg_0) {
+; Line 28
+	PUBLIC	_sub_12278
+_sub_12278	PROC NEAR
+	*** 00000c	55 			push	bp
+	*** 00000d	8b ec 			mov	bp,sp
+	*** 00000f	83 ec 02 		sub	sp,2
+;	arg_0 = 4
+;	target_tick = -2
+;|***     uint8 target_tick;
+;|*** 
+;|***     if (arg_0 > 0) {
+; Line 31
+	*** 000012	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;arg_0
+	*** 000016	7e 12 			jle	$I1938
+;|***         target_tick = (uint8)arg_0 + byte_3790C[0];
+; Line 32
+	*** 000018	8a 46 04 		mov	al,BYTE PTR [bp+4]	;arg_0
+	*** 00001b	02 06 00 00 		add	al,BYTE PTR _byte_3790C
+	*** 00001f	88 46 fe 		mov	BYTE PTR [bp-2],al	;target_tick
+;|***         while (target_tick != byte_3790C[0]) {
+; Line 33
+					$FC1940:
+	*** 000022	a0 00 00 		mov	al,BYTE PTR _byte_3790C
+	*** 000025	38 46 fe 		cmp	BYTE PTR [bp-2],al	;target_tick
+	*** 000028	75 f8 			jne	$FC1940
+;|***         }
+; Line 34
+;|***     }
+; Line 35
+;|*** }
+; Line 36
+					$I1938:
+	*** 00002a	8b e5 			mov	sp,bp
+	*** 00002c	5d 			pop	bp
+	*** 00002d	c3 			ret	
+
+_sub_12278	ENDP
+;|*** 
+;|*** // ==== seg000:0xc8de ====
+;|*** int load15Flt3d3() {
+; Line 39
+	PUBLIC	_load15Flt3d3
+_load15Flt3d3	PROC NEAR
+	*** 00002e	55 			push	bp
+	*** 00002f	8b ec 			mov	bp,sp
+	*** 000031	83 ec 10 		sub	sp,16
+;	var_A = -14
+;	var_C = -16
+;	var_8 = -8
+;	var_10 = -12
+;|***     int var_A, var_C;
+;|***     struct SREGS var_8;
+;|***     uint8 FAR *var_10;
+;|***     strcpyFromDot(a15flt_xxx, a_3d3_0);
+; Line 43
+	*** 000034	b8 00 00 		mov	ax,OFFSET _a_3d3_0
+	*** 000037	50 			push	ax
+	*** 000038	b8 00 00 		mov	ax,OFFSET _a15flt_xxx
+	*** 00003b	50 			push	ax
+	*** 00003c	e8 00 00 		call	_strcpyFromDot
+	*** 00003f	83 c4 04 		add	sp,4
+;|***     fileHandle = fopen(a15flt_xxx, aRb_4);
+; Line 44
+	*** 000042	b8 00 00 		mov	ax,OFFSET _aRb_4
+	*** 000045	50 			push	ax
+	*** 000046	b8 00 00 		mov	ax,OFFSET _a15flt_xxx
+	*** 000049	50 			push	ax
+	*** 00004a	e8 00 00 		call	_fopen
+	*** 00004d	83 c4 04 		add	sp,4
+	*** 000050	a3 00 00 		mov	_fileHandle,ax
+;|***     if (fileHandle == NULL) {
+; Line 45
+	*** 000053	0b c0 			or	ax,ax
+	*** 000055	75 0b 			jne	$I1947
+;|***         // c90b
+;|***         printError(aOpenErrorOn_3d3_0);
+; Line 47
+	*** 000057	b8 00 00 		mov	ax,OFFSET _aOpenErrorOn_3d3_0
+	*** 00005a	50 			push	ax
+	*** 00005b	e8 00 00 		call	_printError
+	*** 00005e	8b e5 			mov	sp,bp
+	*** 000060	5d 			pop	bp
+	*** 000061	c3 			ret	
+					$I1947:
+	*** 000062	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000066	b8 01 00 		mov	ax,1
+	*** 000069	50 			push	ax
+	*** 00006a	b8 02 00 		mov	ax,2
+	*** 00006d	50 			push	ax
+	*** 00006e	b8 00 00 		mov	ax,OFFSET _flt15_word1
+	*** 000071	50 			push	ax
+	*** 000072	e8 00 00 		call	_fread
+	*** 000075	83 c4 08 		add	sp,8
+;|***         return;
+;|***     }
+;|***     // c922
+;|***     fread(&flt15_word1, 2, 1, fileHandle);
+;|***     fread(&flt15_size, 2, 1, fileHandle);
+; Line 52
+	*** 000078	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00007c	b8 01 00 		mov	ax,1
+	*** 00007f	50 			push	ax
+	*** 000080	b8 02 00 		mov	ax,2
+	*** 000083	50 			push	ax
+	*** 000084	b8 00 00 		mov	ax,OFFSET _flt15_size
+	*** 000087	50 			push	ax
+	*** 000088	e8 00 00 		call	_fread
+	*** 00008b	83 c4 08 		add	sp,8
+;|***     fread(flt15_buf1, 2, flt15_size, fileHandle);
+; Line 53
+	*** 00008e	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 000092	ff 36 00 00 		push	WORD PTR _flt15_size
+	*** 000096	b8 02 00 		mov	ax,2
+	*** 000099	50 			push	ax
+	*** 00009a	b8 00 00 		mov	ax,OFFSET _flt15_buf1
+	*** 00009d	50 			push	ax
+	*** 00009e	e8 00 00 		call	_fread
+	*** 0000a1	83 c4 08 		add	sp,8
+;|***     fread(&var_A, 2, 1, fileHandle);
+; Line 54
+	*** 0000a4	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0000a8	b8 01 00 		mov	ax,1
+	*** 0000ab	50 			push	ax
+	*** 0000ac	b8 02 00 		mov	ax,2
+	*** 0000af	50 			push	ax
+	*** 0000b0	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;var_A
+	*** 0000b3	50 			push	ax
+	*** 0000b4	e8 00 00 		call	_fread
+	*** 0000b7	83 c4 08 		add	sp,8
+;|***     segread(&var_8);
+; Line 55
+	*** 0000ba	8d 46 f8 		lea	ax,WORD PTR [bp-8]	;var_8
+	*** 0000bd	50 			push	ax
+	*** 0000be	e8 00 00 		call	_segread
+	*** 0000c1	83 c4 02 		add	sp,2
+;|***     var_10 = byte_2D6A4;
+; Line 56
+	*** 0000c4	c7 46 f4 00 00 		mov	WORD PTR [bp-12],OFFSET _byte_2D6A4	;var_10
+	*** 0000c9	c7 46 f6 00 00 		mov	WORD PTR [bp-10],SEG _byte_2D6A4
+;|***     while(var_A > 0) {
+; Line 57
+	*** 0000ce	eb 40 			jmp	SHORT $L20004
+					$FC1949:
+;|***         // c98b
+;|***         var_C = var_A <= 0x800 ? var_A : 0x800;
+; Line 59
+	*** 0000d0	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;var_A
+	*** 0000d3	3d 00 08 		cmp	ax,2048
+	*** 0000d6	7e 03 			jle	$L20002
+	*** 0000d8	b8 00 08 		mov	ax,2048
+					$L20002:
+	*** 0000db	89 46 f0 		mov	WORD PTR [bp-16],ax	;var_C
+;|***         // c99b
+;|***         fread(flt15_buf2, 1, var_C, fileHandle);
+; Line 61
+	*** 0000de	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0000e2	50 			push	ax
+	*** 0000e3	b8 01 00 		mov	ax,1
+	*** 0000e6	50 			push	ax
+	*** 0000e7	b8 00 00 		mov	ax,OFFSET _flt15_buf2
+	*** 0000ea	50 			push	ax
+	*** 0000eb	e8 00 00 		call	_fread
+	*** 0000ee	83 c4 08 		add	sp,8
+;|***         movedata(var_8.ds, (uint16)flt15_buf2, FP_SEG(var_10), FP_OFF(var_10), var_C);
+; Line 62
+	*** 0000f1	ff 76 f0 		push	WORD PTR [bp-16]	;var_C
+	*** 0000f4	ff 76 f4 		push	WORD PTR [bp-12]	;var_10
+	*** 0000f7	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 0000fa	b8 00 00 		mov	ax,OFFSET _flt15_buf2
+	*** 0000fd	50 			push	ax
+	*** 0000fe	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 000101	e8 00 00 		call	_movedata
+	*** 000104	83 c4 0a 		add	sp,10
+;|***         var_A -= 0x800;
+; Line 63
+	*** 000107	81 6e f2 00 08 		sub	WORD PTR [bp-14],2048	;var_A
+;|***         FP_SEG(var_10) += 0x800;
+; Line 64
+	*** 00010c	80 46 f7 08 		add	BYTE PTR [bp-9],8
+;|***     }
+; Line 65
+					$L20004:
+	*** 000110	83 7e f2 00 		cmp	WORD PTR [bp-14],0	;var_A
+	*** 000114	7f ba 			jg	$FC1949
+;|***     // c9ca
+;|***     fclose(fileHandle);
+; Line 67
+	*** 000116	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00011a	e8 00 00 		call	_fclose
+;|*** }
+; Line 68
+	*** 00011d	8b e5 			mov	sp,bp
+	*** 00011f	5d 			pop	bp
+	*** 000120	c3 			ret	
+	*** 000121	90 			nop	
+
+_load15Flt3d3	ENDP
+;|*** 
+;|*** // ==== seg000:0xdd4c ====
+;|*** int openFileWrapper(char *path, int mode) {
+; Line 71
+	PUBLIC	_openFileWrapper
+_openFileWrapper	PROC NEAR
+	*** 000122	55 			push	bp
+	*** 000123	8b ec 			mov	bp,sp
+;	path = 4
+;	mode = 6
+;|***     return openFile(path, mode);
+; Line 72
+	*** 000125	ff 76 06 		push	WORD PTR [bp+6]	;mode
+	*** 000128	ff 76 04 		push	WORD PTR [bp+4]	;path
+	*** 00012b	e8 00 00 		call	_openFile
+	*** 00012e	83 c4 04 		add	sp,4
+	*** 000131	5d 			pop	bp
+	*** 000132	c3 			ret	
+	*** 000133	90 			nop	
+
+_openFileWrapper	ENDP
+;|*** }
+;|*** 
+;|*** // ==== seg000:0xdd5e ====
+;|*** int sub_1DD5E(char *path, int attr) {
+; Line 76
+	PUBLIC	_sub_1DD5E
+_sub_1DD5E	PROC NEAR
+	*** 000134	55 			push	bp
+	*** 000135	8b ec 			mov	bp,sp
+;	path = 4
+;	attr = 6
+;|***     return createFile(path, attr);
+; Line 77
+	*** 000137	ff 76 06 		push	WORD PTR [bp+6]	;attr
+	*** 00013a	ff 76 04 		push	WORD PTR [bp+4]	;path
+	*** 00013d	e8 00 00 		call	_createFile
+	*** 000140	83 c4 04 		add	sp,4
+	*** 000143	5d 			pop	bp
+	*** 000144	c3 			ret	
+	*** 000145	90 			nop	
+
+_sub_1DD5E	ENDP
+;|*** }
+;|*** 
+;|*** // ==== seg000:0xdd70 ====
+;|*** int closeFileWrapper(int arg_0) {
+; Line 81
+	PUBLIC	_closeFileWrapper
+_closeFileWrapper	PROC NEAR
+	*** 000146	55 			push	bp
+	*** 000147	8b ec 			mov	bp,sp
+;	arg_0 = 4
+;|***     return closeFile(arg_0);
+; Line 82
+	*** 000149	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 00014c	e8 00 00 		call	_closeFile
+	*** 00014f	83 c4 02 		add	sp,2
+	*** 000152	5d 			pop	bp
+	*** 000153	c3 			ret	
+
+_closeFileWrapper	ENDP
+;|*** }
+;|*** 
+;|*** // ==== seg000:0xdd7e ====
+;|*** int sub_1DD7E(int arg_0, void *arg_2, int arg_4) {
+; Line 86
+	PUBLIC	_sub_1DD7E
+_sub_1DD7E	PROC NEAR
+	*** 000154	55 			push	bp
+	*** 000155	8b ec 			mov	bp,sp
+;	arg_0 = 4
+;	arg_2 = 6
+;	arg_4 = 8
+;|***     return readFile1(arg_0, arg_2, arg_4);
+; Line 87
+	*** 000157	ff 76 08 		push	WORD PTR [bp+8]	;arg_4
+	*** 00015a	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 00015d	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 000160	e8 00 00 		call	_readFile1
+	*** 000163	83 c4 06 		add	sp,6
+	*** 000166	5d 			pop	bp
+	*** 000167	c3 			ret	
+
+_sub_1DD7E	ENDP
+;|*** }
+;|*** 
+;|*** // ==== seg000:0xdd92 ====
+;|*** int sub_1DD92(int arg_0, void *arg_2, int arg_4, int arg_6) {
+; Line 91
+	PUBLIC	_sub_1DD92
+_sub_1DD92	PROC NEAR
+	*** 000168	55 			push	bp
+	*** 000169	8b ec 			mov	bp,sp
+;	arg_0 = 4
+;	arg_2 = 6
+;	arg_4 = 8
+;	arg_6 = 10
+;|***     return readFile2(arg_0, arg_2, arg_4, arg_6);
+; Line 92
+	*** 00016b	ff 76 0a 		push	WORD PTR [bp+10]	;arg_6
+	*** 00016e	ff 76 08 		push	WORD PTR [bp+8]	;arg_4
+	*** 000171	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 000174	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 000177	e8 00 00 		call	_readFile2
+	*** 00017a	83 c4 08 		add	sp,8
+	*** 00017d	5d 			pop	bp
+	*** 00017e	c3 			ret	
+	*** 00017f	90 			nop	
+
+_sub_1DD92	ENDP
+;|*** }
+;|*** 
+;|*** // ==== seg000:0xddaa ====
+;|*** int sub_1DDAA(int arg_0, void *arg_2, int arg_4, int arg_6, int arg_8) {
+; Line 96
+	PUBLIC	_sub_1DDAA
+_sub_1DDAA	PROC NEAR
+	*** 000180	55 			push	bp
+	*** 000181	8b ec 			mov	bp,sp
+;	arg_0 = 4
+;	arg_2 = 6
+;	arg_4 = 8
+;	arg_6 = 10
+;	arg_8 = 12
+;|***     return sub_1DF4F(arg_0, arg_2, arg_4, arg_6, arg_8);
+; Line 97
+	*** 000183	ff 76 0c 		push	WORD PTR [bp+12]	;arg_8
+	*** 000186	ff 76 0a 		push	WORD PTR [bp+10]	;arg_6
+	*** 000189	ff 76 08 		push	WORD PTR [bp+8]	;arg_4
+	*** 00018c	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 00018f	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 000192	e8 00 00 		call	_sub_1DF4F
+	*** 000195	83 c4 0a 		add	sp,10
+	*** 000198	5d 			pop	bp
+	*** 000199	c3 			ret	
+
+_sub_1DDAA	ENDP
+_TEXT	ENDS
+END
+;|*** }

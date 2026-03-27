@@ -1,0 +1,981 @@
+;	Static Name Aliases
+;
+	TITLE   f15.c
+	NAME    f15
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+PUBLIC  _SOUND_DRIVER
+PUBLIC  _GFX_DRIVER
+PUBLIC  _MISC_LIBRARY
+PUBLIC  _GAME_MENU
+PUBLIC  _GAME_FLIGHT
+PUBLIC  _GAME_DEBRIEFING
+PUBLIC  _DEBUGGER
+PUBLIC  _GFX_INIT_ARG
+PUBLIC  _RET_MENU
+PUBLIC  _RET_DEBRIEFING
+PUBLIC  _RET_NONZERO
+PUBLIC  _cmdlineBuf
+PUBLIC  _CMDLINE
+PUBLIC  _commSegment
+EXTRN	__acrtused:ABS
+EXTRN	_memset:NEAR
+EXTRN	_dos_runProgram:NEAR
+EXTRN	_writeWordFar:NEAR
+EXTRN	_dos_getReturnCode:NEAR
+EXTRN	_strlen:NEAR
+EXTRN	_sizeString:NEAR
+EXTRN	_dos_mcbInfo:NEAR
+EXTRN	_dos_lastFreeBlock:NEAR
+EXTRN	_log_open:NEAR
+EXTRN	_log_close:NEAR
+EXTRN	_INFO:NEAR
+EXTRN	_bios_clearkeyflags:NEAR
+EXTRN	_FATAL:NEAR
+EXTRN	_overlay_load:NEAR
+EXTRN	_dos_alloc:NEAR
+EXTRN	_overlay_functionAddress:NEAR
+EXTRN	_sprintf:NEAR
+EXTRN	_hexdump:NEAR
+EXTRN	_strcpyFar:NEAR
+EXTRN	_dos_getfree:NEAR
+EXTRN	__ctype:BYTE
+_DATA      SEGMENT
+$SG474	DB	'Nsound.exe',  00H
+$SG476	DB	'Mgraphic.exe',  00H
+$SG478	DB	'MISC.EXE',  00H
+$SG480	DB	'START.EXE',  00H
+$SG482	DB	'EGAME.EXE',  00H
+$SG484	DB	'END.EXE',  00H
+$SG486	DB	'Z:\DEBUG.COM',  00H
+$SG503	DB	'COMM segment address invalid',  00H
+$SG505	DB	'unable to load driver %s!',  00H
+$SG506	DB	'Loaded driver %s at 0x%x, address stored in COMM at %p',  00H
+	ORG	$+156
+$SG516	DB	'Unable to get amount of free memory!',  00H
+$SG517	DB	'free memory: %s',  00H
+$SG519	DB	'Unable to allocate memory for COMM',  00H
+$SG520	DB	'Allocated COMM buffer at 0x%x, size = %up (%lu)',  00H
+$SG521	DB	'gfx init function at %p',  00H
+$SG522	DB	'gfx init function returned 0x%x',  00H
+$SG523	DB	'COMM contents:',  00H
+$SG524	DB	'Initialization complete, free memory = %s',  00H
+$SG532	DB	'Executing %s under the debugger',  00H
+$SG533	DB	' %s',  00H
+$SG535	DB	'Executing %s with commandline ''%Fs''',  00H
+$SG537	DB	'Unable to run %s',  00H
+$SG538	DB	'%s exited with code 0x%x',  00H
+$SG561	DB	'Unrecognized argument: ''%s''',  00H
+$SG573	DB	'Unrecognized argument: ''%s''',  00H
+$SG574	DB	'Starting game initialization routine',  00H
+$SG575	DB	'Starting game main loop',  00H
+$SG582	DB	'Main loop finished, terminating',  00H
+	ORG	$-668
+_SOUND_DRIVER	DW	DGROUP:$SG474
+_GFX_DRIVER	DW	DGROUP:$SG476
+_MISC_LIBRARY	DW	DGROUP:$SG478
+_GAME_MENU	DW	DGROUP:$SG480
+_GAME_FLIGHT	DW	DGROUP:$SG482
+_GAME_DEBRIEFING	DW	DGROUP:$SG484
+_DEBUGGER	DW	DGROUP:$SG486
+_GFX_INIT_ARG	DW	02H
+_RET_MENU	DW	0cH
+_RET_DEBRIEFING	DW	023H
+_RET_NONZERO	DW	0ffffH
+_cmdlineBuf	DB	00H
+ 	DB	127 DUP(0)
+
+_CMDLINE	DD	DGROUP:_cmdlineBuf
+_commSegment	DW	00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /*
+;|***  * This is the main game executable for F15 SE II.
+;|***  * 
+;|***  * Since the original was apparently coded in assembly (and included a convoluted anti-debugging & copy protection scheme), 
+;|***  * this is a purposefully divergent implementation that does not try to be faithful to the original binary.
+;|***  * 
+;|***  * It also combines the functionality of SU.EXE (SetUp), whose purpose was to ask the user which graphics adapter and sound device
+;|***  * they would like to use - we aim to only support VGA (MCGA) and no sound (there's barely any sounds in the game as is, 
+;|***  * perhaps this will be changed in the future), so this will skip the user queries and load MGRAPHIC and NSOUND overlays without asking.
+;|***  * 
+;|***  * Other than that, the purpose of this executable is mostly to do some initial setup and then keep operating the game main loop, that is running 
+;|***  * START, EGAME and END in sequence until the user decides to exit the game. The original calls DS.EXE (Disk Swap) between each of these, but
+;|***  * as far as I can tell DS.EXE only looks to see if the required binary exists in the current directory, and if it doesn't, it prompts the user
+;|***  * to insert a disk containing it (and load it, I think), so I will also ignore DS.EXE here.
+;|***  */
+;|*** 
+;|*** #include "inttype.h"
+;|*** #include "pointers.h"
+;|*** #include "biosfunc.h"
+;|*** #include "dosfunc.h"
+;|*** #include "output.h"
+;|*** #include "memory.h"
+;|*** #include "comm.h"
+;|*** #include "overlay.h"
+;|*** #include "util.h"
+;|*** #include "offsets.h"
+;|*** 
+;|*** #include <STDIO.H>
+;|*** #include <STDDEF.H>
+;|*** #include <STDLIB.H>
+;|*** #include <STRING.H>
+;|*** #include <CTYPE.H>
+;|*** 
+;|*** const char* SOUND_DRIVER = "Nsound.exe";
+;|*** const char* GFX_DRIVER = "Mgraphic.exe";
+;|*** const char* MISC_LIBRARY = "MISC.EXE";
+;|*** const char* GAME_MENU = "START.EXE";
+;|*** const char* GAME_FLIGHT = "EGAME.EXE";
+;|*** const char* GAME_DEBRIEFING = "END.EXE";
+;|*** const char* DEBUGGER = "Z:\\DEBUG.COM";
+;|*** const uint16 GFX_INIT_ARG = 2;
+;|*** const int RET_MENU = 0xc;
+;|*** const int RET_DEBRIEFING = 0x23;
+;|*** const int RET_NONZERO = -1;
+;|*** enum { CMDLINE_LEN = 128 };
+;|*** char cmdlineBuf[CMDLINE_LEN] = "";
+;|*** const char FAR *CMDLINE = (const char FAR*)cmdlineBuf;
+;|*** uint16 commSegment = 0;
+;|*** 
+;|*** uint16 load_driver(const char* filename, const uint16 commPtrOffset) {
+; Line 50
+	PUBLIC	_load_driver
+_load_driver	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 06 		sub	sp,6
+;	filename = 4
+;	commPtrOffset = 6
+;	drvAddress = -6
+;	commPtr = -4
+;|***     /* load driver overlay into memory */
+;|***     uint16 drvAddress;
+;|***     uint16 FAR *commPtr = MK_FP(commSegment, commPtrOffset);
+; Line 53
+	*** 000006	8b 46 06 		mov	ax,WORD PTR [bp+6]	;commPtrOffset
+	*** 000009	8b 1e 52 01 		mov	bx,_commSegment
+	*** 00000d	2b c9 			sub	cx,cx
+	*** 00000f	8b d3 			mov	dx,bx
+	*** 000011	89 46 fc 		mov	WORD PTR [bp-4],ax	;commPtr
+	*** 000014	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     if (commSegment == 0)
+; Line 54
+	*** 000017	3b d9 			cmp	bx,cx
+	*** 000019	75 0a 			jne	$I502
+;|***         FATAL("COMM segment address invalid");
+; Line 55
+	*** 00001b	b8 4a 00 		mov	ax,OFFSET DGROUP:$SG503
+	*** 00001e	50 			push	ax
+	*** 00001f	e8 00 00 		call	_FATAL
+	*** 000022	83 c4 02 		add	sp,2
+;|***     if ((drvAddress = overlay_load(filename)) == 0)
+; Line 56
+					$I502:
+	*** 000025	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 000028	e8 00 00 		call	_overlay_load
+	*** 00002b	83 c4 02 		add	sp,2
+	*** 00002e	89 46 fa 		mov	WORD PTR [bp-6],ax	;drvAddress
+	*** 000031	0b c0 			or	ax,ax
+	*** 000033	75 0d 			jne	$I504
+;|***         FATAL("unable to load driver %s!", filename);
+; Line 57
+	*** 000035	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 000038	b8 67 00 		mov	ax,OFFSET DGROUP:$SG505
+	*** 00003b	50 			push	ax
+	*** 00003c	e8 00 00 		call	_FATAL
+	*** 00003f	83 c4 04 		add	sp,4
+;|***     /* place address of loaded driver into an offset in the communication buffer */
+;|***     *commPtr = drvAddress;
+; Line 59
+					$I504:
+	*** 000042	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;commPtr
+	*** 000045	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;drvAddress
+	*** 000048	26 89 07 		mov	WORD PTR es:[bx],ax
+;|***     INFO("Loaded driver %s at 0x%x, address stored in COMM at %p", filename, drvAddress, commPtr);
+; Line 60
+	*** 00004b	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 00004e	ff 76 fc 		push	WORD PTR [bp-4]	;commPtr
+	*** 000051	ff 76 fa 		push	WORD PTR [bp-6]	;drvAddress
+	*** 000054	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 000057	b8 81 00 		mov	ax,OFFSET DGROUP:$SG506
+	*** 00005a	50 			push	ax
+	*** 00005b	e8 00 00 		call	_INFO
+	*** 00005e	83 c4 0a 		add	sp,10
+;|***     return drvAddress;
+; Line 61
+	*** 000061	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;drvAddress
+	*** 000064	eb 00 			jmp	SHORT $EX499
+;|*** }
+; Line 62
+					$EX499:
+	*** 000066	8b e5 			mov	sp,bp
+	*** 000068	5d 			pop	bp
+	*** 000069	c3 			ret	
+
+_load_driver	ENDP
+;|*** 
+;|*** void game_init(void) {
+; Line 64
+	PUBLIC	_game_init
+_game_init	PROC NEAR
+	*** 00006a	55 			push	bp
+	*** 00006b	8b ec 			mov	bp,sp
+	*** 00006d	83 ec 10 		sub	sp,16
+;	gfxDrvAddress = -6
+;	gfxBufAddress = -8
+;	err = -10
+;	freeMemory = -16
+;	charPtr = -4
+;	gfxInit = -14
+;|***     size_t freeMemory;
+;|***     int8 FAR *charPtr;
+;|***     OverlayFunc gfxInit = NULL;
+; Line 67
+	*** 000070	2b c0 			sub	ax,ax
+	*** 000072	89 46 f4 		mov	WORD PTR [bp-12],ax
+	*** 000075	89 46 f2 		mov	WORD PTR [bp-14],ax	;gfxInit
+;|***     uint16 gfxDrvAddress, gfxBufAddress;
+;|***     int err;
+;|***     
+;|***     bios_clearkeyflags();
+; Line 71
+	*** 000078	e8 00 00 		call	_bios_clearkeyflags
+;|*** 
+;|***     /* get amount of free memory */
+;|***     freeMemory = dos_getfree();
+; Line 74
+	*** 00007b	e8 00 00 		call	_dos_getfree
+	*** 00007e	89 46 f0 		mov	WORD PTR [bp-16],ax	;freeMemory
+;|***     if (freeMemory == 0) 
+; Line 75
+	*** 000081	0b c0 			or	ax,ax
+	*** 000083	75 0a 			jne	$I515
+;|***         FATAL("Unable to get amount of free memory!");
+; Line 76
+	*** 000085	b8 54 01 		mov	ax,OFFSET DGROUP:$SG516
+	*** 000088	50 			push	ax
+	*** 000089	e8 00 00 		call	_FATAL
+	*** 00008c	83 c4 02 		add	sp,2
+;|***     INFO("free memory: %s", sizeString(freeMemory));
+; Line 77
+					$I515:
+	*** 00008f	ff 76 f0 		push	WORD PTR [bp-16]	;freeMemory
+	*** 000092	e8 00 00 		call	_sizeString
+	*** 000095	83 c4 02 		add	sp,2
+	*** 000098	50 			push	ax
+	*** 000099	b8 79 01 		mov	ax,OFFSET DGROUP:$SG517
+	*** 00009c	50 			push	ax
+	*** 00009d	e8 00 00 		call	_INFO
+	*** 0000a0	83 c4 04 		add	sp,4
+;|***     
+;|***     /* allocate memory for communication buffer between game executables */
+;|***     commSegment = dos_alloc(COMM_SIZE_PARA);
+; Line 80
+	*** 0000a3	b8 40 01 		mov	ax,320
+	*** 0000a6	50 			push	ax
+	*** 0000a7	e8 00 00 		call	_dos_alloc
+	*** 0000aa	83 c4 02 		add	sp,2
+	*** 0000ad	a3 52 01 		mov	_commSegment,ax
+;|***     if (commSegment == 0)
+; Line 81
+	*** 0000b0	0b c0 			or	ax,ax
+	*** 0000b2	75 0a 			jne	$I518
+;|***         FATAL("Unable to allocate memory for COMM");
+; Line 82
+	*** 0000b4	b8 89 01 		mov	ax,OFFSET DGROUP:$SG519
+	*** 0000b7	50 			push	ax
+	*** 0000b8	e8 00 00 		call	_FATAL
+	*** 0000bb	83 c4 02 		add	sp,2
+;|***     INFO("Allocated COMM buffer at 0x%x, size = %up (%lu)", commSegment, COMM_SIZE_PARA, PARA_TO_BYTES(COMM_SIZE_PARA));
+; Line 83
+					$I518:
+	*** 0000be	b8 00 14 		mov	ax,5120
+	*** 0000c1	99 			cwd	
+	*** 0000c2	52 			push	dx
+	*** 0000c3	50 			push	ax
+	*** 0000c4	b8 40 01 		mov	ax,320
+	*** 0000c7	50 			push	ax
+	*** 0000c8	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 0000cc	b8 ac 01 		mov	ax,OFFSET DGROUP:$SG520
+	*** 0000cf	50 			push	ax
+	*** 0000d0	e8 00 00 		call	_INFO
+	*** 0000d3	83 c4 0a 		add	sp,10
+;|***     /* magic values written into the MCB for the COMM buffer, EGAME.EXE later checks for them */
+;|***     writeWordFar(commSegment - 1, COMM_MCB_OFFSET_MAGIC1, COMM_MCB_VALUE_MAGIC1);
+; Line 85
+	*** 0000d6	b8 01 ca 		mov	ax,-13823
+	*** 0000d9	50 			push	ax
+	*** 0000da	b8 0c 00 		mov	ax,12
+	*** 0000dd	50 			push	ax
+	*** 0000de	a1 52 01 		mov	ax,_commSegment
+	*** 0000e1	48 			dec	ax
+	*** 0000e2	50 			push	ax
+	*** 0000e3	e8 00 00 		call	_writeWordFar
+	*** 0000e6	83 c4 06 		add	sp,6
+;|***     writeWordFar(commSegment - 1, COMM_MCB_OFFSET_MAGIC2, COMM_MCB_VALUE_MAGIC2);
+; Line 86
+	*** 0000e9	b8 9a 3b 		mov	ax,15258
+	*** 0000ec	50 			push	ax
+	*** 0000ed	b8 0e 00 		mov	ax,14
+	*** 0000f0	50 			push	ax
+	*** 0000f1	a1 52 01 		mov	ax,_commSegment
+	*** 0000f4	48 			dec	ax
+	*** 0000f5	50 			push	ax
+	*** 0000f6	e8 00 00 		call	_writeWordFar
+	*** 0000f9	83 c4 06 		add	sp,6
+;|*** 
+;|***     /* put address of communication buffer into the Intra-Application Comunication Area in low memory 
+;|***        so that all game executables can find out where it is */
+;|***     writeWordFar(SEG_LOWMEM, OFF_IACA_START, commSegment);
+; Line 90
+	*** 0000fc	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 000100	b8 f0 04 		mov	ax,1264
+	*** 000103	50 			push	ax
+	*** 000104	2b c0 			sub	ax,ax
+	*** 000106	50 			push	ax
+	*** 000107	e8 00 00 		call	_writeWordFar
+	*** 00010a	83 c4 06 		add	sp,6
+;|***     writeWordFar(SEG_LOWMEM, OFF_IACA_NEEDSPLASH, 1);
+; Line 91
+	*** 00010d	b8 01 00 		mov	ax,1
+	*** 000110	50 			push	ax
+	*** 000111	b8 f2 04 		mov	ax,1266
+	*** 000114	50 			push	ax
+	*** 000115	2b c0 			sub	ax,ax
+	*** 000117	50 			push	ax
+	*** 000118	e8 00 00 		call	_writeWordFar
+	*** 00011b	83 c4 06 		add	sp,6
+;|***     writeWordFar(SEG_LOWMEM, OFF_IACA_FLAG2, 0);
+; Line 92
+	*** 00011e	2b c0 			sub	ax,ax
+	*** 000120	50 			push	ax
+	*** 000121	b8 f4 04 		mov	ax,1268
+	*** 000124	50 			push	ax
+	*** 000125	2b c0 			sub	ax,ax
+	*** 000127	50 			push	ax
+	*** 000128	e8 00 00 		call	_writeWordFar
+	*** 00012b	83 c4 06 		add	sp,6
+;|***     /* values written into COMM by SU.EXE */
+;|***     writeWordFar(commSegment, COMM_SETUP1_OFFSET, 0);
+; Line 94
+	*** 00012e	2b c0 			sub	ax,ax
+	*** 000130	50 			push	ax
+	*** 000131	b8 22 00 		mov	ax,34
+	*** 000134	50 			push	ax
+	*** 000135	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 000139	e8 00 00 		call	_writeWordFar
+	*** 00013c	83 c4 06 		add	sp,6
+;|***     writeWordFar(commSegment, COMM_SETUP_MONOCHROME_OFFSET, 0);
+; Line 95
+	*** 00013f	2b c0 			sub	ax,ax
+	*** 000141	50 			push	ax
+	*** 000142	b8 24 00 		mov	ax,36
+	*** 000145	50 			push	ax
+	*** 000146	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 00014a	e8 00 00 		call	_writeWordFar
+	*** 00014d	83 c4 06 		add	sp,6
+;|***     writeWordFar(commSegment, COMM_SETUP_SWITCHT_OFFSET, 0);
+; Line 96
+	*** 000150	2b c0 			sub	ax,ax
+	*** 000152	50 			push	ax
+	*** 000153	b8 70 00 		mov	ax,112
+	*** 000156	50 			push	ax
+	*** 000157	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 00015b	e8 00 00 		call	_writeWordFar
+	*** 00015e	83 c4 06 		add	sp,6
+;|***     writeWordFar(commSegment, COMM_SETUP2_OFFSET, 0);
+; Line 97
+	*** 000161	2b c0 			sub	ax,ax
+	*** 000163	50 			push	ax
+	*** 000164	b8 2a 00 		mov	ax,42
+	*** 000167	50 			push	ax
+	*** 000168	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 00016c	e8 00 00 		call	_writeWordFar
+	*** 00016f	83 c4 06 		add	sp,6
+;|***     writeWordFar(commSegment, COMM_SETUP_DETAIL_OFFSET, 3); /* max detail */
+; Line 98
+	*** 000172	b8 03 00 		mov	ax,3
+	*** 000175	50 			push	ax
+	*** 000176	b8 32 00 		mov	ax,50
+	*** 000179	50 			push	ax
+	*** 00017a	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 00017e	e8 00 00 		call	_writeWordFar
+	*** 000181	83 c4 06 		add	sp,6
+;|***     writeWordFar(commSegment, COMM_SETUP_USEJOY_OFFSET, 0);
+; Line 99
+	*** 000184	2b c0 			sub	ax,ax
+	*** 000186	50 			push	ax
+	*** 000187	b8 72 00 		mov	ax,114
+	*** 00018a	50 			push	ax
+	*** 00018b	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 00018f	e8 00 00 		call	_writeWordFar
+	*** 000192	83 c4 06 		add	sp,6
+;|***     strcpyFar(GFX_DRIVER, commSegment, COMM_GFXOVL_NAME_OFFSET, strlen(GFX_DRIVER));
+; Line 100
+	*** 000195	ff 36 ba 00 		push	WORD PTR _GFX_DRIVER
+	*** 000199	e8 00 00 		call	_strlen
+	*** 00019c	83 c4 02 		add	sp,2
+	*** 00019f	50 			push	ax
+	*** 0001a0	2b c0 			sub	ax,ax
+	*** 0001a2	50 			push	ax
+	*** 0001a3	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 0001a7	ff 36 ba 00 		push	WORD PTR _GFX_DRIVER
+	*** 0001ab	e8 00 00 		call	_strcpyFar
+	*** 0001ae	83 c4 08 		add	sp,8
+;|***     strcpyFar(SOUND_DRIVER, commSegment, COMM_SNDOVL_NAME_OFFSET, strlen(SOUND_DRIVER));
+; Line 101
+	*** 0001b1	ff 36 b8 00 		push	WORD PTR _SOUND_DRIVER
+	*** 0001b5	e8 00 00 		call	_strlen
+	*** 0001b8	83 c4 02 		add	sp,2
+	*** 0001bb	50 			push	ax
+	*** 0001bc	b8 0d 00 		mov	ax,13
+	*** 0001bf	50 			push	ax
+	*** 0001c0	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 0001c4	ff 36 b8 00 		push	WORD PTR _SOUND_DRIVER
+	*** 0001c8	e8 00 00 		call	_strcpyFar
+	*** 0001cb	83 c4 08 		add	sp,8
+;|***     writeWordFar(commSegment, COMM_SETUP_DONE_OFFSET, 1);
+; Line 102
+	*** 0001ce	b8 01 00 		mov	ax,1
+	*** 0001d1	50 			push	ax
+	*** 0001d2	b8 26 00 		mov	ax,38
+	*** 0001d5	50 			push	ax
+	*** 0001d6	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 0001da	e8 00 00 		call	_writeWordFar
+	*** 0001dd	83 c4 06 		add	sp,6
+;|***     writeWordFar(commSegment, COMM_SETUP_GFXMODE_OFFSET, (uint16)'M'); /* mcga */
+; Line 103
+	*** 0001e0	b8 4d 00 		mov	ax,77
+	*** 0001e3	50 			push	ax
+	*** 0001e4	b8 30 00 		mov	ax,48
+	*** 0001e7	50 			push	ax
+	*** 0001e8	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 0001ec	e8 00 00 		call	_writeWordFar
+	*** 0001ef	83 c4 06 		add	sp,6
+;|*** 
+;|***     /* load sound, misc and video driver overlays */
+;|***     load_driver(SOUND_DRIVER, COMM_SNDOVL_ADDR_OFFSET);
+; Line 106
+	*** 0001f2	b8 1c 00 		mov	ax,28
+	*** 0001f5	50 			push	ax
+	*** 0001f6	ff 36 b8 00 		push	WORD PTR _SOUND_DRIVER
+	*** 0001fa	e8 03 fe 		call	_load_driver
+	*** 0001fd	83 c4 04 		add	sp,4
+;|***     load_driver(MISC_LIBRARY, COMM_MISCOVL_ADDR_OFFSET);
+; Line 107
+	*** 000200	b8 1e 00 		mov	ax,30
+	*** 000203	50 			push	ax
+	*** 000204	ff 36 bc 00 		push	WORD PTR _MISC_LIBRARY
+	*** 000208	e8 f5 fd 		call	_load_driver
+	*** 00020b	83 c4 04 		add	sp,4
+;|***     gfxDrvAddress = load_driver(GFX_DRIVER, COMM_GFXOVL_ADDR_OFFSET);
+; Line 108
+	*** 00020e	b8 1a 00 		mov	ax,26
+	*** 000211	50 			push	ax
+	*** 000212	ff 36 ba 00 		push	WORD PTR _GFX_DRIVER
+	*** 000216	e8 e7 fd 		call	_load_driver
+	*** 000219	83 c4 04 		add	sp,4
+	*** 00021c	89 46 fa 		mov	WORD PTR [bp-6],ax	;gfxDrvAddress
+;|*** 
+;|***     /* call function 0 from video driver, init video */
+;|***     gfxInit = overlay_functionAddress(gfxDrvAddress, 0);
+; Line 111
+	*** 00021f	2b c0 			sub	ax,ax
+	*** 000221	50 			push	ax
+	*** 000222	ff 76 fa 		push	WORD PTR [bp-6]	;gfxDrvAddress
+	*** 000225	e8 00 00 		call	_overlay_functionAddress
+	*** 000228	83 c4 04 		add	sp,4
+	*** 00022b	89 46 f2 		mov	WORD PTR [bp-14],ax	;gfxInit
+	*** 00022e	89 56 f4 		mov	WORD PTR [bp-12],dx
+;|***     INFO("gfx init function at %p", gfxInit);
+; Line 112
+	*** 000231	52 			push	dx
+	*** 000232	50 			push	ax
+	*** 000233	b8 dc 01 		mov	ax,OFFSET DGROUP:$SG521
+	*** 000236	50 			push	ax
+	*** 000237	e8 00 00 		call	_INFO
+	*** 00023a	83 c4 06 		add	sp,6
+;|***     gfxBufAddress = gfxInit(GFX_INIT_ARG);
+; Line 113
+	*** 00023d	ff 36 c6 00 		push	WORD PTR _GFX_INIT_ARG
+	*** 000241	ff 5e f2 		call	DWORD PTR [bp-14]	;gfxInit
+	*** 000244	83 c4 02 		add	sp,2
+	*** 000247	89 46 f8 		mov	WORD PTR [bp-8],ax	;gfxBufAddress
+;|***     INFO("gfx init function returned 0x%x", gfxBufAddress);
+; Line 114
+	*** 00024a	50 			push	ax
+	*** 00024b	b8 f4 01 		mov	ax,OFFSET DGROUP:$SG522
+	*** 00024e	50 			push	ax
+	*** 00024f	e8 00 00 		call	_INFO
+	*** 000252	83 c4 04 		add	sp,4
+;|***     writeWordFar(commSegment, COMM_GFXINIT_RESULT_OFFSET, gfxBufAddress);
+; Line 115
+	*** 000255	ff 76 f8 		push	WORD PTR [bp-8]	;gfxBufAddress
+	*** 000258	b8 20 00 		mov	ax,32
+	*** 00025b	50 			push	ax
+	*** 00025c	ff 36 52 01 		push	WORD PTR _commSegment
+	*** 000260	e8 00 00 		call	_writeWordFar
+	*** 000263	83 c4 06 		add	sp,6
+;|*** 
+;|***     /* initialization done */
+;|***     INFO("COMM contents:");
+; Line 118
+	*** 000266	b8 14 02 		mov	ax,OFFSET DGROUP:$SG523
+	*** 000269	50 			push	ax
+	*** 00026a	e8 00 00 		call	_INFO
+	*** 00026d	83 c4 02 		add	sp,2
+;|***     hexdump(MK_FP(commSegment - 1, 0), COMM_BUFFER_OFFSET + SIZE_PARAGRAPH, 0, 1);
+; Line 119
+	*** 000270	b8 01 00 		mov	ax,1
+	*** 000273	50 			push	ax
+	*** 000274	2b c0 			sub	ax,ax
+	*** 000276	50 			push	ax
+	*** 000277	b8 30 01 		mov	ax,304
+	*** 00027a	50 			push	ax
+	*** 00027b	a1 52 01 		mov	ax,_commSegment
+	*** 00027e	48 			dec	ax
+	*** 00027f	8b d0 			mov	dx,ax
+	*** 000281	2b c0 			sub	ax,ax
+	*** 000283	52 			push	dx
+	*** 000284	50 			push	ax
+	*** 000285	e8 00 00 		call	_hexdump
+	*** 000288	83 c4 0a 		add	sp,10
+;|***     INFO("Initialization complete, free memory = %s", sizeString(dos_getfree()));
+; Line 120
+	*** 00028b	e8 00 00 		call	_dos_getfree
+	*** 00028e	50 			push	ax
+	*** 00028f	e8 00 00 		call	_sizeString
+	*** 000292	83 c4 02 		add	sp,2
+	*** 000295	50 			push	ax
+	*** 000296	b8 23 02 		mov	ax,OFFSET DGROUP:$SG524
+	*** 000299	50 			push	ax
+	*** 00029a	e8 00 00 		call	_INFO
+	*** 00029d	83 c4 04 		add	sp,4
+;|*** }
+; Line 121
+	*** 0002a0	8b e5 			mov	sp,bp
+	*** 0002a2	5d 			pop	bp
+	*** 0002a3	c3 			ret	
+
+_game_init	ENDP
+;|*** 
+;|*** bool game_run(const char* filename, const int returnCode, const bool debug) {
+; Line 123
+	PUBLIC	_game_run
+_game_run	PROC NEAR
+	*** 0002a4	55 			push	bp
+	*** 0002a5	8b ec 			mov	bp,sp
+	*** 0002a7	83 ec 02 		sub	sp,2
+;	filename = 4
+;	returnCode = 6
+;	debug = 8
+;	err = -2
+;|***     int err;
+;|***     /* launch game executable */
+;|***     log_close();
+; Line 126
+	*** 0002aa	e8 00 00 		call	_log_close
+;|***     if (debug) {
+; Line 127
+	*** 0002ad	83 7e 08 00 		cmp	WORD PTR [bp+8],0	;debug
+	*** 0002b1	74 26 			je	$I531
+;|***         INFO("Executing %s under the debugger", filename);
+; Line 128
+	*** 0002b3	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 0002b6	b8 4d 02 		mov	ax,OFFSET DGROUP:$SG532
+	*** 0002b9	50 			push	ax
+	*** 0002ba	e8 00 00 		call	_INFO
+	*** 0002bd	83 c4 04 		add	sp,4
+;|***         sprintf(cmdlineBuf, " %s", filename);
+; Line 129
+	*** 0002c0	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 0002c3	b8 6d 02 		mov	ax,OFFSET DGROUP:$SG533
+	*** 0002c6	50 			push	ax
+	*** 0002c7	b8 ce 00 		mov	ax,OFFSET DGROUP:_cmdlineBuf
+	*** 0002ca	50 			push	ax
+	*** 0002cb	e8 00 00 		call	_sprintf
+	*** 0002ce	83 c4 06 		add	sp,6
+;|***         filename = DEBUGGER;
+; Line 130
+	*** 0002d1	a1 c4 00 		mov	ax,_DEBUGGER
+	*** 0002d4	89 46 04 		mov	WORD PTR [bp+4],ax	;filename
+;|***     }
+; Line 131
+;|***     else {
+; Line 132
+	*** 0002d7	eb 26 			jmp	SHORT $I534
+					$I531:
+;|***         memset(cmdlineBuf, 0, CMDLINE_LEN);
+; Line 133
+	*** 0002d9	b8 80 00 		mov	ax,128
+	*** 0002dc	50 			push	ax
+	*** 0002dd	2b c0 			sub	ax,ax
+	*** 0002df	50 			push	ax
+	*** 0002e0	b8 ce 00 		mov	ax,OFFSET DGROUP:_cmdlineBuf
+	*** 0002e3	50 			push	ax
+	*** 0002e4	e8 00 00 		call	_memset
+	*** 0002e7	83 c4 06 		add	sp,6
+;|***         INFO("Executing %s with commandline '%Fs'", filename, CMDLINE);
+; Line 134
+	*** 0002ea	ff 36 50 01 		push	WORD PTR _CMDLINE+2
+	*** 0002ee	ff 36 4e 01 		push	WORD PTR _CMDLINE
+	*** 0002f2	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 0002f5	b8 71 02 		mov	ax,OFFSET DGROUP:$SG535
+	*** 0002f8	50 			push	ax
+	*** 0002f9	e8 00 00 		call	_INFO
+	*** 0002fc	83 c4 08 		add	sp,8
+;|***     }
+; Line 135
+					$I534:
+;|***     if ((err = dos_runProgram(filename, CMDLINE)) != 0)
+; Line 136
+	*** 0002ff	ff 36 50 01 		push	WORD PTR _CMDLINE+2
+	*** 000303	ff 36 4e 01 		push	WORD PTR _CMDLINE
+	*** 000307	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 00030a	e8 00 00 		call	_dos_runProgram
+	*** 00030d	83 c4 06 		add	sp,6
+	*** 000310	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+	*** 000313	0b c0 			or	ax,ax
+	*** 000315	74 0d 			je	$I536
+;|***         FATAL("Unable to run %s", filename);
+; Line 137
+	*** 000317	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 00031a	b8 95 02 		mov	ax,OFFSET DGROUP:$SG537
+	*** 00031d	50 			push	ax
+	*** 00031e	e8 00 00 		call	_FATAL
+	*** 000321	83 c4 04 		add	sp,4
+;|***     err = dos_getReturnCode();
+; Line 138
+					$I536:
+	*** 000324	e8 00 00 		call	_dos_getReturnCode
+	*** 000327	89 46 fe 		mov	WORD PTR [bp-2],ax	;err
+;|***     INFO("%s exited with code 0x%x", filename, err);
+; Line 139
+	*** 00032a	50 			push	ax
+	*** 00032b	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 00032e	b8 a6 02 		mov	ax,OFFSET DGROUP:$SG538
+	*** 000331	50 			push	ax
+	*** 000332	e8 00 00 		call	_INFO
+	*** 000335	83 c4 06 		add	sp,6
+;|***     log_open(true);
+; Line 140
+	*** 000338	b8 01 00 		mov	ax,1
+	*** 00033b	50 			push	ax
+	*** 00033c	e8 00 00 		call	_log_open
+	*** 00033f	83 c4 02 		add	sp,2
+;|***     if (debug)
+; Line 141
+	*** 000342	83 7e 08 00 		cmp	WORD PTR [bp+8],0	;debug
+	*** 000346	74 05 			je	$I539
+;|***         return true;
+; Line 142
+	*** 000348	b8 01 00 		mov	ax,1
+	*** 00034b	eb 22 			jmp	SHORT $I541
+;|***     /* check return code if not in debug mode */
+;|***     if (returnCode >= 0)
+; Line 144
+					$I539:
+	*** 00034d	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;returnCode
+	*** 000351	7c 13 			jl	$I540
+;|***         return err == returnCode;
+; Line 145
+	*** 000353	8b 46 06 		mov	ax,WORD PTR [bp+6]	;returnCode
+	*** 000356	39 46 fe 		cmp	WORD PTR [bp-2],ax	;err
+	*** 000359	75 05 			jne	$L20000
+	*** 00035b	b8 01 00 		mov	ax,1
+	*** 00035e	eb 02 			jmp	SHORT $L20001
+					$L20000:
+	*** 000360	2b c0 			sub	ax,ax
+					$L20001:
+	*** 000362	eb 0b 			jmp	SHORT $I541
+;|***     else
+; Line 146
+	*** 000364	eb 09 			jmp	SHORT $I541
+					$I540:
+;|***         return err != 0;
+; Line 147
+	*** 000366	83 7e fe 01 		cmp	WORD PTR [bp-2],1	;err
+	*** 00036a	1b c0 			sbb	ax,ax
+	*** 00036c	40 			inc	ax
+	*** 00036d	eb 00 			jmp	SHORT $I541
+					$I541:
+;|*** }
+; Line 148
+	*** 00036f	8b e5 			mov	sp,bp
+	*** 000371	5d 			pop	bp
+	*** 000372	c3 			ret	
+
+_game_run	ENDP
+;|*** 
+;|*** uint16 load_segment(const uint16 envParagraphs) {
+; Line 150
+	PUBLIC	_load_segment
+_load_segment	PROC NEAR
+	*** 000373	55 			push	bp
+	*** 000374	8b ec 			mov	bp,sp
+;	envParagraphs = 4
+;|***     return dos_lastFreeBlock() + 1 + envParagraphs + 1;
+; Line 151
+	*** 000376	e8 00 00 		call	_dos_lastFreeBlock
+	*** 000379	03 46 04 		add	ax,WORD PTR [bp+4]	;envParagraphs
+	*** 00037c	05 02 00 		add	ax,2
+	*** 00037f	eb 00 			jmp	SHORT $EX544
+;|*** }
+; Line 152
+					$EX544:
+	*** 000381	8b e5 			mov	sp,bp
+	*** 000383	5d 			pop	bp
+	*** 000384	c3 			ret	
+
+_load_segment	ENDP
+;|*** 
+;|*** int main(int argc, char *argv[]) {
+; Line 154
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000385	55 			push	bp
+	*** 000386	8b ec 			mov	bp,sp
+	*** 000388	83 ec 0e 		sub	sp,14
+	*** 00038b	56 			push	si
+;	argc = 4
+;	argv = 6
+;	i = -6
+;	j = -8
+;	debugMenu = -10
+;	debugFlight = -2
+;	debugDebrief = -4
+;|***     /* process cmdline args */
+;|***     int i, j;
+;|***     bool debugMenu = false, debugFlight = false, debugDebrief = false;
+; Line 157
+	*** 00038c	c7 46 f6 00 00 		mov	WORD PTR [bp-10],0	;debugMenu
+	*** 000391	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;debugFlight
+	*** 000396	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;debugDebrief
+;|*** 
+;|***     log_open(false);
+; Line 159
+	*** 00039b	2b c0 			sub	ax,ax
+	*** 00039d	50 			push	ax
+	*** 00039e	e8 00 00 		call	_log_open
+	*** 0003a1	83 c4 02 		add	sp,2
+;|*** 
+;|***     for (i = 1; i < argc; ++i) {
+; Line 161
+	*** 0003a4	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;i
+	*** 0003a9	eb 03 			jmp	SHORT $F554
+					$FC555:
+	*** 0003ab	ff 46 fa 		inc	WORD PTR [bp-6]	;i
+					$F554:
+	*** 0003ae	8b 46 04 		mov	ax,WORD PTR [bp+4]	;argc
+	*** 0003b1	39 46 fa 		cmp	WORD PTR [bp-6],ax	;i
+	*** 0003b4	7c 03 			jl	$JCC948
+	*** 0003b6	e9 ad 00 		jmp	$FB556
+					$JCC948:
+;	arg = -12
+;	len = -14
+;|***         const char *arg = argv[i];
+; Line 162
+	*** 0003b9	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;i
+	*** 0003bc	d1 e3 			shl	bx,1
+	*** 0003be	8b 76 06 		mov	si,WORD PTR [bp+6]	;argv
+	*** 0003c1	8b 00 			mov	ax,[bx][si]
+	*** 0003c3	89 46 f4 		mov	WORD PTR [bp-12],ax	;arg
+;|***         const size_t len = strlen(arg);
+; Line 163
+	*** 0003c6	50 			push	ax
+	*** 0003c7	e8 00 00 		call	_strlen
+	*** 0003ca	83 c4 02 		add	sp,2
+	*** 0003cd	89 46 f2 		mov	WORD PTR [bp-14],ax	;len
+;|***         if (len < 3 || arg[0] != '/' || tolower(arg[1]) != 'd')
+; Line 164
+	*** 0003d0	3d 03 00 		cmp	ax,3
+	*** 0003d3	72 2d 			jb	$I560
+	*** 0003d5	8b 5e f4 		mov	bx,WORD PTR [bp-12]	;arg
+	*** 0003d8	80 3f 2f 		cmp	BYTE PTR [bx],47
+	*** 0003db	75 25 			jne	$I560
+	*** 0003dd	8a 47 01 		mov	al,BYTE PTR [bx+1]
+	*** 0003e0	98 			cbw	
+	*** 0003e1	8b d8 			mov	bx,ax
+	*** 0003e3	f6 87 01 00 01 		test	BYTE PTR __ctype[bx+1],1
+	*** 0003e8	74 0c 			je	$L20004
+	*** 0003ea	8b 5e f4 		mov	bx,WORD PTR [bp-12]	;arg
+	*** 0003ed	8a 47 01 		mov	al,BYTE PTR [bx+1]
+	*** 0003f0	98 			cbw	
+	*** 0003f1	05 20 00 		add	ax,32
+	*** 0003f4	eb 07 			jmp	SHORT $L20005
+					$L20004:
+	*** 0003f6	8b 5e f4 		mov	bx,WORD PTR [bp-12]	;arg
+	*** 0003f9	8a 47 01 		mov	al,BYTE PTR [bx+1]
+	*** 0003fc	98 			cbw	
+					$L20005:
+	*** 0003fd	3d 64 00 		cmp	ax,100
+	*** 000400	74 0d 			je	$I559
+					$I560:
+;|***             FATAL("Unrecognized argument: '%s'", arg);
+; Line 165
+	*** 000402	ff 76 f4 		push	WORD PTR [bp-12]	;arg
+	*** 000405	b8 bf 02 		mov	ax,OFFSET DGROUP:$SG561
+	*** 000408	50 			push	ax
+	*** 000409	e8 00 00 		call	_FATAL
+	*** 00040c	83 c4 04 		add	sp,4
+;|***         for (j = 2; j < len; ++j) {
+; Line 166
+					$I559:
+	*** 00040f	c7 46 f8 02 00 		mov	WORD PTR [bp-8],2	;j
+	*** 000414	eb 03 			jmp	SHORT $F562
+					$FC563:
+	*** 000416	ff 46 f8 		inc	WORD PTR [bp-8]	;j
+					$F562:
+	*** 000419	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;len
+	*** 00041c	39 46 f8 		cmp	WORD PTR [bp-8],ax	;j
+	*** 00041f	73 42 			jae	$FB564
+;|***             switch (arg[j]) {
+; Line 167
+	*** 000421	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;j
+	*** 000424	8b 76 f4 		mov	si,WORD PTR [bp-12]	;arg
+	*** 000427	8a 00 			mov	al,[bx][si]
+	*** 000429	98 			cbw	
+	*** 00042a	eb 24 			jmp	SHORT $S565
+;|***             case '1': debugMenu = true; break;
+; Line 168
+					$SC569:
+	*** 00042c	c7 46 f6 01 00 		mov	WORD PTR [bp-10],1	;debugMenu
+	*** 000431	eb 2e 			jmp	SHORT $SB566
+;|***             case '2': debugFlight = true; break;
+; Line 169
+					$SC570:
+	*** 000433	c7 46 fe 01 00 		mov	WORD PTR [bp-2],1	;debugFlight
+	*** 000438	eb 27 			jmp	SHORT $SB566
+;|***             case '3': debugDebrief = true; break;
+; Line 170
+					$SC571:
+	*** 00043a	c7 46 fc 01 00 		mov	WORD PTR [bp-4],1	;debugDebrief
+	*** 00043f	eb 20 			jmp	SHORT $SB566
+;|***             default:
+; Line 171
+					$SD572:
+;|***                 FATAL("Unrecognized argument: '%s'", arg);
+; Line 172
+	*** 000441	ff 76 f4 		push	WORD PTR [bp-12]	;arg
+	*** 000444	b8 db 02 		mov	ax,OFFSET DGROUP:$SG573
+	*** 000447	50 			push	ax
+	*** 000448	e8 00 00 		call	_FATAL
+	*** 00044b	83 c4 04 		add	sp,4
+;|***             }
+; Line 173
+	*** 00044e	eb 11 			jmp	SHORT $SB566
+					$S565:
+	*** 000450	3d 31 00 		cmp	ax,49
+	*** 000453	74 d7 			je	$SC569
+	*** 000455	3d 32 00 		cmp	ax,50
+	*** 000458	74 d9 			je	$SC570
+	*** 00045a	3d 33 00 		cmp	ax,51
+	*** 00045d	74 db 			je	$SC571
+	*** 00045f	eb e0 			jmp	SHORT $SD572
+					$SB566:
+;|***         }
+; Line 174
+	*** 000461	eb b3 			jmp	SHORT $FC563
+					$FB564:
+;|***     }
+; Line 175
+	*** 000463	e9 45 ff 		jmp	$FC555
+					$FB556:
+;|*** 
+;|***     INFO("Starting game initialization routine");
+; Line 177
+	*** 000466	b8 f7 02 		mov	ax,OFFSET DGROUP:$SG574
+	*** 000469	50 			push	ax
+	*** 00046a	e8 00 00 		call	_INFO
+	*** 00046d	83 c4 02 		add	sp,2
+;|***     game_init();
+; Line 178
+	*** 000470	e8 f7 fb 		call	_game_init
+;|***     dos_mcbInfo();
+; Line 179
+	*** 000473	e8 00 00 		call	_dos_mcbInfo
+;|*** 
+;|***     INFO("Starting game main loop");
+; Line 181
+	*** 000476	b8 1c 03 		mov	ax,OFFSET DGROUP:$SG575
+	*** 000479	50 			push	ax
+	*** 00047a	e8 00 00 		call	_INFO
+	*** 00047d	83 c4 02 		add	sp,2
+;|***     while (true) {
+; Line 182
+					$FC577:
+;|***         if (!game_run(GAME_MENU, RET_MENU, debugMenu)) break;
+; Line 183
+	*** 000480	ff 76 f6 		push	WORD PTR [bp-10]	;debugMenu
+	*** 000483	ff 36 c8 00 		push	WORD PTR _RET_MENU
+	*** 000487	ff 36 be 00 		push	WORD PTR _GAME_MENU
+	*** 00048b	e8 16 fe 		call	_game_run
+	*** 00048e	83 c4 06 		add	sp,6
+	*** 000491	0b c0 			or	ax,ax
+	*** 000493	75 02 			jne	$I579
+	*** 000495	eb 30 			jmp	SHORT $FB578
+;|***         if (!game_run(GAME_FLIGHT, RET_NONZERO, debugFlight)) break;
+; Line 184
+					$I579:
+	*** 000497	ff 76 fe 		push	WORD PTR [bp-2]	;debugFlight
+	*** 00049a	ff 36 cc 00 		push	WORD PTR _RET_NONZERO
+	*** 00049e	ff 36 c0 00 		push	WORD PTR _GAME_FLIGHT
+	*** 0004a2	e8 ff fd 		call	_game_run
+	*** 0004a5	83 c4 06 		add	sp,6
+	*** 0004a8	0b c0 			or	ax,ax
+	*** 0004aa	75 02 			jne	$I580
+	*** 0004ac	eb 19 			jmp	SHORT $FB578
+;|***         if (!game_run(GAME_DEBRIEFING, RET_DEBRIEFING, debugDebrief)) break;
+; Line 185
+					$I580:
+	*** 0004ae	ff 76 fc 		push	WORD PTR [bp-4]	;debugDebrief
+	*** 0004b1	ff 36 ca 00 		push	WORD PTR _RET_DEBRIEFING
+	*** 0004b5	ff 36 c2 00 		push	WORD PTR _GAME_DEBRIEFING
+	*** 0004b9	e8 e8 fd 		call	_game_run
+	*** 0004bc	83 c4 06 		add	sp,6
+	*** 0004bf	0b c0 			or	ax,ax
+	*** 0004c1	75 02 			jne	$I581
+	*** 0004c3	eb 02 			jmp	SHORT $FB578
+;|***     }
+; Line 186
+					$I581:
+	*** 0004c5	eb b9 			jmp	SHORT $FC577
+					$FB578:
+;|*** 
+;|***     INFO("Main loop finished, terminating");
+; Line 188
+	*** 0004c7	b8 34 03 		mov	ax,OFFSET DGROUP:$SG582
+	*** 0004ca	50 			push	ax
+	*** 0004cb	e8 00 00 		call	_INFO
+	*** 0004ce	83 c4 02 		add	sp,2
+;|***     return 0;
+; Line 189
+	*** 0004d1	2b c0 			sub	ax,ax
+	*** 0004d3	eb 00 			jmp	SHORT $EX548
+;|*** }
+; Line 190
+					$EX548:
+	*** 0004d5	5e 			pop	si
+	*** 0004d6	8b e5 			mov	sp,bp
+	*** 0004d8	5d 			pop	bp
+	*** 0004d9	c3 			ret	
+
+_main	ENDP
+_TEXT	ENDS
+END

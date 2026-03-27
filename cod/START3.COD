@@ -1,0 +1,4252 @@
+;	Static Name Aliases
+;
+	TITLE   start3.c
+	NAME    start3
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_strcmp:NEAR
+EXTRN	__aNldiv:NEAR
+EXTRN	_mystrcpy:NEAR
+EXTRN	_mystrlen:NEAR
+EXTRN	_fclose:NEAR
+EXTRN	_mystrcat:NEAR
+EXTRN	_movedata:NEAR
+EXTRN	_fopen:NEAR
+EXTRN	__aNlmul:NEAR
+EXTRN	_fread:NEAR
+EXTRN	_abs:NEAR
+EXTRN	_randMul:NEAR
+EXTRN	_parseGridTerrain:NEAR
+EXTRN	_rand:NEAR
+EXTRN	_byte_1B0FF:BYTE
+EXTRN	_terrainPtrUnk:BYTE
+EXTRN	_byte_1B100:BYTE
+EXTRN	_word_1E24A:WORD
+EXTRN	_word_19294:BYTE
+EXTRN	_word_1B148:WORD
+EXTRN	_word_192A4:BYTE
+EXTRN	_word_182BA:WORD
+EXTRN	_wldReadBuf3:WORD
+EXTRN	_fileHandle:WORD
+EXTRN	_commData:DWORD
+EXTRN	_word_182BC:WORD
+EXTRN	_word_182BE:WORD
+EXTRN	_gameData:DWORD
+EXTRN	_word_182C0:WORD
+EXTRN	_wldReadBuf2:WORD
+EXTRN	_word_182C2:WORD
+EXTRN	_word_182C4:WORD
+EXTRN	_gridBuf5:BYTE
+EXTRN	_word_182C6:WORD
+EXTRN	_gridBuf4:BYTE
+EXTRN	_word_182C8:WORD
+EXTRN	_gridBuf3:BYTE
+EXTRN	_word_1B960:WORD
+EXTRN	_stru_1892E:BYTE
+EXTRN	_word_192EC:BYTE
+EXTRN	_difficultySaved:WORD
+EXTRN	_gridBuf2:BYTE
+EXTRN	_word_18994:WORD
+EXTRN	_word_192F4:BYTE
+EXTRN	_byte_192FC:BYTE
+EXTRN	_off_19304:BYTE
+EXTRN	_word_189B6:BYTE
+EXTRN	_off_19314:BYTE
+EXTRN	_wldReadBuf1:BYTE
+EXTRN	_word_19324:BYTE
+EXTRN	_aPowCamp:BYTE
+EXTRN	_gridBuf1:BYTE
+EXTRN	_aRb_4:BYTE
+EXTRN	_aWb_0:BYTE
+EXTRN	_aTd00:BYTE
+EXTRN	_aJz00:BYTE
+EXTRN	_aXv00:BYTE
+EXTRN	_aEs00:BYTE
+EXTRN	_aWx00:BYTE
+EXTRN	_wldReadBuf4:BYTE
+EXTRN	_aCc00:BYTE
+EXTRN	_wldReadBuf10:BYTE
+EXTRN	_aHz00:BYTE
+EXTRN	_aAt:BYTE
+EXTRN	_planes:BYTE
+EXTRN	_targets:BYTE
+EXTRN	_target2:BYTE
+EXTRN	_word_17FFE:BYTE
+EXTRN	_word_1D00A:WORD
+EXTRN	_word_18010:BYTE
+EXTRN	_wldReadBuf6:BYTE
+EXTRN	_word_18026:BYTE
+EXTRN	_terrainBuf2:BYTE
+EXTRN	_dword_1D5D0:DWORD
+EXTRN	_word_1D5D4:WORD
+EXTRN	_missionPick:WORD
+EXTRN	_word_1D5D6:WORD
+EXTRN	_dword_1D5D8:DWORD
+EXTRN	_dword_1D5DC:DWORD
+EXTRN	_word_1D5E0:WORD
+EXTRN	_byte_1D5E2:BYTE
+EXTRN	_byte_1D5E3:BYTE
+EXTRN	_byte_1D5E4:BYTE
+EXTRN	_byte_1D5E5:BYTE
+EXTRN	_wldReadBuf9:BYTE
+EXTRN	_dword_1D650:DWORD
+EXTRN	_readItemSize:WORD
+EXTRN	_wldReadBuf8:BYTE
+EXTRN	_flag4Saved:WORD
+EXTRN	_theaterSaved:WORD
+EXTRN	_moveDst:DWORD
+EXTRN	_bufCoordStr:BYTE
+EXTRN	_wldReadBuf7:BYTE
+EXTRN	_stru_18FC0:BYTE
+EXTRN	_byte_1B0D1:BYTE
+EXTRN	_word_1DD38:WORD
+EXTRN	_regnPlhPtr:WORD
+EXTRN	_byte_1B0D2:BYTE
+EXTRN	_plhFiles:BYTE
+EXTRN	_byte_1B0D3:BYTE
+EXTRN	_wldReadBuf5Size:WORD
+EXTRN	_worldFiles:BYTE
+EXTRN	_wldOffsets:BYTE
+EXTRN	_todayMissStrBuf:BYTE
+EXTRN	_wldReadBuf11:BYTE
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** // offsets based on F-15 SE2 v451.03 start.exe (unpacked) MD5: cf6e997ed4582cf82db6ec37d2b1a6fd
+;|*** #include "struct.h"
+;|*** #include "start.h"
+;|*** #include "pointers.h"
+;|*** #include "comm.h"
+;|*** #include "debug.h"
+;|*** 
+;|*** #include <memory.h>
+;|*** #include <dos.h>
+;|*** #include <stdarg.h>
+;|*** #include <time.h>
+;|*** #include <string.h>
+;|*** 
+;|*** // 37f8
+;|*** int* sub_137F8(int32 arg_0, int32 arg_4) {
+; Line 15
+	PUBLIC	_sub_137F8
+_sub_137F8	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 22 		sub	sp,34
+	*** 000006	57 			push	di
+	*** 000007	56 			push	si
+;	arg_0 = 4
+;	arg_4 = 8
+;	var_2 = -14
+;	var_4 = -22
+;	var_6 = -32
+;	var_8 = -2
+;	var_A = -8
+;	var_C = -18
+;	var_E = -26
+;	var_10 = -6
+;	var_12 = -16
+;	var_16 = -34
+;	var_18 = -4
+;	var_1A = -12
+;	var_20 = -10
+;	var_22 = -20
+;	var_14 = -24
+;	var_1E = -30
+;|***     int16 var_2, var_4, var_6, var_8, var_A, var_C, var_E, var_10, var_12, var_16, var_18, var_1A, var_20;
+;|***     int16 var_22;
+;|***     int16 var_14;
+;|***     uint32 var_1E;
+;|***     word_1D5D6 = 0x7fff;
+; Line 20
+	*** 000008	c7 06 00 00 ff 7f 	mov	WORD PTR _word_1D5D6,32767
+;|***     for (var_C = 1; var_C <= 2; var_C++) { // 3819
+; Line 21
+	*** 00000e	c7 46 ee 01 00 		mov	WORD PTR [bp-18],1	;var_C
+	*** 000013	eb 03 			jmp	SHORT $F1524
+					$FC1525:
+	*** 000015	ff 46 ee 		inc	WORD PTR [bp-18]	;var_C
+					$F1524:
+	*** 000018	83 7e ee 02 		cmp	WORD PTR [bp-18],2	;var_C
+	*** 00001c	7e 03 			jle	$JCC28
+	*** 00001e	e9 b7 01 		jmp	$FB1526
+					$JCC28:
+;|***         for (var_10 = 0; var_10 < 9; var_10++) { // 382c
+; Line 22
+	*** 000021	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;var_10
+	*** 000026	eb 03 			jmp	SHORT $F1527
+					$FC1528:
+	*** 000028	ff 46 fa 		inc	WORD PTR [bp-6]	;var_10
+					$F1527:
+	*** 00002b	83 7e fa 09 		cmp	WORD PTR [bp-6],9	;var_10
+	*** 00002f	7c 03 			jl	$JCC47
+	*** 000031	e9 a1 01 		jmp	$FB1529
+					$JCC47:
+;|***             // 383b
+;|***             var_1E = sub_139E9(var_C, arg_0);
+; Line 24
+	*** 000034	ff 76 06 		push	WORD PTR [bp+6]
+	*** 000037	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 00003a	ff 76 ee 		push	WORD PTR [bp-18]	;var_C
+	*** 00003d	e8 00 00 		call	_sub_139E9
+	*** 000040	83 c4 06 		add	sp,6
+	*** 000043	89 46 e2 		mov	WORD PTR [bp-30],ax	;var_1E
+	*** 000046	89 56 e4 		mov	WORD PTR [bp-28],dx
+;|***             // 384d
+;|***             var_16 = var_1E >> 0xc;
+; Line 26
+	*** 000049	b1 0c 			mov	cl,12
+					$L20000:
+	*** 00004b	d1 ea 			shr	dx,1
+	*** 00004d	d1 d8 			rcr	ax,1
+	*** 00004f	fe c9 			dec	cl
+	*** 000051	74 02 			je	$L20001
+	*** 000053	eb f6 			jmp	SHORT $L20000
+					$L20001:
+	*** 000055	89 46 de 		mov	WORD PTR [bp-34],ax	;var_16
+;|***             // 3856
+;|***             var_A = (int16)var_1E & 0xfff;
+; Line 28
+	*** 000058	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;var_1E
+	*** 00005b	80 e4 0f 		and	ah,15
+	*** 00005e	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_A
+;|***             // 3868
+;|***             var_1E = sub_139E9(var_C, arg_4);
+; Line 30
+	*** 000061	ff 76 0a 		push	WORD PTR [bp+10]
+	*** 000064	ff 76 08 		push	WORD PTR [bp+8]	;arg_4
+	*** 000067	ff 76 ee 		push	WORD PTR [bp-18]	;var_C
+	*** 00006a	e8 00 00 		call	_sub_139E9
+	*** 00006d	83 c4 06 		add	sp,6
+	*** 000070	89 46 e2 		mov	WORD PTR [bp-30],ax	;var_1E
+	*** 000073	89 56 e4 		mov	WORD PTR [bp-28],dx
+;|***             // 387a
+;|***             var_1A = var_1E >> 0xc;
+; Line 32
+	*** 000076	b1 0c 			mov	cl,12
+					$L20002:
+	*** 000078	d1 ea 			shr	dx,1
+	*** 00007a	d1 d8 			rcr	ax,1
+	*** 00007c	fe c9 			dec	cl
+	*** 00007e	74 02 			je	$L20003
+	*** 000080	eb f6 			jmp	SHORT $L20002
+					$L20003:
+	*** 000082	89 46 f4 		mov	WORD PTR [bp-12],ax	;var_1A
+;|***             var_E = (int16)var_1E & 0xfff;
+; Line 33
+	*** 000085	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;var_1E
+	*** 000088	80 e4 0f 		and	ah,15
+	*** 00008b	89 46 e6 		mov	WORD PTR [bp-26],ax	;var_E
+;|***             var_4 = word_17FFE[var_10];
+; Line 34
+	*** 00008e	8b 76 fa 		mov	si,WORD PTR [bp-6]	;var_10
+	*** 000091	d1 e6 			shl	si,1
+	*** 000093	8b 84 00 00 		mov	ax,WORD PTR _word_17FFE[si]
+	*** 000097	89 46 ea 		mov	WORD PTR [bp-22],ax	;var_4
+;|***             var_8 = word_18010[var_10];
+; Line 35
+	*** 00009a	8b 84 00 00 		mov	ax,WORD PTR _word_18010[si]
+	*** 00009e	89 46 fe 		mov	WORD PTR [bp-2],ax	;var_8
+;|***             var_22 = word_18026[var_4] - var_A + 0x800;
+; Line 36
+	*** 0000a1	8b 5e ea 		mov	bx,WORD PTR [bp-22]	;var_4
+	*** 0000a4	d1 e3 			shl	bx,1
+	*** 0000a6	8b 87 00 00 		mov	ax,WORD PTR _word_18026[bx]
+	*** 0000aa	2b 46 f8 		sub	ax,WORD PTR [bp-8]	;var_A
+	*** 0000ad	80 c4 08 		add	ah,8
+	*** 0000b0	89 46 ec 		mov	WORD PTR [bp-20],ax	;var_22
+;|***             var_2 = word_18026[var_8] - var_E + 0x800;
+; Line 37
+	*** 0000b3	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;var_8
+	*** 0000b6	d1 e3 			shl	bx,1
+	*** 0000b8	8b 87 00 00 		mov	ax,WORD PTR _word_18026[bx]
+	*** 0000bc	2b 46 e6 		sub	ax,WORD PTR [bp-26]	;var_E
+	*** 0000bf	80 c4 08 		add	ah,8
+	*** 0000c2	89 46 f2 		mov	WORD PTR [bp-14],ax	;var_2
+;|***             var_1A += var_8;
+; Line 38
+	*** 0000c5	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;var_8
+	*** 0000c8	01 46 f4 		add	WORD PTR [bp-12],ax	;var_1A
+;|***             // 38d2
+;|***             var_20 = sub_13A61(var_C, var_16 += var_4, var_1A);
+; Line 40
+	*** 0000cb	ff 76 f4 		push	WORD PTR [bp-12]	;var_1A
+	*** 0000ce	8b 46 ea 		mov	ax,WORD PTR [bp-22]	;var_4
+	*** 0000d1	01 46 de 		add	WORD PTR [bp-34],ax	;var_16
+	*** 0000d4	ff 76 de 		push	WORD PTR [bp-34]	;var_16
+	*** 0000d7	ff 76 ee 		push	WORD PTR [bp-18]	;var_C
+	*** 0000da	e8 00 00 		call	_sub_13A61
+	*** 0000dd	83 c4 06 		add	sp,6
+	*** 0000e0	89 46 f6 		mov	WORD PTR [bp-10],ax	;var_20
+;|***             // 38db
+;|***             if (var_20 != 0xffff) {
+; Line 42
+	*** 0000e3	3d ff ff 		cmp	ax,-1
+	*** 0000e6	75 03 			jne	$JCC230
+	*** 0000e8	e9 e7 00 		jmp	$FB1533
+					$JCC230:
+;|***                 // 38f2
+;|***                 word_1E24A = (int16)terrainPtrUnk[var_C].field_0[var_20];
+; Line 44
+	*** 0000eb	8b 7e ee 		mov	di,WORD PTR [bp-18]	;var_C
+	*** 0000ee	b1 06 			mov	cl,6
+	*** 0000f0	d3 e7 			shl	di,cl
+	*** 0000f2	8b d8 			mov	bx,ax
+	*** 0000f4	d1 e3 			shl	bx,1
+	*** 0000f6	8b 81 00 00 		mov	ax,WORD PTR _terrainPtrUnk[bx][di]
+	*** 0000fa	a3 00 00 		mov	_word_1E24A,ax
+;|***                 // 38f5
+;|***                 for (var_12 = 0; (uint16)terrainBuf2[var_C].field_0[var_20] > var_12; var_12++) { // 3917
+; Line 46
+	*** 0000fd	c7 46 f0 00 00 		mov	WORD PTR [bp-16],0	;var_12
+	*** 000102	eb 03 			jmp	SHORT $F1531
+					$FC1532:
+	*** 000104	ff 46 f0 		inc	WORD PTR [bp-16]	;var_12
+					$F1531:
+	*** 000107	8b 76 ee 		mov	si,WORD PTR [bp-18]	;var_C
+	*** 00010a	b1 06 			mov	cl,6
+	*** 00010c	d3 e6 			shl	si,cl
+	*** 00010e	8b 5e f6 		mov	bx,WORD PTR [bp-10]	;var_20
+	*** 000111	d1 e3 			shl	bx,1
+	*** 000113	8b 46 f0 		mov	ax,WORD PTR [bp-16]	;var_12
+	*** 000116	39 80 00 00 		cmp	WORD PTR _terrainBuf2[bx][si],ax
+	*** 00011a	77 03 			ja	$JCC282
+	*** 00011c	e9 b3 00 		jmp	$FB1533
+					$JCC282:
+;|***                     // 3920
+;|***                     if (wldReadBuf9[((uint8*)(word_1E24A))[6]] != 0) { // 3929
+; Line 48
+	*** 00011f	8b 1e 00 00 		mov	bx,_word_1E24A
+	*** 000123	8a 5f 06 		mov	bl,BYTE PTR [bx+6]
+	*** 000126	2a ff 			sub	bh,bh
+	*** 000128	38 bf 00 00 		cmp	BYTE PTR _wldReadBuf9[bx],bh
+	*** 00012c	75 03 			jne	$JCC300
+	*** 00012e	e9 99 00 		jmp	$I1537
+					$JCC300:
+;|***                         var_14 = *((uint16*)word_1E24A) + var_22;
+; Line 49
+	*** 000131	8b 46 ec 		mov	ax,WORD PTR [bp-20]	;var_22
+	*** 000134	8b 1e 00 00 		mov	bx,_word_1E24A
+	*** 000138	03 07 			add	ax,WORD PTR [bx]
+	*** 00013a	89 46 e8 		mov	WORD PTR [bp-24],ax	;var_14
+;|***                         // 393b
+;|***                         var_18 = *((uint16*)word_1E24A + 1) + var_2;
+; Line 51
+	*** 00013d	8b 47 02 		mov	ax,WORD PTR [bx+2]
+	*** 000140	03 46 f2 		add	ax,WORD PTR [bp-14]	;var_2
+	*** 000143	89 46 fc 		mov	WORD PTR [bp-4],ax	;var_18
+;|***                         var_6 = abs(var_14) + abs(var_18);
+; Line 52
+	*** 000146	50 			push	ax
+	*** 000147	e8 00 00 		call	_abs
+	*** 00014a	83 c4 02 		add	sp,2
+	*** 00014d	ff 76 e8 		push	WORD PTR [bp-24]	;var_14
+	*** 000150	8b f0 			mov	si,ax
+	*** 000152	e8 00 00 		call	_abs
+	*** 000155	83 c4 02 		add	sp,2
+	*** 000158	03 c6 			add	ax,si
+	*** 00015a	89 46 e0 		mov	WORD PTR [bp-32],ax	;var_6
+;|***                         if (var_C == 1) { // 395b
+; Line 53
+	*** 00015d	83 7e ee 01 		cmp	WORD PTR [bp-18],1	;var_C
+	*** 000161	75 07 			jne	$I1535
+;|***                             var_6 >>= 2;
+; Line 54
+	*** 000163	b1 02 			mov	cl,2
+	*** 000165	d3 7e e0 		sar	WORD PTR [bp-32],cl	;var_6
+;|***                         }
+; Line 55
+;|***                         else { // 3962
+; Line 56
+	*** 000168	eb 08 			jmp	SHORT $I1536
+					$I1535:
+;|***                             var_14 <<= 2;
+; Line 57
+	*** 00016a	b1 02 			mov	cl,2
+	*** 00016c	d3 66 e8 		shl	WORD PTR [bp-24],cl	;var_14
+;|***                             var_18 <<= 2;
+; Line 58
+	*** 00016f	d3 66 fc 		shl	WORD PTR [bp-4],cl	;var_18
+;|***                         } // 396a
+; Line 59
+					$I1536:
+;|***                         if (var_6 < word_1D5D6) { // 3972
+; Line 60
+	*** 000172	a1 00 00 		mov	ax,_word_1D5D6
+	*** 000175	39 46 e0 		cmp	WORD PTR [bp-32],ax	;var_6
+	*** 000178	7d 50 			jge	$I1537
+;|***                             byte_1D5E2 = (int8)var_C;
+; Line 61
+	*** 00017a	8a 46 ee 		mov	al,BYTE PTR [bp-18]	;var_C
+	*** 00017d	a2 00 00 		mov	_byte_1D5E2,al
+;|***                             byte_1D5E3 = (int8)var_12;
+; Line 62
+	*** 000180	8a 46 f0 		mov	al,BYTE PTR [bp-16]	;var_12
+	*** 000183	a2 00 00 		mov	_byte_1D5E3,al
+;|***                             byte_1D5E4 = (int8)var_16;
+; Line 63
+	*** 000186	8a 46 de 		mov	al,BYTE PTR [bp-34]	;var_16
+	*** 000189	a2 00 00 		mov	_byte_1D5E4,al
+;|***                             byte_1D5E5[0] = (int8)var_1A;
+; Line 64
+	*** 00018c	8a 46 f4 		mov	al,BYTE PTR [bp-12]	;var_1A
+	*** 00018f	a2 00 00 		mov	BYTE PTR _byte_1D5E5,al
+;|***                             // 398d
+;|***                             word_1D5E0 = word_1E24A;
+; Line 66
+	*** 000192	a1 00 00 		mov	ax,_word_1E24A
+	*** 000195	a3 00 00 		mov	_word_1D5E0,ax
+;|***                             word_1D5D4 = ((uint8*)word_1D5E0)[6];
+; Line 67
+	*** 000198	8b d8 			mov	bx,ax
+	*** 00019a	8a 47 06 		mov	al,BYTE PTR [bx+6]
+	*** 00019d	2a e4 			sub	ah,ah
+	*** 00019f	a3 00 00 		mov	_word_1D5D4,ax
+;|***                             word_1D5D6 = var_6;
+; Line 68
+	*** 0001a2	8b 46 e0 		mov	ax,WORD PTR [bp-32]	;var_6
+	*** 0001a5	a3 00 00 		mov	_word_1D5D6,ax
+;|***                             dword_1D5D8 = var_14 + arg_0;
+; Line 69
+	*** 0001a8	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;var_14
+	*** 0001ab	99 			cwd	
+	*** 0001ac	03 46 04 		add	ax,WORD PTR [bp+4]	;arg_0
+	*** 0001af	13 56 06 		adc	dx,WORD PTR [bp+6]
+	*** 0001b2	a3 00 00 		mov	WORD PTR _dword_1D5D8,ax
+	*** 0001b5	89 16 02 00 		mov	WORD PTR _dword_1D5D8+2,dx
+;|***                             dword_1D5DC = var_18 + arg_4;
+; Line 70
+	*** 0001b9	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_18
+	*** 0001bc	99 			cwd	
+	*** 0001bd	03 46 08 		add	ax,WORD PTR [bp+8]	;arg_4
+	*** 0001c0	13 56 0a 		adc	dx,WORD PTR [bp+10]
+	*** 0001c3	a3 00 00 		mov	WORD PTR _dword_1D5DC,ax
+	*** 0001c6	89 16 02 00 		mov	WORD PTR _dword_1D5DC+2,dx
+;|***                         }
+; Line 71
+;|***                     }
+; Line 72
+					$I1537:
+;|***                     // 39c2
+;|***                     word_1E24A += 7; 
+; Line 74
+	*** 0001ca	83 06 00 00 07 		add	WORD PTR _word_1E24A,7
+;|***                 } // 39ca
+; Line 75
+	*** 0001cf	e9 32 ff 		jmp	$FC1532
+					$FB1533:
+;|***             } // 39ca
+; Line 76
+;|***         } // 39cd
+; Line 77
+	*** 0001d2	e9 53 fe 		jmp	$FC1528
+					$FB1529:
+;|***     } // 39d0
+; Line 78
+	*** 0001d5	e9 3d fe 		jmp	$FC1525
+					$FB1526:
+;|***     if (word_1D5D6 != 0x7fff) {
+; Line 79
+	*** 0001d8	81 3e 00 00 ff 7f 	cmp	WORD PTR _word_1D5D6,32767
+	*** 0001de	74 07 			je	$I1538
+;|***         return &word_1D5D4;
+; Line 80
+	*** 0001e0	b8 00 00 		mov	ax,OFFSET _word_1D5D4
+	*** 0001e3	eb 06 			jmp	SHORT $I1539
+;|***     } 
+; Line 81
+;|***     else return NULL;
+; Line 82
+	*** 0001e5	eb 04 			jmp	SHORT $I1539
+					$I1538:
+	*** 0001e7	2b c0 			sub	ax,ax
+	*** 0001e9	eb 00 			jmp	SHORT $I1539
+					$I1539:
+;|*** }
+; Line 83
+	*** 0001eb	5e 			pop	si
+	*** 0001ec	5f 			pop	di
+	*** 0001ed	8b e5 			mov	sp,bp
+	*** 0001ef	5d 			pop	bp
+	*** 0001f0	c3 			ret	
+
+_sub_137F8	ENDP
+;|*** 
+;|*** // 39e9
+;|*** uint32 sub_139E9(int arg_0, uint32 arg_2) {
+; Line 86
+	PUBLIC	_sub_139E9
+_sub_139E9	PROC NEAR
+	*** 0001f1	55 			push	bp
+	*** 0001f2	8b ec 			mov	bp,sp
+;	arg_0 = 4
+;	arg_2 = 6
+;|***     switch (arg_0) { // 3a43
+; Line 87
+	*** 0001f4	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 0001f7	eb 52 			jmp	SHORT $S1543
+;|***     case 4: // 39f1
+; Line 88
+					$SC1547:
+;|***         return arg_2 >> 6;
+; Line 89
+	*** 0001f9	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 0001fc	8b 56 08 		mov	dx,WORD PTR [bp+8]
+	*** 0001ff	b1 06 			mov	cl,6
+					$L20004:
+	*** 000201	d1 ea 			shr	dx,1
+	*** 000203	d1 d8 			rcr	ax,1
+	*** 000205	fe c9 			dec	cl
+	*** 000207	74 02 			je	$L20005
+	*** 000209	eb f6 			jmp	SHORT $L20004
+					$L20005:
+	*** 00020b	eb 58 			jmp	SHORT $SB1544
+;|***     case 3:
+; Line 90
+					$SC1548:
+;|***         return arg_2 >> 4;
+; Line 91
+	*** 00020d	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 000210	8b 56 08 		mov	dx,WORD PTR [bp+8]
+	*** 000213	b1 04 			mov	cl,4
+					$L20006:
+	*** 000215	d1 ea 			shr	dx,1
+	*** 000217	d1 d8 			rcr	ax,1
+	*** 000219	fe c9 			dec	cl
+	*** 00021b	74 02 			je	$L20007
+	*** 00021d	eb f6 			jmp	SHORT $L20006
+					$L20007:
+	*** 00021f	eb 44 			jmp	SHORT $SB1544
+;|***     case 2:
+; Line 92
+					$SC1549:
+;|***         return arg_2 >> 2;
+; Line 93
+	*** 000221	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 000224	8b 56 08 		mov	dx,WORD PTR [bp+8]
+	*** 000227	b1 02 			mov	cl,2
+					$L20008:
+	*** 000229	d1 ea 			shr	dx,1
+	*** 00022b	d1 d8 			rcr	ax,1
+	*** 00022d	fe c9 			dec	cl
+	*** 00022f	74 02 			je	$L20009
+	*** 000231	eb f6 			jmp	SHORT $L20008
+					$L20009:
+	*** 000233	eb 30 			jmp	SHORT $SB1544
+;|***     case 1:
+; Line 94
+					$SC1550:
+;|***         return arg_2;
+; Line 95
+	*** 000235	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 000238	8b 56 08 		mov	dx,WORD PTR [bp+8]
+	*** 00023b	eb 28 			jmp	SHORT $SB1544
+;|***     case 0:
+; Line 96
+					$SC1551:
+;|***         return arg_2 << 1;
+; Line 97
+	*** 00023d	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 000240	8b 56 08 		mov	dx,WORD PTR [bp+8]
+	*** 000243	d1 e0 			shl	ax,1
+	*** 000245	d1 d2 			rcl	dx,1
+	*** 000247	eb 1c 			jmp	SHORT $SB1544
+;|***     }
+; Line 98
+	*** 000249	eb 1a 			jmp	SHORT $SB1544
+					$S1543:
+	*** 00024b	0b c0 			or	ax,ax
+	*** 00024d	74 ee 			je	$SC1551
+	*** 00024f	3d 01 00 		cmp	ax,1
+	*** 000252	74 e1 			je	$SC1550
+	*** 000254	3d 02 00 		cmp	ax,2
+	*** 000257	74 c8 			je	$SC1549
+	*** 000259	3d 03 00 		cmp	ax,3
+	*** 00025c	74 af 			je	$SC1548
+	*** 00025e	3d 04 00 		cmp	ax,4
+	*** 000261	74 96 			je	$SC1547
+	*** 000263	eb 00 			jmp	SHORT $SB1544
+					$SB1544:
+;|*** }
+; Line 99
+	*** 000265	8b e5 			mov	sp,bp
+	*** 000267	5d 			pop	bp
+	*** 000268	c3 			ret	
+
+_sub_139E9	ENDP
+;|*** 
+;|*** // 3a61
+;|*** int sub_13A61(int16 arg_0, int16 arg_2, int16 arg_4) {
+; Line 102
+	PUBLIC	_sub_13A61
+_sub_13A61	PROC NEAR
+	*** 000269	55 			push	bp
+	*** 00026a	8b ec 			mov	bp,sp
+	*** 00026c	56 			push	si
+;	arg_0 = 4
+;	arg_2 = 6
+;	arg_4 = 8
+;|***     if (arg_2 < 0 || arg_4 < 0 || arg_2 >= word_18026[arg_0 + 6] || arg_4 >= word_18026[arg_0 + 6]) 
+; Line 103
+	*** 00026d	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;arg_2
+	*** 000271	7c 19 			jl	$I1557
+	*** 000273	83 7e 08 00 		cmp	WORD PTR [bp+8],0	;arg_4
+	*** 000277	7c 13 			jl	$I1557
+	*** 000279	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;arg_0
+	*** 00027c	d1 e3 			shl	bx,1
+	*** 00027e	8b b7 0c 00 		mov	si,WORD PTR _word_18026[bx+12]
+	*** 000282	39 76 06 		cmp	WORD PTR [bp+6],si	;arg_2
+	*** 000285	7d 05 			jge	$I1557
+	*** 000287	39 76 08 		cmp	WORD PTR [bp+8],si	;arg_4
+	*** 00028a	7c 06 			jl	$I1556
+					$I1557:
+;|***         return -1;
+; Line 104
+	*** 00028c	b8 ff ff 		mov	ax,-1
+	*** 00028f	e9 fa 00 		jmp	$SB1559
+;|***     // 3a8a
+;|***     switch (arg_0) { // 3b61
+; Line 106
+					$I1556:
+	*** 000292	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 000295	e9 d1 00 		jmp	$S1558
+;|***     case 4: // 3a90
+; Line 107
+					$SC1562:
+;|***         return gridBuf1[arg_2 + (arg_4 << 2)];
+; Line 108
+	*** 000298	8b 76 08 		mov	si,WORD PTR [bp+8]	;arg_4
+	*** 00029b	d1 e6 			shl	si,1
+	*** 00029d	d1 e6 			shl	si,1
+	*** 00029f	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;arg_2
+	*** 0002a2	8a 80 00 00 		mov	al,BYTE PTR _gridBuf1[bx][si]
+	*** 0002a6	2a e4 			sub	ah,ah
+	*** 0002a8	e9 e1 00 		jmp	$SB1559
+;|***     case 3: // 3aa3
+; Line 109
+					$SC1563:
+;|***         return gridBuf2[arg_2 + (arg_4 << 4)];
+; Line 110
+	*** 0002ab	8b 76 08 		mov	si,WORD PTR [bp+8]	;arg_4
+	*** 0002ae	b1 04 			mov	cl,4
+	*** 0002b0	d3 e6 			shl	si,cl
+	*** 0002b2	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;arg_2
+	*** 0002b5	8a 80 00 00 		mov	al,BYTE PTR _gridBuf2[bx][si]
+	*** 0002b9	2a e4 			sub	ah,ah
+	*** 0002bb	e9 ce 00 		jmp	$SB1559
+;|***     case 2: // 3ab6
+; Line 111
+					$SC1564:
+;|***         return gridBuf3[(arg_2 & 3) + (((arg_4 & 3) << 2) + (sub_13A61(3, arg_2 >> 2, arg_4 >> 2) << 4))];
+; Line 112
+	*** 0002be	8b 46 08 		mov	ax,WORD PTR [bp+8]	;arg_4
+	*** 0002c1	d1 f8 			sar	ax,1
+	*** 0002c3	d1 f8 			sar	ax,1
+	*** 0002c5	50 			push	ax
+	*** 0002c6	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 0002c9	d1 f8 			sar	ax,1
+	*** 0002cb	d1 f8 			sar	ax,1
+	*** 0002cd	50 			push	ax
+	*** 0002ce	b8 03 00 		mov	ax,3
+	*** 0002d1	50 			push	ax
+	*** 0002d2	e8 94 ff 		call	_sub_13A61
+	*** 0002d5	83 c4 06 		add	sp,6
+	*** 0002d8	b1 04 			mov	cl,4
+	*** 0002da	d3 e0 			shl	ax,cl
+	*** 0002dc	8b 76 08 		mov	si,WORD PTR [bp+8]	;arg_4
+	*** 0002df	83 e6 03 		and	si,3
+	*** 0002e2	d1 e6 			shl	si,1
+	*** 0002e4	d1 e6 			shl	si,1
+	*** 0002e6	03 f0 			add	si,ax
+	*** 0002e8	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;arg_2
+	*** 0002eb	83 e3 03 		and	bx,3
+	*** 0002ee	8a 80 00 00 		mov	al,BYTE PTR _gridBuf3[bx][si]
+	*** 0002f2	2a e4 			sub	ah,ah
+	*** 0002f4	e9 95 00 		jmp	$SB1559
+;|***     case 1: // 3aef
+; Line 113
+					$SC1565:
+;|***         return gridBuf4[(arg_2 & 3) + (((arg_4 & 3) << 2) + (sub_13A61(2, arg_2 >> 2, arg_4 >> 2) << 4))];
+; Line 114
+	*** 0002f7	8b 46 08 		mov	ax,WORD PTR [bp+8]	;arg_4
+	*** 0002fa	d1 f8 			sar	ax,1
+	*** 0002fc	d1 f8 			sar	ax,1
+	*** 0002fe	50 			push	ax
+	*** 0002ff	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 000302	d1 f8 			sar	ax,1
+	*** 000304	d1 f8 			sar	ax,1
+	*** 000306	50 			push	ax
+	*** 000307	b8 02 00 		mov	ax,2
+	*** 00030a	50 			push	ax
+	*** 00030b	e8 5b ff 		call	_sub_13A61
+	*** 00030e	83 c4 06 		add	sp,6
+	*** 000311	b1 04 			mov	cl,4
+	*** 000313	d3 e0 			shl	ax,cl
+	*** 000315	8b 76 08 		mov	si,WORD PTR [bp+8]	;arg_4
+	*** 000318	83 e6 03 		and	si,3
+	*** 00031b	d1 e6 			shl	si,1
+	*** 00031d	d1 e6 			shl	si,1
+	*** 00031f	03 f0 			add	si,ax
+	*** 000321	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;arg_2
+	*** 000324	83 e3 03 		and	bx,3
+	*** 000327	8a 80 00 00 		mov	al,BYTE PTR _gridBuf4[bx][si]
+	*** 00032b	2a e4 			sub	ah,ah
+	*** 00032d	eb 5d 			jmp	SHORT $SB1559
+;|***     case 0: // 3b27
+; Line 115
+					$SC1566:
+;|***         return gridBuf5[(arg_2 & 3) + (((arg_4 & 3) << 2) + (sub_13A61(1, arg_2 >> 2, arg_4 >> 2) << 4))];
+; Line 116
+	*** 00032f	8b 46 08 		mov	ax,WORD PTR [bp+8]	;arg_4
+	*** 000332	d1 f8 			sar	ax,1
+	*** 000334	d1 f8 			sar	ax,1
+	*** 000336	50 			push	ax
+	*** 000337	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 00033a	d1 f8 			sar	ax,1
+	*** 00033c	d1 f8 			sar	ax,1
+	*** 00033e	50 			push	ax
+	*** 00033f	b8 01 00 		mov	ax,1
+	*** 000342	50 			push	ax
+	*** 000343	e8 23 ff 		call	_sub_13A61
+	*** 000346	83 c4 06 		add	sp,6
+	*** 000349	b1 04 			mov	cl,4
+	*** 00034b	d3 e0 			shl	ax,cl
+	*** 00034d	8b 76 08 		mov	si,WORD PTR [bp+8]	;arg_4
+	*** 000350	83 e6 03 		and	si,3
+	*** 000353	d1 e6 			shl	si,1
+	*** 000355	d1 e6 			shl	si,1
+	*** 000357	03 f0 			add	si,ax
+	*** 000359	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;arg_2
+	*** 00035c	83 e3 03 		and	bx,3
+	*** 00035f	8a 80 00 00 		mov	al,BYTE PTR _gridBuf5[bx][si]
+	*** 000363	2a e4 			sub	ah,ah
+	*** 000365	eb 25 			jmp	SHORT $SB1559
+;|***     }
+; Line 117
+	*** 000367	eb 23 			jmp	SHORT $SB1559
+					$S1558:
+	*** 000369	0b c0 			or	ax,ax
+	*** 00036b	74 c2 			je	$SC1566
+	*** 00036d	3d 01 00 		cmp	ax,1
+	*** 000370	74 85 			je	$SC1565
+	*** 000372	3d 02 00 		cmp	ax,2
+	*** 000375	75 03 			jne	$JCC885
+	*** 000377	e9 44 ff 		jmp	$SC1564
+					$JCC885:
+	*** 00037a	3d 03 00 		cmp	ax,3
+	*** 00037d	75 03 			jne	$JCC893
+	*** 00037f	e9 29 ff 		jmp	$SC1563
+					$JCC893:
+	*** 000382	3d 04 00 		cmp	ax,4
+	*** 000385	75 03 			jne	$JCC901
+	*** 000387	e9 0e ff 		jmp	$SC1562
+					$JCC901:
+	*** 00038a	eb 00 			jmp	SHORT $SB1559
+					$SB1559:
+;|*** }
+; Line 118
+	*** 00038c	5e 			pop	si
+	*** 00038d	8b e5 			mov	sp,bp
+	*** 00038f	5d 			pop	bp
+	*** 000390	c3 			ret	
+
+_sub_13A61	ENDP
+;|*** 
+;|*** // 0x4042
+;|*** void missionGenerate() {
+; Line 121
+	PUBLIC	_missionGenerate
+_missionGenerate	PROC NEAR
+	*** 000391	55 			push	bp
+	*** 000392	8b ec 			mov	bp,sp
+;|***     TRACE(("missionGenerate(): entering"));
+;|***     difficultySaved = gameData->difficulty;
+; Line 123
+	*** 000394	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000398	26 8b 47 3e 		mov	ax,WORD PTR es:[bx+62]
+	*** 00039c	a3 00 00 		mov	_difficultySaved,ax
+;|***     theaterSaved = gameData->theater & 3;
+; Line 124
+	*** 00039f	26 8b 47 38 		mov	ax,WORD PTR es:[bx+56]
+	*** 0003a3	25 03 00 		and	ax,3
+	*** 0003a6	a3 00 00 		mov	_theaterSaved,ax
+;|***     flag4Saved = gameData->flag4;
+; Line 125
+	*** 0003a9	26 8b 47 3a 		mov	ax,WORD PTR es:[bx+58]
+	*** 0003ad	a3 00 00 		mov	_flag4Saved,ax
+;|***     TRACE(("missionGenerate(): parsing world %s", worldFiles[gameData->theater]));
+;|***     parseWorld(worldFiles[gameData->theater]);
+; Line 127
+	*** 0003b0	26 8b 5f 38 		mov	bx,WORD PTR es:[bx+56]
+	*** 0003b4	d1 e3 			shl	bx,1
+	*** 0003b6	ff b7 00 00 		push	WORD PTR _worldFiles[bx]
+	*** 0003ba	e8 00 00 		call	_parseWorld
+	*** 0003bd	83 c4 02 		add	sp,2
+;|***     mystrcpy(regnPlhPtr, plhFiles[gameData->theater]);
+; Line 128
+	*** 0003c0	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0003c4	26 8b 5f 38 		mov	bx,WORD PTR es:[bx+56]
+	*** 0003c8	d1 e3 			shl	bx,1
+	*** 0003ca	ff b7 00 00 		push	WORD PTR _plhFiles[bx]
+	*** 0003ce	ff 36 00 00 		push	WORD PTR _regnPlhPtr
+	*** 0003d2	e8 00 00 		call	_mystrcpy
+	*** 0003d5	83 c4 04 		add	sp,4
+;|***     TRACE(("missionGenerate(): parsing grid/terrain"));
+;|***     parseGridTerrain();
+; Line 130
+	*** 0003d8	e8 00 00 		call	_parseGridTerrain
+;|***     TRACE(("missionGenerate(): running generator"));
+;|***     runGenerator();
+; Line 132
+	*** 0003db	e8 00 00 		call	_runGenerator
+;|***     TRACE(("missionGenerate(): returning"));
+;|*** }
+; Line 134
+	*** 0003de	8b e5 			mov	sp,bp
+	*** 0003e0	5d 			pop	bp
+	*** 0003e1	c3 			ret	
+
+_missionGenerate	ENDP
+;|*** 
+;|*** // 4093
+;|*** void runGenerator()
+;|*** {
+; Line 138
+	PUBLIC	_runGenerator
+_runGenerator	PROC NEAR
+	*** 0003e2	55 			push	bp
+	*** 0003e3	8b ec 			mov	bp,sp
+	*** 0003e5	83 ec 34 		sub	sp,52
+	*** 0003e8	57 			push	di
+	*** 0003e9	56 			push	si
+;	var_2 = -24
+;	var_4 = -32
+;	var_6 = -42
+;	var_8 = -4
+;	var_A = -12
+;	var_C = -30
+;	var_E = -38
+;	var_10 = -10
+;	var_12 = -28
+;	var_14 = -36
+;	var_16 = -44
+;	var_18 = -6
+;	var_1A = -22
+;	var_20 = -20
+;	var_24 = -40
+;	var_26 = -2
+;	var_28 = -8
+;	var_2A = -26
+;	var_2C = -34
+;|***   int var_2;
+;|***   int var_4;
+;|***   int var_6;
+;|***   int var_8;
+;|***   int var_A;
+;|***   int var_C;
+;|***   int var_E;
+;|***   int var_10;
+;|***   int16 var_12;
+;|***   int16 var_14;
+;|***   int var_16;
+;|***   int var_18;
+;|***   int16 var_1A;
+;|***   int16 var_20[4];
+;|***   int16 var_24;
+;|***   int var_26; 
+;|***   int var_28;
+;|***   int var_2A;
+;|***   int var_2C;
+;|***   
+;|***   TRACE(("runGenerator(): entering"));
+;|***   // 409d
+;|***   var_2 = word_1DD38 = 0;
+; Line 161
+	*** 0003ea	2b c0 			sub	ax,ax
+	*** 0003ec	a3 00 00 		mov	_word_1DD38,ax
+	*** 0003ef	89 46 e8 		mov	WORD PTR [bp-24],ax	;var_2
+;|***   var_16 = 0xfa;
+; Line 162
+	*** 0003f2	c7 46 d4 fa 00 		mov	WORD PTR [bp-44],250	;var_16
+;|***   // 40a8
+;|*** restart_40a8:
+; Line 164
+					$restart_40a81588:
+;|***   do {
+; Line 165
+;|***     TRACE(("runGenerator(): outer, %d", var_2));
+;|***     var_2 = var_2 + 1;
+; Line 167
+	*** 0003f7	ff 46 e8 		inc	WORD PTR [bp-24]	;var_2
+;|***     if (999 < var_2) goto counterMore1k;
+; Line 168
+	*** 0003fa	81 7e e8 e7 03 		cmp	WORD PTR [bp-24],999	;var_2
+	*** 0003ff	7e 03 			jle	$I1592
+	*** 000401	e9 c3 05 		jmp	$counterMore1k1593
+;|***     // 40b5
+;|***     do {
+; Line 170
+					$I1592:
+;|***       TRACE(("runGenerator(): inner"));
+;|***       if (missionPick != -1) {
+; Line 172
+	*** 000404	83 3e 00 00 ff 		cmp	WORD PTR _missionPick,-1
+	*** 000409	74 38 			je	$I1597
+;|***         TRACE(("runGenerator(): inner branch 1"));
+;|***         // 40c6
+;|***         var_1A = randMul(word_19324[missionPick]);
+; Line 175
+	*** 00040b	8b 1e 00 00 		mov	bx,_missionPick
+	*** 00040f	d1 e3 			shl	bx,1
+	*** 000411	ff b7 00 00 		push	WORD PTR _word_19324[bx]
+	*** 000415	e8 00 00 		call	_randMul
+	*** 000418	83 c4 02 		add	sp,2
+	*** 00041b	89 46 ea 		mov	WORD PTR [bp-22],ax	;var_1A
+;|***         // 40e9
+;|***         targets[0].field_2 = sub_14BB4(off_19304[missionPick][var_1A], 
+;|***           off_19314[missionPick][var_1A], 1);
+; Line 178
+	*** 00041e	8b f0 			mov	si,ax
+	*** 000420	d1 e6 			shl	si,1
+	*** 000422	8b 3e 00 00 		mov	di,_missionPick
+	*** 000426	d1 e7 			shl	di,1
+	*** 000428	b8 01 00 		mov	ax,1
+	*** 00042b	50 			push	ax
+	*** 00042c	8b 9d 00 00 		mov	bx,WORD PTR _off_19314[di]
+	*** 000430	ff 30 			push	WORD PTR [bx][si]
+	*** 000432	8b 9d 00 00 		mov	bx,WORD PTR _off_19304[di]
+	*** 000436	ff 30 			push	WORD PTR [bx][si]
+	*** 000438	e8 00 00 		call	_sub_14BB4
+	*** 00043b	83 c4 06 		add	sp,6
+	*** 00043e	a3 02 00 		mov	WORD PTR _targets+2,ax
+;|***       }
+; Line 179
+;|***       // 40f4
+;|***       else {
+; Line 181
+	*** 000441	eb 58 			jmp	SHORT $I1598
+					$I1597:
+;|***         TRACE(("runGenerator(): inner branch 2"));
+;|***         do {
+; Line 183
+;|***           TRACE(("runGenerator(): inner branch 2 loop 1"));
+;|***           do {
+; Line 185
+;|***             TRACE(("runGenerator(): inner branch 2 loop 2"));
+;|***             // 40f8
+;|***             var_1A = randMul(0xe0) * 0x80 + 0x840;
+; Line 188
+	*** 000443	b8 e0 00 		mov	ax,224
+	*** 000446	50 			push	ax
+	*** 000447	e8 00 00 		call	_randMul
+	*** 00044a	83 c4 02 		add	sp,2
+	*** 00044d	b1 07 			mov	cl,7
+	*** 00044f	d3 e0 			shl	ax,cl
+	*** 000451	05 40 08 		add	ax,2112
+	*** 000454	89 46 ea 		mov	WORD PTR [bp-22],ax	;var_1A
+;|***             // 410c
+;|***             var_24 = randMul(0xe0) * 0x80 + 0x840;
+; Line 190
+	*** 000457	b8 e0 00 		mov	ax,224
+	*** 00045a	50 			push	ax
+	*** 00045b	e8 00 00 		call	_randMul
+	*** 00045e	83 c4 02 		add	sp,2
+	*** 000461	b1 07 			mov	cl,7
+	*** 000463	d3 e0 			shl	ax,cl
+	*** 000465	05 40 08 		add	ax,2112
+	*** 000468	89 46 d8 		mov	WORD PTR [bp-40],ax	;var_24
+;|***           // 412d
+;|***           } while ((wldReadBuf10[(var_1A >> 0xb) + ((var_24 >> 0xb) * 0x10)] & 3) != 0);
+; Line 192
+	*** 00046b	8b f0 			mov	si,ax
+	*** 00046d	b1 0b 			mov	cl,11
+	*** 00046f	d3 fe 			sar	si,cl
+	*** 000471	b1 04 			mov	cl,4
+	*** 000473	d3 e6 			shl	si,cl
+	*** 000475	8b 5e ea 		mov	bx,WORD PTR [bp-22]	;var_1A
+	*** 000478	b1 0b 			mov	cl,11
+	*** 00047a	d3 fb 			sar	bx,cl
+	*** 00047c	f6 80 00 00 03 		test	BYTE PTR _wldReadBuf10[bx][si],3
+	*** 000481	75 c0 			jne	$I1597
+;|***           // 413e
+;|***         } while ((targets[0].field_2 = sub_14BB4(var_1A,var_24,1)) == 0xffff);
+; Line 194
+	*** 000483	b8 01 00 		mov	ax,1
+	*** 000486	50 			push	ax
+	*** 000487	ff 76 d8 		push	WORD PTR [bp-40]	;var_24
+	*** 00048a	ff 76 ea 		push	WORD PTR [bp-22]	;var_1A
+	*** 00048d	e8 00 00 		call	_sub_14BB4
+	*** 000490	83 c4 06 		add	sp,6
+	*** 000493	a3 02 00 		mov	WORD PTR _targets+2,ax
+	*** 000496	3d ff ff 		cmp	ax,-1
+	*** 000499	74 a8 			je	$I1597
+;|***       }
+; Line 195
+					$I1598:
+;|***       TRACE(("runGenerator(): past inner check 1"));
+;|***       // 414c
+;|***       if (missionPick == 7) {
+; Line 198
+	*** 00049b	83 3e 00 00 07 		cmp	WORD PTR _missionPick,7
+	*** 0004a0	75 2b 			jne	$I1605
+;|***         // 4172
+;|***         target2.field_2 = sub_14BB4(off_19304[missionPick][var_1A], 
+;|***           off_19314[missionPick][var_1A] + 0x28, 2);
+; Line 201
+	*** 0004a2	8b 76 ea 		mov	si,WORD PTR [bp-22]	;var_1A
+	*** 0004a5	d1 e6 			shl	si,1
+	*** 0004a7	8b 3e 00 00 		mov	di,_missionPick
+	*** 0004ab	d1 e7 			shl	di,1
+	*** 0004ad	b8 02 00 		mov	ax,2
+	*** 0004b0	50 			push	ax
+	*** 0004b1	8b 9d 00 00 		mov	bx,WORD PTR _off_19314[di]
+	*** 0004b5	8b 00 			mov	ax,[bx][si]
+	*** 0004b7	05 28 00 		add	ax,40
+	*** 0004ba	50 			push	ax
+	*** 0004bb	8b 9d 00 00 		mov	bx,WORD PTR _off_19304[di]
+	*** 0004bf	ff 30 			push	WORD PTR [bx][si]
+	*** 0004c1	e8 00 00 		call	_sub_14BB4
+	*** 0004c4	83 c4 06 		add	sp,6
+	*** 0004c7	a3 02 00 		mov	WORD PTR _target2+2,ax
+;|***       }
+; Line 202
+;|***       // 417e
+;|***       else if (missionPick == 2) {
+; Line 204
+	*** 0004ca	e9 d9 00 		jmp	$D1617
+					$I1605:
+	*** 0004cd	83 3e 00 00 02 		cmp	WORD PTR _missionPick,2
+	*** 0004d2	75 30 			jne	$I1607
+;|***         var_1A = var_1A * 2 + randMul(2);
+; Line 205
+	*** 0004d4	b8 02 00 		mov	ax,2
+	*** 0004d7	50 			push	ax
+	*** 0004d8	e8 00 00 		call	_randMul
+	*** 0004db	83 c4 02 		add	sp,2
+	*** 0004de	8b 4e ea 		mov	cx,WORD PTR [bp-22]	;var_1A
+	*** 0004e1	d1 e1 			shl	cx,1
+	*** 0004e3	03 c8 			add	cx,ax
+	*** 0004e5	89 4e ea 		mov	WORD PTR [bp-22],cx	;var_1A
+;|***         // 41a9
+;|***         target2.field_2 = sub_14BB4(word_192EC[var_1A], word_192F4[var_1A], 2);
+; Line 207
+	*** 0004e8	8b f1 			mov	si,cx
+	*** 0004ea	d1 e6 			shl	si,1
+	*** 0004ec	b8 02 00 		mov	ax,2
+	*** 0004ef	50 			push	ax
+	*** 0004f0	ff b4 00 00 		push	WORD PTR _word_192F4[si]
+	*** 0004f4	ff b4 00 00 		push	WORD PTR _word_192EC[si]
+	*** 0004f8	e8 00 00 		call	_sub_14BB4
+	*** 0004fb	83 c4 06 		add	sp,6
+	*** 0004fe	a3 02 00 		mov	WORD PTR _target2+2,ax
+;|***       }
+; Line 208
+;|***       // 41b5
+;|***       else if (missionPick == 6) {
+; Line 210
+	*** 000501	e9 a2 00 		jmp	$D1617
+					$I1607:
+	*** 000504	83 3e 00 00 06 		cmp	WORD PTR _missionPick,6
+	*** 000509	75 2f 			jne	$I1609
+;|***         var_1A = randMul(6) + var_1A + 1 & 7;
+; Line 211
+	*** 00050b	b8 06 00 		mov	ax,6
+	*** 00050e	50 			push	ax
+	*** 00050f	e8 00 00 		call	_randMul
+	*** 000512	83 c4 02 		add	sp,2
+	*** 000515	03 46 ea 		add	ax,WORD PTR [bp-22]	;var_1A
+	*** 000518	40 			inc	ax
+	*** 000519	25 07 00 		and	ax,7
+	*** 00051c	89 46 ea 		mov	WORD PTR [bp-22],ax	;var_1A
+;|***         // 41e0
+;|***         target2.field_2 = sub_14BB4(word_19294[var_1A], word_192A4[var_1A], 2);
+; Line 213
+	*** 00051f	8b f0 			mov	si,ax
+	*** 000521	d1 e6 			shl	si,1
+	*** 000523	b8 02 00 		mov	ax,2
+	*** 000526	50 			push	ax
+	*** 000527	ff b4 00 00 		push	WORD PTR _word_192A4[si]
+	*** 00052b	ff b4 00 00 		push	WORD PTR _word_19294[si]
+	*** 00052f	e8 00 00 		call	_sub_14BB4
+	*** 000532	83 c4 06 		add	sp,6
+	*** 000535	a3 02 00 		mov	WORD PTR _target2+2,ax
+;|***       }
+; Line 214
+;|***       // 41eb
+;|***       else {
+; Line 216
+	*** 000538	eb 6c 			jmp	SHORT $D1617
+					$I1609:
+;|***         do {
+; Line 217
+;|***           do {
+; Line 218
+;|***             // 41ef
+;|***             var_1A = randMul(0xe0) * 0x80 + 0x840;
+; Line 220
+	*** 00053a	b8 e0 00 		mov	ax,224
+	*** 00053d	50 			push	ax
+	*** 00053e	e8 00 00 		call	_randMul
+	*** 000541	83 c4 02 		add	sp,2
+	*** 000544	b1 07 			mov	cl,7
+	*** 000546	d3 e0 			shl	ax,cl
+	*** 000548	05 40 08 		add	ax,2112
+	*** 00054b	89 46 ea 		mov	WORD PTR [bp-22],ax	;var_1A
+;|***             // 4203
+;|***             var_24 = randMul(0xe0) * 0x80 + 0x840;
+; Line 222
+	*** 00054e	b8 e0 00 		mov	ax,224
+	*** 000551	50 			push	ax
+	*** 000552	e8 00 00 		call	_randMul
+	*** 000555	83 c4 02 		add	sp,2
+	*** 000558	b1 07 			mov	cl,7
+	*** 00055a	d3 e0 			shl	ax,cl
+	*** 00055c	05 40 08 		add	ax,2112
+	*** 00055f	89 46 d8 		mov	WORD PTR [bp-40],ax	;var_24
+;|***           // 4224
+;|***           } while ((wldReadBuf10[(var_1A >> 0xb) + (var_24 >> 0xb) * 0x10] & 3) != 0);
+; Line 224
+	*** 000562	8b f0 			mov	si,ax
+	*** 000564	b1 0b 			mov	cl,11
+	*** 000566	d3 fe 			sar	si,cl
+	*** 000568	b1 04 			mov	cl,4
+	*** 00056a	d3 e6 			shl	si,cl
+	*** 00056c	8b 5e ea 		mov	bx,WORD PTR [bp-22]	;var_1A
+	*** 00056f	b1 0b 			mov	cl,11
+	*** 000571	d3 fb 			sar	bx,cl
+	*** 000573	f6 80 00 00 03 		test	BYTE PTR _wldReadBuf10[bx][si],3
+	*** 000578	75 c0 			jne	$I1609
+;|***           // 4235
+;|***           target2.field_2 = sub_14BB4(var_1A, var_24, 2);
+; Line 226
+	*** 00057a	b8 02 00 		mov	ax,2
+	*** 00057d	50 			push	ax
+	*** 00057e	ff 76 d8 		push	WORD PTR [bp-40]	;var_24
+	*** 000581	ff 76 ea 		push	WORD PTR [bp-22]	;var_1A
+	*** 000584	e8 00 00 		call	_sub_14BB4
+	*** 000587	83 c4 06 		add	sp,6
+	*** 00058a	a3 02 00 		mov	WORD PTR _target2+2,ax
+;|***         } while ((target2.field_2 == -1) || ((missionPick == 0 && (wldReadBuf4[target2.field_2].field_6 == 0))));
+; Line 227
+	*** 00058d	3d ff ff 		cmp	ax,-1
+	*** 000590	74 a8 			je	$I1609
+	*** 000592	83 3e 00 00 00 		cmp	WORD PTR _missionPick,0
+	*** 000597	75 0d 			jne	$D1617
+	*** 000599	8b d8 			mov	bx,ax
+	*** 00059b	b1 04 			mov	cl,4
+	*** 00059d	d3 e3 			shl	bx,cl
+	*** 00059f	83 bf 06 00 00 		cmp	WORD PTR _wldReadBuf4[bx+6],0
+	*** 0005a4	74 94 			je	$I1609
+					$D1617:
+;|***       }
+; Line 228
+;|***       TRACE(("runGenerator(): past inner check 2"));
+;|***     // 4257
+;|***     } while ((targets[0].field_2 == target2.field_2) || (sub_14C94(targets[0].field_2, target2.field_2) >> 6) > 200);
+; Line 231
+	*** 0005a6	a1 02 00 		mov	ax,WORD PTR _target2+2
+	*** 0005a9	39 06 02 00 		cmp	WORD PTR _targets+2,ax
+	*** 0005ad	75 03 			jne	$JCC1453
+	*** 0005af	e9 52 fe 		jmp	$I1592
+					$JCC1453:
+	*** 0005b2	50 			push	ax
+	*** 0005b3	ff 36 02 00 		push	WORD PTR _targets+2
+	*** 0005b7	e8 00 00 		call	_sub_14C94
+	*** 0005ba	83 c4 04 		add	sp,4
+	*** 0005bd	b1 06 			mov	cl,6
+	*** 0005bf	d3 f8 			sar	ax,cl
+	*** 0005c1	3d c8 00 		cmp	ax,200
+	*** 0005c4	7e 03 			jle	$JCC1476
+	*** 0005c6	e9 3b fe 		jmp	$I1592
+					$JCC1476:
+;|***     TRACE(("runGenerator(): passed inner"));
+;|***   // 427a
+;|***   } while ((gameData->theater != THEATER_DS) && (wldReadBuf4[targets[0].field_2].field_E == wldReadBuf4[target2.field_2].field_E));
+; Line 234
+	*** 0005c9	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0005cd	26 83 7f 38 06 		cmp	WORD PTR es:[bx+56],6
+	*** 0005d2	74 1b 			je	$D1618
+	*** 0005d4	8b 1e 02 00 		mov	bx,WORD PTR _targets+2
+	*** 0005d8	b1 04 			mov	cl,4
+	*** 0005da	d3 e3 			shl	bx,cl
+	*** 0005dc	8b 36 02 00 		mov	si,WORD PTR _target2+2
+	*** 0005e0	d3 e6 			shl	si,cl
+	*** 0005e2	8b 84 0e 00 		mov	ax,WORD PTR _wldReadBuf4[si+14]
+	*** 0005e6	39 87 0e 00 		cmp	WORD PTR _wldReadBuf4[bx+14],ax
+	*** 0005ea	75 03 			jne	$JCC1514
+	*** 0005ec	e9 08 fe 		jmp	$restart_40a81588
+					$JCC1514:
+					$D1618:
+;|***   TRACE(("runGenerator(): past outer"));
+;|***   // 42a0
+;|***   for (var_2A = 0; var_2A < 2; var_2A++) {
+; Line 237
+	*** 0005ef	c7 46 e6 00 00 		mov	WORD PTR [bp-26],0	;var_2A
+	*** 0005f4	eb 03 			jmp	SHORT $F1619
+					$FC1620:
+	*** 0005f6	ff 46 e6 		inc	WORD PTR [bp-26]	;var_2A
+					$F1619:
+	*** 0005f9	83 7e e6 02 		cmp	WORD PTR [bp-26],2	;var_2A
+	*** 0005fd	7c 03 			jl	$JCC1533
+	*** 0005ff	e9 c4 00 		jmp	$FB1621
+					$JCC1533:
+;|***     TRACE(("runGenerator(): loop 2, counter %d", var_2A));
+;|***     // 42b8
+;|***     var_20[var_2A] = 0x7fff;
+; Line 240
+	*** 000602	8b 76 e6 		mov	si,WORD PTR [bp-26]	;var_2A
+	*** 000605	d1 e6 			shl	si,1
+	*** 000607	c7 42 ec ff 7f 		mov	WORD PTR [bp-20][si],32767
+;|***     // 42bd
+;|***     for (var_26 = wldReadBuf3; var_26 < readItemSize; var_26++) {
+; Line 242
+	*** 00060c	a1 00 00 		mov	ax,_wldReadBuf3
+	*** 00060f	89 46 fe 		mov	WORD PTR [bp-2],ax	;var_26
+	*** 000612	eb 03 			jmp	SHORT $F1622
+					$FC1623:
+	*** 000614	ff 46 fe 		inc	WORD PTR [bp-2]	;var_26
+					$F1622:
+	*** 000617	a1 00 00 		mov	ax,_readItemSize
+	*** 00061a	39 46 fe 		cmp	WORD PTR [bp-2],ax	;var_26
+	*** 00061d	7c 03 			jl	$JCC1565
+	*** 00061f	e9 a1 00 		jmp	$FB1624
+					$JCC1565:
+;|***       // 42d3
+;|***       if (((wldReadBuf4[var_26].field_8 & 0x500) != 0)
+;|***         && ((wldReadBuf4[var_26].field_8 & 0x201) != 0)
+;|***         && ((wldReadBuf4[var_26].field_8 & 0x800) == 0)) {
+; Line 246
+	*** 000622	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;var_26
+	*** 000625	b1 04 			mov	cl,4
+	*** 000627	d3 e3 			shl	bx,cl
+	*** 000629	8b b7 08 00 		mov	si,WORD PTR _wldReadBuf4[bx+8]
+	*** 00062d	f7 c6 00 05 		test	si,1280
+	*** 000631	75 03 			jne	$JCC1585
+	*** 000633	e9 8a 00 		jmp	$I1626
+					$JCC1585:
+	*** 000636	f7 c6 01 02 		test	si,513
+	*** 00063a	75 03 			jne	$JCC1594
+	*** 00063c	e9 81 00 		jmp	$I1626
+					$JCC1594:
+	*** 00063f	f7 c6 00 08 		test	si,2048
+	*** 000643	75 7b 			jne	$I1626
+;|***         // placed in var_1C in IDA, but this looks like an array, sort out stack layout later
+;|***         // 4332
+;|***         var_20[2] = sub_15472(sub_14C94(targets[var_2A].field_2, var_26) + ((wldReadBuf4[var_26].field_8 & 0x100) != 0 ? randMul(100) * 0x40 + 0xc80 : 0), 0, 0x7fff);
+; Line 249
+	*** 000645	b8 ff 7f 		mov	ax,32767
+	*** 000648	50 			push	ax
+	*** 000649	2b c0 			sub	ax,ax
+	*** 00064b	50 			push	ax
+	*** 00064c	ff 76 fe 		push	WORD PTR [bp-2]	;var_26
+	*** 00064f	b8 12 00 		mov	ax,18
+	*** 000652	f7 6e e6 		imul	WORD PTR [bp-26]	;var_2A
+	*** 000655	8b d8 			mov	bx,ax
+	*** 000657	ff b7 02 00 		push	WORD PTR _targets[bx+2]
+	*** 00065b	e8 00 00 		call	_sub_14C94
+	*** 00065e	83 c4 04 		add	sp,4
+	*** 000661	8b f8 			mov	di,ax
+	*** 000663	f7 c6 00 01 		test	si,256
+	*** 000667	74 13 			je	$L20010
+	*** 000669	b8 64 00 		mov	ax,100
+	*** 00066c	50 			push	ax
+	*** 00066d	e8 00 00 		call	_randMul
+	*** 000670	83 c4 02 		add	sp,2
+	*** 000673	b1 06 			mov	cl,6
+	*** 000675	d3 e0 			shl	ax,cl
+	*** 000677	05 80 0c 		add	ax,3200
+	*** 00067a	eb 02 			jmp	SHORT $L20011
+					$L20010:
+	*** 00067c	2b c0 			sub	ax,ax
+					$L20011:
+	*** 00067e	03 c7 			add	ax,di
+	*** 000680	50 			push	ax
+	*** 000681	e8 00 00 		call	_sub_15472
+	*** 000684	83 c4 06 		add	sp,6
+	*** 000687	89 46 f0 		mov	WORD PTR [bp-16],ax
+;|***         // 433b
+;|***         if ((var_20[2] < 0x7000) && (randMul(0x500) + var_20[2] < var_20[var_2A])) {
+; Line 251
+	*** 00068a	3d 00 70 		cmp	ax,28672
+	*** 00068d	7d 31 			jge	$I1626
+	*** 00068f	b8 00 05 		mov	ax,1280
+	*** 000692	50 			push	ax
+	*** 000693	e8 00 00 		call	_randMul
+	*** 000696	83 c4 02 		add	sp,2
+	*** 000699	03 46 f0 		add	ax,WORD PTR [bp-16]
+	*** 00069c	8b 7e e6 		mov	di,WORD PTR [bp-26]	;var_2A
+	*** 00069f	d1 e7 			shl	di,1
+	*** 0006a1	39 43 ec 		cmp	[bp-20][di],ax
+	*** 0006a4	7e 1a 			jle	$I1626
+;|***           // 4357 
+;|***           targets[var_2A].field_4 = var_26;
+; Line 253
+	*** 0006a6	b8 12 00 		mov	ax,18
+	*** 0006a9	f7 6e e6 		imul	WORD PTR [bp-26]	;var_2A
+	*** 0006ac	8b d8 			mov	bx,ax
+	*** 0006ae	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;var_26
+	*** 0006b1	89 87 04 00 		mov	WORD PTR _targets[bx+4],ax
+;|***           var_20[var_2A] = var_20[2];
+; Line 254
+	*** 0006b5	8b 7e e6 		mov	di,WORD PTR [bp-26]	;var_2A
+	*** 0006b8	d1 e7 			shl	di,1
+	*** 0006ba	8b 46 f0 		mov	ax,WORD PTR [bp-16]
+	*** 0006bd	89 43 ec 		mov	[bp-20][di],ax
+;|***         }
+; Line 255
+;|***       }
+; Line 256
+					$I1626:
+;|***     }
+; Line 257
+	*** 0006c0	e9 51 ff 		jmp	$FC1623
+					$FB1624:
+;|***   }
+; Line 258
+	*** 0006c3	e9 30 ff 		jmp	$FC1620
+					$FB1621:
+;|***   TRACE(("runGenerator(): past loop2"));
+;|***   // 4377
+;|***   if (gameData->theater != THEATER_DS) {
+; Line 261
+	*** 0006c6	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 0006ca	26 83 7f 38 06 		cmp	WORD PTR es:[bx+56],6
+	*** 0006cf	74 55 			je	$I1627
+;|***     // 438a
+;|***     var_4 = (sub_14C94(targets[0].field_2, targets[1].field_2) >> 6) + (var_20[0] >> 6) + (var_20[1] >> 6);
+; Line 263
+	*** 0006d1	ff 36 14 00 		push	WORD PTR _targets+20
+	*** 0006d5	ff 36 02 00 		push	WORD PTR _targets+2
+	*** 0006d9	e8 00 00 		call	_sub_14C94
+	*** 0006dc	83 c4 04 		add	sp,4
+	*** 0006df	b1 06 			mov	cl,6
+	*** 0006e1	d3 f8 			sar	ax,cl
+	*** 0006e3	8b 56 ec 		mov	dx,WORD PTR [bp-20]	;var_20
+	*** 0006e6	d3 fa 			sar	dx,cl
+	*** 0006e8	03 c2 			add	ax,dx
+	*** 0006ea	8b 56 ee 		mov	dx,WORD PTR [bp-18]
+	*** 0006ed	d3 fa 			sar	dx,cl
+	*** 0006ef	03 c2 			add	ax,dx
+	*** 0006f1	89 46 e0 		mov	WORD PTR [bp-32],ax	;var_4
+;|***     // 43a5
+;|***     if (((var_2 + 0x2e4 < var_4) || (var_4 < var_16)) && ((wldReadBuf4[targets[0].field_4].field_8 & 0x200) == 0)) {
+; Line 265
+	*** 0006f4	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;var_2
+	*** 0006f7	05 e4 02 		add	ax,740
+	*** 0006fa	3b 46 e0 		cmp	ax,WORD PTR [bp-32]	;var_4
+	*** 0006fd	7c 08 			jl	$I1629
+	*** 0006ff	8b 46 d4 		mov	ax,WORD PTR [bp-44]	;var_16
+	*** 000702	39 46 e0 		cmp	WORD PTR [bp-32],ax	;var_4
+	*** 000705	7d 1d 			jge	$I1628
+					$I1629:
+	*** 000707	8b 1e 04 00 		mov	bx,WORD PTR _targets+4
+	*** 00070b	b1 04 			mov	cl,4
+	*** 00070d	d3 e3 			shl	bx,cl
+	*** 00070f	f7 87 08 00 00 02 	test	WORD PTR _wldReadBuf4[bx+8],512
+	*** 000715	75 0d 			jne	$I1628
+;|***       // 43c8
+;|***       var_16 -= 5 - difficultySaved;
+; Line 267
+	*** 000717	b8 05 00 		mov	ax,5
+	*** 00071a	2b 06 00 00 		sub	ax,_difficultySaved
+	*** 00071e	29 46 d4 		sub	WORD PTR [bp-44],ax	;var_16
+;|***       goto restart_40a8;
+; Line 268
+	*** 000721	e9 d3 fc 		jmp	$restart_40a81588
+;|***     }
+; Line 269
+;|***   }
+; Line 270
+					$I1628:
+;|***   // 43d7
+;|***   else {
+; Line 272
+	*** 000724	eb 1d 			jmp	SHORT $I1631
+					$I1627:
+;|***     if (var_20[0] == 0x7fff) {
+; Line 273
+	*** 000726	81 7e ec ff 7f 		cmp	WORD PTR [bp-20],32767	;var_20
+	*** 00072b	75 16 			jne	$I1631
+;|***       if (var_20[1] == 0x7fff) goto restart_40a8;
+; Line 274
+	*** 00072d	81 7e ee ff 7f 		cmp	WORD PTR [bp-18],32767
+	*** 000732	75 03 			jne	$I1632
+	*** 000734	e9 c0 fc 		jmp	$restart_40a81588
+;|***       var_20[0] = var_20[1];
+; Line 275
+					$I1632:
+	*** 000737	8b 46 ee 		mov	ax,WORD PTR [bp-18]
+	*** 00073a	89 46 ec 		mov	WORD PTR [bp-20],ax	;var_20
+;|***       // 43ee
+;|***       targets[0].field_4 = targets[1].field_4;
+; Line 277
+	*** 00073d	a1 16 00 		mov	ax,WORD PTR _targets+22
+	*** 000740	a3 04 00 		mov	WORD PTR _targets+4,ax
+;|***     }
+; Line 278
+;|***   }
+; Line 279
+					$I1631:
+;|***   TRACE(("runGenerator(): past DS check"));
+;|***   // 43f4
+;|***   for (var_26 = 0; var_26 < 2; var_26++) {
+; Line 282
+	*** 000743	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_26
+	*** 000748	eb 03 			jmp	SHORT $F1633
+					$FC1634:
+	*** 00074a	ff 46 fe 		inc	WORD PTR [bp-2]	;var_26
+					$F1633:
+	*** 00074d	83 7e fe 02 		cmp	WORD PTR [bp-2],2	;var_26
+	*** 000751	7c 03 			jl	$JCC1873
+	*** 000753	e9 d7 00 		jmp	$FB1635
+					$JCC1873:
+;|***     TRACE(("runGenerator(): loop3, counter %d", var_26));
+;|***     // 4407
+;|***     targets[var_26].field_0 = 0;
+; Line 285
+	*** 000756	b8 12 00 		mov	ax,18
+	*** 000759	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 00075c	8b d8 			mov	bx,ax
+	*** 00075e	c7 87 00 00 00 00 	mov	WORD PTR _targets[bx],0
+;|***     // 4415
+;|***     for (var_2C = 0; var_2C < 2; var_2C++) {
+; Line 287
+	*** 000764	c7 46 de 00 00 		mov	WORD PTR [bp-34],0	;var_2C
+	*** 000769	eb 03 			jmp	SHORT $F1636
+					$FC1637:
+	*** 00076b	ff 46 de 		inc	WORD PTR [bp-34]	;var_2C
+					$F1636:
+	*** 00076e	83 7e de 02 		cmp	WORD PTR [bp-34],2	;var_2C
+	*** 000772	7c 03 			jl	$JCC1906
+	*** 000774	e9 b3 00 		jmp	$FB1638
+					$JCC1906:
+;|***       var_28 = 0;
+; Line 288
+	*** 000777	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;var_28
+;|***       // 442d
+;|***       for (var_2A = 0; var_2A < 0x38; var_2A++) { // 4440
+; Line 290
+	*** 00077c	c7 46 e6 00 00 		mov	WORD PTR [bp-26],0	;var_2A
+	*** 000781	eb 03 			jmp	SHORT $F1639
+					$FC1640:
+	*** 000783	ff 46 e6 		inc	WORD PTR [bp-26]	;var_2A
+					$F1639:
+	*** 000786	83 7e e6 38 		cmp	WORD PTR [bp-26],56	;var_2A
+	*** 00078a	7c 03 			jl	$JCC1930
+	*** 00078c	e9 8c 00 		jmp	$FB1641
+					$JCC1930:
+;|***         if (wldReadBuf9[wldReadBuf4[targets[var_26].field_2].field_E & 0x7f] == stru_18FC0[var_2A].field_2 
+;|***             && strcmp(wldOffsets[targets[var_26].field_2], aPowCamp) != 0) {
+; Line 292
+	*** 00078f	b8 12 00 		mov	ax,18
+	*** 000792	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000795	8b d8 			mov	bx,ax
+	*** 000797	8b b7 02 00 		mov	si,WORD PTR _targets[bx+2]
+	*** 00079b	8b de 			mov	bx,si
+	*** 00079d	b1 04 			mov	cl,4
+	*** 00079f	d3 e3 			shl	bx,cl
+	*** 0007a1	8b 9f 0e 00 		mov	bx,WORD PTR _wldReadBuf4[bx+14]
+	*** 0007a5	83 e3 7f 		and	bx,127
+	*** 0007a8	8a 87 00 00 		mov	al,BYTE PTR _wldReadBuf9[bx]
+	*** 0007ac	98 			cbw	
+	*** 0007ad	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;var_2A
+	*** 0007b0	b1 03 			mov	cl,3
+	*** 0007b2	d3 e3 			shl	bx,cl
+	*** 0007b4	3b 87 02 00 		cmp	ax,WORD PTR _stru_18FC0[bx+2]
+	*** 0007b8	75 5e 			jne	$I1642
+	*** 0007ba	b8 00 00 		mov	ax,OFFSET _aPowCamp
+	*** 0007bd	50 			push	ax
+	*** 0007be	8b de 			mov	bx,si
+	*** 0007c0	d1 e3 			shl	bx,1
+	*** 0007c2	ff b7 00 00 		push	WORD PTR _wldOffsets[bx]
+	*** 0007c6	e8 00 00 		call	_strcmp
+	*** 0007c9	83 c4 04 		add	sp,4
+	*** 0007cc	0b c0 			or	ax,ax
+	*** 0007ce	74 48 			je	$I1642
+;|***           // 4487
+;|***           if ((var_2C != 0) && (var_28 == var_10)) {
+; Line 294
+	*** 0007d0	83 7e de 00 		cmp	WORD PTR [bp-34],0	;var_2C
+	*** 0007d4	74 3f 			je	$I1644
+	*** 0007d6	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;var_10
+	*** 0007d9	39 46 f8 		cmp	WORD PTR [bp-8],ax	;var_28
+	*** 0007dc	75 37 			jne	$I1644
+;|***             // 4495
+;|***             targets[var_26].field_0 = stru_18FC0[var_2A].field_0;
+; Line 296
+	*** 0007de	8b 76 e6 		mov	si,WORD PTR [bp-26]	;var_2A
+	*** 0007e1	b1 03 			mov	cl,3
+	*** 0007e3	d3 e6 			shl	si,cl
+	*** 0007e5	b8 12 00 		mov	ax,18
+	*** 0007e8	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 0007eb	8b f8 			mov	di,ax
+	*** 0007ed	8b 84 00 00 		mov	ax,WORD PTR _stru_18FC0[si]
+	*** 0007f1	89 85 00 00 		mov	WORD PTR _targets[di],ax
+;|***             targets[var_26].field_8 = var_2A;
+; Line 297
+	*** 0007f5	8b 46 e6 		mov	ax,WORD PTR [bp-26]	;var_2A
+	*** 0007f8	89 85 08 00 		mov	WORD PTR _targets[di+8],ax
+;|***             targets[var_26].field_6 = stru_18FC0[var_2A].field_4;
+; Line 298
+	*** 0007fc	8b 84 04 00 		mov	ax,WORD PTR _stru_18FC0[si+4]
+	*** 000800	89 85 06 00 		mov	WORD PTR _targets[di+6],ax
+;|***             // 44c3
+;|***             if (stru_18FC0[var_2A].field_6 > 0) {
+; Line 300
+	*** 000804	83 bc 06 00 00 		cmp	WORD PTR _stru_18FC0[si+6],0
+	*** 000809	7e 0a 			jle	$I1644
+;|***               // 44ca
+;|***               targets[var_26].field_6 += (stru_18FC0[var_2A].field_6 << 8) ;
+; Line 302
+	*** 00080b	8a a4 06 00 		mov	ah,BYTE PTR _stru_18FC0[si+6]
+	*** 00080f	2a c0 			sub	al,al
+	*** 000811	01 85 06 00 		add	WORD PTR _targets[di+6],ax
+;|***             }
+; Line 303
+;|***           }
+; Line 304
+					$I1644:
+;|***           var_28++;
+; Line 305
+	*** 000815	ff 46 f8 		inc	WORD PTR [bp-8]	;var_28
+;|***         }
+; Line 306
+;|***       }
+; Line 307
+					$I1642:
+	*** 000818	e9 68 ff 		jmp	$FC1640
+					$FB1641:
+;|***       // 44dd
+;|***       var_10 = randMul(var_28);
+; Line 309
+	*** 00081b	ff 76 f8 		push	WORD PTR [bp-8]	;var_28
+	*** 00081e	e8 00 00 		call	_randMul
+	*** 000821	83 c4 02 		add	sp,2
+	*** 000824	89 46 f6 		mov	WORD PTR [bp-10],ax	;var_10
+;|***     }
+; Line 310
+	*** 000827	e9 41 ff 		jmp	$FC1637
+					$FB1638:
+;|***   }
+; Line 311
+	*** 00082a	e9 1d ff 		jmp	$FC1634
+					$FB1635:
+;|***   TRACE(("runGenerator(): past loop3"));
+;|***   // 44ec
+;|***   if ((targets[0].field_0 == 0) || (targets[1].field_0 == 0)) {
+; Line 314
+	*** 00082d	83 3e 00 00 00 		cmp	WORD PTR _targets,0
+	*** 000832	74 07 			je	$I1646
+	*** 000834	83 3e 12 00 00 		cmp	WORD PTR _targets+18,0
+	*** 000839	75 03 			jne	$I1645
+					$I1646:
+;|***     TRACE(("runGenerator(): restart 1"));
+;|***     goto restart_40a8;
+; Line 316
+	*** 00083b	e9 b9 fb 		jmp	$restart_40a81588
+;|***   }
+; Line 317
+;|***   // 44fd
+;|***   if ((var_20[0] < var_20[1]) && (missionPick == -1)) {
+; Line 319
+					$I1645:
+	*** 00083e	8b 46 ee 		mov	ax,WORD PTR [bp-18]
+	*** 000841	39 46 ec 		cmp	WORD PTR [bp-20],ax	;var_20
+	*** 000844	7d 73 			jge	$I1647
+	*** 000846	83 3e 00 00 ff 		cmp	WORD PTR _missionPick,-1
+	*** 00084b	75 6c 			jne	$I1647
+;|***     // 450c
+;|***     var_12 = targets[0].field_2;
+; Line 321
+	*** 00084d	a1 02 00 		mov	ax,WORD PTR _targets+2
+	*** 000850	89 46 e4 		mov	WORD PTR [bp-28],ax	;var_12
+;|***     targets[0].field_2 = targets[1].field_2;
+; Line 322
+	*** 000853	a1 14 00 		mov	ax,WORD PTR _targets+20
+	*** 000856	a3 02 00 		mov	WORD PTR _targets+2,ax
+;|***     targets[1].field_2 = var_12;
+; Line 323
+	*** 000859	8b 46 e4 		mov	ax,WORD PTR [bp-28]	;var_12
+	*** 00085c	a3 14 00 		mov	WORD PTR _targets+20,ax
+;|***     var_12 = targets[0].field_0;
+; Line 324
+	*** 00085f	a1 00 00 		mov	ax,WORD PTR _targets
+	*** 000862	89 46 e4 		mov	WORD PTR [bp-28],ax	;var_12
+;|***     targets[0].field_0 = targets[1].field_0;
+; Line 325
+	*** 000865	a1 12 00 		mov	ax,WORD PTR _targets+18
+	*** 000868	a3 00 00 		mov	WORD PTR _targets,ax
+;|***     targets[1].field_0 = var_12;
+; Line 326
+	*** 00086b	8b 46 e4 		mov	ax,WORD PTR [bp-28]	;var_12
+	*** 00086e	a3 12 00 		mov	WORD PTR _targets+18,ax
+;|***     var_12 = targets[0].field_4;
+; Line 327
+	*** 000871	a1 04 00 		mov	ax,WORD PTR _targets+4
+	*** 000874	89 46 e4 		mov	WORD PTR [bp-28],ax	;var_12
+;|***     targets[0].field_4 = targets[1].field_4;
+; Line 328
+	*** 000877	a1 16 00 		mov	ax,WORD PTR _targets+22
+	*** 00087a	a3 04 00 		mov	WORD PTR _targets+4,ax
+;|***     targets[1].field_4 = var_12;
+; Line 329
+	*** 00087d	8b 46 e4 		mov	ax,WORD PTR [bp-28]	;var_12
+	*** 000880	a3 16 00 		mov	WORD PTR _targets+22,ax
+;|***     var_12 = targets[0].field_8;
+; Line 330
+	*** 000883	a1 08 00 		mov	ax,WORD PTR _targets+8
+	*** 000886	89 46 e4 		mov	WORD PTR [bp-28],ax	;var_12
+;|***     targets[0].field_8 = targets[1].field_8;
+; Line 331
+	*** 000889	a1 1a 00 		mov	ax,WORD PTR _targets+26
+	*** 00088c	a3 08 00 		mov	WORD PTR _targets+8,ax
+;|***     targets[1].field_8 = var_12;
+; Line 332
+	*** 00088f	8b 46 e4 		mov	ax,WORD PTR [bp-28]	;var_12
+	*** 000892	a3 1a 00 		mov	WORD PTR _targets+26,ax
+;|***     var_12 = targets[0].field_6;
+; Line 333
+	*** 000895	a1 06 00 		mov	ax,WORD PTR _targets+6
+	*** 000898	89 46 e4 		mov	WORD PTR [bp-28],ax	;var_12
+;|***     targets[0].field_6 = targets[1].field_6;
+; Line 334
+	*** 00089b	a1 18 00 		mov	ax,WORD PTR _targets+24
+	*** 00089e	a3 06 00 		mov	WORD PTR _targets+6,ax
+;|***     targets[1].field_6 = var_12;
+; Line 335
+	*** 0008a1	8b 46 e4 		mov	ax,WORD PTR [bp-28]	;var_12
+	*** 0008a4	a3 18 00 		mov	WORD PTR _targets+24,ax
+;|***     var_12 = var_20[0];
+; Line 336
+	*** 0008a7	8b 46 ec 		mov	ax,WORD PTR [bp-20]	;var_20
+	*** 0008aa	89 46 e4 		mov	WORD PTR [bp-28],ax	;var_12
+;|***     var_20[0] = var_20[1];
+; Line 337
+	*** 0008ad	8b 46 ee 		mov	ax,WORD PTR [bp-18]
+	*** 0008b0	89 46 ec 		mov	WORD PTR [bp-20],ax	;var_20
+;|***     var_20[1] = var_12;
+; Line 338
+	*** 0008b3	8b 46 e4 		mov	ax,WORD PTR [bp-28]	;var_12
+	*** 0008b6	89 46 ee 		mov	WORD PTR [bp-18],ax
+;|***   }
+; Line 339
+;|***   // 4578
+;|***   if (targets[0].field_0 == 4) {
+; Line 341
+					$I1647:
+	*** 0008b9	83 3e 00 00 04 		cmp	WORD PTR _targets,4
+	*** 0008be	75 03 			jne	$I1648
+;|***     TRACE(("runGenerator(): restart2"));
+;|***     goto restart_40a8;
+; Line 343
+	*** 0008c0	e9 34 fb 		jmp	$restart_40a81588
+;|***   }
+; Line 344
+;|***   TRACE(("runGenerator(): past restart checks"));
+; Line 345
+					$I1648:
+;|***   // 4582
+;|***   word_1B148 = 0xffff;
+; Line 347
+	*** 0008c3	c7 06 00 00 ff ff 	mov	WORD PTR _word_1B148,-1
+;|***   // 4588
+;|***   if (stru_18FC0[targets[0].field_8].field_6 < 0) { //459e
+; Line 349
+	*** 0008c9	8b 1e 08 00 		mov	bx,WORD PTR _targets+8
+	*** 0008cd	b1 03 			mov	cl,3
+	*** 0008cf	d3 e3 			shl	bx,cl
+	*** 0008d1	8b b7 06 00 		mov	si,WORD PTR _stru_18FC0[bx+6]
+	*** 0008d5	0b f6 			or	si,si
+	*** 0008d7	7d 07 			jge	$I1649
+;|***     wldReadBuf6[0].field_16 = -stru_18FC0[targets[0].field_8].field_6;
+; Line 350
+	*** 0008d9	8b c6 			mov	ax,si
+	*** 0008db	f7 d8 			neg	ax
+	*** 0008dd	a3 16 00 		mov	WORD PTR _wldReadBuf6+22,ax
+;|***   }
+; Line 351
+;|***   // 45a5
+;|***   if (word_1B148 == 0) {
+; Line 353
+					$I1649:
+	*** 0008e0	83 3e 00 00 00 		cmp	WORD PTR _word_1B148,0
+	*** 0008e5	75 06 			jne	$I1650
+;|***     wldReadBuf6[0].field_1C = 19999;
+; Line 354
+	*** 0008e7	c7 06 1c 00 1f 4e 	mov	WORD PTR _wldReadBuf6+28,19999
+;|***   }
+; Line 355
+;|***   // 45b2
+;|***   for (var_26 = 0; var_26 < 2; var_26++) {
+; Line 357
+					$I1650:
+	*** 0008ed	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_26
+	*** 0008f2	eb 03 			jmp	SHORT $F1651
+					$FC1652:
+	*** 0008f4	ff 46 fe 		inc	WORD PTR [bp-2]	;var_26
+					$F1651:
+	*** 0008f7	83 7e fe 02 		cmp	WORD PTR [bp-2],2	;var_26
+	*** 0008fb	7c 03 			jl	$JCC2299
+	*** 0008fd	e9 bd 00 		jmp	$FB1653
+					$JCC2299:
+;|***     TRACE(("runGenerator(): loop4, counter %d", var_26));
+;|***     // 45e2
+;|***     mystrcpy(targets[var_26].coord, sub_152F4(targets[var_26].field_2));
+; Line 360
+	*** 000900	b8 12 00 		mov	ax,18
+	*** 000903	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000906	8b d8 			mov	bx,ax
+	*** 000908	ff b7 02 00 		push	WORD PTR _targets[bx+2]
+	*** 00090c	e8 00 00 		call	_sub_152F4
+	*** 00090f	83 c4 02 		add	sp,2
+	*** 000912	50 			push	ax
+	*** 000913	b8 12 00 		mov	ax,18
+	*** 000916	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000919	05 0a 00 		add	ax,OFFSET _targets+10
+	*** 00091c	50 			push	ax
+	*** 00091d	e8 00 00 		call	_mystrcpy
+	*** 000920	83 c4 04 		add	sp,4
+;|***     // 45f0
+;|***     if (targets[var_26].field_2 < 3) {
+; Line 362
+	*** 000923	b8 12 00 		mov	ax,18
+	*** 000926	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000929	8b d8 			mov	bx,ax
+	*** 00092b	83 bf 02 00 03 		cmp	WORD PTR _targets[bx+2],3
+	*** 000930	7c 03 			jl	$JCC2352
+	*** 000932	e9 85 00 		jmp	$FB1657
+					$JCC2352:
+;|***       var_12 = 0x7fff;
+; Line 363
+	*** 000935	c7 46 e4 ff 7f 		mov	WORD PTR [bp-28],32767	;var_12
+;|***       // 45ff
+;|***       for (var_2A = 3; var_2A < readItemSize; var_2A++) {
+; Line 365
+	*** 00093a	c7 46 e6 03 00 		mov	WORD PTR [bp-26],3	;var_2A
+	*** 00093f	eb 03 			jmp	SHORT $F1655
+					$FC1656:
+	*** 000941	ff 46 e6 		inc	WORD PTR [bp-26]	;var_2A
+					$F1655:
+	*** 000944	a1 00 00 		mov	ax,_readItemSize
+	*** 000947	39 46 e6 		cmp	WORD PTR [bp-26],ax	;var_2A
+	*** 00094a	7d 6e 			jge	$FB1657
+;|***         // 4611
+;|***         if ((wldReadBuf4[var_2A].field_8 & 0x500) == 0
+;|***             && sub_14C94(var_2A, targets[var_26].field_2) < var_12
+;|***             && wldReadBuf4[var_2A].field_0 != 0) {
+; Line 369
+	*** 00094c	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;var_2A
+	*** 00094f	b1 04 			mov	cl,4
+	*** 000951	d3 e3 			shl	bx,cl
+	*** 000953	f7 87 08 00 00 05 	test	WORD PTR _wldReadBuf4[bx+8],1280
+	*** 000959	75 5d 			jne	$I1658
+	*** 00095b	b8 12 00 		mov	ax,18
+	*** 00095e	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000961	8b d8 			mov	bx,ax
+	*** 000963	ff b7 02 00 		push	WORD PTR _targets[bx+2]
+	*** 000967	ff 76 e6 		push	WORD PTR [bp-26]	;var_2A
+	*** 00096a	e8 00 00 		call	_sub_14C94
+	*** 00096d	83 c4 04 		add	sp,4
+	*** 000970	3b 46 e4 		cmp	ax,WORD PTR [bp-28]	;var_12
+	*** 000973	7d 43 			jge	$I1658
+	*** 000975	8b 5e e6 		mov	bx,WORD PTR [bp-26]	;var_2A
+	*** 000978	b1 04 			mov	cl,4
+	*** 00097a	d3 e3 			shl	bx,cl
+	*** 00097c	83 bf 00 00 00 		cmp	WORD PTR _wldReadBuf4[bx],0
+	*** 000981	74 35 			je	$I1658
+;|***           // 4648
+;|***           var_12 = sub_14C94(var_2A, targets[var_26].field_2);
+; Line 371
+	*** 000983	b8 12 00 		mov	ax,18
+	*** 000986	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000989	8b d8 			mov	bx,ax
+	*** 00098b	ff b7 02 00 		push	WORD PTR _targets[bx+2]
+	*** 00098f	ff 76 e6 		push	WORD PTR [bp-26]	;var_2A
+	*** 000992	e8 00 00 		call	_sub_14C94
+	*** 000995	83 c4 04 		add	sp,4
+	*** 000998	89 46 e4 		mov	WORD PTR [bp-28],ax	;var_12
+;|***           // 4679
+;|***           wldReadBuf4[targets[var_26].field_2].field_0 = wldReadBuf4[var_2A].field_0;
+; Line 373
+	*** 00099b	b8 12 00 		mov	ax,18
+	*** 00099e	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 0009a1	8b d8 			mov	bx,ax
+	*** 0009a3	8b 9f 02 00 		mov	bx,WORD PTR _targets[bx+2]
+	*** 0009a7	b1 04 			mov	cl,4
+	*** 0009a9	d3 e3 			shl	bx,cl
+	*** 0009ab	8b 76 e6 		mov	si,WORD PTR [bp-26]	;var_2A
+	*** 0009ae	d3 e6 			shl	si,cl
+	*** 0009b0	8b 84 00 00 		mov	ax,WORD PTR _wldReadBuf4[si]
+	*** 0009b4	89 87 00 00 		mov	WORD PTR _wldReadBuf4[bx],ax
+;|***         }
+; Line 374
+;|***       }
+; Line 375
+					$I1658:
+	*** 0009b8	eb 87 			jmp	SHORT $FC1656
+					$FB1657:
+;|***     }
+; Line 376
+;|***   }
+; Line 377
+	*** 0009ba	e9 37 ff 		jmp	$FC1652
+					$FB1653:
+;|***   TRACE(("runGenerator(): past loop4"));
+;|***   // 4689
+;|***   targets[0].field_10 = word_1DD38 >> 4;
+; Line 380
+	*** 0009bd	a1 00 00 		mov	ax,_word_1DD38
+	*** 0009c0	b1 04 			mov	cl,4
+	*** 0009c2	d3 f8 			sar	ax,cl
+	*** 0009c4	a3 10 00 		mov	WORD PTR _targets+16,ax
+;|*** counterMore1k:
+; Line 381
+					$counterMore1k1593:
+;|***   TRACE(("runGenerator(): counterMore1k"));
+;|***   // 46a9
+;|***   dword_1D5D0 = (uint32)(wldReadBuf4[targets[0].field_4].field_2) << 5;
+; Line 384
+	*** 0009c7	8b 36 04 00 		mov	si,WORD PTR _targets+4
+	*** 0009cb	b1 04 			mov	cl,4
+	*** 0009cd	d3 e6 			shl	si,cl
+	*** 0009cf	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 0009d3	2b d2 			sub	dx,dx
+	*** 0009d5	b1 05 			mov	cl,5
+					$L20014:
+	*** 0009d7	d1 e0 			shl	ax,1
+	*** 0009d9	d1 d2 			rcl	dx,1
+	*** 0009db	fe c9 			dec	cl
+	*** 0009dd	74 02 			je	$L20015
+	*** 0009df	eb f6 			jmp	SHORT $L20014
+					$L20015:
+	*** 0009e1	a3 00 00 		mov	WORD PTR _dword_1D5D0,ax
+	*** 0009e4	89 16 02 00 		mov	WORD PTR _dword_1D5D0+2,dx
+;|***   // 46ad
+;|***   /* 
+;|***   Assigns the following values to made-up stack variables:
+;|***   var_34 = (long)((word_1C830 & 0x200) ? 0 : 0x708);
+;|***   var_30 = 0x8000 - (long)word_1C82C;
+;|***   example step-through values:
+;|***   1) DX:AX = 0:0708 (1800)
+;|***      BX:CX = 0:42c0 (17088)
+;|***   2) BX:CX = 0:3d40 (15680 = 32768 - 17088)
+;|***   6) DX:AX = 7:a800 (501760 = 15680 << 5)
+;|***   7) DX:AX = 7:a0f8 (499960 = 501760 - 1800)  
+;|***   */
+;|***   dword_1D650 = ((0x8000 - (int32)(wldReadBuf4[targets[0].field_4].field_4)) << 5) - (int32)((wldReadBuf4[targets[0].field_4].field_8 & 0x200) ? 0 : 0x708);
+; Line 397
+	*** 0009e8	f7 84 08 00 00 02 	test	WORD PTR _wldReadBuf4[si+8],512
+	*** 0009ee	74 04 			je	$L20012
+	*** 0009f0	2b c0 			sub	ax,ax
+	*** 0009f2	eb 03 			jmp	SHORT $L20013
+					$L20012:
+	*** 0009f4	b8 08 07 		mov	ax,1800
+					$L20013:
+	*** 0009f7	99 			cwd	
+	*** 0009f8	8b 8c 04 00 		mov	cx,WORD PTR _wldReadBuf4[si+4]
+	*** 0009fc	2b db 			sub	bx,bx
+	*** 0009fe	81 e9 00 80 		sub	cx,-32768
+	*** 000a02	1b db 			sbb	bx,bx
+	*** 000a04	f7 d9 			neg	cx
+	*** 000a06	83 d3 00 		adc	bx,0
+	*** 000a09	f7 db 			neg	bx
+	*** 000a0b	89 4e d0 		mov	WORD PTR [bp-48],cx
+	*** 000a0e	89 5e d2 		mov	WORD PTR [bp-46],bx
+	*** 000a11	b1 05 			mov	cl,5
+	*** 000a13	89 46 cc 		mov	WORD PTR [bp-52],ax
+	*** 000a16	89 56 ce 		mov	WORD PTR [bp-50],dx
+	*** 000a19	8b 46 d0 		mov	ax,WORD PTR [bp-48]
+	*** 000a1c	8b d3 			mov	dx,bx
+					$L20020:
+	*** 000a1e	d1 e0 			shl	ax,1
+	*** 000a20	d1 d2 			rcl	dx,1
+	*** 000a22	fe c9 			dec	cl
+	*** 000a24	74 02 			je	$L20021
+	*** 000a26	eb f6 			jmp	SHORT $L20020
+					$L20021:
+	*** 000a28	2b 46 cc 		sub	ax,WORD PTR [bp-52]
+	*** 000a2b	1b 56 ce 		sbb	dx,WORD PTR [bp-50]
+	*** 000a2e	a3 00 00 		mov	WORD PTR _dword_1D650,ax
+	*** 000a31	89 16 02 00 		mov	WORD PTR _dword_1D650+2,dx
+;|***   // 46fa
+;|***   word_182BE = wldReadBuf4[targets[0].field_2].field_2;
+; Line 399
+	*** 000a35	8b 3e 02 00 		mov	di,WORD PTR _targets+2
+	*** 000a39	b1 04 			mov	cl,4
+	*** 000a3b	d3 e7 			shl	di,cl
+	*** 000a3d	8b 85 02 00 		mov	ax,WORD PTR _wldReadBuf4[di+2]
+	*** 000a41	a3 00 00 		mov	_word_182BE,ax
+;|***   word_182C0 = wldReadBuf4[targets[0].field_2].field_4;
+; Line 400
+	*** 000a44	8b 85 04 00 		mov	ax,WORD PTR _wldReadBuf4[di+4]
+	*** 000a48	a3 00 00 		mov	_word_182C0,ax
+;|***   // 4710
+;|***   word_182BA = (wldReadBuf4[targets[0].field_4].field_2 / 2) + (word_182BE / 2);
+; Line 402
+	*** 000a4b	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000a4f	d1 e8 			shr	ax,1
+	*** 000a51	8b 0e 00 00 		mov	cx,_word_182BE
+	*** 000a55	d1 e9 			shr	cx,1
+	*** 000a57	03 c1 			add	ax,cx
+	*** 000a59	a3 00 00 		mov	_word_182BA,ax
+;|***   word_182BC = (wldReadBuf4[targets[0].field_4].field_4 / 2) + (word_182C0 / 2);
+; Line 403
+	*** 000a5c	8b 84 04 00 		mov	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000a60	d1 e8 			shr	ax,1
+	*** 000a62	8b 0e 00 00 		mov	cx,_word_182C0
+	*** 000a66	d1 e9 			shr	cx,1
+	*** 000a68	03 c1 			add	ax,cx
+	*** 000a6a	a3 00 00 		mov	_word_182BC,ax
+;|***   // 4732
+;|***   word_182C6 = wldReadBuf4[targets[1].field_4].field_2;
+; Line 405
+	*** 000a6d	8b 36 16 00 		mov	si,WORD PTR _targets+22
+	*** 000a71	b1 04 			mov	cl,4
+	*** 000a73	d3 e6 			shl	si,cl
+	*** 000a75	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000a79	a3 00 00 		mov	_word_182C6,ax
+;|***   word_182C8 = wldReadBuf4[targets[1].field_4].field_4;
+; Line 406
+	*** 000a7c	8b 84 04 00 		mov	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000a80	a3 00 00 		mov	_word_182C8,ax
+;|***   word_182C2 = wldReadBuf4[targets[1].field_2].field_2;
+; Line 407
+	*** 000a83	8b 36 14 00 		mov	si,WORD PTR _targets+20
+	*** 000a87	d3 e6 			shl	si,cl
+	*** 000a89	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000a8d	a3 00 00 		mov	_word_182C2,ax
+;|***   word_182C4 = wldReadBuf4[targets[1].field_2].field_4;
+; Line 408
+	*** 000a90	8b 84 04 00 		mov	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000a94	a3 00 00 		mov	_word_182C4,ax
+;|***   // 475c
+;|***   if (missionPick == 2) {
+; Line 410
+	*** 000a97	83 3e 00 00 02 		cmp	WORD PTR _missionPick,2
+	*** 000a9c	75 1a 			jne	$I1659
+;|***     word_182C2 += (rand() & 0x1000) - 0x800;
+; Line 411
+	*** 000a9e	e8 00 00 		call	_rand
+	*** 000aa1	25 00 10 		and	ax,4096
+	*** 000aa4	2d 00 08 		sub	ax,2048
+	*** 000aa7	01 06 00 00 		add	_word_182C2,ax
+;|***     word_182C4 += (rand() & 0x1000) - 0x800;
+; Line 412
+	*** 000aab	e8 00 00 		call	_rand
+	*** 000aae	25 00 10 		and	ax,4096
+	*** 000ab1	2d 00 08 		sub	ax,2048
+	*** 000ab4	01 06 00 00 		add	_word_182C4,ax
+;|***   }
+; Line 413
+;|***   // 477d
+;|***   if ((uint8)targets[0].field_6 & 0x10 != 0) {  
+; Line 415
+					$I1659:
+	*** 000ab8	f6 06 06 00 01 		test	BYTE PTR _targets+6,1
+	*** 000abd	74 1c 			je	$I1660
+;|***     word_182BE = ((word_182BE >> 0xa) << 0xa) + 0x200;
+; Line 416
+	*** 000abf	a1 00 00 		mov	ax,_word_182BE
+	*** 000ac2	b1 0a 			mov	cl,10
+	*** 000ac4	d3 e8 			shr	ax,cl
+	*** 000ac6	d3 e0 			shl	ax,cl
+	*** 000ac8	80 c4 02 		add	ah,2
+	*** 000acb	a3 00 00 		mov	_word_182BE,ax
+;|***     word_182C0 = ((word_182C0 >> 0xa) << 0xa) + 0x200;
+; Line 417
+	*** 000ace	a1 00 00 		mov	ax,_word_182C0
+	*** 000ad1	d3 e8 			shr	ax,cl
+	*** 000ad3	d3 e0 			shl	ax,cl
+	*** 000ad5	80 c4 02 		add	ah,2
+	*** 000ad8	a3 00 00 		mov	_word_182C0,ax
+;|***   }
+; Line 418
+;|***   // 47a0
+;|***   for (var_26 = 0; var_26 < wldReadBuf5Size - 4; var_26++) { // 47cb8
+; Line 420
+					$I1660:
+	*** 000adb	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_26
+	*** 000ae0	eb 03 			jmp	SHORT $F1661
+					$FC1662:
+	*** 000ae2	ff 46 fe 		inc	WORD PTR [bp-2]	;var_26
+					$F1661:
+	*** 000ae5	a1 00 00 		mov	ax,_wldReadBuf5Size
+	*** 000ae8	2d 04 00 		sub	ax,4
+	*** 000aeb	39 46 fe 		cmp	WORD PTR [bp-2],ax	;var_26
+	*** 000aee	7c 03 			jl	$JCC2798
+	*** 000af0	e9 e1 01 		jmp	$FB1663
+					$JCC2798:
+;|***     TRACE(("runGenerator(): loop5, counter %d", var_26));
+;|***     // 47c4
+;|***     if ((wldReadBuf6[var_26].field_18 & 0x80) != 0) {
+; Line 423
+	*** 000af3	b8 24 00 		mov	ax,36
+	*** 000af6	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000af9	8b d8 			mov	bx,ax
+	*** 000afb	8a 87 18 00 		mov	al,BYTE PTR _wldReadBuf6[bx+24]
+	*** 000aff	88 46 cc 		mov	BYTE PTR [bp-52],al
+	*** 000b02	f6 46 cc 80 		test	BYTE PTR [bp-52],128
+	*** 000b06	75 03 			jne	$JCC2822
+	*** 000b08	e9 2b 01 		jmp	$FB1671
+					$JCC2822:
+;|***       // 47ea
+;|***       var_14 = (var_20[0] / 4) * (4 - difficultySaved);
+; Line 425
+	*** 000b0b	8b 46 ec 		mov	ax,WORD PTR [bp-20]	;var_20
+	*** 000b0e	99 			cwd	
+	*** 000b0f	33 c2 			xor	ax,dx
+	*** 000b11	2b c2 			sub	ax,dx
+	*** 000b13	b9 02 00 		mov	cx,2
+	*** 000b16	d3 f8 			sar	ax,cl
+	*** 000b18	33 c2 			xor	ax,dx
+	*** 000b1a	2b c2 			sub	ax,dx
+	*** 000b1c	b9 04 00 		mov	cx,4
+	*** 000b1f	2b 0e 00 00 		sub	cx,_difficultySaved
+	*** 000b23	f7 e9 			imul	cx
+	*** 000b25	89 46 dc 		mov	WORD PTR [bp-36],ax	;var_14
+;|***       // 47ed
+;|***       if ((wldReadBuf6[var_26].field_18 & 0x40) != 0) {
+; Line 427
+	*** 000b28	f6 46 cc 40 		test	BYTE PTR [bp-52],64
+	*** 000b2c	74 08 			je	$I1665
+;|***         var_14 = var_20[0] << 1;
+; Line 428
+	*** 000b2e	8b 46 ec 		mov	ax,WORD PTR [bp-20]	;var_20
+	*** 000b31	d1 e0 			shl	ax,1
+	*** 000b33	89 46 dc 		mov	WORD PTR [bp-36],ax	;var_14
+;|***       }
+; Line 429
+;|***       // 47fb
+;|***       do {
+; Line 431
+					$I1665:
+;|***         // 480b
+;|***         var_20[2] = randMul(wldReadBuf3 - 3) + 3;
+; Line 433
+	*** 000b36	a1 00 00 		mov	ax,_wldReadBuf3
+	*** 000b39	2d 03 00 		sub	ax,3
+	*** 000b3c	50 			push	ax
+	*** 000b3d	e8 00 00 		call	_randMul
+	*** 000b40	83 c4 02 		add	sp,2
+	*** 000b43	05 03 00 		add	ax,3
+	*** 000b46	89 46 f0 		mov	WORD PTR [bp-16],ax
+;|***       // 4814
+;|***       } while ((wldReadBuf4[var_20[2]].field_8 & 0x100) || sub_14D96(word_182BA - wldReadBuf4[var_20[2]].field_2, word_182BC - wldReadBuf4[var_20[2]].field_4) > (var_14 += 0x10));
+; Line 435
+	*** 000b49	8b f0 			mov	si,ax
+	*** 000b4b	b1 04 			mov	cl,4
+	*** 000b4d	d3 e6 			shl	si,cl
+	*** 000b4f	f7 84 08 00 00 01 	test	WORD PTR _wldReadBuf4[si+8],256
+	*** 000b55	75 df 			jne	$I1665
+	*** 000b57	a1 00 00 		mov	ax,_word_182BC
+	*** 000b5a	2b 84 04 00 		sub	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000b5e	50 			push	ax
+	*** 000b5f	a1 00 00 		mov	ax,_word_182BA
+	*** 000b62	2b 84 02 00 		sub	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000b66	50 			push	ax
+	*** 000b67	e8 00 00 		call	_sub_14D96
+	*** 000b6a	83 c4 04 		add	sp,4
+	*** 000b6d	83 46 dc 10 		add	WORD PTR [bp-36],16	;var_14
+	*** 000b71	3b 46 dc 		cmp	ax,WORD PTR [bp-36]	;var_14
+	*** 000b74	7f c0 			jg	$I1665
+;|***       // 4841
+;|***       sub_14CC5(var_26, var_20[2]);
+; Line 437
+	*** 000b76	ff 76 f0 		push	WORD PTR [bp-16]
+	*** 000b79	ff 76 fe 		push	WORD PTR [bp-2]	;var_26
+	*** 000b7c	e8 00 00 		call	_sub_14CC5
+	*** 000b7f	83 c4 04 		add	sp,4
+;|***       var_14 = 0x3000;
+; Line 438
+	*** 000b82	c7 46 dc 00 30 		mov	WORD PTR [bp-36],12288	;var_14
+;|***       // 484c
+;|***       var_E = sub_150EB(wldReadBuf4[targets[0].field_4].field_2 - wldReadBuf6[var_26].field_2, wldReadBuf6[var_26].field_4 - wldReadBuf4[targets[0].field_4].field_4);
+; Line 440
+	*** 000b87	8b 36 04 00 		mov	si,WORD PTR _targets+4
+	*** 000b8b	b1 04 			mov	cl,4
+	*** 000b8d	d3 e6 			shl	si,cl
+	*** 000b8f	b8 24 00 		mov	ax,36
+	*** 000b92	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000b95	8b f8 			mov	di,ax
+	*** 000b97	8b 85 04 00 		mov	ax,WORD PTR _wldReadBuf6[di+4]
+	*** 000b9b	2b 84 04 00 		sub	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000b9f	50 			push	ax
+	*** 000ba0	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000ba4	2b 85 02 00 		sub	ax,WORD PTR _wldReadBuf6[di+2]
+	*** 000ba8	50 			push	ax
+	*** 000ba9	e8 00 00 		call	_sub_150EB
+	*** 000bac	83 c4 04 		add	sp,4
+	*** 000baf	89 46 da 		mov	WORD PTR [bp-38],ax	;var_E
+;|***       // 4877
+;|***       for (var_2A = 0; var_2A < 8; var_2A++) {
+; Line 442
+	*** 000bb2	c7 46 e6 00 00 		mov	WORD PTR [bp-26],0	;var_2A
+	*** 000bb7	eb 03 			jmp	SHORT $F1669
+					$FC1670:
+	*** 000bb9	ff 46 e6 		inc	WORD PTR [bp-26]	;var_2A
+					$F1669:
+	*** 000bbc	83 7e e6 08 		cmp	WORD PTR [bp-26],8	;var_2A
+	*** 000bc0	7d 74 			jge	$FB1671
+;|***         // 488b
+;|***         var_C = randMul(wldReadBuf3) + 1;
+; Line 444
+	*** 000bc2	ff 36 00 00 		push	WORD PTR _wldReadBuf3
+	*** 000bc6	e8 00 00 		call	_randMul
+	*** 000bc9	83 c4 02 		add	sp,2
+	*** 000bcc	40 			inc	ax
+	*** 000bcd	89 46 e2 		mov	WORD PTR [bp-30],ax	;var_C
+;|***         if ((wldReadBuf4[var_C].field_8 & 0x400) == 0) {
+; Line 445
+	*** 000bd0	8b f0 			mov	si,ax
+	*** 000bd2	b1 04 			mov	cl,4
+	*** 000bd4	d3 e6 			shl	si,cl
+	*** 000bd6	f7 84 08 00 00 04 	test	WORD PTR _wldReadBuf4[si+8],1024
+	*** 000bdc	75 56 			jne	$I1673
+;|***           // 48bd
+;|***           var_6 = sub_150EB(wldReadBuf4[var_C].field_2 - wldReadBuf6[var_26].field_2, wldReadBuf6[var_26].field_4 - wldReadBuf4[var_C].field_4);
+; Line 447
+	*** 000bde	b8 24 00 		mov	ax,36
+	*** 000be1	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000be4	8b f8 			mov	di,ax
+	*** 000be6	8b 85 04 00 		mov	ax,WORD PTR _wldReadBuf6[di+4]
+	*** 000bea	2b 84 04 00 		sub	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000bee	50 			push	ax
+	*** 000bef	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000bf3	2b 85 02 00 		sub	ax,WORD PTR _wldReadBuf6[di+2]
+	*** 000bf7	50 			push	ax
+	*** 000bf8	e8 00 00 		call	_sub_150EB
+	*** 000bfb	83 c4 04 		add	sp,4
+	*** 000bfe	89 46 d6 		mov	WORD PTR [bp-42],ax	;var_6
+;|***           // 48d3
+;|***           if (abs(var_E - var_6) < var_14) {
+; Line 449
+	*** 000c01	8b 46 da 		mov	ax,WORD PTR [bp-38]	;var_E
+	*** 000c04	2b 46 d6 		sub	ax,WORD PTR [bp-42]	;var_6
+	*** 000c07	50 			push	ax
+	*** 000c08	e8 00 00 		call	_abs
+	*** 000c0b	83 c4 02 		add	sp,2
+	*** 000c0e	3b 46 dc 		cmp	ax,WORD PTR [bp-36]	;var_14
+	*** 000c11	7d 21 			jge	$I1673
+;|***             // 48e5
+;|***             var_14 = abs(var_E - var_6);
+; Line 451
+	*** 000c13	8b 46 da 		mov	ax,WORD PTR [bp-38]	;var_E
+	*** 000c16	2b 46 d6 		sub	ax,WORD PTR [bp-42]	;var_6
+	*** 000c19	50 			push	ax
+	*** 000c1a	e8 00 00 		call	_abs
+	*** 000c1d	83 c4 02 		add	sp,2
+	*** 000c20	89 46 dc 		mov	WORD PTR [bp-36],ax	;var_14
+;|***             // 48f3
+;|***             wldReadBuf6[var_26].field_0 = var_C;
+; Line 453
+	*** 000c23	b8 24 00 		mov	ax,36
+	*** 000c26	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000c29	8b d8 			mov	bx,ax
+	*** 000c2b	8b 46 e2 		mov	ax,WORD PTR [bp-30]	;var_C
+	*** 000c2e	89 87 00 00 		mov	WORD PTR _wldReadBuf6[bx],ax
+;|***             break;
+; Line 454
+	*** 000c32	eb 02 			jmp	SHORT $FB1671
+;|***           }
+; Line 455
+;|***         }
+; Line 456
+					$I1673:
+;|***       }
+; Line 457
+	*** 000c34	eb 83 			jmp	SHORT $FC1670
+					$FB1671:
+;|***     }
+; Line 458
+;|***     // 48fb
+;|***     if (((wldReadBuf6[var_26].field_18 & 0x100) != 0) && (word_1B148 != -1)) {
+; Line 460
+	*** 000c36	b8 24 00 		mov	ax,36
+	*** 000c39	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000c3c	8b d8 			mov	bx,ax
+	*** 000c3e	f7 87 18 00 00 01 	test	WORD PTR _wldReadBuf6[bx+24],256
+	*** 000c44	74 22 			je	$I1674
+	*** 000c46	83 3e 00 00 ff 		cmp	WORD PTR _word_1B148,-1
+	*** 000c4b	74 1b 			je	$I1674
+;|***       // 4919
+;|***       sub_14CC5(var_26, word_1D00A);
+; Line 462
+	*** 000c4d	ff 36 00 00 		push	WORD PTR _word_1D00A
+	*** 000c51	ff 76 fe 		push	WORD PTR [bp-2]	;var_26
+	*** 000c54	e8 00 00 		call	_sub_14CC5
+	*** 000c57	83 c4 04 		add	sp,4
+;|***       wldReadBuf6[var_26].field_1C = 19999;
+; Line 463
+	*** 000c5a	b8 24 00 		mov	ax,36
+	*** 000c5d	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000c60	8b d8 			mov	bx,ax
+	*** 000c62	c7 87 1c 00 1f 4e 	mov	WORD PTR _wldReadBuf6[bx+28],19999
+;|***     } 
+; Line 464
+;|***     // 492d
+;|***     if (var_26 != 0) {
+; Line 466
+					$I1674:
+	*** 000c68	83 7e fe 00 		cmp	WORD PTR [bp-2],0	;var_26
+	*** 000c6c	74 63 			je	$I1675
+;|***       var_20[2] = 0;
+; Line 467
+	*** 000c6e	c7 46 f0 00 00 		mov	WORD PTR [bp-16],0
+;|***       do {
+; Line 468
+					$D1676:
+;|***         // 4948
+;|***         var_C = randMul(wldReadBuf3 - 3) + 3;
+; Line 470
+	*** 000c73	a1 00 00 		mov	ax,_wldReadBuf3
+	*** 000c76	2d 03 00 		sub	ax,3
+	*** 000c79	50 			push	ax
+	*** 000c7a	e8 00 00 		call	_randMul
+	*** 000c7d	83 c4 02 		add	sp,2
+	*** 000c80	05 03 00 		add	ax,3
+	*** 000c83	89 46 e2 		mov	WORD PTR [bp-30],ax	;var_C
+;|***       // 4964
+;|***       } while ((((wldReadBuf4[var_C].field_8 & 0x801) != 1) || (wldReadBuf4[var_C].field_C != 0)) && var_20[2]++ < 20);
+; Line 472
+	*** 000c86	8b f0 			mov	si,ax
+	*** 000c88	b1 04 			mov	cl,4
+	*** 000c8a	d3 e6 			shl	si,cl
+	*** 000c8c	8b 84 08 00 		mov	ax,WORD PTR _wldReadBuf4[si+8]
+	*** 000c90	25 01 08 		and	ax,2049
+	*** 000c93	3d 01 00 		cmp	ax,1
+	*** 000c96	75 07 			jne	$D1680
+	*** 000c98	83 bc 0c 00 00 		cmp	WORD PTR _wldReadBuf4[si+12],0
+	*** 000c9d	74 0b 			je	$D1679
+					$D1680:
+	*** 000c9f	8b 46 f0 		mov	ax,WORD PTR [bp-16]
+	*** 000ca2	ff 46 f0 		inc	WORD PTR [bp-16]
+	*** 000ca5	3d 14 00 		cmp	ax,20
+	*** 000ca8	7c c9 			jl	$D1676
+					$D1679:
+;|***       // 496f
+;|***       wldReadBuf4[var_C].field_A = wldReadBuf6[var_26].field_16;
+; Line 474
+	*** 000caa	8b 76 e2 		mov	si,WORD PTR [bp-30]	;var_C
+	*** 000cad	b1 04 			mov	cl,4
+	*** 000caf	d3 e6 			shl	si,cl
+	*** 000cb1	b8 24 00 		mov	ax,36
+	*** 000cb4	f7 6e fe 		imul	WORD PTR [bp-2]	;var_26
+	*** 000cb7	8b d8 			mov	bx,ax
+	*** 000cb9	8b 87 16 00 		mov	ax,WORD PTR _wldReadBuf6[bx+22]
+	*** 000cbd	89 84 0a 00 		mov	WORD PTR _wldReadBuf4[si+10],ax
+;|***       wldReadBuf4[var_C].field_C = randMul(theaterSaved + 1) + 1;
+; Line 475
+	*** 000cc1	a1 00 00 		mov	ax,_theaterSaved
+	*** 000cc4	40 			inc	ax
+	*** 000cc5	50 			push	ax
+	*** 000cc6	e8 00 00 		call	_randMul
+	*** 000cc9	83 c4 02 		add	sp,2
+	*** 000ccc	40 			inc	ax
+	*** 000ccd	89 84 0c 00 		mov	WORD PTR _wldReadBuf4[si+12],ax
+;|***     } // 4996
+; Line 476
+;|***   }
+; Line 477
+					$I1675:
+	*** 000cd1	e9 0e fe 		jmp	$FC1662
+					$FB1663:
+;|***   TRACE(("runGenerator(): past loop5"));
+;|***   // 4999
+;|***   for (var_26 = 0; var_26 < wldReadBuf2; var_26++) { // 49ae
+; Line 480
+	*** 000cd4	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_26
+	*** 000cd9	eb 03 			jmp	SHORT $F1681
+					$FC1682:
+	*** 000cdb	ff 46 fe 		inc	WORD PTR [bp-2]	;var_26
+					$F1681:
+	*** 000cde	a1 00 00 		mov	ax,_wldReadBuf2
+	*** 000ce1	39 46 fe 		cmp	WORD PTR [bp-2],ax	;var_26
+	*** 000ce4	7c 03 			jl	$JCC3300
+	*** 000ce6	e9 c0 00 		jmp	$FB1683
+					$JCC3300:
+;|***     TRACE(("runGenerator(): loop6, counter %d", var_26));
+;|***     var_18 = wldReadBuf4[var_26].field_6;
+; Line 482
+	*** 000ce9	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;var_26
+	*** 000cec	b1 04 			mov	cl,4
+	*** 000cee	d3 e3 			shl	bx,cl
+	*** 000cf0	8b 87 06 00 		mov	ax,WORD PTR _wldReadBuf4[bx+6]
+	*** 000cf4	89 46 fa 		mov	WORD PTR [bp-6],ax	;var_18
+;|***     // 49b9
+;|***     if ((var_18 != 0) && (var_18 != 21)) { // 49cb
+; Line 484
+	*** 000cf7	0b c0 			or	ax,ax
+	*** 000cf9	75 03 			jne	$JCC3321
+	*** 000cfb	e9 a8 00 		jmp	$I1692
+					$JCC3321:
+	*** 000cfe	3d 15 00 		cmp	ax,21
+	*** 000d01	75 03 			jne	$JCC3329
+	*** 000d03	e9 a0 00 		jmp	$I1692
+					$JCC3329:
+;|***       // 4a0d
+;|***       switch((gameData->flag4 != 0) + randMul(5) + difficultySaved) {
+; Line 486
+	*** 000d06	b8 05 00 		mov	ax,5
+	*** 000d09	50 			push	ax
+	*** 000d0a	e8 00 00 		call	_randMul
+	*** 000d0d	83 c4 02 		add	sp,2
+	*** 000d10	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000d14	8b c8 			mov	cx,ax
+	*** 000d16	26 83 7f 3a 01 		cmp	WORD PTR es:[bx+58],1
+	*** 000d1b	1b c0 			sbb	ax,ax
+	*** 000d1d	40 			inc	ax
+	*** 000d1e	03 c1 			add	ax,cx
+	*** 000d20	03 06 00 00 		add	ax,_difficultySaved
+	*** 000d24	eb 22 			jmp	SHORT $S1685
+;|***       case 0:
+; Line 487
+					$SC1689:
+;|***       case 1:
+;|***       case 3:
+;|***         // 49eb
+;|***         var_18 = stru_1892E[var_18].field_2;
+; Line 491
+	*** 000d26	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;var_18
+	*** 000d29	d1 e3 			shl	bx,1
+	*** 000d2b	d1 e3 			shl	bx,1
+	*** 000d2d	8b 87 02 00 		mov	ax,WORD PTR _stru_1892E[bx+2]
+	*** 000d31	89 46 fa 		mov	WORD PTR [bp-6],ax	;var_18
+;|***       case 2:
+;|***       case 4:
+;|***       case 6:
+;|***         break;
+; Line 495
+	*** 000d34	eb 31 			jmp	SHORT $SB1686
+;|***       case 5:
+; Line 496
+					$SC1691:
+;|***       case 7:
+;|***       case 8:
+;|***         // 49fb
+;|***         var_18 = stru_1892E[var_18].field_0;
+; Line 500
+	*** 000d36	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;var_18
+	*** 000d39	d1 e3 			shl	bx,1
+	*** 000d3b	d1 e3 			shl	bx,1
+	*** 000d3d	8b 87 00 00 		mov	ax,WORD PTR _stru_1892E[bx]
+	*** 000d41	89 46 fa 		mov	WORD PTR [bp-6],ax	;var_18
+;|***         break;
+; Line 501
+	*** 000d44	eb 21 			jmp	SHORT $SB1686
+;|***       } // 4a2c
+; Line 502
+	*** 000d46	eb 1f 			jmp	SHORT $SB1686
+					$S1685:
+	*** 000d48	3d 08 00 		cmp	ax,8
+	*** 000d4b	77 1a 			ja	$SB1686
+	*** 000d4d	03 c0 			add	ax,ax
+	*** 000d4f	93 			xchg	ax,bx
+	*** 000d50	2e ff a7 55 0d 		jmp	WORD PTR cs:$L20024[bx]
+					$L20024:
+	*** 000d55	26 0d 				DW	$SC1689
+	*** 000d57	26 0d 				DW	$SC1689
+	*** 000d59	67 0d 				DW	$SB1686
+	*** 000d5b	26 0d 				DW	$SC1689
+	*** 000d5d	67 0d 				DW	$SB1686
+	*** 000d5f	36 0d 				DW	$SC1691
+	*** 000d61	67 0d 				DW	$SB1686
+	*** 000d63	36 0d 				DW	$SC1691
+	*** 000d65	36 0d 				DW	$SC1691
+					$SB1686:
+;|***       // 4a36
+;|***       wldReadBuf4[var_26].field_6 = var_18;
+; Line 504
+	*** 000d67	8b 76 fe 		mov	si,WORD PTR [bp-2]	;var_26
+	*** 000d6a	b1 04 			mov	cl,4
+	*** 000d6c	d3 e6 			shl	si,cl
+	*** 000d6e	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;var_18
+	*** 000d71	89 84 06 00 		mov	WORD PTR _wldReadBuf4[si+6],ax
+;|***       if (((wldReadBuf4[var_26].field_8 & 8) != 0) && gameData->flag4 + difficultySaved + 2 < randMul(10)) { // 4a5e
+; Line 505
+	*** 000d75	f6 84 08 00 08 		test	BYTE PTR _wldReadBuf4[si+8],8
+	*** 000d7a	74 2a 			je	$I1692
+	*** 000d7c	b8 0a 00 		mov	ax,10
+	*** 000d7f	50 			push	ax
+	*** 000d80	e8 00 00 		call	_randMul
+	*** 000d83	83 c4 02 		add	sp,2
+	*** 000d86	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000d8a	26 8b 4f 3a 		mov	cx,WORD PTR es:[bx+58]
+	*** 000d8e	03 0e 00 00 		add	cx,_difficultySaved
+	*** 000d92	83 c1 02 		add	cx,2
+	*** 000d95	3b c8 			cmp	cx,ax
+	*** 000d97	7d 0d 			jge	$I1692
+;|***         // 4a65
+;|***         wldReadBuf4[var_26].field_6 = 0;
+; Line 507
+	*** 000d99	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;var_26
+	*** 000d9c	b1 04 			mov	cl,4
+	*** 000d9e	d3 e3 			shl	bx,cl
+	*** 000da0	c7 87 06 00 00 00 	mov	WORD PTR _wldReadBuf4[bx+6],0
+;|***       }
+; Line 508
+;|***     } // 4a6b
+; Line 509
+					$I1692:
+;|***   }
+; Line 510
+	*** 000da6	e9 32 ff 		jmp	$FC1682
+					$FB1683:
+;|***   TRACE(("runGenerator(): past loop6"));
+;|***   // 4a6e
+;|***   for (var_1A = 0; (int)var_1A < 0x10; var_1A++) { // 4a7e
+; Line 513
+	*** 000da9	c7 46 ea 00 00 		mov	WORD PTR [bp-22],0	;var_1A
+	*** 000dae	eb 03 			jmp	SHORT $F1693
+					$FC1694:
+	*** 000db0	ff 46 ea 		inc	WORD PTR [bp-22]	;var_1A
+					$F1693:
+	*** 000db3	83 7e ea 10 		cmp	WORD PTR [bp-22],16	;var_1A
+	*** 000db7	7d 44 			jge	$FB1695
+;|***     for (var_24 = 0; var_24 < 0x10; var_24++) { // 4a8e
+; Line 514
+	*** 000db9	c7 46 d8 00 00 		mov	WORD PTR [bp-40],0	;var_24
+	*** 000dbe	eb 03 			jmp	SHORT $F1696
+					$FC1697:
+	*** 000dc0	ff 46 d8 		inc	WORD PTR [bp-40]	;var_24
+					$F1696:
+	*** 000dc3	83 7e d8 10 		cmp	WORD PTR [bp-40],16	;var_24
+	*** 000dc7	7d 32 			jge	$FB1698
+;|***       if (((wldReadBuf10[var_24 + var_1A * 0x10] & 0x10) != 0) && randMul(5) >= difficultySaved) { // 4aaf
+; Line 515
+	*** 000dc9	8b 76 ea 		mov	si,WORD PTR [bp-22]	;var_1A
+	*** 000dcc	b1 04 			mov	cl,4
+	*** 000dce	d3 e6 			shl	si,cl
+	*** 000dd0	8b 5e d8 		mov	bx,WORD PTR [bp-40]	;var_24
+	*** 000dd3	f6 80 00 00 10 		test	BYTE PTR _wldReadBuf10[bx][si],16
+	*** 000dd8	74 1f 			je	$I1699
+	*** 000dda	b8 05 00 		mov	ax,5
+	*** 000ddd	50 			push	ax
+	*** 000dde	e8 00 00 		call	_randMul
+	*** 000de1	83 c4 02 		add	sp,2
+	*** 000de4	3b 06 00 00 		cmp	ax,_difficultySaved
+	*** 000de8	7c 0f 			jl	$I1699
+;|***         wldReadBuf10[var_24 + var_1A * 0x10] &= 0xef;
+; Line 516
+	*** 000dea	8b 76 ea 		mov	si,WORD PTR [bp-22]	;var_1A
+	*** 000ded	b1 04 			mov	cl,4
+	*** 000def	d3 e6 			shl	si,cl
+	*** 000df1	8b 5e d8 		mov	bx,WORD PTR [bp-40]	;var_24
+	*** 000df4	80 a0 00 00 ef 		and	BYTE PTR _wldReadBuf10[bx][si],239
+;|***       }
+; Line 517
+;|***     }
+; Line 518
+					$I1699:
+	*** 000df9	eb c5 			jmp	SHORT $FC1697
+					$FB1698:
+;|***   } // 4ac2
+; Line 519
+	*** 000dfb	eb b3 			jmp	SHORT $FC1694
+					$FB1695:
+;|***   TRACE(("runGenerator(): past loop7"));
+;|***   commData->unk7[1] = 1;
+; Line 521
+	*** 000dfd	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000e01	26 c7 47 3a 01 00 	mov	WORD PTR es:[bx+58],1
+;|***   commData->unk7[2] = 5;
+; Line 522
+	*** 000e07	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000e0b	26 c7 47 3c 05 00 	mov	WORD PTR es:[bx+60],5
+;|***   commData->unk7[0] = 0; 
+; Line 523
+	*** 000e11	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000e15	26 c7 47 38 00 00 	mov	WORD PTR es:[bx+56],0
+;|***   // 4ae4
+;|***   if (gameData->theater == THEATER_DS) { // 4ae8
+; Line 525
+	*** 000e1b	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 000e1f	26 83 7f 38 06 		cmp	WORD PTR es:[bx+56],6
+	*** 000e24	75 23 			jne	$I1701
+;|***     commData->unk7[1] = 3;
+; Line 526
+	*** 000e26	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000e2a	26 c7 47 3a 03 00 	mov	WORD PTR es:[bx+58],3
+;|***     if (missionPick != -1) { // 4afc
+; Line 527
+	*** 000e30	83 3e 00 00 ff 		cmp	WORD PTR _missionPick,-1
+	*** 000e35	74 12 			je	$I1701
+;|***       // 4b0a
+;|***       commData->unk7[2] = byte_192FC[missionPick];
+; Line 529
+	*** 000e37	c4 1e 00 00 		les	bx,DWORD PTR _commData
+	*** 000e3b	8b 36 00 00 		mov	si,_missionPick
+	*** 000e3f	8a 84 00 00 		mov	al,BYTE PTR _byte_192FC[si]
+	*** 000e43	2a e4 			sub	ah,ah
+	*** 000e45	26 89 47 3c 		mov	WORD PTR es:[bx+60],ax
+;|***     }
+; Line 530
+;|***   } // 4b0e
+; Line 531
+					$I1701:
+;|***   var_A = 0;
+; Line 532
+	*** 000e49	c7 46 f4 00 00 		mov	WORD PTR [bp-12],0	;var_A
+;|***   // 4b13
+;|***   for (var_26 = 0; var_26 < 3; var_26++) { // 4b23
+; Line 534
+	*** 000e4e	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_26
+	*** 000e53	eb 03 			jmp	SHORT $F1702
+					$FC1703:
+	*** 000e55	ff 46 fe 		inc	WORD PTR [bp-2]	;var_26
+					$F1702:
+	*** 000e58	83 7e fe 03 		cmp	WORD PTR [bp-2],3	;var_26
+	*** 000e5c	7d 2c 			jge	$FB1704
+;|***     TRACE(("runGenerator(): loop8, counter %d", var_26));
+;|***     // 4b49
+;|***     commData->unk8[var_26] = word_189B6[commData->unk7[var_26] * 0x34];
+; Line 537
+	*** 000e5e	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;var_26
+	*** 000e61	d1 e0 			shl	ax,1
+	*** 000e63	03 06 00 00 		add	ax,WORD PTR _commData
+	*** 000e67	8b 16 02 00 		mov	dx,WORD PTR _commData+2
+	*** 000e6b	89 46 cc 		mov	WORD PTR [bp-52],ax
+	*** 000e6e	89 56 ce 		mov	WORD PTR [bp-50],dx
+	*** 000e71	c4 5e cc 		les	bx,DWORD PTR [bp-52]
+	*** 000e74	b8 68 00 		mov	ax,104
+	*** 000e77	26 f7 67 38 		mul	WORD PTR es:[bx+56]
+	*** 000e7b	8b d8 			mov	bx,ax
+	*** 000e7d	8b 87 00 00 		mov	ax,WORD PTR _word_189B6[bx]
+	*** 000e81	8b 5e cc 		mov	bx,WORD PTR [bp-52]
+	*** 000e84	26 89 47 40 		mov	WORD PTR es:[bx+64],ax
+;|***   } 
+; Line 538
+	*** 000e88	eb cb 			jmp	SHORT $FC1703
+					$FB1704:
+;|***   TRACE(("runGenerator(): past loop8"));
+;|***   // 4b4f
+;|***   var_8 = targets[0].field_8 + targets[1].field_8;
+; Line 541
+	*** 000e8a	a1 08 00 		mov	ax,WORD PTR _targets+8
+	*** 000e8d	03 06 1a 00 		add	ax,WORD PTR _targets+26
+	*** 000e91	89 46 fc 		mov	WORD PTR [bp-4],ax	;var_8
+;|***   word_18994 = ((uint8)var_8 & 3) == 0;
+; Line 542
+	*** 000e94	8a 46 fc 		mov	al,BYTE PTR [bp-4]	;var_8
+	*** 000e97	24 03 			and	al,3
+	*** 000e99	3c 01 			cmp	al,1
+	*** 000e9b	1b c9 			sbb	cx,cx
+	*** 000e9d	f7 d9 			neg	cx
+	*** 000e9f	89 0e 00 00 		mov	_word_18994,cx
+;|***   // 4b68
+;|***   var_8 = (var_8 & 0xf) << 8;
+; Line 544
+	*** 000ea3	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_8
+	*** 000ea6	25 0f 00 		and	ax,15
+	*** 000ea9	8a e8 			mov	ch,al
+	*** 000eab	2a c9 			sub	cl,cl
+	*** 000ead	89 4e fc 		mov	WORD PTR [bp-4],cx	;var_8
+;|***   // 4b75
+;|***   if ((targets[0].field_0 == 1) || (targets[1].field_0 == 1)) { // 4b83
+; Line 546
+	*** 000eb0	83 3e 00 00 01 		cmp	WORD PTR _targets,1
+	*** 000eb5	74 07 			je	$I1706
+	*** 000eb7	83 3e 12 00 01 		cmp	WORD PTR _targets+18,1
+	*** 000ebc	75 06 			jne	$I1705
+					$I1706:
+;|***     word_18994 = 0;
+; Line 547
+	*** 000ebe	c7 06 00 00 00 00 	mov	WORD PTR _word_18994,0
+;|***   }
+; Line 548
+;|***   // 4b89
+;|***   if ((targets[0].field_0 == 4) || (targets[1].field_0 == 4)) { // 4b97
+; Line 550
+					$I1705:
+	*** 000ec4	83 3e 00 00 04 		cmp	WORD PTR _targets,4
+	*** 000ec9	74 07 			je	$I1708
+	*** 000ecb	83 3e 12 00 04 		cmp	WORD PTR _targets+18,4
+	*** 000ed0	75 06 			jne	$I1707
+					$I1708:
+;|***     word_18994 = 1;
+; Line 551
+	*** 000ed2	c7 06 00 00 01 00 	mov	WORD PTR _word_18994,1
+;|***   } // 4b9d
+; Line 552
+;|***   word_1DD38 -= (var_8 + word_1DD38) % 0x96;
+; Line 553
+					$I1707:
+	*** 000ed8	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_8
+	*** 000edb	03 06 00 00 		add	ax,_word_1DD38
+	*** 000edf	99 			cwd	
+	*** 000ee0	b9 96 00 		mov	cx,150
+	*** 000ee3	f7 f9 			idiv	cx
+	*** 000ee5	29 16 00 00 		sub	_word_1DD38,dx
+;|***   TRACE(("runGenerator(): exiting"));
+;|*** }
+; Line 555
+	*** 000ee9	5e 			pop	si
+	*** 000eea	5f 			pop	di
+	*** 000eeb	8b e5 			mov	sp,bp
+	*** 000eed	5d 			pop	bp
+	*** 000eee	c3 			ret	
+
+_runGenerator	ENDP
+;|*** 
+;|*** // 4bb4
+;|*** int sub_14BB4(int arg_0, int arg_2, int arg_4) {
+; Line 558
+	PUBLIC	_sub_14BB4
+_sub_14BB4	PROC NEAR
+	*** 000eef	55 			push	bp
+	*** 000ef0	8b ec 			mov	bp,sp
+	*** 000ef2	83 ec 02 		sub	sp,2
+	*** 000ef5	56 			push	si
+;	arg_0 = 4
+;	arg_2 = 6
+;	arg_4 = 8
+;	var_2 = -2
+;|***     int var_2;
+;|***     // 4bf2
+;|***     if ((word_1B960 = sub_137F8((long)arg_0 << 5 , (0x8000 - (long)arg_2) << 5)) != NULL) { // 4bfc
+; Line 561
+	*** 000ef6	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 000ef9	99 			cwd	
+	*** 000efa	2d 00 80 		sub	ax,-32768
+	*** 000efd	83 da 00 		sbb	dx,0
+	*** 000f00	f7 d8 			neg	ax
+	*** 000f02	83 d2 00 		adc	dx,0
+	*** 000f05	f7 da 			neg	dx
+	*** 000f07	b1 05 			mov	cl,5
+					$L20027:
+	*** 000f09	d1 e0 			shl	ax,1
+	*** 000f0b	d1 d2 			rcl	dx,1
+	*** 000f0d	fe c9 			dec	cl
+	*** 000f0f	74 02 			je	$L20028
+	*** 000f11	eb f6 			jmp	SHORT $L20027
+					$L20028:
+	*** 000f13	52 			push	dx
+	*** 000f14	50 			push	ax
+	*** 000f15	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 000f18	99 			cwd	
+	*** 000f19	b1 05 			mov	cl,5
+					$L20029:
+	*** 000f1b	d1 e0 			shl	ax,1
+	*** 000f1d	d1 d2 			rcl	dx,1
+	*** 000f1f	fe c9 			dec	cl
+	*** 000f21	74 02 			je	$L20030
+	*** 000f23	eb f6 			jmp	SHORT $L20029
+					$L20030:
+	*** 000f25	52 			push	dx
+	*** 000f26	50 			push	ax
+	*** 000f27	e8 d6 f0 		call	_sub_137F8
+	*** 000f2a	83 c4 08 		add	sp,8
+	*** 000f2d	a3 00 00 		mov	_word_1B960,ax
+	*** 000f30	0b c0 			or	ax,ax
+	*** 000f32	75 03 			jne	$JCC3890
+	*** 000f34	e9 8e 00 		jmp	$I1714
+					$JCC3890:
+;|***         // 4c10
+;|***         arg_0 = ((long*)word_1B960)[1] >> 5;
+; Line 563
+	*** 000f37	8b d8 			mov	bx,ax
+	*** 000f39	8b 47 04 		mov	ax,WORD PTR [bx+4]
+	*** 000f3c	8b 57 06 		mov	dx,WORD PTR [bx+6]
+	*** 000f3f	b1 05 			mov	cl,5
+					$L20031:
+	*** 000f41	d1 fa 			sar	dx,1
+	*** 000f43	d1 d8 			rcr	ax,1
+	*** 000f45	fe c9 			dec	cl
+	*** 000f47	74 02 			je	$L20032
+	*** 000f49	eb f6 			jmp	SHORT $L20031
+					$L20032:
+	*** 000f4b	89 46 04 		mov	WORD PTR [bp+4],ax	;arg_0
+;|***         arg_2 = -((((long*)word_1B960)[2] >> 5) - 0x8000);
+; Line 564
+	*** 000f4e	8b 1e 00 00 		mov	bx,_word_1B960
+	*** 000f52	8b 47 08 		mov	ax,WORD PTR [bx+8]
+	*** 000f55	8b 57 0a 		mov	dx,WORD PTR [bx+10]
+	*** 000f58	b1 05 			mov	cl,5
+					$L20033:
+	*** 000f5a	d1 fa 			sar	dx,1
+	*** 000f5c	d1 d8 			rcr	ax,1
+	*** 000f5e	fe c9 			dec	cl
+	*** 000f60	74 02 			je	$L20034
+	*** 000f62	eb f6 			jmp	SHORT $L20033
+					$L20034:
+	*** 000f64	2d 00 80 		sub	ax,-32768
+	*** 000f67	f7 d8 			neg	ax
+	*** 000f69	89 46 06 		mov	WORD PTR [bp+6],ax	;arg_2
+;|***         // 4c31
+;|***         for (var_2 = 3; var_2 < readItemSize; var_2++) { // 4c43
+; Line 566
+	*** 000f6c	c7 46 fe 03 00 		mov	WORD PTR [bp-2],3	;var_2
+	*** 000f71	eb 03 			jmp	SHORT $F1715
+					$FC1716:
+	*** 000f73	ff 46 fe 		inc	WORD PTR [bp-2]	;var_2
+					$F1715:
+	*** 000f76	a1 00 00 		mov	ax,_readItemSize
+	*** 000f79	39 46 fe 		cmp	WORD PTR [bp-2],ax	;var_2
+	*** 000f7c	7d 20 			jge	$FB1717
+;|***             // 4c4e
+;|***             if (arg_0 == wldReadBuf4[var_2].field_2 && arg_2 == wldReadBuf4[var_2].field_4) return var_2;
+; Line 568
+	*** 000f7e	8b 76 fe 		mov	si,WORD PTR [bp-2]	;var_2
+	*** 000f81	b1 04 			mov	cl,4
+	*** 000f83	d3 e6 			shl	si,cl
+	*** 000f85	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000f89	39 46 04 		cmp	WORD PTR [bp+4],ax	;arg_0
+	*** 000f8c	75 0e 			jne	$I1718
+	*** 000f8e	8b 84 04 00 		mov	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000f92	39 46 06 		cmp	WORD PTR [bp+6],ax	;arg_2
+	*** 000f95	75 05 			jne	$I1718
+	*** 000f97	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;var_2
+	*** 000f9a	eb 2e 			jmp	SHORT $EX1712
+;|***         } // 4c63
+; Line 569
+					$I1718:
+	*** 000f9c	eb d5 			jmp	SHORT $FC1716
+					$FB1717:
+;|***         wldReadBuf4[arg_4].field_2 = arg_0;
+; Line 570
+	*** 000f9e	8b 76 08 		mov	si,WORD PTR [bp+8]	;arg_4
+	*** 000fa1	b1 04 			mov	cl,4
+	*** 000fa3	d3 e6 			shl	si,cl
+	*** 000fa5	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 000fa8	89 84 02 00 		mov	WORD PTR _wldReadBuf4[si+2],ax
+;|***         wldReadBuf4[arg_4].field_4 = arg_2;
+; Line 571
+	*** 000fac	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 000faf	89 84 04 00 		mov	WORD PTR _wldReadBuf4[si+4],ax
+;|***         wldReadBuf4[arg_4].field_E = *word_1B960 + 0x100;
+; Line 572
+	*** 000fb3	8b 1e 00 00 		mov	bx,_word_1B960
+	*** 000fb7	8b 07 			mov	ax,WORD PTR [bx]
+	*** 000fb9	80 c4 01 		add	ah,1
+	*** 000fbc	89 84 0e 00 		mov	WORD PTR _wldReadBuf4[si+14],ax
+;|***         return arg_4;
+; Line 573
+	*** 000fc0	8b 46 08 		mov	ax,WORD PTR [bp+8]	;arg_4
+	*** 000fc3	eb 05 			jmp	SHORT $EX1712
+;|***     }
+; Line 574
+;|***     // 4c8a
+;|***     return -1;
+; Line 576
+					$I1714:
+	*** 000fc5	b8 ff ff 		mov	ax,-1
+	*** 000fc8	eb 00 			jmp	SHORT $EX1712
+;|***     // 4c8f
+;|*** }
+; Line 578
+					$EX1712:
+	*** 000fca	5e 			pop	si
+	*** 000fcb	8b e5 			mov	sp,bp
+	*** 000fcd	5d 			pop	bp
+	*** 000fce	c3 			ret	
+
+_sub_14BB4	ENDP
+;|*** 
+;|*** // 4c94
+;|*** // debugcom: manhattan distance
+;|*** int sub_14C94(int arg_0, int arg_2) {
+; Line 582
+	PUBLIC	_sub_14C94
+_sub_14C94	PROC NEAR
+	*** 000fcf	55 			push	bp
+	*** 000fd0	8b ec 			mov	bp,sp
+	*** 000fd2	57 			push	di
+	*** 000fd3	56 			push	si
+;	arg_0 = 4
+;	arg_2 = 6
+;|***     // 4cb7
+;|***     return sub_14D96(wldReadBuf4[arg_0].field_2 - wldReadBuf4[arg_2].field_2, 
+;|***         wldReadBuf4[arg_0].field_4 - wldReadBuf4[arg_2].field_4);
+; Line 585
+	*** 000fd4	8b 76 06 		mov	si,WORD PTR [bp+6]	;arg_2
+	*** 000fd7	b1 04 			mov	cl,4
+	*** 000fd9	d3 e6 			shl	si,cl
+	*** 000fdb	8b 7e 04 		mov	di,WORD PTR [bp+4]	;arg_0
+	*** 000fde	d3 e7 			shl	di,cl
+	*** 000fe0	8b 85 04 00 		mov	ax,WORD PTR _wldReadBuf4[di+4]
+	*** 000fe4	2b 84 04 00 		sub	ax,WORD PTR _wldReadBuf4[si+4]
+	*** 000fe8	50 			push	ax
+	*** 000fe9	8b 85 02 00 		mov	ax,WORD PTR _wldReadBuf4[di+2]
+	*** 000fed	2b 84 02 00 		sub	ax,WORD PTR _wldReadBuf4[si+2]
+	*** 000ff1	50 			push	ax
+	*** 000ff2	e8 00 00 		call	_sub_14D96
+	*** 000ff5	83 c4 04 		add	sp,4
+	*** 000ff8	eb 00 			jmp	SHORT $EX1721
+;|*** }
+; Line 586
+					$EX1721:
+	*** 000ffa	5e 			pop	si
+	*** 000ffb	5f 			pop	di
+	*** 000ffc	8b e5 			mov	sp,bp
+	*** 000ffe	5d 			pop	bp
+	*** 000fff	c3 			ret	
+
+_sub_14C94	ENDP
+;|*** 
+;|*** // 4cc5
+;|*** int sub_14CC5(int arg_0, int arg_2) {
+; Line 589
+	PUBLIC	_sub_14CC5
+_sub_14CC5	PROC NEAR
+	*** 001000	55 			push	bp
+	*** 001001	8b ec 			mov	bp,sp
+	*** 001003	83 ec 02 		sub	sp,2
+	*** 001006	57 			push	di
+	*** 001007	56 			push	si
+;	arg_0 = 4
+;	arg_2 = 6
+;	var_2 = -2
+;|***     int var_2;
+;|***     // 4cd9
+;|***     var_2 = wldReadBuf6[arg_0].field_16;
+; Line 592
+	*** 001008	b8 24 00 		mov	ax,36
+	*** 00100b	f7 6e 04 		imul	WORD PTR [bp+4]	;arg_0
+	*** 00100e	8b f0 			mov	si,ax
+	*** 001010	8b 84 16 00 		mov	ax,WORD PTR _wldReadBuf6[si+22]
+	*** 001014	89 46 fe 		mov	WORD PTR [bp-2],ax	;var_2
+;|***     // 4cea
+;|***     wldReadBuf6[arg_0].field_2 = wldReadBuf4[arg_2].field_2 + 9;
+; Line 594
+	*** 001017	8b 7e 06 		mov	di,WORD PTR [bp+6]	;arg_2
+	*** 00101a	b1 04 			mov	cl,4
+	*** 00101c	d3 e7 			shl	di,cl
+	*** 00101e	8b 85 02 00 		mov	ax,WORD PTR _wldReadBuf4[di+2]
+	*** 001022	05 09 00 		add	ax,9
+	*** 001025	89 84 02 00 		mov	WORD PTR _wldReadBuf6[si+2],ax
+;|***     wldReadBuf6[arg_0].field_4 = wldReadBuf4[arg_2].field_4 - 0xc;
+; Line 595
+	*** 001029	8b 85 04 00 		mov	ax,WORD PTR _wldReadBuf4[di+4]
+	*** 00102d	2d 0c 00 		sub	ax,12
+	*** 001030	89 84 04 00 		mov	WORD PTR _wldReadBuf6[si+4],ax
+;|***     // 4d0b
+;|***     wldReadBuf6[arg_0].field_8 = (long)wldReadBuf6[arg_0].field_2 << 5;
+; Line 597
+	*** 001034	8b 84 02 00 		mov	ax,WORD PTR _wldReadBuf6[si+2]
+	*** 001038	2b d2 			sub	dx,dx
+	*** 00103a	b1 05 			mov	cl,5
+					$L20037:
+	*** 00103c	d1 e0 			shl	ax,1
+	*** 00103e	d1 d2 			rcl	dx,1
+	*** 001040	fe c9 			dec	cl
+	*** 001042	74 02 			je	$L20038
+	*** 001044	eb f6 			jmp	SHORT $L20037
+					$L20038:
+	*** 001046	89 84 08 00 		mov	WORD PTR _wldReadBuf6[si+8],ax
+	*** 00104a	89 94 0a 00 		mov	WORD PTR _wldReadBuf6[si+10],dx
+;|***     wldReadBuf6[arg_0].field_C = (long)wldReadBuf6[arg_0].field_4 << 5;
+; Line 598
+	*** 00104e	8b 84 04 00 		mov	ax,WORD PTR _wldReadBuf6[si+4]
+	*** 001052	2b d2 			sub	dx,dx
+	*** 001054	b1 05 			mov	cl,5
+					$L20039:
+	*** 001056	d1 e0 			shl	ax,1
+	*** 001058	d1 d2 			rcl	dx,1
+	*** 00105a	fe c9 			dec	cl
+	*** 00105c	74 02 			je	$L20040
+	*** 00105e	eb f6 			jmp	SHORT $L20039
+					$L20040:
+	*** 001060	89 84 0c 00 		mov	WORD PTR _wldReadBuf6[si+12],ax
+	*** 001064	89 94 0e 00 		mov	WORD PTR _wldReadBuf6[si+14],dx
+;|***     // 4d2d
+;|***     wldReadBuf6[arg_0].field_6 = wldReadBuf4[arg_2].field_8 & 0x200 ? 0x8c : 0xc;
+; Line 600
+	*** 001068	f7 85 08 00 00 02 	test	WORD PTR _wldReadBuf4[di+8],512
+	*** 00106e	74 05 			je	$L20035
+	*** 001070	b8 8c 00 		mov	ax,140
+	*** 001073	eb 03 			jmp	SHORT $L20036
+					$L20035:
+	*** 001075	b8 0c 00 		mov	ax,12
+					$L20036:
+	*** 001078	89 84 06 00 		mov	WORD PTR _wldReadBuf6[si+6],ax
+;|***     wldReadBuf6[arg_0].field_1A = planes[var_2].field_12;
+; Line 601
+	*** 00107c	8b 7e fe 		mov	di,WORD PTR [bp-2]	;var_2
+	*** 00107f	b1 05 			mov	cl,5
+	*** 001081	d3 e7 			shl	di,cl
+	*** 001083	8b 85 12 00 		mov	ax,WORD PTR _planes[di+18]
+	*** 001087	89 84 1a 00 		mov	WORD PTR _wldReadBuf6[si+26],ax
+;|***     wldReadBuf6[arg_0].field_10 = 0xfc00;
+; Line 602
+	*** 00108b	c7 84 10 00 00 fc 	mov	WORD PTR _wldReadBuf6[si+16],-1024
+;|***     wldReadBuf6[arg_0].field_12 = 0;
+; Line 603
+	*** 001091	c7 84 12 00 00 00 	mov	WORD PTR _wldReadBuf6[si+18],0
+;|***     wldReadBuf6[arg_0].field_14 = 0;
+; Line 604
+	*** 001097	c7 84 14 00 00 00 	mov	WORD PTR _wldReadBuf6[si+20],0
+;|***     wldReadBuf6[arg_0].field_18 |= 0x403;
+; Line 605
+	*** 00109d	81 8c 18 00 03 04 	or	WORD PTR _wldReadBuf6[si+24],1027
+;|***     // 4d6b
+;|***     wldReadBuf6[arg_0].field_0 = arg_2;
+; Line 607
+	*** 0010a3	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 0010a6	89 84 00 00 		mov	WORD PTR _wldReadBuf6[si],ax
+;|***     // 4d8c
+;|***     wldReadBuf6[arg_0].field_1C = ((long)planes[var_2].field_14 << 0xd) / wldReadBuf6[arg_0].field_1A;
+; Line 609
+	*** 0010aa	8b 84 1a 00 		mov	ax,WORD PTR _wldReadBuf6[si+26]
+	*** 0010ae	99 			cwd	
+	*** 0010af	52 			push	dx
+	*** 0010b0	50 			push	ax
+	*** 0010b1	8b 85 14 00 		mov	ax,WORD PTR _planes[di+20]
+	*** 0010b5	99 			cwd	
+	*** 0010b6	b1 0d 			mov	cl,13
+					$L20041:
+	*** 0010b8	d1 e0 			shl	ax,1
+	*** 0010ba	d1 d2 			rcl	dx,1
+	*** 0010bc	fe c9 			dec	cl
+	*** 0010be	74 02 			je	$L20042
+	*** 0010c0	eb f6 			jmp	SHORT $L20041
+					$L20042:
+	*** 0010c2	52 			push	dx
+	*** 0010c3	50 			push	ax
+	*** 0010c4	e8 00 00 		call	__aNldiv
+	*** 0010c7	89 84 1c 00 		mov	WORD PTR _wldReadBuf6[si+28],ax
+;|*** }
+; Line 610
+	*** 0010cb	5e 			pop	si
+	*** 0010cc	5f 			pop	di
+	*** 0010cd	8b e5 			mov	sp,bp
+	*** 0010cf	5d 			pop	bp
+	*** 0010d0	c3 			ret	
+
+_sub_14CC5	ENDP
+;|*** 
+;|*** // 4d96
+;|*** // debugcom: custom_manhattan_distance
+;|*** int sub_14D96(int arg_0, int arg_2) {
+; Line 614
+	PUBLIC	_sub_14D96
+_sub_14D96	PROC NEAR
+	*** 0010d1	55 			push	bp
+	*** 0010d2	8b ec 			mov	bp,sp
+	*** 0010d4	83 ec 04 		sub	sp,4
+;	var_2 = -4
+;	arg_0 = 4
+;	arg_2 = 6
+;|***     long var_2;
+;|***     // 4d9f
+;|***     arg_0 = abs(arg_0);
+; Line 617
+	*** 0010d7	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 0010da	e8 00 00 		call	_abs
+	*** 0010dd	83 c4 02 		add	sp,2
+	*** 0010e0	89 46 04 		mov	WORD PTR [bp+4],ax	;arg_0
+;|***     arg_2 = abs(arg_2);
+; Line 618
+	*** 0010e3	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 0010e6	e8 00 00 		call	_abs
+	*** 0010e9	83 c4 02 		add	sp,2
+	*** 0010ec	89 46 06 		mov	WORD PTR [bp+6],ax	;arg_2
+;|***     // 4ddf
+;|***     var_2 = (arg_0 > arg_2) ? (long)(arg_2 >> 1) + (long)arg_0 : (long)(arg_0 >> 1) + (long)arg_2;
+; Line 620
+	*** 0010ef	39 46 04 		cmp	WORD PTR [bp+4],ax	;arg_0
+	*** 0010f2	7e 14 			jle	$L20044
+	*** 0010f4	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 0010f7	99 			cwd	
+	*** 0010f8	8b c8 			mov	cx,ax
+	*** 0010fa	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 0010fd	d1 f8 			sar	ax,1
+	*** 0010ff	8b da 			mov	bx,dx
+	*** 001101	99 			cwd	
+	*** 001102	03 c1 			add	ax,cx
+	*** 001104	13 d3 			adc	dx,bx
+	*** 001106	eb 12 			jmp	SHORT $L20045
+					$L20044:
+	*** 001108	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 00110b	99 			cwd	
+	*** 00110c	8b c8 			mov	cx,ax
+	*** 00110e	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 001111	d1 f8 			sar	ax,1
+	*** 001113	8b da 			mov	bx,dx
+	*** 001115	99 			cwd	
+	*** 001116	03 c1 			add	ax,cx
+	*** 001118	13 d3 			adc	dx,bx
+					$L20045:
+	*** 00111a	89 46 fc 		mov	WORD PTR [bp-4],ax	;var_2
+	*** 00111d	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     // 4ddf
+;|***     if (var_2 > 0x7fff) {
+; Line 622
+	*** 001120	0b d2 			or	dx,dx
+	*** 001122	7c 11 			jl	$I1730
+	*** 001124	7f 05 			jg	$L20046
+	*** 001126	3d ff 7f 		cmp	ax,32767
+	*** 001129	76 0a 			jbe	$I1730
+					$L20046:
+;|***         var_2 = 0x7fff;
+; Line 623
+	*** 00112b	c7 46 fc ff 7f 		mov	WORD PTR [bp-4],32767	;var_2
+	*** 001130	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0
+;|***     }
+; Line 624
+;|***     // 4dfa
+;|***     return var_2;
+; Line 626
+					$I1730:
+	*** 001135	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_2
+	*** 001138	eb 00 			jmp	SHORT $EX1728
+;|*** }
+; Line 627
+					$EX1728:
+	*** 00113a	8b e5 			mov	sp,bp
+	*** 00113c	5d 			pop	bp
+	*** 00113d	c3 			ret	
+
+_sub_14D96	ENDP
+;|*** 
+;|*** // 4e03
+;|*** void parseWorld(const char *filename) {
+; Line 630
+	PUBLIC	_parseWorld
+_parseWorld	PROC NEAR
+	*** 00113e	55 			push	bp
+	*** 00113f	8b ec 			mov	bp,sp
+	*** 001141	83 ec 04 		sub	sp,4
+;	filename = 4
+;	var_2 = -2
+;	var_4 = -4
+;|***     int var_2, var_4;
+;|***     // 4e10
+;|***     if ((fileHandle = fopen(filename, aRb_4)) == NULL) return;
+; Line 633
+	*** 001144	b8 00 00 		mov	ax,OFFSET _aRb_4
+	*** 001147	50 			push	ax
+	*** 001148	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 00114b	e8 00 00 		call	_fopen
+	*** 00114e	83 c4 04 		add	sp,4
+	*** 001151	a3 00 00 		mov	_fileHandle,ax
+	*** 001154	0b c0 			or	ax,ax
+	*** 001156	75 03 			jne	$I1735
+	*** 001158	e9 52 01 		jmp	$FB1738
+;|***     // 4e30
+;|***     // fread(buffer, size, count, stream)
+;|***     fread(wldReadBuf1, 2, 1, fileHandle);
+; Line 636
+					$I1735:
+	*** 00115b	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00115f	b8 01 00 		mov	ax,1
+	*** 001162	50 			push	ax
+	*** 001163	b8 02 00 		mov	ax,2
+	*** 001166	50 			push	ax
+	*** 001167	b8 00 00 		mov	ax,OFFSET _wldReadBuf1
+	*** 00116a	50 			push	ax
+	*** 00116b	e8 00 00 		call	_fread
+	*** 00116e	83 c4 08 		add	sp,8
+;|***     fread(&readItemSize, 2, 1, fileHandle);
+; Line 637
+	*** 001171	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001175	b8 01 00 		mov	ax,1
+	*** 001178	50 			push	ax
+	*** 001179	b8 02 00 		mov	ax,2
+	*** 00117c	50 			push	ax
+	*** 00117d	b8 00 00 		mov	ax,OFFSET _readItemSize
+	*** 001180	50 			push	ax
+	*** 001181	e8 00 00 		call	_fread
+	*** 001184	83 c4 08 		add	sp,8
+;|***     fread(&wldReadBuf2, 2, 1, fileHandle);
+; Line 638
+	*** 001187	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00118b	b8 01 00 		mov	ax,1
+	*** 00118e	50 			push	ax
+	*** 00118f	b8 02 00 		mov	ax,2
+	*** 001192	50 			push	ax
+	*** 001193	b8 00 00 		mov	ax,OFFSET _wldReadBuf2
+	*** 001196	50 			push	ax
+	*** 001197	e8 00 00 		call	_fread
+	*** 00119a	83 c4 08 		add	sp,8
+;|***     fread(&wldReadBuf3, 2, 1, fileHandle);
+; Line 639
+	*** 00119d	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0011a1	b8 01 00 		mov	ax,1
+	*** 0011a4	50 			push	ax
+	*** 0011a5	b8 02 00 		mov	ax,2
+	*** 0011a8	50 			push	ax
+	*** 0011a9	b8 00 00 		mov	ax,OFFSET _wldReadBuf3
+	*** 0011ac	50 			push	ax
+	*** 0011ad	e8 00 00 		call	_fread
+	*** 0011b0	83 c4 08 		add	sp,8
+;|***     fread(wldReadBuf4, BUF4ITEMSIZE, readItemSize, fileHandle);
+; Line 640
+	*** 0011b3	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0011b7	ff 36 00 00 		push	WORD PTR _readItemSize
+	*** 0011bb	b8 10 00 		mov	ax,16
+	*** 0011be	50 			push	ax
+	*** 0011bf	b8 00 00 		mov	ax,OFFSET _wldReadBuf4
+	*** 0011c2	50 			push	ax
+	*** 0011c3	e8 00 00 		call	_fread
+	*** 0011c6	83 c4 08 		add	sp,8
+;|***     fread(&wldReadBuf5Size, 2, 1, fileHandle);
+; Line 641
+	*** 0011c9	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0011cd	b8 01 00 		mov	ax,1
+	*** 0011d0	50 			push	ax
+	*** 0011d1	b8 02 00 		mov	ax,2
+	*** 0011d4	50 			push	ax
+	*** 0011d5	b8 00 00 		mov	ax,OFFSET _wldReadBuf5Size
+	*** 0011d8	50 			push	ax
+	*** 0011d9	e8 00 00 		call	_fread
+	*** 0011dc	83 c4 08 		add	sp,8
+;|***     fread(wldReadBuf6, BUF6ITEMSIZE, wldReadBuf5Size, fileHandle);
+; Line 642
+	*** 0011df	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0011e3	ff 36 00 00 		push	WORD PTR _wldReadBuf5Size
+	*** 0011e7	b8 24 00 		mov	ax,36
+	*** 0011ea	50 			push	ax
+	*** 0011eb	b8 00 00 		mov	ax,OFFSET _wldReadBuf6
+	*** 0011ee	50 			push	ax
+	*** 0011ef	e8 00 00 		call	_fread
+	*** 0011f2	83 c4 08 		add	sp,8
+;|***     fread(wldReadBuf7, BUF7SIZE, 1, fileHandle);
+; Line 643
+	*** 0011f5	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0011f9	b8 01 00 		mov	ax,1
+	*** 0011fc	50 			push	ax
+	*** 0011fd	b8 64 00 		mov	ax,100
+	*** 001200	50 			push	ax
+	*** 001201	b8 00 00 		mov	ax,OFFSET _wldReadBuf7
+	*** 001204	50 			push	ax
+	*** 001205	e8 00 00 		call	_fread
+	*** 001208	83 c4 08 		add	sp,8
+;|***     fread(wldReadBuf8, BUF7SIZE, 1, fileHandle);
+; Line 644
+	*** 00120b	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00120f	b8 01 00 		mov	ax,1
+	*** 001212	50 			push	ax
+	*** 001213	b8 64 00 		mov	ax,100
+	*** 001216	50 			push	ax
+	*** 001217	b8 00 00 		mov	ax,OFFSET _wldReadBuf8
+	*** 00121a	50 			push	ax
+	*** 00121b	e8 00 00 		call	_fread
+	*** 00121e	83 c4 08 		add	sp,8
+;|***     fread(wldReadBuf9, BUF7SIZE, 1, fileHandle);
+; Line 645
+	*** 001221	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001225	b8 01 00 		mov	ax,1
+	*** 001228	50 			push	ax
+	*** 001229	b8 64 00 		mov	ax,100
+	*** 00122c	50 			push	ax
+	*** 00122d	b8 00 00 		mov	ax,OFFSET _wldReadBuf9
+	*** 001230	50 			push	ax
+	*** 001231	e8 00 00 		call	_fread
+	*** 001234	83 c4 08 		add	sp,8
+;|***     fread(wldReadBuf10, 1, BUF10SIZE, fileHandle);
+; Line 646
+	*** 001237	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00123b	b8 00 01 		mov	ax,256
+	*** 00123e	50 			push	ax
+	*** 00123f	b8 01 00 		mov	ax,1
+	*** 001242	50 			push	ax
+	*** 001243	b8 00 00 		mov	ax,OFFSET _wldReadBuf10
+	*** 001246	50 			push	ax
+	*** 001247	e8 00 00 		call	_fread
+	*** 00124a	83 c4 08 		add	sp,8
+;|***     fread(wldReadBuf11, 1, WORLD_BUFSZ, fileHandle);
+; Line 647
+	*** 00124d	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001251	b8 ee 02 		mov	ax,750
+	*** 001254	50 			push	ax
+	*** 001255	b8 01 00 		mov	ax,1
+	*** 001258	50 			push	ax
+	*** 001259	b8 00 00 		mov	ax,OFFSET _wldReadBuf11
+	*** 00125c	50 			push	ax
+	*** 00125d	e8 00 00 		call	_fread
+	*** 001260	83 c4 08 		add	sp,8
+;|***     // 4f2c
+;|***     fclose(fileHandle);
+; Line 649
+	*** 001263	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001267	e8 00 00 		call	_fclose
+	*** 00126a	83 c4 02 		add	sp,2
+;|***     wldOffsets[0] = wldReadBuf11;
+; Line 650
+	*** 00126d	c7 06 00 00 00 00 	mov	WORD PTR _wldOffsets,OFFSET _wldReadBuf11
+;|***     var_2 = 1;
+; Line 651
+	*** 001273	c7 46 fe 01 00 		mov	WORD PTR [bp-2],1	;var_2
+;|***     // 4f3d
+;|***     // iterate over the place name strings in the world data, find null bytes, build char pointer table
+;|***     for (var_4 = 0; var_4 < WORLD_BUFSZ; var_4++) {
+; Line 654
+	*** 001278	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_4
+	*** 00127d	eb 03 			jmp	SHORT $F1736
+					$FC1737:
+	*** 00127f	ff 46 fc 		inc	WORD PTR [bp-4]	;var_4
+					$F1736:
+	*** 001282	81 7e fc ee 02 		cmp	WORD PTR [bp-4],750	;var_4
+	*** 001287	7d 24 			jge	$FB1738
+;|***         if (wldReadBuf11[var_4] == 0 && var_2 < 100) {
+; Line 655
+	*** 001289	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;var_4
+	*** 00128c	80 bf 00 00 00 		cmp	BYTE PTR _wldReadBuf11[bx],0
+	*** 001291	75 18 			jne	$I1739
+	*** 001293	83 7e fe 64 		cmp	WORD PTR [bp-2],100	;var_2
+	*** 001297	7d 12 			jge	$I1739
+;|***             wldOffsets[var_2++] = wldReadBuf11 + var_4 + 1;
+; Line 656
+	*** 001299	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;var_2
+	*** 00129c	ff 46 fe 		inc	WORD PTR [bp-2]	;var_2
+	*** 00129f	d1 e3 			shl	bx,1
+	*** 0012a1	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_4
+	*** 0012a4	05 01 00 		add	ax,OFFSET _wldReadBuf11+1
+	*** 0012a7	89 87 00 00 		mov	WORD PTR _wldOffsets[bx],ax
+;|***         }
+; Line 657
+;|***     }
+; Line 658
+					$I1739:
+	*** 0012ab	eb d2 			jmp	SHORT $FC1737
+					$FB1738:
+;|*** }
+; Line 659
+	*** 0012ad	8b e5 			mov	sp,bp
+	*** 0012af	5d 			pop	bp
+	*** 0012b0	c3 			ret	
+
+_parseWorld	ENDP
+;|*** 
+;|*** // 0x4f76
+;|*** void writeWorld(const char *filename) {
+; Line 662
+	PUBLIC	_writeWorld
+_writeWorld	PROC NEAR
+	*** 0012b1	55 			push	bp
+	*** 0012b2	8b ec 			mov	bp,sp
+	*** 0012b4	83 ec 02 		sub	sp,2
+;	filename = 4
+;	unused = -2
+;|***     int unused;
+;|***     if ((fileHandle = (FILE*)setMoveDstComm7A(filename, aWb_0)) == NULL) return;
+; Line 664
+	*** 0012b7	b8 00 00 		mov	ax,OFFSET _aWb_0
+	*** 0012ba	50 			push	ax
+	*** 0012bb	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 0012be	e8 00 00 		call	_setMoveDstComm7A
+	*** 0012c1	83 c4 04 		add	sp,4
+	*** 0012c4	a3 00 00 		mov	_fileHandle,ax
+	*** 0012c7	0b c0 			or	ax,ax
+	*** 0012c9	75 03 			jne	$I1743
+	*** 0012cb	e9 51 01 		jmp	$EX1741
+;|***     // 0x4fa3
+;|***     memAppend(wldReadBuf1, 2, 1, fileHandle);
+; Line 666
+					$I1743:
+	*** 0012ce	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0012d2	b8 01 00 		mov	ax,1
+	*** 0012d5	50 			push	ax
+	*** 0012d6	b8 02 00 		mov	ax,2
+	*** 0012d9	50 			push	ax
+	*** 0012da	b8 00 00 		mov	ax,OFFSET _wldReadBuf1
+	*** 0012dd	50 			push	ax
+	*** 0012de	e8 00 00 		call	_memAppend
+	*** 0012e1	83 c4 08 		add	sp,8
+;|***     // 0x4fb9
+;|***     memAppend(&readItemSize, 2, 1, fileHandle);
+; Line 668
+	*** 0012e4	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0012e8	b8 01 00 		mov	ax,1
+	*** 0012eb	50 			push	ax
+	*** 0012ec	b8 02 00 		mov	ax,2
+	*** 0012ef	50 			push	ax
+	*** 0012f0	b8 00 00 		mov	ax,OFFSET _readItemSize
+	*** 0012f3	50 			push	ax
+	*** 0012f4	e8 00 00 		call	_memAppend
+	*** 0012f7	83 c4 08 		add	sp,8
+;|***     // 0x4fcf
+;|***     memAppend(&wldReadBuf2, 2, 1, fileHandle);
+; Line 670
+	*** 0012fa	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0012fe	b8 01 00 		mov	ax,1
+	*** 001301	50 			push	ax
+	*** 001302	b8 02 00 		mov	ax,2
+	*** 001305	50 			push	ax
+	*** 001306	b8 00 00 		mov	ax,OFFSET _wldReadBuf2
+	*** 001309	50 			push	ax
+	*** 00130a	e8 00 00 		call	_memAppend
+	*** 00130d	83 c4 08 		add	sp,8
+;|***     // 0x4fe5
+;|***     memAppend(&wldReadBuf3, 2, 1, fileHandle);
+; Line 672
+	*** 001310	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001314	b8 01 00 		mov	ax,1
+	*** 001317	50 			push	ax
+	*** 001318	b8 02 00 		mov	ax,2
+	*** 00131b	50 			push	ax
+	*** 00131c	b8 00 00 		mov	ax,OFFSET _wldReadBuf3
+	*** 00131f	50 			push	ax
+	*** 001320	e8 00 00 		call	_memAppend
+	*** 001323	83 c4 08 		add	sp,8
+;|***     // 0x4ffb
+;|***     memAppend(wldReadBuf4, 0x10, readItemSize, fileHandle);
+; Line 674
+	*** 001326	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00132a	ff 36 00 00 		push	WORD PTR _readItemSize
+	*** 00132e	b8 10 00 		mov	ax,16
+	*** 001331	50 			push	ax
+	*** 001332	b8 00 00 		mov	ax,OFFSET _wldReadBuf4
+	*** 001335	50 			push	ax
+	*** 001336	e8 00 00 		call	_memAppend
+	*** 001339	83 c4 08 		add	sp,8
+;|***     // 0x5011
+;|***     memAppend(&wldReadBuf5Size, 2, 1, fileHandle);
+; Line 676
+	*** 00133c	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001340	b8 01 00 		mov	ax,1
+	*** 001343	50 			push	ax
+	*** 001344	b8 02 00 		mov	ax,2
+	*** 001347	50 			push	ax
+	*** 001348	b8 00 00 		mov	ax,OFFSET _wldReadBuf5Size
+	*** 00134b	50 			push	ax
+	*** 00134c	e8 00 00 		call	_memAppend
+	*** 00134f	83 c4 08 		add	sp,8
+;|***     // 0x5027
+;|***     memAppend(wldReadBuf6, 0x24, wldReadBuf5Size, fileHandle);
+; Line 678
+	*** 001352	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001356	ff 36 00 00 		push	WORD PTR _wldReadBuf5Size
+	*** 00135a	b8 24 00 		mov	ax,36
+	*** 00135d	50 			push	ax
+	*** 00135e	b8 00 00 		mov	ax,OFFSET _wldReadBuf6
+	*** 001361	50 			push	ax
+	*** 001362	e8 00 00 		call	_memAppend
+	*** 001365	83 c4 08 		add	sp,8
+;|***     // 0x503c
+;|***     memAppend(wldReadBuf7, 0x64, 1, fileHandle);
+; Line 680
+	*** 001368	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 00136c	b8 01 00 		mov	ax,1
+	*** 00136f	50 			push	ax
+	*** 001370	b8 64 00 		mov	ax,100
+	*** 001373	50 			push	ax
+	*** 001374	b8 00 00 		mov	ax,OFFSET _wldReadBuf7
+	*** 001377	50 			push	ax
+	*** 001378	e8 00 00 		call	_memAppend
+	*** 00137b	83 c4 08 		add	sp,8
+;|***     // 0x5053
+;|***     memAppend(wldReadBuf8, 0x64, 1, fileHandle);
+; Line 682
+	*** 00137e	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001382	b8 01 00 		mov	ax,1
+	*** 001385	50 			push	ax
+	*** 001386	b8 64 00 		mov	ax,100
+	*** 001389	50 			push	ax
+	*** 00138a	b8 00 00 		mov	ax,OFFSET _wldReadBuf8
+	*** 00138d	50 			push	ax
+	*** 00138e	e8 00 00 		call	_memAppend
+	*** 001391	83 c4 08 		add	sp,8
+;|***     // 0x5069
+;|***     memAppend(wldReadBuf11, 1, WORLD_BUFSZ, fileHandle);
+; Line 684
+	*** 001394	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001398	b8 ee 02 		mov	ax,750
+	*** 00139b	50 			push	ax
+	*** 00139c	b8 01 00 		mov	ax,1
+	*** 00139f	50 			push	ax
+	*** 0013a0	b8 00 00 		mov	ax,OFFSET _wldReadBuf11
+	*** 0013a3	50 			push	ax
+	*** 0013a4	e8 00 00 		call	_memAppend
+	*** 0013a7	83 c4 08 		add	sp,8
+;|***     // 0x507f
+;|***     memAppend(wldReadBuf10, 1, 0x100, fileHandle);
+; Line 686
+	*** 0013aa	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0013ae	b8 00 01 		mov	ax,256
+	*** 0013b1	50 			push	ax
+	*** 0013b2	b8 01 00 		mov	ax,1
+	*** 0013b5	50 			push	ax
+	*** 0013b6	b8 00 00 		mov	ax,OFFSET _wldReadBuf10
+	*** 0013b9	50 			push	ax
+	*** 0013ba	e8 00 00 		call	_memAppend
+	*** 0013bd	83 c4 08 		add	sp,8
+;|***     // 0x5095
+;|***     memAppend(&word_1DD38, 2, 1, fileHandle);
+; Line 688
+	*** 0013c0	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0013c4	b8 01 00 		mov	ax,1
+	*** 0013c7	50 			push	ax
+	*** 0013c8	b8 02 00 		mov	ax,2
+	*** 0013cb	50 			push	ax
+	*** 0013cc	b8 00 00 		mov	ax,OFFSET _word_1DD38
+	*** 0013cf	50 			push	ax
+	*** 0013d0	e8 00 00 		call	_memAppend
+	*** 0013d3	83 c4 08 		add	sp,8
+;|***     // 0x50ab
+;|***     memAppend(&word_1B148, 2, 1, fileHandle);
+; Line 690
+	*** 0013d6	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0013da	b8 01 00 		mov	ax,1
+	*** 0013dd	50 			push	ax
+	*** 0013de	b8 02 00 		mov	ax,2
+	*** 0013e1	50 			push	ax
+	*** 0013e2	b8 00 00 		mov	ax,OFFSET _word_1B148
+	*** 0013e5	50 			push	ax
+	*** 0013e6	e8 00 00 		call	_memAppend
+	*** 0013e9	83 c4 08 		add	sp,8
+;|***     // 0x50be
+;|***     memAppend(&word_182BA, 4, 4, fileHandle);
+; Line 692
+	*** 0013ec	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 0013f0	b8 04 00 		mov	ax,4
+	*** 0013f3	50 			push	ax
+	*** 0013f4	50 			push	ax
+	*** 0013f5	b8 00 00 		mov	ax,OFFSET _word_182BA
+	*** 0013f8	50 			push	ax
+	*** 0013f9	e8 00 00 		call	_memAppend
+	*** 0013fc	83 c4 08 		add	sp,8
+;|***     // 0x50d4
+;|***     memAppend(targets, 0x12, 2, fileHandle);
+; Line 694
+	*** 0013ff	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001403	b8 02 00 		mov	ax,2
+	*** 001406	50 			push	ax
+	*** 001407	b8 12 00 		mov	ax,18
+	*** 00140a	50 			push	ax
+	*** 00140b	b8 00 00 		mov	ax,OFFSET _targets
+	*** 00140e	50 			push	ax
+	*** 00140f	e8 00 00 		call	_memAppend
+	*** 001412	83 c4 08 		add	sp,8
+;|***     // 0x50de
+;|***     doNothing(fileHandle);
+; Line 696
+	*** 001415	ff 36 00 00 		push	WORD PTR _fileHandle
+	*** 001419	e8 00 00 		call	_doNothing
+	*** 00141c	83 c4 02 		add	sp,2
+;|*** }
+; Line 697
+					$EX1741:
+	*** 00141f	8b e5 			mov	sp,bp
+	*** 001421	5d 			pop	bp
+	*** 001422	c3 			ret	
+
+_writeWorld	ENDP
+;|*** 
+;|*** // 50eb
+;|*** int sub_150EB(int arg_0, int arg_2) {
+; Line 700
+	PUBLIC	_sub_150EB
+_sub_150EB	PROC NEAR
+	*** 001423	55 			push	bp
+	*** 001424	8b ec 			mov	bp,sp
+	*** 001426	83 ec 0e 		sub	sp,14
+	*** 001429	56 			push	si
+;	arg_0 = 4
+;	arg_2 = 6
+;	var_2 = -4
+;	var_4 = -8
+;	var_6 = -14
+;	var_A = -2
+;	var_C = -6
+;	var_E = -10
+;|***     int16 var_2, var_4;
+;|***     int32 var_6;
+;|***     int16 var_A, var_C, var_E;
+;|***     if (arg_0 == 0) { // 50f8
+; Line 704
+	*** 00142a	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;arg_0
+	*** 00142e	75 10 			jne	$I1753
+;|***         return (arg_2 > 0) ? 0 : 0x8000;
+; Line 705
+	*** 001430	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;arg_2
+	*** 001434	7e 04 			jle	$L20047
+	*** 001436	2b c0 			sub	ax,ax
+	*** 001438	eb 03 			jmp	SHORT $L20048
+					$L20047:
+	*** 00143a	b8 00 80 		mov	ax,-32768
+					$L20048:
+	*** 00143d	e9 5b 01 		jmp	$EX1746
+;|***     } // 5108
+; Line 706
+;|***     if (arg_2 == 0) { // 510e
+; Line 707
+					$I1753:
+	*** 001440	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;arg_2
+	*** 001444	75 11 			jne	$I1754
+;|***         return (arg_0 > 0) ? 0x4000 : 0xc000;
+; Line 708
+	*** 001446	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;arg_0
+	*** 00144a	7e 05 			jle	$L20049
+	*** 00144c	b8 00 40 		mov	ax,16384
+	*** 00144f	eb 03 			jmp	SHORT $L20050
+					$L20049:
+	*** 001451	b8 00 c0 		mov	ax,-16384
+					$L20050:
+	*** 001454	e9 44 01 		jmp	$EX1746
+;|***     } // 511f
+; Line 709
+;|***     if (abs(arg_0) > abs(arg_2)) { // 5137
+; Line 710
+					$I1754:
+	*** 001457	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 00145a	e8 00 00 		call	_abs
+	*** 00145d	83 c4 02 		add	sp,2
+	*** 001460	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 001463	8b f0 			mov	si,ax
+	*** 001465	e8 00 00 		call	_abs
+	*** 001468	83 c4 02 		add	sp,2
+	*** 00146b	3b c6 			cmp	ax,si
+	*** 00146d	7e 2f 			jle	$I1755
+;|***         // 514d
+;|***         var_6 = (int32)abs(arg_2) << 0xe;
+; Line 712
+	*** 00146f	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 001472	e8 00 00 		call	_abs
+	*** 001475	83 c4 02 		add	sp,2
+	*** 001478	99 			cwd	
+	*** 001479	b1 0e 			mov	cl,14
+					$L20051:
+	*** 00147b	d1 e0 			shl	ax,1
+	*** 00147d	d1 d2 			rcl	dx,1
+	*** 00147f	fe c9 			dec	cl
+	*** 001481	74 02 			je	$L20052
+	*** 001483	eb f6 			jmp	SHORT $L20051
+					$L20052:
+	*** 001485	89 46 f2 		mov	WORD PTR [bp-14],ax	;var_6
+	*** 001488	89 56 f4 		mov	WORD PTR [bp-12],dx
+;|***         var_A = abs(arg_0);
+; Line 713
+	*** 00148b	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 00148e	e8 00 00 		call	_abs
+	*** 001491	83 c4 02 		add	sp,2
+	*** 001494	89 46 fe 		mov	WORD PTR [bp-2],ax	;var_A
+;|***         var_C = 1;
+; Line 714
+	*** 001497	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;var_C
+;|***     }
+; Line 715
+;|***     else { // 5166
+; Line 716
+	*** 00149c	eb 2d 			jmp	SHORT $I1756
+					$I1755:
+;|***         // 517c
+;|***         var_6 = (int32)abs(arg_0) << 0xe;
+; Line 718
+	*** 00149e	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 0014a1	e8 00 00 		call	_abs
+	*** 0014a4	83 c4 02 		add	sp,2
+	*** 0014a7	99 			cwd	
+	*** 0014a8	b1 0e 			mov	cl,14
+					$L20053:
+	*** 0014aa	d1 e0 			shl	ax,1
+	*** 0014ac	d1 d2 			rcl	dx,1
+	*** 0014ae	fe c9 			dec	cl
+	*** 0014b0	74 02 			je	$L20054
+	*** 0014b2	eb f6 			jmp	SHORT $L20053
+					$L20054:
+	*** 0014b4	89 46 f2 		mov	WORD PTR [bp-14],ax	;var_6
+	*** 0014b7	89 56 f4 		mov	WORD PTR [bp-12],dx
+;|***         var_A = abs(arg_2);
+; Line 719
+	*** 0014ba	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 0014bd	e8 00 00 		call	_abs
+	*** 0014c0	83 c4 02 		add	sp,2
+	*** 0014c3	89 46 fe 		mov	WORD PTR [bp-2],ax	;var_A
+;|***         var_C = 0;
+; Line 720
+	*** 0014c6	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;var_C
+;|***     } // 5193
+; Line 721
+					$I1756:
+;|***     var_E = var_6 / (int32)var_A;
+; Line 722
+	*** 0014cb	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;var_A
+	*** 0014ce	99 			cwd	
+	*** 0014cf	52 			push	dx
+	*** 0014d0	50 			push	ax
+	*** 0014d1	ff 76 f4 		push	WORD PTR [bp-12]
+	*** 0014d4	ff 76 f2 		push	WORD PTR [bp-14]	;var_6
+	*** 0014d7	e8 00 00 		call	__aNldiv
+	*** 0014da	89 46 f6 		mov	WORD PTR [bp-10],ax	;var_E
+;|***     // 51eb
+;|***     var_2 = ((0x2800 - (((int32)abs((0x1333 - var_E)) * (int32)0xb00) >> 0xe)) * (int32)var_E) >> 0xe;
+; Line 724
+	*** 0014dd	99 			cwd	
+	*** 0014de	52 			push	dx
+	*** 0014df	50 			push	ax
+	*** 0014e0	b8 00 0b 		mov	ax,2816
+	*** 0014e3	99 			cwd	
+	*** 0014e4	52 			push	dx
+	*** 0014e5	50 			push	ax
+	*** 0014e6	b8 33 13 		mov	ax,4915
+	*** 0014e9	2b 46 f6 		sub	ax,WORD PTR [bp-10]	;var_E
+	*** 0014ec	50 			push	ax
+	*** 0014ed	e8 00 00 		call	_abs
+	*** 0014f0	83 c4 02 		add	sp,2
+	*** 0014f3	99 			cwd	
+	*** 0014f4	52 			push	dx
+	*** 0014f5	50 			push	ax
+	*** 0014f6	e8 00 00 		call	__aNlmul
+	*** 0014f9	b1 0e 			mov	cl,14
+					$L20057:
+	*** 0014fb	d1 fa 			sar	dx,1
+	*** 0014fd	d1 d8 			rcr	ax,1
+	*** 0014ff	fe c9 			dec	cl
+	*** 001501	74 02 			je	$L20058
+	*** 001503	eb f6 			jmp	SHORT $L20057
+					$L20058:
+	*** 001505	2d 00 28 		sub	ax,10240
+	*** 001508	83 da 00 		sbb	dx,0
+	*** 00150b	f7 d8 			neg	ax
+	*** 00150d	83 d2 00 		adc	dx,0
+	*** 001510	f7 da 			neg	dx
+	*** 001512	52 			push	dx
+	*** 001513	50 			push	ax
+	*** 001514	e8 00 00 		call	__aNlmul
+	*** 001517	b1 0e 			mov	cl,14
+					$L20059:
+	*** 001519	d1 fa 			sar	dx,1
+	*** 00151b	d1 d8 			rcr	ax,1
+	*** 00151d	fe c9 			dec	cl
+	*** 00151f	74 02 			je	$L20060
+	*** 001521	eb f6 			jmp	SHORT $L20059
+					$L20060:
+	*** 001523	89 46 fc 		mov	WORD PTR [bp-4],ax	;var_2
+;|***     // 51ee
+;|***     if (arg_0 > 0) { // 51f4
+; Line 726
+	*** 001526	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;arg_0
+	*** 00152a	7e 35 			jle	$I1757
+;|***         if (arg_2 > 0) { // 51fa
+; Line 727
+	*** 00152c	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;arg_2
+	*** 001530	7e 16 			jle	$I1758
+;|***             var_4 = var_C != 0 ? 0x4000 - var_2 : var_2;
+; Line 728
+	*** 001532	83 7e fa 00 		cmp	WORD PTR [bp-6],0	;var_C
+	*** 001536	74 08 			je	$L20055
+	*** 001538	b8 00 40 		mov	ax,16384
+	*** 00153b	2b 46 fc 		sub	ax,WORD PTR [bp-4]	;var_2
+	*** 00153e	eb 03 			jmp	SHORT $L20056
+					$L20055:
+	*** 001540	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_2
+					$L20056:
+	*** 001543	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_4
+;|***         } 
+; Line 729
+;|***         else { // 5210
+; Line 730
+	*** 001546	eb 17 			jmp	SHORT $I1759
+					$I1758:
+;|***             var_4 = (var_C != 0) ? var_2 + 0x4000 : 0x8000 - var_2;
+; Line 731
+	*** 001548	83 7e fa 00 		cmp	WORD PTR [bp-6],0	;var_C
+	*** 00154c	74 08 			je	$L20062
+	*** 00154e	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_2
+	*** 001551	80 c4 40 		add	ah,64
+	*** 001554	eb 06 			jmp	SHORT $L20063
+					$L20062:
+	*** 001556	b8 00 80 		mov	ax,-32768
+	*** 001559	2b 46 fc 		sub	ax,WORD PTR [bp-4]	;var_2
+					$L20063:
+	*** 00155c	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_4
+;|***         } // 5227
+; Line 732
+					$I1759:
+;|***     }
+; Line 733
+;|***     else { // 5229
+; Line 734
+	*** 00155f	eb 35 			jmp	SHORT $I1762
+					$I1757:
+;|***         if (arg_2 > 0) { // 522f
+; Line 735
+	*** 001561	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;arg_2
+	*** 001565	7e 18 			jle	$I1761
+;|***             var_4 = (var_C != 0) ? var_2 + 0xc000 : -var_2;
+; Line 736
+	*** 001567	83 7e fa 00 		cmp	WORD PTR [bp-6],0	;var_C
+	*** 00156b	74 08 			je	$L20064
+	*** 00156d	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_2
+	*** 001570	80 c4 c0 		add	ah,192
+	*** 001573	eb 05 			jmp	SHORT $L20065
+					$L20064:
+	*** 001575	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_2
+	*** 001578	f7 d8 			neg	ax
+					$L20065:
+	*** 00157a	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_4
+;|***         }
+; Line 737
+;|***         else { // 5247
+; Line 738
+	*** 00157d	eb 17 			jmp	SHORT $I1762
+					$I1761:
+;|***             var_4 = (var_C != 0) ? 0xc000 - var_2 : var_2 + 0x8000;
+; Line 739
+	*** 00157f	83 7e fa 00 		cmp	WORD PTR [bp-6],0	;var_C
+	*** 001583	74 08 			je	$L20066
+	*** 001585	b8 00 c0 		mov	ax,-16384
+	*** 001588	2b 46 fc 		sub	ax,WORD PTR [bp-4]	;var_2
+	*** 00158b	eb 06 			jmp	SHORT $L20067
+					$L20066:
+	*** 00158d	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;var_2
+	*** 001590	80 c4 80 		add	ah,128
+					$L20067:
+	*** 001593	89 46 f8 		mov	WORD PTR [bp-8],ax	;var_4
+;|*** 
+;|***         } // 525e
+; Line 741
+					$I1762:
+;|***     } // 525e
+; Line 742
+;|***     return var_4;
+; Line 743
+	*** 001596	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;var_4
+	*** 001599	eb 00 			jmp	SHORT $EX1746
+;|*** }
+; Line 744
+					$EX1746:
+	*** 00159b	5e 			pop	si
+	*** 00159c	8b e5 			mov	sp,bp
+	*** 00159e	5d 			pop	bp
+	*** 00159f	c3 			ret	
+
+_sub_150EB	ENDP
+;|*** 
+;|*** // 5268
+;|*** int setMoveDstComm7A() {
+; Line 747
+	PUBLIC	_setMoveDstComm7A
+_setMoveDstComm7A	PROC NEAR
+	*** 0015a0	55 			push	bp
+	*** 0015a1	8b ec 			mov	bp,sp
+;|***     moveDst = (uint8 FAR*)(&commData->worlBuf);
+; Line 748
+	*** 0015a3	a1 00 00 		mov	ax,WORD PTR _commData
+	*** 0015a6	8b 16 02 00 		mov	dx,WORD PTR _commData+2
+	*** 0015aa	05 7a 00 		add	ax,122
+	*** 0015ad	a3 00 00 		mov	WORD PTR _moveDst,ax
+	*** 0015b0	89 16 02 00 		mov	WORD PTR _moveDst+2,dx
+;|***     return 1;
+; Line 749
+	*** 0015b4	b8 01 00 		mov	ax,1
+	*** 0015b7	eb 00 			jmp	SHORT $EX1763
+;|*** }
+; Line 750
+					$EX1763:
+	*** 0015b9	8b e5 			mov	sp,bp
+	*** 0015bb	5d 			pop	bp
+	*** 0015bc	c3 			ret	
+
+_setMoveDstComm7A	ENDP
+;|*** 
+;|*** // 52bb
+;|*** int memAppend(void *ptr, int itemsz, int count, int unused) {
+; Line 753
+	PUBLIC	_memAppend
+_memAppend	PROC NEAR
+	*** 0015bd	55 			push	bp
+	*** 0015be	8b ec 			mov	bp,sp
+	*** 0015c0	83 ec 04 		sub	sp,4
+;	ptr = 4
+;	itemsz = 6
+;	count = 8
+;	unused = 10
+;	farptr = -4
+;|***     void FAR *farptr;
+;|***     farptr = ptr;
+; Line 755
+	*** 0015c3	8b 46 04 		mov	ax,WORD PTR [bp+4]	;ptr
+	*** 0015c6	89 46 fc 		mov	WORD PTR [bp-4],ax	;farptr
+	*** 0015c9	8c 5e fe 		mov	WORD PTR [bp-2],ds
+;|***     // 52dd
+;|***     movedata(FP_SEG(farptr), FP_OFF(farptr), FP_SEG(moveDst), FP_OFF(moveDst), itemsz * count);
+; Line 757
+	*** 0015cc	8b 46 06 		mov	ax,WORD PTR [bp+6]	;itemsz
+	*** 0015cf	f7 6e 08 		imul	WORD PTR [bp+8]	;count
+	*** 0015d2	50 			push	ax
+	*** 0015d3	ff 36 00 00 		push	WORD PTR _moveDst
+	*** 0015d7	ff 36 02 00 		push	WORD PTR _moveDst+2
+	*** 0015db	ff 76 fc 		push	WORD PTR [bp-4]	;farptr
+	*** 0015de	1e 			push	ds
+	*** 0015df	e8 00 00 		call	_movedata
+	*** 0015e2	83 c4 0a 		add	sp,10
+;|***     moveDst += itemsz * count;
+; Line 758
+	*** 0015e5	8b 46 06 		mov	ax,WORD PTR [bp+6]	;itemsz
+	*** 0015e8	f7 6e 08 		imul	WORD PTR [bp+8]	;count
+	*** 0015eb	01 06 00 00 		add	WORD PTR _moveDst,ax
+;|*** }
+; Line 759
+	*** 0015ef	8b e5 			mov	sp,bp
+	*** 0015f1	5d 			pop	bp
+	*** 0015f2	c3 			ret	
+
+_memAppend	ENDP
+;|*** 
+;|*** // 52f1
+;|*** int doNothing() {
+; Line 762
+	PUBLIC	_doNothing
+_doNothing	PROC NEAR
+	*** 0015f3	55 			push	bp
+;|*** }
+; Line 763
+	*** 0015f4	5d 			pop	bp
+	*** 0015f5	c3 			ret	
+
+_doNothing	ENDP
+;|*** 
+;|*** // 52f4
+;|*** char* sub_152F4(int arg_0) {
+; Line 766
+	PUBLIC	_sub_152F4
+_sub_152F4	PROC NEAR
+	*** 0015f6	55 			push	bp
+	*** 0015f7	8b ec 			mov	bp,sp
+	*** 0015f9	56 			push	si
+;	arg_0 = 4
+;|***     // 530f
+;|***     return sub_1531C(wldReadBuf4[arg_0].field_2, wldReadBuf4[arg_0].field_4, gameData->theater);
+; Line 768
+	*** 0015fa	8b 76 04 		mov	si,WORD PTR [bp+4]	;arg_0
+	*** 0015fd	b1 04 			mov	cl,4
+	*** 0015ff	d3 e6 			shl	si,cl
+	*** 001601	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 001605	26 ff 77 38 		push	WORD PTR es:[bx+56]
+	*** 001609	ff b4 04 00 		push	WORD PTR _wldReadBuf4[si+4]
+	*** 00160d	ff b4 02 00 		push	WORD PTR _wldReadBuf4[si+2]
+	*** 001611	e8 00 00 		call	_sub_1531C
+	*** 001614	83 c4 06 		add	sp,6
+	*** 001617	eb 00 			jmp	SHORT $EX1772
+;|*** }
+; Line 769
+					$EX1772:
+	*** 001619	5e 			pop	si
+	*** 00161a	8b e5 			mov	sp,bp
+	*** 00161c	5d 			pop	bp
+	*** 00161d	c3 			ret	
+
+_sub_152F4	ENDP
+;|*** 
+;|*** // 531c
+;|*** char* sub_1531C(int arg_0, int arg_2) {
+; Line 772
+	PUBLIC	_sub_1531C
+_sub_1531C	PROC NEAR
+	*** 00161e	55 			push	bp
+	*** 00161f	8b ec 			mov	bp,sp
+	*** 001621	83 ec 04 		sub	sp,4
+;	arg_0 = 4
+;	arg_2 = 6
+;	var_2 = -2
+;	var_4 = -4
+;|***     int var_2, var_4;
+;|***     switch (gameData->theater) { // 53f2
+; Line 774
+	*** 001624	c4 1e 00 00 		les	bx,DWORD PTR _gameData
+	*** 001628	26 8b 47 38 		mov	ax,WORD PTR es:[bx+56]
+	*** 00162c	e9 c5 00 		jmp	$S1778
+;|***     case 0:
+; Line 775
+					$SC1782:
+;|***         mystrcpy(&bufCoordStr, aTd00);
+; Line 776
+	*** 00162f	b8 00 00 		mov	ax,OFFSET _aTd00
+	*** 001632	50 			push	ax
+	*** 001633	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 001636	50 			push	ax
+	*** 001637	e8 00 00 		call	_mystrcpy
+	*** 00163a	83 c4 04 		add	sp,4
+;|***         var_2 = 6;
+; Line 777
+	*** 00163d	c7 46 fe 06 00 		mov	WORD PTR [bp-2],6	;var_2
+;|***         var_4 = 4;
+; Line 778
+	*** 001642	c7 46 fc 04 00 		mov	WORD PTR [bp-4],4	;var_4
+;|***         break;
+; Line 779
+	*** 001647	e9 c5 00 		jmp	$SB1779
+;|***     case 1:
+; Line 780
+					$SC1783:
+;|***         mystrcpy(&bufCoordStr, aJz00);
+; Line 781
+	*** 00164a	b8 00 00 		mov	ax,OFFSET _aJz00
+	*** 00164d	50 			push	ax
+	*** 00164e	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 001651	50 			push	ax
+	*** 001652	e8 00 00 		call	_mystrcpy
+	*** 001655	83 c4 04 		add	sp,4
+;|***         var_2 = 0;
+; Line 782
+	*** 001658	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_2
+;|***         var_4 = 0;
+; Line 783
+	*** 00165d	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_4
+;|***         break;
+; Line 784
+	*** 001662	e9 aa 00 		jmp	$SB1779
+;|***     case 2:
+; Line 785
+					$SC1784:
+;|***         mystrcpy(&bufCoordStr, aXv00);
+; Line 786
+	*** 001665	b8 00 00 		mov	ax,OFFSET _aXv00
+	*** 001668	50 			push	ax
+	*** 001669	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 00166c	50 			push	ax
+	*** 00166d	e8 00 00 		call	_mystrcpy
+	*** 001670	83 c4 04 		add	sp,4
+;|***         var_2 = 0;
+; Line 787
+	*** 001673	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_2
+;|***         var_4 = 0;
+; Line 788
+	*** 001678	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_4
+;|***         break;
+; Line 789
+	*** 00167d	e9 8f 00 		jmp	$SB1779
+;|***     case 3:
+; Line 790
+					$SC1785:
+;|***         mystrcpy(&bufCoordStr, aEs00);
+; Line 791
+	*** 001680	b8 00 00 		mov	ax,OFFSET _aEs00
+	*** 001683	50 			push	ax
+	*** 001684	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 001687	50 			push	ax
+	*** 001688	e8 00 00 		call	_mystrcpy
+	*** 00168b	83 c4 04 		add	sp,4
+;|***         var_2 = 0;
+; Line 792
+	*** 00168e	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_2
+;|***         var_4 = 0;
+; Line 793
+	*** 001693	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_4
+;|***         break;
+; Line 794
+	*** 001698	eb 75 			jmp	SHORT $SB1779
+;|***     case 4:
+; Line 795
+					$SC1786:
+;|***         mystrcpy(&bufCoordStr, aWx00);
+; Line 796
+	*** 00169a	b8 00 00 		mov	ax,OFFSET _aWx00
+	*** 00169d	50 			push	ax
+	*** 00169e	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 0016a1	50 			push	ax
+	*** 0016a2	e8 00 00 		call	_mystrcpy
+	*** 0016a5	83 c4 04 		add	sp,4
+;|***         var_2 = 0;
+; Line 797
+	*** 0016a8	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_2
+;|***         var_4 = 0;
+; Line 798
+	*** 0016ad	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_4
+;|***         break;
+; Line 799
+	*** 0016b2	eb 5b 			jmp	SHORT $SB1779
+;|***     case 5:
+; Line 800
+					$SC1787:
+;|***         mystrcpy(&bufCoordStr, aCc00);
+; Line 801
+	*** 0016b4	b8 00 00 		mov	ax,OFFSET _aCc00
+	*** 0016b7	50 			push	ax
+	*** 0016b8	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 0016bb	50 			push	ax
+	*** 0016bc	e8 00 00 		call	_mystrcpy
+	*** 0016bf	83 c4 04 		add	sp,4
+;|***         var_2 = 3;
+; Line 802
+	*** 0016c2	c7 46 fe 03 00 		mov	WORD PTR [bp-2],3	;var_2
+;|***         var_4 = 5;
+; Line 803
+	*** 0016c7	c7 46 fc 05 00 		mov	WORD PTR [bp-4],5	;var_4
+;|***         break;
+; Line 804
+	*** 0016cc	eb 41 			jmp	SHORT $SB1779
+;|***     case 6:
+; Line 805
+					$SC1788:
+;|***         mystrcpy(&bufCoordStr, aHz00);
+; Line 806
+	*** 0016ce	b8 00 00 		mov	ax,OFFSET _aHz00
+	*** 0016d1	50 			push	ax
+	*** 0016d2	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 0016d5	50 			push	ax
+	*** 0016d6	e8 00 00 		call	_mystrcpy
+	*** 0016d9	83 c4 04 		add	sp,4
+;|***         var_2 = 0;
+; Line 807
+	*** 0016dc	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;var_2
+;|***         var_4 = 0;
+; Line 808
+	*** 0016e1	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;var_4
+;|***         break;
+; Line 809
+	*** 0016e6	eb 27 			jmp	SHORT $SB1779
+;|***     default: // 53e6
+; Line 810
+					$SD1789:
+;|***         bufCoordStr = 0;
+; Line 811
+	*** 0016e8	c6 06 00 00 00 		mov	BYTE PTR _bufCoordStr,0
+;|***         return &bufCoordStr;
+; Line 812
+	*** 0016ed	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 0016f0	eb 7e 			jmp	SHORT $EX1775
+;|***     } // 540d
+; Line 813
+	*** 0016f2	eb 1b 			jmp	SHORT $SB1779
+					$S1778:
+	*** 0016f4	3d 06 00 		cmp	ax,6
+	*** 0016f7	77 ef 			ja	$SD1789
+	*** 0016f9	03 c0 			add	ax,ax
+	*** 0016fb	93 			xchg	ax,bx
+	*** 0016fc	2e ff a7 01 17 		jmp	WORD PTR cs:$L20068[bx]
+					$L20068:
+	*** 001701	2f 16 				DW	$SC1782
+	*** 001703	4a 16 				DW	$SC1783
+	*** 001705	65 16 				DW	$SC1784
+	*** 001707	80 16 				DW	$SC1785
+	*** 001709	9a 16 				DW	$SC1786
+	*** 00170b	b4 16 				DW	$SC1787
+	*** 00170d	ce 16 				DW	$SC1788
+					$SB1779:
+;|***     // 5420
+;|***     arg_0 = (((arg_0 >> 5) * 0x14) >> 0xa) + var_2;
+; Line 815
+	*** 00170f	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 001712	b1 05 			mov	cl,5
+	*** 001714	d3 f8 			sar	ax,cl
+	*** 001716	b9 14 00 		mov	cx,20
+	*** 001719	f7 e9 			imul	cx
+	*** 00171b	b1 0a 			mov	cl,10
+	*** 00171d	d3 f8 			sar	ax,cl
+	*** 00171f	03 46 fe 		add	ax,WORD PTR [bp-2]	;var_2
+	*** 001722	89 46 04 		mov	WORD PTR [bp+4],ax	;arg_0
+;|***     while (arg_0 > 9) { // 5427
+; Line 816
+					$FC1791:
+	*** 001725	83 7e 04 09 		cmp	WORD PTR [bp+4],9	;arg_0
+	*** 001729	7e 0a 			jle	$FB1792
+;|***         arg_0 -= 0xa;
+; Line 817
+	*** 00172b	83 6e 04 0a 		sub	WORD PTR [bp+4],10	;arg_0
+;|***         bufCoordStr++;
+; Line 818
+	*** 00172f	fe 06 00 00 		inc	BYTE PTR _bufCoordStr
+;|***     } // 5433
+; Line 819
+	*** 001733	eb f0 			jmp	SHORT $FC1791
+					$FB1792:
+;|***     byte_1B0D2 += (int8)arg_0;
+; Line 820
+	*** 001735	8a 46 04 		mov	al,BYTE PTR [bp+4]	;arg_0
+	*** 001738	00 06 00 00 		add	_byte_1B0D2,al
+;|***     arg_2 = (((arg_2 >> 5) * 0x14) >> 0xa) + var_4;
+; Line 821
+	*** 00173c	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 00173f	b1 05 			mov	cl,5
+	*** 001741	d3 f8 			sar	ax,cl
+	*** 001743	b9 14 00 		mov	cx,20
+	*** 001746	f7 e9 			imul	cx
+	*** 001748	b1 0a 			mov	cl,10
+	*** 00174a	d3 f8 			sar	ax,cl
+	*** 00174c	03 46 fc 		add	ax,WORD PTR [bp-4]	;var_4
+	*** 00174f	89 46 06 		mov	WORD PTR [bp+6],ax	;arg_2
+;|***     // 5450
+;|***     while (arg_2 > 9) {
+; Line 823
+					$FC1794:
+	*** 001752	83 7e 06 09 		cmp	WORD PTR [bp+6],9	;arg_2
+	*** 001756	7e 0a 			jle	$FB1795
+;|***         arg_2 -= 0xa;
+; Line 824
+	*** 001758	83 6e 06 0a 		sub	WORD PTR [bp+6],10	;arg_2
+;|***         byte_1B0D1--;
+; Line 825
+	*** 00175c	fe 0e 00 00 		dec	BYTE PTR _byte_1B0D1
+;|***     }
+; Line 826
+	*** 001760	eb f0 			jmp	SHORT $FC1794
+					$FB1795:
+;|***     byte_1B0D3[0] += 9 - (int8)arg_2;
+; Line 827
+	*** 001762	b0 09 			mov	al,9
+	*** 001764	2a 46 06 		sub	al,BYTE PTR [bp+6]	;arg_2
+	*** 001767	00 06 00 00 		add	BYTE PTR _byte_1B0D3,al
+;|***     return &bufCoordStr;
+; Line 828
+	*** 00176b	b8 00 00 		mov	ax,OFFSET _bufCoordStr
+	*** 00176e	eb 00 			jmp	SHORT $EX1775
+;|*** }
+; Line 829
+					$EX1775:
+	*** 001770	8b e5 			mov	sp,bp
+	*** 001772	5d 			pop	bp
+	*** 001773	c3 			ret	
+
+_sub_1531C	ENDP
+;|*** 
+;|*** // 5472
+;|*** int sub_15472(int arg_0, int arg_2, int arg_4) {
+; Line 832
+	PUBLIC	_sub_15472
+_sub_15472	PROC NEAR
+	*** 001774	55 			push	bp
+	*** 001775	8b ec 			mov	bp,sp
+;	arg_0 = 4
+;	arg_2 = 6
+;	arg_4 = 8
+;|***     // 5478
+;|***     if (arg_0 > arg_4) return arg_4;
+; Line 834
+	*** 001777	8b 46 08 		mov	ax,WORD PTR [bp+8]	;arg_4
+	*** 00177a	39 46 04 		cmp	WORD PTR [bp+4],ax	;arg_0
+	*** 00177d	7e 02 			jle	$I1800
+	*** 00177f	eb 1e 			jmp	SHORT $EX1799
+;|***     // 5482
+;|***     if (arg_0 >= arg_2) return arg_0;
+; Line 836
+					$I1800:
+	*** 001781	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 001784	39 46 04 		cmp	WORD PTR [bp+4],ax	;arg_0
+	*** 001787	7c 05 			jl	$I1801
+	*** 001789	8b 46 04 		mov	ax,WORD PTR [bp+4]	;arg_0
+	*** 00178c	eb 11 			jmp	SHORT $EX1799
+;|***     // 548c
+;|***     if (arg_0 > -16384) return arg_2;
+; Line 838
+					$I1801:
+	*** 00178e	81 7e 04 00 c0 		cmp	WORD PTR [bp+4],-16384	;arg_0
+	*** 001793	7e 05 			jle	$I1802
+	*** 001795	8b 46 06 		mov	ax,WORD PTR [bp+6]	;arg_2
+	*** 001798	eb 05 			jmp	SHORT $EX1799
+;|***     // 5498
+;|***     return arg_4;
+; Line 840
+					$I1802:
+	*** 00179a	8b 46 08 		mov	ax,WORD PTR [bp+8]	;arg_4
+	*** 00179d	eb 00 			jmp	SHORT $EX1799
+;|*** }
+; Line 841
+					$EX1799:
+	*** 00179f	8b e5 			mov	sp,bp
+	*** 0017a1	5d 			pop	bp
+	*** 0017a2	c3 			ret	
+
+_sub_15472	ENDP
+;|*** 
+;|*** // 54a1
+;|*** void placeString(int arg_0) {
+; Line 844
+	PUBLIC	_placeString
+_placeString	PROC NEAR
+	*** 0017a3	55 			push	bp
+	*** 0017a4	8b ec 			mov	bp,sp
+;	arg_0 = 4
+;|***     // 54bc
+;|***     mystrcpy(todayMissStrBuf, wldOffsets[wldReadBuf4[arg_0].field_E & 0x7f]);
+; Line 846
+	*** 0017a6	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;arg_0
+	*** 0017a9	b1 04 			mov	cl,4
+	*** 0017ab	d3 e3 			shl	bx,cl
+	*** 0017ad	8b 9f 0e 00 		mov	bx,WORD PTR _wldReadBuf4[bx+14]
+	*** 0017b1	83 e3 7f 		and	bx,127
+	*** 0017b4	d1 e3 			shl	bx,1
+	*** 0017b6	ff b7 00 00 		push	WORD PTR _wldOffsets[bx]
+	*** 0017ba	b8 00 00 		mov	ax,OFFSET _todayMissStrBuf
+	*** 0017bd	50 			push	ax
+	*** 0017be	e8 00 00 		call	_mystrcpy
+	*** 0017c1	83 c4 04 		add	sp,4
+;|***     // 54d3
+;|***     if (mystrlen(wldOffsets[wldReadBuf4[arg_0].field_0]) != 0) { // 54dd
+; Line 848
+	*** 0017c4	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;arg_0
+	*** 0017c7	b1 04 			mov	cl,4
+	*** 0017c9	d3 e3 			shl	bx,cl
+	*** 0017cb	8b 9f 00 00 		mov	bx,WORD PTR _wldReadBuf4[bx]
+	*** 0017cf	d1 e3 			shl	bx,1
+	*** 0017d1	ff b7 00 00 		push	WORD PTR _wldOffsets[bx]
+	*** 0017d5	e8 00 00 		call	_mystrlen
+	*** 0017d8	83 c4 02 		add	sp,2
+	*** 0017db	0b c0 			or	ax,ax
+	*** 0017dd	74 47 			je	$I1805
+;|***         // 54f1
+;|***         if (mystrlen(wldOffsets[wldReadBuf4[arg_0].field_E & 0x7f]) != 0) { // 54fb
+; Line 850
+	*** 0017df	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;arg_0
+	*** 0017e2	b1 04 			mov	cl,4
+	*** 0017e4	d3 e3 			shl	bx,cl
+	*** 0017e6	8b 9f 0e 00 		mov	bx,WORD PTR _wldReadBuf4[bx+14]
+	*** 0017ea	83 e3 7f 		and	bx,127
+	*** 0017ed	d1 e3 			shl	bx,1
+	*** 0017ef	ff b7 00 00 		push	WORD PTR _wldOffsets[bx]
+	*** 0017f3	e8 00 00 		call	_mystrlen
+	*** 0017f6	83 c4 02 		add	sp,2
+	*** 0017f9	0b c0 			or	ax,ax
+	*** 0017fb	74 0e 			je	$I1806
+;|***             // 5503
+;|***             mystrcat(todayMissStrBuf, aAt);
+; Line 852
+	*** 0017fd	b8 00 00 		mov	ax,OFFSET _aAt
+	*** 001800	50 			push	ax
+	*** 001801	b8 00 00 		mov	ax,OFFSET _todayMissStrBuf
+	*** 001804	50 			push	ax
+	*** 001805	e8 00 00 		call	_mystrcat
+	*** 001808	83 c4 04 		add	sp,4
+;|***         } // 5509
+; Line 853
+;|***         // 551e
+;|***         mystrcat(todayMissStrBuf, wldOffsets[wldReadBuf4[arg_0].field_0]);
+; Line 855
+					$I1806:
+	*** 00180b	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;arg_0
+	*** 00180e	b1 04 			mov	cl,4
+	*** 001810	d3 e3 			shl	bx,cl
+	*** 001812	8b 9f 00 00 		mov	bx,WORD PTR _wldReadBuf4[bx]
+	*** 001816	d1 e3 			shl	bx,1
+	*** 001818	ff b7 00 00 		push	WORD PTR _wldOffsets[bx]
+	*** 00181c	b8 00 00 		mov	ax,OFFSET _todayMissStrBuf
+	*** 00181f	50 			push	ax
+	*** 001820	e8 00 00 		call	_mystrcat
+	*** 001823	83 c4 04 		add	sp,4
+;|***     } // 5524
+; Line 856
+;|***     // 5528
+;|***     if (mystrlen(todayMissStrBuf) > 0x1e) { // 5533
+; Line 858
+					$I1805:
+	*** 001826	b8 00 00 		mov	ax,OFFSET _todayMissStrBuf
+	*** 001829	50 			push	ax
+	*** 00182a	e8 00 00 		call	_mystrlen
+	*** 00182d	83 c4 02 		add	sp,2
+	*** 001830	3d 1e 00 		cmp	ax,30
+	*** 001833	7e 0a 			jle	$I1807
+;|***       byte_1B0FF = 0x2e;
+; Line 859
+	*** 001835	c6 06 00 00 2e 		mov	BYTE PTR _byte_1B0FF,46
+;|***       byte_1B100[0] = 0;
+; Line 860
+	*** 00183a	c6 06 00 00 00 		mov	BYTE PTR _byte_1B100,0
+;|***     }
+; Line 861
+;|***     // 5540
+;|*** }
+; Line 863
+					$I1807:
+	*** 00183f	8b e5 			mov	sp,bp
+	*** 001841	5d 			pop	bp
+	*** 001842	c3 			ret	
+
+_placeString	ENDP
+	*** 001843	90 			nop	
+_TEXT	ENDS
+END

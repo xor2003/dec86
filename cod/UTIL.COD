@@ -1,0 +1,376 @@
+;	Static Name Aliases
+;
+;	$S349_buffer	EQU	buffer
+	TITLE   util.c
+	NAME    util
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_fopen:NEAR
+EXTRN	_fread:NEAR
+EXTRN	_sprintf:NEAR
+EXTRN	_ERROR:NEAR
+EXTRN	_DEBUG:NEAR
+_DATA      SEGMENT
+$SG335	DB	'rb',  00H
+$SG337	DB	'Unable to open %s for reading',  00H
+$SG342	DB	'Error reading from %s: %d',  00H
+$SG343	DB	'read %u bytes, writing at %p',  00H
+$SG351	DB	'%lu (0x%x/%up)',  00H
+_DATA      ENDS
+_BSS      SEGMENT
+$S349_buffer	DW 040H DUP (?)
+_BSS      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "util.h"
+;|*** #include "pointers.h"
+;|*** #include "output.h"
+;|*** 
+;|*** #include <STDIO.H>
+;|*** 
+;|*** void strcpyFar(const char* src, const uint16 destSegment, const uint16 destOffset, size_t size) {
+; Line 7
+	PUBLIC	_strcpyFar
+_strcpyFar	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 06 		sub	sp,6
+;	src = 4
+;	destSegment = 6
+;	destOffset = 8
+;	size = 10
+;	dest = -4
+;|***     char FAR *dest = MK_FP(destSegment, destOffset);
+; Line 8
+	*** 000006	8b 56 06 		mov	dx,WORD PTR [bp+6]	;destSegment
+	*** 000009	8b 46 08 		mov	ax,WORD PTR [bp+8]	;destOffset
+	*** 00000c	89 46 fc 		mov	WORD PTR [bp-4],ax	;dest
+	*** 00000f	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     while (size > 0 && *src != '\0') {
+; Line 9
+					$FC307:
+	*** 000012	83 7e 0a 00 		cmp	WORD PTR [bp+10],0	;size
+	*** 000016	74 1d 			je	$FB308
+	*** 000018	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;src
+	*** 00001b	8a 07 			mov	al,BYTE PTR [bx]
+	*** 00001d	88 46 fa 		mov	BYTE PTR [bp-6],al
+	*** 000020	0a c0 			or	al,al
+	*** 000022	74 11 			je	$FB308
+;|***         *dest = *src;
+; Line 10
+	*** 000024	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;dest
+	*** 000027	26 88 07 		mov	BYTE PTR es:[bx],al
+;|***         dest++;
+; Line 11
+	*** 00002a	ff 46 fc 		inc	WORD PTR [bp-4]	;dest
+;|***         src++;
+; Line 12
+	*** 00002d	ff 46 04 		inc	WORD PTR [bp+4]	;src
+;|***         size--;
+; Line 13
+	*** 000030	ff 4e 0a 		dec	WORD PTR [bp+10]	;size
+;|***     }
+; Line 14
+	*** 000033	eb dd 			jmp	SHORT $FC307
+					$FB308:
+;|*** }
+; Line 15
+	*** 000035	8b e5 			mov	sp,bp
+	*** 000037	5d 			pop	bp
+	*** 000038	c3 			ret	
+
+_strcpyFar	ENDP
+;|*** 
+;|*** void memcpyFar(const char* src, const uint16 destSegment, const uint16 destOffset, size_t size) {
+; Line 17
+	PUBLIC	_memcpyFar
+_memcpyFar	PROC NEAR
+	*** 000039	55 			push	bp
+	*** 00003a	8b ec 			mov	bp,sp
+	*** 00003c	83 ec 04 		sub	sp,4
+	*** 00003f	56 			push	si
+;	src = 4
+;	destSegment = 6
+;	destOffset = 8
+;	size = 10
+;	dest = -4
+;|***     uint8 FAR *dest = MK_FP(destSegment, destOffset);
+; Line 18
+	*** 000040	8b 56 06 		mov	dx,WORD PTR [bp+6]	;destSegment
+	*** 000043	8b 46 08 		mov	ax,WORD PTR [bp+8]	;destOffset
+	*** 000046	89 46 fc 		mov	WORD PTR [bp-4],ax	;dest
+	*** 000049	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     while (size > 0) {
+; Line 19
+					$FC316:
+	*** 00004c	83 7e 0a 00 		cmp	WORD PTR [bp+10],0	;size
+	*** 000050	74 16 			je	$FB317
+;|***         *dest = *src;
+; Line 20
+	*** 000052	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;dest
+	*** 000055	8b 76 04 		mov	si,WORD PTR [bp+4]	;src
+	*** 000058	8a 04 			mov	al,BYTE PTR [si]
+	*** 00005a	26 88 07 		mov	BYTE PTR es:[bx],al
+;|***         dest++;
+; Line 21
+	*** 00005d	ff 46 fc 		inc	WORD PTR [bp-4]	;dest
+;|***         src++;
+; Line 22
+	*** 000060	ff 46 04 		inc	WORD PTR [bp+4]	;src
+;|***         size--;
+; Line 23
+	*** 000063	ff 4e 0a 		dec	WORD PTR [bp+10]	;size
+;|***     }
+; Line 24
+	*** 000066	eb e4 			jmp	SHORT $FC316
+					$FB317:
+;|*** }
+; Line 25
+	*** 000068	5e 			pop	si
+	*** 000069	8b e5 			mov	sp,bp
+	*** 00006b	5d 			pop	bp
+	*** 00006c	c3 			ret	
+
+_memcpyFar	ENDP
+;|*** 
+;|*** void writeWordFar(const uint16 segment, const uint16 offset, const uint16 value) {
+; Line 27
+	PUBLIC	_writeWordFar
+_writeWordFar	PROC NEAR
+	*** 00006d	55 			push	bp
+	*** 00006e	8b ec 			mov	bp,sp
+	*** 000070	83 ec 04 		sub	sp,4
+;	value = 8
+;	wordPtr = -4
+;	segment = 4
+;	offset = 6
+;|***     uint16 FAR *wordPtr  = MK_FP(segment, offset);
+; Line 28
+	*** 000073	8b 56 04 		mov	dx,WORD PTR [bp+4]	;segment
+	*** 000076	8b 46 06 		mov	ax,WORD PTR [bp+6]	;offset
+	*** 000079	89 46 fc 		mov	WORD PTR [bp-4],ax	;wordPtr
+	*** 00007c	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     *wordPtr = value;
+; Line 29
+	*** 00007f	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;wordPtr
+	*** 000082	8b 46 08 		mov	ax,WORD PTR [bp+8]	;value
+	*** 000085	26 89 07 		mov	WORD PTR es:[bx],ax
+;|*** }
+; Line 30
+	*** 000088	8b e5 			mov	sp,bp
+	*** 00008a	5d 			pop	bp
+	*** 00008b	c3 			ret	
+
+_writeWordFar	ENDP
+;|*** 
+;|*** enum { BUFSIZE = 256 };
+;|*** int blitFileFar(const char* filename, const uint16 segment, const uint16 offset) {
+; Line 33
+	PUBLIC	_blitFileFar
+_blitFileFar	PROC NEAR
+	*** 00008c	55 			push	bp
+	*** 00008d	8b ec 			mov	bp,sp
+	*** 00008f	81 ec 0c 01 		sub	sp,268
+	*** 000093	56 			push	si
+;	filename = 4
+;	segment = 6
+;	offset = 8
+;	dest = -4
+;	buffer = -268
+;	infile = -8
+;	readsize = -6
+;	i = -12
+;	err = -10
+;|***     uint8 FAR *dest = MK_FP(segment, offset);
+; Line 34
+	*** 000094	8b 56 06 		mov	dx,WORD PTR [bp+6]	;segment
+	*** 000097	8b 46 08 		mov	ax,WORD PTR [bp+8]	;offset
+	*** 00009a	89 46 fc 		mov	WORD PTR [bp-4],ax	;dest
+	*** 00009d	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     uint8 buffer[BUFSIZE];
+;|***     FILE *infile = NULL;
+; Line 36
+	*** 0000a0	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;infile
+;|***     size_t readsize = 0, i;
+; Line 37
+	*** 0000a5	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;readsize
+;|***     int err;
+;|***     infile = fopen(filename, "rb");
+; Line 39
+	*** 0000aa	b8 00 00 		mov	ax,OFFSET DGROUP:$SG335
+	*** 0000ad	50 			push	ax
+	*** 0000ae	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 0000b1	e8 00 00 		call	_fopen
+	*** 0000b4	83 c4 04 		add	sp,4
+	*** 0000b7	89 46 f8 		mov	WORD PTR [bp-8],ax	;infile
+;|***     if (infile == NULL) {
+; Line 40
+	*** 0000ba	0b c0 			or	ax,ax
+	*** 0000bc	75 0f 			jne	$I336
+;|***         ERROR("Unable to open %s for reading");
+; Line 41
+	*** 0000be	b8 03 00 		mov	ax,OFFSET DGROUP:$SG337
+	*** 0000c1	50 			push	ax
+	*** 0000c2	e8 00 00 		call	_ERROR
+	*** 0000c5	83 c4 02 		add	sp,2
+;|***         return 1;
+; Line 42
+	*** 0000c8	b8 01 00 		mov	ax,1
+	*** 0000cb	eb 7e 			jmp	SHORT $EX328
+;|***     }
+; Line 43
+;|***     while (!feof(infile)) {
+; Line 44
+					$I336:
+	*** 0000cd	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;infile
+	*** 0000d0	f6 47 06 10 		test	BYTE PTR [bx+6],16
+	*** 0000d4	75 71 			jne	$FB340
+;|***         readsize = fread(buffer, 1, BUFSIZE, infile);
+; Line 45
+	*** 0000d6	53 			push	bx
+	*** 0000d7	b8 00 01 		mov	ax,256
+	*** 0000da	50 			push	ax
+	*** 0000db	b8 01 00 		mov	ax,1
+	*** 0000de	50 			push	ax
+	*** 0000df	8d 86 f4 fe 		lea	ax,WORD PTR [bp-268]	;buffer
+	*** 0000e3	50 			push	ax
+	*** 0000e4	e8 00 00 		call	_fread
+	*** 0000e7	83 c4 08 		add	sp,8
+	*** 0000ea	89 46 fa 		mov	WORD PTR [bp-6],ax	;readsize
+;|***         if ((err = ferror(infile)) != 0) {
+; Line 46
+	*** 0000ed	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;infile
+	*** 0000f0	8a 47 06 		mov	al,BYTE PTR [bx+6]
+	*** 0000f3	25 20 00 		and	ax,32
+	*** 0000f6	89 46 f6 		mov	WORD PTR [bp-10],ax	;err
+	*** 0000f9	0b c0 			or	ax,ax
+	*** 0000fb	74 13 			je	$I341
+;|***             ERROR("Error reading from %s: %d", filename, err);
+; Line 47
+	*** 0000fd	50 			push	ax
+	*** 0000fe	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 000101	b8 21 00 		mov	ax,OFFSET DGROUP:$SG342
+	*** 000104	50 			push	ax
+	*** 000105	e8 00 00 		call	_ERROR
+	*** 000108	83 c4 06 		add	sp,6
+;|***             return 2;
+; Line 48
+	*** 00010b	b8 02 00 		mov	ax,2
+	*** 00010e	eb 3b 			jmp	SHORT $EX328
+;|***         }
+; Line 49
+;|***         DEBUG("read %u bytes, writing at %p", readsize, dest);
+; Line 50
+					$I341:
+	*** 000110	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 000113	ff 76 fc 		push	WORD PTR [bp-4]	;dest
+	*** 000116	ff 76 fa 		push	WORD PTR [bp-6]	;readsize
+	*** 000119	b8 3b 00 		mov	ax,OFFSET DGROUP:$SG343
+	*** 00011c	50 			push	ax
+	*** 00011d	e8 00 00 		call	_DEBUG
+	*** 000120	83 c4 08 		add	sp,8
+;|***         i = 0;
+; Line 51
+	*** 000123	c7 46 f4 00 00 		mov	WORD PTR [bp-12],0	;i
+;|***         while (i < readsize) {
+; Line 52
+					$FC345:
+	*** 000128	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;readsize
+	*** 00012b	39 46 f4 		cmp	WORD PTR [bp-12],ax	;i
+	*** 00012e	73 15 			jae	$FB346
+;|***             *dest = buffer[i++];
+; Line 53
+	*** 000130	8b 76 f4 		mov	si,WORD PTR [bp-12]	;i
+	*** 000133	ff 46 f4 		inc	WORD PTR [bp-12]	;i
+	*** 000136	8a 82 f4 fe 		mov	al,[bp-268][si]
+	*** 00013a	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;dest
+	*** 00013d	26 88 07 		mov	BYTE PTR es:[bx],al
+;|***             dest++;
+; Line 54
+	*** 000140	ff 46 fc 		inc	WORD PTR [bp-4]	;dest
+;|***         }
+; Line 55
+	*** 000143	eb e3 			jmp	SHORT $FC345
+					$FB346:
+;|***     }
+; Line 56
+	*** 000145	eb 86 			jmp	SHORT $I336
+					$FB340:
+;|***     return 0;
+; Line 57
+	*** 000147	2b c0 			sub	ax,ax
+	*** 000149	eb 00 			jmp	SHORT $EX328
+;|*** }
+; Line 58
+					$EX328:
+	*** 00014b	5e 			pop	si
+	*** 00014c	8b e5 			mov	sp,bp
+	*** 00014e	5d 			pop	bp
+	*** 00014f	c3 			ret	
+
+_blitFileFar	ENDP
+;|*** 
+;|*** const char* sizeString(const size_t paragraphs) {
+; Line 60
+	PUBLIC	_sizeString
+_sizeString	PROC NEAR
+	*** 000150	55 			push	bp
+	*** 000151	8b ec 			mov	bp,sp
+	*** 000153	83 ec 04 		sub	sp,4
+;	paragraphs = 4
+;	bytes = -4
+;|***     static char buffer[128];
+;|***     const uint32 bytes = ((uint32)paragraphs) * 16;
+; Line 62
+	*** 000156	8b 46 04 		mov	ax,WORD PTR [bp+4]	;paragraphs
+	*** 000159	2b d2 			sub	dx,dx
+	*** 00015b	b1 04 			mov	cl,4
+					$L20000:
+	*** 00015d	d1 e0 			shl	ax,1
+	*** 00015f	d1 d2 			rcl	dx,1
+	*** 000161	fe c9 			dec	cl
+	*** 000163	74 02 			je	$L20001
+	*** 000165	eb f6 			jmp	SHORT $L20000
+					$L20001:
+	*** 000167	89 46 fc 		mov	WORD PTR [bp-4],ax	;bytes
+	*** 00016a	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     sprintf(buffer, "%lu (0x%x/%up)", bytes, paragraphs, paragraphs);
+; Line 63
+	*** 00016d	ff 76 04 		push	WORD PTR [bp+4]	;paragraphs
+	*** 000170	ff 76 04 		push	WORD PTR [bp+4]	;paragraphs
+	*** 000173	52 			push	dx
+	*** 000174	50 			push	ax
+	*** 000175	b8 58 00 		mov	ax,OFFSET DGROUP:$SG351
+	*** 000178	50 			push	ax
+	*** 000179	b8 00 00 		mov	ax,OFFSET DGROUP:$S349_buffer
+	*** 00017c	50 			push	ax
+	*** 00017d	e8 00 00 		call	_sprintf
+	*** 000180	83 c4 0c 		add	sp,12
+;|***     return buffer;
+; Line 64
+	*** 000183	b8 00 00 		mov	ax,OFFSET DGROUP:$S349_buffer
+	*** 000186	eb 00 			jmp	SHORT $EX348
+;|*** }; Line 65
+					$EX348:
+	*** 000188	8b e5 			mov	sp,bp
+	*** 00018a	5d 			pop	bp
+	*** 00018b	c3 			ret	
+
+_sizeString	ENDP
+_TEXT	ENDS
+END

@@ -1,0 +1,143 @@
+;	Static Name Aliases
+;
+	TITLE   MATRIXMU.C
+	NAME    MATRIXMU
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	__chkstk:NEAR
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #define n 5
+;|*** #define m 4
+;|*** 
+;|*** static void multMatrix (int a[n][m], int b[m][n], int c[n][n])
+;|*** { int i,j,k;
+; Line 5
+multMatrix	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 06 00 		mov	ax,6
+	*** 000006	e8 00 00 		call	__chkstk
+	*** 000009	57 			push	di
+	*** 00000a	56 			push	si
+;	a = 4
+;	b = 6
+;	c = 8
+;	i = -2
+;	j = -4
+;	k = -6
+;|*** 
+;|*** 	for (i=0; i<n; i++)
+; Line 7
+	*** 00000b	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;i
+	*** 000010	eb 5b 			jmp	SHORT $F108
+					$FC115:
+	*** 000012	ff 46 fa 		inc	WORD PTR [bp-6]	;k
+					$F114:
+	*** 000015	83 7e fa 04 		cmp	WORD PTR [bp-6],4	;k
+	*** 000019	7d 3f 			jge	$FC112
+;|*** 	    for (j=0; j<m; j++)
+;|*** 		for (k=0; k<m; k++)
+;|*** 		    c[i][j] = a[i][k] * b[k][j] + c[i][j];
+; Line 10
+	*** 00001b	8b 76 fc 		mov	si,WORD PTR [bp-4]	;j
+	*** 00001e	d1 e6 			shl	si,1
+	*** 000020	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;i
+	*** 000023	b1 03 			mov	cl,3
+	*** 000025	d3 e3 			shl	bx,cl
+	*** 000027	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;k
+	*** 00002a	d1 e0 			shl	ax,1
+	*** 00002c	03 d8 			add	bx,ax
+	*** 00002e	8b 7e 04 		mov	di,WORD PTR [bp+4]	;a
+	*** 000031	8b 01 			mov	ax,[bx][di]
+	*** 000033	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;k
+	*** 000036	8b cb 			mov	cx,bx
+	*** 000038	d1 e3 			shl	bx,1
+	*** 00003a	d1 e3 			shl	bx,1
+	*** 00003c	03 d9 			add	bx,cx
+	*** 00003e	d1 e3 			shl	bx,1
+	*** 000040	03 5e 06 		add	bx,WORD PTR [bp+6]	;b
+	*** 000043	f7 28 			imul	WORD PTR [bx][si]
+	*** 000045	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;i
+	*** 000048	8b cb 			mov	cx,bx
+	*** 00004a	d1 e3 			shl	bx,1
+	*** 00004c	d1 e3 			shl	bx,1
+	*** 00004e	03 d9 			add	bx,cx
+	*** 000050	d1 e3 			shl	bx,1
+	*** 000052	03 5e 08 		add	bx,WORD PTR [bp+8]	;c
+	*** 000055	01 00 			add	[bx][si],ax
+	*** 000057	eb b9 			jmp	SHORT $FC115
+	*** 000059	90 			nop	
+					$FC112:
+	*** 00005a	ff 46 fc 		inc	WORD PTR [bp-4]	;j
+					$F111:
+	*** 00005d	83 7e fc 04 		cmp	WORD PTR [bp-4],4	;j
+	*** 000061	7d 07 			jge	$FC109
+;|*** 		for (k=0; k<m; k++)
+; Line 9
+	*** 000063	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;k
+	*** 000068	eb ab 			jmp	SHORT $F114
+					$FC109:
+	*** 00006a	ff 46 fe 		inc	WORD PTR [bp-2]	;i
+					$F108:
+	*** 00006d	83 7e fe 05 		cmp	WORD PTR [bp-2],5	;i
+	*** 000071	7d 07 			jge	$FB110
+;|*** 	    for (j=0; j<m; j++)
+; Line 8
+	*** 000073	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;j
+	*** 000078	eb e3 			jmp	SHORT $F111
+					$FB110:
+;|*** 		for (k=0; k<m; k++)
+;|*** 		    c[i][j] = a[i][k] * b[k][j] + c[i][j];
+;|*** }
+; Line 11
+	*** 00007a	5e 			pop	si
+	*** 00007b	5f 			pop	di
+	*** 00007c	8b e5 			mov	sp,bp
+	*** 00007e	5d 			pop	bp
+	*** 00007f	c3 			ret	
+
+multMatrix	ENDP
+;|*** 
+;|*** main()
+;|*** { int a[n][m], b[n][m], c[n][m];
+; Line 14
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000080	55 			push	bp
+	*** 000081	8b ec 			mov	bp,sp
+	*** 000083	b8 78 00 		mov	ax,120
+	*** 000086	e8 00 00 		call	__chkstk
+;	a = -40
+;	b = -80
+;	c = -120
+;|*** 
+;|*** 	multMatrix (a,b,c);
+; Line 16
+	*** 000089	8d 46 88 		lea	ax,WORD PTR [bp-120]	;c
+	*** 00008c	50 			push	ax
+	*** 00008d	8d 46 b0 		lea	ax,WORD PTR [bp-80]	;b
+	*** 000090	50 			push	ax
+	*** 000091	8d 46 d8 		lea	ax,WORD PTR [bp-40]	;a
+	*** 000094	50 			push	ax
+	*** 000095	e8 68 ff 		call	multMatrix
+;|*** }
+; Line 17
+	*** 000098	8b e5 			mov	sp,bp
+	*** 00009a	5d 			pop	bp
+	*** 00009b	c3 			ret	
+
+_main	ENDP
+_TEXT	ENDS
+END

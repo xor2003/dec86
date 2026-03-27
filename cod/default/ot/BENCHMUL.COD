@@ -1,0 +1,186 @@
+;	Static Name Aliases
+;
+	TITLE   BENCHMUL.C
+	NAME    BENCHMUL
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_printf:NEAR
+EXTRN	_scanf:NEAR
+EXTRN	__chkstk:NEAR
+_DATA      SEGMENT
+$SG165	DB	'enter number of iterations',  0aH,  00H
+$SG166	DB	'%ld',  00H
+$SG167	DB	'executing %ld iterations',  0aH,  00H
+$SG168	DB	'%d',  00H
+$SG169	DB	'%d',  00H
+$SG176	DB	'a=%d',  0aH,  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /* benchmul - benchmark for  int multiply
+;|***  * Thomas Plum, Plum Hall Inc, 609-927-3770
+;|***  * If machine traps overflow, use an  unsigned  type
+;|***  * Let  T  be the execution time in milliseconds
+;|***  * Then  average time per operator  =  T/major  usec
+;|***  * (Because the inner loop has exactly 1000 operations)
+;|***  */
+;|*** #define STOR_CL auto
+;|*** #define TYPE int
+;|*** #include <stdio.h>
+;|*** main(int ac, char *av[])
+;|*** { STOR_CL TYPE a, b, c;
+; Line 12
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 0e 00 		mov	ax,14
+	*** 000006	e8 00 00 		call	__chkstk
+;	ac = 4
+;	av = 6
+;	a = -2
+;	b = -4
+;	c = -6
+;	d = -10
+;	major = -14
+;|***   long d, major;
+;|*** 
+;|*** 	printf ("enter number of iterations\n");
+; Line 15
+	*** 000009	b8 00 00 		mov	ax,OFFSET DGROUP:$SG165
+	*** 00000c	50 			push	ax
+	*** 00000d	e8 00 00 		call	_printf
+	*** 000010	83 c4 02 		add	sp,2
+;|*** 	scanf ("%ld", &major);
+; Line 16
+	*** 000013	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;major
+	*** 000016	50 			push	ax
+	*** 000017	b8 1c 00 		mov	ax,OFFSET DGROUP:$SG166
+	*** 00001a	50 			push	ax
+	*** 00001b	e8 00 00 		call	_scanf
+	*** 00001e	83 c4 04 		add	sp,4
+;|***         printf("executing %ld iterations\n", major);
+; Line 17
+	*** 000021	ff 76 f4 		push	WORD PTR [bp-12]
+	*** 000024	ff 76 f2 		push	WORD PTR [bp-14]	;major
+	*** 000027	b8 20 00 		mov	ax,OFFSET DGROUP:$SG167
+	*** 00002a	50 			push	ax
+	*** 00002b	e8 00 00 		call	_printf
+	*** 00002e	83 c4 06 		add	sp,6
+;|*** 	scanf ("%d", &a);
+; Line 18
+	*** 000031	8d 46 fe 		lea	ax,WORD PTR [bp-2]	;a
+	*** 000034	50 			push	ax
+	*** 000035	b8 3a 00 		mov	ax,OFFSET DGROUP:$SG168
+	*** 000038	50 			push	ax
+	*** 000039	e8 00 00 		call	_scanf
+	*** 00003c	83 c4 04 		add	sp,4
+;|*** 	scanf ("%d", &b);
+; Line 19
+	*** 00003f	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;b
+	*** 000042	50 			push	ax
+	*** 000043	b8 3d 00 		mov	ax,OFFSET DGROUP:$SG169
+	*** 000046	50 			push	ax
+	*** 000047	e8 00 00 		call	_scanf
+	*** 00004a	83 c4 04 		add	sp,4
+;|*** 	for (d = 1; d <= major; ++d)
+; Line 20
+	*** 00004d	c7 46 f6 01 00 		mov	WORD PTR [bp-10],1	;d
+	*** 000052	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0
+	*** 000057	eb 67 			jmp	SHORT $F170
+	*** 000059	90 			nop	
+					$FC174:
+	*** 00005a	ff 46 fa 		inc	WORD PTR [bp-6]	;c
+					$F173:
+	*** 00005d	83 7e fa 28 		cmp	WORD PTR [bp-6],40	;c
+	*** 000061	7f 55 			jg	$FC171
+;|*** 	{
+;|***                 /* inner loop executes 1000 selected operations */
+;|***                 for (c = 1; c <= 40; ++c)
+;|*** 		{
+; Line 24
+;|***                         a = 3 *a*a*a*a*a*a*a*a * a*a*a*a*a*a*a*a * a*a*a*a*a*a*a*a * a; /* 25 * */
+; Line 25
+	*** 000063	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;a
+	*** 000066	f7 e8 			imul	ax
+	*** 000068	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00006b	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00006e	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000071	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000074	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000077	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00007a	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00007d	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000080	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000083	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000086	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000089	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00008c	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00008f	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000092	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000095	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000098	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00009b	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 00009e	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 0000a1	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 0000a4	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 0000a7	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 0000aa	8b c8 			mov	cx,ax
+	*** 0000ac	d1 e0 			shl	ax,1
+	*** 0000ae	03 c1 			add	ax,cx
+	*** 0000b0	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 0000b3	89 46 fe 		mov	WORD PTR [bp-2],ax	;a
+;|*** 		}
+; Line 26
+	*** 0000b6	eb a2 			jmp	SHORT $FC174
+					$FC171:
+	*** 0000b8	83 46 f6 01 		add	WORD PTR [bp-10],1	;d
+	*** 0000bc	83 56 f8 00 		adc	WORD PTR [bp-8],0
+					$F170:
+	*** 0000c0	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;major
+	*** 0000c3	8b 56 f4 		mov	dx,WORD PTR [bp-12]
+	*** 0000c6	39 56 f8 		cmp	WORD PTR [bp-8],dx
+	*** 0000c9	7f 0f 			jg	$FB172
+	*** 0000cb	7c 05 			jl	$L20001
+	*** 0000cd	39 46 f6 		cmp	WORD PTR [bp-10],ax	;d
+	*** 0000d0	77 08 			ja	$FB172
+					$L20001:
+;|*** 	{
+; Line 21
+;|***                 /* inner loop executes 1000 selected operations */
+;|***                 for (c = 1; c <= 40; ++c)
+; Line 23
+	*** 0000d2	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;c
+	*** 0000d7	eb 84 			jmp	SHORT $F173
+	*** 0000d9	90 			nop	
+					$FB172:
+;|*** 		{
+;|***                         a = 3 *a*a*a*a*a*a*a*a * a*a*a*a*a*a*a*a * a*a*a*a*a*a*a*a * a; /* 25 * */
+;|*** 		}
+;|*** 	}
+;|***         printf("a=%d\n", a);
+; Line 28
+	*** 0000da	ff 76 fe 		push	WORD PTR [bp-2]	;a
+	*** 0000dd	b8 40 00 		mov	ax,OFFSET DGROUP:$SG176
+	*** 0000e0	50 			push	ax
+	*** 0000e1	e8 00 00 		call	_printf
+;|***   }
+; Line 29
+	*** 0000e4	8b e5 			mov	sp,bp
+	*** 0000e6	5d 			pop	bp
+	*** 0000e7	c3 			ret	
+
+_main	ENDP
+_TEXT	ENDS
+END

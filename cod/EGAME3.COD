@@ -1,0 +1,82 @@
+;	Static Name Aliases
+;
+	TITLE   egame3.c
+	NAME    egame3
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_openFileWrapper:NEAR
+EXTRN	_closeFileWrapper:NEAR
+EXTRN	_picBlit:NEAR
+EXTRN	__chkstk:NEAR
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** // seg000 optimization disabled (/Od) code
+;|*** #include "debug.h"
+;|*** #include "egame.h"
+;|*** #include "offsets.h"
+;|*** #include "pointers.h"
+;|*** #include "slot.h"
+;|*** #include "const.h"
+;|*** 
+;|*** #include <dos.h>
+;|*** #include <memory.h>
+;|*** 
+;|*** // ==== seg000:0xdfbc ====
+;|*** int openBlitClosePic(char* path, int arg_2, int arg_4) {
+; Line 13
+	PUBLIC	_openBlitClosePic
+_openBlitClosePic	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 02 00 		mov	ax,2
+	*** 000006	e8 00 00 		call	__chkstk
+	*** 000009	57 			push	di
+	*** 00000a	56 			push	si
+;	path = 4
+;	arg_2 = 6
+;	arg_4 = 8
+;	var_2 = -2
+;|***     int var_2 = openFileWrapper(path, 0);
+; Line 14
+	*** 00000b	b8 00 00 		mov	ax,0
+	*** 00000e	50 			push	ax
+	*** 00000f	ff 76 04 		push	WORD PTR [bp+4]	;path
+	*** 000012	e8 00 00 		call	_openFileWrapper
+	*** 000015	83 c4 04 		add	sp,4
+	*** 000018	89 46 fe 		mov	WORD PTR [bp-2],ax	;var_2
+;|***     picBlit(var_2, arg_2, arg_4);
+; Line 15
+	*** 00001b	ff 76 08 		push	WORD PTR [bp+8]	;arg_4
+	*** 00001e	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 000021	ff 76 fe 		push	WORD PTR [bp-2]	;var_2
+	*** 000024	e8 00 00 		call	_picBlit
+	*** 000027	83 c4 06 		add	sp,6
+;|***     closeFileWrapper(var_2);
+; Line 16
+	*** 00002a	ff 76 fe 		push	WORD PTR [bp-2]	;var_2
+	*** 00002d	e8 00 00 		call	_closeFileWrapper
+	*** 000030	83 c4 02 		add	sp,2
+;|*** }
+; Line 17
+					$EX1934:
+	*** 000033	5e 			pop	si
+	*** 000034	5f 			pop	di
+	*** 000035	8b e5 			mov	sp,bp
+	*** 000037	5d 			pop	bp
+	*** 000038	c3 			ret	
+
+_openBlitClosePic	ENDP
+	*** 000039	90 			nop	
+_TEXT	ENDS
+END

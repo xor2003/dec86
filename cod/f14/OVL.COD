@@ -1,0 +1,277 @@
+;	Static Name Aliases
+;
+;	$S118_header	EQU	header
+;	$S121_param	EQU	param
+	TITLE   ovl.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+_BSS      SEGMENT
+COMM NEAR	_DigSysSetup:	BYTE:	 4
+COMM NEAR	_DigQueue:	BYTE:	 4
+COMM NEAR	_DigFlushQueue:	BYTE:	 4
+COMM NEAR	_DigStatus:	BYTE:	 4
+COMM NEAR	_DigAllOff:	BYTE:	 4
+COMM NEAR	_DigShutDown:	BYTE:	 4
+	ORG	$+4
+$S118_header	DW 02H DUP (?)
+	ORG	$-8
+$S121_param	DW 02H DUP (?)
+_BSS      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** // Internal functions found in overlay
+; Line 1
+;|*** int (_far *DigSysSetup)(int BoardAddress, int BoardType, int IRQ, int DRQ,
+;|*** 	long BytesLoaded, unsigned EMSsegment, unsigned EMShandle);
+;|*** 
+;|*** /* add phrase to queue */
+;|*** int (_far *DigQueue)(int phrase);
+;|*** 
+;|*** /* flush the queue */
+;|*** void (_far *DigFlushQueue)(void);
+;|*** 
+;|*** /* return current playback status */
+;|*** int (_far *DigStatus)(void);
+;|*** 
+;|*** /* stop anything currently playing      */
+;|*** int (_far *DigAllOff)(void);
+;|*** 
+;|*** /* stops and DMA in progress and resets driver */
+;|*** void (_far *DigShutDown)(void);
+;|*** 
+;|*** //***************************************************************************
+;|*** int dig_load_overlay(char *filename) 
+;|*** {
+; Line 22
+	PUBLIC	_dig_load_overlay
+_dig_load_overlay	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 10 		sub	sp,16
+;	fname = -12
+;	code_ptr = -4
+;	code_offset_ptr = -8
+;	err = -16
+;	i = -14
+;	filename = 4
+;|*** 	static struct exe_header_data {
+;|*** 		int  codeseg, dataseg, datalen;
+;|*** 		int  dummy[2];
+;|*** 		int  f1; 
+;|*** 	} _far *header;
+;|*** 
+;|*** 	char _far *fname;
+;|*** 	static struct {
+;|*** 	int load, rel; 
+;|*** 	} param;
+;|*** 	char _far *code_ptr;
+;|*** 	unsigned int _far *code_offset_ptr;
+;|*** 	unsigned err, i;
+;|*** 
+;|*** 	fname=filename;
+; Line 37
+	*** 000006	8b 46 04 		mov	ax,WORD PTR [bp+4]	;filename
+	*** 000009	89 46 f4 		mov	WORD PTR [bp-12],ax	;fname
+	*** 00000c	8c 5e f6 		mov	WORD PTR [bp-10],ds
+;|*** 
+;|*** 	_asm {
+; Line 39
+;|*** 		mov   bx,-1                     ; Check available mem
+; Line 40
+	*** 00000f	bb ff ff 		mov	bx,-1
+;|*** 		mov   ah, 48H                   ; Alloc mem
+; Line 41
+	*** 000012	b4 48 			mov	ah,72
+;|*** 		int   21H                       ; Call DOS
+; Line 42
+	*** 000014	cd 21 			int	33
+;|*** //		sub   bx, 400H                  ; avail minus DOS2.1 loader 16Kb overhead
+;|*** 		mov   ah, 48H                   ; Alloc mem again
+; Line 44
+	*** 000016	b4 48 			mov	ah,72
+;|*** 		int   21H                       ; Call DOS
+; Line 45
+	*** 000018	cd 21 			int	33
+;|*** 		mov   param.load, ax            ; Setup parameter block
+; Line 46
+	*** 00001a	a3 00 00 		mov	WORD PTR $S121_param,ax
+;|*** 		mov   param.rel, ax
+; Line 47
+	*** 00001d	a3 02 00 		mov	WORD PTR $S121_param+2,ax
+;|*** 		mov   ax, SEG param
+; Line 48
+	*** 000020	b8 00 00 		mov	ax,SEG $S121_param
+;|*** 		mov   es, ax
+; Line 49
+	*** 000023	8e c0 			mov	es,ax
+;|*** 		mov   bx, OFFSET param          ; ES:[BX] points to parameter block
+; Line 50
+	*** 000025	bb 00 00 		mov	bx,OFFSET DGROUP:$S121_param
+;|*** 		lds   dx, fname                 ; DS:[DX] points to overlay name
+; Line 51
+	*** 000028	c5 56 f4 		lds	dx,DWORD PTR [bp-12]	;fname
+;|*** 		mov   ax, 4B03H                 ; Load overlay function
+; Line 52
+	*** 00002b	b8 03 4b 		mov	ax,19203
+;|*** 		int   21H                       ; Call DOS
+; Line 53
+	*** 00002e	cd 21 			int	33
+;|*** 		mov   ax, ss                    ; Move SS ...
+; Line 54
+	*** 000030	8c d0 			mov	ax,ss
+;|*** 		mov   ds, ax                    ; ... back to DS
+; Line 55
+	*** 000032	8e d8 			mov	ds,ax
+;|*** 		mov   ax, 0
+; Line 56
+	*** 000034	b8 00 00 		mov	ax,0
+;|*** 		adc   ax, 0
+; Line 57
+	*** 000037	15 00 00 		adc	ax,0
+;|*** 		mov   err, ax                   ; Get error flag from Carry
+; Line 58
+	*** 00003a	89 46 f0 		mov	WORD PTR [bp-16],ax	;err
+;|*** 	}
+; Line 59
+;|*** 	if(err) {
+; Line 60
+	*** 00003d	83 7e f0 00 		cmp	WORD PTR [bp-16],0	;err
+	*** 000041	74 15 			je	$I126
+;|*** 		_asm {
+; Line 61
+;|*** 			mov   ah, 049h                ; Release memory
+; Line 62
+	*** 000043	b4 49 			mov	ah,73
+;|*** 			mov   es, param.load
+; Line 63
+	*** 000045	8e 06 00 00 		mov	es,WORD PTR $S121_param
+;|*** 			int   021h                    ; Call DOS
+; Line 64
+	*** 000049	cd 21 			int	33
+;|*** 		}
+; Line 65
+;|*** 		param.load=0;
+; Line 66
+	*** 00004b	c7 06 00 00 00 00 	mov	WORD PTR $S121_param,0
+;|*** 		return(1); 
+; Line 67
+	*** 000051	b8 01 00 		mov	ax,1
+	*** 000054	8b e5 			mov	sp,bp
+	*** 000056	5d 			pop	bp
+	*** 000057	c3 			ret	
+;|*** 	}
+; Line 68
+;|*** 	header=(struct exe_header_data _far *)(((long)param.load<<16)+40);
+; Line 69
+					$I126:
+	*** 000058	b8 28 00 		mov	ax,40
+	*** 00005b	8b 16 00 00 		mov	dx,WORD PTR $S121_param
+	*** 00005f	a3 04 00 		mov	WORD PTR $S118_header,ax
+	*** 000062	89 16 06 00 		mov	WORD PTR $S118_header+2,dx
+;|*** 	i=header->datalen/16+header->dataseg-header->codeseg+1;  // Overlay size
+; Line 70
+	*** 000066	8e c2 			mov	es,dx
+	*** 000068	8b d8 			mov	bx,ax
+	*** 00006a	26 8b 47 04 		mov	ax,WORD PTR es:[bx+4]
+	*** 00006e	99 			cwd	
+	*** 00006f	33 c2 			xor	ax,dx
+	*** 000071	2b c2 			sub	ax,dx
+	*** 000073	b9 04 00 		mov	cx,4
+	*** 000076	d3 f8 			sar	ax,cl
+	*** 000078	33 c2 			xor	ax,dx
+	*** 00007a	2b c2 			sub	ax,dx
+	*** 00007c	26 03 47 02 		add	ax,WORD PTR es:[bx+2]
+	*** 000080	26 2b 07 		sub	ax,WORD PTR es:[bx]
+	*** 000083	40 			inc	ax
+	*** 000084	89 46 f2 		mov	WORD PTR [bp-14],ax	;i
+;|*** 
+;|*** 	_asm {
+; Line 72
+;|*** 		mov   ah, 4ah                 ; Resize dataseg
+; Line 73
+	*** 000087	b4 4a 			mov	ah,74
+;|*** 		mov   bx, i
+; Line 74
+	*** 000089	8b 5e f2 		mov	bx,WORD PTR [bp-14]	;i
+;|*** 		int   021h                    ; Call DOS
+; Line 75
+	*** 00008c	cd 21 			int	33
+;|*** 	}
+; Line 76
+;|*** 	code_ptr=(char _far *)((long)header->codeseg<<16);
+; Line 77
+	*** 00008e	c4 1e 04 00 		les	bx,DWORD PTR $S118_header
+	*** 000092	26 8b 07 		mov	ax,WORD PTR es:[bx]
+	*** 000095	2b c9 			sub	cx,cx
+	*** 000097	89 4e fc 		mov	WORD PTR [bp-4],cx	;code_ptr
+	*** 00009a	89 46 fe 		mov	WORD PTR [bp-2],ax
+;|*** 	code_offset_ptr=&header->f1;
+;|*** 	// Set function pointers from overlay data
+;|*** 	(char _far *)DigSysSetup  = code_ptr+*code_offset_ptr++;
+; Line 80
+	*** 00009d	26 03 4f 0a 		add	cx,WORD PTR es:[bx+10]
+	*** 0000a1	89 0e 00 00 		mov	WORD PTR _DigSysSetup,cx
+	*** 0000a5	a3 02 00 		mov	WORD PTR _DigSysSetup+2,ax
+;|*** 	(char _far *)DigShutDown  = code_ptr+*code_offset_ptr++;
+; Line 81
+	*** 0000a8	8d 5f 0a 		lea	bx,WORD PTR [bx+10]
+	*** 0000ab	26 8b 47 02 		mov	ax,WORD PTR es:[bx+2]
+	*** 0000af	03 46 fc 		add	ax,WORD PTR [bp-4]	;code_ptr
+	*** 0000b2	8b 56 fe 		mov	dx,WORD PTR [bp-2]
+	*** 0000b5	a3 00 00 		mov	WORD PTR _DigShutDown,ax
+	*** 0000b8	89 16 02 00 		mov	WORD PTR _DigShutDown+2,dx
+;|*** 	(char _far *)DigQueue     = code_ptr+*code_offset_ptr++;
+; Line 82
+	*** 0000bc	43 			inc	bx
+	*** 0000bd	43 			inc	bx
+	*** 0000be	26 8b 47 02 		mov	ax,WORD PTR es:[bx+2]
+	*** 0000c2	03 46 fc 		add	ax,WORD PTR [bp-4]	;code_ptr
+	*** 0000c5	a3 00 00 		mov	WORD PTR _DigQueue,ax
+	*** 0000c8	89 16 02 00 		mov	WORD PTR _DigQueue+2,dx
+;|*** 	(char _far *)DigFlushQueue= code_ptr+*code_offset_ptr++;
+; Line 83
+	*** 0000cc	43 			inc	bx
+	*** 0000cd	43 			inc	bx
+	*** 0000ce	26 8b 47 02 		mov	ax,WORD PTR es:[bx+2]
+	*** 0000d2	03 46 fc 		add	ax,WORD PTR [bp-4]	;code_ptr
+	*** 0000d5	a3 00 00 		mov	WORD PTR _DigFlushQueue,ax
+	*** 0000d8	89 16 02 00 		mov	WORD PTR _DigFlushQueue+2,dx
+;|*** 	(char _far *)DigAllOff    = code_ptr+*code_offset_ptr++;
+; Line 84
+	*** 0000dc	43 			inc	bx
+	*** 0000dd	43 			inc	bx
+	*** 0000de	26 8b 47 02 		mov	ax,WORD PTR es:[bx+2]
+	*** 0000e2	03 46 fc 		add	ax,WORD PTR [bp-4]	;code_ptr
+	*** 0000e5	a3 00 00 		mov	WORD PTR _DigAllOff,ax
+	*** 0000e8	89 16 02 00 		mov	WORD PTR _DigAllOff+2,dx
+;|*** 	(char _far *)DigStatus    = code_ptr+*code_offset_ptr++;
+; Line 85
+	*** 0000ec	43 			inc	bx
+	*** 0000ed	43 			inc	bx
+	*** 0000ee	26 8b 47 02 		mov	ax,WORD PTR es:[bx+2]
+	*** 0000f2	03 46 fc 		add	ax,WORD PTR [bp-4]	;code_ptr
+	*** 0000f5	a3 00 00 		mov	WORD PTR _DigStatus,ax
+	*** 0000f8	89 16 02 00 		mov	WORD PTR _DigStatus+2,dx
+	*** 0000fc	8c c2 			mov	dx,es
+;|*** 	return(0); 
+; Line 86
+	*** 0000fe	2b c0 			sub	ax,ax
+;|*** }
+; Line 87
+	*** 000100	8b e5 			mov	sp,bp
+	*** 000102	5d 			pop	bp
+	*** 000103	c3 			ret	
+
+_dig_load_overlay	ENDP
+_TEXT	ENDS
+END

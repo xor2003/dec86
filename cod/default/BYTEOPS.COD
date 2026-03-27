@@ -1,0 +1,93 @@
+;	Static Name Aliases
+;
+	TITLE   BYTEOPS.C
+	NAME    BYTEOPS
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	__chkstk:NEAR
+EXTRN	_printf:NEAR
+_DATA      SEGMENT
+$SG105	DB	'a = %d, b = %d',  0aH,  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #define TYPE unsigned char
+;|*** 
+;|*** main()
+;|*** { TYPE a, b;
+; Line 4
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 04 00 		mov	ax,4
+	*** 000006	e8 00 00 		call	__chkstk
+;	a = -2
+;	b = -4
+;|*** 
+;|*** 	a = 255;
+; Line 6
+	*** 000009	c6 46 fe ff 		mov	BYTE PTR [bp-2],255	;a
+;|*** 	b = 143;
+; Line 7
+	*** 00000d	c6 46 fc 8f 		mov	BYTE PTR [bp-4],143	;b
+;|*** 	b = a + b;
+; Line 8
+	*** 000011	80 46 fc ff 		add	BYTE PTR [bp-4],255	;b
+;|*** 	a = a - b;
+; Line 9
+	*** 000015	8a 46 fc 		mov	al,BYTE PTR [bp-4]	;b
+	*** 000018	28 46 fe 		sub	BYTE PTR [bp-2],al	;a
+;|*** 	a = a * b;
+; Line 10
+	*** 00001b	f6 66 fe 		mul	BYTE PTR [bp-2]	;a
+	*** 00001e	88 46 fe 		mov	BYTE PTR [bp-2],al	;a
+;|*** 	b = b / a;
+; Line 11
+	*** 000021	8a 46 fc 		mov	al,BYTE PTR [bp-4]	;b
+	*** 000024	2a e4 			sub	ah,ah
+	*** 000026	f6 76 fe 		div	BYTE PTR [bp-2]	;a
+	*** 000029	88 46 fc 		mov	BYTE PTR [bp-4],al	;b
+;|*** 	b = b % a;
+; Line 12
+	*** 00002c	2a e4 			sub	ah,ah
+	*** 00002e	f6 76 fe 		div	BYTE PTR [bp-2]	;a
+	*** 000031	88 66 fc 		mov	BYTE PTR [bp-4],ah	;b
+;|*** 	a = a << 5;
+; Line 13
+	*** 000034	b1 05 			mov	cl,5
+	*** 000036	d2 66 fe 		shl	BYTE PTR [bp-2],cl	;a
+;|*** 	b = b >> a;
+; Line 14
+	*** 000039	8a 4e fe 		mov	cl,BYTE PTR [bp-2]	;a
+	*** 00003c	d2 6e fc 		shr	BYTE PTR [bp-4],cl	;b
+;|*** 	printf ("a = %d, b = %d\n", a, b);
+; Line 15
+	*** 00003f	8a 46 fc 		mov	al,BYTE PTR [bp-4]	;b
+	*** 000042	2a e4 			sub	ah,ah
+	*** 000044	50 			push	ax
+	*** 000045	8a c1 			mov	al,cl
+	*** 000047	50 			push	ax
+	*** 000048	b8 00 00 		mov	ax,OFFSET DGROUP:$SG105
+	*** 00004b	50 			push	ax
+	*** 00004c	e8 00 00 		call	_printf
+;|*** }; Line 16
+	*** 00004f	8b e5 			mov	sp,bp
+	*** 000051	5d 			pop	bp
+	*** 000052	c3 			ret	
+	*** 000053	90 			nop	
+
+_main	ENDP
+_TEXT	ENDS
+END

@@ -1,0 +1,28 @@
+
+ Start  Stop   Length Name               Class
+
+ 00000H 00086H 00087H _TEXT              CODE
+ 00088H 000CDH 00046H _DATA              DATA
+ 000CEH 000CEH 00000H _BSS               BSS
+
+
+Detailed map of segments
+
+ 0000:0000 0087 C=CODE   S=_TEXT          G=(none)  M=FIBO.C     ACBP=28
+ 0008:0008 0046 C=DATA   S=_DATA          G=DGROUP  M=FIBO.C     ACBP=48
+ 0008:004E 0000 C=BSS    S=_BSS           G=DGROUP  M=FIBO.C     ACBP=48
+
+  Address         Publics by Name
+
+ 0000:0057 idle  _FIB
+ 0000:0000 idle  _MAIN
+
+  Address         Publics by Value
+
+ 0000:0000 idle  _MAIN
+ 0000:0057 idle  _FIB
+
+Error: Undefined symbol _EXIT in module FIBO.C
+Error: Undefined symbol _PRINTF in module FIBO.C
+Error: Undefined symbol _SCANF in module FIBO.C
+

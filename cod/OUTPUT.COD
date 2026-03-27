@@ -1,0 +1,693 @@
+;	Static Name Aliases
+;
+;	$S284_logname	EQU	logname
+;	$S286_logfile	EQU	logfile
+;	$S304_voutput	EQU	voutput
+	TITLE   output.c
+	NAME    output
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_exit:NEAR
+EXTRN	_vfprintf:NEAR
+EXTRN	_vprintf:NEAR
+EXTRN	_fclose:NEAR
+EXTRN	_fopen:NEAR
+_DATA      SEGMENT
+$SG285	DB	'f15.log',  00H
+$SG290	DB	'a',  00H
+$SG291	DB	'w',  00H
+	ORG	$+6
+$SG312	DB	0aH,  00H
+$SG316	DB	'ERROR: ',  00H
+$SG317	DB	0aH,  00H
+$SG321	DB	'FATAL: ',  00H
+$SG322	DB	0aH,  00H
+$SG327	DB	'DEBUG: ',  00H
+$SG328	DB	0aH,  00H
+$SG331	DB	'AX = 0x%x, BX = 0x%x, CX = 0x%x, DX = 0x%x',  0aH,  00H
+$SG332	DB	'SI = 0x%x, DI = 0x%x, CF = 0x%x',  0aH,  00H
+$SG344	DB	'buf[0x%x] @ %p + 0x%x: ',  0aH,  00H
+$SG347	DB	'invalid input',  00H
+$SG349	DB	'[...]',  0aH,  00H
+$SG355	DB	'0x%04x: ',  00H
+$SG356	DB	'%02x ',  00H
+$SG363	DB	'   ',  00H
+$SG365	DB	'%c',  00H
+$SG367	DB	'.',  00H
+$SG368	DB	0aH,  00H
+	ORG	$-187
+$S284_logname	DW	DGROUP:$SG285
+$S286_logfile	DW	00H
+$S304_voutput	DW	_output_log
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "output.h"
+;|*** #include "inttype.h"
+;|*** 
+;|*** #include <STDIO.H>
+;|*** #include <STDARG.H>
+;|*** 
+;|*** void output_stdout(const char* format, va_list ap) {
+; Line 7
+	PUBLIC	_output_stdout
+_output_stdout	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+;	format = 4
+;	ap = 6
+;|***     vprintf(format, ap);
+; Line 8
+	*** 000003	ff 76 06 		push	WORD PTR [bp+6]	;ap
+	*** 000006	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 000009	e8 00 00 		call	_vprintf
+	*** 00000c	83 c4 04 		add	sp,4
+;|*** }
+; Line 9
+	*** 00000f	8b e5 			mov	sp,bp
+	*** 000011	5d 			pop	bp
+	*** 000012	c3 			ret	
+
+_output_stdout	ENDP
+;|*** 
+;|*** static const char* logname = "f15.log";
+;|*** static FILE* logfile = NULL;
+;|*** 
+;|*** void log_open(bool append) {
+; Line 14
+	PUBLIC	_log_open
+_log_open	PROC NEAR
+	*** 000013	55 			push	bp
+	*** 000014	8b ec 			mov	bp,sp
+;	append = 4
+;|***     if (logfile) return;
+; Line 15
+	*** 000016	83 3e 0e 00 00 		cmp	WORD PTR $S286_logfile,0
+	*** 00001b	74 02 			je	$I289
+	*** 00001d	eb 1c 			jmp	SHORT $EX288
+;|***     logfile = fopen(logname, append ? "a" : "w");
+; Line 16
+					$I289:
+	*** 00001f	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;append
+	*** 000023	74 05 			je	$L20000
+	*** 000025	b8 08 00 		mov	ax,OFFSET DGROUP:$SG290
+	*** 000028	eb 03 			jmp	SHORT $L20001
+					$L20000:
+	*** 00002a	b8 0a 00 		mov	ax,OFFSET DGROUP:$SG291
+					$L20001:
+	*** 00002d	50 			push	ax
+	*** 00002e	ff 36 0c 00 		push	WORD PTR $S284_logname
+	*** 000032	e8 00 00 		call	_fopen
+	*** 000035	83 c4 04 		add	sp,4
+	*** 000038	a3 0e 00 		mov	$S286_logfile,ax
+;|*** }
+; Line 17
+					$EX288:
+	*** 00003b	8b e5 			mov	sp,bp
+	*** 00003d	5d 			pop	bp
+	*** 00003e	c3 			ret	
+
+_log_open	ENDP
+;|*** 
+;|*** void log_close() {
+; Line 19
+	PUBLIC	_log_close
+_log_close	PROC NEAR
+	*** 00003f	55 			push	bp
+	*** 000040	8b ec 			mov	bp,sp
+;|***     if (!logfile) return;
+; Line 20
+	*** 000042	83 3e 0e 00 00 		cmp	WORD PTR $S286_logfile,0
+	*** 000047	75 02 			jne	$I293
+	*** 000049	eb 10 			jmp	SHORT $EX292
+;|***     fclose(logfile);
+; Line 21
+					$I293:
+	*** 00004b	ff 36 0e 00 		push	WORD PTR $S286_logfile
+	*** 00004f	e8 00 00 		call	_fclose
+	*** 000052	83 c4 02 		add	sp,2
+;|***     logfile = NULL;
+; Line 22
+	*** 000055	c7 06 0e 00 00 00 	mov	WORD PTR $S286_logfile,0
+;|*** }
+; Line 23
+					$EX292:
+	*** 00005b	8b e5 			mov	sp,bp
+	*** 00005d	5d 			pop	bp
+	*** 00005e	c3 			ret	
+
+_log_close	ENDP
+;|*** 
+;|*** void output_log(const char* format, va_list ap) {
+; Line 25
+	PUBLIC	_output_log
+_output_log	PROC NEAR
+	*** 00005f	55 			push	bp
+	*** 000060	8b ec 			mov	bp,sp
+;	format = 4
+;	ap = 6
+;|***     vfprintf(logfile, format, ap);
+; Line 26
+	*** 000062	ff 76 06 		push	WORD PTR [bp+6]	;ap
+	*** 000065	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 000068	ff 36 0e 00 		push	WORD PTR $S286_logfile
+	*** 00006c	e8 00 00 		call	_vfprintf
+	*** 00006f	83 c4 06 		add	sp,6
+;|*** }
+; Line 27
+	*** 000072	8b e5 			mov	sp,bp
+	*** 000074	5d 			pop	bp
+	*** 000075	c3 			ret	
+
+_output_log	ENDP
+;|*** 
+;|*** 
+;|*** void output_tee(const char *format, va_list ap) {
+; Line 30
+	PUBLIC	_output_tee
+_output_tee	PROC NEAR
+	*** 000076	55 			push	bp
+	*** 000077	8b ec 			mov	bp,sp
+;	format = 4
+;	ap = 6
+;|***     output_log(format, ap);
+; Line 31
+	*** 000079	ff 76 06 		push	WORD PTR [bp+6]	;ap
+	*** 00007c	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 00007f	e8 dd ff 		call	_output_log
+	*** 000082	83 c4 04 		add	sp,4
+;|***     output_stdout(format, ap);
+; Line 32
+	*** 000085	ff 76 06 		push	WORD PTR [bp+6]	;ap
+	*** 000088	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 00008b	e8 72 ff 		call	_output_stdout
+	*** 00008e	83 c4 04 		add	sp,4
+;|*** }
+; Line 33
+	*** 000091	8b e5 			mov	sp,bp
+	*** 000093	5d 			pop	bp
+	*** 000094	c3 			ret	
+
+_output_tee	ENDP
+;|*** 
+;|*** static void (*voutput)(const char* format, va_list ap) = output_log;
+;|*** 
+;|*** void output(const char* format, ...) {
+; Line 37
+	PUBLIC	_output
+_output	PROC NEAR
+	*** 000095	55 			push	bp
+	*** 000096	8b ec 			mov	bp,sp
+	*** 000098	83 ec 02 		sub	sp,2
+;	format = 4
+;	ap = -2
+;|***     va_list ap;
+;|***     va_start(ap, format);
+; Line 39
+	*** 00009b	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 00009e	89 46 fe 		mov	WORD PTR [bp-2],ax	;ap
+;|***     voutput(format, ap);
+; Line 40
+	*** 0000a1	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 0000a4	50 			push	ax
+	*** 0000a5	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 0000a8	ff 16 10 00 		call	WORD PTR $S304_voutput
+	*** 0000ac	83 c4 04 		add	sp,4
+;|***     va_end(ap);
+; Line 41
+	*** 0000af	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;ap
+;|*** }
+; Line 42
+	*** 0000b4	8b e5 			mov	sp,bp
+	*** 0000b6	5d 			pop	bp
+	*** 0000b7	c3 			ret	
+
+_output	ENDP
+;|*** 
+;|*** void INFO(const char *format, ...) {
+; Line 44
+	PUBLIC	_INFO
+_INFO	PROC NEAR
+	*** 0000b8	55 			push	bp
+	*** 0000b9	8b ec 			mov	bp,sp
+	*** 0000bb	83 ec 02 		sub	sp,2
+;	format = 4
+;	ap = -2
+;|***     va_list ap;
+;|***     va_start(ap, format);
+; Line 46
+	*** 0000be	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 0000c1	89 46 fe 		mov	WORD PTR [bp-2],ax	;ap
+;|***     voutput(format, ap);
+; Line 47
+	*** 0000c4	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 0000c7	50 			push	ax
+	*** 0000c8	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 0000cb	ff 16 10 00 		call	WORD PTR $S304_voutput
+	*** 0000cf	83 c4 04 		add	sp,4
+;|***     output("\n");
+; Line 48
+	*** 0000d2	b8 12 00 		mov	ax,OFFSET DGROUP:$SG312
+	*** 0000d5	50 			push	ax
+	*** 0000d6	e8 bc ff 		call	_output
+	*** 0000d9	83 c4 02 		add	sp,2
+;|***     va_end(ap);
+; Line 49
+	*** 0000dc	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;ap
+;|*** }
+; Line 50
+	*** 0000e1	8b e5 			mov	sp,bp
+	*** 0000e3	5d 			pop	bp
+	*** 0000e4	c3 			ret	
+
+_INFO	ENDP
+;|*** 
+;|*** void ERROR(const char *format, ...) {
+; Line 52
+	PUBLIC	_ERROR
+_ERROR	PROC NEAR
+	*** 0000e5	55 			push	bp
+	*** 0000e6	8b ec 			mov	bp,sp
+	*** 0000e8	83 ec 02 		sub	sp,2
+;	format = 4
+;	ap = -2
+;|***     va_list ap;
+;|***     va_start(ap, format);
+; Line 54
+	*** 0000eb	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 0000ee	89 46 fe 		mov	WORD PTR [bp-2],ax	;ap
+;|***     output("ERROR: ");
+; Line 55
+	*** 0000f1	b8 14 00 		mov	ax,OFFSET DGROUP:$SG316
+	*** 0000f4	50 			push	ax
+	*** 0000f5	e8 9d ff 		call	_output
+	*** 0000f8	83 c4 02 		add	sp,2
+;|***     voutput(format, ap);
+; Line 56
+	*** 0000fb	ff 76 fe 		push	WORD PTR [bp-2]	;ap
+	*** 0000fe	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 000101	ff 16 10 00 		call	WORD PTR $S304_voutput
+	*** 000105	83 c4 04 		add	sp,4
+;|***     output("\n");
+; Line 57
+	*** 000108	b8 1c 00 		mov	ax,OFFSET DGROUP:$SG317
+	*** 00010b	50 			push	ax
+	*** 00010c	e8 86 ff 		call	_output
+	*** 00010f	83 c4 02 		add	sp,2
+;|***     va_end(ap);
+; Line 58
+	*** 000112	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;ap
+;|*** }
+; Line 59
+	*** 000117	8b e5 			mov	sp,bp
+	*** 000119	5d 			pop	bp
+	*** 00011a	c3 			ret	
+
+_ERROR	ENDP
+;|*** 
+;|*** void FATAL(const char *format, ...) {
+; Line 61
+	PUBLIC	_FATAL
+_FATAL	PROC NEAR
+	*** 00011b	55 			push	bp
+	*** 00011c	8b ec 			mov	bp,sp
+	*** 00011e	83 ec 02 		sub	sp,2
+;	ap = -2
+;	format = 4
+;|***     va_list ap;
+;|***     va_start(ap, format);
+; Line 63
+	*** 000121	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 000124	89 46 fe 		mov	WORD PTR [bp-2],ax	;ap
+;|***     output("FATAL: ");
+; Line 64
+	*** 000127	b8 1e 00 		mov	ax,OFFSET DGROUP:$SG321
+	*** 00012a	50 			push	ax
+	*** 00012b	e8 67 ff 		call	_output
+	*** 00012e	83 c4 02 		add	sp,2
+;|***     voutput(format, ap);
+; Line 65
+	*** 000131	ff 76 fe 		push	WORD PTR [bp-2]	;ap
+	*** 000134	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 000137	ff 16 10 00 		call	WORD PTR $S304_voutput
+	*** 00013b	83 c4 04 		add	sp,4
+;|***     output("\n");
+; Line 66
+	*** 00013e	b8 26 00 		mov	ax,OFFSET DGROUP:$SG322
+	*** 000141	50 			push	ax
+	*** 000142	e8 50 ff 		call	_output
+	*** 000145	83 c4 02 		add	sp,2
+;|***     va_end(ap);
+; Line 67
+	*** 000148	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;ap
+;|***     exit(1);
+; Line 68
+	*** 00014d	b8 01 00 		mov	ax,1
+	*** 000150	50 			push	ax
+	*** 000151	e8 00 00 		call	_exit
+	*** 000154	83 c4 02 		add	sp,2
+;|*** }
+; Line 69
+	*** 000157	8b e5 			mov	sp,bp
+	*** 000159	5d 			pop	bp
+	*** 00015a	c3 			ret	
+
+_FATAL	ENDP
+;|*** 
+;|*** void DEBUG(const char *format, ...) {
+; Line 71
+	PUBLIC	_DEBUG
+_DEBUG	PROC NEAR
+	*** 00015b	55 			push	bp
+	*** 00015c	8b ec 			mov	bp,sp
+	*** 00015e	83 ec 02 		sub	sp,2
+;	format = 4
+;	ap = -2
+;|***     va_list ap;
+;|***     va_start(ap, format);
+; Line 73
+	*** 000161	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 000164	89 46 fe 		mov	WORD PTR [bp-2],ax	;ap
+;|***     output("DEBUG: ");
+; Line 74
+	*** 000167	b8 28 00 		mov	ax,OFFSET DGROUP:$SG327
+	*** 00016a	50 			push	ax
+	*** 00016b	e8 27 ff 		call	_output
+	*** 00016e	83 c4 02 		add	sp,2
+;|***     voutput(format, ap);
+; Line 75
+	*** 000171	ff 76 fe 		push	WORD PTR [bp-2]	;ap
+	*** 000174	ff 76 04 		push	WORD PTR [bp+4]	;format
+	*** 000177	ff 16 10 00 		call	WORD PTR $S304_voutput
+	*** 00017b	83 c4 04 		add	sp,4
+;|***     output("\n");
+; Line 76
+	*** 00017e	b8 30 00 		mov	ax,OFFSET DGROUP:$SG328
+	*** 000181	50 			push	ax
+	*** 000182	e8 10 ff 		call	_output
+	*** 000185	83 c4 02 		add	sp,2
+;|***     va_end(ap);
+; Line 77
+	*** 000188	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;ap
+;|*** }
+; Line 78
+	*** 00018d	8b e5 			mov	sp,bp
+	*** 00018f	5d 			pop	bp
+	*** 000190	c3 			ret	
+
+_DEBUG	ENDP
+;|*** 
+;|*** void dumpregs(const union REGS *regs) {
+; Line 80
+	PUBLIC	_dumpregs
+_dumpregs	PROC NEAR
+	*** 000191	55 			push	bp
+	*** 000192	8b ec 			mov	bp,sp
+;	regs = 4
+;|***     output("AX = 0x%x, BX = 0x%x, CX = 0x%x, DX = 0x%x\n", regs->x.ax, regs->x.bx, regs->x.cx, regs->x.dx);
+; Line 81
+	*** 000194	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;regs
+	*** 000197	ff 77 06 		push	WORD PTR [bx+6]
+	*** 00019a	ff 77 04 		push	WORD PTR [bx+4]
+	*** 00019d	ff 77 02 		push	WORD PTR [bx+2]
+	*** 0001a0	ff 37 			push	WORD PTR [bx]
+	*** 0001a2	b8 32 00 		mov	ax,OFFSET DGROUP:$SG331
+	*** 0001a5	50 			push	ax
+	*** 0001a6	e8 ec fe 		call	_output
+	*** 0001a9	83 c4 0a 		add	sp,10
+;|***     output("SI = 0x%x, DI = 0x%x, CF = 0x%x\n", regs->x.si, regs->x.di, regs->x.cflag);
+; Line 82
+	*** 0001ac	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;regs
+	*** 0001af	ff 77 0c 		push	WORD PTR [bx+12]
+	*** 0001b2	ff 77 0a 		push	WORD PTR [bx+10]
+	*** 0001b5	ff 77 08 		push	WORD PTR [bx+8]
+	*** 0001b8	b8 5e 00 		mov	ax,OFFSET DGROUP:$SG332
+	*** 0001bb	50 			push	ax
+	*** 0001bc	e8 d6 fe 		call	_output
+	*** 0001bf	83 c4 08 		add	sp,8
+;|*** }
+; Line 83
+	*** 0001c2	8b e5 			mov	sp,bp
+	*** 0001c4	5d 			pop	bp
+	*** 0001c5	c3 			ret	
+
+_dumpregs	ENDP
+;|*** 
+;|*** void hexdump(const uint8 FAR *buf, const size_t size, const size_t off, const int header) {
+; Line 85
+	PUBLIC	_hexdump
+_hexdump	PROC NEAR
+	*** 0001c6	55 			push	bp
+	*** 0001c7	8b ec 			mov	bp,sp
+	*** 0001c9	83 ec 0c 		sub	sp,12
+	*** 0001cc	56 			push	si
+;	buf = 4
+;	size = 8
+;	off = 10
+;	header = 12
+;	bpl = -8
+;	limit = -10
+;	i = -4
+;	j = -6
+;	c = -2
+;|***     const size_t bpl = 16; // display bytes per line
+; Line 86
+	*** 0001cd	c7 46 f8 10 00 		mov	WORD PTR [bp-8],16	;bpl
+;|***     const size_t limit = 50 * bpl;
+; Line 87
+	*** 0001d2	c7 46 f6 20 03 		mov	WORD PTR [bp-10],800	;limit
+;|***     size_t i = 0, j = 0;
+; Line 88
+	*** 0001d7	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+	*** 0001dc	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;j
+;|***     unsigned char c;
+;|***     if (header) output("buf[0x%x] @ %p + 0x%x: \n", size, buf, off);
+; Line 90
+	*** 0001e1	83 7e 0c 00 		cmp	WORD PTR [bp+12],0	;header
+	*** 0001e5	74 16 			je	$I343
+	*** 0001e7	ff 76 0a 		push	WORD PTR [bp+10]	;off
+	*** 0001ea	ff 76 06 		push	WORD PTR [bp+6]
+	*** 0001ed	ff 76 04 		push	WORD PTR [bp+4]	;buf
+	*** 0001f0	ff 76 08 		push	WORD PTR [bp+8]	;size
+	*** 0001f3	b8 7f 00 		mov	ax,OFFSET DGROUP:$SG344
+	*** 0001f6	50 			push	ax
+	*** 0001f7	e8 9b fe 		call	_output
+	*** 0001fa	83 c4 0a 		add	sp,10
+;|***     if (!buf || !size || off >= size) {
+; Line 91
+					$I343:
+	*** 0001fd	8b 46 04 		mov	ax,WORD PTR [bp+4]	;buf
+	*** 000200	0b 46 06 		or	ax,WORD PTR [bp+6]
+	*** 000203	74 0e 			je	$I346
+	*** 000205	83 7e 08 00 		cmp	WORD PTR [bp+8],0	;size
+	*** 000209	74 08 			je	$I346
+	*** 00020b	8b 46 08 		mov	ax,WORD PTR [bp+8]	;size
+	*** 00020e	39 46 0a 		cmp	WORD PTR [bp+10],ax	;off
+	*** 000211	72 0d 			jb	$I345
+					$I346:
+;|***         output("invalid input");
+; Line 92
+	*** 000213	b8 98 00 		mov	ax,OFFSET DGROUP:$SG347
+	*** 000216	50 			push	ax
+	*** 000217	e8 7b fe 		call	_output
+	*** 00021a	83 c4 02 		add	sp,2
+;|***         return;
+; Line 93
+	*** 00021d	e9 13 01 		jmp	$FB352
+;|***     }
+; Line 94
+;|***     if (size - off > 2 * limit) {
+; Line 95
+					$I345:
+	*** 000220	8b 46 08 		mov	ax,WORD PTR [bp+8]	;size
+	*** 000223	2b 46 0a 		sub	ax,WORD PTR [bp+10]	;off
+	*** 000226	8b 4e f6 		mov	cx,WORD PTR [bp-10]	;limit
+	*** 000229	d1 e1 			shl	cx,1
+	*** 00022b	3b c1 			cmp	ax,cx
+	*** 00022d	76 39 			jbe	$I348
+;|***         hexdump(buf, limit, 0, 0);
+; Line 96
+	*** 00022f	2b c0 			sub	ax,ax
+	*** 000231	50 			push	ax
+	*** 000232	50 			push	ax
+	*** 000233	ff 76 f6 		push	WORD PTR [bp-10]	;limit
+	*** 000236	ff 76 06 		push	WORD PTR [bp+6]
+	*** 000239	ff 76 04 		push	WORD PTR [bp+4]	;buf
+	*** 00023c	e8 87 ff 		call	_hexdump
+	*** 00023f	83 c4 0a 		add	sp,10
+;|***         output("[...]\n");
+; Line 97
+	*** 000242	b8 a6 00 		mov	ax,OFFSET DGROUP:$SG349
+	*** 000245	50 			push	ax
+	*** 000246	e8 4c fe 		call	_output
+	*** 000249	83 c4 02 		add	sp,2
+;|***         hexdump(buf, size, size - limit, 0);
+; Line 98
+	*** 00024c	2b c0 			sub	ax,ax
+	*** 00024e	50 			push	ax
+	*** 00024f	8b 46 08 		mov	ax,WORD PTR [bp+8]	;size
+	*** 000252	2b 46 f6 		sub	ax,WORD PTR [bp-10]	;limit
+	*** 000255	50 			push	ax
+	*** 000256	ff 76 08 		push	WORD PTR [bp+8]	;size
+	*** 000259	ff 76 06 		push	WORD PTR [bp+6]
+	*** 00025c	ff 76 04 		push	WORD PTR [bp+4]	;buf
+	*** 00025f	e8 64 ff 		call	_hexdump
+	*** 000262	83 c4 0a 		add	sp,10
+;|***         return;
+; Line 99
+	*** 000265	e9 cb 00 		jmp	$FB352
+;|***     }
+; Line 100
+;|***     for (i = 0; i + off < size; ++i) {
+; Line 101
+					$I348:
+	*** 000268	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+	*** 00026d	eb 03 			jmp	SHORT $F350
+					$FC351:
+	*** 00026f	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+					$F350:
+	*** 000272	8b 76 fc 		mov	si,WORD PTR [bp-4]	;i
+	*** 000275	03 76 0a 		add	si,WORD PTR [bp+10]	;off
+	*** 000278	39 76 08 		cmp	WORD PTR [bp+8],si	;size
+	*** 00027b	77 03 			ja	$JCC635
+	*** 00027d	e9 b3 00 		jmp	$FB352
+					$JCC635:
+;	pos = -12
+;|***         const size_t pos = i % bpl;
+; Line 102
+	*** 000280	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 000283	2b d2 			sub	dx,dx
+	*** 000285	f7 76 f8 		div	WORD PTR [bp-8]	;bpl
+	*** 000288	89 56 f4 		mov	WORD PTR [bp-12],dx	;pos
+;|***         if (pos == 0) { // header at line start
+; Line 103
+	*** 00028b	0b d2 			or	dx,dx
+	*** 00028d	75 0b 			jne	$I354
+;|***             output("0x%04x: ", i + off);
+; Line 104
+	*** 00028f	56 			push	si
+	*** 000290	b8 ad 00 		mov	ax,OFFSET DGROUP:$SG355
+	*** 000293	50 			push	ax
+	*** 000294	e8 fe fd 		call	_output
+	*** 000297	83 c4 04 		add	sp,4
+;|***         }
+; Line 105
+;|***         // hex byte
+;|***         output("%02x ", (int)(buf[i + off]));
+; Line 107
+					$I354:
+	*** 00029a	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;i
+	*** 00029d	03 5e 0a 		add	bx,WORD PTR [bp+10]	;off
+	*** 0002a0	c4 76 04 		les	si,DWORD PTR [bp+4]	;buf
+	*** 0002a3	26 8a 00 		mov	al,es:[bx][si]
+	*** 0002a6	2a e4 			sub	ah,ah
+	*** 0002a8	50 			push	ax
+	*** 0002a9	b8 b6 00 		mov	ax,OFFSET DGROUP:$SG356
+	*** 0002ac	50 			push	ax
+	*** 0002ad	e8 e5 fd 		call	_output
+	*** 0002b0	83 c4 04 		add	sp,4
+;|***         if (pos + 1 == bpl || i + 1 == size) { // ascii dump at line or buffer end
+; Line 108
+	*** 0002b3	8b 46 f4 		mov	ax,WORD PTR [bp-12]	;pos
+	*** 0002b6	40 			inc	ax
+	*** 0002b7	3b 46 f8 		cmp	ax,WORD PTR [bp-8]	;bpl
+	*** 0002ba	74 09 			je	$I358
+	*** 0002bc	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 0002bf	40 			inc	ax
+	*** 0002c0	3b 46 08 		cmp	ax,WORD PTR [bp+8]	;size
+	*** 0002c3	75 6b 			jne	$I357
+					$I358:
+;|***             for (j = 1; j <= bpl; ++j) {
+; Line 109
+	*** 0002c5	c7 46 fa 01 00 		mov	WORD PTR [bp-6],1	;j
+	*** 0002ca	eb 03 			jmp	SHORT $F359
+					$FC360:
+	*** 0002cc	ff 46 fa 		inc	WORD PTR [bp-6]	;j
+					$F359:
+	*** 0002cf	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;bpl
+	*** 0002d2	39 46 fa 		cmp	WORD PTR [bp-6],ax	;j
+	*** 0002d5	77 4f 			ja	$FB361
+;|***                 if (pos + j < bpl) { output("   "); continue; }
+; Line 110
+	*** 0002d7	8b 46 f4 		mov	ax,WORD PTR [bp-12]	;pos
+	*** 0002da	03 46 fa 		add	ax,WORD PTR [bp-6]	;j
+	*** 0002dd	3b 46 f8 		cmp	ax,WORD PTR [bp-8]	;bpl
+	*** 0002e0	73 0c 			jae	$I362
+	*** 0002e2	b8 bc 00 		mov	ax,OFFSET DGROUP:$SG363
+	*** 0002e5	50 			push	ax
+	*** 0002e6	e8 ac fd 		call	_output
+	*** 0002e9	83 c4 02 		add	sp,2
+	*** 0002ec	eb de 			jmp	SHORT $FC360
+;|***                 c = buf[i + off - bpl + j];
+; Line 111
+					$I362:
+	*** 0002ee	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;i
+	*** 0002f1	03 5e 0a 		add	bx,WORD PTR [bp+10]	;off
+	*** 0002f4	2b 5e f8 		sub	bx,WORD PTR [bp-8]	;bpl
+	*** 0002f7	03 5e fa 		add	bx,WORD PTR [bp-6]	;j
+	*** 0002fa	c4 76 04 		les	si,DWORD PTR [bp+4]	;buf
+	*** 0002fd	26 8a 00 		mov	al,es:[bx][si]
+	*** 000300	88 46 fe 		mov	BYTE PTR [bp-2],al	;c
+;|***                 if (c >= 0x20 && c <= 0x7e) output("%c", c);
+; Line 112
+	*** 000303	3c 20 			cmp	al,32
+	*** 000305	72 13 			jb	$I364
+	*** 000307	3c 7e 			cmp	al,126
+	*** 000309	77 0f 			ja	$I364
+	*** 00030b	2a e4 			sub	ah,ah
+	*** 00030d	50 			push	ax
+	*** 00030e	b8 c0 00 		mov	ax,OFFSET DGROUP:$SG365
+	*** 000311	50 			push	ax
+	*** 000312	e8 80 fd 		call	_output
+	*** 000315	83 c4 04 		add	sp,4
+;|***                 else output(".");
+; Line 113
+	*** 000318	eb 0a 			jmp	SHORT $I366
+					$I364:
+	*** 00031a	b8 c3 00 		mov	ax,OFFSET DGROUP:$SG367
+	*** 00031d	50 			push	ax
+	*** 00031e	e8 74 fd 		call	_output
+	*** 000321	83 c4 02 		add	sp,2
+					$I366:
+;|***             }
+; Line 114
+	*** 000324	eb a6 			jmp	SHORT $FC360
+					$FB361:
+;|***             output("\n");
+; Line 115
+	*** 000326	b8 c5 00 		mov	ax,OFFSET DGROUP:$SG368
+	*** 000329	50 			push	ax
+	*** 00032a	e8 68 fd 		call	_output
+	*** 00032d	83 c4 02 		add	sp,2
+;|***         }
+; Line 116
+;|***     }
+; Line 117
+					$I357:
+	*** 000330	e9 3c ff 		jmp	$FC351
+					$FB352:
+;|*** }
+; Line 118
+	*** 000333	5e 			pop	si
+	*** 000334	8b e5 			mov	sp,bp
+	*** 000336	5d 			pop	bp
+	*** 000337	c3 			ret	
+
+_hexdump	ENDP
+_TEXT	ENDS
+END

@@ -1,0 +1,378 @@
+;	Static Name Aliases
+;
+	TITLE   overlay.c
+	NAME    overlay
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_dos_resize:NEAR
+EXTRN	_dos_getfree:NEAR
+EXTRN	_dos_loadOverlay:NEAR
+EXTRN	_ERROR:NEAR
+EXTRN	_DEBUG:NEAR
+EXTRN	_dos_alloc:NEAR
+EXTRN	_dos_free:NEAR
+_DATA      SEGMENT
+$SG284	DB	'overlay_load(): unable to determine amount of free memory',  00H
+$SG285	DB	'overlay_load(): allocated block 0x%x of size %up (%lu) for o'
+	DB	'verlay %s',  00H
+$SG287	DB	'overlay_load(): unable to allocate %u paragraphs',  00H
+$SG289	DB	'overlay_load(): unable to load overlay %s at 0x%x, error 0x%'
+	DB	'x',  00H
+$SG290	DB	'overlay_load(): successfully loaded overlay, calculated size'
+	DB	' = %up (%lu)',  00H
+$SG292	DB	'overlay_load(): overrun allocated memory',  00H
+$SG293	DB	'overlay_load(): shrinking overlay buffer to %up (%lu)',  00H
+$SG295	DB	'overlay_load: failed to resize overlay buffer to %up (%lu)',  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "overlay.h"
+;|*** #include "dosfunc.h"
+;|*** #include "output.h"
+;|*** #include "memory.h"
+;|*** #include "offsets.h"
+;|*** 
+;|*** #include <STDDEF.H>
+;|*** 
+;|*** // Microprose overlay header format
+;|*** #pragma pack(1)
+;|*** struct OvlHeader {
+;|***     uint8 description[0x18]; // 00h-17h: description
+;|***     uint16 code_segment; // 18h-19h: total number of header paragraphs on disk, after relocation into memory becomes segment pointer into code
+;|***     uint16 base_segment; // 1ah-1bh: base load segment of overlay (relocated)
+;|***     uint16 first_slot; // 1ch-1dh: slot index (id) of first jump entry 
+;|***     uint16 size1; // 1eh-1fh: size1
+;|***     uint16 size2; // 20h-21h: size2
+;|***     uint16 jump_count; // 22h-23h: number of jump addresses 
+;|***     // 24h-...: array of jump offsets
+;|***     uint16 slot;
+;|***     // Extra description or padding data follows
+;|*** };
+;|*** 
+;|*** uint16 overlay_load(const char* filename) {
+; Line 24
+	PUBLIC	_overlay_load
+_overlay_load	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 12 		sub	sp,18
+;	filename = 4
+;	RESERVE_PARA = -18
+;	EXTRA_PARA = -6
+;	freeMem = -2
+;	alloc = -14
+;	ovlSegment = -4
+;	ovlSize = -16
+;	ovlHeader = -12
+;	err = -8
+;|***     const size_t RESERVE_PARA = 0x400;
+; Line 25
+	*** 000006	c7 46 ee 00 04 		mov	WORD PTR [bp-18],1024	;RESERVE_PARA
+;|***     const size_t EXTRA_PARA = 8; // original executable adds this many paragraphs for good measure
+; Line 26
+	*** 00000b	c7 46 fa 08 00 		mov	WORD PTR [bp-6],8	;EXTRA_PARA
+;|***     size_t freeMem, alloc;
+;|***     uint16 ovlSegment, ovlSize;
+;|***     struct OvlHeader FAR *ovlHeader = NULL;
+; Line 29
+	*** 000010	2b c0 			sub	ax,ax
+	*** 000012	89 46 f6 		mov	WORD PTR [bp-10],ax
+	*** 000015	89 46 f4 		mov	WORD PTR [bp-12],ax	;ovlHeader
+;|***     int err;
+;|***     freeMem = dos_getfree();
+; Line 31
+	*** 000018	e8 00 00 		call	_dos_getfree
+	*** 00001b	89 46 fe 		mov	WORD PTR [bp-2],ax	;freeMem
+;|***     if (freeMem == 0) {
+; Line 32
+	*** 00001e	0b c0 			or	ax,ax
+	*** 000020	75 0f 			jne	$I283
+;|***         ERROR("overlay_load(): unable to determine amount of free memory");
+; Line 33
+	*** 000022	b8 00 00 		mov	ax,OFFSET DGROUP:$SG284
+	*** 000025	50 			push	ax
+	*** 000026	e8 00 00 		call	_ERROR
+	*** 000029	83 c4 02 		add	sp,2
+;|***         return 0;
+; Line 34
+	*** 00002c	2b c0 			sub	ax,ax
+	*** 00002e	e9 49 01 		jmp	$EX274
+;|***     }
+; Line 35
+;|***     alloc = freeMem - RESERVE_PARA;
+; Line 36
+					$I283:
+	*** 000031	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;freeMem
+	*** 000034	2b 46 ee 		sub	ax,WORD PTR [bp-18]	;RESERVE_PARA
+	*** 000037	89 46 f2 		mov	WORD PTR [bp-14],ax	;alloc
+;|***     ovlSegment = dos_alloc(alloc);
+; Line 37
+	*** 00003a	50 			push	ax
+	*** 00003b	e8 00 00 		call	_dos_alloc
+	*** 00003e	83 c4 02 		add	sp,2
+	*** 000041	89 46 fc 		mov	WORD PTR [bp-4],ax	;ovlSegment
+;|***     DEBUG("overlay_load(): allocated block 0x%x of size %up (%lu) for overlay %s", ovlSegment, alloc, PARA_TO_BYTES(alloc), filename);
+; Line 38
+	*** 000044	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 000047	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;alloc
+	*** 00004a	2b d2 			sub	dx,dx
+	*** 00004c	b1 04 			mov	cl,4
+					$L20000:
+	*** 00004e	d1 e0 			shl	ax,1
+	*** 000050	d1 d2 			rcl	dx,1
+	*** 000052	fe c9 			dec	cl
+	*** 000054	74 02 			je	$L20001
+	*** 000056	eb f6 			jmp	SHORT $L20000
+					$L20001:
+	*** 000058	52 			push	dx
+	*** 000059	50 			push	ax
+	*** 00005a	ff 76 f2 		push	WORD PTR [bp-14]	;alloc
+	*** 00005d	ff 76 fc 		push	WORD PTR [bp-4]	;ovlSegment
+	*** 000060	b8 3a 00 		mov	ax,OFFSET DGROUP:$SG285
+	*** 000063	50 			push	ax
+	*** 000064	e8 00 00 		call	_DEBUG
+	*** 000067	83 c4 0c 		add	sp,12
+;|***     if (ovlSegment == 0) {
+; Line 39
+	*** 00006a	83 7e fc 00 		cmp	WORD PTR [bp-4],0	;ovlSegment
+	*** 00006e	75 12 			jne	$I286
+;|***         ERROR("overlay_load(): unable to allocate %u paragraphs", alloc);
+; Line 40
+	*** 000070	ff 76 f2 		push	WORD PTR [bp-14]	;alloc
+	*** 000073	b8 80 00 		mov	ax,OFFSET DGROUP:$SG287
+	*** 000076	50 			push	ax
+	*** 000077	e8 00 00 		call	_ERROR
+	*** 00007a	83 c4 04 		add	sp,4
+;|***         return 0;
+; Line 41
+	*** 00007d	2b c0 			sub	ax,ax
+	*** 00007f	e9 f8 00 		jmp	$EX274
+;|***     }
+; Line 42
+;|***     err = dos_loadOverlay(filename, ovlSegment);
+; Line 43
+					$I286:
+	*** 000082	ff 76 fc 		push	WORD PTR [bp-4]	;ovlSegment
+	*** 000085	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 000088	e8 00 00 		call	_dos_loadOverlay
+	*** 00008b	83 c4 04 		add	sp,4
+	*** 00008e	89 46 f8 		mov	WORD PTR [bp-8],ax	;err
+;|***     if (err != 0) {
+; Line 44
+	*** 000091	0b c0 			or	ax,ax
+	*** 000093	74 1f 			je	$I288
+;|***         ERROR("overlay_load(): unable to load overlay %s at 0x%x, error 0x%x", filename, ovlSegment, (int)err);
+; Line 45
+	*** 000095	50 			push	ax
+	*** 000096	ff 76 fc 		push	WORD PTR [bp-4]	;ovlSegment
+	*** 000099	ff 76 04 		push	WORD PTR [bp+4]	;filename
+	*** 00009c	b8 b1 00 		mov	ax,OFFSET DGROUP:$SG289
+	*** 00009f	50 			push	ax
+	*** 0000a0	e8 00 00 		call	_ERROR
+	*** 0000a3	83 c4 08 		add	sp,8
+;|***         dos_free(ovlSegment);
+; Line 46
+	*** 0000a6	ff 76 fc 		push	WORD PTR [bp-4]	;ovlSegment
+	*** 0000a9	e8 00 00 		call	_dos_free
+	*** 0000ac	83 c4 02 		add	sp,2
+;|***         return 0;
+; Line 47
+	*** 0000af	2b c0 			sub	ax,ax
+	*** 0000b1	e9 c6 00 		jmp	$EX274
+;|***     }
+; Line 48
+;|***     ovlHeader = MK_FP(ovlSegment, 0);
+; Line 49
+					$I288:
+	*** 0000b4	8b 56 fc 		mov	dx,WORD PTR [bp-4]	;ovlSegment
+	*** 0000b7	2b c0 			sub	ax,ax
+	*** 0000b9	89 46 f4 		mov	WORD PTR [bp-12],ax	;ovlHeader
+	*** 0000bc	89 56 f6 		mov	WORD PTR [bp-10],dx
+;|***     ovlSize = (ovlHeader->size1 >> 4) + (ovlHeader->size2 >> 4); // overlay size in paragraphs
+; Line 50
+	*** 0000bf	c4 5e f4 		les	bx,DWORD PTR [bp-12]	;ovlHeader
+	*** 0000c2	26 8b 47 1e 		mov	ax,WORD PTR es:[bx+30]
+	*** 0000c6	b1 04 			mov	cl,4
+	*** 0000c8	d3 e8 			shr	ax,cl
+	*** 0000ca	26 8b 57 20 		mov	dx,WORD PTR es:[bx+32]
+	*** 0000ce	d3 ea 			shr	dx,cl
+	*** 0000d0	03 c2 			add	ax,dx
+	*** 0000d2	89 46 f0 		mov	WORD PTR [bp-16],ax	;ovlSize
+;|***     DEBUG("overlay_load(): successfully loaded overlay, calculated size = %up (%lu)", ovlSize, PARA_TO_BYTES(ovlSize));
+; Line 51
+	*** 0000d5	2b d2 			sub	dx,dx
+					$L20002:
+	*** 0000d7	d1 e0 			shl	ax,1
+	*** 0000d9	d1 d2 			rcl	dx,1
+	*** 0000db	fe c9 			dec	cl
+	*** 0000dd	74 02 			je	$L20003
+	*** 0000df	eb f6 			jmp	SHORT $L20002
+					$L20003:
+	*** 0000e1	52 			push	dx
+	*** 0000e2	50 			push	ax
+	*** 0000e3	ff 76 f0 		push	WORD PTR [bp-16]	;ovlSize
+	*** 0000e6	b8 ef 00 		mov	ax,OFFSET DGROUP:$SG290
+	*** 0000e9	50 			push	ax
+	*** 0000ea	e8 00 00 		call	_DEBUG
+	*** 0000ed	83 c4 08 		add	sp,8
+;|***     if (ovlSize > alloc) {
+; Line 52
+	*** 0000f0	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;alloc
+	*** 0000f3	39 46 f0 		cmp	WORD PTR [bp-16],ax	;ovlSize
+	*** 0000f6	76 17 			jbe	$I291
+;|***         ERROR("overlay_load(): overrun allocated memory");
+; Line 53
+	*** 0000f8	b8 38 01 		mov	ax,OFFSET DGROUP:$SG292
+	*** 0000fb	50 			push	ax
+	*** 0000fc	e8 00 00 		call	_ERROR
+	*** 0000ff	83 c4 02 		add	sp,2
+;|***         dos_free(ovlSegment);
+; Line 54
+	*** 000102	ff 76 fc 		push	WORD PTR [bp-4]	;ovlSegment
+	*** 000105	e8 00 00 		call	_dos_free
+	*** 000108	83 c4 02 		add	sp,2
+;|***         return 0;
+; Line 55
+	*** 00010b	2b c0 			sub	ax,ax
+	*** 00010d	eb 6b 			jmp	SHORT $EX274
+;|***     }
+; Line 56
+;|***     ovlSize += EXTRA_PARA;
+; Line 57
+					$I291:
+	*** 00010f	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;EXTRA_PARA
+	*** 000112	01 46 f0 		add	WORD PTR [bp-16],ax	;ovlSize
+;|***     DEBUG("overlay_load(): shrinking overlay buffer to %up (%lu)", ovlSize, PARA_TO_BYTES(ovlSize));
+; Line 58
+	*** 000115	8b 46 f0 		mov	ax,WORD PTR [bp-16]	;ovlSize
+	*** 000118	2b d2 			sub	dx,dx
+	*** 00011a	b1 04 			mov	cl,4
+					$L20004:
+	*** 00011c	d1 e0 			shl	ax,1
+	*** 00011e	d1 d2 			rcl	dx,1
+	*** 000120	fe c9 			dec	cl
+	*** 000122	74 02 			je	$L20005
+	*** 000124	eb f6 			jmp	SHORT $L20004
+					$L20005:
+	*** 000126	52 			push	dx
+	*** 000127	50 			push	ax
+	*** 000128	ff 76 f0 		push	WORD PTR [bp-16]	;ovlSize
+	*** 00012b	b8 61 01 		mov	ax,OFFSET DGROUP:$SG293
+	*** 00012e	50 			push	ax
+	*** 00012f	e8 00 00 		call	_DEBUG
+	*** 000132	83 c4 08 		add	sp,8
+;|***     err = dos_resize(ovlSegment, ovlSize);
+; Line 59
+	*** 000135	ff 76 f0 		push	WORD PTR [bp-16]	;ovlSize
+	*** 000138	ff 76 fc 		push	WORD PTR [bp-4]	;ovlSegment
+	*** 00013b	e8 00 00 		call	_dos_resize
+	*** 00013e	83 c4 04 		add	sp,4
+	*** 000141	89 46 f8 		mov	WORD PTR [bp-8],ax	;err
+;|***     if (err != 0) {
+; Line 60
+	*** 000144	0b c0 			or	ax,ax
+	*** 000146	74 2d 			je	$I294
+;|***         ERROR("overlay_load: failed to resize overlay buffer to %up (%lu)", ovlSize, PARA_TO_BYTES(ovlSize));
+; Line 61
+	*** 000148	8b 46 f0 		mov	ax,WORD PTR [bp-16]	;ovlSize
+	*** 00014b	2b d2 			sub	dx,dx
+	*** 00014d	b1 04 			mov	cl,4
+					$L20006:
+	*** 00014f	d1 e0 			shl	ax,1
+	*** 000151	d1 d2 			rcl	dx,1
+	*** 000153	fe c9 			dec	cl
+	*** 000155	74 02 			je	$L20007
+	*** 000157	eb f6 			jmp	SHORT $L20006
+					$L20007:
+	*** 000159	52 			push	dx
+	*** 00015a	50 			push	ax
+	*** 00015b	ff 76 f0 		push	WORD PTR [bp-16]	;ovlSize
+	*** 00015e	b8 97 01 		mov	ax,OFFSET DGROUP:$SG295
+	*** 000161	50 			push	ax
+	*** 000162	e8 00 00 		call	_ERROR
+	*** 000165	83 c4 08 		add	sp,8
+;|***         dos_free(ovlSegment);
+; Line 62
+	*** 000168	ff 76 fc 		push	WORD PTR [bp-4]	;ovlSegment
+	*** 00016b	e8 00 00 		call	_dos_free
+	*** 00016e	83 c4 02 		add	sp,2
+;|***         return 0;
+; Line 63
+	*** 000171	2b c0 			sub	ax,ax
+	*** 000173	eb 05 			jmp	SHORT $EX274
+;|***     }
+; Line 64
+;|***     return ovlSegment;
+; Line 65
+					$I294:
+	*** 000175	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;ovlSegment
+	*** 000178	eb 00 			jmp	SHORT $EX274
+;|*** }
+; Line 66
+					$EX274:
+	*** 00017a	8b e5 			mov	sp,bp
+	*** 00017c	5d 			pop	bp
+	*** 00017d	c3 			ret	
+
+_overlay_load	ENDP
+;|*** 
+;|*** OverlayFunc overlay_functionAddress(const uint16 ovlLoadSegment, const uint16 funcNumber) {
+; Line 68
+	PUBLIC	_overlay_functionAddress
+_overlay_functionAddress	PROC NEAR
+	*** 00017e	55 			push	bp
+	*** 00017f	8b ec 			mov	bp,sp
+	*** 000181	83 ec 08 		sub	sp,8
+	*** 000184	56 			push	si
+;	ovlLoadSegment = 4
+;	funcNumber = 6
+;	ovlHeader = -8
+;	slotArray = -4
+;|***     struct OvlHeader FAR *ovlHeader = MK_FP(ovlLoadSegment, 0);
+; Line 69
+	*** 000185	8b 56 04 		mov	dx,WORD PTR [bp+4]	;ovlLoadSegment
+	*** 000188	2b c0 			sub	ax,ax
+	*** 00018a	89 46 f8 		mov	WORD PTR [bp-8],ax	;ovlHeader
+	*** 00018d	89 56 fa 		mov	WORD PTR [bp-6],dx
+;|***     uint16 FAR* slotArray=&(ovlHeader->slot);
+; Line 70
+	*** 000190	05 24 00 		add	ax,36
+	*** 000193	89 46 fc 		mov	WORD PTR [bp-4],ax	;slotArray
+	*** 000196	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     return MK_FP(ovlHeader->code_segment, slotArray[funcNumber]);
+; Line 71
+	*** 000199	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;funcNumber
+	*** 00019c	d1 e3 			shl	bx,1
+	*** 00019e	c4 76 fc 		les	si,DWORD PTR [bp-4]	;slotArray
+	*** 0001a1	26 8b 00 		mov	ax,es:[bx][si]
+	*** 0001a4	c4 5e f8 		les	bx,DWORD PTR [bp-8]	;ovlHeader
+	*** 0001a7	26 8b 77 18 		mov	si,WORD PTR es:[bx+24]
+	*** 0001ab	2b c9 			sub	cx,cx
+	*** 0001ad	8b d6 			mov	dx,si
+	*** 0001af	eb 00 			jmp	SHORT $EX298
+;|*** }
+; Line 72
+					$EX298:
+	*** 0001b1	5e 			pop	si
+	*** 0001b2	8b e5 			mov	sp,bp
+	*** 0001b4	5d 			pop	bp
+	*** 0001b5	c3 			ret	
+
+_overlay_functionAddress	ENDP
+_TEXT	ENDS
+END

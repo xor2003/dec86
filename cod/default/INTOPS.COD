@@ -1,0 +1,91 @@
+;	Static Name Aliases
+;
+	TITLE   INTOPS.C
+	NAME    INTOPS
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	__chkstk:NEAR
+EXTRN	_printf:NEAR
+_DATA      SEGMENT
+$SG105	DB	'a = %d, b = %d',  0aH,  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #define TYPE int
+;|*** 
+;|*** main()
+;|*** { TYPE a, b;
+; Line 4
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 04 00 		mov	ax,4
+	*** 000006	e8 00 00 		call	__chkstk
+;	a = -2
+;	b = -4
+;|*** 
+;|*** 	a = 255;
+; Line 6
+	*** 000009	c7 46 fe ff 00 		mov	WORD PTR [bp-2],255	;a
+;|*** 	b = 143;
+; Line 7
+	*** 00000e	c7 46 fc 8f 00 		mov	WORD PTR [bp-4],143	;b
+;|*** 	b = a + b;
+; Line 8
+	*** 000013	81 46 fc ff 00 		add	WORD PTR [bp-4],255	;b
+;|*** 	a = a - b;
+; Line 9
+	*** 000018	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;b
+	*** 00001b	29 46 fe 		sub	WORD PTR [bp-2],ax	;a
+;|*** 	a = a * b;
+; Line 10
+	*** 00001e	f7 6e fe 		imul	WORD PTR [bp-2]	;a
+	*** 000021	89 46 fe 		mov	WORD PTR [bp-2],ax	;a
+;|*** 	b = b / a;
+; Line 11
+	*** 000024	8b c8 			mov	cx,ax
+	*** 000026	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;b
+	*** 000029	99 			cwd	
+	*** 00002a	f7 f9 			idiv	cx
+	*** 00002c	89 46 fc 		mov	WORD PTR [bp-4],ax	;b
+;|*** 	b = b % a;
+; Line 12
+	*** 00002f	99 			cwd	
+	*** 000030	f7 f9 			idiv	cx
+	*** 000032	89 56 fc 		mov	WORD PTR [bp-4],dx	;b
+;|*** 	a = a << 5;
+; Line 13
+	*** 000035	b1 05 			mov	cl,5
+	*** 000037	d3 66 fe 		shl	WORD PTR [bp-2],cl	;a
+;|*** 	b = b >> a;
+; Line 14
+	*** 00003a	8a 4e fe 		mov	cl,BYTE PTR [bp-2]	;a
+	*** 00003d	d3 7e fc 		sar	WORD PTR [bp-4],cl	;b
+;|*** 	printf ("a = %d, b = %d\n", a, b);
+; Line 15
+	*** 000040	ff 76 fc 		push	WORD PTR [bp-4]	;b
+	*** 000043	ff 76 fe 		push	WORD PTR [bp-2]	;a
+	*** 000046	b8 00 00 		mov	ax,OFFSET DGROUP:$SG105
+	*** 000049	50 			push	ax
+	*** 00004a	e8 00 00 		call	_printf
+;|*** }; Line 16
+	*** 00004d	8b e5 			mov	sp,bp
+	*** 00004f	5d 			pop	bp
+	*** 000050	c3 			ret	
+	*** 000051	90 			nop	
+
+_main	ENDP
+_TEXT	ENDS
+END

@@ -1,0 +1,692 @@
+;	Static Name Aliases
+;
+	TITLE   egame4.c
+	NAME    egame4
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_sub_20BAE:FAR
+EXTRN	_abs:NEAR
+EXTRN	_sub_154B7:NEAR
+EXTRN	__aNuldiv:NEAR
+EXTRN	__aNldiv:NEAR
+EXTRN	__aNlmul:NEAR
+EXTRN	_g_ourHead:WORD
+EXTRN	_g_ourPitch:WORD
+EXTRN	_g_ourRoll:WORD
+EXTRN	_word_380D8:WORD
+EXTRN	_byte_380DD:BYTE
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include "egame.h"
+;|*** #include <stdlib.h> /* For abs() */
+;|*** 
+;|*** int UpdateRotationMatrix()
+;|*** {
+; Line 5
+	PUBLIC	_UpdateRotationMatrix
+_UpdateRotationMatrix	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 02 		sub	sp,2
+;	result = -2
+;|***     int result;
+;|*** 
+;|***     result = sub_20BAE(0x57BE, g_ourHead, g_ourPitch, g_ourRoll);
+; Line 8
+	*** 000006	ff 36 00 00 		push	WORD PTR _g_ourRoll
+	*** 00000a	ff 36 00 00 		push	WORD PTR _g_ourPitch
+	*** 00000e	ff 36 00 00 		push	WORD PTR _g_ourHead
+	*** 000012	b8 be 57 		mov	ax,22462
+	*** 000015	50 			push	ax
+	*** 000016	9a 00 00 00 00 		call	FAR PTR _sub_20BAE
+	*** 00001b	83 c4 08 		add	sp,8
+	*** 00001e	89 46 fe 		mov	WORD PTR [bp-2],ax	;result
+;|***     byte_380DD = 0;
+; Line 9
+	*** 000021	c6 06 00 00 00 		mov	BYTE PTR _byte_380DD,0
+;|***     word_380D8 = 0;
+; Line 10
+	*** 000026	c7 06 00 00 00 00 	mov	WORD PTR _word_380D8,0
+;|***     return result;
+; Line 11
+	*** 00002c	eb 00 			jmp	SHORT $EX1718
+;|*** }
+; Line 12
+					$EX1718:
+	*** 00002e	8b e5 			mov	sp,bp
+	*** 000030	5d 			pop	bp
+	*** 000031	c3 			ret	
+
+_UpdateRotationMatrix	ENDP
+;|*** 
+;|*** int sub_1543B(int arg_0, int arg_2)
+;|*** {
+; Line 15
+	PUBLIC	_sub_1543B
+_sub_1543B	PROC NEAR
+	*** 000032	55 			push	bp
+	*** 000033	8b ec 			mov	bp,sp
+	*** 000035	83 ec 0e 		sub	sp,14
+;	arg_0 = 4
+;	arg_2 = 6
+;	sign_0 = -2
+;	sign_2 = -4
+;	abs_0 = -8
+;	abs_2 = -12
+;	result = -14
+;|***     int sign_0;
+;|***     int sign_2;
+;|***     unsigned long abs_0;
+;|***     unsigned long abs_2;
+;|***     int result;
+;|*** 
+;|***     sign_0 = 1;
+; Line 22
+	*** 000038	c7 46 fe 01 00 		mov	WORD PTR [bp-2],1	;sign_0
+;|***     sign_2 = 1;
+; Line 23
+	*** 00003d	c7 46 fc 01 00 		mov	WORD PTR [bp-4],1	;sign_2
+;|***     if (arg_0 < 0) {
+; Line 24
+	*** 000042	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;arg_0
+	*** 000046	7d 05 			jge	$I1728
+;|***         sign_0 = -1;
+; Line 25
+	*** 000048	c7 46 fe ff ff 		mov	WORD PTR [bp-2],-1	;sign_0
+;|***     }
+; Line 26
+;|***     if (arg_2 < 0) {
+; Line 27
+					$I1728:
+	*** 00004d	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;arg_2
+	*** 000051	7d 05 			jge	$I1729
+;|***         sign_2 = -1;
+; Line 28
+	*** 000053	c7 46 fc ff ff 		mov	WORD PTR [bp-4],-1	;sign_2
+;|***     }
+; Line 29
+;|*** 
+;|***     abs_0 = (unsigned long)(unsigned int)abs(arg_0);
+; Line 31
+					$I1729:
+	*** 000058	ff 76 04 		push	WORD PTR [bp+4]	;arg_0
+	*** 00005b	e8 00 00 		call	_abs
+	*** 00005e	83 c4 02 		add	sp,2
+	*** 000061	89 46 f8 		mov	WORD PTR [bp-8],ax	;abs_0
+	*** 000064	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0
+;|***     abs_2 = (unsigned long)(unsigned int)abs(arg_2);
+; Line 32
+	*** 000069	ff 76 06 		push	WORD PTR [bp+6]	;arg_2
+	*** 00006c	e8 00 00 		call	_abs
+	*** 00006f	83 c4 02 		add	sp,2
+	*** 000072	89 46 f4 		mov	WORD PTR [bp-12],ax	;abs_2
+	*** 000075	c7 46 f6 00 00 		mov	WORD PTR [bp-10],0
+;|***     result = (int)(abs_2 / abs_0);
+; Line 33
+	*** 00007a	ff 76 fa 		push	WORD PTR [bp-6]
+	*** 00007d	ff 76 f8 		push	WORD PTR [bp-8]	;abs_0
+	*** 000080	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 000083	50 			push	ax
+	*** 000084	e8 00 00 		call	__aNuldiv
+	*** 000087	89 46 f2 		mov	WORD PTR [bp-14],ax	;result
+;|***     result >>= 1;
+; Line 34
+	*** 00008a	d1 7e f2 		sar	WORD PTR [bp-14],1	;result
+;|***     result *= sign_2;
+; Line 35
+	*** 00008d	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;sign_2
+	*** 000090	f7 6e f2 		imul	WORD PTR [bp-14]	;result
+	*** 000093	89 46 f2 		mov	WORD PTR [bp-14],ax	;result
+;|***     result *= sign_0;
+; Line 36
+	*** 000096	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;sign_0
+	*** 000099	f7 6e f2 		imul	WORD PTR [bp-14]	;result
+	*** 00009c	89 46 f2 		mov	WORD PTR [bp-14],ax	;result
+;|***     return result;
+; Line 37
+	*** 00009f	eb 00 			jmp	SHORT $EX1722
+;|*** }
+; Line 38
+					$EX1722:
+	*** 0000a1	8b e5 			mov	sp,bp
+	*** 0000a3	5d 			pop	bp
+	*** 0000a4	c3 			ret	
+
+_sub_1543B	ENDP
+;|*** 
+;|*** int sub_15540(int angle)
+;|*** {
+; Line 41
+	PUBLIC	_sub_15540
+_sub_15540	PROC NEAR
+	*** 0000a5	55 			push	bp
+	*** 0000a6	8b ec 			mov	bp,sp
+;	angle = 4
+;|***     return 0x4000 - sub_154B7(angle);
+; Line 42
+	*** 0000a8	ff 76 04 		push	WORD PTR [bp+4]	;angle
+	*** 0000ab	e8 00 00 		call	_sub_154B7
+	*** 0000ae	83 c4 02 		add	sp,2
+	*** 0000b1	2d 00 40 		sub	ax,16384
+	*** 0000b4	f7 d8 			neg	ax
+	*** 0000b6	eb 00 			jmp	SHORT $EX1731
+;|*** }
+; Line 43
+					$EX1731:
+	*** 0000b8	8b e5 			mov	sp,bp
+	*** 0000ba	5d 			pop	bp
+	*** 0000bb	c3 			ret	
+
+_sub_15540	ENDP
+;|*** 
+;|*** /*
+;|*** Replicates the integer square root function at seg000:5557.
+;|*** It uses an iterative method to find the root.
+;|*** - An initial guess is made (n / 4).
+;|*** - The guess is refined in a loop by averaging the guess and (n / guess).
+;|*** - The loop terminates when the guess is stable.
+;|*** */
+;|*** int sub_15557(int n) // Sqrt(int n)
+;|*** {
+; Line 53
+	PUBLIC	_sub_15557
+_sub_15557	PROC NEAR
+	*** 0000bc	55 			push	bp
+	*** 0000bd	8b ec 			mov	bp,sp
+	*** 0000bf	83 ec 04 		sub	sp,4
+;	n = 4
+;	quotient = -4
+;	guess = -2
+;|***     int quotient;
+;|***     int guess;
+;|*** 
+;|***     n = abs(n);
+; Line 57
+	*** 0000c2	ff 76 04 		push	WORD PTR [bp+4]	;n
+	*** 0000c5	e8 00 00 		call	_abs
+	*** 0000c8	83 c4 02 		add	sp,2
+	*** 0000cb	89 46 04 		mov	WORD PTR [bp+4],ax	;n
+;|*** 
+;|***     if (n < 4)
+; Line 59
+	*** 0000ce	3d 04 00 		cmp	ax,4
+	*** 0000d1	7d 05 			jge	$I1736
+;|***     {
+; Line 60
+;|***         return 1;
+; Line 61
+	*** 0000d3	b8 01 00 		mov	ax,1
+	*** 0000d6	eb 34 			jmp	SHORT $EX1733
+;|***     }
+; Line 62
+;|***     /* Initial guess = n / 4. The assembly uses two signed arithmetic shifts
+;|***        to the right, which is equivalent to a signed division by 4. */
+;|***     guess = n >> 2;
+; Line 65
+					$I1736:
+	*** 0000d8	8b 46 04 		mov	ax,WORD PTR [bp+4]	;n
+	*** 0000db	d1 f8 			sar	ax,1
+	*** 0000dd	d1 f8 			sar	ax,1
+	*** 0000df	89 46 fe 		mov	WORD PTR [bp-2],ax	;guess
+;|*** 
+;|***     /* This do-while loop structure perfectly matches the assembly's
+;|***        logic of executing the block once and then checking the condition
+;|***        with a 'jg' at the end to jump back to the top. */
+;|***     do
+; Line 70
+					$D1737:
+;|***     {
+; Line 71
+;|***         quotient = n / guess;
+; Line 72
+	*** 0000e2	8b 46 04 		mov	ax,WORD PTR [bp+4]	;n
+	*** 0000e5	99 			cwd	
+	*** 0000e6	8b 4e fe 		mov	cx,WORD PTR [bp-2]	;guess
+	*** 0000e9	f7 f9 			idiv	cx
+	*** 0000eb	89 46 fc 		mov	WORD PTR [bp-4],ax	;quotient
+;|***         guess = (guess + quotient) >> 1; /* (guess + quotient) / 2 */
+; Line 73
+	*** 0000ee	8b c1 			mov	ax,cx
+	*** 0000f0	03 46 fc 		add	ax,WORD PTR [bp-4]	;quotient
+	*** 0000f3	d1 f8 			sar	ax,1
+	*** 0000f5	89 46 fe 		mov	WORD PTR [bp-2],ax	;guess
+;|***     } while (abs(guess - quotient) > 1);
+; Line 74
+	*** 0000f8	2b 46 fc 		sub	ax,WORD PTR [bp-4]	;quotient
+	*** 0000fb	50 			push	ax
+	*** 0000fc	e8 00 00 		call	_abs
+	*** 0000ff	83 c4 02 		add	sp,2
+	*** 000102	3d 01 00 		cmp	ax,1
+	*** 000105	7f db 			jg	$D1737
+;|*** 
+;|***     return guess;
+; Line 76
+	*** 000107	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;guess
+	*** 00010a	eb 00 			jmp	SHORT $EX1733
+;|*** }
+; Line 77
+					$EX1733:
+	*** 00010c	8b e5 			mov	sp,bp
+	*** 00010e	5d 			pop	bp
+	*** 00010f	c3 			ret	
+
+_sub_15557	ENDP
+;|*** 
+;|*** int Dist2D(int x, int y)
+;|*** {
+; Line 80
+	PUBLIC	_Dist2D
+_Dist2D	PROC NEAR
+	*** 000110	55 			push	bp
+	*** 000111	8b ec 			mov	bp,sp
+	*** 000113	83 ec 04 		sub	sp,4
+;	x = 4
+;	y = 6
+;	result = -4
+;|***     //int min_val, max_val;
+;|***     long result;
+;|*** 
+;|***     x = abs(x);
+; Line 84
+	*** 000116	ff 76 04 		push	WORD PTR [bp+4]	;x
+	*** 000119	e8 00 00 		call	_abs
+	*** 00011c	83 c4 02 		add	sp,2
+	*** 00011f	89 46 04 		mov	WORD PTR [bp+4],ax	;x
+;|***     y = abs(y);
+; Line 85
+	*** 000122	ff 76 06 		push	WORD PTR [bp+6]	;y
+	*** 000125	e8 00 00 		call	_abs
+	*** 000128	83 c4 02 		add	sp,2
+	*** 00012b	89 46 06 		mov	WORD PTR [bp+6],ax	;y
+;|*** // 0xcfc4
+;|***     result = (long)((y > x)?x:y) + ((long)((x >= y)?x:y) >> 1);
+; Line 87
+	*** 00012e	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 000131	3b 46 06 		cmp	ax,WORD PTR [bp+6]	;y
+	*** 000134	7d 03 			jge	$L20005
+	*** 000136	8b 46 06 		mov	ax,WORD PTR [bp+6]	;y
+					$L20005:
+	*** 000139	99 			cwd	
+	*** 00013a	d1 fa 			sar	dx,1
+	*** 00013c	d1 d8 			rcr	ax,1
+	*** 00013e	8b c8 			mov	cx,ax
+	*** 000140	8b 46 06 		mov	ax,WORD PTR [bp+6]	;y
+	*** 000143	3b 46 04 		cmp	ax,WORD PTR [bp+4]	;x
+	*** 000146	7e 03 			jle	$L20007
+	*** 000148	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+					$L20007:
+	*** 00014b	8b da 			mov	bx,dx
+	*** 00014d	99 			cwd	
+	*** 00014e	03 c8 			add	cx,ax
+	*** 000150	13 da 			adc	bx,dx
+	*** 000152	89 4e fc 		mov	WORD PTR [bp-4],cx	;result
+	*** 000155	89 5e fe 		mov	WORD PTR [bp-2],bx
+;|*** // 0xcff2
+;|***     if (result > 32767L) {
+; Line 89
+	*** 000158	0b db 			or	bx,bx
+	*** 00015a	7c 12 			jl	$I1744
+	*** 00015c	7f 06 			jg	$L20008
+	*** 00015e	81 f9 ff 7f 		cmp	cx,32767
+	*** 000162	76 0a 			jbe	$I1744
+					$L20008:
+;|***         result = 32767L;
+; Line 90
+	*** 000164	c7 46 fc ff 7f 		mov	WORD PTR [bp-4],32767	;result
+	*** 000169	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0
+;|***     }
+; Line 91
+;|*** 
+;|***     return (int)result;
+; Line 93
+					$I1744:
+	*** 00016e	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;result
+	*** 000171	eb 00 			jmp	SHORT $EX1742
+;|*** }
+; Line 94
+					$EX1742:
+	*** 000173	8b e5 			mov	sp,bp
+	*** 000175	5d 			pop	bp
+	*** 000176	c3 			ret	
+
+_Dist2D	ENDP
+;|*** 
+;|*** int ARCTAN(int y, int x)  /* assuming arg_0 = y, arg_2 = x based on special cases */  // D008
+;|*** {
+; Line 97
+	PUBLIC	_ARCTAN
+_ARCTAN	PROC NEAR
+	*** 000177	55 			push	bp
+	*** 000178	8b ec 			mov	bp,sp
+	*** 00017a	83 ec 18 		sub	sp,24
+;	y = 4
+;	x = 6
+;	abs_y = -24
+;	abs_x = -22
+;	max_val = -16
+;	min_val = -12
+;	t = -10
+;	diff = -18
+;	flag = -20
+;	a = -4
+;	coeff = -8
+;	angle = -14
+;|***     int abs_y, abs_x, max_val, min_val, t, diff, flag;  // D008: var_E, var_C, var_A, var_4, var_2
+;|***     long a, coeff;  // D008: var_A (dword)
+;|***     int angle;  // D008: var_4
+;|*** 
+;|***     if (y == 0) {  // D00F
+; Line 102
+	*** 00017d	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;y
+	*** 000181	75 14 			jne	$I1760
+;|***         if (x > 0) {  // D015
+; Line 103
+	*** 000183	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;x
+	*** 000187	7e 08 			jle	$I1759
+;|***             return 0x4000;  // D036
+; Line 104
+	*** 000189	b8 00 40 		mov	ax,16384
+	*** 00018c	e9 4f 01 		jmp	$I1779
+;|***         } else {
+; Line 105
+	*** 00018f	eb 06 			jmp	SHORT $I1760
+					$I1759:
+;|***             return 0xC000;  // D03E
+; Line 106
+	*** 000191	b8 00 c0 		mov	ax,-16384
+	*** 000194	e9 47 01 		jmp	$I1779
+;|***         }
+; Line 107
+					$I1760:
+;|***     }
+; Line 108
+;|***     if (x == 0) {  // D02A
+; Line 109
+	*** 000197	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;x
+	*** 00019b	75 13 			jne	$I1763
+;|***         if (y > 0) {  // D019
+; Line 110
+	*** 00019d	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;y
+	*** 0001a1	7e 07 			jle	$I1762
+;|***             return 0;  // D01B
+; Line 111
+	*** 0001a3	2b c0 			sub	ax,ax
+	*** 0001a5	e9 36 01 		jmp	$I1779
+;|***         } else {
+; Line 112
+	*** 0001a8	eb 06 			jmp	SHORT $I1763
+					$I1762:
+;|***             return 0x8000;  // D022
+; Line 113
+	*** 0001aa	b8 00 80 		mov	ax,-32768
+	*** 0001ad	e9 2e 01 		jmp	$I1779
+;|***         }
+; Line 114
+					$I1763:
+;|***     }
+; Line 115
+;|*** 
+;|***     abs_y = abs(y);  // D046
+; Line 117
+	*** 0001b0	ff 76 04 		push	WORD PTR [bp+4]	;y
+	*** 0001b3	e8 00 00 		call	_abs
+	*** 0001b6	83 c4 02 		add	sp,2
+	*** 0001b9	89 46 e8 		mov	WORD PTR [bp-24],ax	;abs_y
+;|***     abs_x = abs(x);  // D04F
+; Line 118
+	*** 0001bc	ff 76 06 		push	WORD PTR [bp+6]	;x
+	*** 0001bf	e8 00 00 		call	_abs
+	*** 0001c2	83 c4 02 		add	sp,2
+	*** 0001c5	89 46 ea 		mov	WORD PTR [bp-22],ax	;abs_x
+;|*** 
+;|***     if (abs_y > abs_x) {  // D05A
+; Line 120
+	*** 0001c8	39 46 e8 		cmp	WORD PTR [bp-24],ax	;abs_y
+	*** 0001cb	7e 13 			jle	$I1764
+;|***         max_val = abs_y;  // D0A6
+; Line 121
+	*** 0001cd	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;abs_y
+	*** 0001d0	89 46 f0 		mov	WORD PTR [bp-16],ax	;max_val
+;|***         min_val = abs_x;  // D08F
+; Line 122
+	*** 0001d3	8b 46 ea 		mov	ax,WORD PTR [bp-22]	;abs_x
+	*** 0001d6	89 46 f4 		mov	WORD PTR [bp-12],ax	;min_val
+;|***         flag = 0;  // D0B2
+; Line 123
+	*** 0001d9	c7 46 ec 00 00 		mov	WORD PTR [bp-20],0	;flag
+;|***     } else {
+; Line 124
+	*** 0001de	eb 11 			jmp	SHORT $I1765
+					$I1764:
+;|***         max_val = abs_x;  // D05E
+; Line 125
+	*** 0001e0	8b 46 ea 		mov	ax,WORD PTR [bp-22]	;abs_x
+	*** 0001e3	89 46 f0 		mov	WORD PTR [bp-16],ax	;max_val
+;|***         min_val = abs_y;  // D0A9
+; Line 126
+	*** 0001e6	8b 46 e8 		mov	ax,WORD PTR [bp-24]	;abs_y
+	*** 0001e9	89 46 f4 		mov	WORD PTR [bp-12],ax	;min_val
+;|***         flag = 1;  // D084
+; Line 127
+	*** 0001ec	c7 46 ec 01 00 		mov	WORD PTR [bp-20],1	;flag
+;|***     }
+; Line 128
+					$I1765:
+;|*** 
+;|***     t = (int)(((long)min_val << 14) / max_val);  // D06A-D0C3
+; Line 130
+	*** 0001f1	8b 46 f0 		mov	ax,WORD PTR [bp-16]	;max_val
+	*** 0001f4	99 			cwd	
+	*** 0001f5	52 			push	dx
+	*** 0001f6	50 			push	ax
+	*** 0001f7	8b 46 f4 		mov	ax,WORD PTR [bp-12]	;min_val
+	*** 0001fa	99 			cwd	
+	*** 0001fb	b1 0e 			mov	cl,14
+					$L20009:
+	*** 0001fd	d1 e0 			shl	ax,1
+	*** 0001ff	d1 d2 			rcl	dx,1
+	*** 000201	fe c9 			dec	cl
+	*** 000203	74 02 			je	$L20010
+	*** 000205	eb f6 			jmp	SHORT $L20009
+					$L20010:
+	*** 000207	52 			push	dx
+	*** 000208	50 			push	ax
+	*** 000209	e8 00 00 		call	__aNldiv
+	*** 00020c	89 46 f6 		mov	WORD PTR [bp-10],ax	;t
+;|*** 
+;|***     diff = abs(0x1333 - t);  // D0D5-D0D9
+; Line 132
+	*** 00020f	b8 33 13 		mov	ax,4915
+	*** 000212	2b 46 f6 		sub	ax,WORD PTR [bp-10]	;t
+	*** 000215	50 			push	ax
+	*** 000216	e8 00 00 		call	_abs
+	*** 000219	83 c4 02 		add	sp,2
+	*** 00021c	89 46 ee 		mov	WORD PTR [bp-18],ax	;diff
+;|*** 
+;|***     a = ((long)0xB00 * diff) >> 14;  // D0CC-D0E2
+; Line 134
+	*** 00021f	b8 00 0b 		mov	ax,2816
+	*** 000222	99 			cwd	
+	*** 000223	52 			push	dx
+	*** 000224	50 			push	ax
+	*** 000225	8b 46 ee 		mov	ax,WORD PTR [bp-18]	;diff
+	*** 000228	99 			cwd	
+	*** 000229	52 			push	dx
+	*** 00022a	50 			push	ax
+	*** 00022b	e8 00 00 		call	__aNlmul
+	*** 00022e	b1 0e 			mov	cl,14
+					$L20012:
+	*** 000230	d1 fa 			sar	dx,1
+	*** 000232	d1 d8 			rcr	ax,1
+	*** 000234	fe c9 			dec	cl
+	*** 000236	74 02 			je	$L20013
+	*** 000238	eb f6 			jmp	SHORT $L20012
+					$L20013:
+	*** 00023a	89 46 fc 		mov	WORD PTR [bp-4],ax	;a
+	*** 00023d	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 
+;|***     coeff = 0x2800 - a;  // D0EF
+; Line 136
+	*** 000240	b8 00 28 		mov	ax,10240
+	*** 000243	99 			cwd	
+	*** 000244	2b 46 fc 		sub	ax,WORD PTR [bp-4]	;a
+	*** 000247	1b 56 fe 		sbb	dx,WORD PTR [bp-2]
+	*** 00024a	89 46 f8 		mov	WORD PTR [bp-8],ax	;coeff
+	*** 00024d	89 56 fa 		mov	WORD PTR [bp-6],dx
+;|*** 
+;|***     angle = (int)((coeff * (long)t) >> 14);  // D0FE-D103
+; Line 138
+	*** 000250	52 			push	dx
+	*** 000251	50 			push	ax
+	*** 000252	8b 46 f6 		mov	ax,WORD PTR [bp-10]	;t
+	*** 000255	99 			cwd	
+	*** 000256	52 			push	dx
+	*** 000257	50 			push	ax
+	*** 000258	e8 00 00 		call	__aNlmul
+	*** 00025b	b1 0e 			mov	cl,14
+					$L20015:
+	*** 00025d	d1 fa 			sar	dx,1
+	*** 00025f	d1 d8 			rcr	ax,1
+	*** 000261	fe c9 			dec	cl
+	*** 000263	74 02 			je	$L20016
+	*** 000265	eb f6 			jmp	SHORT $L20015
+					$L20016:
+	*** 000267	89 46 f2 		mov	WORD PTR [bp-14],ax	;angle
+;|*** 
+;|***     if (y > 0) {  // D10E
+; Line 140
+	*** 00026a	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;y
+	*** 00026e	7e 36 			jle	$I1766
+;|***         if (x > 0) {  // D114
+; Line 141
+	*** 000270	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;x
+	*** 000274	7e 17 			jle	$I1767
+;|***             if (flag) {  // D11A
+; Line 142
+	*** 000276	83 7e ec 00 		cmp	WORD PTR [bp-20],0	;flag
+	*** 00027a	74 0a 			je	$I1768
+;|***                 return 0x4000 - angle;  // D120-D123
+; Line 143
+	*** 00027c	b8 00 40 		mov	ax,16384
+	*** 00027f	2b 46 f2 		sub	ax,WORD PTR [bp-14]	;angle
+	*** 000282	eb 5a 			jmp	SHORT $I1779
+;|***             } else {
+; Line 144
+	*** 000284	eb 05 			jmp	SHORT $I1769
+					$I1768:
+;|***                 return angle;  // D128
+; Line 145
+	*** 000286	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;angle
+	*** 000289	eb 53 			jmp	SHORT $I1779
+;|***             }
+; Line 146
+					$I1769:
+;|***         } else {
+; Line 147
+	*** 00028b	eb 17 			jmp	SHORT $I1772
+					$I1767:
+;|***             if (flag) {  // D12E
+; Line 148
+	*** 00028d	83 7e ec 00 		cmp	WORD PTR [bp-20],0	;flag
+	*** 000291	74 0a 			je	$I1771
+;|***                 return angle + 0xC000;  // D134
+; Line 149
+	*** 000293	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;angle
+	*** 000296	80 c4 c0 		add	ah,192
+	*** 000299	eb 43 			jmp	SHORT $I1779
+;|***             } else {
+; Line 150
+	*** 00029b	eb 07 			jmp	SHORT $I1772
+					$I1771:
+;|***                 return -angle;  // D156
+; Line 151
+	*** 00029d	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;angle
+	*** 0002a0	f7 d8 			neg	ax
+	*** 0002a2	eb 3a 			jmp	SHORT $I1779
+;|***             }
+; Line 152
+					$I1772:
+;|***         }
+; Line 153
+;|***     } else {
+; Line 154
+	*** 0002a4	eb 38 			jmp	SHORT $I1779
+					$I1766:
+;|***         if (x > 0) {  // D142
+; Line 155
+	*** 0002a6	83 7e 06 00 		cmp	WORD PTR [bp+6],0	;x
+	*** 0002aa	7e 1a 			jle	$I1774
+;|***             if (flag) {  // D148
+; Line 156
+	*** 0002ac	83 7e ec 00 		cmp	WORD PTR [bp-20],0	;flag
+	*** 0002b0	74 0a 			je	$I1775
+;|***                 return angle + 0x4000;  // D16A
+; Line 157
+	*** 0002b2	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;angle
+	*** 0002b5	80 c4 40 		add	ah,64
+	*** 0002b8	eb 24 			jmp	SHORT $I1779
+;|***             } else {
+; Line 158
+	*** 0002ba	eb 08 			jmp	SHORT $I1776
+					$I1775:
+;|***                 return 0x8000 - angle;  // D13C-D123
+; Line 159
+	*** 0002bc	b8 00 80 		mov	ax,-32768
+	*** 0002bf	2b 46 f2 		sub	ax,WORD PTR [bp-14]	;angle
+	*** 0002c2	eb 1a 			jmp	SHORT $I1779
+;|***             }
+; Line 160
+					$I1776:
+;|***         } else {
+; Line 161
+	*** 0002c4	eb 18 			jmp	SHORT $I1779
+					$I1774:
+;|***             if (flag) {  // D15E
+; Line 162
+	*** 0002c6	83 7e ec 00 		cmp	WORD PTR [bp-20],0	;flag
+	*** 0002ca	74 0a 			je	$I1778
+;|***                 return 0xC000 - angle;  // D164-D123
+; Line 163
+	*** 0002cc	b8 00 c0 		mov	ax,-16384
+	*** 0002cf	2b 46 f2 		sub	ax,WORD PTR [bp-14]	;angle
+	*** 0002d2	eb 0a 			jmp	SHORT $I1779
+;|***             } else {
+; Line 164
+	*** 0002d4	eb 08 			jmp	SHORT $I1779
+					$I1778:
+;|***                 return angle + 0x8000;  // D16A
+; Line 165
+	*** 0002d6	8b 46 f2 		mov	ax,WORD PTR [bp-14]	;angle
+	*** 0002d9	80 c4 80 		add	ah,128
+	*** 0002dc	eb 00 			jmp	SHORT $I1779
+;|***             }
+; Line 166
+					$I1779:
+;|***         }
+; Line 167
+;|***     }
+; Line 168
+;|*** }
+; Line 169
+	*** 0002de	8b e5 			mov	sp,bp
+	*** 0002e0	5d 			pop	bp
+	*** 0002e1	c3 			ret	
+
+_ARCTAN	ENDP
+_TEXT	ENDS
+END

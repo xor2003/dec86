@@ -1,0 +1,1556 @@
+;	Static Name Aliases
+;
+;	$S841_CurrRioAnim	EQU	CurrRioAnim
+;	$S842_LastDesignated	EQU	LastDesignated
+;	$S843_AnimDir	EQU	AnimDir
+;	$S844_LastPos	EQU	LastPos
+	TITLE   riohead.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+PUBLIC  _head_proj_x
+PUBLIC  _head_proj_y
+PUBLIC  _head_proj_z
+PUBLIC  _behindus
+PUBLIC  _closeplane
+PUBLIC  _RioHead
+PUBLIC  _RioLeftShould
+PUBLIC  _RioLeftArm
+PUBLIC  _RioRightShould
+PUBLIC  _RioAnim
+PUBLIC  _AnimCnt
+PUBLIC  _TestIt
+EXTRN	_labs:NEAR
+EXTRN	_TrgMul:NEAR
+EXTRN	_MapInEMSSprite:NEAR
+EXTRN	_TransRectCopy:NEAR
+EXTRN	__aNNalshr:NEAR
+EXTRN	__aNldiv:NEAR
+_BSS      SEGMENT
+COMM NEAR	_ntmp:	 1:	 10
+_BSS      ENDS
+EXTRN	_View:WORD
+EXTRN	_ps:BYTE
+EXTRN	_Alt:WORD
+EXTRN	_PxLng:DWORD
+EXTRN	_PyLng:DWORD
+EXTRN	_Rp1:WORD
+EXTRN	_VM:BYTE
+EXTRN	_DESIGNATED:WORD
+EXTRN	_LOCKED:WORD
+_DATA      SEGMENT
+_RioHead	DW	00H
+	DW	00H
+	DW	04bH
+	DW	051H
+	DW	00H
+	DW	0b4H
+	DW	040H
+	DW	04cH
+	DW	00H
+	DW	048H
+	DW	050H
+	DW	00H
+	DW	0baH
+	DW	041H
+	DW	095H
+	DW	00H
+	DW	04cH
+	DW	050H
+	DW	00H
+	DW	0baH
+	DW	041H
+	DW	0e2H
+	DW	00H
+	DW	050H
+	DW	050H
+	DW	00H
+	DW	0c3H
+	DW	041H
+	DW	0e6H
+	DW	00H
+	DW	058H
+	DW	04eH
+	DW	01H
+	DW	0bfH
+	DW	043H
+	DW	00H
+	DW	052H
+	DW	058H
+	DW	050H
+	DW	00H
+	DW	0bdH
+	DW	041H
+	DW	059H
+	DW	051H
+	DW	062H
+	DW	050H
+	DW	00H
+	DW	0afH
+	DW	041H
+	DW	00H
+	DW	00H
+	DW	049H
+	DW	04fH
+	DW	01H
+	DW	0b4H
+	DW	042H
+	DW	04aH
+	DW	00H
+	DW	04aH
+	DW	04fH
+	DW	01H
+	DW	0afH
+	DW	042H
+	DW	095H
+	DW	00H
+	DW	050H
+	DW	04eH
+	DW	01H
+	DW	0a9H
+	DW	043H
+	DW	0b4H
+	DW	050H
+	DW	05bH
+	DW	04cH
+	DW	01H
+	DW	09eH
+	DW	045H
+	DW	0bdH
+	DW	051H
+	DW	06dH
+	DW	047H
+	DW	00H
+	DW	08cH
+	DW	04aH
+	DW	05aH
+	DW	050H
+	DW	059H
+	DW	050H
+	DW	01H
+	DW	0a0H
+	DW	041H
+	DW	00H
+	DW	050H
+	DW	059H
+	DW	050H
+	DW	01H
+	DW	0a0H
+	DW	041H
+ 	DB	14 DUP(0)
+
+_RioLeftShould	DW	00H
+	DW	0a3H
+	DW	026H
+	DW	01fH
+	DW	00H
+	DW	093H
+	DW	083H
+	DW	027H
+	DW	0a3H
+	DW	02fH
+	DW	021H
+	DW	00H
+	DW	093H
+	DW	081H
+	DW	057H
+	DW	0a3H
+	DW	02cH
+	DW	021H
+	DW	00H
+	DW	093H
+	DW	081H
+	DW	0114H
+	DW	04fH
+	DW	02bH
+	DW	01dH
+	DW	01H
+	DW	093H
+	DW	084H
+	DW	0114H
+	DW	06dH
+	DW	02bH
+	DW	01dH
+	DW	01H
+	DW	093H
+	DW	085H
+	DW	0114H
+	DW	08bH
+	DW	02bH
+	DW	01dH
+	DW	01H
+	DW	093H
+	DW	085H
+	DW	0114H
+	DW	0a9H
+	DW	02bH
+	DW	018H
+	DW	01H
+	DW	093H
+	DW	08aH
+	DW	0b4H
+	DW	09dH
+	DW	02eH
+	DW	016H
+	DW	01H
+	DW	090H
+	DW	08cH
+	DW	0b4H
+	DW	0b4H
+	DW	02fH
+	DW	010H
+	DW	01H
+	DW	08fH
+	DW	092H
+	DW	0e6H
+	DW	09dH
+	DW	02dH
+	DW	013H
+	DW	01H
+	DW	091H
+	DW	08fH
+	DW	0e6H
+	DW	0b1H
+	DW	02dH
+	DW	015H
+	DW	01H
+	DW	091H
+	DW	08dH
+ 	DB	28 DUP(0)
+
+_RioLeftArm	DW	00H
+	DW	0a1H
+	DW	022H
+	DW	024H
+	DW	01H
+	DW	086H
+	DW	0a3H
+	DW	023H
+	DW	0a1H
+	DW	020H
+	DW	024H
+	DW	01H
+	DW	086H
+	DW	0a3H
+	DW	044H
+	DW	0a1H
+	DW	022H
+	DW	024H
+	DW	01H
+	DW	084H
+	DW	0a3H
+	DW	067H
+	DW	0a1H
+	DW	024H
+	DW	024H
+	DW	01H
+	DW	084H
+	DW	0a3H
+	DW	08cH
+	DW	0a1H
+	DW	022H
+	DW	024H
+	DW	01H
+	DW	086H
+	DW	0a3H
+ 	DB	14 DUP(0)
+
+_RioRightShould	DW	0edH
+	DW	099H
+	DW	01bH
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0124H
+	DW	0b7H
+	DW	01bH
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0edH
+	DW	0a8H
+	DW	01bH
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0edH
+	DW	0b7H
+	DW	01bH
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0109H
+	DW	099H
+	DW	01aH
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0109H
+	DW	0a8H
+	DW	01aH
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0109H
+	DW	0b7H
+	DW	019H
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0124H
+	DW	099H
+	DW	01bH
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0124H
+	DW	0a8H
+	DW	019H
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+	DW	0d6H
+	DW	099H
+	DW	016H
+	DW	0eH
+	DW	00H
+	DW	0106H
+	DW	089H
+ 	DB	14 DUP(0)
+
+_RioAnim	DW	00H
+	DW	00H
+	DW	00H
+	DW	00H
+	DW	01H
+	DW	00H
+	DW	00H
+	DW	00H
+	DW	02H
+	DW	00H
+	DW	00H
+	DW	00H
+	DW	03H
+	DW	01H
+	DW	00H
+	DW	01H
+	DW	04H
+	DW	02H
+	DW	00H
+	DW	02H
+	DW	05H
+	DW	01H
+	DW	00H
+	DW	03H
+	DW	06H
+	DW	03H
+	DW	00H
+	DW	04H
+	DW	07H
+	DW	04H
+	DW	00H
+	DW	00H
+	DW	08H
+	DW	05H
+	DW	00H
+	DW	06H
+	DW	09H
+	DW	06H
+	DW	00H
+	DW	06H
+	DW	0aH
+	DW	07H
+	DW	01H
+	DW	07H
+	DW	0bH
+	DW	08H
+	DW	02H
+	DW	08H
+	DW	0cH
+	DW	09H
+	DW	03H
+	DW	07H
+	DW	0dH
+	DW	0aH
+	DW	04H
+	DW	06H
+ 	DB	8 DUP(0)
+
+_AnimCnt	DW	00H
+_TestIt	DW	00H
+_head_proj_x	DW	00H
+_head_proj_y	DW	00H
+_head_proj_z	DW	00H
+_behindus	DW	00H
+_closeplane	DW	0ffffH
+$S841_CurrRioAnim	DW	00H
+$S842_LastDesignated	DW	0ffffH
+$S843_AnimDir	DW	01H
+$S844_LastPos	DW	00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include <stdio.h>
+; Line 1
+;|*** #include <stdlib.h>
+; Line 2
+;|*** #include <bios.h>
+; Line 3
+;|*** #include <dos.h>
+; Line 4
+;|*** #include "types.h"
+; Line 5
+;|*** #include "library.h"
+; Line 6
+;|*** #include "world.h"
+; Line 7
+;|*** #include "sdata.h"
+; Line 8
+;|*** #include "common.h"
+; Line 9
+;|*** #include "f15defs.h"
+; Line 10
+;|*** #include "cockpit.h"
+; Line 11
+;|*** #include "carr.h"
+; Line 12
+;|*** #include "awg9.h"
+; Line 13
+;|*** #include "armt.h"
+; Line 14
+;|*** 
+;|*** typedef struct {
+;|*** 	int head;
+;|*** 	int lshoulder;
+;|*** 	int larm;
+;|*** 	int rshoulder;
+;|*** } ranim;
+;|*** 
+;|*** typedef struct {
+;|*** 	int x;
+;|*** 	int y;
+;|*** 	int w;
+;|*** 	int h;
+;|*** 	int page;
+;|*** 	int px;
+;|*** 	int py;
+;|*** } animtype;
+;|*** 
+;|*** 
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** // THIS SUCKS!!! THIS WAS NOT MY IDEA - I REALIZE THAT THIS TAKES UP TO MUCH
+;|*** // SPACE, BUT BLAM MIKE R.
+;|*** 
+;|*** 
+;|*** animtype RioHead[15] =
+;|*** {
+;|*** 	0,   0,  75, 81, 0, 180, 64,
+;|*** 	76,  0,  72, 80, 0, 186, 65,
+;|*** 	149, 0,  76, 80, 0, 186, 65,
+;|*** 	226, 0,  80, 80, 0, 195, 65,
+;|*** 	230, 0,  88, 78, 1, 191, 67,
+;|*** 	0,   82, 88, 80, 0, 189, 65,
+;|*** 	89,  81, 98, 80, 0, 175, 65,
+;|*** 	0,   0,  73, 79, 1, 180, 66,
+;|*** 	74,  0,  74, 79, 1, 175, 66,
+;|*** 	149, 0,  80, 78, 1, 169, 67,
+;|*** 	180, 80, 91, 76, 1, 158, 69,
+;|*** 	189, 81, 109,71, 0, 140, 74,
+;|*** 	90,  80, 89, 80, 1, 160, 65,
+;|*** 	0,   80, 89, 80, 1, 160, 65,
+;|*** };
+;|*** 
+;|*** animtype RioLeftShould[13] =
+;|*** {
+;|*** 	0,   163, 38, 31, 0, 147,131,
+;|*** 	39,  163, 47, 33, 0, 147,129,
+;|*** 	87,  163, 44, 33, 0, 147,129,
+;|*** 	276, 79,  43, 29, 1, 147,132,
+;|*** 	276, 109, 43, 29, 1, 147,133,
+;|*** 	276, 139, 43, 29, 1, 147,133,
+;|*** 	276, 169, 43, 24, 1, 147,138,
+;|*** 	180, 157, 46, 22, 1, 144,140,
+;|*** 	180, 180, 47, 16, 1, 143,146,
+;|*** 	230, 157, 45, 19, 1, 145,143,
+;|*** 	230, 177, 45, 21, 1, 145,141,
+;|*** };
+;|*** 
+;|*** animtype RioLeftArm[6] =
+;|*** {
+;|*** 	0,  161, 34, 36, 1,  134,163,
+;|*** 	35, 161, 32, 36, 1,  134,163,
+;|*** 	68, 161, 34, 36, 1,  132,163,
+;|*** 	103,161, 36, 36, 1,  132,163,
+;|*** 	140,161, 34, 36, 1,  134,163,
+;|*** };
+;|*** 
+;|*** animtype RioRightShould[11] =
+;|*** {
+;|*** 	237,153,27,14, 0, 262,137,
+;|*** 	292,183,27,14, 0, 262,137,
+;|*** 	237,168,27,14, 0, 262,137,
+;|*** 	237,183,27,14, 0, 262,137,
+;|*** 	265,153,26,14, 0, 262,137,
+;|*** 	265,168,26,14, 0, 262,137,
+;|*** 	265,183,25,14, 0, 262,137,
+;|*** 	292,153,27,14, 0, 262,137,
+;|*** 	292,168,25,14, 0, 262,137,
+;|*** 	214,153,22,14, 0, 262,137,
+;|*** };
+;|*** 
+;|*** ranim RioAnim[15] =
+;|*** {
+;|*** 	0,  0,  0, 0,
+;|*** 	1,  0,  0, 0,
+;|*** 	2,  0,  0, 0,
+;|*** 	3,  1,  0, 1,
+;|*** 	4,  2,  0, 2,
+;|*** 	5,  1,  0, 3,
+;|*** 	6,  3,  0, 4,
+;|*** 	7,  4,  0, 0,
+;|*** 	8,  5,  0, 6,
+;|*** 	9,  6,  0, 6,
+;|*** 	10, 7,  1, 7,
+;|*** 	11, 8,  2, 8,
+;|*** 	12, 9,  3, 7,
+;|*** 	13, 10, 4, 6,
+;|*** };
+;|*** 
+;|*** extern  unsigned Alt;
+;|*** extern  long	 PxLng,PyLng;
+;|*** extern  UWORD	 MouseSprite;
+;|*** extern	int      OurHead;
+;|*** extern	UWORD    Rtime;
+;|*** extern  int      View;
+;|*** extern  RPS      *Rp1, RpX1, *Rp2, *Rp3, *Rp3D;
+;|*** extern  UWORD far TopCockpitMask[];
+;|*** extern  int      GRPAGE0[];
+;|*** extern  int      VM[3][3];
+;|*** extern carriers far carrier;
+;|*** extern int AIWingMan;
+;|*** 
+;|*** 
+;|*** extern struct PlaneData far *GetPlanePtr(int PlaneNo);
+;|*** extern struct MissileData far *GetMissilePtr(int MissileNo);
+;|*** extern struct RadarData far *GetRadarPtr(int RadarNo);
+;|*** 
+;|*** extern int whichourcarr;
+;|*** extern  COORD   Px,Py;
+;|*** 
+;|*** int AnimCnt=0;
+;|*** int TestIt=0;
+;|*** int head_proj_x=0;
+;|*** int head_proj_y=0;
+;|*** int head_proj_z=0;
+;|*** int behindus=0;
+;|*** int closeplane = -1;
+;|*** 
+;|*** 
+;|*** //***************************************************************************
+;|*** // There can be different RIO animations running
+;|*** // (1) Just searching the sky
+;|*** // (2) Watching the carrier
+;|*** // (3) Watching a Bandit during a dogfight
+;|*** // (4) Watching for additional Bandits during a dogfight
+;|*** //***************************************************************************
+;|*** DisplayRioHead()
+;|*** {
+; Line 153
+	PUBLIC	_DisplayRioHead
+_DisplayRioHead	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 1e 		sub	sp,30
+;	mseg = -26
+;	mpage = -22
+;	xheadpos = -24
+;	mirrorhead = -28
+;	who = -30
+;	Rptemp = -20
+;	Rtemp = -2
+;|*** 	int mseg;
+;|*** 	int mpage;
+;|*** 	static int CurrRioAnim=0;
+;|*** 	static int LastDesignated=-1;   // Who where we last looking at
+;|*** 	static int AnimDir=1;
+;|*** 	static int LastPos=0;
+;|*** 	int xheadpos=0;
+;|*** 	int mirrorhead;
+;|*** 	int who=-1;
+; Line 162
+	*** 000006	c7 46 e2 ff ff 		mov	WORD PTR [bp-30],-1	;who
+;|*** 
+;|*** 	RPS Rptemp  =  {1,  0,0, 319,198, JAM3, GREEN, BLACK, 1};
+; Line 164
+	*** 00000b	c7 46 f2 3f 01 		mov	WORD PTR [bp-14],319
+	*** 000010	c7 46 f4 c6 00 		mov	WORD PTR [bp-12],198
+	*** 000015	b8 02 00 		mov	ax,2
+	*** 000018	89 46 f6 		mov	WORD PTR [bp-10],ax
+	*** 00001b	89 46 f8 		mov	WORD PTR [bp-8],ax
+	*** 00001e	2b c0 			sub	ax,ax
+	*** 000020	89 46 e8 		mov	WORD PTR [bp-24],ax	;xheadpos
+	*** 000023	89 46 ee 		mov	WORD PTR [bp-18],ax
+	*** 000026	89 46 f0 		mov	WORD PTR [bp-16],ax
+	*** 000029	89 46 fa 		mov	WORD PTR [bp-6],ax
+	*** 00002c	b8 01 00 		mov	ax,1
+	*** 00002f	89 46 ec 		mov	WORD PTR [bp-20],ax	;Rptemp
+	*** 000032	89 46 fc 		mov	WORD PTR [bp-4],ax
+;|*** 	RPS *Rtemp = &Rptemp;
+; Line 165
+	*** 000035	8d 46 ec 		lea	ax,WORD PTR [bp-20]	;Rptemp
+	*** 000038	89 46 fe 		mov	WORD PTR [bp-2],ax	;Rtemp
+;|*** 
+;|*** 	if (View==REARLEFT) {
+; Line 167
+	*** 00003b	83 3e 00 00 04 		cmp	WORD PTR _View,4
+	*** 000040	75 0c 			jne	$I850
+;|*** 		xheadpos = ((319-139)-145);
+; Line 168
+	*** 000042	c7 46 e8 23 00 		mov	WORD PTR [bp-24],35	;xheadpos
+;|*** 		mirrorhead=1;
+; Line 169
+	*** 000047	c7 46 e4 01 00 		mov	WORD PTR [bp-28],1	;mirrorhead
+;|*** 	} else {
+; Line 170
+	*** 00004c	eb 0a 			jmp	SHORT $I851
+					$I850:
+;|*** 		xheadpos = 139;
+; Line 171
+	*** 00004e	c7 46 e8 8b 00 		mov	WORD PTR [bp-24],139	;xheadpos
+;|*** 		mirrorhead=0;
+; Line 172
+	*** 000053	c7 46 e4 00 00 		mov	WORD PTR [bp-28],0	;mirrorhead
+;|*** 	}
+; Line 173
+					$I851:
+;|*** 
+;|*** 	if (mseg=MapInEMSSprite(MISCSPRTSEG,1)) {
+; Line 175
+	*** 000058	b8 01 00 		mov	ax,1
+	*** 00005b	50 			push	ax
+	*** 00005c	b9 02 00 		mov	cx,2
+	*** 00005f	51 			push	cx
+	*** 000060	e8 00 00 		call	_MapInEMSSprite
+	*** 000063	83 c4 04 		add	sp,4
+	*** 000066	89 46 e6 		mov	WORD PTR [bp-26],ax	;mseg
+	*** 000069	0b c0 			or	ax,ax
+	*** 00006b	74 27 			je	$I853
+;|*** 		TransRectCopy(mseg,2,1,145,113,Rtemp,xheadpos,49,0,mirrorhead);
+; Line 176
+	*** 00006d	ff 76 e4 		push	WORD PTR [bp-28]	;mirrorhead
+	*** 000070	2b c9 			sub	cx,cx
+	*** 000072	51 			push	cx
+	*** 000073	b9 31 00 		mov	cx,49
+	*** 000076	51 			push	cx
+	*** 000077	ff 76 e8 		push	WORD PTR [bp-24]	;xheadpos
+	*** 00007a	ff 76 fe 		push	WORD PTR [bp-2]	;Rtemp
+	*** 00007d	b9 71 00 		mov	cx,113
+	*** 000080	51 			push	cx
+	*** 000081	b9 91 00 		mov	cx,145
+	*** 000084	51 			push	cx
+	*** 000085	b9 01 00 		mov	cx,1
+	*** 000088	51 			push	cx
+	*** 000089	b9 02 00 		mov	cx,2
+	*** 00008c	51 			push	cx
+	*** 00008d	50 			push	ax
+	*** 00008e	e8 00 00 		call	_TransRectCopy
+	*** 000091	83 c4 14 		add	sp,20
+;|*** 	}
+; Line 177
+;|*** 
+;|*** 	AnimCnt=1;
+; Line 179
+					$I853:
+	*** 000094	c7 06 ee 02 01 00 	mov	WORD PTR _AnimCnt,1
+;|*** 
+;|*** 	if (LOCKED!=-1)
+; Line 181
+	*** 00009a	83 3e 00 00 ff 		cmp	WORD PTR _LOCKED,-1
+	*** 00009f	74 06 			je	$I855
+;|*** 		who=LOCKED;
+; Line 182
+	*** 0000a1	a1 00 00 		mov	ax,WORD PTR _LOCKED
+	*** 0000a4	89 46 e2 		mov	WORD PTR [bp-30],ax	;who
+;|*** 
+;|*** 	if (DESIGNATED!=-1)
+; Line 184
+					$I855:
+	*** 0000a7	83 3e 00 00 ff 		cmp	WORD PTR _DESIGNATED,-1
+	*** 0000ac	74 06 			je	$I856
+;|*** 		who=DESIGNATED;
+; Line 185
+	*** 0000ae	a1 00 00 		mov	ax,WORD PTR _DESIGNATED
+	*** 0000b1	89 46 e2 		mov	WORD PTR [bp-30],ax	;who
+;|*** 	if (closeplane!=-1)
+; Line 186
+					$I856:
+	*** 0000b4	83 3e fa 02 ff 		cmp	WORD PTR _closeplane,-1
+	*** 0000b9	74 06 			je	$I857
+;|*** 		who=closeplane;
+; Line 187
+	*** 0000bb	a1 fa 02 		mov	ax,WORD PTR _closeplane
+	*** 0000be	89 46 e2 		mov	WORD PTR [bp-30],ax	;who
+;|*** 
+;|*** 	if (who==-1) {
+; Line 189
+					$I857:
+	*** 0000c1	83 7e e2 ff 		cmp	WORD PTR [bp-30],-1	;who
+	*** 0000c5	75 33 			jne	$I861
+;|*** 		if (HeadProject(ps[who].xL,ps[who].yL,ps[who].alt)==-1) {
+; Line 190
+	*** 0000c7	b8 28 00 		mov	ax,40
+	*** 0000ca	f7 6e e2 		imul	WORD PTR [bp-30]	;who
+	*** 0000cd	8b d8 			mov	bx,ax
+	*** 0000cf	ff b7 06 00 		push	WORD PTR _ps[bx+6]
+	*** 0000d3	ff b7 0e 00 		push	WORD PTR _ps[bx+14]
+	*** 0000d7	ff b7 0c 00 		push	WORD PTR _ps[bx+12]
+	*** 0000db	ff b7 0a 00 		push	WORD PTR _ps[bx+10]
+	*** 0000df	ff b7 08 00 		push	WORD PTR _ps[bx+8]
+	*** 0000e3	e8 00 00 		call	_HeadProject
+	*** 0000e6	83 c4 0a 		add	sp,10
+	*** 0000e9	40 			inc	ax
+	*** 0000ea	75 08 			jne	$I860
+;|*** 			AnimCnt=LastPos;
+; Line 191
+	*** 0000ec	a1 02 03 		mov	ax,WORD PTR $S844_LastPos
+	*** 0000ef	a3 ee 02 		mov	WORD PTR _AnimCnt,ax
+;|*** 		} else {
+; Line 192
+	*** 0000f2	eb 06 			jmp	SHORT $I861
+					$I860:
+;|*** 			AnimCnt=1;
+; Line 193
+	*** 0000f4	c7 06 ee 02 01 00 	mov	WORD PTR _AnimCnt,1
+;|*** 		}
+; Line 194
+					$I861:
+;|*** 	}
+; Line 195
+;|*** 
+;|*** 	LastPos=AnimCnt;
+; Line 197
+	*** 0000fa	a1 ee 02 		mov	ax,WORD PTR _AnimCnt
+	*** 0000fd	a3 02 03 		mov	WORD PTR $S844_LastPos,ax
+;|*** 
+;|*** 	if ((head_proj_x > 0) && (head_proj_y < 0)) AnimCnt=2;
+; Line 199
+	*** 000100	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000105	7e 0d 			jle	$I862
+	*** 000107	83 3e f4 02 00 		cmp	WORD PTR _head_proj_y,0
+	*** 00010c	7d 06 			jge	$I862
+	*** 00010e	c7 06 ee 02 02 00 	mov	WORD PTR _AnimCnt,2
+;|*** 	if ((head_proj_x > 0) && (head_proj_y < -15)) AnimCnt=3;
+; Line 200
+					$I862:
+	*** 000114	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000119	7e 0d 			jle	$I863
+	*** 00011b	83 3e f4 02 f1 		cmp	WORD PTR _head_proj_y,-15
+	*** 000120	7d 06 			jge	$I863
+	*** 000122	c7 06 ee 02 03 00 	mov	WORD PTR _AnimCnt,3
+;|*** 	if ((head_proj_x > 0) && (head_proj_y < -40)) AnimCnt=5;
+; Line 201
+					$I863:
+	*** 000128	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 00012d	7e 0d 			jle	$I864
+	*** 00012f	83 3e f4 02 d8 		cmp	WORD PTR _head_proj_y,-40
+	*** 000134	7d 06 			jge	$I864
+	*** 000136	c7 06 ee 02 05 00 	mov	WORD PTR _AnimCnt,5
+;|*** 	if ((head_proj_x > 0) && (head_proj_y < -60)) AnimCnt=6;
+; Line 202
+					$I864:
+	*** 00013c	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000141	7e 0d 			jle	$I865
+	*** 000143	83 3e f4 02 c4 		cmp	WORD PTR _head_proj_y,-60
+	*** 000148	7d 06 			jge	$I865
+	*** 00014a	c7 06 ee 02 06 00 	mov	WORD PTR _AnimCnt,6
+;|*** 
+;|*** 	if ((head_proj_x > 0) && (head_proj_y > 0)) AnimCnt=2;
+; Line 204
+					$I865:
+	*** 000150	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000155	7e 0d 			jle	$I866
+	*** 000157	83 3e f4 02 00 		cmp	WORD PTR _head_proj_y,0
+	*** 00015c	7e 06 			jle	$I866
+	*** 00015e	c7 06 ee 02 02 00 	mov	WORD PTR _AnimCnt,2
+;|*** 	if ((head_proj_x > 0) && (head_proj_y > 15)) AnimCnt=1;
+; Line 205
+					$I866:
+	*** 000164	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000169	7e 0d 			jle	$I867
+	*** 00016b	83 3e f4 02 0f 		cmp	WORD PTR _head_proj_y,15
+	*** 000170	7e 06 			jle	$I867
+	*** 000172	c7 06 ee 02 01 00 	mov	WORD PTR _AnimCnt,1
+;|*** 	if ((head_proj_x > 0) && (head_proj_y > 40)) AnimCnt=0;
+; Line 206
+					$I867:
+	*** 000178	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 00017d	7e 0d 			jle	$I868
+	*** 00017f	83 3e f4 02 28 		cmp	WORD PTR _head_proj_y,40
+	*** 000184	7e 06 			jle	$I868
+	*** 000186	c7 06 ee 02 00 00 	mov	WORD PTR _AnimCnt,0
+;|*** 	if ((head_proj_x > 0) && (head_proj_y > 60)) AnimCnt=4;
+; Line 207
+					$I868:
+	*** 00018c	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000191	7e 0d 			jle	$I869
+	*** 000193	83 3e f4 02 3c 		cmp	WORD PTR _head_proj_y,60
+	*** 000198	7e 06 			jle	$I869
+	*** 00019a	c7 06 ee 02 04 00 	mov	WORD PTR _AnimCnt,4
+;|*** 
+;|*** 	if ((head_proj_x < 0) && (head_proj_y < 0)) AnimCnt=9;
+; Line 209
+					$I869:
+	*** 0001a0	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 0001a5	7d 0d 			jge	$I870
+	*** 0001a7	83 3e f4 02 00 		cmp	WORD PTR _head_proj_y,0
+	*** 0001ac	7d 06 			jge	$I870
+	*** 0001ae	c7 06 ee 02 09 00 	mov	WORD PTR _AnimCnt,9
+;|*** 	if ((head_proj_x < 0) && (head_proj_y < -15)) AnimCnt=10;
+; Line 210
+					$I870:
+	*** 0001b4	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 0001b9	7d 0d 			jge	$I871
+	*** 0001bb	83 3e f4 02 f1 		cmp	WORD PTR _head_proj_y,-15
+	*** 0001c0	7d 06 			jge	$I871
+	*** 0001c2	c7 06 ee 02 0a 00 	mov	WORD PTR _AnimCnt,10
+;|*** 	if ((head_proj_x < 0) && (head_proj_y < -40)) AnimCnt=12;
+; Line 211
+					$I871:
+	*** 0001c8	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 0001cd	7d 0d 			jge	$I872
+	*** 0001cf	83 3e f4 02 d8 		cmp	WORD PTR _head_proj_y,-40
+	*** 0001d4	7d 06 			jge	$I872
+	*** 0001d6	c7 06 ee 02 0c 00 	mov	WORD PTR _AnimCnt,12
+;|*** 	if ((head_proj_x < 0) && (head_proj_y < -60)) AnimCnt=13;
+; Line 212
+					$I872:
+	*** 0001dc	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 0001e1	7d 0d 			jge	$I873
+	*** 0001e3	83 3e f4 02 c4 		cmp	WORD PTR _head_proj_y,-60
+	*** 0001e8	7d 06 			jge	$I873
+	*** 0001ea	c7 06 ee 02 0d 00 	mov	WORD PTR _AnimCnt,13
+;|*** 
+;|*** 	if ((head_proj_x < 0) && (head_proj_y > 0)) AnimCnt=9;
+; Line 214
+					$I873:
+	*** 0001f0	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 0001f5	7d 0d 			jge	$I874
+	*** 0001f7	83 3e f4 02 00 		cmp	WORD PTR _head_proj_y,0
+	*** 0001fc	7e 06 			jle	$I874
+	*** 0001fe	c7 06 ee 02 09 00 	mov	WORD PTR _AnimCnt,9
+;|*** 	if ((head_proj_x < 0) && (head_proj_y > 15)) AnimCnt=8;
+; Line 215
+					$I874:
+	*** 000204	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000209	7d 0d 			jge	$I875
+	*** 00020b	83 3e f4 02 0f 		cmp	WORD PTR _head_proj_y,15
+	*** 000210	7e 06 			jle	$I875
+	*** 000212	c7 06 ee 02 08 00 	mov	WORD PTR _AnimCnt,8
+;|*** 	if ((head_proj_x < 0) && (head_proj_y > 40)) AnimCnt=7;
+; Line 216
+					$I875:
+	*** 000218	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 00021d	7d 0d 			jge	$I876
+	*** 00021f	83 3e f4 02 28 		cmp	WORD PTR _head_proj_y,40
+	*** 000224	7e 06 			jle	$I876
+	*** 000226	c7 06 ee 02 07 00 	mov	WORD PTR _AnimCnt,7
+;|*** 	if ((head_proj_x < 0) && (head_proj_y > 60)) AnimCnt=11;
+; Line 217
+					$I876:
+	*** 00022c	83 3e f2 02 00 		cmp	WORD PTR _head_proj_x,0
+	*** 000231	7d 0d 			jge	$I877
+	*** 000233	83 3e f4 02 3c 		cmp	WORD PTR _head_proj_y,60
+	*** 000238	7e 06 			jle	$I877
+	*** 00023a	c7 06 ee 02 0b 00 	mov	WORD PTR _AnimCnt,11
+;|*** 
+;|*** 	mpage = RioHead[RioAnim[AnimCnt].head].page;
+; Line 219
+					$I877:
+	*** 000240	b1 03 			mov	cl,3
+	*** 000242	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 000246	d3 e3 			shl	bx,cl
+	*** 000248	8b 9f 76 02 		mov	bx,WORD PTR _RioAnim[bx]
+	*** 00024c	8b c3 			mov	ax,bx
+	*** 00024e	d1 e3 			shl	bx,1
+	*** 000250	03 d8 			add	bx,ax
+	*** 000252	d1 e3 			shl	bx,1
+	*** 000254	03 d8 			add	bx,ax
+	*** 000256	d1 e3 			shl	bx,1
+	*** 000258	8b 87 08 00 		mov	ax,WORD PTR _RioHead[bx+8]
+	*** 00025c	89 46 ea 		mov	WORD PTR [bp-22],ax	;mpage
+;|*** 	if (View==REARLEFT) {
+; Line 220
+	*** 00025f	83 3e 00 00 04 		cmp	WORD PTR _View,4
+	*** 000264	75 0e 			jne	$I878
+;|*** 		xheadpos = ((319-RioHead[RioAnim[AnimCnt].head].px)-RioHead[RioAnim[AnimCnt].head].w);
+; Line 221
+	*** 000266	b8 3f 01 		mov	ax,319
+	*** 000269	2b 87 04 00 		sub	ax,WORD PTR _RioHead[bx+4]
+	*** 00026d	2b 87 0a 00 		sub	ax,WORD PTR _RioHead[bx+10]
+	*** 000271	eb 1d 			jmp	SHORT $L20005
+	*** 000273	90 			nop	
+					$I878:
+;|*** 	} else {
+;|*** 		xheadpos = (RioHead[RioAnim[AnimCnt].head].px);
+; Line 223
+	*** 000274	b1 03 			mov	cl,3
+	*** 000276	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 00027a	d3 e3 			shl	bx,cl
+	*** 00027c	8b 9f 76 02 		mov	bx,WORD PTR _RioAnim[bx]
+	*** 000280	8b c3 			mov	ax,bx
+	*** 000282	d1 e3 			shl	bx,1
+	*** 000284	03 d8 			add	bx,ax
+	*** 000286	d1 e3 			shl	bx,1
+	*** 000288	03 d8 			add	bx,ax
+	*** 00028a	d1 e3 			shl	bx,1
+	*** 00028c	8b 87 0a 00 		mov	ax,WORD PTR _RioHead[bx+10]
+					$L20005:
+	*** 000290	89 46 e8 		mov	WORD PTR [bp-24],ax	;xheadpos
+;|*** 	}
+; Line 224
+;|*** 
+;|*** 	if ((mseg=MapInEMSSprite(HEAD1SEG,mpage))) {
+; Line 226
+	*** 000293	ff 76 ea 		push	WORD PTR [bp-22]	;mpage
+	*** 000296	b8 03 00 		mov	ax,3
+	*** 000299	50 			push	ax
+	*** 00029a	e8 00 00 		call	_MapInEMSSprite
+	*** 00029d	83 c4 04 		add	sp,4
+	*** 0002a0	89 46 e6 		mov	WORD PTR [bp-26],ax	;mseg
+	*** 0002a3	0b c0 			or	ax,ax
+	*** 0002a5	74 3f 			je	$I880
+;|*** 		TransRectCopy(mseg,RioHead[RioAnim[AnimCnt].head].x,
+;|*** 							RioHead[RioAnim[AnimCnt].head].y,
+;|*** 							RioHead[RioAnim[AnimCnt].head].w,
+;|*** 							RioHead[RioAnim[AnimCnt].head].h,
+;|*** 							Rtemp,
+;|*** 							xheadpos,
+;|*** 							(RioHead[RioAnim[AnimCnt].head].py),
+;|*** 							0,
+;|*** 							mirrorhead);
+; Line 235
+	*** 0002a7	ff 76 e4 		push	WORD PTR [bp-28]	;mirrorhead
+	*** 0002aa	2b c9 			sub	cx,cx
+	*** 0002ac	51 			push	cx
+	*** 0002ad	b1 03 			mov	cl,3
+	*** 0002af	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 0002b3	d3 e3 			shl	bx,cl
+	*** 0002b5	8b 9f 76 02 		mov	bx,WORD PTR _RioAnim[bx]
+	*** 0002b9	8b cb 			mov	cx,bx
+	*** 0002bb	d1 e3 			shl	bx,1
+	*** 0002bd	03 d9 			add	bx,cx
+	*** 0002bf	d1 e3 			shl	bx,1
+	*** 0002c1	03 d9 			add	bx,cx
+	*** 0002c3	d1 e3 			shl	bx,1
+	*** 0002c5	ff b7 0c 00 		push	WORD PTR _RioHead[bx+12]
+	*** 0002c9	ff 76 e8 		push	WORD PTR [bp-24]	;xheadpos
+	*** 0002cc	ff 76 fe 		push	WORD PTR [bp-2]	;Rtemp
+	*** 0002cf	ff b7 06 00 		push	WORD PTR _RioHead[bx+6]
+	*** 0002d3	ff b7 04 00 		push	WORD PTR _RioHead[bx+4]
+	*** 0002d7	ff b7 02 00 		push	WORD PTR _RioHead[bx+2]
+	*** 0002db	ff b7 00 00 		push	WORD PTR _RioHead[bx]
+	*** 0002df	50 			push	ax
+	*** 0002e0	e8 00 00 		call	_TransRectCopy
+	*** 0002e3	83 c4 14 		add	sp,20
+;|*** 	}
+; Line 236
+;|*** 
+;|*** 	mpage = RioLeftShould[RioAnim[AnimCnt].lshoulder].page;
+; Line 238
+					$I880:
+	*** 0002e6	b1 03 			mov	cl,3
+	*** 0002e8	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 0002ec	d3 e3 			shl	bx,cl
+	*** 0002ee	8b 9f 78 02 		mov	bx,WORD PTR _RioAnim[bx+2]
+	*** 0002f2	8b c3 			mov	ax,bx
+	*** 0002f4	d1 e3 			shl	bx,1
+	*** 0002f6	03 d8 			add	bx,ax
+	*** 0002f8	d1 e3 			shl	bx,1
+	*** 0002fa	03 d8 			add	bx,ax
+	*** 0002fc	d1 e3 			shl	bx,1
+	*** 0002fe	8b 87 da 00 		mov	ax,WORD PTR _RioLeftShould[bx+8]
+	*** 000302	89 46 ea 		mov	WORD PTR [bp-22],ax	;mpage
+;|*** 
+;|*** 	if (View==REARLEFT) {
+; Line 240
+	*** 000305	83 3e 00 00 04 		cmp	WORD PTR _View,4
+	*** 00030a	75 0e 			jne	$I881
+;|*** 		xheadpos = ((319-RioLeftShould[RioAnim[AnimCnt].lshoulder].px)-RioLeftShould[RioAnim[AnimCnt].lshoulder].w);
+; Line 241
+	*** 00030c	b8 3f 01 		mov	ax,319
+	*** 00030f	2b 87 d6 00 		sub	ax,WORD PTR _RioLeftShould[bx+4]
+	*** 000313	2b 87 dc 00 		sub	ax,WORD PTR _RioLeftShould[bx+10]
+	*** 000317	eb 1d 			jmp	SHORT $L20006
+	*** 000319	90 			nop	
+					$I881:
+;|*** 	} else {
+;|*** 		xheadpos = (RioLeftShould[RioAnim[AnimCnt].lshoulder].px);
+; Line 243
+	*** 00031a	b1 03 			mov	cl,3
+	*** 00031c	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 000320	d3 e3 			shl	bx,cl
+	*** 000322	8b 9f 78 02 		mov	bx,WORD PTR _RioAnim[bx+2]
+	*** 000326	8b c3 			mov	ax,bx
+	*** 000328	d1 e3 			shl	bx,1
+	*** 00032a	03 d8 			add	bx,ax
+	*** 00032c	d1 e3 			shl	bx,1
+	*** 00032e	03 d8 			add	bx,ax
+	*** 000330	d1 e3 			shl	bx,1
+	*** 000332	8b 87 dc 00 		mov	ax,WORD PTR _RioLeftShould[bx+10]
+					$L20006:
+	*** 000336	89 46 e8 		mov	WORD PTR [bp-24],ax	;xheadpos
+;|*** 	}
+; Line 244
+;|*** 
+;|*** 	if ((mseg=MapInEMSSprite(HEAD1SEG,mpage))) {
+; Line 246
+	*** 000339	ff 76 ea 		push	WORD PTR [bp-22]	;mpage
+	*** 00033c	b8 03 00 		mov	ax,3
+	*** 00033f	50 			push	ax
+	*** 000340	e8 00 00 		call	_MapInEMSSprite
+	*** 000343	83 c4 04 		add	sp,4
+	*** 000346	89 46 e6 		mov	WORD PTR [bp-26],ax	;mseg
+	*** 000349	0b c0 			or	ax,ax
+	*** 00034b	74 3f 			je	$I883
+;|*** 		TransRectCopy(mseg,RioLeftShould[RioAnim[AnimCnt].lshoulder].x,
+;|*** 							RioLeftShould[RioAnim[AnimCnt].lshoulder].y,
+;|*** 							RioLeftShould[RioAnim[AnimCnt].lshoulder].w,
+;|*** 							RioLeftShould[RioAnim[AnimCnt].lshoulder].h,
+;|*** 							Rtemp,
+;|*** 							xheadpos,
+;|*** 							RioLeftShould[RioAnim[AnimCnt].lshoulder].py,
+;|*** 							0,
+;|*** 							mirrorhead);
+; Line 255
+	*** 00034d	ff 76 e4 		push	WORD PTR [bp-28]	;mirrorhead
+	*** 000350	2b c9 			sub	cx,cx
+	*** 000352	51 			push	cx
+	*** 000353	b1 03 			mov	cl,3
+	*** 000355	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 000359	d3 e3 			shl	bx,cl
+	*** 00035b	8b 9f 78 02 		mov	bx,WORD PTR _RioAnim[bx+2]
+	*** 00035f	8b cb 			mov	cx,bx
+	*** 000361	d1 e3 			shl	bx,1
+	*** 000363	03 d9 			add	bx,cx
+	*** 000365	d1 e3 			shl	bx,1
+	*** 000367	03 d9 			add	bx,cx
+	*** 000369	d1 e3 			shl	bx,1
+	*** 00036b	ff b7 de 00 		push	WORD PTR _RioLeftShould[bx+12]
+	*** 00036f	ff 76 e8 		push	WORD PTR [bp-24]	;xheadpos
+	*** 000372	ff 76 fe 		push	WORD PTR [bp-2]	;Rtemp
+	*** 000375	ff b7 d8 00 		push	WORD PTR _RioLeftShould[bx+6]
+	*** 000379	ff b7 d6 00 		push	WORD PTR _RioLeftShould[bx+4]
+	*** 00037d	ff b7 d4 00 		push	WORD PTR _RioLeftShould[bx+2]
+	*** 000381	ff b7 d2 00 		push	WORD PTR _RioLeftShould[bx]
+	*** 000385	50 			push	ax
+	*** 000386	e8 00 00 		call	_TransRectCopy
+	*** 000389	83 c4 14 		add	sp,20
+;|*** 	}
+; Line 256
+;|*** 
+;|*** 	mpage = RioLeftArm[RioAnim[AnimCnt].larm].page;
+; Line 258
+					$I883:
+	*** 00038c	b1 03 			mov	cl,3
+	*** 00038e	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 000392	d3 e3 			shl	bx,cl
+	*** 000394	8b 9f 7a 02 		mov	bx,WORD PTR _RioAnim[bx+4]
+	*** 000398	8b c3 			mov	ax,bx
+	*** 00039a	d1 e3 			shl	bx,1
+	*** 00039c	03 d8 			add	bx,ax
+	*** 00039e	d1 e3 			shl	bx,1
+	*** 0003a0	03 d8 			add	bx,ax
+	*** 0003a2	d1 e3 			shl	bx,1
+	*** 0003a4	8b 87 90 01 		mov	ax,WORD PTR _RioLeftArm[bx+8]
+	*** 0003a8	89 46 ea 		mov	WORD PTR [bp-22],ax	;mpage
+;|*** 
+;|*** 	if (View==REARLEFT) {
+; Line 260
+	*** 0003ab	83 3e 00 00 04 		cmp	WORD PTR _View,4
+	*** 0003b0	75 0e 			jne	$I884
+;|*** 		xheadpos = ((319-RioLeftArm[RioAnim[AnimCnt].larm].px)-RioLeftArm[RioAnim[AnimCnt].larm].w);
+; Line 261
+	*** 0003b2	b8 3f 01 		mov	ax,319
+	*** 0003b5	2b 87 8c 01 		sub	ax,WORD PTR _RioLeftArm[bx+4]
+	*** 0003b9	2b 87 92 01 		sub	ax,WORD PTR _RioLeftArm[bx+10]
+	*** 0003bd	eb 1d 			jmp	SHORT $L20007
+	*** 0003bf	90 			nop	
+					$I884:
+;|*** 	} else {
+;|*** 		xheadpos = (RioLeftArm[RioAnim[AnimCnt].larm].px);
+; Line 263
+	*** 0003c0	b1 03 			mov	cl,3
+	*** 0003c2	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 0003c6	d3 e3 			shl	bx,cl
+	*** 0003c8	8b 9f 7a 02 		mov	bx,WORD PTR _RioAnim[bx+4]
+	*** 0003cc	8b c3 			mov	ax,bx
+	*** 0003ce	d1 e3 			shl	bx,1
+	*** 0003d0	03 d8 			add	bx,ax
+	*** 0003d2	d1 e3 			shl	bx,1
+	*** 0003d4	03 d8 			add	bx,ax
+	*** 0003d6	d1 e3 			shl	bx,1
+	*** 0003d8	8b 87 92 01 		mov	ax,WORD PTR _RioLeftArm[bx+10]
+					$L20007:
+	*** 0003dc	89 46 e8 		mov	WORD PTR [bp-24],ax	;xheadpos
+;|*** 	}
+; Line 264
+;|*** 
+;|*** 	if (mseg=MapInEMSSprite(HEAD1SEG,mpage)) {
+; Line 266
+	*** 0003df	ff 76 ea 		push	WORD PTR [bp-22]	;mpage
+	*** 0003e2	b8 03 00 		mov	ax,3
+	*** 0003e5	50 			push	ax
+	*** 0003e6	e8 00 00 		call	_MapInEMSSprite
+	*** 0003e9	83 c4 04 		add	sp,4
+	*** 0003ec	89 46 e6 		mov	WORD PTR [bp-26],ax	;mseg
+	*** 0003ef	0b c0 			or	ax,ax
+	*** 0003f1	74 40 			je	$I886
+;|*** 		TransRectCopy(mseg,RioLeftArm[RioAnim[AnimCnt].larm].x,
+;|*** 							RioLeftArm[RioAnim[AnimCnt].larm].y,
+;|*** 							RioLeftArm[RioAnim[AnimCnt].larm].w,
+;|*** 							RioLeftArm[RioAnim[AnimCnt].larm].h,
+;|*** 							Rp1,
+;|*** 							xheadpos,
+;|*** 							RioLeftArm[RioAnim[AnimCnt].larm].py,
+;|*** 							0,
+;|*** 							mirrorhead);
+; Line 275
+	*** 0003f3	ff 76 e4 		push	WORD PTR [bp-28]	;mirrorhead
+	*** 0003f6	2b c9 			sub	cx,cx
+	*** 0003f8	51 			push	cx
+	*** 0003f9	b1 03 			mov	cl,3
+	*** 0003fb	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 0003ff	d3 e3 			shl	bx,cl
+	*** 000401	8b 9f 7a 02 		mov	bx,WORD PTR _RioAnim[bx+4]
+	*** 000405	8b cb 			mov	cx,bx
+	*** 000407	d1 e3 			shl	bx,1
+	*** 000409	03 d9 			add	bx,cx
+	*** 00040b	d1 e3 			shl	bx,1
+	*** 00040d	03 d9 			add	bx,cx
+	*** 00040f	d1 e3 			shl	bx,1
+	*** 000411	ff b7 94 01 		push	WORD PTR _RioLeftArm[bx+12]
+	*** 000415	ff 76 e8 		push	WORD PTR [bp-24]	;xheadpos
+	*** 000418	ff 36 00 00 		push	WORD PTR _Rp1
+	*** 00041c	ff b7 8e 01 		push	WORD PTR _RioLeftArm[bx+6]
+	*** 000420	ff b7 8c 01 		push	WORD PTR _RioLeftArm[bx+4]
+	*** 000424	ff b7 8a 01 		push	WORD PTR _RioLeftArm[bx+2]
+	*** 000428	ff b7 88 01 		push	WORD PTR _RioLeftArm[bx]
+	*** 00042c	50 			push	ax
+	*** 00042d	e8 00 00 		call	_TransRectCopy
+	*** 000430	83 c4 14 		add	sp,20
+;|*** 	}
+; Line 276
+;|*** 
+;|*** 	mpage = RioRightShould[RioAnim[AnimCnt].rshoulder].page;
+; Line 278
+					$I886:
+	*** 000433	b1 03 			mov	cl,3
+	*** 000435	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 000439	d3 e3 			shl	bx,cl
+	*** 00043b	8b 9f 7c 02 		mov	bx,WORD PTR _RioAnim[bx+6]
+	*** 00043f	8b c3 			mov	ax,bx
+	*** 000441	d1 e3 			shl	bx,1
+	*** 000443	03 d8 			add	bx,ax
+	*** 000445	d1 e3 			shl	bx,1
+	*** 000447	03 d8 			add	bx,ax
+	*** 000449	d1 e3 			shl	bx,1
+	*** 00044b	8b 87 e4 01 		mov	ax,WORD PTR _RioRightShould[bx+8]
+	*** 00044f	89 46 ea 		mov	WORD PTR [bp-22],ax	;mpage
+;|*** 
+;|*** 	if (View==REARLEFT) {
+; Line 280
+	*** 000452	83 3e 00 00 04 		cmp	WORD PTR _View,4
+	*** 000457	75 0d 			jne	$I887
+;|*** 		xheadpos = ((319-RioRightShould[RioAnim[AnimCnt].rshoulder].px)-RioRightShould[RioAnim[AnimCnt].rshoulder].w);
+; Line 281
+	*** 000459	b8 3f 01 		mov	ax,319
+	*** 00045c	2b 87 e0 01 		sub	ax,WORD PTR _RioRightShould[bx+4]
+	*** 000460	2b 87 e6 01 		sub	ax,WORD PTR _RioRightShould[bx+10]
+	*** 000464	eb 1c 			jmp	SHORT $L20008
+					$I887:
+;|*** 	} else {
+;|*** 		xheadpos = (RioRightShould[RioAnim[AnimCnt].rshoulder].px);
+; Line 283
+	*** 000466	b1 03 			mov	cl,3
+	*** 000468	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 00046c	d3 e3 			shl	bx,cl
+	*** 00046e	8b 9f 7c 02 		mov	bx,WORD PTR _RioAnim[bx+6]
+	*** 000472	8b c3 			mov	ax,bx
+	*** 000474	d1 e3 			shl	bx,1
+	*** 000476	03 d8 			add	bx,ax
+	*** 000478	d1 e3 			shl	bx,1
+	*** 00047a	03 d8 			add	bx,ax
+	*** 00047c	d1 e3 			shl	bx,1
+	*** 00047e	8b 87 e6 01 		mov	ax,WORD PTR _RioRightShould[bx+10]
+					$L20008:
+	*** 000482	89 46 e8 		mov	WORD PTR [bp-24],ax	;xheadpos
+;|*** 	}
+; Line 284
+;|*** 
+;|*** 	if (mseg=MapInEMSSprite(HEAD1SEG,mpage)) {
+; Line 286
+	*** 000485	ff 76 ea 		push	WORD PTR [bp-22]	;mpage
+	*** 000488	b8 03 00 		mov	ax,3
+	*** 00048b	50 			push	ax
+	*** 00048c	e8 00 00 		call	_MapInEMSSprite
+	*** 00048f	83 c4 04 		add	sp,4
+	*** 000492	89 46 e6 		mov	WORD PTR [bp-26],ax	;mseg
+	*** 000495	0b c0 			or	ax,ax
+	*** 000497	74 3c 			je	$I889
+;|*** 		TransRectCopy(mseg,RioRightShould[RioAnim[AnimCnt].rshoulder].x,
+;|*** 							RioRightShould[RioAnim[AnimCnt].rshoulder].y,
+;|*** 							RioRightShould[RioAnim[AnimCnt].rshoulder].w,
+;|*** 							RioRightShould[RioAnim[AnimCnt].rshoulder].h,
+;|*** 							Rtemp,
+;|*** 							xheadpos,
+;|*** 							RioRightShould[RioAnim[AnimCnt].rshoulder].py,
+;|*** 							0,
+;|*** 							mirrorhead);
+; Line 295
+	*** 000499	ff 76 e4 		push	WORD PTR [bp-28]	;mirrorhead
+	*** 00049c	2b c9 			sub	cx,cx
+	*** 00049e	51 			push	cx
+	*** 00049f	b1 03 			mov	cl,3
+	*** 0004a1	8b 1e ee 02 		mov	bx,WORD PTR _AnimCnt
+	*** 0004a5	d3 e3 			shl	bx,cl
+	*** 0004a7	8b 9f 7c 02 		mov	bx,WORD PTR _RioAnim[bx+6]
+	*** 0004ab	8b cb 			mov	cx,bx
+	*** 0004ad	d1 e3 			shl	bx,1
+	*** 0004af	03 d9 			add	bx,cx
+	*** 0004b1	d1 e3 			shl	bx,1
+	*** 0004b3	03 d9 			add	bx,cx
+	*** 0004b5	d1 e3 			shl	bx,1
+	*** 0004b7	ff b7 e8 01 		push	WORD PTR _RioRightShould[bx+12]
+	*** 0004bb	ff 76 e8 		push	WORD PTR [bp-24]	;xheadpos
+	*** 0004be	ff 76 fe 		push	WORD PTR [bp-2]	;Rtemp
+	*** 0004c1	ff b7 e2 01 		push	WORD PTR _RioRightShould[bx+6]
+	*** 0004c5	ff b7 e0 01 		push	WORD PTR _RioRightShould[bx+4]
+	*** 0004c9	ff b7 de 01 		push	WORD PTR _RioRightShould[bx+2]
+	*** 0004cd	ff b7 dc 01 		push	WORD PTR _RioRightShould[bx]
+	*** 0004d1	50 			push	ax
+	*** 0004d2	e8 00 00 		call	_TransRectCopy
+;|*** 	}
+; Line 296
+;|*** }
+; Line 297
+					$I889:
+	*** 0004d5	8b e5 			mov	sp,bp
+	*** 0004d7	5d 			pop	bp
+	*** 0004d8	c3 			ret	
+	*** 0004d9	90 			nop	
+
+_DisplayRioHead	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** int HeadProject(long x, long y, int z)
+;|*** {
+; Line 301
+	PUBLIC	_HeadProject
+_HeadProject	PROC NEAR
+	*** 0004da	55 			push	bp
+	*** 0004db	8b ec 			mov	bp,sp
+	*** 0004dd	83 ec 16 		sub	sp,22
+	*** 0004e0	56 			push	si
+;	dz = -18
+;	xe = -8
+;	ye = -16
+;	ze = -22
+;	dx = -4
+;	dy = -12
+;	z = 12
+;	y = 8
+;	x = 4
+;|*** 	long  dx,dy;
+;|*** 	int   dz;
+;|*** 	long  xe,ye,ze;
+;|*** 	long   row3();
+;|*** 
+;|***     dx =-(x - PxLng);
+;|***     dy = (y - (0x100000-PyLng));
+; Line 308
+	*** 0004e1	a1 00 00 		mov	ax,WORD PTR _PyLng
+	*** 0004e4	8b 16 02 00 		mov	dx,WORD PTR _PyLng+2
+	*** 0004e8	03 46 08 		add	ax,WORD PTR [bp+8]	;y
+	*** 0004eb	13 56 0a 		adc	dx,WORD PTR [bp+10]
+	*** 0004ee	2d 00 00 		sub	ax,0
+	*** 0004f1	83 da 10 		sbb	dx,16
+	*** 0004f4	89 46 f4 		mov	WORD PTR [bp-12],ax	;dy
+	*** 0004f7	89 56 f6 		mov	WORD PTR [bp-10],dx
+;|***     dz = (z - (int) (Alt+9));
+; Line 309
+	*** 0004fa	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;z
+	*** 0004fd	2b 06 00 00 		sub	ax,WORD PTR _Alt
+	*** 000501	2d 09 00 		sub	ax,9
+	*** 000504	89 46 ee 		mov	WORD PTR [bp-18],ax	;dz
+;|*** 
+;|***     if (labs(dx)>23000L || labs(dy)>23000L) {
+; Line 311
+	*** 000507	a1 00 00 		mov	ax,WORD PTR _PxLng
+	*** 00050a	8b 16 02 00 		mov	dx,WORD PTR _PxLng+2
+	*** 00050e	2b 46 04 		sub	ax,WORD PTR [bp+4]	;x
+	*** 000511	1b 56 06 		sbb	dx,WORD PTR [bp+6]
+	*** 000514	89 46 fc 		mov	WORD PTR [bp-4],ax	;dx
+	*** 000517	89 56 fe 		mov	WORD PTR [bp-2],dx
+	*** 00051a	52 			push	dx
+	*** 00051b	50 			push	ax
+	*** 00051c	e8 00 00 		call	_labs
+	*** 00051f	83 c4 04 		add	sp,4
+	*** 000522	0b d2 			or	dx,dx
+	*** 000524	7f 1e 			jg	$L20001
+	*** 000526	7c 05 			jl	$L20000
+	*** 000528	3d d8 59 		cmp	ax,23000
+	*** 00052b	77 17 			ja	$L20001
+					$L20000:
+	*** 00052d	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 000530	ff 76 f4 		push	WORD PTR [bp-12]	;dy
+	*** 000533	e8 00 00 		call	_labs
+	*** 000536	83 c4 04 		add	sp,4
+	*** 000539	0b d2 			or	dx,dx
+	*** 00053b	7c 20 			jl	$I901
+	*** 00053d	7f 05 			jg	$L20001
+	*** 00053f	3d d8 59 		cmp	ax,23000
+	*** 000542	76 19 			jbe	$I901
+					$L20001:
+;|***         dx >>=HTOV;
+; Line 312
+	*** 000544	b0 05 			mov	al,5
+	*** 000546	50 			push	ax
+	*** 000547	8d 4e fc 		lea	cx,WORD PTR [bp-4]	;dx
+	*** 00054a	51 			push	cx
+	*** 00054b	e8 00 00 		call	__aNNalshr
+;|***         dy >>=HTOV;
+; Line 313
+	*** 00054e	b0 05 			mov	al,5
+	*** 000550	50 			push	ax
+	*** 000551	8d 4e f4 		lea	cx,WORD PTR [bp-12]	;dy
+	*** 000554	51 			push	cx
+	*** 000555	e8 00 00 		call	__aNNalshr
+;|***         dz >>=HTOV;
+; Line 314
+	*** 000558	b1 05 			mov	cl,5
+	*** 00055a	d3 7e ee 		sar	WORD PTR [bp-18],cl	;dz
+;|***     }
+; Line 315
+;|*** 
+;|***     xe=row3(0,(int)dx,(int)dy,dz);
+; Line 317
+					$I901:
+	*** 00055d	ff 76 ee 		push	WORD PTR [bp-18]	;dz
+	*** 000560	ff 76 f4 		push	WORD PTR [bp-12]	;dy
+	*** 000563	ff 76 fc 		push	WORD PTR [bp-4]	;dx
+	*** 000566	2b c0 			sub	ax,ax
+	*** 000568	50 			push	ax
+	*** 000569	e8 00 00 		call	row3
+	*** 00056c	83 c4 08 		add	sp,8
+	*** 00056f	89 46 f8 		mov	WORD PTR [bp-8],ax	;xe
+	*** 000572	89 56 fa 		mov	WORD PTR [bp-6],dx
+;|***     ye=row3(1,(int)dx,(int)dy,dz);
+; Line 318
+	*** 000575	ff 76 ee 		push	WORD PTR [bp-18]	;dz
+	*** 000578	ff 76 f4 		push	WORD PTR [bp-12]	;dy
+	*** 00057b	ff 76 fc 		push	WORD PTR [bp-4]	;dx
+	*** 00057e	b8 01 00 		mov	ax,1
+	*** 000581	50 			push	ax
+	*** 000582	e8 00 00 		call	row3
+	*** 000585	83 c4 08 		add	sp,8
+	*** 000588	89 46 f0 		mov	WORD PTR [bp-16],ax	;ye
+	*** 00058b	89 56 f2 		mov	WORD PTR [bp-14],dx
+;|***     ze=row3(2,(int)dx,(int)dy,dz);
+;|*** 
+;|*** 	if (ze==0) return -1;
+; Line 321
+	*** 00058e	ff 76 ee 		push	WORD PTR [bp-18]	;dz
+	*** 000591	ff 76 f4 		push	WORD PTR [bp-12]	;dy
+	*** 000594	ff 76 fc 		push	WORD PTR [bp-4]	;dx
+	*** 000597	b8 02 00 		mov	ax,2
+	*** 00059a	50 			push	ax
+	*** 00059b	e8 00 00 		call	row3
+	*** 00059e	83 c4 08 		add	sp,8
+	*** 0005a1	89 46 ea 		mov	WORD PTR [bp-22],ax	;ze
+	*** 0005a4	89 56 ec 		mov	WORD PTR [bp-20],dx
+	*** 0005a7	0b d0 			or	dx,ax
+	*** 0005a9	75 09 			jne	$I903
+	*** 0005ab	b8 ff ff 		mov	ax,-1
+	*** 0005ae	5e 			pop	si
+	*** 0005af	8b e5 			mov	sp,bp
+	*** 0005b1	5d 			pop	bp
+	*** 0005b2	c3 			ret	
+;|*** 
+;|*** 	if (ze > 0) {
+; Line 323
+	*** 0005b3	90 			nop	
+					$I903:
+	*** 0005b4	83 7e ec 00 		cmp	WORD PTR [bp-20],0
+	*** 0005b8	7c 18 			jl	$I904
+	*** 0005ba	7f 04 			jg	$L20003
+	*** 0005bc	0b c0 			or	ax,ax
+	*** 0005be	74 12 			je	$I904
+					$L20003:
+;|*** 		ze = -ze;
+; Line 324
+	*** 0005c0	f7 5e ea 		neg	WORD PTR [bp-22]	;ze
+	*** 0005c3	83 56 ec 00 		adc	WORD PTR [bp-20],0
+	*** 0005c7	f7 5e ec 		neg	WORD PTR [bp-20]
+;|*** 		behindus=1;
+; Line 325
+	*** 0005ca	c7 06 f8 02 01 00 	mov	WORD PTR _behindus,1
+;|*** 	} else {
+; Line 326
+	*** 0005d0	eb 06 			jmp	SHORT $I905
+					$I904:
+;|*** 		behindus=0;
+; Line 327
+	*** 0005d2	c7 06 f8 02 00 00 	mov	WORD PTR _behindus,0
+;|*** 	}
+; Line 328
+					$I905:
+;|*** 
+;|***     head_proj_x  = ((xe<<8)/ze) + 160;
+;|***     head_proj_y  = ((ye<<8)/ze);
+; Line 331
+	*** 0005d8	ff 76 ec 		push	WORD PTR [bp-20]
+	*** 0005db	ff 76 ea 		push	WORD PTR [bp-22]	;ze
+	*** 0005de	8b 46 f0 		mov	ax,WORD PTR [bp-16]	;ye
+	*** 0005e1	8b 56 f2 		mov	dx,WORD PTR [bp-14]
+	*** 0005e4	8a f2 			mov	dh,dl
+	*** 0005e6	8a d4 			mov	dl,ah
+	*** 0005e8	8a e0 			mov	ah,al
+	*** 0005ea	2a c0 			sub	al,al
+	*** 0005ec	52 			push	dx
+	*** 0005ed	50 			push	ax
+	*** 0005ee	e8 00 00 		call	__aNldiv
+	*** 0005f1	a3 f4 02 		mov	WORD PTR _head_proj_y,ax
+;|***     head_proj_y -= head_proj_y >> 2;
+; Line 332
+	*** 0005f4	8b c8 			mov	cx,ax
+	*** 0005f6	d1 f8 			sar	ax,1
+	*** 0005f8	d1 f8 			sar	ax,1
+	*** 0005fa	2b c8 			sub	cx,ax
+	*** 0005fc	89 0e f4 02 		mov	WORD PTR _head_proj_y,cx
+;|*** 	head_proj_y += 50;
+; Line 333
+	*** 000600	83 c1 32 		add	cx,50
+	*** 000603	89 0e f4 02 		mov	WORD PTR _head_proj_y,cx
+;|***     head_proj_z  = ze >> (HTOV+BT2KM-3);
+; Line 334
+	*** 000607	8b 46 ea 		mov	ax,WORD PTR [bp-22]	;ze
+	*** 00060a	8b 56 ec 		mov	dx,WORD PTR [bp-20]
+	*** 00060d	8a c4 			mov	al,ah
+	*** 00060f	8a e2 			mov	ah,dl
+	*** 000611	8a d6 			mov	dl,dh
+	*** 000613	d0 e6 			shl	dh,1
+	*** 000615	1a f6 			sbb	dh,dh
+	*** 000617	a3 f6 02 		mov	WORD PTR _head_proj_z,ax
+;|*** 
+;|*** 	head_proj_x = head_proj_x - 159;
+; Line 336
+	*** 00061a	ff 76 ec 		push	WORD PTR [bp-20]
+	*** 00061d	ff 76 ea 		push	WORD PTR [bp-22]	;ze
+	*** 000620	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;xe
+	*** 000623	8b 56 fa 		mov	dx,WORD PTR [bp-6]
+	*** 000626	8a f2 			mov	dh,dl
+	*** 000628	8a d4 			mov	dl,ah
+	*** 00062a	8a e0 			mov	ah,al
+	*** 00062c	2a c0 			sub	al,al
+	*** 00062e	52 			push	dx
+	*** 00062f	50 			push	ax
+	*** 000630	8b f1 			mov	si,cx
+	*** 000632	e8 00 00 		call	__aNldiv
+	*** 000635	05 a0 00 		add	ax,160
+	*** 000638	a3 f2 02 		mov	WORD PTR _head_proj_x,ax
+	*** 00063b	2d 9f 00 		sub	ax,159
+	*** 00063e	a3 f2 02 		mov	WORD PTR _head_proj_x,ax
+;|*** 	head_proj_y = head_proj_y - 99;
+; Line 337
+	*** 000641	8d 44 9d 		lea	ax,WORD PTR [si-99]
+	*** 000644	a3 f4 02 		mov	WORD PTR _head_proj_y,ax
+;|*** }
+; Line 338
+	*** 000647	5e 			pop	si
+	*** 000648	8b e5 			mov	sp,bp
+	*** 00064a	5d 			pop	bp
+	*** 00064b	c3 			ret	
+
+_HeadProject	ENDP
+;|*** 
+;|*** //***************************************************************************
+;|*** static long row3(int r,int dx,int dy,int dz)
+;|*** {
+; Line 342
+row3	PROC NEAR
+	*** 00064c	55 			push	bp
+	*** 00064d	8b ec 			mov	bp,sp
+	*** 00064f	83 ec 04 		sub	sp,4
+	*** 000652	56 			push	si
+;	z = -4
+;	dz = 10
+;	dy = 8
+;	dx = 6
+;	r = 4
+;|*** 	long  z;
+;|*** 
+;|*** 	z  = TrgMul(VM[0][r],dx);
+; Line 345
+	*** 000653	ff 76 06 		push	WORD PTR [bp+6]	;dx
+	*** 000656	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;r
+	*** 000659	d1 e3 			shl	bx,1
+	*** 00065b	ff b7 00 00 		push	WORD PTR _VM[bx]
+	*** 00065f	8b f3 			mov	si,bx
+	*** 000661	e8 00 00 		call	_TrgMul
+	*** 000664	83 c4 04 		add	sp,4
+	*** 000667	99 			cwd	
+	*** 000668	89 46 fc 		mov	WORD PTR [bp-4],ax	;z
+	*** 00066b	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 	z += TrgMul(VM[1][r],dz);
+; Line 346
+	*** 00066e	ff 76 0a 		push	WORD PTR [bp+10]	;dz
+	*** 000671	ff b4 06 00 		push	WORD PTR _VM[si+6]
+	*** 000675	e8 00 00 		call	_TrgMul
+	*** 000678	83 c4 04 		add	sp,4
+	*** 00067b	99 			cwd	
+	*** 00067c	01 46 fc 		add	WORD PTR [bp-4],ax	;z
+	*** 00067f	11 56 fe 		adc	WORD PTR [bp-2],dx
+;|*** 	z += TrgMul(VM[2][r],dy);
+;|*** 	return z;
+; Line 348
+	*** 000682	ff 76 08 		push	WORD PTR [bp+8]	;dy
+	*** 000685	ff b4 0c 00 		push	WORD PTR _VM[si+12]
+	*** 000689	e8 00 00 		call	_TrgMul
+	*** 00068c	83 c4 04 		add	sp,4
+	*** 00068f	99 			cwd	
+	*** 000690	01 46 fc 		add	WORD PTR [bp-4],ax	;z
+	*** 000693	11 56 fe 		adc	WORD PTR [bp-2],dx
+	*** 000696	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;z
+	*** 000699	8b 56 fe 		mov	dx,WORD PTR [bp-2]
+;|*** }
+; Line 349
+	*** 00069c	5e 			pop	si
+	*** 00069d	8b e5 			mov	sp,bp
+	*** 00069f	5d 			pop	bp
+	*** 0006a0	c3 			ret	
+	*** 0006a1	90 			nop	
+
+row3	ENDP
+_TEXT	ENDS
+END
+;|*** 

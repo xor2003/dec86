@@ -1,0 +1,724 @@
+;	Static Name Aliases
+;
+	TITLE   monoprin.c
+	.8087
+INCLUDELIB	SLIBCE
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+PUBLIC  __mono_attribute
+PUBLIC  __mono_x
+PUBLIC  __mono_y
+PUBLIC  __mono_loc
+EXTRN	__fmemcpy:NEAR
+EXTRN	_vsprintf:NEAR
+_BSS      SEGMENT
+COMM NEAR	__mono_buffer:	 1:	 2000
+_BSS      ENDS
+_DATA      SEGMENT
+__mono_attribute	DB	07H
+	ORG	$+1
+__mono_x	DW	00H
+__mono_y	DW	00H
+__mono_loc	DD	0b0000000H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /*
+; Line 1
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** 
+;|***     File Name:          MONOPRIN.C
+;|*** 
+;|***     Author:             Ned Way
+;|*** 
+;|***     File Date:          22:13:04  Mon  27-Sep-1993
+;|*** 
+;|***     File Description:
+;|***                         printf function for monochrome screen
+;|*** 
+;|*** 
+;|***     Enhancements Needed:
+;|*** 
+;|*** 
+;|*** 
+;|***     Routines Implemented:
+;|*** 
+;|*** 
+;|*** 
+;|***     Modifications:
+;|***         Date        Name            Purpose:
+;|*** 
+;|*** 
+;|*** 
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** */
+;|*** 
+;|*** 
+;|*** 
+;|*** #include <stdio.h>
+; Line 32
+;|*** #include <stdarg.h>
+; Line 33
+;|*** #include <bios.h>
+; Line 34
+;|*** 
+;|*** 
+;|*** char _mono_buffer[2000], _mono_attribute = 0x07 ;
+;|*** 
+;|*** int _mono_x = 0, _mono_y = 0 ;
+;|*** 
+;|*** int far *_mono_loc = (int far *) 0xb0000000 ;
+;|*** 
+;|*** 
+;|*** 
+;|*** /*
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** */
+;|*** 
+;|*** 
+;|*** int mprintf (char *fmt, ...) {
+; Line 50
+	PUBLIC	_mprintf
+_mprintf	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 04 		sub	sp,4
+;	args = -4
+;	length = -2
+;	fmt = 4
+;|*** 
+;|*** 
+;|*** va_list args ;
+;|*** int length ;
+;|*** 
+;|*** 
+;|***         va_start (args, fmt) ;
+;|*** 
+;|*** #if (_MSC_VER <= 600)
+;|***         vsprintf (_mono_buffer, fmt, args) ;
+; Line 60
+	*** 000006	8d 46 06 		lea	ax,WORD PTR [bp+6]
+	*** 000009	50 			push	ax
+	*** 00000a	ff 76 04 		push	WORD PTR [bp+4]	;fmt
+	*** 00000d	b8 00 00 		mov	ax,OFFSET DGROUP:__mono_buffer
+	*** 000010	50 			push	ax
+	*** 000011	e8 00 00 		call	_vsprintf
+	*** 000014	83 c4 06 		add	sp,6
+;|*** 	 #else
+;|***         _vsnprintf (_mono_buffer, 2000, fmt, args) ;
+;|*** #endif
+;|*** 
+;|***         mono_out (_mono_buffer) ;
+; Line 65
+	*** 000017	b8 00 00 		mov	ax,OFFSET DGROUP:__mono_buffer
+	*** 00001a	50 			push	ax
+	*** 00001b	e8 00 00 		call	_mono_out
+;|*** 
+;|*** 
+;|*** }
+; Line 68
+	*** 00001e	8b e5 			mov	sp,bp
+	*** 000020	5d 			pop	bp
+	*** 000021	c3 			ret	
+
+_mprintf	ENDP
+;|*** 
+;|*** int mono_scroll (void) {
+; Line 70
+	PUBLIC	_mono_scroll
+_mono_scroll	PROC NEAR
+	*** 000022	55 			push	bp
+	*** 000023	8b ec 			mov	bp,sp
+	*** 000025	83 ec 0a 		sub	sp,10
+;	blank = -10
+;	from = -8
+;	to = -4
+;|*** 
+;|*** int far *from = _mono_loc + 80, far *to = _mono_loc ;
+; Line 72
+	*** 000028	a1 06 00 		mov	ax,WORD PTR __mono_loc
+	*** 00002b	8b 16 08 00 		mov	dx,WORD PTR __mono_loc+2
+;|*** 
+;|*** int blank = 0x0720 ;
+;|*** 
+;|***         _fmemcpy (to, from, (2000 - 80) * sizeof (int) ) ;
+; Line 76
+	*** 00002f	b9 00 0f 		mov	cx,3840
+	*** 000032	51 			push	cx
+	*** 000033	05 a0 00 		add	ax,160
+	*** 000036	52 			push	dx
+	*** 000037	50 			push	ax
+	*** 000038	52 			push	dx
+	*** 000039	ff 36 06 00 		push	WORD PTR __mono_loc
+	*** 00003d	e8 00 00 		call	__fmemcpy
+	*** 000040	83 c4 0a 		add	sp,10
+;|*** 
+;|***         _fimemset (_mono_loc + 24 * 80, 80, blank) ;
+; Line 78
+	*** 000043	b8 20 07 		mov	ax,1824
+	*** 000046	50 			push	ax
+	*** 000047	b8 50 00 		mov	ax,80
+	*** 00004a	50 			push	ax
+	*** 00004b	a1 06 00 		mov	ax,WORD PTR __mono_loc
+	*** 00004e	8b 16 08 00 		mov	dx,WORD PTR __mono_loc+2
+	*** 000052	80 c4 0f 		add	ah,15
+	*** 000055	52 			push	dx
+	*** 000056	50 			push	ax
+	*** 000057	e8 00 00 		call	__fimemset
+;|*** 
+;|*** 
+;|*** }
+; Line 81
+	*** 00005a	8b e5 			mov	sp,bp
+	*** 00005c	5d 			pop	bp
+	*** 00005d	c3 			ret	
+
+_mono_scroll	ENDP
+;|*** 
+;|*** /*
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** */
+;|*** 
+;|*** int mono_out (char *buffer) {
+; Line 87
+	PUBLIC	_mono_out
+_mono_out	PROC NEAR
+	*** 00005e	55 			push	bp
+	*** 00005f	8b ec 			mov	bp,sp
+	*** 000061	83 ec 08 		sub	sp,8
+;	c = -6
+;	attribute = -8
+;	to = -4
+;	buffer = 4
+;|*** 
+;|*** int c, attribute = _mono_attribute << 8 ;
+; Line 89
+	*** 000064	8a 26 00 00 		mov	ah,BYTE PTR __mono_attribute
+	*** 000068	2a c0 			sub	al,al
+	*** 00006a	89 46 f8 		mov	WORD PTR [bp-8],ax	;attribute
+;|*** 
+;|*** int far *to = _mono_loc ;
+;|*** 
+;|***         to += _mono_y * 80 + _mono_x ;
+; Line 93
+	*** 00006d	b8 50 00 		mov	ax,80
+	*** 000070	f7 2e 04 00 		imul	WORD PTR __mono_y
+	*** 000074	03 06 02 00 		add	ax,WORD PTR __mono_x
+	*** 000078	d1 e0 			shl	ax,1
+					$L20000:
+	*** 00007a	03 06 06 00 		add	ax,WORD PTR __mono_loc
+	*** 00007e	8b 16 08 00 		mov	dx,WORD PTR __mono_loc+2
+					$L20003:
+	*** 000082	89 46 fc 		mov	WORD PTR [bp-4],ax	;to
+	*** 000085	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 
+;|***         while (*buffer != '\0') {
+; Line 95
+	*** 000088	e9 1d 01 		jmp	$I219
+	*** 00008b	90 			nop	
+					$FC201:
+;|*** 
+;|***                 switch (c = *buffer++) {
+; Line 97
+	*** 00008c	8a 07 			mov	al,BYTE PTR [bx]
+	*** 00008e	98 			cbw	
+	*** 00008f	89 46 fa 		mov	WORD PTR [bp-6],ax	;c
+	*** 000092	ff 46 04 		inc	WORD PTR [bp+4]	;buffer
+	*** 000095	2d 09 00 		sub	ax,9
+	*** 000098	75 03 			jne	$JCC152
+	*** 00009a	e9 9b 00 		jmp	$SC212
+					$JCC152:
+	*** 00009d	48 			dec	ax
+	*** 00009e	74 54 			je	$SC208
+	*** 0000a0	48 			dec	ax
+	*** 0000a1	48 			dec	ax
+	*** 0000a2	74 66 			je	$SC211
+	*** 0000a4	48 			dec	ax
+	*** 0000a5	74 3d 			je	$SC207
+;|*** 
+;|*** 
+;|*** 
+;|***                         case '\r':
+;|*** 
+;|***                                 _mono_x = 0 ;
+;|*** 
+;|***                                 to = _mono_loc + _mono_y * 80 ;
+;|*** 
+;|*** 
+;|***                                 break ;
+;|*** 
+;|***                         case '\n':
+;|*** 
+;|***                                 if (_mono_y == 24)
+;|***                                         mono_scroll () ;
+;|*** 
+;|***                                     else {
+;|***                                         to += 80 ;
+;|***                                         _mono_y++ ;
+;|*** 
+;|***                                 }
+;|*** 
+;|*** 
+;|***                                 break ;
+;|*** 
+;|***                         case '\f':
+;|*** 
+;|***                                 _mono_x = 0 ;
+;|***                                 _mono_y = 0 ;
+;|*** 
+;|*** 
+;|***                                 to = _mono_loc ;
+;|*** 
+;|***                                 c = attribute | 0x20 ;
+;|*** 
+;|***                                 _fimemset (to, 2000, c) ;    // clears screen
+;|*** 
+;|***                                 break ;
+;|*** 
+;|***                         case '\t':
+;|*** 
+;|***                                 if (_mono_y == 24 && _mono_x > 71) {
+;|***                                         mono_scroll () ;
+;|***                                         _mono_y = 23 ;
+;|***                                         to = _mono_loc + 23 * 80 ;
+;|*** 
+;|***                                 }
+;|*** 
+;|***                                 c = attribute | 0x20 ;
+;|*** 
+;|***                                 _fimemset (to, 8, c) ;
+;|*** 
+;|***                                 to += 8 ;
+;|*** 
+;|***                                 if (_mono_x > 71) {
+;|***                                         _mono_x = (_mono_x + 8) % 80 ;
+;|***                                         _mono_y++ ;
+;|***                                         }
+;|***                                     else
+;|***                                         _mono_x += 8 ;
+;|*** 
+;|*** 
+;|***                                 break ;
+;|*** 
+;|***                         default:
+;|*** 
+;|***                                 c |= attribute ;
+;|*** 
+;|***                                 *to++ = c ;
+; Line 167
+	*** 0000a7	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;attribute
+	*** 0000aa	09 46 fa 		or	WORD PTR [bp-6],ax	;c
+	*** 0000ad	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;c
+	*** 0000b0	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;to
+	*** 0000b3	83 46 fc 02 		add	WORD PTR [bp-4],2	;to
+	*** 0000b7	26 89 07 		mov	WORD PTR es:[bx],ax
+;|*** 
+;|***                                 _mono_x++ ;
+;|*** 
+;|*** 
+;|***                                 if (_mono_x == 80) {
+; Line 172
+	*** 0000ba	ff 06 02 00 		inc	WORD PTR __mono_x
+	*** 0000be	83 3e 02 00 50 		cmp	WORD PTR __mono_x,80
+	*** 0000c3	74 03 			je	$JCC195
+	*** 0000c5	e9 e0 00 		jmp	$I219
+					$JCC195:
+;|***                                         if (_mono_y == 24) {
+; Line 173
+	*** 0000c8	83 3e 04 00 18 		cmp	WORD PTR __mono_y,24
+	*** 0000cd	74 03 			je	$JCC205
+	*** 0000cf	e9 cc 00 		jmp	$I218
+					$JCC205:
+;|***                                                 mono_scroll ;
+;|***                                                 _mono_x = 0 ;
+; Line 175
+	*** 0000d2	c7 06 02 00 00 00 	mov	WORD PTR __mono_x,0
+;|*** 
+;|***                                                 to = _mono_loc + 24 * 80 ;
+; Line 177
+	*** 0000d8	a1 06 00 		mov	ax,WORD PTR __mono_loc
+	*** 0000db	8b 16 08 00 		mov	dx,WORD PTR __mono_loc+2
+	*** 0000df	80 c4 0f 		add	ah,15
+	*** 0000e2	eb 9e 			jmp	SHORT $L20003
+;|***                         case '\r':
+; Line 101
+					$SC207:
+;|*** 
+;|***                                 _mono_x = 0 ;
+; Line 103
+	*** 0000e4	c7 06 02 00 00 00 	mov	WORD PTR __mono_x,0
+;|*** 
+;|***                                 to = _mono_loc + _mono_y * 80 ;
+; Line 105
+	*** 0000ea	b8 a0 00 		mov	ax,160
+	*** 0000ed	f7 2e 04 00 		imul	WORD PTR __mono_y
+	*** 0000f1	eb 87 			jmp	SHORT $L20000
+;|*** 
+;|*** 
+;|***                                 break ;
+;|*** 
+;|***                         case '\n':
+; Line 110
+	*** 0000f3	90 			nop	
+					$SC208:
+;|*** 
+;|***                                 if (_mono_y == 24)
+; Line 112
+	*** 0000f4	83 3e 04 00 18 		cmp	WORD PTR __mono_y,24
+	*** 0000f9	75 07 			jne	$I209
+;|***                                         mono_scroll () ;
+; Line 113
+	*** 0000fb	e8 24 ff 		call	_mono_scroll
+;|*** 
+;|***                                     else {
+; Line 115
+	*** 0000fe	e9 a7 00 		jmp	$I219
+	*** 000101	90 			nop	
+					$I209:
+;|***                                         to += 80 ;
+; Line 116
+	*** 000102	81 46 fc a0 00 		add	WORD PTR [bp-4],160	;to
+;|***                                         _mono_y++ ;
+; Line 117
+	*** 000107	e9 9a 00 		jmp	$L20004
+;|*** 
+;|***                                 }
+;|*** 
+;|*** 
+;|***                                 break ;
+;|*** 
+;|***                         case '\f':
+; Line 124
+					$SC211:
+;|*** 
+;|***                                 _mono_x = 0 ;
+;|***                                 _mono_y = 0 ;
+; Line 127
+	*** 00010a	2b c0 			sub	ax,ax
+	*** 00010c	a3 02 00 		mov	WORD PTR __mono_x,ax
+	*** 00010f	a3 04 00 		mov	WORD PTR __mono_y,ax
+;|*** 
+;|*** 
+;|***                                 to = _mono_loc ;
+; Line 130
+	*** 000112	a1 06 00 		mov	ax,WORD PTR __mono_loc
+	*** 000115	8b 16 08 00 		mov	dx,WORD PTR __mono_loc+2
+	*** 000119	89 46 fc 		mov	WORD PTR [bp-4],ax	;to
+	*** 00011c	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 
+;|***                                 c = attribute | 0x20 ;
+; Line 132
+	*** 00011f	8b 4e f8 		mov	cx,WORD PTR [bp-8]	;attribute
+	*** 000122	80 c9 20 		or	cl,32
+	*** 000125	89 4e fa 		mov	WORD PTR [bp-6],cx	;c
+;|*** 
+;|***                                 _fimemset (to, 2000, c) ;    // clears screen
+; Line 134
+	*** 000128	51 			push	cx
+	*** 000129	b9 d0 07 		mov	cx,2000
+	*** 00012c	51 			push	cx
+	*** 00012d	52 			push	dx
+	*** 00012e	50 			push	ax
+	*** 00012f	e8 00 00 		call	__fimemset
+	*** 000132	83 c4 08 		add	sp,8
+;|*** 
+;|***                                 break ;
+; Line 136
+	*** 000135	eb 71 			jmp	SHORT $I219
+;|*** 
+;|***                         case '\t':
+; Line 138
+	*** 000137	90 			nop	
+					$SC212:
+;|*** 
+;|***                                 if (_mono_y == 24 && _mono_x > 71) {
+; Line 140
+	*** 000138	83 3e 04 00 18 		cmp	WORD PTR __mono_y,24
+	*** 00013d	75 20 			jne	$I213
+	*** 00013f	83 3e 02 00 47 		cmp	WORD PTR __mono_x,71
+	*** 000144	7e 19 			jle	$I213
+;|***                                         mono_scroll () ;
+; Line 141
+	*** 000146	e8 d9 fe 		call	_mono_scroll
+;|***                                         _mono_y = 23 ;
+; Line 142
+	*** 000149	c7 06 04 00 17 00 	mov	WORD PTR __mono_y,23
+;|***                                         to = _mono_loc + 23 * 80 ;
+; Line 143
+	*** 00014f	a1 06 00 		mov	ax,WORD PTR __mono_loc
+	*** 000152	8b 16 08 00 		mov	dx,WORD PTR __mono_loc+2
+	*** 000156	05 60 0e 		add	ax,3680
+	*** 000159	89 46 fc 		mov	WORD PTR [bp-4],ax	;to
+	*** 00015c	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 
+;|***                                 }
+; Line 145
+;|*** 
+;|***                                 c = attribute | 0x20 ;
+; Line 147
+					$I213:
+;|*** 
+;|***                                 _fimemset (to, 8, c) ;
+; Line 149
+	*** 00015f	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;attribute
+	*** 000162	0c 20 			or	al,32
+	*** 000164	89 46 fa 		mov	WORD PTR [bp-6],ax	;c
+	*** 000167	50 			push	ax
+	*** 000168	b8 08 00 		mov	ax,8
+	*** 00016b	50 			push	ax
+	*** 00016c	ff 76 fe 		push	WORD PTR [bp-2]
+	*** 00016f	ff 76 fc 		push	WORD PTR [bp-4]	;to
+	*** 000172	e8 00 00 		call	__fimemset
+	*** 000175	83 c4 08 		add	sp,8
+;|*** 
+;|***                                 to += 8 ;
+; Line 151
+	*** 000178	83 46 fc 10 		add	WORD PTR [bp-4],16	;to
+;|*** 
+;|***                                 if (_mono_x > 71) {
+; Line 153
+	*** 00017c	83 3e 02 00 47 		cmp	WORD PTR __mono_x,71
+	*** 000181	7e 13 			jle	$I214
+;|***                                         _mono_x = (_mono_x + 8) % 80 ;
+; Line 154
+	*** 000183	a1 02 00 		mov	ax,WORD PTR __mono_x
+	*** 000186	05 08 00 		add	ax,8
+	*** 000189	b9 50 00 		mov	cx,80
+	*** 00018c	99 			cwd	
+	*** 00018d	f7 f9 			idiv	cx
+	*** 00018f	89 16 02 00 		mov	WORD PTR __mono_x,dx
+	*** 000193	eb 0f 			jmp	SHORT $L20004
+	*** 000195	90 			nop	
+					$I214:
+;|***                                         _mono_y++ ;
+;|***                                         }
+;|***                                     else
+;|***                                         _mono_x += 8 ;
+; Line 158
+	*** 000196	83 06 02 00 08 		add	WORD PTR __mono_x,8
+;|*** 
+;|*** 
+;|***                                 break ;
+; Line 161
+	*** 00019b	eb 0b 			jmp	SHORT $I219
+;|*** 
+;|***                         default:
+; Line 163
+	*** 00019d	90 			nop	
+					$I218:
+;|*** 
+;|***                                 c |= attribute ;
+;|*** 
+;|***                                 *to++ = c ;
+;|*** 
+;|***                                 _mono_x++ ;
+;|*** 
+;|*** 
+;|***                                 if (_mono_x == 80) {
+;|***                                         if (_mono_y == 24) {
+;|***                                                 mono_scroll ;
+;|***                                                 _mono_x = 0 ;
+;|*** 
+;|***                                                 to = _mono_loc + 24 * 80 ;
+;|*** 
+;|***                                                 }
+;|***                                             else {
+;|***                                                 _mono_x = 0 ;
+; Line 181
+	*** 00019e	c7 06 02 00 00 00 	mov	WORD PTR __mono_x,0
+;|***                                                 _mono_y++ ;
+; Line 182
+					$L20004:
+	*** 0001a4	ff 06 04 00 		inc	WORD PTR __mono_y
+;|*** 
+;|***                                         }
+; Line 184
+					$I219:
+;|*** 
+;|***                                 }
+; Line 186
+;|*** 
+;|***                                 break ;
+; Line 188
+	*** 0001a8	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;buffer
+	*** 0001ab	80 3f 00 		cmp	BYTE PTR [bx],0
+	*** 0001ae	74 03 			je	$JCC430
+	*** 0001b0	e9 d9 fe 		jmp	$FC201
+					$JCC430:
+;|*** 
+;|***                 }
+;|*** 
+;|***         }
+;|*** 
+;|***         return 0 ;
+; Line 194
+	*** 0001b3	2b c0 			sub	ax,ax
+;|*** 
+;|*** }
+; Line 196
+	*** 0001b5	8b e5 			mov	sp,bp
+	*** 0001b7	5d 			pop	bp
+	*** 0001b8	c3 			ret	
+	*** 0001b9	90 			nop	
+
+_mono_out	ENDP
+;|*** 
+;|*** 
+;|*** /*
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** */
+;|*** 
+;|*** int _fimemset (void far *to, int n, int c) {
+; Line 203
+	PUBLIC	__fimemset
+__fimemset	PROC NEAR
+	*** 0001ba	55 			push	bp
+	*** 0001bb	8b ec 			mov	bp,sp
+	*** 0001bd	57 			push	di
+	*** 0001be	56 			push	si
+;	c = 10
+;	n = 8
+;	to = 4
+;|*** 
+;|*** 
+;|*** 
+;|***         _asm {
+; Line 207
+;|*** 
+;|***                 push    es
+; Line 209
+	*** 0001bf	06 			push	es
+;|*** 
+;|***                 mov     cx, n
+; Line 211
+	*** 0001c0	8b 4e 08 		mov	cx,WORD PTR [bp+8]	;n
+;|***                 mov     ax, c
+; Line 212
+	*** 0001c3	8b 46 0a 		mov	ax,WORD PTR [bp+10]	;c
+;|*** 
+;|***                 les     di, to
+; Line 214
+	*** 0001c6	c4 7e 04 		les	di,DWORD PTR [bp+4]	;to
+;|*** 
+;|***                 repnz   stosw
+; Line 216
+	*** 0001c9	f2 			repnz
+	*** 0001ca	ab 			stosw
+;|*** 
+;|***                 pop     es
+; Line 218
+	*** 0001cb	07 			pop	es
+;|*** 
+;|*** 
+;|***         }
+; Line 221
+;|*** 
+;|***         return 0 ;
+; Line 223
+	*** 0001cc	2b c0 			sub	ax,ax
+;|*** 
+;|*** }
+; Line 225
+	*** 0001ce	5e 			pop	si
+	*** 0001cf	5f 			pop	di
+	*** 0001d0	8b e5 			mov	sp,bp
+	*** 0001d2	5d 			pop	bp
+	*** 0001d3	c3 			ret	
+
+__fimemset	ENDP
+;|*** 
+;|*** 
+;|*** /*
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** */
+;|*** 
+;|*** 
+;|*** int mset_pos (int x, int y) {
+; Line 233
+	PUBLIC	_mset_pos
+_mset_pos	PROC NEAR
+	*** 0001d4	55 			push	bp
+	*** 0001d5	8b ec 			mov	bp,sp
+;	y = 6
+;	x = 4
+;|*** 
+;|*** 
+;|***         _mono_x = x % 80 ;
+; Line 236
+	*** 0001d7	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 0001da	b9 50 00 		mov	cx,80
+	*** 0001dd	99 			cwd	
+	*** 0001de	f7 f9 			idiv	cx
+	*** 0001e0	89 16 02 00 		mov	WORD PTR __mono_x,dx
+;|***         _mono_y = y % 25 ;
+; Line 237
+	*** 0001e4	8b 46 06 		mov	ax,WORD PTR [bp+6]	;y
+	*** 0001e7	b9 19 00 		mov	cx,25
+	*** 0001ea	99 			cwd	
+	*** 0001eb	f7 f9 			idiv	cx
+	*** 0001ed	89 16 04 00 		mov	WORD PTR __mono_y,dx
+;|*** 
+;|***         return 0 ;
+; Line 239
+	*** 0001f1	2b c0 			sub	ax,ax
+;|*** 
+;|*** 
+;|*** }
+; Line 242
+	*** 0001f3	5d 			pop	bp
+	*** 0001f4	c3 			ret	
+	*** 0001f5	90 			nop	
+
+_mset_pos	ENDP
+;|*** 
+;|*** /*
+;|*** лллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллллл
+;|*** */
+;|*** 
+;|*** int mclear_screen (void) {
+; Line 248
+	PUBLIC	_mclear_screen
+_mclear_screen	PROC NEAR
+	*** 0001f6	55 			push	bp
+	*** 0001f7	8b ec 			mov	bp,sp
+	*** 0001f9	83 ec 06 		sub	sp,6
+;	blank = -6
+;	to = -4
+;|*** 
+;|*** int blank = (_mono_attribute << 8 ) | 0x20 ;
+;|*** 
+;|*** int far *to = _mono_loc ;
+; Line 252
+	*** 0001fc	a1 06 00 		mov	ax,WORD PTR __mono_loc
+	*** 0001ff	8b 16 08 00 		mov	dx,WORD PTR __mono_loc+2
+;|*** 
+;|***         _fimemset (to, 2000, blank) ;
+; Line 254
+	*** 000203	b1 20 			mov	cl,32
+	*** 000205	8a 2e 00 00 		mov	ch,BYTE PTR __mono_attribute
+	*** 000209	51 			push	cx
+	*** 00020a	b9 d0 07 		mov	cx,2000
+	*** 00020d	51 			push	cx
+	*** 00020e	52 			push	dx
+	*** 00020f	50 			push	ax
+	*** 000210	e8 a7 ff 		call	__fimemset
+;|*** 
+;|*** }
+; Line 256
+	*** 000213	8b e5 			mov	sp,bp
+	*** 000215	5d 			pop	bp
+	*** 000216	c3 			ret	
+	*** 000217	90 			nop	
+
+_mclear_screen	ENDP
+_TEXT	ENDS
+END
+;|*** 

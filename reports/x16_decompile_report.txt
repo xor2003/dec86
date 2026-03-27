@@ -1,0 +1,984 @@
+File: angr_platforms/x16_samples/COMTEST.BAT
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/COMTEST.BAT */', 'ERROR    | 2026-03-25 13:39:02,904 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/COMTEST.BAT */
+ERROR    | 2026-03-25 13:39:02,904 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.
+
+File: angr_platforms/x16_samples/ICOMBI.ASM
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.ASM */', 'ERROR    | 2026-03-25 13:39:04,089 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.ASM */
+ERROR    | 2026-03-25 13:39:04,089 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.1
+
+File: angr_platforms/x16_samples/ICOMBI.COM
+Status: fallback
+Summary: ['no_bytes_available']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.COM */
+/* recovering functions... */
+/* binary: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.COM */
+/* arch: 86_16 */
+/* entry: 0x1000 */
+/* functions recovered: 2 */
+
+/* == function 0x1000 _start == */
+/* -- c -- */
+void exit(int status);
+
+int _start(void)
+{
+    bios_int10_video();
+    bios_int1a_clock();
+    bios_int10_video();
+    exit(1);
+}
+
+/* == function 0xfe04c dos_exit == */
+/* no bytes available for function at 0xfe04c; likely external or synthetic */
+
+summary: decompiled 1/2 shown functions
+summary: 1 functions fell back to asm/details
+ERROR    | 2026-03-25 13:39:05,467 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py
+
+File: angr_platforms/x16_samples/ICOMBI.LST
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.LST */', 'ERROR    | 2026-03-25 13:39:07,257 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.LST */
+ERROR    | 2026-03-25 13:39:07,257 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.1
+
+File: angr_platforms/x16_samples/ICOMDO.ASM
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.ASM */', 'ERROR    | 2026-03-25 13:39:08,454 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.ASM */
+ERROR    | 2026-03-25 13:39:08,454 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.1
+
+File: angr_platforms/x16_samples/ICOMDO.COM
+Status: fallback
+Summary: ['no_bytes_available']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.COM */
+/* recovering functions... */
+/* binary: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.COM */
+/* arch: 86_16 */
+/* entry: 0x1000 */
+/* functions recovered: 4 */
+
+/* == function 0x1000 _start == */
+/* -- c -- */
+int get_dos_version(void);
+void print_dos_string(const char *s);
+void exit(int status);
+
+int _start(void)
+{
+    get_dos_version();
+    print_dos_string("DOS sample");
+    exit(0);
+}
+
+/* == function 0xfe009 dos_print_dollar_string == */
+/* no bytes available for function at 0xfe009; likely external or synthetic */
+
+/* == function 0xfe030 dos_get_version == */
+/* no bytes available for function at 0xfe030; likely external or synthetic */
+
+/* == function 0xfe04c dos_exit == */
+/* no bytes available for functio
+
+File: angr_platforms/x16_samples/ICOMDO.LST
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.LST */', 'ERROR    | 2026-03-25 13:39:11,035 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.LST */
+ERROR    | 2026-03-25 13:39:11,035 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.1
+
+File: angr_platforms/x16_samples/IDEMO.C
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IDEMO.C */', 'ERROR    | 2026-03-25 13:39:12,229 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IDEMO.C */
+ERROR    | 2026-03-25 13:39:12,229 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/s
+
+File: angr_platforms/x16_samples/IHOD.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.COD */', 'ERROR    | 2026-03-25 13:39:13,430 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.COD */
+ERROR    | 2026-03-25 13:39:13,430 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IHOD.EXE
+Status: timeout
+Summary: timeout
+--- snippet ---
+
+
+File: angr_platforms/x16_samples/IHOD.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.MAP */', 'ERROR    | 2026-03-25 13:39:44,722 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.MAP */
+ERROR    | 2026-03-25 13:39:44,722 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IHOD.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.OBJ */', 'ERROR    | 2026-03-25 13:39:45,881 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.OBJ */
+ERROR    | 2026-03-25 13:39:45,881 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IHOT.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.COD */', 'ERROR    | 2026-03-25 13:39:47,023 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.COD */
+ERROR    | 2026-03-25 13:39:47,023 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IHOT.EXE
+Status: timeout
+Summary: timeout
+--- snippet ---
+
+
+File: angr_platforms/x16_samples/IHOT.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.MAP */', 'ERROR    | 2026-03-25 13:40:18,261 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.MAP */
+ERROR    | 2026-03-25 13:40:18,261 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IHOT.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.OBJ */', 'ERROR    | 2026-03-25 13:40:19,414 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.OBJ */
+ERROR    | 2026-03-25 13:40:19,414 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ILOD.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.COD */', 'ERROR    | 2026-03-25 13:40:20,571 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.COD */
+ERROR    | 2026-03-25 13:40:20,571 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ILOD.EXE
+Status: timeout
+Summary: timeout
+--- snippet ---
+
+
+File: angr_platforms/x16_samples/ILOD.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.MAP */', 'ERROR    | 2026-03-25 13:40:51,784 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.MAP */
+ERROR    | 2026-03-25 13:40:51,784 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ILOD.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.OBJ */', 'ERROR    | 2026-03-25 13:40:52,948 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.OBJ */
+ERROR    | 2026-03-25 13:40:52,948 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ILOT.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.COD */', 'ERROR    | 2026-03-25 13:40:54,101 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.COD */
+ERROR    | 2026-03-25 13:40:54,101 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ILOT.EXE
+Status: timeout
+Summary: timeout
+--- snippet ---
+
+
+File: angr_platforms/x16_samples/ILOT.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.MAP */', 'ERROR    | 2026-03-25 13:41:25,330 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.MAP */
+ERROR    | 2026-03-25 13:41:25,330 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ILOT.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.OBJ */', 'ERROR    | 2026-03-25 13:41:26,508 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.OBJ */
+ERROR    | 2026-03-25 13:41:26,508 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOD.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.COD */', 'ERROR    | 2026-03-25 13:41:27,728 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.COD */
+ERROR    | 2026-03-25 13:41:27,728 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOD.EXE
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.EXE */', '/* recovering functions... */', '/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */', '', '/* == entry asm == */', '0x1158: mov ah, 0x30']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.EXE */
+/* recovering functions... */
+/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */
+
+/* == entry asm == */
+0x1158: mov ah, 0x30
+0x115a: int 0x21
+ERROR    | 2026-03-25 13:41:28,902 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+
+File: angr_platforms/x16_samples/IMOD.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.MAP */', 'ERROR    | 2026-03-25 13:41:40,113 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.MAP */
+ERROR    | 2026-03-25 13:41:40,113 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOD.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.OBJ */', 'ERROR    | 2026-03-25 13:41:41,291 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.OBJ */
+ERROR    | 2026-03-25 13:41:41,291 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOT.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.COD */', 'ERROR    | 2026-03-25 13:41:42,459 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.COD */
+ERROR    | 2026-03-25 13:41:42,459 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOT.EXE
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.EXE */', '/* recovering functions... */', '/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */', '', '/* == entry asm == */', '0x1126: mov ah, 0x30']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.EXE */
+/* recovering functions... */
+/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */
+
+/* == entry asm == */
+0x1126: mov ah, 0x30
+0x1128: int 0x21
+ERROR    | 2026-03-25 13:41:43,644 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+
+File: angr_platforms/x16_samples/IMOT.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.MAP */', 'ERROR    | 2026-03-25 13:41:54,682 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.MAP */
+ERROR    | 2026-03-25 13:41:54,682 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOT.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.OBJ */', 'ERROR    | 2026-03-25 13:41:55,863 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.OBJ */
+ERROR    | 2026-03-25 13:41:55,863 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOX.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.COD */', 'ERROR    | 2026-03-25 13:41:57,037 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.COD */
+ERROR    | 2026-03-25 13:41:57,037 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOX.EXE
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.EXE */', '/* recovering functions... */', '/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */', '', '/* == entry asm == */', '0x1126: mov ah, 0x30']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.EXE */
+/* recovering functions... */
+/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */
+
+/* == entry asm == */
+0x1126: mov ah, 0x30
+0x1128: int 0x21
+ERROR    | 2026-03-25 13:41:58,202 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+
+File: angr_platforms/x16_samples/IMOX.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.MAP */', 'ERROR    | 2026-03-25 13:42:09,286 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.MAP */
+ERROR    | 2026-03-25 13:42:09,286 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/IMOX.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.OBJ */', 'ERROR    | 2026-03-25 13:42:10,474 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.OBJ */
+ERROR    | 2026-03-25 13:42:10,474 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOD.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.COD */', 'ERROR    | 2026-03-25 13:42:11,642 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.COD */
+ERROR    | 2026-03-25 13:42:11,642 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOD.EXE
+Status: timeout
+Summary: timeout
+--- snippet ---
+
+
+File: angr_platforms/x16_samples/ISOD.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.MAP */', 'ERROR    | 2026-03-25 13:42:42,873 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.MAP */
+ERROR    | 2026-03-25 13:42:42,873 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOD.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.OBJ */', 'ERROR    | 2026-03-25 13:42:44,048 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.OBJ */
+ERROR    | 2026-03-25 13:42:44,048 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOT.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.COD */', 'ERROR    | 2026-03-25 13:42:45,224 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.COD */
+ERROR    | 2026-03-25 13:42:45,224 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOT.EXE
+Status: timeout
+Summary: timeout
+--- snippet ---
+
+
+File: angr_platforms/x16_samples/ISOT.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.MAP */', 'ERROR    | 2026-03-25 13:43:16,469 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.MAP */
+ERROR    | 2026-03-25 13:43:16,469 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOT.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.OBJ */', 'ERROR    | 2026-03-25 13:43:17,668 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.OBJ */
+ERROR    | 2026-03-25 13:43:17,668 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOX.COD
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.COD */', 'ERROR    | 2026-03-25 13:43:18,848 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.COD */
+ERROR    | 2026-03-25 13:43:18,848 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOX.EXE
+Status: timeout
+Summary: timeout
+--- snippet ---
+
+
+File: angr_platforms/x16_samples/ISOX.MAP
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.MAP */', 'ERROR    | 2026-03-25 13:43:50,078 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.MAP */
+ERROR    | 2026-03-25 13:43:50,078 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/ISOX.OBJ
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.OBJ */', 'ERROR    | 2026-03-25 13:43:51,256 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.OBJ */
+ERROR    | 2026-03-25 13:43:51,256 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13/
+
+File: angr_platforms/x16_samples/README.md
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/README.md */', 'ERROR    | 2026-03-25 13:43:52,434 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/README.md */
+ERROR    | 2026-03-25 13:43:52,434 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13
+
+File: angr_platforms/x16_samples/build_matrix.sh
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/build_matrix.sh */', 'ERROR    | 2026-03-25 13:43:53,637 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/build_matrix.sh */
+ERROR    | 2026-03-25 13:43:53,637 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/pyth
+
+File: angr_platforms/x16_samples/intdemo.c
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/intdemo.c */', 'ERROR    | 2026-03-25 13:43:54,802 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/intdemo.c */
+ERROR    | 2026-03-25 13:43:54,802 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.13
+
+File: angr_platforms/x16_samples/matrix_manifest.json
+Status: ok
+Summary: ['/* loading: /home/xor/vextest/angr_platforms/x16_samples/matrix_manifest.json */', 'ERROR    | 2026-03-25 13:43:55,981 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled (\'NoneType\' object has no attribute \'unicorn_py3\')', 'Traceback (most recent call last):', '  File "/home/xor/vextest/decompile.py", line 1838, in <module>', '    raise SystemExit(main())', '                     ~~~~^^']
+--- snippet ---
+/* loading: /home/xor/vextest/angr_platforms/x16_samples/matrix_manifest.json */
+ERROR    | 2026-03-25 13:43:55,981 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "/home/xor/vextest/decompile.py", line 1838, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/xor/vextest/decompile.py", line 1679, in main
+    project = _build_project(
+        args.binary,
+    ...<2 lines>...
+        entry_point=args.entry_point,
+    )
+  File "/home/xor/vextest/decompile.py", line 95, in _build_project
+    return angr.Project(path, auto_load_libs=False)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib
+

@@ -1,0 +1,113 @@
+;	Static Name Aliases
+;
+	TITLE   MAX.C
+	NAME    MAX
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	__chkstk:NEAR
+EXTRN	_printf:NEAR
+EXTRN	_scanf:NEAR
+_DATA      SEGMENT
+$SG105	DB	'Enter 2 numbers: ',  00H
+$SG107	DB	'%d %d',  00H
+$SG110	DB	'Maximum: %d',  0aH,  00H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** main()
+;|*** { int a, b;
+; Line 2
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 04 00 		mov	ax,4
+	*** 000006	e8 00 00 		call	__chkstk
+;	a = -2
+;	b = -4
+;|*** 
+;|*** 	printf ("Enter 2 numbers: ");
+; Line 4
+	*** 000009	b8 00 00 		mov	ax,OFFSET DGROUP:$SG105
+	*** 00000c	50 			push	ax
+	*** 00000d	e8 00 00 		call	_printf
+	*** 000010	83 c4 02 		add	sp,2
+;|*** 	scanf ("%d %d", &a, &b);
+; Line 5
+	*** 000013	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;b
+	*** 000016	50 			push	ax
+	*** 000017	8d 46 fe 		lea	ax,WORD PTR [bp-2]	;a
+	*** 00001a	50 			push	ax
+	*** 00001b	b8 12 00 		mov	ax,OFFSET DGROUP:$SG107
+	*** 00001e	50 			push	ax
+	*** 00001f	e8 00 00 		call	_scanf
+	*** 000022	83 c4 06 		add	sp,6
+;|*** 	if (a != b)
+; Line 6
+	*** 000025	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;b
+	*** 000028	39 46 fe 		cmp	WORD PTR [bp-2],ax	;a
+	*** 00002b	74 15 			je	$I108
+;|*** 	   printf ("Maximum: %d\n", max (a,b));
+; Line 7
+	*** 00002d	50 			push	ax
+	*** 00002e	ff 76 fe 		push	WORD PTR [bp-2]	;a
+	*** 000031	e8 00 00 		call	_max
+	*** 000034	83 c4 04 		add	sp,4
+	*** 000037	50 			push	ax
+	*** 000038	b8 18 00 		mov	ax,OFFSET DGROUP:$SG110
+	*** 00003b	50 			push	ax
+	*** 00003c	e8 00 00 		call	_printf
+	*** 00003f	83 c4 04 		add	sp,4
+;|*** }
+; Line 8
+					$I108:
+	*** 000042	8b e5 			mov	sp,bp
+	*** 000044	5d 			pop	bp
+	*** 000045	c3 			ret	
+
+_main	ENDP
+;|*** 
+;|*** max (int x, int y)
+;|*** {
+; Line 11
+	PUBLIC	_max
+_max	PROC NEAR
+	*** 000046	55 			push	bp
+	*** 000047	8b ec 			mov	bp,sp
+	*** 000049	33 c0 			xor	ax,ax
+	*** 00004b	e8 00 00 		call	__chkstk
+;	x = 4
+;	y = 6
+;|*** 	if (x > y)
+; Line 12
+	*** 00004e	8b 46 06 		mov	ax,WORD PTR [bp+6]	;y
+	*** 000051	39 46 04 		cmp	WORD PTR [bp+4],ax	;x
+	*** 000054	7e 06 			jle	$I114
+;|*** 	   return (x);
+; Line 13
+	*** 000056	8b 46 04 		mov	ax,WORD PTR [bp+4]	;x
+	*** 000059	5d 			pop	bp
+	*** 00005a	c3 			ret	
+	*** 00005b	90 			nop	
+					$I114:
+	*** 00005c	8b 46 06 		mov	ax,WORD PTR [bp+6]	;y
+	*** 00005f	5d 			pop	bp
+	*** 000060	c3 			ret	
+	*** 000061	90 			nop	
+
+_max	ENDP
+_TEXT	ENDS
+END
+;|*** 	return (y);
+;|*** }

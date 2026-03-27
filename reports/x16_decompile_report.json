@@ -1,0 +1,612 @@
+[
+  {
+    "file": "angr_platforms/x16_samples/COMTEST.BAT",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/COMTEST.BAT */",
+      "ERROR    | 2026-03-25 13:39:02,904 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/COMTEST.BAT */\nERROR    | 2026-03-25 13:39:02,904 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/COMTEST.BAT.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ICOMBI.ASM",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.ASM */",
+      "ERROR    | 2026-03-25 13:39:04,089 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.ASM */\nERROR    | 2026-03-25 13:39:04,089 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.ASM.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ICOMBI.COM",
+    "status": "fallback",
+    "summary": [
+      "no_bytes_available"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.COM */\n/* recovering functions... */\n/* binary: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.COM */\n/* arch: 86_16 */\n/* entry: 0x1000 */\n/* functions recovered: 2 */\n\n/* == function 0x1000 _start == */\n/* -- c -- */\nvoid exit(int status);\n\nint _start(void)\n{\n    bios_int10_video();\n    bios_int1a_clock();\n    bios_int10_video();\n    exit(1);\n}\n\n/* == function 0xfe04c dos_exit == */\n/* no bytes available for function at 0xfe04c; likely external or synthetic */\n\nsummary: decompiled 1/2 shown functions\nsummary: 1 functions fell back to asm/details\nERROR    | 2026-03-25 13:39:05,467 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ICOMBI.LST",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.LST */",
+      "ERROR    | 2026-03-25 13:39:07,257 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.LST */\nERROR    | 2026-03-25 13:39:07,257 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ICOMBI.LST.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ICOMDO.ASM",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.ASM */",
+      "ERROR    | 2026-03-25 13:39:08,454 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.ASM */\nERROR    | 2026-03-25 13:39:08,454 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.ASM.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ICOMDO.COM",
+    "status": "fallback",
+    "summary": [
+      "no_bytes_available"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.COM */\n/* recovering functions... */\n/* binary: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.COM */\n/* arch: 86_16 */\n/* entry: 0x1000 */\n/* functions recovered: 4 */\n\n/* == function 0x1000 _start == */\n/* -- c -- */\nint get_dos_version(void);\nvoid print_dos_string(const char *s);\nvoid exit(int status);\n\nint _start(void)\n{\n    get_dos_version();\n    print_dos_string(\"DOS sample\");\n    exit(0);\n}\n\n/* == function 0xfe009 dos_print_dollar_string == */\n/* no bytes available for function at 0xfe009; likely external or synthetic */\n\n/* == function 0xfe030 dos_get_version == */\n/* no bytes available for function at 0xfe030; likely external or synthetic */\n\n/* == function 0xfe04c dos_exit == */\n/* no bytes available for function at 0xfe04c; likely external or synthetic */\n\nsummary: decompiled 1/4 shown functions\nsummary: 3 functions fell back to asm/details\nERROR    | 2026-03-25 13:39:09,651 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ICOMDO.LST",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.LST */",
+      "ERROR    | 2026-03-25 13:39:11,035 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.LST */\nERROR    | 2026-03-25 13:39:11,035 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ICOMDO.LST.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IDEMO.C",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IDEMO.C */",
+      "ERROR    | 2026-03-25 13:39:12,229 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IDEMO.C */\nERROR    | 2026-03-25 13:39:12,229 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IDEMO.C.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOD.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.COD */",
+      "ERROR    | 2026-03-25 13:39:13,430 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.COD */\nERROR    | 2026-03-25 13:39:13,430 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IHOD.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOD.EXE",
+    "status": "timeout",
+    "summary": "timeout"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOD.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.MAP */",
+      "ERROR    | 2026-03-25 13:39:44,722 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.MAP */\nERROR    | 2026-03-25 13:39:44,722 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IHOD.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOD.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.OBJ */",
+      "ERROR    | 2026-03-25 13:39:45,881 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOD.OBJ */\nERROR    | 2026-03-25 13:39:45,881 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IHOD.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOT.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.COD */",
+      "ERROR    | 2026-03-25 13:39:47,023 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.COD */\nERROR    | 2026-03-25 13:39:47,023 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IHOT.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOT.EXE",
+    "status": "timeout",
+    "summary": "timeout"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOT.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.MAP */",
+      "ERROR    | 2026-03-25 13:40:18,261 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.MAP */\nERROR    | 2026-03-25 13:40:18,261 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IHOT.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IHOT.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.OBJ */",
+      "ERROR    | 2026-03-25 13:40:19,414 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IHOT.OBJ */\nERROR    | 2026-03-25 13:40:19,414 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IHOT.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOD.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.COD */",
+      "ERROR    | 2026-03-25 13:40:20,571 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.COD */\nERROR    | 2026-03-25 13:40:20,571 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ILOD.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOD.EXE",
+    "status": "timeout",
+    "summary": "timeout"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOD.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.MAP */",
+      "ERROR    | 2026-03-25 13:40:51,784 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.MAP */\nERROR    | 2026-03-25 13:40:51,784 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ILOD.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOD.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.OBJ */",
+      "ERROR    | 2026-03-25 13:40:52,948 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOD.OBJ */\nERROR    | 2026-03-25 13:40:52,948 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ILOD.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOT.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.COD */",
+      "ERROR    | 2026-03-25 13:40:54,101 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.COD */\nERROR    | 2026-03-25 13:40:54,101 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ILOT.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOT.EXE",
+    "status": "timeout",
+    "summary": "timeout"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOT.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.MAP */",
+      "ERROR    | 2026-03-25 13:41:25,330 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.MAP */\nERROR    | 2026-03-25 13:41:25,330 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ILOT.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ILOT.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.OBJ */",
+      "ERROR    | 2026-03-25 13:41:26,508 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ILOT.OBJ */\nERROR    | 2026-03-25 13:41:26,508 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ILOT.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOD.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.COD */",
+      "ERROR    | 2026-03-25 13:41:27,728 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.COD */\nERROR    | 2026-03-25 13:41:27,728 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOD.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOD.EXE",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.EXE */",
+      "/* recovering functions... */",
+      "/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */",
+      "",
+      "/* == entry asm == */",
+      "0x1158: mov ah, 0x30"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.EXE */\n/* recovering functions... */\n/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */\n\n/* == entry asm == */\n0x1158: mov ah, 0x30\n0x115a: int 0x21\nERROR    | 2026-03-25 13:41:28,902 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOD.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.MAP */",
+      "ERROR    | 2026-03-25 13:41:40,113 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.MAP */\nERROR    | 2026-03-25 13:41:40,113 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOD.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOD.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.OBJ */",
+      "ERROR    | 2026-03-25 13:41:41,291 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOD.OBJ */\nERROR    | 2026-03-25 13:41:41,291 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOD.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOT.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.COD */",
+      "ERROR    | 2026-03-25 13:41:42,459 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.COD */\nERROR    | 2026-03-25 13:41:42,459 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOT.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOT.EXE",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.EXE */",
+      "/* recovering functions... */",
+      "/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */",
+      "",
+      "/* == entry asm == */",
+      "0x1126: mov ah, 0x30"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.EXE */\n/* recovering functions... */\n/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */\n\n/* == entry asm == */\n0x1126: mov ah, 0x30\n0x1128: int 0x21\nERROR    | 2026-03-25 13:41:43,644 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOT.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.MAP */",
+      "ERROR    | 2026-03-25 13:41:54,682 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.MAP */\nERROR    | 2026-03-25 13:41:54,682 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOT.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOT.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.OBJ */",
+      "ERROR    | 2026-03-25 13:41:55,863 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOT.OBJ */\nERROR    | 2026-03-25 13:41:55,863 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOT.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOX.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.COD */",
+      "ERROR    | 2026-03-25 13:41:57,037 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.COD */\nERROR    | 2026-03-25 13:41:57,037 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOX.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOX.EXE",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.EXE */",
+      "/* recovering functions... */",
+      "/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */",
+      "",
+      "/* == entry asm == */",
+      "0x1126: mov ah, 0x30"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.EXE */\n/* recovering functions... */\n/* Function catalog recovery failed: Unknown opcode 00000011: 63726f736f */\n\n/* == entry asm == */\n0x1126: mov ah, 0x30\n0x1128: int 0x21\nERROR    | 2026-03-25 13:41:58,202 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOX.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.MAP */",
+      "ERROR    | 2026-03-25 13:42:09,286 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.MAP */\nERROR    | 2026-03-25 13:42:09,286 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOX.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/IMOX.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.OBJ */",
+      "ERROR    | 2026-03-25 13:42:10,474 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/IMOX.OBJ */\nERROR    | 2026-03-25 13:42:10,474 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/IMOX.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOD.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.COD */",
+      "ERROR    | 2026-03-25 13:42:11,642 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.COD */\nERROR    | 2026-03-25 13:42:11,642 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOD.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOD.EXE",
+    "status": "timeout",
+    "summary": "timeout"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOD.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.MAP */",
+      "ERROR    | 2026-03-25 13:42:42,873 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.MAP */\nERROR    | 2026-03-25 13:42:42,873 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOD.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOD.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.OBJ */",
+      "ERROR    | 2026-03-25 13:42:44,048 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOD.OBJ */\nERROR    | 2026-03-25 13:42:44,048 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOD.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOT.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.COD */",
+      "ERROR    | 2026-03-25 13:42:45,224 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.COD */\nERROR    | 2026-03-25 13:42:45,224 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOT.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOT.EXE",
+    "status": "timeout",
+    "summary": "timeout"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOT.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.MAP */",
+      "ERROR    | 2026-03-25 13:43:16,469 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.MAP */\nERROR    | 2026-03-25 13:43:16,469 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOT.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOT.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.OBJ */",
+      "ERROR    | 2026-03-25 13:43:17,668 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOT.OBJ */\nERROR    | 2026-03-25 13:43:17,668 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOT.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOX.COD",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.COD */",
+      "ERROR    | 2026-03-25 13:43:18,848 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.COD */\nERROR    | 2026-03-25 13:43:18,848 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOX.COD.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOX.EXE",
+    "status": "timeout",
+    "summary": "timeout"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOX.MAP",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.MAP */",
+      "ERROR    | 2026-03-25 13:43:50,078 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.MAP */\nERROR    | 2026-03-25 13:43:50,078 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOX.MAP.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/ISOX.OBJ",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.OBJ */",
+      "ERROR    | 2026-03-25 13:43:51,256 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/ISOX.OBJ */\nERROR    | 2026-03-25 13:43:51,256 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/ISOX.OBJ.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/README.md",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/README.md */",
+      "ERROR    | 2026-03-25 13:43:52,434 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/README.md */\nERROR    | 2026-03-25 13:43:52,434 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/README.md.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/build_matrix.sh",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/build_matrix.sh */",
+      "ERROR    | 2026-03-25 13:43:53,637 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/build_matrix.sh */\nERROR    | 2026-03-25 13:43:53,637 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/build_matrix.sh.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/intdemo.c",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/intdemo.c */",
+      "ERROR    | 2026-03-25 13:43:54,802 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/intdemo.c */\nERROR    | 2026-03-25 13:43:54,802 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/intdemo.c.  Perhaps try the 'blob' loader?"
+  },
+  {
+    "file": "angr_platforms/x16_samples/matrix_manifest.json",
+    "status": "ok",
+    "summary": [
+      "/* loading: /home/xor/vextest/angr_platforms/x16_samples/matrix_manifest.json */",
+      "ERROR    | 2026-03-25 13:43:55,981 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')",
+      "Traceback (most recent call last):",
+      "  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>",
+      "    raise SystemExit(main())",
+      "                     ~~~~^^"
+    ],
+    "snippet": "/* loading: /home/xor/vextest/angr_platforms/x16_samples/matrix_manifest.json */\nERROR    | 2026-03-25 13:43:55,981 | angr.state_plugins.unicorn_engine | failed loading \"unicornlib.so\", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')\nTraceback (most recent call last):\n  File \"/home/xor/vextest/decompile.py\", line 1838, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/xor/vextest/decompile.py\", line 1679, in main\n    project = _build_project(\n        args.binary,\n    ...<2 lines>...\n        entry_point=args.entry_point,\n    )\n  File \"/home/xor/vextest/decompile.py\", line 95, in _build_project\n    return angr.Project(path, auto_load_libs=False)\n           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/angr/project.py\", line 164, in __init__\n    self.loader = cle.Loader(self.filename, concrete_target=concrete_target, **load_options)\n                  ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 187, in __init__\n    self.initial_load_objects = self._internal_load(\n                                ~~~~~~~~~~~~~~~~~~~^\n        main_binary, *preload_libs, *force_load_libs, preloading=(main_binary, *preload_libs)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 800, in _internal_load\n    obj = self._load_object_isolated(main_spec)\n  File \"/home/xor/vextest/.venv/lib/python3.13/site-packages/cle/loader.py\", line 1005, in _load_object_isolated\n    raise CLECompatibilityError(\n        f\"Unable to find a loader backend for {spec}.  Perhaps try the 'blob' loader?\"\n    )\ncle.errors.CLECompatibilityError: Unable to find a loader backend for /home/xor/vextest/angr_platforms/x16_samples/matrix_manifest.json.  Perhaps try the 'blob' loader?"
+  }
+]
