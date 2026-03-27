@@ -361,6 +361,12 @@ def _decompile_function(
             print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
             function.normalize()
         dec = project.analyses.Decompiler(function, cfg=cfg)
+        if dec.codegen is None:
+            logging.getLogger(__name__).debug(
+                "Default decompiler structurer produced no code for %s; retrying with Phoenix.",
+                function,
+            )
+            dec = project.analyses.Decompiler(function, cfg=cfg, options=[("structurer_cls", "Phoenix")])
         print(f"[dbg] Decompiler returned for {hex(function.addr)}")
         sys.stdout.flush()
     except _AnalysisTimeout:
