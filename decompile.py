@@ -3337,13 +3337,15 @@ def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
     return changed
 
 
+def _stack_type_for_size(size: int):
+    return SimTypeChar() if size == 1 else SimTypeShort(False)
+
+
 def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
     changed = False
-    target_type = SimTypeShort(False)
-
     def visit(node):
         nonlocal changed
 
@@ -3369,7 +3371,7 @@ def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) ->
                             and high_expr is not None
                             and _same_c_expression(_unwrap_c_casts(high_expr), _unwrap_c_casts(stmt.rhs))
                         ):
-                            if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, target_type):
+                            if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, _stack_type_for_size(2)):
                                 changed = True
                             new_statements.append(stmt)
                             changed = True
