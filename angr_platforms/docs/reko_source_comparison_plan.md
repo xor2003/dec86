@@ -187,6 +187,9 @@ Inertia now collects access traits and uses them for narrow field-style output:
 
 This already feeds visible improvements like `field_30e`-style recovery and is
 a real partial implementation of the `AddressTraitCollector` direction.
+The trait cache is also now width-aware for repeated offsets and stride-shaped
+accesses, which gives us a safer base for future member/array work without
+changing today's object rewrites.
 
 ### 4. Alias-aware cleanup is already helping
 
