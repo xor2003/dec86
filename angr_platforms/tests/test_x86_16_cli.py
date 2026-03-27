@@ -445,7 +445,8 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
     assert "unsigned short b;  // [bp-0x2] b" in result.stdout
     assert "y2 = 0;" in result.stdout
     assert "y2 = 112;" in result.stdout
-    assert "v0 = 2;" in result.stdout
+    assert "v0 = 0;" in result.stdout
+    assert "(&v0 + 2)" in result.stdout
     assert "sub_1023();" in result.stdout
 
 

@@ -44,6 +44,7 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - repeated `>> 1` chains in `snake.EXE:0x13b2` now compress into wider `>> 3` / `>> 5` / `>> 8` forms instead of staying as a ladder of one-bit temporaries
   - bitwise mask recovery now also collapses one `snake.EXE:0x1287` flag-chain into source-like `v34` / `v35` forms instead of leaving the whole condition as raw mask scaffolding
   - the hottest x86-16 expression matchers are now cached per decompilation run to cut repeated tree walks
+  - the structured simplifier now includes a tiny safe algebra layer for `x ^ x -> 0`, `x - 0 -> x`, and `0 + x -> x`
 - Current concrete wins:
   - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
   - `snake.EXE:0x1131` now recovers via a Phoenix structurer retry when the default structurer returns empty codegen, bringing whole-binary `snake.exe` to `18/18` shown functions
