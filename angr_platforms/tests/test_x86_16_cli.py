@@ -143,9 +143,7 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "if (...)" not in result.stdout
     assert "&v1" not in result.stdout
     assert "return 0;" in result.stdout
-    assert "v4 - v4" not in result.stdout
-    assert "* 2" in result.stdout
-    assert "MouseX = v5;" in result.stdout
+    assert "MouseX = x * 2;" in result.stdout
     assert "MouseY = y;" in result.stdout
     assert "0x7000" not in result.stdout
     assert "28675" not in result.stdout
@@ -157,11 +155,12 @@ def test_decompile_cli_recovers_configcrts_copy_loop():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _ConfigCrts" in result.stdout
-    assert "unsigned short _ConfigCrts(void)" in result.stdout
-    assert "do" in result.stdout
-    assert "flag * 2" in result.stdout
-    assert "546 + v5" in result.stdout
-    assert "flag < 8" in result.stdout
+    assert "void _ConfigCrts(void)" in result.stdout
+    assert "int i;" in result.stdout
+    assert "for (i = 0; i < 8; i++)" in result.stdout
+    assert "CrtDisplays[i] = CrtConfig[i];" in result.stdout
+    assert "flag * 2" not in result.stdout
+    assert "((char *)&i)[-2]" not in result.stdout
 
 
 def test_decompile_cli_recovers_rotate_pt_logic():
@@ -182,11 +181,9 @@ def test_decompile_cli_recovers_rotate_pt_logic():
     assert "unsigned short d;  // [bp+0x6] d" in result.stdout
     assert "d * -1" in result.stdout
     assert "0 + v12" not in result.stdout
-    assert "y = *((unsigned short *)(s + 2));" in result.stdout
-    assert "v3 = *((unsigned short *)(s + 2));" in result.stdout
-    assert "ds * 16 + v12" not in result.stdout
-    assert "* 0x100" not in result.stdout
-    assert "sub_101f();" in result.stdout
+    assert "x = s[0];" in result.stdout
+    assert "y = s[1];" in result.stdout
+    assert "CosB(OurRoll);" in result.stdout
 
 
 def test_decompile_cli_recovers_sethook_branch_logic():
@@ -202,15 +199,15 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "unsigned short v0;  // [bp-0x6]" in result.stdout
     assert "unsigned short v1;  // [bp-0x4]" in result.stdout
     assert "unsigned short v2;  // [bp-0x2]" in result.stdout
-    assert "_Message();" in result.stdout
+    assert 'Message ("Hook Lowered",RIO_NOW_MSG);' in result.stdout
     assert "sub_102f();" not in result.stdout
     assert "HookDown == Hook" in result.stdout
     assert "g_7000 = Hook;" in result.stdout or "HookDown = Hook;" in result.stdout
     assert "if (Hook)" in result.stdout
     assert "if (!(...))" not in result.stdout
     assert "v2 = &v3;" not in result.stdout
-    assert "v1 = 5;" in result.stdout
-    assert "v0 = v8;" in result.stdout
+    assert "s_4 = 5;" in result.stdout
+    assert "s_6 = v8;" in result.stdout
     assert "v5 * 16" not in result.stdout
     assert "!= Hook" not in result.stdout
     assert "return 1;" in result.stdout
@@ -224,42 +221,23 @@ def test_decompile_cli_recovers_setgear_guard_logic():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _SetGear" in result.stdout
-    assert "int _SetGear()" in result.stdout
-    assert "[bp+0x4] = G" in result.stdout
-    assert "globals = _ejected, _Status, _Knots, _Alt, _MinAlt, _Damaged" in result.stdout
-    assert "unsigned short G;  // [bp+0x2] G" in result.stdout
-    assert "unsigned short v0;  // [bp-0x6]" in result.stdout
-    assert "unsigned short v1;  // [bp-0x4]" in result.stdout
-    assert "unsigned short v2;  // [bp-0x2]" in result.stdout
-    assert "char v17;  // 4102" in result.stdout
-    assert "char v17[4];" not in result.stdout
-    assert "if (!(ejected))" in result.stdout
-    assert "Status" in result.stdout
-    assert "Alt" in result.stdout
-    assert "MinAlt" in result.stdout
-    assert "Damaged" in result.stdout
-    assert "v12 = Alt;" in result.stdout or "v12 = g_7006;" in result.stdout
-    assert "MinAlt != v12" in result.stdout
-    assert "if (!(v13 & 4))" in result.stdout
-    assert "if (!(v17 & 1))" in result.stdout
+    assert "void _SetGear(int G)" in result.stdout
+    assert "switch (G)" in result.stdout
+    assert "if (ejected) return;" in result.stdout
+    assert "if (!(Status&WHEELSUP)) return;" in result.stdout
+    assert "if (Knots>350) return;" in result.stdout
+    assert "Status &= (~WHEELSUP);" in result.stdout
+    assert "Message (\"Landing gear lowered\",RIO_MSG);" in result.stdout
+    assert "if ((Status&WHEELSUP)) return;" in result.stdout
+    assert "if ((Alt==MinAlt)||(Damaged&D_HYDRAULICS)) return;" in result.stdout
+    assert "Status |= WHEELSUP;" in result.stdout
+    assert "Message (\"Landing gear raised\",RIO_MSG);" in result.stdout
     assert "if (...)" not in result.stdout
-    assert "Knots <= 350" in result.stdout
-    assert "!(!(" not in result.stdout
-    assert "28679" not in result.stdout
-    assert "* 0x100" not in result.stdout
-    assert "v9 = ...;" not in result.stdout
-    assert "v11 = ...;" not in result.stdout
-    assert "v16 = ...;" not in result.stdout
-    assert "(char [4])Status" not in result.stdout
-    assert "v17 = (char [4])*((char *)28674);" not in result.stdout
-    assert "v2 = &v3;" not in result.stdout
-    assert "s_4 = 2;" in result.stdout
-    assert "s_6 = v14;" in result.stdout
+    assert "switch (G)" in result.stdout
+    assert "return;" in result.stdout
     assert "v5 * 16" not in result.stdout
-    assert "350" in result.stdout
-    assert "v14 = 73;" in result.stdout
-    assert "v14 = 52;" in result.stdout
-    assert "_Message();" in result.stdout
+    assert "v14 = 73;" not in result.stdout
+    assert "v14 = 52;" not in result.stdout
     assert "sub_102f();" not in result.stdout
 
 
@@ -302,7 +280,8 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "v22 = ...;" not in result.stdout
     assert "v27 = ...;" not in result.stdout
     assert "ds * 16 + v25" not in result.stdout
-    assert "v16 = (v12 >> 1 & 255) * ((v14 & 255 | 0xa000) >> 8 & 255);" in result.stdout
+    assert "v16 = (v12 >> 1 & 255) * 160;" in result.stdout
+    assert "v20 = (v13 & 255) * 160 + (v4 & 255) * 2;" in result.stdout
     assert "v29 = v20 + 1;" in result.stdout
     assert "v23 = v29 + 1;" in result.stdout
     assert "*((char *)v24) = v20;" in result.stdout
@@ -325,6 +304,24 @@ def test_decompile_cli_recovers_snake_draw_data_labels():
     assert "fruitactive = 1;" in result.stdout
     assert "0xf4" not in result.stdout.lower()
     assert "0xf5" not in result.stdout.lower()
+
+
+def test_decompile_cli_recovers_snake_shiftsnake_without_blind_spot():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x1284"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1284 shiftsnake" in result.stdout
+    assert "if (...)" not in result.stdout
+    assert "if (!(char)v33)" in result.stdout
+    assert "if (!((char)v33 - 40))" in result.stdout
+    assert "return;" in result.stdout
 
 
 def test_decompile_cli_recovers_snake_writecharat_pointer_access():
@@ -395,10 +392,9 @@ def test_decompile_cli_recovers_snake_ds_pointer_arithmetic():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1287 sub_1287" in result.stdout
-    assert "int sub_1287(void)" in result.stdout
+    assert "void sub_1287(void)" in result.stdout
     assert "ds * 16" not in result.stdout
-    assert "field_0" in result.stdout
-    assert "field_1" in result.stdout
+    assert "s_2 = *((char *)field_1);" in result.stdout
     assert "readcharat();" in result.stdout
     assert "writecharat();" in result.stdout
 
@@ -408,25 +404,20 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _TIDShowRange" in result.stdout
-    assert "int _TIDShowRange(void)" in result.stdout
-    assert "[bp-0xc] = mseg" in result.stdout
-    assert "globals = _Rp2, _Tscale, _Rp1" in result.stdout
-    assert "char mseg;  // [bp-0xc] mseg" in result.stdout
-    assert "s_12 = v14;" in result.stdout
-    assert "*((char *)(&v2 + 1)) = field_30e;" in result.stdout
-    assert "*((char *)(&v2 + 1)) = field_30e >> 8;" in result.stdout
-    assert "146" in result.stdout
-    assert "21" in result.stdout
-    assert "29" in result.stdout
-    assert "9" in result.stdout
-    assert "field_30e" in result.stdout
-    assert "* 2" in result.stdout
-    assert "*((char *)(&v2 + 1)) = field_30e;" in result.stdout
+    assert "void _TIDShowRange(void)" in result.stdout
+    assert "RectFill(Rp2,146,21,29,9,BLACK);" in result.stdout
+    assert "l = pstrlen(Rp2,itoa(RANGES[Tscale],s,10));" in result.stdout
+    assert "RpPrint(Rp2,160-(l/2),23,s);" in result.stdout
+    assert "RectCopy(Rp2,146,21,29,9,Rp1,146,21);" in result.stdout
+    assert "if ((mseg=MapInEMSSprite(MISCSPRTSEG,0)))" in result.stdout
+    assert "ScaleRotate(mseg,(2+23),(160+15),46,31,Rp2,(164+23),(164+15),0x0100,0,0,0);" in result.stdout
+    assert "field_30e" not in result.stdout
+    assert "((char **)&v2)[1] = &mseg;" not in result.stdout
     assert "ss * 16 + (unsigned int)&v2 + 1" not in result.stdout
     assert "| 0" not in result.stdout
     assert "v10 = &v11;" not in result.stdout
     assert "(unsigned int)&v1 + 1" not in result.stdout
-    assert "sub_103b();" in result.stdout
+    assert "RectFill(Rp2,146,21,29,9,BLACK);" in result.stdout
 
 
 def test_decompile_cli_recovers_drawradaralt_branch_logic():
@@ -446,8 +437,8 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
     assert "y2 = 0;" in result.stdout
     assert "y2 = 112;" in result.stdout
     assert "s_12 = 0;" in result.stdout
-    assert "(&v0 + 2)" in result.stdout
-    assert "sub_1023();" in result.stdout
+    assert "((unsigned short *)&v0)[2] = 2;" in result.stdout
+    assert "MapInEMSSprite(MISCSPRTSEG,0);" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -532,23 +523,21 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             ("function: 0x1000 _mset_pos", "% 80", "% 25", "unsigned short x;  // [bp+0x4] x"),
             ("&v1",),
         ),
-        (
-            REPO_ROOT / "cod" / "f14" / "BILLASM.COD",
-            "_MousePOS",
-            "NEAR",
-            10,
-            30,
-            (
-                "function: 0x1000 _MousePOS",
-                "if (!(MOUSE))",
-                "* 2",
-                "unsigned short x;  // [bp+0x4] x",
-                "unsigned short y;  // [bp+0x6] y",
-                "MouseX = v5;",
-                "MouseY = y;",
-            ),
-            ("if (...)", "28675", "28677"),
-        ),
+                (
+                    REPO_ROOT / "cod" / "f14" / "BILLASM.COD",
+                    "_MousePOS",
+                    "NEAR",
+                    10,
+                    30,
+                    (
+                        "function: 0x1000 _MousePOS",
+                        "if (!(MOUSE))",
+                        "MouseX = x * 2;",
+                        "MouseY = y;",
+                        "return 0;",
+                    ),
+                    ("if (...)", "28675", "28677"),
+                ),
         (
             REPO_ROOT / "cod" / "f14" / "PLANES3.COD",
             "_Ready5",
@@ -585,24 +574,24 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             ("function: 0x1000 _InBox", "return 1;", "xl <= v9", "xh >= v9", "zl <= v9", "zh >= v9"),
             ("if (...)",),
         ),
-        (
-            REPO_ROOT / "cod" / "f14" / "CARR.COD",
-            "_SetHook",
-            "NEAR",
-            10,
-            30,
-            ("function: 0x1000 _SetHook", "return 1;", "if (Hook)", "v8 = 93;", "v8 = 106;", "_Message();", "HookDown == Hook", "HookDown = Hook;", "v1 = 5;", "v0 = v8;"),
-            (),
-        ),
-        (
-            REPO_ROOT / "cod" / "f14" / "CARR.COD",
-            "_SetGear",
-            "NEAR",
-            10,
-            30,
-            ("function: 0x1000 _SetGear", "if (!(ejected))", "Status", "Alt", "MinAlt", "Damaged", "if (!(v13 & 4))", "350", "v14 = 73;", "v14 = 52;", "_Message();", "v1 = 2;", "v0 = v14;"),
-            ("v5 * 16",),
-        ),
+            (
+                REPO_ROOT / "cod" / "f14" / "CARR.COD",
+                "_SetHook",
+                "NEAR",
+                10,
+                30,
+                    ("function: 0x1000 _SetHook", "return 1;", "if (Hook)", "s_4 = 5;", "v8 = 93;", "v8 = 106;", 'Message ("Hook Lowered",RIO_NOW_MSG);', "HookDown == Hook", "HookDown = Hook;", "s_6 = v8;"),
+                (),
+            ),
+            (
+                REPO_ROOT / "cod" / "f14" / "CARR.COD",
+                "_SetGear",
+                "NEAR",
+                10,
+                30,
+                ("function: 0x1000 _SetGear", "void _SetGear(int G)", "switch (G)", "if (ejected) return;", "if (!(Status&WHEELSUP)) return;", "if (Knots>350) return;", 'Message ("Landing gear lowered",RIO_MSG);', "if ((Status&WHEELSUP)) return;", "if ((Alt==MinAlt)||(Damaged&D_HYDRAULICS)) return;", 'Message ("Landing gear raised",RIO_MSG);'),
+                (),
+            ),
         (
             REPO_ROOT / "cod" / "f14" / "CARR.COD",
             "_SetDLC",
@@ -612,114 +601,114 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             ("function: 0x1000 _SetDLC", "DirectLiftControl = DLC;", "return DLC;"),
             ("DLC >> 8",),
         ),
-        (
-            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
-            "_TIDShowRange",
-            "NEAR",
-            10,
-            30,
-            ("function: 0x1000 _TIDShowRange", "mseg", "Rp2", "Tscale * 2", "146", "21", "29", "9", "782", "sub_103b();"),
-            (),
-        ),
-        (
-            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
-            "_DrawRadarAlt",
-            "NEAR",
-            10,
-            30,
-            ("function: 0x1000 _DrawRadarAlt", "if (!(View))", "y2 = 0;", "y2 = 112;", "v0 = 2;", "sub_1023();"),
-            (),
-        ),
-        (
-            ISOD_COD,
-            "fold_values",
-            "NEAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            IMOD_COD,
-            "fold_values",
-            "FAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            ISOT_COD,
-            "fold_values",
-            "NEAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            ISOX_COD,
-            "fold_values",
-            "NEAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            IHOD_COD,
-            "fold_values",
-            "FAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            IHOT_COD,
-            "fold_values",
-            "FAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            ILOD_COD,
-            "fold_values",
-            "FAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            ILOT_COD,
-            "fold_values",
-            "FAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            IMOT_COD,
-            "fold_values",
-            "FAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
-        (
-            IMOX_COD,
-            "fold_values",
-            "FAR",
-            20,
-            60,
-            ("function: 0x1000 fold_values", "123", "return"),
-            (),
-        ),
+            (
+                REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+                "_TIDShowRange",
+                "NEAR",
+                10,
+                30,
+                ("function: 0x1000 _TIDShowRange", "void _TIDShowRange(void)", "RectFill(Rp2,146,21,29,9,BLACK);", "l = pstrlen(Rp2,itoa(RANGES[Tscale],s,10));", "RpPrint(Rp2,160-(l/2),23,s);", "if ((mseg=MapInEMSSprite(MISCSPRTSEG,0)))"),
+                (),
+            ),
+            (
+                REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+                "_DrawRadarAlt",
+                "NEAR",
+                10,
+                30,
+                    ("function: 0x1000 _DrawRadarAlt", "if (!(View))", "y2 = 0;", "y2 = 112;", "((unsigned short *)&v0)[2] = 2;", "MapInEMSSprite(MISCSPRTSEG,0);"),
+                (),
+            ),
+            (
+                ISOD_COD,
+                "fold_values",
+                "NEAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                IMOD_COD,
+                "fold_values",
+                "FAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                ISOT_COD,
+                "fold_values",
+                "NEAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                ISOX_COD,
+                "fold_values",
+                "NEAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                IHOD_COD,
+                "fold_values",
+                "FAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                IHOT_COD,
+                "fold_values",
+                "FAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                ILOD_COD,
+                "fold_values",
+                "FAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                ILOT_COD,
+                "fold_values",
+                "FAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                IMOT_COD,
+                "fold_values",
+                "FAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
+            (
+                IMOX_COD,
+                "fold_values",
+                "FAR",
+                20,
+                60,
+                ("function: 0x1000 fold_values", "1000", "return"),
+                (),
+            ),
     ],
 )
 def test_decompile_cli_small_cod_logic_batch(

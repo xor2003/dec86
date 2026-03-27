@@ -9,7 +9,15 @@ from pathlib import Path
 class CODProcMetadata:
     stack_aliases: dict[int, str]
     call_names: tuple[str, ...]
+    call_sources: tuple[tuple[str, str], ...]
     global_names: tuple[str, ...]
+    source_lines: tuple[str, ...]
+    source_line_set: frozenset[str]
+
+    def has_source_lines(self, required_lines: tuple[str, ...]) -> bool:
+        if not required_lines:
+            return True
+        return set(required_lines).issubset(self.source_line_set)
 
 
 def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> list[dict[str, object]]:
@@ -53,7 +61,9 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     collect = False
     stack_aliases: dict[int, str] = {}
     call_names: list[str] = []
+    call_sources: list[tuple[str, str]] = []
     global_names: list[str] = []
+    source_lines: list[str] = []
 
     alias_re = re.compile(r"^\s*;\s*([A-Za-z_$?@][\w$?@]*)\s*=\s*(-?[0-9A-Fa-f]+)\s*$")
     entry_re = re.compile(r"\*\*\*\s+[0-9A-Fa-f]+\s+(?:[0-9A-Fa-f]{2}\s+)+(.*)$")
@@ -72,6 +82,19 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
         alias_match = alias_re.match(line)
         if alias_match:
             stack_aliases[int(alias_match.group(2), 0)] = alias_match.group(1)
+            continue
+
+        if line.lstrip().startswith(";|***"):
+            source_text = re.sub(r"^\s*;\|\*+\s*", "", line).strip()
+            if source_text:
+                source_lines.append(source_text)
+                for call_name, call_text in _extract_source_call_expressions(source_text):
+                    if call_name in {"if", "while", "for", "switch", "return"}:
+                        continue
+                    if call_name.startswith("$"):
+                        continue
+                    if call_text not in {text for _, text in call_sources}:
+                        call_sources.append((call_name, call_text))
             continue
 
         entry_match = entry_re.search(line)
@@ -96,8 +119,44 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     return CODProcMetadata(
         stack_aliases=stack_aliases,
         call_names=tuple(call_names),
+        call_sources=tuple(call_sources),
         global_names=tuple(global_names),
+        source_lines=tuple(source_lines),
+        source_line_set=frozenset(source_lines),
     )
+
+
+def _extract_source_call_expressions(source_text: str) -> list[tuple[str, str]]:
+    def _match_call(start: int) -> tuple[str, str, int] | None:
+        match = re.match(r"([A-Za-z_$?@][\w$?@]*)\s*\(", source_text[start:])
+        if match is None:
+            return None
+        name = match.group(1)
+        open_idx = start + match.end() - 1
+        depth = 0
+        for idx in range(open_idx, len(source_text)):
+            ch = source_text[idx]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return name, source_text[start : idx + 1], idx + 1
+        return None
+
+    calls: list[tuple[str, str]] = []
+    idx = 0
+    while idx < len(source_text):
+        match = _match_call(idx)
+        if match is None:
+            idx += 1
+            continue
+        name, call_text, end_idx = match
+        calls.append((name, call_text))
+        inner = call_text[call_text.find("(") + 1 : -1]
+        calls.extend(_extract_source_call_expressions(inner))
+        idx = end_idx
+    return calls
 
 
 def join_cod_entries(

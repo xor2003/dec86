@@ -3,6 +3,7 @@ import struct
 from typing import TYPE_CHECKING
 
 from pyvex.lifting.util.vex_helper import Type
+from pyvex.lifting.util import ParseError
 
 if TYPE_CHECKING:
     from .emulator import Emulator
@@ -72,8 +73,13 @@ class ParseInstr(X86Instruction):
             opcode = (opcode & 0xFF) | 0x0100
 
         if opcode not in self.chk:
-            logger.error(f"Unknown opcode at {self.emu.bitstream.bytepos:08x}: {opcode:02x}, next bytes: {self.emu.bitstream.peek('uint:32'):08x}")
-            raise RuntimeError(f"Unknown opcode {self.emu.bitstream.bytepos:08x}: {opcode:02x}{self.emu.bitstream.peek('uint:32'):08x}")
+            logger.error(
+                "Unknown opcode at %08x: %02x, next bytes: %08x",
+                self.emu.bitstream.bytepos,
+                opcode,
+                self.emu.bitstream.peek("uint:32"),
+            )
+            raise ParseError(f"Unknown opcode {self.emu.bitstream.bytepos:08x}: {opcode:02x}{self.emu.bitstream.peek('uint:32'):08x}")
             #sys.exit(1)
         if self.chk[opcode] & CHK_MODRM:
             self.parse_modrm_sib_disp()

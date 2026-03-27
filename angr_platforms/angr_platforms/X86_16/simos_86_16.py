@@ -278,5 +278,6 @@ class SimCC8616MSCmedium(SimCC):
 
 register_simos("DOS", SimDOS86_16)
 register_default_cc("86_16", SimCC8616MSCsmall)
+register_default_cc("86_16", SimCC8616MSCsmall, platform="DOS")
 register_syscall_cc("86_16", "Linux", SimDOSintcall)
 register_syscall_cc("86_16", "default", SimDOSintcall)

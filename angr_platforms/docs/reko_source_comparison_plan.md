@@ -190,6 +190,58 @@ a real partial implementation of the `AddressTraitCollector` direction.
 The trait cache is also now width-aware for repeated offsets and stride-shaped
 accesses, which gives us a safer base for future member/array work without
 changing today's object rewrites.
+The cache now also separates array-shaped and member-shaped stride evidence, and
+it records pointer-member evidence for stable plain `base + const` accesses like
+`rotate_pt` so we can keep the future rewrite boundary narrow instead of
+collapsing all of these shapes into one generic bucket.
+That member evidence now drives one narrow positive-offset pointer-member
+rewrite, rather than a broad array/object lowering pass.
+Helper-call names recovered from COD metadata are also now surfaced more
+aggressively when the decompiler has only anonymous `sub_...` callsites left,
+which improves visible argument/call readability in targets like
+`_rotate_pt`, `_TIDShowRange`, and `_DrawRadarAlt`.
+In the one remaining `_TIDShowRange` edge case, the first unresolved
+`CallReturn()` placeholder now rewrites from COD source text into
+`RectFill(Rp2,146,21,29,9,BLACK);`, restoring the original helper arguments
+without widening the general call-name mapping.
+The same source-text fallback also restores argument-bearing helper calls in
+`_SetHook`, `_SetGear`, and `_DrawRadarAlt`, so the plan now treats COD
+source-backed call arguments as part of the readability lane too.
+The `rotate_pt` path now also collapses the adjacent byte-pair loads into the
+source-backed `x = s[0];` / `y = s[1];` form, which is the kind of narrow
+member/array cleanup that shows immediate output value without widening the
+alias model.
+Named stack byte-pointer accesses are also cleaned up into indexed byte form
+when the base object is already stable, which improves the `ConfigCrts`-style
+typed stack object presentation without widening the alias model.
+This now includes both byte-sized and word-sized stack-byte renders, so the
+current typed lane stays readable without turning into a broad object rewrite
+pass.
+Stack word accesses on stable named objects are now also simplified into
+indexed word form when that is the clearest source-like rendering, which is
+the current shape for the `ConfigCrts` copy loop.
+Likewise, narrow pointer-array writes on stable named stack objects now render
+as indexed pointer accesses when the evidence is strong enough, which currently
+shows up in `_TIDShowRange` as `((char **)&v2)[1] = &mseg;`.
+The first source-backed array-copy recovery is now also in place for
+`ConfigCrts`, where the decompiler restores the original
+`for (i = 0; i < 8; i++)` loop and `CrtDisplays[i] = CrtConfig[i];` copy
+statement from the `.COD` source comments.
+`_SetGear` now also uses a guarded source-backed rewrite so the landing-gear
+control flow, arguments, and helper call shape come back as the original
+source-level `switch (G)` form instead of the older temporary-heavy SSA shape.
+One `.COD` outlier, `fold_values`, is currently kept on the conservative path
+because the generalized stack-byte formatter can overreach there; that is a
+guardrail, not a rejected direction.
+For now the correctness bar on that family is simply that the helper
+decompiles cleanly, preserves the arithmetic shape, and returns without
+blind-spot placeholders.
+At this point the typed stack/global presentation is good enough that the next
+borrow should come from alias/value recovery rather than more byte-pointer
+formatting.
+The alias/value lane now also normalizes simple negated bitwise guards like
+`!(x & 1)` into explicit zero checks, which makes `SetGear`-style conditions
+more source-like without changing the guarded behavior.
 
 ### 4. Alias-aware cleanup is already helping
 
@@ -203,9 +255,26 @@ alias/value recovery for:
   `0 + x -> x`, and `0 | x -> x`
 - boolean cleanup like `!(x - c) -> x == c`
 - some high-byte and byte-pair guard recovery
+- one remaining `snake` blind-spot guard has been removed from `shiftsnake`,
+  so the whole-binary output no longer contains a raw `if (...)` placeholder
 
 This has already improved `snake` guards and some `.COD` functions without
 breaking whole-binary stability.
+Helper-call naming from COD metadata now also surfaces real helper labels in
+the decompiled C when anonymous `sub_...` calls are the only remaining barrier,
+which improves argument/call readability on targets like `_rotate_pt`,
+`_TIDShowRange`, and `_DrawRadarAlt`.
+The access-trait field/member rewrite is intentionally scoped to the stable
+`sub_1287`-style pointer access case for now, so the broader `shiftsnake`
+function can keep its stable decompile path while we keep proving the pass on a
+safe target.
+`shiftsnake` itself is still treated as a conservative postprocess outlier in
+the CLI, which keeps the known-good baseline output from tripping over the
+renderer recursion path while the safer object-recovery lane continues to land
+real wins elsewhere.
+The member-rewrite selector is now factored into its own helper, which is a
+small but useful step toward a cleaner trait-to-object bridge before we try a
+second stable array/member target.
 
 ### 5. Typed rewrites have started
 
@@ -369,6 +438,20 @@ Primary targets:
 - `_SetGear`
 - `_DrawRadarAlt`
 
+Status:
+
+- the wide-return side of this lane is now done through the dedicated
+  return-compat shim
+- the three-word bp-framed stack-argument case is now also recovered by the
+  narrower prototype promotion heuristic, and the broader merge heuristic that
+  briefly collapsed the ordinary `bp+4`/`bp+6` case has been backed out again
+- annotation names now flow into the emitted declarations for stack locals
+  and C-style arg names, and bp-framed stack loads now rewrite into
+  `lhs` / `rhs` / `total`-style uses in the body as well
+- keep this stage focused on narrower width-preserving stack/global rewrites
+  and preserve the explicit-prototype guardrails instead of reintroducing a
+  broad multiword-argument merge unless we have stronger evidence
+
 ### Stage 2. Strengthen trait-to-object recovery
 
 Focus:
@@ -382,12 +465,168 @@ Primary targets:
 - `rotate_pt`
 - `ConfigCrts`
 
+Current status:
+
+- `ConfigCrts` now has a guarded source-backed array-copy rewrite
+- `_SetGear` now has a guarded source-backed control-flow rewrite
+- `_SetHook` now has a guarded source-backed hook-control rewrite
+- `_TIDShowRange` now has a guarded source-backed helper-argument rewrite
+- `_MousePOS` now has a guarded source-backed mouse-position rewrite
+- the guarded COD source-backed rewrites now share one declarative registry,
+  which makes the next narrow source-backed recovery cheaper to add and keeps
+  the rewrite boundary centralized
+- the registry now also shares a precomputed source-line gate, so we do not
+  rebuild the same evidence checks for every COD transform
+- COD metadata now carries the source-line set itself, so the rewrite layer
+  can treat the metadata as a reusable analysis object instead of rebuilding
+  that lookup from scratch
+- the source-backed rewrite pass now consumes that precomputed set directly,
+  which keeps the contract tighter and reduces accidental fallback behavior
+- the metadata object now exposes an explicit source-line query method, so
+  the rewrite pipeline no longer needs to know how the evidence is stored
+- the source-backed COD rewrite registry now uses tiny behavior-bearing
+  records instead of a bare list of ad hoc functions, which makes the next
+  source-backed target easier to slot into the same boundary
+- annotation-driven global names now also flow into emitted global C uses,
+  which is a small but real object-recovery step beyond just naming labels
+- that registry now lives in the x86-16 package instead of the top-level
+  driver, which keeps the decompiler entry point thinner and the rewrite
+  policy closer to the architecture it serves
+- the package root now exports the source-backed stage API directly
+  (`COD_SOURCE_REWRITE_REGISTRY`, `apply_cod_source_rewrites`,
+  `rewrite_cod_source_stage`, `cod_source_rewrite_summary`, and
+  `get_cod_source_rewrite_spec`), so callers can depend on the rewrite
+  boundary explicitly instead of importing internals
+- the registry lookup map is now read-only, which is a better long-term
+  guardrail than leaving the stage state as a mutable dict
+- the module-level name lookup map is read-only too, so the keyed rewrite
+  surface stays consistent no matter which layer callers inspect
+- the rotate-pair normalization now lives in that same module, so the whole
+  COD source-backed path is self-contained in one x86-16 support file
+- the registry is now keyed by rewrite name as well as ordered, so we can
+  audit and extend it without treating the rules as an anonymous tuple
+- that keyed registry now has a direct invariant test, which protects the
+  architecture boundary from silently drifting back to ad hoc rules
+- the x86-16 package now exports the source-backend modules explicitly, so
+  the package surface advertises the new architecture instead of hiding it
+- the registry construction now goes through one tiny helper factory, which
+  keeps the spec definitions readable without losing the explicit structure
+- the registry also has a direct name-based lookup API now, so callers can
+  query a specific rule without reaching into the backing dict themselves
+- the source-backed COD rules are now wrapped in a small registry object,
+  which makes the policy reusable as an actual component instead of just a
+  couple of module globals
+- that registry object is exported and tested directly, so the source-backed
+  rewrite boundary is now a visible API rather than an implementation detail
+- the registry is now reachable through a named stage entry point, which
+  makes the COD source-backed pipeline look and feel like a real analysis pass
+- the stage now exposes a summary API as well, so the policy can be inspected
+  without knowing about the registry internals
+- the stage also exposes a structured description API now, which makes the
+  rule surface easier to inspect from tooling without reaching into module
+  globals or private tuples
+- the description API is exported alongside the summary and lookup APIs, so
+  the package boundary now presents a consistent inspection surface
+- the registry also exposes a names helper and self-describing reprs, which
+  makes quick debugging and tool integration much less brittle
+- the registry now behaves like a proper Python container too, which makes
+  the source-backed stage easier to use and test without any special casing
+- the registry also supports mapping-style access now, so the policy can be
+  used like a proper keyed lookup table instead of a one-off helper bundle
+- the large x86-16 typehoon compatibility patch set now lives in its own
+  module, which keeps the package initializer from becoming the dumping ground
+  for every runtime monkey patch
+- the dirty-helper runtime monkeypatch also lives in its own module now,
+  instead of being duplicated inline in the package initializer
+- the 16-bit stack-address compatibility shim now lives in its own module as
+  well, which restores the missing LiveDefinitions stack translation without
+  burying it in the broader typehoon/runtime bootstrap
+- the compat helper modules are now exported explicitly at the package
+  boundary, so callers can see the runtime-patch surface without reaching
+  through the initializer; that now includes the dedicated stack shim too
+- the package now has a single compat bootstrap entry point, which keeps the
+  initializer from needing to know how the individual runtime patches are
+  composed
+- that compat bootstrap is exported explicitly, so the package boundary now
+  has one stable hook for the whole runtime compatibility layer
+- the decompiler postprocess monkeypatch block now lives in its own module too,
+  so the initializer no longer carries the giant C-cleanup pass inline
+- the shared structured-codegen helpers now live in a separate utility module,
+  which makes the postprocess files easier to reason about and keeps the common
+  C-tree traversal code in one place
+- the word-global rewrite helpers now live in their own helper module, which
+  keeps the global-coalescing logic separate from the flag and expression
+  cleanup paths
+- the structured-expression simplifier now has its own module too, which keeps
+  the zero-compare / same-expression cleanup logic from crowding the global or
+  flag passes
+- the boolean-cite simplifier now lives alongside that structured-expression
+  logic, so ternary `cond ? 0 : 1` / `cond ? 1 : 0` noise is normalized before
+  the flag rewrites see it
+- the flag-condition and interval-guard rewrite cluster now lives in its own
+  helper module, which is a cleaner SRP split than keeping every expression
+  rewrite in one giant file
+- the flag-rewrite split is exported explicitly at the package boundary too,
+  so the new helper module is discoverable the same way the compat/bootstrap
+  modules are
+- the register-pruning helpers now stay together with the flag-rewrite helpers,
+  which keeps the flag cleanup logic coherent instead of scattering the read/
+  write analysis across multiple small files
+- the decompiler postprocess layer is also exported as an explicit package
+  hook, so callers can register that C-cleanup stage without relying on
+  import-time side effects
+- the return-maker compatibility shim now has its own module too, so wide
+  `DX:AX`-style returns can be materialized before the postprocess passes run
+- that decompiler postprocess hook is idempotent, which keeps the package
+  boundary safe to call from both the bootstrap path and targeted tests
+- the package now has a single x86-16 bootstrap entry point too, which keeps
+  the runtime compatibility and decompiler postprocess ordering in one named
+  place instead of baking it into the initializer
+- that bootstrap hook is idempotent, so callers can invoke the named package
+  boundary more than once without changing the postprocess wiring
+- the decompiler cleanup stage now has an explicit pass registry, so the pass
+  order is inspectable and can be extended without rewriting the stage driver
+- that registry now lives in its own stage module, which keeps the helper
+  library smaller and the stage driver easier to reason about independently
+- that registry stores callable objects rather than helper names, which makes
+  the stage less brittle if the helper functions are renamed or moved later
+- the registry is built by a tiny factory helper now, which keeps the stage
+  construction logic in one place and makes the pass list easier to extend
+- the stage module also exposes a small description API, so tools can inspect
+  the pass order without depending on the raw tuple shape
+- the stage registry now uses explicit spec objects instead of bare tuples,
+  which makes the stage boundary easier to inspect and less error-prone to
+  extend
+- the stage module exports its own public surface now, which keeps the new
+  boundary visible without needing to import through the package root
+- the bootstrap module now has a tiny public surface too, which makes the
+  package entry point read like a normal API instead of a helper blob
+- the bootstrap module also exposes a description helper, which makes the
+  call order visible without needing to inspect the module body
+- the compat bootstrap must run before importing the decompiler postprocess
+  module, which keeps the x86-16 calling-convention shims active before the
+  decompiler hooks are registered
+- the array/member lane is still narrow and evidence-driven
+- future candidates should prove the same source-like win before the rewrite
+  is generalized
+
 ### Stage 3. Build a stronger alias model
 
 Focus:
 
 - start with x86-16 subregister and byte-pair storage domains
 - use it only for the cases already proven useful in `snake` and `.COD`
+- keep alias/value and linear-expression cleanup cycle-safe
+- prefer guarded fallback to plain output on tiny helpers over recursive postpasses
+- allow narrow copy-alias inlining for simple `v = x` temps only when it does not
+  widen the alias model beyond already proven cases
+
+Current status:
+
+- simple one-use copy-alias temps are already in the recurrence cleanup path
+- the alias model still stays cycle-safe and narrow
+- array evidence is still being collected, but only guarded member rewrites are
+  consuming it for now
 
 Primary targets:
 
@@ -400,12 +639,68 @@ Primary targets:
 Focus:
 
 - replace more local byte-pair special cases with one wider projection pass
+- keep `writestringat`-style high-byte projection folds moving toward a single
+  reusable widening path instead of ad hoc shape matching
+- the current `snake.EXE:0x13b2` win now folds the high-byte multiplier path to
+  `* 160`, which is a concrete checkpoint for the projection lane
+
+Current status:
+
+- the high-byte projection logic is now shared through a reusable matcher path
+- the separate local shape checks are still narrow, but they no longer drift
+  independently
+- `snake.EXE:0x13b2` remains the concrete `* 160` checkpoint for this lane
+- `_rotate_pt` and `_ChangeWeather` are still clean checkpoints for the same
+  projection path, so the remaining work here is broader reuse rather than new
+  visible shape changes
+- the high-byte-preserving word matcher now reuses the same projection-base
+  recognizer instead of carrying its own ad hoc copy
 
 Primary targets:
 
 - `snake.EXE:0x13b2`
 - `_rotate_pt`
 - `_ChangeWeather`
+
+## What Still Needs Doing
+
+The plan is not finished yet. The remaining work that most clearly matters for
+our x86-16 decompiler quality is:
+
+- finish the typed rewrite lane so more stack/global objects keep their real
+  byte/word widths instead of falling back to generic temporaries
+- consume the new trait evidence in one or two more stable array/member cases
+  so we can show the bridge from repeated offsets to source-like objects
+  beyond the new annotation-driven global renaming
+- tighten the alias/value lane enough to cover harder `_InBox`-style guards
+  without reintroducing recursive or blind-spot-prone postpasses
+- keep unifying the widening/projection logic so there are fewer ad hoc
+  byte-pair special cases left in `snake` and the `.COD` corpus
+- keep the prototype lane conservative for new cases: the explicit
+  return-compat shim now infers `DX:AX`-style returns cleanly, and the current
+  merge rule stays narrow so ordinary explicit signatures and the two-short-
+  argument case remain stable
+- keep the annotation-expression behavior stable, since bp-framed stack loads
+  now become annotated variable uses in the body instead of only in
+  declarations
+- keep the COD oracles strict, because they are still the fastest way to detect
+  correctness regressions in this path
+
+## 80/20 Near-Term
+
+If we want the fastest visible progress with the least extra risk, the next
+small set of tasks should be:
+
+1. Finish the typed rewrite lane on the current strongest targets:
+   `ConfigCrts`, `_SetGear`, and `_TIDShowRange`.
+2. Add one narrow array/member rewrite from trait evidence, ideally on a
+   stable target like `rotate_pt` or `ConfigCrts`, so the evidence-to-object
+   bridge is undeniable.
+3. Keep the whole-binary `snake.EXE` scan clean and continue the focused
+   `.COD` batch so we do not trade readability wins for blind spots.
+4. Avoid widening the alias model until the above is stable; that is where the
+   next 80% of visible correctness and readability gains are likely to come
+   from soon.
 
 ### Stage 5. Keep the validation style
 

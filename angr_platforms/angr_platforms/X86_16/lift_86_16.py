@@ -700,6 +700,11 @@ class Instruction_ANY(Instruction):
             if not self._next_instruction_is_simple_jcc():
                 self._update_cmp_flags8(self._load_abs8(offset), self.constant(imm, Type.int_8))
             return
+        if kind == "cmp_reg_abs16":
+            _, lhs_reg, offset = self.simple_semantics
+            if not self._next_instruction_is_simple_jcc():
+                self._update_cmp_flags(self._get_reg16(lhs_reg), self._load_abs16(offset))
+            return
         if kind in {"je", "jz", "jne", "jnz", "jmp", "jle", "jg", "jl", "jge", "jb", "jbe", "ja", "jae", "jnb", "jnc", "jc"}:
             _, abs_target = self.simple_semantics
             target = self._const16(abs_target)
