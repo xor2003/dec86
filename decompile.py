@@ -2928,6 +2928,8 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
         "base_const": {},
         "base_stride": {},
         "repeated_offsets": {},
+        "repeated_offset_widths": {},
+        "base_stride_widths": {},
     }
 
     cache = getattr(project, "_inertia_access_traits", None)
@@ -2993,10 +2995,12 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
             if isinstance(base_var, SimRegisterVariable):
                 record("base_const", (classified.seg_name, getattr(base_var, "reg", None), offset, access_size))
                 record("repeated_offsets", (classified.seg_name, getattr(base_var, "reg", None), offset))
+                record("repeated_offset_widths", (classified.seg_name, getattr(base_var, "reg", None), offset, access_size))
         for index_expr, stride in stride_terms:
             index_var = getattr(index_expr, "variable", None)
             if isinstance(index_var, SimRegisterVariable):
                 record("base_stride", (classified.seg_name, getattr(index_var, "reg", None), stride, offset, access_size))
+                record("base_stride_widths", (classified.seg_name, getattr(index_var, "reg", None), stride, offset, access_size))
 
     for key, count in list(traits["repeated_offsets"].items()):
         if count < 2:
