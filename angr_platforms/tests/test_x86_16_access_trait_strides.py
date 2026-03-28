@@ -41,6 +41,7 @@ def test_access_trait_profiles_keep_member_array_and_induction_lanes_distinct():
             member_like=((4, 2, 5),),
             array_like=((0, 2, 4),),
             induction_like=((0, 2, 3),),
+            stack_like=(),
         )
     }
 
@@ -81,3 +82,31 @@ def test_access_trait_induction_evidence_feeds_member_candidates():
     candidates = _access_trait_member_candidates(traits)
 
     assert candidates == {("reg", 30): [(0, 2, 3)]}
+
+
+def test_access_trait_profiles_track_stack_like_evidence():
+    traits = {
+        "base_const": {
+            ("ss", ("stack", "bp", -4), 4, 2): 5,
+        },
+        "base_stride": {},
+        "repeated_offsets": {
+            ("ss", ("stack", "bp", -4), -4): 3,
+        },
+        "repeated_offset_widths": {},
+        "base_stride_widths": {},
+        "induction_evidence": {},
+        "member_evidence": {},
+        "array_evidence": {},
+    }
+
+    profiles = _build_access_trait_evidence_profiles(traits)
+
+    assert profiles == {
+        ("stack", "bp", -4): _decompile._AccessTraitEvidenceProfile(
+            member_like=((-4, 1, 3), (4, 2, 5)),
+            array_like=(),
+            induction_like=(),
+            stack_like=((-4, 1, 3), (4, 2, 5)),
+        )
+    }

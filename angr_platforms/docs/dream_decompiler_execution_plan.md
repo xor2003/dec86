@@ -229,6 +229,8 @@ This phase converts cleaner value recovery into source-like object recovery.
     - induction-like access
     - repeated offsets
     - stride evidence
+    - stack-like access that is still evidence-driven but not yet a full object
+      type guess
   - build stable evidence profiles per base object
   - keep positive tests on real `.COD` and `snake` helpers
 - `Dependencies`:
@@ -236,6 +238,8 @@ This phase converts cleaner value recovery into source-like object recovery.
   - `B4`
 - `Exit signal`:
   - traits can feed object/type decisions without relying on raw bucket dicts
+  - stack-aware evidence profiles are available as a first-class trait lane for
+    later stack/object recovery work
 
 ### C2. Stable Stack and Global Object Recovery
 
