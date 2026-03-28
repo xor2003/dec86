@@ -75,6 +75,13 @@ def _clear_alarm() -> None:
     signal.alarm(0)
 
 
+def _finish_scan(result: FunctionScanResult) -> FunctionScanResult:
+    global _SCAN_ACTIVE
+    _SCAN_ACTIVE = False
+    _clear_alarm()
+    return result
+
+
 def set_memory_limit(max_memory_mb: int) -> None:
     if max_memory_mb <= 0:
         return
@@ -230,8 +237,7 @@ def scan_function(
             result.failure_class = failure_class
             result.reason = reason
             _mark_stage(result, "load", False, reason=failure_class, detail=reason)
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         _mark_stage(result, "normalize", True, detail="bounded blob pipeline")
 
@@ -243,22 +249,19 @@ def scan_function(
             result.failure_class = failure_class
             result.reason = reason
             _mark_stage(result, "lift", False, reason=failure_class, detail=reason)
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         result.function_count = 1
         if mode == "lift":
             result.ok = True
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         if mode == "decompile-reloc-free" and (result.has_near_call_reloc or result.has_far_call_reloc):
             result.failure_class = "skipped_relocation"
             result.reason = "contains unresolved call relocation pattern"
             result.fallback_kind = "block_lift"
             _mark_stage(result, "cfg", False, reason="skipped_relocation", detail=result.reason)
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         if _should_skip_scan_safe_cfg(len(code), mode, max_cfg_bytes):
             result.ok = True
@@ -270,8 +273,7 @@ def scan_function(
                 detail=f"skipped cfg/decompile for oversized function ({len(code)} bytes > {max_cfg_bytes}); lift ok",
             )
             _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         try:
             cfg = _scan_cfg(project, len(code))
@@ -284,8 +286,7 @@ def scan_function(
             result.reason = reason
             result.fallback_kind = "block_lift"
             _mark_stage(result, "cfg", False, reason=failure_class, detail=reason)
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
 
@@ -301,8 +302,7 @@ def scan_function(
                     f"(blocks>{max_cfg_blocks} or insns>{max_cfg_insns}); cfg ok"
                 ),
             )
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         if _should_skip_scan_safe_decompile(len(code), mode, max_decompile_bytes):
             result.ok = True
@@ -313,8 +313,7 @@ def scan_function(
                 True,
                 detail=f"skipped decompile for oversized function ({len(code)} bytes > {max_decompile_bytes}); cfg ok",
             )
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
 
         try:
             dec = project.analyses.Decompiler(func, cfg=cfg)
@@ -326,26 +325,22 @@ def scan_function(
                     result.ok = True
                     result.fallback_kind = "cfg_only"
                     _mark_stage(result, "decompile", True, detail=reason)
-                    _clear_alarm()
-                    return result
+                    return _finish_scan(result)
                 result.failure_class = failure_class
                 result.fallback_kind = "block_lift"
                 _mark_stage(result, "decompile", False, reason=failure_class, detail=reason)
-                _clear_alarm()
-                return result
+                return _finish_scan(result)
             result.decompiled_count = 1
             result.ok = True
             _mark_stage(result, "decompile", True)
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
         except Exception as exc:  # noqa: BLE001
             failure_class, reason = classify_failure("decompile", exc)
             result.failure_class = failure_class
             result.reason = reason
             result.fallback_kind = "block_lift"
             _mark_stage(result, "decompile", False, reason=failure_class, detail=reason)
-            _clear_alarm()
-            return result
+            return _finish_scan(result)
     finally:
         _SCAN_ACTIVE = False
         _clear_alarm()
