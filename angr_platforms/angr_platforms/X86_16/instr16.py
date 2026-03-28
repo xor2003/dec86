@@ -1355,6 +1355,21 @@ class Instr16(InstrBase):
 
     def rcl(self, a, b):
         count = self._rot_count(b, 17)
+        count_value = self.emu._const_u8_value(count)
+        if count_value == 0:
+            self.set_rm16(a)
+            return
+        if count_value == 1:
+            carry = self.emu.get_carry().cast_to(Type.int_1)
+            result = ((a << 1) | carry.cast_to(Type.int_16)) & self.emu.constant(0xFFFF, Type.int_16)
+            shifted_out = a[15].cast_to(Type.int_1)
+            self.set_rm16(result)
+            self._set_rotate_cf(shifted_out)
+            flags = self.emu.get_gpreg(reg16_t.FLAGS)
+            of = result[15].cast_to(Type.int_1) ^ shifted_out
+            flags = self.emu.set_overflow(flags, of.cast_to(Type.int_1))
+            self.emu.set_gpreg(reg16_t.FLAGS, flags)
+            return
         result = a
         carry = self.emu.get_carry().cast_to(Type.int_1)
         selected_result = a
@@ -1376,6 +1391,21 @@ class Instr16(InstrBase):
 
     def rcr(self, a, b):
         count = self._rot_count(b, 17)
+        count_value = self.emu._const_u8_value(count)
+        if count_value == 0:
+            self.set_rm16(a)
+            return
+        if count_value == 1:
+            carry = self.emu.get_carry().cast_to(Type.int_1)
+            result = (a >> 1) | (carry.cast_to(Type.int_16) << 15)
+            shifted_out = a[0].cast_to(Type.int_1)
+            self.set_rm16(result)
+            self._set_rotate_cf(shifted_out)
+            flags = self.emu.get_gpreg(reg16_t.FLAGS)
+            of = result[15].cast_to(Type.int_1) ^ result[14].cast_to(Type.int_1)
+            flags = self.emu.set_overflow(flags, of.cast_to(Type.int_1))
+            self.emu.set_gpreg(reg16_t.FLAGS, flags)
+            return
         result = a
         carry = self.emu.get_carry().cast_to(Type.int_1)
         selected_result = a
