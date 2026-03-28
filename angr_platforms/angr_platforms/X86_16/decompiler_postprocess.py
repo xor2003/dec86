@@ -42,7 +42,7 @@ from angr.sim_variable import SimStackVariable
 from angr.sim_variable import SimStackVariable
 from .annotations import ANNOTATION_KEY
 from .analysis_helpers import resolve_direct_call_target_from_block
-from .alias_model import _storage_domain_for_variable
+from .alias_model import _same_stack_slot_identity
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
     _global_load_addr_8616,
@@ -451,9 +451,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
                     low_var = getattr(low_cvar, "variable", None)
                     high_var = getattr(high_cvar, "variable", None)
                     if isinstance(low_var, SimStackVariable) and isinstance(high_var, SimStackVariable):
-                        low_domain = _storage_domain_for_variable(low_var)
-                        high_domain = _storage_domain_for_variable(high_var)
-                        if not low_domain.can_join(high_domain):
+                        if not _same_stack_slot_identity(low_var, high_var):
                             continue
                 cvar = low_cvar
                 if cvar is not None:

@@ -192,6 +192,22 @@ def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     return _StorageDomainSignature("unknown")
 
 
+def _stack_slot_identity_for_variable(variable) -> _StackSlotIdentity | None:
+    if not isinstance(variable, SimStackVariable):
+        return None
+    base = getattr(variable, "base", None) or "sp"
+    offset = getattr(variable, "offset", 0)
+    width = getattr(variable, "size", 0) or None
+    region = getattr(variable, "region", None)
+    return _StackSlotIdentity(base, offset, width, region=region)
+
+
+def _same_stack_slot_identity(lhs, rhs) -> bool:
+    if not isinstance(lhs, SimStackVariable) or not isinstance(rhs, SimStackVariable):
+        return False
+    return _stack_slot_identity_for_variable(lhs) == _stack_slot_identity_for_variable(rhs)
+
+
 def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
     expr = _unwrap_c_casts(expr)
     if isinstance(expr, structured_c.CVariable):
@@ -249,6 +265,8 @@ __all__ = [
     "_StorageDomainSignature",
     "_CopyAliasState",
     "_StackPointerAliasState",
+    "_stack_slot_identity_for_variable",
+    "_same_stack_slot_identity",
     "_storage_view_for_variable",
     "_storage_domain_for_variable",
     "_storage_domain_for_expr",
