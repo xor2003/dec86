@@ -786,6 +786,11 @@ class _SegmentedAccess:
     extra_offset: int = 0
     addr_expr: object | None = None
 
+    def allows_object_rewrite(self) -> bool:
+        if self.assoc_state is not None and hasattr(self.assoc_state, "is_over_associated"):
+            return not self.assoc_state.is_over_associated()
+        return self.assoc_kind != "over"
+
 
 @dataclass(frozen=True)
 class _SegmentAssociationState:
@@ -1010,7 +1015,7 @@ def _match_segment_register_based_dereference(node, project: angr.Project):
     classified = _classify_segmented_dereference(node, project)
     if classified is None or classified.addr_expr is None or classified.seg_name not in {"ds", "es"}:
         return None
-    if classified.assoc_kind == "over":
+    if not classified.allows_object_rewrite():
         return None
 
     addr_expr = classified.addr_expr
