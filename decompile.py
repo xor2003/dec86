@@ -623,17 +623,10 @@ def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_sty
         if isinstance(node, structured_c.CFunctionCall) and node.callee_func is None
     ]
 
-    # Only patch when the structured C still preserves a clean one-to-one call
-    # shape. The decompiler can sometimes collapse DOS interrupt helpers into a
-    # much noisier tree where forcing a pseudo-callee onto the remaining call
-    # node makes the output worse rather than better.
-    if len(call_nodes) != len(pseudo_funcs):
-        return False
-
     for node, pseudo_func in zip(call_nodes, pseudo_funcs):
         if pseudo_func is not None:
             node.callee_func = pseudo_func
-    return True
+    return bool(call_nodes)
 
 
 def _attach_cod_callee_names(project: angr.Project, codegen, cod_metadata: CODProcMetadata | None) -> bool:
