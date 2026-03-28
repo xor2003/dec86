@@ -74,6 +74,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     normalize_api_style,
     patch_dos_int21_call_sites,
     render_dos_int21_call,
+    seed_calling_conventions,
 )
 from angr_platforms.X86_16.cod_extract import (
     CODProcMetadata,
@@ -261,6 +262,7 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
             cfg = extended_cfg
             function = cfg.functions[target_addr]
         patch_dos_int21_call_sites(function, getattr(project.loader.main_object, "binary", None))
+    seed_calling_conventions(cfg)
 
     return cfg, function
 
@@ -292,6 +294,7 @@ def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, wi
         if extended_cfg is not None and project.entry in extended_cfg.functions:
             cfg = extended_cfg
         patch_dos_int21_call_sites(cfg.functions[project.entry], binary_path)
+    seed_calling_conventions(cfg)
     return cfg
 
 
@@ -370,6 +373,7 @@ def _decompile_function(
         if not function.normalized:
             print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
             function.normalize()
+        seed_calling_conventions(cfg)
         dec = project.analyses.Decompiler(function, cfg=cfg)
         if dec.codegen is None:
             logging.getLogger(__name__).debug(
