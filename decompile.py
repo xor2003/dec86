@@ -2793,6 +2793,17 @@ class _AccessTraitEvidenceProfile:
     def has_any_evidence(self) -> bool:
         return bool(self.member_like or self.array_like or self.induction_like)
 
+    def best_rewrite_kind(self) -> str | None:
+        if self.member_like and self.array_like:
+            return "mixed"
+        if self.array_like:
+            return "array"
+        if self.member_like:
+            return "member"
+        if self.induction_like:
+            return "induction"
+        return None
+
 
 @dataclass(frozen=True)
 class _CopyAliasState:
@@ -2818,6 +2829,47 @@ class _WideningMatch:
     kind: str
     base_expr: object
     delta: int = 0
+
+
+@dataclass(frozen=True)
+class _AccessTraitRewriteDecision:
+    base_key: tuple[object, ...]
+    profile: _AccessTraitEvidenceProfile
+
+    def should_rename_stack(self) -> bool:
+        return self.profile.best_rewrite_kind() in {"member", "array", "mixed"}
+
+    def preferred_kind(self) -> str | None:
+        return self.profile.best_rewrite_kind()
+
+    def candidate_field_names(self) -> tuple[str, ...]:
+        candidates: list[tuple[int, int, int]] = []
+        if self.profile.member_like:
+            candidates.extend(self.profile.member_like)
+        if self.profile.array_like:
+            candidates.extend(self.profile.array_like)
+        if self.profile.induction_like:
+            candidates.extend(self.profile.induction_like)
+        if not candidates:
+            return ()
+        ordered = sorted(
+            candidates,
+            key=lambda item: (
+                item[0] == 0,
+                -item[2],
+                item[1],
+                item[0],
+            ),
+        )
+        names: list[str] = []
+        seen: set[str] = set()
+        for offset, _size, _count in ordered:
+            field_name = _access_trait_field_name(offset, 1)
+            if field_name in seen:
+                continue
+            seen.add(field_name)
+            names.append(field_name)
+        return tuple(names)
 
 
 def _build_access_trait_evidence_profiles(
@@ -2993,12 +3045,14 @@ def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
     def is_generic_stack_name(name: object) -> bool:
         return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
 
-    def has_stack_trait_evidence(variable) -> bool:
+    def stack_rewrite_decision(variable) -> _AccessTraitRewriteDecision | None:
         base_key = _access_trait_variable_key(variable)
         if base_key is None:
-            return False
+            return None
         profile = evidence_profiles.get(base_key)
-        return profile.has_any_evidence() if profile is not None else False
+        if profile is None or profile.best_rewrite_kind() is None:
+            return None
+        return _AccessTraitRewriteDecision(base_key, profile)
 
     changed = False
 
@@ -3006,7 +3060,8 @@ def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
         variable = getattr(cvar, "variable", None)
         if not isinstance(variable, SimStackVariable):
             return None
-        if not has_stack_trait_evidence(variable):
+        decision = stack_rewrite_decision(variable)
+        if decision is None or not decision.should_rename_stack():
             return None
 
         name = getattr(variable, "name", None)
@@ -3065,48 +3120,19 @@ def _attach_pointer_member_names(project: angr.Project, codegen) -> bool:
         return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
 
     evidence = _access_trait_member_candidates(traits)
+    evidence_profiles = _build_access_trait_evidence_profiles(traits)
 
     if not evidence:
         return False
 
-    def choose_field_name(base_key: tuple[object, ...]) -> str | None:
-        candidates = evidence.get(base_key)
-        if not candidates:
-            return None
-        candidates = sorted(
-            candidates,
-            key=lambda item: (
-                item[0] == 0,
-                -item[2],
-                item[1],
-                item[0],
-            ),
-        )
-        offset, _size, _count = candidates[0]
-        return _access_trait_field_name(offset, 1)
-
     def candidate_field_names(base_key: tuple[object, ...]) -> tuple[str, ...]:
-        candidates = evidence.get(base_key)
-        if not candidates:
+        profile = evidence_profiles.get(base_key)
+        if profile is None:
             return ()
-        ordered = sorted(
-            candidates,
-            key=lambda item: (
-                item[0] == 0,
-                -item[2],
-                item[1],
-                item[0],
-            ),
-        )
-        names: list[str] = []
-        seen: set[str] = set()
-        for offset, _size, _count in ordered:
-            field_name = _access_trait_field_name(offset, 1)
-            if field_name in seen:
-                continue
-            seen.add(field_name)
-            names.append(field_name)
-        return tuple(names)
+        decision = _AccessTraitRewriteDecision(base_key, profile)
+        if decision.preferred_kind() is None:
+            return ()
+        return decision.candidate_field_names()
 
     changed = False
     assigned_names: dict[int, str] = {}
