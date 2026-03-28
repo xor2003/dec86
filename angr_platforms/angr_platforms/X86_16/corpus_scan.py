@@ -264,6 +264,12 @@ def scan_function(
 
 def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str, object]:
     failure_counter = Counter(result.failure_class for result in results if result.failure_class is not None)
+    stage_failure_counter = Counter(
+        stage.stage
+        for result in results
+        for stage in result.stages
+        if not stage.ok
+    )
     failure_file_counter = Counter(
         result.cod_file for result in results if not result.ok and result.failure_class is not None
     )
@@ -289,6 +295,10 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         {"failure_class": failure_class, "count": count}
         for failure_class, count in sorted(failure_counter.items(), key=lambda item: (-item[1], item[0]))
     ]
+    top_failure_stages = [
+        {"stage": stage, "count": count}
+        for stage, count in sorted(stage_failure_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
     top_failure_files = [
         {"cod_file": cod_file, "count": count}
         for cod_file, count in sorted(failure_file_counter.items(), key=lambda item: (-item[1], item[0]))
@@ -313,6 +323,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "failed": sum(1 for result in results if not result.ok),
         "failure_counts": dict(sorted(failure_counter.items())),
         "top_failure_classes": top_failure_classes,
+        "top_failure_stages": top_failure_stages,
         "top_failure_files": top_failure_files,
         "top_failure_functions": top_failure_functions,
         "files_zero_success": files_zero_success,

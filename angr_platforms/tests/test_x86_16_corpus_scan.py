@@ -135,6 +135,10 @@ def test_corpus_scan_summary_ranks_repeat_failures():
         {"failure_class": "timeout", "count": 2},
         {"failure_class": "cfg_failure", "count": 1},
     ]
+    assert summary["top_failure_stages"] == [
+        {"stage": "decompile", "count": 2},
+        {"stage": "cfg", "count": 1},
+    ]
     assert summary["top_failure_files"] == [
         {"cod_file": "A.COD", "count": 2},
         {"cod_file": "B.COD", "count": 1},
