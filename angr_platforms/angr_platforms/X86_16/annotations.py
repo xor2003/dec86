@@ -34,7 +34,7 @@ def annotate_function(
     arg_names: list[str] | tuple[str, ...] | None = None,
     stack_vars: dict[int, str | dict] | None = None,
     bp_stack_vars: dict[int, str | dict] | None = None,
-    global_vars: dict[int, str] | None = None,
+    global_vars: dict[int, str | dict] | None = None,
 ):
     func = project.kb.functions.function(addr=func_addr, create=True)
     if func is None:
@@ -84,9 +84,19 @@ def annotate_function(
         annotate_function(project, func_addr, stack_vars=translated)
 
     if global_vars:
-        for addr, var_name in global_vars.items():
-            annotations["global_vars"][addr] = var_name
-            project.kb.labels[addr] = var_name
+        for addr, spec in global_vars.items():
+            if isinstance(spec, str):
+                entry = {"name": spec}
+                label = spec
+            elif isinstance(spec, dict):
+                entry = dict(spec)
+                label = entry.get("name")
+                if not isinstance(label, str):
+                    raise ValueError(f"Global annotation for {addr:#x} must include a string name.")
+            else:
+                raise TypeError(f"Unsupported global annotation spec for {addr:#x}: {type(spec).__name__}")
+            annotations["global_vars"][addr] = entry
+            project.kb.labels[addr] = label
 
     return func
 

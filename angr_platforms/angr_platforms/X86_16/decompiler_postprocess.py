@@ -368,6 +368,17 @@ def _apply_annotations_8616(project, codegen) -> bool:
     stack_specs = annotations.get("stack_vars", {})
     global_specs = annotations.get("global_vars", {})
 
+    def global_spec_for(addr: int):
+        spec = global_specs.get(addr)
+        if isinstance(spec, str):
+            return spec, None
+        if isinstance(spec, dict):
+            name = spec.get("name")
+            vartype = spec.get("type")
+            if isinstance(name, str):
+                return name, vartype
+        return None, None
+
     changed = False
     stack_vars_by_offset = {}
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
@@ -411,7 +422,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
         if not isinstance(variable, SimMemoryVariable):
             continue
-        name = global_specs.get(getattr(variable, "addr", None))
+        name, vartype = global_spec_for(getattr(variable, "addr", None))
         if not isinstance(name, str):
             continue
         current = getattr(variable, "name", None)
@@ -424,6 +435,9 @@ def _apply_annotations_8616(project, codegen) -> bool:
         if getattr(variable, "name", None) != name:
             variable.name = name
             changed = True
+        if vartype is not None and getattr(cvar, "variable_type", None) != vartype:
+            cvar.variable_type = vartype
+            changed = True
 
     def transform_globals(node):
         if not isinstance(node, CVariable):
@@ -431,7 +445,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
         variable = getattr(node, "variable", None)
         if not isinstance(variable, SimMemoryVariable):
             return node
-        name = global_specs.get(getattr(variable, "addr", None))
+        name, vartype = global_spec_for(getattr(variable, "addr", None))
         if not isinstance(name, str):
             return node
         current = getattr(variable, "name", None)
@@ -442,7 +456,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
             changed = True
         return CVariable(
             variable,
-            variable_type=getattr(node, "variable_type", None),
+            variable_type=vartype if vartype is not None else getattr(node, "variable_type", None),
             codegen=codegen,
         )
 
