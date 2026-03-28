@@ -112,6 +112,16 @@ The intended order is important: alias + widening first, then traits and types,
 and only then object rewriting. Avoid mixing those layers together in a single
 local pass if a boundary object or helper can keep the responsibilities clear.
 
+For x86-16 specifically, model aliasing as:
+
+- a `domain` that says what storage the value belongs to
+- a `view` that says which slice of that storage is visible
+- a `state` object that records whether a full value must be synthesized
+
+Start with register domains, stack-slot domains, and segmented-memory domains.
+Only widen values after the alias model has already proved that the parts are
+compatible.
+
 ## Tutorials
 
 - [Part 1: Basics](angr_platforms/tutorial/1_basics.md) – angr lifecycle and components.
