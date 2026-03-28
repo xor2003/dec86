@@ -813,10 +813,9 @@ Primary targets:
 
 ## What Still Needs Doing
 
-The main architectural steps in this plan are now implemented. The remaining
-work that most clearly matters for our x86-16 decompiler quality is mostly
-about keeping the current wins stable and extending them only when new sample
-evidence justifies it:
+The main architectural steps in this plan are now implemented. What remains is
+mostly stability work and sample-driven extensions, not unfinished core
+architecture:
 
 - keep the typed rewrite lane stable so more stack/global objects preserve
   their real byte/word widths instead of regressing to generic temporaries
@@ -835,6 +834,9 @@ evidence justifies it:
   declarations
 - keep the COD oracles strict, because they are still the fastest way to detect
   correctness regressions in this path
+- treat the alias/widening split as an architectural boundary that should only
+  move when new corpus evidence justifies it; the current boundaries are the
+  stable baseline
 
 ## 80/20 Near-Term
 
