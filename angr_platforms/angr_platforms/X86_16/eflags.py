@@ -445,7 +445,7 @@ class Eflags:
 
     def chk_parity(self, v):
         v = self.constant(v, Type.int_8) if isinstance(v, int) else v.cast_to(Type.int_8)
-        p = self.constant(1, Type.int_1)
-        for i in range(8):
-            p ^= v[i].cast_to(Type.int_1)
-        return p
+        parity = v ^ (v >> self.constant(4, Type.int_8))
+        parity = parity ^ (parity >> self.constant(2, Type.int_8))
+        parity = parity ^ (parity >> self.constant(1, Type.int_8))
+        return ((~parity) & self.constant(1, Type.int_8)).cast_to(Type.int_1)

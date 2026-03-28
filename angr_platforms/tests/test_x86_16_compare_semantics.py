@@ -561,7 +561,16 @@ def test_adc_ax_imm16_matches_upstream_x86_vex_effect():
     state16 = _run_one_instruction_with_flags(Arch86_16(), b"\x15\x00\x00", ax=0x0000, flags=1)
 
     assert state32.solver.eval(state32.regs.ax) == state16.solver.eval(state16.regs.ax)
-    for bit in (0, 6, 7, 11):
+    for bit in (0, 2, 6, 7, 11):
+        assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
+
+
+def test_add_ax_imm16_matches_upstream_x86_vex_effect():
+    state32 = _run_one_instruction_with_flags(ArchX86(), b"\x66\x05\x01\x00", ax=0x00FF, flags=0)
+    state16 = _run_one_instruction_with_flags(Arch86_16(), b"\x05\x01\x00", ax=0x00FF, flags=0)
+
+    assert state32.solver.eval(state32.regs.ax) == state16.solver.eval(state16.regs.ax)
+    for bit in (0, 2, 6, 7, 11):
         assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
 
 
