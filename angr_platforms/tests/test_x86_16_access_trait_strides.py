@@ -110,3 +110,25 @@ def test_access_trait_profiles_track_stack_like_evidence():
             stack_like=((-4, 1, 3), (4, 2, 5)),
         )
     }
+
+
+def test_access_trait_stack_profiles_prefer_stack_like_naming_order():
+    profile = _decompile._AccessTraitEvidenceProfile(
+        member_like=((4, 2, 5),),
+        array_like=((8, 2, 1),),
+        induction_like=((12, 2, 2),),
+        stack_like=((-4, 1, 3),),
+    )
+
+    assert profile.naming_candidates(("stack", "bp", -4)) == (
+        (-4, 1, 3),
+        (4, 2, 5),
+        (8, 2, 1),
+        (12, 2, 2),
+    )
+    assert profile.naming_candidates(("reg", 30)) == (
+        (4, 2, 5),
+        (8, 2, 1),
+        (12, 2, 2),
+        (-4, 1, 3),
+    )
