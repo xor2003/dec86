@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .alias_model import _StorageDomainSignature, _StorageView, _merge_storage_domains, _storage_domain_for_expr
+from .widening_alias import RegisterWideningCandidate, can_join_adjacent_register_slices
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,15 @@ class WideningCandidate:
 
 
 def can_join_adjacent_storage_slices(low_expr, high_expr) -> bool:
+    try:
+        low_candidate = RegisterWideningCandidate.from_expr(low_expr)
+        high_candidate = RegisterWideningCandidate.from_expr(high_expr)
+    except ValueError:
+        low_candidate = None
+        high_candidate = None
+    if low_candidate is not None and high_candidate is not None:
+        return can_join_adjacent_register_slices(low_expr, high_expr)
+
     try:
         low_candidate = WideningCandidate.from_expr(low_expr)
         high_candidate = WideningCandidate.from_expr(high_expr)

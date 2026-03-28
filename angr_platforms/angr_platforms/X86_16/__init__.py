@@ -18,6 +18,9 @@ __all__ = [
     "patch_dirty",
     "typehoon_compat",
     "alias_model",
+    "alias_domains",
+    "alias_state",
+    "alias_transfer",
     "simos_86_16",
     "rewrite_cod_source_stage",
     "decompiler_postprocess",
@@ -25,6 +28,7 @@ __all__ = [
     "decompiler_postprocess_utils",
     "decompiler_postprocess_flags",
     "decompiler_postprocess_simplify",
+    "widening_alias",
     "widening_model",
     "calling_convention_compat",
     "decompiler_return_compat",
@@ -39,7 +43,7 @@ __all__ = [
 ]
 
 from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, lift_86_16, load_dos_mz, simos_86_16  # noqa: F401
-from . import alias_model, compat, patch_dirty, stack_compat, typehoon_compat, widening_model  # noqa: F401
+from . import alias_domains, alias_model, alias_state, alias_transfer, compat, patch_dirty, stack_compat, typehoon_compat, widening_alias, widening_model  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,
     apply_cod_source_rewrites,

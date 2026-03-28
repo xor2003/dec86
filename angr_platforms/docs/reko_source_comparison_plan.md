@@ -512,7 +512,9 @@ small set of tasks should be:
    `.COD` batch so we do not trade readability wins for blind spots.
 2. Extend the stable array/member bridge only when a new sample proves the
    same source-like win as `rotate_pt`, `ConfigCrts`, or `_TIDShowRange`.
-3. Avoid widening the alias model until new corpus evidence justifies it; the
+3. Finish the register-only alias MVP first, then use that boundary for one
+   current widening case before expanding to stack slots.
+4. Avoid widening the alias model until new corpus evidence justifies it; the
    current guard and projection shapes are already the stable baseline.
 
 ### Stage 5. Keep the validation style
