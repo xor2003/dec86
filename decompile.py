@@ -779,11 +779,33 @@ class _SegmentedAccess:
     kind: str
     seg_name: str | None
     assoc_kind: str = "unknown"
+    assoc_state: object | None = None
     linear: int | None = None
     cvar: structured_c.CVariable | None = None
     stack_var: SimStackVariable | None = None
     extra_offset: int = 0
     addr_expr: object | None = None
+
+
+@dataclass(frozen=True)
+class _SegmentAssociationState:
+    seg_name: str | None
+    base_terms: int = 0
+    other_terms: int = 0
+    const_offset: int = 0
+
+    @property
+    def assoc_kind(self) -> str:
+        if self.seg_name is None:
+            return "unknown"
+        if self.base_terms == 0:
+            return "const" if self.other_terms == 0 else "over"
+        if self.other_terms > 0:
+            return "over"
+        return "single"
+
+    def is_over_associated(self) -> bool:
+        return self.assoc_kind == "over"
 
 
 @dataclass(frozen=True)
@@ -832,6 +854,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
     stack_var = None
     const_offset = 0
     other_terms = []
+    base_terms = 0
 
     for term in _flatten_c_add_terms(node):
         inner = _unwrap_c_casts(term)
@@ -863,8 +886,10 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
                 if isinstance(matched_var, SimStackVariable):
                     stack_var = matched_var
                 const_offset += stack_offset
+                base_terms += 1
             elif current_var is matched_var:
                 const_offset += stack_offset
+                base_terms += 1
             else:
                 other_terms.append(term)
             continue
@@ -875,19 +900,20 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         cache[key] = None
         return None
 
-    assoc_kind = "unknown"
-    if cvar is None:
-        assoc_kind = "const" if not other_terms else "over"
-    elif other_terms:
-        assoc_kind = "over"
-    else:
-        assoc_kind = "single"
+    assoc_state = _SegmentAssociationState(
+        seg_name=seg_name,
+        base_terms=base_terms,
+        other_terms=len(other_terms),
+        const_offset=const_offset,
+    )
+    assoc_kind = assoc_state.assoc_kind
 
     if seg_name == "ss" and cvar is not None and not other_terms:
         result = _SegmentedAccess(
             "stack",
             seg_name,
             assoc_kind=assoc_kind,
+            assoc_state=assoc_state,
             cvar=cvar,
             stack_var=stack_var,
             extra_offset=const_offset,
@@ -906,7 +932,15 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         else:
             kind = "segment_const"
             linear = const_offset
-        result = _SegmentedAccess(kind, seg_name, assoc_kind=assoc_kind, linear=linear, extra_offset=const_offset, addr_expr=node)
+        result = _SegmentedAccess(
+            kind,
+            seg_name,
+            assoc_kind=assoc_kind,
+            assoc_state=assoc_state,
+            linear=linear,
+            extra_offset=const_offset,
+            addr_expr=node,
+        )
         cache[key] = result
         return result
 
@@ -914,6 +948,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         "unknown",
         seg_name,
         assoc_kind=assoc_kind,
+        assoc_state=assoc_state,
         linear=const_offset if cvar is None else None,
         cvar=cvar,
         stack_var=stack_var,
