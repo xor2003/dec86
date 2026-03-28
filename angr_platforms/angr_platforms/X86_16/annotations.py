@@ -4,6 +4,8 @@ from angr.analyses import CFGFast, Decompiler
 from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
 
+from .analysis_helpers import seed_calling_conventions
+
 
 ANNOTATION_KEY = "x86_16_annotations"
 
@@ -110,6 +112,7 @@ def annotate_global_variable(project, addr: int, name: str):
 
 def decompile_function(project, func_addr: int, **annotations):
     cfg = project.analyses.CFGFast(normalize=True)
+    seed_calling_conventions(cfg)
     func = cfg.functions[func_addr]
     if annotations:
         annotate_function(project, func_addr, **annotations)
