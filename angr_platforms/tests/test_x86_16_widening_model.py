@@ -13,6 +13,7 @@ _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
+from angr_platforms.X86_16.alias_model import _StorageDomainSignature, _StorageView
 from angr_platforms.X86_16.widening_model import can_join_adjacent_storage_slices, merge_storage_slice_domains
 
 
@@ -35,12 +36,20 @@ def _make_var(name: str, addr: int):
     )
 
 
+def _make_stack_var(name: str, offset: int):
+    codegen = _DummyCodegen()
+    return _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(offset, 1, base="bp", name=name, region=0x1000),
+        codegen=codegen,
+    )
+
+
 def test_widening_model_accepts_adjacent_memory_slices():
     low = _make_var("field_0", 0x2000)
     high = _make_var("field_1", 0x2001)
 
     assert can_join_adjacent_storage_slices(low, high)
-    assert merge_storage_slice_domains(low, high) == _decompile._StorageDomainSignature("memory", 2, _decompile._StorageView(0x2000 * 8, 16))
+    assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
 
 
 def test_widening_model_rejects_non_adjacent_memory_slices():
@@ -48,3 +57,11 @@ def test_widening_model_rejects_non_adjacent_memory_slices():
     far = _make_var("field_2", 0x2002)
 
     assert not can_join_adjacent_storage_slices(low, far)
+
+
+def test_widening_model_accepts_adjacent_stack_slices():
+    low = _make_stack_var("field_0", -4)
+    high = _make_stack_var("field_1", -3)
+
+    assert can_join_adjacent_storage_slices(low, high)
+    assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))

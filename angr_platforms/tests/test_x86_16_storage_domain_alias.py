@@ -13,6 +13,14 @@ _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
+from angr_platforms.X86_16.alias_model import (
+    _CopyAliasState,
+    _StackPointerAliasState,
+    _StorageDomainSignature,
+    _StorageView,
+    _merge_storage_domains,
+)
+
 
 def _make_codegen():
     return SimpleNamespace(
@@ -27,42 +35,42 @@ def test_storage_domain_classifier_distinguishes_variable_domains():
     reg = _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="v14"))
     mem = _decompile._storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15"))
 
-    assert stack == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(-32, 16))
-    assert reg == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
-    assert mem == _decompile._StorageDomainSignature("memory", 2, _decompile._StorageView(0x2000 * 8, 16))
+    assert stack == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
+    assert reg == _StorageDomainSignature("register", 2, _StorageView(0, 16))
+    assert mem == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
 
 
 def test_storage_domain_classifier_distinguishes_subregister_widths():
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="al")).view == _decompile._StorageView(0, 8)
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="ah")).view == _decompile._StorageView(8, 8)
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="ax")).view == _decompile._StorageView(0, 16)
+    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="al")).view == _StorageView(0, 8)
+    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="ah")).view == _StorageView(8, 8)
+    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="ax")).view == _StorageView(0, 16)
 
 
 def test_storage_domain_classifier_joins_adjacent_views():
-    high_view = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(8, 8))
-    low_view = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(0, 8))
+    high_view = _StorageDomainSignature("register", 1, _StorageView(8, 8))
+    low_view = _StorageDomainSignature("register", 1, _StorageView(0, 8))
 
     joined = low_view.join(high_view)
 
-    assert joined == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
-    assert _decompile._StorageView(0, 8).can_join(_decompile._StorageView(8, 8))
+    assert joined == _StorageDomainSignature("register", 2, _StorageView(0, 16))
+    assert _StorageView(0, 8).can_join(_StorageView(8, 8))
 
 
 def test_storage_domain_classifier_joins_adjacent_stack_views():
-    low_view = _decompile._StorageDomainSignature("stack", 1, _decompile._StorageView(-32, 8))
-    high_view = _decompile._StorageDomainSignature("stack", 1, _decompile._StorageView(-24, 8))
+    low_view = _StorageDomainSignature("stack", 1, _StorageView(-32, 8))
+    high_view = _StorageDomainSignature("stack", 1, _StorageView(-24, 8))
 
     assert low_view.can_join(high_view)
-    assert low_view.join(high_view) == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(-32, 16))
+    assert low_view.join(high_view) == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
 
 
 def test_storage_domain_merge_helper_prefers_joinable_domains():
-    low = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(0, 8))
-    high = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(8, 8))
-    mixed = _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(0, 16))
+    low = _StorageDomainSignature("register", 1, _StorageView(0, 8))
+    high = _StorageDomainSignature("register", 1, _StorageView(8, 8))
+    mixed = _StorageDomainSignature("stack", 2, _StorageView(0, 16))
 
-    assert _decompile._merge_storage_domains(low, high) == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
-    assert _decompile._merge_storage_domains(low, mixed) == _decompile._StorageDomainSignature("mixed")
+    assert _merge_storage_domains(low, high) == _StorageDomainSignature("register", 2, _StorageView(0, 16))
+    assert _merge_storage_domains(low, mixed) == _StorageDomainSignature("mixed")
 
 
 def test_storage_domain_classifier_marks_mixed_expressions():
@@ -80,13 +88,13 @@ def test_storage_domain_classifier_marks_mixed_expressions():
     )
     mixed = _decompile.structured_c.CBinaryOp("Add", stack_expr, reg_expr, codegen=codegen)
 
-    assert _decompile._storage_domain_for_expr(pure_stack) == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(-32, 16))
-    assert _decompile._storage_domain_for_expr(mixed) == _decompile._StorageDomainSignature("mixed")
+    assert _decompile._storage_domain_for_expr(pure_stack) == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
+    assert _decompile._storage_domain_for_expr(mixed) == _StorageDomainSignature("mixed")
 
 
 def test_copy_alias_state_stops_mixed_domain_inlining():
-    plain = _decompile._CopyAliasState(_decompile._StorageDomainSignature("register", 2), object())
-    mixed = _decompile._CopyAliasState(_decompile._StorageDomainSignature("mixed"), object(), needs_synthesis=True)
+    plain = _CopyAliasState(_StorageDomainSignature("register", 2), object())
+    mixed = _CopyAliasState(_StorageDomainSignature("mixed"), object(), needs_synthesis=True)
 
     assert plain.can_inline()
     assert not mixed.can_inline()
@@ -94,12 +102,12 @@ def test_copy_alias_state_stops_mixed_domain_inlining():
 
 
 def test_copy_alias_state_merge_keeps_joinable_domains_together():
-    low = _decompile._CopyAliasState(_decompile._StorageDomainSignature("register", 1, _decompile._StorageView(0, 8)), object())
-    high = _decompile._CopyAliasState(_decompile._StorageDomainSignature("register", 1, _decompile._StorageView(8, 8)), object(), needs_synthesis=True)
+    low = _CopyAliasState(_StorageDomainSignature("register", 1, _StorageView(0, 8)), object())
+    high = _CopyAliasState(_StorageDomainSignature("register", 1, _StorageView(8, 8)), object(), needs_synthesis=True)
 
     merged = low.merge(high)
 
-    assert merged.domain == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
+    assert merged.domain == _StorageDomainSignature("register", 2, _StorageView(0, 16))
     assert merged.needs_synthesis
 
 
@@ -107,7 +115,7 @@ def test_stack_pointer_alias_state_tracks_base_and_offset():
     codegen = _make_codegen()
     stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
     cvar = _decompile.structured_c.CVariable(stack_var, codegen=codegen)
-    state = _decompile._StackPointerAliasState(cvar, 6)
+    state = _StackPointerAliasState(cvar, 6)
 
     shifted = state.shifted(-2)
 

@@ -730,6 +730,8 @@ Current status:
 - the widening layer now has its own module boundary as well, and the
   adjacent byte-pair gate now asks that module whether two storage slices are
   actually joinable before it tries to widen them
+- that widening boundary is now exercised on both memory and stack slices in
+  the focused tests, so the join rule is clearly storage-domain oriented
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold
