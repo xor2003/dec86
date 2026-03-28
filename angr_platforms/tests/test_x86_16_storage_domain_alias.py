@@ -85,6 +85,16 @@ def test_copy_alias_state_stops_mixed_domain_inlining():
     assert str(plain.domain) == "register:2"
 
 
+def test_copy_alias_state_merge_keeps_joinable_domains_together():
+    low = _decompile._CopyAliasState(_decompile._StorageDomainSignature("register", 1, _decompile._StorageView(0, 8)), object())
+    high = _decompile._CopyAliasState(_decompile._StorageDomainSignature("register", 1, _decompile._StorageView(8, 8)), object(), needs_synthesis=True)
+
+    merged = low.merge(high)
+
+    assert merged.domain == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
+    assert merged.needs_synthesis
+
+
 def test_stack_pointer_alias_state_tracks_base_and_offset():
     codegen = _make_codegen()
     stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
