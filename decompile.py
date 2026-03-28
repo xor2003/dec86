@@ -1540,6 +1540,26 @@ def _match_high_byte_projection_constant(node):
     return None
 
 
+def _storage_view_for_variable(variable) -> _StorageView:
+    size = getattr(variable, "size", 0) or 0
+    width_bits = size * 8 if size else None
+    name = (getattr(variable, "ident", None) or getattr(variable, "name", None) or "").lower()
+    if isinstance(variable, SimRegisterVariable):
+        low_high_offsets = {
+            "al": 0,
+            "ah": 8,
+            "bl": 0,
+            "bh": 8,
+            "cl": 0,
+            "ch": 8,
+            "dl": 0,
+            "dh": 8,
+        }
+        if name in low_high_offsets:
+            return _StorageView(low_high_offsets[name], width_bits)
+    return _StorageView(0, width_bits)
+
+
 @dataclass(frozen=True)
 class _StorageView:
     bit_offset: int = 0
@@ -1547,6 +1567,27 @@ class _StorageView:
 
     def is_full_width(self) -> bool:
         return self.bit_offset == 0 and self.bit_width is not None
+
+    def end_bit(self) -> int | None:
+        if self.bit_width is None:
+            return None
+        return self.bit_offset + self.bit_width
+
+    def can_join(self, other: "_StorageView") -> bool:
+        if self.bit_width is None or other.bit_width is None:
+            return False
+        return self.end_bit() == other.bit_offset or other.end_bit() == self.bit_offset
+
+    def join(self, other: "_StorageView") -> "_StorageView | None":
+        if self.bit_width is None or other.bit_width is None:
+            return None
+        if self.bit_offset <= other.bit_offset:
+            first, second = self, other
+        else:
+            first, second = other, self
+        if first.end_bit() != second.bit_offset:
+            return None
+        return _StorageView(first.bit_offset, first.bit_width + second.bit_width)
 
 
 @dataclass(frozen=True)
@@ -1569,17 +1610,34 @@ class _StorageDomainSignature:
             return self.space
         return f"{self.space}:{self.width}"
 
+    def can_join(self, other: "_StorageDomainSignature") -> bool:
+        if self.space != other.space:
+            return False
+        if self.view is None or other.view is None:
+            return False
+        return self.view.can_join(other.view)
+
+    def join(self, other: "_StorageDomainSignature") -> "_StorageDomainSignature | None":
+        if not self.can_join(other):
+            return None
+        joined_view = self.view.join(other.view)
+        if joined_view is None:
+            return None
+        width = self.width or 0
+        other_width = other.width or 0
+        return _StorageDomainSignature(self.space, width + other_width, joined_view)
+
 
 def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     if isinstance(variable, SimStackVariable):
         width = getattr(variable, "size", 0)
-        return _StorageDomainSignature("stack", width, _StorageView(0, width * 8 if width else None))
+        return _StorageDomainSignature("stack", width, _storage_view_for_variable(variable))
     if isinstance(variable, SimRegisterVariable):
         width = getattr(variable, "size", 0)
-        return _StorageDomainSignature("register", width, _StorageView(0, width * 8 if width else None))
+        return _StorageDomainSignature("register", width, _storage_view_for_variable(variable))
     if isinstance(variable, SimMemoryVariable):
         width = getattr(variable, "size", 0)
-        return _StorageDomainSignature("memory", width, _StorageView(0, width * 8 if width else None))
+        return _StorageDomainSignature("memory", width, _storage_view_for_variable(variable))
     return _StorageDomainSignature("unknown")
 
 
@@ -1596,6 +1654,7 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
         return _storage_domain_for_expr(expr.operand)
     if isinstance(expr, structured_c.CBinaryOp):
         domains: set[_StorageDomainSignature] = set()
+        domain_list: list[_StorageDomainSignature] = []
         for child in (expr.lhs, expr.rhs):
             domain = _storage_domain_for_expr(child)
             if domain.is_const():
@@ -1603,12 +1662,15 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
             if domain.is_unknown():
                 return _StorageDomainSignature("unknown")
             domains.add(domain)
+            domain_list.append(domain)
         if not domains:
             return _StorageDomainSignature("const")
         if len(domains) == 1:
             return next(iter(domains))
-        if len({d.space for d in domains}) == 1 and len({d.view for d in domains}) == 1:
-            return next(iter(domains))
+        if len(domain_list) == 2:
+            joined = domain_list[0].join(domain_list[1])
+            if joined is not None:
+                return joined
         return _StorageDomainSignature("mixed")
     return _StorageDomainSignature("unknown")
 
