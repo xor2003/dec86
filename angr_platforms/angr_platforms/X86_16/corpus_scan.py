@@ -203,7 +203,7 @@ def scan_function(
     code: bytes,
     timeout_sec: int,
     mode: str,
-    max_cfg_bytes: int = 2048,
+    max_cfg_bytes: int = 192,
     max_cfg_blocks: int = 8,
     max_cfg_insns: int = 200,
     max_decompile_bytes: int = 384,

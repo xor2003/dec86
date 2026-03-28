@@ -173,9 +173,10 @@ def test_scan_safe_skips_oversized_decompile_attempts():
 
 
 def test_scan_safe_skips_oversized_cfg_attempts():
-    assert _should_skip_scan_safe_cfg(2608, "scan-safe", 2048) is True
-    assert _should_skip_scan_safe_cfg(1589, "scan-safe", 2048) is False
-    assert _should_skip_scan_safe_cfg(2608, "lift", 2048) is False
+    assert _should_skip_scan_safe_cfg(2608, "scan-safe", 192) is True
+    assert _should_skip_scan_safe_cfg(1589, "scan-safe", 192) is True
+    assert _should_skip_scan_safe_cfg(192, "scan-safe", 192) is False
+    assert _should_skip_scan_safe_cfg(2608, "lift", 192) is False
     assert _should_skip_scan_safe_cfg(2608, "scan-safe", 0) is False
 
 
@@ -205,8 +206,8 @@ def test_scan_safe_skips_complex_cfg_shapes():
 def test_scan_safe_keeps_empty_codegen_as_fallback_for_known_hotspots():
     repo_root = Path(__file__).resolve().parents[2]
     expectations = {
-        ("OUTPUT.COD", "_hexdump"): "cfg_only",
-        ("START1.COD", "_processStoreInput"): "cfg_only",
+        ("OUTPUT.COD", "_hexdump"): "lift_only",
+        ("START1.COD", "_processStoreInput"): "lift_only",
     }
 
     for (cod_name, proc_name), expected_fallback in expectations.items():
@@ -220,9 +221,32 @@ def test_scan_safe_keeps_empty_codegen_as_fallback_for_known_hotspots():
             code,
             timeout_sec=5,
             mode="scan-safe",
-            max_cfg_bytes=2048,
+            max_cfg_bytes=192,
             max_decompile_bytes=384,
         )
         assert result.ok is True
         assert result.failure_class is None
         assert result.fallback_kind == expected_fallback
+
+
+def test_scan_safe_uses_lift_only_for_start3_timeout_hotspot():
+    repo_root = Path(__file__).resolve().parents[2]
+    cod_path = repo_root / "cod" / "START3.COD"
+    funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
+    kind, code = funcs["_sub_14BB4"]
+
+    result = scan_function(
+        cod_path,
+        "_sub_14BB4",
+        kind,
+        code,
+        timeout_sec=5,
+        mode="scan-safe",
+        max_cfg_bytes=192,
+        max_decompile_bytes=384,
+    )
+
+    assert result.ok is True
+    assert result.failure_class is None
+    assert result.fallback_kind == "lift_only"
+    assert result.stage_reached == "cleanup"
