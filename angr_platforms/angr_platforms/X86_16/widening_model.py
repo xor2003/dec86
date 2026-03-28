@@ -23,8 +23,11 @@ class WideningCandidate:
 
 
 def can_join_adjacent_storage_slices(low_expr, high_expr) -> bool:
-    low_candidate = WideningCandidate.from_expr(low_expr)
-    high_candidate = WideningCandidate.from_expr(high_expr)
+    try:
+        low_candidate = WideningCandidate.from_expr(low_expr)
+        high_candidate = WideningCandidate.from_expr(high_expr)
+    except ValueError:
+        return False
     if low_candidate.domain.is_unknown() or high_candidate.domain.is_unknown():
         return False
     if low_candidate.domain.is_mixed() or high_candidate.domain.is_mixed():
