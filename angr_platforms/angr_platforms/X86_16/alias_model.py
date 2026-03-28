@@ -53,6 +53,12 @@ def _storage_view_for_variable(variable) -> _StorageView:
         }
         if name in low_high_offsets:
             return _StorageView(low_high_offsets[name], width_bits)
+    if isinstance(variable, SimStackVariable):
+        return _StorageView(getattr(variable, "offset", 0) * 8, width_bits)
+    if isinstance(variable, SimMemoryVariable):
+        addr = getattr(variable, "addr", 0)
+        if isinstance(addr, int):
+            return _StorageView(addr * 8, width_bits)
     return _StorageView(0, width_bits)
 
 

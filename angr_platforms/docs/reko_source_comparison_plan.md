@@ -727,6 +727,9 @@ Current status:
 - the copy-alias state object now also owns the merge/transfer step for
   compatible slices, which makes the alias layer feel more like a central
   truth source than a loose collection of local rewrite rules
+- the widening layer now has its own module boundary as well, and the
+  adjacent byte-pair gate now asks that module whether two storage slices are
+  actually joinable before it tries to widen them
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold

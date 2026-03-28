@@ -1,0 +1,50 @@
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DECOMPILE_PATH = REPO_ROOT / "decompile.py"
+
+_spec = spec_from_file_location("decompile", DECOMPILE_PATH)
+assert _spec is not None and _spec.loader is not None
+_decompile = module_from_spec(_spec)
+sys.modules[_spec.name] = _decompile
+_spec.loader.exec_module(_decompile)
+
+from angr_platforms.X86_16.widening_model import can_join_adjacent_storage_slices, merge_storage_slice_domains
+
+
+class _DummyCodegen:
+    def __init__(self):
+        self._idx = 0
+        self.project = SimpleNamespace(arch=SimpleNamespace())
+        self.cstyle_null_cmp = False
+
+    def next_idx(self, _name):
+        self._idx += 1
+        return self._idx
+
+
+def _make_var(name: str, addr: int):
+    codegen = _DummyCodegen()
+    return _decompile.structured_c.CVariable(
+        _decompile.SimMemoryVariable(addr, 1, name=name),
+        codegen=codegen,
+    )
+
+
+def test_widening_model_accepts_adjacent_memory_slices():
+    low = _make_var("field_0", 0x2000)
+    high = _make_var("field_1", 0x2001)
+
+    assert can_join_adjacent_storage_slices(low, high)
+    assert merge_storage_slice_domains(low, high) == _decompile._StorageDomainSignature("memory", 2, _decompile._StorageView(0x2000 * 8, 16))
+
+
+def test_widening_model_rejects_non_adjacent_memory_slices():
+    low = _make_var("field_0", 0x2000)
+    far = _make_var("field_2", 0x2002)
+
+    assert not can_join_adjacent_storage_slices(low, far)

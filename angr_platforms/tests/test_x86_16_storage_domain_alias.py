@@ -27,9 +27,9 @@ def test_storage_domain_classifier_distinguishes_variable_domains():
     reg = _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="v14"))
     mem = _decompile._storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15"))
 
-    assert stack == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(0, 16))
+    assert stack == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(-32, 16))
     assert reg == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
-    assert mem == _decompile._StorageDomainSignature("memory", 2, _decompile._StorageView(0, 16))
+    assert mem == _decompile._StorageDomainSignature("memory", 2, _decompile._StorageView(0x2000 * 8, 16))
 
 
 def test_storage_domain_classifier_distinguishes_subregister_widths():
@@ -46,6 +46,14 @@ def test_storage_domain_classifier_joins_adjacent_views():
 
     assert joined == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
     assert _decompile._StorageView(0, 8).can_join(_decompile._StorageView(8, 8))
+
+
+def test_storage_domain_classifier_joins_adjacent_stack_views():
+    low_view = _decompile._StorageDomainSignature("stack", 1, _decompile._StorageView(-32, 8))
+    high_view = _decompile._StorageDomainSignature("stack", 1, _decompile._StorageView(-24, 8))
+
+    assert low_view.can_join(high_view)
+    assert low_view.join(high_view) == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(-32, 16))
 
 
 def test_storage_domain_merge_helper_prefers_joinable_domains():
@@ -72,7 +80,7 @@ def test_storage_domain_classifier_marks_mixed_expressions():
     )
     mixed = _decompile.structured_c.CBinaryOp("Add", stack_expr, reg_expr, codegen=codegen)
 
-    assert _decompile._storage_domain_for_expr(pure_stack) == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(0, 16))
+    assert _decompile._storage_domain_for_expr(pure_stack) == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(-32, 16))
     assert _decompile._storage_domain_for_expr(mixed) == _decompile._StorageDomainSignature("mixed")
 
 

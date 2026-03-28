@@ -34,6 +34,7 @@ def test_x86_16_package_exports_source_backends():
     assert "patch_dirty" in x8616.__all__
     assert "typehoon_compat" in x8616.__all__
     assert "alias_model" in x8616.__all__
+    assert "widening_model" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__
     assert "decompiler_postprocess_globals" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__
