@@ -72,6 +72,32 @@ later recovery architecture evolves.
   - loader/runtime changes are mostly maintenance, not the main blocker for new
     corpus cases
 
+### A3. MartyPC-Style Instruction-Core Factoring
+
+- `Priority`: `P2`
+- `Complexity`: `Medium`
+- `How it helps`:
+  - keeps instruction semantics easier to reason about and test
+  - reduces the chance that future 386 real-mode additions will be bolted onto
+    16-bit handlers as special cases
+  - improves scan stability and semantic readability for hot paths such as
+    string ops, stack ops, ALU flags, and control transfer
+- `Low-level steps`:
+  - keep instruction families split into small semantic helpers instead of one
+    large handler
+  - keep ALU flag updates centralized and width-parametric
+  - keep string, stack, and near/far control-transfer helpers separate
+  - make instruction semantics width-extensible so 32-bit operand-size support
+    can be added later without rewriting the 16-bit baseline
+  - treat future 386 real-mode instructions with 16-bit addressing as a mixed-
+    width extension of the same instruction-core, not a separate architecture
+- `Dependencies`:
+  - `A1`
+  - `A2`
+- `Exit signal`:
+  - new instruction support can be added with small, width-aware helpers rather
+    than ad hoc branching in existing 16-bit handlers
+
 ## Phase B. Recovery Foundation
 
 This is the highest-value architecture phase. It turns isolated wins into a
@@ -166,13 +192,16 @@ MartyPC is not a decompiler, but it is a useful reference implementation for the
 - centralize ALU flag updates instead of scattering flag logic across instruction handlers
 - keep near/far jump, call, return, and interrupt paths separate and explicit
 - make stack push/pop semantics simple and reusable
+- keep operand width and address width as separate concepts so future 386 real-mode instructions with 16-bit addressing do not contaminate the current 16-bit baseline
+- make mixed-width instruction semantics width-extensible from the start, especially for ALU, shifts/rotates, and stack/control-transfer helpers
 
 For Inertia, these ideas are most useful as low-level guidance for x86-16 maintenance work, not as a replacement for the alias/widening/type pipeline. The practical application order is:
 
 1. keep instruction handlers in small semantic groups
 2. prefer shared helpers for repeated flag, stack, and control-transfer behavior
 3. use MartyPC-style clarity when cleaning up handlers that still affect scan stability or real-sample correctness
-4. keep these instruction-level patterns downstream of the architecture boundary already fixed in `IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
+4. keep operand-size and address-size concerns explicit so the future 386 real-mode path can remain a bounded extension of the same helpers
+5. keep these instruction-level patterns downstream of the architecture boundary already fixed in `IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
 
 ## Phase C. Evidence To Types To Objects
 
