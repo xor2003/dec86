@@ -2832,7 +2832,7 @@ class _AccessTraitEvidenceProfile:
         if base_key is not None and base_key and base_key[0] == "stack" and self.stack_like:
             return "stack"
         if self.member_like and self.array_like:
-            return "mixed"
+            return None
         if self.array_like:
             return "array"
         if self.member_like:
@@ -2857,12 +2857,14 @@ class _AccessTraitRewriteDecision:
     profile: _AccessTraitEvidenceProfile
 
     def should_rename_stack(self) -> bool:
-        return self.profile.best_rewrite_kind() in {"member", "array", "mixed", "stack"}
+        return self.profile.best_rewrite_kind(self.base_key) in {"member", "array", "stack"}
 
     def preferred_kind(self) -> str | None:
         return self.profile.best_rewrite_kind(self.base_key)
 
     def candidate_field_names(self) -> tuple[str, ...]:
+        if self.preferred_kind() is None:
+            return ()
         if self.base_key and self.base_key[0] == "stack":
             groups = (
                 self.profile.stack_like,
