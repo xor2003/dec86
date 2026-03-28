@@ -93,7 +93,7 @@ from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.alias_model import (
     _CopyAliasState,
     _StackPointerAliasState,
-    _same_stack_slot_identity,
+    _same_stack_slot_identity as _same_stack_slot_identity_var,
     _stack_slot_identity_for_variable,
     _storage_domain_for_expr,
     _storage_domain_for_variable,
@@ -1367,7 +1367,7 @@ def _same_stack_slot_identity(lhs, rhs) -> bool:
         return False
     lvar = getattr(lhs, "variable", None)
     rvar = getattr(rhs, "variable", None)
-    return _same_stack_slot_identity(lvar, rvar)
+    return _same_stack_slot_identity_var(lvar, rvar)
 
 
 def _is_c_constant_int(node, value: int) -> bool:
