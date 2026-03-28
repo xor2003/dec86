@@ -205,7 +205,11 @@ def _stack_slot_identity_for_variable(variable) -> _StackSlotIdentity | None:
 def _same_stack_slot_identity(lhs, rhs) -> bool:
     if not isinstance(lhs, SimStackVariable) or not isinstance(rhs, SimStackVariable):
         return False
-    return _stack_slot_identity_for_variable(lhs) == _stack_slot_identity_for_variable(rhs)
+    lhs_identity = _stack_slot_identity_for_variable(lhs)
+    rhs_identity = _stack_slot_identity_for_variable(rhs)
+    if lhs_identity is None or rhs_identity is None:
+        return False
+    return lhs_identity == rhs_identity or lhs_identity.can_join(rhs_identity)
 
 
 def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
