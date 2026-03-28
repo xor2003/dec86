@@ -418,6 +418,9 @@ The trait bridge now also builds an explicit evidence-profile layer before the
 field/member naming pass consumes anything, so member-like, array-like, and
 induction-like signals are separated architecturally instead of being read
 straight out of raw bucket dictionaries.
+That evidence profile now also feeds an explicit rewrite-decision object, so
+the object-naming layer chooses between member-like, array-like, and mixed
+evidence instead of collapsing every case into one generic rename path.
 
 ### 5. Typed object rewriting after evidence, not before
 

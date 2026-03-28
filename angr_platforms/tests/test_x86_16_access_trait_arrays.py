@@ -15,6 +15,8 @@ _spec.loader.exec_module(_decompile)
 
 _access_trait_member_candidates = _decompile._access_trait_member_candidates
 _attach_access_trait_field_names = _decompile._attach_access_trait_field_names
+_AccessTraitRewriteDecision = _decompile._AccessTraitRewriteDecision
+_AccessTraitEvidenceProfile = _decompile._AccessTraitEvidenceProfile
 
 
 def test_access_trait_array_evidence_feeds_member_candidates():
@@ -72,3 +74,13 @@ def test_access_trait_array_evidence_can_rename_stack_objects():
     assert changed
     assert stack_var.name == "field_0"
     assert cvar.name == "field_0"
+
+
+def test_access_trait_rewrite_decision_separates_evidence_kinds():
+    member_profile = _AccessTraitEvidenceProfile(member_like=((4, 2, 3),))
+    array_profile = _AccessTraitEvidenceProfile(array_like=((0, 2, 5),))
+    mixed_profile = _AccessTraitEvidenceProfile(member_like=((4, 2, 3),), array_like=((0, 2, 5),))
+
+    assert _AccessTraitRewriteDecision(("stack", "bp", -4), member_profile).preferred_kind() == "member"
+    assert _AccessTraitRewriteDecision(("stack", "bp", -4), array_profile).preferred_kind() == "array"
+    assert _AccessTraitRewriteDecision(("stack", "bp", -4), mixed_profile).preferred_kind() == "mixed"
