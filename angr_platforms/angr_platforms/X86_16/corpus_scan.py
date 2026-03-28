@@ -67,7 +67,10 @@ _SCAN_ACTIVE = False
 
 
 def _alarm_handler(_signum, _frame):
+    global _SCAN_ACTIVE
     if _SCAN_ACTIVE:
+        _SCAN_ACTIVE = False
+        _clear_alarm()
         raise ScanTimeout("timed out")
 
 
