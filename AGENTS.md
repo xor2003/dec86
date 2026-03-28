@@ -720,7 +720,10 @@ Useful recent commit in `f15se2-re`:
   - `scan-safe` is the preferred corpus-scan lane:
     - bounded single-function first
     - staged results for load, normalize, lift, cfg, cleanup, and decompile
-    - structured failure taxonomy plus fallback classification
+    - structured failure taxonomy plus fallback classification, including
+      `timeout` and `analysis_assertion`
+    - the scan lane intentionally suppresses noisy decompiler callsite warnings
+      so corpus baselines stay machine-readable
   - it now scans recursively with `rglob("*.COD")`, not just one directory level
   - it is sequential, applies a hard address-space cap with `RLIMIT_AS`, and prevents the multi-process RAM blowups the user reported
 - Current bounded whole-directory result for `cod/default/`:
