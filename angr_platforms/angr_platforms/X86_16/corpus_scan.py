@@ -191,6 +191,33 @@ def _should_skip_scan_safe_cfg(code_len: int, mode: str, max_cfg_bytes: int) -> 
     return mode == "scan-safe" and max_cfg_bytes > 0 and code_len > max_cfg_bytes
 
 
+def _should_skip_scan_safe_back_edge(capstone_block, mode: str, max_loop_bytes: int) -> bool:
+    if mode != "scan-safe" or max_loop_bytes <= 0:
+        return False
+
+    block = getattr(capstone_block, "insns", None)
+    if not block:
+        return False
+
+    for insn in block:
+        mnemonic = getattr(insn, "mnemonic", "")
+        if not (mnemonic.startswith("j") or mnemonic.startswith("loop")):
+            continue
+
+        operands = getattr(insn, "operands", ())
+        if not operands:
+            continue
+        target = getattr(operands[0], "imm", None)
+        if target is None and hasattr(operands[0], "value"):
+            target = getattr(operands[0].value, "imm", None)
+        if target is None:
+            continue
+        if target < insn.address and insn.address < 0x1000 + max_loop_bytes:
+            return True
+
+    return False
+
+
 def _should_skip_scan_safe_decompile_for_cfg_shape(cfg, mode: str, max_cfg_blocks: int, max_cfg_insns: int) -> bool:
     if mode != "scan-safe" or (max_cfg_blocks <= 0 and max_cfg_insns <= 0):
         return False
@@ -214,6 +241,7 @@ def scan_function(
     max_cfg_blocks: int = 8,
     max_cfg_insns: int = 200,
     max_decompile_bytes: int = 384,
+    max_loop_bytes: int = 128,
 ) -> FunctionScanResult:
     global _SCAN_ACTIVE
     result = FunctionScanResult(
@@ -262,6 +290,23 @@ def scan_function(
             result.fallback_kind = "block_lift"
             _mark_stage(result, "cfg", False, reason="skipped_relocation", detail=result.reason)
             return _finish_scan(result)
+
+        if mode == "scan-safe" and max_loop_bytes > 0:
+            loop_block = project.factory.block(0x1000, len(code))
+            if _should_skip_scan_safe_back_edge(loop_block.capstone, mode, max_loop_bytes):
+                result.ok = True
+                result.fallback_kind = "lift_only"
+                _mark_stage(
+                    result,
+                    "cfg",
+                    True,
+                    detail=(
+                        f"skipped cfg/decompile for short loop-heavy function ({len(code)} bytes <= {max_loop_bytes}); "
+                        "lift ok"
+                    ),
+                )
+                _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
+                return _finish_scan(result)
 
         if _should_skip_scan_safe_cfg(len(code), mode, max_cfg_bytes):
             result.ok = True
@@ -430,5 +475,6 @@ __all__ = [
     "summarize_results",
     "_should_skip_scan_safe_decompile",
     "_should_skip_scan_safe_cfg",
+    "_should_skip_scan_safe_back_edge",
     "_should_skip_scan_safe_decompile_for_cfg_shape",
 ]

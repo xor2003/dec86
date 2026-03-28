@@ -5,6 +5,7 @@ from angr_platforms.X86_16.corpus_scan import (
     ScanTimeout,
     StageResult,
     _should_skip_scan_safe_cfg,
+    _should_skip_scan_safe_back_edge,
     _should_skip_scan_safe_decompile,
     _should_skip_scan_safe_decompile_for_cfg_shape,
     extract_cod_functions,
@@ -203,11 +204,33 @@ def test_scan_safe_skips_complex_cfg_shapes():
     assert _should_skip_scan_safe_decompile_for_cfg_shape(_FakeCfg([_FakeBlock(5)]), "scan-safe", 8, 200) is False
 
 
+def test_scan_safe_skips_short_loop_heavy_functions():
+    class _FakeOp:
+        def __init__(self, imm):
+            self.imm = imm
+
+    class _FakeInsn:
+        def __init__(self, address: int, mnemonic: str, imm: int | None):
+            self.address = address
+            self.mnemonic = mnemonic
+            self.operands = [] if imm is None else [_FakeOp(imm)]
+
+    class _FakeCapstoneBlock:
+        def __init__(self, insns):
+            self.insns = insns
+
+    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x0FFF)]), "scan-safe", 128) is True
+    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x1010)]), "scan-safe", 128) is False
+    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "mov", None)]), "scan-safe", 128) is False
+    assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x0FFF)]), "lift", 128) is False
+
+
 def test_scan_safe_keeps_empty_codegen_as_fallback_for_known_hotspots():
     repo_root = Path(__file__).resolve().parents[2]
     expectations = {
         ("OUTPUT.COD", "_hexdump"): "lift_only",
         ("START1.COD", "_processStoreInput"): "lift_only",
+        ("UTIL.COD", "_sizeString"): "lift_only",
     }
 
     for (cod_name, proc_name), expected_fallback in expectations.items():
