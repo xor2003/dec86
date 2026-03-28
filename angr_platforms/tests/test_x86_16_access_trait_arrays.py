@@ -1,0 +1,74 @@
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DECOMPILE_PATH = REPO_ROOT / "decompile.py"
+
+_spec = spec_from_file_location("decompile", DECOMPILE_PATH)
+assert _spec is not None and _spec.loader is not None
+_decompile = module_from_spec(_spec)
+sys.modules[_spec.name] = _decompile
+_spec.loader.exec_module(_decompile)
+
+_access_trait_member_candidates = _decompile._access_trait_member_candidates
+_attach_access_trait_field_names = _decompile._attach_access_trait_field_names
+
+
+def test_access_trait_array_evidence_feeds_member_candidates():
+    traits = {
+        "base_const": {},
+        "base_stride": {},
+        "repeated_offsets": {},
+        "repeated_offset_widths": {},
+        "base_stride_widths": {},
+        "member_evidence": {},
+        "array_evidence": {
+            (("reg", 4), ("reg", 2), 4, 0, 2): 1,
+        },
+    }
+
+    candidates = _access_trait_member_candidates(traits)
+
+    assert candidates == {("reg", 4): [(0, 2, 1)]}
+
+
+def test_access_trait_array_evidence_can_rename_stack_objects():
+    class DummyCodegen:
+        def __init__(self):
+            self._i = 0
+            self.project = SimpleNamespace(arch=SimpleNamespace())
+            self.cfunc = SimpleNamespace(addr=0x1000, name="_ConfigCrts")
+
+        def next_idx(self, _):
+            self._i += 1
+            return self._i
+
+    codegen = DummyCodegen()
+    stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
+    cvar = _decompile.structured_c.CVariable(stack_var, codegen=codegen)
+    codegen.cfunc.variables_in_use = {stack_var: cvar}
+    codegen.cfunc.statements = cvar
+    project = SimpleNamespace(
+        _inertia_access_traits={
+            0x1000: {
+                "base_const": {},
+                "base_stride": {},
+                "repeated_offsets": {},
+                "repeated_offset_widths": {},
+                "base_stride_widths": {},
+                "member_evidence": {},
+                "array_evidence": {
+                    (("stack", "bp", -4), ("reg", 2), 2, 4, 2): 1,
+                },
+            }
+        }
+    )
+
+    changed = _attach_access_trait_field_names(project, codegen)
+
+    assert changed
+    assert stack_var.name == "field_0"
+    assert cvar.name == "field_0"

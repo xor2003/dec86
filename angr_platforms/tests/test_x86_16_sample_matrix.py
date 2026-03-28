@@ -260,12 +260,17 @@ def test_cod_access_traits_are_collected_for_segmented_proc():
     traits = getattr(project, "_inertia_access_traits", {})
     function_traits = traits.get(function.addr)
     assert function_traits is not None
-    assert function_traits["base_const"]
-    assert any(key[0] == "ds" for key in function_traits["base_const"])
-    assert function_traits["repeated_offsets"]
+    assert function_traits["base_stride"]
+    assert any(key[0] == "ss" and key[2] == 16 and key[3] == 0 and key[4] == 2 for key in function_traits["base_stride"])
+    assert function_traits["induction_evidence"]
     assert any(
-        key[0] == "ds" and key[2] == 782 and key[1] in {6, ("reg", 6)}
-        for key in function_traits["repeated_offsets"]
+        key[0] == ("reg", 30) and key[1] == 16 and key[2] == 0 and key[3] == 2
+        for key in function_traits["induction_evidence"]
+    )
+    assert function_traits["member_evidence"]
+    assert any(
+        key[0] == ("reg", 6) and key[1] in {782, 783} and key[2] in {1, 2}
+        for key in function_traits["member_evidence"]
     )
 
 

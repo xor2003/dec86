@@ -70,6 +70,7 @@ def test_decompile_cli_recovers_source_like_monoprin_tokens():
     assert "== c ==" in result.stdout
     assert "% 80" in result.stdout
     assert "% 25" in result.stdout
+    assert "int _mset_pos(int x, int y)" in result.stdout
     assert "[bp+0x4] = x" in result.stdout
     assert "[bp+0x6] = y" in result.stdout
     assert "unsigned short x;  // [bp+0x4] x" in result.stdout
@@ -168,17 +169,14 @@ def test_decompile_cli_recovers_rotate_pt_logic():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _rotate_pt" in result.stdout
-    assert "int _rotate_pt()" in result.stdout
+    assert "int _rotate_pt(int *s, int *d, int ang)" in result.stdout
     assert "[bp+0x4] = s" in result.stdout
     assert "[bp+0x6] = d" in result.stdout
     assert "[bp-0x4] = y" in result.stdout
     assert "[bp-0x2] = x" in result.stdout
-    assert "unsigned short s;  // [bp+0x2] s" in result.stdout
-    assert "unsigned short d;  // [bp+0x6] d" in result.stdout
     assert "unsigned short y;  // [bp-0x4] y" in result.stdout
     assert "unsigned short x;  // [bp-0x2] x" in result.stdout
     assert "calls = _CosB, _SinB" in result.stdout
-    assert "unsigned short d;  // [bp+0x6] d" in result.stdout
     assert "d * -1" in result.stdout
     assert "0 + v12" not in result.stdout
     assert "x = s[0];" in result.stdout
@@ -280,8 +278,8 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "v22 = ...;" not in result.stdout
     assert "v27 = ...;" not in result.stdout
     assert "ds * 16 + v25" not in result.stdout
-    assert "v16 = (v12 >> 1 & 255) * 160;" in result.stdout
-    assert "v20 = (v13 & 255) * 160 + (v4 & 255) * 2;" in result.stdout
+    assert "v16 = (v12 >> 1) * 160;" in result.stdout
+    assert "v20 = v13 * 160 + (v4 & 255) * 2;" in result.stdout
     assert "v29 = v20 + 1;" in result.stdout
     assert "v23 = v29 + 1;" in result.stdout
     assert "*((char *)v24) = v20;" in result.stdout
@@ -336,11 +334,12 @@ def test_decompile_cli_recovers_snake_writecharat_pointer_access():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x135c writecharat" in result.stdout
-    assert "int writecharat(void)" in result.stdout
+    assert "long writecharat(void)" in result.stdout
     assert "*((char *)(es * 16 +" not in result.stdout
     assert "*((char *)" in result.stdout
-    assert "return (v5 >> 5 & 255)" in result.stdout
-    assert "(v4 & 255) * 2" in result.stdout
+    assert "s_2 = v4;" in result.stdout
+    assert "s_4 = v5;" in result.stdout
+    assert "return s_2 << 16 | ((v4 & 0xff00) >> 8) * 160 + (v4 & 255) * 2;" in result.stdout
     assert "return" in result.stdout
 
 
@@ -356,10 +355,26 @@ def test_decompile_cli_recovers_snake_readcharat_listing_name():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1387 readcharat" in result.stdout
-    assert "int readcharat(void)" in result.stdout
+    assert "long readcharat(void)" in result.stdout
     assert "== asm fallback ==" not in result.stdout
-    assert "v5 = (v4 & 0xff00) >> 3;" in result.stdout
-    assert "(v4 & 255) * 2" in result.stdout
+    assert "s_2 = v4;" in result.stdout
+    assert "s_4 = v5;" in result.stdout
+    assert "return s_2 << 16 | ((v4 & 0xff00) >> 8) * 160 + (v4 & 255) * 2;" in result.stdout
+
+
+def test_decompile_cli_whole_snake_scan_has_no_blank_spot_placeholders():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "20", "--max-functions", "20"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "...;" not in result.stdout
+    assert "if (...)" not in result.stdout
 
 
 def test_decompile_cli_recovers_snake_fruitgeneration_with_phoenix_fallback():
@@ -425,7 +440,7 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _DrawRadarAlt" in result.stdout
-    assert "int _DrawRadarAlt(void)" in result.stdout
+    assert "void _DrawRadarAlt(void)" in result.stdout
     assert "[bp-0xc] = newalt" in result.stdout
     assert "[bp-0xa] = y2" in result.stdout
     assert "[bp-0x8] = soffset" in result.stdout
@@ -437,7 +452,7 @@ def test_decompile_cli_recovers_drawradaralt_branch_logic():
     assert "y2 = 0;" in result.stdout
     assert "y2 = 112;" in result.stdout
     assert "s_12 = 0;" in result.stdout
-    assert "((unsigned short *)&v0)[2] = 2;" in result.stdout
+    assert "s_14 = 2;" in result.stdout
     assert "MapInEMSSprite(MISCSPRTSEG,0);" in result.stdout
 
 
@@ -520,7 +535,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _mset_pos", "% 80", "% 25", "unsigned short x;  // [bp+0x4] x"),
+            ("function: 0x1000 _mset_pos", "% 80", "% 25", "short _mset_pos(unsigned short"),
             ("&v1",),
         ),
                 (
@@ -544,7 +559,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _Ready5", "planecnt", "droll", "pdest", "* 46", "+ 18 + v3", "return"),
+            ("function: 0x1000 _Ready5", "void _Ready5(void)", "planecnt", "droll", "pdest", "* 46", "+ 18 + v3", "return;"),
             (),
         ),
         (
@@ -553,7 +568,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _LookDown", "if (!(BackSeat))", "Rp3D", "RpCRT1", "RpCRT2", "RpCRT4", "50", "27", "25", "39"),
+            ("function: 0x1000 _LookDown", "if (!(BackSeat))", "Rp3D->Length1 = 50;", "RpCRT1->YBgn = 27;", "RpCRT2->YBgn = 25;", "RpCRT4->YBgn = 39;", "VdiMask[MASKY] = 27;", "AdiMask[MASKY] = 25;", "RawMask[MASKY] = 39;"),
             (),
         ),
         (
@@ -562,7 +577,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _LookUp", "if (!(BackSeat))", "Rp3D", "RpCRT1", "RpCRT2", "RpCRT4", "150", "138", "136", "139"),
+            ("function: 0x1000 _LookUp", "if (!(BackSeat))", "Rp3D->Length1 = 150;", "RpCRT1->YBgn = 138;", "RpCRT2->YBgn = 136;", "RpCRT4->YBgn = 150;", "VdiMask[MASKY] = 138;", "AdiMask[MASKY] = 136;", "RawMask[MASKY] = 150;"),
             (),
         ),
         (
@@ -571,18 +586,27 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            ("function: 0x1000 _InBox", "return 1;", "xl <= v9", "xh >= v9", "zl <= v9", "zh >= v9"),
-            ("if (...)",),
+            ("function: 0x1000 _InBox", "return 1;", "xl <=", "xh >=", "zl <=", "zh >="),
+            ("if (...)", "!(zh >=", "xl >", "xh <", "zl >"),
+        ),
+        (
+            REPO_ROOT / "cod" / "f14" / "CARR.COD",
+            "_InBoxLng",
+            "NEAR",
+            10,
+            30,
+            ("function: 0x1000 _InBoxLng", "if (x < xl || x > xh || z < zl || z > zh)", "return 0;", "return 1;"),
+            ("if (...)", "!(v4", "& &"),
         ),
             (
                 REPO_ROOT / "cod" / "f14" / "CARR.COD",
                 "_SetHook",
                 "NEAR",
                 10,
-                30,
-                    ("function: 0x1000 _SetHook", "return 1;", "if (Hook)", "s_4 = 5;", "v8 = 93;", "v8 = 106;", 'Message ("Hook Lowered",RIO_NOW_MSG);', "HookDown == Hook", "HookDown = Hook;", "s_6 = v8;"),
-                (),
-            ),
+            30,
+                        ("function: 0x1000 _SetHook", "return 1;", "if (Hook)", "s_4 = 5;", "Message (\"Hook Lowered\",RIO_NOW_MSG);", "HookDown == Hook", "HookDown = Hook;"),
+                    (),
+                ),
             (
                 REPO_ROOT / "cod" / "f14" / "CARR.COD",
                 "_SetGear",
@@ -610,15 +634,15 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
                 ("function: 0x1000 _TIDShowRange", "void _TIDShowRange(void)", "RectFill(Rp2,146,21,29,9,BLACK);", "l = pstrlen(Rp2,itoa(RANGES[Tscale],s,10));", "RpPrint(Rp2,160-(l/2),23,s);", "if ((mseg=MapInEMSSprite(MISCSPRTSEG,0)))"),
                 (),
             ),
-            (
-                REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
-                "_DrawRadarAlt",
-                "NEAR",
-                10,
-                30,
-                    ("function: 0x1000 _DrawRadarAlt", "if (!(View))", "y2 = 0;", "y2 = 112;", "((unsigned short *)&v0)[2] = 2;", "MapInEMSSprite(MISCSPRTSEG,0);"),
-                (),
-            ),
+        (
+            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+            "_DrawRadarAlt",
+            "NEAR",
+            10,
+            30,
+                ("function: 0x1000 _DrawRadarAlt", "if (!(View))", "y2 = 0;", "y2 = 112;", "s_12 = 0;", "s_14 = 2;", "MapInEMSSprite(MISCSPRTSEG,0);"),
+            (),
+        ),
             (
                 ISOD_COD,
                 "fold_values",

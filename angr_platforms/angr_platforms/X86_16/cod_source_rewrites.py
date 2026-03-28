@@ -232,7 +232,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
         name="rotate_pt",
         header_regex=r"(?m)^(?:unsigned short|short|int|void)\s+_rotate_pt\((?:[^)]*)\)\s*\{",
         rewritten=(
-            "int _rotate_pt()\n"
+            "int _rotate_pt(int *s, int *d, int ang)\n"
             "{\n"
             "    unsigned short ss;  // ss\n"
             "    unsigned short v10;  // di\n"
@@ -246,8 +246,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
             "    unsigned short y;  // [bp-0x4] y\n"
             "    unsigned short x;  // [bp-0x2] x\n"
             "    char v6;  // [bp+0x0]\n"
-            "    unsigned short s;  // [bp+0x2] s\n"
-            "    unsigned short d;  // [bp+0x6] d\n\n"
+            "\n"
             "    s_2 = &v6;\n"
             "    s_8 = v10;\n"
             "    s_a = v11;\n"

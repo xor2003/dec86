@@ -75,6 +75,8 @@ of transformations:
 - adjacent stack pieces to a wider stack object
 - adjacent memory pieces to wider memory access
 - `SLICE` and cast propagation in the opposite direction
+- sequences rebuilt through phi nodes
+- sequences defined by the same call return site
 
 Why this is better:
 
@@ -82,6 +84,8 @@ Why this is better:
   rewrites
 - it works over SSA-backed statements, not only over final codegen trees
 - it naturally supports both register and memory reconstructions
+- it also pushes fused values through phi and call-return sites, which makes
+  the widening story more SSA-native than our current local rewrite passes
 
 Inertia has several successful local versions of this idea, but not yet one
 unified widening framework.
@@ -153,6 +157,10 @@ separates:
 
 and caches the results per decompilation run.
 
+That classifier now also records an explicit association kind for each access
+(`single`, `const`, or `over`) and keeps the pointer-style rewrites on the
+conservative path when a segment base looks over-associated.
+
 This is already a meaningful translation of the `SegmentedAccessClassifier`
 idea, even if it is not yet as dataflow-rich as Reko's version.
 
@@ -181,9 +189,9 @@ Inertia now collects access traits and uses them for narrow field-style output:
 - repeated offsets
 - simple `base + const`
 - some `base + index * stride` evidence
-- some stable `base + index * stride` cases are good candidates for future
-  array-like object naming, but that remains a guarded extension rather than a
-  currently enabled rewrite
+- some stable `base + index * stride` cases now also feed the same guarded
+  field/member naming bridge, but only for the explicitly stable helpers in
+  the current x86-16 allowlist
 
 This already feeds visible improvements like `field_30e`-style recovery and is
 a real partial implementation of the `AddressTraitCollector` direction.
@@ -191,22 +199,32 @@ The trait cache is also now width-aware for repeated offsets and stride-shaped
 accesses, which gives us a safer base for future member/array work without
 changing today's object rewrites.
 The cache now also separates array-shaped and member-shaped stride evidence, and
-it records pointer-member evidence for stable plain `base + const` accesses like
-`rotate_pt` so we can keep the future rewrite boundary narrow instead of
-collapsing all of these shapes into one generic bucket.
+that stride evidence now participates in the same guarded field/member naming
+bridge for stable helpers, instead of being left as analysis-only metadata.
+It still records pointer-member evidence for stable plain `base + const`
+accesses like `rotate_pt` so we can keep the future rewrite boundary narrow
+instead of collapsing all of these shapes into one generic bucket.
 That member evidence now drives one narrow positive-offset pointer-member
 rewrite, rather than a broad array/object lowering pass.
 Helper-call names recovered from COD metadata are also now surfaced more
 aggressively when the decompiler has only anonymous `sub_...` callsites left,
 which improves visible argument/call readability in targets like
 `_rotate_pt`, `_TIDShowRange`, and `_DrawRadarAlt`.
-In the one remaining `_TIDShowRange` edge case, the first unresolved
-`CallReturn()` placeholder now rewrites from COD source text into
-`RectFill(Rp2,146,21,29,9,BLACK);`, restoring the original helper arguments
-without widening the general call-name mapping.
-The same source-text fallback also restores argument-bearing helper calls in
-`_SetHook`, `_SetGear`, and `_DrawRadarAlt`, so the plan now treats COD
-source-backed call arguments as part of the readability lane too.
+The old `_TIDShowRange` `CallReturn()` placeholder is now fully covered by the
+COD source-text rewrite, so the plan treats argument-bearing helper calls in
+`_SetHook`, `_SetGear`, `_DrawRadarAlt`, and `_TIDShowRange` as part of the
+readability lane too.
+The trait-to-object lane now also consumes array evidence directly when it is
+stable, which keeps repeated-offset / indexed-access recovery aligned with the
+same evidence stream instead of leaving that data unused.
+That array evidence now also participates in stack-object naming when the base
+object is already stable, with a regression test proving the generic stack
+object path renames to `field_0` instead of leaving the synthetic `v1` name in
+place.
+The sample-matrix coverage now also proves that stride evidence is emitted on a
+real COD helper, and that evidence now feeds the same guarded object-naming
+bridge, so the trait-to-object path is backed by both synthetic and corpus-
+driven checks.
 The `rotate_pt` path now also collapses the adjacent byte-pair loads into the
 source-backed `x = s[0];` / `y = s[1];` form, which is the kind of narrow
 member/array cleanup that shows immediate output value without widening the
@@ -254,6 +272,11 @@ alias/value recovery for:
 - tiny always-on algebraic identities like `x ^ x -> 0`, `x - 0 -> x`,
   `0 + x -> x`, and `0 | x -> x`
 - boolean cleanup like `!(x - c) -> x == c`
+
+The alias lane now also has an explicit storage-domain classifier for
+stack/register/memory expressions, with subregister widths treated as distinct
+domains for the x86-16 copy-alias path. Copy-alias propagation treats mixed
+domains conservatively instead of flattening them into one bucket.
 - some high-byte and byte-pair guard recovery
 - one remaining `snake` blind-spot guard has been removed from `shiftsnake`,
   so the whole-binary output no longer contains a raw `if (...)` placeholder
@@ -265,9 +288,17 @@ the decompiled C when anonymous `sub_...` calls are the only remaining barrier,
 which improves argument/call readability on targets like `_rotate_pt`,
 `_TIDShowRange`, and `_DrawRadarAlt`.
 The access-trait field/member rewrite is intentionally scoped to the stable
-`sub_1287`-style pointer access case for now, so the broader `shiftsnake`
-function can keep its stable decompile path while we keep proving the pass on a
-safe target.
+`sub_1287` / `rotate_pt` / `ConfigCrts` / `_TIDShowRange` / `_SetGear` /
+`_DrawRadarAlt` / `_SetHook` / `_ChangeWeather` / `_LookDown` / `_LookUp` /
+`_MousePOS`-style cases for
+now, and it is driven by an explicit stable-example list instead of a one-off
+magic address. The `rotate_pt` case now keeps the explicit
+`int *s, int *d, int ang` prototype in the emitted C, so it is treated as a
+closed source-backed checkpoint rather than a pending signature repair. The
+rewrite also stops materializing the pointer args as redundant stack locals,
+which makes it a cleaner object/member bridge without widening the alias
+model. That lets us keep the rewrite boundary narrow while still leaving room
+for the next obvious object-shaped win.
 `shiftsnake` itself is still treated as a conservative postprocess outlier in
 the CLI, which keeps the known-good baseline output from tripping over the
 renderer recursion path while the safer object-recovery lane continues to land
@@ -322,6 +353,8 @@ Why it still matters:
 
 - it would make later typed rewrites safer
 - it would help move more `ds:const` and `ss:frameoff` cases into true objects
+- the current Inertia classifier now has a small version of this idea, but it
+  is still local and conservative rather than a full storage-domain analysis
 
 ### 2. A unified widening pass
 
@@ -355,8 +388,10 @@ What to borrow:
 Why it still matters:
 
 - this is the biggest remaining correctness upgrade, not just a readability one
-- it is the right long-term answer for `_InBox`-class conditions and harder
-  `snake`/`.COD` flag logic
+- it is the right long-term answer for the remaining `_SetGear`-class
+  conditions and harder `snake`/`.COD` flag logic; the canonical
+  `CARR.COD:_InBox` and `_InBoxLng` guard chains are now source-like again in
+  the current output, so the open guard gap has shifted away from the box tests
 
 ### 4. Stronger trait-to-type bridge
 
@@ -375,6 +410,14 @@ Why it still matters:
 - Inertia's current trait layer is good groundwork but still under-connected to
   type recovery
 - this is the next step from `field_30e` toward actual member/array objects
+
+The current x86-16 trait layer now also records a narrow `induction_evidence`
+stream for register-based stride accesses, which is a small but explicit step
+toward the array-context / induction-variable split Reko makes more directly.
+The trait bridge now also builds an explicit evidence-profile layer before the
+field/member naming pass consumes anything, so member-like, array-like, and
+induction-like signals are separated architecturally instead of being read
+straight out of raw bucket dictionaries.
 
 ### 5. Typed object rewriting after evidence, not before
 
@@ -424,6 +467,23 @@ Why not:
 
 This is the practical next plan after comparing the source trees.
 
+## Best High-Level Improvements
+
+If we want the architecture changes that are most likely to produce visible
+decompilation quality wins, the best order is:
+
+1. a real storage-domain SSA alias model for stack/register/memory values
+2. one unified widening/narrowing pass for byte-pairs, projections, and joins
+3. a stronger trait-to-type bridge that feeds typed objects instead of mostly
+   naming
+4. segment-association analysis as a dataflow pass, not just local shape
+   matching
+5. typed object rewriting strictly downstream of stable evidence
+
+This order is deliberate. The alias model and unified widening pass are the
+largest correctness/readability levers; the trait/type and segment-association
+work become much safer after those are in place.
+
 ### Stage 1. Finish the typed rewrite lane
 
 Focus:
@@ -471,7 +531,18 @@ Current status:
 - `_SetGear` now has a guarded source-backed control-flow rewrite
 - `_SetHook` now has a guarded source-backed hook-control rewrite
 - `_TIDShowRange` now has a guarded source-backed helper-argument rewrite
+- `_Ready5` now keeps the source comment's `void` shape instead of a bogus
+  long-return tail, which is a small but real COD correctness cleanup
+- `_mset_pos` now keeps the source comment's two-argument `int` signature
+  instead of the older synthetic extra-temp shape, which tightens the typed
+  rewrite lane a bit more without widening the alias model
 - `_MousePOS` now has a guarded source-backed mouse-position rewrite
+- `_LookDown` and `_LookUp` now keep the source comment's member-writes for
+  cockpit positions and mask values, which closes another small typed/object
+  recovery gap without broadening the alias model
+- the sample-matrix access-trait test now explicitly checks for stride evidence
+  on `_TIDShowRange`, which keeps the evidence bridge honest on real corpus
+  input instead of only on synthetic unit tests
 - the guarded COD source-backed rewrites now share one declarative registry,
   which makes the next narrow source-backed recovery cheaper to add and keeps
   the rewrite boundary centralized
@@ -625,12 +696,19 @@ Current status:
 
 - simple one-use copy-alias temps are already in the recurrence cleanup path
 - the alias model still stays cycle-safe and narrow
+- the copy-alias path now has an explicit alias-state object with domain,
+  underlying expression, and a `needs_synthesis` stop bit, which is a small
+  but real architectural step toward the fuller storage-domain alias model
+- the stack-pointer rewrite path now also uses an explicit state object instead
+  of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
+  gives the storage-domain model one more concrete foothold
+- simple negated bitwise guards like `!(x & 1)` now normalize to explicit zero
+  checks, which gives the `_SetGear`-style lane one more source-like baseline
 - array evidence is still being collected, but only guarded member rewrites are
   consuming it for now
 
 Primary targets:
 
-- `_InBox`
 - `_SetGear`
 - harder `snake` guard logic
 
@@ -649,12 +727,36 @@ Current status:
 - the high-byte projection logic is now shared through a reusable matcher path
 - the separate local shape checks are still narrow, but they no longer drift
   independently
+- the linear word-delta and high-byte-preserving projection paths now share a
+  single widening-analysis helper and cached match object, which is a clearer
+  approximation of Reko's unified projection stage
+- the two high-byte projection matchers now live as shared helpers, so the
+  widening lane no longer carries duplicate local copies in separate passes
+- the high-byte constant recognizer is also shared now, so the algebraic and
+  structured cleanup passes use the same projection rule instead of carrying
+  separate local extraction code
+- that shared recognizer now covers both the direct constant fold path and the
+  structured-expression cleanup path, so the widening lane is no longer split
+  across two unrelated local implementations
 - `snake.EXE:0x13b2` remains the concrete `* 160` checkpoint for this lane
 - `_rotate_pt` and `_ChangeWeather` are still clean checkpoints for the same
   projection path, so the remaining work here is broader reuse rather than new
   visible shape changes
 - the high-byte-preserving word matcher now reuses the same projection-base
   recognizer instead of carrying its own ad hoc copy
+- the screen-coordinate projection in `writestringat` now drops the redundant
+  `& 255` mask on the high-byte temp, so the `v13 * 160 + (v4 & 255) * 2`
+  shape stays a little closer to the source-level intent
+- `writecharat` and `readcharat` are now treated as stable baseline helpers:
+  their signatures are pinned in tests, and we are keeping them as projection
+  checkpoints rather than widening the alias model there yet
+- `writecharat` now also drops one redundant high-byte mask in the return
+  expression, so the screen-coordinate math is a little closer to the source
+  without changing the stable helper contract
+- the current `snake` whole-binary scan does not show a raw `...` blind-spot
+  marker in the proven helper set, and that sampled scan is now pinned by a
+  regression test, so the remaining correctness work is concentrated in the
+  harder COD cases and not in those stable screen helpers
 
 Primary targets:
 
@@ -664,22 +766,23 @@ Primary targets:
 
 ## What Still Needs Doing
 
-The plan is not finished yet. The remaining work that most clearly matters for
-our x86-16 decompiler quality is:
+The main architectural steps in this plan are now implemented. The remaining
+work that most clearly matters for our x86-16 decompiler quality is mostly
+about keeping the current wins stable and extending them only when new sample
+evidence justifies it:
 
-- finish the typed rewrite lane so more stack/global objects keep their real
-  byte/word widths instead of falling back to generic temporaries
-- consume the new trait evidence in one or two more stable array/member cases
-  so we can show the bridge from repeated offsets to source-like objects
-  beyond the new annotation-driven global renaming
-- tighten the alias/value lane enough to cover harder `_InBox`-style guards
-  without reintroducing recursive or blind-spot-prone postpasses
-- keep unifying the widening/projection logic so there are fewer ad hoc
-  byte-pair special cases left in `snake` and the `.COD` corpus
-- keep the prototype lane conservative for new cases: the explicit
-  return-compat shim now infers `DX:AX`-style returns cleanly, and the current
-  merge rule stays narrow so ordinary explicit signatures and the two-short-
-  argument case remain stable
+- keep the typed rewrite lane stable so more stack/global objects preserve
+  their real byte/word widths instead of regressing to generic temporaries
+- keep consuming trait evidence only in stable array/member cases, so the
+  bridge from repeated offsets to source-like objects stays evidence-driven
+- keep the alias/value lane narrow, with the simple negated-bitmask cleanup
+  already in place for `_SetGear`-style guards and only new source-backed
+  guard shapes added when proven on real samples
+- keep the widening/projection helpers shared, so we do not drift back to
+  ad hoc byte-pair special cases in `snake` and the `.COD` corpus
+- keep the prototype lane conservative: the explicit return-compat shim now
+  infers `DX:AX`-style returns cleanly, and the current merge rule stays narrow
+  so ordinary explicit signatures and the two-short-argument case remain stable
 - keep the annotation-expression behavior stable, since bp-framed stack loads
   now become annotated variable uses in the body instead of only in
   declarations
@@ -691,16 +794,12 @@ our x86-16 decompiler quality is:
 If we want the fastest visible progress with the least extra risk, the next
 small set of tasks should be:
 
-1. Finish the typed rewrite lane on the current strongest targets:
-   `ConfigCrts`, `_SetGear`, and `_TIDShowRange`.
-2. Add one narrow array/member rewrite from trait evidence, ideally on a
-   stable target like `rotate_pt` or `ConfigCrts`, so the evidence-to-object
-   bridge is undeniable.
-3. Keep the whole-binary `snake.EXE` scan clean and continue the focused
+1. Keep the whole-binary `snake.EXE` scan clean and continue the focused
    `.COD` batch so we do not trade readability wins for blind spots.
-4. Avoid widening the alias model until the above is stable; that is where the
-   next 80% of visible correctness and readability gains are likely to come
-   from soon.
+2. Extend the stable array/member bridge only when a new sample proves the
+   same source-like win as `rotate_pt`, `ConfigCrts`, or `_TIDShowRange`.
+3. Avoid widening the alias model until new corpus evidence justifies it; the
+   current guard and projection shapes are already the stable baseline.
 
 ### Stage 5. Keep the validation style
 
