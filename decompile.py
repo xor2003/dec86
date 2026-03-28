@@ -1947,17 +1947,15 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 if rhs_domain.is_mixed():
                     continue
                 parent_state = aliases.get(id(rhs_var))
-                rhs_expr = parent_state.expr if parent_state is not None else rhs
-                needs_synthesis = parent_state.needs_synthesis if parent_state is not None else False
+                rhs_state = _CopyAliasState(rhs_domain, parent_state.expr if parent_state is not None else rhs, needs_synthesis=parent_state.needs_synthesis if parent_state is not None else False)
                 current = aliases.get(key)
-                merged_domain = _merge_storage_domains(current.domain if current is not None else None, rhs_domain)
-                value = _CopyAliasState(merged_domain, rhs_expr, needs_synthesis=needs_synthesis)
-                if current is None or current.domain == merged_domain:
-                    if current != value:
-                        aliases[key] = value
-                        changed = True
-                elif not current.domain.is_mixed():
-                    aliases[key] = _CopyAliasState(merged_domain, rhs_expr, needs_synthesis=True)
+                if current is None:
+                    aliases[key] = rhs_state
+                    changed = True
+                    continue
+                merged = current.merge(rhs_state)
+                if merged != current:
+                    aliases[key] = merged
                     changed = True
             if not changed:
                 break
@@ -2927,6 +2925,15 @@ class _CopyAliasState:
 
     def can_inline(self) -> bool:
         return not self.domain.is_mixed() and not self.needs_synthesis
+
+    def merge(self, other: "_CopyAliasState") -> "_CopyAliasState":
+        merged_domain = _merge_storage_domains(self.domain, other.domain)
+        merged_expr = self.expr if self.expr is not None else other.expr
+        merged_needs_synthesis = self.needs_synthesis or other.needs_synthesis
+        if merged_domain.is_mixed():
+            merged_needs_synthesis = True
+            merged_expr = other.expr
+        return _CopyAliasState(merged_domain, merged_expr, needs_synthesis=merged_needs_synthesis)
 
 
 @dataclass(frozen=True)
