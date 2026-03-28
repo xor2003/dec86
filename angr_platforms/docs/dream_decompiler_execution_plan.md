@@ -235,6 +235,9 @@ This phase converts cleaner value recovery into source-like object recovery.
   - make stack bases prefer stack-like evidence first when ordering candidate
     names, and keep that priority stable through candidate-field-name
     generation instead of letting a later sort erase it
+  - let stack bases surface `stack` as the preferred rewrite kind when
+    stack-like evidence is present, so stack-object recovery has a distinct
+    path from member/array rewriting
   - keep positive tests on real `.COD` and `snake` helpers
 - `Dependencies`:
   - `B1`

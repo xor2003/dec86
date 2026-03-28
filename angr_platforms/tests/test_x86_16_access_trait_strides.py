@@ -133,6 +133,7 @@ def test_access_trait_stack_profiles_prefer_stack_like_naming_order():
         "field_8",
         "field_c",
     )
+    assert _AccessTraitRewriteDecision(("stack", "bp", -4), profile).preferred_kind() == "stack"
     assert profile.naming_candidates(("reg", 30)) == (
         (4, 2, 5),
         (8, 2, 1),
