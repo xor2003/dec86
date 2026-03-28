@@ -136,6 +136,8 @@ coherent recovery pipeline.
   - add safe `bp`-relative byte-pair joins only after alias proof
   - keep the first MVP narrow: explicit `bp` base, displacement, width, and
     region metadata for stack slots
+  - use stack-slot identity when promoting prototypes from `bp` loads so mixed
+    stack regions do not trigger false argument expansion
 - `Dependencies`:
   - `B1`
 - `Exit signal`:

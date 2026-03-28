@@ -42,7 +42,7 @@ from angr.sim_variable import SimStackVariable
 from angr.sim_variable import SimStackVariable
 from .annotations import ANNOTATION_KEY
 from .analysis_helpers import resolve_direct_call_target_from_block
-from .alias_model import _same_stack_slot_identity
+from .alias_model import _same_stack_slot_identity, _stack_slot_identity_for_variable
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
     _global_load_addr_8616,
@@ -87,7 +87,16 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
     if not getattr(codegen, "cfunc", None):
         return False
 
+    stack_slots_by_offset = {}
+    for variable, _cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        if not isinstance(variable, SimStackVariable):
+            continue
+        identity = _stack_slot_identity_for_variable(variable)
+        if identity is not None:
+            stack_slots_by_offset[getattr(variable, "offset", None)] = identity
+
     offsets = set()
+    slot_identities = set()
     for stmt in getattr(codegen.cfunc.statements, "statements", ()) or ():
         if not isinstance(stmt, CReturn):
             continue
@@ -98,6 +107,12 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             offset = _match_bp_stack_load_8616(node, project)
             if offset is not None and offset > 0:
                 offsets.add(offset)
+                slot_identity = stack_slots_by_offset.get(offset)
+                if slot_identity is not None:
+                    slot_identities.add(slot_identity)
+
+    if len(slot_identities) > 1:
+        return False
 
     existing_args = list(getattr(prototype, "args", ()) or ())
 
