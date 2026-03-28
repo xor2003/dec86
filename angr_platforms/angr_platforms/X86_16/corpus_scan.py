@@ -24,6 +24,7 @@ _silence_scan_loggers()
 import angr
 
 from .arch_86_16 import Arch86_16
+from .analysis_helpers import seed_calling_conventions
 from .lift_86_16 import Lifter86_16  # noqa: F401
 
 
@@ -124,6 +125,7 @@ def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool =
     if isinstance(exc, ScanTimeout):
         return "timeout", "timed out"
     if isinstance(exc, AssertionError):
+        message = str(exc)
         return "analysis_assertion", message or "assertion failure"
     if exc is None:
         return "unknown_failure", "unknown failure"
@@ -221,6 +223,7 @@ def scan_function(
 
         try:
             cfg = _scan_cfg(project, len(code))
+            seed_calling_conventions(cfg)
             func = cfg.functions[0x1000]
             _mark_stage(result, "cfg", True)
         except Exception as exc:  # noqa: BLE001

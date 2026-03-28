@@ -888,6 +888,14 @@ def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) 
     return changed
 
 
+def seed_calling_conventions(cfg) -> None:
+    for function in getattr(cfg, "functions", {}).values():
+        try:
+            function._init_prototype_and_calling_convention()
+        except Exception:
+            continue
+
+
 def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_window: int = 0x80):
     """
     Re-run CFG with direct far callees seeded as extra function starts.
@@ -914,6 +922,7 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
         normalize=True,
         force_complete_scan=False,
     )
+    seed_calling_conventions(cfg)
     all_targets = list(far_targets)
     if function.addr in cfg.functions:
         recovered_function = cfg.functions[function.addr]
@@ -929,4 +938,5 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
         callee = cfg.kb.functions.function(addr=target.target_addr, create=True)
         if callee is not None:
             callee._init_prototype_and_calling_convention()
+    seed_calling_conventions(cfg)
     return cfg
