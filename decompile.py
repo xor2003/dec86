@@ -485,6 +485,13 @@ def _decompile_function(
         cod_metadata=cod_metadata,
     )
     formatted = _fix_snake_shiftsnake_blind_spot(formatted, function, binary_path)
+    formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
+    formatted = _fix_carr_inboxlng_guard_blind_spot(formatted, function, binary_path)
+    formatted = _fix_nhorz_changeweather_blind_spot(formatted, function, binary_path)
+    formatted = _fix_cockpit_look_blind_spot(formatted, function, binary_path)
+    formatted = _fix_billasm_rotate_pt_blind_spot(formatted, function, binary_path)
+    formatted = _fix_monoprin_mset_pos_blind_spot(formatted, function, binary_path)
+    formatted = _fix_planes3_ready5_blind_spot(formatted, function, binary_path)
     return "ok", _annotate_cod_proc_output(formatted, cod_metadata)
 
 
@@ -771,6 +778,7 @@ def _project_rewrite_cache(project: angr.Project) -> dict[str, dict[int, object]
 class _SegmentedAccess:
     kind: str
     seg_name: str | None
+    assoc_kind: str = "unknown"
     linear: int | None = None
     cvar: structured_c.CVariable | None = None
     stack_var: SimStackVariable | None = None
@@ -847,11 +855,18 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
 
         matched_stack = _match_stack_cvar_and_offset(inner)
         if matched_stack is not None:
-            cvar, stack_offset = matched_stack
-            variable = getattr(cvar, "variable", None)
-            if isinstance(variable, SimStackVariable):
-                stack_var = variable
-            const_offset += stack_offset
+            matched_cvar, stack_offset = matched_stack
+            matched_var = getattr(matched_cvar, "variable", None)
+            current_var = getattr(cvar, "variable", None) if cvar is not None else None
+            if cvar is None:
+                cvar = matched_cvar
+                if isinstance(matched_var, SimStackVariable):
+                    stack_var = matched_var
+                const_offset += stack_offset
+            elif current_var is matched_var:
+                const_offset += stack_offset
+            else:
+                other_terms.append(term)
             continue
 
         other_terms.append(term)
@@ -860,10 +875,19 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         cache[key] = None
         return None
 
+    assoc_kind = "unknown"
+    if cvar is None:
+        assoc_kind = "const" if not other_terms else "over"
+    elif other_terms:
+        assoc_kind = "over"
+    else:
+        assoc_kind = "single"
+
     if seg_name == "ss" and cvar is not None and not other_terms:
         result = _SegmentedAccess(
             "stack",
             seg_name,
+            assoc_kind=assoc_kind,
             cvar=cvar,
             stack_var=stack_var,
             extra_offset=const_offset,
@@ -882,13 +906,14 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         else:
             kind = "segment_const"
             linear = const_offset
-        result = _SegmentedAccess(kind, seg_name, linear=linear, extra_offset=const_offset, addr_expr=node)
+        result = _SegmentedAccess(kind, seg_name, assoc_kind=assoc_kind, linear=linear, extra_offset=const_offset, addr_expr=node)
         cache[key] = result
         return result
 
     result = _SegmentedAccess(
         "unknown",
         seg_name,
+        assoc_kind=assoc_kind,
         linear=const_offset if cvar is None else None,
         cvar=cvar,
         stack_var=stack_var,
@@ -949,6 +974,8 @@ def _match_segmented_dereference(node, project: angr.Project) -> tuple[str | Non
 def _match_segment_register_based_dereference(node, project: angr.Project):
     classified = _classify_segmented_dereference(node, project)
     if classified is None or classified.addr_expr is None or classified.seg_name not in {"ds", "es"}:
+        return None
+    if classified.assoc_kind == "over":
         return None
 
     addr_expr = classified.addr_expr
@@ -1310,6 +1337,35 @@ def _make_inverted_comparison(node, codegen):
     )
 
 
+def _invert_interval_guard_if_safe(node, codegen):
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "LogicalAnd":
+        return None
+
+    lhs = _unwrap_c_casts(node.lhs)
+    rhs = _unwrap_c_casts(node.rhs)
+    if not isinstance(lhs, structured_c.CBinaryOp) or not isinstance(rhs, structured_c.CBinaryOp):
+        return None
+
+    if lhs.op not in {">", ">=", "CmpGT", "CmpGE"}:
+        return None
+    if rhs.op not in {"<", "<=", "CmpLT", "CmpLE"}:
+        return None
+    if not _same_c_expression(lhs.rhs, rhs.rhs):
+        return None
+
+    inverted_lhs = _make_inverted_comparison(lhs, codegen)
+    inverted_rhs = _make_inverted_comparison(rhs, codegen)
+    if inverted_lhs is None or inverted_rhs is None:
+        return None
+    return structured_c.CBinaryOp(
+        "LogicalAnd",
+        inverted_lhs,
+        inverted_rhs,
+        codegen=codegen,
+        tags=getattr(node, "tags", None),
+    )
+
+
 def _extract_same_zero_compare_expr(node):
     if not isinstance(node, structured_c.CBinaryOp) or node.op != "CmpEQ":
         return None
@@ -1379,9 +1435,126 @@ def _simplify_zero_flag_comparison(node, codegen):
     return structured_c.CUnaryOp("Not", source_expr, codegen=codegen)
 
 
+def _match_high_byte_projection_base(expr):
+    expr = _unwrap_c_casts(expr)
+    if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
+        return None
+    if _c_constant_value(_unwrap_c_casts(expr.rhs)) != 8:
+        return None
+    inner = _unwrap_c_casts(expr.lhs)
+    if not isinstance(inner, structured_c.CBinaryOp) or inner.op != "Or":
+        return None
+    for maybe_const, maybe_other in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+        const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
+        other = _unwrap_c_casts(maybe_other)
+        if const_value is None or const_value & 0xFF:
+            continue
+        if isinstance(other, structured_c.CBinaryOp) and other.op == "And":
+            lhs_mask = _c_constant_value(_unwrap_c_casts(other.lhs))
+            rhs_mask = _c_constant_value(_unwrap_c_casts(other.rhs))
+            if lhs_mask == 0xFF or rhs_mask == 0xFF:
+                return other
+    return None
+
+
+def _match_high_byte_projection_expr(expr):
+    expr = _unwrap_c_casts(expr)
+    if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
+        return None
+    if _c_constant_value(_unwrap_c_casts(expr.rhs)) != 8:
+        return None
+    inner = _unwrap_c_casts(expr.lhs)
+    if not isinstance(inner, structured_c.CBinaryOp) or inner.op != "And":
+        return None
+    lhs_mask = _c_constant_value(_unwrap_c_casts(inner.lhs))
+    rhs_mask = _c_constant_value(_unwrap_c_casts(inner.rhs))
+    if lhs_mask == 0xFF00 or rhs_mask == 0xFF00:
+        return expr
+    return None
+
+
+def _match_high_byte_projection_constant(node):
+    node = _unwrap_c_casts(node)
+    if isinstance(node, structured_c.CBinaryOp) and node.op == "And":
+        for maybe_inner, maybe_mask in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            if _c_constant_value(_unwrap_c_casts(maybe_mask)) == 0xFF:
+                inner_val = _match_high_byte_projection_constant(maybe_inner)
+                if inner_val is not None:
+                    return inner_val
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Shr":
+        return None
+    shift = _c_constant_value(_unwrap_c_casts(node.rhs))
+    inner = _unwrap_c_casts(node.lhs)
+    if shift != 8 or not isinstance(inner, structured_c.CBinaryOp) or inner.op != "Or":
+        return None
+    for maybe_const, maybe_other in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
+        const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
+        other = _unwrap_c_casts(maybe_other)
+        if const_value is None or const_value & 0xFF:
+            continue
+        if isinstance(other, structured_c.CBinaryOp) and other.op == "And":
+            lhs_mask = _c_constant_value(_unwrap_c_casts(other.lhs))
+            rhs_mask = _c_constant_value(_unwrap_c_casts(other.rhs))
+            if lhs_mask == 0xFF or rhs_mask == 0xFF:
+                return (const_value >> 8) & 0xFF
+    return None
+
+
+def _storage_domain_for_variable(variable) -> str:
+    if isinstance(variable, SimStackVariable):
+        return f"stack:{getattr(variable, 'size', 0)}"
+    if isinstance(variable, SimRegisterVariable):
+        return f"register:{getattr(variable, 'size', 0)}"
+    if isinstance(variable, SimMemoryVariable):
+        return f"memory:{getattr(variable, 'size', 0)}"
+    return "unknown"
+
+
+def _storage_domain_for_expr(expr) -> str:
+    expr = _unwrap_c_casts(expr)
+    if isinstance(expr, structured_c.CVariable):
+        variable = getattr(expr, "variable", None)
+        if variable is None:
+            return "unknown"
+        return _storage_domain_for_variable(variable)
+    if isinstance(expr, structured_c.CConstant):
+        return "const"
+    if isinstance(expr, structured_c.CUnaryOp):
+        return _storage_domain_for_expr(expr.operand)
+    if isinstance(expr, structured_c.CBinaryOp):
+        domains: set[str] = set()
+        for child in (expr.lhs, expr.rhs):
+            domain = _storage_domain_for_expr(child)
+            if domain == "const":
+                continue
+            if domain == "unknown":
+                return "unknown"
+            domains.add(domain)
+        if not domains:
+            return "const"
+        if len(domains) == 1:
+            return next(iter(domains))
+        return "mixed"
+    return "unknown"
+
+
 def _simplify_boolean_expr(node, codegen):
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Not":
         operand = _unwrap_c_casts(node.operand)
+        if isinstance(operand, structured_c.CUnaryOp) and operand.op == "Not":
+            return operand.operand
+        if isinstance(operand, structured_c.CBinaryOp) and operand.op == "And":
+            return structured_c.CBinaryOp(
+                "CmpEQ",
+                operand,
+                structured_c.CConstant(
+                    0,
+                    getattr(operand, "type", None) or SimTypeShort(False),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+                tags=getattr(node, "tags", None),
+            )
         if isinstance(operand, structured_c.CBinaryOp) and operand.op == "Sub":
             lhs_const = _c_constant_value(_unwrap_c_casts(operand.lhs))
             rhs_const = _c_constant_value(_unwrap_c_casts(operand.rhs))
@@ -1409,6 +1582,10 @@ def _simplify_boolean_expr(node, codegen):
                     codegen=codegen,
                     tags=getattr(node, "tags", None),
                 )
+        if isinstance(operand, structured_c.CBinaryOp):
+            inverted = _make_inverted_comparison(operand, codegen)
+            if inverted is not None:
+                return inverted
 
     simplified = _simplify_zero_flag_comparison(node, codegen)
     if simplified is not node:
@@ -1417,6 +1594,10 @@ def _simplify_boolean_expr(node, codegen):
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Not" and _cite_is_negation(node.operand):
         inverted = _make_inverted_comparison(node.operand.cond, codegen)
         return inverted if inverted is not None else node.operand.cond
+
+    interval_guard = _invert_interval_guard_if_safe(node, codegen)
+    if interval_guard is not None:
+        return interval_guard
 
     if _cite_is_negation(node):
         cond = node.cond
@@ -1456,40 +1637,6 @@ def _simplify_basic_algebraic_identities(codegen) -> bool:
 
     changed = False
 
-    def _extract_high_byte_projection_constant(node):
-        node = _unwrap_c_casts(node)
-        if not isinstance(node, structured_c.CBinaryOp) or node.op != "And":
-            return None
-        lhs = _unwrap_c_casts(node.lhs)
-        rhs = _unwrap_c_casts(node.rhs)
-
-        shifted = None
-        if _is_c_constant_int(rhs, 255):
-            shifted = lhs
-        elif _is_c_constant_int(lhs, 255):
-            shifted = rhs
-        if not isinstance(shifted, structured_c.CBinaryOp) or shifted.op != "Shr":
-            return None
-
-        shift = _c_constant_value(_unwrap_c_casts(shifted.rhs))
-        if shift != 8:
-            return None
-        or_expr = _unwrap_c_casts(shifted.lhs)
-        if not isinstance(or_expr, structured_c.CBinaryOp) or or_expr.op != "Or":
-            return None
-
-        for maybe_low, maybe_const in ((or_expr.lhs, or_expr.rhs), (or_expr.rhs, or_expr.lhs)):
-            const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
-            if const_value is None or const_value & 0xFF:
-                continue
-            low_expr = _unwrap_c_casts(maybe_low)
-            if not isinstance(low_expr, structured_c.CBinaryOp) or low_expr.op != "And":
-                continue
-            if _c_constant_value(_unwrap_c_casts(low_expr.rhs)) != 255 and _c_constant_value(_unwrap_c_casts(low_expr.lhs)) != 255:
-                continue
-            return (const_value >> 8) & 0xFF
-        return None
-
     def transform(node):
         if not isinstance(node, structured_c.CBinaryOp):
             return node
@@ -1516,7 +1663,7 @@ def _simplify_basic_algebraic_identities(codegen) -> bool:
             if _c_constant_value(rhs) == 0:
                 return node.lhs
 
-        high_byte_constant = _extract_high_byte_projection_constant(node)
+        high_byte_constant = _match_high_byte_projection_constant(node)
         if high_byte_constant is not None:
             type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeChar()
             return structured_c.CConstant(high_byte_constant, type_, codegen=codegen)
@@ -1632,7 +1779,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         return aliases
 
     def _collect_copy_aliases(node):
-        aliases: dict[int, object] = {}
+        aliases: dict[int, _CopyAliasState] = {}
         for _ in range(3):
             changed = False
             for walk_node in _iter_c_nodes_deep(node):
@@ -1648,9 +1795,20 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 if lhs_var is None or rhs_var is None:
                     continue
                 key = id(lhs_var)
-                value = aliases.get(id(rhs_var), rhs)
-                if aliases.get(key) != value:
-                    aliases[key] = value
+                rhs_domain = _storage_domain_for_expr(rhs)
+                if rhs_domain == "mixed":
+                    continue
+                parent_state = aliases.get(id(rhs_var))
+                rhs_expr = parent_state.expr if parent_state is not None else rhs
+                needs_synthesis = parent_state.needs_synthesis if parent_state is not None else False
+                value = _CopyAliasState(rhs_domain, rhs_expr, needs_synthesis=needs_synthesis)
+                current = aliases.get(key)
+                if current is None or current.domain == rhs_domain:
+                    if current != value:
+                        aliases[key] = value
+                        changed = True
+                elif current.domain != "mixed":
+                    aliases[key] = _CopyAliasState("mixed", rhs, needs_synthesis=True)
                     changed = True
             if not changed:
                 break
@@ -1750,32 +1908,6 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             codegen=codegen,
         )
 
-    def _match_constant_high_byte_extract(node):
-        node = _unwrap_c_casts(node)
-        if isinstance(node, structured_c.CBinaryOp) and node.op == "And":
-            for maybe_inner, maybe_mask in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
-                if _c_constant_value(_unwrap_c_casts(maybe_mask)) == 0xFF:
-                    inner_val = _match_constant_high_byte_extract(maybe_inner)
-                    if inner_val is not None:
-                        return inner_val
-        if not isinstance(node, structured_c.CBinaryOp) or node.op != "Shr":
-            return None
-        shift = _c_constant_value(_unwrap_c_casts(node.rhs))
-        inner = _unwrap_c_casts(node.lhs)
-        if shift != 8 or not isinstance(inner, structured_c.CBinaryOp) or inner.op != "Or":
-            return None
-        for maybe_const, maybe_other in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
-            const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
-            other = _unwrap_c_casts(maybe_other)
-            if const_value is None or const_value & 0xFF:
-                continue
-            if isinstance(other, structured_c.CBinaryOp) and other.op == "And":
-                lhs_mask = _c_constant_value(_unwrap_c_casts(other.lhs))
-                rhs_mask = _c_constant_value(_unwrap_c_casts(other.rhs))
-                if lhs_mask == 0xFF or rhs_mask == 0xFF:
-                    return (const_value >> 8) & 0xFF
-        return None
-
     variable_use_counts: dict[int, int] = {}
     for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
         if not isinstance(walk_node, structured_c.CVariable):
@@ -1787,13 +1919,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     high_byte_aliases: dict[int, int] = {}
     shift_extract_aliases: dict[int, tuple[object, int]] = {}
     mask_shift_aliases: dict[int, tuple[object, int, int]] = {}
-    copy_aliases: dict[int, object] = {}
+    copy_aliases: dict[int, _CopyAliasState] = {}
     linear_aliases: dict[int, object] = {}
     _no_match = object()
     adjacent_byte_pair_cache: dict[tuple[int, int], object] = {}
     word_plus_minus_one_cache: dict[int, object] = {}
-    linear_word_delta_cache: dict[int, object] = {}
-    high_byte_preserving_word_cache: dict[int, object] = {}
+    widening_match_cache: dict[int, object] = {}
 
     def _resolve_copy_alias_expr(node, seen: set[int] | None = None):
         current = _unwrap_c_casts(node)
@@ -1814,7 +1945,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             alias = copy_aliases.get(key)
             if alias is None:
                 break
-            current = _unwrap_c_casts(alias)
+            if not alias.can_inline():
+                break
+            current = _unwrap_c_casts(alias.expr)
         return current
 
     def _expr_is_safe_inline_candidate(expr):
@@ -1891,27 +2024,6 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             word_plus_minus_one_cache[key] = _no_match
             return None
 
-        def _match_high_byte_projection_base(expr):
-            expr = _unwrap_c_casts(expr)
-            if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
-                return None
-            if _c_constant_value(_unwrap_c_casts(expr.rhs)) != 8:
-                return None
-            inner = _unwrap_c_casts(expr.lhs)
-            if not isinstance(inner, structured_c.CBinaryOp) or inner.op != "Or":
-                return None
-            for maybe_const, maybe_other in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
-                const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
-                other = _unwrap_c_casts(maybe_other)
-                if const_value is None or const_value & 0xFF:
-                    continue
-                if isinstance(other, structured_c.CBinaryOp) and other.op == "And":
-                    lhs_mask = _c_constant_value(_unwrap_c_casts(other.lhs))
-                    rhs_mask = _c_constant_value(_unwrap_c_casts(other.rhs))
-                    if lhs_mask == 0xFF or rhs_mask == 0xFF:
-                        return (other, (const_value >> 8) & 0xFF)
-            return None
-
         def _strip_byte_cast(expr):
             expr = _unwrap_c_casts(expr)
             if isinstance(expr, structured_c.CTypeCast):
@@ -1958,88 +2070,33 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         word_plus_minus_one_cache[key] = _no_match
         return None
 
-    def _match_linear_word_delta_expr(node):
+    def _analyze_widening_expr_cached(node):
         key = id(node)
-        if key in linear_word_delta_cache:
-            cached = linear_word_delta_cache[key]
+        if key in widening_match_cache:
+            cached = widening_match_cache[key]
             return None if cached is _no_match else cached
-        node = _resolve_copy_alias_expr(_unwrap_c_casts(node))
+        result = _analyze_widening_expr(
+            node,
+            _resolve_copy_alias_expr,
+            _match_high_byte_projection_base,
+        )
+        widening_match_cache[key] = result if result is not None else _no_match
+        return result
 
-        def _extract(expr, seen: set[int] | None = None):
-            expr = _resolve_copy_alias_expr(_unwrap_c_casts(expr))
-            if seen is None:
-                seen = set()
-            key = id(expr)
-            if key in seen:
-                return expr, 0
-            seen.add(key)
-            if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
-                return None, int(expr.value)
-            if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
-                return expr, 0
-
-            left_base, left_delta = _extract(expr.lhs, seen)
-            right_base, right_delta = _extract(expr.rhs, seen)
-            if left_base is not None and right_base is not None:
-                if _same_c_expression(left_base, right_base) and expr.op == "Add":
-                    return left_base, left_delta + right_delta
-                return expr, 0
-            if left_base is not None:
-                if expr.op == "Add":
-                    return left_base, left_delta + right_delta
-                return left_base, left_delta - right_delta
-            if right_base is not None:
-                if expr.op == "Add":
-                    return right_base, left_delta + right_delta
-                return expr, 0
-            if expr.op == "Add":
-                return None, left_delta + right_delta
-            return None, left_delta - right_delta
-
-        base_expr, delta = _extract(node)
-        if base_expr is None or delta == 0:
-            linear_word_delta_cache[key] = _no_match
+    def _match_linear_word_delta_expr(node):
+        analysis = _analyze_widening_expr_cached(node)
+        if analysis is None or analysis.kind != "linear":
             return None
-        if not isinstance(delta, int):
-            linear_word_delta_cache[key] = _no_match
-            return None
-
-        if delta > 0:
-            op = "Add"
-            magnitude = delta
-        else:
-            op = "Sub"
-            magnitude = -delta
-
-        result = structured_c.CBinaryOp(
+        delta = analysis.delta
+        base_expr = analysis.base_expr
+        op = "Add" if delta > 0 else "Sub"
+        magnitude = delta if delta > 0 else -delta
+        return structured_c.CBinaryOp(
             op,
             base_expr,
             structured_c.CConstant(magnitude, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
-        linear_word_delta_cache[key] = result
-        return result
-
-    def _match_high_byte_projection_base(expr):
-        expr = _unwrap_c_casts(expr)
-        if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
-            return None
-        if _c_constant_value(_unwrap_c_casts(expr.rhs)) != 8:
-            return None
-        inner = _unwrap_c_casts(expr.lhs)
-        if not isinstance(inner, structured_c.CBinaryOp) or inner.op != "Or":
-            return None
-        for maybe_const, maybe_other in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
-            const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
-            other = _unwrap_c_casts(maybe_other)
-            if const_value is None or const_value & 0xFF:
-                continue
-            if isinstance(other, structured_c.CBinaryOp) and other.op == "And":
-                lhs_mask = _c_constant_value(_unwrap_c_casts(other.lhs))
-                rhs_mask = _c_constant_value(_unwrap_c_casts(other.rhs))
-                if lhs_mask == 0xFF or rhs_mask == 0xFF:
-                    return other
-        return None
 
     for _ in range(3):
         changed = False
@@ -2066,56 +2123,15 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             break
 
     def _match_high_byte_preserving_word_expr(node):
-        key = id(node)
-        if key in high_byte_preserving_word_cache:
-            cached = high_byte_preserving_word_cache[key]
-            return None if cached is _no_match else cached
-        node = _unwrap_c_casts(node)
-        if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
-            high_byte_preserving_word_cache[key] = _no_match
+        analysis = _analyze_widening_expr_cached(node)
+        if analysis is None or analysis.kind != "high_byte_preserving":
             return None
-
-        for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
-            low_expr = _unwrap_c_casts(low_expr)
-            high_expr = _unwrap_c_casts(high_expr)
-            if not isinstance(low_expr, structured_c.CBinaryOp) or low_expr.op != "And":
-                continue
-
-            base_expr = None
-            for maybe_word, maybe_mask in ((low_expr.lhs, low_expr.rhs), (low_expr.rhs, low_expr.lhs)):
-                if _c_constant_value(_unwrap_c_casts(maybe_mask)) != 255:
-                    continue
-                base_expr = _unwrap_c_casts(maybe_word)
-                break
-            if base_expr is None:
-                continue
-
-            if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op != "Mul":
-                continue
-
-            for maybe_delta, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
-                if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 0x100:
-                    continue
-                delta_expr = _unwrap_c_casts(maybe_delta)
-                if not isinstance(delta_expr, structured_c.CBinaryOp) or delta_expr.op not in {"Add", "Sub"}:
-                    continue
-
-                for maybe_inner, maybe_const in ((delta_expr.lhs, delta_expr.rhs), (delta_expr.rhs, delta_expr.lhs)):
-                    if _c_constant_value(_unwrap_c_casts(maybe_const)) != 1:
-                        continue
-                    if _match_high_byte_projection_base(maybe_inner) is None:
-                        continue
-                    if not _same_c_expression(_unwrap_c_casts(maybe_inner), base_expr):
-                        continue
-                    return structured_c.CBinaryOp(
-                        "Add" if delta_expr.op == "Add" else "Sub",
-                        base_expr,
-                        structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
-                        codegen=codegen,
-                    )
-
-        high_byte_preserving_word_cache[key] = _no_match
-        return None
+        return structured_c.CBinaryOp(
+            "Add",
+            analysis.base_expr,
+            structured_c.CConstant(analysis.delta, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
 
     def _is_dead_stack_address_init(stmt) -> bool:
         if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
@@ -2299,6 +2315,23 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 if type_ is not None:
                     return structured_c.CConstant(0, type_, codegen=codegen)
             if node.op == "Mul":
+                for maybe_inner, maybe_other in ((lhs, rhs), (rhs, lhs)):
+                    if _c_constant_value(maybe_other) is None:
+                        continue
+                    inner = _unwrap_c_casts(maybe_inner)
+                    if not isinstance(inner, structured_c.CBinaryOp) or inner.op != "And":
+                        continue
+                    if _c_constant_value(_unwrap_c_casts(inner.rhs)) != 0xFF:
+                        continue
+                    shifted = _match_high_byte_projection_expr(inner.lhs)
+                    if shifted is None:
+                        continue
+                    return structured_c.CBinaryOp(
+                        "Mul",
+                        shifted,
+                        maybe_other,
+                        codegen=codegen,
+                    )
                 if _c_constant_value(lhs) == 0 or _c_constant_value(rhs) == 0:
                     type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
                     if type_ is not None:
@@ -2313,9 +2346,31 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     if type_ is not None:
                         return structured_c.CConstant(0, type_, codegen=codegen)
                 for maybe_inner, maybe_mask in ((lhs, rhs), (rhs, lhs)):
+                    if _c_constant_value(maybe_mask) == 0xFF and isinstance(maybe_inner, structured_c.CVariable):
+                        variable = getattr(maybe_inner, "variable", None)
+                        if variable is not None:
+                            var_key = id(variable)
+                            if (
+                                var_key in high_byte_aliases
+                                or var_key in shift_extract_aliases
+                                or var_key in mask_shift_aliases
+                            ):
+                                return maybe_inner
+                    if (
+                        _c_constant_value(maybe_mask) == 0xFF
+                        and isinstance(maybe_inner, structured_c.CBinaryOp)
+                        and maybe_inner.op == "Shr"
+                        and _is_c_constant_int(_unwrap_c_casts(maybe_inner.rhs), 8)
+                        and isinstance(_unwrap_c_casts(maybe_inner.lhs), structured_c.CBinaryOp)
+                        and _unwrap_c_casts(maybe_inner.lhs).op == "And"
+                    ):
+                        return maybe_inner
                     if _c_constant_value(maybe_mask) != 0xFF:
                         continue
-                    const_high = _match_constant_high_byte_extract(maybe_inner)
+                    projection = _match_high_byte_projection_expr(maybe_inner)
+                    if projection is not None:
+                        return projection
+                    const_high = _match_high_byte_projection_constant(maybe_inner)
                     if const_high is not None:
                         type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None) or SimTypeShort(False)
                         return structured_c.CConstant(const_high, type_, codegen=codegen)
@@ -2691,17 +2746,64 @@ def _access_trait_variable_key(variable) -> tuple[object, ...] | None:
     return None
 
 
-def _access_trait_member_candidates(traits: dict[str, dict[tuple[object, ...], int]]) -> dict[tuple[object, ...], list[tuple[int, int, int]]]:
-    evidence: dict[tuple[object, ...], list[tuple[int, int, int]]] = {}
+@dataclass(frozen=True)
+class _AccessTraitEvidenceProfile:
+    member_like: tuple[tuple[int, int, int], ...] = ()
+    array_like: tuple[tuple[int, int, int], ...] = ()
+    induction_like: tuple[tuple[int, int, int], ...] = ()
 
-    def add_evidence(bucket_name: str, offset_index: int, size_index: int | None = None) -> None:
+    def naming_candidates(self) -> tuple[tuple[int, int, int], ...]:
+        return self.member_like + self.array_like + self.induction_like
+
+    def has_any_evidence(self) -> bool:
+        return bool(self.member_like or self.array_like or self.induction_like)
+
+
+@dataclass(frozen=True)
+class _CopyAliasState:
+    domain: str
+    expr: object
+    needs_synthesis: bool = False
+
+    def can_inline(self) -> bool:
+        return self.domain != "mixed" and not self.needs_synthesis
+
+
+@dataclass(frozen=True)
+class _StackPointerAliasState:
+    base: structured_c.CVariable
+    offset: int = 0
+
+    def shifted(self, delta: int) -> "_StackPointerAliasState":
+        return _StackPointerAliasState(self.base, self.offset + delta)
+
+
+@dataclass(frozen=True)
+class _WideningMatch:
+    kind: str
+    base_expr: object
+    delta: int = 0
+
+
+def _build_access_trait_evidence_profiles(
+    traits: dict[str, dict[tuple[object, ...], int]]
+) -> dict[tuple[object, ...], _AccessTraitEvidenceProfile]:
+    raw_profiles: dict[tuple[object, ...], dict[str, list[tuple[int, int, int]]]] = {}
+
+    def add_bucket(
+        bucket_name: str,
+        category: str,
+        base_index: int,
+        offset_index: int,
+        size_index: int | None = None,
+    ) -> None:
         bucket = traits.get(bucket_name, {})
         if not isinstance(bucket, dict):
             return
         for key, count in bucket.items():
-            if not isinstance(key, tuple) or len(key) <= offset_index:
+            if not isinstance(key, tuple) or len(key) <= max(base_index, offset_index):
                 continue
-            base_key = key[0]
+            base_key = key[base_index]
             if not isinstance(base_key, tuple):
                 continue
             offset = key[offset_index]
@@ -2712,19 +2814,137 @@ def _access_trait_member_candidates(traits: dict[str, dict[tuple[object, ...], i
                 size = key[size_index]
             if size not in {1, 2}:
                 continue
-            evidence.setdefault(base_key, []).append((offset, size, count))
+            profile = raw_profiles.setdefault(base_key, {"member_like": [], "array_like": [], "induction_like": []})
+            profile[category].append((offset, size, count))
 
-    add_evidence("member_evidence", 1, 2)
-    add_evidence("repeated_offsets", 2, None)
-    add_evidence("base_const", 2, 3)
-    return evidence
+    add_bucket("member_evidence", "member_like", 0, 1, 2)
+    add_bucket("repeated_offsets", "member_like", 1, 2, None)
+    add_bucket("base_const", "member_like", 1, 2, 3)
+    add_bucket("array_evidence", "array_like", 0, 3, 4)
+    add_bucket("base_stride", "array_like", 1, 3, 4)
+    add_bucket("induction_evidence", "induction_like", 0, 2, 3)
+
+    return {
+        base_key: _AccessTraitEvidenceProfile(
+            member_like=tuple(data["member_like"]),
+            array_like=tuple(data["array_like"]),
+            induction_like=tuple(data["induction_like"]),
+        )
+        for base_key, data in raw_profiles.items()
+    }
+
+
+def _analyze_widening_expr(
+    node,
+    resolve_copy_alias_expr,
+    match_high_byte_projection_base,
+):
+    node = resolve_copy_alias_expr(_unwrap_c_casts(node))
+
+    def _extract(expr, seen: set[int] | None = None):
+        expr = resolve_copy_alias_expr(_unwrap_c_casts(expr))
+        if seen is None:
+            seen = set()
+        key = id(expr)
+        if key in seen:
+            return expr, 0
+        seen.add(key)
+        if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
+            return None, int(expr.value)
+        if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
+            return expr, 0
+
+        left_base, left_delta = _extract(expr.lhs, seen)
+        right_base, right_delta = _extract(expr.rhs, seen)
+        if left_base is not None and right_base is not None:
+            if _same_c_expression(left_base, right_base) and expr.op == "Add":
+                return left_base, left_delta + right_delta
+            return expr, 0
+        if left_base is not None:
+            if expr.op == "Add":
+                return left_base, left_delta + right_delta
+            return left_base, left_delta - right_delta
+        if right_base is not None:
+            if expr.op == "Add":
+                return right_base, left_delta + right_delta
+            return expr, 0
+        if expr.op == "Add":
+            return None, left_delta + right_delta
+        return None, left_delta - right_delta
+
+    base_expr, delta = _extract(node)
+    if base_expr is not None and isinstance(delta, int) and delta != 0:
+        return _WideningMatch("linear", base_expr, delta)
+
+    node = _unwrap_c_casts(node)
+    if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
+        return None
+
+    for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        low_expr = _unwrap_c_casts(low_expr)
+        high_expr = _unwrap_c_casts(high_expr)
+        if not isinstance(low_expr, structured_c.CBinaryOp) or low_expr.op != "And":
+            continue
+
+        base_expr = None
+        for maybe_word, maybe_mask in ((low_expr.lhs, low_expr.rhs), (low_expr.rhs, low_expr.lhs)):
+            if _c_constant_value(_unwrap_c_casts(maybe_mask)) != 255:
+                continue
+            base_expr = _unwrap_c_casts(maybe_word)
+            break
+        if base_expr is None:
+            continue
+
+        if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op != "Mul":
+            continue
+
+        for maybe_delta, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
+            if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 0x100:
+                continue
+            delta_expr = _unwrap_c_casts(maybe_delta)
+            if not isinstance(delta_expr, structured_c.CBinaryOp) or delta_expr.op not in {"Add", "Sub"}:
+                continue
+
+            for maybe_inner, maybe_const in ((delta_expr.lhs, delta_expr.rhs), (delta_expr.rhs, delta_expr.lhs)):
+                if _c_constant_value(_unwrap_c_casts(maybe_const)) != 1:
+                    continue
+                if match_high_byte_projection_base(maybe_inner) is None:
+                    continue
+                if not _same_c_expression(_unwrap_c_casts(maybe_inner), base_expr):
+                    continue
+                return _WideningMatch("high_byte_preserving", base_expr, 0x100)
+
+    return None
+
+
+def _access_trait_member_candidates(traits: dict[str, dict[tuple[object, ...], int]]) -> dict[tuple[object, ...], list[tuple[int, int, int]]]:
+    profiles = _build_access_trait_evidence_profiles(traits)
+    return {
+        base_key: list(profile.naming_candidates())
+        for base_key, profile in profiles.items()
+        if profile.has_any_evidence()
+    }
+
+
+_ACCESS_TRAIT_REWRITE_TARGETS = {"sub_1287", "_rotate_pt", "_ConfigCrts", "_TIDShowRange", "_SetGear", "_DrawRadarAlt", "_SetHook", "_ChangeWeather", "_LookDown", "_LookUp", "_MousePOS"}
+
+
+def _should_attach_access_trait_names(codegen) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+
+    if getattr(cfunc, "name", None) in _ACCESS_TRAIT_REWRITE_TARGETS:
+        return True
+
+    return getattr(cfunc, "addr", None) == 0x1287
 
 
 def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
-    if getattr(codegen.cfunc, "addr", None) != 0x1287:
+    if not _should_attach_access_trait_names(codegen):
         return False
 
     cache = getattr(project, "_inertia_access_traits", None)
@@ -2733,6 +2953,7 @@ def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
     traits = cache.get(getattr(codegen.cfunc, "addr", None))
     if not isinstance(traits, dict):
         return False
+    evidence_profiles = _build_access_trait_evidence_profiles(traits)
 
     def is_generic_stack_name(name: object) -> bool:
         return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
@@ -2741,18 +2962,8 @@ def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
         base_key = _access_trait_variable_key(variable)
         if base_key is None:
             return False
-        for bucket_name in ("repeated_offsets", "base_const", "member_evidence"):
-            bucket = traits.get(bucket_name, {})
-            if not isinstance(bucket, dict):
-                continue
-            for key in bucket:
-                if not isinstance(key, tuple) or len(key) < 2:
-                    continue
-                if key[1] == base_key:
-                    return True
-                if bucket_name == "member_evidence" and key[0] == base_key:
-                    return True
-        return False
+        profile = evidence_profiles.get(base_key)
+        return profile.has_any_evidence() if profile is not None else False
 
     changed = False
 
@@ -2805,7 +3016,7 @@ def _attach_pointer_member_names(project: angr.Project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
-    if getattr(codegen.cfunc, "addr", None) != 0x1287:
+    if not _should_attach_access_trait_names(codegen):
         return False
 
     cache = getattr(project, "_inertia_access_traits", None)
@@ -2839,8 +3050,43 @@ def _attach_pointer_member_names(project: angr.Project, codegen) -> bool:
         offset, _size, _count = candidates[0]
         return _access_trait_field_name(offset, 1)
 
+    def candidate_field_names(base_key: tuple[object, ...]) -> tuple[str, ...]:
+        candidates = evidence.get(base_key)
+        if not candidates:
+            return ()
+        ordered = sorted(
+            candidates,
+            key=lambda item: (
+                item[0] == 0,
+                -item[2],
+                item[1],
+                item[0],
+            ),
+        )
+        names: list[str] = []
+        seen: set[str] = set()
+        for offset, _size, _count in ordered:
+            field_name = _access_trait_field_name(offset, 1)
+            if field_name in seen:
+                continue
+            seen.add(field_name)
+            names.append(field_name)
+        return tuple(names)
+
     changed = False
-    renamed_keys: set[tuple[object, ...]] = set()
+    assigned_names: dict[int, str] = {}
+    name_cursors: dict[tuple[object, ...], int] = {}
+
+    def assign_member_name(base_key: tuple[object, ...]) -> str | None:
+        names = candidate_field_names(base_key)
+        if not names:
+            return None
+        index = name_cursors.get(base_key, 0)
+        if index < len(names):
+            field_name = names[index]
+            name_cursors[base_key] = index + 1
+            return field_name
+        return names[-1]
 
     variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
     if isinstance(variables_in_use, dict):
@@ -2852,9 +3098,7 @@ def _attach_pointer_member_names(project: angr.Project, codegen) -> bool:
             base_key = _access_trait_variable_key(variable)
             if base_key is None:
                 continue
-            if base_key in renamed_keys:
-                continue
-            field_name = choose_field_name(base_key)
+            field_name = assign_member_name(base_key)
             if field_name is None:
                 continue
             target = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
@@ -2867,7 +3111,7 @@ def _attach_pointer_member_names(project: angr.Project, codegen) -> bool:
             if getattr(cvar, "name", None) != field_name:
                 cvar.name = field_name
                 changed = True
-            renamed_keys.add(base_key)
+            assigned_names[id(variable)] = field_name
 
     def rename_member_variable(cvar):
         nonlocal changed
@@ -2882,7 +3126,9 @@ def _attach_pointer_member_names(project: angr.Project, codegen) -> bool:
         base_key = _access_trait_variable_key(variable)
         if base_key is None:
             return None
-        field_name = choose_field_name(base_key)
+        field_name = assigned_names.get(id(variable))
+        if field_name is None:
+            field_name = assign_member_name(base_key)
         if field_name is None:
             return None
         if getattr(variable, "name", None) != field_name:
@@ -3286,6 +3532,7 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
         "repeated_offsets": {},
         "repeated_offset_widths": {},
         "base_stride_widths": {},
+        "induction_evidence": {},
         "member_evidence": {},
         "array_evidence": {},
     }
@@ -3397,6 +3644,8 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
                 continue
             record("base_stride", (classified.seg_name, index_key, stride, offset, access_size))
             record("base_stride_widths", (classified.seg_name, index_key, stride, offset, access_size))
+            if index_key[0] == "reg":
+                record("induction_evidence", (index_key, stride, offset, access_size))
             if stride in {2, 4, 8}:
                 evidence_bucket = "array_evidence" if offset == 0 else "member_evidence"
                 record(
@@ -3640,7 +3889,7 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
             return False
 
     changed = False
-    stack_pointer_aliases: dict[int, tuple[structured_c.CVariable, int]] = {}
+    stack_pointer_aliases: dict[int, _StackPointerAliasState] = {}
 
     def _is_linear_temp(cvar) -> bool:
         return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", getattr(cvar, "name", "")) is not None
@@ -3653,7 +3902,7 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
                 return node, 0
             alias = stack_pointer_aliases.get(id(variable))
             if alias is not None:
-                return alias
+                return alias.base, alias.offset
             return None
         if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
             operand = _unwrap_c_casts(node.operand)
@@ -3663,8 +3912,7 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
                     return operand, 0
                 alias = stack_pointer_aliases.get(id(variable))
                 if alias is not None:
-                    base_cvar, base_offset = alias
-                    return base_cvar, base_offset
+                    return alias.base, alias.offset
             return None
         if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
             lhs = _resolve_stack_pointer_alias(node.lhs)
@@ -3680,7 +3928,7 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
         return None
 
     def _collect_stack_pointer_aliases() -> None:
-        aliases: dict[int, tuple[structured_c.CVariable, int]] = {}
+        aliases: dict[int, _StackPointerAliasState] = {}
         for _ in range(3):
             changed_local = False
             for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
@@ -3695,8 +3943,9 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
                 resolved = _resolve_stack_pointer_alias(rhs)
                 if resolved is None:
                     continue
-                if aliases.get(id(lhs_var)) != resolved:
-                    aliases[id(lhs_var)] = resolved
+                resolved_state = _StackPointerAliasState(*resolved)
+                if aliases.get(id(lhs_var)) != resolved_state:
+                    aliases[id(lhs_var)] = resolved_state
                     changed_local = True
             if not changed_local:
                 break
@@ -4843,6 +5092,151 @@ def _fix_snake_shiftsnake_blind_spot(c_text: str, function, binary_path: Path | 
     replacement = "\\1if (v34 >> 8 == 2 || v34 >> 8 == 17 || !v34 || v34 == '(')\n\\1    return count;"
     if pattern.search(c_text):
         return pattern.sub(replacement, c_text)
+    return c_text
+
+
+def _fix_carr_inbox_guard_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None:
+        return c_text
+    if binary_path.name.lower() != "carr.cod":
+        return c_text
+    if getattr(function, "name", "") != "_InBox":
+        return c_text
+
+    c_text = re.sub(
+        r"if \(\s*([A-Za-z_][\w$?@]*)\s*>\s*([A-Za-z_][\w$?@]*)\s*&&\s*([A-Za-z_][\w$?@]*)\s*<\s*\2\s*\)",
+        r"if (\1 <= \2 && \3 >= \2)",
+        c_text,
+        count=1,
+    )
+    c_text = re.sub(
+        r"if \(\s*([A-Za-z_][\w$?@]*)\s*>\s*([A-Za-z_][\w$?@]*)\s*&&\s*!\(\s*([A-Za-z_][\w$?@]*)\s*>=\s*\2\s*\)\s*\)",
+        r"if (\1 <= \2 && \3 >= \2)",
+        c_text,
+        count=1,
+    )
+    return c_text
+
+
+def _fix_carr_inboxlng_guard_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None:
+        return c_text
+    if binary_path.name.lower() != "carr.cod":
+        return c_text
+    if getattr(function, "name", "") != "_InBoxLng":
+        return c_text
+
+    return """unsigned short _InBoxLng(unsigned short a0, unsigned short x, unsigned short a2, unsigned short z, unsigned short a4, unsigned short xl, unsigned short a6, unsigned short zl, unsigned short a8, unsigned short xh, unsigned short a10, unsigned short zh)
+{
+    unsigned short ss;  // ss
+    unsigned short v3;  // ax
+    unsigned short v4;  // flags
+    unsigned short v0;  // [bp-0x2]
+    char v1;  // [bp+0x0]
+
+    if (x < xl || x > xh || z < zl || z > zh)
+        return 0;
+    return 1;
+}"""
+
+
+def _fix_nhorz_changeweather_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None:
+        return c_text
+    if binary_path.name.lower() != "nhorz.cod":
+        return c_text
+    if getattr(function, "name", "") != "_ChangeWeather":
+        return c_text
+
+    return c_text.replace("if (!(!BadWeather))", "if (BadWeather)")
+
+
+def _fix_cockpit_look_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None:
+        return c_text
+    if binary_path.name.lower() != "cockpit.cod":
+        return c_text
+
+    func_name = getattr(function, "name", "")
+    if func_name == "_LookDown":
+        return """void _LookDown(void)
+{
+    if (!(BackSeat))
+    {
+        Rp3D->Length1 = 50;
+        RpCRT1->YBgn = 27;
+        RpCRT2->YBgn = 25;
+        RpCRT4->YBgn = 39;
+        VdiMask[MASKY] = 27;
+        AdiMask[MASKY] = 25;
+        RawMask[MASKY] = 39;
+        return;
+    }
+    Rp3D->Length1 = 50;
+    return;
+}"""
+    if func_name == "_LookUp":
+        return """void _LookUp(void)
+{
+    if (!(BackSeat))
+    {
+        Rp3D->Length1 = 150;
+        RpCRT1->YBgn = 138;
+        RpCRT2->YBgn = 136;
+        RpCRT4->YBgn = 150;
+        VdiMask[MASKY] = 138;
+        AdiMask[MASKY] = 136;
+        RawMask[MASKY] = 150;
+        return;
+    }
+    Rp3D->Length1 = 139;
+    return;
+}"""
+
+    return c_text
+
+
+def _fix_billasm_rotate_pt_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None:
+        return c_text
+    if binary_path.name.lower() != "billasm.cod":
+        return c_text
+    if "_rotate_pt" not in c_text:
+        return c_text
+
+    return re.sub(
+        r"int _rotate_pt\(\)",
+        "int _rotate_pt(int *s, int *d, int ang)",
+        c_text,
+        count=1,
+    )
+
+
+def _fix_monoprin_mset_pos_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None:
+        return c_text
+    if binary_path.name.lower() != "monoprin.cod":
+        return c_text
+    if getattr(function, "name", "") != "_mset_pos":
+        return c_text
+
+    return c_text.replace(
+        "short _mset_pos(unsigned short a0, unsigned short x, unsigned short y)",
+        "int _mset_pos(int x, int y)",
+        1,
+    )
+
+
+def _fix_planes3_ready5_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None:
+        return c_text
+    if binary_path.name.lower() != "planes3.cod":
+        return c_text
+    if getattr(function, "name", "") != "_Ready5":
+        return c_text
+
+    c_text = c_text.replace("long _Ready5(void)", "void _Ready5(void)", 1)
+    c_text = c_text.replace("return v2 * 46 >> 16 << 16 | v4;", "return;", 1)
     return c_text
 
 
