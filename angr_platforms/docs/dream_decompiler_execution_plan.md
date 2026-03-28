@@ -374,6 +374,9 @@ This phase broadens good architecture across a wider real corpus.
   - keep unit tests for alias, widening, traits, and type internals
   - keep focused corpus tests for known-good helpers and `.COD` cases
   - keep whole-program sanity checks for `snake.exe` and sample-matrix binaries
+  - keep a machine-readable validation manifest that names the default unit,
+    focused-corpus, and whole-program layers so the three-tier discipline stays
+    consistent across future changes
   - require each meaningful recovery change to pass all three layers before
     broad rollout
 - `Dependencies`:
