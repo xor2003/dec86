@@ -105,6 +105,25 @@ def test_storage_domain_classifier_rejects_mismatched_bp_stack_regions():
     assert low_view.join(high_view) is None
 
 
+def test_same_stack_slot_identity_checks_bp_region():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
+        codegen=codegen,
+    )
+    high = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="v2", region=0x1000),
+        codegen=codegen,
+    )
+    other_region = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="v3", region=0x2000),
+        codegen=codegen,
+    )
+
+    assert _decompile._same_stack_slot_identity(low, high)
+    assert not _decompile._same_stack_slot_identity(low, other_region)
+
+
 def test_storage_domain_merge_helper_prefers_joinable_domains():
     low = _StorageDomainSignature("register", 1, _StorageView(0, 8))
     high = _StorageDomainSignature("register", 1, _StorageView(8, 8))
