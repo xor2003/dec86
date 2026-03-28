@@ -478,6 +478,27 @@ def test_stack_variable_annotation_applies_local_name():
     assert "total = lhs + rhs;" in dec.codegen.text
 
 
+def test_stack_variable_annotation_preserves_explicit_type():
+    project = _project_from_asm(
+        "push bp; mov bp, sp; sub sp, 2; mov ax, [bp+4]; add ax, [bp+6]; "
+        "mov [bp-2], ax; mov ax, [bp-2]; mov sp, bp; pop bp; ret"
+    )
+
+    dec = decompile_function(
+        project,
+        0x1000,
+        c_decl="int add_store_bp(int lhs, int rhs);",
+        bp_stack_vars={-2: {"name": "sum_local", "type": SimTypeShort(False)}},
+    )
+
+    assert dec.codegen is not None
+    assert "unsigned short sum_local;" in dec.codegen.text
+    assert "sum_local = lhs + rhs;" in dec.codegen.text
+    annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["stack_vars"]
+    assert annotations[-4]["name"] == "sum_local"
+    assert annotations[-4]["type"] == SimTypeShort(False)
+
+
 def test_bp_relative_stack_annotation_uses_assembly_displacement():
     project = _project_from_asm(
         "push bp; mov bp, sp; sub sp, 2; mov ax, [bp+4]; add ax, [bp+6]; "

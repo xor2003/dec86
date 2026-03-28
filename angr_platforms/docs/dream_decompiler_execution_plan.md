@@ -261,6 +261,9 @@ This phase converts cleaner value recovery into source-like object recovery.
   - preserve byte/word widths for recovered stack objects
   - improve stable global naming and typed global usage, including typed
     annotation specs that keep global name and type evidence together
+  - keep typed `bp_stack_vars` / stack annotations as the first working
+    evidence-preserving stack-object path, so recovered locals can retain their
+    width and type instead of collapsing back to generic temps
   - use evidence profiles to choose conservative stack/global object rewrites
   - keep stack-object rewrites separate from printer-only cleanup
 - `Dependencies`:
