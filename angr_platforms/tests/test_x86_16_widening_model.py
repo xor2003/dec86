@@ -59,6 +59,22 @@ def test_widening_model_rejects_non_adjacent_memory_slices():
     assert not can_join_adjacent_storage_slices(low, far)
 
 
+def _make_register_var(name: str):
+    codegen = _DummyCodegen()
+    return _decompile.structured_c.CVariable(
+        _decompile.SimRegisterVariable(30, 1, name=name),
+        codegen=codegen,
+    )
+
+
+def test_widening_model_accepts_adjacent_register_slices():
+    low = _make_register_var("al")
+    high = _make_register_var("ah")
+
+    assert can_join_adjacent_storage_slices(low, high)
+    assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("register", 2, _StorageView(0, 16))
+
+
 def test_widening_model_accepts_adjacent_stack_slices():
     low = _make_stack_var("field_0", -4)
     high = _make_stack_var("field_1", -3)

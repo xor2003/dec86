@@ -732,6 +732,8 @@ Current status:
   actually joinable before it tries to widen them
 - that widening boundary is now exercised on both memory and stack slices in
   the focused tests, so the join rule is clearly storage-domain oriented
+- register slices are covered too, so the same boundary now proves the
+  register/stack/memory split the alias model is supposed to own
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold
