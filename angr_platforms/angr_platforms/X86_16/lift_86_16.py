@@ -778,9 +778,16 @@ class Instruction_ANY(Instruction):
             logger.debug(f"IRSB generated successfully for {self.addr:04x}")
 
         except Exception as ex:
+            if ex.__class__.__name__ == "ScanTimeout":
+                logger.warning(
+                    "Lifting timed out at %04x (bytes: %s)",
+                    self.addr,
+                    self.cs.bytes.hex(),
+                )
+                raise
             logger.error(f"Lifting failed at {self.addr:04x} (bytes: {self.cs.bytes.hex()}): {ex}")
             logger.exception("Exception during instruction execution")
-            raise ex from Exception
+            raise
 
     def disassemble(self):
         return self.start, self.cs.insn_name(), [str(i) for i in self.cs.operands]
