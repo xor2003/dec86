@@ -16,9 +16,19 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
 - Priority 1 is in place:
   - segment-space classification is centralized in `decompile.py`
   - `ss`/`ds`/`es` consumers now reuse the same cached classifier
+  - the segmented classifier now also emits an explicit association-state object
+    and an object-rewrite policy gate instead of relying only on ad hoc checks
 - Priority 2 is partially in place:
   - byte-pair word load/store coalescing already consumes the classifier
   - small safe segmented byte-pointer rewrites now exist for `snake`-style `ds/es` byte access
+  - the widening lane now has an explicit module boundary
+    (`angr_platforms/X86_16/widening_model.py`)
+  - widening now uses alias-proven storage compatibility across register,
+    stack, and memory slices
+  - widening candidates now exist as explicit data objects and can be built
+    directly from expressions
+  - mixed expressions are rejected at the widening boundary instead of being
+    allowed to drift into speculative joins
 - Priority 3 has groundwork in place:
   - access traits for repeated `base + const` and `base + index * stride` segmented accesses are now collected and cached per decompilation run
   - a real `.COD` proc test now verifies that segmented access traits are actually recorded in the cache
@@ -61,6 +71,14 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
   - `snake.EXE:0x1287` now folds the `g_c2 - 1` / `- 1` chain to `g_c2 - 2`
   - `snake.EXE:0x1287` now also collapses a repeated bitmask update into source-like `v34` / `v35` forms and exposes the `v29 - 40` guard directly
   - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
+  - the alias lane now has an explicit storage-domain model in
+    `angr_platforms/X86_16/alias_model.py`
+  - that alias model now uses `domain + view` semantics for register, stack,
+    and memory storages instead of only width-tagged buckets
+  - copy-alias and stack-pointer alias states now live in the alias module
+    instead of being duplicated inside `decompile.py`
+  - the widening and alias boundaries are now treated as stable architecture,
+    not as open cleanup ideas
 
 ## Constraints
 
@@ -128,6 +146,15 @@ Primary targets:
 - `_ChangeWeather`
 - `snake.EXE:0x13b2`
 
+Status:
+
+- the architectural widening split is now in place
+- widening is now gated by alias-proven compatibility, not only by local
+  pattern matches
+- register, stack, and memory slice joins are covered by focused tests
+- the remaining work in this priority is incremental reuse on new corpus cases,
+  not a missing core widening framework
+
 ## Priority 3. Access-Trait Collection
 
 Goal:
@@ -179,6 +206,14 @@ Primary targets:
 - `_InBox`-class predicate code
 - `_SetGear`
 - `snake.EXE` loop and guard logic
+
+Status:
+
+- the architectural alias split is now in place
+- storage-domain reasoning now lives in `angr_platforms/X86_16/alias_model.py`
+- copy-alias and stack-pointer alias state are explicit boundary objects
+- the remaining work in this priority is conservative extension from new
+  corpus evidence, not a missing alias foundation
 
 ## Priority 5. Typed Rewrite To Source-Like Memory Objects
 
@@ -257,6 +292,14 @@ Primary targets:
 - small `.COD --proc` helpers used in CLI tests
 
 ## Validation Strategy
+
+At this point the main borrow architecture is in place. The remaining work is
+primarily:
+
+- keeping the current `snake` and `.COD` wins stable
+- extending typed rewrites only when new samples justify them
+- adding new corpus-backed widening or alias cases without broadening the
+  current safe boundaries
 
 After each meaningful change:
 
