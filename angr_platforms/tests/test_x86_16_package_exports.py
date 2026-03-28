@@ -33,6 +33,7 @@ def test_x86_16_package_exports_source_backends():
     assert "DecompilerPostprocessPassSpec" in x8616.__all__
     assert "patch_dirty" in x8616.__all__
     assert "typehoon_compat" in x8616.__all__
+    assert "alias_model" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__
     assert "decompiler_postprocess_globals" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__
@@ -66,7 +67,9 @@ def test_x86_16_bootstrap_hook_is_idempotent():
 def test_x86_16_decompiler_postprocess_registry_order():
     assert [spec.func.__name__ for spec in decompiler_postprocess_stage.DECOMPILER_POSTPROCESS_PASSES] == [
         "_apply_word_global_types_8616",
+        "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
+        "_apply_annotations_8616",
         "_simplify_boolean_cites_8616",
         "_simplify_structured_expressions_8616",
         "_rewrite_flag_condition_pairs_8616",
