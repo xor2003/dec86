@@ -1535,42 +1535,62 @@ def _match_high_byte_projection_constant(node):
     return None
 
 
-def _storage_domain_for_variable(variable) -> str:
+@dataclass(frozen=True)
+class _StorageDomainSignature:
+    space: str
+    width: int | None = None
+
+    def is_mixed(self) -> bool:
+        return self.space == "mixed"
+
+    def is_unknown(self) -> bool:
+        return self.space == "unknown"
+
+    def is_const(self) -> bool:
+        return self.space == "const"
+
+    def __str__(self) -> str:
+        if self.width is None:
+            return self.space
+        return f"{self.space}:{self.width}"
+
+
+def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     if isinstance(variable, SimStackVariable):
-        return f"stack:{getattr(variable, 'size', 0)}"
+        return _StorageDomainSignature("stack", getattr(variable, "size", 0))
     if isinstance(variable, SimRegisterVariable):
-        return f"register:{getattr(variable, 'size', 0)}"
+        return _StorageDomainSignature("register", getattr(variable, "size", 0))
     if isinstance(variable, SimMemoryVariable):
-        return f"memory:{getattr(variable, 'size', 0)}"
-    return "unknown"
+        return _StorageDomainSignature("memory", getattr(variable, "size", 0))
+    return _StorageDomainSignature("unknown")
 
 
-def _storage_domain_for_expr(expr) -> str:
+def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
     expr = _unwrap_c_casts(expr)
     if isinstance(expr, structured_c.CVariable):
         variable = getattr(expr, "variable", None)
         if variable is None:
-            return "unknown"
+            return _StorageDomainSignature("unknown")
         return _storage_domain_for_variable(variable)
     if isinstance(expr, structured_c.CConstant):
-        return "const"
+        return _StorageDomainSignature("const")
     if isinstance(expr, structured_c.CUnaryOp):
         return _storage_domain_for_expr(expr.operand)
     if isinstance(expr, structured_c.CBinaryOp):
-        domains: set[str] = set()
+        domains: set[_StorageDomainSignature] = set()
         for child in (expr.lhs, expr.rhs):
             domain = _storage_domain_for_expr(child)
-            if domain == "const":
+            if domain.is_const():
                 continue
-            if domain == "unknown":
-                return "unknown"
+            if domain.is_unknown():
+                return _StorageDomainSignature("unknown")
             domains.add(domain)
         if not domains:
-            return "const"
+            return _StorageDomainSignature("const")
         if len(domains) == 1:
             return next(iter(domains))
-        return "mixed"
-    return "unknown"
+        return _StorageDomainSignature("mixed")
+    return _StorageDomainSignature("unknown")
 
 
 def _simplify_boolean_expr(node, codegen):
@@ -1831,7 +1851,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     continue
                 key = id(lhs_var)
                 rhs_domain = _storage_domain_for_expr(rhs)
-                if rhs_domain == "mixed":
+                if rhs_domain.is_mixed():
                     continue
                 parent_state = aliases.get(id(rhs_var))
                 rhs_expr = parent_state.expr if parent_state is not None else rhs
@@ -1842,8 +1862,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     if current != value:
                         aliases[key] = value
                         changed = True
-                elif current.domain != "mixed":
-                    aliases[key] = _CopyAliasState("mixed", rhs, needs_synthesis=True)
+                elif not current.domain.is_mixed():
+                    aliases[key] = _CopyAliasState(_StorageDomainSignature("mixed"), rhs, needs_synthesis=True)
                     changed = True
             if not changed:
                 break
@@ -2807,12 +2827,12 @@ class _AccessTraitEvidenceProfile:
 
 @dataclass(frozen=True)
 class _CopyAliasState:
-    domain: str
+    domain: _StorageDomainSignature
     expr: object
     needs_synthesis: bool = False
 
     def can_inline(self) -> bool:
-        return self.domain != "mixed" and not self.needs_synthesis
+        return not self.domain.is_mixed() and not self.needs_synthesis
 
 
 @dataclass(frozen=True)
