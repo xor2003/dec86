@@ -92,9 +92,6 @@ from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.alias_model import (
     _CopyAliasState,
     _StackPointerAliasState,
-    _StorageDomainSignature,
-    _StorageView,
-    _merge_storage_domains,
     _storage_domain_for_expr,
     _storage_domain_for_variable,
     _storage_view_for_variable,
@@ -2783,34 +2780,6 @@ class _AccessTraitEvidenceProfile:
         if self.induction_like:
             return "induction"
         return None
-
-
-@dataclass(frozen=True)
-class _CopyAliasState:
-    domain: _StorageDomainSignature
-    expr: object
-    needs_synthesis: bool = False
-
-    def can_inline(self) -> bool:
-        return not self.domain.is_mixed() and not self.needs_synthesis
-
-    def merge(self, other: "_CopyAliasState") -> "_CopyAliasState":
-        merged_domain = _merge_storage_domains(self.domain, other.domain)
-        merged_expr = self.expr if self.expr is not None else other.expr
-        merged_needs_synthesis = self.needs_synthesis or other.needs_synthesis
-        if merged_domain.is_mixed():
-            merged_needs_synthesis = True
-            merged_expr = other.expr
-        return _CopyAliasState(merged_domain, merged_expr, needs_synthesis=merged_needs_synthesis)
-
-
-@dataclass(frozen=True)
-class _StackPointerAliasState:
-    base: structured_c.CVariable
-    offset: int = 0
-
-    def shifted(self, delta: int) -> "_StackPointerAliasState":
-        return _StackPointerAliasState(self.base, self.offset + delta)
 
 
 @dataclass(frozen=True)
