@@ -718,6 +718,9 @@ Current status:
   memory split used by more explicit IRs
 - that `view` is now an explicit object too, so register/stack/memory slices
   are modeled as domain + projection instead of only width-tagged domains
+- adjacent views can now be joined when they belong to the same storage
+  domain, which gives the alias model a narrow and explicit widening-friendly
+  hook without turning the whole pass into speculation
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold

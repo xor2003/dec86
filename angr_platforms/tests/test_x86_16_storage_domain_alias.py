@@ -34,7 +34,18 @@ def test_storage_domain_classifier_distinguishes_variable_domains():
 
 def test_storage_domain_classifier_distinguishes_subregister_widths():
     assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="al")).view == _decompile._StorageView(0, 8)
+    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="ah")).view == _decompile._StorageView(8, 8)
     assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="ax")).view == _decompile._StorageView(0, 16)
+
+
+def test_storage_domain_classifier_joins_adjacent_views():
+    high_view = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(8, 8))
+    low_view = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(0, 8))
+
+    joined = low_view.join(high_view)
+
+    assert joined == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
+    assert _decompile._StorageView(0, 8).can_join(_decompile._StorageView(8, 8))
 
 
 def test_storage_domain_classifier_marks_mixed_expressions():
