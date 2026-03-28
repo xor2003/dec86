@@ -45,6 +45,7 @@ class BlockLiftCase:
     proc_kind: str = "NEAR"
     start_offset: int | None = None
     end_offset: int | None = None
+    expected_token_counts: tuple[tuple[str, int], ...] = ()
 
 
 DECOMP_CASES = (
@@ -202,6 +203,7 @@ class MatrixBlockLiftCase:
     end_offset: int
     original_c: str
     expected_tokens: tuple[str, ...]
+    expected_token_counts: tuple[tuple[str, int], ...] = ()
 
 
 QUERY_INTERRUPT_MATRIX_CASES = (
@@ -525,7 +527,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x11D,
         end_offset=0x127,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="isot_main_fold_values_args",
@@ -535,7 +538,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0xF6,
         end_offset=0x100,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="isox_main_fold_values_args",
@@ -545,7 +549,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0xF6,
         end_offset=0x100,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="imod_main_fold_values_args",
@@ -555,7 +560,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x12D,
         end_offset=0x137,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="imot_main_fold_values_args",
@@ -565,7 +571,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x104,
         end_offset=0x10E,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="imox_main_fold_values_args",
@@ -575,7 +582,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x104,
         end_offset=0x10E,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="ihod_main_fold_values_args",
@@ -585,7 +593,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x139,
         end_offset=0x143,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="ihot_main_fold_values_args",
@@ -595,7 +604,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x10E,
         end_offset=0x118,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="ilod_main_fold_values_args",
@@ -605,7 +615,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x139,
         end_offset=0x143,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
     MatrixBlockLiftCase(
         name="ilot_main_fold_values_args",
@@ -615,7 +626,8 @@ MAIN_FOLD_VALUES_ARG_MATRIX_CASES = (
         start_offset=0x10E,
         end_offset=0x118,
         original_c="return fold_values(g_info.video_mode, g_info.bios_kb & 0xFF);",
-        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "STle(t104) = t97", "STle(t127) = t128"),
+        expected_tokens=("And16(t5,0xff00)", "Add16(0x0000,0x0004)", "PUT(sp) =", "Shr16(t95,0x08)"),
+        expected_token_counts=(("STle(", 3),),
     ),
 )
 
@@ -858,12 +870,23 @@ def _assert_text_contains(text: str, expected_tokens: tuple[str, ...], original_
     )
 
 
-def _assert_irsb_contains(irsb_text: str, expected_tokens: tuple[str, ...], original_c: str):
+def _assert_irsb_contains(
+    irsb_text: str,
+    expected_tokens: tuple[str, ...],
+    original_c: str,
+    expected_token_counts: tuple[tuple[str, int], ...] = (),
+):
     missing = [token for token in expected_tokens if token not in irsb_text]
-    assert not missing, (
+    count_failures = [
+        f"{token!r} expected at least {minimum} times, got {irsb_text.count(token)}"
+        for token, minimum in expected_token_counts
+        if irsb_text.count(token) < minimum
+    ]
+    assert not missing and not count_failures, (
         "Lifted VEX no longer reflects the intended source-level operation.\n"
         f"Original C fragment:\n{original_c}\n\n"
-        f"Missing expected IR anchors: {missing}\n\n"
+        f"Missing expected IR anchors: {missing}\n"
+        f"Count mismatches: {count_failures}\n\n"
         f"Recovered IRSB:\n{irsb_text}"
     )
 
@@ -1033,7 +1056,7 @@ def test_main_fold_values_arg_block_lift_matrix(case: MatrixBlockLiftCase):
     irsb_text = block.vex._pp_str()
 
     assert block.vex.jumpkind == "Ijk_Boring"
-    _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c)
+    _assert_irsb_contains(irsb_text, case.expected_tokens, case.original_c, case.expected_token_counts)
 
 
 @pytest.mark.parametrize("case", MAIN_CALL_PREFIX_MATRIX_CASES, ids=lambda case: case.name)
