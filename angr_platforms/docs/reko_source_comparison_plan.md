@@ -699,9 +699,10 @@ Current status:
 
 - simple one-use copy-alias temps are already in the recurrence cleanup path
 - the alias model still stays cycle-safe and narrow
-- the copy-alias path now has an explicit alias-state object with domain,
-  underlying expression, and a `needs_synthesis` stop bit, which is a small
-  but real architectural step toward the fuller storage-domain alias model
+- the copy-alias path now has an explicit alias-state object with a
+  varnode-like storage-domain signature, underlying expression, and a
+  `needs_synthesis` stop bit, which is a small but real architectural step
+  toward the fuller storage-domain alias model
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold
