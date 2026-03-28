@@ -9,13 +9,12 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
+
 import angr
 
 from .arch_86_16 import Arch86_16
 from .lift_86_16 import Lifter86_16  # noqa: F401
-
-
-logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
 
 
 ENTRY_RE = re.compile(r"\*\*\*\s+([0-9A-Fa-f]+)\s+((?:[0-9A-Fa-f]{2}\s+)+)(.*)$")
