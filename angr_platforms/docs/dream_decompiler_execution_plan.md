@@ -238,6 +238,9 @@ This phase converts cleaner value recovery into source-like object recovery.
   - let stack bases surface `stack` as the preferred rewrite kind when
     stack-like evidence is present, so stack-object recovery has a distinct
     path from member/array rewriting
+  - render stack-like trait-driven stack objects with stack-object naming
+    (`local_` / `arg_`) instead of forcing them through the generic
+    `field_`-style member naming path
   - keep positive tests on real `.COD` and `snake` helpers
 - `Dependencies`:
   - `B1`

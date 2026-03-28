@@ -76,6 +76,45 @@ def test_access_trait_array_evidence_can_rename_stack_objects():
     assert cvar.name == "field_0"
 
 
+def test_access_trait_stack_like_evidence_uses_stack_object_naming():
+    class DummyCodegen:
+        def __init__(self):
+            self._i = 0
+            self.project = SimpleNamespace(arch=SimpleNamespace())
+            self.cfunc = SimpleNamespace(addr=0x1000, name="_ConfigCrts")
+
+        def next_idx(self, _):
+            self._i += 1
+            return self._i
+
+    codegen = DummyCodegen()
+    stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
+    cvar = _decompile.structured_c.CVariable(stack_var, codegen=codegen)
+    codegen.cfunc.variables_in_use = {stack_var: cvar}
+    codegen.cfunc.statements = cvar
+    project = SimpleNamespace(
+        _inertia_access_traits={
+            0x1000: {
+                "base_const": {
+                    ("ss", ("stack", "bp", -4), 4, 2, 1): 1,
+                },
+                "base_stride": {},
+                "repeated_offsets": {},
+                "repeated_offset_widths": {},
+                "base_stride_widths": {},
+                "member_evidence": {},
+                "array_evidence": {},
+            }
+        }
+    )
+
+    changed = _attach_access_trait_field_names(project, codegen)
+
+    assert changed
+    assert stack_var.name == "local_4"
+    assert cvar.name == "local_4"
+
+
 def test_access_trait_rewrite_decision_separates_evidence_kinds():
     member_profile = _AccessTraitEvidenceProfile(member_like=((4, 2, 3),))
     array_profile = _AccessTraitEvidenceProfile(array_like=((0, 2, 5),))
