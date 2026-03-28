@@ -414,6 +414,7 @@ def test_explicit_wide_return_codegen():
     dec = project.analyses.Decompiler(func, cfg=cfg)
 
     assert dec.codegen is not None
+    _assert_long_signature(func, 0)
     assert "return 305419896;" in dec.codegen.text
 
 

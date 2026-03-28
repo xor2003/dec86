@@ -304,7 +304,8 @@ This phase converts cleaner value recovery into source-like object recovery.
 - `Low-level steps`:
   - improve stack-argument recovery on top of stack alias identity
   - improve near/far-call aware signature handling
-  - preserve multiword return handling
+  - preserve multiword return handling and keep explicit wide-return
+    prototypes width-stable through decompilation
   - promote explicit prototypes only with strong evidence
   - keep helper signatures and callsites stable across corpus runs
 - `Dependencies`:
