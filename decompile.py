@@ -1541,9 +1541,19 @@ def _match_high_byte_projection_constant(node):
 
 
 @dataclass(frozen=True)
+class _StorageView:
+    bit_offset: int = 0
+    bit_width: int | None = None
+
+    def is_full_width(self) -> bool:
+        return self.bit_offset == 0 and self.bit_width is not None
+
+
+@dataclass(frozen=True)
 class _StorageDomainSignature:
     space: str
     width: int | None = None
+    view: _StorageView | None = None
 
     def is_mixed(self) -> bool:
         return self.space == "mixed"
@@ -1562,11 +1572,14 @@ class _StorageDomainSignature:
 
 def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     if isinstance(variable, SimStackVariable):
-        return _StorageDomainSignature("stack", getattr(variable, "size", 0))
+        width = getattr(variable, "size", 0)
+        return _StorageDomainSignature("stack", width, _StorageView(0, width * 8 if width else None))
     if isinstance(variable, SimRegisterVariable):
-        return _StorageDomainSignature("register", getattr(variable, "size", 0))
+        width = getattr(variable, "size", 0)
+        return _StorageDomainSignature("register", width, _StorageView(0, width * 8 if width else None))
     if isinstance(variable, SimMemoryVariable):
-        return _StorageDomainSignature("memory", getattr(variable, "size", 0))
+        width = getattr(variable, "size", 0)
+        return _StorageDomainSignature("memory", width, _StorageView(0, width * 8 if width else None))
     return _StorageDomainSignature("unknown")
 
 
@@ -1593,6 +1606,8 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
         if not domains:
             return _StorageDomainSignature("const")
         if len(domains) == 1:
+            return next(iter(domains))
+        if len({d.space for d in domains}) == 1 and len({d.view for d in domains}) == 1:
             return next(iter(domains))
         return _StorageDomainSignature("mixed")
     return _StorageDomainSignature("unknown")
