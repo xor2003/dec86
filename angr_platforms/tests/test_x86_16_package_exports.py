@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import angr_platforms.X86_16 as x8616
+from angr.analyses.calling_convention import calling_convention as _cc_analysis
+from angr.analyses.calling_convention import fact_collector as _cc_fact_collector
+from angr.analyses.calling_convention import utils as _cc_utils
 from angr.analyses.decompiler.decompiler import Decompiler
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16 import bootstrap
 from angr_platforms.X86_16 import decompiler_postprocess
 from angr_platforms.X86_16 import decompiler_postprocess_stage
@@ -63,6 +67,15 @@ def test_x86_16_bootstrap_hook_is_idempotent():
 
     assert Decompiler._decompile.__name__ == "_decompile_8616"
     assert Decompiler._decompile is not original or original.__name__ == "_decompile_8616"
+
+
+def test_x86_16_calling_convention_compatibility_patches_register_sanity():
+    x8616.apply_x86_16_calling_convention_compatibility()
+
+    assert _cc_utils.is_sane_register_variable.__name__ == "_is_sane_register_variable_8616"
+    assert _cc_analysis.is_sane_register_variable.__name__ == "_is_sane_register_variable_8616"
+    assert _cc_fact_collector.is_sane_register_variable.__name__ == "_is_sane_register_variable_8616"
+    assert _cc_utils.is_sane_register_variable(Arch86_16(), 0, 2)
 
 
 def test_x86_16_decompiler_postprocess_registry_order():

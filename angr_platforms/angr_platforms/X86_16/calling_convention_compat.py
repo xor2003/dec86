@@ -3,6 +3,8 @@ from __future__ import annotations
 from pyvex.stmt import Put
 
 from angr.analyses.calling_convention import calling_convention as _cc_analysis
+from angr.analyses.calling_convention import fact_collector as _cc_fact_collector
+from angr.analyses.calling_convention import utils as _cc_utils
 from angr.errors import SimTranslationError
 from angr.sim_type import SimTypeFunction, SimTypeLong, SimTypeShort
 from .simos_86_16 import SimCC8616MSCsmall
@@ -155,6 +157,18 @@ def _set_function_prototype_8616(function, cc, prototype) -> tuple[object, objec
 
 
 def apply_x86_16_calling_convention_compatibility() -> None:
+    if getattr(_cc_utils.is_sane_register_variable, "__name__", "") != "_is_sane_register_variable_8616":
+        _orig_is_sane_register_variable = _cc_utils.is_sane_register_variable
+
+        def _is_sane_register_variable_8616(arch, reg_offset, reg_size, def_cc=None):
+            if arch.name == "86_16":
+                return True
+            return _orig_is_sane_register_variable(arch, reg_offset, reg_size, def_cc=def_cc)
+
+        _cc_utils.is_sane_register_variable = _is_sane_register_variable_8616
+        _cc_analysis.is_sane_register_variable = _is_sane_register_variable_8616
+        _cc_fact_collector.is_sane_register_variable = _is_sane_register_variable_8616
+
     if getattr(_cc_analysis.CallingConventionAnalysis._analyze_function, "__name__", "") != "_analyze_function_8616":
         _guess_retval_type_8616._orig = _cc_analysis.CallingConventionAnalysis._guess_retval_type
         _analyze_function_orig = _cc_analysis.CallingConventionAnalysis._analyze_function

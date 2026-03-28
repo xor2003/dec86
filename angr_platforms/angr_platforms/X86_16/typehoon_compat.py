@@ -3,7 +3,6 @@ from __future__ import annotations
 import claripy
 import networkx
 
-from angr.analyses.calling_convention import utils as _cc_utils
 from angr.analyses.reaching_definitions import rd_state as _rd_state
 from angr.analyses.typehoon import simple_solver as _typehoon_simple_solver
 from angr.analyses.typehoon import translator as _typehoon_translator
@@ -21,16 +20,6 @@ __all__ = ["apply_x86_16_typehoon_compatibility"]
 
 
 def apply_x86_16_typehoon_compatibility() -> None:
-    _orig_is_sane_register_variable = _cc_utils.is_sane_register_variable
-
-    def _is_sane_register_variable_8616(arch, reg_offset, reg_size, def_cc=None):
-        if arch.name == "86_16":
-            return True
-        return _orig_is_sane_register_variable(arch, reg_offset, reg_size, def_cc=def_cc)
-
-    if getattr(_cc_utils.is_sane_register_variable, "__name__", "") != "_is_sane_register_variable_8616":
-        _cc_utils.is_sane_register_variable = _is_sane_register_variable_8616
-
     _orig_stack_addr_from_offset = _variable_recovery_base.VariableRecoveryStateBase.stack_addr_from_offset
 
     def _stack_addr_from_offset_8616(self, offset):
