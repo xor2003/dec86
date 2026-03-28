@@ -259,7 +259,8 @@ This phase converts cleaner value recovery into source-like object recovery.
   - reduces raw address arithmetic in output
 - `Low-level steps`:
   - preserve byte/word widths for recovered stack objects
-  - improve stable global naming and typed global usage
+  - improve stable global naming and typed global usage, including typed
+    annotation specs that keep global name and type evidence together
   - use evidence profiles to choose conservative stack/global object rewrites
   - keep stack-object rewrites separate from printer-only cleanup
 - `Dependencies`:

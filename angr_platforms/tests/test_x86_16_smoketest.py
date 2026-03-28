@@ -502,7 +502,11 @@ def test_global_variable_annotation_applies_global_names():
     dec = decompile_function(
         project,
         0x1000,
-        global_vars={0x1234: "left_word", 0x1236: "right_word", 0x1238: "sum_word"},
+        global_vars={
+            0x1234: {"name": "left_word", "type": SimTypeShort(False)},
+            0x1236: {"name": "right_word", "type": SimTypeShort(False)},
+            0x1238: {"name": "sum_word", "type": SimTypeShort(False)},
+        },
     )
 
     assert dec.codegen is not None
@@ -510,6 +514,9 @@ def test_global_variable_annotation_applies_global_names():
     assert "right_word" in dec.codegen.text
     assert "sum_word" in dec.codegen.text
     assert "field_" not in dec.codegen.text
+    annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["global_vars"]
+    assert annotations[0x1234]["name"] == "left_word"
+    assert annotations[0x1234]["type"] == SimTypeShort(False)
 
 
 def test_c_decl_annotation_applies_pointer_signature():
