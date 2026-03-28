@@ -16,6 +16,7 @@ _spec.loader.exec_module(_decompile)
 from angr_platforms.X86_16.alias_model import (
     _CopyAliasState,
     _StackPointerAliasState,
+    _StackSlotIdentity,
     _StorageDomainSignature,
     _StorageView,
     _merge_storage_domains,
@@ -36,6 +37,7 @@ def test_storage_domain_classifier_distinguishes_variable_domains():
     mem = _decompile._storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15"))
 
     assert stack == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
+    assert stack.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
     assert reg == _StorageDomainSignature("register", 2, _StorageView(0, 16))
     assert mem == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
 
@@ -62,6 +64,27 @@ def test_storage_domain_classifier_joins_adjacent_stack_views():
 
     assert low_view.can_join(high_view)
     assert low_view.join(high_view) == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
+
+
+def test_storage_domain_classifier_tracks_bp_stack_slot_identity():
+    low_view = _StorageDomainSignature(
+        "stack",
+        1,
+        _StorageView(-32, 8),
+        stack_slot=_StackSlotIdentity("bp", -4, 1, region=0x1000),
+    )
+    high_view = _StorageDomainSignature(
+        "stack",
+        1,
+        _StorageView(-24, 8),
+        stack_slot=_StackSlotIdentity("bp", -3, 1, region=0x1000),
+    )
+
+    joined = low_view.join(high_view)
+
+    assert joined is not None
+    assert joined.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
+    assert joined == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
 
 
 def test_storage_domain_merge_helper_prefers_joinable_domains():

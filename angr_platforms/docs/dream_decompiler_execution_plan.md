@@ -134,11 +134,15 @@ coherent recovery pipeline.
   - support byte and word views for stack slots
   - track partial vs full slot writes conservatively
   - add safe `bp`-relative byte-pair joins only after alias proof
+  - keep the first MVP narrow: explicit `bp` base, displacement, width, and
+    region metadata for stack slots
 - `Dependencies`:
   - `B1`
 - `Exit signal`:
   - stack byte-pair cleanup and prototype reasoning start depending on stack
     identity, not isolated local rewrites
+  - the MVP already handles simple `bp`-framed locals and can be extended to
+    more stack forms without changing the core alias boundary
 
 ### B3. Segmented Memory Association
 

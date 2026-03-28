@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -36,6 +36,40 @@ class _StorageView:
         return _StorageView(first.bit_offset, first.bit_width + second.bit_width)
 
 
+@dataclass(frozen=True)
+class _StackSlotIdentity:
+    base: str
+    offset: int
+    width: int | None = None
+    region: int | None = None
+
+    def end_offset(self) -> int | None:
+        if self.width is None:
+            return None
+        return self.offset + self.width
+
+    def can_join(self, other: "_StackSlotIdentity") -> bool:
+        if self.base != other.base:
+            return False
+        if self.region is not None and other.region is not None and self.region != other.region:
+            return False
+        if self.width is None or other.width is None:
+            return False
+        return self.end_offset() == other.offset or other.end_offset() == self.offset
+
+    def join(self, other: "_StackSlotIdentity") -> "_StackSlotIdentity | None":
+        if not self.can_join(other):
+            return None
+        if self.offset <= other.offset:
+            first, second = self, other
+        else:
+            first, second = other, self
+        if first.end_offset() != second.offset:
+            return None
+        region = first.region if first.region == second.region else first.region or second.region
+        return _StackSlotIdentity(first.base, first.offset, first.width + second.width, region=region)
+
+
 def _storage_view_for_variable(variable) -> _StorageView:
     size = getattr(variable, "size", 0) or 0
     width_bits = size * 8 if size else None
@@ -67,6 +101,7 @@ class _StorageDomainSignature:
     space: str
     width: int | None = None
     view: _StorageView | None = None
+    stack_slot: _StackSlotIdentity | None = field(default=None, compare=False)
 
     def is_mixed(self) -> bool:
         return self.space == "mixed"
@@ -87,6 +122,11 @@ class _StorageDomainSignature:
             return False
         if self.view is None or other.view is None:
             return False
+        if self.space == "stack":
+            if self.stack_slot is None or other.stack_slot is None:
+                return self.view.can_join(other.view)
+            if not self.stack_slot.can_join(other.stack_slot):
+                return False
         return self.view.can_join(other.view)
 
     def join(self, other: "_StorageDomainSignature") -> "_StorageDomainSignature | None":
@@ -97,7 +137,10 @@ class _StorageDomainSignature:
             return None
         width = self.width or 0
         other_width = other.width or 0
-        return _StorageDomainSignature(self.space, width + other_width, joined_view)
+        stack_slot = None
+        if self.space == "stack" and self.stack_slot is not None and other.stack_slot is not None:
+            stack_slot = self.stack_slot.join(other.stack_slot)
+        return _StorageDomainSignature(self.space, width + other_width, joined_view, stack_slot=stack_slot)
 
 
 @dataclass(frozen=True)
@@ -131,7 +174,15 @@ class _StackPointerAliasState:
 def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     if isinstance(variable, SimStackVariable):
         width = getattr(variable, "size", 0)
-        return _StorageDomainSignature("stack", width, _storage_view_for_variable(variable))
+        base = getattr(variable, "base", None) or "sp"
+        offset = getattr(variable, "offset", 0)
+        region = getattr(variable, "region", None)
+        return _StorageDomainSignature(
+            "stack",
+            width,
+            _storage_view_for_variable(variable),
+            stack_slot=_StackSlotIdentity(base, offset, width, region=region),
+        )
     if isinstance(variable, SimRegisterVariable):
         width = getattr(variable, "size", 0)
         return _StorageDomainSignature("register", width, _storage_view_for_variable(variable))
@@ -194,6 +245,7 @@ def _unwrap_c_casts(expr):
 
 __all__ = [
     "_StorageView",
+    "_StackSlotIdentity",
     "_StorageDomainSignature",
     "_CopyAliasState",
     "_StackPointerAliasState",

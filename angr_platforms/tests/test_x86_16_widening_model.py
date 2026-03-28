@@ -13,7 +13,7 @@ _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
-from angr_platforms.X86_16.alias_model import _StorageDomainSignature, _StorageView
+from angr_platforms.X86_16.alias_model import _StackSlotIdentity, _StorageDomainSignature, _StorageView
 from angr_platforms.X86_16.widening_model import WideningCandidate, can_join_adjacent_storage_slices, merge_storage_slice_domains
 
 
@@ -84,7 +84,9 @@ def test_widening_model_accepts_adjacent_stack_slices():
     high = _make_stack_var("field_1", -3)
 
     assert can_join_adjacent_storage_slices(low, high)
-    assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
+    merged = merge_storage_slice_domains(low, high)
+    assert merged == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
+    assert merged.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
 
 
 def test_widening_model_rejects_mixed_expressions():
