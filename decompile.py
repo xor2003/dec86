@@ -2855,26 +2855,40 @@ class _AccessTraitRewriteDecision:
         return self.profile.best_rewrite_kind()
 
     def candidate_field_names(self) -> tuple[str, ...]:
-        candidates = list(self.profile.naming_candidates(self.base_key))
-        if not candidates:
+        if self.base_key and self.base_key[0] == "stack":
+            groups = (
+                self.profile.stack_like,
+                self.profile.member_like,
+                self.profile.array_like,
+                self.profile.induction_like,
+            )
+        else:
+            groups = (
+                self.profile.member_like,
+                self.profile.array_like,
+                self.profile.induction_like,
+                self.profile.stack_like,
+            )
+
+        if not any(groups):
             return ()
-        ordered = sorted(
-            candidates,
-            key=lambda item: (
-                item[0] == 0,
-                -item[2],
-                item[1],
-                item[0],
-            ),
-        )
         names: list[str] = []
         seen: set[str] = set()
-        for offset, _size, _count in ordered:
-            field_name = _access_trait_field_name(offset, 1)
-            if field_name in seen:
-                continue
-            seen.add(field_name)
-            names.append(field_name)
+        for candidates in groups:
+            for offset, _size, _count in sorted(
+                candidates,
+                key=lambda item: (
+                    item[0] == 0,
+                    -item[2],
+                    item[1],
+                    item[0],
+                ),
+            ):
+                field_name = _access_trait_field_name(offset, 1)
+                if field_name in seen:
+                    continue
+                seen.add(field_name)
+                names.append(field_name)
         return tuple(names)
 
 
