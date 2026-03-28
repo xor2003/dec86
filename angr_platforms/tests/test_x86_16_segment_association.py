@@ -92,3 +92,18 @@ def test_segmented_access_classifier_marks_multiple_stack_bases_as_over():
     assert classified.assoc_state.assoc_kind == "over"
     assert classified.assoc_state.is_over_associated()
     assert not classified.allows_object_rewrite()
+
+
+def test_segmented_access_classifier_tracks_single_stack_slot_as_single():
+    codegen = _make_codegen()
+    project = codegen.project
+    stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
+    expr = _make_segmented_expr([stack_var, stack_var])
+
+    classified = _decompile._classify_segmented_addr_expr(expr, project)
+
+    assert classified is not None
+    assert classified.assoc_kind == "single"
+    assert classified.assoc_state is not None
+    assert classified.assoc_state.assoc_kind == "single"
+    assert classified.allows_object_rewrite()

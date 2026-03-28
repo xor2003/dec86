@@ -159,6 +159,8 @@ coherent recovery pipeline.
   - make object-lowering conditional on stable association
   - extend association checks from local shape matching toward function-level
     reasoning
+  - treat repeated uses of one stack slot differently from genuinely distinct
+    stack slots so `ss`-based object lowering stays conservative
 - `Dependencies`:
   - `B1`
   - ideally `B2`
