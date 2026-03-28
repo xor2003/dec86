@@ -23,14 +23,18 @@ def _make_codegen():
 
 
 def test_storage_domain_classifier_distinguishes_variable_domains():
-    assert _decompile._storage_domain_for_variable(_decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)) == _decompile._StorageDomainSignature("stack", 2)
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="v14")) == _decompile._StorageDomainSignature("register", 2)
-    assert _decompile._storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15")) == _decompile._StorageDomainSignature("memory", 2)
+    stack = _decompile._storage_domain_for_variable(_decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000))
+    reg = _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="v14"))
+    mem = _decompile._storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15"))
+
+    assert stack == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(0, 16))
+    assert reg == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
+    assert mem == _decompile._StorageDomainSignature("memory", 2, _decompile._StorageView(0, 16))
 
 
 def test_storage_domain_classifier_distinguishes_subregister_widths():
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="al")) == _decompile._StorageDomainSignature("register", 1)
-    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="ax")) == _decompile._StorageDomainSignature("register", 2)
+    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="al")).view == _decompile._StorageView(0, 8)
+    assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="ax")).view == _decompile._StorageView(0, 16)
 
 
 def test_storage_domain_classifier_marks_mixed_expressions():
@@ -48,7 +52,7 @@ def test_storage_domain_classifier_marks_mixed_expressions():
     )
     mixed = _decompile.structured_c.CBinaryOp("Add", stack_expr, reg_expr, codegen=codegen)
 
-    assert _decompile._storage_domain_for_expr(pure_stack) == _decompile._StorageDomainSignature("stack", 2)
+    assert _decompile._storage_domain_for_expr(pure_stack) == _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(0, 16))
     assert _decompile._storage_domain_for_expr(mixed) == _decompile._StorageDomainSignature("mixed")
 
 

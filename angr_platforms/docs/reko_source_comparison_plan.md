@@ -716,6 +716,8 @@ Current status:
 - the storage-domain signature now behaves like a proper `domain + view`
   boundary, which makes the x86-16 alias layer closer to the register/stack/
   memory split used by more explicit IRs
+- that `view` is now an explicit object too, so register/stack/memory slices
+  are modeled as domain + projection instead of only width-tagged domains
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold
