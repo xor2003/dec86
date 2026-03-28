@@ -97,6 +97,7 @@ from angr_platforms.X86_16.alias_model import (
     _storage_view_for_variable,
 )
 from angr_platforms.X86_16.widening_model import can_join_adjacent_storage_slices
+from angr_platforms.X86_16.widening_alias import join_adjacent_register_slices
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -1505,6 +1506,23 @@ def _match_high_byte_projection_base(expr):
     return None
 
 
+def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
+    if isinstance(high_expr, structured_c.CBinaryOp) and high_expr.op in {"Mul", "Shl"}:
+        for maybe_inner, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
+            scale = _c_constant_value(_unwrap_c_casts(maybe_scale))
+            if scale not in {8, 0x100}:
+                continue
+            high_expr = _unwrap_c_casts(maybe_inner)
+            break
+    if not isinstance(low_expr, structured_c.CVariable) or not isinstance(high_expr, structured_c.CVariable):
+        return None
+    low_var = getattr(low_expr, "variable", None)
+    high_var = getattr(high_expr, "variable", None)
+    if not isinstance(low_var, SimRegisterVariable) or not isinstance(high_var, SimRegisterVariable):
+        return None
+    return join_adjacent_register_slices(low_expr, high_expr, codegen)
+
+
 def _match_high_byte_projection_expr(expr):
     expr = _unwrap_c_casts(expr)
     if not isinstance(expr, structured_c.CBinaryOp) or expr.op != "Shr":
@@ -2223,6 +2241,11 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             lhs = _resolve_copy_alias_expr(_unwrap_c_casts(node.lhs))
             rhs = _resolve_copy_alias_expr(_unwrap_c_casts(node.rhs))
             if node.op in {"Add", "Or"}:
+                widened = _match_adjacent_register_pair_var_expr(lhs, rhs, codegen)
+                if widened is None:
+                    widened = _match_adjacent_register_pair_var_expr(rhs, lhs, codegen)
+                if widened is not None:
+                    return widened
                 widened = _match_adjacent_byte_pair_var_expr(lhs, rhs)
                 if widened is None:
                     widened = _match_adjacent_byte_pair_var_expr(rhs, lhs)
