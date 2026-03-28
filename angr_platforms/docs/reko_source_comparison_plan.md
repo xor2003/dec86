@@ -487,6 +487,10 @@ This order is deliberate. The alias model and unified widening pass are the
 largest correctness/readability levers; the trait/type and segment-association
 work become much safer after those are in place.
 
+The active architecture follows the same stack:
+`IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
+with evidence-driven boundaries between each layer.
+
 ### Stage 1. Finish the typed rewrite lane
 
 Focus:
