@@ -709,6 +709,9 @@ Current status:
 - the segmented-address classifier now also emits an explicit association
   state object, so the segment/offset decision is visible as data rather than
   only as a stringly `assoc_kind` flag
+- that state now also has an explicit object-rewrite policy gate, so
+  over-associated segment accesses can be rejected as a boundary decision
+  instead of being handled through scattered `assoc_kind` checks
 - simple negated bitwise guards like `!(x & 1)` now normalize to explicit zero
   checks, which gives the `_SetGear`-style lane one more source-like baseline
 - array evidence is still being collected, but only guarded member rewrites are

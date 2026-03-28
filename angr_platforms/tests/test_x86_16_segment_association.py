@@ -72,6 +72,7 @@ def test_segmented_access_classifier_marks_single_stack_base_as_single():
     assert classified.assoc_state is not None
     assert classified.assoc_state.assoc_kind == "single"
     assert not classified.assoc_state.is_over_associated()
+    assert classified.allows_object_rewrite()
     assert classified.extra_offset == 2
 
 
@@ -90,3 +91,4 @@ def test_segmented_access_classifier_marks_multiple_stack_bases_as_over():
     assert classified.assoc_state is not None
     assert classified.assoc_state.assoc_kind == "over"
     assert classified.assoc_state.is_over_associated()
+    assert not classified.allows_object_rewrite()
