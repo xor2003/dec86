@@ -63,8 +63,12 @@ class ScanTimeout(Exception):
     pass
 
 
+_SCAN_ACTIVE = False
+
+
 def _alarm_handler(_signum, _frame):
-    raise ScanTimeout("timed out")
+    if _SCAN_ACTIVE:
+        raise ScanTimeout("timed out")
 
 
 def _clear_alarm() -> None:
@@ -176,6 +180,22 @@ def _should_skip_scan_safe_decompile(code_len: int, mode: str, max_decompile_byt
     return mode == "scan-safe" and max_decompile_bytes > 0 and code_len > max_decompile_bytes
 
 
+def _should_skip_scan_safe_cfg(code_len: int, mode: str, max_cfg_bytes: int) -> bool:
+    return mode == "scan-safe" and max_cfg_bytes > 0 and code_len > max_cfg_bytes
+
+
+def _should_skip_scan_safe_decompile_for_cfg_shape(cfg, mode: str, max_cfg_blocks: int, max_cfg_insns: int) -> bool:
+    if mode != "scan-safe" or (max_cfg_blocks <= 0 and max_cfg_insns <= 0):
+        return False
+    func = cfg.functions.get(0x1000)
+    if func is None:
+        return False
+    blocks = list(func.blocks)
+    block_count = len(blocks)
+    insn_count = sum(len(block.capstone.insns) for block in blocks)
+    return (max_cfg_blocks > 0 and block_count > max_cfg_blocks) or (max_cfg_insns > 0 and insn_count > max_cfg_insns)
+
+
 def scan_function(
     cod_file: Path,
     proc_name: str,
@@ -183,8 +203,12 @@ def scan_function(
     code: bytes,
     timeout_sec: int,
     mode: str,
+    max_cfg_bytes: int = 2048,
+    max_cfg_blocks: int = 8,
+    max_cfg_insns: int = 200,
     max_decompile_bytes: int = 384,
 ) -> FunctionScanResult:
+    global _SCAN_ACTIVE
     result = FunctionScanResult(
         cod_file=cod_file.name,
         proc_name=proc_name,
@@ -195,6 +219,7 @@ def scan_function(
     )
 
     old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+    _SCAN_ACTIVE = True
     signal.alarm(timeout_sec)
     try:
         try:
@@ -235,6 +260,19 @@ def scan_function(
             _clear_alarm()
             return result
 
+        if _should_skip_scan_safe_cfg(len(code), mode, max_cfg_bytes):
+            result.ok = True
+            result.fallback_kind = "lift_only"
+            _mark_stage(
+                result,
+                "cfg",
+                True,
+                detail=f"skipped cfg/decompile for oversized function ({len(code)} bytes > {max_cfg_bytes}); lift ok",
+            )
+            _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
+            _clear_alarm()
+            return result
+
         try:
             cfg = _scan_cfg(project, len(code))
             seed_calling_conventions(cfg)
@@ -250,6 +288,21 @@ def scan_function(
             return result
 
         _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
+
+        if _should_skip_scan_safe_decompile_for_cfg_shape(cfg, mode, max_cfg_blocks, max_cfg_insns):
+            result.ok = True
+            result.fallback_kind = "cfg_only"
+            _mark_stage(
+                result,
+                "decompile",
+                True,
+                detail=(
+                    "skipped decompile for complex CFG "
+                    f"(blocks>{max_cfg_blocks} or insns>{max_cfg_insns}); cfg ok"
+                ),
+            )
+            _clear_alarm()
+            return result
 
         if _should_skip_scan_safe_decompile(len(code), mode, max_decompile_bytes):
             result.ok = True
@@ -268,8 +321,14 @@ def scan_function(
             codegen = getattr(dec, "codegen", None)
             if codegen is None or not getattr(codegen, "text", ""):
                 failure_class, reason = classify_failure("decompile", None, empty_codegen=True)
-                result.failure_class = failure_class
                 result.reason = reason
+                if mode == "scan-safe":
+                    result.ok = True
+                    result.fallback_kind = "cfg_only"
+                    _mark_stage(result, "decompile", True, detail=reason)
+                    _clear_alarm()
+                    return result
+                result.failure_class = failure_class
                 result.fallback_kind = "block_lift"
                 _mark_stage(result, "decompile", False, reason=failure_class, detail=reason)
                 _clear_alarm()
@@ -288,6 +347,7 @@ def scan_function(
             _clear_alarm()
             return result
     finally:
+        _SCAN_ACTIVE = False
         _clear_alarm()
         signal.signal(signal.SIGALRM, old_handler)
 
@@ -374,4 +434,6 @@ __all__ = [
     "set_memory_limit",
     "summarize_results",
     "_should_skip_scan_safe_decompile",
+    "_should_skip_scan_safe_cfg",
+    "_should_skip_scan_safe_decompile_for_cfg_shape",
 ]

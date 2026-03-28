@@ -14,8 +14,13 @@ class Memory:
         self.a20gate = False
 
     def __del__(self):
-        del self.memory
-        self.mem_size = 0
+        try:
+            del self.memory
+            self.mem_size = 0
+        except Exception:
+            # Destructor paths can run while scan-safe timeouts are unwinding.
+            # Keep cleanup best-effort and never let finalization emit noise.
+            pass
 
     def dump_mem(self, addr: int, size: int):
         addr &= ~(0x10 - 1)

@@ -16,9 +16,13 @@ class IO:
         self.mem_io_map: Dict[int, int] = {}
 
     def __del__(self):
-        self.port_io.clear()
-        self.mem_io.clear()
-        self.mem_io_map.clear()
+        try:
+            self.port_io.clear()
+            self.mem_io.clear()
+            self.mem_io_map.clear()
+        except Exception:
+            # Keep destructor cleanup quiet during scan-safe timeout unwinding.
+            pass
 
     def set_portio(self, addr: int, length: int, dev: PortIO):
         addr &= ~1

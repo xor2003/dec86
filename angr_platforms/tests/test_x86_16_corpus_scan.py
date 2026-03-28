@@ -1,8 +1,14 @@
+from pathlib import Path
+
 from angr_platforms.X86_16.corpus_scan import (
     FunctionScanResult,
     ScanTimeout,
     StageResult,
+    _should_skip_scan_safe_cfg,
     _should_skip_scan_safe_decompile,
+    _should_skip_scan_safe_decompile_for_cfg_shape,
+    extract_cod_functions,
+    scan_function,
     classify_failure,
     summarize_results,
 )
@@ -164,3 +170,59 @@ def test_scan_safe_skips_oversized_decompile_attempts():
     assert _should_skip_scan_safe_decompile(384, "scan-safe", 384) is False
     assert _should_skip_scan_safe_decompile(698, "lift", 384) is False
     assert _should_skip_scan_safe_decompile(698, "scan-safe", 0) is False
+
+
+def test_scan_safe_skips_oversized_cfg_attempts():
+    assert _should_skip_scan_safe_cfg(2608, "scan-safe", 2048) is True
+    assert _should_skip_scan_safe_cfg(1589, "scan-safe", 2048) is False
+    assert _should_skip_scan_safe_cfg(2608, "lift", 2048) is False
+    assert _should_skip_scan_safe_cfg(2608, "scan-safe", 0) is False
+
+
+def test_scan_safe_skips_complex_cfg_shapes():
+    class _FakeBlock:
+        def __init__(self, insn_count: int):
+            self.capstone = type("Capstone", (), {"insns": [object()] * insn_count})()
+
+    class _FakeFunc:
+        def __init__(self, blocks):
+            self._blocks = blocks
+
+        @property
+        def blocks(self):
+            return self._blocks
+
+    class _FakeCfg:
+        def __init__(self, blocks):
+            self.functions = {0x1000: _FakeFunc(blocks)}
+
+    assert _should_skip_scan_safe_decompile_for_cfg_shape(_FakeCfg([_FakeBlock(201)]), "scan-safe", 8, 200) is True
+    assert _should_skip_scan_safe_decompile_for_cfg_shape(_FakeCfg([_FakeBlock(1)] * 9), "scan-safe", 8, 200) is True
+    assert _should_skip_scan_safe_decompile_for_cfg_shape(_FakeCfg([_FakeBlock(20)]), "lift", 8, 200) is False
+    assert _should_skip_scan_safe_decompile_for_cfg_shape(_FakeCfg([_FakeBlock(5)]), "scan-safe", 8, 200) is False
+
+
+def test_scan_safe_keeps_empty_codegen_as_fallback_for_known_hotspots():
+    repo_root = Path(__file__).resolve().parents[2]
+    expectations = {
+        ("OUTPUT.COD", "_hexdump"): "cfg_only",
+        ("START1.COD", "_processStoreInput"): "cfg_only",
+    }
+
+    for (cod_name, proc_name), expected_fallback in expectations.items():
+        cod_path = repo_root / "cod" / cod_name
+        funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
+        kind, code = funcs[proc_name]
+        result = scan_function(
+            cod_path,
+            proc_name,
+            kind,
+            code,
+            timeout_sec=5,
+            mode="scan-safe",
+            max_cfg_bytes=2048,
+            max_decompile_bytes=384,
+        )
+        assert result.ok is True
+        assert result.failure_class is None
+        assert result.fallback_kind == expected_fallback
