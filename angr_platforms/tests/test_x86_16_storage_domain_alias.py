@@ -87,6 +87,24 @@ def test_storage_domain_classifier_tracks_bp_stack_slot_identity():
     assert joined == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
 
 
+def test_storage_domain_classifier_rejects_mismatched_bp_stack_regions():
+    low_view = _StorageDomainSignature(
+        "stack",
+        1,
+        _StorageView(-32, 8),
+        stack_slot=_StackSlotIdentity("bp", -4, 1, region=0x1000),
+    )
+    high_view = _StorageDomainSignature(
+        "stack",
+        1,
+        _StorageView(-24, 8),
+        stack_slot=_StackSlotIdentity("bp", -3, 1, region=0x2000),
+    )
+
+    assert not low_view.can_join(high_view)
+    assert low_view.join(high_view) is None
+
+
 def test_storage_domain_merge_helper_prefers_joinable_domains():
     low = _StorageDomainSignature("register", 1, _StorageView(0, 8))
     high = _StorageDomainSignature("register", 1, _StorageView(8, 8))
