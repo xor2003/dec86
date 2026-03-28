@@ -14,6 +14,7 @@ _spec.loader.exec_module(_decompile)
 
 _access_trait_member_candidates = _decompile._access_trait_member_candidates
 _build_access_trait_evidence_profiles = _decompile._build_access_trait_evidence_profiles
+_AccessTraitRewriteDecision = _decompile._AccessTraitRewriteDecision
 
 
 def test_access_trait_profiles_keep_member_array_and_induction_lanes_distinct():
@@ -125,6 +126,12 @@ def test_access_trait_stack_profiles_prefer_stack_like_naming_order():
         (4, 2, 5),
         (8, 2, 1),
         (12, 2, 2),
+    )
+    assert _AccessTraitRewriteDecision(("stack", "bp", -4), profile).candidate_field_names() == (
+        "field_-4",
+        "field_4",
+        "field_8",
+        "field_c",
     )
     assert profile.naming_candidates(("reg", 30)) == (
         (4, 2, 5),

@@ -233,8 +233,8 @@ This phase converts cleaner value recovery into source-like object recovery.
       type guess
   - build stable evidence profiles per base object
   - make stack bases prefer stack-like evidence first when ordering candidate
-    names, while leaving non-stack bases on the existing member/array-first
-    order
+    names, and keep that priority stable through candidate-field-name
+    generation instead of letting a later sort erase it
   - keep positive tests on real `.COD` and `snake` helpers
 - `Dependencies`:
   - `B1`
