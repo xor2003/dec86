@@ -264,6 +264,14 @@ def scan_function(
 
 def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str, object]:
     failure_counter = Counter(result.failure_class for result in results if result.failure_class is not None)
+    failure_file_counter = Counter(
+        result.cod_file for result in results if not result.ok and result.failure_class is not None
+    )
+    failure_function_counter = Counter(
+        (result.cod_file, result.proc_name, result.proc_kind, result.failure_class)
+        for result in results
+        if not result.ok and result.failure_class is not None
+    )
     per_file: dict[str, dict[str, int]] = defaultdict(lambda: {"scanned": 0, "ok": 0})
 
     for result in results:
@@ -277,12 +285,36 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         name for name, stats in per_file.items() if 0 < stats["ok"] < stats["scanned"]
     )
 
+    top_failure_classes = [
+        {"failure_class": failure_class, "count": count}
+        for failure_class, count in sorted(failure_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    top_failure_files = [
+        {"cod_file": cod_file, "count": count}
+        for cod_file, count in sorted(failure_file_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    top_failure_functions = [
+        {
+            "cod_file": cod_file,
+            "proc_name": proc_name,
+            "proc_kind": proc_kind,
+            "failure_class": failure_class,
+            "count": count,
+        }
+        for (cod_file, proc_name, proc_kind, failure_class), count in sorted(
+            failure_function_counter.items(), key=lambda item: (-item[1], item[0])
+        )
+    ]
+
     return {
         "mode": mode,
         "scanned": len(results),
         "ok": sum(1 for result in results if result.ok),
         "failed": sum(1 for result in results if not result.ok),
         "failure_counts": dict(sorted(failure_counter.items())),
+        "top_failure_classes": top_failure_classes,
+        "top_failure_files": top_failure_files,
+        "top_failure_functions": top_failure_functions,
         "files_zero_success": files_zero_success,
         "files_partial_success": files_partial_success,
         "files_scan_clean": files_scan_clean,

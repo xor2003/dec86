@@ -355,6 +355,8 @@ This phase broadens good architecture across a wider real corpus.
     - poor helper signatures
     - ugly startup/runtime output
   - rank quality gaps by recurrence, not only by aesthetics
+  - keep scan summaries grouped by failure class, file, and function so the
+    next fixes come from recurring outliers instead of isolated anecdotes
 - `Dependencies`:
   - none beyond the current corpus workflow
 - `Exit signal`:
