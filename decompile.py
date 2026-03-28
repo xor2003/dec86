@@ -93,6 +93,8 @@ from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.alias_model import (
     _CopyAliasState,
     _StackPointerAliasState,
+    _same_stack_slot_identity,
+    _stack_slot_identity_for_variable,
     _storage_domain_for_expr,
     _storage_domain_for_variable,
     _storage_view_for_variable,
@@ -811,11 +813,14 @@ class _SegmentAssociationState:
     base_terms: int = 0
     other_terms: int = 0
     const_offset: int = 0
+    stack_slots: tuple[object, ...] = ()
 
     @property
     def assoc_kind(self) -> str:
         if self.seg_name is None:
             return "unknown"
+        if len(self.stack_slots) > 1:
+            return "over"
         if self.base_terms == 0:
             return "const" if self.other_terms == 0 else "over"
         if self.other_terms > 0:
@@ -873,6 +878,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
     const_offset = 0
     other_terms = []
     base_terms = 0
+    stack_slots = set()
 
     for term in _flatten_c_add_terms(node):
         inner = _unwrap_c_casts(term)
@@ -903,9 +909,16 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
                 cvar = matched_cvar
                 if isinstance(matched_var, SimStackVariable):
                     stack_var = matched_var
+                    identity = _stack_slot_identity_for_variable(matched_var)
+                    if identity is not None:
+                        stack_slots.add(identity)
                 const_offset += stack_offset
                 base_terms += 1
             elif current_var is matched_var:
+                if isinstance(matched_var, SimStackVariable):
+                    identity = _stack_slot_identity_for_variable(matched_var)
+                    if identity is not None:
+                        stack_slots.add(identity)
                 const_offset += stack_offset
                 base_terms += 1
             else:
@@ -923,6 +936,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         base_terms=base_terms,
         other_terms=len(other_terms),
         const_offset=const_offset,
+        stack_slots=tuple(stack_slots),
     )
     assoc_kind = assoc_state.assoc_kind
 
@@ -1353,6 +1367,14 @@ def _same_c_storage(lhs, rhs) -> bool:
     if isinstance(lvar, SimMemoryVariable):
         return getattr(lvar, "addr", None) == getattr(rvar, "addr", None)
     return lvar == rvar
+
+
+def _same_stack_slot_identity(lhs, rhs) -> bool:
+    if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
+        return False
+    lvar = getattr(lhs, "variable", None)
+    rvar = getattr(rhs, "variable", None)
+    return _same_stack_slot_identity(lvar, rvar)
 
 
 def _is_c_constant_int(node, value: int) -> bool:
@@ -2790,12 +2812,15 @@ class _AccessTraitEvidenceProfile:
     member_like: tuple[tuple[int, int, int], ...] = ()
     array_like: tuple[tuple[int, int, int], ...] = ()
     induction_like: tuple[tuple[int, int, int], ...] = ()
+    stack_like: tuple[tuple[int, int, int], ...] = ()
 
-    def naming_candidates(self) -> tuple[tuple[int, int, int], ...]:
-        return self.member_like + self.array_like + self.induction_like
+    def naming_candidates(self, base_key: tuple[object, ...] | None = None) -> tuple[tuple[int, int, int], ...]:
+        if base_key is not None and base_key and base_key[0] == "stack":
+            return self.stack_like + self.member_like + self.array_like + self.induction_like
+        return self.member_like + self.array_like + self.induction_like + self.stack_like
 
     def has_any_evidence(self) -> bool:
-        return bool(self.member_like or self.array_like or self.induction_like)
+        return bool(self.member_like or self.array_like or self.induction_like or self.stack_like)
 
     def best_rewrite_kind(self) -> str | None:
         if self.member_like and self.array_like:
@@ -2806,6 +2831,8 @@ class _AccessTraitEvidenceProfile:
             return "member"
         if self.induction_like:
             return "induction"
+        if self.stack_like:
+            return "stack"
         return None
 
 
@@ -2822,19 +2849,13 @@ class _AccessTraitRewriteDecision:
     profile: _AccessTraitEvidenceProfile
 
     def should_rename_stack(self) -> bool:
-        return self.profile.best_rewrite_kind() in {"member", "array", "mixed"}
+        return self.profile.best_rewrite_kind() in {"member", "array", "mixed", "stack"}
 
     def preferred_kind(self) -> str | None:
         return self.profile.best_rewrite_kind()
 
     def candidate_field_names(self) -> tuple[str, ...]:
-        candidates: list[tuple[int, int, int]] = []
-        if self.profile.member_like:
-            candidates.extend(self.profile.member_like)
-        if self.profile.array_like:
-            candidates.extend(self.profile.array_like)
-        if self.profile.induction_like:
-            candidates.extend(self.profile.induction_like)
+        candidates = list(self.profile.naming_candidates(self.base_key))
         if not candidates:
             return ()
         ordered = sorted(
@@ -2886,8 +2907,13 @@ def _build_access_trait_evidence_profiles(
                 size = key[size_index]
             if size not in {1, 2}:
                 continue
-            profile = raw_profiles.setdefault(base_key, {"member_like": [], "array_like": [], "induction_like": []})
+            profile = raw_profiles.setdefault(
+                base_key,
+                {"member_like": [], "array_like": [], "induction_like": [], "stack_like": []},
+            )
             profile[category].append((offset, size, count))
+            if category in {"member_like", "stack_like"} and base_key[0] == "stack":
+                profile["stack_like"].append((offset, size, count))
 
     add_bucket("member_evidence", "member_like", 0, 1, 2)
     add_bucket("repeated_offsets", "member_like", 1, 2, None)
@@ -2901,6 +2927,7 @@ def _build_access_trait_evidence_profiles(
             member_like=tuple(data["member_like"]),
             array_like=tuple(data["array_like"]),
             induction_like=tuple(data["induction_like"]),
+            stack_like=tuple(data["stack_like"]),
         )
         for base_key, data in raw_profiles.items()
     }
@@ -2992,7 +3019,7 @@ def _analyze_widening_expr(
 def _access_trait_member_candidates(traits: dict[str, dict[tuple[object, ...], int]]) -> dict[tuple[object, ...], list[tuple[int, int, int]]]:
     profiles = _build_access_trait_evidence_profiles(traits)
     return {
-        base_key: list(profile.naming_candidates())
+        base_key: list(profile.naming_candidates(base_key))
         for base_key, profile in profiles.items()
         if profile.has_any_evidence()
     }
@@ -4159,7 +4186,7 @@ def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) ->
                         high_expr = _match_shift_right_8_expr(next_stmt.rhs)
                         if (
                             extra_offset == 1
-                            and _same_c_storage(target_cvar, stmt.lhs)
+                            and (_same_stack_slot_identity(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
                             and high_expr is not None
                             and _same_c_expression(_unwrap_c_casts(high_expr), _unwrap_c_casts(stmt.rhs))
                         ):
@@ -4531,7 +4558,7 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
                             rhs_word = _match_word_rhs_from_byte_pair(stmt.rhs, next_stmt.rhs, codegen, project)
                             if (
                                 extra_offset == 1
-                                and _same_c_storage(target_cvar, stmt.lhs)
+                                and (_same_stack_slot_identity(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
                                 and rhs_word is not None
                             ):
                                 if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, target_type):
