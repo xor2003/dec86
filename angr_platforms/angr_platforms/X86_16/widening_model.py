@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from angr.analyses.decompiler.structured_codegen import c as structured_c
-
 from .alias_model import _StorageDomainSignature, _StorageView, _merge_storage_domains, _storage_domain_for_expr
 
 
@@ -16,21 +14,22 @@ class WideningCandidate:
     def is_joinable_with(self, other: "WideningCandidate") -> bool:
         return self.domain.can_join(other.domain) and self.view.can_join(other.view)
 
-
-def _unwrap_c_casts(expr):
-    while isinstance(expr, structured_c.CTypeCast):
-        expr = expr.expr
-    return expr
+    @classmethod
+    def from_expr(cls, expr: object) -> "WideningCandidate":
+        domain = _storage_domain_for_expr(expr)
+        if domain.view is None:
+            raise ValueError("cannot build widening candidate without a concrete storage view")
+        return cls(domain, domain.view, expr)
 
 
 def can_join_adjacent_storage_slices(low_expr, high_expr) -> bool:
-    low_domain = _storage_domain_for_expr(low_expr)
-    high_domain = _storage_domain_for_expr(high_expr)
-    if low_domain.is_unknown() or high_domain.is_unknown():
+    low_candidate = WideningCandidate.from_expr(low_expr)
+    high_candidate = WideningCandidate.from_expr(high_expr)
+    if low_candidate.domain.is_unknown() or high_candidate.domain.is_unknown():
         return False
-    if low_domain.is_mixed() or high_domain.is_mixed():
+    if low_candidate.domain.is_mixed() or high_candidate.domain.is_mixed():
         return False
-    if not low_domain.can_join(high_domain):
+    if not low_candidate.is_joinable_with(high_candidate):
         return False
     return True
 

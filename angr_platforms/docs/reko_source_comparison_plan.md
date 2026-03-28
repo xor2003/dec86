@@ -735,7 +735,8 @@ Current status:
 - register slices are covered too, so the same boundary now proves the
   register/stack/memory split the alias model is supposed to own
 - the widening boundary also has an explicit candidate object now, which keeps
-  the join policy as data rather than only as a boolean helper
+  the join policy as data rather than only as a boolean helper, and the
+  candidate can be built directly from a storage expression now
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold
