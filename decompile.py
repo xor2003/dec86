@@ -2822,7 +2822,9 @@ class _AccessTraitEvidenceProfile:
     def has_any_evidence(self) -> bool:
         return bool(self.member_like or self.array_like or self.induction_like or self.stack_like)
 
-    def best_rewrite_kind(self) -> str | None:
+    def best_rewrite_kind(self, base_key: tuple[object, ...] | None = None) -> str | None:
+        if base_key is not None and base_key and base_key[0] == "stack" and self.stack_like:
+            return "stack"
         if self.member_like and self.array_like:
             return "mixed"
         if self.array_like:
@@ -2852,7 +2854,7 @@ class _AccessTraitRewriteDecision:
         return self.profile.best_rewrite_kind() in {"member", "array", "mixed", "stack"}
 
     def preferred_kind(self) -> str | None:
-        return self.profile.best_rewrite_kind()
+        return self.profile.best_rewrite_kind(self.base_key)
 
     def candidate_field_names(self) -> tuple[str, ...]:
         if self.base_key and self.base_key[0] == "stack":
