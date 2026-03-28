@@ -13,6 +13,7 @@ from angr_platforms.X86_16 import decompiler_postprocess_stage
 
 def test_x86_16_package_exports_source_backends():
     assert "cod_extract" in x8616.__all__
+    assert "corpus_scan" in x8616.__all__
     assert "cod_source_rewrites" in x8616.__all__
     assert "COD_SOURCE_REWRITE_REGISTRY" in x8616.__all__
     assert "apply_cod_source_rewrites" in x8616.__all__

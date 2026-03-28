@@ -3,6 +3,7 @@ __all__ = [
     "annotations",
     "arch_86_16",
     "cod_extract",
+    "corpus_scan",
     "cod_source_rewrites",
     "apply_cod_source_rewrites",
     "lift_86_16",
@@ -42,7 +43,7 @@ __all__ = [
     "DecompilerPostprocessPassSpec",
 ]
 
-from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, lift_86_16, load_dos_mz, simos_86_16  # noqa: F401
+from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, lift_86_16, load_dos_mz, simos_86_16  # noqa: F401
 from . import alias_domains, alias_model, alias_state, alias_transfer, compat, patch_dirty, stack_compat, typehoon_compat, widening_alias, widening_model  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,
