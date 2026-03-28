@@ -283,7 +283,8 @@ This phase converts cleaner value recovery into source-like object recovery.
 - `Low-level steps`:
   - map repeated offsets to field candidates
   - map stride/induction patterns to array candidates
-  - keep mixed evidence conservative
+  - keep mixed evidence conservative by preferring no rewrite when member and
+    array evidence conflict on the same base
   - prefer "no rewrite" over guessed pretty output when evidence conflicts
 - `Dependencies`:
   - `C1`

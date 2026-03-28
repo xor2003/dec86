@@ -122,4 +122,5 @@ def test_access_trait_rewrite_decision_separates_evidence_kinds():
 
     assert _AccessTraitRewriteDecision(("stack", "bp", -4), member_profile).preferred_kind() == "member"
     assert _AccessTraitRewriteDecision(("stack", "bp", -4), array_profile).preferred_kind() == "array"
-    assert _AccessTraitRewriteDecision(("stack", "bp", -4), mixed_profile).preferred_kind() == "mixed"
+    assert _AccessTraitRewriteDecision(("stack", "bp", -4), mixed_profile).preferred_kind() is None
+    assert _AccessTraitRewriteDecision(("stack", "bp", -4), mixed_profile).candidate_field_names() == ()
