@@ -491,6 +491,12 @@ The active architecture follows the same stack:
 `IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
 with evidence-driven boundaries between each layer.
 
+For x86-16, the alias layer should start with explicit storage domains and
+views: register domains first, then stack-slot domains, then segmented-memory
+domains. Widening should only join slices that the alias layer has already
+proved compatible, so the unified widening pass stays a consumer of alias
+facts instead of becoming a source of speculative merges.
+
 ### Stage 1. Finish the typed rewrite lane
 
 Focus:
@@ -707,6 +713,9 @@ Current status:
   varnode-like storage-domain signature, underlying expression, and a
   `needs_synthesis` stop bit, which is a small but real architectural step
   toward the fuller storage-domain alias model
+- the storage-domain signature now behaves like a proper `domain + view`
+  boundary, which makes the x86-16 alias layer closer to the register/stack/
+  memory split used by more explicit IRs
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold
