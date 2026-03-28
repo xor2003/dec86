@@ -399,6 +399,9 @@ This phase is about maturity, not a new foundation.
   - improve call target recovery in bounded CFG paths
   - preserve helper names and signatures more consistently
   - reduce `callee None` style decompiler failures on real samples
+  - keep helper attachment tolerant of partial call-node recovery so bounded
+    CFG paths can still recover meaningful pseudo-callee names when the C tree
+    collapses some call sites
 - `Dependencies`:
   - `C4`
   - `D1`
