@@ -715,8 +715,12 @@ Useful recent commit in `f15se2-re`:
 ### Tips And Tricks For Next Agents
 
 - For wide `.COD` triage, use the bounded scanner instead of ad hoc probing:
-  - `../.venv/bin/python scripts/scan_cod_dir.py /path/to/cod_dir --timeout-sec 5 --max-memory-mb 1024`
+  - `../.venv/bin/python scripts/scan_cod_dir.py /path/to/cod_dir --mode scan-safe --timeout-sec 5 --max-memory-mb 1024`
   - `../.venv/bin/python scripts/scan_cod_dir.py /path/to/cod_dir --mode decompile-reloc-free --timeout-sec 5 --max-memory-mb 1024`
+  - `scan-safe` is the preferred corpus-scan lane:
+    - bounded single-function first
+    - staged results for load, normalize, lift, cfg, cleanup, and decompile
+    - structured failure taxonomy plus fallback classification
   - it now scans recursively with `rglob("*.COD")`, not just one directory level
   - it is sequential, applies a hard address-space cap with `RLIMIT_AS`, and prevents the multi-process RAM blowups the user reported
 - Current bounded whole-directory result for `cod/default/`:
