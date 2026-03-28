@@ -2797,6 +2797,12 @@ def _access_trait_field_name(offset: int, size: int) -> str:
     return f"field_{offset:x}"
 
 
+def _stack_object_name(offset: int) -> str:
+    if offset >= 0:
+        return f"arg_{offset:x}"
+    return f"local_{-offset:x}"
+
+
 def _access_trait_variable_key(variable) -> tuple[object, ...] | None:
     if isinstance(variable, SimRegisterVariable):
         return ("reg", getattr(variable, "reg", None))
@@ -3096,7 +3102,10 @@ def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
         if not is_generic_stack_name(name) and not (isinstance(name, str) and name.startswith("field_")):
             return None
 
-        field_name = _access_trait_field_name(suffix, getattr(variable, "size", 1))
+        if decision.preferred_kind() == "stack":
+            field_name = _stack_object_name(getattr(variable, "offset", suffix))
+        else:
+            field_name = _access_trait_field_name(suffix, getattr(variable, "size", 1))
         nonlocal changed
         if getattr(variable, "name", None) != field_name:
             variable.name = field_name
