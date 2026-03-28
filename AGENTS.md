@@ -122,6 +122,148 @@ Start with register domains, stack-slot domains, and segmented-memory domains.
 Only widen values after the alias model has already proved that the parts are
 compatible.
 
+### Dream Decompiler Target
+
+The long-term target for Inertia is not abstract "better pseudocode". It is a
+decompiler that can systematically recover readable, evidence-driven C from a
+real 16-bit x86 DOS corpus.
+
+In practical terms, the dream state means:
+
+- it correctly decompiles real small/medium-model DOS programs, not only toy
+  samples
+- it produces readable C with better locals, arguments, booleans, fields,
+  arrays, and fewer synthetic temporaries
+- it gets those wins from explicit recovery layers instead of an endless bag of
+  ad hoc rewrites
+- it preserves a strong regression discipline on real sample oracles
+- it gradually improves partial recompilability as a side effect of stronger
+  decompilation quality
+
+### High-Level Phases
+
+Use this roadmap as the default high-level direction for major x86-16 work:
+
+#### Phase A. Stable Decompilation Platform
+
+This is the baseline:
+
+- lifter
+- loader
+- runtime and interrupt support
+- CFG recovery
+- bounded decompilation
+- test harnesses
+- sample matrix coverage
+
+This phase is mostly in place already. Keep extending it only when real corpus
+failures still come from missing lifting, runtime semantics, or loader support.
+
+#### Phase B. Recovery Architecture
+
+This is the main turning point and the highest-ROI phase.
+
+The goal is to convert distributed recovery logic into an explicit pipeline:
+
+- alias model
+- widening
+- segmented association analysis
+
+Subphases:
+
+- `B1. Register alias domains`
+  - `AX/AL/AH`, `BX/BL/BH`, `CX/CL/CH`, `DX/DL/DH`
+  - full vs partial write semantics
+  - explicit synthesis of wider values
+- `B2. Stack-slot identity`
+  - stable `bp`-framed stack slots
+  - byte/word views
+  - safe stack byte-pair widening
+- `B3. Segmented association analysis`
+  - treat `ss`, `ds`, and `es` as separate spaces
+  - record stable base association vs over-associated cases
+  - allow pointer-like lowering only when the evidence is strong
+- `B4. Unified widening`
+  - candidate extraction
+  - compatibility proof
+  - rewrite
+  - handle register joins, stack joins, memory joins, and projection cleanup
+
+The intended rule stays strict: alias facts first, widening second.
+
+#### Phase C. Evidence -> Types -> Objects
+
+This is where output becomes genuinely source-like.
+
+The order here matters:
+
+- traits collect evidence
+- types interpret stable evidence
+- object rewrites happen late
+
+Key goals:
+
+- turn repeated offsets, stride, induction, and array contexts into evidence
+  profiles instead of loose naming hints
+- recover stable stack objects, globals, fields, arrays, and typed pointers
+- improve calling conventions, prototypes, helper signatures, and multiword
+  returns only when the evidence is strong enough
+
+Typed object rewriting must stay downstream of stable evidence. Do not guess
+structs or arrays early.
+
+#### Phase D. Corpus-Scale Generalization
+
+This phase turns a good architecture into a useful corpus-grade decompiler.
+
+Goals:
+
+- reduce dependence on one-off allowlists and source-backed rescue paths
+- mine the real corpus for repeated readability failures
+- keep multi-level validation:
+  - unit tests
+  - focused corpus tests
+  - whole-program sanity checks
+
+The purpose is not to remove corpus-backed oracles. It is to make more of the
+wins come from general architecture instead of isolated miracles.
+
+#### Phase E. Dream-Quality Decompiler
+
+This is the mature target:
+
+- stable IR pipeline
+- explicit alias and widening layers
+- evidence-driven type and object recovery
+- readable structured C on the target DOS/x86-16 corpus
+- strong correctness envelope: if uncertain, stay conservative instead of
+  hallucinating
+- sustainable design where new contributors can understand the system by layer
+  instead of reverse-engineering intertwined passes
+
+### What Gives The Biggest Quality Win
+
+For planning and prioritization, the biggest quality drivers are:
+
+1. alias model
+2. unified widening
+3. stack/object identity
+4. prototype and calling-convention cleanup
+5. trait evidence refinement
+6. member/array/object recovery
+
+### How To Judge Progress
+
+Use this rule of thumb:
+
+- bad direction: every new good example needs another special rewrite,
+  allowlist, or source-backed rescue
+- good direction: each new architectural layer explains more old wins, reduces
+  special cases, and transfers to new corpus cases with less extra work
+
+That is the main success criterion for moving from a working x86-16 decompiler
+to the dream decompiler for this project.
+
 ## Tutorials
 
 - [Part 1: Basics](angr_platforms/tutorial/1_basics.md) – angr lifecycle and components.
