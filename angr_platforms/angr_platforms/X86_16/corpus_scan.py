@@ -167,6 +167,10 @@ def _scan_cfg(project: angr.Project, code_len: int):
     )
 
 
+def _should_skip_scan_safe_decompile(code_len: int, mode: str, max_decompile_bytes: int) -> bool:
+    return mode == "scan-safe" and max_decompile_bytes > 0 and code_len > max_decompile_bytes
+
+
 def scan_function(
     cod_file: Path,
     proc_name: str,
@@ -174,6 +178,7 @@ def scan_function(
     code: bytes,
     timeout_sec: int,
     mode: str,
+    max_decompile_bytes: int = 384,
 ) -> FunctionScanResult:
     result = FunctionScanResult(
         cod_file=cod_file.name,
@@ -235,6 +240,17 @@ def scan_function(
             return result
 
         _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
+
+        if _should_skip_scan_safe_decompile(len(code), mode, max_decompile_bytes):
+            result.ok = True
+            result.fallback_kind = "cfg_only"
+            _mark_stage(
+                result,
+                "decompile",
+                True,
+                detail=f"skipped decompile for oversized function ({len(code)} bytes > {max_decompile_bytes}); cfg ok",
+            )
+            return result
 
         try:
             dec = project.analyses.Decompiler(func, cfg=cfg)
@@ -342,4 +358,5 @@ __all__ = [
     "scan_function",
     "set_memory_limit",
     "summarize_results",
+    "_should_skip_scan_safe_decompile",
 ]

@@ -1,4 +1,11 @@
-from angr_platforms.X86_16.corpus_scan import FunctionScanResult, ScanTimeout, StageResult, classify_failure, summarize_results
+from angr_platforms.X86_16.corpus_scan import (
+    FunctionScanResult,
+    ScanTimeout,
+    StageResult,
+    _should_skip_scan_safe_decompile,
+    classify_failure,
+    summarize_results,
+)
 
 
 def test_corpus_scan_classifies_core_failure_kinds():
@@ -150,3 +157,10 @@ def test_corpus_scan_summary_ranks_repeat_failures():
         "failure_class": "timeout",
         "count": 1,
     }
+
+
+def test_scan_safe_skips_oversized_decompile_attempts():
+    assert _should_skip_scan_safe_decompile(698, "scan-safe", 384) is True
+    assert _should_skip_scan_safe_decompile(384, "scan-safe", 384) is False
+    assert _should_skip_scan_safe_decompile(698, "lift", 384) is False
+    assert _should_skip_scan_safe_decompile(698, "scan-safe", 0) is False
