@@ -48,6 +48,15 @@ def test_storage_domain_classifier_joins_adjacent_views():
     assert _decompile._StorageView(0, 8).can_join(_decompile._StorageView(8, 8))
 
 
+def test_storage_domain_merge_helper_prefers_joinable_domains():
+    low = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(0, 8))
+    high = _decompile._StorageDomainSignature("register", 1, _decompile._StorageView(8, 8))
+    mixed = _decompile._StorageDomainSignature("stack", 2, _decompile._StorageView(0, 16))
+
+    assert _decompile._merge_storage_domains(low, high) == _decompile._StorageDomainSignature("register", 2, _decompile._StorageView(0, 16))
+    assert _decompile._merge_storage_domains(low, mixed) == _decompile._StorageDomainSignature("mixed")
+
+
 def test_storage_domain_classifier_marks_mixed_expressions():
     codegen = _make_codegen()
     stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
