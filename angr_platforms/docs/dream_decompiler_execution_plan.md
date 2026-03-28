@@ -50,6 +50,8 @@ later recovery architecture evolves.
   - add compare-style semantics tests for instructions that still block real
     code
   - add focused lift/decompile regressions for each newly unblocked sample
+  - use MartyPC as a reference when an instruction family still needs clearer
+    semantic factoring or flag/stack/control-transfer organization
 - `Exit signal`:
   - new real-sample failures are more often readability/recovery failures than
     missing opcode failures
@@ -154,6 +156,23 @@ coherent recovery pipeline.
 - `Exit signal`:
   - widening lives as one coherent recovery stage instead of multiple unrelated
     cleanup tricks
+
+## Reference Implementation Notes: MartyPC
+
+MartyPC is not a decompiler, but it is a useful reference implementation for the instruction-core side of the x86-16 stack. The most useful patterns to borrow are:
+
+- split instruction families into small semantic modules instead of one monolithic executor
+- keep string operations explicit, with side effects and direction-flag updates localized
+- centralize ALU flag updates instead of scattering flag logic across instruction handlers
+- keep near/far jump, call, return, and interrupt paths separate and explicit
+- make stack push/pop semantics simple and reusable
+
+For Inertia, these ideas are most useful as low-level guidance for x86-16 maintenance work, not as a replacement for the alias/widening/type pipeline. The practical application order is:
+
+1. keep instruction handlers in small semantic groups
+2. prefer shared helpers for repeated flag, stack, and control-transfer behavior
+3. use MartyPC-style clarity when cleaning up handlers that still affect scan stability or real-sample correctness
+4. keep these instruction-level patterns downstream of the architecture boundary already fixed in `IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
 
 ## Phase C. Evidence To Types To Objects
 

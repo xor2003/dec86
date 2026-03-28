@@ -9,7 +9,17 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
+def _silence_scan_loggers() -> None:
+    for name in (
+        "angr.state_plugins.unicorn_engine",
+        "angr.analyses.analysis",
+        "angr.analyses.decompiler.clinic",
+        "angr.analyses.decompiler.callsite_maker",
+    ):
+        logging.getLogger(name).setLevel(logging.CRITICAL)
+
+
+_silence_scan_loggers()
 
 import angr
 
@@ -113,6 +123,8 @@ def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool =
         return "no_code_produced", "Decompiler did not produce code."
     if isinstance(exc, ScanTimeout):
         return "timeout", "timed out"
+    if isinstance(exc, AssertionError):
+        return "analysis_assertion", message or "assertion failure"
     if exc is None:
         return "unknown_failure", "unknown failure"
 
