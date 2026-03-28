@@ -14,7 +14,7 @@ sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
 from angr_platforms.X86_16.alias_model import _StorageDomainSignature, _StorageView
-from angr_platforms.X86_16.widening_model import can_join_adjacent_storage_slices, merge_storage_slice_domains
+from angr_platforms.X86_16.widening_model import WideningCandidate, can_join_adjacent_storage_slices, merge_storage_slice_domains
 
 
 class _DummyCodegen:
@@ -73,6 +73,9 @@ def test_widening_model_accepts_adjacent_register_slices():
 
     assert can_join_adjacent_storage_slices(low, high)
     assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("register", 2, _StorageView(0, 16))
+    low_candidate = WideningCandidate(_StorageDomainSignature("register", 1, _StorageView(0, 8)), _StorageView(0, 8), low)
+    high_candidate = WideningCandidate(_StorageDomainSignature("register", 1, _StorageView(8, 8)), _StorageView(8, 8), high)
+    assert low_candidate.is_joinable_with(high_candidate)
 
 
 def test_widening_model_accepts_adjacent_stack_slices():
