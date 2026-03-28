@@ -702,6 +702,9 @@ Current status:
 - the stack-pointer rewrite path now also uses an explicit state object instead
   of a raw `(base, offset)` tuple, which keeps the alias lanes consistent and
   gives the storage-domain model one more concrete foothold
+- the segmented-address classifier now also emits an explicit association
+  state object, so the segment/offset decision is visible as data rather than
+  only as a stringly `assoc_kind` flag
 - simple negated bitwise guards like `!(x & 1)` now normalize to explicit zero
   checks, which gives the `_SetGear`-style lane one more source-like baseline
 - array evidence is still being collected, but only guarded member rewrites are
