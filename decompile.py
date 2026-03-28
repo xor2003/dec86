@@ -99,6 +99,7 @@ from angr_platforms.X86_16.alias_model import (
     _storage_domain_for_variable,
     _storage_view_for_variable,
 )
+from angr_platforms.X86_16.widening_model import can_join_adjacent_storage_slices
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -2002,6 +2003,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         low_var = getattr(low_expr, "variable", None) if isinstance(low_expr, structured_c.CVariable) else None
         high_var = getattr(high_expr, "variable", None) if isinstance(high_expr, structured_c.CVariable) else None
         if not isinstance(low_var, SimMemoryVariable) or not isinstance(high_var, SimMemoryVariable):
+            adjacent_byte_pair_cache[key] = _no_match
+            return None
+        if not can_join_adjacent_storage_slices(low_var, high_var):
             adjacent_byte_pair_cache[key] = _no_match
             return None
         if getattr(low_var, "region", None) != getattr(high_var, "region", None):
