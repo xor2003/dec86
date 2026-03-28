@@ -264,6 +264,11 @@ Use this rule of thumb:
 That is the main success criterion for moving from a working x86-16 decompiler
 to the dream decompiler for this project.
 
+For the low-level execution roadmap that breaks this vision into concrete
+implementation steps with priority, complexity, and expected impact, see:
+
+- `angr_platforms/docs/dream_decompiler_execution_plan.md`
+
 ## Tutorials
 
 - [Part 1: Basics](angr_platforms/tutorial/1_basics.md) – angr lifecycle and components.
