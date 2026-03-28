@@ -63,6 +63,27 @@ class ScanTimeout(Exception):
     pass
 
 
+def _patch_scan_destructors() -> None:
+    from angr.knowledge_plugins.rtdb import rtdb
+
+    if getattr(rtdb.RuntimeDb.__del__, "_inertia_scan_safe", False):
+        return
+
+    original_del = rtdb.RuntimeDb.__del__
+
+    def _safe_del(self):  # noqa: ANN001
+        try:
+            original_del(self)
+        except Exception:
+            return
+
+    _safe_del._inertia_scan_safe = True  # type: ignore[attr-defined]
+    rtdb.RuntimeDb.__del__ = _safe_del
+
+
+_patch_scan_destructors()
+
+
 _SCAN_ACTIVE = False
 
 
