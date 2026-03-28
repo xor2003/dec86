@@ -15,6 +15,7 @@ def _silence_scan_loggers() -> None:
         "angr.analyses.analysis",
         "angr.analyses.decompiler.clinic",
         "angr.analyses.decompiler.callsite_maker",
+        "angr_platforms.X86_16.lift_86_16",
     ):
         logging.getLogger(name).setLevel(logging.CRITICAL)
 
@@ -64,6 +65,10 @@ class ScanTimeout(Exception):
 
 def _alarm_handler(_signum, _frame):
     raise ScanTimeout("timed out")
+
+
+def _clear_alarm() -> None:
+    signal.alarm(0)
 
 
 def set_memory_limit(max_memory_mb: int) -> None:
@@ -200,6 +205,7 @@ def scan_function(
             result.failure_class = failure_class
             result.reason = reason
             _mark_stage(result, "load", False, reason=failure_class, detail=reason)
+            _clear_alarm()
             return result
 
         _mark_stage(result, "normalize", True, detail="bounded blob pipeline")
@@ -212,11 +218,13 @@ def scan_function(
             result.failure_class = failure_class
             result.reason = reason
             _mark_stage(result, "lift", False, reason=failure_class, detail=reason)
+            _clear_alarm()
             return result
 
         result.function_count = 1
         if mode == "lift":
             result.ok = True
+            _clear_alarm()
             return result
 
         if mode == "decompile-reloc-free" and (result.has_near_call_reloc or result.has_far_call_reloc):
@@ -224,6 +232,7 @@ def scan_function(
             result.reason = "contains unresolved call relocation pattern"
             result.fallback_kind = "block_lift"
             _mark_stage(result, "cfg", False, reason="skipped_relocation", detail=result.reason)
+            _clear_alarm()
             return result
 
         try:
@@ -237,6 +246,7 @@ def scan_function(
             result.reason = reason
             result.fallback_kind = "block_lift"
             _mark_stage(result, "cfg", False, reason=failure_class, detail=reason)
+            _clear_alarm()
             return result
 
         _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
@@ -250,6 +260,7 @@ def scan_function(
                 True,
                 detail=f"skipped decompile for oversized function ({len(code)} bytes > {max_decompile_bytes}); cfg ok",
             )
+            _clear_alarm()
             return result
 
         try:
@@ -261,10 +272,12 @@ def scan_function(
                 result.reason = reason
                 result.fallback_kind = "block_lift"
                 _mark_stage(result, "decompile", False, reason=failure_class, detail=reason)
+                _clear_alarm()
                 return result
             result.decompiled_count = 1
             result.ok = True
             _mark_stage(result, "decompile", True)
+            _clear_alarm()
             return result
         except Exception as exc:  # noqa: BLE001
             failure_class, reason = classify_failure("decompile", exc)
@@ -272,9 +285,10 @@ def scan_function(
             result.reason = reason
             result.fallback_kind = "block_lift"
             _mark_stage(result, "decompile", False, reason=failure_class, detail=reason)
+            _clear_alarm()
             return result
     finally:
-        signal.alarm(0)
+        _clear_alarm()
         signal.signal(signal.SIGALRM, old_handler)
 
 
@@ -353,6 +367,7 @@ __all__ = [
     "FunctionScanResult",
     "ScanTimeout",
     "StageResult",
+    "_clear_alarm",
     "classify_failure",
     "extract_cod_functions",
     "scan_function",
