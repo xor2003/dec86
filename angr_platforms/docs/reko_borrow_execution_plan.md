@@ -11,74 +11,17 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
 - source-like C
 - eventual recompilability
 
-## Current Progress
+## Current State
 
-- Priority 1 is in place:
-  - segment-space classification is centralized in `decompile.py`
-  - `ss`/`ds`/`es` consumers now reuse the same cached classifier
-  - the segmented classifier now also emits an explicit association-state object
-    and an object-rewrite policy gate instead of relying only on ad hoc checks
-- Priority 2 is partially in place:
-  - byte-pair word load/store coalescing already consumes the classifier
-  - small safe segmented byte-pointer rewrites now exist for `snake`-style `ds/es` byte access
-  - the widening lane now has an explicit module boundary
-    (`angr_platforms/X86_16/widening_model.py`)
-  - widening now uses alias-proven storage compatibility across register,
-    stack, and memory slices
-  - widening candidates now exist as explicit data objects and can be built
-    directly from expressions
-  - mixed expressions are rejected at the widening boundary instead of being
-    allowed to drift into speculative joins
-- Priority 3 has groundwork in place:
-  - access traits for repeated `base + const` and `base + index * stride` segmented accesses are now collected and cached per decompilation run
-  - a real `.COD` proc test now verifies that segmented access traits are actually recorded in the cache
-  - the cache now also keeps repeated-offset evidence for later field/array recovery
-  - repeated-offset evidence now drives narrow field-like names for stable segmented data accesses when no source label exists
-  - stack-side `ss + const` accesses now also rewrite to source-like pointer arithmetic instead of staying as raw real-mode segment math
-  - field-like names are now width-unified when the same offset is seen as both byte and word access
-  - register-only `ds` pointer arithmetic in `snake`-style helpers now drops raw `ds * 16` scaffolding too
-  - `es` byte-pointer arithmetic in `snake`-style helpers now also loses raw `es * 16` scaffolding when the rest of the projection is safe
-  - adjacent byte temporaries in `snake.EXE:0x1287` now collapse into a source-like word condition instead of `byte | byte * 0x100`
-  - `snake.EXE:0x1287` also simplifies the `g_c2` high-byte update path to `v26 ± 1`
-  - the remaining high-byte-preserving update path now collapses to `v26 ± 0x100` instead of raw byte/word scaffolding
-  - the remaining `snake.EXE:0x1287` linear temp chain now collapses one step further to `g_c2 - 2` in the `<` path
-  - the `>` path in `snake.EXE:0x1287` now folds the `g_c2 + 1` / `+ 1` chain to `g_c2 + 2`
-  - the remaining `snake.EXE:0x1287` additive tail now folds `v5 + 1 + 1` to `g_c2 + 0x100`, while the `v29 == 40` guard stays intact
-  - a narrow additive-chain fold now exists for shallow left-deep constant adds, which is useful groundwork for remaining source-like recurrence cleanup
-  - boolean cleanup now rewrites `!(x - c)` into `x == c` in stable cases, which already improved the remaining `snake.EXE:0x1287` guard
-  - the remaining `snake.EXE:0x1287` loop-counter recurrence (`v21 += 40`) is left as a separate statement-sequence cleanup target
-  - recovered stack objects now keep a simple type-width helper so later type evidence can reuse the actual stack width instead of hardcoding every promoted slot to the same shape
-  - a narrower recurrence cleanup pass now trims another copy/increment chain in `snake.EXE:0x1287` and reduces the decompilation time further without changing the remaining source-like shape
-  - known linear temps can now be inlined into later expressions within the same block, which helps keep the remaining recurrence chains source-like without introducing broad alias rewrites
-  - one-use expression aliases can now be inlined safely inside the recurrence pass, which helps later mask and add cleanup see the simpler rhs directly
-  - the name-aware linear-temp fallback was tried, but rolled back after it introduced a `snake.EXE:0x13b2` regression, so the current safe path remains the original id-based lookup
-  - repeated `>> 1` chains in `snake.EXE:0x13b2` now compress into wider `>> 3` / `>> 5` / `>> 8` forms instead of staying as a ladder of one-bit temporaries
-  - bitwise mask recovery now also collapses one `snake.EXE:0x1287` flag-chain into source-like `v34` / `v35` forms instead of leaving the whole condition as raw mask scaffolding
-  - the hottest x86-16 expression matchers are now cached per decompilation run to cut repeated tree walks
-  - the structured simplifier now includes a tiny safe algebra layer for `x ^ x -> 0`, `x - 0 -> x`, and `0 + x -> x`
-- Current concrete wins:
-  - `snake.EXE:0x13b2` now decompiles without `...` and with byte-pointer access like `*((char *)v25)`
-  - `snake.EXE:0x1131` now recovers via a Phoenix structurer retry when the default structurer returns empty codegen, bringing whole-binary `snake.exe` to `18/18` shown functions
-  - `snake.EXE:0x11d8` recovers listing-backed data labels such as `segmentcount` and `fruitactive`
-  - `snake.EXE:0x135c` / `0x1387` now recover coordinate projection as `(v4 >> 8) * 160 + (v4 & 255) * 2`
-  - `snake.EXE:0x135c` no longer prints `es * 16` in the `writecharat` byte-pointer write
-  - promoted stack slots now get source-like local names instead of generic temp scaffolding when they are recovered as real stack objects
-  - positive stack offsets now prefer `arg_`-style names and negative stack offsets prefer `local_`-style names when the existing label is still a generic temp
-  - `snake.EXE:0x1287` now keeps the source labels `field_0` and `field_1` while dropping raw `ds * 16` scaffolding
-  - `snake.EXE:0x1287` now simplifies the guard to `if (!(field_0 & v17))`
-  - `snake.EXE:0x1287` now simplifies the guard further to `if (!field_0)`
-  - `snake.EXE:0x1287` also prunes the remaining `field_0`/`field_1` pair down to `field_0` in the guard path
-  - `snake.EXE:0x1287` now folds the `g_c2 - 1` / `- 1` chain to `g_c2 - 2`
-  - `snake.EXE:0x1287` now also collapses a repeated bitmask update into source-like `v34` / `v35` forms and exposes the `v29 - 40` guard directly
-  - `.COD` helpers like `_rotate_pt`, `_SetGear`, and `_TIDShowRange` remain green under the focused CLI slice
-  - the alias lane now has an explicit storage-domain model in
-    `angr_platforms/X86_16/alias_model.py`
-  - that alias model now uses `domain + view` semantics for register, stack,
-    and memory storages instead of only width-tagged buckets
-  - copy-alias and stack-pointer alias states now live in the alias module
-    instead of being duplicated inside `decompile.py`
-  - the widening and alias boundaries are now treated as stable architecture,
-    not as open cleanup ideas
+The core borrow architecture is already in place:
+
+- centralized segment classification
+- explicit alias-model boundary
+- explicit widening boundary
+- trait/evidence collection feeding narrow typed rewrites
+- focused `snake` and `.COD` validation loops
+
+This document now tracks only the work that still matters.
 
 ## Constraints
 
@@ -87,204 +30,42 @@ The goal is to reproduce the highest-value ideas inside the angr/x86-16 pipeline
 - Keep `ss`, `ds`, and `es` distinct until we can prove a safer collapse.
 - Use real `.COD` and `examples/` functions as oracles after every meaningful change.
 
-## Priority 1. Segment-Space Classifier
+## Remaining Priority 1. Typed/Object Extensions
 
 Goal:
 
-- replace repeated ad hoc matching of `seg * 16 + off` with one central classifier
-
-What to implement:
-
-- classify segmented accesses into:
-  - `stack`
-  - `global`
-  - `extra`
-  - `segment_const`
-  - `unknown`
-- keep a per-decompilation cache of classification results
-- expose helpers that return both:
-  - storage class
-  - normalized address expression / offset / segment source
-
-Expected payoff:
-
-- fewer repeated tree walks
-- safer downstream rewrites
-- simpler `ss/ds/es` handling everywhere else
+- extend source-like object and typed rewrites only where evidence is stable
 
 Primary targets:
 
-- `_MousePOS`
-- `_SetHook`
-- `_TIDShowRange`
-- `snake.EXE:0x13b2`
-
-## Priority 2. Projection-Style Widening
-
-Goal:
-
-- generalize byte-pair and split-value recovery into one coherent family of passes
-
-What to implement:
-
-- adjacent byte load -> word load
-- adjacent byte store -> word store
-- split `segment` + `offset` uses -> one pointer-like value when stable
-- small register-pair widening where it improves conditions or addresses
-
-Expected payoff:
-
-- less `low | high * 0x100`
-- fewer duplicate store pairs
-- smaller expression trees
-- better chances of killing `...`
-
-Primary targets:
-
-- `_rotate_pt`
-- `_TIDShowRange`
-- `_ChangeWeather`
-- `snake.EXE:0x13b2`
-
-Status:
-
-- the architectural widening split is now in place
-- widening is now gated by alias-proven compatibility, not only by local
-  pattern matches
-- register, stack, and memory slice joins are covered by focused tests
-- the remaining work in this priority is incremental reuse on new corpus cases,
-  not a missing core widening framework
-
-## Priority 3. Access-Trait Collection
-
-Goal:
-
-- infer field/array evidence from normalized addresses instead of guessing late
-- use repeated-offset evidence to name stable segmented data accesses when no source label is available
-
-What to implement:
-
-- detect `base + const`
-- detect `base + index * stride + const`
-- detect repeated loads/stores at same offsets
-- detect simple table accesses under `ds` / `es`
-
-Expected payoff:
-
-- move from pointer arithmetic to fields and arrays
-- enable later type recovery with stronger evidence
-
-Primary targets:
-
-- cockpit UI helpers
-- `rotate_pt`
 - `ConfigCrts`
-- `show_summary` and `fold_values` matrix functions
-
-## Priority 4. Alias-Aware Value Recovery
-
-Goal:
-
-- reduce wrong conditions and noisy temporaries caused by split register/value modeling
-
-What to implement:
-
-- lightweight storage-domain reasoning for:
-  - subregisters
-  - flag groups
-  - word values rebuilt from byte defs
-- synthesize alias-like rewrites only when they unblock real recovery
-
-Expected payoff:
-
-- cleaner branch conditions
-- fewer false temporaries
-- better guard reconstruction
-
-Primary targets:
-
-- `_InBox`-class predicate code
-- `_SetGear`
-- `snake.EXE` loop and guard logic
-
-Status:
-
-- the architectural alias split is now in place
-- storage-domain reasoning now lives in `angr_platforms/X86_16/alias_model.py`
-- copy-alias and stack-pointer alias state are explicit boundary objects
-- the remaining work in this priority is conservative extension from new
-  corpus evidence, not a missing alias foundation
-
-## Priority 5. Typed Rewrite To Source-Like Memory Objects
-
-Goal:
-
-- once accesses are classified and widened, rewrite them to locals/globals/member access
-
-What to implement:
-
-- `ss:frameoff` -> stack local / argument
-- `ds:const` -> global variable or named field
-- `segconst:const` -> segment-owned object / table member
-- preserve `es` as a separate pointer space unless a stronger proof appears
-
-Expected payoff:
-
-- fewer raw `seg * 16 + off`
-- more recompilable C
-- clearer declarations
-
-Primary targets:
-
-- `_SetHook`
-- `_SetDLC`
 - `_MousePOS`
-- `_ChangeWeather`
+- `_SetHook`
 - `_TIDShowRange`
+- `rotate_pt`
+- `_SetGear`
+- `_ChangeWeather`
 
-## Priority 6. Type Evidence Layer
+## Remaining Priority 2. Corpus-Driven Alias and Widening Extensions
 
 Goal:
 
-- recover enough type shape to improve recompilability without inventing too much
-
-What to implement:
-
-- width propagation from widened loads/stores
-- char/word distinction for globals and locals
-- simple pointer/member-pointer recognition
-- array element width/stride hints
-
-Expected payoff:
-
-- fewer bogus `char` declarations
-- cleaner function locals
-- stronger follow-on rewrites
+- extend the existing alias and widening boundaries only when real samples
+  justify it
 
 Primary targets:
 
 - `_SetGear`
-- `_ChangeWeather`
-- `_rotate_pt`
-- `fold_values`
+- `_InBox`-class predicates when a new regression appears
+- `snake.EXE` guard and loop helpers
+- new `.COD --proc` helpers that prove a clear source-like win
 
-## Priority 7. Performance Tightening
+## Remaining Priority 3. Stability and Performance
 
 Goal:
 
-- keep small functions under a practical decompilation budget
-
-What to implement:
-
-- cache hot classifier/matcher results
-- reduce repeated whole-tree passes
-- stop running expensive rewrites when the function shape makes them impossible
-- bias to bounded function windows and early body-only extraction when safe
-
-Expected payoff:
-
-- keep small functions near the 5-second target
-- reduce variance on `snake` and small `.COD` helpers
+- keep the current wins stable and the focused runs cheap enough to stay in the
+  inner loop
 
 Primary targets:
 
@@ -293,8 +74,7 @@ Primary targets:
 
 ## Validation Strategy
 
-At this point the main borrow architecture is in place. The remaining work is
-primarily:
+At this point the main borrow architecture is in place. The remaining work is:
 
 - keeping the current `snake` and `.COD` wins stable
 - extending typed rewrites only when new samples justify them
@@ -328,13 +108,8 @@ Reassess the current approach if any of these happen repeatedly:
 
 ## Immediate Next Steps
 
-1. Extend the new byte-pointer rewrite only to other safe zero-offset base-register cases.
-2. Add more focused `snake`-family oracles so new source-like pointer output stays locked in.
-3. Start collecting lightweight access traits for repeated `base + const` uses under `ds/es`.
-4. Recheck:
-   - `writecharat`
-   - `readcharat`
-   - `_TIDShowRange`
-   - `_rotate_pt`
-   - `_SetGear`
-   - `snake.EXE:0x13b2`
+1. Keep the focused `snake` and `.COD` oracle slices green.
+2. Add new typed/object rewrites only when a sample proves the same kind of
+   source-like win as the current stable set.
+3. Extend alias or widening only when a new corpus-backed case clearly needs
+   it.
