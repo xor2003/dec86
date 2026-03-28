@@ -329,6 +329,8 @@ This phase broadens good architecture across a wider real corpus.
   - makes improvements transfer to new binaries with less manual work
 - `Low-level steps`:
   - identify current wins that still depend on source-backed rescues
+  - factor repeated synthetic word-global recovery into a shared helper used by
+    both load-expression folding and statement folding
   - move repeated successful patterns into general recovery layers when safe
   - keep source-backed rewrites as anchors and regressions, not the only
     mechanism
