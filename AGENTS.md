@@ -92,6 +92,26 @@ p = angr.Project("path/to/binary")  # Auto-selects agents based on format/arch
   - make a useful subset of output recompilable where practical
 - When forced to choose, favor decompiler-quality work over transpiler-style semantic re-expression.
 
+### Architecture Model
+
+Use this decompiler architecture as the default mental model:
+
+`IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
+
+In practice:
+
+- `IR` is the normalized input layer produced by lifting.
+- `Alias model` decides which values really refer to the same storage.
+- `Widening` combines byte-pairs, projections, and joins into cleaner values.
+- `Traits` collect repeated-offset, stride, and induction evidence.
+- `Types` turn stable evidence into arrays, structs, and typed pointers.
+- `Rewrite` is the last-stage C cleanup layer that applies only after the
+  evidence is stable.
+
+The intended order is important: alias + widening first, then traits and types,
+and only then object rewriting. Avoid mixing those layers together in a single
+local pass if a boundary object or helper can keep the responsibilities clear.
+
 ## Tutorials
 
 - [Part 1: Basics](angr_platforms/tutorial/1_basics.md) – angr lifecycle and components.
