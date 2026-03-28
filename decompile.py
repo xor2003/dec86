@@ -4920,6 +4920,27 @@ def _make_word_global(codegen, addr: int, name: str):
     )
 
 
+def _synthetic_word_global_variable(
+    codegen, synthetic_globals: dict[int, tuple[str, int]] | None, addr: int, created: dict[int, structured_c.CVariable] | None = None
+):
+    if created is not None:
+        existing = created.get(addr)
+        if existing is not None:
+            return existing
+
+    symbol = _synthetic_global_entry(synthetic_globals, addr)
+    if symbol is None:
+        return None
+
+    raw_name, width = symbol
+    if width < 2:
+        return None
+    cvar = _make_word_global(codegen, addr, _sanitize_cod_identifier(raw_name))
+    if created is not None:
+        created[addr] = cvar
+    return cvar
+
+
 def _coalesce_cod_word_global_loads(
     project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None
 ) -> bool:
@@ -4927,15 +4948,6 @@ def _coalesce_cod_word_global_loads(
         return False
 
     created: dict[int, structured_c.CVariable] = {}
-
-    def make_word_global(addr: int):
-        existing = created.get(addr)
-        if existing is not None:
-            return existing
-        raw_name, _width = _synthetic_global_entry(synthetic_globals, addr)
-        cvar = _make_word_global(codegen, addr, _sanitize_cod_identifier(raw_name))
-        created[addr] = cvar
-        return cvar
 
     def transform(node):
         if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
@@ -4946,18 +4958,15 @@ def _coalesce_cod_word_global_loads(
             if low_addr is None:
                 continue
 
-            symbol = _synthetic_global_entry(synthetic_globals, low_addr)
-            if symbol is None:
-                continue
-            _raw_name, width = symbol
-            if width < 2:
+            cvar = _synthetic_word_global_variable(codegen, synthetic_globals, low_addr, created)
+            if cvar is None:
                 continue
 
             high_addr = _match_scaled_high_byte(high_expr, project)
             if high_addr != low_addr + 1:
                 continue
 
-            return make_word_global(low_addr)
+            return cvar
 
         return node
 
@@ -5036,17 +5045,18 @@ def _coalesce_cod_word_global_statements(
                     next_stmt = node.statements[i + 1]
                     base_addr = _global_memory_addr(stmt.lhs)
                     next_addr = _high_byte_store_addr(next_stmt.lhs, project)
-                    symbol = _synthetic_global_entry(synthetic_globals, base_addr) if base_addr is not None else None
+                    word_global = (
+                        _synthetic_word_global_variable(codegen, synthetic_globals, base_addr)
+                        if base_addr is not None
+                        else None
+                    )
 
-                    if base_addr is not None and next_addr == base_addr + 1 and symbol is not None:
-                        raw_name, width = symbol
-                        name = _sanitize_cod_identifier(raw_name)
-
+                    if base_addr is not None and next_addr == base_addr + 1 and word_global is not None:
                         if isinstance(stmt.rhs, structured_c.CConstant) and isinstance(next_stmt.rhs, structured_c.CConstant):
                             value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
                             new_statements.append(
                                 structured_c.CAssignment(
-                                    _make_word_global(codegen, base_addr, name),
+                                    word_global,
                                     structured_c.CConstant(value, SimTypeShort(False), codegen=codegen),
                                     codegen=codegen,
                                 )
@@ -5054,12 +5064,10 @@ def _coalesce_cod_word_global_statements(
                             changed = True
                             i += 2
                             continue
-
-                        if width >= 2:
-                            changed = True
-                            new_statements.append(stmt)
-                            i += 2
-                            continue
+                        changed = True
+                        new_statements.append(stmt)
+                        i += 2
+                        continue
 
                 visit(stmt)
                 new_statements.append(stmt)
