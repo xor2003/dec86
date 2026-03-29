@@ -635,9 +635,16 @@ def _normalize_interrupt_wrapper_name(name: str | None) -> str | None:
     return name.lstrip("_")
 
 
-def _interrupt_wrapper_call_kind(name: str | None) -> str | None:
+def _interrupt_wrapper_call_kind(name: str | None, args: tuple[object, ...] | None = None) -> str | None:
     canonical = _normalize_interrupt_wrapper_name(name)
     if canonical not in {"int86", "int86x", "intdos", "intdosx"}:
+        if canonical != "CallReturn" or not args:
+            return None
+        first_arg = args[0]
+        if len(args) >= 4:
+            return "int86x" if isinstance(first_arg, structured_c.CConstant) else "intdosx"
+        if len(args) >= 3:
+            return "int86" if isinstance(first_arg, structured_c.CConstant) else "intdos"
         return None
     return canonical
 
@@ -650,11 +657,10 @@ def _interrupt_wrapper_call_signature(node: structured_c.CFunctionCall) -> Inter
     elif isinstance(getattr(node, "callee_target", None), str):
         callee_name = getattr(node, "callee_target")
 
-    kind = _interrupt_wrapper_call_kind(callee_name)
+    args = tuple(getattr(node, "args", ()) or ())
+    kind = _interrupt_wrapper_call_kind(callee_name, args)
     if kind is None:
         return None
-
-    args = tuple(getattr(node, "args", ()) or ())
     if kind in {"int86", "int86x"}:
         vector_arg = args[0] if len(args) >= 1 else None
         inregs_arg = args[1] if len(args) >= 2 else None
