@@ -137,6 +137,9 @@ Recent progress on that front:
   of owning their own stack-unwind and `Ijk_Ret` plumbing in `instr16.py`
 - byte-side ALU immediate handlers in `instr_base.py` now share local family
   helpers for `AL imm8`, `r/m8 imm8`, compare, and carry-aware variants
+- resolved-memory instruction-side users now share generic
+  `load_resolved_operand` / `store_resolved_operand` helpers instead of
+  open-coding width-specific memory access after address resolution
 
 ## Remaining Priorities
 

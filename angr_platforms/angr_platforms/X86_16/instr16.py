@@ -13,7 +13,7 @@ from .alu_helpers import (
     rotate_count,
     unary_operation,
 )
-from .addressing_helpers import load_far_pointer, load_word_pair16, resolve_linear_operand
+from .addressing_helpers import load_far_pointer, load_resolved_operand, load_word_pair16, resolve_linear_operand, store_resolved_operand
 from .instr_base import InstrBase
 from .stack_helpers import enter16, leave16, near_return_ip16, pop_all16, push16_register, push_all16, return_near16
 from .string_helpers import (
@@ -466,7 +466,7 @@ class Instr16(InstrBase):
 
         seg, addr = self._resolved_rm_address()
         self.set_r16(rm16)
-        self.emu.put_data16(seg, addr, r16)
+        store_resolved_operand(self.emu, resolve_linear_operand(self.emu, seg, addr, 16, 16), r16)
 
     def mov_rm16_r16(self):
         r16 = self.get_r16()
@@ -544,7 +544,7 @@ class Instr16(InstrBase):
         bx = self.emu.get_gpreg(reg16_t.BX)
         al = self.emu.get_gpreg(reg8_t.AL).cast_to(Type.int_16)
         operand = resolve_linear_operand(self.emu, self.select_segment(), bx + al, 8, 16)
-        value = self.emu.get_data8(operand.segment, operand.offset)
+        value = load_resolved_operand(self.emu, operand)
         self.emu.set_gpreg(reg8_t.AL, value)
 
     def _string_delta(self, width):

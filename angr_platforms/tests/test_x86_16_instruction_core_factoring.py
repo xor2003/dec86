@@ -47,6 +47,7 @@ def test_x86_16_instruction_core_uses_addressing_helpers_for_xlat_and_bound_pair
     source = inspect.getsource(instr16.Instr16.xlat) + inspect.getsource(instr16.Instr16.bound_r16_m16)
 
     assert "resolve_linear_operand(" in source
+    assert "load_resolved_operand(" in source
     assert "load_word_pair16(" in source
 
 
@@ -129,3 +130,14 @@ def test_x86_16_instruction_core_uses_byte_alu_immediate_helper_families():
     assert "_binary_rm8_imm8(" in source
     assert "_binary_rm8_imm8_with_carry(" in source
     assert "_compare_rm8_imm8(" in source
+
+
+def test_x86_16_instruction_core_uses_resolved_operand_load_store_helpers():
+    source = (
+        inspect.getsource(instr16.Instr16.xchg_r16_rm16)
+        + inspect.getsource(InstrBase.xchg_r8_rm8)
+        + inspect.getsource(InstrBase.esc)
+    )
+
+    assert "load_resolved_operand(" in source
+    assert "store_resolved_operand(" in source

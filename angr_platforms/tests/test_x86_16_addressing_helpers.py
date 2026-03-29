@@ -8,10 +8,12 @@ from angr_platforms.X86_16.addressing_helpers import (
     displacement_width_bits,
     load_far_pointer,
     load_far_pointer16,
+    load_resolved_operand,
     load_word_pair16,
     resolve_linear_operand,
     operand_width_bits,
     signed_displacement,
+    store_resolved_operand,
 )
 from pyvex.lifting.util.vex_helper import Type
 from angr_platforms.X86_16.regs import sgreg_t
@@ -21,6 +23,7 @@ class _FakeEmu:
     def __init__(self):
         self.calls = []
         self.loads = []
+        self.stores = []
 
     def constant(self, value, ty):
         self.calls.append((value, ty))
@@ -29,6 +32,10 @@ class _FakeEmu:
     def v2p(self, segment, offset):
         return (segment, offset)
 
+    def get_data8(self, segment, offset):
+        self.loads.append((segment, offset))
+        return ("byte", segment, offset)
+
     def get_data16(self, segment, offset):
         self.loads.append((segment, offset))
         return ("word", segment, offset)
@@ -36,6 +43,15 @@ class _FakeEmu:
     def get_data32(self, segment, offset):
         self.loads.append((segment, offset))
         return ("dword", segment, offset)
+
+    def put_data8(self, segment, offset, value):
+        self.stores.append((8, segment, offset, value))
+
+    def put_data16(self, segment, offset, value):
+        self.stores.append((16, segment, offset, value))
+
+    def put_data32(self, segment, offset, value):
+        self.stores.append((32, segment, offset, value))
 
 
 def test_width_helpers_cover_real_mode_and_386_extension_paths():
@@ -147,3 +163,25 @@ def test_load_far_pointer_supports_future_32_bit_operand_widths():
     assert emu.loads[1] == (sgreg_t.DS, typed_offset + emu.calls[1])
     assert offset == ("dword", sgreg_t.DS, typed_offset)
     assert segment == ("word", sgreg_t.DS, typed_offset + emu.calls[1])
+
+
+def test_resolved_memory_helpers_dispatch_by_operand_width():
+    emu = _FakeEmu()
+
+    byte_operand = resolve_linear_operand(emu, sgreg_t.DS, 0x10, 8, 16)
+    word_operand = resolve_linear_operand(emu, sgreg_t.DS, 0x20, 16, 16)
+    dword_operand = resolve_linear_operand(emu, sgreg_t.DS, 0x30, 32, 16)
+
+    assert load_resolved_operand(emu, byte_operand)[0] == "byte"
+    assert load_resolved_operand(emu, word_operand)[0] == "word"
+    assert load_resolved_operand(emu, dword_operand)[0] == "dword"
+
+    store_resolved_operand(emu, byte_operand, 0x11)
+    store_resolved_operand(emu, word_operand, 0x2222)
+    store_resolved_operand(emu, dword_operand, 0x33333333)
+
+    assert emu.stores == [
+        (8, sgreg_t.DS, 0x10, 0x11),
+        (16, sgreg_t.DS, 0x20, 0x2222),
+        (32, sgreg_t.DS, 0x30, 0x33333333),
+    ]

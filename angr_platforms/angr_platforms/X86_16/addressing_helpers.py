@@ -88,6 +88,29 @@ def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, addre
     return ResolvedMemoryOperand(segment, offset, emu.v2p(segment, offset), width_bits, address_bits)
 
 
+def load_resolved_operand(emu, operand: ResolvedMemoryOperand):
+    if operand.width_bits == 8:
+        return emu.get_data8(operand.segment, operand.offset)
+    if operand.width_bits == 16:
+        return emu.get_data16(operand.segment, operand.offset)
+    if operand.width_bits == 32:
+        return emu.get_data32(operand.segment, operand.offset)
+    raise ValueError(f"unsupported resolved operand width: {operand.width_bits}")
+
+
+def store_resolved_operand(emu, operand: ResolvedMemoryOperand, value) -> None:
+    if operand.width_bits == 8:
+        emu.put_data8(operand.segment, operand.offset, value)
+        return
+    if operand.width_bits == 16:
+        emu.put_data16(operand.segment, operand.offset, value)
+        return
+    if operand.width_bits == 32:
+        emu.put_data32(operand.segment, operand.offset, value)
+        return
+    raise ValueError(f"unsupported resolved operand width: {operand.width_bits}")
+
+
 def load_word_pair16(emu, segment: sgreg_t, offset, address_bits: int = 16):
     if isinstance(offset, int):
         offset = emu.constant(offset, type_for_bits(address_bits))

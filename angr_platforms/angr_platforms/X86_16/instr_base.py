@@ -19,6 +19,7 @@ from .alu_helpers import (
     shift_right_operation,
     unary_operation,
 )
+from .addressing_helpers import load_resolved_operand, store_resolved_operand
 from .exec import ExecInstr
 from .stack_helpers import pop_far_return_frame16, pop_interrupt_frame16
 from .instruction import *
@@ -470,7 +471,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
         operand = self._resolved_rm_operand(8)
         self.set_r8(rm8)
-        self.emu.put_data8(operand.segment, operand.offset, r8)
+        store_resolved_operand(self.emu, operand, r8)
 
     def mov_rm8_r8(self) -> None:
         r8 = self.get_r8()
@@ -527,7 +528,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def esc(self) -> None:
         if self.instr.modrm.mod != 3:
             operand = self._resolved_rm_operand(8)
-            self.emu.get_data8(operand.segment, operand.offset)
+            load_resolved_operand(self.emu, operand)
 
     def mov_r8_imm8(self) -> None:
         reg = self.instr.opcode & 0b111
