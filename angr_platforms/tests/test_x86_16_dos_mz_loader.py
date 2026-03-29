@@ -8,7 +8,7 @@ import pytest
 import pyvex
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
+from angr_platforms.X86_16.load_dos_mz import DOSMZ, DOSMZHeader  # noqa: F401
 from angr_platforms.X86_16.simos_86_16 import (
     BIOSInt12MemorySize,
     DOSInt21,
@@ -43,6 +43,28 @@ def _read_mz_header(path: Path) -> dict[str, int]:
         "ip": int.from_bytes(data[0x14:0x16], "little"),
         "cs": int.from_bytes(data[0x16:0x18], "little"),
     }
+
+
+def test_dos_mz_header_parser_reads_core_fields():
+    header = bytearray(0x40)
+    header[0:2] = b"MZ"
+    header[0x06:0x08] = (3).to_bytes(2, "little")
+    header[0x08:0x0A] = (4).to_bytes(2, "little")
+    header[0x0E:0x10] = (0x1111).to_bytes(2, "little")
+    header[0x10:0x12] = (0x2222).to_bytes(2, "little")
+    header[0x14:0x16] = (0x3333).to_bytes(2, "little")
+    header[0x16:0x18] = (0x4444).to_bytes(2, "little")
+    header[0x18:0x1A] = (0x20).to_bytes(2, "little")
+
+    parsed = DOSMZHeader.from_stream(io.BytesIO(bytes(header)))
+
+    assert parsed.header_paragraphs == 4
+    assert parsed.relocation_count == 3
+    assert parsed.relocation_offset == 0x20
+    assert parsed.initial_ip == 0x3333
+    assert parsed.initial_cs == 0x4444
+    assert parsed.initial_sp == 0x2222
+    assert parsed.initial_ss == 0x1111
 
 
 @pytest.mark.skipif(not T_EXE_PATH.exists(), reason="f15se2-re test executable is not available")
