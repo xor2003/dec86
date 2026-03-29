@@ -395,11 +395,11 @@ class Instr32(InstrBase):
         self.emu.out_io32(self.instr.imm8, eax)
 
     def call_rel32(self):
-        target = self.emu.get_eip() + self.instr.imm32
+        target = near_relative_target32(self.emu, self.instr.imm32)
         emit_near_call32(self.emu, target)
 
     def jmp_rel32(self):
-        target = self.emu.get_eip() + self.instr.imm32
+        target = near_relative_target32(self.emu, self.instr.imm32)
         emit_near_jump32(self.emu, target)
 
     def jmpf_ptr16_32(self):

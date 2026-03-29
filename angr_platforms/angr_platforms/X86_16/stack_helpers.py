@@ -126,7 +126,7 @@ def near_relative_target16(emu, displacement, instruction_size: int):
     return near_return_ip16(emu, instruction_size) + emu.constant(displacement, Type.int_16)
 
 
-def near_relative_target32(emu, displacement, instruction_size: int):
+def near_relative_target32(emu, displacement, instruction_size: int = 0):
     return emu.get_eip() + emu.constant(instruction_size, Type.int_32) + emu.constant(displacement, Type.int_32)
 
 

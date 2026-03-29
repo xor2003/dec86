@@ -157,6 +157,9 @@ Recent progress on that front:
   `branch_rel*` helpers, and the old local `_rel8_target`, `_rel16_target`,
   and `_decrement_cx` helpers were removed after the branch/loop boundary was
   centralized
+- 32-bit near relative call/jump target math now also goes through the shared
+  `near_relative_target32` helper instead of open-coding `get_eip() + imm32`
+  in `instr32.py`
 - 8-bit and 16-bit relative branches now also use shared branch helpers instead
   of each conditional branch handler open-coding its own target math and jump
   emission

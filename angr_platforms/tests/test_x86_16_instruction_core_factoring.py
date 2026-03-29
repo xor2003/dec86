@@ -185,6 +185,7 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_trans
     assert "emit_near_call32(" in source
     assert "emit_near_jump32(" in source
     assert "branch_rel32(" in source
+    assert "near_relative_target32(" in source
     assert "self.emu.update_eip(" not in source
 
 
