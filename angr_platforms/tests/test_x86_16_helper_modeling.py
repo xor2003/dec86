@@ -504,6 +504,71 @@ def test_interrupt_wrapper_result_lowering_rewrites_wrapper_call_and_composite_a
     assert third_stmt.rhs.callee_target == "get_dos_version"
 
 
+def test_interrupt_wrapper_result_lowering_falls_back_to_wrapper_call_when_service_name_is_unknown():
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x4568, statements=None),
+        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+        cstyle_null_cmp=False,
+    )
+    h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
+    x_struct = SimStruct({"ax": SimTypeShort()}, name="REGS_X")
+    regs_struct = SimStruct({"h": h_struct, "x": x_struct}, name="REGS")
+
+    outregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(2, 2, base="bp", name="outregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    g_info = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(4, 2, base="bp", name="g_info", region=0),
+        variable_type=SimTypeShort(),
+        codegen=codegen,
+    )
+
+    x_field = _decompile.structured_c.CStructField(regs_struct, 0, "x", codegen=codegen)
+    ax_field = _decompile.structured_c.CStructField(x_struct, 0, "ax", codegen=codegen)
+    g_info_ref = _decompile.structured_c.CVariable(g_info.variable, variable_type=SimTypeShort(), codegen=codegen)
+
+    wrapper_call = _decompile.structured_c.CFunctionCall(
+        "CallReturn",
+        SimpleNamespace(name="CallReturn"),
+        [
+            _decompile.structured_c.CConstant(0x21, SimTypeShort(), codegen=codegen),
+            object(),
+            object(),
+            object(),
+        ],
+        codegen=codegen,
+    )
+
+    stmts = _decompile.structured_c.CStatements(
+        [
+            _decompile.structured_c.CExpressionStatement(wrapper_call, codegen=codegen),
+            _decompile.structured_c.CAssignment(
+                g_info_ref,
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(outregs, x_field, codegen=codegen),
+                    ax_field,
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = stmts
+
+    assert _decompile._lower_interrupt_wrapper_result_reads(SimpleNamespace(), codegen, "modern") is True
+
+    first_stmt, second_stmt = codegen.cfunc.statements.statements
+    assert isinstance(first_stmt, _decompile.structured_c.CExpressionStatement)
+    assert first_stmt.expr.callee_target == "CallReturn"
+    assert isinstance(second_stmt, _decompile.structured_c.CAssignment)
+    assert isinstance(second_stmt.rhs, _decompile.structured_c.CFunctionCall)
+    assert second_stmt.rhs.callee_target == "CallReturn"
+
+
 def test_interrupt_helper_formatting_uses_helper_names(monkeypatch):
     call = _decompile.InterruptCall(insn_addr=0x1000, vector=0x12)
     helper_addr = _decompile.interrupt_service_addr(call)
@@ -518,3 +583,31 @@ def test_interrupt_helper_formatting_uses_helper_names(monkeypatch):
 
     assert replacements["bios_int12_memory_size"] == "bios_memsize()"
     assert "int bios_memsize(void);" in declarations
+
+
+def test_patch_interrupt_service_call_sites_handles_bios_vectors(monkeypatch):
+    call = _decompile.InterruptCall(insn_addr=0x1234, vector=0x12)
+    callee = SimpleNamespace(name="old_name", _init_prototype_and_calling_convention=lambda: None)
+    project = SimpleNamespace(
+        is_hooked=lambda _addr: False,
+        hook=lambda _addr, _proc, replace=True: None,
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=True: callee if addr == 0xFE012 else None)),
+    )
+    function = SimpleNamespace(project=project, _call_sites={}, get_call_return=lambda _addr: 0x4321)
+
+    monkeypatch.setitem(
+        _decompile.patch_interrupt_service_call_sites.__globals__,
+        "collect_interrupt_service_calls",
+        lambda _function, _binary_path=None, vectors=None: [call],
+    )
+    monkeypatch.setitem(
+        _decompile.patch_interrupt_service_call_sites.__globals__,
+        "ensure_interrupt_service_hook",
+        lambda _project, _call: (0xFE012, "bios_memsize"),
+    )
+
+    changed = _decompile.patch_interrupt_service_call_sites(function, None)
+
+    assert changed
+    assert function._call_sites[0x1234] == (0xFE012, 0x4321)
+    assert callee.name == "bios_memsize"

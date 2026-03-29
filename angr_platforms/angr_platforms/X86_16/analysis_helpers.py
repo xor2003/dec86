@@ -462,6 +462,41 @@ def ensure_dos_service_hook(project, call: InterruptCall) -> tuple[int, str]:
     return ensure_interrupt_service_hook(project, call)
 
 
+def patch_interrupt_service_call_sites(
+    function,
+    binary_path: Path | str | None = None,
+    *,
+    vectors: set[int] | None = None,
+) -> bool:
+    """
+    Rewrite Function._call_sites for recoverable DOS and BIOS interrupt services.
+
+    The decompiler needs these synthetic hooks so direct interrupt callsites can
+    be rendered with the service-specific helper names recovered from the
+    interrupt vector and register state.
+    """
+
+    project = function.project
+    if project is None:
+        return False
+
+    changed = False
+    for call in collect_interrupt_service_calls(function, binary_path, vectors=vectors):
+        target_addr, name = ensure_interrupt_service_hook(project, call)
+        return_addr = function.get_call_return(call.insn_addr)
+        new = (target_addr, return_addr)
+        old = function._call_sites.get(call.insn_addr)
+        if old != new:
+            function._call_sites[call.insn_addr] = new
+            changed = True
+        callee = project.kb.functions.function(addr=target_addr, create=True)
+        if callee is not None:
+            callee.name = name
+            callee._init_prototype_and_calling_convention()
+
+    return changed
+
+
 def normalize_api_style(api_style: str) -> str:
     if api_style in {"pseudo", "service"}:
         return "pseudo"
@@ -1252,25 +1287,7 @@ def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) 
     single undifferentiated `dos_int21` hook at every site.
     """
 
-    project = function.project
-    if project is None:
-        return False
-
-    changed = False
-    for call in collect_dos_int21_calls(function, binary_path):
-        target_addr, name = ensure_dos_service_hook(project, call)
-        return_addr = function.get_call_return(call.insn_addr)
-        new = (target_addr, return_addr)
-        old = function._call_sites.get(call.insn_addr)
-        if old != new:
-            function._call_sites[call.insn_addr] = new
-            changed = True
-        callee = project.kb.functions.function(addr=target_addr, create=True)
-        if callee is not None:
-            callee.name = name
-            callee._init_prototype_and_calling_convention()
-
-    return changed
+    return patch_interrupt_service_call_sites(function, binary_path, vectors={0x21})
 
 
 def seed_calling_conventions(cfg) -> None:
