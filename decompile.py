@@ -414,6 +414,7 @@ def _decompile_function(
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
         lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
+        lambda: _lower_interrupt_wrapper_result_reads(project, dec.codegen, api_style),
         lambda: _attach_segment_register_names(dec.codegen, project),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
@@ -439,6 +440,7 @@ def _decompile_function(
         rewrite_passes = (
             lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
             lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
+            lambda: _lower_interrupt_wrapper_result_reads(project, dec.codegen, api_style),
             lambda: _attach_segment_register_names(dec.codegen, project),
             lambda: _attach_ss_stack_variables(project, dec.codegen),
             lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
@@ -800,6 +802,296 @@ def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style:
             callee_func.name = sig.canonical_name
             changed = True
 
+    return changed
+
+
+def _interrupt_wrapper_register_state_value(
+    state: dict[str, dict[tuple[str, ...], int]],
+    base_name: str,
+    field_path: tuple[str, ...],
+) -> int | None:
+    return state.get(base_name, {}).get(field_path)
+
+
+def _interrupt_wrapper_record_register_write(
+    state: dict[str, dict[tuple[str, ...], int]],
+    base_name: str,
+    field_path: tuple[str, ...],
+    value: int | None,
+) -> None:
+    if value is None:
+        return
+
+    regs = state.setdefault(base_name, {})
+    regs[field_path] = value & 0xFFFF
+
+    if field_path == ("x", "ax"):
+        ax = value & 0xFFFF
+        regs[("h", "ah")] = (ax >> 8) & 0xFF
+        regs[("h", "al")] = ax & 0xFF
+    elif field_path == ("x", "bx"):
+        bx = value & 0xFFFF
+        regs[("h", "bh")] = (bx >> 8) & 0xFF
+        regs[("h", "bl")] = bx & 0xFF
+    elif field_path == ("x", "cx"):
+        cx = value & 0xFFFF
+        regs[("h", "ch")] = (cx >> 8) & 0xFF
+        regs[("h", "cl")] = cx & 0xFF
+    elif field_path == ("x", "dx"):
+        dx = value & 0xFFFF
+        regs[("h", "dh")] = (dx >> 8) & 0xFF
+        regs[("h", "dl")] = dx & 0xFF
+    elif field_path == ("h", "ah"):
+        ah = value & 0xFF
+        regs[("h", "ah")] = ah
+        al = regs.get(("h", "al"))
+        if al is not None:
+            regs[("x", "ax")] = ((ah & 0xFF) << 8) | (al & 0xFF)
+    elif field_path == ("h", "al"):
+        al = value & 0xFF
+        regs[("h", "al")] = al
+        ah = regs.get(("h", "ah"))
+        if ah is not None:
+            regs[("x", "ax")] = ((ah & 0xFF) << 8) | (al & 0xFF)
+    elif field_path == ("h", "bh"):
+        regs[("h", "bh")] = value & 0xFF
+    elif field_path == ("h", "bl"):
+        regs[("h", "bl")] = value & 0xFF
+    elif field_path == ("h", "ch"):
+        regs[("h", "ch")] = value & 0xFF
+    elif field_path == ("h", "cl"):
+        regs[("h", "cl")] = value & 0xFF
+    elif field_path == ("h", "dh"):
+        regs[("h", "dh")] = value & 0xFF
+    elif field_path == ("h", "dl"):
+        regs[("h", "dl")] = value & 0xFF
+
+
+def _interrupt_wrapper_helper_call_expr(
+    sig: InterruptWrapperCall,
+    input_state: dict[str, dict[tuple[str, ...], int]],
+    api_style: str,
+    codegen,
+):
+    vector = _c_constant_value(_unwrap_c_casts(sig.vector_arg)) if sig.vector_arg is not None else None
+    if vector is None and sig.kind in {"intdos", "intdosx"}:
+        vector = 0x21
+    if vector is None:
+        return None
+    if vector == 0x10:
+        return None
+
+    service_call = InterruptCall(insn_addr=0, vector=vector & 0xFF)
+    if vector == 0x21:
+        inregs = "inregs"
+        ah = _interrupt_wrapper_register_state_value(input_state, inregs, ("h", "ah"))
+        al = _interrupt_wrapper_register_state_value(input_state, inregs, ("h", "al"))
+        ax = _interrupt_wrapper_register_state_value(input_state, inregs, ("x", "ax"))
+        if ax is None and ah is not None and al is not None:
+            ax = ((ah & 0xFF) << 8) | (al & 0xFF)
+        if ax is not None and ah is None:
+            ah = (ax >> 8) & 0xFF
+        if ax is not None and al is None:
+            al = ax & 0xFF
+
+        if ah is None:
+            return None
+
+        service_call = InterruptCall(
+            insn_addr=0,
+            vector=0x21,
+            ah=ah,
+            al=al,
+            ax=ax,
+            bx=_interrupt_wrapper_register_state_value(input_state, inregs, ("x", "bx")),
+            cx=_interrupt_wrapper_register_state_value(input_state, inregs, ("x", "cx")),
+            dx=_interrupt_wrapper_register_state_value(input_state, inregs, ("x", "dx")),
+            ds=_interrupt_wrapper_register_state_value(input_state, inregs, ("ds",)),
+            es=_interrupt_wrapper_register_state_value(input_state, inregs, ("es",)),
+            ss=_interrupt_wrapper_register_state_value(input_state, inregs, ("ss",)),
+            cs=_interrupt_wrapper_register_state_value(input_state, inregs, ("cs",)),
+        )
+
+    helper_name = interrupt_service_name(service_call, api_style)
+    if helper_name.startswith("int86") or helper_name.startswith("intdos"):
+        return None
+
+    helper_args: list[object] = []
+    if helper_name.endswith("getvect"):
+        helper_args.append(structured_c.CConstant(0x21, SimTypeShort(False), codegen=codegen))
+
+    return structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen)
+
+
+def _interrupt_wrapper_result_replacement(
+    access: InterruptWrapperFieldAccess,
+    helper_expr,
+    api_style: str,
+    codegen,
+):
+    if helper_expr is None:
+        return None
+
+    helper_name = getattr(helper_expr, "callee_target", None)
+    if not isinstance(helper_name, str):
+        helper_func = getattr(helper_expr, "callee_func", None)
+        helper_name = getattr(helper_func, "name", None)
+    if not isinstance(helper_name, str) or not helper_name:
+        return None
+
+    helper_args = list(getattr(helper_expr, "args", ()) or ())
+
+    def _clone_helper():
+        return structured_c.CFunctionCall(helper_name, None, list(helper_args), codegen=codegen)
+
+    if "getvect" in helper_name:
+        if access.base_name == "sregs" and access.field_path == ("es",):
+            return structured_c.CFunctionCall(
+                "FP_SEG",
+                None,
+                [_clone_helper()],
+                codegen=codegen,
+            )
+        if access.base_name == "outregs" and access.field_path == ("x", "bx"):
+            return structured_c.CFunctionCall(
+                "FP_OFF",
+                None,
+                [_clone_helper()],
+                codegen=codegen,
+            )
+        return None
+
+    if access.base_name == "outregs" and access.field_path in {("x", "ax"), ("h", "ah"), ("h", "al")}:
+        return _clone_helper()
+
+    return None
+
+
+def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str, codegen):
+    if helper_expr is None:
+        return None
+
+    replacement = None
+    access = _interrupt_wrapper_field_path(expr)
+    if access is not None:
+        replacement = _interrupt_wrapper_result_replacement(access, helper_expr, api_style, codegen)
+        if replacement is not None:
+            return replacement
+
+    helper_name = getattr(helper_expr, "callee_target", None)
+    if not isinstance(helper_name, str):
+        helper_func = getattr(helper_expr, "callee_func", None)
+        helper_name = getattr(helper_func, "name", None)
+    if not isinstance(helper_name, str) or not helper_name:
+        return None
+
+    if helper_name in {"get_dos_version", "_dos_get_version", "dos_get_version"}:
+        expr = _unwrap_c_casts(expr)
+        if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Or", "Add"}:
+            return None
+
+        for high_expr, low_expr in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+            high_expr = _unwrap_c_casts(high_expr)
+            low_expr = _unwrap_c_casts(low_expr)
+            if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op not in {"Shl", "Mul"}:
+                continue
+
+            scale = _c_constant_value(_unwrap_c_casts(high_expr.rhs))
+            if scale != 8:
+                continue
+
+            high_access = _interrupt_wrapper_field_path(high_expr.lhs)
+            low_access = _interrupt_wrapper_field_path(low_expr)
+            if (
+                high_access is not None
+                and low_access is not None
+                and high_access.base_name == low_access.base_name == "outregs"
+                and high_access.field_path == ("h", "ah")
+                and low_access.field_path == ("h", "al")
+            ):
+                return structured_c.CFunctionCall(
+                    helper_name,
+                    getattr(helper_expr, "callee_func", None),
+                    list(getattr(helper_expr, "args", ()) or ()),
+                    codegen=codegen,
+                )
+
+    return None
+
+
+def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_style: str) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    def visit(node, state: dict[str, dict[tuple[str, ...], int]], active_helper) -> None:
+        nonlocal changed
+
+        if isinstance(node, structured_c.CStatements):
+            local_state = {base_name: dict(values) for base_name, values in state.items()}
+            current_helper = active_helper
+            new_statements = []
+
+            for stmt in node.statements:
+                if isinstance(stmt, structured_c.CAssignment):
+                    lhs_access = _interrupt_wrapper_field_path(stmt.lhs)
+                    if lhs_access is not None and lhs_access.base_name in {"inregs", "outregs", "sregs"}:
+                        const_value = _c_constant_value(_unwrap_c_casts(stmt.rhs))
+                        _interrupt_wrapper_record_register_write(
+                            local_state,
+                            lhs_access.base_name,
+                            lhs_access.field_path,
+                            const_value,
+                        )
+
+                    if current_helper is not None:
+                        replacement = _interrupt_wrapper_result_expr_replacement(
+                            stmt.rhs,
+                            current_helper,
+                            api_style,
+                            codegen,
+                        )
+                        if replacement is not None and not _same_c_expression(stmt.rhs, replacement):
+                            stmt = structured_c.CAssignment(stmt.lhs, replacement, codegen=codegen)
+                            changed = True
+
+                elif isinstance(stmt, structured_c.CFunctionCall):
+                    sig = _interrupt_wrapper_call_signature(stmt)
+                    if sig is not None:
+                        helper = _interrupt_wrapper_helper_call_expr(sig, local_state, api_style, codegen)
+                        if helper is not None:
+                            current_helper = helper
+                            if not _same_c_expression(stmt, helper):
+                                stmt = helper
+                                changed = True
+
+                elif isinstance(stmt, structured_c.CExpressionStatement):
+                    expr = getattr(stmt, "expr", None)
+                    if isinstance(expr, structured_c.CFunctionCall):
+                        sig = _interrupt_wrapper_call_signature(expr)
+                        if sig is not None:
+                            helper = _interrupt_wrapper_helper_call_expr(sig, local_state, api_style, codegen)
+                            if helper is not None:
+                                current_helper = helper
+                                if not _same_c_expression(expr, helper):
+                                    stmt = structured_c.CExpressionStatement(helper, codegen=codegen)
+                                    changed = True
+
+                visit(stmt, local_state, current_helper)
+                new_statements.append(stmt)
+
+            if new_statements != list(node.statements):
+                node.statements = new_statements
+            return
+
+        if isinstance(node, structured_c.CIfElse):
+            for _cond, body in node.condition_and_nodes:
+                visit(body, {base_name: dict(values) for base_name, values in state.items()}, active_helper)
+            if node.else_node is not None:
+                visit(node.else_node, {base_name: dict(values) for base_name, values in state.items()}, active_helper)
+
+    visit(codegen.cfunc.statements, {}, None)
     return changed
 
 
