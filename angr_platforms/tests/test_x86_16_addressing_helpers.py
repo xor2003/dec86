@@ -16,6 +16,7 @@ from angr_platforms.X86_16.addressing_helpers import (
     load_resolved_operand,
     load_word_pair16,
     linear_address,
+    modrm16_effective_offset,
     resolve_linear_operand,
     operand_width_bits,
     signed_displacement,
@@ -138,6 +139,29 @@ def test_default_segment_helpers_match_x86_16_addressing_rules():
     assert default_segment_for_modrm32(0, 4, 5) == sgreg_t.SS
     assert default_segment_for_modrm32(0, 4, 0) == sgreg_t.DS
     assert default_segment_for_modrm32(1, 5) == sgreg_t.SS
+
+
+def test_modrm16_effective_offset_reuses_shared_address_rules():
+    class _MathFakeEmu(_FakeEmu):
+        def constant(self, value, ty):
+            self.calls.append((value, ty))
+            return value
+
+    emu = _MathFakeEmu()
+    emu.gpregs[reg16_t.BX] = 0x0100
+    emu.gpregs[reg16_t.BP] = 0x0200
+    emu.gpregs[reg16_t.SI] = 0x0300
+    emu.gpregs[reg16_t.DI] = 0x0400
+
+    class _Modrm:
+        def __init__(self, mod, rm):
+            self.mod = mod
+            self.rm = rm
+
+    addr = modrm16_effective_offset(emu, _Modrm(1, 1), 0x10, 0x2222)
+    assert emu.calls[0] == (0, Type.int_16)
+    assert emu.calls[1] == (0x10, Type.int_16)
+    assert addr == 0x0510
 
 
 def test_resolved_memory_operand_tracks_segment_offset_and_linear_form():

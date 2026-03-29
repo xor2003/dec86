@@ -149,6 +149,32 @@ def default_segment_for_modrm32(mod: int, rm: int, sib_base: int | None = None) 
     return sgreg_t.DS
 
 
+def modrm16_effective_offset(emu, modrm, disp8: int, disp16: int):
+    addr = emu.constant(0, Type.int_16)
+
+    if modrm.mod == 1:
+        addr = addr + emu.constant(signed_displacement(disp8, 8) & 0xFFFF, Type.int_16)
+    elif modrm.mod == 2:
+        addr = addr + emu.constant(disp16, Type.int_16)
+
+    rm = modrm.rm
+    if rm in (0, 1, 7):
+        addr = addr + emu.get_gpreg(reg16_t.BX)
+    elif rm in (2, 3, 6):
+        if modrm.mod == 0 and rm == 6:
+            addr = addr + emu.constant(disp16, Type.int_16)
+        else:
+            addr = addr + emu.get_gpreg(reg16_t.BP)
+
+    if rm < 6:
+        if rm % 2:
+            addr = addr + emu.get_gpreg(reg16_t.DI)
+        else:
+            addr = addr + emu.get_gpreg(reg16_t.SI)
+
+    return addr
+
+
 def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, address_bits: int) -> ResolvedMemoryOperand:
     return ResolvedMemoryOperand(segment, offset, linear_address(emu, segment, offset), width_bits, address_bits)
 

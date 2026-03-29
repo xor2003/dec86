@@ -177,6 +177,8 @@ Recent progress on that front:
 - the mixed-width extension path now has a dedicated report surface that
   spells out the supported operand/address pair matrix instead of leaving it
   implicit inside parse helpers
+- 16-bit ModRM effective-address arithmetic now has a shared helper boundary
+  instead of living only inside `exec.py`
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging

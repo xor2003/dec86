@@ -4,7 +4,14 @@ from pyvex.lifting.util.vex_helper import Type
 from pyvex.expr import Const, Binop, Unop
 from pyvex import IRConst
 
-from .addressing_helpers import ResolvedMemoryOperand, default_segment_for_modrm16, default_segment_for_modrm32, resolve_linear_operand, signed_displacement
+from .addressing_helpers import (
+    ResolvedMemoryOperand,
+    default_segment_for_modrm16,
+    default_segment_for_modrm32,
+    modrm16_effective_offset,
+    resolve_linear_operand,
+    signed_displacement,
+)
 from .regs import reg8_t, reg16_t, reg32_t, sgreg_t
 
 from .instruction import X86Instruction
@@ -163,35 +170,8 @@ class ExecInstr(X86Instruction):
             return self.calc_modrm16()
 
     def calc_modrm16(self):
-        addr = self.emu.constant(0, Type.int_16)
         self.instr.segment = default_segment_for_modrm16(self.instr.modrm.mod, self.instr.modrm.rm).value
-
-        if self.instr.modrm.mod == 1:
-            disp8 = signed_displacement(self.instr.disp8, 8)
-            addr = addr + self.emu.constant(disp8 & 0xFFFF, Type.int_16)
-        elif self.instr.modrm.mod == 2:
-            addr = addr + self.emu.constant(self.instr.disp16, Type.int_16)
-
-        rm = self.instr.modrm.rm
-        if rm in (0, 1, 7):
-            bx = self.emu.get_gpreg(reg16_t.BX)
-            addr = addr + bx
-        elif rm in (2, 3, 6):
-            if self.instr.modrm.mod == 0 and rm == 6:
-                addr = addr + self.emu.constant(self.instr.disp16, Type.int_16)
-            else:
-                bp = self.emu.get_gpreg(reg16_t.BP)
-                addr = addr + bp
-
-        if rm < 6:
-            if rm % 2:
-                di = self.emu.get_gpreg(reg16_t.DI)
-                addr = addr + di
-            else:
-                si = self.emu.get_gpreg(reg16_t.SI)
-                addr = addr + si
-
-        return addr
+        return modrm16_effective_offset(self.emu, self.instr.modrm, self.instr.disp8, self.instr.disp16)
 
     def calc_modrm32(self):
         addr = 0
