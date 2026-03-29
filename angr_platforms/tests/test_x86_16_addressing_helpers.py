@@ -6,6 +6,7 @@ from angr_platforms.X86_16.addressing_helpers import (
     advance_eip32,
     advance_ip16,
     describe_x86_16_decode_width_matrix,
+    describe_x86_16_mixed_width_extension_surface,
     decode_width_profile,
     default_segment_for_modrm16,
     default_segment_for_modrm32,
@@ -173,6 +174,48 @@ def test_describe_x86_16_decode_width_matrix_exposes_named_cases():
         ("16/32", 16, 32),
         ("32/32", 32, 32),
     )
+
+
+def test_describe_x86_16_mixed_width_extension_surface_matches_matrix():
+    assert describe_x86_16_mixed_width_extension_surface() == {
+        "matrix": (
+            {
+                "name": "16/16",
+                "operand_bits": 16,
+                "address_bits": 16,
+                "mode32": False,
+                "chsz_op": False,
+                "chsz_ad": False,
+            },
+            {
+                "name": "32/16",
+                "operand_bits": 32,
+                "address_bits": 16,
+                "mode32": False,
+                "chsz_op": True,
+                "chsz_ad": False,
+            },
+            {
+                "name": "16/32",
+                "operand_bits": 16,
+                "address_bits": 32,
+                "mode32": False,
+                "chsz_op": False,
+                "chsz_ad": True,
+            },
+            {
+                "name": "32/32",
+                "operand_bits": 32,
+                "address_bits": 32,
+                "mode32": True,
+                "chsz_op": False,
+                "chsz_ad": False,
+            },
+        ),
+        "supported_pairs": ((16, 16), (32, 16), (16, 32), (32, 32)),
+        "address_widths": (16, 32),
+        "operand_widths": (16, 32),
+    }
 
 
 def test_load_far_pointer16_uses_address_width_specific_step():

@@ -99,6 +99,25 @@ def describe_x86_16_decode_width_matrix() -> tuple[tuple[str, int, int], ...]:
     return tuple((case.name, case.profile.operand_bits, case.profile.address_bits) for case in DECODE_WIDTH_MATRIX)
 
 
+def describe_x86_16_mixed_width_extension_surface() -> dict[str, object]:
+    return {
+        "matrix": tuple(
+            {
+                "name": case.name,
+                "operand_bits": case.profile.operand_bits,
+                "address_bits": case.profile.address_bits,
+                "mode32": case.mode32,
+                "chsz_op": case.chsz_op,
+                "chsz_ad": case.chsz_ad,
+            }
+            for case in DECODE_WIDTH_MATRIX
+        ),
+        "supported_pairs": tuple((case.profile.operand_bits, case.profile.address_bits) for case in DECODE_WIDTH_MATRIX),
+        "address_widths": tuple(sorted({case.profile.address_bits for case in DECODE_WIDTH_MATRIX})),
+        "operand_widths": tuple(sorted({case.profile.operand_bits for case in DECODE_WIDTH_MATRIX})),
+    }
+
+
 def linear_address(emu, segment, offset):
     return emu.v2p(segment, offset)
 

@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alias_model import describe_x86_16_alias_recovery_api
-from .addressing_helpers import describe_x86_16_decode_width_matrix
-from .analysis_helpers import describe_x86_16_interrupt_api_surface
+from .addressing_helpers import describe_x86_16_decode_width_matrix, describe_x86_16_mixed_width_extension_surface
+from .analysis_helpers import describe_x86_16_interrupt_api_surface, describe_x86_16_interrupt_core_surface
 from .cod_source_rewrites import (
     describe_x86_16_source_backed_rewrite_debt,
     describe_x86_16_source_backed_rewrite_status,
@@ -96,7 +96,9 @@ def build_x86_16_milestone_report(
     recovery_layers = describe_x86_16_recovery_layers()
     projection_cleanup_rules = describe_x86_16_projection_cleanup_rules()
     decode_width_matrix = describe_x86_16_decode_width_matrix()
+    mixed_width_extension_surface = describe_x86_16_mixed_width_extension_surface()
     interrupt_api_surface = describe_x86_16_interrupt_api_surface()
+    interrupt_core_surface = describe_x86_16_interrupt_core_surface()
     failure_counts = dict(scan_summary.get("failure_counts", {}) or {})
     fallback_counts = dict(scan_summary.get("fallback_counts", {}) or {})
     top_failure_classes = list(scan_summary.get("top_failure_classes", []) or [])
@@ -141,6 +143,7 @@ def build_x86_16_milestone_report(
             {"name": name, "operand_bits": operand_bits, "address_bits": address_bits}
             for name, operand_bits, address_bits in decode_width_matrix
         ],
+        "mixed_width_extension_surface": mixed_width_extension_surface,
         "widening_pipeline": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in widening_pipeline
@@ -181,6 +184,7 @@ def build_x86_16_milestone_report(
             "unresolved_wrappers": int(interrupt_api.get("unresolved_wrappers", 0) or 0),
         },
         "interrupt_api_surface": interrupt_api_surface,
+        "interrupt_core_surface": interrupt_core_surface,
         "readability_tiers": readability_tier_counts,
         "hotspots": {
             "failure_counts": failure_counts,

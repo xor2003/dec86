@@ -6,6 +6,9 @@ from pathlib import Path
 
 from angr import SimProcedure
 
+INTERRUPT_CORE_VECTOR_BASE = 0xFF000
+INTERRUPT_CORE_VECTOR_COUNT = 0x100
+
 
 @dataclass(frozen=True)
 class FarCallTarget:
@@ -531,6 +534,24 @@ def describe_x86_16_interrupt_api_surface() -> dict[str, object]:
                 "sregs.es",
             ),
         },
+    }
+
+
+def describe_x86_16_interrupt_core_surface() -> dict[str, object]:
+    return {
+        "vector_base": INTERRUPT_CORE_VECTOR_BASE,
+        "vector_count": INTERRUPT_CORE_VECTOR_COUNT,
+        "hook_count": INTERRUPT_CORE_VECTOR_COUNT,
+        "runtime_alias_base": 0x0000,
+        "named_vectors": tuple(sorted(INTERRUPT_SERVICE_SPECS) + [0x20, 0x21, 0x25, 0x26, 0x27, 0x2F]),
+        "control_transfer_policy": "int -> synthetic target -> SimOS hook",
+        "low_level_helpers": (
+            "interrupt_service_addr",
+            "ensure_interrupt_service_hook",
+            "ensure_dos_service_hook",
+            "collect_interrupt_service_calls",
+            "patch_interrupt_service_call_sites",
+        ),
     }
 
 

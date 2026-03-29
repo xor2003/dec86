@@ -174,9 +174,15 @@ Recent progress on that front:
 - the explicit mixed-width decode matrix now has a shared helper/report
   surface, so the width combinations are visible in tests and milestone
   reporting instead of only in parser logic
+- the mixed-width extension path now has a dedicated report surface that
+  spells out the supported operand/address pair matrix instead of leaving it
+  implicit inside parse helpers
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging
+- interrupt-core semantics now have a dedicated report surface separate from
+  DOS/BIOS/API lowering, so the low-level synthetic interrupt target policy is
+  visible apart from helper lowering
 - scan-safe corpus reports now also attach semantic-family ownership to
   failures and ugly clusters, so triage can point back to the low-level family
   that likely needs work

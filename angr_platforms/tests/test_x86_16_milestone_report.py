@@ -122,6 +122,37 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "wrapper_calls": 6,
         "unresolved_wrappers": 1,
     }
+    assert report["interrupt_core_surface"] == {
+        "vector_base": 0xFF000,
+        "vector_count": 256,
+        "hook_count": 256,
+        "runtime_alias_base": 0x0000,
+        "named_vectors": (
+            0x10,
+            0x11,
+            0x12,
+            0x13,
+            0x14,
+            0x15,
+            0x16,
+            0x17,
+            0x1A,
+            0x20,
+            0x21,
+            0x25,
+            0x26,
+            0x27,
+            0x2F,
+        ),
+        "control_transfer_policy": "int -> synthetic target -> SimOS hook",
+        "low_level_helpers": (
+            "interrupt_service_addr",
+            "ensure_interrupt_service_hook",
+            "ensure_dos_service_hook",
+            "collect_interrupt_service_calls",
+            "patch_interrupt_service_call_sites",
+        ),
+    }
     assert report["interrupt_api_surface"] == {
         "dos": {
             "service_count": 18,
@@ -205,6 +236,45 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
                 "sregs.es",
             ),
         },
+    }
+    assert report["mixed_width_extension_surface"] == {
+        "matrix": (
+            {
+                "name": "16/16",
+                "operand_bits": 16,
+                "address_bits": 16,
+                "mode32": False,
+                "chsz_op": False,
+                "chsz_ad": False,
+            },
+            {
+                "name": "32/16",
+                "operand_bits": 32,
+                "address_bits": 16,
+                "mode32": False,
+                "chsz_op": True,
+                "chsz_ad": False,
+            },
+            {
+                "name": "16/32",
+                "operand_bits": 16,
+                "address_bits": 32,
+                "mode32": False,
+                "chsz_op": False,
+                "chsz_ad": True,
+            },
+            {
+                "name": "32/32",
+                "operand_bits": 32,
+                "address_bits": 32,
+                "mode32": True,
+                "chsz_op": False,
+                "chsz_ad": False,
+            },
+        ),
+        "supported_pairs": ((16, 16), (32, 16), (16, 32), (32, 32)),
+        "address_widths": (16, 32),
+        "operand_widths": (16, 32),
     }
     assert report["readability_tiers"] == {"R0": 1, "R1": 1, "R2": 1, "R3": 1}
     assert [layer["name"] for layer in report["validation_layers"]] == ["unit", "focused_corpus", "whole_program"]
