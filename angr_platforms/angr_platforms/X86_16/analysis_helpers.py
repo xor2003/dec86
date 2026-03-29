@@ -15,8 +15,9 @@ class FarCallTarget:
 
 
 @dataclass(frozen=True)
-class DOSInt21Call:
+class InterruptCall:
     insn_addr: int
+    vector: int = 0x21
     ah: int | None = None
     al: int | None = None
     ax: int | None = None
@@ -24,68 +25,167 @@ class DOSInt21Call:
     cx: int | None = None
     dx: int | None = None
     si: int | None = None
+    di: int | None = None
+    bh: int | None = None
+    bl: int | None = None
+    ch: int | None = None
+    cl: int | None = None
+    dh: int | None = None
     dl: int | None = None
+    ds: int | None = None
+    es: int | None = None
+    ss: int | None = None
+    cs: int | None = None
     ah_expr: str | None = None
     al_expr: str | None = None
+    ax_expr: str | None = None
     bx_expr: str | None = None
     cx_expr: str | None = None
     dx_expr: str | None = None
     si_expr: str | None = None
+    di_expr: str | None = None
+    bh_expr: str | None = None
+    bl_expr: str | None = None
+    ch_expr: str | None = None
+    cl_expr: str | None = None
+    dh_expr: str | None = None
     dl_expr: str | None = None
+    ds_expr: str | None = None
+    es_expr: str | None = None
+    ss_expr: str | None = None
+    cs_expr: str | None = None
     string_literal: str | None = None
 
 
-DOS_SERVICE_BASE_ADDR = 0xFE000
+DOSInt21Call = InterruptCall
 
 
-def _dos_service_key(call: DOSInt21Call) -> int:
-    return call.ah & 0xFF if call.ah is not None else 0
+@dataclass(frozen=True)
+class InterruptServiceSpec:
+    vector: int
+    pseudo_name: str
+    dos_name: str
+    modern_name: str
+    render_kind: str = "generic"
+    default_output: str = "return"
 
 
-def dos_service_addr(call: DOSInt21Call) -> int:
-    return DOS_SERVICE_BASE_ADDR + _dos_service_key(call)
+INTERRUPT_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
+    0x10: InterruptServiceSpec(0x10, "bios_int10_video", "_bios_int10_video", "_bios_int10_video", "wrapper"),
+    0x11: InterruptServiceSpec(0x11, "bios_equiplist", "_bios_equiplist", "_bios_equiplist", "direct"),
+    0x12: InterruptServiceSpec(0x12, "bios_memsize", "_bios_memsize", "_bios_memsize", "direct"),
+    0x13: InterruptServiceSpec(0x13, "bios_int13_disk", "_bios_disk", "_bios_disk", "wrapper"),
+    0x14: InterruptServiceSpec(0x14, "bios_int14_serial", "_bios_serialcom", "_bios_serialcom", "wrapper"),
+    0x15: InterruptServiceSpec(0x15, "bios_int15_system", "_bios_int15_system", "_bios_int15_system", "wrapper"),
+    0x16: InterruptServiceSpec(0x16, "bios_keybrd", "_bios_keybrd", "_bios_keybrd", "direct"),
+    0x17: InterruptServiceSpec(0x17, "bios_int17_printer", "_bios_printer", "_bios_printer", "wrapper"),
+    0x1A: InterruptServiceSpec(0x1A, "bios_timeofday", "_bios_timeofday", "_bios_timeofday", "direct"),
+}
 
 
-def dos_service_name(call: DOSInt21Call) -> str:
-    if call.ah == 0x0E:
-        return "dos_set_current_drive"
-    if call.ah == 0x39:
-        return "dos_mkdir"
-    if call.ah == 0x3A:
-        return "dos_rmdir"
-    if call.ah == 0x3B:
-        return "dos_chdir"
-    if call.ah == 0x47:
-        return "dos_get_current_directory"
-    if call.ah == 0x09:
-        return "dos_print_dollar_string"
-    if call.ah == 0x30:
-        return "dos_get_version"
-    if call.ah == 0x3C:
-        return "dos_creat"
-    if call.ah == 0x3D:
-        return "dos_open"
-    if call.ah == 0x3E:
-        return "dos_close"
-    if call.ah == 0x3F:
-        return "dos_read"
-    if call.ah == 0x40:
-        return "dos_write"
-    if call.ah == 0x42:
-        return "dos_lseek"
-    if call.ah == 0x4A:
-        return "dos_setblock"
-    if call.ah == 0x4C:
-        return "dos_exit"
-    return "dos_int21"
+INTERRUPT_SERVICE_BASE_ADDR = 0xFE000
+DOS_SERVICE_BASE_ADDR = INTERRUPT_SERVICE_BASE_ADDR
 
 
-def ensure_dos_service_hook(project, call: DOSInt21Call) -> tuple[int, str]:
-    addr = dos_service_addr(call)
-    name = dos_service_name(call)
+def _interrupt_service_key(call: InterruptCall) -> int:
+    if call.vector == 0x21:
+        return call.ah & 0xFF if call.ah is not None else 0
+    return call.vector & 0xFF
+
+
+def interrupt_service_addr(call: InterruptCall) -> int:
+    return INTERRUPT_SERVICE_BASE_ADDR + _interrupt_service_key(call)
+
+
+def interrupt_service_name(call: InterruptCall, api_style: str = "pseudo") -> str:
+    spec = INTERRUPT_SERVICE_SPECS.get(call.vector)
+    if spec is not None:
+        if api_style == "pseudo":
+            return spec.pseudo_name
+        if api_style in {"dos", "msc", "compiler"}:
+            return spec.dos_name
+        return spec.modern_name
+
+    if call.vector == 0x21:
+        if call.ah == 0x0E:
+            return "dos_set_current_drive" if api_style == "pseudo" else "_dos_setdrive"
+        if call.ah == 0x39:
+            return "dos_mkdir" if api_style == "pseudo" else "_dos_mkdir"
+        if call.ah == 0x3A:
+            return "dos_rmdir" if api_style == "pseudo" else "_dos_rmdir"
+        if call.ah == 0x3B:
+            return "dos_chdir" if api_style == "pseudo" else "_dos_chdir"
+        if call.ah == 0x47:
+            return "dos_get_current_directory" if api_style == "pseudo" else "_dos_getcwd"
+        if call.ah == 0x09:
+            return "dos_print_dollar_string" if api_style == "pseudo" else "_dos_print_dollar_string"
+        if call.ah == 0x30:
+            return "dos_get_version" if api_style == "pseudo" else "_dos_get_version"
+        if call.ah == 0x3C:
+            return "dos_creat" if api_style == "pseudo" else "_dos_creat"
+        if call.ah == 0x3D:
+            return "dos_open" if api_style == "pseudo" else "_dos_open"
+        if call.ah == 0x3E:
+            return "dos_close" if api_style == "pseudo" else "_dos_close"
+        if call.ah == 0x3F:
+            return "dos_read" if api_style == "pseudo" else "_dos_read"
+        if call.ah == 0x40:
+            return "dos_write" if api_style == "pseudo" else "_dos_write"
+        if call.ah == 0x42:
+            return "dos_lseek" if api_style == "pseudo" else "_dos_seek"
+        if call.ah == 0x4A:
+            return "dos_setblock" if api_style == "pseudo" else "_dos_setblock"
+        if call.ah == 0x4C:
+            return "dos_exit" if api_style == "pseudo" else "_dos_exit"
+        return "dos_int21"
+
+    if call.vector == 0x10:
+        return "bios_int10_video" if api_style == "pseudo" else "_bios_int10_video"
+    if call.vector == 0x11:
+        return "bios_equiplist" if api_style == "pseudo" else "_bios_equiplist"
+    if call.vector == 0x12:
+        return "bios_memsize" if api_style == "pseudo" else "_bios_memsize"
+    if call.vector == 0x13:
+        return "bios_int13_disk" if api_style == "pseudo" else "_bios_disk"
+    if call.vector == 0x14:
+        return "bios_int14_serial" if api_style == "pseudo" else "_bios_serialcom"
+    if call.vector == 0x15:
+        return "bios_int15_system" if api_style == "pseudo" else "_bios_int15_system"
+    if call.vector == 0x16:
+        return "bios_keybrd" if api_style == "pseudo" else "_bios_keybrd"
+    if call.vector == 0x17:
+        return "bios_int17_printer" if api_style == "pseudo" else "_bios_printer"
+    if call.vector == 0x1A:
+        return "bios_timeofday" if api_style == "pseudo" else "_bios_timeofday"
+    return f"int{call.vector:02x}"
+
+
+def dos_service_name(call: InterruptCall) -> str:
+    return interrupt_service_name(call, "pseudo")
+
+
+def _interrupt_service_name_for_helper(call: InterruptCall, api_style: str) -> str:
+    if api_style in {"dos", "msc", "compiler"}:
+        return interrupt_service_name(call, "dos")
+    return interrupt_service_name(call, "pseudo")
+
+
+def interrupt_service_spec(call: InterruptCall) -> InterruptServiceSpec | None:
+    if call.vector == 0x21:
+        return None
+    return INTERRUPT_SERVICE_SPECS.get(call.vector)
+
+
+def dos_service_addr(call: InterruptCall) -> int:
+    return interrupt_service_addr(call)
+
+
+def ensure_interrupt_service_hook(project, call: InterruptCall) -> tuple[int, str]:
+    addr = interrupt_service_addr(call)
+    name = _interrupt_service_name_for_helper(call, "pseudo")
 
     if not project.is_hooked(addr):
-        no_ret = call.ah == 0x4C
+        no_ret = call.vector == 0x21 and call.ah == 0x4C
 
         def _run(self):  # pylint:disable=unused-argument
             if no_ret:
@@ -105,6 +205,10 @@ def ensure_dos_service_hook(project, call: DOSInt21Call) -> tuple[int, str]:
         project.hook(addr, proc_cls(), replace=True)
 
     return addr, name
+
+
+def ensure_dos_service_hook(project, call: InterruptCall) -> tuple[int, str]:
+    return ensure_interrupt_service_hook(project, call)
 
 
 def normalize_api_style(api_style: str) -> str:
@@ -236,55 +340,77 @@ def _operand_expr(ins, operand) -> tuple[int | None, str | None]:
     return None, None
 
 
-def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> list[DOSInt21Call]:
+def collect_interrupt_calls(
+    function,
+    binary_path: Path | str | None = None,
+    *,
+    vectors: set[int] | None = None,
+) -> list[InterruptCall]:
     binary_path = _coerce_path(binary_path)
     project = function.project
     if project is None:
         return []
 
-    calls: list[DOSInt21Call] = []
+    calls: list[InterruptCall] = []
     regs: dict[str, tuple[int | None, str | None]] = {
         "ah": (None, None),
         "al": (None, None),
         "ax": (None, None),
+        "bh": (None, None),
+        "bl": (None, None),
         "bx": (None, None),
+        "ch": (None, None),
+        "cl": (None, None),
         "cx": (None, None),
-        "dx": (None, None),
+        "dh": (None, None),
         "dl": (None, None),
+        "dx": (None, None),
         "si": (None, None),
+        "di": (None, None),
+        "ds": (None, None),
+        "es": (None, None),
+        "ss": (None, None),
+        "cs": (None, None),
     }
 
     def set_reg(reg_name: str, value: int | None, expr: str | None) -> None:
         regs[reg_name] = (value, expr)
 
-        if reg_name == "ax":
+        if reg_name in {"ax", "bx", "cx", "dx"}:
             if value is not None:
-                regs["ah"] = ((value >> 8) & 0xFF, _format_imm((value >> 8) & 0xFF))
-                regs["al"] = (value & 0xFF, _format_imm(value & 0xFF))
+                high = (value >> 8) & 0xFF
+                low = value & 0xFF
+                regs[f"{reg_name[0]}h"] = (high, _format_imm(high))
+                regs[f"{reg_name[0]}l"] = (low, _format_imm(low))
             else:
-                regs["ah"] = (None, None)
-                regs["al"] = (None, None)
-        elif reg_name == "ah":
-            al_val, al_expr = regs["al"]
-            if value is not None and al_val is not None:
-                regs["ax"] = (((value & 0xFF) << 8) | (al_val & 0xFF), None)
+                regs[f"{reg_name[0]}h"] = (None, None)
+                regs[f"{reg_name[0]}l"] = (None, None)
+        elif reg_name in {"ah", "al"}:
+            high, _ = regs["ah"]
+            low, _ = regs["al"]
+            if high is not None and low is not None:
+                regs["ax"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
             else:
                 regs["ax"] = (None, None)
-        elif reg_name == "al":
-            ah_val, ah_expr = regs["ah"]
-            if value is not None and ah_val is not None:
-                regs["ax"] = ((((ah_val & 0xFF) << 8) | (value & 0xFF)), None)
+        elif reg_name in {"bh", "bl"}:
+            high, _ = regs["bh"]
+            low, _ = regs["bl"]
+            if high is not None and low is not None:
+                regs["bx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
             else:
-                regs["ax"] = (None, None)
-        elif reg_name == "dx":
-            if value is not None:
-                regs["dl"] = (value & 0xFF, _format_imm(value & 0xFF))
+                regs["bx"] = (None, None)
+        elif reg_name in {"ch", "cl"}:
+            high, _ = regs["ch"]
+            low, _ = regs["cl"]
+            if high is not None and low is not None:
+                regs["cx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
             else:
-                regs["dl"] = (None, None)
-        elif reg_name == "dl":
-            dx_val, _ = regs["dx"]
-            if value is not None and dx_val is not None:
-                regs["dx"] = (((dx_val & 0xFF00) | (value & 0xFF)), None)
+                regs["cx"] = (None, None)
+        elif reg_name in {"dh", "dl"}:
+            high, _ = regs["dh"]
+            low, _ = regs["dl"]
+            if high is not None and low is not None:
+                regs["dx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
             else:
                 regs["dx"] = (None, None)
 
@@ -302,47 +428,100 @@ def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> 
             elif ins.mnemonic == "xor" and len(operands) == 2 and operands[0].type == 1 and operands[1].type == 1:
                 dst_name = ins.reg_name(operands[0].reg).lower()
                 src_name = ins.reg_name(operands[1].reg).lower()
-                if dst_name == src_name:
-                    if dst_name in regs:
-                        set_reg(dst_name, 0, "0")
-            elif ins.mnemonic == "int" and ins.op_str.lower() == "0x21":
+                if dst_name == src_name and dst_name in regs:
+                    set_reg(dst_name, 0, "0")
+            elif ins.mnemonic == "int":
+                vector_text = ins.op_str.lower().strip()
+                try:
+                    vector = int(vector_text, 0) & 0xFF
+                except ValueError:
+                    continue
+                if vectors is not None and vector not in vectors:
+                    continue
+
                 ah, ah_expr = regs["ah"]
                 al, al_expr = regs["al"]
-                ax, _ = regs["ax"]
+                ax, ax_expr = regs["ax"]
+                bh, bh_expr = regs["bh"]
+                bl, bl_expr = regs["bl"]
                 bx, bx_expr = regs["bx"]
+                ch, ch_expr = regs["ch"]
+                cl, cl_expr = regs["cl"]
                 cx, cx_expr = regs["cx"]
+                dh, dh_expr = regs["dh"]
+                dl, dl_expr = regs["dl"]
                 dx, dx_expr = regs["dx"]
                 si, si_expr = regs["si"]
-                dl, dl_expr = regs["dl"]
+                di, di_expr = regs["di"]
+                ds, ds_expr = regs["ds"]
+                es, es_expr = regs["es"]
+                ss, ss_expr = regs["ss"]
+                cs, cs_expr = regs["cs"]
                 path_literal = None
-                if ah in {0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x41}:
+                if vector == 0x21 and ah in {0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x41}:
                     path_literal = decode_com_c_string(binary_path, dx)
-                elif ah == 0x09:
+                elif vector == 0x21 and ah == 0x09:
                     path_literal = decode_com_dollar_string(binary_path, dx)
                 calls.append(
-                    DOSInt21Call(
+                    InterruptCall(
                         insn_addr=ins.address,
+                        vector=vector,
                         ah=ah,
                         al=al,
                         ax=ax,
+                        bh=bh,
+                        bl=bl,
                         bx=bx,
+                        ch=ch,
+                        cl=cl,
                         cx=cx,
+                        dh=dh,
+                        dl=dl,
                         dx=dx,
                         si=si,
-                        dl=dl,
+                        di=di,
+                        ds=ds,
+                        es=es,
+                        ss=ss,
+                        cs=cs,
                         ah_expr=ah_expr,
                         al_expr=al_expr,
+                        ax_expr=ax_expr,
+                        bh_expr=bh_expr,
+                        bl_expr=bl_expr,
                         bx_expr=bx_expr,
+                        ch_expr=ch_expr,
+                        cl_expr=cl_expr,
                         cx_expr=cx_expr,
+                        dh_expr=dh_expr,
+                        dl_expr=dl_expr,
                         dx_expr=dx_expr,
                         si_expr=si_expr,
-                        dl_expr=dl_expr,
+                        di_expr=di_expr,
+                        ds_expr=ds_expr,
+                        es_expr=es_expr,
+                        ss_expr=ss_expr,
+                        cs_expr=cs_expr,
                         string_literal=path_literal,
                     )
                 )
-                set_reg("dx", None, None)
+                if vector == 0x21:
+                    set_reg("dx", None, None)
 
     return calls
+
+
+def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> list[DOSInt21Call]:
+    return [call for call in collect_interrupt_calls(function, binary_path, vectors={0x21}) if call.vector == 0x21]
+
+
+def collect_interrupt_service_calls(
+    function,
+    binary_path: Path | str | None = None,
+    *,
+    vectors: set[int] | None = None,
+) -> list[InterruptCall]:
+    return collect_interrupt_calls(function, binary_path, vectors=vectors)
 
 
 def _dos_path_arg(call: DOSInt21Call, *, far_ptr: bool) -> str | None:
@@ -580,6 +759,29 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
     return "dos_int21()"
 
 
+def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
+    api_style = normalize_api_style(api_style)
+    spec = interrupt_service_spec(call)
+    if spec is None:
+        return render_dos_int21_call(call, api_style)
+    if api_style == "raw":
+        return f"int{call.vector:02x}()"
+
+    name = interrupt_service_name(call, api_style)
+    if call.vector == 0x10 and api_style in {"dos", "msc", "compiler"}:
+        return f"{name}(0x10)"
+    if call.vector == 0x13 and api_style == "pseudo":
+        return f"{name}()"
+    return f"{name}()"
+
+
+def render_interrupt_call(call: InterruptCall, api_style: str) -> str:
+    spec = interrupt_service_spec(call)
+    if spec is None:
+        return render_dos_int21_call(call, api_style)
+    return _render_simple_interrupt_call(call, api_style)
+
+
 def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[str]:
     api_style = normalize_api_style(api_style)
     if api_style == "raw":
@@ -688,6 +890,35 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
                 decl = "void exit(int status);"
             else:
                 decl = "int dos_int21(void);"
+        if decl not in seen:
+            seen.add(decl)
+            declarations.append(decl)
+    return declarations
+
+
+def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -> list[str]:
+    api_style = normalize_api_style(api_style)
+    if api_style == "raw":
+        return []
+
+    declarations: list[str] = []
+    seen: set[str] = set()
+    for call in calls:
+        spec = interrupt_service_spec(call)
+        if spec is None:
+            decls = dos_helper_declarations([call], api_style)
+            for decl in decls:
+                if decl not in seen:
+                    seen.add(decl)
+                    declarations.append(decl)
+            continue
+
+        if api_style == "pseudo":
+            decl = f"int {spec.pseudo_name}(void);"
+        elif api_style == "dos":
+            decl = f"int {spec.dos_name}(void);"
+        else:
+            decl = f"int {spec.modern_name.lstrip('_')}(void);"
         if decl not in seen:
             seen.add(decl)
             declarations.append(decl)

@@ -40,3 +40,26 @@ def test_dos_pseudo_callee_attachment_accepts_partial_callnode_matches(monkeypat
     assert changed
     assert first.callee_func is fake_helper
     assert second.callee_func is None
+
+
+def test_interrupt_service_table_names_cover_common_bios_vectors():
+    call_12 = _decompile.InterruptCall(insn_addr=0x1000, vector=0x12)
+    call_13 = _decompile.InterruptCall(insn_addr=0x1002, vector=0x13)
+    call_1a = _decompile.InterruptCall(insn_addr=0x1004, vector=0x1A)
+
+    assert _decompile.interrupt_service_name(call_12, "pseudo") == "bios_memsize"
+    assert _decompile.interrupt_service_name(call_12, "dos") == "_bios_memsize"
+    assert _decompile.interrupt_service_name(call_13, "pseudo") == "bios_int13_disk"
+    assert _decompile.interrupt_service_name(call_13, "dos") == "_bios_disk"
+    assert _decompile.interrupt_service_name(call_1a, "pseudo") == "bios_timeofday"
+    assert _decompile.interrupt_service_name(call_1a, "dos") == "_bios_timeofday"
+
+
+def test_interrupt_service_renderer_uses_table_driven_names():
+    call_12 = _decompile.InterruptCall(insn_addr=0x1000, vector=0x12)
+    call_13 = _decompile.InterruptCall(insn_addr=0x1002, vector=0x13)
+
+    assert _decompile.render_interrupt_call(call_12, "pseudo") == "bios_memsize()"
+    assert _decompile.render_interrupt_call(call_12, "dos") == "_bios_memsize()"
+    assert _decompile.render_interrupt_call(call_13, "pseudo") == "bios_int13_disk()"
+    assert _decompile.render_interrupt_call(call_13, "dos") == "_bios_disk()"
