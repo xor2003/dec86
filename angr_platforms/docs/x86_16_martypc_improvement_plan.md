@@ -151,6 +151,12 @@ Recent progress on that front:
 - the remaining far-control opcode handlers now also route through the shared
   helper boundary with explicit return-IP handling instead of keeping their
   own local call-frame plumbing in `instr16.py` / `instr32.py`
+- base control-flow helpers now also share the same family boundary:
+  - `jmp` reuses the shared relative-branch helper path instead of open-coding
+    its own IP arithmetic
+  - `retf`, `retf imm16`, and `iret` route through shared far-return and
+    interrupt-return helpers instead of keeping their own `v2p` / frame
+    plumbing in `instr_base.py`
 - the access-layer far-call and far-jump helpers now also share a named
   linear-address helper instead of open-coding `v2p` at the call site
 - normalized decode metadata now has an explicit width-profile abstraction, so

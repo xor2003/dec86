@@ -21,7 +21,7 @@ from .alu_helpers import (
 )
 from .addressing_helpers import load_resolved_operand, store_resolved_operand
 from .exec import ExecInstr
-from .stack_helpers import branch_rel8, pop_far_return_frame16, pop_interrupt_frame16
+from .stack_helpers import branch_rel8, return_far16, return_interrupt16
 from .instruction import *
 from .parse import ParseInstr
 from .regs import reg8_t, reg16_t, sgreg_t
@@ -671,22 +671,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def retf_imm16(self) -> None:
-        ip, seg = pop_far_return_frame16(self.emu)
-        self.emu.set_gpreg(
-            reg16_t.SP,
-            self.emu.get_gpreg(reg16_t.SP) + self.emu.constant(self.instr.imm16, Type.int_16),
-        )
-        self.emu.set_sgreg(sgreg_t.CS, seg)
-        self.emu.set_gpreg(reg16_t.IP, ip)
-        addr = self.emu.v2p(seg, ip)
-        self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+        return_far16(self.emu, self.instr.imm16)
 
     def retf(self) -> None:
-        ip, seg = pop_far_return_frame16(self.emu)
-        self.emu.set_sgreg(sgreg_t.CS, seg)
-        self.emu.set_gpreg(reg16_t.IP, ip)
-        addr = self.emu.v2p(seg, ip)
-        self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+        return_far16(self.emu)
 
 
     def int3(self) -> None:
@@ -701,12 +689,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.lifter_instruction.jump(None, 0xFF000 + self.instr.imm8, JumpKind.Call)
 
     def iret(self) -> None:
-        ip, cs, flags = pop_interrupt_frame16(self.emu)
-        self.emu.set_gpreg(reg16_t.FLAGS, flags)
-        self.emu.set_sgreg(sgreg_t.CS, cs)
-        self.emu.set_gpreg(reg16_t.IP, ip)
-        addr = self.emu.v2p(cs, ip)
-        self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+        return_interrupt16(self.emu)
 
     def in_al_imm8(self) -> None:
         self.emu.set_gpreg(reg8_t.AL, self.emu.in_io8(self.instr.imm8))
@@ -716,10 +699,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.out_io8(self.instr.imm8, al)
 
     def jmp(self) -> None:
-        size = self.emu.constant(self.instr.size, Type.int_16)
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16) + size
-        self.emu.set_gpreg(reg16_t.IP, ip)
-        self.emu.lifter_instruction.jump(None, ip, JumpKind.Boring)
+        branch_rel8(self.emu, True, self.instr.imm8)
 
     def in_al_dx(self) -> None:
         dx = self.emu.get_gpreg(reg16_t.DX)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
 
+from .addressing_helpers import linear_address
 from .regs import reg16_t, reg32_t, sgreg_t
 
 
@@ -259,6 +260,27 @@ def emit_far_call32(emu, segment, offset, return_ip):
 def emit_far_jump32(emu, segment, offset):
     emu.jmpf(segment, offset)
     return offset
+
+
+def return_far16(emu, stack_adjust: int = 0):
+    ip, seg = pop_far_return_frame16(emu)
+    if stack_adjust:
+        emu.set_gpreg(reg16_t.SP, emu.get_gpreg(reg16_t.SP) + emu.constant(stack_adjust, Type.int_16))
+    emu.set_sgreg(sgreg_t.CS, seg)
+    emu.set_gpreg(reg16_t.IP, ip)
+    addr = linear_address(emu, seg, ip)
+    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    return ip, seg
+
+
+def return_interrupt16(emu):
+    ip, cs, flags = pop_interrupt_frame16(emu)
+    emu.set_gpreg(reg16_t.FLAGS, flags)
+    emu.set_sgreg(sgreg_t.CS, cs)
+    emu.set_gpreg(reg16_t.IP, ip)
+    addr = linear_address(emu, cs, ip)
+    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    return ip, cs, flags
 
 
 def _branch_rel(emu, condition, displacement, instruction_size: int, target_width_bits: int, emit_jump):

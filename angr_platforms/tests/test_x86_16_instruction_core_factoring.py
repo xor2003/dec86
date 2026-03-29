@@ -216,6 +216,20 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_trans
     assert "self.emu.update_eip(" not in source
 
 
+def test_x86_16_instruction_core_uses_stack_helpers_for_base_return_and_jump_control():
+    source = (
+        inspect.getsource(InstrBase.retf_imm16)
+        + inspect.getsource(InstrBase.retf)
+        + inspect.getsource(InstrBase.iret)
+        + inspect.getsource(InstrBase.jmp)
+    )
+
+    assert "return_far16(" in source
+    assert "return_interrupt16(" in source
+    assert "branch_rel8(" in source
+    assert "self.emu.v2p(" not in source
+
+
 def test_x86_16_instruction_core_uses_stack_helpers_for_far_control_transfer():
     source = (
         inspect.getsource(instr16.Instr16.callf_ptr16_16)
