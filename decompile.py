@@ -917,10 +917,79 @@ def _interrupt_wrapper_helper_call_expr(
         return None
 
     helper_args: list[object] = []
+    if sig.kind in {"int86", "int86x"} and vector == 0x16:
+        selector = _interrupt_wrapper_register_state_value(input_state, "inregs", ("h", "ah"))
+        if selector is not None:
+            helper_args.append(structured_c.CConstant(selector, SimTypeShort(False), codegen=codegen))
     if helper_name.endswith("getvect"):
         helper_args.append(structured_c.CConstant(0x21, SimTypeShort(False), codegen=codegen))
 
     return structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen)
+
+
+def _interrupt_wrapper_result_helper_expr(helper_expr, codegen):
+    helper_name = getattr(helper_expr, "callee_target", None)
+    if not isinstance(helper_name, str):
+        helper_func = getattr(helper_expr, "callee_func", None)
+        helper_name = getattr(helper_func, "name", None)
+    if not isinstance(helper_name, str) or not helper_name:
+        return None
+
+    helper_args = list(getattr(helper_expr, "args", ()) or ())
+    return structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen)
+
+
+def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, helper_expr, codegen):
+    helper_call = _interrupt_wrapper_result_helper_expr(helper_expr, codegen)
+    if helper_call is None:
+        return None
+
+    if access.base_name == "outregs" and access.field_path == ("x", "ax"):
+        return helper_call
+
+    if access.base_name == "outregs" and access.field_path == ("h", "ah"):
+        return structured_c.CBinaryOp(
+            "And",
+            structured_c.CBinaryOp(
+                "Shr",
+                helper_call,
+                structured_c.CConstant(8, SimTypeShort(), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CConstant(0xFF, SimTypeShort(), codegen=codegen),
+            codegen=codegen,
+        )
+
+    if access.base_name == "outregs" and access.field_path == ("h", "al"):
+        return structured_c.CBinaryOp(
+            "And",
+            helper_call,
+            structured_c.CConstant(0xFF, SimTypeShort(), codegen=codegen),
+            codegen=codegen,
+        )
+
+    helper_name = getattr(helper_call, "callee_target", None)
+    if not isinstance(helper_name, str):
+        helper_func = getattr(helper_call, "callee_func", None)
+        helper_name = getattr(helper_func, "name", None)
+
+    if "getvect" in str(helper_name):
+        if access.base_name == "sregs" and access.field_path == ("es",):
+            return structured_c.CFunctionCall(
+                "FP_SEG",
+                None,
+                [helper_call],
+                codegen=codegen,
+            )
+        if access.base_name == "outregs" and access.field_path == ("x", "bx"):
+            return structured_c.CFunctionCall(
+                "FP_OFF",
+                None,
+                [helper_call],
+                codegen=codegen,
+            )
+
+    return None
 
 
 def _interrupt_wrapper_result_replacement(
@@ -931,40 +1000,7 @@ def _interrupt_wrapper_result_replacement(
 ):
     if helper_expr is None:
         return None
-
-    helper_name = getattr(helper_expr, "callee_target", None)
-    if not isinstance(helper_name, str):
-        helper_func = getattr(helper_expr, "callee_func", None)
-        helper_name = getattr(helper_func, "name", None)
-    if not isinstance(helper_name, str) or not helper_name:
-        return None
-
-    helper_args = list(getattr(helper_expr, "args", ()) or ())
-
-    def _clone_helper():
-        return structured_c.CFunctionCall(helper_name, None, list(helper_args), codegen=codegen)
-
-    if "getvect" in helper_name:
-        if access.base_name == "sregs" and access.field_path == ("es",):
-            return structured_c.CFunctionCall(
-                "FP_SEG",
-                None,
-                [_clone_helper()],
-                codegen=codegen,
-            )
-        if access.base_name == "outregs" and access.field_path == ("x", "bx"):
-            return structured_c.CFunctionCall(
-                "FP_OFF",
-                None,
-                [_clone_helper()],
-                codegen=codegen,
-            )
-        return None
-
-    if access.base_name == "outregs" and access.field_path in {("x", "ax"), ("h", "ah"), ("h", "al")}:
-        return _clone_helper()
-
-    return None
+    return _interrupt_wrapper_result_extract_expr(access, helper_expr, codegen)
 
 
 def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str, codegen):
