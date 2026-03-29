@@ -1,6 +1,7 @@
 from angr_platforms.X86_16.instruction import NONE, REPZ
 from angr_platforms.X86_16.regs import reg16_t, sgreg_t
 from angr_platforms.X86_16.string_helpers import (
+    repeat_kind,
     repeat_prefix_cond,
     repeat_jump,
     string_advance_indices,
@@ -123,9 +124,10 @@ class _Cond:
 
 
 class _Instr:
-    def __init__(self, pre_segment=None, pre_repeat=NONE, size=2, mode32=False):
+    def __init__(self, pre_segment=None, pre_repeat=NONE, size=2, mode32=False, repeat_class=None):
         self.pre_segment = pre_segment
         self.pre_repeat = pre_repeat
+        self.repeat_class = repeat_class if repeat_class is not None else ("repz" if pre_repeat == REPZ else "none")
         self.size = size
         self.mode32 = mode32
 
@@ -143,6 +145,12 @@ def test_repeat_prefix_cond_consumes_cx_for_repeated_string_ops():
 
     assert emu.get_gpreg(reg16_t.CX) == 3
     assert cond is True
+
+
+def test_repeat_kind_prefers_normalized_repeat_metadata():
+    assert repeat_kind(_Instr(repeat_class="repnz")) == "repnz"
+    assert repeat_kind(_Instr(pre_repeat=REPZ)) == "repz"
+    assert repeat_kind(_Instr()) == "none"
 
 
 def test_repeat_jump_uses_repz_and_current_zero_flag():
@@ -172,7 +180,7 @@ def test_repeat_jump_ignores_zf_for_non_compare_string_ops():
 def test_repeat_jump_can_be_zf_sensitive_for_compare_string_ops():
     emu = _StringEmu(cx=4, zf=False)
     emu.gpregs[reg16_t.IP] = 0x0100
-    instr = _Instr(pre_repeat=REPZ)
+    instr = _Instr(repeat_class="repz")
 
     repeat_jump(emu, instr, _Cond(True), zf_sensitive=True)
 

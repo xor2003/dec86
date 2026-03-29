@@ -22,8 +22,19 @@ def string_source_segment(instr) -> sgreg_t:
     return sgreg_t.DS
 
 
+def repeat_kind(instr) -> str:
+    normalized = getattr(instr, "repeat_class", None)
+    if normalized not in (None, ""):
+        return normalized
+    if instr.pre_repeat == REPZ:
+        return "repz"
+    if instr.pre_repeat == REPNZ:
+        return "repnz"
+    return "none"
+
+
 def repeat_prefix_cond(emu, instr):
-    if instr.pre_repeat == NONE:
+    if repeat_kind(instr) == "none":
         return None
 
     cx = emu.get_gpreg(reg16_t.CX)
@@ -38,9 +49,10 @@ def repeat_jump(emu, instr, repeat_cond, zf_sensitive: bool = False) -> None:
 
     cond = repeat_cond.cast_to(Type.int_1)
     if zf_sensitive:
-        if instr.pre_repeat == REPZ:
+        kind = repeat_kind(instr)
+        if kind == "repz":
             cond = cond & emu.is_zero()
-        elif instr.pre_repeat == REPNZ:
+        elif kind == "repnz":
             cond = cond & (emu.is_zero() == emu.constant(0, Type.int_1))
     if isinstance(cond, bool):
         if not cond:
