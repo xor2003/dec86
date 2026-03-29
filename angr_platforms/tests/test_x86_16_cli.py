@@ -438,6 +438,8 @@ def test_decompile_cli_keeps_query_interrupts_wrapper_calls_classified_in_matrix
     assert "function: 0x1000 query_interrupts" in result.stdout
     assert "calls = _int86, _int86x" in result.stdout
     assert "int86(0x21, &inregs, &outregs);" in result.stdout
+    assert "info = outregs;" in result.stdout
+    assert "return outregs;" in result.stdout
 
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():

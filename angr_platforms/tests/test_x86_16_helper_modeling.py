@@ -211,6 +211,154 @@ def test_interrupt_wrapper_result_lowering_rewrites_bios_int10_results_with_sele
     assert third_stmt.rhs.rhs.value == 0xFF
 
 
+def test_interrupt_wrapper_result_lowering_rewrites_int10_cursor_shape_reads():
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x3458, statements=None),
+        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+        cstyle_null_cmp=False,
+    )
+    h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
+    x_struct = SimStruct({"cx": SimTypeShort()}, name="REGS_X")
+    regs_struct = SimStruct({"h": h_struct, "x": x_struct}, name="REGS")
+
+    inregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(0, 2, base="bp", name="inregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    outregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(2, 2, base="bp", name="outregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    sink = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(4, 2, base="bp", name="sink", region=0),
+        variable_type=SimTypeShort(),
+        codegen=codegen,
+    )
+
+    h_field = _decompile.structured_c.CStructField(regs_struct, 0, "h", codegen=codegen)
+    x_field = _decompile.structured_c.CStructField(regs_struct, 0, "x", codegen=codegen)
+    ah_field = _decompile.structured_c.CStructField(h_struct, 0, "ah", codegen=codegen)
+    cx_field = _decompile.structured_c.CStructField(x_struct, 2, "cx", codegen=codegen)
+    sink_ref = _decompile.structured_c.CVariable(sink.variable, variable_type=SimTypeShort(), codegen=codegen)
+
+    stmts = _decompile.structured_c.CStatements(
+        [
+            _decompile.structured_c.CAssignment(
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(inregs, h_field, codegen=codegen),
+                    ah_field,
+                    codegen=codegen,
+                ),
+                _decompile.structured_c.CConstant(0x03, SimTypeShort(), codegen=codegen),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CExpressionStatement(
+                _decompile.structured_c.CFunctionCall(
+                    "int86",
+                    SimpleNamespace(name="int86"),
+                    [
+                        _decompile.structured_c.CConstant(0x10, SimTypeShort(), codegen=codegen),
+                        object(),
+                        object(),
+                    ],
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CAssignment(
+                sink_ref,
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(outregs, x_field, codegen=codegen),
+                    cx_field,
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = stmts
+
+    assert _decompile._lower_interrupt_wrapper_result_reads(SimpleNamespace(), codegen, "pseudo") is True
+
+    _, _, third_stmt = codegen.cfunc.statements.statements
+    assert isinstance(third_stmt, _decompile.structured_c.CAssignment)
+    assert isinstance(third_stmt.rhs, _decompile.structured_c.CFunctionCall)
+    assert third_stmt.rhs.callee_target == "bios_int10_video"
+    assert [arg.value for arg in third_stmt.rhs.args] == [0x03]
+
+
+def test_interrupt_wrapper_result_lowering_rewrites_whole_outregs_reads():
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x3459, statements=None),
+        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+        cstyle_null_cmp=False,
+    )
+    h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
+    regs_struct = SimStruct({"h": h_struct}, name="REGS")
+
+    inregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(0, 2, base="bp", name="inregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    outregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(2, 2, base="bp", name="outregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    sink = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(4, 2, base="bp", name="sink", region=0),
+        variable_type=SimTypeShort(),
+        codegen=codegen,
+    )
+
+    h_field = _decompile.structured_c.CStructField(regs_struct, 0, "h", codegen=codegen)
+    ah_field = _decompile.structured_c.CStructField(h_struct, 0, "ah", codegen=codegen)
+    sink_ref = _decompile.structured_c.CVariable(sink.variable, variable_type=SimTypeShort(), codegen=codegen)
+
+    stmts = _decompile.structured_c.CStatements(
+        [
+            _decompile.structured_c.CAssignment(
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(inregs, h_field, codegen=codegen),
+                    ah_field,
+                    codegen=codegen,
+                ),
+                _decompile.structured_c.CConstant(0x12, SimTypeShort(), codegen=codegen),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CExpressionStatement(
+                _decompile.structured_c.CFunctionCall(
+                    "int86",
+                    SimpleNamespace(name="int86"),
+                    [
+                        _decompile.structured_c.CConstant(0x12, SimTypeShort(), codegen=codegen),
+                        object(),
+                        object(),
+                    ],
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CAssignment(sink_ref, outregs, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = stmts
+
+    assert _decompile._lower_interrupt_wrapper_result_reads(SimpleNamespace(), codegen, "pseudo") is True
+
+    _, _, third_stmt = codegen.cfunc.statements.statements
+    assert isinstance(third_stmt, _decompile.structured_c.CAssignment)
+    assert isinstance(third_stmt.rhs, _decompile.structured_c.CFunctionCall)
+    assert third_stmt.rhs.callee_target == "bios_memsize"
+
+
 def test_interrupt_wrapper_placeholder_calls_are_recovered_from_argument_shape(monkeypatch):
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x2345, statements=SimpleNamespace()),
