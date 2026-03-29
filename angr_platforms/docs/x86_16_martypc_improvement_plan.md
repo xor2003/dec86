@@ -187,6 +187,8 @@ Recent progress on that front:
   inside `exec.py`
 -  both 16-bit and 32-bit ModRM address resolution now return segment + offset
    from the shared addressing layer instead of re-pairing them in `exec.py`
+-  `instr16.py` string handlers now call shared string helpers directly
+   instead of routing through local forwarding wrappers
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging

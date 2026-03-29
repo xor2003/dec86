@@ -45,7 +45,6 @@ from .string_helpers import (
     repeat_prefix_cond,
     string_advance_indices,
     string_compare_values,
-    string_delta,
     string_load,
     string_store,
     string_source_segment,
@@ -551,21 +550,12 @@ class Instr16(InstrBase):
         value = load_resolved_operand(self.emu, operand)
         self.emu.set_gpreg(reg8_t.AL, value)
 
-    def _string_delta(self, width):
-        return string_delta(self.emu, width)
-
-    def _string_source_segment(self):
-        return string_source_segment(self.instr)
-
-    def _repeat_prefix_cond(self):
-        return repeat_prefix_cond(self.emu, self.instr)
-
     def movsb_m8_m8(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
         di = self.emu.get_gpreg(reg16_t.DI)
-        value = string_load(self.emu, self._string_source_segment(), si, 1)
+        value = string_load(self.emu, string_source_segment(self.instr), si, 1)
         string_store(self.emu, sgreg_t.ES, di, value, 1)
         string_advance_indices(self.emu, 1, reg16_t.SI, reg16_t.DI)
 
@@ -573,7 +563,7 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def stosb_m8_al(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         di = self.emu.get_gpreg(reg16_t.DI)
         string_store(self.emu, sgreg_t.ES, di, self.emu.get_gpreg(reg8_t.AL), 1)
@@ -583,7 +573,7 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def stosw_m16_ax(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         di = self.emu.get_gpreg(reg16_t.DI)
         string_store(self.emu, sgreg_t.ES, di, self.emu.get_gpreg(reg16_t.AX), 2)
@@ -593,10 +583,10 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def lodsb_al_m8(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
-        value = string_load(self.emu, self._string_source_segment(), si, 1)
+        value = string_load(self.emu, string_source_segment(self.instr), si, 1)
         self.emu.set_gpreg(reg8_t.AL, value)
         string_advance_indices(self.emu, 1, reg16_t.SI)
 
@@ -604,10 +594,10 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def lodsw_ax_m16(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
-        value = string_load(self.emu, self._string_source_segment(), si, 2)
+        value = string_load(self.emu, string_source_segment(self.instr), si, 2)
         self.emu.set_gpreg(reg16_t.AX, value)
         string_advance_indices(self.emu, 2, reg16_t.SI)
 
@@ -615,7 +605,7 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def scasb_al_m8(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         di = self.emu.get_gpreg(reg16_t.DI)
         value = string_load(self.emu, sgreg_t.ES, di, 1)
@@ -626,7 +616,7 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond, zf_sensitive=True)
 
     def scasw_ax_m16(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         di = self.emu.get_gpreg(reg16_t.DI)
         value = string_load(self.emu, sgreg_t.ES, di, 2)
@@ -637,11 +627,11 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond, zf_sensitive=True)
 
     def cmps_m8_m8(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
         di = self.emu.get_gpreg(reg16_t.DI)
-        m8_s = string_load(self.emu, self._string_source_segment(), si, 1)
+        m8_s = string_load(self.emu, string_source_segment(self.instr), si, 1)
         m8_d = string_load(self.emu, sgreg_t.ES, di, 1)
         string_compare_values(m8_s, m8_d, self.emu.update_eflags_sub)
         string_advance_indices(self.emu, 1, reg16_t.SI, reg16_t.DI)
@@ -650,11 +640,11 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def cmps_m16_m16(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
         di = self.emu.get_gpreg(reg16_t.DI)
-        m16_s = string_load(self.emu, self._string_source_segment(), si, 2)
+        m16_s = string_load(self.emu, string_source_segment(self.instr), si, 2)
         m16_d = string_load(self.emu, sgreg_t.ES, di, 2)
         string_compare_values(m16_s, m16_d, self.emu.update_eflags_sub)
         string_advance_indices(self.emu, 2, reg16_t.SI, reg16_t.DI)
@@ -664,11 +654,11 @@ class Instr16(InstrBase):
 
 
     def movsw_m16_m16(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
         di = self.emu.get_gpreg(reg16_t.DI)
-        value = string_load(self.emu, self._string_source_segment(), si, 2)
+        value = string_load(self.emu, string_source_segment(self.instr), si, 2)
         string_store(self.emu, sgreg_t.ES, di, value, 2)
         string_advance_indices(self.emu, 2, reg16_t.SI, reg16_t.DI)
 
@@ -676,7 +666,7 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def insb_m8_dx(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         di = self.emu.get_gpreg(reg16_t.DI)
         dx = self.emu.get_gpreg(reg16_t.DX)
@@ -687,7 +677,7 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def insw_m16_dx(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         di = self.emu.get_gpreg(reg16_t.DI)
         dx = self.emu.get_gpreg(reg16_t.DX)
@@ -698,22 +688,22 @@ class Instr16(InstrBase):
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def outsb_dx_m8(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
         dx = self.emu.get_gpreg(reg16_t.DX)
-        self.emu.out_io8(dx, string_load(self.emu, self._string_source_segment(), si, 1))
+        self.emu.out_io8(dx, string_load(self.emu, string_source_segment(self.instr), si, 1))
         string_advance_indices(self.emu, 1, reg16_t.SI)
 
         if repeat_cond is not None:
             repeat_jump(self.emu, self.instr, repeat_cond)
 
     def outsw_dx_m16(self):
-        repeat_cond = self._repeat_prefix_cond()
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
         si = self.emu.get_gpreg(reg16_t.SI)
         dx = self.emu.get_gpreg(reg16_t.DX)
-        self.emu.out_io16(dx, string_load(self.emu, self._string_source_segment(), si, 2))
+        self.emu.out_io16(dx, string_load(self.emu, string_source_segment(self.instr), si, 2))
         string_advance_indices(self.emu, 2, reg16_t.SI)
 
         if repeat_cond is not None:
