@@ -1,12 +1,17 @@
 from angr_platforms.X86_16.addressing_helpers import (
+    ResolvedMemoryOperand,
     WidthProfile,
     address_width_bits,
     address_step,
+    default_segment_for_modrm16,
+    default_segment_for_modrm32,
     displacement_width_bits,
+    resolve_linear_operand,
     operand_width_bits,
     signed_displacement,
 )
 from pyvex.lifting.util.vex_helper import Type
+from angr_platforms.X86_16.regs import sgreg_t
 
 
 class _FakeEmu:
@@ -16,6 +21,9 @@ class _FakeEmu:
     def constant(self, value, ty):
         self.calls.append((value, ty))
         return (value, ty)
+
+    def v2p(self, segment, offset):
+        return (segment, offset)
 
 
 def test_width_helpers_cover_real_mode_and_386_extension_paths():
@@ -55,6 +63,32 @@ def test_address_step_uses_bit_width_specific_constants():
     assert emu.calls[1][1] == Type.int_32
     assert sixteen == (2, emu.calls[0][1])
     assert thirty_two == (4, emu.calls[1][1])
+
+
+def test_default_segment_helpers_match_x86_16_addressing_rules():
+    assert default_segment_for_modrm16(0, 0) == sgreg_t.DS
+    assert default_segment_for_modrm16(0, 6) == sgreg_t.DS
+    assert default_segment_for_modrm16(1, 2) == sgreg_t.SS
+    assert default_segment_for_modrm16(2, 3) == sgreg_t.SS
+
+    assert default_segment_for_modrm32(0, 0) == sgreg_t.DS
+    assert default_segment_for_modrm32(0, 4, 4) == sgreg_t.SS
+    assert default_segment_for_modrm32(0, 4, 5) == sgreg_t.SS
+    assert default_segment_for_modrm32(0, 4, 0) == sgreg_t.DS
+    assert default_segment_for_modrm32(1, 5) == sgreg_t.SS
+
+
+def test_resolved_memory_operand_tracks_segment_offset_and_linear_form():
+    emu = _FakeEmu()
+
+    resolved = resolve_linear_operand(emu, sgreg_t.DS, 0x1234, 16, 16)
+
+    assert isinstance(resolved, ResolvedMemoryOperand)
+    assert resolved.segment == sgreg_t.DS
+    assert resolved.offset == 0x1234
+    assert resolved.linear == (sgreg_t.DS, 0x1234)
+    assert resolved.width_bits == 16
+    assert resolved.address_bits == 16
 
 
 def test_width_profile_exposes_byte_counts():

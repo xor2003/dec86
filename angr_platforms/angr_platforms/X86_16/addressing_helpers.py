@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from pyvex.lifting.util.vex_helper import Type
+
+from .regs import sgreg_t
 
 
 def operand_width_bits(mode32: bool, chsz_op: bool = False) -> int:
@@ -52,6 +55,37 @@ def type_for_bits(width_bits: int):
 
 def address_step(emu, step_bytes: int, address_bits: int = 16):
     return emu.constant(step_bytes, type_for_bits(address_bits))
+
+
+@dataclass(frozen=True)
+class ResolvedMemoryOperand:
+    segment: sgreg_t
+    offset: Any
+    linear: Any
+    width_bits: int
+    address_bits: int
+
+
+def default_segment_for_modrm16(mod: int, rm: int) -> sgreg_t:
+    if rm in (2, 3):
+        return sgreg_t.SS
+    if rm == 6 and mod != 0:
+        return sgreg_t.SS
+    return sgreg_t.DS
+
+
+def default_segment_for_modrm32(mod: int, rm: int, sib_base: int | None = None) -> sgreg_t:
+    if rm == 4 and sib_base is not None:
+        if sib_base in (4, 5):
+            return sgreg_t.SS
+        return sgreg_t.DS
+    if rm == 5 and mod != 0:
+        return sgreg_t.SS
+    return sgreg_t.DS
+
+
+def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, address_bits: int) -> ResolvedMemoryOperand:
+    return ResolvedMemoryOperand(segment, offset, emu.v2p(segment, offset), width_bits, address_bits)
 
 
 @dataclass(frozen=True)
