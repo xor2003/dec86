@@ -726,6 +726,11 @@ def _interrupt_wrapper_field_access_summary(
     return summary
 
 
+def _interrupt_wrapper_call_text(sig: InterruptWrapperCall) -> str:
+    args = [str(arg) for arg in sig.arguments if arg is not None]
+    return f"{sig.canonical_name}({', '.join(args)})"
+
+
 def collect_interrupt_wrapper_calls(codegen) -> list[InterruptWrapperCall]:
     if getattr(codegen, "cfunc", None) is None:
         return []
@@ -5639,6 +5644,15 @@ def _format_known_helper_calls(
 
     for literal, name in sorted(mappings.items(), key=lambda item: len(item[0]), reverse=True):
         c_text = re.sub(rf"(?<![A-Za-z_]){re.escape(literal)}(?=\s*\()", name, c_text)
+
+    wrapper_cache = getattr(project, "_inertia_interrupt_wrappers", None)
+    if isinstance(wrapper_cache, dict):
+        wrapper_entry = wrapper_cache.get(getattr(function, "addr", None))
+        if isinstance(wrapper_entry, dict):
+            for sig in wrapper_entry.get("calls", []):
+                if "CallReturn();" not in c_text:
+                    break
+                c_text = c_text.replace("CallReturn();", f"{_interrupt_wrapper_call_text(sig)};", 1)
 
     replacements = _int21_call_replacements(project, function, api_style, binary_path)
     for replacement in replacements:
