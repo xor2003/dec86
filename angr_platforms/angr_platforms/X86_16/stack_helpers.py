@@ -20,6 +20,18 @@ def push16_register(emu, reg: reg16_t):
     push16(emu, emu.get_gpreg(reg))
 
 
+def pop16_register(emu, reg: reg16_t):
+    emu.set_gpreg(reg, pop16(emu))
+
+
+def push32_register(emu, reg: reg32_t):
+    push32(emu, emu.get_gpreg(reg))
+
+
+def pop32_register(emu, reg: reg32_t):
+    emu.set_gpreg(reg, pop32(emu))
+
+
 def pop16(emu):
     sp = emu.get_gpreg(reg16_t.SP)
     value = emu.read_mem16_seg(sgreg_t.SS, sp)
@@ -44,6 +56,24 @@ def pop_flags16(emu, writable_mask: int = 0x0FD5, fixed_mask: int = 0x0002):
     masked = (flags & emu.constant(writable_mask, Type.int_16)) | emu.constant(fixed_mask, Type.int_16)
     emu.set_flags(masked)
     return masked
+
+
+def push_flags32(emu) -> None:
+    push32(emu, emu.get_eflags())
+
+
+def pop_flags32(emu):
+    flags = pop32(emu)
+    emu.set_eflags(flags)
+    return flags
+
+
+def push_immediate16(emu, value):
+    push16(emu, value)
+
+
+def push_immediate32(emu, value):
+    push32(emu, value)
 
 
 def push_all16(emu) -> None:

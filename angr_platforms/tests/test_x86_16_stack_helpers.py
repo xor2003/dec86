@@ -16,6 +16,9 @@ from angr_platforms.X86_16.stack_helpers import (
     pop_all16,
     pop16,
     pop_flags16,
+    pop_flags32,
+    pop16_register,
+    pop32_register,
     pop_segment32,
     pop_segment16,
     pop_far_return_frame16,
@@ -25,6 +28,10 @@ from angr_platforms.X86_16.stack_helpers import (
     push_all32,
     push_all16,
     push_flags16,
+    push_flags32,
+    push_immediate16,
+    push_immediate32,
+    push32_register,
     push_segment32,
     push_segment16,
     push_far_return_frame16,
@@ -93,6 +100,12 @@ class _StackEmu:
     def set_flags(self, value):
         self.flags = value
 
+    def get_eflags(self):
+        return self.flags
+
+    def set_eflags(self, value):
+        self.flags = value
+
     def write_mem16_seg(self, seg, addr, value):
         self.memory[(seg, addr)] = value
 
@@ -121,6 +134,32 @@ def test_stack_helpers_push_and_pop_16_bit_values():
     assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0xABCD
     assert pop16(emu) == 0xABCD
     assert emu.get_gpreg(reg16_t.SP) == 0x1000
+
+
+def test_stack_helpers_register_immediate_and_flags_primitives_cover_both_widths():
+    emu = _StackEmu()
+
+    push16_register(emu, reg16_t.AX)
+    push32_register(emu, reg32_t.EAX)
+    push_immediate16(emu, 0xBEEF)
+    push_immediate32(emu, 0xCAFEBABE)
+    push_flags16(emu)
+    push_flags32(emu)
+
+    assert emu.memory[(sgreg_t.SS, 0x1FFC)] == 0x11111111
+    assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0x1111
+    assert emu.memory[(sgreg_t.SS, 0x0FFC)] == 0xBEEF
+    assert emu.memory[(sgreg_t.SS, 0x1FF8)] == 0xCAFEBABE
+    assert emu.memory[(sgreg_t.SS, 0x0FFA)] == 0xF002
+    assert emu.memory[(sgreg_t.SS, 0x1FF4)] == 0xF002
+
+    assert pop_flags32(emu) == 0xF002
+    assert pop_flags16(emu) == 0x0002
+
+    pop32_register(emu, reg32_t.EAX)
+    pop16_register(emu, reg16_t.AX)
+    assert emu.get_gpreg(reg32_t.EAX) == 0xCAFEBABE
+    assert emu.get_gpreg(reg16_t.AX) == 0xBEEF
 
 
 def test_stack_helpers_push16_register_preserves_original_sp_value():

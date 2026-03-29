@@ -159,6 +159,32 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_stack_families():
     assert "return_near32(" in source
 
 
+def test_x86_16_instruction_core_uses_stack_helpers_for_register_flags_and_immediate_pushes():
+    source = (
+        inspect.getsource(instr16.Instr16.push_r16)
+        + inspect.getsource(instr16.Instr16.pop_r16)
+        + inspect.getsource(instr16.Instr16.push_imm16)
+        + inspect.getsource(instr16.Instr16.push_imm8)
+        + inspect.getsource(instr16.Instr16.pushf)
+        + inspect.getsource(instr32.Instr32.push_r32)
+        + inspect.getsource(instr32.Instr32.pop_r32)
+        + inspect.getsource(instr32.Instr32.push_imm32)
+        + inspect.getsource(instr32.Instr32.push_imm8)
+        + inspect.getsource(instr32.Instr32.pushf)
+        + inspect.getsource(instr32.Instr32.popf)
+    )
+
+    assert "push16_register(" in source
+    assert "pop16_register(" in source
+    assert "push_immediate16(" in source
+    assert "push_immediate32(" in source
+    assert "push_flags16(" in source
+    assert "push_flags32(" in source
+    assert "pop_flags32(" in source
+    assert "push32_register(" in source
+    assert "pop32_register(" in source
+
+
 def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_transfer():
     source = (
         inspect.getsource(instr32.Instr32.call_rel32)

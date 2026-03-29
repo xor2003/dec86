@@ -20,12 +20,17 @@ from .stack_helpers import (
     branch_rel32,
     emit_near_call32,
     emit_near_jump32,
-    leave32,
     far_return_ip32,
     pop_all32,
+    pop32_register,
+    pop_flags32,
     pop_segment32,
+    push32_register,
     push_all32,
+    push_flags32,
+    push_immediate32,
     push_segment32,
+    leave32,
     return_near32,
 )
 from .string_helpers import (
@@ -266,11 +271,11 @@ class Instr32(InstrBase):
 
     def push_r32(self):
         reg = self.instr.opcode & ((1 << 3) - 1)
-        self.emu.push32(self.emu.get_gpreg(reg))
+        push32_register(self.emu, reg)
 
     def pop_r32(self):
         reg = self.instr.opcode & ((1 << 3) - 1)
-        self.emu.set_gpreg(reg, self.emu.pop32())
+        pop32_register(self.emu, reg)
 
     def pushad(self):
         push_all32(self.emu)
@@ -279,7 +284,7 @@ class Instr32(InstrBase):
         pop_all32(self.emu)
 
     def push_imm32(self):
-        self.emu.push32(self.instr.imm32)
+        push_immediate32(self.emu, self.instr.imm32)
 
     def imul_r32_rm32_imm32(self):
         rm32_s = self.get_rm32()
@@ -287,7 +292,7 @@ class Instr32(InstrBase):
         self.emu.update_eflags_imul(rm32_s, self.instr.imm32)
 
     def push_imm8(self):
-        self.emu.push32(self.instr.imm8)
+        push_immediate32(self.emu, self.instr.imm8)
 
     def imul_r32_rm32_imm8(self):
         rm32_s = self.get_rm32()
@@ -337,10 +342,10 @@ class Instr32(InstrBase):
         emit_far_call32(self.emu, self.instr.ptr16, self.instr.imm32, far_return_ip32(self.emu, self.instr.size))
 
     def pushf(self):
-        self.emu.push32(self.emu.get_eflags())
+        push_flags32(self.emu)
 
     def popf(self):
-        self.emu.set_eflags(self.emu.pop32())
+        pop_flags32(self.emu)
 
     def mov_eax_moffs32(self):
         self.emu.set_gpreg(reg32_t.EAX, self.get_moffs32())
@@ -801,4 +806,4 @@ class Instr32(InstrBase):
 
     def push_rm32(self):
         rm32 = self.get_rm32()
-        self.emu.push32(rm32)
+        push_immediate32(self.emu, rm32)

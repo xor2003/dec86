@@ -28,11 +28,13 @@ from .stack_helpers import (
     near_relative_target16,
     near_return_ip16,
     pop_all16,
+    pop16_register,
     pop_flags16,
     pop_segment16,
     push16_register,
-    push_all16,
     push_flags16,
+    push_all16,
+    push_immediate16,
     push_segment16,
     loop_rel8,
     return_near16,
@@ -418,7 +420,7 @@ class Instr16(InstrBase):
 
     def pop_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
-        self.emu.set_gpreg(reg, self.emu.pop16())
+        pop16_register(self.emu, reg)
 
     def pusha(self):
         push_all16(self.emu)
@@ -427,7 +429,7 @@ class Instr16(InstrBase):
         pop_all16(self.emu)
 
     def push_imm16(self):
-        self.emu.push16(self.emu.constant(self.instr.imm16, Type.int_16))
+        push_immediate16(self.emu, self.emu.constant(self.instr.imm16, Type.int_16))
 
     def bound_r16_m16(self):
         if self.instr.modrm.mod == 3:
@@ -448,8 +450,7 @@ class Instr16(InstrBase):
 
     def push_imm8(self):
         # Create a 16-bit constant from the 8-bit immediate value
-        imm16 = self.emu.constant(self.instr.imm8, Type.int_16)
-        self.emu.push16(imm16)
+        push_immediate16(self.emu, self.emu.constant(self.instr.imm8, Type.int_16))
 
     def imul_r16_rm16_imm8(self):
         rm16_s = self.get_rm16().signed
