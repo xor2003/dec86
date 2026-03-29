@@ -10,6 +10,7 @@ from .alu_helpers import (
     unary_operation,
 )
 from .addressing_helpers import load_far_pointer
+from .addressing_helpers import advance_eip32
 from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
@@ -728,7 +729,7 @@ class Instr32(InstrBase):
 
     def test_rm32_imm32(self):
         imm32 = struct.unpack("<I", self.emu.get_code8(0, 4))[0]
-        self.emu.update_eip(4)
+        self.emu.set_gpreg(reg32_t.EIP, advance_eip32(self.emu, 4))
         compare_operation(self.get_rm32, lambda: imm32, self.emu.update_eflags_and)
 
     def not_rm32(self):

@@ -3,6 +3,8 @@ from angr_platforms.X86_16.addressing_helpers import (
     WidthProfile,
     address_width_bits,
     address_step,
+    advance_eip32,
+    advance_ip16,
     decode_width_profile,
     default_segment_for_modrm16,
     default_segment_for_modrm32,
@@ -18,7 +20,7 @@ from angr_platforms.X86_16.addressing_helpers import (
     store_resolved_operand,
 )
 from pyvex.lifting.util.vex_helper import Type
-from angr_platforms.X86_16.regs import sgreg_t
+from angr_platforms.X86_16.regs import reg16_t, reg32_t, sgreg_t
 
 
 class _FakeEmu:
@@ -26,10 +28,14 @@ class _FakeEmu:
         self.calls = []
         self.loads = []
         self.stores = []
+        self.gpregs = {}
 
     def constant(self, value, ty):
         self.calls.append((value, ty))
         return (value, ty)
+
+    def get_gpreg(self, reg):
+        return self.gpregs.get(reg, 0)
 
     def v2p(self, segment, offset):
         return (segment, offset)
@@ -93,6 +99,24 @@ def test_address_step_uses_bit_width_specific_constants():
     assert emu.calls[1][1] == Type.int_32
     assert sixteen == (2, emu.calls[0][1])
     assert thirty_two == (4, emu.calls[1][1])
+
+
+def test_advance_ip_helpers_use_bit_width_specific_constants():
+    class _AdvanceFakeEmu(_FakeEmu):
+        def constant(self, value, ty):
+            self.calls.append((value, ty))
+            return value
+
+    emu = _AdvanceFakeEmu()
+    emu.gpregs[sgreg_t.CS] = 0x1234
+    emu.gpregs[sgreg_t.DS] = 0x5678
+    emu.gpregs[sgreg_t.SS] = 0x9ABC
+    emu.gpregs[reg16_t.IP] = 0x0100
+    emu.gpregs[reg32_t.EIP] = 0x0200
+
+    assert advance_ip16(emu, 4) == 0x0104
+    assert advance_eip32(emu, 8) == 0x0208
+    assert emu.calls == [(4, Type.int_16), (8, Type.int_32)]
 
 
 def test_linear_address_reuses_project_linear_translation():

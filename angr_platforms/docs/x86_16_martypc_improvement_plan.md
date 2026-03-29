@@ -157,6 +157,12 @@ Recent progress on that front:
   - `retf`, `retf imm16`, and `iret` route through shared far-return and
     interrupt-return helpers instead of keeping their own `v2p` / frame
     plumbing in `instr_base.py`
+- the last open-coded `push rm16` / `pop rm16` stack paths now also use the
+  shared stack primitives instead of directly calling `self.emu.push16` /
+  `self.emu.pop16`
+- the remaining 32-bit immediate-memory probe in `instr32.py` now also uses a
+  shared instruction-pointer advance helper instead of open-coding
+  `update_eip(4)`
 - the access-layer far-call and far-jump helpers now also share a named
   linear-address helper instead of open-coding `v2p` at the call site
 - normalized decode metadata now has an explicit width-profile abstraction, so

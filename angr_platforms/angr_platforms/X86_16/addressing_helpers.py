@@ -5,7 +5,7 @@ from typing import Any
 
 from pyvex.lifting.util.vex_helper import Type
 
-from .regs import sgreg_t
+from .regs import reg16_t, reg32_t, sgreg_t
 
 
 def operand_width_bits(mode32: bool, chsz_op: bool = False) -> int:
@@ -161,3 +161,11 @@ def load_far_pointer(emu, segment: sgreg_t, offset, operand_bits: int, address_b
 
 def load_far_pointer16(emu, segment: sgreg_t, offset, address_bits: int = 16):
     return load_word_pair16(emu, segment, offset, address_bits=address_bits)
+
+
+def advance_ip16(emu, byte_count: int):
+    return emu.get_gpreg(reg16_t.IP) + emu.constant(byte_count, Type.int_16)
+
+
+def advance_eip32(emu, byte_count: int):
+    return emu.get_gpreg(reg32_t.EIP) + emu.constant(byte_count, Type.int_32)

@@ -28,6 +28,7 @@ from .stack_helpers import (
     near_relative_target16,
     near_return_ip16,
     pop_all16,
+    pop16,
     pop16_register,
     pop_flags16,
     pop_segment16,
@@ -1401,10 +1402,10 @@ class Instr16(InstrBase):
 
     def push_rm16(self):
         rm16 = self.get_rm16()
-        self.emu.push16(rm16)
+        push_immediate16(self.emu, rm16)
 
     def pop_rm16(self):
-        value = self.emu.pop16()
+        value = pop16(self.emu)
         self.set_rm16(value)
 
     def enter(self):

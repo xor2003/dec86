@@ -185,6 +185,15 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_register_flags_and_immed
     assert "pop32_register(" in source
 
 
+def test_x86_16_instruction_core_uses_stack_helpers_for_rm_push_and_pop_paths():
+    source = inspect.getsource(instr16.Instr16.push_rm16) + inspect.getsource(instr16.Instr16.pop_rm16)
+
+    assert "push_immediate16(" in source
+    assert "pop16(" in source
+    assert "self.emu.push16(" not in source
+    assert "self.emu.pop16(" not in source
+
+
 def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_transfer():
     source = (
         inspect.getsource(instr32.Instr32.call_rel32)
@@ -214,6 +223,13 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_trans
     assert "branch_rel32(" in source
     assert "near_relative_target32(" in source
     assert "self.emu.update_eip(" not in source
+
+
+def test_x86_16_instruction_core_uses_addressing_helper_to_advance_32bit_instruction_pointer():
+    source = inspect.getsource(instr32.Instr32.test_rm32_imm32)
+
+    assert "advance_eip32(" in source
+    assert "update_eip(" not in source
 
 
 def test_x86_16_instruction_core_uses_stack_helpers_for_base_return_and_jump_control():
