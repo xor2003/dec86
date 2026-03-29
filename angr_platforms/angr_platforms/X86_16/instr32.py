@@ -14,7 +14,16 @@ from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
-from .stack_helpers import leave32, near_return_eip32, pop_all32, pop_segment32, push_all32, push_segment32, return_near32
+from .stack_helpers import (
+    emit_near_call32,
+    emit_near_jump32,
+    leave32,
+    pop_all32,
+    pop_segment32,
+    push_all32,
+    push_segment32,
+    return_near32,
+)
 from .string_helpers import (
     repeat_jump,
     repeat_prefix_cond,
@@ -385,11 +394,12 @@ class Instr32(InstrBase):
         self.emu.out_io32(self.instr.imm8, eax)
 
     def call_rel32(self):
-        self.emu.push32(near_return_eip32(self.emu))
-        self.emu.update_eip(self.instr.imm32)
+        target = self.emu.get_eip() + self.instr.imm32
+        emit_near_call32(self.emu, target)
 
     def jmp_rel32(self):
-        self.emu.update_eip(self.instr.imm32)
+        target = self.emu.get_eip() + self.instr.imm32
+        emit_near_jump32(self.emu, target)
 
     def jmpf_ptr16_32(self):
         self.emu.jmpf(self.instr.ptr16, self.instr.imm32)
@@ -776,8 +786,7 @@ class Instr32(InstrBase):
 
     def call_rm32(self):
         rm32 = self.get_rm32()
-        self.emu.push32(self.emu.get_eip())
-        self.emu.set_eip(rm32)
+        emit_near_call32(self.emu, rm32)
 
     def callf_m16_32(self):
         seg, offset = self._resolved_rm_address()
@@ -793,7 +802,7 @@ class Instr32(InstrBase):
 
     def jmp_rm32(self):
         rm32 = self.get_rm32()
-        self.emu.set_eip(rm32)
+        emit_near_jump32(self.emu, rm32)
 
     def jmpf_m16_32(self):
         seg, offset = self._resolved_rm_address()

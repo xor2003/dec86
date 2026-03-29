@@ -15,7 +15,22 @@ from .alu_helpers import (
 )
 from .addressing_helpers import load_far_pointer, load_resolved_operand, load_word_pair16, resolve_linear_operand, store_resolved_operand
 from .instr_base import InstrBase
-from .stack_helpers import enter16, leave16, near_return_ip16, pop_all16, push16_register, push_all16, return_near16
+from .stack_helpers import (
+    emit_near_call16,
+    emit_near_jump16,
+    enter16,
+    leave16,
+    near_relative_target16,
+    near_return_ip16,
+    pop_all16,
+    pop_flags16,
+    pop_segment16,
+    push16_register,
+    push_all16,
+    push_flags16,
+    push_segment16,
+    return_near16,
+)
 from .string_helpers import (
     repeat_jump,
     repeat_prefix_cond,
@@ -324,10 +339,10 @@ class Instr16(InstrBase):
         )
 
     def push_es(self):
-        self.emu.push16(self.emu.get_segment(sgreg_t.ES))
+        push_segment16(self.emu, sgreg_t.ES)
 
     def pop_es(self):
-        self.emu.set_segment(sgreg_t.ES, self.emu.pop16())
+        pop_segment16(self.emu, sgreg_t.ES)
 
     def or_rm16_r16(self):
         binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
@@ -339,19 +354,19 @@ class Instr16(InstrBase):
         self._binary_ax_imm16(lambda ax, imm16: ax | imm16, self.emu.update_eflags_or)
 
     def push_cs(self):
-        self.emu.push16(self.emu.get_segment(sgreg_t.CS))
+        push_segment16(self.emu, sgreg_t.CS)
 
     def push_ss(self):
-        self.emu.push16(self.emu.get_segment(sgreg_t.SS))
+        push_segment16(self.emu, sgreg_t.SS)
 
     def pop_ss(self):
-        self.emu.set_segment(sgreg_t.SS, self.emu.pop16())
+        pop_segment16(self.emu, sgreg_t.SS)
 
     def push_ds(self):
-        self.emu.push16(self.emu.get_segment(sgreg_t.DS))
+        push_segment16(self.emu, sgreg_t.DS)
 
     def pop_ds(self):
-        self.emu.set_segment(sgreg_t.DS, self.emu.pop16())
+        pop_segment16(self.emu, sgreg_t.DS)
 
     def and_rm16_r16(self):
         binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
@@ -519,12 +534,10 @@ class Instr16(InstrBase):
 
 
     def pushf(self):
-        self.emu.push16(self.emu.get_flags())
+        push_flags16(self.emu)
 
     def popf(self):
-        flags = self.emu.pop16()
-        masked = (flags & self.emu.constant(0x0FD5, Type.int_16)) | self.emu.constant(0x0002, Type.int_16)
-        self.emu.set_flags(masked)
+        pop_flags16(self.emu)
 
     def mov_ax_moffs16(self):
         self.emu.set_gpreg(reg16_t.AX, self.get_moffs16())
@@ -723,25 +736,6 @@ class Instr16(InstrBase):
         reg = self.instr.opcode & 0b111
         self.emu.set_gpreg(reg16_t(reg), Const(IRConst.U16(self.instr.imm16)))
 
-    def _emit_near_call(self, target, return_ip=None):
-        """
-        Emit a near call edge in a single place.
-
-        Near-call bugs tend to show up as CFG/decompiler pathologies rather than
-        obvious execution failures, so keeping the stack update and call jumpkind
-        together makes this area much easier to troubleshoot.
-        """
-
-        if return_ip is None:
-            return_ip = self.emu.get_ip() + self.emu.constant(self.instr.size, Type.int_16)
-        self.emu.push16(return_ip)
-        self.emu.set_gpreg(reg16_t.IP, target)
-        self.emu.lifter_instruction.jump(None, target, JumpKind.Call)
-
-    def _emit_near_jump(self, target):
-        self.emu.set_gpreg(reg16_t.IP, target)
-        self.emu.lifter_instruction.jump(None, target, JumpKind.Boring)
-
     def ret(self):
         return_near16(self.emu)
 
@@ -762,19 +756,13 @@ class Instr16(InstrBase):
         self.emu.out_io16(self.instr.imm8, ax)
 
     def call_rel16(self):
-        size = 3  # opcode + imm16
-        return_ip = near_return_ip16(self.emu, size)
-        imm = self.emu.constant(self.instr.imm16, Type.int_16)
-        target = return_ip + imm
-        self._emit_near_call(target)
+        target = near_relative_target16(self.emu, self.instr.imm16, self.instr.size)
+        emit_near_call16(self.emu, target, instruction_size=self.instr.size)
 
 
     def jmp_rel16(self):
-        size = self.instr.size
-        current_ip = self.emu.get_gpreg(reg16_t.IP) + size
-        imm = self.emu.constant(self.instr.imm16, Type.int_16)
-        target = current_ip + imm
-        self._emit_near_jump(target)
+        target = near_relative_target16(self.emu, self.instr.imm16, self.instr.size)
+        emit_near_jump16(self.emu, target)
 
     def jmpf_ptr16_16(self):
         self.emu.jmpf(self.instr.ptr16, self.instr.imm16)
@@ -1436,7 +1424,7 @@ class Instr16(InstrBase):
     def call_rm16(self):
         rm16 = self.get_rm16()
         return_ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.size, Type.int_16)
-        self._emit_near_call(rm16, return_ip=return_ip)
+        emit_near_call16(self.emu, rm16, return_ip=return_ip)
 
     def callf_m16_16(self):
         ip, cs = self._load_far_pointer()
@@ -1445,7 +1433,7 @@ class Instr16(InstrBase):
 
     def jmp_rm16(self):
         rm16 = self.get_rm16()
-        self._emit_near_jump(rm16)
+        emit_near_jump16(self.emu, rm16)
 
     def jmpf_m16_16(self):
         ip, sel = self._load_far_pointer()

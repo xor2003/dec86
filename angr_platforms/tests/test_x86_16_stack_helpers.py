@@ -1,19 +1,29 @@
 from angr_platforms.X86_16.regs import reg16_t, reg32_t, sgreg_t
 from angr_platforms.X86_16.stack_helpers import (
+    emit_near_call16,
+    emit_near_call32,
+    emit_near_jump16,
+    emit_near_jump32,
     enter16,
     leave16,
+    near_relative_target16,
+    near_relative_target32,
     near_return_ip16,
     pop_all32,
     pop_all16,
     pop16,
+    pop_flags16,
     pop_segment32,
+    pop_segment16,
     pop_far_return_frame16,
     pop_interrupt_frame16,
     push16,
     push16_register,
     push_all32,
     push_all16,
+    push_flags16,
     push_segment32,
+    push_segment16,
     push_far_return_frame16,
     return_near32,
     return_near16,
@@ -44,6 +54,8 @@ class _StackEmu:
         self.sgregs = {sgreg_t.CS: 0x1234, sgreg_t.SS: 0x2000}
         self.memory = {}
         self.irsb = type("_IRSB", (), {"next": None, "jumpkind": None})()
+        self.lifter_instruction = type("_Lifter", (), {"jump": self._jump})()
+        self.flags = 0xF002
 
     def update_gpreg(self, reg, delta):
         self.gpregs[reg] = self.gpregs[reg] + delta
@@ -57,6 +69,9 @@ class _StackEmu:
     def set_eip(self, value):
         self.gpregs[reg32_t.EIP] = value
 
+    def get_eip(self):
+        return self.gpregs.get(reg32_t.EIP, 0)
+
     def get_sgreg(self, reg):
         return self.sgregs[reg]
 
@@ -68,6 +83,12 @@ class _StackEmu:
 
     def set_segment(self, reg, value):
         self.set_sgreg(reg, value)
+
+    def get_flags(self):
+        return self.flags
+
+    def set_flags(self, value):
+        self.flags = value
 
     def write_mem16_seg(self, seg, addr, value):
         self.memory[(seg, addr)] = value
@@ -83,6 +104,10 @@ class _StackEmu:
 
     def constant(self, value, _ty):
         return value
+
+    def _jump(self, _cond, target, jumpkind):
+        self.irsb.next = target
+        self.irsb.jumpkind = jumpkind
 
 
 def test_stack_helpers_push_and_pop_16_bit_values():
@@ -102,6 +127,30 @@ def test_stack_helpers_push16_register_preserves_original_sp_value():
 
     assert emu.get_gpreg(reg16_t.SP) == 0x0FFE
     assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0x1000
+
+
+def test_stack_helpers_segment16_helpers_round_trip_segment_registers():
+    emu = _StackEmu()
+    emu.sgregs[sgreg_t.DS] = 0xBEEF
+
+    push_segment16(emu, sgreg_t.DS)
+    emu.sgregs[sgreg_t.DS] = 0
+    pop_segment16(emu, sgreg_t.DS)
+
+    assert emu.get_sgreg(sgreg_t.DS) == 0xBEEF
+    assert emu.get_gpreg(reg16_t.SP) == 0x1000
+
+
+def test_stack_helpers_flags16_helpers_mask_reserved_bits():
+    emu = _StackEmu()
+    emu.flags = 0xAAAA
+
+    push_flags16(emu)
+    emu.flags = 0
+    masked = pop_flags16(emu)
+
+    assert masked == ((0xAAAA & 0x0FD5) | 0x0002)
+    assert emu.get_flags() == masked
 
 
 def test_stack_helpers_form_far_call_frames_in_cs_ip_order():
@@ -146,6 +195,14 @@ def test_stack_helpers_compute_near_return_ip_from_instruction_size():
     emu = _StackEmu()
 
     assert near_return_ip16(emu, 3) == 0x0103
+
+
+def test_stack_helpers_compute_relative_targets_from_current_ip_and_eip():
+    emu = _StackEmu()
+    emu.gpregs[reg32_t.EIP] = 0x1000
+
+    assert near_relative_target16(emu, 4, 3) == 0x0107
+    assert near_relative_target32(emu, 8, 5) == 0x100D
 
 
 def test_stack_helpers_push_all16_preserves_original_sp_slot():
@@ -209,6 +266,30 @@ def test_stack_helpers_return_near16_applies_extra_stack_adjust():
 
     assert emu.get_gpreg(reg16_t.IP) == 0x3456
     assert emu.get_gpreg(reg16_t.SP) == 0x1004
+
+
+def test_stack_helpers_emit_near_call_and_jump_set_control_transfer_edges():
+    emu = _StackEmu()
+    emu.gpregs[reg32_t.EIP] = 0x1000
+
+    emit_near_call16(emu, 0x2222, instruction_size=3)
+    assert emu.get_gpreg(reg16_t.IP) == 0x2222
+    assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0x0103
+    assert emu.irsb.jumpkind == "Ijk_Call"
+
+    emu.gpregs[reg16_t.SP] = 0x1000
+    emit_near_jump16(emu, 0x3333)
+    assert emu.get_gpreg(reg16_t.IP) == 0x3333
+    assert emu.irsb.jumpkind == "Ijk_Boring"
+
+    emit_near_call32(emu, 0x2000)
+    assert emu.get_gpreg(reg32_t.EIP) == 0x2000
+    assert emu.memory[(sgreg_t.SS, 0x1FFC)] == 0x1000
+    assert emu.irsb.jumpkind == "Ijk_Call"
+
+    emit_near_jump32(emu, 0x3000)
+    assert emu.get_gpreg(reg32_t.EIP) == 0x3000
+    assert emu.irsb.jumpkind == "Ijk_Boring"
 
 
 def test_stack_helpers_push_and_pop_all32_preserve_saved_esp_slot():

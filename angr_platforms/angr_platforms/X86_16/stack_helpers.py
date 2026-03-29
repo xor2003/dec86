@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
 
 from .regs import reg16_t, reg32_t, sgreg_t
@@ -24,6 +25,25 @@ def pop16(emu):
     value = emu.read_mem16_seg(sgreg_t.SS, sp)
     emu.update_gpreg(reg16_t.SP, 2)
     return value
+
+
+def push_segment16(emu, segment: sgreg_t) -> None:
+    push16(emu, emu.get_segment(segment))
+
+
+def pop_segment16(emu, segment: sgreg_t) -> None:
+    emu.set_segment(segment, pop16(emu))
+
+
+def push_flags16(emu) -> None:
+    push16(emu, emu.get_flags())
+
+
+def pop_flags16(emu, writable_mask: int = 0x0FD5, fixed_mask: int = 0x0002):
+    flags = pop16(emu)
+    masked = (flags & emu.constant(writable_mask, Type.int_16)) | emu.constant(fixed_mask, Type.int_16)
+    emu.set_flags(masked)
+    return masked
 
 
 def push_all16(emu) -> None:
@@ -102,6 +122,14 @@ def near_return_eip32(emu):
     return emu.get_eip()
 
 
+def near_relative_target16(emu, displacement, instruction_size: int):
+    return near_return_ip16(emu, instruction_size) + emu.constant(displacement, Type.int_16)
+
+
+def near_relative_target32(emu, displacement, instruction_size: int):
+    return emu.get_eip() + emu.constant(instruction_size, Type.int_32) + emu.constant(displacement, Type.int_32)
+
+
 def push_far_return_frame16(emu, return_ip=None):
     push16(emu, emu.get_sgreg(sgreg_t.CS))
     if return_ip is None:
@@ -141,6 +169,38 @@ def return_near32(emu, stack_adjust=0):
     emu.irsb.next = eip
     emu.irsb.jumpkind = "Ijk_Ret"
     return eip
+
+
+def emit_near_call16(emu, target, return_ip=None, instruction_size: int | None = None):
+    if return_ip is None:
+        if instruction_size is None:
+            raise ValueError("instruction_size is required when return_ip is not provided")
+        return_ip = near_return_ip16(emu, instruction_size)
+    push16(emu, return_ip)
+    emu.set_gpreg(reg16_t.IP, target)
+    emu.lifter_instruction.jump(None, target, JumpKind.Call)
+    return return_ip
+
+
+def emit_near_jump16(emu, target):
+    emu.set_gpreg(reg16_t.IP, target)
+    emu.lifter_instruction.jump(None, target, JumpKind.Boring)
+    return target
+
+
+def emit_near_call32(emu, target, return_ip=None):
+    if return_ip is None:
+        return_ip = near_return_eip32(emu)
+    push32(emu, return_ip)
+    emu.set_eip(target)
+    emu.lifter_instruction.jump(None, target, JumpKind.Call)
+    return return_ip
+
+
+def emit_near_jump32(emu, target):
+    emu.set_eip(target)
+    emu.lifter_instruction.jump(None, target, JumpKind.Boring)
+    return target
 
 
 def enter16(emu, frame_size: int, nesting_level: int) -> None:

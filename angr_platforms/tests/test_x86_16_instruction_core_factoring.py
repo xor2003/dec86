@@ -112,6 +112,32 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_near_returns():
     assert "self.emu.irsb.jumpkind" not in source
 
 
+def test_x86_16_instruction_core_uses_stack_helpers_for_segment_flags_and_near_control_transfer():
+    source = (
+        inspect.getsource(instr16.Instr16.push_es)
+        + inspect.getsource(instr16.Instr16.pop_es)
+        + inspect.getsource(instr16.Instr16.push_cs)
+        + inspect.getsource(instr16.Instr16.push_ss)
+        + inspect.getsource(instr16.Instr16.pop_ss)
+        + inspect.getsource(instr16.Instr16.push_ds)
+        + inspect.getsource(instr16.Instr16.pop_ds)
+        + inspect.getsource(instr16.Instr16.pushf)
+        + inspect.getsource(instr16.Instr16.popf)
+        + inspect.getsource(instr16.Instr16.call_rel16)
+        + inspect.getsource(instr16.Instr16.jmp_rel16)
+        + inspect.getsource(instr16.Instr16.call_rm16)
+        + inspect.getsource(instr16.Instr16.jmp_rm16)
+    )
+
+    assert "push_segment16(" in source
+    assert "pop_segment16(" in source
+    assert "push_flags16(" in source
+    assert "pop_flags16(" in source
+    assert "emit_near_call16(" in source
+    assert "emit_near_jump16(" in source
+    assert "near_relative_target16(" in source
+
+
 def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_stack_families():
     source = (
         inspect.getsource(instr32.Instr32.push_es)
@@ -130,6 +156,20 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_stack_families():
     assert "push_all32(" in source
     assert "pop_all32(" in source
     assert "return_near32(" in source
+
+
+def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_transfer():
+    source = (
+        inspect.getsource(instr32.Instr32.call_rel32)
+        + inspect.getsource(instr32.Instr32.jmp_rel32)
+        + inspect.getsource(instr32.Instr32.call_rm32)
+        + inspect.getsource(instr32.Instr32.jmp_rm32)
+    )
+
+    assert "emit_near_call32(" in source
+    assert "emit_near_jump32(" in source
+    assert "self.emu.push32(" not in source
+    assert "self.emu.set_eip(" not in source
 
 
 def test_x86_16_instruction_core_uses_byte_alu_immediate_helper_families():
