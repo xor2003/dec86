@@ -28,6 +28,40 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "true_failure_rate": 0.3,
         },
         "debt": {"traversal": 3, "recovery": 2, "readability": 7},
+        "results": [
+            {
+                "cod_file": "cod/f14/MONOPRIN.COD",
+                "proc_name": "_mset_pos",
+                "proc_kind": "NEAR",
+                "ok": True,
+                "decompiled_count": 1,
+                "fallback_kind": None,
+            },
+            {
+                "cod_file": "cod/f14/OTHER.COD",
+                "proc_name": "_other",
+                "proc_kind": "NEAR",
+                "ok": True,
+                "decompiled_count": 1,
+                "fallback_kind": None,
+            },
+            {
+                "cod_file": "cod/f14/MAX.COD",
+                "proc_name": "_max",
+                "proc_kind": "NEAR",
+                "ok": True,
+                "decompiled_count": 0,
+                "fallback_kind": "cfg_only",
+            },
+            {
+                "cod_file": "cod/f14/BROKEN.COD",
+                "proc_name": "_broken",
+                "proc_kind": "NEAR",
+                "ok": False,
+                "decompiled_count": 0,
+                "fallback_kind": "block_lift",
+            },
+        ],
         "top_ugly_clusters": [{"cluster": "byte_pair_arithmetic", "count": 4}],
     }
 
@@ -46,6 +80,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
     }
     assert report["blind_spot_budget"] == scan_summary["blind_spot_budget"]
     assert report["debt"] == scan_summary["debt"]
+    assert report["readability_tiers"] == {"R0": 1, "R1": 1, "R2": 1, "R3": 1}
     assert [layer["name"] for layer in report["validation_layers"]] == ["unit", "focused_corpus", "whole_program"]
     assert [item["name"] for item in report["alias_api"]] == ["same_domain", "compatible_view", "needs_synthesis", "can_join"]
     assert [item["name"] for item in report["widening_pipeline"]] == [

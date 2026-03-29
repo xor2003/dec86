@@ -27,6 +27,20 @@ def _success_rate(summary: Mapping[str, object]) -> float:
     return round(ok / scanned, 6)
 
 
+def _readability_tier(result: Mapping[str, object], golden_cases: set[tuple[str, str]]) -> str:
+    if not bool(result.get("ok", False)):
+        return "R0"
+    fallback_kind = result.get("fallback_kind")
+    if fallback_kind not in (None, "none"):
+        return "R1"
+    if int(result.get("decompiled_count", 0) or 0) <= 0:
+        return "R1"
+    golden_key = (str(result.get("cod_file", "")), str(result.get("proc_name", "")))
+    if golden_key in golden_cases:
+        return "R3"
+    return "R2"
+
+
 def build_x86_16_milestone_report(
     scan_summary: Mapping[str, object],
     *,
@@ -51,6 +65,11 @@ def build_x86_16_milestone_report(
     blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
     debt = dict(scan_summary.get("debt", {}) or {})
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
+    scan_results = list(scan_summary.get("results", []) or [])
+    golden_cases = {(case.source, case.proc_name) for case in readability_set}
+    readability_tier_counts = {"R0": 0, "R1": 0, "R2": 0, "R3": 0}
+    for result in scan_results:
+        readability_tier_counts[_readability_tier(result, golden_cases)] += 1
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
 
     report = {
@@ -88,6 +107,7 @@ def build_x86_16_milestone_report(
         },
         "blind_spot_budget": blind_spot_budget,
         "debt": debt,
+        "readability_tiers": readability_tier_counts,
         "hotspots": {
             "failure_counts": failure_counts,
             "fallback_counts": fallback_counts,
