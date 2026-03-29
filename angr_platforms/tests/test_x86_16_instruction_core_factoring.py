@@ -252,6 +252,7 @@ def test_x86_16_emu_runtime_uses_shared_far_frame_helpers_by_mode():
 
     assert "push_far_return_frame16(" in source
     assert "push_far_return_frame32(" in source
+    assert "push_privilege_stack32(" in source
     assert "pop_far_return_frame16(" in source
     assert "pop_far_return_frame32(" in source
     assert "pop_interrupt_frame16(" in source

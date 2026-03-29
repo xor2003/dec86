@@ -10,6 +10,7 @@ from .stack_helpers import (
     pop_interrupt_frame32,
     push_far_return_frame16,
     push_far_return_frame32,
+    push_privilege_stack32,
 )
 
 
@@ -41,8 +42,7 @@ class EmuInstr(X86Instruction):
         if CPL != RPL:
             if RPL < CPL:
                 raise Exception(self.emu.EXP_GP)
-            self.emu.push32(self.emu.get_segment(sgreg_t.SS.name))
-            self.emu.push32(self.emu.get_gpreg(reg32_t.ESP.name))
+            push_privilege_stack32(self.emu)
 
         if self.mode32:
             push_far_return_frame32(self.emu, return_ip)

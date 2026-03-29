@@ -38,6 +38,7 @@ from angr_platforms.X86_16.stack_helpers import (
     push_segment16,
     push_far_return_frame16,
     push_far_return_frame32,
+    push_privilege_stack32,
     return_far16,
     return_far32,
     return_interrupt16,
@@ -292,6 +293,18 @@ def test_stack_helpers_32bit_far_and_interrupt_helpers_use_dword_frames():
     assert emu.get_gpreg(reg32_t.EIP) == 0x11112222
     assert emu.get_sgreg(sgreg_t.CS) == 0x33334444
     assert emu.get_eflags() == 0x55556666
+
+
+def test_stack_helpers_privilege_stack_save_uses_ss_and_esp_order():
+    emu = _StackEmu()
+    emu.gpregs[reg32_t.ESP] = 0x1FF0
+
+    saved_ss, saved_esp = push_privilege_stack32(emu)
+
+    assert saved_ss == 0x2000
+    assert saved_esp == 0x1FF0
+    assert emu.memory[(sgreg_t.SS, 0x1FEC)] == 0x2000
+    assert emu.memory[(sgreg_t.SS, 0x1FE8)] == 0x1FF0
 
 
 def test_stack_helpers_enter_and_leave_manage_the_frame_pointer():

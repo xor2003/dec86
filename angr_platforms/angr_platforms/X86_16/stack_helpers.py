@@ -170,11 +170,19 @@ def push_far_return_frame16(emu, return_ip=None):
 
 
 def push_far_return_frame32(emu, return_ip=None):
-    push32(emu, emu.get_segment(sgreg_t.CS.name))
+    push32(emu, emu.get_segment(sgreg_t.CS))
     if return_ip is None:
         return_ip = emu.get_eip()
     push32(emu, return_ip)
     return return_ip
+
+
+def push_privilege_stack32(emu):
+    saved_ss = emu.get_segment(sgreg_t.SS)
+    saved_esp = emu.get_gpreg(reg32_t.ESP)
+    push32(emu, saved_ss)
+    push32(emu, saved_esp)
+    return saved_ss, saved_esp
 
 
 def pop_far_return_frame16(emu):
