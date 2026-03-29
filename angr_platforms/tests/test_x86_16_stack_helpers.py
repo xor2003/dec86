@@ -22,7 +22,9 @@ from angr_platforms.X86_16.stack_helpers import (
     pop_segment32,
     pop_segment16,
     pop_far_return_frame16,
+    pop_far_return_frame32,
     pop_interrupt_frame16,
+    pop_interrupt_frame32,
     push16,
     push16_register,
     push_all32,
@@ -35,8 +37,11 @@ from angr_platforms.X86_16.stack_helpers import (
     push_segment32,
     push_segment16,
     push_far_return_frame16,
+    push_far_return_frame32,
     return_far16,
+    return_far32,
     return_interrupt16,
+    return_interrupt32,
     return_near32,
     return_near16,
 )
@@ -87,12 +92,16 @@ class _StackEmu:
         return self.gpregs.get(reg32_t.EIP, 0)
 
     def get_sgreg(self, reg):
+        if isinstance(reg, str):
+            reg = sgreg_t[reg]
         return self.sgregs[reg]
 
     def v2p(self, seg, off):
         return (seg << 4) + off
 
     def set_sgreg(self, reg, value):
+        if isinstance(reg, str):
+            reg = sgreg_t[reg]
         self.sgregs[reg] = value
 
     def get_segment(self, reg):
@@ -245,6 +254,44 @@ def test_stack_helpers_return_helpers_restore_far_and_interrupt_state():
     assert emu.get_sgreg(sgreg_t.CS) == 0xBBBB
     assert emu.get_flags() == 0xCCCC
     assert emu.irsb.jumpkind == "Ijk_Ret"
+
+
+def test_stack_helpers_32bit_far_and_interrupt_helpers_use_dword_frames():
+    emu = _StackEmu()
+    emu.gpregs[reg32_t.ESP] = 0x1FF0
+    emu.memory[(sgreg_t.SS, 0x1FF0)] = 0x11112222
+    emu.memory[(sgreg_t.SS, 0x1FF4)] = 0x33334444
+    emu.memory[(sgreg_t.SS, 0x1FF8)] = 0x55556666
+
+    assert push_far_return_frame32(emu, 0x77778888) == 0x77778888
+    assert emu.memory[(sgreg_t.SS, 0x1FE8)] == 0x77778888
+    assert emu.memory[(sgreg_t.SS, 0x1FEC)] == 0x1234
+
+    emu.gpregs[reg32_t.ESP] = 0x1FF0
+    emu.irsb.next = None
+    emu.irsb.jumpkind = None
+    assert pop_far_return_frame32(emu) == (0x11112222, 0x33334444)
+
+    emu.gpregs[reg32_t.ESP] = 0x1FF0
+    emu.irsb.next = None
+    emu.irsb.jumpkind = None
+    assert return_far32(emu, 4) == (0x11112222, 0x33334444)
+    assert emu.get_gpreg(reg32_t.ESP) == 0x1FFC
+    assert emu.get_gpreg(reg32_t.EIP) == 0x11112222
+    assert emu.get_sgreg(sgreg_t.CS) == 0x33334444
+
+    emu.gpregs[reg32_t.ESP] = 0x1FF0
+    emu.irsb.next = None
+    emu.irsb.jumpkind = None
+    assert pop_interrupt_frame32(emu) == (0x11112222, 0x33334444, 0x55556666)
+
+    emu.gpregs[reg32_t.ESP] = 0x1FF0
+    emu.irsb.next = None
+    emu.irsb.jumpkind = None
+    assert return_interrupt32(emu) == (0x11112222, 0x33334444, 0x55556666)
+    assert emu.get_gpreg(reg32_t.EIP) == 0x11112222
+    assert emu.get_sgreg(sgreg_t.CS) == 0x33334444
+    assert emu.get_eflags() == 0x55556666
 
 
 def test_stack_helpers_enter_and_leave_manage_the_frame_pointer():

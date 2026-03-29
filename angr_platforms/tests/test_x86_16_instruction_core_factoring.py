@@ -1,6 +1,7 @@
 import inspect
 
 from angr_platforms.X86_16 import access
+from angr_platforms.X86_16 import emu as emu_mod
 from angr_platforms.X86_16 import instr16
 from angr_platforms.X86_16 import instr32
 from angr_platforms.X86_16.instr_base import GROUP2_BYTE_SHIFT_ROTATE_HANDLERS, InstrBase
@@ -244,6 +245,17 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_base_return_and_jump_con
     assert "return_interrupt16(" in source
     assert "branch_rel8(" in source
     assert "self.emu.v2p(" not in source
+
+
+def test_x86_16_emu_runtime_uses_shared_far_frame_helpers_by_mode():
+    source = inspect.getsource(emu_mod.EmuInstr.callf) + inspect.getsource(emu_mod.EmuInstr.retf) + inspect.getsource(emu_mod.EmuInstr.iret)
+
+    assert "push_far_return_frame16(" in source
+    assert "push_far_return_frame32(" in source
+    assert "pop_far_return_frame16(" in source
+    assert "pop_far_return_frame32(" in source
+    assert "pop_interrupt_frame16(" in source
+    assert "pop_interrupt_frame32(" in source
 
 
 def test_x86_16_instruction_core_uses_stack_helpers_for_far_control_transfer():

@@ -2,7 +2,15 @@ from typing import Any, Dict
 
 from .emulator import Emulator
 from .instruction import InstrData, X86Instruction
-from .regs import reg32_t, sgreg_t
+from .regs import reg32_t, reg16_t, sgreg_t
+from .stack_helpers import (
+    pop_far_return_frame16,
+    pop_far_return_frame32,
+    pop_interrupt_frame16,
+    pop_interrupt_frame32,
+    push_far_return_frame16,
+    push_far_return_frame32,
+)
 
 
 class EmuInstr(X86Instruction):
@@ -36,25 +44,35 @@ class EmuInstr(X86Instruction):
             self.emu.push32(self.emu.get_segment(sgreg_t.SS.name))
             self.emu.push32(self.emu.get_gpreg(reg32_t.ESP.name))
 
-        self.emu.push32(cs)
-        self.emu.push32(return_ip if return_ip is not None else self.emu.get_eip())
+        if self.mode32:
+            push_far_return_frame32(self.emu, return_ip)
+        else:
+            push_far_return_frame16(self.emu, return_ip)
 
         self.emu.set_segment(sgreg_t.CS.name, sel)
         self.emu.set_eip(eip)
 
     def retf(self, instr: Dict[str, Any]) -> None:
-        ip = self.emu.pop16()
-        cs = self.emu.pop16()
-        self.emu.set_segment(sgreg_t.CS.name, cs)
-        self.emu.set_ip(ip)
+        if self.mode32:
+            eip, cs = pop_far_return_frame32(self.emu)
+            self.emu.set_segment(sgreg_t.CS.name, cs)
+            self.emu.set_eip(eip)
+        else:
+            ip, cs = pop_far_return_frame16(self.emu)
+            self.emu.set_segment(sgreg_t.CS.name, cs)
+            self.emu.set_ip(ip)
 
     def iret(self, instr: Dict[str, Any]) -> None:
-        ip = self.emu.pop16()
-        cs = self.emu.pop16()
-        flags = self.emu.pop16()
-        self.emu.set_flags(flags)
-        self.emu.set_segment(sgreg_t.CS.name, cs)
-        self.emu.set_ip(ip)
+        if self.mode32:
+            eip, cs, flags = pop_interrupt_frame32(self.emu)
+            self.emu.set_eflags(flags)
+            self.emu.set_segment(sgreg_t.CS.name, cs)
+            self.emu.set_eip(eip)
+        else:
+            ip, cs, flags = pop_interrupt_frame16(self.emu)
+            self.emu.set_flags(flags)
+            self.emu.set_segment(sgreg_t.CS.name, cs)
+            self.emu.set_ip(ip)
 
     def chk_ring(self, dpl: int) -> bool:
         raise NotImplementedError

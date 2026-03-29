@@ -163,6 +163,9 @@ Recent progress on that front:
 - the remaining 32-bit immediate-memory probe in `instr32.py` now also uses a
   shared instruction-pointer advance helper instead of open-coding
   `update_eip(4)`
+- the runtime `EmuInstr` far-call / far-return / interrupt-return paths now
+  also use shared 16-bit and 32-bit far-frame helpers instead of open-coding
+  their own frame push/pop layout
 - the access-layer far-call and far-jump helpers now also share a named
   linear-address helper instead of open-coding `v2p` at the call site
 - normalized decode metadata now has an explicit width-profile abstraction, so

@@ -169,10 +169,24 @@ def push_far_return_frame16(emu, return_ip=None):
     return return_ip
 
 
+def push_far_return_frame32(emu, return_ip=None):
+    push32(emu, emu.get_segment(sgreg_t.CS.name))
+    if return_ip is None:
+        return_ip = emu.get_eip()
+    push32(emu, return_ip)
+    return return_ip
+
+
 def pop_far_return_frame16(emu):
     ip = pop16(emu)
     seg = pop16(emu)
     return ip, seg
+
+
+def pop_far_return_frame32(emu):
+    eip = pop32(emu)
+    seg = pop32(emu)
+    return eip, seg
 
 
 def pop_interrupt_frame16(emu):
@@ -180,6 +194,13 @@ def pop_interrupt_frame16(emu):
     cs = pop16(emu)
     flags = pop16(emu)
     return ip, cs, flags
+
+
+def pop_interrupt_frame32(emu):
+    eip = pop32(emu)
+    cs = pop32(emu)
+    flags = pop32(emu)
+    return eip, cs, flags
 
 
 def return_near16(emu, stack_adjust=0):
@@ -281,6 +302,27 @@ def return_interrupt16(emu):
     addr = linear_address(emu, cs, ip)
     emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
     return ip, cs, flags
+
+
+def return_far32(emu, stack_adjust: int = 0):
+    eip, seg = pop_far_return_frame32(emu)
+    if stack_adjust:
+        emu.set_gpreg(reg32_t.ESP, emu.get_gpreg(reg32_t.ESP) + emu.constant(stack_adjust, Type.int_32))
+    emu.set_segment(sgreg_t.CS.name, seg)
+    emu.set_eip(eip)
+    addr = linear_address(emu, seg, eip)
+    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    return eip, seg
+
+
+def return_interrupt32(emu):
+    eip, cs, flags = pop_interrupt_frame32(emu)
+    emu.set_eflags(flags)
+    emu.set_segment(sgreg_t.CS.name, cs)
+    emu.set_eip(eip)
+    addr = linear_address(emu, cs, eip)
+    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    return eip, cs, flags
 
 
 def _branch_rel(emu, condition, displacement, instruction_size: int, target_width_bits: int, emit_jump):
