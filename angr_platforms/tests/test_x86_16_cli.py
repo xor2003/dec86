@@ -767,7 +767,7 @@ def test_decompile_cli_names_known_dos_interrupt_helpers_in_com_output():
     assert "int get_dos_version(void);" in result.stdout
     assert "void print_dos_string(const char *s);" in result.stdout
     assert "void exit(int status);" in result.stdout
-    assert "int _start(void)" in result.stdout
+    assert "void _start(void)" in result.stdout
     assert "get_dos_version();" in result.stdout
     assert 'print_dos_string("DOS sample");' in result.stdout
     assert "exit(0);" in result.stdout

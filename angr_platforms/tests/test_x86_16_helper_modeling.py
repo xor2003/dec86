@@ -67,6 +67,22 @@ def test_interrupt_service_renderer_uses_table_driven_names():
     assert _decompile.render_interrupt_call(call_13, "dos") == "_bios_disk()"
 
 
+def test_interrupt_service_renderer_covers_vector_management_apis():
+    call_get = _decompile.InterruptCall(insn_addr=0x1010, vector=0x21, ah=0x35, al=0x21)
+    call_set = _decompile.InterruptCall(insn_addr=0x1012, vector=0x21, ah=0x25, al=0x21, ds=0x1234, dx=0x5678)
+
+    assert _decompile.render_interrupt_call(call_get, "pseudo") == "dos_getvect(0x21)"
+    assert _decompile.render_interrupt_call(call_get, "dos") == "_dos_getvect(0x21)"
+    assert _decompile.render_interrupt_call(call_get, "modern") == "getvect(0x21)"
+    assert _decompile.render_interrupt_call(call_set, "pseudo") == "dos_setvect(0x21, MK_FP(0x1234, 0x5678))"
+    assert _decompile.render_interrupt_call(call_set, "dos") == "_dos_setvect(0x21, MK_FP(0x1234, 0x5678))"
+    assert _decompile.render_interrupt_call(call_set, "modern") == "setvect(0x21, MK_FP(0x1234, 0x5678))"
+
+    declarations = _decompile.interrupt_service_declarations([call_get, call_set], "modern")
+    assert "void (*getvect(int interruptno))(void);" in declarations
+    assert "void setvect(int interruptno, void (*isr)(void));" in declarations
+
+
 def test_interrupt_wrapper_callees_are_classified_and_canonicalized(monkeypatch):
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1234, statements=SimpleNamespace()),
@@ -91,6 +107,7 @@ def test_interrupt_wrapper_callees_are_classified_and_canonicalized(monkeypatch)
     cache_entry = project._inertia_interrupt_wrappers[0x1234]
     assert [item.canonical_name for item in cache_entry["calls"]] == ["int86x"]
     assert cache_entry["calls"][0].vector_arg is not None
+    assert cache_entry["field_access_summary"] == {"input": [], "output": [], "segment": [], "other": []}
 
 
 def test_interrupt_wrapper_field_paths_capture_regs_subfields():
@@ -115,6 +132,20 @@ def test_interrupt_wrapper_field_paths_capture_regs_subfields():
     assert access is not None
     assert access.base_name == "inregs"
     assert access.field_path == ("h", "ah")
+
+
+def test_interrupt_wrapper_field_access_summary_groups_register_roles():
+    accesses = [
+        _decompile.InterruptWrapperFieldAccess("inregs", ("h", "ah"), object()),
+        _decompile.InterruptWrapperFieldAccess("outregs", ("x", "bx"), object()),
+        _decompile.InterruptWrapperFieldAccess("sregs", ("es",), object()),
+    ]
+
+    summary = _decompile._interrupt_wrapper_field_access_summary(accesses)
+
+    assert [item.base_name for item in summary["input"]] == ["inregs"]
+    assert [item.base_name for item in summary["output"]] == ["outregs"]
+    assert [item.base_name for item in summary["segment"]] == ["sregs"]
 
 
 def test_interrupt_helper_formatting_uses_helper_names(monkeypatch):

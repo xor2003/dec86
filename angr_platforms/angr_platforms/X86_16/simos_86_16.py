@@ -114,6 +114,7 @@ class BIOSInt1AClock(BIOSInterruptHandler):
     def run(self):  # pylint:disable=arguments-differ
         ah = self.state.regs.ah
         if self.state.solver.is_true(ah == 0x00):
+            self.state.regs.ax = claripy.BVV(0, 16)
             self.state.regs.cx = claripy.BVV(0, 16)
             self.state.regs.dx = claripy.BVV(0, 16)
             return self.state.regs.ax
@@ -152,6 +153,11 @@ class DOSInt21(DOSInterruptHandler):
         if self.state.solver.is_true(ah == 0x35):
             self.state.regs.es = claripy.BVV(0, 16)
             self.state.regs.bx = claripy.BVV(0, 16)
+            self.state.regs.ax = claripy.BVV(0, 16)
+            return self.state.regs.ax
+
+        if self.state.solver.is_true(ah == 0x25):
+            self.state.regs.ax = claripy.BVV(0, 16)
             return self.state.regs.ax
 
         if self.state.solver.is_true(ah == 0x4C):

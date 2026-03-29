@@ -68,18 +68,286 @@ class InterruptServiceSpec:
     modern_name: str
     render_kind: str = "generic"
     default_output: str = "return"
+    pseudo_decl: str | None = None
+    dos_decl: str | None = None
+    modern_decl: str | None = None
+
+
+INT21_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
+    0x09: InterruptServiceSpec(
+        0x21,
+        "dos_print_dollar_string",
+        "_dos_print_dollar_string",
+        "print_dos_string",
+        "string_dollar",
+        pseudo_decl="void dos_print_dollar_string(const char *s);",
+        dos_decl="void _dos_print_dollar_string(const char far *s);",
+        modern_decl="void print_dos_string(const char *s);",
+    ),
+    0x0E: InterruptServiceSpec(
+        0x21,
+        "dos_set_current_drive",
+        "_dos_setdrive",
+        "set_current_drive",
+        "drive",
+        pseudo_decl="int dos_set_current_drive(int drive);",
+        dos_decl="int _dos_setdrive(unsigned char drive);",
+        modern_decl="int set_current_drive(int drive);",
+    ),
+    0x25: InterruptServiceSpec(
+        0x21,
+        "dos_setvect",
+        "_dos_setvect",
+        "setvect",
+        "setvect",
+        pseudo_decl="void dos_setvect(int vector, void (*handler)(void));",
+        dos_decl="void _dos_setvect(unsigned int interruptno, void (far *isr)(void));",
+        modern_decl="void setvect(int interruptno, void (*isr)(void));",
+    ),
+    0x30: InterruptServiceSpec(
+        0x21,
+        "dos_get_version",
+        "_dos_get_version",
+        "get_dos_version",
+        "zero_arg",
+        pseudo_decl="int dos_get_version(void);",
+        dos_decl="unsigned short _dos_get_version(void);",
+        modern_decl="int get_dos_version(void);",
+    ),
+    0x35: InterruptServiceSpec(
+        0x21,
+        "dos_getvect",
+        "_dos_getvect",
+        "getvect",
+        "getvect",
+        pseudo_decl="void *dos_getvect(int vector);",
+        dos_decl="void (far *_dos_getvect(unsigned int interruptno))(void);",
+        modern_decl="void (*getvect(int interruptno))(void);",
+    ),
+    0x39: InterruptServiceSpec(
+        0x21,
+        "dos_mkdir",
+        "_dos_mkdir",
+        "mkdir",
+        "path",
+        pseudo_decl="int dos_mkdir(const char *path);",
+        dos_decl="int _dos_mkdir(const char far *path);",
+        modern_decl="int mkdir(const char *path);",
+    ),
+    0x3A: InterruptServiceSpec(
+        0x21,
+        "dos_rmdir",
+        "_dos_rmdir",
+        "rmdir",
+        "path",
+        pseudo_decl="int dos_rmdir(const char *path);",
+        dos_decl="int _dos_rmdir(const char far *path);",
+        modern_decl="int rmdir(const char *path);",
+    ),
+    0x3B: InterruptServiceSpec(
+        0x21,
+        "dos_chdir",
+        "_dos_chdir",
+        "chdir",
+        "path",
+        pseudo_decl="int dos_chdir(const char *path);",
+        dos_decl="int _dos_chdir(const char far *path);",
+        modern_decl="int chdir(const char *path);",
+    ),
+    0x3C: InterruptServiceSpec(
+        0x21,
+        "dos_creat",
+        "_dos_creat",
+        "creat",
+        "path_attrs",
+        pseudo_decl="int dos_creat(const char *path, int attrs);",
+        dos_decl="int _dos_creat(const char far *path, unsigned short attrs);",
+        modern_decl="int creat(const char *path, int attrs);",
+    ),
+    0x3D: InterruptServiceSpec(
+        0x21,
+        "dos_open",
+        "_dos_open",
+        "open",
+        "path_mode",
+        pseudo_decl="int dos_open(const char *path, int mode);",
+        dos_decl="int _dos_open(const char far *path, unsigned char mode);",
+        modern_decl="int open(const char *path, int oflag);",
+    ),
+    0x3E: InterruptServiceSpec(
+        0x21,
+        "dos_close",
+        "_dos_close",
+        "close",
+        "handle",
+        pseudo_decl="int dos_close(int handle);",
+        dos_decl="int _dos_close(unsigned short handle);",
+        modern_decl="int close(int fd);",
+    ),
+    0x3F: InterruptServiceSpec(
+        0x21,
+        "dos_read",
+        "_dos_read",
+        "read",
+        "handle_buffer_count",
+        pseudo_decl="int dos_read(int handle, void *buffer, unsigned int count);",
+        dos_decl="int _dos_read(unsigned short handle, void far *buffer, unsigned short count);",
+        modern_decl="int read(int fd, void *buf, unsigned int count);",
+    ),
+    0x40: InterruptServiceSpec(
+        0x21,
+        "dos_write",
+        "_dos_write",
+        "write",
+        "handle_buffer_count",
+        pseudo_decl="int dos_write(int handle, const void *buffer, unsigned int count);",
+        dos_decl="int _dos_write(unsigned short handle, const void far *buffer, unsigned short count);",
+        modern_decl="int write(int fd, const void *buf, unsigned int count);",
+    ),
+    0x41: InterruptServiceSpec(
+        0x21,
+        "dos_unlink",
+        "_dos_unlink",
+        "unlink",
+        "path",
+        pseudo_decl="int dos_unlink(const char *path);",
+        dos_decl="int _dos_unlink(const char far *path);",
+        modern_decl="int unlink(const char *path);",
+    ),
+    0x42: InterruptServiceSpec(
+        0x21,
+        "dos_seek",
+        "_dos_seek",
+        "lseek",
+        "handle_seek",
+        pseudo_decl="long dos_seek(int handle, long offset, int origin);",
+        dos_decl="long _dos_seek(unsigned short handle, long offset, unsigned char origin);",
+        modern_decl="long lseek(int fd, long offset, int whence);",
+    ),
+    0x47: InterruptServiceSpec(
+        0x21,
+        "dos_get_current_directory",
+        "_dos_getcwd",
+        "get_current_directory",
+        "drive_buffer",
+        pseudo_decl="int dos_get_current_directory(int drive, char *buffer);",
+        dos_decl="int _dos_getcwd(unsigned char drive, char far *buffer);",
+        modern_decl="int get_current_directory(int drive, char *buffer);",
+    ),
+    0x4A: InterruptServiceSpec(
+        0x21,
+        "dos_setblock",
+        "_dos_setblock",
+        "resize_dos_memory_block",
+        "zero_arg",
+        pseudo_decl="int dos_setblock(void);",
+        dos_decl="int _dos_setblock(void);",
+        modern_decl="int resize_dos_memory_block(void);",
+    ),
+    0x4C: InterruptServiceSpec(
+        0x21,
+        "dos_exit",
+        "_dos_exit",
+        "exit",
+        "exit",
+        pseudo_decl="void dos_exit(int status);",
+        dos_decl="void _dos_exit(unsigned char status);",
+        modern_decl="void exit(int status);",
+    ),
+}
 
 
 INTERRUPT_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
-    0x10: InterruptServiceSpec(0x10, "bios_int10_video", "_bios_int10_video", "_bios_int10_video", "wrapper"),
-    0x11: InterruptServiceSpec(0x11, "bios_equiplist", "_bios_equiplist", "_bios_equiplist", "direct"),
-    0x12: InterruptServiceSpec(0x12, "bios_memsize", "_bios_memsize", "_bios_memsize", "direct"),
-    0x13: InterruptServiceSpec(0x13, "bios_int13_disk", "_bios_disk", "_bios_disk", "wrapper"),
-    0x14: InterruptServiceSpec(0x14, "bios_int14_serial", "_bios_serialcom", "_bios_serialcom", "wrapper"),
-    0x15: InterruptServiceSpec(0x15, "bios_int15_system", "_bios_int15_system", "_bios_int15_system", "wrapper"),
-    0x16: InterruptServiceSpec(0x16, "bios_keybrd", "_bios_keybrd", "_bios_keybrd", "direct"),
-    0x17: InterruptServiceSpec(0x17, "bios_int17_printer", "_bios_printer", "_bios_printer", "wrapper"),
-    0x1A: InterruptServiceSpec(0x1A, "bios_timeofday", "_bios_timeofday", "_bios_timeofday", "direct"),
+    0x10: InterruptServiceSpec(
+        0x10,
+        "bios_int10_video",
+        "_bios_int10_video",
+        "_bios_int10_video",
+        "wrapper",
+        pseudo_decl="int bios_int10_video(void);",
+        dos_decl="int _bios_int10_video(void);",
+        modern_decl="int _bios_int10_video(void);",
+    ),
+    0x11: InterruptServiceSpec(
+        0x11,
+        "bios_equiplist",
+        "_bios_equiplist",
+        "_bios_equiplist",
+        "direct",
+        pseudo_decl="int bios_equiplist(void);",
+        dos_decl="int _bios_equiplist(void);",
+        modern_decl="int _bios_equiplist(void);",
+    ),
+    0x12: InterruptServiceSpec(
+        0x12,
+        "bios_memsize",
+        "_bios_memsize",
+        "_bios_memsize",
+        "direct",
+        pseudo_decl="int bios_memsize(void);",
+        dos_decl="int _bios_memsize(void);",
+        modern_decl="int _bios_memsize(void);",
+    ),
+    0x13: InterruptServiceSpec(
+        0x13,
+        "bios_int13_disk",
+        "_bios_disk",
+        "_bios_disk",
+        "wrapper",
+        pseudo_decl="int bios_int13_disk(void);",
+        dos_decl="int _bios_disk(void);",
+        modern_decl="int _bios_disk(void);",
+    ),
+    0x14: InterruptServiceSpec(
+        0x14,
+        "bios_int14_serial",
+        "_bios_serialcom",
+        "_bios_serialcom",
+        "wrapper",
+        pseudo_decl="int bios_int14_serial(void);",
+        dos_decl="int _bios_serialcom(void);",
+        modern_decl="int _bios_serialcom(void);",
+    ),
+    0x15: InterruptServiceSpec(
+        0x15,
+        "bios_int15_system",
+        "_bios_int15_system",
+        "_bios_int15_system",
+        "wrapper",
+        pseudo_decl="int bios_int15_system(void);",
+        dos_decl="int _bios_int15_system(void);",
+        modern_decl="int _bios_int15_system(void);",
+    ),
+    0x16: InterruptServiceSpec(
+        0x16,
+        "bios_keybrd",
+        "_bios_keybrd",
+        "_bios_keybrd",
+        "direct",
+        pseudo_decl="int bios_keybrd(void);",
+        dos_decl="int _bios_keybrd(void);",
+        modern_decl="int _bios_keybrd(void);",
+    ),
+    0x17: InterruptServiceSpec(
+        0x17,
+        "bios_int17_printer",
+        "_bios_printer",
+        "_bios_printer",
+        "wrapper",
+        pseudo_decl="int bios_int17_printer(void);",
+        dos_decl="int _bios_printer(void);",
+        modern_decl="int _bios_printer(void);",
+    ),
+    0x1A: InterruptServiceSpec(
+        0x1A,
+        "bios_timeofday",
+        "_bios_timeofday",
+        "_bios_timeofday",
+        "direct",
+        pseudo_decl="int bios_timeofday(void);",
+        dos_decl="int _bios_timeofday(void);",
+        modern_decl="int _bios_timeofday(void);",
+    ),
 }
 
 
@@ -98,7 +366,7 @@ def interrupt_service_addr(call: InterruptCall) -> int:
 
 
 def interrupt_service_name(call: InterruptCall, api_style: str = "pseudo") -> str:
-    spec = INTERRUPT_SERVICE_SPECS.get(call.vector)
+    spec = _interrupt_service_spec_for_call(call)
     if spec is not None:
         if api_style == "pseudo":
             return spec.pseudo_name
@@ -107,36 +375,13 @@ def interrupt_service_name(call: InterruptCall, api_style: str = "pseudo") -> st
         return spec.modern_name
 
     if call.vector == 0x21:
-        if call.ah == 0x0E:
-            return "dos_set_current_drive" if api_style == "pseudo" else "_dos_setdrive"
-        if call.ah == 0x39:
-            return "dos_mkdir" if api_style == "pseudo" else "_dos_mkdir"
-        if call.ah == 0x3A:
-            return "dos_rmdir" if api_style == "pseudo" else "_dos_rmdir"
-        if call.ah == 0x3B:
-            return "dos_chdir" if api_style == "pseudo" else "_dos_chdir"
-        if call.ah == 0x47:
-            return "dos_get_current_directory" if api_style == "pseudo" else "_dos_getcwd"
-        if call.ah == 0x09:
-            return "dos_print_dollar_string" if api_style == "pseudo" else "_dos_print_dollar_string"
-        if call.ah == 0x30:
-            return "dos_get_version" if api_style == "pseudo" else "_dos_get_version"
-        if call.ah == 0x3C:
-            return "dos_creat" if api_style == "pseudo" else "_dos_creat"
-        if call.ah == 0x3D:
-            return "dos_open" if api_style == "pseudo" else "_dos_open"
-        if call.ah == 0x3E:
-            return "dos_close" if api_style == "pseudo" else "_dos_close"
-        if call.ah == 0x3F:
-            return "dos_read" if api_style == "pseudo" else "_dos_read"
-        if call.ah == 0x40:
-            return "dos_write" if api_style == "pseudo" else "_dos_write"
-        if call.ah == 0x42:
-            return "dos_lseek" if api_style == "pseudo" else "_dos_seek"
-        if call.ah == 0x4A:
-            return "dos_setblock" if api_style == "pseudo" else "_dos_setblock"
-        if call.ah == 0x4C:
-            return "dos_exit" if api_style == "pseudo" else "_dos_exit"
+        spec = INT21_SERVICE_SPECS.get(call.ah or -1)
+        if spec is not None:
+            if api_style == "pseudo":
+                return spec.pseudo_name
+            if api_style in {"dos", "msc", "compiler"}:
+                return spec.dos_name
+            return spec.modern_name
         return "dos_int21"
 
     if call.vector == 0x10:
@@ -173,6 +418,12 @@ def _interrupt_service_name_for_helper(call: InterruptCall, api_style: str) -> s
 def interrupt_service_spec(call: InterruptCall) -> InterruptServiceSpec | None:
     if call.vector == 0x21:
         return None
+    return INTERRUPT_SERVICE_SPECS.get(call.vector)
+
+
+def _interrupt_service_spec_for_call(call: InterruptCall) -> InterruptServiceSpec | None:
+    if call.vector == 0x21:
+        return INT21_SERVICE_SPECS.get(call.ah or -1)
     return INTERRUPT_SERVICE_SPECS.get(call.vector)
 
 
@@ -578,185 +829,143 @@ def _dos_seek_offset_arg(call: DOSInt21Call) -> str:
     return "0"
 
 
+def _dos_vector_arg(call: DOSInt21Call) -> str | None:
+    if call.al is not None:
+        return _format_imm(call.al)
+    return call.al_expr
+
+
+def _dos_far_pointer_arg(call: DOSInt21Call) -> str | None:
+    segment = _dos_arg(call.ds, call.ds_expr)
+    offset = _dos_arg(call.dx, call.dx_expr)
+    if segment is not None and offset is not None:
+        return f"MK_FP({segment}, {offset})"
+    if offset is not None:
+        return offset
+    return None
+
+
+def _interrupt_service_decl(spec: InterruptServiceSpec, api_style: str) -> str:
+    api_style = normalize_api_style(api_style)
+    if api_style == "pseudo" and spec.pseudo_decl is not None:
+        return spec.pseudo_decl
+    if api_style == "dos" and spec.dos_decl is not None:
+        return spec.dos_decl
+    if api_style == "raw":
+        return ""
+    if spec.modern_decl is not None:
+        return spec.modern_decl
+    if api_style == "pseudo":
+        return f"int {spec.pseudo_name}(void);"
+    if api_style == "dos":
+        return f"int {spec.dos_name}(void);"
+    return f"int {spec.modern_name.lstrip('_')}(void);"
+
+
 def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
     api_style = normalize_api_style(api_style)
 
     if api_style == "raw":
         return "dos_int21()"
 
-    if api_style == "pseudo":
-        name = dos_service_name(call)
-        if call.ah == 0x0E:
-            drive = _dos_drive_arg(call) or "0"
-            return f"{name}({drive})"
-        if call.ah in {0x39, 0x3A, 0x3B, 0x41}:
-            path = _dos_path_arg(call, far_ptr=False) or "NULL"
-            return f"{name}({path})"
-        if call.ah == 0x47:
-            drive = _dos_drive_arg(call) or "0"
-            buffer = _dos_si_buffer_arg(call, far_ptr=False, const=False) or "NULL"
-            return f"{name}({drive}, {buffer})"
-        if call.ah == 0x09:
-            if call.string_literal is not None:
-                return f'{name}("{call.string_literal}")'
-            if call.dx is None:
-                return f"{name}()"
-            return f"{name}((const char *)0x{call.dx:x})"
-        if call.ah == 0x30:
-            return f"{name}()"
-        if call.ah == 0x3D:
-            path = _dos_path_arg(call, far_ptr=False) or "NULL"
-            mode = _dos_arg(call.al, call.al_expr) or "0"
-            return f"{name}({path}, {mode})"
-        if call.ah == 0x3C:
-            path = _dos_path_arg(call, far_ptr=False) or "NULL"
-            attrs = _dos_arg(call.cx, call.cx_expr) or "0"
-            return f"{name}({path}, {attrs})"
-        if call.ah == 0x3E:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            return f"{name}({handle})"
-        if call.ah == 0x3F:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            buffer = _dos_buffer_arg(call, far_ptr=False, const=False) or "NULL"
-            count = _dos_arg(call.cx, call.cx_expr) or "0"
-            return f"{name}({handle}, {buffer}, {count})"
-        if call.ah == 0x40:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            buffer = _dos_buffer_arg(call, far_ptr=False, const=True) or "NULL"
-            count = _dos_arg(call.cx, call.cx_expr) or "0"
-            return f"{name}({handle}, {buffer}, {count})"
-        if call.ah == 0x42:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            offset = _dos_seek_offset_arg(call)
-            origin = _dos_arg(call.al, call.al_expr) or "0"
-            return f"{name}({handle}, {offset}, {origin})"
-        if call.ah == 0x4A:
-            return f"{name}()"
-        if call.ah == 0x4C:
-            exit_code = call.ax & 0xFF if call.ax is not None else 0
-            return f"{name}({exit_code})"
-        return name + "()"
+    spec = INT21_SERVICE_SPECS.get(call.ah or -1)
+    if spec is None:
+        return "dos_int21()"
 
-    if api_style == "dos":
-        if call.ah == 0x0E:
-            drive = _dos_drive_arg(call) or "0"
-            return f"_dos_setdrive({drive})"
-        if call.ah == 0x39:
-            path = _dos_path_arg(call, far_ptr=True) or "NULL"
-            return f"_dos_mkdir({path})"
-        if call.ah == 0x3A:
-            path = _dos_path_arg(call, far_ptr=True) or "NULL"
-            return f"_dos_rmdir({path})"
-        if call.ah == 0x3B:
-            path = _dos_path_arg(call, far_ptr=True) or "NULL"
-            return f"_dos_chdir({path})"
-        if call.ah == 0x47:
-            drive = _dos_drive_arg(call) or "0"
-            buffer = _dos_si_buffer_arg(call, far_ptr=True, const=False) or "NULL"
-            return f"_dos_getcwd({drive}, {buffer})"
-        if call.ah == 0x30:
-            return "_dos_get_version()"
-        if call.ah == 0x09:
+    name = interrupt_service_name(call, api_style)
+
+    if spec.render_kind == "string_dollar":
+        if api_style == "dos":
             if call.string_literal is not None:
                 return f'_dos_print_dollar_string("{call.string_literal}")'
             if call.dx is None:
                 return "_dos_print_dollar_string()"
             return f"_dos_print_dollar_string((const char far *)0x{call.dx:x})"
-        if call.ah == 0x3D:
-            path = _dos_path_arg(call, far_ptr=True) or "NULL"
-            mode = _dos_arg(call.al, call.al_expr) or "0"
-            return f"_dos_open({path}, {mode})"
-        if call.ah == 0x3C:
-            path = _dos_path_arg(call, far_ptr=True) or "NULL"
-            attrs = _dos_arg(call.cx, call.cx_expr) or "0"
-            return f"_dos_creat({path}, {attrs})"
-        if call.ah == 0x3E:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            return f"_dos_close({handle})"
-        if call.ah == 0x3F:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            buffer = _dos_buffer_arg(call, far_ptr=True, const=False) or "NULL"
-            count = _dos_arg(call.cx, call.cx_expr) or "0"
-            return f"_dos_read({handle}, {buffer}, {count})"
-        if call.ah == 0x40:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            buffer = _dos_buffer_arg(call, far_ptr=True, const=True) or "NULL"
-            count = _dos_arg(call.cx, call.cx_expr) or "0"
-            return f"_dos_write({handle}, {buffer}, {count})"
-        if call.ah == 0x42:
-            handle = _dos_arg(call.bx, call.bx_expr) or "0"
-            offset = _dos_seek_offset_arg(call)
-            origin = _dos_arg(call.al, call.al_expr) or "0"
-            return f"_dos_seek({handle}, {offset}, {origin})"
-        if call.ah == 0x41:
-            path = _dos_path_arg(call, far_ptr=True) or "NULL"
-            return f"_dos_unlink({path})"
-        if call.ah == 0x4A:
-            return "_dos_setblock()"
-        if call.ah == 0x4C:
-            exit_code = call.ax & 0xFF if call.ax is not None else 0
-            return f"_dos_exit({exit_code})"
-        return "dos_int21()"
-
-    if call.ah == 0x0E:
-        drive = _dos_drive_arg(call) or "0"
-        return f"set_current_drive({drive})"
-    if call.ah == 0x39:
-        path = _dos_path_arg(call, far_ptr=False) or "NULL"
-        return f"mkdir({path})"
-    if call.ah == 0x3A:
-        path = _dos_path_arg(call, far_ptr=False) or "NULL"
-        return f"rmdir({path})"
-    if call.ah == 0x3B:
-        path = _dos_path_arg(call, far_ptr=False) or "NULL"
-        return f"chdir({path})"
-    if call.ah == 0x47:
-        drive = _dos_drive_arg(call) or "0"
-        buffer = _dos_si_buffer_arg(call, far_ptr=False, const=False) or "NULL"
-        return f"get_current_directory({drive}, {buffer})"
-    if call.ah == 0x30:
-        return "get_dos_version()"
-    if call.ah == 0x09:
+        if api_style == "pseudo":
+            if call.string_literal is not None:
+                return f'{name}("{call.string_literal}")'
+            if call.dx is None:
+                return f"{name}()"
+            return f"{name}((const char *)0x{call.dx:x})"
         if call.string_literal is not None:
             return f'print_dos_string("{call.string_literal}")'
         if call.dx is None:
             return "print_dos_string()"
         return f"print_dos_string((const char *)0x{call.dx:x})"
-    if call.ah == 0x3D:
-        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+
+    if spec.render_kind == "drive":
+        drive = _dos_drive_arg(call) or "0"
+        return f"{name}({drive})"
+
+    if spec.render_kind == "path":
+        path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
+        return f"{name}({path})"
+
+    if spec.render_kind == "path_mode":
+        path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
         mode = _dos_arg(call.al, call.al_expr) or "0"
-        return f"open({path}, {mode})"
-    if call.ah == 0x3C:
-        path = _dos_path_arg(call, far_ptr=False) or "NULL"
+        return f"{name}({path}, {mode})"
+
+    if spec.render_kind == "path_attrs":
+        path = _dos_path_arg(call, far_ptr=api_style == "dos") or "NULL"
         attrs = _dos_arg(call.cx, call.cx_expr) or "0"
-        return f"creat({path}, {attrs})"
-    if call.ah == 0x3E:
+        return f"{name}({path}, {attrs})"
+
+    if spec.render_kind == "handle":
         handle = _dos_arg(call.bx, call.bx_expr) or "0"
-        return f"close({handle})"
-    if call.ah == 0x3F:
+        return f"{name}({handle})"
+
+    if spec.render_kind == "handle_buffer_count":
         handle = _dos_arg(call.bx, call.bx_expr) or "0"
-        buffer = _dos_buffer_arg(call, far_ptr=False, const=False) or "NULL"
+        buffer = _dos_buffer_arg(call, far_ptr=api_style == "dos", const=call.ah == 0x40) or "NULL"
         count = _dos_arg(call.cx, call.cx_expr) or "0"
-        return f"read({handle}, {buffer}, {count})"
-    if call.ah == 0x40:
-        handle = _dos_arg(call.bx, call.bx_expr) or "0"
-        buffer = _dos_buffer_arg(call, far_ptr=False, const=True) or "NULL"
-        count = _dos_arg(call.cx, call.cx_expr) or "0"
-        return f"write({handle}, {buffer}, {count})"
-    if call.ah == 0x42:
+        return f"{name}({handle}, {buffer}, {count})"
+
+    if spec.render_kind == "handle_seek":
         handle = _dos_arg(call.bx, call.bx_expr) or "0"
         offset = _dos_seek_offset_arg(call)
         origin = _dos_arg(call.al, call.al_expr) or "0"
-        return f"lseek({handle}, {offset}, {origin})"
-    if call.ah == 0x41:
-        path = _dos_path_arg(call, far_ptr=False) or "NULL"
-        return f"unlink({path})"
-    if call.ah == 0x4A:
-        return "resize_dos_memory_block()"
-    if call.ah == 0x4C:
+        return f"{name}({handle}, {offset}, {origin})"
+
+    if spec.render_kind == "drive_buffer":
+        drive = _dos_drive_arg(call) or "0"
+        buffer = _dos_si_buffer_arg(call, far_ptr=api_style == "dos", const=False) or "NULL"
+        return f"{name}({drive}, {buffer})"
+
+    if spec.render_kind == "setvect":
+        vector = _dos_vector_arg(call) or "0"
+        handler = _dos_far_pointer_arg(call) or "NULL"
+        if api_style == "dos":
+            return f"_dos_setvect({vector}, {handler})"
+        if api_style == "pseudo":
+            return f"{name}({vector}, {handler})"
+        return f"setvect({vector}, {handler})"
+
+    if spec.render_kind == "getvect":
+        vector = _dos_vector_arg(call) or "0"
+        if api_style == "dos":
+            return f"_dos_getvect({vector})"
+        if api_style == "pseudo":
+            return f"{name}({vector})"
+        return f"getvect({vector})"
+
+    if spec.render_kind == "exit":
         exit_code = call.ax & 0xFF if call.ax is not None else 0
-        return f"exit({exit_code})"
-    return "dos_int21()"
+        return f"{name}({exit_code})"
+
+    if spec.render_kind == "zero_arg":
+        return f"{name}()"
+
+    if spec.render_kind == "wrapper":
+        return f"{name}()"
+
+    if spec.render_kind == "setblock":
+        return f"{name}()"
+
+    if spec.render_kind == "get_version":
+        return f"{name}()"
+
+    return f"{name}()"
 
 
 def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
@@ -766,6 +975,12 @@ def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
         return render_dos_int21_call(call, api_style)
     if api_style == "raw":
         return f"int{call.vector:02x}()"
+
+    if call.vector == 0x10 and spec.render_kind == "wrapper":
+        extended = any(value is not None for value in (call.ds, call.es, call.ss, call.cs))
+        if extended:
+            return "int86x(0x10, &inregs, &outregs, &sregs)"
+        return "int86(0x10, &inregs, &outregs)"
 
     name = interrupt_service_name(call, api_style)
     if call.vector == 0x10 and api_style in {"dos", "msc", "compiler"}:
@@ -790,106 +1005,13 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
     declarations: list[str] = []
     seen: set[str] = set()
     for call in calls:
-        if api_style == "pseudo":
-            name = dos_service_name(call)
-            if call.ah == 0x0E:
-                decl = f"int {name}(int drive);"
-            elif call.ah in {0x39, 0x3A, 0x3B, 0x41}:
-                decl = f"int {name}(const char *path);"
-            elif call.ah == 0x47:
-                decl = f"int {name}(int drive, char *buffer);"
-            elif call.ah == 0x09:
-                decl = f"void {name}(const char *s);"
-            elif call.ah == 0x30:
-                decl = f"int {name}(void);"
-            elif call.ah == 0x3D:
-                decl = f"int {name}(const char *path, int mode);"
-            elif call.ah == 0x3C:
-                decl = f"int {name}(const char *path, int attrs);"
-            elif call.ah == 0x3E:
-                decl = f"int {name}(int handle);"
-            elif call.ah == 0x3F:
-                decl = f"int {name}(int handle, void *buffer, unsigned int count);"
-            elif call.ah == 0x40:
-                decl = f"int {name}(int handle, const void *buffer, unsigned int count);"
-            elif call.ah == 0x42:
-                decl = f"long {name}(int handle, long offset, int origin);"
-            elif call.ah == 0x4A:
-                decl = f"int {name}(void);"
-            elif call.ah == 0x4C:
-                decl = f"void {name}(int status);"
-            else:
-                decl = f"int {name}(void);"
-        elif api_style == "dos":
-            if call.ah == 0x0E:
-                decl = "int _dos_setdrive(unsigned char drive);"
-            elif call.ah == 0x39:
-                decl = "int _dos_mkdir(const char far *path);"
-            elif call.ah == 0x3A:
-                decl = "int _dos_rmdir(const char far *path);"
-            elif call.ah == 0x3B:
-                decl = "int _dos_chdir(const char far *path);"
-            elif call.ah == 0x47:
-                decl = "int _dos_getcwd(unsigned char drive, char far *buffer);"
-            elif call.ah == 0x30:
-                decl = "unsigned short _dos_get_version(void);"
-            elif call.ah == 0x09:
-                decl = "void _dos_print_dollar_string(const char far *s);"
-            elif call.ah == 0x3D:
-                decl = "int _dos_open(const char far *path, unsigned char mode);"
-            elif call.ah == 0x3C:
-                decl = "int _dos_creat(const char far *path, unsigned short attrs);"
-            elif call.ah == 0x3E:
-                decl = "int _dos_close(unsigned short handle);"
-            elif call.ah == 0x3F:
-                decl = "int _dos_read(unsigned short handle, void far *buffer, unsigned short count);"
-            elif call.ah == 0x40:
-                decl = "int _dos_write(unsigned short handle, const void far *buffer, unsigned short count);"
-            elif call.ah == 0x42:
-                decl = "long _dos_seek(unsigned short handle, long offset, unsigned char origin);"
-            elif call.ah == 0x41:
-                decl = "int _dos_unlink(const char far *path);"
-            elif call.ah == 0x4A:
-                decl = "int _dos_setblock(void);"
-            elif call.ah == 0x4C:
-                decl = "void _dos_exit(unsigned char status);"
-            else:
-                decl = "unsigned short dos_int21(void);"
+        spec = _interrupt_service_spec_for_call(call)
+        if spec is None:
+            decl = "int dos_int21(void);"
         else:
-            if call.ah == 0x0E:
-                decl = "int set_current_drive(int drive);"
-            elif call.ah == 0x39:
-                decl = "int mkdir(const char *path);"
-            elif call.ah == 0x3A:
-                decl = "int rmdir(const char *path);"
-            elif call.ah == 0x3B:
-                decl = "int chdir(const char *path);"
-            elif call.ah == 0x47:
-                decl = "int get_current_directory(int drive, char *buffer);"
-            elif call.ah == 0x30:
-                decl = "int get_dos_version(void);"
-            elif call.ah == 0x09:
-                decl = "void print_dos_string(const char *s);"
-            elif call.ah == 0x3D:
-                decl = "int open(const char *path, int oflag);"
-            elif call.ah == 0x3C:
-                decl = "int creat(const char *path, int attrs);"
-            elif call.ah == 0x3E:
-                decl = "int close(int fd);"
-            elif call.ah == 0x3F:
-                decl = "int read(int fd, void *buf, unsigned int count);"
-            elif call.ah == 0x40:
-                decl = "int write(int fd, const void *buf, unsigned int count);"
-            elif call.ah == 0x42:
-                decl = "long lseek(int fd, long offset, int whence);"
-            elif call.ah == 0x41:
-                decl = "int unlink(const char *path);"
-            elif call.ah == 0x4A:
-                decl = "int resize_dos_memory_block(void);"
-            elif call.ah == 0x4C:
-                decl = "void exit(int status);"
-            else:
-                decl = "int dos_int21(void);"
+            if spec.render_kind == "wrapper" and call.vector != 0x21:
+                continue
+            decl = _interrupt_service_decl(spec, api_style)
         if decl not in seen:
             seen.add(decl)
             declarations.append(decl)
@@ -904,7 +1026,7 @@ def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -
     declarations: list[str] = []
     seen: set[str] = set()
     for call in calls:
-        spec = interrupt_service_spec(call)
+        spec = _interrupt_service_spec_for_call(call)
         if spec is None:
             decls = dos_helper_declarations([call], api_style)
             for decl in decls:
@@ -913,12 +1035,7 @@ def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -
                     declarations.append(decl)
             continue
 
-        if api_style == "pseudo":
-            decl = f"int {spec.pseudo_name}(void);"
-        elif api_style == "dos":
-            decl = f"int {spec.dos_name}(void);"
-        else:
-            decl = f"int {spec.modern_name.lstrip('_')}(void);"
+        decl = _interrupt_service_decl(spec, api_style)
         if decl not in seen:
             seen.add(decl)
             declarations.append(decl)
