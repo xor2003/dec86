@@ -151,6 +151,8 @@ Recent progress on that front:
 - normalized decode metadata now has an explicit width-profile abstraction, so
   the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
   scattered width math
+- 32-bit relative branches now also share a single helper emission path instead
+  of repeating `update_eip` logic in each conditional branch handler
 
 ## Remaining Priorities
 

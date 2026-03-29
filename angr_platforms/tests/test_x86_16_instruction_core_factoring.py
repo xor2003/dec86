@@ -164,12 +164,28 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_trans
         + inspect.getsource(instr32.Instr32.jmp_rel32)
         + inspect.getsource(instr32.Instr32.call_rm32)
         + inspect.getsource(instr32.Instr32.jmp_rm32)
+        + inspect.getsource(instr32.Instr32.jo_rel32)
+        + inspect.getsource(instr32.Instr32.jno_rel32)
+        + inspect.getsource(instr32.Instr32.jb_rel32)
+        + inspect.getsource(instr32.Instr32.jnb_rel32)
+        + inspect.getsource(instr32.Instr32.jz_rel32)
+        + inspect.getsource(instr32.Instr32.jnz_rel32)
+        + inspect.getsource(instr32.Instr32.jbe_rel32)
+        + inspect.getsource(instr32.Instr32.ja_rel32)
+        + inspect.getsource(instr32.Instr32.js_rel32)
+        + inspect.getsource(instr32.Instr32.jns_rel32)
+        + inspect.getsource(instr32.Instr32.jp_rel32)
+        + inspect.getsource(instr32.Instr32.jnp_rel32)
+        + inspect.getsource(instr32.Instr32.jl_rel32)
+        + inspect.getsource(instr32.Instr32.jnl_rel32)
+        + inspect.getsource(instr32.Instr32.jle_rel32)
+        + inspect.getsource(instr32.Instr32.jnle_rel32)
     )
 
     assert "emit_near_call32(" in source
     assert "emit_near_jump32(" in source
-    assert "self.emu.push32(" not in source
-    assert "self.emu.set_eip(" not in source
+    assert "branch_rel32(" in source
+    assert "self.emu.update_eip(" not in source
 
 
 def test_x86_16_instruction_core_uses_byte_alu_immediate_helper_families():

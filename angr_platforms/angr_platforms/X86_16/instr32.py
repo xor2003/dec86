@@ -15,6 +15,7 @@ from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
 from .stack_helpers import (
+    branch_rel32,
     emit_near_call32,
     emit_near_jump32,
     leave32,
@@ -414,72 +415,52 @@ class Instr32(InstrBase):
         self.emu.out_io32(dx, eax)
 
     def jo_rel32(self):
-        if self.emu.is_overflow():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_overflow(), self.instr.imm32)
 
     def jno_rel32(self):
-        ip = self.emu.get_gpreg(reg16_t.IP).cast_to(Type.int_32) + self.emu.constant(self.instr.imm32, Type.int_32).signed + 6
-        self.emu.lifter_instruction.jump(self.emu.is_overflow(), ip)
+        branch_rel32(self.emu, ~self.emu.is_overflow(), self.instr.imm32)
 
     def jb_rel32(self):
-        if self.emu.is_carry():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_carry(), self.instr.imm32)
 
     def jnb_rel32(self):
-        if not self.emu.is_carry():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, ~self.emu.is_carry(), self.instr.imm32)
 
     def jz_rel32(self):
-        if self.emu.is_zero():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_zero(), self.instr.imm32)
 
     def jnz_rel32(self):
-        if not self.emu.is_zero():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, ~self.emu.is_zero(), self.instr.imm32)
 
     def jbe_rel32(self):
-        if self.emu.is_carry() or self.emu.is_zero():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_carry() or self.emu.is_zero(), self.instr.imm32)
 
     def ja_rel32(self):
-        if not (self.emu.is_carry() or self.emu.is_zero()):
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, not (self.emu.is_carry() or self.emu.is_zero()), self.instr.imm32)
 
     def js_rel32(self):
-        if self.emu.is_sign():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_sign(), self.instr.imm32)
 
     def jns_rel32(self):
-        if not self.emu.is_sign():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, ~self.emu.is_sign(), self.instr.imm32)
 
     def jp_rel32(self):
-        if self.emu.is_parity():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_parity(), self.instr.imm32)
 
     def jnp_rel32(self):
-        if not self.emu.is_parity():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, ~self.emu.is_parity(), self.instr.imm32)
 
     def jl_rel32(self):
-        if self.emu.is_sign() != self.emu.is_overflow():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm32)
 
     def jnl_rel32(self):
-        if self.emu.is_sign() == self.emu.is_overflow():
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_sign() == self.emu.is_overflow(), self.instr.imm32)
 
     def jle_rel32(self):
-        if self.emu.is_zero() or (
-            self.emu.is_sign() != self.emu.is_overflow()
-        ):
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm32)
 
     def jnle_rel32(self):
-        if not self.emu.is_zero() and (
-            self.emu.is_sign() == self.emu.is_overflow()
-        ):
-            self.emu.update_eip(self.instr.imm32)
+        branch_rel32(self.emu, not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm32)
 
     def imul_r32_rm32(self):
         r32_s = self.get_r32()

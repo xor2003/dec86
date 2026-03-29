@@ -203,6 +203,19 @@ def emit_near_jump32(emu, target):
     return target
 
 
+def branch_rel32(emu, condition, displacement):
+    if hasattr(condition, "cast_to"):
+        condition = condition.cast_to(Type.int_1)
+    target = emu.get_eip() + emu.constant(displacement, Type.int_32)
+    if isinstance(condition, bool):
+        if not condition:
+            return None
+        return emit_near_jump32(emu, target)
+    if getattr(condition, "rdt", None) is False:
+        return None
+    return emit_near_jump32(emu, target)
+
+
 def enter16(emu, frame_size: int, nesting_level: int) -> None:
     push16(emu, emu.get_gpreg(reg16_t.BP))
     ss = emu.get_sgreg(sgreg_t.SS)

@@ -1,5 +1,6 @@
 from angr_platforms.X86_16.regs import reg16_t, reg32_t, sgreg_t
 from angr_platforms.X86_16.stack_helpers import (
+    branch_rel32,
     emit_near_call16,
     emit_near_call32,
     emit_near_jump16,
@@ -290,6 +291,19 @@ def test_stack_helpers_emit_near_call_and_jump_set_control_transfer_edges():
     emit_near_jump32(emu, 0x3000)
     assert emu.get_gpreg(reg32_t.EIP) == 0x3000
     assert emu.irsb.jumpkind == "Ijk_Boring"
+
+
+def test_stack_helpers_branch_rel32_uses_shared_jump_emission_for_taken_branches():
+    emu = _StackEmu()
+    emu.gpregs[reg32_t.EIP] = 0x1000
+
+    assert branch_rel32(emu, True, 0x20) == 0x1020
+    assert emu.get_gpreg(reg32_t.EIP) == 0x1020
+    assert emu.irsb.jumpkind == "Ijk_Boring"
+
+    emu.gpregs[reg32_t.EIP] = 0x2000
+    assert branch_rel32(emu, False, 0x20) is None
+    assert emu.get_gpreg(reg32_t.EIP) == 0x2000
 
 
 def test_stack_helpers_push_and_pop_all32_preserve_saved_esp_slot():
