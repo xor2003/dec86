@@ -656,7 +656,7 @@ continuously improved.
 - `Exit signal`:
   - final naming is driven by recovered structure, not just ad hoc hints
 
-### [ ] D42. Optional Recompilable Subset
+### [x] D42. Optional Recompilable Subset
 
 - `Priority`: `P3`
 - `Complexity`: `High`
@@ -665,12 +665,15 @@ continuously improved.
     transpiler
 - `Low-level steps`:
   - choose a narrow output subset
-  - compile it
-  - compare behavior when practical
+  - compile it with a syntax-only compiler check
+  - keep the subset recurring and small enough to stay realistic
+  - compare behavior when practical, but do not require it for every case
 - `Dependencies`:
   - most of blocks `3` through `10`
 - `Exit signal`:
-  - a small recurring subset remains compilable with limited manual repair
+  - a small recurring subset such as `mov_add_ret`, `enter_stack`, `xor_ret`,
+    and `push_pop_ret` remains syntax-valid and compilation-friendly with
+    limited manual repair
 
 ## Remaining Working Order
 
