@@ -11,6 +11,7 @@ from angr_platforms.X86_16.stack_helpers import (
     push16_register,
     push_all16,
     push_far_return_frame16,
+    return_near16,
 )
 
 
@@ -29,6 +30,7 @@ class _StackEmu:
         }
         self.sgregs = {sgreg_t.CS: 0x1234, sgreg_t.SS: 0x2000}
         self.memory = {}
+        self.irsb = type("_IRSB", (), {"next": None, "jumpkind": None})()
 
     def update_gpreg(self, reg, delta):
         self.gpregs[reg] = self.gpregs[reg] + delta
@@ -156,3 +158,26 @@ def test_stack_helpers_pop_all16_restores_registers_and_skips_saved_sp():
     assert emu.get_gpreg(reg16_t.CX) == 0x2222
     assert emu.get_gpreg(reg16_t.AX) == 0x1111
     assert emu.get_gpreg(reg16_t.SP) == 0x1000
+
+
+def test_stack_helpers_return_near16_sets_ip_and_ret_jumpkind():
+    emu = _StackEmu()
+    emu.gpregs[reg16_t.SP] = 0x0FFE
+    emu.memory[(sgreg_t.SS, 0x0FFE)] = 0x3456
+
+    assert return_near16(emu) == 0x3456
+    assert emu.get_gpreg(reg16_t.IP) == 0x3456
+    assert emu.get_gpreg(reg16_t.SP) == 0x1000
+    assert emu.irsb.next == 0x3456
+    assert emu.irsb.jumpkind == "Ijk_Ret"
+
+
+def test_stack_helpers_return_near16_applies_extra_stack_adjust():
+    emu = _StackEmu()
+    emu.gpregs[reg16_t.SP] = 0x0FFE
+    emu.memory[(sgreg_t.SS, 0x0FFE)] = 0x3456
+
+    return_near16(emu, stack_adjust=4)
+
+    assert emu.get_gpreg(reg16_t.IP) == 0x3456
+    assert emu.get_gpreg(reg16_t.SP) == 0x1004

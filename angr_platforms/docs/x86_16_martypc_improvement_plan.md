@@ -133,6 +133,8 @@ Recent progress on that front:
   instead of local `get_data*` reads
 - `pusha` / `popa` now delegate to shared stack-family helpers instead of
   owning their own stack choreography inside `instr16.py`
+- near `ret` / `ret imm16` now delegate to a shared near-return helper instead
+  of owning their own stack-unwind and `Ijk_Ret` plumbing in `instr16.py`
 
 ## Remaining Priorities
 

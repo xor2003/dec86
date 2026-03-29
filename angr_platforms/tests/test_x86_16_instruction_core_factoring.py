@@ -93,3 +93,11 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_pusha_and_popa():
     assert "pop_all16(" in source
     assert "self.emu.push16(" not in source
     assert "self.emu.pop16(" not in source
+
+
+def test_x86_16_instruction_core_uses_stack_helpers_for_near_returns():
+    source = inspect.getsource(instr16.Instr16.ret) + inspect.getsource(instr16.Instr16.ret_imm16)
+
+    assert "return_near16(" in source
+    assert "self.emu.pop16(" not in source
+    assert "self.emu.irsb.jumpkind" not in source

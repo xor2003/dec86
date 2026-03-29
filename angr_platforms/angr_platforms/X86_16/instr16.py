@@ -15,7 +15,7 @@ from .alu_helpers import (
 )
 from .addressing_helpers import load_far_pointer, load_word_pair16, resolve_linear_operand
 from .instr_base import InstrBase
-from .stack_helpers import enter16, leave16, near_return_ip16, pop_all16, push16_register, push_all16
+from .stack_helpers import enter16, leave16, near_return_ip16, pop_all16, push16_register, push_all16, return_near16
 from .string_helpers import (
     repeat_jump,
     repeat_prefix_cond,
@@ -743,20 +743,10 @@ class Instr16(InstrBase):
         self.emu.lifter_instruction.jump(None, target, JumpKind.Boring)
 
     def ret(self):
-        ret_addr = self.emu.pop16()
-        self.emu.set_gpreg(reg16_t.IP, ret_addr)
-        self.emu.irsb.next = ret_addr
-        self.emu.irsb.jumpkind = 'Ijk_Ret'
+        return_near16(self.emu)
 
     def ret_imm16(self):
-        ret_addr = self.emu.pop16()
-        self.emu.set_gpreg(
-            reg16_t.SP,
-            self.emu.get_gpreg(reg16_t.SP) + self.emu.constant(self.instr.imm16, Type.int_16),
-        )
-        self.emu.set_gpreg(reg16_t.IP, ret_addr)
-        self.emu.irsb.next = ret_addr
-        self.emu.irsb.jumpkind = 'Ijk_Ret'
+        return_near16(self.emu, stack_adjust=self.instr.imm16)
 
     def mov_rm16_imm16(self):
         self.set_rm16(self.emu.constant(self.instr.imm16, Type.int_16))

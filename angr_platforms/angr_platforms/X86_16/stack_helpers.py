@@ -91,6 +91,16 @@ def pop_interrupt_frame16(emu):
     return ip, cs, flags
 
 
+def return_near16(emu, stack_adjust=0):
+    ip = pop16(emu)
+    if stack_adjust:
+        emu.set_gpreg(reg16_t.SP, emu.get_gpreg(reg16_t.SP) + emu.constant(stack_adjust, Type.int_16))
+    emu.set_gpreg(reg16_t.IP, ip)
+    emu.irsb.next = ip
+    emu.irsb.jumpkind = "Ijk_Ret"
+    return ip
+
+
 def enter16(emu, frame_size: int, nesting_level: int) -> None:
     push16(emu, emu.get_gpreg(reg16_t.BP))
     ss = emu.get_sgreg(sgreg_t.SS)
