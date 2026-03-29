@@ -17,3 +17,10 @@ def test_x86_16_instruction_core_registration_tables_cover_hot_ranges():
 
 def test_x86_16_instruction_core_base_exposes_registration_helper():
     assert hasattr(InstrBase, "_register_opcode_range")
+
+
+def test_x86_16_instruction_core_base_groups_ax_immediates_under_shared_helpers():
+    assert hasattr(instr16.Instr16, "_ax_imm16")
+    assert hasattr(instr16.Instr16, "_binary_ax_imm16")
+    assert hasattr(instr16.Instr16, "_binary_ax_imm16_with_carry")
+    assert hasattr(instr16.Instr16, "_compare_ax_imm16")

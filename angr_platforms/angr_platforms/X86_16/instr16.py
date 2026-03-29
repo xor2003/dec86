@@ -258,25 +258,40 @@ class Instr16(InstrBase):
         self.set_r16(r16 + rm16 + carry)
         self.emu.update_eflags_adc(r16, rm16, carry)
 
-    def add_ax_imm16(self):
+    def _ax_imm16(self):
+        return self.emu.constant(self.instr.imm16, Type.int_16)
+
+    def _binary_ax_imm16(self, operator, updater):
         ax = self.emu.get_gpreg(reg16_t.AX)
-        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
-        self.emu.set_gpreg(reg16_t.AX, ax + imm16)
-        self.emu.update_eflags_add(ax, imm16)
+        imm16 = self._ax_imm16()
+        self.emu.set_gpreg(reg16_t.AX, operator(ax, imm16))
+        updater(ax, imm16)
+
+    def _binary_ax_imm16_with_carry(self, operator, updater):
+        ax = self.emu.get_gpreg(reg16_t.AX)
+        imm16 = self._ax_imm16()
+        carry = self.emu.is_carry().cast_to(Type.int_16)
+        self.emu.set_gpreg(reg16_t.AX, operator(ax, imm16, carry))
+        updater(ax, imm16, carry)
+
+    def _compare_ax_imm16(self, updater):
+        ax = self.emu.get_gpreg(reg16_t.AX)
+        updater(ax, self._ax_imm16())
+
+    def add_ax_imm16(self):
+        self._binary_ax_imm16(lambda ax, imm16: ax + imm16, self.emu.update_eflags_add)
 
     def adc_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
-        carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.emu.set_gpreg(reg16_t.AX, ax + imm16 + carry)
-        self.emu.update_eflags_adc(ax, imm16, carry)
+        self._binary_ax_imm16_with_carry(
+            lambda ax, imm16, carry: ax + imm16 + carry,
+            self.emu.update_eflags_adc,
+        )
 
     def sbb_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
-        carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.emu.set_gpreg(reg16_t.AX, ax - imm16 - carry)
-        self.emu.update_eflags_sbb(ax, imm16, carry)
+        self._binary_ax_imm16_with_carry(
+            lambda ax, imm16, carry: ax - imm16 - carry,
+            self.emu.update_eflags_sbb,
+        )
 
     def push_es(self):
         self.emu.push16(self.emu.get_segment(sgreg_t.ES))
@@ -297,9 +312,7 @@ class Instr16(InstrBase):
         self.emu.update_eflags_or(r16, rm16)
 
     def or_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t.AX, ax | self.instr.imm16)
-        self.emu.update_eflags_or(ax, self.instr.imm16)
+        self._binary_ax_imm16(lambda ax, imm16: ax | imm16, self.emu.update_eflags_or)
 
     def push_cs(self):
         self.emu.push16(self.emu.get_segment(sgreg_t.CS))
@@ -329,9 +342,7 @@ class Instr16(InstrBase):
         self.emu.update_eflags_and(r16, rm16)
 
     def and_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t.AX, ax & self.instr.imm16)
-        self.emu.update_eflags_and(ax, self.instr.imm16)
+        self._binary_ax_imm16(lambda ax, imm16: ax & imm16, self.emu.update_eflags_and)
 
     def sub_rm16_r16(self):
         rm16 = self.get_rm16()
@@ -346,9 +357,7 @@ class Instr16(InstrBase):
         self.emu.update_eflags_sub(r16, rm16)
 
     def sub_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t.AX, ax - self.instr.imm16)
-        self.emu.update_eflags_sub(ax, self.instr.imm16)
+        self._binary_ax_imm16(lambda ax, imm16: ax - imm16, self.emu.update_eflags_sub)
 
     def xor_rm16_r16(self):
         rm16 = self.get_rm16()
@@ -364,9 +373,7 @@ class Instr16(InstrBase):
         self.emu.update_eflags_xor(rm16, r16)
 
     def xor_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t.AX, ax ^ self.instr.imm16)
-        self.emu.update_eflags_xor(ax, self.instr.imm16)
+        self._binary_ax_imm16(lambda ax, imm16: ax ^ imm16, self.emu.update_eflags_xor)
 
     def cmp_rm16_r16(self):
         rm16 = self.get_rm16()
@@ -379,8 +386,7 @@ class Instr16(InstrBase):
         self.emu.update_eflags_sub(r16, rm16)
 
     def cmp_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.update_eflags_sub(ax, self.instr.imm16)
+        self._compare_ax_imm16(self.emu.update_eflags_sub)
 
     def inc_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
