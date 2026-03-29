@@ -78,6 +78,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     interrupt_service_declarations,
     normalize_api_style,
     patch_dos_int21_call_sites,
+    patch_interrupt_service_call_sites,
     render_interrupt_call,
     render_dos_int21_call,
     seed_calling_conventions,
@@ -269,7 +270,7 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
         if extended_cfg is not None and target_addr in extended_cfg.functions:
             cfg = extended_cfg
             function = cfg.functions[target_addr]
-        patch_dos_int21_call_sites(function, getattr(project.loader.main_object, "binary", None))
+        patch_interrupt_service_call_sites(function, getattr(project.loader.main_object, "binary", None))
     seed_calling_conventions(cfg)
 
     return cfg, function
@@ -301,7 +302,7 @@ def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, wi
         extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
         if extended_cfg is not None and project.entry in extended_cfg.functions:
             cfg = extended_cfg
-        patch_dos_int21_call_sites(cfg.functions[project.entry], binary_path)
+        patch_interrupt_service_call_sites(cfg.functions[project.entry], binary_path)
     seed_calling_conventions(cfg)
     return cfg
 
@@ -1101,6 +1102,10 @@ def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_st
                             if not _same_c_expression(stmt, helper):
                                 stmt = helper
                                 changed = True
+                        else:
+                            # Preserve the wrapper call itself as the result source when
+                            # service-specific lowering is not possible yet.
+                            current_helper = stmt
 
                 elif isinstance(stmt, structured_c.CExpressionStatement):
                     expr = getattr(stmt, "expr", None)
@@ -1113,6 +1118,8 @@ def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_st
                                 if not _same_c_expression(expr, helper):
                                     stmt = structured_c.CExpressionStatement(helper, codegen=codegen)
                                     changed = True
+                            else:
+                                current_helper = expr
 
                 visit(stmt, local_state, current_helper)
                 new_statements.append(stmt)
@@ -5624,6 +5631,12 @@ def _interrupt_call_replacement_map(project: angr.Project, function, api_style: 
     replacements: dict[str, str] = {}
     for call in collect_interrupt_service_calls(function, binary_path):
         replacement = render_interrupt_call(call, api_style)
+        target_addr = getattr(function, "get_call_target", lambda _addr: None)(call.insn_addr)
+        if isinstance(target_addr, int):
+            replacements[str(target_addr)] = replacement
+            replacements[hex(target_addr)] = replacement
+            replacements[hex(target_addr).upper().replace("X", "x")] = replacement
+
         helper_name = _helper_name(project, interrupt_service_addr(call))
         if helper_name:
             replacements[helper_name] = replacement
