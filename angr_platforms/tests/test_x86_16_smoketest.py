@@ -251,6 +251,17 @@ def test_xlat_lifts_as_table_lookup():
     assert "PUT(ax)" in vex_text
 
 
+def test_rep_movsb_decompiles_without_double_negation():
+    project = _project_from_bytes(bytes.fromhex("b90200f3a4c3"))  # mov cx,2; rep movsb; ret
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+    assert dec.codegen is not None
+    text = dec.codegen.text
+    assert "*((char *)" in text
+    assert "!(!(" not in text
+
+
 def test_movsb_lifts_and_updates_indices():
     project = _project_from_bytes(bytes.fromhex("a4"))
 

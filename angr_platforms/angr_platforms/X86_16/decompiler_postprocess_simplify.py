@@ -130,6 +130,11 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 tags=getattr(node, "tags", None),
             )
 
+        if isinstance(node, CUnaryOp) and node.op == "Not":
+            operand = getattr(node, "operand", None)
+            if isinstance(operand, CUnaryOp) and operand.op == "Not":
+                return operand.operand
+
         simplified = _simplify_zero_flag_comparison_8616(node)
         if simplified is not node:
             return simplified
