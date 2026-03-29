@@ -193,6 +193,8 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_far_control_transfer():
     source = (
         inspect.getsource(instr16.Instr16.callf_ptr16_16)
         + inspect.getsource(instr16.Instr16.jmpf_ptr16_16)
+        + inspect.getsource(instr16.Instr16.callf_m16_16)
+        + inspect.getsource(instr16.Instr16.jmpf_m16_16)
         + inspect.getsource(instr32.Instr32.callf_ptr16_32)
         + inspect.getsource(instr32.Instr32.jmpf_ptr16_32)
         + inspect.getsource(instr32.Instr32.callf_m16_32)

@@ -148,9 +148,9 @@ Recent progress on that front:
   stack choreography in `instr16.py`
 - 32-bit near call/jump handlers now use the same helper-layer style instead of
   open-coding `push32` / `set_eip` pairs in `instr32.py`
--  far call / far jump handlers now also use a shared helper boundary with
-  explicit return-IP handling instead of keeping their own local call-frame
-  plumbing in `instr16.py` and `instr32.py`
+- the remaining far-control opcode handlers now also route through the shared
+  helper boundary with explicit return-IP handling instead of keeping their
+  own local call-frame plumbing in `instr16.py` / `instr32.py`
 - normalized decode metadata now has an explicit width-profile abstraction, so
   the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
   scattered width math

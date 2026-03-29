@@ -1388,8 +1388,7 @@ class Instr16(InstrBase):
 
     def callf_m16_16(self):
         ip, cs = self._load_far_pointer()
-        size = self.emu.constant(self.instr.size, Type.int_16)
-        self.emu.callf(cs, ip, return_ip=self.emu.get_gpreg(reg16_t.IP) + size)
+        emit_far_call16(self.emu, cs, ip, far_return_ip16(self.emu, self.instr.size))
 
     def jmp_rm16(self):
         rm16 = self.get_rm16()
@@ -1397,7 +1396,7 @@ class Instr16(InstrBase):
 
     def jmpf_m16_16(self):
         ip, sel = self._load_far_pointer()
-        self.emu.jmpf(sel, ip)
+        emit_far_jump16(self.emu, sel, ip)
 
     def push_rm16(self):
         rm16 = self.get_rm16()
