@@ -6,6 +6,7 @@ ITY_I16 = Type.int_16
 ITY_I32 = Type.int_32
 
 from .hardware import Hardware
+from .addressing_helpers import linear_address
 from .stack_helpers import pop16, pop32, push16, push32, push_far_return_frame16
 from .regs import reg16_t, reg32_t, sgreg_t
 
@@ -152,11 +153,11 @@ class DataAccess(Hardware):
         push_far_return_frame16(self, return_ip)
         self.set_sgreg(sgreg_t.CS, seg)
         self.set_gpreg(reg16_t.IP, ip)
-        laddr = self.v2p(seg, ip)
+        laddr = linear_address(self, seg, ip)
         self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Call)
 
     def jmpf(self, seg, ip):
         self.set_sgreg(sgreg_t.CS, seg)
         self.set_gpreg(reg16_t.IP, ip)
-        laddr = self.v2p(seg, ip)
+        laddr = linear_address(self, seg, ip)
         self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Boring)

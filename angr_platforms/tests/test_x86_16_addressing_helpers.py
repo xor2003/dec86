@@ -11,6 +11,7 @@ from angr_platforms.X86_16.addressing_helpers import (
     load_far_pointer16,
     load_resolved_operand,
     load_word_pair16,
+    linear_address,
     resolve_linear_operand,
     operand_width_bits,
     signed_displacement,
@@ -92,6 +93,12 @@ def test_address_step_uses_bit_width_specific_constants():
     assert emu.calls[1][1] == Type.int_32
     assert sixteen == (2, emu.calls[0][1])
     assert thirty_two == (4, emu.calls[1][1])
+
+
+def test_linear_address_reuses_project_linear_translation():
+    emu = _FakeEmu()
+
+    assert linear_address(emu, sgreg_t.DS, 0x1234) == (sgreg_t.DS, 0x1234)
 
 
 def test_default_segment_helpers_match_x86_16_addressing_rules():

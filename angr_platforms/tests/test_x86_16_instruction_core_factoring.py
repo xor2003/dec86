@@ -1,5 +1,6 @@
 import inspect
 
+from angr_platforms.X86_16 import access
 from angr_platforms.X86_16 import instr16
 from angr_platforms.X86_16 import instr32
 from angr_platforms.X86_16.instr_base import GROUP2_BYTE_SHIFT_ROTATE_HANDLERS, InstrBase
@@ -207,6 +208,13 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_far_control_transfer():
     assert "emit_far_jump32(" in source
     assert "far_return_ip16(" in source
     assert "far_return_ip32(" in source
+
+
+def test_x86_16_access_far_control_uses_shared_linear_address_helper():
+    source = inspect.getsource(access.DataAccess.callf) + inspect.getsource(access.DataAccess.jmpf)
+
+    assert "linear_address(" in source
+    assert "self.v2p(" not in source
 
 
 def test_x86_16_instruction_core_uses_stack_helpers_for_8bit_and_16bit_relative_branches():

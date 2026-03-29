@@ -151,6 +151,8 @@ Recent progress on that front:
 - the remaining far-control opcode handlers now also route through the shared
   helper boundary with explicit return-IP handling instead of keeping their
   own local call-frame plumbing in `instr16.py` / `instr32.py`
+- the access-layer far-call and far-jump helpers now also share a named
+  linear-address helper instead of open-coding `v2p` at the call site
 - normalized decode metadata now has an explicit width-profile abstraction, so
   the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
   scattered width math

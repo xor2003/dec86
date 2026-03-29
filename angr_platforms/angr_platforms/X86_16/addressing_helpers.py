@@ -78,6 +78,10 @@ def address_step(emu, step_bytes: int, address_bits: int = 16):
     return emu.constant(step_bytes, type_for_bits(address_bits))
 
 
+def linear_address(emu, segment, offset):
+    return emu.v2p(segment, offset)
+
+
 @dataclass(frozen=True)
 class ResolvedMemoryOperand:
     segment: sgreg_t
@@ -106,7 +110,7 @@ def default_segment_for_modrm32(mod: int, rm: int, sib_base: int | None = None) 
 
 
 def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, address_bits: int) -> ResolvedMemoryOperand:
-    return ResolvedMemoryOperand(segment, offset, emu.v2p(segment, offset), width_bits, address_bits)
+    return ResolvedMemoryOperand(segment, offset, linear_address(emu, segment, offset), width_bits, address_bits)
 
 
 def load_resolved_operand(emu, operand: ResolvedMemoryOperand):
