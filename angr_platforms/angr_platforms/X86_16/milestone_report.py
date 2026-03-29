@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alias_model import describe_x86_16_alias_recovery_api
+from .cod_source_rewrites import describe_x86_16_source_backed_rewrite_status
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import describe_x86_16_validation_layers
@@ -43,6 +44,7 @@ def build_x86_16_milestone_report(
     top_failure_stages = list(scan_summary.get("top_failure_stages", []) or [])
     top_failure_files = list(scan_summary.get("top_failure_files", []) or [])
     top_failure_functions = list(scan_summary.get("top_failure_functions", []) or [])
+    source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
 
     report = {
         "corpus": corpus_name,
@@ -80,6 +82,7 @@ def build_x86_16_milestone_report(
             "top_failure_files": top_failure_files,
             "top_failure_functions": top_failure_functions,
         },
+        "source_backed_rewrites": source_backed_rewrites,
     }
     return report
 

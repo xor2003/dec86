@@ -494,7 +494,7 @@ continuously improved.
 - `Exit signal`:
   - late rewrite no longer hides recovery logic that belongs upstream
 
-### [ ] D35. Source-Backed Rewrite Audit
+### [x] D35. Source-Backed Rewrite Audit
 
 - `Priority`: `P2`
 - `Complexity`: `Medium`
@@ -544,7 +544,7 @@ continuously improved.
 - `Exit signal`:
   - more former rescue cases are enforced by tests than by active rewrite code
 
-### [ ] D37. Special-Case Debt Tracker
+### [x] D37. Special-Case Debt Tracker
 
 - `Priority`: `P2`
 - `Complexity`: `Low`

@@ -15,6 +15,7 @@ __all__ = [
     "apply_cod_source_rewrites",
     "cod_source_rewrite_description",
     "cod_source_rewrite_names",
+    "describe_x86_16_source_backed_rewrite_status",
     "get_cod_source_rewrite_spec",
     "rewrite_cod_source_stage",
     "rewrite_cod_proc_from_source",
@@ -348,3 +349,12 @@ def rewrite_rotate_pt_load_pair(c_text: str) -> str:
         1,
     )
     return c_text
+
+
+def describe_x86_16_source_backed_rewrite_status() -> dict[str, object]:
+    registry_description = COD_SOURCE_REWRITE_REGISTRY.describe()
+    return {
+        "count": registry_description["count"],
+        "names": registry_description["names"],
+        "specs": registry_description["specs"],
+    }

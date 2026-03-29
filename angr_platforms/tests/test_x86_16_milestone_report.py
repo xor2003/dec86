@@ -35,6 +35,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "prototype_evidence_layer",
         "far_near_prototype_recovery",
     ]
+    assert report["source_backed_rewrites"]["count"] >= 6
     assert report["readability_set_summary"][0] == {
         "source": "cod/f14/MONOPRIN.COD",
         "proc_name": "_mset_pos",

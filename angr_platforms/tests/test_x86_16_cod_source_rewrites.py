@@ -7,6 +7,7 @@ from angr_platforms.X86_16.cod_source_rewrites import (
     cod_source_rewrite_description,
     cod_source_rewrite_names,
     cod_source_rewrite_summary,
+    describe_x86_16_source_backed_rewrite_status,
     get_cod_source_rewrite_spec,
 )
 
@@ -45,6 +46,14 @@ def test_cod_source_rewrite_description_matches_registry_contents():
     assert description["count"] == len(COD_SOURCE_REWRITE_SPECS)
     assert description["names"] == tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME)
     assert [item["name"] for item in description["specs"]] == list(COD_SOURCE_REWRITE_SPECS_BY_NAME)
+
+
+def test_cod_source_rewrite_status_matches_registry_contents():
+    status = describe_x86_16_source_backed_rewrite_status()
+
+    assert status["count"] == len(COD_SOURCE_REWRITE_SPECS)
+    assert status["names"] == tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME)
+    assert [item["name"] for item in status["specs"]] == list(COD_SOURCE_REWRITE_SPECS_BY_NAME)
 
 
 def test_cod_source_rewrite_names_matches_registry_contents():

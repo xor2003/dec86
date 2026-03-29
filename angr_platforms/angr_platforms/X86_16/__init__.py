@@ -11,6 +11,7 @@ __all__ = [
     "cod_source_rewrite_description",
     "cod_source_rewrite_names",
     "cod_source_rewrite_summary",
+    "describe_x86_16_source_backed_rewrite_status",
     "apply_x86_16_compatibility",
     "stack_compat",
     "apply_x86_16_stack_compatibility",
@@ -61,6 +62,7 @@ from .cod_source_rewrites import (  # noqa: F401
     cod_source_rewrite_description,
     cod_source_rewrite_names,
     cod_source_rewrite_summary,
+    describe_x86_16_source_backed_rewrite_status,
     get_cod_source_rewrite_spec,
     rewrite_cod_source_stage,
 )
