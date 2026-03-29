@@ -64,6 +64,9 @@ def build_x86_16_milestone_report(
     top_fallback_functions = list(scan_summary.get("top_fallback_functions", []) or [])
     blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
     debt = dict(scan_summary.get("debt", {}) or {})
+    visibility_debt = int(scan_summary.get("visibility_debt", debt.get("traversal", 0)) or 0)
+    recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
+    readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
     scan_results = list(scan_summary.get("results", []) or [])
     golden_cases = {(case.source, case.proc_name) for case in readability_set}
@@ -107,6 +110,11 @@ def build_x86_16_milestone_report(
         },
         "blind_spot_budget": blind_spot_budget,
         "debt": debt,
+        "debt_breakdown": {
+            "visibility": visibility_debt,
+            "recovery": recovery_debt,
+            "readability": readability_debt,
+        },
         "readability_tiers": readability_tier_counts,
         "hotspots": {
             "failure_counts": failure_counts,

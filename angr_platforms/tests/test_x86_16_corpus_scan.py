@@ -20,7 +20,8 @@ def test_corpus_scan_classifies_core_failure_kinds():
     assert classify_failure("lift", RuntimeError("unsupported opcode 0f ff"))[0] == "unsupported_semantic"
     assert classify_failure("decompile", ScanTimeout("timed out"))[0] == "timeout"
     assert classify_failure("decompile", RuntimeError("maximum recursion depth exceeded"))[0] == "recursion_or_explosion"
-    assert classify_failure("cfg", None)[0] == "unclassified_failure"
+    assert classify_failure("cfg", None)[0] == "cfg_failure"
+    assert classify_failure("unknown", None)[0] == "analysis_failure"
     assert classify_failure("decompile", None, empty_codegen=True)[0] == "no_code_produced"
 
 
@@ -95,6 +96,9 @@ def test_corpus_scan_summary_groups_file_health():
     assert summary["cfg_only_count"] == 1
     assert summary["lift_only_count"] == 0
     assert summary["block_lift_count"] == 1
+    assert summary["visibility_debt"] == 2
+    assert summary["recovery_debt"] == 1
+    assert summary["readability_debt"] == 1
     assert summary["blind_spot_budget"] == {
         "full_decompile_rate": 0.25,
         "cfg_only_rate": 0.25,
@@ -245,6 +249,61 @@ def test_corpus_scan_summary_ranks_fallback_hotspots():
         "fallback_kind": "cfg_only",
         "count": 1,
     }
+
+
+def test_corpus_scan_summary_ranks_ugly_clusters():
+    oversized = FunctionScanResult(
+        cod_file="A.COD",
+        proc_name="_oversized",
+        proc_kind="NEAR",
+        byte_len=512,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="cfg",
+        fallback_kind="cfg_only",
+        function_count=1,
+        decompiled_count=0,
+        stages=[StageResult("load", True), StageResult("decompile", True, detail="skipped decompile for oversized function (512 bytes > 384); cfg ok")],
+    )
+    complex_cfg = FunctionScanResult(
+        cod_file="A.COD",
+        proc_name="_complex",
+        proc_kind="NEAR",
+        byte_len=128,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="cfg",
+        fallback_kind="cfg_only",
+        function_count=1,
+        decompiled_count=0,
+        stages=[StageResult("load", True), StageResult("decompile", True, detail="skipped decompile for complex CFG (blocks>8 or insns>200); cfg ok")],
+    )
+    relocation = FunctionScanResult(
+        cod_file="B.COD",
+        proc_name="_reloc",
+        proc_kind="NEAR",
+        byte_len=16,
+        has_near_call_reloc=True,
+        has_far_call_reloc=False,
+        ok=False,
+        stage_reached="cfg",
+        failure_class="skipped_relocation",
+        reason="contains unresolved call relocation pattern",
+        fallback_kind="block_lift",
+        function_count=1,
+        decompiled_count=0,
+        stages=[StageResult("load", True), StageResult("cfg", False, reason="skipped_relocation", detail="contains unresolved call relocation pattern")],
+    )
+
+    summary = summarize_results([oversized, complex_cfg, relocation], "scan-safe")
+
+    assert summary["top_ugly_clusters"] == [
+        {"cluster": "call_relocation_rescue", "count": 1},
+        {"cluster": "control_flow_explosion", "count": 1},
+        {"cluster": "oversized_function", "count": 1},
+    ]
 
 
 def test_scan_safe_skips_oversized_decompile_attempts():

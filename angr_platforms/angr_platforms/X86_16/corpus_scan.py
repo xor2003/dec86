@@ -168,7 +168,13 @@ def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool =
         message = str(exc)
         return "analysis_assertion", message or "assertion failure"
     if exc is None:
-        return "unclassified_failure", "unclassified failure"
+        stage_failure_classes = {
+            "load": "load_failure",
+            "lift": "lift_failure",
+            "cfg": "cfg_failure",
+            "decompile": "decompiler_crash",
+        }
+        return stage_failure_classes.get(stage, "analysis_failure"), "missing exception details"
 
     message = str(exc)
     lowered = message.lower()
@@ -181,20 +187,55 @@ def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool =
         return "renderer_failure", message
     if "postprocess" in lowered or "simplify" in lowered:
         return "postprocess_failure", message
-    if stage == "load":
-        return "load_failure", message
-    if stage == "lift":
-        return "lift_failure", message
-    if stage == "cfg":
-        return "cfg_failure", message
-    if stage == "decompile":
-        return "decompiler_crash", message
-    return "unclassified_failure", message
+    stage_failure_classes = {
+        "load": "load_failure",
+        "lift": "lift_failure",
+        "cfg": "cfg_failure",
+        "decompile": "decompiler_crash",
+    }
+    return stage_failure_classes.get(stage, "analysis_failure"), message
 
 
 def _mark_stage(result: FunctionScanResult, stage: str, ok: bool, *, reason: str | None = None, detail: str | None = None) -> None:
     result.stages.append(StageResult(stage=stage, ok=ok, reason=reason, detail=detail))
     result.stage_reached = stage
+
+
+def _classify_ugly_cluster(result: FunctionScanResult) -> str | None:
+    parts: list[str] = []
+    if result.reason:
+        parts.append(result.reason)
+    if result.failure_class:
+        parts.append(result.failure_class)
+    parts.extend(stage.reason for stage in result.stages if stage.reason)
+    parts.extend(stage.detail for stage in result.stages if stage.detail)
+    details = " ".join(part.lower() for part in parts)
+
+    if result.failure_class == "timeout":
+        return "timeout_hotspot"
+    if result.failure_class == "skipped_relocation":
+        return "call_relocation_rescue"
+    if "empty codegen" in details or "no_code_produced" in details:
+        return "empty_codegen"
+    if "recursion" in details or "maximum recursion depth" in details:
+        return "recursion_or_explosion"
+    if "unsupported" in details or "unknown opcode" in details or "not implemented" in details:
+        return "unsupported_semantics"
+    if "oversized function" in details:
+        return "oversized_function"
+    if "complex cfg" in details or "pathological cfg" in details:
+        return "control_flow_explosion"
+    if "loop-heavy" in details:
+        return "loop_heavy_helper"
+    if result.fallback_kind == "cfg_only":
+        return "cfg_only_recovery"
+    if result.fallback_kind == "lift_only":
+        return "lift_only_recovery"
+    if result.fallback_kind == "block_lift":
+        return "block_lift_recovery"
+    if not result.ok:
+        return "analysis_failure"
+    return None
 
 
 def _scan_cfg(project: angr.Project, code_len: int):
@@ -462,6 +503,9 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     block_lift_count = sum(1 for result in results if result.fallback_kind == "block_lift")
     fallback_only_count = sum(1 for result in fallback_results if result.ok)
     true_failure_count = sum(1 for result in results if not result.ok)
+    ugly_cluster_counter = Counter(
+        cluster for result in results if (cluster := _classify_ugly_cluster(result)) is not None
+    )
 
     def _rate(count: int) -> float:
         if not results:
@@ -512,6 +556,10 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
             fallback_function_counter.items(), key=lambda item: (-item[1], item[0])
         )
     ]
+    top_ugly_clusters = [
+        {"cluster": cluster, "count": count}
+        for cluster, count in sorted(ugly_cluster_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
     return {
         "mode": mode,
@@ -527,6 +575,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "top_failure_functions": top_failure_functions,
         "top_fallback_files": top_fallback_files,
         "top_fallback_functions": top_fallback_functions,
+        "top_ugly_clusters": top_ugly_clusters,
         "files_zero_success": files_zero_success,
         "files_partial_success": files_partial_success,
         "files_scan_clean": files_scan_clean,
@@ -536,6 +585,9 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "block_lift_count": block_lift_count,
         "fallback_only_count": fallback_only_count,
         "true_failure_count": true_failure_count,
+        "visibility_debt": true_failure_count,
+        "recovery_debt": fallback_only_count,
+        "readability_debt": full_decompile_count,
         "blind_spot_budget": {
             "full_decompile_rate": _rate(full_decompile_count),
             "cfg_only_rate": _rate(cfg_only_count),

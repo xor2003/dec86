@@ -80,6 +80,11 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
     }
     assert report["blind_spot_budget"] == scan_summary["blind_spot_budget"]
     assert report["debt"] == scan_summary["debt"]
+    assert report["debt_breakdown"] == {
+        "visibility": 3,
+        "recovery": 2,
+        "readability": 7,
+    }
     assert report["readability_tiers"] == {"R0": 1, "R1": 1, "R2": 1, "R3": 1}
     assert [layer["name"] for layer in report["validation_layers"]] == ["unit", "focused_corpus", "whole_program"]
     assert [item["name"] for item in report["alias_api"]] == ["same_domain", "compatible_view", "needs_synthesis", "can_join"]
