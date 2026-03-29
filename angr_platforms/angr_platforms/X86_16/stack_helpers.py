@@ -62,6 +62,38 @@ def pop32(emu):
     return value
 
 
+def push_all32(emu) -> None:
+    esp = emu.get_gpreg(reg32_t.ESP)
+    push32(emu, emu.get_gpreg(reg32_t.EAX))
+    push32(emu, emu.get_gpreg(reg32_t.ECX))
+    push32(emu, emu.get_gpreg(reg32_t.EDX))
+    push32(emu, emu.get_gpreg(reg32_t.EBX))
+    push32(emu, esp)
+    push32(emu, emu.get_gpreg(reg32_t.EBP))
+    push32(emu, emu.get_gpreg(reg32_t.ESI))
+    push32(emu, emu.get_gpreg(reg32_t.EDI))
+
+
+def pop_all32(emu) -> None:
+    emu.set_gpreg(reg32_t.EDI, pop32(emu))
+    emu.set_gpreg(reg32_t.ESI, pop32(emu))
+    emu.set_gpreg(reg32_t.EBP, pop32(emu))
+    esp = pop32(emu)
+    emu.set_gpreg(reg32_t.EBX, pop32(emu))
+    emu.set_gpreg(reg32_t.EDX, pop32(emu))
+    emu.set_gpreg(reg32_t.ECX, pop32(emu))
+    emu.set_gpreg(reg32_t.EAX, pop32(emu))
+    emu.set_gpreg(reg32_t.ESP, esp)
+
+
+def push_segment32(emu, segment: sgreg_t) -> None:
+    push32(emu, emu.get_segment(segment))
+
+
+def pop_segment32(emu, segment: sgreg_t) -> None:
+    emu.set_segment(segment, pop32(emu))
+
+
 def near_return_ip16(emu, instruction_size: int):
     return emu.get_gpreg(reg16_t.IP) + emu.constant(instruction_size, Type.int_16)
 
@@ -99,6 +131,16 @@ def return_near16(emu, stack_adjust=0):
     emu.irsb.next = ip
     emu.irsb.jumpkind = "Ijk_Ret"
     return ip
+
+
+def return_near32(emu, stack_adjust=0):
+    eip = pop32(emu)
+    if stack_adjust:
+        emu.set_gpreg(reg32_t.ESP, emu.get_gpreg(reg32_t.ESP) + emu.constant(stack_adjust, Type.int_32))
+    emu.set_eip(eip)
+    emu.irsb.next = eip
+    emu.irsb.jumpkind = "Ijk_Ret"
+    return eip
 
 
 def enter16(emu, frame_size: int, nesting_level: int) -> None:

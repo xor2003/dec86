@@ -14,7 +14,7 @@ from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
-from .stack_helpers import leave32, near_return_eip32
+from .stack_helpers import leave32, near_return_eip32, pop_all32, pop_segment32, push_all32, push_segment32, return_near32
 from .string_helpers import (
     repeat_jump,
     repeat_prefix_cond,
@@ -171,10 +171,10 @@ class Instr32(InstrBase):
         binary_operation(self.emu, lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, lambda value: self.emu.set_gpreg(reg32_t.EAX, value), self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
 
     def push_es(self):
-        self.emu.push32(self.emu.get_segment(reg16_t.ES))
+        push_segment32(self.emu, reg16_t.ES)
 
     def pop_es(self):
-        self.emu.set_segment(reg16_t.ES, self.emu.pop32())
+        pop_segment32(self.emu, reg16_t.ES)
 
     def or_rm32_r32(self):
         binary_operation(self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
@@ -186,16 +186,16 @@ class Instr32(InstrBase):
         binary_operation(self.emu, lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, lambda value: self.emu.set_gpreg(reg32_t.EAX, value), self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def push_ss(self):
-        self.emu.push32(self.emu.get_segment(reg16_t.SS))
+        push_segment32(self.emu, reg16_t.SS)
 
     def pop_ss(self):
-        self.emu.set_segment(reg16_t.SS, self.emu.pop32())
+        pop_segment32(self.emu, reg16_t.SS)
 
     def push_ds(self):
-        self.emu.push32(self.emu.get_segment(reg16_t.DS))
+        push_segment32(self.emu, reg16_t.DS)
 
     def pop_ds(self):
-        self.emu.set_segment(reg16_t.DS, self.emu.pop32())
+        pop_segment32(self.emu, reg16_t.DS)
 
     def and_rm32_r32(self):
         binary_operation(self.emu, self.get_rm32, self.get_r32, self.set_rm32, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
@@ -260,26 +260,10 @@ class Instr32(InstrBase):
         self.emu.set_gpreg(reg, self.emu.pop32())
 
     def pushad(self):
-        esp = self.emu.get_gpreg(reg32_t.ESP)
-        self.emu.push32(self.emu.get_gpreg(reg32_t.EAX))
-        self.emu.push32(self.emu.get_gpreg(reg32_t.ECX))
-        self.emu.push32(self.emu.get_gpreg(reg32_t.EDX))
-        self.emu.push32(self.emu.get_gpreg(reg32_t.EBX))
-        self.emu.push32(esp)
-        self.emu.push32(self.emu.get_gpreg(reg32_t.EBP))
-        self.emu.push32(self.emu.get_gpreg(reg32_t.ESI))
-        self.emu.push32(self.emu.get_gpreg(reg32_t.EDI))
+        push_all32(self.emu)
 
     def popad(self):
-        self.emu.set_gpreg(reg32_t.EDI, self.emu.pop32())
-        self.emu.set_gpreg(reg32_t.ESI, self.emu.pop32())
-        self.emu.set_gpreg(reg32_t.EBP, self.emu.pop32())
-        esp = self.emu.pop32()
-        self.emu.set_gpreg(reg32_t.EBX, self.emu.pop32())
-        self.emu.set_gpreg(reg32_t.EDX, self.emu.pop32())
-        self.emu.set_gpreg(reg32_t.ECX, self.emu.pop32())
-        self.emu.set_gpreg(reg32_t.EAX, self.emu.pop32())
-        self.emu.set_gpreg(reg32_t.ESP, esp)
+        pop_all32(self.emu)
 
     def push_imm32(self):
         self.emu.push32(self.instr.imm32)
@@ -385,7 +369,7 @@ class Instr32(InstrBase):
         self.emu.set_gpreg(reg32_t(reg), self.instr.imm32)
 
     def ret(self):
-        self.emu.set_eip(self.emu.pop32())
+        return_near32(self.emu)
 
     def mov_rm32_imm32(self):
         self.set_rm32(self.instr.imm32)

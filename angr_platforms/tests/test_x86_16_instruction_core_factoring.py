@@ -104,6 +104,26 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_near_returns():
     assert "self.emu.irsb.jumpkind" not in source
 
 
+def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_stack_families():
+    source = (
+        inspect.getsource(instr32.Instr32.push_es)
+        + inspect.getsource(instr32.Instr32.pop_es)
+        + inspect.getsource(instr32.Instr32.push_ss)
+        + inspect.getsource(instr32.Instr32.pop_ss)
+        + inspect.getsource(instr32.Instr32.push_ds)
+        + inspect.getsource(instr32.Instr32.pop_ds)
+        + inspect.getsource(instr32.Instr32.pushad)
+        + inspect.getsource(instr32.Instr32.popad)
+        + inspect.getsource(instr32.Instr32.ret)
+    )
+
+    assert "push_segment32(" in source
+    assert "pop_segment32(" in source
+    assert "push_all32(" in source
+    assert "pop_all32(" in source
+    assert "return_near32(" in source
+
+
 def test_x86_16_instruction_core_uses_byte_alu_immediate_helper_families():
     source = (
         inspect.getsource(InstrBase.add_al_imm8)

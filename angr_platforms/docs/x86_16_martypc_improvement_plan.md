@@ -140,6 +140,9 @@ Recent progress on that front:
 - resolved-memory instruction-side users now share generic
   `load_resolved_operand` / `store_resolved_operand` helpers instead of
   open-coding width-specific memory access after address resolution
+- 32-bit stack-family handlers now also delegate to shared helpers for
+  `pushad` / `popad`, segment push/pop, and near return instead of owning
+  their own stack choreography in `instr32.py`
 
 ## Remaining Priorities
 

@@ -1,16 +1,21 @@
-from angr_platforms.X86_16.regs import reg16_t, sgreg_t
+from angr_platforms.X86_16.regs import reg16_t, reg32_t, sgreg_t
 from angr_platforms.X86_16.stack_helpers import (
     enter16,
     leave16,
     near_return_ip16,
+    pop_all32,
     pop_all16,
     pop16,
+    pop_segment32,
     pop_far_return_frame16,
     pop_interrupt_frame16,
     push16,
     push16_register,
+    push_all32,
     push_all16,
+    push_segment32,
     push_far_return_frame16,
+    return_near32,
     return_near16,
 )
 
@@ -27,6 +32,14 @@ class _StackEmu:
             reg16_t.SI: 0x5555,
             reg16_t.DI: 0x6666,
             reg16_t.IP: 0x0100,
+            reg32_t.EAX: 0x11111111,
+            reg32_t.ECX: 0x22222222,
+            reg32_t.EDX: 0x33333333,
+            reg32_t.EBX: 0x44444444,
+            reg32_t.ESP: 0x2000,
+            reg32_t.EBP: 0x55555555,
+            reg32_t.ESI: 0x66666666,
+            reg32_t.EDI: 0x77777777,
         }
         self.sgregs = {sgreg_t.CS: 0x1234, sgreg_t.SS: 0x2000}
         self.memory = {}
@@ -41,16 +54,31 @@ class _StackEmu:
     def set_gpreg(self, reg, value):
         self.gpregs[reg] = value
 
+    def set_eip(self, value):
+        self.gpregs[reg32_t.EIP] = value
+
     def get_sgreg(self, reg):
         return self.sgregs[reg]
 
     def set_sgreg(self, reg, value):
         self.sgregs[reg] = value
 
+    def get_segment(self, reg):
+        return self.get_sgreg(reg)
+
+    def set_segment(self, reg, value):
+        self.set_sgreg(reg, value)
+
     def write_mem16_seg(self, seg, addr, value):
         self.memory[(seg, addr)] = value
 
     def read_mem16_seg(self, seg, addr):
+        return self.memory[(seg, addr)]
+
+    def write_mem32_seg(self, seg, addr, value):
+        self.memory[(seg, addr)] = value
+
+    def read_mem32_seg(self, seg, addr):
         return self.memory[(seg, addr)]
 
     def constant(self, value, _ty):
@@ -181,3 +209,53 @@ def test_stack_helpers_return_near16_applies_extra_stack_adjust():
 
     assert emu.get_gpreg(reg16_t.IP) == 0x3456
     assert emu.get_gpreg(reg16_t.SP) == 0x1004
+
+
+def test_stack_helpers_push_and_pop_all32_preserve_saved_esp_slot():
+    emu = _StackEmu()
+
+    push_all32(emu)
+
+    assert emu.get_gpreg(reg32_t.ESP) == 0x1FE0
+    assert emu.memory[(sgreg_t.SS, 0x1FFC)] == 0x11111111
+    assert emu.memory[(sgreg_t.SS, 0x1FF8)] == 0x22222222
+    assert emu.memory[(sgreg_t.SS, 0x1FF4)] == 0x33333333
+    assert emu.memory[(sgreg_t.SS, 0x1FF0)] == 0x44444444
+    assert emu.memory[(sgreg_t.SS, 0x1FEC)] == 0x2000
+    assert emu.memory[(sgreg_t.SS, 0x1FE8)] == 0x55555555
+    assert emu.memory[(sgreg_t.SS, 0x1FE4)] == 0x66666666
+    assert emu.memory[(sgreg_t.SS, 0x1FE0)] == 0x77777777
+
+    pop_all32(emu)
+
+    assert emu.get_gpreg(reg32_t.EAX) == 0x11111111
+    assert emu.get_gpreg(reg32_t.ECX) == 0x22222222
+    assert emu.get_gpreg(reg32_t.EDX) == 0x33333333
+    assert emu.get_gpreg(reg32_t.EBX) == 0x44444444
+    assert emu.get_gpreg(reg32_t.EBP) == 0x55555555
+    assert emu.get_gpreg(reg32_t.ESI) == 0x66666666
+    assert emu.get_gpreg(reg32_t.EDI) == 0x77777777
+    assert emu.get_gpreg(reg32_t.ESP) == 0x2000
+
+
+def test_stack_helpers_segment32_helpers_round_trip_segment_registers():
+    emu = _StackEmu()
+    emu.sgregs[sgreg_t.DS] = 0xBEEF
+
+    push_segment32(emu, sgreg_t.DS)
+    emu.sgregs[sgreg_t.DS] = 0
+    pop_segment32(emu, sgreg_t.DS)
+
+    assert emu.get_sgreg(sgreg_t.DS) == 0xBEEF
+    assert emu.get_gpreg(reg32_t.ESP) == 0x2000
+
+
+def test_stack_helpers_return_near32_sets_eip_and_ret_jumpkind():
+    emu = _StackEmu()
+    emu.gpregs[reg32_t.ESP] = 0x1FFC
+    emu.memory[(sgreg_t.SS, 0x1FFC)] = 0x12345678
+
+    assert return_near32(emu) == 0x12345678
+    assert emu.get_gpreg(reg32_t.ESP) == 0x2000
+    assert emu.irsb.next == 0x12345678
+    assert emu.irsb.jumpkind == "Ijk_Ret"
