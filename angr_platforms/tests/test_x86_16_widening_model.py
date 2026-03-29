@@ -14,7 +14,12 @@ sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
 from angr_platforms.X86_16.alias_model import _StackSlotIdentity, _StorageDomainSignature, _StorageView
-from angr_platforms.X86_16.widening_model import WideningCandidate, can_join_adjacent_storage_slices, merge_storage_slice_domains
+from angr_platforms.X86_16.widening_model import (
+    WideningCandidate,
+    analyze_adjacent_storage_slices,
+    can_join_adjacent_storage_slices,
+    merge_storage_slice_domains,
+)
 
 
 class _DummyCodegen:
@@ -48,6 +53,11 @@ def test_widening_model_accepts_adjacent_memory_slices():
     low = _make_var("field_0", 0x2000)
     high = _make_var("field_1", 0x2001)
 
+    analysis = analyze_adjacent_storage_slices(low, high)
+
+    assert analysis.ok
+    assert analysis.reason == "ok"
+    assert analysis.merged_domain == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
     assert can_join_adjacent_storage_slices(low, high)
     assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
 
@@ -71,6 +81,11 @@ def test_widening_model_accepts_adjacent_register_slices():
     low = _make_register_var("al")
     high = _make_register_var("ah")
 
+    analysis = analyze_adjacent_storage_slices(low, high)
+
+    assert analysis.ok
+    assert analysis.same_domain()
+    assert analysis.compatible_view()
     assert can_join_adjacent_storage_slices(low, high)
     assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("register", 2, _StorageView(0, 16))
     assert WideningCandidate.from_expr(low).domain == _StorageDomainSignature("register", 1, _StorageView(0, 8))

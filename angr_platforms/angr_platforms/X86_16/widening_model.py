@@ -50,6 +50,40 @@ class WideningProof:
 
 
 @dataclass(frozen=True)
+class StorageJoinAnalysis:
+    proof: WideningProof
+
+    @property
+    def ok(self) -> bool:
+        return self.proof.ok
+
+    @property
+    def reason(self) -> str:
+        return self.proof.reason
+
+    @property
+    def left(self) -> AliasStorageFacts:
+        return self.proof.left
+
+    @property
+    def right(self) -> AliasStorageFacts:
+        return self.proof.right
+
+    @property
+    def merged_domain(self) -> _StorageDomainSignature | None:
+        return self.proof.merged_domain
+
+    def same_domain(self) -> bool:
+        return self.left.same_domain(self.right)
+
+    def compatible_view(self) -> bool:
+        return self.left.compatible_view(self.right)
+
+    def needs_synthesis(self) -> bool:
+        return self.left.needs_synthesis() or self.right.needs_synthesis()
+
+
+@dataclass(frozen=True)
 class WideningPipelineSpec:
     name: str
     purpose: str
@@ -102,6 +136,10 @@ def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasStat
     )
 
 
+def analyze_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasState | None = None) -> StorageJoinAnalysis:
+    return StorageJoinAnalysis(prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state))
+
+
 def collect_widening_candidates(exprs: Iterable[object]) -> list[WideningCandidate]:
     candidates: list[WideningCandidate] = []
     for expr in exprs:
@@ -131,7 +169,7 @@ WIDENING_PIPELINE: tuple[WideningPipelineSpec, ...] = (
     WideningPipelineSpec(
         name="candidate_extraction",
         purpose="Collect joinable storage candidates before proof or rewrite decisions.",
-        helpers=("collect_widening_candidates", "describe_widening_candidates"),
+        helpers=("collect_widening_candidates", "describe_widening_candidates", "analyze_adjacent_storage_slices"),
     ),
     WideningPipelineSpec(
         name="compatibility_proof",
@@ -188,6 +226,8 @@ __all__ = [
     "WideningProof",
     "WideningPipelineSpec",
     "WIDENING_PIPELINE",
+    "StorageJoinAnalysis",
+    "analyze_adjacent_storage_slices",
     "collect_widening_candidates",
     "can_join_adjacent_storage_slices",
     "describe_widening_candidates",

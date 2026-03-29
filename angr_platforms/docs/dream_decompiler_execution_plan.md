@@ -129,6 +129,11 @@ For Inertia, these ideas are most useful as low-level guidance for x86-16 mainte
 4. keep operand-size and address-size concerns explicit so the future 386 real-mode path can remain a bounded extension of the same helpers
 5. keep these instruction-level patterns downstream of the architecture boundary already fixed in `IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
 
+For a more concrete comparison between Inertia and MartyPC, with file-level
+gaps and a priority-ordered practical improvement plan, see:
+
+- [`x86_16_martypc_improvement_plan.md`](./x86_16_martypc_improvement_plan.md)
+
 ## Remaining Roadmap
 
 The completed baseline and recovery milestones are intentionally omitted from
