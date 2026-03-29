@@ -88,6 +88,24 @@ def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, addre
     return ResolvedMemoryOperand(segment, offset, emu.v2p(segment, offset), width_bits, address_bits)
 
 
+def load_far_pointer(emu, segment: sgreg_t, offset, operand_bits: int, address_bits: int = 16):
+    if isinstance(offset, int):
+        offset = emu.constant(offset, type_for_bits(address_bits))
+    step = address_step(emu, operand_bits // 8, address_bits)
+    if operand_bits == 16:
+        far_offset = emu.get_data16(segment, offset)
+    elif operand_bits == 32:
+        far_offset = emu.get_data32(segment, offset)
+    else:
+        raise ValueError(f"unsupported far pointer operand width: {operand_bits}")
+    far_segment = emu.get_data16(segment, offset + step)
+    return far_offset, far_segment
+
+
+def load_far_pointer16(emu, segment: sgreg_t, offset, address_bits: int = 16):
+    return load_far_pointer(emu, segment, offset, 16, address_bits=address_bits)
+
+
 @dataclass(frozen=True)
 class WidthProfile:
     operand_bits: int

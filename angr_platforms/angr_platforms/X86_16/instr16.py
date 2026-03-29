@@ -13,7 +13,7 @@ from .alu_helpers import (
     rotate_count,
     unary_operation,
 )
-from .addressing_helpers import address_step
+from .addressing_helpers import address_step, load_far_pointer
 from .instr_base import InstrBase
 from .stack_helpers import enter16, leave16, near_return_ip16
 from .string_helpers import repeat_jump, repeat_prefix_cond, string_delta, string_source_segment
@@ -502,9 +502,7 @@ class Instr16(InstrBase):
     def _load_far_pointer(self):
         addr = self.get_m()
         seg = self.select_segment()
-        offset = self.emu.get_data16(seg, addr)
-        segment = self.emu.get_data16(seg, addr + address_step(self.emu, 2, 16))
-        return offset, segment
+        return load_far_pointer(self.emu, seg, addr, 16, address_bits=16)
 
     def les_es_r16_m16(self):
         offset, segment = self._load_far_pointer()

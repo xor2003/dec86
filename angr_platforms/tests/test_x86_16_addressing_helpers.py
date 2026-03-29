@@ -6,6 +6,8 @@ from angr_platforms.X86_16.addressing_helpers import (
     default_segment_for_modrm16,
     default_segment_for_modrm32,
     displacement_width_bits,
+    load_far_pointer,
+    load_far_pointer16,
     resolve_linear_operand,
     operand_width_bits,
     signed_displacement,
@@ -17,6 +19,7 @@ from angr_platforms.X86_16.regs import sgreg_t
 class _FakeEmu:
     def __init__(self):
         self.calls = []
+        self.loads = []
 
     def constant(self, value, ty):
         self.calls.append((value, ty))
@@ -24,6 +27,14 @@ class _FakeEmu:
 
     def v2p(self, segment, offset):
         return (segment, offset)
+
+    def get_data16(self, segment, offset):
+        self.loads.append((segment, offset))
+        return ("word", segment, offset)
+
+    def get_data32(self, segment, offset):
+        self.loads.append((segment, offset))
+        return ("dword", segment, offset)
 
 
 def test_width_helpers_cover_real_mode_and_386_extension_paths():
@@ -96,3 +107,29 @@ def test_width_profile_exposes_byte_counts():
 
     assert profile.operand_bytes == 4
     assert profile.address_bytes == 2
+
+
+def test_load_far_pointer16_uses_address_width_specific_step():
+    emu = _FakeEmu()
+
+    offset, segment = load_far_pointer16(emu, sgreg_t.DS, 0x1234, address_bits=16)
+
+    assert emu.calls == [(0x1234, Type.int_16), (2, Type.int_16)]
+    typed_offset = (0x1234, Type.int_16)
+    assert emu.loads[0] == (sgreg_t.DS, typed_offset)
+    assert emu.loads[1] == (sgreg_t.DS, typed_offset + emu.calls[1])
+    assert offset == ("word", sgreg_t.DS, typed_offset)
+    assert segment == ("word", sgreg_t.DS, typed_offset + emu.calls[1])
+
+
+def test_load_far_pointer_supports_future_32_bit_operand_widths():
+    emu = _FakeEmu()
+
+    offset, segment = load_far_pointer(emu, sgreg_t.DS, 0x1234, 32, address_bits=16)
+
+    assert emu.calls == [(0x1234, Type.int_16), (4, Type.int_16)]
+    typed_offset = (0x1234, Type.int_16)
+    assert emu.loads[0] == (sgreg_t.DS, typed_offset)
+    assert emu.loads[1] == (sgreg_t.DS, typed_offset + emu.calls[1])
+    assert offset == ("dword", sgreg_t.DS, typed_offset)
+    assert segment == ("word", sgreg_t.DS, typed_offset + emu.calls[1])
