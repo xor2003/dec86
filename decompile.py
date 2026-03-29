@@ -702,6 +702,30 @@ def _interrupt_wrapper_field_path(expr) -> InterruptWrapperFieldAccess | None:
     return InterruptWrapperFieldAccess(base_name=base_name, field_path=tuple(path), expr=expr)
 
 
+def _interrupt_wrapper_field_role(base_name: str) -> str:
+    if base_name == "inregs":
+        return "input"
+    if base_name == "outregs":
+        return "output"
+    if base_name == "sregs":
+        return "segment"
+    return "other"
+
+
+def _interrupt_wrapper_field_access_summary(
+    accesses: list[InterruptWrapperFieldAccess],
+) -> dict[str, list[InterruptWrapperFieldAccess]]:
+    summary: dict[str, list[InterruptWrapperFieldAccess]] = {
+        "input": [],
+        "output": [],
+        "segment": [],
+        "other": [],
+    }
+    for access in accesses:
+        summary.setdefault(_interrupt_wrapper_field_role(access.base_name), []).append(access)
+    return summary
+
+
 def collect_interrupt_wrapper_calls(codegen) -> list[InterruptWrapperCall]:
     if getattr(codegen, "cfunc", None) is None:
         return []
@@ -748,6 +772,7 @@ def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style:
         "api_style": api_style,
         "calls": wrapper_calls,
         "field_accesses": wrapper_field_accesses,
+        "field_access_summary": _interrupt_wrapper_field_access_summary(wrapper_field_accesses),
     }
 
     changed = False
