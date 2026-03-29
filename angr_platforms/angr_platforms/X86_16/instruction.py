@@ -51,6 +51,11 @@ class InstrData:
         self.moffs = 0  # Memory offset
         self.prefix_len = 0  # number of prefix bytes consumed
         self.size = 0  # total instruction size in bytes including prefixes
+        self.operand_bits = 0  # normalized effective operand width
+        self.address_bits = 0  # normalized effective address width
+        self.displacement_bits = 0  # normalized displacement width, if any
+        self.repeat_class = "none"  # normalized repeat prefix class
+        self.control_flow_class = "none"  # normalized control-transfer family
 
 # Base class for instruction handlers
 class X86Instruction:

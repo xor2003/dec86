@@ -122,12 +122,13 @@ class ExecInstr(X86Instruction):
 
     def _resolved_rm_operand(self, width_bits: int) -> ResolvedMemoryOperand:
         seg, addr = self._resolved_rm_address()
+        address_bits = self.instr.address_bits or address_width_bits(self.emu.is_mode32(), self.chsz_ad)
         return resolve_linear_operand(
             self.emu,
             seg,
             addr,
             width_bits,
-            address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+            address_bits,
         )
 
     def _resolved_rm_address(self):
@@ -139,12 +140,13 @@ class ExecInstr(X86Instruction):
         self.instr.segment = sgreg_t.DS.value
         seg = self.select_segment()
         offset = self.instr.moffs
+        address_bits = self.instr.address_bits or address_width_bits(self.emu.is_mode32(), self.chsz_ad)
         return resolve_linear_operand(
             self.emu,
             seg,
             offset,
             width_bits,
-            address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+            address_bits,
         )
 
     def set_sreg(self, value):
@@ -164,7 +166,7 @@ class ExecInstr(X86Instruction):
         assert self.instr.modrm.mod != 3
 
         self.instr.segment = sgreg_t.DS.value
-        if self.emu.is_mode32() ^ self.chsz_ad:
+        if (self.instr.address_bits or address_width_bits(self.emu.is_mode32(), self.chsz_ad)) == 32:
             return self.calc_modrm32()
         else:
             return self.calc_modrm16()
