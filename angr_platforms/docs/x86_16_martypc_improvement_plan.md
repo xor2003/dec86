@@ -185,6 +185,8 @@ Recent progress on that front:
 - 32-bit ModRM/SIB effective-address arithmetic now also has a shared helper
   boundary, including ESP-base and no-index handling, instead of staying
   inside `exec.py`
+-  both 16-bit and 32-bit ModRM address resolution now return segment + offset
+   from the shared addressing layer instead of re-pairing them in `exec.py`
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging

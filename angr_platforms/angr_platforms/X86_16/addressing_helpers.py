@@ -203,6 +203,16 @@ def modrm32_effective_offset(emu, modrm, sib, disp8: int, disp32: int):
     return addr + emu.get_gpreg(reg32_t(rm))
 
 
+def resolve_modrm16_address(emu, modrm, disp8: int, disp16: int) -> tuple[sgreg_t, Any]:
+    segment = default_segment_for_modrm16(modrm.mod, modrm.rm)
+    return segment, modrm16_effective_offset(emu, modrm, disp8, disp16)
+
+
+def resolve_modrm32_address(emu, modrm, sib, disp8: int, disp32: int) -> tuple[sgreg_t, Any]:
+    segment = default_segment_for_modrm32(modrm.mod, modrm.rm, sib.base if modrm.rm == 4 else None)
+    return segment, modrm32_effective_offset(emu, modrm, sib, disp8, disp32)
+
+
 def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, address_bits: int) -> ResolvedMemoryOperand:
     return ResolvedMemoryOperand(segment, offset, linear_address(emu, segment, offset), width_bits, address_bits)
 

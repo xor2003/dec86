@@ -18,6 +18,8 @@ from angr_platforms.X86_16.addressing_helpers import (
     linear_address,
     modrm16_effective_offset,
     modrm32_effective_offset,
+    resolve_modrm16_address,
+    resolve_modrm32_address,
     resolve_linear_operand,
     operand_width_bits,
     signed_displacement,
@@ -199,6 +201,38 @@ def test_modrm32_effective_offset_handles_sib_base_and_no_index():
 
     addr = modrm32_effective_offset(emu, _Modrm(0, 4), _SIB(0, 1, 2), 0x10, 0x4444)
     assert addr == 0x2000 + (0x0040 << 2)
+
+
+def test_resolve_modrm_address_pairs_segment_and_offset():
+    class _MathFakeEmu(_FakeEmu):
+        def constant(self, value, ty):
+            self.calls.append((value, ty))
+            return value
+
+    class _Modrm:
+        def __init__(self, mod, rm):
+            self.mod = mod
+            self.rm = rm
+
+    class _SIB:
+        def __init__(self, base, index, scale):
+            self.base = base
+            self.index = index
+            self.scale = scale
+
+    emu = _MathFakeEmu()
+    emu.gpregs[reg16_t.BX] = 0x0100
+    emu.gpregs[reg16_t.SI] = 0x0200
+    emu.gpregs[reg32_t.EAX] = 0x2000
+    emu.gpregs[reg32_t.ESP] = 0x1000
+
+    segment, offset = resolve_modrm16_address(emu, _Modrm(1, 0), 0x10, 0x2222)
+    assert segment == sgreg_t.DS
+    assert offset == 0x0310
+
+    segment, offset = resolve_modrm32_address(emu, _Modrm(0, 4), _SIB(4, 4, 1), 0x10, 0x4444)
+    assert segment == sgreg_t.SS
+    assert offset == 0x1000
 
 
 def test_resolved_memory_operand_tracks_segment_offset_and_linear_form():

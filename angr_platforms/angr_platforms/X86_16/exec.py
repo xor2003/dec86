@@ -6,10 +6,8 @@ from pyvex import IRConst
 
 from .addressing_helpers import (
     ResolvedMemoryOperand,
-    default_segment_for_modrm16,
-    default_segment_for_modrm32,
-    modrm16_effective_offset,
-    modrm32_effective_offset,
+    resolve_modrm16_address,
+    resolve_modrm32_address,
     resolve_linear_operand,
     signed_displacement,
 )
@@ -171,10 +169,11 @@ class ExecInstr(X86Instruction):
             return self.calc_modrm16()
 
     def calc_modrm16(self):
-        self.instr.segment = default_segment_for_modrm16(self.instr.modrm.mod, self.instr.modrm.rm).value
-        return modrm16_effective_offset(self.emu, self.instr.modrm, self.instr.disp8, self.instr.disp16)
+        segment, addr = resolve_modrm16_address(self.emu, self.instr.modrm, self.instr.disp8, self.instr.disp16)
+        self.instr.segment = segment.value
+        return addr
 
     def calc_modrm32(self):
-        sib_base = self.instr.sib.base if self.instr.modrm.rm == 4 else None
-        self.instr.segment = default_segment_for_modrm32(self.instr.modrm.mod, self.instr.modrm.rm, sib_base).value
-        return modrm32_effective_offset(self.emu, self.instr.modrm, self.instr.sib, self.instr.disp8, self.instr.disp32)
+        segment, addr = resolve_modrm32_address(self.emu, self.instr.modrm, self.instr.sib, self.instr.disp8, self.instr.disp32)
+        self.instr.segment = segment.value
+        return addr
