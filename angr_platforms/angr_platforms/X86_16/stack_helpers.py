@@ -203,6 +203,34 @@ def emit_near_jump32(emu, target):
     return target
 
 
+def far_return_ip16(emu, instruction_size: int):
+    return near_return_ip16(emu, instruction_size)
+
+
+def far_return_ip32(emu, instruction_size: int):
+    return emu.get_eip() + emu.constant(instruction_size, Type.int_32)
+
+
+def emit_far_call16(emu, segment, offset, return_ip):
+    emu.callf(segment, offset, return_ip=return_ip)
+    return return_ip
+
+
+def emit_far_jump16(emu, segment, offset):
+    emu.jmpf(segment, offset)
+    return offset
+
+
+def emit_far_call32(emu, segment, offset, return_ip):
+    emu.callf(segment, offset, return_ip=return_ip)
+    return return_ip
+
+
+def emit_far_jump32(emu, segment, offset):
+    emu.jmpf(segment, offset)
+    return offset
+
+
 def _branch_rel(emu, condition, displacement, instruction_size: int, target_width_bits: int, emit_jump):
     if hasattr(condition, "cast_to"):
         condition = condition.cast_to(Type.int_1)

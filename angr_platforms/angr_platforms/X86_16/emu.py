@@ -25,7 +25,7 @@ class EmuInstr(X86Instruction):
         self.emu.set_segment(sgreg_t.CS.name, sel)
         self.emu.set_eip(eip)
 
-    def callf(self, instr: Dict[str, Any], sel: int, eip: int) -> None:
+    def callf(self, instr: Dict[str, Any], sel: int, eip: int, return_ip=None) -> None:
         cs = self.emu.get_segment(sgreg_t.CS.name)
         RPL = sel & 3
         CPL = cs & 3
@@ -37,7 +37,7 @@ class EmuInstr(X86Instruction):
             self.emu.push32(self.emu.get_gpreg(reg32_t.ESP.name))
 
         self.emu.push32(cs)
-        self.emu.push32(self.emu.get_eip())
+        self.emu.push32(return_ip if return_ip is not None else self.emu.get_eip())
 
         self.emu.set_segment(sgreg_t.CS.name, sel)
         self.emu.set_eip(eip)

@@ -15,10 +15,13 @@ from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
 from .stack_helpers import (
+    emit_far_call32,
+    emit_far_jump32,
     branch_rel32,
     emit_near_call32,
     emit_near_jump32,
     leave32,
+    far_return_ip32,
     pop_all32,
     pop_segment32,
     push_all32,
@@ -331,7 +334,7 @@ class Instr32(InstrBase):
         self.emu.set_gpreg(reg32_t.EDX, eax.sar(self.emu.constant(31, Type.int_8)))
 
     def callf_ptr16_32(self):
-        self.emu.callf(self.instr.ptr16, self.instr.imm32)
+        emit_far_call32(self.emu, self.instr.ptr16, self.instr.imm32, far_return_ip32(self.emu, self.instr.size))
 
     def pushf(self):
         self.emu.push32(self.emu.get_eflags())
@@ -403,7 +406,7 @@ class Instr32(InstrBase):
         emit_near_jump32(self.emu, target)
 
     def jmpf_ptr16_32(self):
-        self.emu.jmpf(self.instr.ptr16, self.instr.imm32)
+        emit_far_jump32(self.emu, self.instr.ptr16, self.instr.imm32)
 
     def in_eax_dx(self):
         dx = self.emu.get_gpreg(reg16_t.DX)
@@ -779,7 +782,7 @@ class Instr32(InstrBase):
             address_bits=self.effective_address_bits(),
         )
         INFO(2, "cs = 0x%04x, eip = 0x%08x", cs, eip)
-        self.emu.callf(cs, eip)
+        emit_far_call32(self.emu, cs, eip, far_return_ip32(self.emu, self.instr.size))
 
     def jmp_rm32(self):
         rm32 = self.get_rm32()
@@ -794,7 +797,7 @@ class Instr32(InstrBase):
             32,
             address_bits=self.effective_address_bits(),
         )
-        self.emu.jmpf(sel, eip)
+        emit_far_jump32(self.emu, sel, eip)
 
     def push_rm32(self):
         rm32 = self.get_rm32()

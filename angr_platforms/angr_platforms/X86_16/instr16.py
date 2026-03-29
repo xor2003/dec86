@@ -18,10 +18,13 @@ from .instr_base import InstrBase
 from .stack_helpers import (
     branch_rel16,
     branch_rel8,
+    emit_far_call16,
+    emit_far_jump16,
     emit_near_call16,
     emit_near_jump16,
     enter16,
     leave16,
+    far_return_ip16,
     near_relative_target16,
     near_return_ip16,
     pop_all16,
@@ -516,7 +519,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DX, dx)
 
     def callf_ptr16_16(self):
-        self.emu.callf(self.instr.ptr16, self.instr.imm16, return_ip=near_return_ip16(self.emu, 5))
+        emit_far_call16(self.emu, self.instr.ptr16, self.instr.imm16, far_return_ip16(self.emu, self.instr.size))
 
 
     def pushf(self):
@@ -751,7 +754,7 @@ class Instr16(InstrBase):
         emit_near_jump16(self.emu, target)
 
     def jmpf_ptr16_16(self):
-        self.emu.jmpf(self.instr.ptr16, self.instr.imm16)
+        emit_far_jump16(self.emu, self.instr.ptr16, self.instr.imm16)
 
     def in_ax_dx(self):
         dx = self.emu.get_gpreg(reg16_t.DX)
