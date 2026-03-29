@@ -67,12 +67,15 @@ import angr_platforms.X86_16  # noqa: F401
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.analysis_helpers import (
     DOS_SERVICE_BASE_ADDR,
+    InterruptCall,
     collect_dos_int21_calls,
     dos_helper_declarations,
     extend_cfg_for_far_calls,
     infer_com_region,
+    interrupt_service_name,
     normalize_api_style,
     patch_dos_int21_call_sites,
+    render_interrupt_call,
     render_dos_int21_call,
     seed_calling_conventions,
 )
@@ -99,7 +102,7 @@ from angr_platforms.X86_16.alias_model import (
     _storage_domain_for_variable,
     _storage_view_for_variable,
 )
-from angr_platforms.X86_16.widening_model import can_join_adjacent_storage_slices
+from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
 from angr_platforms.X86_16.widening_alias import join_adjacent_register_slices
 
 
@@ -407,6 +410,7 @@ def _decompile_function(
     shiftsnake_postprocess_outlier = getattr(function, "name", "") == "shiftsnake"
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
+        lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
         lambda: _attach_segment_register_names(dec.codegen, project),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
@@ -431,6 +435,7 @@ def _decompile_function(
     if small_function:
         rewrite_passes = (
             lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
+            lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
             lambda: _attach_segment_register_names(dec.codegen, project),
             lambda: _attach_ss_stack_variables(project, dec.codegen),
             lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
@@ -597,6 +602,166 @@ def _iter_c_nodes(node):
             for arg in args:
                 if type(arg).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
                     yield from _iter_c_nodes(arg)
+
+
+WRAPPER_CALL_NAMES = {"int86", "_int86", "int86x", "_int86x", "intdos", "_intdos", "intdosx", "_intdosx"}
+
+
+@dataclass(frozen=True)
+class InterruptWrapperCall:
+    callee_name: str
+    canonical_name: str
+    kind: str
+    arguments: tuple[object, ...]
+    vector_arg: object | None = None
+    inregs_arg: object | None = None
+    outregs_arg: object | None = None
+    sregs_arg: object | None = None
+
+
+@dataclass(frozen=True)
+class InterruptWrapperFieldAccess:
+    base_name: str
+    field_path: tuple[str, ...]
+    expr: object
+
+
+def _normalize_interrupt_wrapper_name(name: str | None) -> str | None:
+    if not isinstance(name, str) or not name:
+        return None
+    return name.lstrip("_")
+
+
+def _interrupt_wrapper_call_kind(name: str | None) -> str | None:
+    canonical = _normalize_interrupt_wrapper_name(name)
+    if canonical not in {"int86", "int86x", "intdos", "intdosx"}:
+        return None
+    return canonical
+
+
+def _interrupt_wrapper_call_signature(node: structured_c.CFunctionCall) -> InterruptWrapperCall | None:
+    callee_name = None
+    callee_func = getattr(node, "callee_func", None)
+    if callee_func is not None:
+        callee_name = getattr(callee_func, "name", None)
+    elif isinstance(getattr(node, "callee_target", None), str):
+        callee_name = getattr(node, "callee_target")
+
+    kind = _interrupt_wrapper_call_kind(callee_name)
+    if kind is None:
+        return None
+
+    args = tuple(getattr(node, "args", ()) or ())
+    if kind in {"int86", "int86x"}:
+        vector_arg = args[0] if len(args) >= 1 else None
+        inregs_arg = args[1] if len(args) >= 2 else None
+        outregs_arg = args[2] if len(args) >= 3 else None
+        sregs_arg = args[3] if kind == "int86x" and len(args) >= 4 else None
+    else:
+        vector_arg = None
+        inregs_arg = args[0] if len(args) >= 1 else None
+        outregs_arg = args[1] if len(args) >= 2 else None
+        sregs_arg = args[2] if kind == "intdosx" and len(args) >= 3 else None
+
+    return InterruptWrapperCall(
+        callee_name=callee_name or kind,
+        canonical_name=kind,
+        kind=kind,
+        arguments=args,
+        vector_arg=vector_arg,
+        inregs_arg=inregs_arg,
+        outregs_arg=outregs_arg,
+        sregs_arg=sregs_arg,
+    )
+
+
+def _interrupt_wrapper_field_path(expr) -> InterruptWrapperFieldAccess | None:
+    path: list[str] = []
+    current = expr
+    while isinstance(current, structured_c.CVariableField):
+        field = getattr(current, "field", None)
+        field_name = getattr(field, "field", None)
+        if not isinstance(field_name, str) or not field_name:
+            return None
+        path.append(field_name)
+        current = getattr(current, "variable", None)
+
+    if not isinstance(current, structured_c.CVariable):
+        return None
+
+    base_name = getattr(current, "name", None)
+    if not isinstance(base_name, str) or not base_name:
+        return None
+    if not path:
+        return None
+
+    path.reverse()
+    return InterruptWrapperFieldAccess(base_name=base_name, field_path=tuple(path), expr=expr)
+
+
+def collect_interrupt_wrapper_calls(codegen) -> list[InterruptWrapperCall]:
+    if getattr(codegen, "cfunc", None) is None:
+        return []
+
+    calls: list[InterruptWrapperCall] = []
+    for node in _iter_c_nodes(codegen.cfunc.statements):
+        if not isinstance(node, structured_c.CFunctionCall):
+            continue
+        sig = _interrupt_wrapper_call_signature(node)
+        if sig is not None:
+            calls.append(sig)
+    return calls
+
+
+def collect_interrupt_wrapper_field_accesses(codegen) -> list[InterruptWrapperFieldAccess]:
+    if getattr(codegen, "cfunc", None) is None:
+        return []
+
+    accesses: list[InterruptWrapperFieldAccess] = []
+    for node in _iter_c_nodes(codegen.cfunc.statements):
+        if not isinstance(node, structured_c.CVariableField):
+            continue
+        access = _interrupt_wrapper_field_path(node)
+        if access is not None and access.base_name in {"inregs", "outregs", "sregs"}:
+            accesses.append(access)
+    return accesses
+
+
+def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style: str) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    wrapper_calls = collect_interrupt_wrapper_calls(codegen)
+    wrapper_field_accesses = collect_interrupt_wrapper_field_accesses(codegen)
+    if not wrapper_calls and not wrapper_field_accesses:
+        return False
+
+    cache = getattr(project, "_inertia_interrupt_wrappers", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(project, "_inertia_interrupt_wrappers", cache)
+
+    cache[getattr(codegen.cfunc, "addr", 0)] = {
+        "api_style": api_style,
+        "calls": wrapper_calls,
+        "field_accesses": wrapper_field_accesses,
+    }
+
+    changed = False
+    for node in _iter_c_nodes(codegen.cfunc.statements):
+        if not isinstance(node, structured_c.CFunctionCall):
+            continue
+        sig = _interrupt_wrapper_call_signature(node)
+        if sig is None:
+            continue
+        callee_func = getattr(node, "callee_func", None)
+        if callee_func is None:
+            continue
+        if getattr(callee_func, "name", None) != sig.canonical_name:
+            callee_func.name = sig.canonical_name
+            changed = True
+
+    return changed
 
 
 def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_style: str) -> bool:
@@ -2039,7 +2204,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         if not isinstance(low_var, SimMemoryVariable) or not isinstance(high_var, SimMemoryVariable):
             adjacent_byte_pair_cache[key] = _no_match
             return None
-        if not can_join_adjacent_storage_slices(low_var, high_var):
+        if not analyze_adjacent_storage_slices(low_var, high_var).ok:
             adjacent_byte_pair_cache[key] = _no_match
             return None
         if getattr(low_var, "region", None) != getattr(high_var, "region", None):
@@ -4850,6 +5015,8 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
         and low_mem_addr is not None
         and high_mem_addr == low_mem_addr + 1
     ):
+        if not analyze_adjacent_storage_slices(low_unwrapped, high_unwrapped).ok:
+            return None
         low_var = getattr(low_unwrapped, "variable", None)
         name = getattr(low_var, "name", None) if isinstance(low_var, SimMemoryVariable) else None
         if not isinstance(name, str) or not name or re.fullmatch(r"(?:v\d+|vvar_\d+)", name):
