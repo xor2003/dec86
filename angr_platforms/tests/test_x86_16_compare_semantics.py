@@ -1342,6 +1342,24 @@ def test_into_branches_to_interrupt_vector_when_overflow_set():
     assert state.addr == 0xF004
 
 
+def _assert_same_in_effect(code16: bytes, code32: bytes, *, regs: dict[str, int], expected_ax: int):
+    state32 = _run_one_instruction_with_regs(ArchX86(), code32, regs)
+    state16 = _run_one_instruction_with_regs(Arch86_16(), code16, regs)
+
+    assert state32.solver.eval(state32.regs.ax) == expected_ax
+    assert state16.solver.eval(state16.regs.ax) == expected_ax
+    assert state32.addr == state16.addr
+    assert state32.solver.eval(state32.regs.ip) == state16.solver.eval(state16.regs.ip)
+
+
+def test_in_al_dx_matches_upstream_x86_vex_effect():
+    _assert_same_in_effect(b"\xEC", b"\xEC", regs={"ax": 0x12AA, "dx": 0x0040}, expected_ax=0x12FF)
+
+
+def test_in_al_imm8_matches_upstream_x86_vex_effect():
+    _assert_same_in_effect(b"\xE4\x40", b"\xE4\x40", regs={"ax": 0x12AA}, expected_ax=0x12FF)
+
+
 def test_insb_advances_di_and_writes_byte():
     state = _run_control_flow_instruction(
         b"\x6C",

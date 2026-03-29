@@ -39,7 +39,7 @@ Priority meanings:
 | high | `cli` | 0 | yes | yes | smoke | yes | yes | no focused regression |
 | high | `esc` | 0 | partial | partial | smoke | yes | yes | support gap, tricky semantics |
 | high | `hlt` | 0 | yes | yes | smoke | yes | yes | smoke |
-| high | `in` | 0 | yes | yes | none | yes | yes | no focused regression |
+| high | `in` | 0 | yes | yes | compare | yes | yes | compare-backed |
 | high | `ins` | 0 | yes | yes | runtime | yes | yes | not compare-backed, tricky semantics |
 | high | `into` | 0 | yes | yes | smoke+runtime | yes | yes | tricky semantics |
 | high | `jcxz` | 0 | yes | yes | none | yes | yes | no focused regression |
