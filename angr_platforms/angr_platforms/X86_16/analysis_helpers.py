@@ -470,6 +470,33 @@ def normalize_api_style(api_style: str) -> str:
     return api_style
 
 
+def describe_x86_16_interrupt_api_surface() -> dict[str, object]:
+    return {
+        "dos": {
+            "service_count": len(INT21_SERVICE_SPECS),
+            "service_names": tuple(spec.modern_name for spec in INT21_SERVICE_SPECS.values()),
+            "helper_names": tuple(spec.dos_name for spec in INT21_SERVICE_SPECS.values()),
+        },
+        "bios": {
+            "service_count": len(INTERRUPT_SERVICE_SPECS),
+            "service_names": tuple(spec.modern_name for spec in INTERRUPT_SERVICE_SPECS.values()),
+            "helper_names": tuple(spec.dos_name for spec in INTERRUPT_SERVICE_SPECS.values()),
+            "vectors": tuple(sorted(INTERRUPT_SERVICE_SPECS)),
+        },
+        "wrappers": {
+            "kinds": ("int86", "int86x", "intdos", "intdosx"),
+            "input_fields": ("inregs", "outregs", "sregs"),
+            "result_paths": (
+                "outregs.h.ah",
+                "outregs.h.al",
+                "outregs.x.ax",
+                "outregs.x.bx",
+                "sregs.es",
+            ),
+        },
+    }
+
+
 def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
     """
     Infer a bounded `.COM` code region by scanning until a likely terminator.

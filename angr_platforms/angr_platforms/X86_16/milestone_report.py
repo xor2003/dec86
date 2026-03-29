@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alias_model import describe_x86_16_alias_recovery_api
+from .analysis_helpers import describe_x86_16_interrupt_api_surface
 from .cod_source_rewrites import describe_x86_16_source_backed_rewrite_status
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
@@ -53,6 +54,7 @@ def build_x86_16_milestone_report(
     alias_api = describe_x86_16_alias_recovery_api()
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
+    interrupt_api_surface = describe_x86_16_interrupt_api_surface()
     failure_counts = dict(scan_summary.get("failure_counts", {}) or {})
     fallback_counts = dict(scan_summary.get("fallback_counts", {}) or {})
     top_failure_classes = list(scan_summary.get("top_failure_classes", []) or [])
@@ -122,6 +124,7 @@ def build_x86_16_milestone_report(
             "wrapper_calls": int(interrupt_api.get("wrapper_calls", 0) or 0),
             "unresolved_wrappers": int(interrupt_api.get("unresolved_wrappers", 0) or 0),
         },
+        "interrupt_api_surface": interrupt_api_surface,
         "readability_tiers": readability_tier_counts,
         "hotspots": {
             "failure_counts": failure_counts,
