@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CStatements, CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable
@@ -19,10 +21,73 @@ from .decompiler_postprocess_utils import (
 
 __all__ = [
     "_coalesce_word_global_loads_8616",
+    "WordGlobalStoreCandidate",
+    "describe_word_global_constant_store_candidates_8616",
     "_coalesce_word_global_constant_stores_8616",
     "_apply_word_global_types_8616",
     "_prune_unused_unnamed_memory_declarations_8616",
 ]
+
+
+@dataclass(frozen=True)
+class WordGlobalStoreCandidate:
+    base_addr: int
+    next_addr: int
+    kind: str
+
+
+def _word_global_constant_store_candidate_8616(project, stmt, next_stmt) -> WordGlobalStoreCandidate | None:
+    if not isinstance(stmt, CAssignment) or not isinstance(next_stmt, CAssignment):
+        return None
+
+    base_addr = _global_memory_addr_8616(stmt.lhs)
+    if base_addr is None:
+        seg_name, linear = _match_segmented_dereference_8616(stmt.lhs, project)
+        if seg_name != "ds":
+            return None
+        base_addr = linear
+    if base_addr is None:
+        return None
+
+    next_addr = _global_memory_addr_8616(next_stmt.lhs)
+    if next_addr is None:
+        seg_name, linear = _match_segmented_dereference_8616(next_stmt.lhs, project)
+        if seg_name != "ds":
+            return None
+        next_addr = linear
+    if next_addr != base_addr + 1:
+        return None
+
+    if isinstance(stmt.rhs, CConstant) and isinstance(next_stmt.rhs, CConstant):
+        return WordGlobalStoreCandidate(base_addr, next_addr, "constant")
+    if _is_shifted_high_byte_8616(next_stmt.rhs, stmt.rhs):
+        return WordGlobalStoreCandidate(base_addr, next_addr, "shifted_high_byte")
+    return None
+
+
+def describe_word_global_constant_store_candidates_8616(project, codegen) -> tuple[WordGlobalStoreCandidate, ...]:
+    if getattr(codegen, "cfunc", None) is None:
+        return ()
+
+    candidates: list[WordGlobalStoreCandidate] = []
+
+    def visit(node):
+        if isinstance(node, CStatements):
+            for idx in range(len(node.statements) - 1):
+                candidate = _word_global_constant_store_candidate_8616(project, node.statements[idx], node.statements[idx + 1])
+                if candidate is not None:
+                    candidates.append(candidate)
+            for stmt in node.statements:
+                visit(stmt)
+        elif hasattr(node, "condition_and_nodes"):
+            for _, body in getattr(node, "condition_and_nodes", ()):
+                visit(body)
+            else_node = getattr(node, "else_node", None)
+            if else_node is not None:
+                visit(else_node)
+
+    visit(codegen.cfunc.statements)
+    return tuple(candidates)
 
 
 def _coalesce_word_global_loads_8616(project, codegen) -> set[int]:
@@ -71,15 +136,6 @@ def _coalesce_word_global_constant_stores_8616(project, codegen) -> set[int]:
 
     changed_addrs: set[int] = set()
 
-    def lhs_addr(node):
-        addr = _global_memory_addr_8616(node)
-        if addr is not None:
-            return addr
-        seg_name, linear = _match_segmented_dereference_8616(node, project)
-        if seg_name != "ds":
-            return None
-        return linear
-
     def visit(node):
         if isinstance(node, CStatements):
             new_statements = []
@@ -92,10 +148,10 @@ def _coalesce_word_global_constant_stores_8616(project, codegen) -> set[int]:
                     and isinstance(node.statements[i + 1], CAssignment)
                 ):
                     next_stmt = node.statements[i + 1]
-                    base_addr = lhs_addr(stmt.lhs)
-                    next_addr = lhs_addr(next_stmt.lhs)
-                    if base_addr is not None and next_addr == base_addr + 1:
-                        if isinstance(stmt.rhs, CConstant) and isinstance(next_stmt.rhs, CConstant):
+                    candidate = _word_global_constant_store_candidate_8616(project, stmt, next_stmt)
+                    if candidate is not None:
+                        base_addr = candidate.base_addr
+                        if candidate.kind == "constant":
                             value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
                             new_statements.append(
                                 CAssignment(
@@ -108,7 +164,7 @@ def _coalesce_word_global_constant_stores_8616(project, codegen) -> set[int]:
                             i += 2
                             continue
 
-                        if _is_shifted_high_byte_8616(next_stmt.rhs, stmt.rhs):
+                        if candidate.kind == "shifted_high_byte":
                             new_statements.append(
                                 CAssignment(
                                     _make_word_global_8616(codegen, base_addr),
