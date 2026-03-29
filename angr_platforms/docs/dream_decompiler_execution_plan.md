@@ -302,7 +302,7 @@ continuously improved.
   - field/array recovery operates on segment-aware roots instead of raw address
     arithmetic alone
 
-### [ ] C3. Member And Array Recovery
+### [x] C3. Member And Array Recovery
 
 - `Priority`: `P2`
 - `Complexity`: `High`
@@ -522,7 +522,7 @@ continuously improved.
   - every source-backed rewrite has an explicit status and the active rescue
     set is small and explainable
 
-### [ ] D36. Promote Rescues Into Regression Oracles
+### [x] D36. Promote Rescues Into Regression Oracles
 
 - `Priority`: `P2`
 - `Complexity`: `Medium`
@@ -566,7 +566,7 @@ continuously improved.
 - `Exit signal`:
   - the special-case surface trends down over time instead of drifting upward
 
-### [ ] D38. Readability Issue Mining
+### [x] D38. Readability Issue Mining
 
 - `Priority`: `P2`
 - `Complexity`: `Medium`
@@ -596,7 +596,7 @@ continuously improved.
   - each milestone can point to a few top readability clusters and the layer
     responsible for fixing them
 
-### [ ] D39. Boolean And Condition Cleanup Refinement
+### [x] D39. Boolean And Condition Cleanup Refinement
 
 - `Priority`: `P2`
 - `Complexity`: `Medium`
@@ -623,7 +623,7 @@ continuously improved.
   - common conditions get shorter and clearer without reintroducing hidden
     semantic recovery into late rewrite
 
-### [ ] D40. Control-Flow Readability Polishing
+### [x] D40. Control-Flow Readability Polishing
 
 - `Priority`: `P3`
 - `Complexity`: `High`
@@ -638,7 +638,7 @@ continuously improved.
 - `Exit signal`:
   - selected bodies become structurally easier to read
 
-### [ ] D41. Naming Polish Over Object Recovery
+### [x] D41. Naming Polish Over Object Recovery
 
 - `Priority`: `P3`
 - `Complexity`: `Medium`
