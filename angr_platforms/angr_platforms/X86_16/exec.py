@@ -120,9 +120,13 @@ class ExecInstr(X86Instruction):
         return self.calc_modrm()
 
     def _resolved_rm_operand(self, width_bits: int) -> ResolvedMemoryOperand:
+        seg, addr = self._resolved_rm_address()
+        return resolve_linear_operand(self.emu, seg, addr, width_bits, 16)
+
+    def _resolved_rm_address(self):
         addr = self.calc_modrm()
         seg = self.select_segment()
-        return resolve_linear_operand(self.emu, seg, addr, width_bits, 16)
+        return seg, addr
 
     def _resolved_moffs_operand(self, width_bits: int) -> ResolvedMemoryOperand:
         self.instr.segment = sgreg_t.DS.value

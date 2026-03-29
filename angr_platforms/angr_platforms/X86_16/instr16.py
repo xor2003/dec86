@@ -435,10 +435,12 @@ class Instr16(InstrBase):
         if self.instr.modrm.mod == 3:
             raise Exception(EXP_UD)
         reg = self.get_r16().signed
-        addr = self.get_m()
-        seg = self.select_segment()
+        seg, addr = self._resolved_rm_address()
         lower = self.emu.get_data16(seg, addr).signed
-        upper = self.emu.get_data16(seg, addr + address_step(self.emu, 2, 16)).signed
+        upper = self.emu.get_data16(
+            seg,
+            addr + address_step(self.emu, 2, 16),
+        ).signed
         out_of_range = (reg < lower) | (reg > upper)
         self.emu.lifter_instruction.jump(out_of_range, 0xFF005, JumpKind.Call)
 
@@ -470,8 +472,7 @@ class Instr16(InstrBase):
             self.set_rm16(r16)
             return
 
-        addr = self.get_m()
-        seg = self.select_segment()
+        seg, addr = self._resolved_rm_address()
         self.set_r16(rm16)
         self.emu.put_data16(seg, addr, r16)
 
@@ -488,12 +489,11 @@ class Instr16(InstrBase):
         self.set_rm16(sreg)
 
     def lea_r16_m16(self):
-        m16 = self.get_m()
-        self.set_r16(m16)
+        _, addr = self._resolved_rm_address()
+        self.set_r16(addr)
 
     def _load_far_pointer(self):
-        addr = self.get_m()
-        seg = self.select_segment()
+        seg, addr = self._resolved_rm_address()
         return load_far_pointer(self.emu, seg, addr, 16, address_bits=16)
 
     def les_es_r16_m16(self):
@@ -1468,9 +1468,7 @@ class Instr16(InstrBase):
         self._emit_near_call(rm16, return_ip=return_ip)
 
     def callf_m16_16(self):
-        m32 = self.get_m()
-        ip = self.emu.read_mem16(m32)  # TODO: check segment, probably self.emu.get_data16(select_segment(),
-        cs = self.emu.read_mem16(m32 + 2)
+        ip, cs = self._load_far_pointer()
         size = self.emu.constant(self.instr.size, Type.int_16)
         self.emu.callf(cs, ip, return_ip=self.emu.get_gpreg(reg16_t.IP) + size)
 
@@ -1479,9 +1477,7 @@ class Instr16(InstrBase):
         self._emit_near_jump(rm16)
 
     def jmpf_m16_16(self):
-        m32 = self.get_m()
-        ip = self.emu.read_mem16(m32)
-        sel = self.emu.read_mem16(m32 + 2)
+        ip, sel = self._load_far_pointer()
         self.emu.jmpf(sel, ip)
 
     def push_rm16(self):
