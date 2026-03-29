@@ -47,14 +47,14 @@ Priority meanings:
 | high | `jnp` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `jo` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `jp` | 0 | yes | yes | none | yes | yes | no focused regression |
-| high | `lock` | 0 | no | no | none | yes | yes | support gap, no focused regression |
+| high | `lock` | 0 | yes | yes | smoke | yes | yes | tricky semantics |
 | high | `loope` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `loopne` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `out` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `outs` | 0 | yes | yes | runtime | yes | yes | not compare-backed, tricky semantics |
 | high | `std` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `sti` | 0 | yes | yes | none | yes | yes | no focused regression |
-| high | `wait` | 0 | no | no | none | yes | yes | support gap, no focused regression |
+| high | `wait` | 0 | yes | yes | smoke | yes | yes | tricky semantics |
 | medium | `mov` | 194163 | yes | yes | corpus | yes | yes | not compare-backed |
 | medium | `cmp` | 41804 | yes | yes | corpus | yes | yes | not compare-backed |
 | medium | `je` | 29447 | yes | yes | smoke | yes | yes | not compare-backed |

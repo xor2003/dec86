@@ -95,7 +95,7 @@ Status meanings:
 | `jp` | jpe | 0 | yes | yes | none | short rel8 | - | - |
 | `lahf` | - | 0 | yes | yes | compare | implicit flags->AH | - | - |
 | `leave` | - | 0 | yes | yes | runtime | implicit | - | - |
-| `lock` | - | 0 | no | no | none | - | prefix 0xF0 parsing + legality checks | Prefix parsing does not currently recognize 0xF0. |
+| `lock` | - | 0 | yes | yes | smoke | - | prefix 0xF0 parsing + legality checks | - |
 | `lods` | lodsb, lodsw | 0 | yes | yes | compare | lodsb, lodsw; repeat-aware | - | - |
 | `loope` | loopz | 0 | yes | yes | none | short rel8 | - | - |
 | `loopne` | loopnz | 0 | yes | yes | none | short rel8 | - | - |
@@ -112,7 +112,7 @@ Status meanings:
 | `stc` | - | 0 | yes | yes | compare | implicit | - | - |
 | `std` | - | 0 | yes | yes | none | implicit | - | - |
 | `sti` | - | 0 | yes | yes | none | implicit | - | - |
-| `wait` | - | 0 | no | no | none | - | implicit | - |
+| `wait` | - | 0 | yes | yes | smoke | - | implicit | - |
 | `xlat` | - | 0 | yes | yes | compare+smoke | implicit AL <- [BX+AL] via DS | - | - |
 
 ## Notes
