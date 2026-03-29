@@ -28,6 +28,12 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "true_failure_rate": 0.3,
         },
         "debt": {"traversal": 3, "recovery": 2, "readability": 7},
+        "interrupt_api": {
+            "dos_helpers": 4,
+            "bios_helpers": 2,
+            "wrapper_calls": 6,
+            "unresolved_wrappers": 1,
+        },
         "results": [
             {
                 "cod_file": "cod/f14/MONOPRIN.COD",
@@ -84,6 +90,12 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "visibility": 3,
         "recovery": 2,
         "readability": 7,
+    }
+    assert report["interrupt_api"] == {
+        "dos_helpers": 4,
+        "bios_helpers": 2,
+        "wrapper_calls": 6,
+        "unresolved_wrappers": 1,
     }
     assert report["readability_tiers"] == {"R0": 1, "R1": 1, "R2": 1, "R3": 1}
     assert [layer["name"] for layer in report["validation_layers"]] == ["unit", "focused_corpus", "whole_program"]

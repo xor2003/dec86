@@ -25,7 +25,7 @@ _silence_scan_loggers()
 import angr
 
 from .arch_86_16 import Arch86_16
-from .analysis_helpers import seed_calling_conventions
+from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed_calling_conventions
 from .lift_86_16 import Lifter86_16  # noqa: F401
 
 
@@ -56,6 +56,10 @@ class FunctionScanResult:
     fallback_kind: str | None = None
     function_count: int = 0
     decompiled_count: int = 0
+    interrupt_dos_helper_count: int = 0
+    interrupt_bios_helper_count: int = 0
+    interrupt_wrapper_call_count: int = 0
+    interrupt_unresolved_wrapper_count: int = 0
     stages: list[StageResult] = field(default_factory=list)
 
 
@@ -104,6 +108,36 @@ def _finish_scan(result: FunctionScanResult) -> FunctionScanResult:
     _SCAN_ACTIVE = False
     _clear_alarm()
     return result
+
+
+def _interrupt_api_helper_names() -> tuple[set[str], set[str]]:
+    dos_names: set[str] = set()
+    bios_names: set[str] = set()
+    for spec in INT21_SERVICE_SPECS.values():
+        dos_names.update({spec.pseudo_name, spec.dos_name, spec.modern_name})
+    for spec in INTERRUPT_SERVICE_SPECS.values():
+        bios_names.update({spec.pseudo_name, spec.dos_name, spec.modern_name})
+    return dos_names, bios_names
+
+
+_INTERRUPT_DOS_HELPER_NAMES, _INTERRUPT_BIOS_HELPER_NAMES = _interrupt_api_helper_names()
+
+
+def _count_named_helper_calls(text: str, names: set[str]) -> int:
+    if not text or not names:
+        return 0
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(?:"
+        + "|".join(re.escape(name) for name in sorted(names, key=len, reverse=True))
+        + r")\s*\("
+    )
+    return len(pattern.findall(text))
+
+
+def _count_interrupt_wrapper_calls(text: str) -> int:
+    if not text:
+        return 0
+    return len(re.findall(r"(?<![A-Za-z0-9_])(?:int86x?|intdosx?)\s*\(", text))
 
 
 def set_memory_limit(max_memory_mb: int) -> None:
@@ -440,6 +474,11 @@ def scan_function(
                 result.fallback_kind = "block_lift"
                 _mark_stage(result, "decompile", False, reason=failure_class, detail=reason)
                 return _finish_scan(result)
+            text = codegen.text
+            result.interrupt_dos_helper_count = _count_named_helper_calls(text, _INTERRUPT_DOS_HELPER_NAMES)
+            result.interrupt_bios_helper_count = _count_named_helper_calls(text, _INTERRUPT_BIOS_HELPER_NAMES)
+            result.interrupt_wrapper_call_count = _count_interrupt_wrapper_calls(text)
+            result.interrupt_unresolved_wrapper_count = result.interrupt_wrapper_call_count
             result.decompiled_count = 1
             result.ok = True
             _mark_stage(result, "decompile", True)
@@ -501,6 +540,10 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     cfg_only_count = sum(1 for result in results if result.fallback_kind == "cfg_only")
     lift_only_count = sum(1 for result in results if result.fallback_kind == "lift_only")
     block_lift_count = sum(1 for result in results if result.fallback_kind == "block_lift")
+    interrupt_dos_helper_count = sum(result.interrupt_dos_helper_count for result in results)
+    interrupt_bios_helper_count = sum(result.interrupt_bios_helper_count for result in results)
+    interrupt_wrapper_call_count = sum(result.interrupt_wrapper_call_count for result in results)
+    interrupt_unresolved_wrapper_count = sum(result.interrupt_unresolved_wrapper_count for result in results)
     fallback_only_count = sum(1 for result in fallback_results if result.ok)
     true_failure_count = sum(1 for result in results if not result.ok)
     ugly_cluster_counter = Counter(
@@ -588,6 +631,12 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "visibility_debt": true_failure_count,
         "recovery_debt": fallback_only_count,
         "readability_debt": full_decompile_count,
+        "interrupt_api": {
+            "dos_helpers": interrupt_dos_helper_count,
+            "bios_helpers": interrupt_bios_helper_count,
+            "wrapper_calls": interrupt_wrapper_call_count,
+            "unresolved_wrappers": interrupt_unresolved_wrapper_count,
+        },
         "blind_spot_budget": {
             "full_decompile_rate": _rate(full_decompile_count),
             "cfg_only_rate": _rate(cfg_only_count),

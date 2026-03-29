@@ -68,6 +68,7 @@ def build_x86_16_milestone_report(
     recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
     readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
+    interrupt_api = dict(scan_summary.get("interrupt_api", {}) or {})
     scan_results = list(scan_summary.get("results", []) or [])
     golden_cases = {(case.source, case.proc_name) for case in readability_set}
     readability_tier_counts = {"R0": 0, "R1": 0, "R2": 0, "R3": 0}
@@ -114,6 +115,12 @@ def build_x86_16_milestone_report(
             "visibility": visibility_debt,
             "recovery": recovery_debt,
             "readability": readability_debt,
+        },
+        "interrupt_api": {
+            "dos_helpers": int(interrupt_api.get("dos_helpers", 0) or 0),
+            "bios_helpers": int(interrupt_api.get("bios_helpers", 0) or 0),
+            "wrapper_calls": int(interrupt_api.get("wrapper_calls", 0) or 0),
+            "unresolved_wrappers": int(interrupt_api.get("unresolved_wrappers", 0) or 0),
         },
         "readability_tiers": readability_tier_counts,
         "hotspots": {

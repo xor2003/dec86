@@ -977,6 +977,8 @@ def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
         return f"int{call.vector:02x}()"
 
     if call.vector == 0x10 and spec.render_kind == "wrapper":
+        if call.ah is not None:
+            return f"{interrupt_service_name(call, api_style)}()"
         extended = any(value is not None for value in (call.ds, call.es, call.ss, call.cs))
         if extended:
             return "int86x(0x10, &inregs, &outregs, &sregs)"

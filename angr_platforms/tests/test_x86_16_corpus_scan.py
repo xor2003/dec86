@@ -110,6 +110,41 @@ def test_corpus_scan_summary_groups_file_health():
     assert summary["files_scan_clean"] == ["A.COD"]
     assert summary["files_partial_success"] == ["B.COD"]
     assert summary["files_zero_success"] == ["C.COD"]
+    assert summary["interrupt_api"] == {
+        "dos_helpers": 0,
+        "bios_helpers": 0,
+        "wrapper_calls": 0,
+        "unresolved_wrappers": 0,
+    }
+
+
+def test_corpus_scan_summary_accumulates_interrupt_api_counts():
+    helper_result = FunctionScanResult(
+        cod_file="D.COD",
+        proc_name="_d",
+        proc_kind="NEAR",
+        byte_len=4,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="decompile",
+        function_count=1,
+        decompiled_count=1,
+        interrupt_dos_helper_count=2,
+        interrupt_bios_helper_count=1,
+        interrupt_wrapper_call_count=3,
+        interrupt_unresolved_wrapper_count=1,
+        stages=[StageResult("load", True), StageResult("decompile", True)],
+    )
+
+    summary = summarize_results([helper_result], "scan-safe")
+
+    assert summary["interrupt_api"] == {
+        "dos_helpers": 2,
+        "bios_helpers": 1,
+        "wrapper_calls": 3,
+        "unresolved_wrappers": 1,
+    }
 
 
 def test_corpus_scan_summary_ranks_repeat_failures():
