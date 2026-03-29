@@ -1,12 +1,14 @@
 from .interrupt import Interrupt
 from .processor import Processor
-from .regs import reg16_t, sgreg_t
 from pyvex.expr import Const, Binop
 from pyvex.stmt import Store, Put
 from pyvex import IRSB
 from pyvex.expr import Load
 from pyvex.lifting.util.vex_helper import Type
 from pyvex.lifting.util.syntax_wrapper import VexValue
+
+from .stack_helpers import pop16 as stack_pop16
+from .stack_helpers import push16 as stack_push16
 
 
 class Emulator(Interrupt):
@@ -39,21 +41,12 @@ class Emulator(Interrupt):
         if isinstance(val, VexValue) and self.lifter_instruction is not None:
             # Snapshot register-backed values like PUSH SP before we mutate SP itself.
             val = self._vv(val.rdt)
-        sp = self.get_gpreg(reg16_t.SP)
-        two = self.constant(2, Type.int_16)
-        new_sp = sp - two
-        self.set_gpreg(reg16_t.SP, new_sp)
         if isinstance(val, int):
             val = self.constant(val, Type.int_16)
-        self.write_mem16_seg(sgreg_t.SS, new_sp, val)
+        stack_push16(self, val)
 
     def pop16(self):
-        sp = self.get_gpreg(reg16_t.SP)
-        val = self.read_mem16_seg(sgreg_t.SS, sp)
-        two = self.constant(2, Type.int_16)
-        new_sp = sp + two
-        self.set_gpreg(reg16_t.SP, new_sp)
-        return val
+        return stack_pop16(self)
 
     def get_data16(self, seg, addr):
         return self.read_mem16_seg(seg, addr)

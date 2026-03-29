@@ -7,6 +7,7 @@ from pyvex import IRConst
  
 from .addressing_helpers import address_step
 from .instr_base import InstrBase
+from .stack_helpers import enter16, leave16, near_return_ip16
 from .instruction import *
 from .regs import reg8_t, reg16_t, sgreg_t
 from .exception import EXP_UD
@@ -537,11 +538,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DX, dx)
 
     def callf_ptr16_16(self):
-        self.emu.callf(
-            self.instr.ptr16,
-            self.instr.imm16,
-            return_ip=self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(5, Type.int_16),
-        )
+        self.emu.callf(self.instr.ptr16, self.instr.imm16, return_ip=near_return_ip16(self.emu, 5))
 
 
     def pushf(self):
@@ -822,9 +819,7 @@ class Instr16(InstrBase):
         self.set_rm16(self.emu.constant(self.instr.imm16, Type.int_16))
 
     def leave(self):
-        ebp = self.emu.get_gpreg(reg16_t.BP)
-        self.emu.set_gpreg(reg16_t.SP, ebp)
-        self.emu.set_gpreg(reg16_t.BP, self.emu.pop16())
+        leave16(self.emu)
 
     def in_ax_imm8(self):
         self.emu.set_gpreg(reg16_t.AX, self.emu.in_io16(self.instr.imm8))
@@ -835,7 +830,7 @@ class Instr16(InstrBase):
 
     def call_rel16(self):
         size = 3  # opcode + imm16
-        return_ip = self.emu.get_gpreg(reg16_t.IP) + size
+        return_ip = near_return_ip16(self.emu, size)
         imm = self.emu.constant(self.instr.imm16, Type.int_16)
         target = return_ip + imm
         self._emit_near_call(target)
@@ -1521,19 +1516,4 @@ class Instr16(InstrBase):
         bytes_ = self.instr.imm16
         level = self.instr.imm8
         level &= 0x1f
-
-        self.emu.push16(self.emu.get_gpreg(reg16_t.BP))
-        ss = self.emu.get_sgreg(sgreg_t.SS)
-        frame_temp = self.emu.get_gpreg(reg16_t.SP)
-        sp = frame_temp
-        if level:
-            bp = self.emu.get_gpreg(reg16_t.BP)
-            for i in range(1, level):
-                bp -= 2
-                sp -= 2
-                self.emu.put_data16(ss, sp, self.emu.get_data16(ss, bp))
-            sp -= 2
-            self.emu.put_data16(ss, sp, frame_temp)
-        self.emu.set_gpreg(reg16_t.BP, frame_temp)
-        sp -= bytes_
-        self.emu.set_gpreg(reg16_t.SP, sp)
+        enter16(self.emu, bytes_, level)

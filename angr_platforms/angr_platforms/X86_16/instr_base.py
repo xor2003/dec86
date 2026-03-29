@@ -7,6 +7,7 @@ from pyvex.lifting.util.vex_helper import Type
 
 from .emu import EmuInstr
 from .exec import ExecInstr
+from .stack_helpers import pop_far_return_frame16, pop_interrupt_frame16
 from .instruction import *
 from .parse import ParseInstr
 from .regs import reg8_t, reg16_t, sgreg_t
@@ -682,8 +683,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def retf_imm16(self) -> None:
-        ip = self.emu.pop16()
-        seg = self.emu.pop16()
+        ip, seg = pop_far_return_frame16(self.emu)
         self.emu.set_gpreg(
             reg16_t.SP,
             self.emu.get_gpreg(reg16_t.SP) + self.emu.constant(self.instr.imm16, Type.int_16),
@@ -694,8 +694,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
 
     def retf(self) -> None:
-        ip = self.emu.pop16()
-        seg = self.emu.pop16()
+        ip, seg = pop_far_return_frame16(self.emu)
         self.emu.set_sgreg(sgreg_t.CS, seg)
         self.emu.set_gpreg(reg16_t.IP, ip)
         addr = self.emu.v2p(seg, ip)
@@ -714,9 +713,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.lifter_instruction.jump(None, 0xFF000 + self.instr.imm8, JumpKind.Call)
 
     def iret(self) -> None:
-        ip = self.emu.pop16()
-        cs = self.emu.pop16()
-        flags = self.emu.pop16()
+        ip, cs, flags = pop_interrupt_frame16(self.emu)
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
         self.emu.set_sgreg(sgreg_t.CS, cs)
         self.emu.set_gpreg(reg16_t.IP, ip)

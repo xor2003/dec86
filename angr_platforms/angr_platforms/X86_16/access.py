@@ -6,6 +6,7 @@ ITY_I16 = Type.int_16
 ITY_I32 = Type.int_32
 
 from .hardware import Hardware
+from .stack_helpers import pop16, pop32, push16, push32, push_far_return_frame16
 from .regs import reg16_t, reg32_t, sgreg_t
 
 # Constants for access modes
@@ -64,26 +65,16 @@ class DataAccess(Hardware):
         self.tlb[vpn] = pte
 
     def push32(self, value):
-        self.update_gpreg(reg32_t.ESP, -4)
-        sp = self.get_gpreg(reg32_t.ESP)
-        self.write_mem32_seg(sgreg_t.SS, sp, value)
+        push32(self, value)
 
     def pop32(self):
-        sp = self.get_gpreg(reg32_t.ESP)
-        value = self.read_mem32_seg(sgreg_t.SS, sp)
-        self.update_gpreg(reg32_t.ESP, 4)
-        return value
+        return pop32(self)
 
     def push16(self, value):
-        self.update_gpreg(reg16_t.SP, -2)
-        sp = self.get_gpreg(reg16_t.SP)
-        self.write_mem16_seg(sgreg_t.SS, sp, value)
+        push16(self, value)
 
     def pop16(self):
-        sp = self.get_gpreg(reg16_t.SP)
-        value = self.read_mem16_seg(sgreg_t.SS, sp)
-        self.update_gpreg(reg16_t.SP, 2)
-        return value
+        return pop16(self)
 
     def read_mem32_seg(self, seg, addr):
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
@@ -158,10 +149,7 @@ class DataAccess(Hardware):
         self.write_mem32_seg(seg, addr, value)
 
     def callf(self, seg, ip, return_ip=None):
-        self.push16(self.get_sgreg(sgreg_t.CS))
-        if return_ip is None:
-            return_ip = self.get_gpreg(reg16_t.IP)
-        self.push16(return_ip)
+        push_far_return_frame16(self, return_ip)
         self.set_sgreg(sgreg_t.CS, seg)
         self.set_gpreg(reg16_t.IP, ip)
         laddr = self.v2p(seg, ip)

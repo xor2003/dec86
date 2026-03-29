@@ -6,6 +6,7 @@ from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
+from .stack_helpers import leave32, near_return_eip32
 from .regs import reg8_t, reg16_t, reg32_t
 
 
@@ -422,9 +423,7 @@ class Instr32(InstrBase):
         self.set_rm32(self.instr.imm32)
 
     def leave(self):
-        ebp = self.emu.get_gpreg(reg32_t.EBP)
-        self.emu.set_gpreg(reg32_t.ESP, ebp)
-        self.emu.set_gpreg(reg32_t.EBP, self.emu.pop32())
+        leave32(self.emu)
 
     def in_eax_imm8(self):
         self.emu.set_gpreg(reg32_t.EAX, self.emu.in_io32(self.instr.imm8))
@@ -434,7 +433,7 @@ class Instr32(InstrBase):
         self.emu.out_io32(self.instr.imm8, eax)
 
     def call_rel32(self):
-        self.emu.push32(self.emu.get_eip())
+        self.emu.push32(near_return_eip32(self.emu))
         self.emu.update_eip(self.instr.imm32)
 
     def jmp_rel32(self):
