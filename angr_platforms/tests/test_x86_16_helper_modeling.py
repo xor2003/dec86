@@ -96,12 +96,119 @@ def test_interrupt_service_renderer_keeps_int10_wrapper_oriented():
     callx = _decompile.InterruptCall(insn_addr=0x1022, vector=0x10, ah=0x03, ds=0x1111, es=0x2222)
     call_unknown = _decompile.InterruptCall(insn_addr=0x1024, vector=0x10)
 
-    assert _decompile.render_interrupt_call(call, "pseudo") == "bios_int10_video()"
-    assert _decompile.render_interrupt_call(call, "dos") == "_bios_int10_video()"
-    assert _decompile.render_interrupt_call(callx, "pseudo") == "bios_int10_video()"
+    assert _decompile.render_interrupt_call(call, "pseudo") == "bios_int10_video(0xe)"
+    assert _decompile.render_interrupt_call(call, "dos") == "_bios_int10_video(0xe)"
+    assert _decompile.render_interrupt_call(callx, "pseudo") == "bios_int10_video(3)"
     assert _decompile.render_interrupt_call(call_unknown, "pseudo") == "int86(0x10, &inregs, &outregs)"
     assert _decompile.render_interrupt_call(call_unknown, "dos") == "int86(0x10, &inregs, &outregs)"
-    assert _decompile.interrupt_service_declarations([call, callx], "pseudo") == []
+    assert _decompile.interrupt_service_declarations([call, callx], "pseudo") == [
+        "int bios_int10_video(unsigned int service);"
+    ]
+
+
+def test_interrupt_wrapper_helper_call_expr_carries_bios_int10_selector():
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+    )
+    sig = _decompile.InterruptWrapperCall(
+        callee_name="int86",
+        canonical_name="int86",
+        kind="int86",
+        arguments=(object(), object(), object()),
+        vector_arg=_decompile.structured_c.CConstant(0x10, SimTypeShort(), codegen=codegen),
+    )
+    input_state = {
+        "inregs": {
+            ("h", "ah"): 0x0F,
+        }
+    }
+
+    helper = _decompile._interrupt_wrapper_helper_call_expr(sig, input_state, "pseudo", codegen)
+
+    assert helper is not None
+    assert helper.callee_target == "bios_int10_video"
+    assert [arg.value for arg in helper.args] == [0x0F]
+
+
+def test_interrupt_wrapper_result_lowering_rewrites_bios_int10_results_with_selector():
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x3455, statements=None),
+        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+        cstyle_null_cmp=False,
+    )
+    h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
+    regs_struct = SimStruct({"h": h_struct}, name="REGS")
+
+    inregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(0, 2, base="bp", name="inregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    outregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(2, 2, base="bp", name="outregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    sink = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(4, 2, base="bp", name="sink", region=0),
+        variable_type=SimTypeShort(),
+        codegen=codegen,
+    )
+
+    h_field = _decompile.structured_c.CStructField(regs_struct, 0, "h", codegen=codegen)
+    ah_field = _decompile.structured_c.CStructField(h_struct, 0, "ah", codegen=codegen)
+    al_field = _decompile.structured_c.CStructField(h_struct, 1, "al", codegen=codegen)
+    sink_ref = _decompile.structured_c.CVariable(sink.variable, variable_type=SimTypeShort(), codegen=codegen)
+
+    stmts = _decompile.structured_c.CStatements(
+        [
+            _decompile.structured_c.CAssignment(
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(inregs, h_field, codegen=codegen),
+                    ah_field,
+                    codegen=codegen,
+                ),
+                _decompile.structured_c.CConstant(0x0F, SimTypeShort(), codegen=codegen),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CExpressionStatement(
+                _decompile.structured_c.CFunctionCall(
+                    "int86",
+                    SimpleNamespace(name="int86"),
+                    [
+                        _decompile.structured_c.CConstant(0x10, SimTypeShort(), codegen=codegen),
+                        object(),
+                        object(),
+                    ],
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CAssignment(
+                sink_ref,
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(outregs, h_field, codegen=codegen),
+                    al_field,
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = stmts
+
+    assert _decompile._lower_interrupt_wrapper_result_reads(SimpleNamespace(), codegen, "pseudo") is True
+
+    _, _, third_stmt = codegen.cfunc.statements.statements
+    assert isinstance(third_stmt, _decompile.structured_c.CAssignment)
+    assert isinstance(third_stmt.rhs, _decompile.structured_c.CBinaryOp)
+    assert third_stmt.rhs.op == "And"
+    assert third_stmt.rhs.lhs.callee_target == "bios_int10_video"
+    assert [arg.value for arg in third_stmt.rhs.lhs.args] == [0x0F]
+    assert third_stmt.rhs.rhs.value == 0xFF
 
 
 def test_interrupt_wrapper_placeholder_calls_are_recovered_from_argument_shape(monkeypatch):

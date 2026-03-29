@@ -264,9 +264,9 @@ INTERRUPT_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
         "_bios_int10_video",
         "_bios_int10_video",
         "wrapper",
-        pseudo_decl="int bios_int10_video(void);",
-        dos_decl="int _bios_int10_video(void);",
-        modern_decl="int _bios_int10_video(void);",
+        pseudo_decl="int bios_int10_video(unsigned int service);",
+        dos_decl="int _bios_int10_video(unsigned int service);",
+        modern_decl="int _bios_int10_video(unsigned int service);",
     ),
     0x11: InterruptServiceSpec(
         0x11,
@@ -1040,7 +1040,8 @@ def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
 
     if call.vector == 0x10 and spec.render_kind == "wrapper":
         if call.ah is not None:
-            return f"{interrupt_service_name(call, api_style)}()"
+            selector = _format_imm(call.ah)
+            return f"{interrupt_service_name(call, api_style)}({selector})"
         extended = any(value is not None for value in (call.ds, call.es, call.ss, call.cs))
         if extended:
             return "int86x(0x10, &inregs, &outregs, &sregs)"
@@ -1078,7 +1079,9 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
         if spec is None:
             decl = "int dos_int21(void);"
         else:
-            if spec.render_kind == "wrapper" and call.vector != 0x21:
+            if spec.render_kind == "wrapper" and call.vector not in {0x21, 0x10}:
+                continue
+            if call.vector == 0x10 and call.ah is None:
                 continue
             decl = _interrupt_service_decl(spec, api_style)
         if decl not in seen:
@@ -1104,7 +1107,9 @@ def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -
                     declarations.append(decl)
             continue
 
-        if spec.render_kind == "wrapper" and call.vector != 0x21:
+        if spec.render_kind == "wrapper" and call.vector not in {0x21, 0x10}:
+            continue
+        if call.vector == 0x10 and call.ah is None:
             continue
 
         decl = _interrupt_service_decl(spec, api_style)
