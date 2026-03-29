@@ -71,3 +71,7 @@ exclude = [
     "dist/",
     "angr_platforms.egg-info/",
 ]
+
+[tool.setuptools.packages.find]
+include = ["angr_platforms*"]
+exclude = ["tests*", "tutorial*", "x16_samples*", "test_programs*"]
