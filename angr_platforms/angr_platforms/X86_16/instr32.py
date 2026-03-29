@@ -14,7 +14,14 @@ from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
 from .stack_helpers import leave32, near_return_eip32
-from .string_helpers import repeat_jump, repeat_prefix_cond, string_delta, string_source_segment
+from .string_helpers import (
+    repeat_jump,
+    repeat_prefix_cond,
+    string_advance_indices,
+    string_compare_values,
+    string_delta,
+    string_source_segment,
+)
 from .regs import reg8_t, reg16_t, reg32_t
 
 
@@ -347,12 +354,10 @@ class Instr32(InstrBase):
 
         si = self.emu.get_gpreg(reg32_t.ESI)
         di = self.emu.get_gpreg(reg32_t.EDI)
-        delta = string_delta(self.emu, 1)
         m8_s = self.emu.get_data8(string_source_segment(self.instr), si)
         m8_d = self.emu.get_data8(reg16_t.ES, di)
-        compare_operation(lambda: m8_s, lambda: m8_d, self.emu.update_eflags_sub)
-        self.emu.set_gpreg(reg32_t.ESI, si + delta)
-        self.emu.set_gpreg(reg32_t.EDI, di + delta)
+        string_compare_values(m8_s, m8_d, self.emu.update_eflags_sub)
+        string_advance_indices(self.emu, 1, reg32_t.ESI, reg32_t.EDI)
 
         if repeat_cond is not None:
             repeat_jump(self.emu, self.instr, repeat_cond)
@@ -362,12 +367,10 @@ class Instr32(InstrBase):
 
         si = self.emu.get_gpreg(reg32_t.ESI)
         di = self.emu.get_gpreg(reg32_t.EDI)
-        delta = string_delta(self.emu, 4)
         m32_s = self.emu.get_data32(string_source_segment(self.instr), si)
         m32_d = self.emu.get_data32(reg16_t.ES, di)
-        compare_operation(lambda: m32_s, lambda: m32_d, self.emu.update_eflags_sub)
-        self.emu.set_gpreg(reg32_t.ESI, si + delta)
-        self.emu.set_gpreg(reg32_t.EDI, di + delta)
+        string_compare_values(m32_s, m32_d, self.emu.update_eflags_sub)
+        string_advance_indices(self.emu, 4, reg32_t.ESI, reg32_t.EDI)
 
         if repeat_cond is not None:
             repeat_jump(self.emu, self.instr, repeat_cond)
