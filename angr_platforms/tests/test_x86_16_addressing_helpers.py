@@ -3,6 +3,7 @@ from angr_platforms.X86_16.addressing_helpers import (
     WidthProfile,
     address_width_bits,
     address_step,
+    decode_width_profile,
     default_segment_for_modrm16,
     default_segment_for_modrm32,
     displacement_width_bits,
@@ -124,6 +125,13 @@ def test_width_profile_exposes_byte_counts():
 
     assert profile.operand_bytes == 4
     assert profile.address_bytes == 2
+
+
+def test_decode_width_profile_covers_explicit_mixed_width_matrix():
+    assert decode_width_profile(False, False, False) == WidthProfile(operand_bits=16, address_bits=16)
+    assert decode_width_profile(False, True, False) == WidthProfile(operand_bits=32, address_bits=16)
+    assert decode_width_profile(False, False, True) == WidthProfile(operand_bits=16, address_bits=32)
+    assert decode_width_profile(True, False, False) == WidthProfile(operand_bits=32, address_bits=32)
 
 
 def test_load_far_pointer16_uses_address_width_specific_step():

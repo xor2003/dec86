@@ -1,5 +1,5 @@
 from .emulator import Emulator
-from .addressing_helpers import address_width_bits, operand_width_bits
+from .addressing_helpers import WidthProfile, address_width_bits, operand_width_bits
 from .regs import sgreg_t
 
 # Constants for repeat prefixes
@@ -81,6 +81,12 @@ class X86Instruction:
 
     def control_flow_kind(self) -> str:
         return self.instr.control_flow_class or "none"
+
+    def width_profile(self) -> WidthProfile:
+        return WidthProfile(
+            operand_bits=self.effective_operand_bits(),
+            address_bits=self.effective_address_bits(),
+        )
 
 # Class for executing instructions
 

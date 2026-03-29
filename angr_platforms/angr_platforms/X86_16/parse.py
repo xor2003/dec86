@@ -7,7 +7,7 @@ from pyvex.lifting.util import ParseError
 
 if TYPE_CHECKING:
     from .emulator import Emulator
-from .addressing_helpers import address_width_bits, operand_width_bits
+from .addressing_helpers import decode_width_profile
 from .instruction import *
 
 CHSZ_NONE: int = 0
@@ -70,8 +70,13 @@ class ParseInstr(X86Instruction):
 
     def parse(self) -> None:
         start = self.emu.bitstream.bytepos
-        self.instr.operand_bits = operand_width_bits(self.emu.is_mode32(), bool(self.chsz & CHSZ_OP))
-        self.instr.address_bits = address_width_bits(self.emu.is_mode32(), bool(self.chsz & CHSZ_AD))
+        widths = decode_width_profile(
+            self.emu.is_mode32(),
+            bool(self.chsz & CHSZ_OP),
+            bool(self.chsz & CHSZ_AD),
+        )
+        self.instr.operand_bits = widths.operand_bits
+        self.instr.address_bits = widths.address_bits
         self.instr.displacement_bits = 0
         self.parse_opcode()
 

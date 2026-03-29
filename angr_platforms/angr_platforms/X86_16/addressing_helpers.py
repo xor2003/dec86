@@ -16,6 +16,27 @@ def address_width_bits(mode32: bool, chsz_ad: bool = False) -> int:
     return 32 if mode32 ^ bool(chsz_ad) else 16
 
 
+@dataclass(frozen=True)
+class WidthProfile:
+    operand_bits: int
+    address_bits: int
+
+    @property
+    def operand_bytes(self) -> int:
+        return self.operand_bits // 8
+
+    @property
+    def address_bytes(self) -> int:
+        return self.address_bits // 8
+
+
+def decode_width_profile(mode32: bool, chsz_op: bool = False, chsz_ad: bool = False) -> WidthProfile:
+    return WidthProfile(
+        operand_bits=operand_width_bits(mode32, chsz_op),
+        address_bits=address_width_bits(mode32, chsz_ad),
+    )
+
+
 def displacement_width_bits(mod: int, rm: int, address_bits: int) -> int | None:
     if address_bits == 16:
         if mod == 0 and rm == 6:
@@ -136,17 +157,3 @@ def load_far_pointer(emu, segment: sgreg_t, offset, operand_bits: int, address_b
 
 def load_far_pointer16(emu, segment: sgreg_t, offset, address_bits: int = 16):
     return load_word_pair16(emu, segment, offset, address_bits=address_bits)
-
-
-@dataclass(frozen=True)
-class WidthProfile:
-    operand_bits: int
-    address_bits: int
-
-    @property
-    def operand_bytes(self) -> int:
-        return self.operand_bits // 8
-
-    @property
-    def address_bytes(self) -> int:
-        return self.address_bits // 8

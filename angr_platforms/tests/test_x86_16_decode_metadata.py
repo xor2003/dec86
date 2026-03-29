@@ -82,3 +82,5 @@ def test_instruction_api_exposes_effective_decode_facts():
     assert view.effective_address_bits() == 16
     assert view.repeat_kind() == "repz"
     assert view.control_flow_kind() == "near_call"
+    assert view.width_profile().operand_bits == 32
+    assert view.width_profile().address_bits == 16

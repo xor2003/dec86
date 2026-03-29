@@ -143,6 +143,14 @@ Recent progress on that front:
 - 32-bit stack-family handlers now also delegate to shared helpers for
   `pushad` / `popad`, segment push/pop, and near return instead of owning
   their own stack choreography in `instr32.py`
+- 16-bit segment push/pop, `pushf/popf`, and near call/jump emission now also
+  route through shared stack/control-transfer helpers instead of open-coding
+  stack choreography in `instr16.py`
+- 32-bit near call/jump handlers now use the same helper-layer style instead of
+  open-coding `push32` / `set_eip` pairs in `instr32.py`
+- normalized decode metadata now has an explicit width-profile abstraction, so
+  the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
+  scattered width math
 
 ## Remaining Priorities
 
