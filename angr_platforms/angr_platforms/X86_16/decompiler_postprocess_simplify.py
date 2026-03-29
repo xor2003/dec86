@@ -130,6 +130,24 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 tags=getattr(node, "tags", None),
             )
 
+        if isinstance(node, CBinaryOp) and node.op == "Mul":
+            if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
+                type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                if type_ is not None:
+                    return CConstant(0, type_, codegen=codegen)
+
+        if isinstance(node, CBinaryOp) and node.op == "Or":
+            if _is_c_constant_int_8616(node.lhs, 0):
+                return node.rhs
+            if _is_c_constant_int_8616(node.rhs, 0):
+                return node.lhs
+
+        if isinstance(node, CBinaryOp) and node.op == "And":
+            if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
+                type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                if type_ is not None:
+                    return CConstant(0, type_, codegen=codegen)
+
         if isinstance(node, CUnaryOp) and node.op == "Not":
             operand = getattr(node, "operand", None)
             if isinstance(operand, CUnaryOp) and operand.op == "Not":
@@ -186,6 +204,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     else:
         changed = False
 
-    if _replace_c_children_8616(root, transform):
+    for _ in range(3):
+        if not _replace_c_children_8616(root, transform):
+            break
         changed = True
     return changed

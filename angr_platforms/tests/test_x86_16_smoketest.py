@@ -273,6 +273,16 @@ def test_rep_movsb_decompiles_without_double_negation():
     assert "!(!(" not in text
 
 
+def test_rep_movsw_decompiles_to_direct_byte_copy():
+    project = _project_from_bytes(bytes.fromhex("b90200f3a5c3"))  # mov cx,2; rep movsw; ret
+
+    cfg = project.analyses.CFGFast(normalize=True)
+    dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
+    assert dec.codegen is not None
+    text = dec.codegen.text
+    assert "*((char *)(v1 * 16 + v2)) = *((char *)(v3 * 16 + v4));" in text
+
+
 def test_movsb_lifts_and_updates_indices():
     project = _project_from_bytes(bytes.fromhex("a4"))
 
