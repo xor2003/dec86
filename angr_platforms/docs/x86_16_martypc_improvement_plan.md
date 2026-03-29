@@ -135,6 +135,8 @@ Recent progress on that front:
   owning their own stack choreography inside `instr16.py`
 - near `ret` / `ret imm16` now delegate to a shared near-return helper instead
   of owning their own stack-unwind and `Ijk_Ret` plumbing in `instr16.py`
+- byte-side ALU immediate handlers in `instr_base.py` now share local family
+  helpers for `AL imm8`, `r/m8 imm8`, compare, and carry-aware variants
 
 ## Remaining Priorities
 

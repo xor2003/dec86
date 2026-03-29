@@ -101,3 +101,31 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_near_returns():
     assert "return_near16(" in source
     assert "self.emu.pop16(" not in source
     assert "self.emu.irsb.jumpkind" not in source
+
+
+def test_x86_16_instruction_core_uses_byte_alu_immediate_helper_families():
+    source = (
+        inspect.getsource(InstrBase.add_al_imm8)
+        + inspect.getsource(InstrBase.or_al_imm8)
+        + inspect.getsource(InstrBase.and_al_imm8)
+        + inspect.getsource(InstrBase.sub_al_imm8)
+        + inspect.getsource(InstrBase.xor_al_imm8)
+        + inspect.getsource(InstrBase.adc_al_imm8)
+        + inspect.getsource(InstrBase.sbb_al_imm8)
+        + inspect.getsource(InstrBase.cmp_al_imm8)
+        + inspect.getsource(InstrBase.add_rm8_imm8)
+        + inspect.getsource(InstrBase.or_rm8_imm8)
+        + inspect.getsource(InstrBase.and_rm8_imm8)
+        + inspect.getsource(InstrBase.sub_rm8_imm8)
+        + inspect.getsource(InstrBase.xor_rm8_imm8)
+        + inspect.getsource(InstrBase.adc_rm8_imm8)
+        + inspect.getsource(InstrBase.sbb_rm8_imm8)
+        + inspect.getsource(InstrBase.cmp_rm8_imm8)
+    )
+
+    assert "_binary_al_imm8(" in source
+    assert "_binary_al_imm8_with_carry(" in source
+    assert "_compare_al_imm8(" in source
+    assert "_binary_rm8_imm8(" in source
+    assert "_binary_rm8_imm8_with_carry(" in source
+    assert "_compare_rm8_imm8(" in source
