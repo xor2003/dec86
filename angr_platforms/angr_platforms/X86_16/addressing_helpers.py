@@ -37,6 +37,23 @@ def decode_width_profile(mode32: bool, chsz_op: bool = False, chsz_ad: bool = Fa
     )
 
 
+@dataclass(frozen=True)
+class DecodeWidthMatrixCase:
+    name: str
+    mode32: bool
+    chsz_op: bool
+    chsz_ad: bool
+    profile: WidthProfile
+
+
+DECODE_WIDTH_MATRIX: tuple[DecodeWidthMatrixCase, ...] = (
+    DecodeWidthMatrixCase("16/16", False, False, False, decode_width_profile(False, False, False)),
+    DecodeWidthMatrixCase("32/16", False, True, False, decode_width_profile(False, True, False)),
+    DecodeWidthMatrixCase("16/32", False, False, True, decode_width_profile(False, False, True)),
+    DecodeWidthMatrixCase("32/32", True, False, False, decode_width_profile(True, False, False)),
+)
+
+
 def displacement_width_bits(mod: int, rm: int, address_bits: int) -> int | None:
     if address_bits == 16:
         if mod == 0 and rm == 6:
@@ -76,6 +93,10 @@ def type_for_bits(width_bits: int):
 
 def address_step(emu, step_bytes: int, address_bits: int = 16):
     return emu.constant(step_bytes, type_for_bits(address_bits))
+
+
+def describe_x86_16_decode_width_matrix() -> tuple[tuple[str, int, int], ...]:
+    return tuple((case.name, case.profile.operand_bits, case.profile.address_bits) for case in DECODE_WIDTH_MATRIX)
 
 
 def linear_address(emu, segment, offset):

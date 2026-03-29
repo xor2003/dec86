@@ -10,6 +10,13 @@ class ValidationLayerSpec:
     default_checks: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ValidationFamilySpec:
+    name: str
+    purpose: str
+    default_checks: tuple[str, ...]
+
+
 VALIDATION_LAYERS = (
     ValidationLayerSpec(
         name="unit",
@@ -46,8 +53,64 @@ VALIDATION_LAYERS = (
 )
 
 
+VALIDATION_FAMILIES = (
+    ValidationFamilySpec(
+        name="addressing",
+        purpose="Keep effective-address, far-pointer, and width-matrix behavior explicit.",
+        default_checks=(
+            "tests/test_x86_16_addressing_helpers.py",
+            "tests/test_x86_16_decode_metadata.py",
+            "tests/test_x86_16_instruction_core_factoring.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="stack_control",
+        purpose="Keep call/ret/enter/leave, privilege stack, and branch helpers stable.",
+        default_checks=(
+            "tests/test_x86_16_stack_helpers.py",
+            "tests/test_x86_16_instruction_core_factoring.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="string",
+        purpose="Keep REP, direction-flag, and compare/store string behavior stable.",
+        default_checks=(
+            "tests/test_x86_16_string_helpers.py",
+            "tests/test_x86_16_compare_semantics.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="alu",
+        purpose="Keep flag-update and arithmetic/shift/rotate behavior stable.",
+        default_checks=(
+            "tests/test_x86_16_alu_helpers.py",
+            "tests/test_x86_16_compare_semantics.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="interrupt_api",
+        purpose="Keep interrupt-core semantics and DOS/BIOS/API lowering separable.",
+        default_checks=(
+            "tests/test_x86_16_milestone_report.py",
+            "tests/test_x86_16_corpus_scan.py",
+        ),
+    ),
+)
+
+
 def describe_x86_16_validation_layers() -> tuple[tuple[str, tuple[str, ...]], ...]:
     return tuple((layer.name, layer.default_checks) for layer in VALIDATION_LAYERS)
 
 
-__all__ = ["VALIDATION_LAYERS", "ValidationLayerSpec", "describe_x86_16_validation_layers"]
+def describe_x86_16_validation_families() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return tuple((family.name, family.default_checks) for family in VALIDATION_FAMILIES)
+
+
+__all__ = [
+    "VALIDATION_FAMILIES",
+    "VALIDATION_LAYERS",
+    "ValidationFamilySpec",
+    "ValidationLayerSpec",
+    "describe_x86_16_validation_families",
+    "describe_x86_16_validation_layers",
+]

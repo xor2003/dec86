@@ -171,6 +171,12 @@ Recent progress on that front:
 - normalized decode metadata now has an explicit width-profile abstraction, so
   the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
   scattered width math
+- the explicit mixed-width decode matrix now has a shared helper/report
+  surface, so the width combinations are visible in tests and milestone
+  reporting instead of only in parser logic
+- validation now has family slices alongside the tiered corpus layers, which
+  gives stack/control, addressing, string, ALU, and interrupt API families a
+  named validation boundary for focused debugging
 - 32-bit relative branches now also share a single helper emission path instead
   of repeating `update_eip` logic in each conditional branch handler
 - 8-bit, 16-bit, and 32-bit relative-branch families now all use shared

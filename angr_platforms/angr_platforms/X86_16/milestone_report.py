@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .alias_model import describe_x86_16_alias_recovery_api
+from .addressing_helpers import describe_x86_16_decode_width_matrix
 from .analysis_helpers import describe_x86_16_interrupt_api_surface
 from .cod_source_rewrites import describe_x86_16_source_backed_rewrite_status
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
-from .validation_manifest import describe_x86_16_validation_layers
+from .validation_manifest import describe_x86_16_validation_families, describe_x86_16_validation_layers
 from .widening_model import describe_x86_16_widening_pipeline
 
 
@@ -50,10 +51,12 @@ def build_x86_16_milestone_report(
     blocked_mnemonics: Sequence[str] | None = None,
 ) -> dict[str, object]:
     validation_layers = describe_x86_16_validation_layers()
+    validation_families = describe_x86_16_validation_families()
     readability_set = describe_x86_16_golden_readability_set()
     alias_api = describe_x86_16_alias_recovery_api()
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
+    decode_width_matrix = describe_x86_16_decode_width_matrix()
     interrupt_api_surface = describe_x86_16_interrupt_api_surface()
     failure_counts = dict(scan_summary.get("failure_counts", {}) or {})
     fallback_counts = dict(scan_summary.get("fallback_counts", {}) or {})
@@ -85,9 +88,16 @@ def build_x86_16_milestone_report(
         "validation_layers": [
             {"name": name, "default_checks": list(checks)} for name, checks in validation_layers
         ],
+        "validation_families": [
+            {"name": name, "default_checks": list(checks)} for name, checks in validation_families
+        ],
         "alias_api": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in alias_api
+        ],
+        "decode_width_matrix": [
+            {"name": name, "operand_bits": operand_bits, "address_bits": address_bits}
+            for name, operand_bits, address_bits in decode_width_matrix
         ],
         "widening_pipeline": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}

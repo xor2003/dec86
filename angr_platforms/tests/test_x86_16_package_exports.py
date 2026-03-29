@@ -51,6 +51,7 @@ def test_x86_16_package_exports_source_backends():
     assert "describe_x86_16_source_backed_rewrite_status" in x8616.__all__
     assert "describe_x86_16_alias_recovery_api" in x8616.__all__
     assert "describe_x86_16_interrupt_api_surface" in x8616.__all__
+    assert "describe_x86_16_decode_width_matrix" in x8616.__all__
     assert "describe_x86_16_widening_pipeline" in x8616.__all__
     assert "describe_x86_16_recovery_layers" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__

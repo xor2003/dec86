@@ -183,6 +183,19 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
     }
     assert report["readability_tiers"] == {"R0": 1, "R1": 1, "R2": 1, "R3": 1}
     assert [layer["name"] for layer in report["validation_layers"]] == ["unit", "focused_corpus", "whole_program"]
+    assert [family["name"] for family in report["validation_families"]] == [
+        "addressing",
+        "stack_control",
+        "string",
+        "alu",
+        "interrupt_api",
+    ]
+    assert report["decode_width_matrix"] == [
+        {"name": "16/16", "operand_bits": 16, "address_bits": 16},
+        {"name": "32/16", "operand_bits": 32, "address_bits": 16},
+        {"name": "16/32", "operand_bits": 16, "address_bits": 32},
+        {"name": "32/32", "operand_bits": 32, "address_bits": 32},
+    ]
     assert [item["name"] for item in report["alias_api"]] == ["same_domain", "compatible_view", "needs_synthesis", "can_join"]
     assert [item["name"] for item in report["widening_pipeline"]] == [
         "candidate_extraction",
