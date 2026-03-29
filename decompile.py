@@ -69,10 +69,13 @@ from angr_platforms.X86_16.analysis_helpers import (
     DOS_SERVICE_BASE_ADDR,
     InterruptCall,
     collect_dos_int21_calls,
+    collect_interrupt_service_calls,
     dos_helper_declarations,
     extend_cfg_for_far_calls,
     infer_com_region,
     interrupt_service_name,
+    interrupt_service_addr,
+    interrupt_service_declarations,
     normalize_api_style,
     patch_dos_int21_call_sites,
     render_interrupt_call,
@@ -5253,8 +5256,23 @@ def _int21_call_replacements(project: angr.Project, function, api_style: str, bi
     ]
 
 
+def _interrupt_call_replacement_map(project: angr.Project, function, api_style: str, binary_path: Path | None) -> dict[str, str]:
+    replacements: dict[str, str] = {}
+    for call in collect_interrupt_service_calls(function, binary_path):
+        replacement = render_interrupt_call(call, api_style)
+        helper_name = _helper_name(project, interrupt_service_addr(call))
+        if helper_name:
+            replacements[helper_name] = replacement
+            replacements[helper_name.lstrip("_")] = replacement
+    return replacements
+
+
 def _dos_helper_declarations(function, api_style: str, binary_path: Path | None) -> list[str]:
     return dos_helper_declarations(collect_dos_int21_calls(function, binary_path), api_style)
+
+
+def _interrupt_helper_declarations(function, api_style: str, binary_path: Path | None) -> list[str]:
+    return interrupt_service_declarations(collect_interrupt_service_calls(function, binary_path), api_style)
 
 
 def _split_top_level_binary(expr: str, op: str) -> tuple[str, str] | None:
@@ -5608,7 +5626,17 @@ def _format_known_helper_calls(
             if count:
                 break
 
+    interrupt_replacements = _interrupt_call_replacement_map(project, function, api_style, binary_path)
+    for source_name, replacement in sorted(interrupt_replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        c_text = re.sub(
+            rf"(?<![A-Za-z_]){re.escape(source_name)}\s*\(\s*\)",
+            replacement,
+            c_text,
+            count=1,
+        )
+
     declarations = _dos_helper_declarations(function, api_style, binary_path)
+    declarations.extend(_interrupt_helper_declarations(function, api_style, binary_path))
     if declarations:
         c_text = "\n".join(declarations) + "\n\n" + c_text
     c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
