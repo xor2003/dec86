@@ -246,6 +246,17 @@ def test_movsb_lifts_and_updates_indices():
     assert "PUT(di)" in vex_text
 
 
+def test_wait_lifts_as_a_boring_noop():
+    project = _project_from_bytes(bytes.fromhex("9b"))
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "PUT(ip) = 0x1001" in vex_text
+    assert block.capstone.insns[0].mnemonic == "wait"
+
+
 def test_into_lifts_as_conditional_interrupt_call():
     project = _project_from_bytes(bytes.fromhex("ce"))
 
