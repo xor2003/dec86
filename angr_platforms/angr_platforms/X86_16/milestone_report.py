@@ -24,7 +24,11 @@ from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_
 from .instruction import describe_x86_16_instruction_metadata_surface
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
-from .validation_manifest import describe_x86_16_validation_families, describe_x86_16_validation_layers
+from .validation_manifest import (
+    describe_x86_16_martypc_differential_triage,
+    describe_x86_16_validation_families,
+    describe_x86_16_validation_layers,
+)
 from .widening_model import describe_x86_16_widening_pipeline
 
 
@@ -99,6 +103,7 @@ def build_x86_16_milestone_report(
 ) -> dict[str, object]:
     validation_layers = describe_x86_16_validation_layers()
     validation_families = describe_x86_16_validation_families()
+    martypc_differential_triage = describe_x86_16_martypc_differential_triage()
     readability_set = describe_x86_16_golden_readability_set()
     alias_api = describe_x86_16_alias_recovery_api()
     widening_pipeline = describe_x86_16_widening_pipeline()
@@ -147,6 +152,7 @@ def build_x86_16_milestone_report(
         "validation_families": [
             {"name": name, "default_checks": list(checks)} for name, checks in validation_families
         ],
+        "martypc_differential_triage": martypc_differential_triage,
         "alias_api": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in alias_api

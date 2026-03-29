@@ -1,6 +1,7 @@
 from angr_platforms.X86_16.validation_manifest import (
     VALIDATION_FAMILIES,
     VALIDATION_LAYERS,
+    describe_x86_16_martypc_differential_triage,
     describe_x86_16_validation_families,
     describe_x86_16_validation_layers,
 )
@@ -37,3 +38,17 @@ def test_x86_16_validation_families_cover_key_instruction_core_slices():
     assert "tests/test_x86_16_string_helpers.py" in VALIDATION_FAMILIES[2].default_checks
     assert "tests/test_x86_16_alu_helpers.py" in VALIDATION_FAMILIES[3].default_checks
     assert "tests/test_x86_16_milestone_report.py" in VALIDATION_FAMILIES[4].default_checks
+
+
+def test_x86_16_martypc_differential_triage_surface_spells_out_workflow():
+    assert describe_x86_16_martypc_differential_triage() == {
+        "reference_role": "secondary semantic reference",
+        "target_families": ("string", "stack_control", "addressing", "interrupt_api", "alu"),
+        "workflow": (
+            "compare Inertia output first",
+            "compare MartyPC behavior next",
+            "confirm against hardware-backed or compare-style references when available",
+        ),
+        "use_case": "debugging and triage only, not sole truth source",
+        "outputs": ("family notes", "opcode notes", "minimal repro snippets"),
+    }

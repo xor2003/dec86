@@ -33,6 +33,7 @@ __all__ = [
     "describe_x86_16_mixed_width_extension_surface",
     "describe_x86_16_mixed_width_instruction_surface",
     "describe_x86_16_projection_cleanup_rules",
+    "describe_x86_16_martypc_differential_triage",
     "simos_86_16",
     "rewrite_cod_source_stage",
     "decompiler_postprocess",
@@ -73,6 +74,7 @@ from .analysis_helpers import describe_x86_16_interrupt_lowering_boundary  # noq
 from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
 from .recovery_manifest import describe_x86_16_recovery_layers  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
+from .validation_manifest import describe_x86_16_martypc_differential_triage  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,

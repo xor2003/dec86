@@ -188,6 +188,9 @@ Recent progress on that front:
   concerns in the plan and milestone report
 - the instruction-metadata report surface now exposes normalized decode facts
   directly, so the decoder boundary is visible as a dedicated report artifact
+- MartyPC-assisted differential triage is now surfaced as a named workflow,
+  so family-local debugging can point at a secondary semantic reference without
+  pretending that the reference is the only source of truth
 - the mixed-width extension path now has a dedicated report surface that
   spells out the supported operand/address pair matrix instead of leaving it
   implicit inside parse helpers

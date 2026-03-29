@@ -1,4 +1,5 @@
 from angr_platforms.X86_16.milestone_report import build_x86_16_milestone_report
+from angr_platforms.X86_16.validation_manifest import describe_x86_16_martypc_differential_triage
 
 
 def test_x86_16_milestone_report_combines_scan_and_quality_context():
@@ -279,6 +280,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "conditional_jump",
         ),
     }
+    assert report["martypc_differential_triage"] == describe_x86_16_martypc_differential_triage()
     assert report["mixed_width_extension_surface"] == {
         "matrix": (
             {
