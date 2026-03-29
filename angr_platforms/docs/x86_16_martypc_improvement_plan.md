@@ -177,6 +177,9 @@ Recent progress on that front:
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging
+- scan-safe corpus reports now also attach semantic-family ownership to
+  failures and ugly clusters, so triage can point back to the low-level family
+  that likely needs work
 - 32-bit relative branches now also share a single helper emission path instead
   of repeating `update_eip` logic in each conditional branch handler
 - 8-bit, 16-bit, and 32-bit relative-branch families now all use shared

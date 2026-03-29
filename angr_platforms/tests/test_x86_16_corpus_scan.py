@@ -49,6 +49,7 @@ def test_corpus_scan_summary_groups_file_health():
         ok=True,
         stage_reached="decompile",
         fallback_kind="cfg_only",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("decompile", True)],
@@ -134,6 +135,7 @@ def test_corpus_scan_summary_accumulates_interrupt_api_counts():
         interrupt_bios_helper_count=1,
         interrupt_wrapper_call_count=3,
         interrupt_unresolved_wrapper_count=1,
+        semantic_family="interrupt_api",
         stages=[StageResult("load", True), StageResult("decompile", True)],
     )
 
@@ -144,6 +146,12 @@ def test_corpus_scan_summary_accumulates_interrupt_api_counts():
         "bios_helpers": 1,
         "wrapper_calls": 3,
         "unresolved_wrappers": 1,
+    }
+    assert summary["family_ownership"] == {
+        "top_families": [{"family": "interrupt_api", "count": 1}],
+        "top_failures": [],
+        "top_fallbacks": [],
+        "top_ugly_clusters": [],
     }
 
 
@@ -160,6 +168,7 @@ def test_corpus_scan_summary_ranks_repeat_failures():
         failure_class="timeout",
         reason="timed out",
         fallback_kind="block_lift",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("decompile", False, reason="timeout")],
@@ -176,6 +185,7 @@ def test_corpus_scan_summary_ranks_repeat_failures():
         failure_class="timeout",
         reason="timed out",
         fallback_kind="block_lift",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("decompile", False, reason="timeout")],
@@ -192,6 +202,7 @@ def test_corpus_scan_summary_ranks_repeat_failures():
         failure_class="cfg_failure",
         reason="cfg broke",
         fallback_kind="block_lift",
+        semantic_family="addressing",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("cfg", False, reason="cfg_failure")],
@@ -202,6 +213,14 @@ def test_corpus_scan_summary_ranks_repeat_failures():
     assert summary["top_failure_classes"] == [
         {"failure_class": "timeout", "count": 2},
         {"failure_class": "cfg_failure", "count": 1},
+    ]
+    assert summary["family_ownership"]["top_families"] == [
+        {"family": "stack_control", "count": 2},
+        {"family": "addressing", "count": 1},
+    ]
+    assert summary["family_ownership"]["top_failures"] == [
+        {"family": "stack_control", "count": 2},
+        {"family": "addressing", "count": 1},
     ]
     assert summary["top_failure_stages"] == [
         {"stage": "decompile", "count": 2},
@@ -231,6 +250,7 @@ def test_corpus_scan_summary_ranks_fallback_hotspots():
         ok=True,
         stage_reached="decompile",
         fallback_kind="cfg_only",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("decompile", True)],
@@ -245,6 +265,7 @@ def test_corpus_scan_summary_ranks_fallback_hotspots():
         ok=True,
         stage_reached="cfg",
         fallback_kind="lift_only",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("cfg", True)],
@@ -261,6 +282,7 @@ def test_corpus_scan_summary_ranks_fallback_hotspots():
         failure_class="decompiler_crash",
         reason="boom",
         fallback_kind="block_lift",
+        semantic_family="addressing",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("decompile", False, reason="decompiler_crash")],
@@ -272,6 +294,10 @@ def test_corpus_scan_summary_ranks_fallback_hotspots():
         {"fallback_kind": "block_lift", "count": 1},
         {"fallback_kind": "cfg_only", "count": 1},
         {"fallback_kind": "lift_only", "count": 1},
+    ]
+    assert summary["family_ownership"]["top_fallbacks"] == [
+        {"family": "stack_control", "count": 2},
+        {"family": "addressing", "count": 1},
     ]
     assert summary["top_fallback_files"] == [
         {"cod_file": "A.COD", "count": 2},
@@ -297,6 +323,7 @@ def test_corpus_scan_summary_ranks_ugly_clusters():
         ok=True,
         stage_reached="cfg",
         fallback_kind="cfg_only",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("decompile", True, detail="skipped decompile for oversized function (512 bytes > 384); cfg ok")],
@@ -311,6 +338,7 @@ def test_corpus_scan_summary_ranks_ugly_clusters():
         ok=True,
         stage_reached="cfg",
         fallback_kind="cfg_only",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("decompile", True, detail="skipped decompile for complex CFG (blocks>8 or insns>200); cfg ok")],
@@ -327,6 +355,7 @@ def test_corpus_scan_summary_ranks_ugly_clusters():
         failure_class="skipped_relocation",
         reason="contains unresolved call relocation pattern",
         fallback_kind="block_lift",
+        semantic_family="stack_control",
         function_count=1,
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("cfg", False, reason="skipped_relocation", detail="contains unresolved call relocation pattern")],
@@ -338,6 +367,11 @@ def test_corpus_scan_summary_ranks_ugly_clusters():
         {"cluster": "call_relocation_rescue", "count": 1},
         {"cluster": "control_flow_explosion", "count": 1},
         {"cluster": "oversized_function", "count": 1},
+    ]
+    assert summary["family_ownership"]["top_ugly_clusters"] == [
+        {"family": "stack_control", "cluster": "call_relocation_rescue", "count": 1},
+        {"family": "stack_control", "cluster": "control_flow_explosion", "count": 1},
+        {"family": "stack_control", "cluster": "oversized_function", "count": 1},
     ]
 
 

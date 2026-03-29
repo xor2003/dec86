@@ -60,6 +60,8 @@ class FunctionScanResult:
     interrupt_bios_helper_count: int = 0
     interrupt_wrapper_call_count: int = 0
     interrupt_unresolved_wrapper_count: int = 0
+    semantic_family: str | None = None
+    semantic_family_reason: str | None = None
     stages: list[StageResult] = field(default_factory=list)
 
 
@@ -122,6 +124,82 @@ def _interrupt_api_helper_names() -> tuple[set[str], set[str]]:
 
 _INTERRUPT_DOS_HELPER_NAMES, _INTERRUPT_BIOS_HELPER_NAMES = _interrupt_api_helper_names()
 
+_ADDRESSING_HELPER_NAMES = {
+    "address_width_bits",
+    "advance_eip32",
+    "advance_ip16",
+    "decode_width_profile",
+    "default_segment_for_modrm16",
+    "default_segment_for_modrm32",
+    "linear_address",
+    "load_far_pointer",
+    "load_far_pointer16",
+    "load_resolved_operand",
+    "load_word_pair16",
+    "resolve_linear_operand",
+    "store_resolved_operand",
+    "width_profile",
+}
+_STACK_HELPER_NAMES = {
+    "branch_rel16",
+    "branch_rel32",
+    "branch_rel8",
+    "emit_far_call16",
+    "emit_far_call32",
+    "emit_far_jump16",
+    "emit_far_jump32",
+    "emit_near_call16",
+    "emit_near_call32",
+    "emit_near_jump16",
+    "emit_near_jump32",
+    "loop_rel8",
+    "pop_all16",
+    "pop_all32",
+    "pop_far_return_frame16",
+    "pop_far_return_frame32",
+    "pop_flags16",
+    "pop_flags32",
+    "pop_interrupt_frame16",
+    "pop_interrupt_frame32",
+    "pop_segment16",
+    "pop_segment32",
+    "push16",
+    "push16_register",
+    "push32",
+    "push32_register",
+    "push_all16",
+    "push_all32",
+    "push_far_return_frame16",
+    "push_far_return_frame32",
+    "push_flags16",
+    "push_flags32",
+    "push_immediate16",
+    "push_immediate32",
+    "push_privilege_stack32",
+    "push_segment16",
+    "push_segment32",
+    "return_far16",
+    "return_far32",
+    "return_interrupt16",
+    "return_interrupt32",
+    "return_near16",
+    "return_near32",
+}
+_STRING_HELPER_NAMES = {
+    "direction_step",
+    "repeat_kind",
+    "string_load",
+    "string_store",
+}
+_ALU_HELPER_NAMES = {
+    "binary_",
+    "compare_",
+    "rotate_",
+    "shift_",
+    "unary_",
+    "update_eflags",
+}
+
 
 def _count_named_helper_calls(text: str, names: set[str]) -> int:
     if not text or not names:
@@ -138,6 +216,55 @@ def _count_interrupt_wrapper_calls(text: str) -> int:
     if not text:
         return 0
     return len(re.findall(r"(?<![A-Za-z0-9_])(?:int86x?|intdosx?)\s*\(", text))
+
+
+def _classify_semantic_family_from_text(text: str, result: FunctionScanResult | None = None) -> tuple[str | None, str | None]:
+    if result is not None and (
+        result.interrupt_dos_helper_count or result.interrupt_bios_helper_count or result.interrupt_wrapper_call_count
+    ):
+        return "interrupt_api", "interrupt helper or wrapper calls detected"
+
+    if not text:
+        return None, None
+
+    text_lower = text.lower()
+    family_markers = (
+        ("interrupt_api", _INTERRUPT_DOS_HELPER_NAMES | _INTERRUPT_BIOS_HELPER_NAMES | {"int86", "int86x", "intdos", "intdosx"}),
+        ("string", _STRING_HELPER_NAMES),
+        ("stack_control", _STACK_HELPER_NAMES),
+        ("addressing", _ADDRESSING_HELPER_NAMES),
+        ("alu", _ALU_HELPER_NAMES),
+    )
+    for family, markers in family_markers:
+        if any(marker.lower() in text_lower for marker in markers):
+            return family, f"{family} helper markers detected"
+    return None, None
+
+
+def _classify_semantic_family_from_failure(result: FunctionScanResult) -> tuple[str | None, str | None]:
+    parts = " ".join(
+        part.lower()
+        for part in (
+            result.failure_class,
+            result.reason,
+            *(stage.reason or "" for stage in result.stages),
+            *(stage.detail or "" for stage in result.stages),
+        )
+        if part
+    )
+    if not parts:
+        return None, None
+    if "interrupt" in parts or "int86" in parts or "intdos" in parts or "bios" in parts:
+        return "interrupt_api", "failure text points at interrupt/API lowering"
+    if "string" in parts or "rep" in parts or "cmps" in parts or "stos" in parts or "lods" in parts or "scas" in parts:
+        return "string", "failure text points at string family"
+    if "stack" in parts or "frame" in parts or "retf" in parts or "callf" in parts or "branch" in parts or "loop" in parts:
+        return "stack_control", "failure text points at stack/control family"
+    if "address" in parts or "segment" in parts or "modrm" in parts or "pointer" in parts or "width" in parts:
+        return "addressing", "failure text points at addressing family"
+    if "flag" in parts or "shift" in parts or "rotate" in parts or "alu" in parts:
+        return "alu", "failure text points at alu family"
+    return None, None
 
 
 def set_memory_limit(max_memory_mb: int) -> None:
@@ -387,6 +514,7 @@ def scan_function(
             result.failure_class = "skipped_relocation"
             result.reason = "contains unresolved call relocation pattern"
             result.fallback_kind = "block_lift"
+            result.semantic_family, result.semantic_family_reason = _classify_semantic_family_from_failure(result)
             _mark_stage(result, "cfg", False, reason="skipped_relocation", detail=result.reason)
             return _finish_scan(result)
 
@@ -395,6 +523,7 @@ def scan_function(
             if _should_skip_scan_safe_back_edge(loop_block.capstone, mode, max_loop_bytes):
                 result.ok = True
                 result.fallback_kind = "lift_only"
+                result.semantic_family, result.semantic_family_reason = "stack_control", "loop-heavy helper path"
                 _mark_stage(
                     result,
                     "cfg",
@@ -410,6 +539,7 @@ def scan_function(
         if _should_skip_scan_safe_cfg(len(code), mode, max_cfg_bytes):
             result.ok = True
             result.fallback_kind = "lift_only"
+            result.semantic_family, result.semantic_family_reason = "addressing", "oversized function skipped before decompile"
             _mark_stage(
                 result,
                 "cfg",
@@ -429,6 +559,7 @@ def scan_function(
             result.failure_class = failure_class
             result.reason = reason
             result.fallback_kind = "block_lift"
+            result.semantic_family, result.semantic_family_reason = _classify_semantic_family_from_failure(result)
             _mark_stage(result, "cfg", False, reason=failure_class, detail=reason)
             return _finish_scan(result)
 
@@ -437,6 +568,7 @@ def scan_function(
         if _should_skip_scan_safe_decompile_for_cfg_shape(cfg, mode, max_cfg_blocks, max_cfg_insns):
             result.ok = True
             result.fallback_kind = "cfg_only"
+            result.semantic_family, result.semantic_family_reason = "stack_control", "complex CFG skipped before decompile"
             _mark_stage(
                 result,
                 "decompile",
@@ -451,6 +583,7 @@ def scan_function(
         if _should_skip_scan_safe_decompile(len(code), mode, max_decompile_bytes):
             result.ok = True
             result.fallback_kind = "cfg_only"
+            result.semantic_family, result.semantic_family_reason = "addressing", "oversized function skipped before decompile"
             _mark_stage(
                 result,
                 "decompile",
@@ -479,6 +612,7 @@ def scan_function(
             result.interrupt_bios_helper_count = _count_named_helper_calls(text, _INTERRUPT_BIOS_HELPER_NAMES)
             result.interrupt_wrapper_call_count = _count_interrupt_wrapper_calls(text)
             result.interrupt_unresolved_wrapper_count = result.interrupt_wrapper_call_count
+            result.semantic_family, result.semantic_family_reason = _classify_semantic_family_from_text(text, result)
             result.decompiled_count = 1
             result.ok = True
             _mark_stage(result, "decompile", True)
@@ -488,6 +622,7 @@ def scan_function(
             result.failure_class = failure_class
             result.reason = reason
             result.fallback_kind = "block_lift"
+            result.semantic_family, result.semantic_family_reason = _classify_semantic_family_from_failure(result)
             _mark_stage(result, "decompile", False, reason=failure_class, detail=reason)
             return _finish_scan(result)
     finally:
@@ -521,6 +656,18 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         (result.cod_file, result.proc_name, result.proc_kind, result.fallback_kind)
         for result in results
         if _has_fallback_kind(result)
+    )
+    family_counter = Counter(result.semantic_family for result in results if result.semantic_family is not None)
+    family_failure_counter = Counter(
+        result.semantic_family for result in results if not result.ok and result.semantic_family is not None
+    )
+    family_fallback_counter = Counter(
+        result.semantic_family for result in results if _has_fallback_kind(result) and result.semantic_family is not None
+    )
+    family_cluster_counter = Counter(
+        (result.semantic_family, cluster)
+        for result in results
+        if (cluster := _classify_ugly_cluster(result)) is not None and result.semantic_family is not None
     )
     per_file: dict[str, dict[str, int]] = defaultdict(lambda: {"scanned": 0, "ok": 0})
 
@@ -603,6 +750,31 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         {"cluster": cluster, "count": count}
         for cluster, count in sorted(ugly_cluster_counter.items(), key=lambda item: (-item[1], item[0]))
     ]
+    top_family_ownership = [
+        {
+            "family": family,
+            "count": count,
+        }
+        for family, count in sorted(family_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    top_family_failures = [
+        {
+            "family": family,
+            "count": count,
+        }
+        for family, count in sorted(family_failure_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    top_family_fallbacks = [
+        {
+            "family": family,
+            "count": count,
+        }
+        for family, count in sorted(family_fallback_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    family_ugly_clusters = [
+        {"family": family, "cluster": cluster, "count": count}
+        for (family, cluster), count in sorted(family_cluster_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
     return {
         "mode": mode,
@@ -619,6 +791,12 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "top_fallback_files": top_fallback_files,
         "top_fallback_functions": top_fallback_functions,
         "top_ugly_clusters": top_ugly_clusters,
+        "family_ownership": {
+            "top_families": top_family_ownership,
+            "top_failures": top_family_failures,
+            "top_fallbacks": top_family_fallbacks,
+            "top_ugly_clusters": family_ugly_clusters,
+        },
         "files_zero_success": files_zero_success,
         "files_partial_success": files_partial_success,
         "files_scan_clean": files_scan_clean,

@@ -69,6 +69,12 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             },
         ],
         "top_ugly_clusters": [{"cluster": "byte_pair_arithmetic", "count": 4}],
+        "family_ownership": {
+            "top_families": [{"family": "stack_control", "count": 2}],
+            "top_failures": [{"family": "stack_control", "count": 1}],
+            "top_fallbacks": [{"family": "stack_control", "count": 2}],
+            "top_ugly_clusters": [{"family": "stack_control", "cluster": "byte_pair_arithmetic", "count": 4}],
+        },
     }
 
     report = build_x86_16_milestone_report(scan_summary, corpus_slice="active-corpus")
@@ -218,6 +224,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
     assert report["hotspots"]["fallback_counts"] == {"block_lift": 1, "cfg_only": 2}
     assert report["hotspots"]["top_fallback_kinds"][0]["fallback_kind"] == "cfg_only"
     assert report["hotspots"]["top_ugly_clusters"] == [{"cluster": "byte_pair_arithmetic", "count": 4}]
+    assert report["hotspots"]["family_ownership"] == scan_summary["family_ownership"]
     assert report["readability_set_summary"][0] == {
         "source": "cod/f14/MONOPRIN.COD",
         "proc_name": "_mset_pos",

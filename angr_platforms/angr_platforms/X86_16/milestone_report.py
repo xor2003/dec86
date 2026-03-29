@@ -73,6 +73,7 @@ def build_x86_16_milestone_report(
     recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
     readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
+    family_ownership = dict(scan_summary.get("family_ownership", {}) or {})
     interrupt_api = dict(scan_summary.get("interrupt_api", {}) or {})
     scan_results = list(scan_summary.get("results", []) or [])
     golden_cases = {(case.source, case.proc_name) for case in readability_set}
@@ -147,6 +148,7 @@ def build_x86_16_milestone_report(
             "top_fallback_files": top_fallback_files,
             "top_fallback_functions": top_fallback_functions,
             "top_ugly_clusters": top_ugly_clusters,
+            "family_ownership": family_ownership,
         },
         "source_backed_rewrites": source_backed_rewrites,
     }
