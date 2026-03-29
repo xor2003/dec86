@@ -8,6 +8,7 @@ from pyvex import IRConst
 from .addressing_helpers import address_step
 from .instr_base import InstrBase
 from .stack_helpers import enter16, leave16, near_return_ip16
+from .string_helpers import repeat_jump, repeat_prefix_cond, string_delta, string_source_segment
 from .instruction import *
 from .regs import reg8_t, reg16_t, sgreg_t
 from .exception import EXP_UD
@@ -570,25 +571,13 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg8_t.AL, value)
 
     def _string_delta(self, width):
-        df = self.emu.is_direction()
-        neg = self.emu.constant((-width) & 0xFFFF, Type.int_16)
-        pos = self.emu.constant(width, Type.int_16)
-        expr = self.emu.lifter_instruction.irsb_c.ite(df.cast_to(Type.int_1).rdt, neg.rdt, pos.rdt)
-        return self.emu._vv(expr)
+        return string_delta(self.emu, width)
 
     def _string_source_segment(self):
-        if self.instr.pre_segment is not None:
-            return sgreg_t(self.instr.pre_segment)
-        return sgreg_t.DS
+        return string_source_segment(self.instr)
 
     def _repeat_prefix_cond(self):
-        if self.instr.pre_repeat == NONE:
-            return None
-
-        cx = self.emu.get_gpreg(reg16_t.CX)
-        remaining = cx - self.emu.constant(1, Type.int_16)
-        self.emu.set_gpreg(reg16_t.CX, remaining)
-        return remaining != self.emu.constant(0, Type.int_16)
+        return repeat_prefix_cond(self.emu, self.instr)
 
     def movsb_m8_m8(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -602,7 +591,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, di + delta)
 
         if repeat_cond is not None:
-            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def stosb_m8_al(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -612,7 +601,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(1))
 
         if repeat_cond is not None:
-            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def stosw_m16_ax(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -622,7 +611,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, di + self._string_delta(2))
 
         if repeat_cond is not None:
-            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def lodsb_al_m8(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -634,7 +623,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.SI, next_si)
 
         if repeat_cond is not None:
-            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def lodsw_ax_m16(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -646,7 +635,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.SI, next_si)
 
         if repeat_cond is not None:
-            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def scasb_al_m8(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -685,12 +674,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, di + delta)
 
         if repeat_cond is not None:
-            cond = repeat_cond.cast_to(Type.int_1)
-            if self.instr.pre_repeat == REPZ:
-                cond = cond & self.emu.is_zero()
-            elif self.instr.pre_repeat == REPNZ:
-                cond = cond & (self.emu.is_zero() == self.emu.constant(0, Type.int_1))
-            self.emu.lifter_instruction.jump(cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def cmps_m16_m16(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -705,12 +689,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, di + delta)
 
         if repeat_cond is not None:
-            cond = repeat_cond.cast_to(Type.int_1)
-            if self.instr.pre_repeat == REPZ:
-                cond = cond & self.emu.is_zero()
-            elif self.instr.pre_repeat == REPNZ:
-                cond = cond & (self.emu.is_zero() == self.emu.constant(0, Type.int_1))
-            self.emu.lifter_instruction.jump(cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
 
     def movsw_m16_m16(self):

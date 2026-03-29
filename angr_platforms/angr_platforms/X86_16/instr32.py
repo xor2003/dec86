@@ -7,6 +7,7 @@ from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
 from .stack_helpers import leave32, near_return_eip32
+from .string_helpers import string_source_segment
 from .regs import reg8_t, reg16_t, reg32_t
 
 
@@ -367,7 +368,7 @@ class Instr32(InstrBase):
     def cmps_m8_m8(self):
         while True:
             m8_s = self.emu.get_data8(
-                self.select_segment(), self.emu.get_gpreg(reg32_t.ESI),
+                string_source_segment(self.instr), self.emu.get_gpreg(reg32_t.ESI),
             )
             m8_d = self.emu.get_data8(reg16_t.ES, self.emu.get_gpreg(reg32_t.EDI))
             self.emu.update_eflags_sub(m8_s, m8_d)
@@ -389,7 +390,7 @@ class Instr32(InstrBase):
     def cmps_m32_m32(self):
         while True:
             m32_s = self.emu.get_data32(
-                self.select_segment(), self.emu.get_gpreg(reg32_t.ESI),
+                string_source_segment(self.instr), self.emu.get_gpreg(reg32_t.ESI),
             )
             m32_d = self.emu.get_data32(reg16_t.ES, self.emu.get_gpreg(reg32_t.EDI))
             self.emu.update_eflags_sub(m32_s, m32_d)
