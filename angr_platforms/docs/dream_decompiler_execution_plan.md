@@ -18,6 +18,17 @@ step:
 - how hard it is
 - how it improves real decompilation quality
 
+For the narrower whole-corpus operational plan focused on:
+
+- whole `.COD` traversal
+- no crashes
+- no blind spots
+- steadily improving readability
+
+see:
+
+- [`x86_16_cod_corpus_completion_plan.md`](./x86_16_cod_corpus_completion_plan.md)
+
 ## Priority Scale
 
 - `P0`: foundation work that unlocks multiple later steps
@@ -472,6 +483,11 @@ continuously improved.
 - `Exit signal`:
   - medium-model startup/helper code shows fewer weak or misleading call
     signatures
+
+For the interrupt- and wrapper-specific API-lowering follow-up that sits on top
+of this prototype/helper work, see:
+
+- [`x86_16_interrupt_api_lowering_plan.md`](./x86_16_interrupt_api_lowering_plan.md)
 
 ### [x] D7. Thin Late-Rewrite Boundary
 
