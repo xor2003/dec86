@@ -173,6 +173,19 @@ def test_short_jmp_lifts_as_boring_jump():
     assert "mov" not in asm
 
 
+def test_jcxz_lifts_as_a_boring_conditional_jump():
+    code = bytes.fromhex("e302b80100c3")  # jcxz +2; mov ax,1; ret
+    project = _project_from_bytes(code)
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert block.capstone.insns[0].mnemonic == "jcxz"
+    assert "if (" in vex_text
+    assert "PUT(ip) = 0x1002" in vex_text
+
+
 def test_indirect_near_jump_lifts_as_boring_jump():
     code = bytes.fromhex("b80510ffe0c3")  # mov ax,0x1005; jmp ax; ret
     project = _project_from_bytes(code)

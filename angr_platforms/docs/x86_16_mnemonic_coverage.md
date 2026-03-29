@@ -88,7 +88,7 @@ Status meanings:
 | `ins` | - | 0 | yes | yes | runtime | insb, insw; repeat-aware DI/ES semantics | - | - |
 | `into` | - | 0 | yes | yes | smoke+runtime | implicit OF-gated int 4 | - | - |
 | `iret` | - | 0 | yes | yes | compare+smoke | implicit far return from interrupt frame | - | - |
-| `jcxz` | - | 0 | yes | yes | none | short rel8 | - | - |
+| `jcxz` | - | 0 | yes | yes | compare+smoke | short rel8 | - | - |
 | `jno` | - | 0 | yes | yes | none | short rel8 | - | - |
 | `jnp` | jpo | 0 | yes | yes | none | short rel8 | - | - |
 | `jo` | - | 0 | yes | yes | none | short rel8 | - | - |

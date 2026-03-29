@@ -42,7 +42,7 @@ Priority meanings:
 | high | `in` | 0 | yes | yes | compare | yes | yes | compare-backed |
 | high | `ins` | 0 | yes | yes | runtime | yes | yes | not compare-backed, tricky semantics |
 | high | `into` | 0 | yes | yes | smoke+runtime | yes | yes | tricky semantics |
-| high | `jcxz` | 0 | yes | yes | none | yes | yes | no focused regression |
+| high | `jcxz` | 0 | yes | yes | compare+smoke | yes | yes | compare-backed smoke |
 | high | `jno` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `jnp` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `jo` | 0 | yes | yes | none | yes | yes | no focused regression |
