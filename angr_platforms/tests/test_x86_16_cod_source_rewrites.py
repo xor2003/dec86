@@ -7,6 +7,7 @@ from angr_platforms.X86_16.cod_source_rewrites import (
     cod_source_rewrite_description,
     cod_source_rewrite_names,
     cod_source_rewrite_summary,
+    describe_x86_16_source_backed_rewrite_debt,
     describe_x86_16_source_backed_rewrite_status,
     get_cod_source_rewrite_spec,
 )
@@ -46,6 +47,7 @@ def test_cod_source_rewrite_description_matches_registry_contents():
     assert description["count"] == len(COD_SOURCE_REWRITE_SPECS)
     assert description["names"] == tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME)
     assert [item["name"] for item in description["specs"]] == list(COD_SOURCE_REWRITE_SPECS_BY_NAME)
+    assert all("rewrite_status" in item for item in description["specs"])
 
 
 def test_cod_source_rewrite_status_matches_registry_contents():
@@ -54,6 +56,36 @@ def test_cod_source_rewrite_status_matches_registry_contents():
     assert status["count"] == len(COD_SOURCE_REWRITE_SPECS)
     assert status["names"] == tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME)
     assert [item["name"] for item in status["specs"]] == list(COD_SOURCE_REWRITE_SPECS_BY_NAME)
+    assert status["status_counts"] == {
+        "permanent_guarded_oracle": 2,
+        "temporary_rescue": 4,
+    }
+    assert status["active_count"] == 6
+    assert status["oracle_count"] == 2
+    assert status["subsumed_count"] == 0
+
+
+def test_cod_source_rewrite_debt_matches_registry_contents():
+    debt = describe_x86_16_source_backed_rewrite_debt()
+
+    assert debt["count"] == len(COD_SOURCE_REWRITE_SPECS)
+    assert debt["active_count"] == 6
+    assert debt["oracle_count"] == 2
+    assert debt["subsumed_count"] == 0
+    assert debt["status_counts"] == {
+        "permanent_guarded_oracle": 2,
+        "temporary_rescue": 4,
+    }
+    assert debt["active_names"] == (
+        "configcrts",
+        "setgear",
+        "sethook",
+        "rotate_pt",
+        "mousepos",
+        "tidshowrange",
+    )
+    assert debt["oracle_names"] == ("configcrts", "rotate_pt")
+    assert debt["subsumed_names"] == ()
 
 
 def test_cod_source_rewrite_names_matches_registry_contents():

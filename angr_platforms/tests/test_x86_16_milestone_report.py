@@ -247,6 +247,30 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         },
     ]
     assert report["source_backed_rewrites"]["count"] >= 6
+    assert report["source_backed_rewrites"]["status_counts"] == {
+        "permanent_guarded_oracle": 2,
+        "temporary_rescue": 4,
+    }
+    assert report["source_backed_rewrite_debt"] == {
+        "count": 6,
+        "active_count": 6,
+        "oracle_count": 2,
+        "subsumed_count": 0,
+        "status_counts": {
+            "permanent_guarded_oracle": 2,
+            "temporary_rescue": 4,
+        },
+        "active_names": (
+            "configcrts",
+            "setgear",
+            "sethook",
+            "rotate_pt",
+            "mousepos",
+            "tidshowrange",
+        ),
+        "oracle_names": ("configcrts", "rotate_pt"),
+        "subsumed_names": (),
+    }
     assert report["hotspots"]["fallback_counts"] == {"block_lift": 1, "cfg_only": 2}
     assert report["hotspots"]["top_fallback_kinds"][0]["fallback_kind"] == "cfg_only"
     assert report["hotspots"]["top_ugly_clusters"] == [{"cluster": "byte_pair_arithmetic", "count": 4}]

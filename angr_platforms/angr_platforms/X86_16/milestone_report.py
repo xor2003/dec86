@@ -8,7 +8,10 @@ from typing import Mapping, Sequence
 from .alias_model import describe_x86_16_alias_recovery_api
 from .addressing_helpers import describe_x86_16_decode_width_matrix
 from .analysis_helpers import describe_x86_16_interrupt_api_surface
-from .cod_source_rewrites import describe_x86_16_source_backed_rewrite_status
+from .cod_source_rewrites import (
+    describe_x86_16_source_backed_rewrite_debt,
+    describe_x86_16_source_backed_rewrite_status,
+)
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
@@ -83,6 +86,7 @@ def build_x86_16_milestone_report(
     for result in scan_results:
         readability_tier_counts[_readability_tier(result, golden_cases)] += 1
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
+    source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
 
     report = {
         "corpus": corpus_name,
@@ -157,6 +161,7 @@ def build_x86_16_milestone_report(
             "family_ownership": family_ownership,
         },
         "source_backed_rewrites": source_backed_rewrites,
+        "source_backed_rewrite_debt": source_backed_rewrite_debt,
     }
     return report
 

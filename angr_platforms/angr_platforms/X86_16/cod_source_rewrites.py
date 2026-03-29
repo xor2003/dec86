@@ -16,6 +16,7 @@ __all__ = [
     "cod_source_rewrite_description",
     "cod_source_rewrite_names",
     "describe_x86_16_source_backed_rewrite_status",
+    "describe_x86_16_source_backed_rewrite_debt",
     "get_cod_source_rewrite_spec",
     "rewrite_cod_source_stage",
     "rewrite_cod_proc_from_source",
@@ -28,6 +29,7 @@ class CODSourceRewriteSpec:
     name: str
     header_regex: str
     rewritten: str
+    rewrite_status: str = "temporary_rescue"
     required_lines: tuple[str, ...] = ()
 
     def apply(self, c_text: str, metadata: CODProcMetadata | None) -> str:
@@ -42,6 +44,7 @@ class CODSourceRewriteSpec:
     def __repr__(self) -> str:
         return (
             f"CODSourceRewriteSpec(name={self.name!r}, "
+            f"rewrite_status={self.rewrite_status!r}, "
             f"required_lines={self.required_lines!r})"
         )
 
@@ -85,9 +88,16 @@ class CODSourceRewriteRegistry:
         return len(self.specs)
 
     def summary(self) -> dict[str, object]:
+        status_counts: dict[str, int] = {}
+        for spec in self.specs:
+            status_counts[spec.rewrite_status] = status_counts.get(spec.rewrite_status, 0) + 1
         return {
             "count": len(self.specs),
             "names": self.names(),
+            "status_counts": dict(sorted(status_counts.items())),
+            "active_count": sum(1 for spec in self.specs if spec.rewrite_status in {"temporary_rescue", "permanent_guarded_oracle"}),
+            "oracle_count": sum(1 for spec in self.specs if spec.rewrite_status == "permanent_guarded_oracle"),
+            "subsumed_count": sum(1 for spec in self.specs if spec.rewrite_status == "already_subsumed_by_general_recovery"),
         }
 
     def describe(self) -> dict[str, object]:
@@ -97,6 +107,7 @@ class CODSourceRewriteRegistry:
             "specs": tuple(
                 {
                     "name": spec.name,
+                    "rewrite_status": spec.rewrite_status,
                     "required_lines": spec.required_lines,
                     "header_regex": spec.header_regex,
                 }
@@ -116,12 +127,14 @@ def _cod_source_rewrite_spec(
     name: str,
     header_regex: str,
     rewritten: str,
+    rewrite_status: str = "temporary_rescue",
     required_lines: tuple[str, ...] = (),
 ) -> CODSourceRewriteSpec:
     return CODSourceRewriteSpec(
         name=name,
         header_regex=header_regex,
         rewritten=rewritten,
+        rewrite_status=rewrite_status,
         required_lines=required_lines,
     )
 
@@ -151,6 +164,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
     _cod_source_rewrite_spec(
         name="configcrts",
         header_regex=r"(?m)^(?:unsigned short|int|void)\s+_ConfigCrts\(void\)\s*\{",
+        rewrite_status="permanent_guarded_oracle",
         rewritten=(
             "void _ConfigCrts(void)\n"
             "{\n"
@@ -165,6 +179,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
     _cod_source_rewrite_spec(
         name="setgear",
         header_regex=r"(?m)^(?:unsigned short|short|int|void)\s+_SetGear\((?:[^)]*)\)\s*\{",
+        rewrite_status="temporary_rescue",
         rewritten=(
             "void _SetGear(int G)\n"
             "{\n"
@@ -191,6 +206,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
     _cod_source_rewrite_spec(
         name="sethook",
         header_regex=r"(?m)^int\s+_SetHook\(\)\s*\{",
+        rewrite_status="temporary_rescue",
         rewritten=(
             "int _SetHook()\n"
             "{\n"
@@ -232,6 +248,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
     _cod_source_rewrite_spec(
         name="rotate_pt",
         header_regex=r"(?m)^(?:unsigned short|short|int|void)\s+_rotate_pt\((?:[^)]*)\)\s*\{",
+        rewrite_status="permanent_guarded_oracle",
         rewritten=(
             "int _rotate_pt(int *s, int *d, int ang)\n"
             "{\n"
@@ -263,6 +280,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
     _cod_source_rewrite_spec(
         name="mousepos",
         header_regex=r"(?m)^(?:unsigned short|short|int|void)\s+_MousePOS\((?:[^)]*)\)\s*\{",
+        rewrite_status="temporary_rescue",
         rewritten=(
             "int _MousePOS()\n"
             "{\n"
@@ -278,6 +296,7 @@ COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (
     _cod_source_rewrite_spec(
         name="tidshowrange",
         header_regex=r"(?m)^(?:unsigned short|short|int|void)\s+_TIDShowRange\((?:[^)]*)\)\s*\{",
+        rewrite_status="temporary_rescue",
         rewritten=(
             "void _TIDShowRange(void)\n"
             "{\n"
@@ -357,4 +376,38 @@ def describe_x86_16_source_backed_rewrite_status() -> dict[str, object]:
         "count": registry_description["count"],
         "names": registry_description["names"],
         "specs": registry_description["specs"],
+        "status_counts": COD_SOURCE_REWRITE_REGISTRY.summary()["status_counts"],
+        "active_count": COD_SOURCE_REWRITE_REGISTRY.summary()["active_count"],
+        "oracle_count": COD_SOURCE_REWRITE_REGISTRY.summary()["oracle_count"],
+        "subsumed_count": COD_SOURCE_REWRITE_REGISTRY.summary()["subsumed_count"],
+    }
+
+
+def describe_x86_16_source_backed_rewrite_debt() -> dict[str, object]:
+    summary = COD_SOURCE_REWRITE_REGISTRY.summary()
+    specs = COD_SOURCE_REWRITE_REGISTRY.describe()["specs"]
+    active_names = tuple(
+        spec["name"]
+        for spec in specs
+        if spec["rewrite_status"] in {"temporary_rescue", "permanent_guarded_oracle"}
+    )
+    oracle_names = tuple(
+        spec["name"]
+        for spec in specs
+        if spec["rewrite_status"] == "permanent_guarded_oracle"
+    )
+    subsumed_names = tuple(
+        spec["name"]
+        for spec in specs
+        if spec["rewrite_status"] == "already_subsumed_by_general_recovery"
+    )
+    return {
+        "count": summary["count"],
+        "active_count": summary["active_count"],
+        "oracle_count": summary["oracle_count"],
+        "subsumed_count": summary["subsumed_count"],
+        "status_counts": summary["status_counts"],
+        "active_names": active_names,
+        "oracle_names": oracle_names,
+        "subsumed_names": subsumed_names,
     }
