@@ -442,7 +442,7 @@ class Instr16(InstrBase):
         addr = self.get_m()
         seg = self.select_segment()
         lower = self.emu.get_data16(seg, addr).signed
-        upper = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_16)).signed
+        upper = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_32)).signed
         out_of_range = (reg < lower) | (reg > upper)
         self.emu.lifter_instruction.jump(out_of_range, 0xFF005, JumpKind.Call)
 
@@ -501,7 +501,7 @@ class Instr16(InstrBase):
         addr = self.get_m()
         seg = self.select_segment()
         offset = self.emu.get_data16(seg, addr)
-        segment = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_16))
+        segment = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_32))
         return offset, segment
 
     def les_es_r16_m16(self):

@@ -74,7 +74,7 @@ Status meanings:
 | `aad` | - | 0 | yes | yes | compare | aad imm8 (tested with base 10) | - | - |
 | `aam` | - | 0 | yes | yes | compare | aam imm8 (tested with base 10) | - | - |
 | `aas` | - | 0 | yes | yes | compare | implicit AL/AH/flags | - | - |
-| `bound` | - | 0 | no | no | none | - | reg16, mem16 bounds pair | - |
+| `bound` | - | 0 | yes | yes | smoke | - | reg16, mem16 bounds pair | - |
 | `clc` | - | 0 | yes | yes | compare | implicit | - | - |
 | `cld` | - | 0 | yes | yes | none | implicit | - | - |
 | `cli` | - | 0 | yes | yes | none | implicit | - | - |

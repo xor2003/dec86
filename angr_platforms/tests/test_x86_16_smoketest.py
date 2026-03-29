@@ -105,6 +105,23 @@ def test_simple_je_near_targets_branch_destination():
     assert "if (" in vex_text and "PUT(ip) = 0x1004" in vex_text
 
 
+def test_bound_16bit_addressing_lifts():
+    code = b"\x67\x62\x07"  # bound ax, [bx]
+    project = angr.load_shellcode(
+        code,
+        arch=Arch86_16(),
+        start_offset=0x100,
+        load_address=0x100,
+        selfmodifying_code=False,
+        rebase_granularity=0x1000,
+    )
+
+    block = project.factory.block(0x100, size=len(code), opt_level=0)
+    assert block.vex is not None
+    assert block.vex.jumpkind == "Ijk_Call"
+    assert block.capstone.insns[0].mnemonic == "bound"
+
+
 def test_enter_local_stack_smoke():
     project = _project_from_asm("enter 2, 0; mov word ptr [bp-2], 1; mov ax, [bp-2]; leave; ret")
 

@@ -34,7 +34,7 @@ Priority meanings:
 | high | `jns` | 7 | yes | yes | none | yes | yes | no focused regression |
 | high | `mul` | 7 | yes | yes | none | yes | yes | no focused regression, tricky semantics |
 | high | `js` | 4 | yes | yes | none | yes | yes | no focused regression |
-| high | `bound` | 0 | no | no | none | yes | yes | support gap, no focused regression, tricky semantics |
+| high | `bound` | 0 | yes | yes | smoke | yes | yes | tricky semantics |
 | high | `cld` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `cli` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `esc` | 0 | partial | partial | none | yes | yes | support gap, no focused regression |
