@@ -35,10 +35,10 @@ Priority meanings:
 | high | `mul` | 7 | yes | yes | none | yes | yes | no focused regression, tricky semantics |
 | high | `js` | 4 | yes | yes | none | yes | yes | no focused regression |
 | high | `bound` | 0 | yes | yes | smoke | yes | yes | tricky semantics |
-| high | `cld` | 0 | yes | yes | none | yes | yes | no focused regression |
-| high | `cli` | 0 | yes | yes | none | yes | yes | no focused regression |
+| high | `cld` | 0 | yes | yes | smoke | yes | yes | no focused regression |
+| high | `cli` | 0 | yes | yes | smoke | yes | yes | no focused regression |
 | high | `esc` | 0 | partial | partial | smoke | yes | yes | support gap, tricky semantics |
-| high | `hlt` | 0 | yes | yes | none | yes | yes | no focused regression |
+| high | `hlt` | 0 | yes | yes | smoke | yes | yes | smoke |
 | high | `in` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `ins` | 0 | yes | yes | runtime | yes | yes | not compare-backed, tricky semantics |
 | high | `into` | 0 | yes | yes | smoke+runtime | yes | yes | tricky semantics |
@@ -52,8 +52,8 @@ Priority meanings:
 | high | `loopne` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `out` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `outs` | 0 | yes | yes | runtime | yes | yes | not compare-backed, tricky semantics |
-| high | `std` | 0 | yes | yes | none | yes | yes | no focused regression |
-| high | `sti` | 0 | yes | yes | none | yes | yes | no focused regression |
+| high | `std` | 0 | yes | yes | smoke | yes | yes | no focused regression |
+| high | `sti` | 0 | yes | yes | smoke | yes | yes | no focused regression |
 | high | `wait` | 0 | yes | yes | smoke | yes | yes | tricky semantics |
 | medium | `mov` | 194163 | yes | yes | corpus | yes | yes | not compare-backed |
 | medium | `cmp` | 41804 | yes | yes | corpus | yes | yes | not compare-backed |

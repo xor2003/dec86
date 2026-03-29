@@ -307,6 +307,40 @@ def test_wait_lifts_as_a_boring_noop():
     assert block.capstone.insns[0].mnemonic == "wait"
 
 
+def test_hlt_lifts_as_a_boring_stop_instruction():
+    project = _project_from_bytes(bytes.fromhex("f4"))
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert "PUT(ip) = 0x1001" in vex_text
+    assert block.capstone.insns[0].mnemonic == "hlt"
+
+
+def test_flag_control_instructions_smoke():
+    cases = (
+        (bytes.fromhex("fa"), 9, 0),  # cli
+        (bytes.fromhex("fb"), 9, 1),  # sti
+        (bytes.fromhex("fc"), 10, 0),  # cld
+        (bytes.fromhex("fd"), 10, 1),  # std
+    )
+
+    for code, bit, expected in cases:
+        project = _project_from_bytes(code)
+        state = project.factory.blank_state(
+            add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+        )
+        state.regs.flags = 0xFFFF
+
+        simgr = project.factory.simgr(state)
+        simgr.step(num_inst=1, insn_bytes=code)
+        assert len(simgr.active) == 1
+
+        result = simgr.active[0]
+        assert result.solver.eval(result.regs.flags[bit]) == expected
+
+
 def test_lock_prefix_add_executes_like_unlocked_add():
     unlocked = _project_from_bytes(bytes.fromhex("0107"))
     locked = _project_from_bytes(bytes.fromhex("f00107"))

@@ -76,14 +76,14 @@ Status meanings:
 | `aas` | - | 0 | yes | yes | compare | implicit AL/AH/flags | - | - |
 | `bound` | - | 0 | yes | yes | smoke | - | reg16, mem16 bounds pair | - |
 | `clc` | - | 0 | yes | yes | compare | implicit | - | - |
-| `cld` | - | 0 | yes | yes | none | implicit | - | - |
-| `cli` | - | 0 | yes | yes | none | implicit | - | - |
+| `cld` | - | 0 | yes | yes | smoke | implicit | - | - |
+| `cli` | - | 0 | yes | yes | smoke | implicit | - | - |
 | `cmps` | cmpsb, cmpsw | 0 | yes | yes | compare+corpus | cmpsb, cmpsw; repeat-aware | - | - |
 | `daa` | - | 0 | yes | yes | compare | implicit AL/flags | - | - |
 | `das` | - | 0 | yes | yes | compare | implicit AL/flags | - | - |
 | `enter` | - | 0 | yes | yes | smoke+runtime | enter imm16, imm8 | - | Runtime coverage now includes nested real-mode frame setup. |
 | `esc` | - | 0 | partial | partial | smoke | narrow FPU escape subset | general non-FPU modeling | Only narrow FPU escape groups exist; integer-model coverage is intentionally deferred. |
-| `hlt` | - | 0 | yes | yes | none | implicit | - | - |
+| `hlt` | - | 0 | yes | yes | smoke | implicit | - | - |
 | `in` | - | 0 | yes | yes | none | AL/AX <- imm8 or DX | - | - |
 | `ins` | - | 0 | yes | yes | runtime | insb, insw; repeat-aware DI/ES semantics | - | - |
 | `into` | - | 0 | yes | yes | smoke+runtime | implicit OF-gated int 4 | - | - |
@@ -110,8 +110,8 @@ Status meanings:
 | `ror` | - | 0 | yes | yes | compare | reg, mem; count=1/imm8/CL; 8+16-bit | - | - |
 | `scas` | scasb, scasw | 0 | yes | yes | compare | scasb, scasw; repeat-aware | - | - |
 | `stc` | - | 0 | yes | yes | compare | implicit | - | - |
-| `std` | - | 0 | yes | yes | none | implicit | - | - |
-| `sti` | - | 0 | yes | yes | none | implicit | - | - |
+| `std` | - | 0 | yes | yes | smoke | implicit | - | - |
+| `sti` | - | 0 | yes | yes | smoke | implicit | - | - |
 | `wait` | - | 0 | yes | yes | smoke | - | implicit | - |
 | `xlat` | - | 0 | yes | yes | compare+smoke | implicit AL <- [BX+AL] via DS | - | - |
 
