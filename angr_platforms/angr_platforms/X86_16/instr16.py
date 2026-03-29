@@ -5,6 +5,14 @@ from pyvex.stmt import IMark, WrTmp, Put, Store
 from pyvex.expr import Const, Binop
 from pyvex import IRConst
  
+from .alu_helpers import (
+    binary_operation,
+    binary_operation_with_carry,
+    compare_operation,
+    masked_shift_count,
+    rotate_count,
+    unary_operation,
+)
 from .addressing_helpers import address_step
 from .instr_base import InstrBase
 from .stack_helpers import enter16, leave16, near_return_ip16
@@ -222,64 +230,74 @@ class Instr16(InstrBase):
             raise RuntimeError(f"not implemented: 0x8f /{reg}")
 
     def sbb_r16_rm16(self) -> None:
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.set_r16(r16 - rm16 - carry)
-        self.emu.update_eflags_sbb(r16, rm16, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_r16,
+            self.get_rm16,
+            self.set_r16,
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            16,
+        )
 
     def add_rm16_r16(self):
-        rm16 = self.get_rm16().cast_to(Type.int_16)
-        r16 = self.get_r16().cast_to(Type.int_16)
-        self.set_rm16(rm16 + r16)
-        self.emu.update_eflags_add(rm16, r16)
+        binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
 
     def sbb_rm16_r16(self) -> None:
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.set_rm16(rm16 - r16 - carry)
-        self.emu.update_eflags_sbb(rm16, r16, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm16,
+            self.get_r16,
+            self.set_rm16,
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            16,
+        )
 
     def adc_rm16_r16(self) -> None:
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.set_rm16(rm16 + r16 + carry)
-        self.emu.update_eflags_adc(rm16, r16, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm16,
+            self.get_r16,
+            self.set_rm16,
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            16,
+        )
 
     def add_r16_rm16(self):
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        self.set_r16(r16 + rm16)
-        self.emu.update_eflags_add(r16, rm16)
+        binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
 
     def adc_r16_rm16(self) -> None:
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.set_r16(r16 + rm16 + carry)
-        self.emu.update_eflags_adc(r16, rm16, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_r16,
+            self.get_rm16,
+            self.set_r16,
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            16,
+        )
 
     def _ax_imm16(self):
         return self.emu.constant(self.instr.imm16, Type.int_16)
 
     def _binary_ax_imm16(self, operator, updater):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        imm16 = self._ax_imm16()
-        self.emu.set_gpreg(reg16_t.AX, operator(ax, imm16))
-        updater(ax, imm16)
+        binary_operation(self.emu, lambda: self.emu.get_gpreg(reg16_t.AX), self._ax_imm16, lambda value: self.emu.set_gpreg(reg16_t.AX, value), updater, operator)
 
     def _binary_ax_imm16_with_carry(self, operator, updater):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        imm16 = self._ax_imm16()
-        carry = self.emu.is_carry().cast_to(Type.int_16)
-        self.emu.set_gpreg(reg16_t.AX, operator(ax, imm16, carry))
-        updater(ax, imm16, carry)
+        binary_operation_with_carry(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            self._ax_imm16,
+            lambda value: self.emu.set_gpreg(reg16_t.AX, value),
+            updater,
+            operator,
+            16,
+        )
 
     def _compare_ax_imm16(self, updater):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        updater(ax, self._ax_imm16())
+        compare_operation(lambda: self.emu.get_gpreg(reg16_t.AX), self._ax_imm16, updater)
 
     def add_ax_imm16(self):
         self._binary_ax_imm16(lambda ax, imm16: ax + imm16, self.emu.update_eflags_add)
@@ -303,16 +321,10 @@ class Instr16(InstrBase):
         self.emu.set_segment(sgreg_t.ES, self.emu.pop16())
 
     def or_rm16_r16(self):
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        self.set_rm16(rm16 | r16)
-        self.emu.update_eflags_or(rm16, r16)
+        binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def or_r16_rm16(self):
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        self.set_r16(r16 | rm16)
-        self.emu.update_eflags_or(r16, rm16)
+        binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def or_ax_imm16(self):
         self._binary_ax_imm16(lambda ax, imm16: ax | imm16, self.emu.update_eflags_or)
@@ -333,75 +345,59 @@ class Instr16(InstrBase):
         self.emu.set_segment(sgreg_t.DS, self.emu.pop16())
 
     def and_rm16_r16(self):
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        self.set_rm16(rm16 & r16)
-        self.emu.update_eflags_and(rm16, r16)
+        binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
 
     def and_r16_rm16(self):
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        self.set_r16(r16 & rm16)
-        self.emu.update_eflags_and(r16, rm16)
+        binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
 
     def and_ax_imm16(self):
         self._binary_ax_imm16(lambda ax, imm16: ax & imm16, self.emu.update_eflags_and)
 
     def sub_rm16_r16(self):
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        self.set_rm16(rm16 - r16)
-        self.emu.update_eflags_sub(rm16, r16)
+        binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
 
     def sub_r16_rm16(self):
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        self.set_r16(r16 - rm16)
-        self.emu.update_eflags_sub(r16, rm16)
+        binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
 
     def sub_ax_imm16(self):
         self._binary_ax_imm16(lambda ax, imm16: ax - imm16, self.emu.update_eflags_sub)
 
     def xor_rm16_r16(self):
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        self.set_rm16(rm16 ^ r16)
-        self.emu.update_eflags_xor(rm16, r16)
+        binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
 
 
     def xor_r16_rm16(self):
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        self.set_r16(r16 ^ rm16)
-        self.emu.update_eflags_xor(rm16, r16)
+        binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
 
     def xor_ax_imm16(self):
         self._binary_ax_imm16(lambda ax, imm16: ax ^ imm16, self.emu.update_eflags_xor)
 
     def cmp_rm16_r16(self):
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        self.emu.update_eflags_sub(rm16, r16)
+        compare_operation(self.get_rm16, self.get_r16, self.emu.update_eflags_sub)
 
     def cmp_r16_rm16(self):
-        r16 = self.get_r16()
-        rm16 = self.get_rm16()
-        self.emu.update_eflags_sub(r16, rm16)
+        compare_operation(self.get_r16, self.get_rm16, self.emu.update_eflags_sub)
 
     def cmp_ax_imm16(self):
         self._compare_ax_imm16(self.emu.update_eflags_sub)
 
     def inc_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
-        r16 = self.emu.get_gpreg(reg)
-        self.emu.set_gpreg(reg, r16 + 1)
-        self.emu.update_eflags_inc(r16)
+        unary_operation(
+            lambda: self.emu.get_gpreg(reg),
+            lambda value: self.emu.set_gpreg(reg, value),
+            self.emu.update_eflags_inc,
+            lambda value: value + 1,
+        )
 
     def dec_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
-        r16 = self.emu.get_gpreg(reg)
-        self.emu.set_gpreg(reg, r16 - 1)
-        self.emu.update_eflags_dec(r16)
+        unary_operation(
+            lambda: self.emu.get_gpreg(reg),
+            lambda value: self.emu.set_gpreg(reg, value),
+            self.emu.update_eflags_dec,
+            lambda value: value - 1,
+        )
 
     def push_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
@@ -472,9 +468,7 @@ class Instr16(InstrBase):
         self.emu.update_eflags_imul(rm16_s, imm8_s)
 
     def test_rm16_r16(self):
-        rm16 = self.get_rm16()
-        r16 = self.get_r16()
-        self.emu.update_eflags_and(rm16, r16)
+        compare_operation(self.get_rm16, self.get_r16, self.emu.update_eflags_and)
 
     def xchg_r16_rm16(self):
         r16 = self.get_r16()
@@ -643,7 +637,7 @@ class Instr16(InstrBase):
         di = self.emu.get_gpreg(reg16_t.DI)
         next_di = di + self._string_delta(1)
         value = self.emu.get_data8(sgreg_t.ES, di)
-        self.emu.update_eflags_sub(self.emu.get_gpreg(reg8_t.AL), value)
+        compare_operation(lambda: self.emu.get_gpreg(reg8_t.AL), lambda: value, self.emu.update_eflags_sub)
         self.emu.set_gpreg(reg16_t.DI, next_di)
 
         if repeat_cond is not None:
@@ -655,7 +649,7 @@ class Instr16(InstrBase):
         di = self.emu.get_gpreg(reg16_t.DI)
         next_di = di + self._string_delta(2)
         value = self.emu.get_data16(sgreg_t.ES, di)
-        self.emu.update_eflags_sub(self.emu.get_gpreg(reg16_t.AX), value)
+        compare_operation(lambda: self.emu.get_gpreg(reg16_t.AX), lambda: value, self.emu.update_eflags_sub)
         self.emu.set_gpreg(reg16_t.DI, next_di)
 
         if repeat_cond is not None:
@@ -669,7 +663,7 @@ class Instr16(InstrBase):
         delta = self._string_delta(1)
         m8_s = self.emu.get_data8(self._string_source_segment(), si)
         m8_d = self.emu.get_data8(sgreg_t.ES, di)
-        self.emu.update_eflags_sub(m8_s, m8_d)
+        compare_operation(lambda: m8_s, lambda: m8_d, self.emu.update_eflags_sub)
         self.emu.set_gpreg(reg16_t.SI, si + delta)
         self.emu.set_gpreg(reg16_t.DI, di + delta)
 
@@ -684,7 +678,7 @@ class Instr16(InstrBase):
         delta = self._string_delta(2)
         m16_s = self.emu.get_data16(self._string_source_segment(), si)
         m16_d = self.emu.get_data16(sgreg_t.ES, di)
-        self.emu.update_eflags_sub(m16_s, m16_d)
+        compare_operation(lambda: m16_s, lambda: m16_d, self.emu.update_eflags_sub)
         self.emu.set_gpreg(reg16_t.SI, si + delta)
         self.emu.set_gpreg(reg16_t.DI, di + delta)
 
@@ -752,8 +746,7 @@ class Instr16(InstrBase):
 
 
     def test_ax_imm16(self):
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.update_eflags_and(ax, self.instr.imm16)
+        compare_operation(lambda: self.emu.get_gpreg(reg16_t.AX), lambda: self.instr.imm16, self.emu.update_eflags_and)
 
     def mov_r16_imm16(self):
         reg = self.instr.opcode & 0b111
@@ -1067,97 +1060,119 @@ class Instr16(InstrBase):
             pass
 
     def add_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        self.set_rm16(rm16 + self.instr.imm16)
-        self.emu.update_eflags_add(rm16, self.instr.imm16)
+        binary_operation(self.emu, self.get_rm16, lambda: self.instr.imm16, self.set_rm16, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
 
     def or_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        self.set_rm16(rm16 | self.instr.imm16)
-        self.emu.update_eflags_or(rm16, self.instr.imm16)
+        binary_operation(self.emu, self.get_rm16, lambda: self.instr.imm16, self.set_rm16, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def adc_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        cf = self.emu.is_carry().cast_to(Type.int_16)
-        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
-        self.set_rm16(rm16 + imm16 + cf)
-        self.emu.update_eflags_adc(rm16, imm16, cf)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            16,
+        )
 
     def sbb_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        cf = self.emu.is_carry().cast_to(Type.int_16)
-        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
-        self.set_rm16(rm16 - imm16 - cf)
-        self.emu.update_eflags_sbb(rm16, imm16, cf)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            16,
+        )
 
     def and_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        self.set_rm16(rm16 & self.instr.imm16)
-        self.emu.update_eflags_and(rm16, self.instr.imm16)
+        binary_operation(self.emu, self.get_rm16, lambda: self.instr.imm16, self.set_rm16, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
 
     def sub_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        self.set_rm16(rm16 - self.instr.imm16)
-        self.emu.update_eflags_sub(rm16, self.instr.imm16)
+        binary_operation(self.emu, self.get_rm16, lambda: self.instr.imm16, self.set_rm16, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
 
     def xor_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        imm16 = self.emu.constant(self.instr.imm16, Type.int_16)
-        self.set_rm16(rm16 ^ imm16)
-        self.emu.update_eflags_xor(rm16, imm16)
+        binary_operation(self.emu, self.get_rm16, lambda: self.emu.constant(self.instr.imm16, Type.int_16), self.set_rm16, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
 
     def cmp_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        self.emu.update_eflags_sub(rm16, self.instr.imm16)
+        compare_operation(self.get_rm16, lambda: self.instr.imm16, self.emu.update_eflags_sub)
 
     def add_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.set_rm16(rm16 + imm8)
-        self.emu.update_eflags_add(rm16, imm8)
+        binary_operation(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_add,
+            lambda lhs, rhs: lhs + rhs,
+        )
 
     def or_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.set_rm16(rm16 | imm8)
-        self.emu.update_eflags_or(rm16, imm8)
+        binary_operation(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_or,
+            lambda lhs, rhs: lhs | rhs,
+        )
 
     def adc_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        cf = self.emu.is_carry().cast_to(Type.int_16)
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.set_rm16(rm16 + imm8 + cf)
-        self.emu.update_eflags_adc(rm16, imm8, cf)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            16,
+        )
 
     def sbb_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        cf = self.emu.is_carry().cast_to(Type.int_16)
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.set_rm16(rm16 - imm8 - cf)
-        self.emu.update_eflags_sbb(rm16, imm8, cf)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            16,
+        )
 
     def and_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.set_rm16(rm16 & imm8)
-        self.emu.update_eflags_and(rm16, imm8)
+        binary_operation(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_and,
+            lambda lhs, rhs: lhs & rhs,
+        )
 
     def sub_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.set_rm16(rm16 - imm8)
-        self.emu.update_eflags_sub(rm16, imm8)
+        binary_operation(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_sub,
+            lambda lhs, rhs: lhs - rhs,
+        )
 
     def xor_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.set_rm16(rm16 ^ imm8)
-        self.emu.update_eflags_xor(rm16, imm8)
+        binary_operation(
+            self.emu,
+            self.get_rm16,
+            lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16),
+            self.set_rm16,
+            self.emu.update_eflags_xor,
+            lambda lhs, rhs: lhs ^ rhs,
+        )
 
     def cmp_rm16_imm8(self):
-        rm16 = self.get_rm16()
-        imm8 = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        self.emu.update_eflags_sub(rm16, imm8)
+        compare_operation(self.get_rm16, lambda: self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16), self.emu.update_eflags_sub)
 
     def shl_rm16_imm8(self):
         rm16 = self.get_rm16()
@@ -1401,18 +1416,18 @@ class Instr16(InstrBase):
         self.emu.update_eflags_sar(rm16_s, cl)
 
     def test_rm16_imm16(self):
-        rm16 = self.get_rm16()
-        imm16 = self.instr.imm16
-        self.emu.update_eflags_and(rm16, imm16)
+        compare_operation(self.get_rm16, lambda: self.instr.imm16, self.emu.update_eflags_and)
 
     def not_rm16(self):
-        rm16 = self.get_rm16()
-        self.set_rm16(~rm16)
+        unary_operation(self.get_rm16, self.set_rm16, None, lambda value: ~value)
 
     def neg_rm16(self):
-        rm16_s = self.get_rm16().signed
-        self.set_rm16((rm16_s * -1).cast_to(Type.int_16))
-        self.emu.update_eflags_neg(rm16_s)
+        unary_operation(
+            self.get_rm16,
+            self.set_rm16,
+            self.emu.update_eflags_neg,
+            lambda value: (value.signed * -1).cast_to(Type.int_16),
+        )
 
     def mul_dx_ax_rm16(self):
         rm16 = self.get_rm16()
@@ -1452,14 +1467,10 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DX, (val_s % rm16_s).cast_to(Type.int_16))
 
     def inc_rm16(self):
-        rm16 = self.get_rm16()
-        self.set_rm16(rm16 + 1)
-        self.emu.update_eflags_inc(rm16)
+        unary_operation(self.get_rm16, self.set_rm16, self.emu.update_eflags_inc, lambda value: value + 1)
 
     def dec_rm16(self):
-        rm16 = self.get_rm16()
-        self.set_rm16(rm16 - 1)
-        self.emu.update_eflags_dec(rm16)
+        unary_operation(self.get_rm16, self.set_rm16, self.emu.update_eflags_dec, lambda value: value - 1)
 
     def call_rm16(self):
         rm16 = self.get_rm16()

@@ -6,6 +6,14 @@ from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
 
 from .emu import EmuInstr
+from .alu_helpers import (
+    binary_operation,
+    binary_operation_with_carry,
+    compare_operation,
+    masked_shift_count,
+    rotate_count,
+    unary_operation,
+)
 from .exec import ExecInstr
 from .stack_helpers import pop_far_return_frame16, pop_interrupt_frame16
 from .instruction import *
@@ -211,143 +219,159 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.chk[opcode] = flags
 
     def add_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        self.set_rm8(rm8 + r8)
-        self.emu.update_eflags_add(rm8, r8)
+        binary_operation(self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
 
     def adc_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        carry = self.emu.is_carry().cast_to(Type.int_8)
-        self.set_rm8(rm8 + r8 + carry)
-        self.emu.update_eflags_adc(rm8, r8, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm8,
+            self.get_r8,
+            self.set_rm8,
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            8,
+        )
 
     def add_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        self.set_r8(r8 + rm8)
-        self.emu.update_eflags_add(r8, rm8)
+        binary_operation(self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
 
     def adc_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        carry = self.emu.is_carry().cast_to(Type.int_8)
-        self.set_r8(r8 + rm8 + carry)
-        self.emu.update_eflags_adc(r8, rm8, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_r8,
+            self.get_rm8,
+            self.set_r8,
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            8,
+        )
 
     def adc_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        carry = self.emu.is_carry().cast_to(Type.int_8)
-        self.emu.set_gpreg(reg8_t.AL, al + self.instr.imm8 + carry)
-        self.emu.update_eflags_adc(al, self.instr.imm8, carry)
+        binary_operation_with_carry(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: self.instr.imm8,
+            lambda value: self.emu.set_gpreg(reg8_t.AL, value),
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            8,
+        )
 
     def add_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        self.emu.set_gpreg(reg8_t.AL, al + self.instr.imm8)
-        self.emu.update_eflags_add(al, self.instr.imm8)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: self.instr.imm8,
+            lambda value: self.emu.set_gpreg(reg8_t.AL, value),
+            self.emu.update_eflags_add,
+            lambda lhs, rhs: lhs + rhs,
+        )
 
     def or_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        self.set_rm8(rm8 | r8)
-        self.emu.update_eflags_or(rm8, r8)
+        binary_operation(self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def or_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        self.set_r8(r8 | rm8)
-        self.emu.update_eflags_or(r8, rm8)
+        binary_operation(self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def or_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        self.emu.set_gpreg(reg8_t.AL, al | self.instr.imm8)
-        self.emu.update_eflags_or(al, self.instr.imm8)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: self.instr.imm8,
+            lambda value: self.emu.set_gpreg(reg8_t.AL, value),
+            self.emu.update_eflags_or,
+            lambda lhs, rhs: lhs | rhs,
+        )
 
     def and_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        self.set_rm8(rm8 & r8)
-        self.emu.update_eflags_and(rm8, r8)
+        binary_operation(self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
 
     def and_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        self.set_r8(r8 & rm8)
-        self.emu.update_eflags_and(r8, rm8)
+        binary_operation(self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
 
     def and_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        self.emu.set_gpreg(reg8_t.AL, al & self.instr.imm8)
-        self.emu.update_eflags_and(al, self.instr.imm8)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: self.instr.imm8,
+            lambda value: self.emu.set_gpreg(reg8_t.AL, value),
+            self.emu.update_eflags_and,
+            lambda lhs, rhs: lhs & rhs,
+        )
 
     def sub_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        self.set_rm8(rm8 - r8)
-        self.emu.update_eflags_sub(rm8, r8)
+        binary_operation(self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
 
     def sub_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        self.set_r8(r8 - rm8)
-        self.emu.update_eflags_sub(r8, rm8)
+        binary_operation(self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
 
     def sub_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        self.emu.set_gpreg(reg8_t.AL, al - self.instr.imm8)
-        self.emu.update_eflags_sub(al, self.instr.imm8)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: self.instr.imm8,
+            lambda value: self.emu.set_gpreg(reg8_t.AL, value),
+            self.emu.update_eflags_sub,
+            lambda lhs, rhs: lhs - rhs,
+        )
 
     def sbb_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        carry = self.emu.is_carry().cast_to(Type.int_8)
-        self.set_rm8(rm8 - r8 - carry)
-        self.emu.update_eflags_sbb(rm8, r8, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm8,
+            self.get_r8,
+            self.set_rm8,
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            8,
+        )
 
     def sbb_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        carry = self.emu.is_carry().cast_to(Type.int_8)
-        self.set_r8(r8 - rm8 - carry)
-        self.emu.update_eflags_sbb(r8, rm8, carry)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_r8,
+            self.get_rm8,
+            self.set_r8,
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            8,
+        )
 
     def sbb_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        carry = self.emu.is_carry().cast_to(Type.int_8)
-        self.emu.set_gpreg(reg8_t.AL, al - self.instr.imm8 - carry)
-        self.emu.update_eflags_sbb(al, self.instr.imm8, carry)
+        binary_operation_with_carry(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: self.instr.imm8,
+            lambda value: self.emu.set_gpreg(reg8_t.AL, value),
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            8,
+        )
 
     def xor_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        self.set_rm8(rm8 ^ r8)
-        self.emu.update_eflags_xor(rm8, r8)
+        binary_operation(self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
 
     def xor_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        self.set_r8(r8 ^ rm8)
-        self.emu.update_eflags_xor(rm8, r8)
+        binary_operation(self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
 
     def xor_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        self.emu.set_gpreg(reg8_t.AL, al ^ self.instr.imm8)
-        self.emu.update_eflags_xor(al, self.instr.imm8)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: self.instr.imm8,
+            lambda value: self.emu.set_gpreg(reg8_t.AL, value),
+            self.emu.update_eflags_xor,
+            lambda lhs, rhs: lhs ^ rhs,
+        )
 
     def cmp_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        self.emu.update_eflags_sub(rm8, r8)
+        compare_operation(self.get_rm8, self.get_r8, self.emu.update_eflags_sub)
 
     def cmp_r8_rm8(self) -> None:
-        r8 = self.get_r8()
-        rm8 = self.get_rm8()
-        self.emu.update_eflags_sub(r8, rm8)
+        compare_operation(self.get_r8, self.get_rm8, self.emu.update_eflags_sub)
 
     def cmp_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        self.emu.update_eflags_sub(al, self.instr.imm8)
+        compare_operation(lambda: self.emu.get_gpreg(reg8_t.AL), lambda: self.instr.imm8, self.emu.update_eflags_sub)
 
     def _rel8_target(self):
         rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
@@ -432,9 +456,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
 
     def test_rm8_r8(self) -> None:
-        rm8 = self.get_rm8()
-        r8 = self.get_r8()
-        self.emu.update_eflags_and(rm8, r8)
+        compare_operation(self.get_rm8, self.get_r8, self.emu.update_eflags_and)
 
     def xchg_r8_rm8(self) -> None:
         r8 = self.get_r8()
@@ -491,8 +513,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_moffs8(self.emu.get_gpreg(reg8_t.AL))
 
     def test_al_imm8(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
-        self.emu.update_eflags_and(al, self.instr.imm8)
+        compare_operation(lambda: self.emu.get_gpreg(reg8_t.AL), lambda: self.instr.imm8, self.emu.update_eflags_and)
 
     def salc(self) -> None:
         value = self._ite_value(
@@ -900,11 +921,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         return self.emu.constant(1, Type.int_8)
 
     def _masked_shift_count8(self, count):
-        count_v = self.emu.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
-        return count_v & self.emu.constant(0x1F, Type.int_8)
+        return masked_shift_count(self.emu, count, 8)
 
     def _rotate_count8(self, count, modulo):
-        return self._masked_shift_count8(count) % self.emu.constant(modulo, Type.int_8)
+        return rotate_count(self.emu, count, modulo, 8)
 
     def shl_rm8(self) -> None:
         rm8 = self.get_rm8()
@@ -949,59 +969,54 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.update_eflags_sar(rm8, count)
 
     def inc_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.set_rm8(rm8 + 1)
-        self.emu.update_eflags_inc(rm8)
+        unary_operation(self.get_rm8, self.set_rm8, self.emu.update_eflags_inc, lambda value: value + 1)
 
     def dec_rm8(self) -> None:
-        rm8 = self.get_rm8() - 1
-        self.set_rm8(rm8)
-        self.emu.update_eflags_dec(rm8)
+        unary_operation(self.get_rm8, self.set_rm8, self.emu.update_eflags_dec, lambda value: value - 1)
 
     def add_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.set_rm8(rm8 + self.instr.imm8)
-        self.emu.update_eflags_add(rm8, self.instr.imm8)
+        binary_operation(self.emu, self.get_rm8, lambda: self.instr.imm8, self.set_rm8, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs)
 
     def or_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.set_rm8(rm8 | self.instr.imm8)
-        self.emu.update_eflags_or(rm8, self.instr.imm8)
+        binary_operation(self.emu, self.get_rm8, lambda: self.instr.imm8, self.set_rm8, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def adc_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        cf = self.emu.is_carry().cast_to(Type.int_8)
-        self.set_rm8(rm8 + self.instr.imm8 + cf)
-        self.emu.update_eflags_adc(rm8, self.instr.imm8, cf)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm8,
+            lambda: self.instr.imm8,
+            self.set_rm8,
+            self.emu.update_eflags_adc,
+            lambda lhs, rhs, carry: lhs + rhs + carry,
+            8,
+        )
 
     def sbb_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        cf = self.emu.is_carry().cast_to(Type.int_8)
-        self.set_rm8(rm8 - self.instr.imm8 - cf)
-        self.emu.update_eflags_sbb(rm8, self.instr.imm8, cf)
+        binary_operation_with_carry(
+            self.emu,
+            self.get_rm8,
+            lambda: self.instr.imm8,
+            self.set_rm8,
+            self.emu.update_eflags_sbb,
+            lambda lhs, rhs, carry: lhs - rhs - carry,
+            8,
+        )
 
 
     def and_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.set_rm8(rm8 & self.instr.imm8)
-        self.emu.update_eflags_and(rm8, self.instr.imm8)
+        binary_operation(self.emu, self.get_rm8, lambda: self.instr.imm8, self.set_rm8, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
 
 
     def sub_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.set_rm8(rm8 - self.instr.imm8)
-        self.emu.update_eflags_sub(rm8, self.instr.imm8)
+        binary_operation(self.emu, self.get_rm8, lambda: self.instr.imm8, self.set_rm8, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
 
 
     def xor_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.set_rm8(rm8 ^ self.instr.imm8)
-        self.emu.update_eflags_xor(rm8, self.instr.imm8)
+        binary_operation(self.emu, self.get_rm8, lambda: self.instr.imm8, self.set_rm8, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
 
 
     def cmp_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.emu.update_eflags_sub(rm8, self.emu.constant(self.instr.imm8, Type.int_8))
+        compare_operation(self.get_rm8, lambda: self.emu.constant(self.instr.imm8, Type.int_8), self.emu.update_eflags_sub)
 
 
     def shl_rm8_imm8(self) -> None:
@@ -1109,10 +1124,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
 
     def test_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        imm8 = self.instr.imm8  #self.emu.get_code8(0)
-        #self.emu.update_eip(1)
-        self.emu.update_eflags_and(rm8, imm8)
+        compare_operation(self.get_rm8, lambda: self.instr.imm8, self.emu.update_eflags_and)
 
 
     def not_rm8(self) -> None:
@@ -1121,9 +1133,12 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
 
     def neg_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        self.set_rm8(self.emu.constant(0, Type.int_8) - rm8)
-        self.emu.update_eflags_sub(self.emu.constant(0, Type.int_8), rm8)
+        unary_operation(
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_sub,
+            lambda value: self.emu.constant(0, Type.int_8) - value,
+        )
 
 
     def mul_ax_al_rm8(self) -> None:
