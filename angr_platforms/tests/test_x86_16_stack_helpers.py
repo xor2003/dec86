@@ -3,11 +3,13 @@ from angr_platforms.X86_16.stack_helpers import (
     enter16,
     leave16,
     near_return_ip16,
+    pop_all16,
     pop16,
     pop_far_return_frame16,
     pop_interrupt_frame16,
     push16,
     push16_register,
+    push_all16,
     push_far_return_frame16,
 )
 
@@ -15,8 +17,14 @@ from angr_platforms.X86_16.stack_helpers import (
 class _StackEmu:
     def __init__(self):
         self.gpregs = {
+            reg16_t.AX: 0x1111,
+            reg16_t.CX: 0x2222,
+            reg16_t.DX: 0x3333,
+            reg16_t.BX: 0x4444,
             reg16_t.SP: 0x1000,
             reg16_t.BP: 0x2222,
+            reg16_t.SI: 0x5555,
+            reg16_t.DI: 0x6666,
             reg16_t.IP: 0x0100,
         }
         self.sgregs = {sgreg_t.CS: 0x1234, sgreg_t.SS: 0x2000}
@@ -108,3 +116,43 @@ def test_stack_helpers_compute_near_return_ip_from_instruction_size():
     emu = _StackEmu()
 
     assert near_return_ip16(emu, 3) == 0x0103
+
+
+def test_stack_helpers_push_all16_preserves_original_sp_slot():
+    emu = _StackEmu()
+
+    push_all16(emu)
+
+    assert emu.get_gpreg(reg16_t.SP) == 0x0FF0
+    assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0x1111
+    assert emu.memory[(sgreg_t.SS, 0x0FFC)] == 0x2222
+    assert emu.memory[(sgreg_t.SS, 0x0FFA)] == 0x3333
+    assert emu.memory[(sgreg_t.SS, 0x0FF8)] == 0x4444
+    assert emu.memory[(sgreg_t.SS, 0x0FF6)] == 0x1000
+    assert emu.memory[(sgreg_t.SS, 0x0FF4)] == 0x2222
+    assert emu.memory[(sgreg_t.SS, 0x0FF2)] == 0x5555
+    assert emu.memory[(sgreg_t.SS, 0x0FF0)] == 0x6666
+
+
+def test_stack_helpers_pop_all16_restores_registers_and_skips_saved_sp():
+    emu = _StackEmu()
+    emu.gpregs[reg16_t.SP] = 0x0FF0
+    emu.memory[(sgreg_t.SS, 0x0FF0)] = 0x6666
+    emu.memory[(sgreg_t.SS, 0x0FF2)] = 0x5555
+    emu.memory[(sgreg_t.SS, 0x0FF4)] = 0x2222
+    emu.memory[(sgreg_t.SS, 0x0FF6)] = 0x1000
+    emu.memory[(sgreg_t.SS, 0x0FF8)] = 0x4444
+    emu.memory[(sgreg_t.SS, 0x0FFA)] = 0x3333
+    emu.memory[(sgreg_t.SS, 0x0FFC)] = 0x2222
+    emu.memory[(sgreg_t.SS, 0x0FFE)] = 0x1111
+
+    pop_all16(emu)
+
+    assert emu.get_gpreg(reg16_t.DI) == 0x6666
+    assert emu.get_gpreg(reg16_t.SI) == 0x5555
+    assert emu.get_gpreg(reg16_t.BP) == 0x2222
+    assert emu.get_gpreg(reg16_t.BX) == 0x4444
+    assert emu.get_gpreg(reg16_t.DX) == 0x3333
+    assert emu.get_gpreg(reg16_t.CX) == 0x2222
+    assert emu.get_gpreg(reg16_t.AX) == 0x1111
+    assert emu.get_gpreg(reg16_t.SP) == 0x1000

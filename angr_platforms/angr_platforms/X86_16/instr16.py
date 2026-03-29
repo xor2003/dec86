@@ -15,7 +15,7 @@ from .alu_helpers import (
 )
 from .addressing_helpers import load_far_pointer, load_word_pair16, resolve_linear_operand
 from .instr_base import InstrBase
-from .stack_helpers import enter16, leave16, near_return_ip16, push16_register
+from .stack_helpers import enter16, leave16, near_return_ip16, pop_all16, push16_register, push_all16
 from .string_helpers import (
     repeat_jump,
     repeat_prefix_cond,
@@ -417,25 +417,10 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg, self.emu.pop16())
 
     def pusha(self):
-        sp = self.emu.get_gpreg(reg16_t.SP)
-        self.emu.push16(self.emu.get_gpreg(reg16_t.AX))
-        self.emu.push16(self.emu.get_gpreg(reg16_t.CX))
-        self.emu.push16(self.emu.get_gpreg(reg16_t.DX))
-        self.emu.push16(self.emu.get_gpreg(reg16_t.BX))
-        self.emu.push16(sp)
-        self.emu.push16(self.emu.get_gpreg(reg16_t.BP))
-        self.emu.push16(self.emu.get_gpreg(reg16_t.SI))
-        self.emu.push16(self.emu.get_gpreg(reg16_t.DI))
+        push_all16(self.emu)
 
     def popa(self):
-        self.emu.set_gpreg(reg16_t.DI, self.emu.pop16())
-        self.emu.set_gpreg(reg16_t.SI, self.emu.pop16())
-        self.emu.set_gpreg(reg16_t.BP, self.emu.pop16())
-        self.emu.pop16()
-        self.emu.set_gpreg(reg16_t.BX, self.emu.pop16())
-        self.emu.set_gpreg(reg16_t.DX, self.emu.pop16())
-        self.emu.set_gpreg(reg16_t.CX, self.emu.pop16())
-        self.emu.set_gpreg(reg16_t.AX, self.emu.pop16())
+        pop_all16(self.emu)
 
     def push_imm16(self):
         self.emu.push16(self.emu.constant(self.instr.imm16, Type.int_16))

@@ -26,6 +26,29 @@ def pop16(emu):
     return value
 
 
+def push_all16(emu) -> None:
+    sp = emu.get_gpreg(reg16_t.SP)
+    push16(emu, emu.get_gpreg(reg16_t.AX))
+    push16(emu, emu.get_gpreg(reg16_t.CX))
+    push16(emu, emu.get_gpreg(reg16_t.DX))
+    push16(emu, emu.get_gpreg(reg16_t.BX))
+    push16(emu, sp)
+    push16(emu, emu.get_gpreg(reg16_t.BP))
+    push16(emu, emu.get_gpreg(reg16_t.SI))
+    push16(emu, emu.get_gpreg(reg16_t.DI))
+
+
+def pop_all16(emu) -> None:
+    emu.set_gpreg(reg16_t.DI, pop16(emu))
+    emu.set_gpreg(reg16_t.SI, pop16(emu))
+    emu.set_gpreg(reg16_t.BP, pop16(emu))
+    pop16(emu)
+    emu.set_gpreg(reg16_t.BX, pop16(emu))
+    emu.set_gpreg(reg16_t.DX, pop16(emu))
+    emu.set_gpreg(reg16_t.CX, pop16(emu))
+    emu.set_gpreg(reg16_t.AX, pop16(emu))
+
+
 def push32(emu, value):
     emu.update_gpreg(reg32_t.ESP, -4)
     sp = emu.get_gpreg(reg32_t.ESP)

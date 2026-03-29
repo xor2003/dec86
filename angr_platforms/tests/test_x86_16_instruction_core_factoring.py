@@ -84,3 +84,12 @@ def test_x86_16_instruction_core_uses_string_helpers_for_32bit_string_compare_ac
     assert "string_load(" in source
     assert "self.emu.get_data8(" not in source
     assert "self.emu.get_data32(" not in source
+
+
+def test_x86_16_instruction_core_uses_stack_helpers_for_pusha_and_popa():
+    source = inspect.getsource(instr16.Instr16.pusha) + inspect.getsource(instr16.Instr16.popa)
+
+    assert "push_all16(" in source
+    assert "pop_all16(" in source
+    assert "self.emu.push16(" not in source
+    assert "self.emu.pop16(" not in source

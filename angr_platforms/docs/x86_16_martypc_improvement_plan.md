@@ -131,6 +131,8 @@ Recent progress on that front:
   `string_load` / `string_store` helpers instead of open-coded memory plumbing
 - 32-bit `cmps` handlers now also use the same shared string-load boundary
   instead of local `get_data*` reads
+- `pusha` / `popa` now delegate to shared stack-family helpers instead of
+  owning their own stack choreography inside `instr16.py`
 
 ## Remaining Priorities
 
