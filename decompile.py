@@ -967,7 +967,22 @@ def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, 
     if helper_call is None:
         return None
 
+    helper_name = getattr(helper_call, "callee_target", None)
+    if not isinstance(helper_name, str):
+        helper_func = getattr(helper_call, "callee_func", None)
+        helper_name = getattr(helper_func, "name", None)
+
     if access.base_name == "outregs" and access.field_path == ("x", "ax"):
+        return helper_call
+
+    if access.base_name == "outregs" and access.field_path in {("x", "bx"), ("x", "cx"), ("x", "dx")}:
+        if "getvect" in str(helper_name) and access.field_path == ("x", "bx"):
+            return structured_c.CFunctionCall(
+                "FP_OFF",
+                None,
+                [helper_call],
+                codegen=codegen,
+            )
         return helper_call
 
     if access.base_name == "outregs" and access.field_path == ("h", "ah"):
@@ -991,11 +1006,6 @@ def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, 
             codegen=codegen,
         )
 
-    helper_name = getattr(helper_call, "callee_target", None)
-    if not isinstance(helper_name, str):
-        helper_func = getattr(helper_call, "callee_func", None)
-        helper_name = getattr(helper_func, "name", None)
-
     if "getvect" in str(helper_name):
         if access.base_name == "sregs" and access.field_path == ("es",):
             return structured_c.CFunctionCall(
@@ -1004,13 +1014,9 @@ def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, 
                 [helper_call],
                 codegen=codegen,
             )
-        if access.base_name == "outregs" and access.field_path == ("x", "bx"):
-            return structured_c.CFunctionCall(
-                "FP_OFF",
-                None,
-                [helper_call],
-                codegen=codegen,
-            )
+
+    if access.base_name == "sregs" and access.field_path == ("es",):
+        return helper_call
 
     return None
 
@@ -1031,6 +1037,9 @@ def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str
         return None
 
     replacement = None
+    if isinstance(expr, structured_c.CVariable) and getattr(expr, "name", None) == "outregs":
+        return _interrupt_wrapper_result_helper_expr(helper_expr, codegen)
+
     access = _interrupt_wrapper_field_path(expr)
     if access is not None:
         replacement = _interrupt_wrapper_result_replacement(access, helper_expr, api_style, codegen)
