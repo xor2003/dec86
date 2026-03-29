@@ -122,7 +122,7 @@ def test_repeat_prefix_cond_consumes_cx_for_repeated_string_ops():
 
 def test_repeat_jump_uses_repz_and_current_zero_flag():
     emu = _StringEmu(cx=4, zf=True)
-    emu.gpregs[reg16_t.IP] = 0x0102
+    emu.gpregs[reg16_t.IP] = 0x0100
     instr = _Instr(pre_repeat=REPZ)
 
     repeat_jump(emu, instr, _Cond(True))
@@ -130,6 +130,28 @@ def test_repeat_jump_uses_repz_and_current_zero_flag():
     assert emu.lifter_instruction.calls
     args, _kwargs = emu.lifter_instruction.calls[0]
     assert args[1] == 0x0100
+
+
+def test_repeat_jump_ignores_zf_for_non_compare_string_ops():
+    emu = _StringEmu(cx=4, zf=False)
+    emu.gpregs[reg16_t.IP] = 0x0100
+    instr = _Instr(pre_repeat=REPZ)
+
+    repeat_jump(emu, instr, _Cond(True))
+
+    assert emu.lifter_instruction.calls
+    args, _kwargs = emu.lifter_instruction.calls[0]
+    assert args[1] == 0x0100
+
+
+def test_repeat_jump_can_be_zf_sensitive_for_compare_string_ops():
+    emu = _StringEmu(cx=4, zf=False)
+    emu.gpregs[reg16_t.IP] = 0x0100
+    instr = _Instr(pre_repeat=REPZ)
+
+    repeat_jump(emu, instr, _Cond(True), zf_sensitive=True)
+
+    assert not emu.lifter_instruction.calls
 
 
 def test_string_advance_indices_applies_directional_delta_to_all_indices():

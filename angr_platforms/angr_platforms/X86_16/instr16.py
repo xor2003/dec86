@@ -633,7 +633,7 @@ class Instr16(InstrBase):
         string_advance_indices(self.emu, 1, reg16_t.DI)
 
         if repeat_cond is not None:
-            repeat_jump(self.emu, self.instr, repeat_cond)
+            repeat_jump(self.emu, self.instr, repeat_cond, zf_sensitive=True)
 
     def scasw_ax_m16(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -644,7 +644,7 @@ class Instr16(InstrBase):
         string_advance_indices(self.emu, 2, reg16_t.DI)
 
         if repeat_cond is not None:
-            repeat_jump(self.emu, self.instr, repeat_cond)
+            repeat_jump(self.emu, self.instr, repeat_cond, zf_sensitive=True)
 
     def cmps_m8_m8(self):
         repeat_cond = self._repeat_prefix_cond()

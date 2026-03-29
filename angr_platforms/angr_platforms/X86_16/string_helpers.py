@@ -32,19 +32,28 @@ def repeat_prefix_cond(emu, instr):
     return remaining != emu.constant(0, Type.int_16)
 
 
-def repeat_jump(emu, instr, repeat_cond) -> None:
+def repeat_jump(emu, instr, repeat_cond, zf_sensitive: bool = False) -> None:
     if repeat_cond is None:
         return
 
     cond = repeat_cond.cast_to(Type.int_1)
+    if zf_sensitive:
+        if instr.pre_repeat == REPZ:
+            cond = cond & emu.is_zero()
+        elif instr.pre_repeat == REPNZ:
+            cond = cond & (emu.is_zero() == emu.constant(0, Type.int_1))
+    if isinstance(cond, bool):
+        if not cond:
+            return
+        ip_reg = reg32_t.EIP if getattr(instr, "mode32", False) else reg16_t.IP
+        repeat_target = emu.get_gpreg(ip_reg)
+        repeat_target_expr = repeat_target.rdt if hasattr(repeat_target, "rdt") else repeat_target
+        emu.lifter_instruction.jump(None, repeat_target_expr, JumpKind.Boring)
+        emu.set_gpreg(ip_reg, repeat_target)
+        return
     cond_value = getattr(cond, "rdt", None)
-    if instr.pre_repeat == REPZ:
-        cond = cond & emu.is_zero()
-    elif instr.pre_repeat == REPNZ:
-        cond = cond & (emu.is_zero() == emu.constant(0, Type.int_1))
     ip_reg = reg32_t.EIP if getattr(instr, "mode32", False) else reg16_t.IP
-    size_ty = Type.int_32 if getattr(instr, "mode32", False) else Type.int_16
-    repeat_target = emu.get_gpreg(ip_reg) - emu.constant(instr.size, size_ty)
+    repeat_target = emu.get_gpreg(ip_reg)
     repeat_target_expr = repeat_target.rdt if hasattr(repeat_target, "rdt") else repeat_target
 
     if isinstance(cond_value, bool):
@@ -52,14 +61,10 @@ def repeat_jump(emu, instr, repeat_cond) -> None:
             return
         emu.lifter_instruction.jump(None, repeat_target_expr, JumpKind.Boring)
         emu.set_gpreg(ip_reg, repeat_target)
-        emu.irsb.next = repeat_target_expr
-        emu.irsb.jumpkind = "Ijk_Boring"
         return
 
     emu.lifter_instruction.jump(cond, repeat_target_expr, JumpKind.Boring)
     emu.set_gpreg(ip_reg, repeat_target)
-    emu.irsb.next = repeat_target_expr
-    emu.irsb.jumpkind = "Ijk_Boring"
 
 
 def string_advance_indices(emu, width: int, *regs) -> object:

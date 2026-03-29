@@ -360,7 +360,7 @@ class Instr32(InstrBase):
         string_advance_indices(self.emu, 1, reg32_t.ESI, reg32_t.EDI)
 
         if repeat_cond is not None:
-            repeat_jump(self.emu, self.instr, repeat_cond)
+            repeat_jump(self.emu, self.instr, repeat_cond, zf_sensitive=True)
 
     def cmps_m32_m32(self):
         repeat_cond = repeat_prefix_cond(self.emu, self.instr)
@@ -373,7 +373,7 @@ class Instr32(InstrBase):
         string_advance_indices(self.emu, 4, reg32_t.ESI, reg32_t.EDI)
 
         if repeat_cond is not None:
-            repeat_jump(self.emu, self.instr, repeat_cond)
+            repeat_jump(self.emu, self.instr, repeat_cond, zf_sensitive=True)
 
     def test_eax_imm32(self):
         compare_operation(lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, self.emu.update_eflags_and)
