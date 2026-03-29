@@ -40,10 +40,17 @@ def build_x86_16_milestone_report(
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
     failure_counts = dict(scan_summary.get("failure_counts", {}) or {})
+    fallback_counts = dict(scan_summary.get("fallback_counts", {}) or {})
     top_failure_classes = list(scan_summary.get("top_failure_classes", []) or [])
+    top_fallback_kinds = list(scan_summary.get("top_fallback_kinds", []) or [])
     top_failure_stages = list(scan_summary.get("top_failure_stages", []) or [])
     top_failure_files = list(scan_summary.get("top_failure_files", []) or [])
     top_failure_functions = list(scan_summary.get("top_failure_functions", []) or [])
+    top_fallback_files = list(scan_summary.get("top_fallback_files", []) or [])
+    top_fallback_functions = list(scan_summary.get("top_fallback_functions", []) or [])
+    blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
+    debt = dict(scan_summary.get("debt", {}) or {})
+    top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
 
     report = {
@@ -74,13 +81,24 @@ def build_x86_16_milestone_report(
         "corpus_rates": {
             "success_rate": _success_rate(scan_summary),
             "failure_rate": round(1.0 - _success_rate(scan_summary), 6),
+            "full_decompile_rate": round(int(scan_summary.get("full_decompile_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
+            "cfg_only_rate": round(int(scan_summary.get("cfg_only_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
+            "lift_only_rate": round(int(scan_summary.get("lift_only_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
+            "block_lift_rate": round(int(scan_summary.get("block_lift_count", 0) or 0) / max(int(scan_summary.get("scanned", 0) or 0), 1), 6),
         },
+        "blind_spot_budget": blind_spot_budget,
+        "debt": debt,
         "hotspots": {
             "failure_counts": failure_counts,
+            "fallback_counts": fallback_counts,
             "top_failure_classes": top_failure_classes,
+            "top_fallback_kinds": top_fallback_kinds,
             "top_failure_stages": top_failure_stages,
             "top_failure_files": top_failure_files,
             "top_failure_functions": top_failure_functions,
+            "top_fallback_files": top_fallback_files,
+            "top_fallback_functions": top_fallback_functions,
+            "top_ugly_clusters": top_ugly_clusters,
         },
         "source_backed_rewrites": source_backed_rewrites,
     }

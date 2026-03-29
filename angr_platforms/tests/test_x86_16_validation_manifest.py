@@ -11,5 +11,6 @@ def test_x86_16_validation_layers_pin_expected_focus_checks():
 
     assert "tests/test_x86_16_alias_register_mvp.py" in unit.default_checks
     assert "tests/test_x86_16_widening_model.py" in unit.default_checks
+    assert "tests/test_x86_16_validation_manifest.py" in unit.default_checks
     assert "tests/test_x86_16_sample_matrix.py" in focused.default_checks
     assert "scripts/scan_cod_dir.py --mode scan-safe" in whole_program.default_checks

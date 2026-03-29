@@ -21,6 +21,7 @@ VALIDATION_LAYERS = (
             "tests/test_x86_16_word_global_helpers.py",
             "tests/test_x86_16_milestone_report.py",
             "tests/test_x86_16_readability_set.py",
+            "tests/test_x86_16_validation_manifest.py",
         ),
     ),
     ValidationLayerSpec(

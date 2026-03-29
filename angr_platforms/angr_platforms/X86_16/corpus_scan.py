@@ -168,7 +168,7 @@ def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool =
         message = str(exc)
         return "analysis_assertion", message or "assertion failure"
     if exc is None:
-        return "unknown_failure", "unknown failure"
+        return "unclassified_failure", "unclassified failure"
 
     message = str(exc)
     lowered = message.lower()
@@ -176,7 +176,7 @@ def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool =
     if "recursion" in lowered or "maximum recursion depth" in lowered:
         return "recursion_or_explosion", message
     if "unsupported" in lowered or "unknown opcode" in lowered or "not implemented" in lowered:
-        return "unknown_opcode_or_semantic", message
+        return "unsupported_semantic", message
     if "render" in lowered or "codegen" in lowered:
         return "renderer_failure", message
     if "postprocess" in lowered or "simplify" in lowered:
@@ -189,7 +189,7 @@ def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool =
         return "cfg_failure", message
     if stage == "decompile":
         return "decompiler_crash", message
-    return "unknown_failure", message
+    return "unclassified_failure", message
 
 
 def _mark_stage(result: FunctionScanResult, stage: str, ok: bool, *, reason: str | None = None, detail: str | None = None) -> None:
@@ -417,7 +417,11 @@ def scan_function(
 
 
 def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str, object]:
+    def _has_fallback_kind(result: FunctionScanResult) -> bool:
+        return result.fallback_kind not in (None, "none")
+
     failure_counter = Counter(result.failure_class for result in results if result.failure_class is not None)
+    fallback_counter = Counter(result.fallback_kind for result in results if _has_fallback_kind(result))
     stage_failure_counter = Counter(
         stage.stage
         for result in results
@@ -432,6 +436,12 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         for result in results
         if not result.ok and result.failure_class is not None
     )
+    fallback_file_counter = Counter(result.cod_file for result in results if _has_fallback_kind(result))
+    fallback_function_counter = Counter(
+        (result.cod_file, result.proc_name, result.proc_kind, result.fallback_kind)
+        for result in results
+        if _has_fallback_kind(result)
+    )
     per_file: dict[str, dict[str, int]] = defaultdict(lambda: {"scanned": 0, "ok": 0})
 
     for result in results:
@@ -445,9 +455,26 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         name for name, stats in per_file.items() if 0 < stats["ok"] < stats["scanned"]
     )
 
+    fallback_results = [result for result in results if _has_fallback_kind(result)]
+    full_decompile_count = sum(1 for result in results if result.decompiled_count > 0)
+    cfg_only_count = sum(1 for result in results if result.fallback_kind == "cfg_only")
+    lift_only_count = sum(1 for result in results if result.fallback_kind == "lift_only")
+    block_lift_count = sum(1 for result in results if result.fallback_kind == "block_lift")
+    fallback_only_count = sum(1 for result in fallback_results if result.ok)
+    true_failure_count = sum(1 for result in results if not result.ok)
+
+    def _rate(count: int) -> float:
+        if not results:
+            return 0.0
+        return round(count / len(results), 6)
+
     top_failure_classes = [
         {"failure_class": failure_class, "count": count}
         for failure_class, count in sorted(failure_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    top_fallback_kinds = [
+        {"fallback_kind": fallback_kind, "count": count}
+        for fallback_kind, count in sorted(fallback_counter.items(), key=lambda item: (-item[1], item[0]))
     ]
     top_failure_stages = [
         {"stage": stage, "count": count}
@@ -469,6 +496,22 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
             failure_function_counter.items(), key=lambda item: (-item[1], item[0])
         )
     ]
+    top_fallback_files = [
+        {"cod_file": cod_file, "count": count}
+        for cod_file, count in sorted(fallback_file_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    top_fallback_functions = [
+        {
+            "cod_file": cod_file,
+            "proc_name": proc_name,
+            "proc_kind": proc_kind,
+            "fallback_kind": fallback_kind,
+            "count": count,
+        }
+        for (cod_file, proc_name, proc_kind, fallback_kind), count in sorted(
+            fallback_function_counter.items(), key=lambda item: (-item[1], item[0])
+        )
+    ]
 
     return {
         "mode": mode,
@@ -476,13 +519,35 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "ok": sum(1 for result in results if result.ok),
         "failed": sum(1 for result in results if not result.ok),
         "failure_counts": dict(sorted(failure_counter.items())),
+        "fallback_counts": dict(sorted(fallback_counter.items())),
         "top_failure_classes": top_failure_classes,
+        "top_fallback_kinds": top_fallback_kinds,
         "top_failure_stages": top_failure_stages,
         "top_failure_files": top_failure_files,
         "top_failure_functions": top_failure_functions,
+        "top_fallback_files": top_fallback_files,
+        "top_fallback_functions": top_fallback_functions,
         "files_zero_success": files_zero_success,
         "files_partial_success": files_partial_success,
         "files_scan_clean": files_scan_clean,
+        "full_decompile_count": full_decompile_count,
+        "cfg_only_count": cfg_only_count,
+        "lift_only_count": lift_only_count,
+        "block_lift_count": block_lift_count,
+        "fallback_only_count": fallback_only_count,
+        "true_failure_count": true_failure_count,
+        "blind_spot_budget": {
+            "full_decompile_rate": _rate(full_decompile_count),
+            "cfg_only_rate": _rate(cfg_only_count),
+            "lift_only_rate": _rate(lift_only_count),
+            "block_lift_rate": _rate(block_lift_count),
+            "true_failure_rate": _rate(true_failure_count),
+        },
+        "debt": {
+            "traversal": true_failure_count,
+            "recovery": fallback_only_count,
+            "readability": full_decompile_count,
+        },
         "results": [asdict(result) for result in results],
     }
 
