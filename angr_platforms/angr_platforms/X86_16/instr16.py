@@ -5,6 +5,7 @@ from pyvex.stmt import IMark, WrTmp, Put, Store
 from pyvex.expr import Const, Binop
 from pyvex import IRConst
  
+from .addressing_helpers import address_step
 from .instr_base import InstrBase
 from .instruction import *
 from .regs import reg8_t, reg16_t, sgreg_t
@@ -447,7 +448,7 @@ class Instr16(InstrBase):
         addr = self.get_m()
         seg = self.select_segment()
         lower = self.emu.get_data16(seg, addr).signed
-        upper = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_32)).signed
+        upper = self.emu.get_data16(seg, addr + address_step(self.emu, 2, 16)).signed
         out_of_range = (reg < lower) | (reg > upper)
         self.emu.lifter_instruction.jump(out_of_range, 0xFF005, JumpKind.Call)
 
@@ -506,7 +507,7 @@ class Instr16(InstrBase):
         addr = self.get_m()
         seg = self.select_segment()
         offset = self.emu.get_data16(seg, addr)
-        segment = self.emu.get_data16(seg, addr + self.emu.constant(2, Type.int_32))
+        segment = self.emu.get_data16(seg, addr + address_step(self.emu, 2, 16))
         return offset, segment
 
     def les_es_r16_m16(self):

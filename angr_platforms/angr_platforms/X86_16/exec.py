@@ -4,6 +4,7 @@ from pyvex.lifting.util.vex_helper import Type
 from pyvex.expr import Const, Binop, Unop
 from pyvex import IRConst
 
+from .addressing_helpers import signed_displacement
 from .regs import reg8_t, reg16_t, reg32_t, sgreg_t
 
 from .instruction import X86Instruction
@@ -147,7 +148,7 @@ class ExecInstr(X86Instruction):
         addr = self.emu.constant(0, Type.int_16)
 
         if self.instr.modrm.mod == 1:
-            disp8 = self.instr.disp8 if self.instr.disp8 < 0x80 else self.instr.disp8 - 0x100
+            disp8 = signed_displacement(self.instr.disp8, 8)
             addr = addr + self.emu.constant(disp8 & 0xFFFF, Type.int_16)
         elif self.instr.modrm.mod == 2:
             addr = addr + self.emu.constant(self.instr.disp16, Type.int_16)
