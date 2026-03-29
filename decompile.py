@@ -879,8 +879,6 @@ def _interrupt_wrapper_helper_call_expr(
         vector = 0x21
     if vector is None:
         return None
-    if vector == 0x10:
-        return None
 
     service_call = InterruptCall(insn_addr=0, vector=vector & 0xFF)
     if vector == 0x21:
@@ -912,12 +910,35 @@ def _interrupt_wrapper_helper_call_expr(
             ss=_interrupt_wrapper_register_state_value(input_state, inregs, ("ss",)),
             cs=_interrupt_wrapper_register_state_value(input_state, inregs, ("cs",)),
         )
+    elif vector == 0x10:
+        inregs = "inregs"
+        ah = _interrupt_wrapper_register_state_value(input_state, inregs, ("h", "ah"))
+        if ah is None:
+            return None
+        service_call = InterruptCall(
+            insn_addr=0,
+            vector=0x10,
+            ah=ah,
+            al=_interrupt_wrapper_register_state_value(input_state, inregs, ("h", "al")),
+            ax=_interrupt_wrapper_register_state_value(input_state, inregs, ("x", "ax")),
+            bx=_interrupt_wrapper_register_state_value(input_state, inregs, ("x", "bx")),
+            cx=_interrupt_wrapper_register_state_value(input_state, inregs, ("x", "cx")),
+            dx=_interrupt_wrapper_register_state_value(input_state, inregs, ("x", "dx")),
+            ds=_interrupt_wrapper_register_state_value(input_state, inregs, ("ds",)),
+            es=_interrupt_wrapper_register_state_value(input_state, inregs, ("es",)),
+            ss=_interrupt_wrapper_register_state_value(input_state, inregs, ("ss",)),
+            cs=_interrupt_wrapper_register_state_value(input_state, inregs, ("cs",)),
+        )
 
     helper_name = interrupt_service_name(service_call, api_style)
     if helper_name.startswith("int86") or helper_name.startswith("intdos"):
         return None
 
     helper_args: list[object] = []
+    if sig.kind in {"int86", "int86x"} and vector == 0x10:
+        selector = _interrupt_wrapper_register_state_value(input_state, "inregs", ("h", "ah"))
+        if selector is not None:
+            helper_args.append(structured_c.CConstant(selector, SimTypeShort(False), codegen=codegen))
     if sig.kind in {"int86", "int86x"} and vector == 0x16:
         selector = _interrupt_wrapper_register_state_value(input_state, "inregs", ("h", "ah"))
         if selector is not None:
