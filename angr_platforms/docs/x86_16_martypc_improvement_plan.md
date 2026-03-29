@@ -192,6 +192,11 @@ Recent progress on that front:
 -  AX/immediate ALU handlers in `instr16.py` now call the shared binary and
    compare helpers directly instead of going through private AX wrapper
    methods
+-  byte-immediate ALU handlers in `instr_base.py` now also call the shared
+   binary and compare helpers directly instead of going through private byte
+   wrapper methods
+-  the remaining byte-immediate ALU wrappers in `instr_base.py` were flattened
+   out so the helper layer is the only abstraction for those handlers
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging

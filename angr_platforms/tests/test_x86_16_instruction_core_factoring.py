@@ -44,6 +44,37 @@ def test_x86_16_instruction_core_base_groups_ax_immediates_under_shared_helpers(
     assert "_compare_ax_imm16" not in source
 
 
+def test_x86_16_instruction_core_base_groups_byte_immediates_under_shared_helpers():
+    source = (
+        inspect.getsource(instr16.InstrBase.add_al_imm8)
+        + inspect.getsource(instr16.InstrBase.adc_al_imm8)
+        + inspect.getsource(instr16.InstrBase.sbb_al_imm8)
+        + inspect.getsource(instr16.InstrBase.or_al_imm8)
+        + inspect.getsource(instr16.InstrBase.and_al_imm8)
+        + inspect.getsource(instr16.InstrBase.sub_al_imm8)
+        + inspect.getsource(instr16.InstrBase.xor_al_imm8)
+        + inspect.getsource(instr16.InstrBase.cmp_al_imm8)
+        + inspect.getsource(instr16.InstrBase.add_rm8_imm8)
+        + inspect.getsource(instr16.InstrBase.adc_rm8_imm8)
+        + inspect.getsource(instr16.InstrBase.sbb_rm8_imm8)
+        + inspect.getsource(instr16.InstrBase.or_rm8_imm8)
+        + inspect.getsource(instr16.InstrBase.and_rm8_imm8)
+        + inspect.getsource(instr16.InstrBase.sub_rm8_imm8)
+        + inspect.getsource(instr16.InstrBase.xor_rm8_imm8)
+        + inspect.getsource(instr16.InstrBase.cmp_rm8_imm8)
+    )
+
+    assert "binary_operation(" in source
+    assert "binary_operation_with_carry(" in source
+    assert "compare_operation(" in source
+    assert "_binary_al_imm8" not in source
+    assert "_binary_al_imm8_with_carry" not in source
+    assert "_binary_rm8_imm8" not in source
+    assert "_binary_rm8_imm8_with_carry" not in source
+    assert "_compare_al_imm8" not in source
+    assert "_compare_rm8_imm8" not in source
+
+
 def test_x86_16_instruction_core_base_reuses_resolved_memory_operands_for_byte_memory_paths():
     source = inspect.getsource(InstrBase.xchg_r8_rm8) + inspect.getsource(InstrBase.esc)
 
@@ -365,12 +396,15 @@ def test_x86_16_instruction_core_uses_byte_alu_immediate_helper_families():
         + inspect.getsource(InstrBase.cmp_rm8_imm8)
     )
 
-    assert "_binary_al_imm8(" in source
-    assert "_binary_al_imm8_with_carry(" in source
-    assert "_compare_al_imm8(" in source
-    assert "_binary_rm8_imm8(" in source
-    assert "_binary_rm8_imm8_with_carry(" in source
-    assert "_compare_rm8_imm8(" in source
+    assert "binary_operation(" in source
+    assert "binary_operation_with_carry(" in source
+    assert "compare_operation(" in source
+    assert "_binary_al_imm8(" not in source
+    assert "_binary_al_imm8_with_carry(" not in source
+    assert "_compare_al_imm8(" not in source
+    assert "_binary_rm8_imm8(" not in source
+    assert "_binary_rm8_imm8_with_carry(" not in source
+    assert "_compare_rm8_imm8(" not in source
 
 
 def test_x86_16_instruction_core_uses_resolved_operand_load_store_helpers():
