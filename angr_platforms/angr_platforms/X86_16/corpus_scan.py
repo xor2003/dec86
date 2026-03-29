@@ -693,6 +693,11 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     interrupt_unresolved_wrapper_count = sum(result.interrupt_unresolved_wrapper_count for result in results)
     fallback_only_count = sum(1 for result in fallback_results if result.ok)
     true_failure_count = sum(1 for result in results if not result.ok)
+    unclassified_failure_count = sum(
+        1
+        for result in results
+        if not result.ok and result.failure_class in {"analysis_failure", "unknown_failure"}
+    )
     ugly_cluster_counter = Counter(
         cluster for result in results if (cluster := _classify_ugly_cluster(result)) is not None
     )
@@ -809,6 +814,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "visibility_debt": true_failure_count,
         "recovery_debt": fallback_only_count,
         "readability_debt": full_decompile_count,
+        "unclassified_failure_count": unclassified_failure_count,
         "interrupt_api": {
             "dos_helpers": interrupt_dos_helper_count,
             "bios_helpers": interrupt_bios_helper_count,

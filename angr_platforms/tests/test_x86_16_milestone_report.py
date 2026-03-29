@@ -91,6 +91,25 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "block_lift_rate": 0.1,
     }
     assert report["blind_spot_budget"] == scan_summary["blind_spot_budget"]
+    assert report["corpus_completion"] == {
+        "no_crashes": False,
+        "no_blind_spots": True,
+        "unclassified_failure_count": 0,
+        "scanned": 10,
+        "fallback_coverage": {
+            "full_decompile_count": 7,
+            "cfg_only_count": 2,
+            "lift_only_count": 0,
+            "block_lift_count": 1,
+        },
+        "debt": {
+            "visibility": 3,
+            "recovery": 2,
+            "readability": 7,
+        },
+        "blind_spot_budget": scan_summary["blind_spot_budget"],
+        "stable_by_traversal": False,
+    }
     assert report["debt"] == scan_summary["debt"]
     assert report["debt_breakdown"] == {
         "visibility": 3,

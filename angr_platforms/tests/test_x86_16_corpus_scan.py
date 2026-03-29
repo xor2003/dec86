@@ -100,6 +100,7 @@ def test_corpus_scan_summary_groups_file_health():
     assert summary["visibility_debt"] == 2
     assert summary["recovery_debt"] == 1
     assert summary["readability_debt"] == 1
+    assert summary["unclassified_failure_count"] == 0
     assert summary["blind_spot_budget"] == {
         "full_decompile_rate": 0.25,
         "cfg_only_rate": 0.25,

@@ -47,6 +47,40 @@ def _readability_tier(result: Mapping[str, object], golden_cases: set[tuple[str,
     return "R2"
 
 
+def _build_corpus_completion_surface(scan_summary: Mapping[str, object]) -> dict[str, object]:
+    scanned = int(scan_summary.get("scanned", 0) or 0)
+    failed = int(scan_summary.get("failed", 0) or 0)
+    full_decompile_count = int(scan_summary.get("full_decompile_count", 0) or 0)
+    cfg_only_count = int(scan_summary.get("cfg_only_count", 0) or 0)
+    lift_only_count = int(scan_summary.get("lift_only_count", 0) or 0)
+    block_lift_count = int(scan_summary.get("block_lift_count", 0) or 0)
+    debt = dict(scan_summary.get("debt", {}) or {})
+    visibility_debt = int(scan_summary.get("visibility_debt", debt.get("traversal", 0)) or 0)
+    recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
+    readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
+    unclassified_failure_count = int(scan_summary.get("unclassified_failure_count", 0) or 0)
+    blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
+    return {
+        "no_crashes": failed == 0,
+        "no_blind_spots": unclassified_failure_count == 0,
+        "unclassified_failure_count": unclassified_failure_count,
+        "scanned": scanned,
+        "fallback_coverage": {
+            "full_decompile_count": full_decompile_count,
+            "cfg_only_count": cfg_only_count,
+            "lift_only_count": lift_only_count,
+            "block_lift_count": block_lift_count,
+        },
+        "debt": {
+            "visibility": visibility_debt,
+            "recovery": recovery_debt,
+            "readability": readability_debt,
+        },
+        "blind_spot_budget": blind_spot_budget,
+        "stable_by_traversal": failed == 0 and unclassified_failure_count == 0,
+    }
+
+
 def build_x86_16_milestone_report(
     scan_summary: Mapping[str, object],
     *,
@@ -87,6 +121,7 @@ def build_x86_16_milestone_report(
         readability_tier_counts[_readability_tier(result, golden_cases)] += 1
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
     source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
+    corpus_completion = _build_corpus_completion_surface(scan_summary)
 
     report = {
         "corpus": corpus_name,
@@ -162,6 +197,7 @@ def build_x86_16_milestone_report(
         },
         "source_backed_rewrites": source_backed_rewrites,
         "source_backed_rewrite_debt": source_backed_rewrite_debt,
+        "corpus_completion": corpus_completion,
     }
     return report
 
