@@ -10,6 +10,15 @@ from .instruction import *
 from .regs import reg8_t, reg16_t, sgreg_t
 from .exception import EXP_UD
 
+X86_16_OPCODE_HELPERS = (
+    (0x40, 0x47, "inc_r16", 0),
+    (0x48, 0x4F, "dec_r16", 0),
+    (0x50, 0x57, "push_r16", 0),
+    (0x58, 0x5F, "pop_r16", 0),
+    (0x91, 0x97, "xchg_r16_ax", 0),
+    (0xB8, 0xBF, "mov_r16_imm16", CHK_IMM16),
+)
+
 
 class Instr16(InstrBase):
     def __init__(self, emu: Emulator, instr: InstrData):
@@ -71,11 +80,8 @@ class Instr16(InstrBase):
         self.set_funcflag(0x3C, self.cmp_al_imm8, CHK_IMM8)
         self.set_funcflag(0x3D, self.cmp_ax_imm16, CHK_IMM16)
 
-        for i in range(8):
-            self.set_funcflag(0x40+i, self.inc_r16, 0)
-            self.set_funcflag(0x48+i, self.dec_r16, 0)
-            self.set_funcflag(0x50+i, self.push_r16, 0)
-            self.set_funcflag(0x58+i, self.pop_r16, 0)
+        for start, end, helper_name, flags in X86_16_OPCODE_HELPERS:
+            self._register_opcode_range(start, end, getattr(self, helper_name), flags)
 
         self.set_funcflag(0x60, self.pusha, 0)
         self.set_funcflag(0x61, self.popa, 0)
@@ -95,9 +101,6 @@ class Instr16(InstrBase):
         self.set_funcflag(0x8C, self.mov_rm16_sreg, CHK_MODRM)
         self.set_funcflag(0x8D, self.lea_r16_m16, CHK_MODRM)
         self.set_funcflag(0x8F, self.code_8f, CHK_MODRM)
-
-        for i in range(1, 8):
-            self.set_funcflag(0x90+i, self.xchg_r16_ax, 0)
 
         self.set_funcflag(0x98, self.cbw, 0)
         self.set_funcflag(0x99, self.cwd, 0)

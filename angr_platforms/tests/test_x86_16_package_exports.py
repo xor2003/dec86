@@ -45,6 +45,8 @@ def test_x86_16_package_exports_source_backends():
     assert "widening_alias" in x8616.__all__
     assert "widening_model" in x8616.__all__
     assert "validation_manifest" in x8616.__all__
+    assert "readability_set" in x8616.__all__
+    assert "milestone_report" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__
     assert "decompiler_postprocess_globals" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__

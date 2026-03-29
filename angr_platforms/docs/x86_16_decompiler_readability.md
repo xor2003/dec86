@@ -81,6 +81,20 @@ The highest-value work now is:
 2. Clean up stack/frame noise for small MSC functions.
 3. Improve branch-condition recovery on small `.COD` arithmetic/logic samples.
 
+## Golden Readability Set
+
+The current named readability set is:
+
+- `cod/f14/MONOPRIN.COD` `_mset_pos`
+- `cod/f14/NHORZ.COD` `_ChangeWeather`
+- `angr_platforms/x16_samples/ICOMDO.COM` `_start`
+- `cod/f14/MAX.COD` `_max`
+- `angr_platforms/x16_samples/COCKPIT.COD` `_ConfigCrts`
+
+Each case is tracked with a small anchor list in
+[`readability_set.py`](../angr_platforms/X86_16/readability_set.py) and in the
+sample-backed tests that exercise the decompiler output.
+
 That should make outputs like `_mset_pos`, `_ChangeWeather`, and the small
 `ISOD.EXE` startup function look materially more human-readable without needing
 much broader semantic coverage.

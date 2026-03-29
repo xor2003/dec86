@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 
 OpcodeHandler = Callable[..., None]
 
+GROUP2_BYTE_SHIFT_ROTATE_HANDLERS: dict[int, str] = {
+    0: "rol_rm8",
+    1: "ror_rm8",
+    2: "rcl_rm8",
+    3: "rcr_rm8",
+    4: "shl_rm8",  # SHL
+    5: "shr_rm8",
+    6: "shl_rm8",  # SAL aliases SHL on x86
+    7: "sar_rm8",
+}
+
 class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):
         super().__init__(emu)
@@ -172,6 +183,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             return
         raise RuntimeError(f"not implemented: {opcode} /{reg}")
 
+    def _register_opcode_range(self, start: int, end: int, func: OpcodeHandler, flags: int) -> None:
+        for opcode in range(start, end + 1):
+            self.set_funcflag(opcode, func, flags)
+
 
     def code_d0_d2(self) -> None:
         """
@@ -181,18 +196,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         a real sample trips over one of the rarely used `/digit` encodings.
         """
 
-        group2_handler_names = {
-            0: "rol_rm8",
-            1: "ror_rm8",
-            2: "rcl_rm8",
-            3: "rcr_rm8",
-            4: "shl_rm8",  # SHL
-            5: "shr_rm8",
-            6: "shl_rm8",  # SAL aliases SHL on x86
-            7: "sar_rm8",
-        }
         reg = self.instr.modrm.reg
-        handler_name = group2_handler_names.get(reg)
+        handler_name = GROUP2_BYTE_SHIFT_ROTATE_HANDLERS.get(reg)
         if handler_name is None:
             raise RuntimeError(f"not implemented: 0xd0_d2 /{reg}")
         cast(OpcodeHandler, getattr(self, handler_name))()
