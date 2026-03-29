@@ -37,7 +37,7 @@ Priority meanings:
 | high | `bound` | 0 | yes | yes | smoke | yes | yes | tricky semantics |
 | high | `cld` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `cli` | 0 | yes | yes | none | yes | yes | no focused regression |
-| high | `esc` | 0 | partial | partial | none | yes | yes | support gap, no focused regression |
+| high | `esc` | 0 | partial | partial | smoke | yes | yes | support gap, tricky semantics |
 | high | `hlt` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `in` | 0 | yes | yes | none | yes | yes | no focused regression |
 | high | `ins` | 0 | yes | yes | runtime | yes | yes | not compare-backed, tricky semantics |

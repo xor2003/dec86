@@ -251,6 +251,17 @@ def test_xlat_lifts_as_table_lookup():
     assert "PUT(ax)" in vex_text
 
 
+def test_esc_memory_form_lifts_as_a_harmless_fpu_escape():
+    project = _project_from_bytes(bytes.fromhex("d800"))
+
+    block = project.factory.block(0x1000, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert block.vex.jumpkind == "Ijk_Boring"
+    assert block.capstone.insns[0].mnemonic == "fadd"
+    assert "LDle:I8" in vex_text
+
+
 def test_rep_movsb_decompiles_without_double_negation():
     project = _project_from_bytes(bytes.fromhex("b90200f3a4c3"))  # mov cx,2; rep movsb; ret
 

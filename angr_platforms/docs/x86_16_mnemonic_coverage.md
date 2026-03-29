@@ -82,7 +82,7 @@ Status meanings:
 | `daa` | - | 0 | yes | yes | compare | implicit AL/flags | - | - |
 | `das` | - | 0 | yes | yes | compare | implicit AL/flags | - | - |
 | `enter` | - | 0 | yes | yes | smoke+runtime | enter imm16, imm8 | - | Runtime coverage now includes nested real-mode frame setup. |
-| `esc` | - | 0 | partial | partial | none | narrow FPU escape subset | general non-FPU modeling | Only narrow FPU escape groups exist; integer-model coverage is intentionally deferred. |
+| `esc` | - | 0 | partial | partial | smoke | narrow FPU escape subset | general non-FPU modeling | Only narrow FPU escape groups exist; integer-model coverage is intentionally deferred. |
 | `hlt` | - | 0 | yes | yes | none | implicit | - | - |
 | `in` | - | 0 | yes | yes | none | AL/AX <- imm8 or DX | - | - |
 | `ins` | - | 0 | yes | yes | runtime | insb, insw; repeat-aware DI/ES semantics | - | - |
