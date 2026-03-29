@@ -643,11 +643,12 @@ def _interrupt_wrapper_call_kind(name: str | None, args: tuple[object, ...] | No
     if canonical not in {"int86", "int86x", "intdos", "intdosx"}:
         if canonical != "CallReturn" or not args:
             return None
-        first_arg = args[0]
+        first_arg = _unwrap_c_casts(args[0])
+        first_value = _c_constant_value(first_arg)
         if len(args) >= 4:
-            return "int86x" if isinstance(first_arg, structured_c.CConstant) else "intdosx"
+            return "int86x" if first_value is not None else "intdosx"
         if len(args) >= 3:
-            return "int86" if isinstance(first_arg, structured_c.CConstant) else "intdos"
+            return "int86" if first_value is not None else "intdos"
         return None
     return canonical
 
