@@ -115,3 +115,19 @@ def test_interrupt_wrapper_field_paths_capture_regs_subfields():
     assert access is not None
     assert access.base_name == "inregs"
     assert access.field_path == ("h", "ah")
+
+
+def test_interrupt_helper_formatting_uses_helper_names(monkeypatch):
+    call = _decompile.InterruptCall(insn_addr=0x1000, vector=0x12)
+    helper_addr = _decompile.interrupt_service_addr(call)
+    project = SimpleNamespace()
+    function = SimpleNamespace(project=project)
+
+    monkeypatch.setattr(_decompile, "collect_interrupt_service_calls", lambda _function, _binary_path=None: [call])
+    monkeypatch.setattr(_decompile, "_helper_name", lambda _project, addr: "bios_int12_memory_size" if addr == helper_addr else None)
+
+    replacements = _decompile._interrupt_call_replacement_map(project, function, "pseudo", None)
+    declarations = _decompile._interrupt_helper_declarations(function, "pseudo", None)
+
+    assert replacements["bios_int12_memory_size"] == "bios_memsize()"
+    assert "int bios_memsize(void);" in declarations
