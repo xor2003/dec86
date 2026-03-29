@@ -10,11 +10,28 @@ You will need:
 1. [angr-platforms](https://github.com/xor2003/angr-platforms)
 2. [patched angr](https://github.com/xor2003/angr)
 
-Install dependencies via `pip install -r requirements.txt` and then install the local `angr_platforms` package with:
+Use a fresh Python virtual environment. The current checked setup is working
+with Python 3.14.x. The package metadata supports Python 3.10+, but the
+recommended path for this repo is to keep the project isolated in `.venv`.
+
+From a fresh clone:
 
 ```bash
-cd angr_platforms
-python -m pip install .
+git submodule update --init --recursive
+python3.14 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e ./angr_platforms[test]
+```
+
+If you already have a working `.venv`, re-run the last two commands after a
+submodule update so the root environment and `angr_platforms` stay in sync.
+
+Quick verification:
+
+```bash
+python -m pytest -q tests/test_x86_16_smoketest.py tests/test_x86_16_cod_samples.py
 ```
 
 ## Usage
@@ -36,22 +53,29 @@ decomp = project.analyses.Decompiler(func, cfg=cfg)
 print(decomp.codegen.text)
 ```
 
-The same pattern works for raw blobs when you wrap the bytes in `io.BytesIO` and use `main_opts={"backend": "blob", "arch": "X86_16"}`.
+For raw blobs, use `angr.load_shellcode(...)` with the x86-16 architecture object:
 
 ```python
 import angr
-import io
 import angr_platforms.X86_16  # registers the custom x86-16 platform
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 binary = b'\xb8\x01\x00\x05\x02\x00\xc3'
-project = angr.Project(io.BytesIO(binary), auto_load_libs=False, main_opts={"backend": "blob", "arch": "X86_16"})
-cfg = project.analyses.CFGFast(start_at_entry=False, function_starts=[0], normalize=True)
-func = cfg.functions[0]
+project = angr.load_shellcode(
+    binary,
+    arch=Arch86_16(),
+    start_offset=0x1000,
+    load_address=0x1000,
+    selfmodifying_code=False,
+    rebase_granularity=0x1000,
+)
+cfg = project.analyses.CFGFast(normalize=True)
+func = cfg.functions[0x1000]
 decomp = project.analyses.Decompiler(func, cfg=cfg)
 print(decomp.codegen.text)
 ```
 
-Note: Use `main_opts={"backend": "blob", "arch": "X86_16"}` for raw binaries or COM files without headers, and import `angr_platforms.X86_16` before constructing the project so the custom agents are registered.
+Note: import `angr_platforms.X86_16` before constructing the project so the custom agents are registered. For COM files or other headerless binaries that you want to load from a file path, use `main_opts={"backend": "blob", "arch": "X86_16"}`. For raw blobs, prefer `angr.load_shellcode(...)` as shown above.
 
 For legacy script usage:
 ```bash
@@ -78,9 +102,9 @@ This repo includes an in-tree real-mode DOS sample corpus under `x16_samples/`.
 
 - Build or rebuild the sample matrix with `./scripts/build_x16_samples.sh`
 - Run the focused x86-16 regression suite with:
-  - `../venv/bin/python -m pytest -q tests/test_x86_16_smoketest.py tests/test_x86_16_cod_samples.py tests/test_x86_16_dos_mz_loader.py tests/test_x86_16_sample_matrix.py`
+  - `../.venv/bin/python -m pytest -q tests/test_x86_16_smoketest.py tests/test_x86_16_cod_samples.py tests/test_x86_16_dos_mz_loader.py tests/test_x86_16_sample_matrix.py`
 - Run just the real-binary corpus coverage with:
-  - `../venv/bin/python -m pytest -q tests/test_x86_16_sample_matrix.py`
+  - `../.venv/bin/python -m pytest -q tests/test_x86_16_sample_matrix.py`
 
 The sample rebuild uses the DOS toolchain from `/home/xor/games/f15se2-re` by default. If your toolchain checkout lives somewhere else, set `X16_TOOLCHAIN_ROOT=/path/to/f15se2-re`.
 
