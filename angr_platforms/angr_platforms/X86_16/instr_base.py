@@ -21,7 +21,7 @@ from .alu_helpers import (
 )
 from .addressing_helpers import load_resolved_operand, store_resolved_operand
 from .exec import ExecInstr
-from .stack_helpers import pop_far_return_frame16, pop_interrupt_frame16
+from .stack_helpers import branch_rel8, pop_far_return_frame16, pop_interrupt_frame16
 from .instruction import *
 from .parse import ParseInstr
 from .regs import reg8_t, reg16_t, sgreg_t
@@ -381,82 +381,52 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         return self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
 
     def jo_rel8(self) -> None:
-        result = self.emu.is_overflow()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, self.emu.is_overflow(), self.instr.imm8)
 
     def jno_rel8(self) -> None:
-        result = self.emu.is_overflow()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, ~self.emu.is_overflow(), self.instr.imm8)
 
     def jb_rel8(self) -> None:
-        result = self.emu.is_carry()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, self.emu.is_carry(), self.instr.imm8)
 
     def jnb_rel8(self) -> None:  # jae
-        result = self.emu.is_carry()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, ~self.emu.is_carry(), self.instr.imm8)
 
     def jz_rel8(self) -> None:
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(self.emu.is_zero(), ip)
+        branch_rel8(self.emu, self.emu.is_zero(), self.instr.imm8)
 
     def jnz_rel8(self) -> None:
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(~self.emu.is_zero(), ip)
+        branch_rel8(self.emu, ~self.emu.is_zero(), self.instr.imm8)
 
     def jbe_rel8(self) -> None:
-        result = self.emu.is_carry() | self.emu.is_zero()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, self.emu.is_carry() | self.emu.is_zero(), self.instr.imm8)
 
     def ja_rel8(self) -> None:
-        result = self.emu.is_carry() | self.emu.is_zero()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, ~(self.emu.is_carry() | self.emu.is_zero()), self.instr.imm8)
 
     def js_rel8(self) -> None:
-        result = self.emu.is_sign()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, self.emu.is_sign(), self.instr.imm8)
 
     def jns_rel8(self) -> None:
-        result = self.emu.is_sign()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, ~self.emu.is_sign(), self.instr.imm8)
 
     def jp_rel8(self) -> None:
-        result = self.emu.is_parity()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, self.emu.is_parity(), self.instr.imm8)
 
     def jnp_rel8(self) -> None:
-        result = self.emu.is_parity()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, ~self.emu.is_parity(), self.instr.imm8)
 
     def jl_rel8(self) -> None:
-        result = self.emu.is_sign() != self.emu.is_overflow()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm8)
 
     def jnl_rel8(self) -> None:  # jge
-        result = self.emu.is_sign() != self.emu.is_overflow()
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(~result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, ~(self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm8)
 
     def jle_rel8(self) -> None:
-        ip = self._rel8_target()
-        cond = self.emu.is_zero() | (self.emu.is_sign() != self.emu.is_overflow())
-        self.emu.lifter_instruction.jump(cond, ip)
+        branch_rel8(self.emu, self.emu.is_zero() | (self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm8)
 
     def jnle_rel8(self) -> None:
-        result = ~self.emu.is_zero() & (self.emu.is_sign() == self.emu.is_overflow())
-        ip = self._rel8_target()
-        self.emu.lifter_instruction.jump(result, ip, JumpKind.Boring)
+        branch_rel8(self.emu, ~self.emu.is_zero() & (self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm8)
 
     def test_rm8_r8(self) -> None:
         compare_operation(self.get_rm8, self.get_r8, self.emu.update_eflags_and)

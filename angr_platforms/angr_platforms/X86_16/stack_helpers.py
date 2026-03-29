@@ -203,17 +203,33 @@ def emit_near_jump32(emu, target):
     return target
 
 
-def branch_rel32(emu, condition, displacement):
+def _branch_rel(emu, condition, displacement, instruction_size: int, target_width_bits: int, emit_jump):
     if hasattr(condition, "cast_to"):
         condition = condition.cast_to(Type.int_1)
-    target = emu.get_eip() + emu.constant(displacement, Type.int_32)
+    target = (
+        emu.get_gpreg(reg16_t.IP)
+        if target_width_bits == 16
+        else emu.get_eip()
+    ) + emu.constant(displacement, Type.int_16 if target_width_bits == 16 else Type.int_32) + emu.constant(instruction_size, Type.int_16 if target_width_bits == 16 else Type.int_32)
     if isinstance(condition, bool):
         if not condition:
             return None
-        return emit_near_jump32(emu, target)
+        return emit_jump(emu, target)
     if getattr(condition, "rdt", None) is False:
         return None
-    return emit_near_jump32(emu, target)
+    return emit_jump(emu, target)
+
+
+def branch_rel8(emu, condition, displacement):
+    return _branch_rel(emu, condition, displacement, 2, 16, emit_near_jump16)
+
+
+def branch_rel16(emu, condition, displacement, instruction_size: int = 3):
+    return _branch_rel(emu, condition, displacement, instruction_size, 16, emit_near_jump16)
+
+
+def branch_rel32(emu, condition, displacement):
+    return _branch_rel(emu, condition, displacement, 0, 32, emit_near_jump32)
 
 
 def enter16(emu, frame_size: int, nesting_level: int) -> None:

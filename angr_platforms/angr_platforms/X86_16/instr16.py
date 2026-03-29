@@ -16,6 +16,7 @@ from .alu_helpers import (
 from .addressing_helpers import load_far_pointer, load_resolved_operand, load_word_pair16, resolve_linear_operand, store_resolved_operand
 from .instr_base import InstrBase
 from .stack_helpers import (
+    branch_rel16,
     emit_near_call16,
     emit_near_jump16,
     enter16,
@@ -784,74 +785,52 @@ class Instr16(InstrBase):
         self.emu.out_io16(dx, ax)
 
     def jo_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(self.emu.is_overflow(), ip)
+        branch_rel16(self.emu, self.emu.is_overflow(), self.instr.imm16, self.instr.size)
 
     def jno_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(not self.emu.is_overflow(), ip)
+        branch_rel16(self.emu, not self.emu.is_overflow(), self.instr.imm16, self.instr.size)
 
     def jb_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(self.emu.is_carry(), ip)
+        branch_rel16(self.emu, self.emu.is_carry(), self.instr.imm16, self.instr.size)
 
     def jnb_rel16(self):  # jae, jnc
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(not self.emu.is_carry(), ip)
+        branch_rel16(self.emu, not self.emu.is_carry(), self.instr.imm16, self.instr.size)
 
     def jz_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(self.emu.is_zero(), ip)
+        branch_rel16(self.emu, self.emu.is_zero(), self.instr.imm16, self.instr.size)
 
     def jnz_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(not self.emu.is_zero(), ip)
+        branch_rel16(self.emu, not self.emu.is_zero(), self.instr.imm16, self.instr.size)
 
     def jbe_rel16(self):
-        ip = self._rel16_target()
-        cond = self.emu.is_carry() or self.emu.is_zero()
-        self.emu.lifter_instruction.jump(cond, ip)
+        branch_rel16(self.emu, self.emu.is_carry() or self.emu.is_zero(), self.instr.imm16, self.instr.size)
 
     def ja_rel16(self):
-        ip = self._rel16_target()
-        cond = not (self.emu.is_carry() or self.emu.is_zero())
-        self.emu.lifter_instruction.jump(cond, ip)
+        branch_rel16(self.emu, not (self.emu.is_carry() or self.emu.is_zero()), self.instr.imm16, self.instr.size)
 
     def js_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(self.emu.is_sign(), ip)
+        branch_rel16(self.emu, self.emu.is_sign(), self.instr.imm16, self.instr.size)
 
     def jns_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(not self.emu.is_sign(), ip)
+        branch_rel16(self.emu, not self.emu.is_sign(), self.instr.imm16, self.instr.size)
 
     def jp_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(self.emu.is_parity(), ip)
+        branch_rel16(self.emu, self.emu.is_parity(), self.instr.imm16, self.instr.size)
 
     def jnp_rel16(self):
-        ip = self._rel16_target()
-        self.emu.lifter_instruction.jump(not self.emu.is_parity(), ip)
+        branch_rel16(self.emu, not self.emu.is_parity(), self.instr.imm16, self.instr.size)
 
     def jl_rel16(self):
-        ip = self._rel16_target()
-        cond = self.emu.is_sign() != self.emu.is_overflow()
-        self.emu.lifter_instruction.jump(cond, ip)
+        branch_rel16(self.emu, self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm16, self.instr.size)
 
     def jnl_rel16(self):  # jge
-        ip = self._rel16_target()
-        cond = self.emu.is_sign() == self.emu.is_overflow()
-        self.emu.lifter_instruction.jump(cond, ip)
+        branch_rel16(self.emu, self.emu.is_sign() == self.emu.is_overflow(), self.instr.imm16, self.instr.size)
 
     def jle_rel16(self):
-        ip = self._rel16_target()
-        cond = self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())
-        self.emu.lifter_instruction.jump(cond, ip)
+        branch_rel16(self.emu, self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm16, self.instr.size)
 
     def jnle_rel16(self):
-        ip = self._rel16_target()
-        cond = not (self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()))
-        self.emu.lifter_instruction.jump(cond, ip)
+        branch_rel16(self.emu, not (self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())), self.instr.imm16, self.instr.size)
 
     def imul_r16_rm16(self):
         r16_s = self.get_r16()

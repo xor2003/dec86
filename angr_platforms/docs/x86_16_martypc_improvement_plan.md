@@ -153,6 +153,9 @@ Recent progress on that front:
   scattered width math
 - 32-bit relative branches now also share a single helper emission path instead
   of repeating `update_eip` logic in each conditional branch handler
+- 8-bit and 16-bit relative branches now also use shared branch helpers instead
+  of each conditional branch handler open-coding its own target math and jump
+  emission
 
 ## Remaining Priorities
 

@@ -188,6 +188,47 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_trans
     assert "self.emu.update_eip(" not in source
 
 
+def test_x86_16_instruction_core_uses_stack_helpers_for_8bit_and_16bit_relative_branches():
+    source = (
+        inspect.getsource(InstrBase.jo_rel8)
+        + inspect.getsource(InstrBase.jno_rel8)
+        + inspect.getsource(InstrBase.jb_rel8)
+        + inspect.getsource(InstrBase.jnb_rel8)
+        + inspect.getsource(InstrBase.jz_rel8)
+        + inspect.getsource(InstrBase.jnz_rel8)
+        + inspect.getsource(InstrBase.jbe_rel8)
+        + inspect.getsource(InstrBase.ja_rel8)
+        + inspect.getsource(InstrBase.js_rel8)
+        + inspect.getsource(InstrBase.jns_rel8)
+        + inspect.getsource(InstrBase.jp_rel8)
+        + inspect.getsource(InstrBase.jnp_rel8)
+        + inspect.getsource(InstrBase.jl_rel8)
+        + inspect.getsource(InstrBase.jnl_rel8)
+        + inspect.getsource(InstrBase.jle_rel8)
+        + inspect.getsource(InstrBase.jnle_rel8)
+        + inspect.getsource(instr16.Instr16.jo_rel16)
+        + inspect.getsource(instr16.Instr16.jno_rel16)
+        + inspect.getsource(instr16.Instr16.jb_rel16)
+        + inspect.getsource(instr16.Instr16.jnb_rel16)
+        + inspect.getsource(instr16.Instr16.jz_rel16)
+        + inspect.getsource(instr16.Instr16.jnz_rel16)
+        + inspect.getsource(instr16.Instr16.jbe_rel16)
+        + inspect.getsource(instr16.Instr16.ja_rel16)
+        + inspect.getsource(instr16.Instr16.js_rel16)
+        + inspect.getsource(instr16.Instr16.jns_rel16)
+        + inspect.getsource(instr16.Instr16.jp_rel16)
+        + inspect.getsource(instr16.Instr16.jnp_rel16)
+        + inspect.getsource(instr16.Instr16.jl_rel16)
+        + inspect.getsource(instr16.Instr16.jnl_rel16)
+        + inspect.getsource(instr16.Instr16.jle_rel16)
+        + inspect.getsource(instr16.Instr16.jnle_rel16)
+    )
+
+    assert "branch_rel8(" in source
+    assert "branch_rel16(" in source
+    assert "self.emu.lifter_instruction.jump(" not in source
+
+
 def test_x86_16_instruction_core_uses_byte_alu_immediate_helper_families():
     source = (
         inspect.getsource(InstrBase.add_al_imm8)
