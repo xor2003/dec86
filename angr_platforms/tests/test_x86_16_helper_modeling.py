@@ -93,6 +93,35 @@ def test_interrupt_service_renderer_keeps_int10_wrapper_oriented():
     assert _decompile.interrupt_service_declarations([call, callx], "pseudo") == []
 
 
+def test_interrupt_wrapper_placeholder_calls_are_recovered_from_argument_shape(monkeypatch):
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x2345, statements=SimpleNamespace()),
+        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+    )
+    project = SimpleNamespace()
+    callee_func = SimpleNamespace(name="CallReturn")
+    call = _decompile.structured_c.CFunctionCall(
+        "CallReturn",
+        callee_func,
+        [
+            _decompile.structured_c.CConstant(0x21, SimTypeShort(), codegen=codegen),
+            object(),
+            object(),
+            object(),
+        ],
+        codegen=codegen,
+    )
+
+    monkeypatch.setattr(_decompile, "_iter_c_nodes", lambda _node: [call])
+
+    changed = _decompile._attach_interrupt_wrapper_callees(project, codegen, "pseudo")
+
+    assert changed
+    assert callee_func.name == "int86x"
+    assert project._inertia_interrupt_wrappers[0x2345]["calls"][0].canonical_name == "int86x"
+
+
 def test_interrupt_wrapper_callees_are_classified_and_canonicalized(monkeypatch):
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1234, statements=SimpleNamespace()),
