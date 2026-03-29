@@ -50,3 +50,42 @@ def masked_shift_count(emu, count, width_bits: int, mask: int = 0x1F):
 
 def rotate_count(emu, count, modulo: int, width_bits: int, mask: int = 0x1F):
     return masked_shift_count(emu, count, width_bits, mask) % emu.constant(modulo, type_for_bits(width_bits))
+
+
+def shift_left_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+    value = get_value()
+    shift = masked_shift_count(emu, count, width_bits)
+    set_result(value << shift)
+    update_flags(value, shift)
+
+
+def shift_right_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+    value = get_value()
+    shift = masked_shift_count(emu, count, width_bits)
+    set_result(value >> shift)
+    update_flags(value, shift)
+
+
+def shift_right_arithmetic_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+    value = get_value()
+    shift = masked_shift_count(emu, count, width_bits)
+    set_result(value.sar(shift))
+    update_flags(value, shift)
+
+
+def rotate_left_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+    value = get_value()
+    shift = rotate_count(emu, count, width_bits, width_bits)
+    width = emu.constant(width_bits, type_for_bits(width_bits))
+    mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
+    set_result(((value << shift) | (value >> (width - shift))) & mask)
+    update_flags(value, shift)
+
+
+def rotate_right_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+    value = get_value()
+    shift = rotate_count(emu, count, width_bits, width_bits)
+    width = emu.constant(width_bits, type_for_bits(width_bits))
+    mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
+    set_result(((value >> shift) | (value << (width - shift))) & mask)
+    update_flags(value, shift)

@@ -12,6 +12,11 @@ from .alu_helpers import (
     compare_operation,
     masked_shift_count,
     rotate_count,
+    rotate_left_operation,
+    rotate_right_operation,
+    shift_left_operation,
+    shift_right_arithmetic_operation,
+    shift_right_operation,
     unary_operation,
 )
 from .exec import ExecInstr
@@ -854,9 +859,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.set_rm8(self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()))
 
     def setnle_rm8(self) -> None:
-        self.set_rm8(
-            self.instr, not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow()),
-        )
+        self.set_rm8(not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow()))
 
     def code_80(self) -> None:
         self._dispatch_modrm_reg(
@@ -927,24 +930,34 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         return rotate_count(self.emu, count, modulo, 8)
 
     def shl_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._masked_shift_count8(self._group2_rm8_count())
-        self.set_rm8(rm8 << count)
-        self.emu.update_eflags_shl(rm8, count)
+        shift_left_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_shl,
+            self._group2_rm8_count(),
+            8,
+        )
 
     def rol_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._rotate_count8(self._group2_rm8_count(), 8)
-        width = self.emu.constant(8, Type.int_8)
-        self.set_rm8((rm8 << count) | (rm8 >> (width - count)))
-        self.emu.update_eflags_rol(rm8, count)
+        rotate_left_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_rol,
+            self._group2_rm8_count(),
+            8,
+        )
 
     def ror_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._rotate_count8(self._group2_rm8_count(), 8)
-        width = self.emu.constant(8, Type.int_8)
-        self.set_rm8((rm8 >> count) | (rm8 << (width - count)))
-        self.emu.update_eflags_ror(rm8, count)
+        rotate_right_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_ror,
+            self._group2_rm8_count(),
+            8,
+        )
 
     def rcl_rm8(self) -> None:
         rm8 = self.get_rm8()
@@ -957,16 +970,24 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self._rcr_rm8(rm8, count)
 
     def shr_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._masked_shift_count8(self._group2_rm8_count())
-        self.set_rm8(rm8 >> count)
-        self.emu.update_eflags_shr(rm8, count)
+        shift_right_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_shr,
+            self._group2_rm8_count(),
+            8,
+        )
 
     def sar_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._masked_shift_count8(self._group2_rm8_count())
-        self.set_rm8(rm8.sar(count))
-        self.emu.update_eflags_sar(rm8, count)
+        shift_right_arithmetic_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_sar,
+            self._group2_rm8_count(),
+            8,
+        )
 
     def inc_rm8(self) -> None:
         unary_operation(self.get_rm8, self.set_rm8, self.emu.update_eflags_inc, lambda value: value + 1)
@@ -1020,24 +1041,34 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
 
     def shl_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._masked_shift_count8(self.instr.imm8)
-        self.set_rm8(rm8 << count)
-        self.emu.update_eflags_shl(rm8, count)
+        shift_left_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_shl,
+            self.instr.imm8,
+            8,
+        )
 
     def rol_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._rotate_count8(self.instr.imm8, 8)
-        width = self.emu.constant(8, Type.int_8)
-        self.set_rm8((rm8 << count) | (rm8 >> (width - count)))
-        self.emu.update_eflags_rol(rm8, count)
+        rotate_left_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_rol,
+            self.instr.imm8,
+            8,
+        )
 
     def ror_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._rotate_count8(self.instr.imm8, 8)
-        width = self.emu.constant(8, Type.int_8)
-        self.set_rm8((rm8 >> count) | (rm8 << (width - count)))
-        self.emu.update_eflags_ror(rm8, count)
+        rotate_right_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_ror,
+            self.instr.imm8,
+            8,
+        )
 
     def rcl_rm8_imm8(self) -> None:
         rm8 = self.get_rm8()
@@ -1051,24 +1082,36 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
 
     def shr_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._masked_shift_count8(self.instr.imm8)
-        self.set_rm8(rm8 >> count)
-        self.emu.update_eflags_shr(rm8, count)
+        shift_right_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_shr,
+            self.instr.imm8,
+            8,
+        )
 
 
     def sal_rm8_imm8(self) -> None:
-        rm8 = self.get_rm8()
-        count = self._masked_shift_count8(self.instr.imm8)
-        self.set_rm8(rm8 << count)
-        self.emu.update_eflags_shl(rm8, count)
+        shift_left_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_shl,
+            self.instr.imm8,
+            8,
+        )
 
 
     def sar_rm8_imm8(self) -> None:
-        rm8_s = self.get_rm8()
-        count = self._masked_shift_count8(self.instr.imm8)
-        self.set_rm8(rm8_s.sar(count))
-        self.emu.update_eflags_sar(rm8_s, count)
+        shift_right_arithmetic_operation(
+            self.emu,
+            self.get_rm8,
+            self.set_rm8,
+            self.emu.update_eflags_sar,
+            self.instr.imm8,
+            8,
+        )
 
     def _rcl_rm8(self, value, count) -> None:
         size = 8

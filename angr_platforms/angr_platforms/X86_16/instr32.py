@@ -14,7 +14,7 @@ from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
 from .stack_helpers import leave32, near_return_eip32
-from .string_helpers import string_source_segment
+from .string_helpers import repeat_jump, repeat_prefix_cond, string_delta, string_source_segment
 from .regs import reg8_t, reg16_t, reg32_t
 
 
@@ -343,48 +343,34 @@ class Instr32(InstrBase):
         self.set_moffs32(self.emu.get_gpreg(reg32_t.EAX))
 
     def cmps_m8_m8(self):
-        while True:
-            m8_s = self.emu.get_data8(
-                string_source_segment(self.instr), self.emu.get_gpreg(reg32_t.ESI),
-            )
-            m8_d = self.emu.get_data8(reg16_t.ES, self.emu.get_gpreg(reg32_t.EDI))
-            compare_operation(lambda: m8_s, lambda: m8_d, self.emu.update_eflags_sub)
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
-            self.emu.update_gpreg(reg32_t.ESI, -1 if self.emu.is_direction() else 1)
-            self.emu.update_gpreg(reg32_t.EDI, -1 if self.emu.is_direction() else 1)
+        si = self.emu.get_gpreg(reg32_t.ESI)
+        di = self.emu.get_gpreg(reg32_t.EDI)
+        delta = string_delta(self.emu, 1)
+        m8_s = self.emu.get_data8(string_source_segment(self.instr), si)
+        m8_d = self.emu.get_data8(reg16_t.ES, di)
+        compare_operation(lambda: m8_s, lambda: m8_d, self.emu.update_eflags_sub)
+        self.emu.set_gpreg(reg32_t.ESI, si + delta)
+        self.emu.set_gpreg(reg32_t.EDI, di + delta)
 
-            if self.instr.pre_repeat:
-                self.emu.update_gpreg(reg32_t.ECX, -1)
-                if self.instr.pre_repeat == REPZ:
-                    if not self.emu.get_gpreg(reg32_t.ECX) or not self.emu.is_zero():
-                        break
-                elif self.instr.pre_repeat == REPNZ:
-                    if not self.emu.get_gpreg(reg32_t.ECX) or self.emu.is_zero():
-                        break
-            else:
-                break
+        if repeat_cond is not None:
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def cmps_m32_m32(self):
-        while True:
-            m32_s = self.emu.get_data32(
-                string_source_segment(self.instr), self.emu.get_gpreg(reg32_t.ESI),
-            )
-            m32_d = self.emu.get_data32(reg16_t.ES, self.emu.get_gpreg(reg32_t.EDI))
-            compare_operation(lambda: m32_s, lambda: m32_d, self.emu.update_eflags_sub)
+        repeat_cond = repeat_prefix_cond(self.emu, self.instr)
 
-            self.emu.update_gpreg(reg32_t.ESI, -1 if self.emu.is_direction() else 1)
-            self.emu.update_gpreg(reg32_t.EDI, -1 if self.emu.is_direction() else 1)
+        si = self.emu.get_gpreg(reg32_t.ESI)
+        di = self.emu.get_gpreg(reg32_t.EDI)
+        delta = string_delta(self.emu, 4)
+        m32_s = self.emu.get_data32(string_source_segment(self.instr), si)
+        m32_d = self.emu.get_data32(reg16_t.ES, di)
+        compare_operation(lambda: m32_s, lambda: m32_d, self.emu.update_eflags_sub)
+        self.emu.set_gpreg(reg32_t.ESI, si + delta)
+        self.emu.set_gpreg(reg32_t.EDI, di + delta)
 
-            if self.instr.pre_repeat:
-                self.emu.update_gpreg(reg32_t.ECX, -1)
-                if self.instr.pre_repeat == REPZ:
-                    if not self.emu.get_gpreg(reg32_t.ECX) or not self.emu.is_zero():
-                        break
-                elif self.instr.pre_repeat == REPNZ:
-                    if not self.emu.get_gpreg(reg32_t.ECX) or self.emu.is_zero():
-                        break
-            else:
-                break
+        if repeat_cond is not None:
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def test_eax_imm32(self):
         compare_operation(lambda: self.emu.get_gpreg(reg32_t.EAX), lambda: self.instr.imm32, self.emu.update_eflags_and)

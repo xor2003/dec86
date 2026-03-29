@@ -631,7 +631,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, next_di)
 
         if repeat_cond is not None:
-            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def scasw_ax_m16(self):
         repeat_cond = self._repeat_prefix_cond()
@@ -643,7 +643,7 @@ class Instr16(InstrBase):
         self.emu.set_gpreg(reg16_t.DI, next_di)
 
         if repeat_cond is not None:
-            self.emu.lifter_instruction.jump(repeat_cond, self.emu.get_gpreg(reg16_t.IP), JumpKind.Boring)
+            repeat_jump(self.emu, self.instr, repeat_cond)
 
     def cmps_m8_m8(self):
         repeat_cond = self._repeat_prefix_cond()
