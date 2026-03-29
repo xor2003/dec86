@@ -9,6 +9,7 @@ from .addressing_helpers import (
     default_segment_for_modrm16,
     default_segment_for_modrm32,
     modrm16_effective_offset,
+    modrm32_effective_offset,
     resolve_linear_operand,
     signed_displacement,
 )
@@ -174,42 +175,6 @@ class ExecInstr(X86Instruction):
         return modrm16_effective_offset(self.emu, self.instr.modrm, self.instr.disp8, self.instr.disp16)
 
     def calc_modrm32(self):
-        addr = 0
-        self.instr.segment = default_segment_for_modrm32(self.instr.modrm.mod, self.instr.modrm.rm).value
-
-        if self.instr.modrm.mod == 1:
-            addr += self.instr.disp8
-        elif self.instr.modrm.mod == 2:
-            addr += self.instr.disp32
-
-        rm = self.instr.modrm.rm
-        if rm == 4:
-            addr += self.calc_sib()
-        elif rm == 5:
-            if self.instr.modrm.mod == 0:
-                addr += self.instr.disp32
-            else:
-                addr += self.emu.get_gpreg(reg32_t(rm))
-        else:
-            addr += self.emu.get_gpreg(reg32_t(rm))
-
-        return addr
-
-    def calc_sib(self):
-        base = 0
-
-        if self.instr.sib.base == 5 and self.instr.modrm.mod == 0:
-            base = self.instr.disp32
-        elif self.instr.sib.base == 4:
-            if self.instr.sib.scale == 0:
-                self.instr.segment = sgreg_t.SS.value
-            else:
-                print(
-                    f"not implemented SIB (base = {self.instr.sib.base}, index = {self.instr.sib.index}, scale = {self.instr.sib.scale})\n",
-                    file=sys.stderr,
-                )
-        else:
-            self.instr.segment = default_segment_for_modrm32(self.instr.modrm.mod, self.instr.modrm.rm, self.instr.sib.base).value
-            base = self.emu.get_gpreg(reg32_t(self.instr.sib.base))
-
-        return base + self.emu.get_gpreg(reg32_t(self.instr.sib.index)) * (1 << self.instr.sib.scale)
+        sib_base = self.instr.sib.base if self.instr.modrm.rm == 4 else None
+        self.instr.segment = default_segment_for_modrm32(self.instr.modrm.mod, self.instr.modrm.rm, sib_base).value
+        return modrm32_effective_offset(self.emu, self.instr.modrm, self.instr.sib, self.instr.disp8, self.instr.disp32)

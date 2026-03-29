@@ -175,6 +175,34 @@ def modrm16_effective_offset(emu, modrm, disp8: int, disp16: int):
     return addr
 
 
+def modrm32_effective_offset(emu, modrm, sib, disp8: int, disp32: int):
+    addr = emu.constant(0, Type.int_32)
+
+    if modrm.mod == 1:
+        addr = addr + emu.constant(signed_displacement(disp8, 8) & 0xFFFFFFFF, Type.int_32)
+    elif modrm.mod == 2:
+        addr = addr + emu.constant(disp32, Type.int_32)
+
+    rm = modrm.rm
+    if rm == 4:
+        if sib.base == 5 and modrm.mod == 0:
+            base = emu.constant(disp32, Type.int_32)
+        elif sib.base == 4:
+            base = emu.get_gpreg(reg32_t.ESP)
+        else:
+            base = emu.get_gpreg(reg32_t(sib.base))
+        if sib.index == 4:
+            index = emu.constant(0, Type.int_32)
+        else:
+            index = emu.get_gpreg(reg32_t(sib.index))
+        addr = addr + base + index * (1 << sib.scale)
+        return addr
+
+    if rm == 5 and modrm.mod == 0:
+        return addr + emu.constant(disp32, Type.int_32)
+    return addr + emu.get_gpreg(reg32_t(rm))
+
+
 def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, address_bits: int) -> ResolvedMemoryOperand:
     return ResolvedMemoryOperand(segment, offset, linear_address(emu, segment, offset), width_bits, address_bits)
 

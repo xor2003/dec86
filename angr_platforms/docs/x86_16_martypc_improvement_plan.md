@@ -125,6 +125,9 @@ Recent progress on that front:
   instruction-side memory helpers
 - `xlat` and adjacent 16-bit word-pair reads no longer need purely local
   address-step logic
+- 32-bit ModRM/SIB effective-address composition is now also helper-backed,
+  including ESP-base and no-index cases, instead of living only in
+  `exec.py`
 - `movzx` / `movsx` byte-source handlers now use the shared `rm8` access path
   instead of open-coding memory reads
 - string-family handlers now route their memory reads and writes through shared
@@ -179,6 +182,9 @@ Recent progress on that front:
   implicit inside parse helpers
 - 16-bit ModRM effective-address arithmetic now has a shared helper boundary
   instead of living only inside `exec.py`
+- 32-bit ModRM/SIB effective-address arithmetic now also has a shared helper
+  boundary, including ESP-base and no-index handling, instead of staying
+  inside `exec.py`
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging
