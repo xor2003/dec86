@@ -9,6 +9,7 @@ from .alias_model import describe_x86_16_alias_recovery_api
 from .addressing_helpers import describe_x86_16_decode_width_matrix
 from .analysis_helpers import describe_x86_16_interrupt_api_surface
 from .cod_source_rewrites import describe_x86_16_source_backed_rewrite_status
+from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import describe_x86_16_validation_families, describe_x86_16_validation_layers
@@ -56,6 +57,7 @@ def build_x86_16_milestone_report(
     alias_api = describe_x86_16_alias_recovery_api()
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
+    projection_cleanup_rules = describe_x86_16_projection_cleanup_rules()
     decode_width_matrix = describe_x86_16_decode_width_matrix()
     interrupt_api_surface = describe_x86_16_interrupt_api_surface()
     failure_counts = dict(scan_summary.get("failure_counts", {}) or {})
@@ -107,6 +109,10 @@ def build_x86_16_milestone_report(
         "recovery_layers": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in recovery_layers
+        ],
+        "projection_cleanup_rules": [
+            {"name": name, "purpose": purpose}
+            for name, purpose in projection_cleanup_rules
         ],
         "readability_set_summary": [
             {"source": source, "proc_name": proc_name, "anchor_count": anchor_count}

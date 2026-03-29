@@ -103,6 +103,7 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
         helpers=(
             "describe_x86_16_decompiler_postprocess_stage",
             "apply_x86_16_decompiler_postprocess",
+            "describe_x86_16_projection_cleanup_rules",
             "_simplify_boolean_cites_8616",
             "_rewrite_flag_condition_pairs_8616",
         ),

@@ -10,7 +10,43 @@ from .decompiler_postprocess_utils import (
     _structured_codegen_node_8616,
 )
 
-__all__ = ["_simplify_structured_expressions_8616", "_simplify_boolean_cites_8616"]
+PROJECTION_CLEANUP_RULES = (
+    (
+        "concat_fold",
+        "Fold concatenations of constant halves into one constant and preserve the narrower shift width otherwise.",
+    ),
+    (
+        "or_zero_elimination",
+        "Eliminate redundant zero terms in Or expressions after the low-level expression facts are stable.",
+    ),
+    (
+        "and_zero_collapse",
+        "Collapse And expressions with a zero operand into typed zero constants.",
+    ),
+    (
+        "double_not_collapse",
+        "Remove redundant boolean negation pairs after boolean cite recovery.",
+    ),
+    (
+        "zero_compare_projection",
+        "Convert zero comparisons into the underlying projection or flag source when the evidence is explicit.",
+    ),
+    (
+        "sub_self_zero",
+        "Collapse self-subtractions into typed zero constants once the low-level operands are proven identical.",
+    ),
+)
+
+
+__all__ = [
+    "_simplify_structured_expressions_8616",
+    "_simplify_boolean_cites_8616",
+    "describe_x86_16_projection_cleanup_rules",
+]
+
+
+def describe_x86_16_projection_cleanup_rules() -> tuple[tuple[str, str], ...]:
+    return PROJECTION_CLEANUP_RULES
 
 
 def _simplify_boolean_cites_8616(codegen) -> bool:

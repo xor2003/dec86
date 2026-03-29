@@ -220,6 +220,32 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "far_near_prototype_recovery",
         "thin_late_rewrite_boundary",
     ]
+    assert report["projection_cleanup_rules"] == [
+        {
+            "name": "concat_fold",
+            "purpose": "Fold concatenations of constant halves into one constant and preserve the narrower shift width otherwise.",
+        },
+        {
+            "name": "or_zero_elimination",
+            "purpose": "Eliminate redundant zero terms in Or expressions after the low-level expression facts are stable.",
+        },
+        {
+            "name": "and_zero_collapse",
+            "purpose": "Collapse And expressions with a zero operand into typed zero constants.",
+        },
+        {
+            "name": "double_not_collapse",
+            "purpose": "Remove redundant boolean negation pairs after boolean cite recovery.",
+        },
+        {
+            "name": "zero_compare_projection",
+            "purpose": "Convert zero comparisons into the underlying projection or flag source when the evidence is explicit.",
+        },
+        {
+            "name": "sub_self_zero",
+            "purpose": "Collapse self-subtractions into typed zero constants once the low-level operands are proven identical.",
+        },
+    ]
     assert report["source_backed_rewrites"]["count"] >= 6
     assert report["hotspots"]["fallback_counts"] == {"block_lift": 1, "cfg_only": 2}
     assert report["hotspots"]["top_fallback_kinds"][0]["fallback_kind"] == "cfg_only"

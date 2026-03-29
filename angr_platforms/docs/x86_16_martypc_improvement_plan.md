@@ -180,6 +180,9 @@ Recent progress on that front:
 - scan-safe corpus reports now also attach semantic-family ownership to
   failures and ugly clusters, so triage can point back to the low-level family
   that likely needs work
+- the late rewrite layer now exposes an explicit projection-cleanup rules
+  surface, so concat/zero-compare/boolean cleanup is visible as a named
+  boundary instead of being hidden inside one large simplifier
 - 32-bit relative branches now also share a single helper emission path instead
   of repeating `update_eip` logic in each conditional branch handler
 - 8-bit, 16-bit, and 32-bit relative-branch families now all use shared

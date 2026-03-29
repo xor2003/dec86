@@ -26,6 +26,7 @@ __all__ = [
     "describe_x86_16_alias_recovery_api",
     "describe_x86_16_interrupt_api_surface",
     "describe_x86_16_decode_width_matrix",
+    "describe_x86_16_projection_cleanup_rules",
     "simos_86_16",
     "rewrite_cod_source_stage",
     "decompiler_postprocess",
@@ -60,6 +61,7 @@ from .alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
 from .addressing_helpers import describe_x86_16_decode_width_matrix  # noqa: F401
 from .analysis_helpers import describe_x86_16_interrupt_api_surface  # noqa: F401
 from .recovery_manifest import describe_x86_16_recovery_layers  # noqa: F401
+from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,
