@@ -174,6 +174,9 @@ Recent progress on that front:
 - normalized decode metadata now has an explicit width-profile abstraction, so
   the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
   scattered width math
+- instruction metadata now has a dedicated report surface, so normalized
+  decode facts are visible in milestone summaries instead of only being
+  consumed indirectly by helpers
 - the explicit mixed-width decode matrix now has a shared helper/report
   surface, so the width combinations are visible in tests and milestone
   reporting instead of only in parser logic

@@ -58,6 +58,31 @@ class InstrData:
         self.repeat_class = "none"  # normalized repeat prefix class
         self.control_flow_class = "none"  # normalized control-transfer family
 
+
+def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
+    return {
+        "normalized_fields": (
+            "operand_bits",
+            "address_bits",
+            "displacement_bits",
+            "repeat_class",
+            "control_flow_class",
+        ),
+        "repeat_classes": ("none", "repz", "repnz"),
+        "control_flow_classes": (
+            "none",
+            "interrupt",
+            "iret",
+            "near_ret",
+            "far_ret",
+            "near_call",
+            "far_call",
+            "near_jump",
+            "far_jump",
+            "conditional_jump",
+        ),
+    }
+
 # Base class for instruction handlers
 class X86Instruction:
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool):

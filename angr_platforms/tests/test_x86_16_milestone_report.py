@@ -237,6 +237,28 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             ),
         },
     }
+    assert report["instruction_metadata_surface"] == {
+        "normalized_fields": (
+            "operand_bits",
+            "address_bits",
+            "displacement_bits",
+            "repeat_class",
+            "control_flow_class",
+        ),
+        "repeat_classes": ("none", "repz", "repnz"),
+        "control_flow_classes": (
+            "none",
+            "interrupt",
+            "iret",
+            "near_ret",
+            "far_ret",
+            "near_call",
+            "far_call",
+            "near_jump",
+            "far_jump",
+            "conditional_jump",
+        ),
+    }
     assert report["mixed_width_extension_surface"] == {
         "matrix": (
             {

@@ -13,6 +13,7 @@ from .cod_source_rewrites import (
     describe_x86_16_source_backed_rewrite_status,
 )
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
+from .instruction import describe_x86_16_instruction_metadata_surface
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import describe_x86_16_validation_families, describe_x86_16_validation_layers
@@ -99,6 +100,7 @@ def build_x86_16_milestone_report(
     mixed_width_extension_surface = describe_x86_16_mixed_width_extension_surface()
     interrupt_api_surface = describe_x86_16_interrupt_api_surface()
     interrupt_core_surface = describe_x86_16_interrupt_core_surface()
+    instruction_metadata_surface = describe_x86_16_instruction_metadata_surface()
     failure_counts = dict(scan_summary.get("failure_counts", {}) or {})
     fallback_counts = dict(scan_summary.get("fallback_counts", {}) or {})
     top_failure_classes = list(scan_summary.get("top_failure_classes", []) or [])
@@ -185,6 +187,7 @@ def build_x86_16_milestone_report(
         },
         "interrupt_api_surface": interrupt_api_surface,
         "interrupt_core_surface": interrupt_core_surface,
+        "instruction_metadata_surface": instruction_metadata_surface,
         "readability_tiers": readability_tier_counts,
         "hotspots": {
             "failure_counts": failure_counts,
