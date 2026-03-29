@@ -12,6 +12,16 @@ class RecoveryLayerSpec:
 
 RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
     RecoveryLayerSpec(
+        name="segmented_memory_association",
+        purpose="Keep segment-base association explicit so real-mode lowering stays conservative.",
+        helpers=(
+            "_SegmentAssociationState",
+            "_SegmentedAccess",
+            "_classify_segmented_addr_expr",
+            "_classify_segmented_dereference",
+        ),
+    ),
+    RecoveryLayerSpec(
         name="member_and_array_recovery",
         purpose="Turn repeated offsets and stride evidence into fields and arrays.",
         helpers=(
@@ -38,6 +48,26 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
             "_apply_word_global_types_8616",
             "_coalesce_word_global_loads_8616",
             "_coalesce_word_global_constant_stores_8616",
+            "describe_word_global_constant_store_candidates_8616",
+        ),
+    ),
+    RecoveryLayerSpec(
+        name="store_side_widening",
+        purpose="Coalesce adjacent global stores before final typing and rewrite.",
+        helpers=(
+            "_coalesce_word_global_loads_8616",
+            "_coalesce_word_global_constant_stores_8616",
+            "_apply_word_global_types_8616",
+        ),
+    ),
+    RecoveryLayerSpec(
+        name="segment_aware_object_roots",
+        purpose="Keep object roots tied to explicit real-mode segment association.",
+        helpers=(
+            "_match_real_mode_linear_expr",
+            "_match_segmented_dereference",
+            "_match_segment_register_based_dereference",
+            "_match_ss_stack_reference",
         ),
     ),
     RecoveryLayerSpec(
@@ -65,6 +95,16 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
             "extend_cfg_for_far_calls",
             "seed_calling_conventions",
             "describe_x86_16_decompiler_return_compatibility",
+        ),
+    ),
+    RecoveryLayerSpec(
+        name="thin_late_rewrite_boundary",
+        purpose="Keep the final C cleanup layer thin and low-risk.",
+        helpers=(
+            "describe_x86_16_decompiler_postprocess_stage",
+            "apply_x86_16_decompiler_postprocess",
+            "_simplify_boolean_cites_8616",
+            "_rewrite_flag_condition_pairs_8616",
         ),
     ),
 )

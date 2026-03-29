@@ -169,7 +169,7 @@ continuously improved.
 - `Exit signal`:
   - the project has a named readability set, not just scattered anchor tests
 
-### [ ] B3. Segmented Memory Association
+### [x] B3. Segmented Memory Association
 
 - `Priority`: `P1`
 - `Complexity`: `Very High`
@@ -259,7 +259,7 @@ continuously improved.
   - widening is accepted or rejected by an explicit proof layer, not by one
     combined helper
 
-### [ ] B7. Store-Side Widening
+### [x] B7. Store-Side Widening
 
 - `Priority`: `P2`
 - `Complexity`: `High`
@@ -279,7 +279,7 @@ continuously improved.
   - adjacent byte stores are recovered as wider assignments only when safety is
     proven
 
-### [ ] B8. Segment-Aware Object Roots
+### [x] B8. Segment-Aware Object Roots
 
 - `Priority`: `P2`
 - `Complexity`: `Very High`
@@ -473,7 +473,7 @@ continuously improved.
   - medium-model startup/helper code shows fewer weak or misleading call
     signatures
 
-### [ ] D7. Thin Late-Rewrite Boundary
+### [x] D7. Thin Late-Rewrite Boundary
 
 - `Priority`: `P1`
 - `Complexity`: `High`

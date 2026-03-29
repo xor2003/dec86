@@ -28,12 +28,16 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "join_decision",
     ]
     assert [item["name"] for item in report["recovery_layers"]] == [
+        "segmented_memory_association",
         "member_and_array_recovery",
         "stable_stack_object_recovery",
         "stable_global_object_recovery",
+        "store_side_widening",
+        "segment_aware_object_roots",
         "trait_to_type_handoff",
         "prototype_evidence_layer",
         "far_near_prototype_recovery",
+        "thin_late_rewrite_boundary",
     ]
     assert report["source_backed_rewrites"]["count"] >= 6
     assert report["readability_set_summary"][0] == {
