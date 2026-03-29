@@ -1,8 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterable
 
-from .alias_model import _StorageDomainSignature, _StorageView, _merge_storage_domains, _storage_domain_for_expr
+from .alias_domains import DomainKey
+from .alias_model import (
+    AliasStorageFacts,
+    _StorageDomainSignature,
+    _StorageView,
+    _merge_storage_domains,
+    _storage_domain_for_expr,
+    can_join_alias_storage,
+    describe_alias_storage,
+    same_alias_storage_domain,
+)
+from .alias_state import AliasState
 from .widening_alias import RegisterWideningCandidate, can_join_adjacent_register_slices
 
 
@@ -23,7 +35,95 @@ class WideningCandidate:
         return cls(domain, domain.view, expr)
 
 
+@dataclass(frozen=True)
+class WideningProof:
+    ok: bool
+    reason: str
+    left: AliasStorageFacts
+    right: AliasStorageFacts
+    merged_domain: _StorageDomainSignature | None = None
+    left_version: int | None = None
+    right_version: int | None = None
+
+    def is_safe(self) -> bool:
+        return self.ok
+
+
+def _register_version_for_expr(expr: object, state: AliasState | None) -> int | None:
+    if state is None:
+        return None
+    facts = describe_alias_storage(expr)
+    if facts.identity is None:
+        return None
+    kind, name = facts.identity
+    if kind != "register" or not isinstance(name, str):
+        return None
+    return state.version_of(DomainKey("reg", name.upper()))
+
+
+def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasState | None = None) -> WideningProof:
+    low_facts = describe_alias_storage(low_expr)
+    high_facts = describe_alias_storage(high_expr)
+    low_version = _register_version_for_expr(low_expr, alias_state)
+    high_version = _register_version_for_expr(high_expr, alias_state)
+
+    if low_facts.needs_synthesis() or high_facts.needs_synthesis():
+        return WideningProof(False, "needs_synthesis", low_facts, high_facts, left_version=low_version, right_version=high_version)
+    if not same_alias_storage_domain(low_expr, high_expr):
+        return WideningProof(False, "domain_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version)
+    if not can_join_alias_storage(low_expr, high_expr):
+        return WideningProof(False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version)
+    if low_version is not None and high_version is not None and low_version != high_version:
+        return WideningProof(
+            False,
+            "version_mismatch",
+            low_facts,
+            high_facts,
+            left_version=low_version,
+            right_version=high_version,
+        )
+
+    merged_domain = _merge_storage_domains(_storage_domain_for_expr(low_expr), _storage_domain_for_expr(high_expr))
+    return WideningProof(
+        True,
+        "ok",
+        low_facts,
+        high_facts,
+        merged_domain=merged_domain,
+        left_version=low_version,
+        right_version=high_version,
+    )
+
+
+def collect_widening_candidates(exprs: Iterable[object]) -> list[WideningCandidate]:
+    candidates: list[WideningCandidate] = []
+    for expr in exprs:
+        try:
+            candidates.append(WideningCandidate.from_expr(expr))
+        except ValueError:
+            continue
+    return candidates
+
+
+def describe_widening_candidates(exprs: Iterable[object]) -> tuple[dict[str, object], ...]:
+    descriptions: list[dict[str, object]] = []
+    for candidate in collect_widening_candidates(exprs):
+        descriptions.append(
+            {
+                "domain": str(candidate.domain),
+                "view": {
+                    "bit_offset": candidate.view.bit_offset,
+                    "bit_width": candidate.view.bit_width,
+                },
+            }
+        )
+    return tuple(descriptions)
+
+
 def can_join_adjacent_storage_slices(low_expr, high_expr) -> bool:
+    proof = prove_adjacent_storage_slices(low_expr, high_expr)
+    if not proof.ok:
+        return False
     try:
         low_candidate = RegisterWideningCandidate.from_expr(low_expr)
         high_candidate = RegisterWideningCandidate.from_expr(high_expr)
@@ -55,6 +155,10 @@ def merge_storage_slice_domains(low_expr, high_expr) -> _StorageDomainSignature:
 
 __all__ = [
     "WideningCandidate",
+    "WideningProof",
+    "collect_widening_candidates",
     "can_join_adjacent_storage_slices",
+    "describe_widening_candidates",
     "merge_storage_slice_domains",
+    "prove_adjacent_storage_slices",
 ]

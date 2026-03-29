@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+
+from .alias_domains import register_pair_name
 
 
 @dataclass(frozen=True)
@@ -171,6 +174,38 @@ class _StackPointerAliasState:
         return _StackPointerAliasState(self.base, self.offset + delta)
 
 
+@dataclass(frozen=True)
+class AliasStorageFacts:
+    domain: _StorageDomainSignature
+    identity: tuple[str, Any] | None = None
+
+    def same_domain(self, other: "AliasStorageFacts") -> bool:
+        if self.domain.space != other.domain.space:
+            return False
+        if self.identity is None or other.identity is None:
+            return True
+        kind, value = self.identity
+        other_kind, other_value = other.identity
+        if kind != other_kind:
+            return False
+        if kind == "register":
+            return value == other_value
+        if kind == "stack":
+            return value == other_value or (hasattr(value, "can_join") and value.can_join(other_value))
+        return True
+
+    def compatible_view(self, other: "AliasStorageFacts") -> bool:
+        if self.domain.view is None or other.domain.view is None:
+            return False
+        return self.domain.view.can_join(other.domain.view)
+
+    def needs_synthesis(self) -> bool:
+        return self.domain.is_mixed() or self.domain.is_unknown()
+
+    def can_join(self, other: "AliasStorageFacts") -> bool:
+        return self.same_domain(other) and self.compatible_view(other) and not self.needs_synthesis() and not other.needs_synthesis()
+
+
 def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     if isinstance(variable, SimStackVariable):
         width = getattr(variable, "size", 0)
@@ -190,6 +225,23 @@ def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
         width = getattr(variable, "size", 0)
         return _StorageDomainSignature("memory", width, _storage_view_for_variable(variable))
     return _StorageDomainSignature("unknown")
+
+
+def _alias_identity_for_variable(variable) -> tuple[str, Any] | None:
+    if isinstance(variable, SimStackVariable):
+        slot = _stack_slot_identity_for_variable(variable)
+        if slot is not None:
+            return ("stack", slot)
+    if isinstance(variable, SimRegisterVariable):
+        name = getattr(variable, "name", None)
+        pair_name = register_pair_name(name)
+        if pair_name is not None:
+            return ("register", pair_name)
+    if isinstance(variable, SimMemoryVariable):
+        addr = getattr(variable, "addr", None)
+        if isinstance(addr, int):
+            return ("memory", addr)
+    return None
 
 
 def _stack_slot_identity_for_variable(variable) -> _StackSlotIdentity | None:
@@ -246,6 +298,33 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
     return _StorageDomainSignature("unknown")
 
 
+def describe_alias_storage(expr) -> AliasStorageFacts:
+    domain = _storage_domain_for_expr(expr)
+    identity: tuple[str, Any] | None = None
+    expr = _unwrap_c_casts(expr)
+    if isinstance(expr, structured_c.CVariable):
+        variable = getattr(expr, "variable", None)
+        if variable is not None:
+            identity = _alias_identity_for_variable(variable)
+    return AliasStorageFacts(domain, identity)
+
+
+def same_alias_storage_domain(lhs, rhs) -> bool:
+    return describe_alias_storage(lhs).same_domain(describe_alias_storage(rhs))
+
+
+def compatible_alias_storage_views(lhs, rhs) -> bool:
+    return describe_alias_storage(lhs).compatible_view(describe_alias_storage(rhs))
+
+
+def needs_alias_synthesis(expr) -> bool:
+    return describe_alias_storage(expr).needs_synthesis()
+
+
+def can_join_alias_storage(lhs, rhs) -> bool:
+    return describe_alias_storage(lhs).can_join(describe_alias_storage(rhs))
+
+
 def _merge_storage_domains(existing: _StorageDomainSignature | None, incoming: _StorageDomainSignature) -> _StorageDomainSignature:
     if existing is None:
         return incoming
@@ -275,4 +354,10 @@ __all__ = [
     "_storage_domain_for_variable",
     "_storage_domain_for_expr",
     "_merge_storage_domains",
+    "AliasStorageFacts",
+    "can_join_alias_storage",
+    "compatible_alias_storage_views",
+    "describe_alias_storage",
+    "needs_alias_synthesis",
+    "same_alias_storage_domain",
 ]
