@@ -954,154 +954,112 @@ class Instr16(InstrBase):
         self.set_r16(rm16_s)
 
     def code_81(self):
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.add_rm16_imm16()
-        elif reg == 1:
-            self.or_rm16_imm16()
-        elif reg == 2:
-            self.adc_rm16_imm16()
-        elif reg == 3:
-            self.sbb_rm16_imm16()
-        elif reg == 4:
-            self.and_rm16_imm16()
-        elif reg == 5:
-            self.sub_rm16_imm16()
-        elif reg == 6:
-            self.xor_rm16_imm16()
-        elif reg == 7:
-            self.cmp_rm16_imm16()
-        else:
-            raise RuntimeError(f"not implemented: 0x81 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.add_rm16_imm16,
+                self.or_rm16_imm16,
+                self.adc_rm16_imm16,
+                self.sbb_rm16_imm16,
+                self.and_rm16_imm16,
+                self.sub_rm16_imm16,
+                self.xor_rm16_imm16,
+                self.cmp_rm16_imm16,
+            ),
+            "0x81",
+        )
 
     def code_83(self):
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.add_rm16_imm8()
-        elif reg == 1:
-            self.or_rm16_imm8()
-        elif reg == 2:
-            self.adc_rm16_imm8()
-        elif reg == 3:
-            self.sbb_rm16_imm8()
-        elif reg == 4:
-            self.and_rm16_imm8()
-        elif reg == 5:
-            self.sub_rm16_imm8()
-        elif reg == 6:
-            self.xor_rm16_imm8()
-        elif reg == 7:
-            self.cmp_rm16_imm8()
-        else:
-            raise RuntimeError(f"not implemented: 0x83 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.add_rm16_imm8,
+                self.or_rm16_imm8,
+                self.adc_rm16_imm8,
+                self.sbb_rm16_imm8,
+                self.and_rm16_imm8,
+                self.sub_rm16_imm8,
+                self.xor_rm16_imm8,
+                self.cmp_rm16_imm8,
+            ),
+            "0x83",
+        )
 
     def code_c1(self):
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.rol_rm16_imm8()
-        elif reg == 1:
-            self.ror_rm16_imm8()
-        elif reg == 2:
-            self.rcl_rm16_imm8()
-        elif reg == 3:
-            self.rcr_rm16_imm8()
-        elif reg == 4:
-            self.shl_rm16_imm8()
-        elif reg == 5:
-            self.shr_rm16_imm8()
-        elif reg == 6:
-            self.sal_rm16_imm8()
-        elif reg == 7:
-            self.sar_rm16_imm8()
-        else:
-            raise RuntimeError(f"not implemented: 0xc1 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.rol_rm16_imm8,
+                self.ror_rm16_imm8,
+                self.rcl_rm16_imm8,
+                self.rcr_rm16_imm8,
+                self.shl_rm16_imm8,
+                self.shr_rm16_imm8,
+                self.sal_rm16_imm8,
+                self.sar_rm16_imm8,
+            ),
+            "0xc1",
+        )
 
     def code_d1(self):
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.rol_rm16_1()
-        elif reg == 1:
-            self.ror_rm16_1()
-        elif reg == 2:
-            self.rcl_rm16_1()
-        elif reg == 3:
-            self.rcr_rm16_1()
-        elif reg == 4:
-            self.shl_rm16_1()
-        elif reg == 5:
-            self.shr_rm16_1()
-        elif reg == 6:
-            self.sal_rm16_1()
-        elif reg == 7:
-            self.sar_rm16_1()
-        else:
-            raise RuntimeError(f"not implemented: 0xd1 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.rol_rm16_1,
+                self.ror_rm16_1,
+                self.rcl_rm16_1,
+                self.rcr_rm16_1,
+                self.shl_rm16_1,
+                self.shr_rm16_1,
+                self.sal_rm16_1,
+                self.sar_rm16_1,
+            ),
+            "0xd1",
+        )
 
     def code_d3(self):
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.rol_rm16_cl()
-        elif reg == 1:
-            self.ror_rm16_cl()
-        elif reg == 2:
-            self.rcl_rm16_cl()
-        elif reg == 3:
-            self.rcr_rm16_cl()
-        elif reg == 4:
-            self.shl_rm16_cl()
-        elif reg == 5:
-            self.shr_rm16_cl()
-        elif reg == 6:
-            self.sal_rm16_cl()
-        elif reg == 7:
-            self.sar_rm16_cl()
-        else:
-            raise RuntimeError(f"not implemented: 0xd3 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.rol_rm16_cl,
+                self.ror_rm16_cl,
+                self.rcl_rm16_cl,
+                self.rcr_rm16_cl,
+                self.shl_rm16_cl,
+                self.shr_rm16_cl,
+                self.sal_rm16_cl,
+                self.sar_rm16_cl,
+            ),
+            "0xd3",
+        )
 
     def code_f7(self):
-        reg = self.instr.modrm.reg
-        if reg in (0, 1):
-            self.test_rm16_imm16()
-        elif reg == 2:
-            self.not_rm16()
-        elif reg == 3:
-            self.neg_rm16()
-        elif reg == 4:
-            self.mul_dx_ax_rm16()
-        elif reg == 5:
-            self.imul_dx_ax_rm16()
-        elif reg == 6:
-            self.div_dx_ax_rm16()
-        elif reg == 7:
-            self.idiv_dx_ax_rm16()
-        else:
-            raise RuntimeError(f"not implemented: 0xf7 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.test_rm16_imm16,
+                self.test_rm16_imm16,
+                self.not_rm16,
+                self.neg_rm16,
+                self.mul_dx_ax_rm16,
+                self.imul_dx_ax_rm16,
+                self.div_dx_ax_rm16,
+                self.idiv_dx_ax_rm16,
+            ),
+            "0xf7",
+        )
 
     def code_ff(self):
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.inc_rm16()
-        elif reg == 1:
-            self.dec_rm16()
-        elif reg == 2:
-            self.call_rm16()
-        elif reg == 3:
-            self.callf_m16_16()
-        elif reg == 4:
-            self.jmp_rm16()
-        elif reg == 5:
-            self.jmpf_m16_16()
-        elif reg == 6:
-            self.push_rm16()
-        else:
-            raise RuntimeError(f"not implemented: 0xff /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.inc_rm16,
+                self.dec_rm16,
+                self.call_rm16,
+                self.callf_m16_16,
+                self.jmp_rm16,
+                self.jmpf_m16_16,
+                self.push_rm16,
+                None,
+            ),
+            "0xff",
+        )
 
     def code_0f00(self):
-        reg = self.instr.modrm.reg
-        if reg == 3:
-            self.ltr_rm16()
-        else:
-            raise RuntimeError(f"not implemented: 0x0f00 /{reg}")
+        self._dispatch_modrm_reg((None, None, None, self.ltr_rm16), "0x0f00")
 
     def code_0f01(self):
         reg = self.instr.modrm.reg

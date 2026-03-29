@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
 
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
@@ -154,6 +154,23 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             when_false.rdt,
         )
         return self.emu._vv(expr)
+
+    def _dispatch_modrm_reg(
+        self,
+        handlers: Sequence[OpcodeHandler | None],
+        opcode: str,
+        on_missing: Callable[[int], None] | None = None,
+    ) -> None:
+        reg = self.instr.modrm.reg
+        if 0 <= reg < len(handlers):
+            handler = handlers[reg]
+            if handler is not None:
+                handler()
+                return
+        if on_missing is not None:
+            on_missing(reg)
+            return
+        raise RuntimeError(f"not implemented: {opcode} /{reg}")
 
 
     def code_d0_d2(self) -> None:
@@ -819,77 +836,55 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def code_80(self) -> None:
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.add_rm8_imm8()
-        elif reg == 1:
-            self.or_rm8_imm8()
-        elif reg == 2:
-            self.adc_rm8_imm8()
-        elif reg == 3:
-            self.sbb_rm8_imm8()
-        elif reg == 4:
-            self.and_rm8_imm8()
-        elif reg == 5:
-            self.sub_rm8_imm8()
-        elif reg == 6:
-            self.xor_rm8_imm8()
-        elif reg == 7:
-            self.cmp_rm8_imm8()
-        else:
-            raise RuntimeError(f"not implemented: 0x80 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.add_rm8_imm8,
+                self.or_rm8_imm8,
+                self.adc_rm8_imm8,
+                self.sbb_rm8_imm8,
+                self.and_rm8_imm8,
+                self.sub_rm8_imm8,
+                self.xor_rm8_imm8,
+                self.cmp_rm8_imm8,
+            ),
+            "0x80",
+        )
 
     def code_82(self) -> None:
         self.code_80()
 
     def code_c0(self) -> None:
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.rol_rm8_imm8()
-        elif reg == 1:
-            self.ror_rm8_imm8()
-        elif reg == 2:
-            self.rcl_rm8_imm8()
-        elif reg == 3:
-            self.rcr_rm8_imm8()
-        elif reg == 4:
-            self.shl_rm8_imm8()
-        elif reg == 5:
-            self.shr_rm8_imm8()
-        elif reg == 6:
-            self.sal_rm8_imm8()
-        elif reg == 7:
-            self.sar_rm8_imm8()
-        else:
-            raise RuntimeError(f"not implemented: 0xc0 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.rol_rm8_imm8,
+                self.ror_rm8_imm8,
+                self.rcl_rm8_imm8,
+                self.rcr_rm8_imm8,
+                self.shl_rm8_imm8,
+                self.shr_rm8_imm8,
+                self.sal_rm8_imm8,
+                self.sar_rm8_imm8,
+            ),
+            "0xc0",
+        )
 
     def code_f6(self) -> None:
-        reg = self.instr.modrm.reg
-        if reg in (0, 1):
-            self.test_rm8_imm8()
-        elif reg == 2:
-            self.not_rm8()
-        elif reg == 3:
-            self.neg_rm8()
-        elif reg == 4:
-            self.mul_ax_al_rm8()
-        elif reg == 5:
-            self.imul_ax_al_rm8()
-        elif reg == 6:
-            self.div_al_ah_rm8()
-        elif reg == 7:
-            self.idiv_al_ah_rm8()
-        else:
-            raise RuntimeError(f"not implemented: 0xf6 /{reg}")
+        self._dispatch_modrm_reg(
+            (
+                self.test_rm8_imm8,
+                self.test_rm8_imm8,
+                self.not_rm8,
+                self.neg_rm8,
+                self.mul_ax_al_rm8,
+                self.imul_ax_al_rm8,
+                self.div_al_ah_rm8,
+                self.idiv_al_ah_rm8,
+            ),
+            "0xf6",
+        )
 
     def code_fe(self) -> None:
-        reg = self.instr.modrm.reg
-        if reg == 0:
-            self.inc_rm8()
-        elif reg == 1:
-            self.dec_rm8()
-        else:
-            raise RuntimeError(f"not implemented: 0xf6 /{reg}")
+        self._dispatch_modrm_reg((self.inc_rm8, self.dec_rm8), "0xfe")
 
     def _group2_rm8_count(self):
         """

@@ -131,7 +131,7 @@ class Instr32(InstrBase):
         rm32 = self.get_rm32()
         r32 = self.get_r32()
         carry = self.emu.is_carry().cast_to(Type.int_32)
-        self.set_rm8(rm32 + r32 + carry)
+        self.set_rm32(rm32 + r32 + carry)
         self.emu.update_eflags_adc(rm32, r32, carry)
 
     def add_r32_rm32(self):
@@ -543,126 +543,114 @@ class Instr32(InstrBase):
         self.set_r32(rm16_s)
 
     def code_81(self):
-        match self.instr.modrm.reg:
-            case 0:
-                self.add_rm32_imm32()
-            case 1:
-                self.or_rm32_imm32()
-            case 2:
-                self.adc_rm32_imm32()
-            case 3:
-                self.sbb_rm32_imm32()
-            case 4:
-                self.and_rm32_imm32()
-            case 5:
-                self.sub_rm32_imm32()
-            case 6:
-                self.xor_rm32_imm32()
-            case 7:
-                self.cmp_rm32_imm32()
-            case _:
-                ERROR("not implemented: 0x81 /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (
+                self.add_rm32_imm32,
+                self.or_rm32_imm32,
+                self.adc_rm32_imm32,
+                self.sbb_rm32_imm32,
+                self.and_rm32_imm32,
+                self.sub_rm32_imm32,
+                self.xor_rm32_imm32,
+                self.cmp_rm32_imm32,
+            ),
+            "0x81",
+            lambda reg: ERROR("not implemented: 0x81 /%d\n", reg),
+        )
 
     def code_83(self):
-        match self.instr.modrm.reg:
-            case 0:
-                self.add_rm32_imm8()
-            case 1:
-                self.or_rm32_imm8()
-            case 2:
-                self.adc_rm32_imm8()
-            case 3:
-                self.sbb_rm32_imm8()
-            case 4:
-                self.and_rm32_imm8()
-            case 5:
-                self.sub_rm32_imm8()
-            case 6:
-                self.xor_rm32_imm8()
-            case 7:
-                self.cmp_rm32_imm8()
-            case _:
-                ERROR("not implemented: 0x83 /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (
+                self.add_rm32_imm8,
+                self.or_rm32_imm8,
+                self.adc_rm32_imm8,
+                self.sbb_rm32_imm8,
+                self.and_rm32_imm8,
+                self.sub_rm32_imm8,
+                self.xor_rm32_imm8,
+                self.cmp_rm32_imm8,
+            ),
+            "0x83",
+            lambda reg: ERROR("not implemented: 0x83 /%d\n", reg),
+        )
 
     def code_c1(self):
-        match self.instr.modrm.reg:
-            case 4:
-                self.shl_rm32_imm8()
-            case 5:
-                self.shr_rm32_imm8()
-            case 6:
-                self.sal_rm32_imm8()
-            case 7:
-                self.sar_rm32_imm8()
-            case _:
-                ERROR("not implemented: 0xc1 /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (
+                None,
+                None,
+                None,
+                None,
+                self.shl_rm32_imm8,
+                self.shr_rm32_imm8,
+                self.sal_rm32_imm8,
+                self.sar_rm32_imm8,
+            ),
+            "0xc1",
+            lambda reg: ERROR("not implemented: 0xc1 /%d\n", reg),
+        )
 
     def code_d3(self):
-        match self.instr.modrm.reg:
-            case 4:
-                self.shl_rm32_cl()
-            case 5:
-                self.shr_rm32_cl()
-            case 6:
-                self.sal_rm32_cl()
-            case 7:
-                self.sar_rm32_cl()
-            case _:
-                ERROR("not implemented: 0xd3 /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (
+                None,
+                None,
+                None,
+                None,
+                self.shl_rm32_cl,
+                self.shr_rm32_cl,
+                self.sal_rm32_cl,
+                self.sar_rm32_cl,
+            ),
+            "0xd3",
+            lambda reg: ERROR("not implemented: 0xd3 /%d\n", reg),
+        )
 
     def code_f7(self):
-        match self.instr.modrm.reg:
-            case 0:
-                self.test_rm32_imm32()
-            case 2:
-                self.not_rm32()
-            case 3:
-                self.neg_rm32()
-            case 4:
-                self.mul_edx_eax_rm32()
-            case 5:
-                self.imul_edx_eax_rm32()
-            case 6:
-                self.div_edx_eax_rm32()
-            case 7:
-                self.idiv_edx_eax_rm32()
-            case _:
-                ERROR("not implemented: 0xf7 /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (
+                self.test_rm32_imm32,
+                None,
+                self.not_rm32,
+                self.neg_rm32,
+                self.mul_edx_eax_rm32,
+                self.imul_edx_eax_rm32,
+                self.div_edx_eax_rm32,
+                self.idiv_edx_eax_rm32,
+            ),
+            "0xf7",
+            lambda reg: ERROR("not implemented: 0xf7 /%d\n", reg),
+        )
 
     def code_ff(self):
-        match self.instr.modrm.reg:
-            case 0:
-                self.inc_rm32()
-            case 1:
-                self.dec_rm32()
-            case 2:
-                self.call_rm32()
-            case 3:
-                self.callf_m16_32()
-            case 4:
-                self.jmp_rm32()
-            case 5:
-                self.jmpf_m16_32()
-            case 6:
-                self.push_rm32()
-            case _:
-                ERROR("not implemented: 0xff /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (
+                self.inc_rm32,
+                self.dec_rm32,
+                self.call_rm32,
+                self.callf_m16_32,
+                self.jmp_rm32,
+                self.jmpf_m16_32,
+                self.push_rm32,
+                None,
+            ),
+            "0xff",
+            lambda reg: ERROR("not implemented: 0xff /%d\n", reg),
+        )
 
     def code_0f00(self):
-        match self.instr.modrm.reg:
-            case 3:
-                self.ltr_rm16()
-            case _:
-                ERROR("not implemented: 0x0f00 /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (None, None, None, self.ltr_rm16),
+            "0x0f00",
+            lambda reg: ERROR("not implemented: 0x0f00 /%d\n", reg),
+        )
 
     def code_0f01(self):
-        match self.instr.modrm.reg:
-            case 2:
-                self.lgdt_m32()
-            case 3:
-                self.lidt_m32()
-            case _:
-                ERROR("not implemented: 0x0f01 /%d\n", self.instr.modrm.reg)
+        self._dispatch_modrm_reg(
+            (None, None, self.lgdt_m32, self.lidt_m32),
+            "0x0f01",
+            lambda reg: ERROR("not implemented: 0x0f01 /%d\n", reg),
+        )
 
     def add_rm32_imm32(self):
         rm32 = self.get_rm32()

@@ -574,6 +574,16 @@ def test_add_ax_imm16_matches_upstream_x86_vex_effect():
         assert state32.solver.eval(state32.regs.flags[bit]) == state16.solver.eval(state16.regs.flags[bit])
 
 
+def test_adc_bx_cx_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\x11\xCB",
+        b"\x66\x11\xCB",
+        regs={"bx": 0x1234, "cx": 0x1111, "flags": 1},
+        compare_regs=("bx",),
+        compare_flag_bits=(0, 2, 6, 7, 11),
+    )
+
+
 def test_sbb_dx_imm8_matches_upstream_x86_vex_effect():
     state32 = _run_one_instruction_with_flags(ArchX86(), b"\x66\x83\xDA\x00", ax=0x0000, dx=0x1234, flags=1)
     state16 = _run_one_instruction_with_flags(Arch86_16(), b"\x83\xDA\x00", ax=0x0000, dx=0x1234, flags=1)
