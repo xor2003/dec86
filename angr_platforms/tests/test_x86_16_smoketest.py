@@ -3,6 +3,7 @@ import io
 import angr
 import keystone as ks
 import pytest
+from angr import options as o
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
 
 from angr_platforms.X86_16.annotations import decompile_function
@@ -255,6 +256,35 @@ def test_wait_lifts_as_a_boring_noop():
     assert block.vex.jumpkind == "Ijk_Boring"
     assert "PUT(ip) = 0x1001" in vex_text
     assert block.capstone.insns[0].mnemonic == "wait"
+
+
+def test_lock_prefix_add_executes_like_unlocked_add():
+    unlocked = _project_from_bytes(bytes.fromhex("0107"))
+    locked = _project_from_bytes(bytes.fromhex("f00107"))
+
+    def _run(project, code: bytes):
+        state = project.factory.blank_state(
+            add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
+        )
+        state.regs.ax = 0x1234
+        state.regs.bx = 0x0200
+        state.regs.ds = 0
+        state.memory.store(0x0200, b"\x78\x56")
+
+        simgr = project.factory.simgr(state)
+        simgr.step(num_inst=1, insn_bytes=code)
+        assert len(simgr.active) == 1
+        return simgr.active[0]
+
+    unlocked_state = _run(unlocked, bytes.fromhex("0107"))
+    locked_state = _run(locked, bytes.fromhex("f00107"))
+
+    assert locked.factory.block(0x1000, opt_level=0).capstone.insns[0].mnemonic == "lock add"
+    assert unlocked_state.solver.eval(unlocked_state.memory.load(0x0200, 2, endness=unlocked_state.arch.memory_endness)) == 0x68AC
+    assert locked_state.solver.eval(locked_state.memory.load(0x0200, 2, endness=locked_state.arch.memory_endness)) == 0x68AC
+    assert unlocked_state.solver.eval(unlocked_state.regs.ax) == locked_state.solver.eval(locked_state.regs.ax)
+    for bit in (0, 2, 6, 7, 11):
+        assert unlocked_state.solver.eval(unlocked_state.regs.flags[bit]) == locked_state.solver.eval(locked_state.regs.flags[bit])
 
 
 def test_into_lifts_as_conditional_interrupt_call():
