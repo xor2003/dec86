@@ -414,6 +414,32 @@ def test_decompile_cli_recovers_snake_ds_pointer_arithmetic():
     assert "writecharat();" in result.stdout
 
 
+def test_decompile_cli_keeps_query_interrupts_wrapper_calls_classified_in_matrix_corpus():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLI_PATH),
+            str(IMOD_COD),
+            "--proc",
+            "query_interrupts",
+            "--proc-kind",
+            "FAR",
+            "--timeout",
+            "20",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1000 query_interrupts" in result.stdout
+    assert "calls = _int86, _int86x" in result.stdout
+    assert "int86(0x21, &inregs, &outregs);" in result.stdout
+
+
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
     result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_TIDShowRange")
 

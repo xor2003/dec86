@@ -175,6 +175,8 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
                 "outregs.h.al",
                 "outregs.x.ax",
                 "outregs.x.bx",
+                "outregs.x.cx",
+                "outregs.x.dx",
                 "sregs.es",
             ),
         },

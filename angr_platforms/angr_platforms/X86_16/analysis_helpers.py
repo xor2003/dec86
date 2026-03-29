@@ -526,6 +526,8 @@ def describe_x86_16_interrupt_api_surface() -> dict[str, object]:
                 "outregs.h.al",
                 "outregs.x.ax",
                 "outregs.x.bx",
+                "outregs.x.cx",
+                "outregs.x.dx",
                 "sregs.es",
             ),
         },
