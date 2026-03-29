@@ -83,6 +83,16 @@ def test_interrupt_service_renderer_covers_vector_management_apis():
     assert "void setvect(int interruptno, void (*isr)(void));" in declarations
 
 
+def test_interrupt_service_renderer_keeps_int10_wrapper_oriented():
+    call = _decompile.InterruptCall(insn_addr=0x1020, vector=0x10, ah=0x0E)
+    callx = _decompile.InterruptCall(insn_addr=0x1022, vector=0x10, ah=0x03, ds=0x1111, es=0x2222)
+
+    assert _decompile.render_interrupt_call(call, "pseudo") == "int86(0x10, &inregs, &outregs)"
+    assert _decompile.render_interrupt_call(call, "dos") == "int86(0x10, &inregs, &outregs)"
+    assert _decompile.render_interrupt_call(callx, "pseudo") == "int86x(0x10, &inregs, &outregs, &sregs)"
+    assert _decompile.interrupt_service_declarations([call, callx], "pseudo") == []
+
+
 def test_interrupt_wrapper_callees_are_classified_and_canonicalized(monkeypatch):
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1234, statements=SimpleNamespace()),

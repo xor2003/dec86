@@ -1035,6 +1035,9 @@ def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -
                     declarations.append(decl)
             continue
 
+        if spec.render_kind == "wrapper" and call.vector != 0x21:
+            continue
+
         decl = _interrupt_service_decl(spec, api_style)
         if decl not in seen:
             seen.add(decl)
