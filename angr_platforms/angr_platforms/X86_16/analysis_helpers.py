@@ -324,9 +324,9 @@ INTERRUPT_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
         "_bios_keybrd",
         "_bios_keybrd",
         "direct",
-        pseudo_decl="int bios_keybrd(void);",
-        dos_decl="int _bios_keybrd(void);",
-        modern_decl="int _bios_keybrd(void);",
+        pseudo_decl="unsigned bios_keybrd(unsigned keycmd);",
+        dos_decl="unsigned _bios_keybrd(unsigned keycmd);",
+        modern_decl="unsigned _bios_keybrd(unsigned keycmd);",
     ),
     0x17: InterruptServiceSpec(
         0x17,
@@ -985,6 +985,11 @@ def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
         return "int86(0x10, &inregs, &outregs)"
 
     name = interrupt_service_name(call, api_style)
+    if call.vector == 0x16:
+        selector = _dos_arg(call.ah, call.ah_expr)
+        if selector is not None:
+            return f"{name}({selector})"
+        return f"{name}()"
     if call.vector == 0x10 and api_style in {"dos", "msc", "compiler"}:
         return f"{name}(0x10)"
     if call.vector == 0x13 and api_style == "pseudo":

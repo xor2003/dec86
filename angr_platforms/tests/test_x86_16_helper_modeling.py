@@ -67,6 +67,14 @@ def test_interrupt_service_renderer_uses_table_driven_names():
     assert _decompile.render_interrupt_call(call_13, "dos") == "_bios_disk()"
 
 
+def test_interrupt_service_renderer_carries_bios_keybrd_selector():
+    call = _decompile.InterruptCall(insn_addr=0x1006, vector=0x16, ah=0x02)
+
+    assert _decompile.render_interrupt_call(call, "pseudo") == "bios_keybrd(2)"
+    assert _decompile.render_interrupt_call(call, "dos") == "_bios_keybrd(2)"
+    assert _decompile.interrupt_service_declarations([call], "dos") == ["unsigned _bios_keybrd(unsigned keycmd);"]
+
+
 def test_interrupt_service_renderer_covers_vector_management_apis():
     call_get = _decompile.InterruptCall(insn_addr=0x1010, vector=0x21, ah=0x35, al=0x21)
     call_set = _decompile.InterruptCall(insn_addr=0x1012, vector=0x21, ah=0x25, al=0x21, ds=0x1234, dx=0x5678)
@@ -322,6 +330,85 @@ def test_interrupt_wrapper_result_lowering_rewrites_known_output_reads():
     assert assignments[3].rhs.args[0].callee_target == "getvect"
     assert assignments[4].rhs.callee_target == "FP_OFF"
     assert assignments[4].rhs.args[0].callee_target == "getvect"
+
+
+def test_interrupt_wrapper_result_lowering_keeps_byte_reads_byte_sized():
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x3457, statements=None),
+        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+        cstyle_null_cmp=False,
+    )
+    h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
+    regs_struct = SimStruct({"h": h_struct}, name="REGS")
+
+    inregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(0, 2, base="bp", name="inregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    outregs = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(2, 2, base="bp", name="outregs", region=0),
+        variable_type=regs_struct,
+        codegen=codegen,
+    )
+    sink = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(4, 2, base="bp", name="sink", region=0),
+        variable_type=SimTypeShort(),
+        codegen=codegen,
+    )
+
+    h_field = _decompile.structured_c.CStructField(regs_struct, 0, "h", codegen=codegen)
+    ah_field = _decompile.structured_c.CStructField(h_struct, 0, "ah", codegen=codegen)
+    al_field = _decompile.structured_c.CStructField(h_struct, 1, "al", codegen=codegen)
+
+    sink_ref = _decompile.structured_c.CVariable(sink.variable, variable_type=SimTypeShort(), codegen=codegen)
+    stmts = _decompile.structured_c.CStatements(
+        [
+            _decompile.structured_c.CAssignment(
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(inregs, h_field, codegen=codegen),
+                    ah_field,
+                    codegen=codegen,
+                ),
+                _decompile.structured_c.CConstant(0x30, SimTypeShort(), codegen=codegen),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CExpressionStatement(
+                _decompile.structured_c.CFunctionCall(
+                    "int86",
+                    SimpleNamespace(name="int86"),
+                    [
+                        _decompile.structured_c.CConstant(0x21, SimTypeShort(), codegen=codegen),
+                        object(),
+                        object(),
+                    ],
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            _decompile.structured_c.CAssignment(
+                sink_ref,
+                _decompile.structured_c.CVariableField(
+                    _decompile.structured_c.CVariableField(outregs, h_field, codegen=codegen),
+                    al_field,
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = stmts
+
+    assert _decompile._lower_interrupt_wrapper_result_reads(SimpleNamespace(), codegen, "modern") is True
+
+    _, _, third_stmt = codegen.cfunc.statements.statements
+    assert isinstance(third_stmt, _decompile.structured_c.CAssignment)
+    assert isinstance(third_stmt.rhs, _decompile.structured_c.CBinaryOp)
+    assert third_stmt.rhs.op == "And"
+    assert third_stmt.rhs.lhs.callee_target == "get_dos_version"
+    assert third_stmt.rhs.rhs.value == 0xFF
 
 
 def test_interrupt_wrapper_result_lowering_rewrites_wrapper_call_and_composite_ax_read():
