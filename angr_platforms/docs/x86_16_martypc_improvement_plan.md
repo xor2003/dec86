@@ -180,6 +180,14 @@ Recent progress on that front:
 - the explicit mixed-width decode matrix now has a shared helper/report
   surface, so the width combinations are visible in tests and milestone
   reporting instead of only in parser logic
+- the mixed-width instruction-extension surface is now named explicitly, so
+  future 386 real-mode work can attach to a concrete consumer-path boundary
+  instead of rediscovering it in handler code
+- interrupt-core vs API-lowering separation is now surfaced explicitly, so
+  low-level interrupt semantics and DOS/BIOS/MS-C lowering remain distinct
+  concerns in the plan and milestone report
+- the instruction-metadata report surface now exposes normalized decode facts
+  directly, so the decoder boundary is visible as a dedicated report artifact
 - the mixed-width extension path now has a dedicated report surface that
   spells out the supported operand/address pair matrix instead of leaving it
   implicit inside parse helpers

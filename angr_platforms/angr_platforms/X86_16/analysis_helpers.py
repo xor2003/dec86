@@ -555,6 +555,19 @@ def describe_x86_16_interrupt_core_surface() -> dict[str, object]:
     }
 
 
+def describe_x86_16_interrupt_lowering_boundary() -> dict[str, object]:
+    return {
+        "boundary_rule": "interrupt instruction semantics stay low-level; DOS/BIOS/MS-C lowering stays in analysis and rewrite helpers",
+        "core_surface": describe_x86_16_interrupt_core_surface(),
+        "api_surface": describe_x86_16_interrupt_api_surface(),
+        "validated_by": (
+            "tests/test_x86_16_milestone_report.py",
+            "tests/test_x86_16_package_exports.py",
+            "tests/test_x86_16_helper_modeling.py",
+        ),
+    }
+
+
 def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
     """
     Infer a bounded `.COM` code region by scanning until a likely terminator.

@@ -118,6 +118,25 @@ def describe_x86_16_mixed_width_extension_surface() -> dict[str, object]:
     }
 
 
+def describe_x86_16_mixed_width_instruction_surface() -> dict[str, object]:
+    return {
+        "boundary": "mixed-width decode facts feed shared helpers instead of handler-local branches",
+        "consumer_paths": (
+            "angr_platforms/X86_16/parse.py",
+            "angr_platforms/X86_16/exec.py",
+            "angr_platforms/X86_16/instruction.py",
+            "angr_platforms/X86_16/instr16.py",
+            "angr_platforms/X86_16/instr32.py",
+        ),
+        "validated_by": (
+            "tests/test_x86_16_addressing_helpers.py",
+            "tests/test_x86_16_decode_metadata.py",
+            "tests/test_x86_16_instruction_core_factoring.py",
+        ),
+        "matrix": describe_x86_16_mixed_width_extension_surface()["matrix"],
+    }
+
+
 def linear_address(emu, segment, offset):
     return emu.v2p(segment, offset)
 

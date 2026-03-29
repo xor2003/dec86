@@ -153,6 +153,26 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "patch_interrupt_service_call_sites",
         ),
     }
+    assert report["interrupt_lowering_boundary"] == {
+        "boundary_rule": "interrupt instruction semantics stay low-level; DOS/BIOS/MS-C lowering stays in analysis and rewrite helpers",
+        "core_surface": report["interrupt_core_surface"],
+        "api_surface": report["interrupt_api_surface"],
+        "validated_by": (
+            "tests/test_x86_16_milestone_report.py",
+            "tests/test_x86_16_package_exports.py",
+            "tests/test_x86_16_helper_modeling.py",
+        ),
+    }
+    assert report["interrupt_lowering_boundary"] == {
+        "boundary_rule": "interrupt instruction semantics stay low-level; DOS/BIOS/MS-C lowering stays in analysis and rewrite helpers",
+        "core_surface": report["interrupt_core_surface"],
+        "api_surface": report["interrupt_api_surface"],
+        "validated_by": (
+            "tests/test_x86_16_milestone_report.py",
+            "tests/test_x86_16_package_exports.py",
+            "tests/test_x86_16_helper_modeling.py",
+        ),
+    }
     assert report["interrupt_api_surface"] == {
         "dos": {
             "service_count": 18,
@@ -297,6 +317,38 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "supported_pairs": ((16, 16), (32, 16), (16, 32), (32, 32)),
         "address_widths": (16, 32),
         "operand_widths": (16, 32),
+    }
+    assert report["mixed_width_instruction_surface"] == {
+        "boundary": "mixed-width decode facts feed shared helpers instead of handler-local branches",
+        "consumer_paths": (
+            "angr_platforms/X86_16/parse.py",
+            "angr_platforms/X86_16/exec.py",
+            "angr_platforms/X86_16/instruction.py",
+            "angr_platforms/X86_16/instr16.py",
+            "angr_platforms/X86_16/instr32.py",
+        ),
+        "validated_by": (
+            "tests/test_x86_16_addressing_helpers.py",
+            "tests/test_x86_16_decode_metadata.py",
+            "tests/test_x86_16_instruction_core_factoring.py",
+        ),
+        "matrix": report["mixed_width_extension_surface"]["matrix"],
+    }
+    assert report["mixed_width_instruction_surface"] == {
+        "boundary": "mixed-width decode facts feed shared helpers instead of handler-local branches",
+        "consumer_paths": (
+            "angr_platforms/X86_16/parse.py",
+            "angr_platforms/X86_16/exec.py",
+            "angr_platforms/X86_16/instruction.py",
+            "angr_platforms/X86_16/instr16.py",
+            "angr_platforms/X86_16/instr32.py",
+        ),
+        "validated_by": (
+            "tests/test_x86_16_addressing_helpers.py",
+            "tests/test_x86_16_decode_metadata.py",
+            "tests/test_x86_16_instruction_core_factoring.py",
+        ),
+        "matrix": report["mixed_width_extension_surface"]["matrix"],
     }
     assert report["readability_tiers"] == {"R0": 1, "R1": 1, "R2": 1, "R3": 1}
     assert [layer["name"] for layer in report["validation_layers"]] == ["unit", "focused_corpus", "whole_program"]

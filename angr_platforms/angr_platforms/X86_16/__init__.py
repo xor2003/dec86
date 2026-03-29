@@ -27,9 +27,11 @@ __all__ = [
     "describe_x86_16_alias_recovery_api",
     "describe_x86_16_interrupt_api_surface",
     "describe_x86_16_interrupt_core_surface",
+    "describe_x86_16_interrupt_lowering_boundary",
     "describe_x86_16_instruction_metadata_surface",
     "describe_x86_16_decode_width_matrix",
     "describe_x86_16_mixed_width_extension_surface",
+    "describe_x86_16_mixed_width_instruction_surface",
     "describe_x86_16_projection_cleanup_rules",
     "simos_86_16",
     "rewrite_cod_source_stage",
@@ -64,8 +66,10 @@ from . import alias_domains, alias_model, alias_state, alias_transfer, compat, m
 from .alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
 from .addressing_helpers import describe_x86_16_decode_width_matrix  # noqa: F401
 from .addressing_helpers import describe_x86_16_mixed_width_extension_surface  # noqa: F401
+from .addressing_helpers import describe_x86_16_mixed_width_instruction_surface  # noqa: F401
 from .analysis_helpers import describe_x86_16_interrupt_api_surface  # noqa: F401
 from .analysis_helpers import describe_x86_16_interrupt_core_surface  # noqa: F401
+from .analysis_helpers import describe_x86_16_interrupt_lowering_boundary  # noqa: F401
 from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
 from .recovery_manifest import describe_x86_16_recovery_layers  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
