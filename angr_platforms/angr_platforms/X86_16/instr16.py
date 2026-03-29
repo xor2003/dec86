@@ -181,39 +181,35 @@ class Instr16(InstrBase):
         self.set_funcflag(0xDA, self.code_da, CHK_MODRM)
 
 
-    def jcxz_rel8(self) -> None:
+    def _rel8_target(self):
+        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
+        return self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
+
+    def _decrement_cx(self):
         cx = self.emu.get_gpreg(reg16_t.CX)
-        ip = self.emu.get_gpreg(reg16_t.IP) + self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16) + self.emu.constant(2, Type.int_16)
-        self.emu.lifter_instruction.jump(cx == 0, ip)
+        cx -= 1
+        self.emu.set_gpreg(reg16_t.CX, cx)
+        return cx
+
+    def jcxz_rel8(self) -> None:
+        self.emu.lifter_instruction.jump(self.emu.get_gpreg(reg16_t.CX) == 0, self._rel8_target())
 
 
     def loop16(self) -> None:
-        cx = self.emu.get_gpreg(reg16_t.CX)
-        cx -= 1
-        self.emu.set_gpreg(reg16_t.CX, cx)
-        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
-        self.emu.lifter_instruction.jump(cx != 0, ip, JumpKind.Boring)
+        cx = self._decrement_cx()
+        self.emu.lifter_instruction.jump(cx != 0, self._rel8_target(), JumpKind.Boring)
 
     def loop16e(self) -> None:
-        cx = self.emu.get_gpreg(reg16_t.CX)
-        cx -= 1
-        self.emu.set_gpreg(reg16_t.CX, cx)
+        cx = self._decrement_cx()
         zero = self.emu.is_zero()
-        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
         count_nonzero = (cx != self.emu.constant(0, Type.int_16)).cast_to(Type.int_1)
-        self.emu.lifter_instruction.jump(count_nonzero & zero, ip, JumpKind.Boring)
+        self.emu.lifter_instruction.jump(count_nonzero & zero, self._rel8_target(), JumpKind.Boring)
 
     def loop16ne(self) -> None:
-        cx = self.emu.get_gpreg(reg16_t.CX)
-        cx -= 1
-        self.emu.set_gpreg(reg16_t.CX, cx)
+        cx = self._decrement_cx()
         zero = self.emu.is_zero()
-        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        ip = self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
         count_nonzero = (cx != self.emu.constant(0, Type.int_16)).cast_to(Type.int_1)
-        self.emu.lifter_instruction.jump(count_nonzero & ~zero, ip, JumpKind.Boring)
+        self.emu.lifter_instruction.jump(count_nonzero & ~zero, self._rel8_target(), JumpKind.Boring)
 
     def code_8f(self):
         reg = self.instr.modrm.reg
