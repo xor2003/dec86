@@ -22,6 +22,7 @@ __all__ = [
     "alias_domains",
     "alias_state",
     "alias_transfer",
+    "describe_x86_16_alias_recovery_api",
     "simos_86_16",
     "rewrite_cod_source_stage",
     "decompiler_postprocess",
@@ -31,9 +32,12 @@ __all__ = [
     "decompiler_postprocess_simplify",
     "widening_alias",
     "widening_model",
+    "describe_x86_16_widening_pipeline",
+    "describe_x86_16_recovery_layers",
     "validation_manifest",
     "readability_set",
     "milestone_report",
+    "recovery_manifest",
     "calling_convention_compat",
     "decompiler_return_compat",
     "apply_x86_16_calling_convention_compatibility",
@@ -47,7 +51,10 @@ __all__ = [
 ]
 
 from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, lift_86_16, load_dos_mz, simos_86_16  # noqa: F401
-from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
+from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, recovery_manifest, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
+from .alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
+from .recovery_manifest import describe_x86_16_recovery_layers  # noqa: F401
+from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,
     apply_cod_source_rewrites,

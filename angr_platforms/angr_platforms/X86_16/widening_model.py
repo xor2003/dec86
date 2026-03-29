@@ -49,6 +49,13 @@ class WideningProof:
         return self.ok
 
 
+@dataclass(frozen=True)
+class WideningPipelineSpec:
+    name: str
+    purpose: str
+    helpers: tuple[str, ...]
+
+
 def _register_version_for_expr(expr: object, state: AliasState | None) -> int | None:
     if state is None:
         return None
@@ -120,6 +127,29 @@ def describe_widening_candidates(exprs: Iterable[object]) -> tuple[dict[str, obj
     return tuple(descriptions)
 
 
+WIDENING_PIPELINE: tuple[WideningPipelineSpec, ...] = (
+    WideningPipelineSpec(
+        name="candidate_extraction",
+        purpose="Collect joinable storage candidates before proof or rewrite decisions.",
+        helpers=("collect_widening_candidates", "describe_widening_candidates"),
+    ),
+    WideningPipelineSpec(
+        name="compatibility_proof",
+        purpose="Prove adjacent slices are safe before widening proceeds.",
+        helpers=("prove_adjacent_storage_slices",),
+    ),
+    WideningPipelineSpec(
+        name="join_decision",
+        purpose="Gate widening on alias facts, compatible views, and version safety.",
+        helpers=("can_join_adjacent_storage_slices", "merge_storage_slice_domains"),
+    ),
+)
+
+
+def describe_x86_16_widening_pipeline() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    return tuple((spec.name, spec.purpose, spec.helpers) for spec in WIDENING_PIPELINE)
+
+
 def can_join_adjacent_storage_slices(low_expr, high_expr) -> bool:
     proof = prove_adjacent_storage_slices(low_expr, high_expr)
     if not proof.ok:
@@ -156,9 +186,12 @@ def merge_storage_slice_domains(low_expr, high_expr) -> _StorageDomainSignature:
 __all__ = [
     "WideningCandidate",
     "WideningProof",
+    "WideningPipelineSpec",
+    "WIDENING_PIPELINE",
     "collect_widening_candidates",
     "can_join_adjacent_storage_slices",
     "describe_widening_candidates",
+    "describe_x86_16_widening_pipeline",
     "merge_storage_slice_domains",
     "prove_adjacent_storage_slices",
 ]

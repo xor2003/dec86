@@ -5,8 +5,11 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .readability_set import describe_x86_16_golden_readability_set
+from .alias_model import describe_x86_16_alias_recovery_api
+from .recovery_manifest import describe_x86_16_recovery_layers
+from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import describe_x86_16_validation_layers
+from .widening_model import describe_x86_16_widening_pipeline
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,9 @@ def build_x86_16_milestone_report(
 ) -> dict[str, object]:
     validation_layers = describe_x86_16_validation_layers()
     readability_set = describe_x86_16_golden_readability_set()
+    alias_api = describe_x86_16_alias_recovery_api()
+    widening_pipeline = describe_x86_16_widening_pipeline()
+    recovery_layers = describe_x86_16_recovery_layers()
     failure_counts = dict(scan_summary.get("failure_counts", {}) or {})
     top_failure_classes = list(scan_summary.get("top_failure_classes", []) or [])
     top_failure_stages = list(scan_summary.get("top_failure_stages", []) or [])
@@ -44,6 +50,22 @@ def build_x86_16_milestone_report(
         "scan_summary": dict(scan_summary),
         "validation_layers": [
             {"name": name, "default_checks": list(checks)} for name, checks in validation_layers
+        ],
+        "alias_api": [
+            {"name": name, "purpose": purpose, "helpers": list(helpers)}
+            for name, purpose, helpers in alias_api
+        ],
+        "widening_pipeline": [
+            {"name": name, "purpose": purpose, "helpers": list(helpers)}
+            for name, purpose, helpers in widening_pipeline
+        ],
+        "recovery_layers": [
+            {"name": name, "purpose": purpose, "helpers": list(helpers)}
+            for name, purpose, helpers in recovery_layers
+        ],
+        "readability_set_summary": [
+            {"source": source, "proc_name": proc_name, "anchor_count": anchor_count}
+            for source, proc_name, anchor_count in summarize_x86_16_golden_readability_set()
         ],
         "readability_set": [asdict(case) for case in readability_set],
         "blocked_mnemonics": list(blocked_mnemonics or ()),

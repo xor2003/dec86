@@ -21,5 +21,24 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
     assert report["scan_summary"]["failed"] == 3
     assert report["corpus_rates"] == {"success_rate": 0.7, "failure_rate": 0.3}
     assert [layer["name"] for layer in report["validation_layers"]] == ["unit", "focused_corpus", "whole_program"]
+    assert [item["name"] for item in report["alias_api"]] == ["same_domain", "compatible_view", "needs_synthesis", "can_join"]
+    assert [item["name"] for item in report["widening_pipeline"]] == [
+        "candidate_extraction",
+        "compatibility_proof",
+        "join_decision",
+    ]
+    assert [item["name"] for item in report["recovery_layers"]] == [
+        "member_and_array_recovery",
+        "stable_stack_object_recovery",
+        "stable_global_object_recovery",
+        "trait_to_type_handoff",
+        "prototype_evidence_layer",
+        "far_near_prototype_recovery",
+    ]
+    assert report["readability_set_summary"][0] == {
+        "source": "cod/f14/MONOPRIN.COD",
+        "proc_name": "_mset_pos",
+        "anchor_count": 5,
+    }
     assert len(report["readability_set"]) >= 4
     assert report["hotspots"]["top_failure_classes"][0]["failure_class"] == "cfg_failure"

@@ -17,6 +17,7 @@ from angr_platforms.X86_16.alias_model import (
     can_join_alias_storage,
     compatible_alias_storage_views,
     describe_alias_storage,
+    describe_x86_16_alias_recovery_api,
     needs_alias_synthesis,
     same_alias_storage_domain,
 )
@@ -25,6 +26,7 @@ from angr_platforms.X86_16.alias_state import AliasState
 from angr_platforms.X86_16.widening_model import (
     collect_widening_candidates,
     describe_widening_candidates,
+    describe_x86_16_widening_pipeline,
     prove_adjacent_storage_slices,
 )
 
@@ -53,6 +55,13 @@ def test_alias_api_tracks_register_storage_identity_and_view_compatibility():
     assert not can_join_alias_storage(low, other)
 
 
+def test_alias_recovery_api_is_explicit_and_stable():
+    api = describe_x86_16_alias_recovery_api()
+
+    assert [name for name, _, _ in api] == ["same_domain", "compatible_view", "needs_synthesis", "can_join"]
+    assert api[0][2] == ("same_alias_storage_domain",)
+
+
 def test_alias_api_marks_mixed_expression_for_synthesis():
     codegen = _make_codegen()
     stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
@@ -76,6 +85,13 @@ def test_widening_candidate_extraction_and_debug_description():
     descriptions = describe_widening_candidates([low, high, other])
     assert descriptions[0]["domain"].startswith("register")
     assert descriptions[0]["view"]["bit_width"] == 8
+
+
+def test_widening_pipeline_is_explicit_and_stable():
+    pipeline = describe_x86_16_widening_pipeline()
+
+    assert [name for name, _, _ in pipeline] == ["candidate_extraction", "compatibility_proof", "join_decision"]
+    assert "prove_adjacent_storage_slices" in pipeline[1][2]
 
 
 def test_widening_proof_accepts_joinable_register_slices_and_rejects_mixed_pairs():

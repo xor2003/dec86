@@ -206,6 +206,13 @@ class AliasStorageFacts:
         return self.same_domain(other) and self.compatible_view(other) and not self.needs_synthesis() and not other.needs_synthesis()
 
 
+@dataclass(frozen=True)
+class AliasRecoveryAPISpec:
+    name: str
+    purpose: str
+    helpers: tuple[str, ...]
+
+
 def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     if isinstance(variable, SimStackVariable):
         width = getattr(variable, "size", 0)
@@ -325,6 +332,34 @@ def can_join_alias_storage(lhs, rhs) -> bool:
     return describe_alias_storage(lhs).can_join(describe_alias_storage(rhs))
 
 
+ALIAS_RECOVERY_API: tuple[AliasRecoveryAPISpec, ...] = (
+    AliasRecoveryAPISpec(
+        name="same_domain",
+        purpose="Determine whether two expressions belong to the same storage family.",
+        helpers=("same_alias_storage_domain",),
+    ),
+    AliasRecoveryAPISpec(
+        name="compatible_view",
+        purpose="Determine whether two expressions can join as adjacent or compatible slices.",
+        helpers=("compatible_alias_storage_views",),
+    ),
+    AliasRecoveryAPISpec(
+        name="needs_synthesis",
+        purpose="Detect mixed or unknown storage that should remain explicitly synthesized.",
+        helpers=("needs_alias_synthesis",),
+    ),
+    AliasRecoveryAPISpec(
+        name="can_join",
+        purpose="Check the downstream-ready join condition used by widening and object recovery.",
+        helpers=("can_join_alias_storage",),
+    ),
+)
+
+
+def describe_x86_16_alias_recovery_api() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    return tuple((spec.name, spec.purpose, spec.helpers) for spec in ALIAS_RECOVERY_API)
+
+
 def _merge_storage_domains(existing: _StorageDomainSignature | None, incoming: _StorageDomainSignature) -> _StorageDomainSignature:
     if existing is None:
         return incoming
@@ -355,9 +390,12 @@ __all__ = [
     "_storage_domain_for_expr",
     "_merge_storage_domains",
     "AliasStorageFacts",
+    "AliasRecoveryAPISpec",
+    "ALIAS_RECOVERY_API",
     "can_join_alias_storage",
     "compatible_alias_storage_views",
     "describe_alias_storage",
+    "describe_x86_16_alias_recovery_api",
     "needs_alias_synthesis",
     "same_alias_storage_domain",
 ]
