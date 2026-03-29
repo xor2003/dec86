@@ -7,6 +7,7 @@ from angr_platforms.X86_16.stack_helpers import (
     pop_far_return_frame16,
     pop_interrupt_frame16,
     push16,
+    push16_register,
     push_far_return_frame16,
 )
 
@@ -54,6 +55,15 @@ def test_stack_helpers_push_and_pop_16_bit_values():
     assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0xABCD
     assert pop16(emu) == 0xABCD
     assert emu.get_gpreg(reg16_t.SP) == 0x1000
+
+
+def test_stack_helpers_push16_register_preserves_original_sp_value():
+    emu = _StackEmu()
+
+    push16_register(emu, reg16_t.SP)
+
+    assert emu.get_gpreg(reg16_t.SP) == 0x0FFE
+    assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0x1000
 
 
 def test_stack_helpers_form_far_call_frames_in_cs_ip_order():

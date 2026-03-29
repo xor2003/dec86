@@ -11,6 +11,14 @@ def push16(emu, value):
     emu.write_mem16_seg(sgreg_t.SS, sp, value)
 
 
+def push16_register(emu, reg: reg16_t):
+    if reg == reg16_t.SP:
+        sp = emu.get_gpreg(reg16_t.SP)
+        push16(emu, sp)
+        return
+    push16(emu, emu.get_gpreg(reg))
+
+
 def pop16(emu):
     sp = emu.get_gpreg(reg16_t.SP)
     value = emu.read_mem16_seg(sgreg_t.SS, sp)

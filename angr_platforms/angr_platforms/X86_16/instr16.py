@@ -15,7 +15,7 @@ from .alu_helpers import (
 )
 from .addressing_helpers import address_step, load_far_pointer
 from .instr_base import InstrBase
-from .stack_helpers import enter16, leave16, near_return_ip16
+from .stack_helpers import enter16, leave16, near_return_ip16, push16_register
 from .string_helpers import repeat_jump, repeat_prefix_cond, string_delta, string_source_segment
 from .instruction import *
 from .regs import reg8_t, reg16_t, sgreg_t
@@ -401,15 +401,7 @@ class Instr16(InstrBase):
 
     def push_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
-        if reg == reg16_t.SP:
-            sp = self.emu.get_gpreg(reg16_t.SP)
-            new_sp = sp - self.emu.constant(2, Type.int_16)
-            self.emu.set_gpreg(reg16_t.SP, new_sp)
-            self.emu.put_data16(sgreg_t.SS, new_sp, sp)
-            return
-
-        value = self.emu.get_gpreg(reg)
-        self.emu.push16(value)
+        push16_register(self.emu, reg)
 
     def pop_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)
