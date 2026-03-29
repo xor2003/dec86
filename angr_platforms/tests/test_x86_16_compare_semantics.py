@@ -906,6 +906,16 @@ def test_div_cx_matches_upstream_x86_vex_effect():
     )
 
 
+def test_idiv_cx_matches_upstream_x86_vex_effect():
+    _assert_same_reg_effect_with_flags(
+        b"\xF7\xF9",
+        b"\x66\xF7\xF9",
+        regs={"ax": 0x0009, "dx": 0x0000, "cx": 0x0003, "flags": 0},
+        compare_regs=("ax", "dx"),
+        compare_flag_bits=(),
+    )
+
+
 def test_neg_bx_matches_upstream_x86_vex_effect():
     _assert_same_reg_effect_with_flags(
         b"\xF7\xDB",

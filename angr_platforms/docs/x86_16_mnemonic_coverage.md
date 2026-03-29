@@ -52,7 +52,7 @@ Status meanings:
 | `rcr` | - | 366 | yes | yes | compare | reg, mem; count=1/imm8/CL; 8+16-bit | - | - |
 | `neg` | - | 201 | yes | yes | compare | reg, mem; 8+16-bit | - | - |
 | `sbb` | - | 184 | yes | yes | compare | reg/reg, reg/mem, mem/reg, reg/imm, mem/imm, accum/imm; 8+16-bit | - | - |
-| `idiv` | - | 118 | yes | yes | smoke | reg, mem; 8+16-bit | - | - |
+| `idiv` | - | 118 | yes | yes | compare | reg, mem; 8+16-bit | - | - |
 | `xor` | - | 81 | yes | yes | corpus | reg/reg, reg/mem, mem/reg, reg/imm, mem/imm, accum/imm; 8+16-bit | - | - |
 | `ja` | jnbe | 74 | yes | yes | none | short rel8 | - | - |
 | `jbe` | jna | 59 | yes | yes | none | short rel8 | - | - |
