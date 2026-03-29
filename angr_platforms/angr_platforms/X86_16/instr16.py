@@ -17,6 +17,7 @@ from .addressing_helpers import load_far_pointer, load_resolved_operand, load_wo
 from .instr_base import InstrBase
 from .stack_helpers import (
     branch_rel16,
+    branch_rel8,
     emit_near_call16,
     emit_near_jump16,
     enter16,
@@ -30,6 +31,7 @@ from .stack_helpers import (
     push_all16,
     push_flags16,
     push_segment16,
+    loop_rel8,
     return_near16,
 )
 from .string_helpers import (
@@ -217,35 +219,18 @@ class Instr16(InstrBase):
         self.set_funcflag(0xDA, self.code_da, CHK_MODRM)
 
 
-    def _rel8_target(self):
-        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        return self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
-
-    def _decrement_cx(self):
-        cx = self.emu.get_gpreg(reg16_t.CX)
-        cx -= 1
-        self.emu.set_gpreg(reg16_t.CX, cx)
-        return cx
-
     def jcxz_rel8(self) -> None:
-        self.emu.lifter_instruction.jump(self.emu.get_gpreg(reg16_t.CX) == 0, self._rel8_target())
+        branch_rel8(self.emu, self.emu.get_gpreg(reg16_t.CX) == 0, self.instr.imm8)
 
 
     def loop16(self) -> None:
-        cx = self._decrement_cx()
-        self.emu.lifter_instruction.jump(cx != 0, self._rel8_target(), JumpKind.Boring)
+        loop_rel8(self.emu, self.emu.constant(1, Type.int_1), self.instr.imm8)
 
     def loop16e(self) -> None:
-        cx = self._decrement_cx()
-        zero = self.emu.is_zero()
-        count_nonzero = (cx != self.emu.constant(0, Type.int_16)).cast_to(Type.int_1)
-        self.emu.lifter_instruction.jump(count_nonzero & zero, self._rel8_target(), JumpKind.Boring)
+        loop_rel8(self.emu, self.emu.is_zero(), self.instr.imm8)
 
     def loop16ne(self) -> None:
-        cx = self._decrement_cx()
-        zero = self.emu.is_zero()
-        count_nonzero = (cx != self.emu.constant(0, Type.int_16)).cast_to(Type.int_1)
-        self.emu.lifter_instruction.jump(count_nonzero & ~zero, self._rel8_target(), JumpKind.Boring)
+        loop_rel8(self.emu, ~self.emu.is_zero(), self.instr.imm8)
 
     def code_8f(self):
         reg = self.instr.modrm.reg
@@ -767,13 +752,6 @@ class Instr16(InstrBase):
 
     def jmpf_ptr16_16(self):
         self.emu.jmpf(self.instr.ptr16, self.instr.imm16)
-
-    def _rel16_target(self):
-        return (
-            self.emu.get_gpreg(reg16_t.IP)
-            + self.emu.constant(self.instr.imm16, Type.int_16)
-            + self.emu.constant(4, Type.int_16)
-        )
 
     def in_ax_dx(self):
         dx = self.emu.get_gpreg(reg16_t.DX)

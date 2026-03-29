@@ -376,10 +376,6 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
     def cmp_al_imm8(self) -> None:
         self._compare_al_imm8(self.emu.update_eflags_sub)
 
-    def _rel8_target(self):
-        rel = self.emu.constant(self.instr.imm8, Type.int_8).widen_signed(Type.int_16)
-        return self.emu.get_gpreg(reg16_t.IP) + rel + self.emu.constant(2, Type.int_16)
-
     def jo_rel8(self) -> None:
         branch_rel8(self.emu, self.emu.is_overflow(), self.instr.imm8)
 

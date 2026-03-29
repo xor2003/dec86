@@ -190,7 +190,8 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_32bit_near_control_trans
 
 def test_x86_16_instruction_core_uses_stack_helpers_for_8bit_and_16bit_relative_branches():
     source = (
-        inspect.getsource(InstrBase.jo_rel8)
+        inspect.getsource(instr16.Instr16.jcxz_rel8)
+        + inspect.getsource(InstrBase.jo_rel8)
         + inspect.getsource(InstrBase.jno_rel8)
         + inspect.getsource(InstrBase.jb_rel8)
         + inspect.getsource(InstrBase.jnb_rel8)
@@ -206,6 +207,9 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_8bit_and_16bit_relative_
         + inspect.getsource(InstrBase.jnl_rel8)
         + inspect.getsource(InstrBase.jle_rel8)
         + inspect.getsource(InstrBase.jnle_rel8)
+        + inspect.getsource(instr16.Instr16.loop16)
+        + inspect.getsource(instr16.Instr16.loop16e)
+        + inspect.getsource(instr16.Instr16.loop16ne)
         + inspect.getsource(instr16.Instr16.jo_rel16)
         + inspect.getsource(instr16.Instr16.jno_rel16)
         + inspect.getsource(instr16.Instr16.jb_rel16)
@@ -226,6 +230,7 @@ def test_x86_16_instruction_core_uses_stack_helpers_for_8bit_and_16bit_relative_
 
     assert "branch_rel8(" in source
     assert "branch_rel16(" in source
+    assert "loop_rel8(" in source
     assert "self.emu.lifter_instruction.jump(" not in source
 
 
