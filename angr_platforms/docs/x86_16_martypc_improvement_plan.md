@@ -189,6 +189,9 @@ Recent progress on that front:
    from the shared addressing layer instead of re-pairing them in `exec.py`
 -  `instr16.py` string handlers now call shared string helpers directly
    instead of routing through local forwarding wrappers
+-  AX/immediate ALU handlers in `instr16.py` now call the shared binary and
+   compare helpers directly instead of going through private AX wrapper
+   methods
 - validation now has family slices alongside the tiered corpus layers, which
   gives stack/control, addressing, string, ALU, and interrupt API families a
   named validation boundary for focused debugging

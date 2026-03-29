@@ -294,39 +294,36 @@ class Instr16(InstrBase):
             16,
         )
 
-    def _ax_imm16(self):
-        return self.emu.constant(self.instr.imm16, Type.int_16)
+    def add_ax_imm16(self):
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            lambda value: self.emu.set_gpreg(reg16_t.AX, value),
+            self.emu.update_eflags_add,
+            lambda ax, imm16: ax + imm16,
+        )
 
-    def _binary_ax_imm16(self, operator, updater):
-        binary_operation(self.emu, lambda: self.emu.get_gpreg(reg16_t.AX), self._ax_imm16, lambda value: self.emu.set_gpreg(reg16_t.AX, value), updater, operator)
-
-    def _binary_ax_imm16_with_carry(self, operator, updater):
+    def adc_ax_imm16(self):
         binary_operation_with_carry(
             self.emu,
             lambda: self.emu.get_gpreg(reg16_t.AX),
-            self._ax_imm16,
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
             lambda value: self.emu.set_gpreg(reg16_t.AX, value),
-            updater,
-            operator,
+            self.emu.update_eflags_adc,
+            lambda ax, imm16, carry: ax + imm16 + carry,
             16,
         )
 
-    def _compare_ax_imm16(self, updater):
-        compare_operation(lambda: self.emu.get_gpreg(reg16_t.AX), self._ax_imm16, updater)
-
-    def add_ax_imm16(self):
-        self._binary_ax_imm16(lambda ax, imm16: ax + imm16, self.emu.update_eflags_add)
-
-    def adc_ax_imm16(self):
-        self._binary_ax_imm16_with_carry(
-            lambda ax, imm16, carry: ax + imm16 + carry,
-            self.emu.update_eflags_adc,
-        )
-
     def sbb_ax_imm16(self):
-        self._binary_ax_imm16_with_carry(
-            lambda ax, imm16, carry: ax - imm16 - carry,
+        binary_operation_with_carry(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            lambda value: self.emu.set_gpreg(reg16_t.AX, value),
             self.emu.update_eflags_sbb,
+            lambda ax, imm16, carry: ax - imm16 - carry,
+            16,
         )
 
     def push_es(self):
@@ -342,7 +339,14 @@ class Instr16(InstrBase):
         binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs)
 
     def or_ax_imm16(self):
-        self._binary_ax_imm16(lambda ax, imm16: ax | imm16, self.emu.update_eflags_or)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            lambda value: self.emu.set_gpreg(reg16_t.AX, value),
+            self.emu.update_eflags_or,
+            lambda ax, imm16: ax | imm16,
+        )
 
     def push_cs(self):
         push_segment16(self.emu, sgreg_t.CS)
@@ -366,7 +370,14 @@ class Instr16(InstrBase):
         binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs)
 
     def and_ax_imm16(self):
-        self._binary_ax_imm16(lambda ax, imm16: ax & imm16, self.emu.update_eflags_and)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            lambda value: self.emu.set_gpreg(reg16_t.AX, value),
+            self.emu.update_eflags_and,
+            lambda ax, imm16: ax & imm16,
+        )
 
     def sub_rm16_r16(self):
         binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
@@ -375,7 +386,14 @@ class Instr16(InstrBase):
         binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs)
 
     def sub_ax_imm16(self):
-        self._binary_ax_imm16(lambda ax, imm16: ax - imm16, self.emu.update_eflags_sub)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            lambda value: self.emu.set_gpreg(reg16_t.AX, value),
+            self.emu.update_eflags_sub,
+            lambda ax, imm16: ax - imm16,
+        )
 
     def xor_rm16_r16(self):
         binary_operation(self.emu, self.get_rm16, self.get_r16, self.set_rm16, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
@@ -385,7 +403,14 @@ class Instr16(InstrBase):
         binary_operation(self.emu, self.get_r16, self.get_rm16, self.set_r16, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs)
 
     def xor_ax_imm16(self):
-        self._binary_ax_imm16(lambda ax, imm16: ax ^ imm16, self.emu.update_eflags_xor)
+        binary_operation(
+            self.emu,
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            lambda value: self.emu.set_gpreg(reg16_t.AX, value),
+            self.emu.update_eflags_xor,
+            lambda ax, imm16: ax ^ imm16,
+        )
 
     def cmp_rm16_r16(self):
         compare_operation(self.get_rm16, self.get_r16, self.emu.update_eflags_sub)
@@ -394,7 +419,11 @@ class Instr16(InstrBase):
         compare_operation(self.get_r16, self.get_rm16, self.emu.update_eflags_sub)
 
     def cmp_ax_imm16(self):
-        self._compare_ax_imm16(self.emu.update_eflags_sub)
+        compare_operation(
+            lambda: self.emu.get_gpreg(reg16_t.AX),
+            lambda: self.emu.constant(self.instr.imm16, Type.int_16),
+            self.emu.update_eflags_sub,
+        )
 
     def inc_r16(self):
         reg = reg16_t(self.instr.opcode & 0b111)

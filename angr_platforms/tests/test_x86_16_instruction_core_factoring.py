@@ -25,10 +25,23 @@ def test_x86_16_instruction_core_base_exposes_registration_helper():
 
 
 def test_x86_16_instruction_core_base_groups_ax_immediates_under_shared_helpers():
-    assert hasattr(instr16.Instr16, "_ax_imm16")
-    assert hasattr(instr16.Instr16, "_binary_ax_imm16")
-    assert hasattr(instr16.Instr16, "_binary_ax_imm16_with_carry")
-    assert hasattr(instr16.Instr16, "_compare_ax_imm16")
+    source = (
+        inspect.getsource(instr16.Instr16.add_ax_imm16)
+        + inspect.getsource(instr16.Instr16.adc_ax_imm16)
+        + inspect.getsource(instr16.Instr16.sbb_ax_imm16)
+        + inspect.getsource(instr16.Instr16.or_ax_imm16)
+        + inspect.getsource(instr16.Instr16.and_ax_imm16)
+        + inspect.getsource(instr16.Instr16.sub_ax_imm16)
+        + inspect.getsource(instr16.Instr16.xor_ax_imm16)
+        + inspect.getsource(instr16.Instr16.cmp_ax_imm16)
+    )
+
+    assert "binary_operation(" in source
+    assert "binary_operation_with_carry(" in source
+    assert "compare_operation(" in source
+    assert "_binary_ax_imm16" not in source
+    assert "_binary_ax_imm16_with_carry" not in source
+    assert "_compare_ax_imm16" not in source
 
 
 def test_x86_16_instruction_core_base_reuses_resolved_memory_operands_for_byte_memory_paths():
