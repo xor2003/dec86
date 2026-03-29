@@ -6,6 +6,7 @@ from pyvex import IRConst
 
 from .addressing_helpers import (
     ResolvedMemoryOperand,
+    address_width_bits,
     default_segment_for_modrm16,
     default_segment_for_modrm32,
     resolve_linear_operand,
@@ -121,7 +122,13 @@ class ExecInstr(X86Instruction):
 
     def _resolved_rm_operand(self, width_bits: int) -> ResolvedMemoryOperand:
         seg, addr = self._resolved_rm_address()
-        return resolve_linear_operand(self.emu, seg, addr, width_bits, 16)
+        return resolve_linear_operand(
+            self.emu,
+            seg,
+            addr,
+            width_bits,
+            address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+        )
 
     def _resolved_rm_address(self):
         addr = self.calc_modrm()
@@ -132,7 +139,13 @@ class ExecInstr(X86Instruction):
         self.instr.segment = sgreg_t.DS.value
         seg = self.select_segment()
         offset = self.instr.moffs
-        return resolve_linear_operand(self.emu, seg, offset, width_bits, 16)
+        return resolve_linear_operand(
+            self.emu,
+            seg,
+            offset,
+            width_bits,
+            address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+        )
 
     def set_sreg(self, value):
         self.emu.set_segment(sgreg_t(self.instr.modrm.reg), value)

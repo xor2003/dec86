@@ -76,3 +76,26 @@ def string_advance_indices(emu, width: int, *regs) -> object:
 
 def string_compare_values(lhs, rhs, update_flags) -> None:
     compare_operation(lambda: lhs, lambda: rhs, update_flags)
+
+
+def string_load(emu, segment: sgreg_t, offset, width: int):
+    if width == 1:
+        return emu.get_data8(segment, offset)
+    if width == 2:
+        return emu.get_data16(segment, offset)
+    if width == 4:
+        return emu.get_data32(segment, offset)
+    raise ValueError(f"unsupported string width: {width}")
+
+
+def string_store(emu, segment: sgreg_t, offset, value, width: int) -> None:
+    if width == 1:
+        emu.put_data8(segment, offset, value)
+        return
+    if width == 2:
+        emu.put_data16(segment, offset, value)
+        return
+    if width == 4:
+        emu.put_data32(segment, offset, value)
+        return
+    raise ValueError(f"unsupported string width: {width}")

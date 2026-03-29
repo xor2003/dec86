@@ -5,6 +5,8 @@ from angr_platforms.X86_16.string_helpers import (
     repeat_jump,
     string_advance_indices,
     string_compare_values,
+    string_load,
+    string_store,
     string_source_segment,
 )
 
@@ -65,6 +67,8 @@ class _StringEmu:
         self.lifter_instruction = _JumpRecorder()
         self.lifter_instruction.irsb_c = _IrsbC()
         self.irsb = self.lifter_instruction.irsb
+        self.loads = []
+        self.stores = []
 
     def get_gpreg(self, reg):
         return self.gpregs[reg]
@@ -83,6 +87,27 @@ class _StringEmu:
 
     def _vv(self, expr):
         return _Const(expr)
+
+    def get_data8(self, segment, offset):
+        self.loads.append(("u8", segment, offset))
+        return ("u8", segment, offset)
+
+    def get_data16(self, segment, offset):
+        self.loads.append(("u16", segment, offset))
+        return ("u16", segment, offset)
+
+    def get_data32(self, segment, offset):
+        self.loads.append(("u32", segment, offset))
+        return ("u32", segment, offset)
+
+    def put_data8(self, segment, offset, value):
+        self.stores.append(("u8", segment, offset, value))
+
+    def put_data16(self, segment, offset, value):
+        self.stores.append(("u16", segment, offset, value))
+
+    def put_data32(self, segment, offset, value):
+        self.stores.append(("u32", segment, offset, value))
 
 
 class _Cond:
@@ -170,3 +195,25 @@ def test_string_compare_values_delegates_to_flags_update():
     string_compare_values(0x12, 0x34, lambda lhs, rhs: state.update({"flags": (lhs, rhs)}))
 
     assert state["flags"] == (0x12, 0x34)
+
+
+def test_string_load_dispatches_by_width():
+    emu = _StringEmu()
+
+    assert string_load(emu, sgreg_t.DS, 0x10, 1) == ("u8", sgreg_t.DS, 0x10)
+    assert string_load(emu, sgreg_t.DS, 0x20, 2) == ("u16", sgreg_t.DS, 0x20)
+    assert string_load(emu, sgreg_t.DS, 0x30, 4) == ("u32", sgreg_t.DS, 0x30)
+
+
+def test_string_store_dispatches_by_width():
+    emu = _StringEmu()
+
+    string_store(emu, sgreg_t.ES, 0x10, 0xAA, 1)
+    string_store(emu, sgreg_t.ES, 0x20, 0xBEEF, 2)
+    string_store(emu, sgreg_t.ES, 0x30, 0xDEADBEEF, 4)
+
+    assert emu.stores == [
+        ("u8", sgreg_t.ES, 0x10, 0xAA),
+        ("u16", sgreg_t.ES, 0x20, 0xBEEF),
+        ("u32", sgreg_t.ES, 0x30, 0xDEADBEEF),
+    ]

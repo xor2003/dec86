@@ -9,6 +9,7 @@ from .alu_helpers import (
     masked_shift_count,
     unary_operation,
 )
+from .addressing_helpers import address_width_bits, load_far_pointer
 from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
@@ -20,6 +21,7 @@ from .string_helpers import (
     string_advance_indices,
     string_compare_values,
     string_delta,
+    string_load,
     string_source_segment,
 )
 from .regs import reg8_t, reg16_t, reg32_t
@@ -354,8 +356,8 @@ class Instr32(InstrBase):
 
         si = self.emu.get_gpreg(reg32_t.ESI)
         di = self.emu.get_gpreg(reg32_t.EDI)
-        m8_s = self.emu.get_data8(string_source_segment(self.instr), si)
-        m8_d = self.emu.get_data8(reg16_t.ES, di)
+        m8_s = string_load(self.emu, string_source_segment(self.instr), si, 1)
+        m8_d = string_load(self.emu, reg16_t.ES, di, 1)
         string_compare_values(m8_s, m8_d, self.emu.update_eflags_sub)
         string_advance_indices(self.emu, 1, reg32_t.ESI, reg32_t.EDI)
 
@@ -367,8 +369,8 @@ class Instr32(InstrBase):
 
         si = self.emu.get_gpreg(reg32_t.ESI)
         di = self.emu.get_gpreg(reg32_t.EDI)
-        m32_s = self.emu.get_data32(string_source_segment(self.instr), si)
-        m32_d = self.emu.get_data32(reg16_t.ES, di)
+        m32_s = string_load(self.emu, string_source_segment(self.instr), si, 4)
+        m32_d = string_load(self.emu, reg16_t.ES, di, 4)
         string_compare_values(m32_s, m32_d, self.emu.update_eflags_sub)
         string_advance_indices(self.emu, 4, reg32_t.ESI, reg32_t.EDI)
 
@@ -794,9 +796,14 @@ class Instr32(InstrBase):
         self.emu.set_eip(rm32)
 
     def callf_m16_32(self):
-        m48 = self.get_m()
-        eip = self.emu.read_mem32(m48)
-        cs = self.emu.read_mem16(m48 + 4)
+        seg, offset = self._resolved_rm_address()
+        eip, cs = load_far_pointer(
+            self.emu,
+            seg,
+            offset,
+            32,
+            address_bits=address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+        )
         INFO(2, "cs = 0x%04x, eip = 0x%08x", cs, eip)
         self.emu.callf(cs, eip)
 
@@ -805,9 +812,14 @@ class Instr32(InstrBase):
         self.emu.set_eip(rm32)
 
     def jmpf_m16_32(self):
-        m48 = self.get_m()
-        eip = self.emu.read_mem32(m48)
-        sel = self.emu.read_mem16(m48 + 4)
+        seg, offset = self._resolved_rm_address()
+        eip, sel = load_far_pointer(
+            self.emu,
+            seg,
+            offset,
+            32,
+            address_bits=address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+        )
         self.emu.jmpf(sel, eip)
 
     def push_rm32(self):

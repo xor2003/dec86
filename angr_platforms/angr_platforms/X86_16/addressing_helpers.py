@@ -88,6 +88,15 @@ def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, addre
     return ResolvedMemoryOperand(segment, offset, emu.v2p(segment, offset), width_bits, address_bits)
 
 
+def load_word_pair16(emu, segment: sgreg_t, offset, address_bits: int = 16):
+    if isinstance(offset, int):
+        offset = emu.constant(offset, type_for_bits(address_bits))
+    step = address_step(emu, 2, address_bits)
+    first = emu.get_data16(segment, offset)
+    second = emu.get_data16(segment, offset + step)
+    return first, second
+
+
 def load_far_pointer(emu, segment: sgreg_t, offset, operand_bits: int, address_bits: int = 16):
     if isinstance(offset, int):
         offset = emu.constant(offset, type_for_bits(address_bits))
@@ -103,7 +112,7 @@ def load_far_pointer(emu, segment: sgreg_t, offset, operand_bits: int, address_b
 
 
 def load_far_pointer16(emu, segment: sgreg_t, offset, address_bits: int = 16):
-    return load_far_pointer(emu, segment, offset, 16, address_bits=address_bits)
+    return load_word_pair16(emu, segment, offset, address_bits=address_bits)
 
 
 @dataclass(frozen=True)

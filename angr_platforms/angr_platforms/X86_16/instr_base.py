@@ -471,10 +471,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             self.set_rm8(r8)
             return
 
-        addr = self.get_m()
-        seg = self.select_segment()
+        operand = self._resolved_rm_operand(8)
         self.set_r8(rm8)
-        self.emu.put_data8(seg, addr, r8)
+        self.emu.put_data8(operand.segment, operand.offset, r8)
 
     def mov_rm8_r8(self) -> None:
         r8 = self.get_r8()
@@ -530,9 +529,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def esc(self) -> None:
         if self.instr.modrm.mod != 3:
-            addr = self.get_m()
-            seg = self.select_segment()
-            self.emu.get_data8(seg, addr)
+            operand = self._resolved_rm_operand(8)
+            self.emu.get_data8(operand.segment, operand.offset)
 
     def mov_r8_imm8(self) -> None:
         reg = self.instr.opcode & 0b111

@@ -8,6 +8,7 @@ from angr_platforms.X86_16.addressing_helpers import (
     displacement_width_bits,
     load_far_pointer,
     load_far_pointer16,
+    load_word_pair16,
     resolve_linear_operand,
     operand_width_bits,
     signed_displacement,
@@ -120,6 +121,19 @@ def test_load_far_pointer16_uses_address_width_specific_step():
     assert emu.loads[1] == (sgreg_t.DS, typed_offset + emu.calls[1])
     assert offset == ("word", sgreg_t.DS, typed_offset)
     assert segment == ("word", sgreg_t.DS, typed_offset + emu.calls[1])
+
+
+def test_load_word_pair16_uses_address_width_specific_step():
+    emu = _FakeEmu()
+
+    first, second = load_word_pair16(emu, sgreg_t.DS, 0x1234, address_bits=16)
+
+    assert emu.calls == [(0x1234, Type.int_16), (2, Type.int_16)]
+    typed_offset = (0x1234, Type.int_16)
+    assert emu.loads[0] == (sgreg_t.DS, typed_offset)
+    assert emu.loads[1] == (sgreg_t.DS, typed_offset + emu.calls[1])
+    assert first == ("word", sgreg_t.DS, typed_offset)
+    assert second == ("word", sgreg_t.DS, typed_offset + emu.calls[1])
 
 
 def test_load_far_pointer_supports_future_32_bit_operand_widths():
