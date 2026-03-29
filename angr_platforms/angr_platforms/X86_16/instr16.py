@@ -430,7 +430,7 @@ class Instr16(InstrBase):
             raise Exception(EXP_UD)
         reg = self.get_r16().signed
         seg, addr = self._resolved_rm_address()
-        lower, upper = load_word_pair16(self.emu, seg, addr, address_bits=16)
+        lower, upper = load_word_pair16(self.emu, seg, addr, address_bits=self.effective_address_bits())
         lower = lower.signed
         upper = upper.signed
         out_of_range = (reg < lower) | (reg > upper)
@@ -486,7 +486,7 @@ class Instr16(InstrBase):
 
     def _load_far_pointer(self):
         seg, addr = self._resolved_rm_address()
-        return load_far_pointer(self.emu, seg, addr, 16, address_bits=16)
+        return load_far_pointer(self.emu, seg, addr, 16, address_bits=self.effective_address_bits())
 
     def les_es_r16_m16(self):
         offset, segment = self._load_far_pointer()
@@ -543,7 +543,7 @@ class Instr16(InstrBase):
         self.instr.segment = sgreg_t.DS.value
         bx = self.emu.get_gpreg(reg16_t.BX)
         al = self.emu.get_gpreg(reg8_t.AL).cast_to(Type.int_16)
-        operand = resolve_linear_operand(self.emu, self.select_segment(), bx + al, 8, 16)
+        operand = resolve_linear_operand(self.emu, self.select_segment(), bx + al, 8, self.effective_address_bits())
         value = load_resolved_operand(self.emu, operand)
         self.emu.set_gpreg(reg8_t.AL, value)
 

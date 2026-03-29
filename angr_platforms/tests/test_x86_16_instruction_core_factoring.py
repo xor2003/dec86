@@ -40,7 +40,7 @@ def test_x86_16_instruction_core_base_reuses_resolved_memory_operands_for_byte_m
 def test_x86_16_exec_resolved_memory_operands_use_effective_address_width():
     source = inspect.getsource(InstrBase._resolved_rm_operand) + inspect.getsource(InstrBase._resolved_moffs_operand)
 
-    assert "address_width_bits(" in source
+    assert "effective_address_bits(" in source
 
 
 def test_x86_16_instruction_core_uses_addressing_helpers_for_xlat_and_bound_pairs():
@@ -49,6 +49,7 @@ def test_x86_16_instruction_core_uses_addressing_helpers_for_xlat_and_bound_pair
     assert "resolve_linear_operand(" in source
     assert "load_resolved_operand(" in source
     assert "load_word_pair16(" in source
+    assert "effective_address_bits(" in source
 
 
 def test_x86_16_instruction_core_uses_shared_rm8_access_for_movzx_and_movsx():
@@ -85,6 +86,13 @@ def test_x86_16_instruction_core_uses_string_helpers_for_32bit_string_compare_ac
     assert "string_load(" in source
     assert "self.emu.get_data8(" not in source
     assert "self.emu.get_data32(" not in source
+
+
+def test_x86_16_instruction_core_uses_decode_width_api_for_far_pointer_paths():
+    source = inspect.getsource(instr16.Instr16._load_far_pointer) + inspect.getsource(instr32.Instr32.callf_m16_32) + inspect.getsource(instr32.Instr32.jmpf_m16_32)
+
+    assert "effective_address_bits(" in source
+    assert "address_width_bits(" not in source
 
 
 def test_x86_16_instruction_core_uses_stack_helpers_for_pusha_and_popa():

@@ -4,14 +4,7 @@ from pyvex.lifting.util.vex_helper import Type
 from pyvex.expr import Const, Binop, Unop
 from pyvex import IRConst
 
-from .addressing_helpers import (
-    ResolvedMemoryOperand,
-    address_width_bits,
-    default_segment_for_modrm16,
-    default_segment_for_modrm32,
-    resolve_linear_operand,
-    signed_displacement,
-)
+from .addressing_helpers import ResolvedMemoryOperand, default_segment_for_modrm16, default_segment_for_modrm32, resolve_linear_operand, signed_displacement
 from .regs import reg8_t, reg16_t, reg32_t, sgreg_t
 
 from .instruction import X86Instruction
@@ -122,13 +115,12 @@ class ExecInstr(X86Instruction):
 
     def _resolved_rm_operand(self, width_bits: int) -> ResolvedMemoryOperand:
         seg, addr = self._resolved_rm_address()
-        address_bits = self.instr.address_bits or address_width_bits(self.emu.is_mode32(), self.chsz_ad)
         return resolve_linear_operand(
             self.emu,
             seg,
             addr,
             width_bits,
-            address_bits,
+            self.effective_address_bits(),
         )
 
     def _resolved_rm_address(self):
@@ -140,13 +132,12 @@ class ExecInstr(X86Instruction):
         self.instr.segment = sgreg_t.DS.value
         seg = self.select_segment()
         offset = self.instr.moffs
-        address_bits = self.instr.address_bits or address_width_bits(self.emu.is_mode32(), self.chsz_ad)
         return resolve_linear_operand(
             self.emu,
             seg,
             offset,
             width_bits,
-            address_bits,
+            self.effective_address_bits(),
         )
 
     def set_sreg(self, value):
@@ -166,7 +157,7 @@ class ExecInstr(X86Instruction):
         assert self.instr.modrm.mod != 3
 
         self.instr.segment = sgreg_t.DS.value
-        if (self.instr.address_bits or address_width_bits(self.emu.is_mode32(), self.chsz_ad)) == 32:
+        if self.effective_address_bits() == 32:
             return self.calc_modrm32()
         else:
             return self.calc_modrm16()

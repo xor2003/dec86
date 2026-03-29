@@ -9,7 +9,7 @@ from .alu_helpers import (
     masked_shift_count,
     unary_operation,
 )
-from .addressing_helpers import address_width_bits, load_far_pointer
+from .addressing_helpers import load_far_pointer
 from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
@@ -786,7 +786,7 @@ class Instr32(InstrBase):
             seg,
             offset,
             32,
-            address_bits=address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+            address_bits=self.effective_address_bits(),
         )
         INFO(2, "cs = 0x%04x, eip = 0x%08x", cs, eip)
         self.emu.callf(cs, eip)
@@ -802,7 +802,7 @@ class Instr32(InstrBase):
             seg,
             offset,
             32,
-            address_bits=address_width_bits(self.emu.is_mode32(), self.chsz_ad),
+            address_bits=self.effective_address_bits(),
         )
         self.emu.jmpf(sel, eip)
 

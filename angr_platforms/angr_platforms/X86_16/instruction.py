@@ -1,4 +1,5 @@
 from .emulator import Emulator
+from .addressing_helpers import address_width_bits, operand_width_bits
 from .regs import sgreg_t
 
 # Constants for repeat prefixes
@@ -68,6 +69,18 @@ class X86Instruction:
     def select_segment(self):
         seg = self.instr.pre_segment if self.instr.pre_segment is not None else self.instr.segment
         return sgreg_t(seg)
+
+    def effective_operand_bits(self) -> int:
+        return self.instr.operand_bits or operand_width_bits(self.mode32, False)
+
+    def effective_address_bits(self) -> int:
+        return self.instr.address_bits or address_width_bits(self.mode32, self.chsz_ad)
+
+    def repeat_kind(self) -> str:
+        return self.instr.repeat_class or "none"
+
+    def control_flow_kind(self) -> str:
+        return self.instr.control_flow_class or "none"
 
 # Class for executing instructions
 

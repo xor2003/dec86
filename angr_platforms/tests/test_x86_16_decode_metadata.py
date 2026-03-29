@@ -3,7 +3,7 @@ from __future__ import annotations
 from bitstring import ConstBitStream
 
 from angr_platforms.X86_16.exec import ExecInstr
-from angr_platforms.X86_16.instruction import CHK_IMM8, CHK_IMM16, CHK_MOFFS, CHK_MODRM, CHK_PTR16, InstrData
+from angr_platforms.X86_16.instruction import CHK_IMM8, CHK_IMM16, CHK_MOFFS, CHK_MODRM, CHK_PTR16, InstrData, X86Instruction
 from angr_platforms.X86_16.parse import ParseInstr
 
 
@@ -66,4 +66,19 @@ def test_decode_metadata_classifies_far_call_and_conditional_jump():
 
 def test_exec_reads_normalized_address_bits_from_instruction_metadata():
     source = ExecInstr.calc_modrm.__code__.co_names + ExecInstr._resolved_rm_operand.__code__.co_names
-    assert "address_bits" in source
+    assert "effective_address_bits" in source
+
+
+def test_instruction_api_exposes_effective_decode_facts():
+    instr = InstrData()
+    instr.operand_bits = 32
+    instr.address_bits = 16
+    instr.repeat_class = "repz"
+    instr.control_flow_class = "near_call"
+
+    view = X86Instruction(_DecodeEmu(b""), instr, mode32=False)
+
+    assert view.effective_operand_bits() == 32
+    assert view.effective_address_bits() == 16
+    assert view.repeat_kind() == "repz"
+    assert view.control_flow_kind() == "near_call"
