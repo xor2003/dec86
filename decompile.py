@@ -3334,6 +3334,30 @@ def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: 
                     created[key] = cvar
                     return cvar
 
+        if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
+            addr_expr = _extract_dereference_addr_expr(node)
+            addr_value = _c_constant_value(_unwrap_c_casts(addr_expr)) if addr_expr is not None else None
+            symbol = _synthetic_global_entry(synthetic_globals, addr_value) if isinstance(addr_value, int) else None
+            if symbol is not None:
+                type_ = getattr(node, "type", None)
+                if type_ is None:
+                    return node
+                bits = getattr(type_, "size", None)
+                size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
+                key = (addr_value, size)
+                existing = created.get(key)
+                if existing is not None:
+                    return existing
+                name, _width = symbol
+                name = _sanitize_cod_identifier(name)
+                cvar = structured_c.CVariable(
+                    SimMemoryVariable(addr_value, size, name=name, region=codegen.cfunc.addr),
+                    variable_type=type_,
+                    codegen=codegen,
+                )
+                created[key] = cvar
+                return cvar
+
         seg_name, linear = _match_segmented_dereference(node, project)
         symbol = _synthetic_global_entry(synthetic_globals, linear)
         if seg_name != "ds" or symbol is None:
