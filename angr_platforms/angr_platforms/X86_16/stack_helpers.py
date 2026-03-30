@@ -365,7 +365,8 @@ def branch_rel32(emu, condition, displacement):
 def loop_rel8(emu, condition, displacement):
     cx = emu.get_gpreg(reg16_t.CX) - emu.constant(1, Type.int_16)
     emu.set_gpreg(reg16_t.CX, cx)
-    return branch_rel8(emu, condition & (cx != emu.constant(0, Type.int_16)), displacement)
+    loop_continue = (cx != emu.constant(0, Type.int_16)).cast_to(Type.int_1)
+    return branch_rel8(emu, condition.cast_to(Type.int_1) & loop_continue, displacement)
 
 
 def enter16(emu, frame_size: int, nesting_level: int) -> None:

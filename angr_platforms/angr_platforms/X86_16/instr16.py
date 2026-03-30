@@ -11,6 +11,8 @@ from .alu_helpers import (
     compare_operation,
     masked_shift_count,
     rotate_count,
+    rotate_through_carry_left_state,
+    rotate_through_carry_right_state,
     unary_operation,
 )
 from .addressing_helpers import load_far_pointer, load_resolved_operand, load_word_pair16, resolve_linear_operand, store_resolved_operand
@@ -1237,75 +1239,25 @@ class Instr16(InstrBase):
         self.emu.update_eflags_ror(a, masked)
 
     def rcl(self, a, b):
-        count = self._rot_count(b, 17)
-        count_value = self.emu._const_u8_value(count)
-        if count_value == 0:
+        result, carry, overflow = rotate_through_carry_left_state(self.emu, a, b, 16, self._ite_value)
+        if carry is None:
             self.set_rm16(a)
             return
-        if count_value == 1:
-            carry = self.emu.get_carry().cast_to(Type.int_1)
-            result = ((a << 1) | carry.cast_to(Type.int_16)) & self.emu.constant(0xFFFF, Type.int_16)
-            shifted_out = a[15].cast_to(Type.int_1)
-            self.set_rm16(result)
-            self._set_rotate_cf(shifted_out)
-            flags = self.emu.get_gpreg(reg16_t.FLAGS)
-            of = result[15].cast_to(Type.int_1) ^ shifted_out
-            flags = self.emu.set_overflow(flags, of.cast_to(Type.int_1))
-            self.emu.set_gpreg(reg16_t.FLAGS, flags)
-            return
-        result = a
-        carry = self.emu.get_carry().cast_to(Type.int_1)
-        selected_result = a
-        selected_carry = carry.cast_to(Type.int_16)
-        for step in range(1, 17):
-            shifted_out = result[15].cast_to(Type.int_1)
-            result = ((result << 1) | carry.cast_to(Type.int_16)) & self.emu.constant(0xFFFF, Type.int_16)
-            carry = shifted_out
-            cond = count == self.emu.constant(step, Type.int_8)
-            selected_result = self._ite_value(cond, result, selected_result)
-            selected_carry = self._ite_value(cond, carry.cast_to(Type.int_16), selected_carry)
-        self.set_rm16(selected_result)
-        self._set_rotate_cf(selected_carry.cast_to(Type.int_1))
+        self.set_rm16(result)
+        self._set_rotate_cf(carry)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
-        one_step = count == self.emu.constant(1, Type.int_8)
-        of = selected_result[15].cast_to(Type.int_1) ^ selected_carry.cast_to(Type.int_1)
-        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
+        flags = self.emu.set_overflow(flags, self._ite_value(b == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def rcr(self, a, b):
-        count = self._rot_count(b, 17)
-        count_value = self.emu._const_u8_value(count)
-        if count_value == 0:
+        result, carry, overflow = rotate_through_carry_right_state(self.emu, a, b, 16, self._ite_value)
+        if carry is None:
             self.set_rm16(a)
             return
-        if count_value == 1:
-            carry = self.emu.get_carry().cast_to(Type.int_1)
-            result = (a >> 1) | (carry.cast_to(Type.int_16) << 15)
-            shifted_out = a[0].cast_to(Type.int_1)
-            self.set_rm16(result)
-            self._set_rotate_cf(shifted_out)
-            flags = self.emu.get_gpreg(reg16_t.FLAGS)
-            of = result[15].cast_to(Type.int_1) ^ result[14].cast_to(Type.int_1)
-            flags = self.emu.set_overflow(flags, of.cast_to(Type.int_1))
-            self.emu.set_gpreg(reg16_t.FLAGS, flags)
-            return
-        result = a
-        carry = self.emu.get_carry().cast_to(Type.int_1)
-        selected_result = a
-        selected_carry = carry.cast_to(Type.int_16)
-        for step in range(1, 17):
-            shifted_out = result[0].cast_to(Type.int_1)
-            result = (result >> 1) | (carry.cast_to(Type.int_16) << 15)
-            carry = shifted_out
-            cond = count == self.emu.constant(step, Type.int_8)
-            selected_result = self._ite_value(cond, result, selected_result)
-            selected_carry = self._ite_value(cond, carry.cast_to(Type.int_16), selected_carry)
-        self.set_rm16(selected_result)
-        self._set_rotate_cf(selected_carry.cast_to(Type.int_1))
+        self.set_rm16(result)
+        self._set_rotate_cf(carry)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
-        one_step = count == self.emu.constant(1, Type.int_8)
-        of = selected_result[15].cast_to(Type.int_1) ^ selected_result[14].cast_to(Type.int_1)
-        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
+        flags = self.emu.set_overflow(flags, self._ite_value(b == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def shr_rm16_cl(self):

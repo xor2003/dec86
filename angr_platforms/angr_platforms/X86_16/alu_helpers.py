@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from pyvex.lifting.util.vex_helper import Type
+
 from .addressing_helpers import type_for_bits
 
 
@@ -52,6 +54,10 @@ def rotate_count(emu, count, modulo: int, width_bits: int, mask: int = 0x1F):
     return masked_shift_count(emu, count, width_bits, mask) % emu.constant(modulo, type_for_bits(width_bits))
 
 
+def rotate_through_carry_count(emu, count, width_bits: int, mask: int = 0x1F):
+    return masked_shift_count(emu, count, width_bits, mask) % emu.constant(width_bits + 1, type_for_bits(width_bits))
+
+
 def shift_left_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
     value = get_value()
     shift = masked_shift_count(emu, count, width_bits)
@@ -89,3 +95,63 @@ def rotate_right_operation(emu, get_value, set_result, update_flags, count, widt
     mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
     set_result(((value >> shift) | (value << (width - shift))) & mask)
     update_flags(value, shift)
+
+
+def rotate_through_carry_left_state(emu, value, count, width_bits: int, ite_value):
+    shift = rotate_through_carry_count(emu, count, width_bits)
+    shift_value = emu._const_u8_value(shift)
+    mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
+    one = emu.constant(1, Type.int_8)
+    carry_in = emu.get_carry().cast_to(Type.int_1)
+
+    if shift_value == 0:
+        return value, None, None
+    if shift_value == 1:
+        result = ((value << one) | carry_in.cast_to(type_for_bits(width_bits))) & mask
+        carry_out = value[width_bits - 1].cast_to(Type.int_1)
+        overflow = result[width_bits - 1].cast_to(Type.int_1) ^ carry_out
+        return result, carry_out, overflow
+
+    result = value
+    carry = carry_in
+    selected_result = value
+    selected_carry = carry_in.cast_to(type_for_bits(width_bits))
+    for step in range(1, width_bits + 1):
+        shifted_out = result[width_bits - 1].cast_to(Type.int_1)
+        result = ((result << one) | carry.cast_to(type_for_bits(width_bits))) & mask
+        carry = shifted_out
+        cond = shift == emu.constant(step, type_for_bits(width_bits))
+        selected_result = ite_value(cond, result, selected_result)
+        selected_carry = ite_value(cond, carry.cast_to(type_for_bits(width_bits)), selected_carry)
+    overflow = selected_result[width_bits - 1].cast_to(Type.int_1) ^ selected_carry.cast_to(Type.int_1)
+    return selected_result, selected_carry.cast_to(Type.int_1), overflow
+
+
+def rotate_through_carry_right_state(emu, value, count, width_bits: int, ite_value):
+    shift = rotate_through_carry_count(emu, count, width_bits)
+    shift_value = emu._const_u8_value(shift)
+    mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
+    one = emu.constant(1, Type.int_8)
+    carry_in = emu.get_carry().cast_to(Type.int_1)
+
+    if shift_value == 0:
+        return value, None, None
+    if shift_value == 1:
+        result = (value >> one) | (carry_in.cast_to(type_for_bits(width_bits)) << (width_bits - 1))
+        carry_out = value[0].cast_to(Type.int_1)
+        overflow = result[width_bits - 1].cast_to(Type.int_1) ^ result[width_bits - 2].cast_to(Type.int_1)
+        return result & mask, carry_out, overflow
+
+    result = value
+    carry = carry_in
+    selected_result = value
+    selected_carry = carry_in.cast_to(type_for_bits(width_bits))
+    for step in range(1, width_bits + 1):
+        shifted_out = result[0].cast_to(Type.int_1)
+        result = (result >> one) | (carry.cast_to(type_for_bits(width_bits)) << (width_bits - 1))
+        carry = shifted_out
+        cond = shift == emu.constant(step, type_for_bits(width_bits))
+        selected_result = ite_value(cond, result & mask, selected_result)
+        selected_carry = ite_value(cond, carry.cast_to(type_for_bits(width_bits)), selected_carry)
+    overflow = selected_result[width_bits - 1].cast_to(Type.int_1) ^ selected_result[width_bits - 2].cast_to(Type.int_1)
+    return selected_result & mask, selected_carry.cast_to(Type.int_1), overflow

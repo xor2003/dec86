@@ -14,6 +14,8 @@ from .alu_helpers import (
     rotate_count,
     rotate_left_operation,
     rotate_right_operation,
+    rotate_through_carry_left_state,
+    rotate_through_carry_right_state,
     shift_left_operation,
     shift_right_arithmetic_operation,
     shift_right_operation,
@@ -1102,55 +1104,25 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def _rcl_rm8(self, value, count) -> None:
-        size = 8
-        count_v = self._masked_shift_count8(count)
-        steps = count_v % self.emu.constant(size + 1, Type.int_8)
-        result = value
-        cf = self.emu.get_carry()
-
-        for step in range(1, size + 1):
-            cand_result = value
-            cand_cf = self.emu.get_carry()
-            for _ in range(step):
-                new_cf = (cand_result >> (size - 1)) & 1
-                cand_result = ((cand_result << 1) | cand_cf.cast_to(Type.int_8)) & self.emu.constant((1 << size) - 1, Type.int_8)
-                cand_cf = new_cf
-            use_step = steps == self.emu.constant(step, Type.int_8)
-            result = self._ite_value(use_step, cand_result, result)
-            cf = self._ite_value(use_step, cand_cf.cast_to(Type.int_1), cf.cast_to(Type.int_1))
-
+        result, cf, overflow = rotate_through_carry_left_state(self.emu, value, count, 8, self._ite_value)
+        if cf is None:
+            self.set_rm8(value)
+            return
         self.set_rm8(result)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
         flags = self.emu.set_carry(flags, cf)
-        one_step = steps == self.emu.constant(1, Type.int_8)
-        of = ((result >> (size - 1)) & 1) ^ cf.cast_to(Type.int_8)
-        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
+        flags = self.emu.set_overflow(flags, self._ite_value(count == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def _rcr_rm8(self, value, count) -> None:
-        size = 8
-        count_v = self._masked_shift_count8(count)
-        steps = count_v % self.emu.constant(size + 1, Type.int_8)
-        result = value
-        cf = self.emu.get_carry()
-
-        for step in range(1, size + 1):
-            cand_result = value
-            cand_cf = self.emu.get_carry()
-            for _ in range(step):
-                new_cf = cand_result & 1
-                cand_result = (cand_result >> 1) | (cand_cf.cast_to(Type.int_8) << (size - 1))
-                cand_cf = new_cf
-            use_step = steps == self.emu.constant(step, Type.int_8)
-            result = self._ite_value(use_step, cand_result, result)
-            cf = self._ite_value(use_step, cand_cf.cast_to(Type.int_1), cf.cast_to(Type.int_1))
-
+        result, cf, overflow = rotate_through_carry_right_state(self.emu, value, count, 8, self._ite_value)
+        if cf is None:
+            self.set_rm8(value)
+            return
         self.set_rm8(result)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
         flags = self.emu.set_carry(flags, cf)
-        one_step = steps == self.emu.constant(1, Type.int_8)
-        of = ((result >> (size - 1)) & 1) ^ ((result >> (size - 2)) & 1)
-        flags = self.emu.set_overflow(flags, self._ite_value(one_step, of.cast_to(Type.int_1), self.emu.get_flag(11)))
+        flags = self.emu.set_overflow(flags, self._ite_value(count == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)))
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
 
