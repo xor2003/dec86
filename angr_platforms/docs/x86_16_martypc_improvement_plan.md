@@ -171,6 +171,23 @@ Recent progress on that front:
   their own frame push/pop layout
 - the access-layer far-call and far-jump helpers now also share a named
   linear-address helper instead of open-coding `v2p` at the call site
+- Deterministic progress is now tracked in code through:
+
+  - `martypc_progress.py`
+    - landed / partial / open status for each remaining priority
+    - deterministic goal strings per step
+    - code-surface pointers for each step
+    - strict and weighted completion percentages
+  - `milestone_report.py`
+    - exposes `martypc_improvement_progress` and `martypc_progress_summary`
+
+  Current progress snapshot:
+
+  - strict completion: 11/13 priorities landed
+  - weighted completion: 92.31% when partial items count as half-credit
+  - remaining partial priorities:
+    - `P1.2` mixed-width 386 extension path
+    - `P2.2` MartyPC-assisted differential triage
 - normalized decode metadata now has an explicit width-profile abstraction, so
   the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
   scattered width math

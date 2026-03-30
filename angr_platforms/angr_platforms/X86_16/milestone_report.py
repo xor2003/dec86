@@ -22,6 +22,7 @@ from .cod_source_rewrites import (
 )
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .instruction import describe_x86_16_instruction_metadata_surface
+from .martypc_progress import describe_x86_16_martypc_improvement_progress, summarize_x86_16_martypc_improvement_progress
 from .readability_goals import describe_x86_16_readability_goals, summarize_readability_goals
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
@@ -125,6 +126,7 @@ def build_x86_16_milestone_report(
     validation_layers = describe_x86_16_validation_layers()
     validation_families = describe_x86_16_validation_families()
     martypc_differential_triage = describe_x86_16_martypc_differential_triage()
+    martypc_improvement_progress = describe_x86_16_martypc_improvement_progress()
     readability_set = describe_x86_16_golden_readability_set()
     alias_api = describe_x86_16_alias_recovery_api()
     widening_pipeline = describe_x86_16_widening_pipeline()
@@ -163,6 +165,7 @@ def build_x86_16_milestone_report(
         readability_tier_counts[_readability_tier(result, golden_cases)] += 1
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
     source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
+    martypc_progress_summary = summarize_x86_16_martypc_improvement_progress()
     corpus_completion = _build_corpus_completion_surface(
         scan_summary,
         readability_tiers=readability_tier_counts,
@@ -185,6 +188,18 @@ def build_x86_16_milestone_report(
             {"name": name, "default_checks": list(checks)} for name, checks in validation_families
         ],
         "martypc_differential_triage": martypc_differential_triage,
+        "martypc_improvement_progress": [
+            {
+                "code": code,
+                "title": title,
+                "priority": priority,
+                "status": status,
+                "code_surfaces": list(code_surfaces),
+                "completion_signal": completion_signal,
+            }
+            for code, title, priority, status, code_surfaces, completion_signal in martypc_improvement_progress
+        ],
+        "martypc_progress_summary": martypc_progress_summary,
         "alias_api": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in alias_api

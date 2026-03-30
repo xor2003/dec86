@@ -47,6 +47,7 @@ def test_x86_16_package_exports_source_backends():
     assert "validation_manifest" in x8616.__all__
     assert "readability_set" in x8616.__all__
     assert "readability_goals" in x8616.__all__
+    assert "martypc_progress" in x8616.__all__
     assert "milestone_report" in x8616.__all__
     assert "recovery_manifest" in x8616.__all__
     assert "describe_x86_16_source_backed_rewrite_status" in x8616.__all__
@@ -60,6 +61,7 @@ def test_x86_16_package_exports_source_backends():
     assert "describe_x86_16_mixed_width_extension_surface" in x8616.__all__
     assert "describe_x86_16_mixed_width_instruction_surface" in x8616.__all__
     assert "describe_x86_16_martypc_differential_triage" in x8616.__all__
+    assert "describe_x86_16_martypc_improvement_progress" in x8616.__all__
     assert "describe_x86_16_projection_cleanup_rules" in x8616.__all__
     assert "describe_x86_16_readability_goals" in x8616.__all__
     assert "describe_x86_16_widening_pipeline" in x8616.__all__
