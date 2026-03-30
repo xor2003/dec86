@@ -135,7 +135,6 @@ def test_cod_dos_loadoverlay_wrapper_returns_loadprog():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="wrapper staging-slot cleanup is not landed yet")
 def test_cod_openfilewrapper_direct_forwarding():
     result = _run_cod_proc(COD_DIR / "EGAME2.COD", "_openFileWrapper")
 
