@@ -280,6 +280,18 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             ),
         },
     }
+    assert report["correctness_goal_summary"] == {
+        "total": 4,
+        "landed": 4,
+        "partial": 0,
+        "open": 0,
+        "strict_percent": 100.0,
+        "weighted_percent": 100.0,
+        "landed_codes": ("C6.1", "C6.2", "C6.3", "C6.4"),
+        "partial_codes": (),
+        "open_codes": (),
+    }
+    assert [item["code"] for item in report["correctness_goals"]] == ["C6.1", "C6.2", "C6.3", "C6.4"]
     assert report["instruction_metadata_surface"] == {
         "normalized_fields": (
             "width_case",
@@ -422,6 +434,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "string",
         "alu",
         "interrupt_api",
+        "correctness",
     ]
     assert report["decode_width_matrix"] == [
         {"name": "16/16", "operand_bits": 16, "address_bits": 16},

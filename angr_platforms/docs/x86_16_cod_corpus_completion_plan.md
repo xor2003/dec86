@@ -129,6 +129,10 @@ This phase is about knowing exactly what happens for every function.
 - `Done when`:
   - the whole corpus can be summarized without hand-reading logs
 
+- `Deterministic goal`:
+  - every corpus result has a stage, fallback kind or failure class, and short reason
+  - milestone reports never need an "unknown" bucket for routine triage
+
 ### [x] 1.2. Remove "unknown" buckets from reports
 
 - `Priority`: `P0`
@@ -148,6 +152,10 @@ This phase is about knowing exactly what happens for every function.
 - `Done when`:
   - milestone reports no longer need manual interpretation for top failures
 
+- `Deterministic goal`:
+  - recurring unknown paths are converted into stable classes such as `load_failure`, `lift_failure`, `cfg_failure`, `decompiler_crash`, `timeout`, `postprocess_failure`, `renderer_failure`, `recursion_or_explosion`, or `unsupported_semantic`
+  - reports stay readable without manual log spelunking
+
 ### [x] 1.3. Track conservative skips as first-class outcomes
 
 - `Priority`: `P0`
@@ -165,6 +173,10 @@ This phase is about knowing exactly what happens for every function.
   - we can tell whether the corpus is "green by real decompile" or "green by
     bounded fallback"
 
+- `Deterministic goal`:
+  - reports always separate `decompile`, `cfg_only`, `lift_only`, and `block_lift`
+  - the corpus can be ranked by fallback kind without manual parsing
+
 ## Phase 2. Make Whole-Corpus Scan Boring
 
 This phase is complete only when `.COD` traversal is routine, not exciting.
@@ -180,6 +192,9 @@ This phase is complete only when `.COD` traversal is routine, not exciting.
   - cleanup-time noise remains suppressed
 - `Done when`:
   - new pretty-output work no longer threatens corpus traversal
+
+- `Deterministic goal`:
+  - scan-safe stays robust-first, with no risky beautification by default and no cleanup-time noise escape
 
 ### [x] 2.2. Bound the remaining hotspot classes
 
@@ -199,6 +214,10 @@ This phase is complete only when `.COD` traversal is routine, not exciting.
 - `Done when`:
   - the whole corpus can run to completion on normal milestone sweeps
 
+- `Deterministic goal`:
+  - every recurring hotspot class is either guarded, safely skipped, or fixed
+  - large corpus sweeps finish without a new uncapped hotspot class
+
 ### [x] 2.3. Preserve file and function progress logging
 
 - `Priority`: `P1`
@@ -209,6 +228,10 @@ This phase is complete only when `.COD` traversal is routine, not exciting.
   - JSON summaries stay machine-readable
 - `Done when`:
   - any stalled or slow corpus run can be localized immediately
+
+- `Deterministic goal`:
+  - file-start, progress, and file-end logging remain available
+  - JSON summaries stay machine-readable during long runs
 
 ## Phase 3. Turn Blind Spots Into Work Queues
 
@@ -229,6 +252,9 @@ backlog.
 - `Done when`:
   - planning can start from hotspot reports instead of ad hoc exploration
 
+- `Deterministic goal`:
+  - each milestone report ranks failures and fallbacks by stage, failure class, file, and function
+
 ### [x] 3.2. Add a blind-spot budget
 
 - `Priority`: `P1`
@@ -244,6 +270,10 @@ backlog.
 - `Done when`:
   - we can see whether we are reducing blind spots or merely hiding them
 
+- `Deterministic goal`:
+  - reports always show the current split between full decompile, cfg_only, lift_only, and true failure
+  - fallback-only coverage can fail a milestone gate if it grows
+
 ### [x] 3.3. Separate visibility debt from readability debt
 
 - `Priority`: `P1`
@@ -257,6 +287,9 @@ backlog.
     - readability debt
 - `Done when`:
   - teams can work in parallel without mixing priorities
+
+- `Deterministic goal`:
+  - visibility debt, recovery debt, and readability debt always remain separately measured
 
 ## Phase 4. Raise the Readability Floor Across the Whole Corpus
 
@@ -361,6 +394,9 @@ project does not yet explain well.
 - `Done when`:
   - fallback-heavy regions are being reduced intentionally, not accidentally
 
+- `Deterministic goal`:
+  - the report always exposes the top cfg_only and lift_only files and functions as an explicit backlog
+
 ### [x] 5.2. Define "readable enough" tiers
 
 - `Priority`: `P1`
@@ -376,6 +412,9 @@ project does not yet explain well.
   - the project can measure whole-corpus readability movement, not only local
     wins
 
+- `Deterministic goal`:
+  - full-decompile outputs are always classed into R0, R1, R2, or R3
+
 ### [x] 5.3. Make "no blind spots" a merge gate
 
 - `Priority`: `P0`
@@ -388,6 +427,92 @@ project does not yet explain well.
     - reduce full-decompile coverage without explanation
 - `Done when`:
   - the corpus cannot quietly become less observable
+
+- `Deterministic goal`:
+  - nontrivial changes cannot increase unclassified results or reduce visibility without an explicit explanation
+
+## Phase 6. Decompilation Correctness
+
+This phase keeps decompilation correctness explicit while readability work
+continues.
+
+### [x] 6.1. Keep semantic compare and runtime samples green
+
+- `Priority`: `P0`
+- `Why`:
+  - readable output is only useful if the underlying semantics stay stable
+- `Required outcome`:
+  - compare semantics remain green
+  - runtime samples remain green
+  - correctness regressions are triaged before readability work is counted as a
+    win
+- `Deterministic goal`:
+  - keep `tests/test_x86_16_compare_semantics.py` and
+    `tests/test_x86_16_runtime_samples.py` green
+  - keep the correctness report tied to those semantic slices
+- `Done when`:
+  - semantic and runtime probes stay green across ordinary corpus changes
+
+### [x] 6.2. Keep sample matrix and 80286 verifier aligned
+
+- `Priority`: `P0`
+- `Why`:
+  - corpus decompilation has to agree with representative samples and
+    hardware-backed verification
+- `Required outcome`:
+  - the sample matrix stays representative
+  - the 80286 verifier stays green
+  - correctness work can point at concrete opcode families instead of vague
+    confidence
+- `Deterministic goal`:
+  - keep `tests/test_x86_16_sample_matrix.py` and
+    `tests/test_x86_16_80286_verifier.py` green
+  - keep the sample-matrix / verifier pairing visible in the milestone report
+- `Done when`:
+  - representative samples and hardware-backed checks remain in agreement
+
+### [x] 6.3. Keep calling-convention and return compatibility faithful
+
+- `Priority`: `P0`
+- `Why`:
+  - decompilation correctness collapses if prototypes and returns drift away
+    from the real calling convention
+- `Required outcome`:
+  - calling-convention compat remains explicit
+  - return compat remains explicit
+  - helper lowering does not invent impossible signatures
+- `Deterministic goal`:
+  - keep `calling_convention_compat` and `decompiler_return_compat` as the
+    source of truth for the decompiler boundary
+  - keep their validation tests green
+- `Done when`:
+  - the decompiler boundary continues to preserve correct call/return shape
+
+### [x] 6.4. Keep interrupt lowering correctness-driven and bounded
+
+- `Priority`: `P1`
+- `Why`:
+  - interrupt lowering must stay helper-backed and visible so it does not
+    become a hidden semantics sink
+- `Required outcome`:
+  - interrupt core semantics remain separate from DOS/BIOS/MS-C helper
+    lowering
+  - wrapper paths remain classified
+  - unresolved wrappers stay visible as bounded debt
+- `Deterministic goal`:
+  - keep the interrupt boundary surfaces in `milestone_report`
+  - keep `interrupt_api_surface`, `interrupt_core_surface`, and
+    `interrupt_lowering_boundary` aligned with the code
+- `Done when`:
+  - interrupt lowering can be audited without opening the whole decompiler
+    pipeline
+
+## Current Completion Snapshot
+
+- Completed steps: `14`
+- Total tracked steps: `17`
+- Strict completion: `82.35%`
+- Weighted completion: `82.35%`
 
 ## Recommended Milestone Loop
 

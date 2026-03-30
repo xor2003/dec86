@@ -29,6 +29,7 @@ def test_x86_16_validation_families_cover_key_instruction_core_slices():
         "string",
         "alu",
         "interrupt_api",
+        "correctness",
     ]
     assert describe_x86_16_validation_families() == tuple(
         (family.name, family.default_checks) for family in VALIDATION_FAMILIES
@@ -38,6 +39,8 @@ def test_x86_16_validation_families_cover_key_instruction_core_slices():
     assert "tests/test_x86_16_string_helpers.py" in VALIDATION_FAMILIES[2].default_checks
     assert "tests/test_x86_16_alu_helpers.py" in VALIDATION_FAMILIES[3].default_checks
     assert "tests/test_x86_16_milestone_report.py" in VALIDATION_FAMILIES[4].default_checks
+    assert "tests/test_x86_16_compare_semantics.py" in VALIDATION_FAMILIES[5].default_checks
+    assert "tests/test_x86_16_80286_verifier.py" in VALIDATION_FAMILIES[5].default_checks
 
 
 def test_x86_16_martypc_differential_triage_surface_spells_out_workflow():

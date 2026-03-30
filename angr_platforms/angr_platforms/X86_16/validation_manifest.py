@@ -95,6 +95,16 @@ VALIDATION_FAMILIES = (
             "tests/test_x86_16_corpus_scan.py",
         ),
     ),
+    ValidationFamilySpec(
+        name="correctness",
+        purpose="Keep decompilation correctness anchored to semantic, runtime, and hardware-backed probes.",
+        default_checks=(
+            "tests/test_x86_16_compare_semantics.py",
+            "tests/test_x86_16_runtime_samples.py",
+            "tests/test_x86_16_sample_matrix.py",
+            "tests/test_x86_16_80286_verifier.py",
+        ),
+    ),
 )
 
 

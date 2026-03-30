@@ -20,6 +20,7 @@ from .cod_source_rewrites import (
     describe_x86_16_source_backed_rewrite_debt,
     describe_x86_16_source_backed_rewrite_status,
 )
+from .correctness_goals import describe_x86_16_correctness_goals, summarize_x86_16_correctness_goals
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .instruction import describe_x86_16_instruction_metadata_surface
 from .martypc_progress import describe_x86_16_martypc_improvement_progress, summarize_x86_16_martypc_improvement_progress
@@ -128,6 +129,7 @@ def build_x86_16_milestone_report(
     martypc_differential_triage = describe_x86_16_martypc_differential_triage()
     martypc_improvement_progress = describe_x86_16_martypc_improvement_progress()
     readability_set = describe_x86_16_golden_readability_set()
+    correctness_goals = describe_x86_16_correctness_goals()
     alias_api = describe_x86_16_alias_recovery_api()
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
@@ -165,6 +167,7 @@ def build_x86_16_milestone_report(
         readability_tier_counts[_readability_tier(result, golden_cases)] += 1
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
     source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
+    correctness_goal_summary = summarize_x86_16_correctness_goals()
     martypc_progress_summary = summarize_x86_16_martypc_improvement_progress()
     corpus_completion = _build_corpus_completion_surface(
         scan_summary,
@@ -238,6 +241,18 @@ def build_x86_16_milestone_report(
             for source, proc_name, anchor_count in summarize_x86_16_golden_readability_set()
         ],
         "readability_set": [asdict(case) for case in readability_set],
+        "correctness_goals": [
+            {
+                "code": code,
+                "title": title,
+                "priority": priority,
+                "status": status,
+                "owner_surfaces": list(owner_surfaces),
+                "completion_signal": completion_signal,
+            }
+            for code, title, priority, status, owner_surfaces, completion_signal in correctness_goals
+        ],
+        "correctness_goal_summary": correctness_goal_summary,
         "blocked_mnemonics": list(blocked_mnemonics or ()),
         "corpus_rates": {
             "success_rate": _success_rate(scan_summary),
