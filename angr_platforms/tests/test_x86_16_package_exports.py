@@ -69,6 +69,7 @@ def test_x86_16_package_exports_source_backends():
     assert "describe_x86_16_readability_goals" in x8616.__all__
     assert "describe_x86_16_correctness_goals" in x8616.__all__
     assert "describe_x86_16_widening_pipeline" in x8616.__all__
+    assert "describe_x86_16_object_recovery_focus" in x8616.__all__
     assert "describe_x86_16_recovery_layers" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__
     assert "decompiler_postprocess_globals" in x8616.__all__

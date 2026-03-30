@@ -327,7 +327,7 @@ This phase is about moving more of the corpus from "alive" to "useful".
   - verify the sprint focus from the `readability_goal_summary` surface in the
     milestone report
 
-### 4.2. Spend the first major readability budget on alias and widening
+### [x] 4.2. Spend the first major readability budget on alias and widening
 
 - `Priority`: `P0`
 - `Why`:
@@ -350,7 +350,7 @@ This phase is about moving more of the corpus from "alive" to "useful".
     - `projection_cleanup_rules`
     - `source_backed_rewrite_debt`
 
-### 4.3. Only then spend on traits, types, and objects
+### [x] 4.3. Only then spend on traits, types, and objects
 
 - `Priority`: `P1`
 - `Why`:
@@ -507,10 +507,10 @@ continues.
 
 ## Current Completion Snapshot
 
-- Completed steps: `17`
+- Completed steps: `19`
 - Total tracked steps: `19`
-- Strict completion: `89.47%`
-- Weighted completion: `89.47%`
+- Strict completion: `100%`
+- Weighted completion: `100%`
 
 ## Recommended Milestone Loop
 

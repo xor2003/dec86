@@ -49,6 +49,7 @@ __all__ = [
     "widening_alias",
     "widening_model",
     "describe_x86_16_widening_pipeline",
+    "describe_x86_16_object_recovery_focus",
     "describe_x86_16_recovery_layers",
     "validation_manifest",
     "readability_set",
@@ -83,7 +84,7 @@ from .analysis_helpers import describe_x86_16_interrupt_api_surface  # noqa: F40
 from .analysis_helpers import describe_x86_16_interrupt_core_surface  # noqa: F401
 from .analysis_helpers import describe_x86_16_interrupt_lowering_boundary  # noqa: F401
 from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
-from .recovery_manifest import describe_x86_16_recovery_layers  # noqa: F401
+from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
 from .readability_goals import describe_x86_16_readability_goals, rank_readability_goal_queue, summarize_readability_focus  # noqa: F401
 from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401

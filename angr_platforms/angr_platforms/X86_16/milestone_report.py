@@ -29,6 +29,7 @@ from .readability_goals import (
     summarize_readability_focus,
     summarize_readability_goals,
 )
+from .recovery_manifest import describe_x86_16_object_recovery_focus
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import (
@@ -174,6 +175,7 @@ def build_x86_16_milestone_report(
     alias_api = describe_x86_16_alias_recovery_api()
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
+    object_recovery_focus = describe_x86_16_object_recovery_focus()
     projection_cleanup_rules = describe_x86_16_projection_cleanup_rules()
     readability_goals = describe_x86_16_readability_goals()
     decode_width_matrix = describe_x86_16_decode_width_matrix()
@@ -263,6 +265,10 @@ def build_x86_16_milestone_report(
         "recovery_layers": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in recovery_layers
+        ],
+        "object_recovery_focus": [
+            {"name": name, "purpose": purpose, "helpers": list(helpers)}
+            for name, purpose, helpers in object_recovery_focus
         ],
         "projection_cleanup_rules": [
             {"name": name, "purpose": purpose}

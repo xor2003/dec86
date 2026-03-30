@@ -564,6 +564,13 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "far_near_prototype_recovery",
         "thin_late_rewrite_boundary",
     ]
+    assert [item["name"] for item in report["object_recovery_focus"]] == [
+        "stable_stack_object_recovery",
+        "stable_global_object_recovery",
+        "segment_aware_object_roots",
+        "trait_to_type_handoff",
+        "member_and_array_recovery",
+    ]
     assert report["projection_cleanup_rules"] == [
         {
             "name": "concat_fold",

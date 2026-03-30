@@ -115,4 +115,28 @@ def describe_x86_16_recovery_layers() -> tuple[tuple[str, str, tuple[str, ...]],
     return tuple((layer.name, layer.purpose, layer.helpers) for layer in RECOVERY_LAYERS)
 
 
-__all__ = ["RECOVERY_LAYERS", "RecoveryLayerSpec", "describe_x86_16_recovery_layers"]
+OBJECT_RECOVERY_FOCUS_ORDER: tuple[str, ...] = (
+    "stable_stack_object_recovery",
+    "stable_global_object_recovery",
+    "segment_aware_object_roots",
+    "trait_to_type_handoff",
+    "member_and_array_recovery",
+)
+
+
+def describe_x86_16_object_recovery_focus() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    by_name = {layer.name: layer for layer in RECOVERY_LAYERS}
+    return tuple(
+        (layer.name, layer.purpose, layer.helpers)
+        for name in OBJECT_RECOVERY_FOCUS_ORDER
+        if (layer := by_name.get(name)) is not None
+    )
+
+
+__all__ = [
+    "OBJECT_RECOVERY_FOCUS_ORDER",
+    "RECOVERY_LAYERS",
+    "RecoveryLayerSpec",
+    "describe_x86_16_object_recovery_focus",
+    "describe_x86_16_recovery_layers",
+]
