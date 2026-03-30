@@ -42,21 +42,35 @@ def _assert_has_none(text: str, anchors: tuple[str, ...]) -> None:
 
 
 @pytest.mark.parametrize(
-    ("cod_name", "proc_name"),
+    ("cod_name", "proc_name", "timeout"),
     (
-        ("BIOSFUNC.COD", "_bios_clearkeyflags"),
-        ("DOSFUNC.COD", "_dos_getfree"),
-        ("DOSFUNC.COD", "_dos_loadOverlay"),
-        ("DOSFUNC.COD", "_dos_getReturnCode"),
-        ("EGAME2.COD", "_openFileWrapper"),
+        ("BIOSFUNC.COD", "_bios_clearkeyflags", 20),
+        ("DOSFUNC.COD", "_dos_getfree", 20),
+        ("DOSFUNC.COD", "_dos_loadOverlay", 20),
+        ("DOSFUNC.COD", "_dos_getReturnCode", 20),
+        ("OVERLAY.COD", "_overlay_load", 20),
+        ("EGAME2.COD", "_openFileWrapper", 20),
     ),
 )
-def test_cod_regression_targets_are_recoverable(cod_name: str, proc_name: str):
-    result = _run_cod_proc(COD_DIR / cod_name, proc_name)
+def test_cod_regression_targets_are_recoverable(cod_name: str, proc_name: str, timeout: int):
+    result = _run_cod_proc(COD_DIR / cod_name, proc_name, timeout=timeout)
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"function: 0x1000 {proc_name}" in result.stdout
     assert "Decompilation empty" not in result.stdout
+
+
+def test_cod_timeout_target_is_classified_deterministically():
+    result = _run_cod_proc(COD_DIR / "EGAME11.COD", "_drawCockpit", timeout=20)
+
+    assert result.returncode != 0
+    _assert_has_all(
+        result.stdout,
+        (
+            "Timed out while recovering a function after 20s.",
+            "Tip: try a larger --timeout for larger binaries.",
+        ),
+    )
 
 
 @pytest.mark.xfail(strict=True, reason="far-pointer object recovery is not landed yet")
@@ -151,3 +165,18 @@ def test_cod_dos_getreturncode_returns_value():
         ),
     )
     _assert_has_none(result.stdout, ("void _dos_getReturnCode(void)",))
+
+
+@pytest.mark.parametrize(
+    ("cod_name", "proc_name", "anchors"),
+    (
+        ("DOSFUNC.COD", "_dos_getfree", ("int _intdos(union REGS *in, union REGS *out);", "int _ERROR(const char *fmt, ...);")),
+        ("DOSFUNC.COD", "_dos_loadOverlay", ("int loadprog(const char *file, unsigned short segment, unsigned short mode, unsigned short flags);",)),
+        ("EGAME2.COD", "_openFileWrapper", ("int _openFile(const char *path, unsigned short mode);",)),
+    ),
+)
+def test_cod_known_helper_signatures_are_declared(cod_name: str, proc_name: str, anchors: tuple[str, ...]):
+    result = _run_cod_proc(COD_DIR / cod_name, proc_name)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    _assert_has_all(result.stdout, anchors)

@@ -10,6 +10,30 @@ INTERRUPT_CORE_VECTOR_BASE = 0xFF000
 INTERRUPT_CORE_VECTOR_COUNT = 0x100
 
 
+KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
+    "_abort": "void _abort(void);",
+    "_DEBUG": "int _DEBUG(const char *fmt, ...);",
+    "_ERROR": "int _ERROR(const char *fmt, ...);",
+    "_INFO": "int _INFO(const char *fmt, ...);",
+    "_fflush": "int _fflush(FILE *f);",
+    "_fprintf": "int _fprintf(FILE *f, const char *fmt, ...);",
+    "_intdos": "int _intdos(union REGS *in, union REGS *out);",
+    "_intdosx": "int _intdosx(union REGS *in, union REGS *out, struct SREGS *sreg);",
+    "intdos": "int intdos(union REGS *in, union REGS *out);",
+    "intdosx": "int intdosx(union REGS *in, union REGS *out, struct SREGS *sreg);",
+    "loadprog": "int loadprog(const char *file, unsigned short segment, unsigned short mode, unsigned short flags);",
+    "openFile": "int openFile(const char *path, unsigned short mode);",
+    "_openFile": "int _openFile(const char *path, unsigned short mode);",
+    "readchar": "unsigned char readchar(void);",
+    "readcharat": "unsigned char readcharat(unsigned short rowcol);",
+    "setcursorpos": "void setcursorpos(unsigned short rowcol);",
+    "writecharat": "void writecharat(unsigned short rowcol, unsigned char ch);",
+    "writestringat": "void writestringat(unsigned short rowcol, const char *s);",
+    "dispdigit": "void dispdigit(unsigned char digit);",
+    "dispnum": "void dispnum(unsigned short value);",
+}
+
+
 @dataclass(frozen=True)
 class FarCallTarget:
     callsite_addr: int
@@ -565,6 +589,18 @@ def describe_x86_16_interrupt_lowering_boundary() -> dict[str, object]:
             "tests/test_x86_16_package_exports.py",
             "tests/test_x86_16_helper_modeling.py",
         ),
+    }
+
+
+def known_helper_signature_decl(name: str) -> str | None:
+    return KNOWN_HELPER_SIGNATURE_DECLS.get(name)
+
+
+def describe_x86_16_known_helper_signatures() -> dict[str, object]:
+    return {
+        "signature_count": len(KNOWN_HELPER_SIGNATURE_DECLS),
+        "helper_names": tuple(sorted(KNOWN_HELPER_SIGNATURE_DECLS)),
+        "declarations": tuple(sorted(KNOWN_HELPER_SIGNATURE_DECLS.values())),
     }
 
 

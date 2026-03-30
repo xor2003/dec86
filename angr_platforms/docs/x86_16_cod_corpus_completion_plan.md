@@ -505,12 +505,280 @@ continues.
   - interrupt lowering can be audited without opening the whole decompiler
     pipeline
 
+## Phase 7. COD Recovery Architecture Backlog
+
+This phase is the systematic `.COD` decompilation roadmap. It is not about one
+sample and it is not permission for source-specific rescue work. The repeating
+MSC-corpus failures are:
+
+- helper calls collapsing into raw stack temps and magic addresses
+- return values being dropped after otherwise-recognized calls
+- globals like `rin`, `rout`, `sreg`, and `exeLoadParams` not being recovered
+  as typed objects
+- far pointers and segmented memory being flattened or half-flattened
+- medium-model far-call recovery still timing out or mis-targeting some
+  functions
+- larger `.COD` functions still hitting timeout, sparse-region, or
+  under-recovery failures
+
+The architectural rule remains:
+
+`IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
+
+The practical meaning for `.COD` work is:
+
+- correctness and recovery quality before prettiness
+- calling-convention recovery before wrapper cleanup
+- typed object recovery before field-name polish
+- segmented/far-pointer recovery before pointer-like lowering
+- expression simplification before final C text cleanup
+
+### 7.1. Lock exact COD success criteria
+
+- `Priority`: `P0`
+- `Why`:
+  - `.COD` work needs explicit “correct enough” and “recompilable enough”
+    definitions so progress is measurable
+- `Deterministic goal`:
+  - every `.COD` milestone uses these three tiers:
+    - `Tier A correctness`:
+      - parameters match `.COD` stack layout
+      - returns come from the real architectural return register or memory
+        object
+      - calls use the right callee and argument order
+      - control flow preserves branches, loops, and returns
+      - loads/stores preserve byte vs word width
+      - `DS`, `SS`, `ES`, and far pointers are not silently merged
+    - `Tier B recompilation`:
+      - helper-based C is possible for DOS/MSC wrappers
+      - typed globals/structs such as `union REGS`, `struct SREGS`, and load
+        parameter objects are visible
+      - final C does not tolerate artifacts like:
+        - `s_2 = &v3;`
+        - `return v12 << 16 | 3823();`
+        - `rin = 72;`
+        - split-byte stores for known word stores
+    - `Tier C first-milestone regression goals`:
+      - `_bios_clearkeyflags` becomes a word store to low memory
+      - `_dos_alloc`, `_dos_free`, `_dos_resize`, `_dos_getfree`, and
+        `_dos_getReturnCode` emit real `intdos`/`intdosx` calls with typed
+        `rin`/`rout`/`sreg` and emit their returns
+      - wrappers like `_dos_loadOverlay`, `_dos_runProgram`, and
+        `_openFileWrapper` emit direct helper calls with correct args and
+        return propagation
+      - timeout rate drops on the bounded sample-matrix / COD scanner
+- `Done when`:
+  - milestone reports can state correctness and recompilation progress without
+    ad hoc prose
+
+### 7.2. Keep a fixed COD regression matrix
+
+- `Priority`: `P0`
+- `Why`:
+  - the first COD milestone needs a stable target set before any pipeline work
+- `Deterministic goal`:
+  - the fixed target set is kept explicit and test-backed:
+    - `BIOSFUNC.COD`
+    - `DOSFUNC.COD`
+    - `OVERLAY.COD`
+    - one wrapper-heavy game file such as `EGAME2.COD`
+    - one timeout-heavy larger game file such as `EGAME11.COD`
+  - regression layers are always split into:
+    - recovery tests
+    - semantic anchor tests
+    - anti-anchor tests
+  - the focused regression harness in
+    `tests/test_x86_16_cod_regressions.py` remains the first gate
+- `Done when`:
+  - the fixed COD targets can be rechecked with one focused test command
+
+### 7.3. Treat `.COD` metadata as recovery input
+
+- `Priority`: `P0`
+- `Why`:
+  - `.COD` metadata is the biggest honest advantage over arbitrary binaries
+- `Deterministic goal`:
+  - COD-mode recovery records seed:
+    - function starts
+    - stack arg names and sizes
+    - known globals
+    - wrapper signatures
+    - local helper symbols
+    - model hints when sample-matrix context provides them
+  - CFG seeding uses metadata-driven function starts instead of relying on
+    rediscovery from `0x1000`
+  - direct far-callee seeding is extended from startup-only cases to
+    metadata-driven COD callees
+- `Done when`:
+  - wrappers and medium-model far targets recover from metadata instead of
+    heuristics alone
+
+### 7.4. Recover external MSC/DOS call surfaces before cleanup
+
+- `Priority`: `P0`
+- `Why`:
+  - dropped returns and numeric helper calls are currently the biggest
+    correctness failure in `DOSFUNC.COD`
+- `Current implementation note`:
+  - known helper signatures are now surfaced as typed declarations before
+    decompilation, and the remaining work in this phase is return propagation
+    and wrapper cleanup
+- `Deterministic goal`:
+  - `analysis_helpers.py` owns an MSC/DOS extern signature catalog for at
+    least:
+    - `_intdos`
+    - `_intdosx`
+    - `_fprintf`
+    - `_fflush`
+    - `_abort`
+    - `_ERROR`
+    - `_DEBUG`
+    - `_INFO`
+    - `_sprintf`
+    - `_strlen`
+    - `_strcat`
+    - `_sizeString`
+  - signatures attach before decompilation, alongside the existing interrupt
+    wrapper / DOS pseudo-callee attachment
+  - direct callsite argument attachment preserves:
+    - outgoing stack args
+    - varargs status
+    - real return values
+  - wrapper-return propagation preserves `AX` returns for one-call wrappers
+- `Done when`:
+  - `_dos_loadOverlay`, `_dos_getfree`, and `_dos_getReturnCode` stop dropping
+    return semantics and stop degrading into raw numeric helper calls
+
+### 7.5. Recover known COD objects through alias and types
+
+- `Priority`: `P0`
+- `Why`:
+  - typed object recovery is the main blocker behind `rin = 72;`-style junk
+- `Deterministic goal`:
+  - `cod_known_objects.py` defines exact layouts for:
+    - `union REGS`
+    - `struct SREGS`
+    - `exeLoadParams`
+    - `ovlLoadParams`
+  - `alias_model.py` adds:
+    - `dgroup_global` storage identity for metadata-backed globals
+    - far-pointer local object domains for `(segment, offset)` stack objects
+    - an explicit outgoing-call staging-slot classification
+  - `widening_model.py` supports:
+    - DGROUP field widening for known object fields
+    - far word load/store widening when the alias proof is valid
+    - forbidden joins across segments or across clobbers
+  - `cod_type_recovery.py` lowers stable object views to field syntax only
+    after alias and widening facts are stable
+- `Done when`:
+  - outputs move from:
+    - `rin = 72;`
+    - `rin = 65535;`
+    - `sreg = segment;`
+  - toward:
+    - `rin.h.ah = 0x48;`
+    - `rin.x.bx = 0xffff;`
+    - `sreg.es = segment;`
+
+### 7.6. Recover segmented and far-pointer semantics conservatively
+
+- `Priority`: `P0`
+- `Why`:
+  - BIOS and overlay cases still flatten segmented state too aggressively
+- `Deterministic goal`:
+  - segmented memory stays split at least into:
+    - `DS:DGROUP`
+    - `SS:DGROUP`
+    - `ES:external/far object`
+    - absolute low-memory / BDA objects when the segment is constant zero
+  - a stable far-pointer object representation is used when stack or globals
+    carry `(segment, offset)` pairs that are later dereferenced
+  - known absolute-memory objects such as `0x0000:0x0417` can lower to named
+    helpers or named low-memory objects
+  - word-width far stores remain word stores
+- `Done when`:
+  - `_bios_clearkeyflags` stops decompiling as two anonymous byte stores
+
+### 7.7. Remove non-semantic wrapper stack noise
+
+- `Priority`: `P1`
+- `Why`:
+  - `s_*` call-staging locals still block recompilable wrappers
+- `Deterministic goal`:
+  - stack-slot identity distinguishes:
+    - real parameters
+    - real locals
+    - outgoing-call staging slots
+  - wrapper simplification only runs after:
+    - callee signatures are correct
+    - arg identity is correct
+    - return propagation is correct
+  - simple forwarding wrappers stop emitting:
+    - `s_2 = &v3;`
+    - `s_4 = mode;`
+    - `s_6 = path;`
+- `Done when`:
+  - `_openFileWrapper`, `_dos_loadOverlay`, and similar wrappers decompile as
+    direct forwarding calls
+
+### 7.8. Improve condition recovery and timeout triage together
+
+- `Priority`: `P1`
+- `Why`:
+  - larger `.COD` functions need both cleaner conditions and better timeout
+    visibility
+- `Deterministic goal`:
+  - early condition simplification rewrites typed-object comparisons such as
+    `rout.x.cflag != 0` before final C text generation
+  - return-value path simplification recovers final `AX` returns after one
+    condition
+  - bounded scanner metrics always record:
+    - function name
+    - block count
+    - byte count
+    - call count
+    - known-object count
+    - whether metadata was used
+    - timeout stage
+    - anchor-quality score
+  - the first timeout milestone is:
+    - reduce timeout count by 30% at `--timeout-sec 10`
+    - no regressions on simple wrappers
+    - no increase in empty decompilations
+- `Done when`:
+  - timeout-heavy `.COD` outliers are ranked by cause and the simple wrapper
+    cases stay green
+
+### Current Phase-7 first implementation backlog
+
+1. `Commit 1`: regression harness and anti-anchors
+2. `Commit 2`: metadata-driven function seeding and model hints
+3. `Commit 3`: MSC extern signature catalog and callsite typing
+4. `Commit 4`: DGROUP global alias domain and known object catalog
+5. `Commit 5`: widening for known object fields and far word stores
+6. `Commit 6`: condition and return simplification on typed objects
+7. `Commit 7`: wrapper simplifier
+8. `Commit 8`: timeout classification and scan-safe reporting
+
+### Definition of done for Phase 7
+
+Phase 7 is only done on the fixed target set when:
+
+- `_bios_clearkeyflags` is a far word store, not split byte stores
+- `_dos_getfree` emits typed `rin/rout` field accesses, the `intdos` call, the
+  `cflag` check, and `return rout.x.bx;`
+- `_dos_getReturnCode` emits a return value
+- `_dos_loadOverlay` emits `return loadprog(file, segment, 3, 0);`
+- `_openFileWrapper` emits a direct call without fake staging locals
+- the bounded COD scan reports fewer bogus numeric callees and fewer timeouts
+  than before
+
 ## Current Completion Snapshot
 
 - Completed steps: `19`
-- Total tracked steps: `19`
-- Strict completion: `100%`
-- Weighted completion: `100%`
+- Total tracked steps: `27`
+- Strict completion: `70.37%`
+- Weighted completion: `70.37%`
 
 ## Recommended Milestone Loop
 
