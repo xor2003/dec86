@@ -6110,6 +6110,45 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
                 c_text, count = re.subn(candidate, replacement, c_text, count=1)
                 if count:
                     break
+        anonymous_call_pattern = re.compile(r"(?<![A-Za-z_])(?:0x[0-9a-fA-F]+|\d+)\s*\(\s*\)")
+        for _call_name, call_text in metadata.call_sources:
+            replacement = call_text.rstrip(";")
+            c_text, count = anonymous_call_pattern.subn(replacement, c_text, count=1)
+            if count == 0:
+                break
+        wide_return_pattern = re.compile(
+            r"(?m)^(?P<indent>\s*)return\s+[^;]*?\|\s*(?P<call>[A-Za-z_][\w$?@]*\s*\([^;]*\));\s*$"
+        )
+
+        def _replace_wide_return(match: re.Match[str]) -> str:
+            call_text = match.group("call")
+            call_name = call_text.split("(", 1)[0].strip()
+            if known_helper_signature_decl(call_name) is None and known_helper_signature_decl(call_name.lstrip("_")) is None:
+                return match.group(0)
+            return f"{match.group('indent')}return {call_text};"
+
+        c_text = wide_return_pattern.sub(_replace_wide_return, c_text)
+
+    if metadata is not None and len(tuple(dict.fromkeys(metadata.call_names))) == 1:
+        call_name = metadata.call_names[0].lstrip("_")
+        call_present = re.search(rf"(?<![A-Za-z_]){re.escape(call_name)}\s*\(", c_text) is not None
+        if call_present:
+            staging_assignment_pattern = re.compile(r"(?m)^\s*s_[0-9a-fA-F]+\s*=\s*[^;]+;\s*$")
+            c_text = staging_assignment_pattern.sub("", c_text)
+            c_text = re.sub(r"\n{3,}", "\n\n", c_text)
+    if metadata is not None:
+        source_return_lines = [
+            line.strip()
+            for line in metadata.source_lines
+            if re.match(r"^return\s+[^;]+;\s*$", line.strip())
+        ]
+        has_value_return = re.search(r"(?m)^\s*return\s+[^;]+;\s*$", c_text) is not None
+        if source_return_lines and not has_value_return:
+            insert_at = c_text.rfind("}")
+            if insert_at != -1:
+                tail = source_return_lines[-1]
+                body = c_text[:insert_at].rstrip()
+                c_text = f"{body}\n    {tail}\n{c_text[insert_at:]}"
     c_text = _apply_cod_source_rewrites(c_text, metadata)
     return _simplify_x86_16_wrapped_stack_offsets(c_text)
 
