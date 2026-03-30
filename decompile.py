@@ -189,6 +189,27 @@ def _apply_known_helper_signatures(project: angr.Project, cod_metadata: CODProcM
     return changed
 
 
+def _snapshot_codegen_text(codegen) -> str:
+    try:
+        return codegen.text
+    except Exception:
+        return ""
+
+
+def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool]:
+    fallback_text = _snapshot_codegen_text(codegen)
+    try:
+        codegen.regenerate_text()
+    except Exception as ex:
+        logging.getLogger(__name__).warning(
+            "Skipping C text regeneration for %s: %s",
+            context,
+            ex,
+        )
+        return fallback_text, False
+    return _snapshot_codegen_text(codegen), True
+
+
 def _apply_known_cod_object_annotations(
     project: angr.Project,
     func_addr: int,
@@ -485,6 +506,7 @@ def _decompile_function(
 ) -> tuple[str, str]:
     _apply_binary_specific_annotations(project, binary_path, lst_metadata)
     if cod_metadata is not None:
+        _apply_known_helper_signatures(project, cod_metadata)
         _apply_known_cod_object_annotations(project, function.addr, cod_metadata, synthetic_globals)
     block_count, byte_count = _function_complexity(function)
     decompiler_options = _preferred_decompiler_options(block_count, byte_count)
@@ -622,11 +644,16 @@ def _decompile_function(
             break
         changed = True
     if changed:
-        dec.codegen.regenerate_text()
+        rendered_text, _ = _regenerate_codegen_text_safely(
+            dec.codegen,
+            context=f"{hex(function.addr)} {function.name}",
+        )
+    else:
+        rendered_text = _snapshot_codegen_text(dec.codegen)
     formatted = _format_known_helper_calls(
         project,
         function,
-        dec.codegen.text,
+        rendered_text,
         api_style,
         binary_path,
         cod_metadata=cod_metadata,
