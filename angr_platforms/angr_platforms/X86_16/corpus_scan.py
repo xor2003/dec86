@@ -653,6 +653,12 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         for stage in result.stages
         if not stage.ok
     )
+    timeout_stage_counter = Counter(
+        stage.stage
+        for result in results
+        for stage in result.stages
+        if not stage.ok and (stage.reason == "timeout" or result.failure_class == "timeout")
+    )
     failure_file_counter = Counter(
         result.cod_file for result in results if not result.ok and result.failure_class is not None
     )
@@ -808,6 +814,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "top_failure_classes": top_failure_classes,
         "top_fallback_kinds": top_fallback_kinds,
         "top_failure_stages": top_failure_stages,
+        "timeout_stage_counts": dict(sorted(timeout_stage_counter.items())),
         "top_failure_files": top_failure_files,
         "top_failure_functions": top_failure_functions,
         "top_fallback_files": top_fallback_files,

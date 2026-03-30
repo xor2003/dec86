@@ -228,6 +228,7 @@ def test_corpus_scan_summary_ranks_repeat_failures():
         {"stage": "decompile", "count": 2},
         {"stage": "cfg", "count": 1},
     ]
+    assert summary["timeout_stage_counts"] == {"decompile": 2}
     assert summary["top_failure_files"] == [
         {"cod_file": "A.COD", "count": 2},
         {"cod_file": "B.COD", "count": 1},

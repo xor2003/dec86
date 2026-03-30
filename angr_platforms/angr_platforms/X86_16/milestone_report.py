@@ -73,6 +73,7 @@ def _build_corpus_completion_surface(
     scan_summary: Mapping[str, object],
     *,
     readability_tiers: Mapping[str, int],
+    timeout_stage_counts: Mapping[str, int],
     top_fallback_files: list[dict[str, object]],
     top_fallback_functions: list[dict[str, object]],
     top_ugly_clusters: list[dict[str, object]],
@@ -112,6 +113,7 @@ def _build_corpus_completion_surface(
         "stable_by_traversal": failed == 0 and unclassified_failure_count == 0,
         "merge_gate": failed == 0 and unclassified_failure_count == 0,
         "readability_tiers": dict(readability_tiers),
+        "timeout_stage_counts": timeout_stage_counts,
         "fallback_backlog": {
             "top_fallback_files": top_fallback_files,
             "top_fallback_functions": top_fallback_functions,
@@ -191,6 +193,7 @@ def build_x86_16_milestone_report(
     top_failure_classes = list(scan_summary.get("top_failure_classes", []) or [])
     top_fallback_kinds = list(scan_summary.get("top_fallback_kinds", []) or [])
     top_failure_stages = list(scan_summary.get("top_failure_stages", []) or [])
+    timeout_stage_counts = dict(scan_summary.get("timeout_stage_counts", {}) or {})
     top_failure_files = list(scan_summary.get("top_failure_files", []) or [])
     top_failure_functions = list(scan_summary.get("top_failure_functions", []) or [])
     top_fallback_files = list(scan_summary.get("top_fallback_files", []) or [])
@@ -218,6 +221,7 @@ def build_x86_16_milestone_report(
     corpus_completion = _build_corpus_completion_surface(
         scan_summary,
         readability_tiers=readability_tier_counts,
+        timeout_stage_counts=timeout_stage_counts,
         top_fallback_files=top_fallback_files,
         top_fallback_functions=top_fallback_functions,
         top_ugly_clusters=top_ugly_clusters,
@@ -386,8 +390,9 @@ def build_x86_16_milestone_report(
             "fallback_counts": fallback_counts,
             "top_failure_classes": top_failure_classes,
             "top_fallback_kinds": top_fallback_kinds,
-            "top_failure_stages": top_failure_stages,
-            "top_failure_files": top_failure_files,
+        "top_failure_stages": top_failure_stages,
+        "timeout_stage_counts": timeout_stage_counts,
+        "top_failure_files": top_failure_files,
             "top_failure_functions": top_failure_functions,
             "top_fallback_files": top_fallback_files,
             "top_fallback_functions": top_fallback_functions,

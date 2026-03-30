@@ -75,6 +75,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             },
         ],
         "top_ugly_clusters": [{"cluster": "byte_pair_arithmetic", "count": 4}],
+        "timeout_stage_counts": {"decompile": 2},
         "family_ownership": {
             "top_families": [{"family": "stack_control", "count": 2}],
             "top_failures": [{"family": "stack_control", "count": 1}],
@@ -117,6 +118,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "stable_by_traversal": False,
         "merge_gate": False,
         "readability_tiers": {"R0": 1, "R1": 1, "R2": 1, "R3": 1},
+        "timeout_stage_counts": {"decompile": 2},
         "fallback_backlog": {
             "top_fallback_files": [{"cod_file": "A.COD", "count": 2}],
             "top_fallback_functions": [

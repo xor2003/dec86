@@ -761,6 +761,11 @@ The practical meaning for `.COD` work is:
     - reduce timeout count by 30% at `--timeout-sec 10`
     - no regressions on simple wrappers
     - no increase in empty decompilations
+- `Current implementation note`:
+  - timeout-stage counts are now exposed in corpus scan summaries and
+    milestone reports, so timeout triage is no longer implicit
+  - the remaining work in this step is to make the condition simplification
+    side of the step equally explicit and evidence-driven
 - `Done when`:
   - timeout-heavy `.COD` outliers are ranked by cause and the simple wrapper
     cases stay green
