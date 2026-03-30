@@ -733,6 +733,10 @@ The practical meaning for `.COD` work is:
 - `Current implementation note`:
   - the one-call forwarding wrapper shape is now cleaned up generically for
     `_openFileWrapper` and `_dos_loadOverlay`
+  - anonymous helper placeholders are now normalized through the generic
+    call-source recovery path, so metadata-backed calls can render with their
+    source call text instead of `sub_xxx()` placeholders when that evidence is
+    available
   - the remaining work in this area is to apply the same conservative
     staging-slot cleanup to any additional wrappers that still expose
     stack-noise after call/return recovery
