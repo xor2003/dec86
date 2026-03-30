@@ -1,5 +1,11 @@
 from .emulator import Emulator
-from .addressing_helpers import WidthProfile, address_width_bits, operand_width_bits
+from .addressing_helpers import (
+    WidthProfile,
+    address_width_bits,
+    decode_width_case,
+    decode_width_case_for_profile,
+    operand_width_bits,
+)
 from .regs import sgreg_t
 
 # Constants for repeat prefixes
@@ -57,11 +63,13 @@ class InstrData:
         self.displacement_bits = 0  # normalized displacement width, if any
         self.repeat_class = "none"  # normalized repeat prefix class
         self.control_flow_class = "none"  # normalized control-transfer family
+        self.width_case = ""  # normalized decode matrix case label
 
 
 def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
     return {
         "normalized_fields": (
+            "width_case",
             "operand_bits",
             "address_bits",
             "displacement_bits",
@@ -112,6 +120,14 @@ class X86Instruction:
             operand_bits=self.effective_operand_bits(),
             address_bits=self.effective_address_bits(),
         )
+
+    def width_case_name(self) -> str:
+        if self.instr.width_case:
+            return self.instr.width_case
+        try:
+            return decode_width_case_for_profile(self.effective_operand_bits(), self.effective_address_bits()).name
+        except ValueError:
+            return decode_width_case(self.mode32, False, False).name
 
 # Class for executing instructions
 

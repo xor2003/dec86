@@ -7,7 +7,7 @@ from pyvex.lifting.util import ParseError
 
 if TYPE_CHECKING:
     from .emulator import Emulator
-from .addressing_helpers import decode_width_profile
+from .addressing_helpers import decode_width_case_for_profile, decode_width_profile
 from .instruction import *
 
 CHSZ_NONE: int = 0
@@ -77,6 +77,7 @@ class ParseInstr(X86Instruction):
         )
         self.instr.operand_bits = widths.operand_bits
         self.instr.address_bits = widths.address_bits
+        self.instr.width_case = decode_width_case_for_profile(widths.operand_bits, widths.address_bits).name
         self.instr.displacement_bits = 0
         self.parse_opcode()
 

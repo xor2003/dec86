@@ -8,6 +8,8 @@ from angr_platforms.X86_16.addressing_helpers import (
     describe_x86_16_decode_width_matrix,
     describe_x86_16_mixed_width_extension_surface,
     decode_width_profile,
+    decode_width_case,
+    decode_width_case_for_profile,
     default_segment_for_modrm16,
     default_segment_for_modrm32,
     displacement_width_bits,
@@ -260,6 +262,20 @@ def test_decode_width_profile_covers_explicit_mixed_width_matrix():
     assert decode_width_profile(False, True, False) == WidthProfile(operand_bits=32, address_bits=16)
     assert decode_width_profile(False, False, True) == WidthProfile(operand_bits=16, address_bits=32)
     assert decode_width_profile(True, False, False) == WidthProfile(operand_bits=32, address_bits=32)
+
+
+def test_decode_width_case_returns_named_matrix_entries():
+    assert decode_width_case(False, False, False).name == "16/16"
+    assert decode_width_case(False, True, False).name == "32/16"
+    assert decode_width_case(False, False, True).name == "16/32"
+    assert decode_width_case(True, False, False).name == "32/32"
+
+
+def test_decode_width_case_for_profile_resolves_mixed_width_matrix_entries():
+    assert decode_width_case_for_profile(16, 16).name == "16/16"
+    assert decode_width_case_for_profile(32, 16).name == "32/16"
+    assert decode_width_case_for_profile(16, 32).name == "16/32"
+    assert decode_width_case_for_profile(32, 32).name == "32/32"
 
 
 def test_describe_x86_16_decode_width_matrix_exposes_named_cases():

@@ -42,6 +42,7 @@ def test_decode_metadata_tracks_effective_widths_and_repeat_prefixes():
 
     assert instr.operand_bits == 32
     assert instr.address_bits == 32
+    assert instr.width_case == "32/32"
     assert instr.displacement_bits == 32
     assert instr.repeat_class == "repz"
     assert instr.control_flow_class == "none"
@@ -73,6 +74,7 @@ def test_instruction_api_exposes_effective_decode_facts():
     instr = InstrData()
     instr.operand_bits = 32
     instr.address_bits = 16
+    instr.width_case = "32/16"
     instr.repeat_class = "repz"
     instr.control_flow_class = "near_call"
 
@@ -82,5 +84,6 @@ def test_instruction_api_exposes_effective_decode_facts():
     assert view.effective_address_bits() == 16
     assert view.repeat_kind() == "repz"
     assert view.control_flow_kind() == "near_call"
+    assert view.width_case_name() == "32/16"
     assert view.width_profile().operand_bits == 32
     assert view.width_profile().address_bits == 16

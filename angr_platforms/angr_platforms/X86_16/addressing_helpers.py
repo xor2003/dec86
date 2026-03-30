@@ -54,6 +54,20 @@ DECODE_WIDTH_MATRIX: tuple[DecodeWidthMatrixCase, ...] = (
 )
 
 
+def decode_width_case(mode32: bool, chsz_op: bool = False, chsz_ad: bool = False) -> DecodeWidthMatrixCase:
+    for case in DECODE_WIDTH_MATRIX:
+        if case.mode32 == mode32 and case.chsz_op == chsz_op and case.chsz_ad == chsz_ad:
+            return case
+    raise ValueError(f"unsupported width case: mode32={mode32} chsz_op={chsz_op} chsz_ad={chsz_ad}")
+
+
+def decode_width_case_for_profile(operand_bits: int, address_bits: int) -> DecodeWidthMatrixCase:
+    for case in DECODE_WIDTH_MATRIX:
+        if case.profile.operand_bits == operand_bits and case.profile.address_bits == address_bits:
+            return case
+    raise ValueError(f"unsupported width profile: operand_bits={operand_bits} address_bits={address_bits}")
+
+
 def displacement_width_bits(mod: int, rm: int, address_bits: int) -> int | None:
     if address_bits == 16:
         if mod == 0 and rm == 6:
