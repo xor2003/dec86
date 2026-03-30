@@ -1,4 +1,5 @@
 import io
+from types import SimpleNamespace
 
 import angr
 import keystone as ks
@@ -7,6 +8,7 @@ from angr import options as o
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
 
 from angr_platforms.X86_16.annotations import decompile_function
+from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.simos_86_16 import SimCC8616MSCsmall  # noqa: F401
@@ -676,6 +678,28 @@ def test_global_variable_annotation_applies_global_names():
     annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["global_vars"]
     assert annotations[0x1234]["name"] == "left_word"
     assert annotations[0x1234]["type"] == SimTypeShort(False)
+
+
+def test_metadata_annotations_apply_before_decompilation():
+    project = _project_from_asm("ret")
+    cfg = project.analyses.CFGFast(normalize=True)
+    func = cfg.functions[0x1000]
+
+    changed = apply_x86_16_metadata_annotations(
+        project,
+        func_addr=func.addr,
+        lst_metadata=SimpleNamespace(
+            data_labels={0x1234: "data_label"},
+            code_labels={0x1000: "entry_label"},
+        ),
+        synthetic_globals={0x2000: ("rin", 14)},
+    )
+
+    assert changed is True
+    assert project.kb.labels[0x1234] == "data_label"
+    assert project.kb.functions[0x1000].name == "entry_label"
+    annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["global_vars"]
+    assert annotations[0x2000]["name"] == "rin"
 
 
 def test_c_decl_annotation_applies_pointer_signature():

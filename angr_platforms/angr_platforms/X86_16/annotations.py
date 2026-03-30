@@ -5,6 +5,8 @@ from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
 
 from .analysis_helpers import seed_calling_conventions
+from .analysis_helpers import known_helper_signature_decl
+from .cod_known_objects import known_cod_object_spec
 
 
 ANNOTATION_KEY = "x86_16_annotations"
@@ -124,6 +126,71 @@ def annotate_global_variable(project, addr: int, name: str):
     return name
 
 
+def apply_x86_16_metadata_annotations(
+    project,
+    *,
+    func_addr: int | None = None,
+    cod_metadata=None,
+    lst_metadata=None,
+    synthetic_globals: dict[int, tuple[str, int]] | None = None,
+) -> bool:
+    changed = False
+
+    if lst_metadata is not None:
+        for offset, name in getattr(lst_metadata, "data_labels", {}).items():
+            if project.kb.labels.get(offset) != name:
+                project.kb.labels[offset] = name
+                changed = True
+
+        if func_addr is not None:
+            code_name = getattr(lst_metadata, "code_labels", {}).get(func_addr)
+            if isinstance(code_name, str) and code_name:
+                func = project.kb.functions.function(addr=func_addr, create=True)
+                if func is not None and getattr(func, "name", None) != code_name:
+                    func.name = code_name
+                    changed = True
+
+    if cod_metadata is not None:
+        seen_decls: set[str] = set()
+        for call_name in getattr(cod_metadata, "call_names", ()) or ():
+            decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
+            if decl is None or decl in seen_decls:
+                continue
+            seen_decls.add(decl)
+
+            helper_func = project.kb.functions.function(name=call_name, create=False)
+            if helper_func is None and call_name.startswith("_"):
+                helper_func = project.kb.functions.function(name=call_name.lstrip("_"), create=False)
+            if helper_func is None:
+                continue
+
+            annotate_function(
+                project,
+                helper_func.addr,
+                name=getattr(helper_func, "name", call_name),
+                c_decl=decl,
+            )
+            changed = True
+
+    if func_addr is not None and synthetic_globals:
+        seen_addrs: set[int] = set()
+        for addr, (raw_name, _width) in synthetic_globals.items():
+            if addr in seen_addrs:
+                continue
+            seen_addrs.add(addr)
+            spec = known_cod_object_spec(raw_name)
+            if spec is None:
+                continue
+            annotate_function(
+                project,
+                func_addr,
+                global_vars={addr: {"name": spec.name, "type": spec.type}},
+            )
+            changed = True
+
+    return changed
+
+
 def decompile_function(project, func_addr: int, **annotations):
     cfg = project.analyses.CFGFast(normalize=True)
     seed_calling_conventions(cfg)
@@ -131,4 +198,5 @@ def decompile_function(project, func_addr: int, **annotations):
     if annotations:
         annotate_function(project, func_addr, **annotations)
         func = project.kb.functions[func_addr]
+    apply_x86_16_metadata_annotations(project, func_addr=func_addr)
     return project.analyses.Decompiler(func, cfg=cfg)
