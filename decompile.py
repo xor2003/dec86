@@ -73,6 +73,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     dos_helper_declarations,
     extend_cfg_for_far_calls,
     infer_com_region,
+    known_helper_signature_decl,
     interrupt_service_name,
     interrupt_service_addr,
     interrupt_service_declarations,
@@ -83,6 +84,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     render_dos_int21_call,
     seed_calling_conventions,
 )
+from angr_platforms.X86_16.annotations import annotate_function
 from angr_platforms.X86_16.cod_extract import (
     CODProcMetadata,
     extract_cod_function_entries,
@@ -94,7 +96,6 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr_platforms.X86_16.cod_source_rewrites import apply_cod_source_rewrites as _apply_cod_source_rewrites
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
-from angr_platforms.X86_16.snake_annotations import apply_snake_recompilation_annotations
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
@@ -153,7 +154,37 @@ def _apply_binary_specific_annotations(
     binary_path: Path | None,
     lst_metadata: LSTMetadata | None,
 ) -> None:
-    apply_snake_recompilation_annotations(project, binary_path, lst_metadata)
+    return None
+
+
+def _apply_known_helper_signatures(project: angr.Project, cod_metadata: CODProcMetadata | None) -> bool:
+    if cod_metadata is None or not cod_metadata.call_names:
+        return False
+
+    changed = False
+    seen: set[str] = set()
+    for call_name in cod_metadata.call_names:
+        decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
+        if decl is None or decl in seen:
+            continue
+        seen.add(decl)
+
+        helper_name = call_name
+        helper_func = project.kb.functions.function(name=helper_name, create=False)
+        if helper_func is None and helper_name.startswith("_"):
+            helper_func = project.kb.functions.function(name=helper_name.lstrip("_"), create=False)
+        if helper_func is None:
+            continue
+
+        annotate_function(
+            project,
+            helper_func.addr,
+            name=getattr(helper_func, "name", helper_name),
+            c_decl=decl,
+        )
+        changed = True
+
+    return changed
 
 
 def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | None:
@@ -464,7 +495,6 @@ def _decompile_function(
         and binary_path.name.lower().endswith(".cod")
         and getattr(function, "name", "") == "fold_values"
     )
-    shiftsnake_postprocess_outlier = getattr(function, "name", "") == "shiftsnake"
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
         lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
@@ -517,7 +547,7 @@ def _decompile_function(
                 byte_count,
             )
     else:
-        if fold_values_cod_outlier or shiftsnake_postprocess_outlier:
+        if fold_values_cod_outlier:
             rewrite_passes = ()
         else:
             rewrite_passes = rewrite_passes[:6] + (
@@ -525,7 +555,7 @@ def _decompile_function(
             ) + rewrite_passes[6:14] + (
                 lambda: _attach_lst_data_names(project, dec.codegen, lst_metadata),
             ) + rewrite_passes[14:]
-    if enable_structured_simplify and not small_function and not fold_values_cod_outlier and not shiftsnake_postprocess_outlier:
+    if enable_structured_simplify and not small_function and not fold_values_cod_outlier:
         structured_simplify_failed = [False]
 
         def _safe_structured_simplify():
@@ -563,10 +593,7 @@ def _decompile_function(
         binary_path,
         cod_metadata=cod_metadata,
     )
-    formatted = _fix_snake_shiftsnake_blind_spot(formatted, function, binary_path)
-    formatted = _fix_snake_data_global_blind_spot(formatted, function, binary_path, lst_metadata)
-    formatted = _fix_snake_video_helper_blind_spot(formatted, function, binary_path)
-    formatted = _fix_snake_main_interrupt_blind_spot(formatted, function, binary_path)
+    formatted = _normalize_boolean_conditions(formatted)
     formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
     formatted = _fix_carr_inboxlng_guard_blind_spot(formatted, function, binary_path)
     formatted = _fix_nhorz_changeweather_blind_spot(formatted, function, binary_path)
@@ -1285,6 +1312,14 @@ def _attach_cod_callee_names(project: angr.Project, codegen, cod_metadata: CODPr
         if getattr(callee_func, "name", None) != call_name:
             callee_func.name = call_name
             changed = True
+        decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
+        if decl is not None:
+            annotate_function(
+                project,
+                callee_func.addr,
+                name=call_name,
+                c_decl=decl,
+            )
     return changed
 
 
@@ -5739,6 +5774,23 @@ def _interrupt_helper_declarations(function, api_style: str, binary_path: Path |
     return interrupt_service_declarations(collect_interrupt_service_calls(function, binary_path), api_style)
 
 
+def _known_helper_declarations(cod_metadata: CODProcMetadata | None) -> list[str]:
+    if cod_metadata is None:
+        return []
+
+    declarations: list[str] = []
+    seen: set[str] = set()
+    for call_name in cod_metadata.call_names:
+        decl = known_helper_signature_decl(call_name)
+        if decl is None and call_name.startswith("_"):
+            decl = known_helper_signature_decl(call_name.lstrip("_"))
+        if decl is None or decl in seen:
+            continue
+        seen.add(decl)
+        declarations.append(decl)
+    return declarations
+
+
 def _split_top_level_binary(expr: str, op: str) -> tuple[str, str] | None:
     depth = 0
     i = 0
@@ -5826,145 +5878,29 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str) -> str:
     return c_text
 
 
-def _fix_snake_shiftsnake_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    name = binary_path.name.lower()
-    if name != "snake.exe":
-        return c_text
-    func_name = getattr(function, "name", "")
-    if func_name != "shiftsnake":
-        return c_text
+def _normalize_boolean_conditions(c_text: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        kind = match.group("kind")
+        expr = match.group("expr")
+        return f"{indent}{kind} (({expr}) == 0)"
 
     pattern = re.compile(
-        r"(?m)^(\s*)if \((?:\(char\)\()?v34 >> 8(?:\))? != 17\)\n\1\{\n\1\s+if \(\.\.\.\)\n\1\s+return count;\n\1\}"
+        r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(!\(\((?P<expr>[^()]*(?:\([^()]*\)[^()]*)*)\)\)\)"
     )
-    replacement = "\\1if (v34 >> 8 == 2 || v34 >> 8 == 17 || !v34 || v34 == '(')\n\\1    return count;"
-    if pattern.search(c_text):
-        return pattern.sub(replacement, c_text)
+    rewritten = pattern.sub(_replace, c_text)
 
-    tail_pattern = re.compile(
-        r"(?m)^(?P<indent>\s*)if \(\(char\)\(v33 >> 8\) == 2\)\n"
-        r"(?P=indent)goto LABEL_0x12fa;\n"
-        r"(?P=indent)if \(\(char\)\(v33 >> 8\) == 17\)\n"
-        r"(?P=indent)goto LABEL_0x12fa;\n"
-        r"(?P=indent)if \(!\(char\)v33\)\n"
-        r"(?P=indent)goto LABEL_0x12fa;\n"
-        r"(?P=indent)if \(\.\.\.\)\n"
-        r"(?P=indent)goto LABEL_0x12fa;"
+    brace_while_pattern = re.compile(
+        r"(?m)^(?P<indent>\s*)\}\s*while \(!\(\((?P<expr>[^()]*(?:\([^()]*\)[^()]*)*)\)\)\);"
     )
-    tail_replacement = (
-        "\\g<indent>if ((char)v33 == '(')\n"
-        "\\g<indent>    goto LABEL_0x12fa;\n"
-        "\\g<indent>if ((char)(v33 >> 8) == 2)\n"
-        "\\g<indent>    goto LABEL_0x12fa;\n"
-        "\\g<indent>if ((char)(v33 >> 8) == 17)\n"
-        "\\g<indent>    goto LABEL_0x12fa;\n"
-        "\\g<indent>if (!(char)v33)\n"
-        "\\g<indent>    goto LABEL_0x12fa;"
+    rewritten = brace_while_pattern.sub(lambda m: f"{m.group('indent')}}} while (({m.group('expr')}) == 0);", rewritten)
+
+    index_pattern = re.compile(
+        r"(?m)^(?P<indent>\s*)(?P<name>[A-Za-z_][\w$?@]*) = &v\d+\[(?P<delta>\d+)\];$"
     )
-    if tail_pattern.search(c_text):
-        return tail_pattern.sub(tail_replacement, c_text)
-
-    c_text = re.sub(
-        r"(?m)^(\s*)if \(\.\.\.\)\n\1goto LABEL_0x12fa;",
-        r"\1if ((char)v33 == '(')\n\1    goto LABEL_0x12fa;",
-        c_text,
-    )
-    c_text = c_text.replace(
-        "    if (!(char)v33)\n        goto LABEL_0x12fa;\n    if (...)\n        goto LABEL_0x12fa;\n    return;\n",
-        "    if (!(char)v33)\n        goto LABEL_0x12fa;\n    if ((char)v33 == '(')\n        goto LABEL_0x12fa;\n    return;\n",
-    )
-    return c_text
-
-
-def _fix_snake_data_global_blind_spot(
-    c_text: str,
-    function,
-    binary_path: Path | None,
-    lst_metadata: LSTMetadata | None,
-) -> str:
-    if binary_path is None or lst_metadata is None:
-        return c_text
-    if binary_path.name.lower() != "snake.exe":
-        return c_text
-
-    data_labels = {
-        offset: name
-        for offset, name in lst_metadata.data_labels.items()
-        if name in {"segmentcount", "fruitactive", "fruitx", "fruity", "head", "body", "scoremsg"}
-    }
-    if not data_labels:
-        return c_text
-
-    def _replace_direct_deref(match: re.Match[str]) -> str:
-        addr_text = match.group("addr")
-        try:
-            addr = int(addr_text, 0)
-        except ValueError:
-            return match.group(0)
-        name = data_labels.get(addr)
-        if name is None:
-            return match.group(0)
-        return name
-
-    def _replace_hex_addr(match: re.Match[str]) -> str:
-        addr_text = match.group("addr")
-        try:
-            addr = int(addr_text, 0)
-        except ValueError:
-            return match.group(0)
-        name = data_labels.get(addr)
-        if name is None:
-            return match.group(0)
-        return name
-
-    rewritten = c_text
-    rewritten = re.sub(r"\*\(\(char \*\)\s*(?P<addr>0x[0-9a-fA-F]+|\d+)\s*\)", _replace_direct_deref, rewritten)
-    rewritten = re.sub(r"\*\(\(unsigned char \*\)\s*(?P<addr>0x[0-9a-fA-F]+|\d+)\s*\)", _replace_direct_deref, rewritten)
-    rewritten = re.sub(r"writestringat\((?P<rowcol>[^,]+),\s*0xb9\)", r"writestringat(\g<rowcol>, scoremsg)", rewritten)
+    rewritten = index_pattern.sub(lambda m: f"{m.group('indent')}{m.group('name')} += {m.group('delta')};", rewritten)
     return rewritten
 
-
-def _fix_snake_video_helper_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None or binary_path.name.lower() != "snake.exe":
-        return c_text
-
-    func_name = getattr(function, "name", "")
-    if func_name == "writecharat":
-        pattern = re.compile(
-            r"(?ms)^(?P<indent>\s*)s_2 = rowcol;\n"
-            r"(?P=indent)s_4 = ch;\n"
-            r"(?P=indent)\*\(\(char \*\)\(\(\(rowcol & 0xff00\) >> 8\) \* 160 \+ \(rowcol & 255\) \* 2\)\) = s_4;"
-        )
-        replacement = (
-            "\\g<indent>*((char *)(((rowcol & 0xff00) >> 8) * 160 + (rowcol & 255) * 2)) = ch;"
-        )
-        return pattern.sub(replacement, c_text)
-
-    if func_name == "readcharat":
-        pattern = re.compile(
-            r"(?ms)^(?P<indent>\s*)s_2 = rowcol;\n"
-            r"(?P=indent)s_4 = v4;\n"
-            r"(?P=indent)return s_4 & 0xff00 \| \*\(\(char \*\)\(\(\(rowcol & 0xff00\) >> 8\) \* 160 \+ \(rowcol & 255\) \* 2\)\);"
-        )
-        replacement = (
-            "\\g<indent>return *((char *)(((rowcol & 0xff00) >> 8) * 160 + (rowcol & 255) * 2));"
-        )
-        return pattern.sub(replacement, c_text)
-
-    return c_text
-
-
-def _fix_snake_main_interrupt_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None or binary_path.name.lower() != "snake.exe":
-        return c_text
-    if getattr(function, "name", "") != "main":
-        return c_text
-
-    c_text = c_text.replace("bios_int10_video();", "bios_int10_video(3);")
-    c_text = c_text.replace("print_dos_string((const char *)0x0);", "print_dos_string(instructions);")
-    return c_text
 
 
 def _fix_carr_inbox_guard_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
@@ -6232,6 +6168,7 @@ def _format_known_helper_calls(
 
     declarations = _dos_helper_declarations(function, api_style, binary_path)
     declarations.extend(_interrupt_helper_declarations(function, api_style, binary_path))
+    declarations.extend(_known_helper_declarations(cod_metadata))
     if declarations:
         c_text = "\n".join(declarations) + "\n\n" + c_text
     c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
@@ -6467,6 +6404,7 @@ def main() -> int:
             code_name = lst_metadata.code_labels.get(func.addr)
             if code_name is not None:
                 func.name = code_name
+        _apply_known_helper_signatures(project, cod_metadata)
         _apply_binary_specific_annotations(project, args.binary, lst_metadata)
 
         print(f"/* binary: {args.binary} */")
