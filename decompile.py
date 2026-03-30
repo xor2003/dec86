@@ -6449,6 +6449,9 @@ def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, time
             force_complete_scan=False,
             function_starts=[entry_addr],
             data_references=seeded_data_refs,
+            cross_references=False,
+            resolve_indirect_jumps=False,
+            function_prologues=False,
         )
     finally:
         signal.alarm(0)
@@ -6462,6 +6465,8 @@ def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, time
                 normalize=True,
                 force_complete_scan=False,
                 data_references=True,
+                cross_references=True,
+                resolve_indirect_jumps=True,
             )
         finally:
             signal.alarm(0)
