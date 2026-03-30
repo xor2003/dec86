@@ -6434,19 +6434,41 @@ def _recover_lst_function(
 
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
+    main_object = project.loader.main_object
+    blob_span = None
+    try:
+        blob_span = int(getattr(main_object, "max_addr", entry_addr)) - int(getattr(main_object, "min_addr", entry_addr)) + 1
+    except Exception:
+        blob_span = None
+    seeded_data_refs = blob_span is None or blob_span <= 0x4000
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
     try:
         cfg = project.analyses.CFGFast(
             normalize=True,
             force_complete_scan=False,
+            function_starts=[entry_addr],
+            data_references=seeded_data_refs,
         )
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
     if entry_addr not in cfg.functions:
-        raise KeyError(f"Function {entry_addr:#x} was not recovered by CFGFast.")
+        old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+        signal.alarm(timeout)
+        try:
+            cfg = project.analyses.CFGFast(
+                normalize=True,
+                force_complete_scan=False,
+                data_references=True,
+            )
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+        if entry_addr not in cfg.functions:
+            raise KeyError(f"Function {entry_addr:#x} was not recovered by CFGFast.")
     return cfg, cfg.functions[entry_addr]
 
 
