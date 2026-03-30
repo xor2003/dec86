@@ -377,6 +377,23 @@ def test_decompile_cli_whole_snake_scan_has_no_blank_spot_placeholders():
     assert "if (...)" not in result.stdout
 
 
+def test_decompile_cli_default_snake_decompiles_all_listed_functions():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=240,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "functions recovered: 14" in result.stdout
+    assert result.stdout.count("/* == function ") == 14
+    assert "showing first" not in result.stdout
+    assert "fallback function" not in result.stdout
+
+
 def test_decompile_cli_snake_default_falls_back_to_entry_function():
     result = subprocess.run(
         [sys.executable, str(CLI_PATH), str(SNAKE_EXE)],
