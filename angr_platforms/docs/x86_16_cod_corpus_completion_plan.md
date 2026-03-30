@@ -621,8 +621,13 @@ The practical meaning for `.COD` work is:
     correctness failure in `DOSFUNC.COD`
 - `Current implementation note`:
   - known helper signatures are now surfaced as typed declarations before
-    decompilation, and the remaining work in this phase is return propagation
-    and wrapper cleanup
+    decompilation
+  - anonymous COD call expressions now recover to the source-backed helper
+    call text when the listing provides it
+  - wide-return wrapper artifacts are simplified for known helper calls
+  - the remaining work in this phase is return propagation on harder wrappers
+    and the non-semantic staging cleanup that still appears in multi-call
+    functions
 - `Deterministic goal`:
   - `analysis_helpers.py` owns an MSC/DOS extern signature catalog for at
     least:
@@ -717,6 +722,11 @@ The practical meaning for `.COD` work is:
     - `s_2 = &v3;`
     - `s_4 = mode;`
     - `s_6 = path;`
+- `Current implementation note`:
+  - the one-call forwarding wrapper shape is now cleaned up generically for
+    `_openFileWrapper`, and the remaining work is to apply the same
+    conservative staging-slot cleanup to other wrappers once return
+    propagation is stable
 - `Done when`:
   - `_openFileWrapper`, `_dos_loadOverlay`, and similar wrappers decompile as
     direct forwarding calls
