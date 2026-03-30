@@ -94,7 +94,9 @@ from angr_platforms.X86_16.cod_extract import (
     infer_cod_logic_start,
     join_cod_entries_with_synthetic_globals,
 )
+from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 from angr_platforms.X86_16.cod_source_rewrites import apply_cod_source_rewrites as _apply_cod_source_rewrites
+from angr_platforms.X86_16.cod_source_rewrites import rewrite_known_cod_object_fields_from_source
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -184,6 +186,31 @@ def _apply_known_helper_signatures(project: angr.Project, cod_metadata: CODProcM
         )
         changed = True
 
+    return changed
+
+
+def _apply_known_cod_object_annotations(
+    project: angr.Project,
+    func_addr: int,
+    cod_metadata: CODProcMetadata | None,
+    synthetic_globals: dict[int, tuple[str, int]] | None,
+) -> bool:
+    if not synthetic_globals:
+        return False
+
+    changed = False
+    seen: set[int] = set()
+    for addr, (raw_name, _width) in synthetic_globals.items():
+        spec = known_cod_object_spec(raw_name)
+        if spec is None or addr in seen:
+            continue
+        seen.add(addr)
+        annotate_function(
+            project,
+            func_addr,
+            global_vars={addr: {"name": spec.name, "type": spec.type}},
+        )
+        changed = True
     return changed
 
 
@@ -457,6 +484,8 @@ def _decompile_function(
     enable_structured_simplify: bool = True,
 ) -> tuple[str, str]:
     _apply_binary_specific_annotations(project, binary_path, lst_metadata)
+    if cod_metadata is not None:
+        _apply_known_cod_object_annotations(project, function.addr, cod_metadata, synthetic_globals)
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
     try:
@@ -3375,7 +3404,10 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
         symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
         if symbol is None:
             return None
-        _raw_name, width = symbol
+        raw_name, width = symbol
+        known_spec = known_cod_object_spec(raw_name)
+        if known_spec is not None:
+            return known_spec.type
         if width == 1:
             return char_type
         if width >= 2:
@@ -3386,7 +3418,10 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
         symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
         if symbol is None:
             return None
-        _raw_name, width = symbol
+        raw_name, width = symbol
+        known_spec = known_cod_object_spec(raw_name)
+        if known_spec is not None:
+            return known_spec.size
         if width <= 1:
             return 1
         return 2
@@ -6149,8 +6184,37 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
                 tail = source_return_lines[-1]
                 body = c_text[:insert_at].rstrip()
                 c_text = f"{body}\n    {tail}\n{c_text[insert_at:]}"
+    c_text = _prune_unused_staging_assignments(c_text)
     c_text = _apply_cod_source_rewrites(c_text, metadata)
     return _simplify_x86_16_wrapped_stack_offsets(c_text)
+
+
+def _prune_unused_staging_assignments(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not any(re.search(r"\bs_[0-9a-fA-F]+\b", line) for line in lines):
+        return c_text
+
+    staging_name_re = re.compile(r"\bs_[0-9a-fA-F]+\b")
+    used_names: dict[str, int] = {}
+    for line in lines:
+        if staging_name_re.search(line) is None:
+            continue
+        for name in staging_name_re.findall(line):
+            used_names[name] = used_names.get(name, 0) + 1
+
+    kept_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        match = re.match(r"^(?P<indent>\s*)(?P<name>s_[0-9a-fA-F]+)\s*=\s*[^;]+;\s*$", stripped)
+        if match is None:
+            kept_lines.append(line)
+            continue
+        name = match.group("name")
+        if used_names.get(name, 0) <= 1:
+            continue
+        kept_lines.append(line)
+
+    return "\n".join(kept_lines)
 
 
 def _format_known_helper_calls(
