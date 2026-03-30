@@ -183,11 +183,9 @@ Recent progress on that front:
 
   Current progress snapshot:
 
-  - strict completion: 11/13 priorities landed
-  - weighted completion: 92.31% when partial items count as half-credit
-  - remaining partial priorities:
-    - `P1.2` mixed-width 386 extension path
-    - `P2.2` MartyPC-assisted differential triage
+  - strict completion: 13/13 priorities landed
+  - weighted completion: 100.0% when partial items count as half-credit
+  - remaining partial priorities: none
 - normalized decode metadata now has an explicit width-profile abstraction, so
   the `16/16`, `32/16`, and `16/32` matrix is a named boundary instead of
   scattered width math

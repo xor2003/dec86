@@ -116,17 +116,41 @@ def describe_x86_16_martypc_differential_triage() -> dict[str, object]:
             "interrupt_api",
             "alu",
         ),
+        "bounded_opcode_sets": (
+            {
+                "family": "string",
+                "opcodes": ("movsb", "movsw", "cmpsb", "cmpsw", "scasb", "scasw", "stosb", "stosw", "lodsb", "lodsw"),
+            },
+            {
+                "family": "stack_control",
+                "opcodes": ("call", "ret", "iret", "enter", "leave", "push", "pop", "pushf", "popf"),
+            },
+            {
+                "family": "addressing",
+                "opcodes": ("lea", "xlat", "bound", "les", "lds", "mov"),
+            },
+            {
+                "family": "interrupt_api",
+                "opcodes": ("int 0x10", "int 0x21", "int 0x33"),
+            },
+            {
+                "family": "alu",
+                "opcodes": ("add", "adc", "sub", "sbb", "cmp", "test", "shl", "shr", "rol", "ror"),
+            },
+        ),
         "workflow": (
             "compare Inertia output first",
             "compare MartyPC behavior next",
             "confirm against hardware-backed or compare-style references when available",
         ),
+        "evidence_sources": ("Inertia output", "MartyPC behavior", "hardware-backed or compare-style reference"),
         "use_case": "debugging and triage only, not sole truth source",
         "outputs": (
             "family notes",
             "opcode notes",
             "minimal repro snippets",
         ),
+        "artifacts": ("disassembly", "decompile text", "semantic notes"),
     }
 
 
