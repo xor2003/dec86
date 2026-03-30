@@ -60,7 +60,15 @@ def _readability_tier(result: Mapping[str, object], golden_cases: set[tuple[str,
     return "R2"
 
 
-def _build_corpus_completion_surface(scan_summary: Mapping[str, object]) -> dict[str, object]:
+def _build_corpus_completion_surface(
+    scan_summary: Mapping[str, object],
+    *,
+    readability_tiers: Mapping[str, int],
+    top_fallback_files: list[dict[str, object]],
+    top_fallback_functions: list[dict[str, object]],
+    top_ugly_clusters: list[dict[str, object]],
+    family_ownership: Mapping[str, object],
+) -> dict[str, object]:
     scanned = int(scan_summary.get("scanned", 0) or 0)
     failed = int(scan_summary.get("failed", 0) or 0)
     full_decompile_count = int(scan_summary.get("full_decompile_count", 0) or 0)
@@ -91,6 +99,16 @@ def _build_corpus_completion_surface(scan_summary: Mapping[str, object]) -> dict
         },
         "blind_spot_budget": blind_spot_budget,
         "stable_by_traversal": failed == 0 and unclassified_failure_count == 0,
+        "merge_gate": failed == 0 and unclassified_failure_count == 0,
+        "readability_tiers": dict(readability_tiers),
+        "fallback_backlog": {
+            "top_fallback_files": top_fallback_files,
+            "top_fallback_functions": top_fallback_functions,
+        },
+        "readability_backlog": {
+            "top_ugly_clusters": top_ugly_clusters,
+            "family_ownership": family_ownership,
+        },
     }
 
 
@@ -140,7 +158,14 @@ def build_x86_16_milestone_report(
         readability_tier_counts[_readability_tier(result, golden_cases)] += 1
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
     source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
-    corpus_completion = _build_corpus_completion_surface(scan_summary)
+    corpus_completion = _build_corpus_completion_surface(
+        scan_summary,
+        readability_tiers=readability_tier_counts,
+        top_fallback_files=top_fallback_files,
+        top_fallback_functions=top_fallback_functions,
+        top_ugly_clusters=top_ugly_clusters,
+        family_ownership=family_ownership,
+    )
 
     report = {
         "corpus": corpus_name,

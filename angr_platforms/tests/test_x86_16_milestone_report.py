@@ -110,6 +110,18 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         },
         "blind_spot_budget": scan_summary["blind_spot_budget"],
         "stable_by_traversal": False,
+        "merge_gate": False,
+        "readability_tiers": {"R0": 1, "R1": 1, "R2": 1, "R3": 1},
+        "fallback_backlog": {
+            "top_fallback_files": [{"cod_file": "A.COD", "count": 2}],
+            "top_fallback_functions": [
+                {"cod_file": "A.COD", "proc_name": "_x", "proc_kind": "NEAR", "fallback_kind": "cfg_only", "count": 2}
+            ],
+        },
+        "readability_backlog": {
+            "top_ugly_clusters": [{"cluster": "byte_pair_arithmetic", "count": 4}],
+            "family_ownership": scan_summary["family_ownership"],
+        },
     }
     assert report["debt"] == scan_summary["debt"]
     assert report["debt_breakdown"] == {

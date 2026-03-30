@@ -313,7 +313,7 @@ This phase is about moving more of the corpus from "alive" to "useful".
 Blind spots are not only crashes. They also include systematic regions the
 project does not yet explain well.
 
-### 5.1. Fallback-heavy functions become explicit backlog items
+### [x] 5.1. Fallback-heavy functions become explicit backlog items
 
 - `Priority`: `P1`
 - `Why`:
@@ -327,7 +327,7 @@ project does not yet explain well.
 - `Done when`:
   - fallback-heavy regions are being reduced intentionally, not accidentally
 
-### 5.2. Define "readable enough" tiers
+### [x] 5.2. Define "readable enough" tiers
 
 - `Priority`: `P1`
 - `Why`:
@@ -342,7 +342,7 @@ project does not yet explain well.
   - the project can measure whole-corpus readability movement, not only local
     wins
 
-### 5.3. Make "no blind spots" a merge gate
+### [x] 5.3. Make "no blind spots" a merge gate
 
 - `Priority`: `P0`
 - `Why`:
