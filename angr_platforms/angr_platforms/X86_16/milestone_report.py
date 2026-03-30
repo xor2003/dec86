@@ -22,6 +22,7 @@ from .cod_source_rewrites import (
 )
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .instruction import describe_x86_16_instruction_metadata_surface
+from .readability_goals import describe_x86_16_readability_goals, summarize_readability_goals
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import (
@@ -67,6 +68,7 @@ def _build_corpus_completion_surface(
     top_fallback_files: list[dict[str, object]],
     top_fallback_functions: list[dict[str, object]],
     top_ugly_clusters: list[dict[str, object]],
+    readability_clusters: list[dict[str, object]],
     family_ownership: Mapping[str, object],
 ) -> dict[str, object]:
     scanned = int(scan_summary.get("scanned", 0) or 0)
@@ -107,6 +109,7 @@ def _build_corpus_completion_surface(
         },
         "readability_backlog": {
             "top_ugly_clusters": top_ugly_clusters,
+            "readability_clusters": readability_clusters,
             "family_ownership": family_ownership,
         },
     }
@@ -127,6 +130,7 @@ def build_x86_16_milestone_report(
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
     projection_cleanup_rules = describe_x86_16_projection_cleanup_rules()
+    readability_goals = describe_x86_16_readability_goals()
     decode_width_matrix = describe_x86_16_decode_width_matrix()
     mixed_width_extension_surface = describe_x86_16_mixed_width_extension_surface()
     mixed_width_instruction_surface = describe_x86_16_mixed_width_instruction_surface()
@@ -149,6 +153,7 @@ def build_x86_16_milestone_report(
     recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
     readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
+    readability_clusters = list(scan_summary.get("readability_clusters", []) or [])
     family_ownership = dict(scan_summary.get("family_ownership", {}) or {})
     interrupt_api = dict(scan_summary.get("interrupt_api", {}) or {})
     scan_results = list(scan_summary.get("results", []) or [])
@@ -164,8 +169,10 @@ def build_x86_16_milestone_report(
         top_fallback_files=top_fallback_files,
         top_fallback_functions=top_fallback_functions,
         top_ugly_clusters=top_ugly_clusters,
+        readability_clusters=readability_clusters,
         family_ownership=family_ownership,
     )
+    readability_goal_summary = summarize_readability_goals(top_ugly_clusters, readability_clusters, family_ownership)
 
     report = {
         "corpus": corpus_name,
@@ -200,6 +207,17 @@ def build_x86_16_milestone_report(
             {"name": name, "purpose": purpose}
             for name, purpose in projection_cleanup_rules
         ],
+        "readability_goals": [
+            {
+                "step": step,
+                "title": title,
+                "deterministic_goal": deterministic_goal,
+                "target_clusters": list(target_clusters),
+                "owner_surfaces": list(owner_surfaces),
+                "completion_signal": completion_signal,
+            }
+            for step, title, deterministic_goal, target_clusters, owner_surfaces, completion_signal in readability_goals
+        ],
         "readability_set_summary": [
             {"source": source, "proc_name": proc_name, "anchor_count": anchor_count}
             for source, proc_name, anchor_count in summarize_x86_16_golden_readability_set()
@@ -232,6 +250,20 @@ def build_x86_16_milestone_report(
         "interrupt_lowering_boundary": interrupt_lowering_boundary,
         "instruction_metadata_surface": instruction_metadata_surface,
         "readability_tiers": readability_tier_counts,
+        "readability_goal_summary": [
+            {
+                "step": item["step"],
+                "title": item["title"],
+                "priority": item["priority"],
+                "deterministic_goal": item["deterministic_goal"],
+                "target_clusters": list(item["target_clusters"]),
+                "owner_surfaces": list(item["owner_surfaces"]),
+                "completion_signal": item["completion_signal"],
+                "observed_cluster_count": item["observed_cluster_count"],
+                "observed_family_count": item["observed_family_count"],
+            }
+            for item in readability_goal_summary
+        ],
         "hotspots": {
             "failure_counts": failure_counts,
             "fallback_counts": fallback_counts,
@@ -243,6 +275,7 @@ def build_x86_16_milestone_report(
             "top_fallback_files": top_fallback_files,
             "top_fallback_functions": top_fallback_functions,
             "top_ugly_clusters": top_ugly_clusters,
+            "readability_clusters": readability_clusters,
             "family_ownership": family_ownership,
         },
         "source_backed_rewrites": source_backed_rewrites,

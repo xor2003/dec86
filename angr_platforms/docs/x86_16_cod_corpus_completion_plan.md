@@ -280,6 +280,20 @@ This phase is about moving more of the corpus from "alive" to "useful".
   - each readability sprint starts from ranked clusters instead of a single
     function
 
+- `Deterministic goal`:
+  - rank the repeated ugly forms that the scanner now surfaces as first-class
+    readability clusters:
+    - `byte_pair_arithmetic`
+    - `split_segmented_word_accesses`
+    - `fake_locals_and_stack_noise`
+    - `weak_helper_signatures`
+    - `boolean_noise`
+    - `unresolved_member_or_array_opportunities`
+  - spend each readability sprint on the top repeated cluster, not on one
+    showcase function
+  - verify the sprint focus from the `readability_goal_summary` surface in the
+    milestone report
+
 ### 4.2. Spend the first major readability budget on alias and widening
 
 - `Priority`: `P0`
@@ -292,6 +306,16 @@ This phase is about moving more of the corpus from "alive" to "useful".
 - `Done when`:
   - several old local coalescers become thin wrappers over shared proof-based
     logic
+
+- `Deterministic goal`:
+  - make byte-pair and projection cleanup consume alias and widening proofs
+  - stop late rewrite from re-solving storage identity
+  - keep downstream passes consuming alias facts instead of recomputing them
+  - use the milestone report surfaces:
+    - `alias_api`
+    - `widening_pipeline`
+    - `projection_cleanup_rules`
+    - `source_backed_rewrite_debt`
 
 ### 4.3. Only then spend on traits, types, and objects
 
@@ -307,6 +331,16 @@ This phase is about moving more of the corpus from "alive" to "useful".
 - `Done when`:
   - readable object output increases without a spike in hallucinated structs or
     arrays
+
+- `Deterministic goal`:
+  - let stable alias and widening facts feed traits, types, and object policy
+  - improve field, array, global, and stack-object rendering without widening
+    the hallucination surface
+  - verify the effect through:
+    - `recovery_layers`
+    - `validation_families`
+    - `readability_set`
+    - `readability_tiers`
 
 ## Phase 5. Remove the Last Real Blind Spots
 

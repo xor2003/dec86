@@ -26,6 +26,7 @@ import angr
 
 from .arch_86_16 import Arch86_16
 from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed_calling_conventions
+from .readability_goals import classify_readability_cluster
 from .lift_86_16 import Lifter86_16  # noqa: F401
 
 
@@ -62,6 +63,8 @@ class FunctionScanResult:
     interrupt_unresolved_wrapper_count: int = 0
     semantic_family: str | None = None
     semantic_family_reason: str | None = None
+    readability_cluster: str | None = None
+    readability_cluster_reason: str | None = None
     stages: list[StageResult] = field(default_factory=list)
 
 
@@ -399,6 +402,12 @@ def _classify_ugly_cluster(result: FunctionScanResult) -> str | None:
     return None
 
 
+def _classify_readability_cluster(result: FunctionScanResult, text: str | None) -> tuple[str | None, str | None]:
+    if not result.ok or result.fallback_kind not in (None, "none"):
+        return None, None
+    return classify_readability_cluster(text)
+
+
 def _scan_cfg(project: angr.Project, code_len: int):
     return project.analyses.CFGFast(
         normalize=True,
@@ -613,6 +622,7 @@ def scan_function(
             result.interrupt_wrapper_call_count = _count_interrupt_wrapper_calls(text)
             result.interrupt_unresolved_wrapper_count = result.interrupt_wrapper_call_count
             result.semantic_family, result.semantic_family_reason = _classify_semantic_family_from_text(text, result)
+            result.readability_cluster, result.readability_cluster_reason = _classify_readability_cluster(result, text)
             result.decompiled_count = 1
             result.ok = True
             _mark_stage(result, "decompile", True)
@@ -668,6 +678,9 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         (result.semantic_family, cluster)
         for result in results
         if (cluster := _classify_ugly_cluster(result)) is not None and result.semantic_family is not None
+    )
+    readability_cluster_counter = Counter(
+        result.readability_cluster for result in results if result.readability_cluster is not None
     )
     per_file: dict[str, dict[str, int]] = defaultdict(lambda: {"scanned": 0, "ok": 0})
 
@@ -780,6 +793,10 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         {"family": family, "cluster": cluster, "count": count}
         for (family, cluster), count in sorted(family_cluster_counter.items(), key=lambda item: (-item[1], item[0]))
     ]
+    readability_clusters = [
+        {"cluster": cluster, "count": count}
+        for cluster, count in sorted(readability_cluster_counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
     return {
         "mode": mode,
@@ -796,6 +813,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "top_fallback_files": top_fallback_files,
         "top_fallback_functions": top_fallback_functions,
         "top_ugly_clusters": top_ugly_clusters,
+        "readability_clusters": readability_clusters,
         "family_ownership": {
             "top_families": top_family_ownership,
             "top_failures": top_family_failures,
@@ -851,4 +869,5 @@ __all__ = [
     "_should_skip_scan_safe_cfg",
     "_should_skip_scan_safe_back_edge",
     "_should_skip_scan_safe_decompile_for_cfg_shape",
+    "_classify_readability_cluster",
 ]

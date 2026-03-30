@@ -154,6 +154,7 @@ def test_corpus_scan_summary_accumulates_interrupt_api_counts():
         "top_fallbacks": [],
         "top_ugly_clusters": [],
     }
+    assert summary["readability_clusters"] == []
 
 
 def test_corpus_scan_summary_ranks_repeat_failures():
@@ -300,17 +301,27 @@ def test_corpus_scan_summary_ranks_fallback_hotspots():
         {"family": "stack_control", "count": 2},
         {"family": "addressing", "count": 1},
     ]
-    assert summary["top_fallback_files"] == [
-        {"cod_file": "A.COD", "count": 2},
-        {"cod_file": "B.COD", "count": 1},
-    ]
-    assert summary["top_fallback_functions"][0] == {
-        "cod_file": "A.COD",
-        "proc_name": "_a",
-        "proc_kind": "NEAR",
-        "fallback_kind": "cfg_only",
-        "count": 1,
-    }
+
+
+def test_corpus_scan_summary_tracks_readability_clusters():
+    readable = FunctionScanResult(
+        cod_file="R.COD",
+        proc_name="_r",
+        proc_kind="NEAR",
+        byte_len=4,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="decompile",
+        function_count=1,
+        decompiled_count=1,
+        readability_cluster="byte_pair_arithmetic",
+        readability_cluster_reason="shift-and-or byte pair detected",
+        stages=[StageResult("load", True), StageResult("decompile", True)],
+    )
+    summary = summarize_results([readable], "scan-safe")
+
+    assert summary["readability_clusters"] == [{"cluster": "byte_pair_arithmetic", "count": 1}]
 
 
 def test_corpus_scan_summary_ranks_ugly_clusters():

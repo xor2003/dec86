@@ -17,6 +17,11 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "top_failure_functions": [{"cod_file": "A.COD", "proc_name": "_x", "proc_kind": "NEAR", "failure_class": "cfg_failure", "count": 2}],
         "top_fallback_files": [{"cod_file": "A.COD", "count": 2}],
         "top_fallback_functions": [{"cod_file": "A.COD", "proc_name": "_x", "proc_kind": "NEAR", "fallback_kind": "cfg_only", "count": 2}],
+        "readability_clusters": [
+            {"cluster": "byte_pair_arithmetic", "count": 4},
+            {"cluster": "fake_locals_and_stack_noise", "count": 2},
+            {"cluster": "boolean_noise", "count": 1},
+        ],
         "full_decompile_count": 7,
         "cfg_only_count": 2,
         "lift_only_count": 0,
@@ -120,6 +125,11 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         },
         "readability_backlog": {
             "top_ugly_clusters": [{"cluster": "byte_pair_arithmetic", "count": 4}],
+            "readability_clusters": [
+                {"cluster": "byte_pair_arithmetic", "count": 4},
+                {"cluster": "fake_locals_and_stack_noise", "count": 2},
+                {"cluster": "boolean_noise", "count": 1},
+            ],
             "family_ownership": scan_summary["family_ownership"],
         },
     }
@@ -457,5 +467,142 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "proc_name": "_mset_pos",
         "anchor_count": 5,
     }
+    assert report["readability_goals"] == [
+        {
+            "step": "4.1",
+            "title": "Fix the top ugly clusters, not isolated outputs",
+            "deterministic_goal": (
+                "Rank repeated ugly forms from scan output, then chip away at the highest-frequency clusters "
+                "instead of single showcase functions."
+            ),
+            "target_clusters": [
+                "byte_pair_arithmetic",
+                "split_segmented_word_accesses",
+                "fake_locals_and_stack_noise",
+                "weak_helper_signatures",
+                "boolean_noise",
+                "unresolved_member_or_array_opportunities",
+            ],
+            "owner_surfaces": [
+                "corpus_scan.top_ugly_clusters",
+                "corpus_scan.family_ownership.top_ugly_clusters",
+                "milestone_report.readability_backlog",
+            ],
+            "completion_signal": "Milestone reports always show stable ranked clusters, and each readability sprint starts from the top cluster counts.",
+        },
+        {
+            "step": "4.2",
+            "title": "Spend the first major readability budget on alias and widening",
+            "deterministic_goal": (
+                "Move byte-pair, projection, and split-segment cleanup onto alias and widening proof surfaces, "
+                "then keep late rewrite from re-solving storage identity."
+            ),
+            "target_clusters": [
+                "byte_pair_arithmetic",
+                "split_segmented_word_accesses",
+                "fake_locals_and_stack_noise",
+            ],
+            "owner_surfaces": [
+                "alias_api",
+                "widening_pipeline",
+                "projection_cleanup_rules",
+                "source_backed_rewrite_debt",
+            ],
+            "completion_signal": "Several old local coalescers become thin wrappers and the remaining cleanup work consumes shared alias/widening facts.",
+        },
+        {
+            "step": "4.3",
+            "title": "Only then spend on traits, types, and objects",
+            "deterministic_goal": (
+                "Let trait evidence drive typed object recovery only after alias and widening are stable, "
+                "so field, array, global, and stack-object wins stay evidence-driven."
+            ),
+            "target_clusters": [
+                "fake_locals_and_stack_noise",
+                "weak_helper_signatures",
+                "unresolved_member_or_array_opportunities",
+            ],
+            "owner_surfaces": [
+                "recovery_layers",
+                "validation_families",
+                "readability_set",
+                "readability_tiers",
+            ],
+            "completion_signal": "Object-like output increases without a matching rise in hallucinated structs or arrays.",
+        },
+    ]
+    assert report["readability_goal_summary"] == [
+        {
+            "step": "4.1",
+            "title": "Fix the top ugly clusters, not isolated outputs",
+            "priority": "P1",
+            "deterministic_goal": (
+                "Rank repeated ugly forms from scan output, then chip away at the highest-frequency clusters "
+                "instead of single showcase functions."
+            ),
+            "target_clusters": [
+                "byte_pair_arithmetic",
+                "split_segmented_word_accesses",
+                "fake_locals_and_stack_noise",
+                "weak_helper_signatures",
+                "boolean_noise",
+                "unresolved_member_or_array_opportunities",
+            ],
+            "owner_surfaces": [
+                "corpus_scan.top_ugly_clusters",
+                "corpus_scan.family_ownership.top_ugly_clusters",
+                "milestone_report.readability_backlog",
+            ],
+            "completion_signal": "Milestone reports always show stable ranked clusters, and each readability sprint starts from the top cluster counts.",
+            "observed_cluster_count": 7,
+            "observed_family_count": 4,
+        },
+        {
+            "step": "4.2",
+            "title": "Spend the first major readability budget on alias and widening",
+            "priority": "P0",
+            "deterministic_goal": (
+                "Move byte-pair, projection, and split-segment cleanup onto alias and widening proof surfaces, "
+                "then keep late rewrite from re-solving storage identity."
+            ),
+            "target_clusters": [
+                "byte_pair_arithmetic",
+                "split_segmented_word_accesses",
+                "fake_locals_and_stack_noise",
+            ],
+            "owner_surfaces": [
+                "alias_api",
+                "widening_pipeline",
+                "projection_cleanup_rules",
+                "source_backed_rewrite_debt",
+            ],
+            "completion_signal": "Several old local coalescers become thin wrappers and the remaining cleanup work consumes shared alias/widening facts.",
+            "observed_cluster_count": 6,
+            "observed_family_count": 4,
+        },
+        {
+            "step": "4.3",
+            "title": "Only then spend on traits, types, and objects",
+            "priority": "P1",
+            "deterministic_goal": (
+                "Let trait evidence drive typed object recovery only after alias and widening are stable, "
+                "so field, array, global, and stack-object wins stay evidence-driven."
+            ),
+            "target_clusters": [
+                "fake_locals_and_stack_noise",
+                "weak_helper_signatures",
+                "unresolved_member_or_array_opportunities",
+            ],
+            "owner_surfaces": [
+                "recovery_layers",
+                "validation_families",
+                "readability_set",
+                "readability_tiers",
+            ],
+            "completion_signal": "Object-like output increases without a matching rise in hallucinated structs or arrays.",
+            "observed_cluster_count": 2,
+            "observed_family_count": 0,
+        },
+    ]
     assert len(report["readability_set"]) >= 4
     assert report["hotspots"]["top_failure_classes"][0]["failure_class"] == "cfg_failure"

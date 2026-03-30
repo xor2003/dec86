@@ -33,6 +33,7 @@ __all__ = [
     "describe_x86_16_mixed_width_extension_surface",
     "describe_x86_16_mixed_width_instruction_surface",
     "describe_x86_16_projection_cleanup_rules",
+    "describe_x86_16_readability_goals",
     "describe_x86_16_martypc_differential_triage",
     "simos_86_16",
     "rewrite_cod_source_stage",
@@ -47,6 +48,7 @@ __all__ = [
     "describe_x86_16_recovery_layers",
     "validation_manifest",
     "readability_set",
+    "readability_goals",
     "milestone_report",
     "recovery_manifest",
     "recompilable_subset",
@@ -64,6 +66,7 @@ __all__ = [
 
 from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, lift_86_16, load_dos_mz, simos_86_16  # noqa: F401
 from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, recovery_manifest, recompilable_subset, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
+from . import readability_goals  # noqa: F401
 from .alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
 from .addressing_helpers import describe_x86_16_decode_width_matrix  # noqa: F401
 from .addressing_helpers import describe_x86_16_mixed_width_extension_surface  # noqa: F401
@@ -74,6 +77,7 @@ from .analysis_helpers import describe_x86_16_interrupt_lowering_boundary  # noq
 from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
 from .recovery_manifest import describe_x86_16_recovery_layers  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
+from .readability_goals import describe_x86_16_readability_goals  # noqa: F401
 from .validation_manifest import describe_x86_16_martypc_differential_triage  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
