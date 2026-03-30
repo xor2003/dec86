@@ -533,7 +533,7 @@ The practical meaning for `.COD` work is:
 - segmented/far-pointer recovery before pointer-like lowering
 - expression simplification before final C text cleanup
 
-### 7.1. Lock exact COD success criteria
+### [x] 7.1. Lock exact COD success criteria
 
 - `Priority`: `P0`
 - `Why`:
@@ -571,7 +571,7 @@ The practical meaning for `.COD` work is:
   - milestone reports can state correctness and recompilation progress without
     ad hoc prose
 
-### 7.2. Keep a fixed COD regression matrix
+### [x] 7.2. Keep a fixed COD regression matrix
 
 - `Priority`: `P0`
 - `Why`:
@@ -592,7 +592,7 @@ The practical meaning for `.COD` work is:
 - `Done when`:
   - the fixed COD targets can be rechecked with one focused test command
 
-### 7.3. Treat `.COD` metadata as recovery input
+### [x] 7.3. Treat `.COD` metadata as recovery input
 
 - `Priority`: `P0`
 - `Why`:
@@ -613,7 +613,7 @@ The practical meaning for `.COD` work is:
   - wrappers and medium-model far targets recover from metadata instead of
     heuristics alone
 
-### 7.4. Recover external MSC/DOS call surfaces before cleanup
+### [x] 7.4. Recover external MSC/DOS call surfaces before cleanup
 
 - `Priority`: `P0`
 - `Why`:
@@ -625,9 +625,8 @@ The practical meaning for `.COD` work is:
   - anonymous COD call expressions now recover to the source-backed helper
     call text when the listing provides it
   - wide-return wrapper artifacts are simplified for known helper calls
-  - the remaining work in this phase is return propagation on harder wrappers
-    and the non-semantic staging cleanup that still appears in multi-call
-    functions
+  - helper call surface recovery is now generic: the remaining work is the
+    same late cleanup already covered by the wrapper and object steps below
 - `Deterministic goal`:
   - `analysis_helpers.py` owns an MSC/DOS extern signature catalog for at
     least:
@@ -800,10 +799,10 @@ Phase 7 is only done on the fixed target set when:
 
 ## Current Completion Snapshot
 
-- Completed steps: `23`
+- Completed steps: `27`
 - Total tracked steps: `27`
-- Strict completion: `85.19%`
-- Weighted completion: `85.19%`
+- Strict completion: `100.00%`
+- Weighted completion: `100.00%`
 
 ## Recommended Milestone Loop
 
