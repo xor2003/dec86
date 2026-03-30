@@ -24,7 +24,11 @@ from .correctness_goals import describe_x86_16_correctness_goals, summarize_x86_
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .instruction import describe_x86_16_instruction_metadata_surface
 from .martypc_progress import describe_x86_16_martypc_improvement_progress, summarize_x86_16_martypc_improvement_progress
-from .readability_goals import describe_x86_16_readability_goals, summarize_readability_goals
+from .readability_goals import (
+    describe_x86_16_readability_goals,
+    summarize_readability_focus,
+    summarize_readability_goals,
+)
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import (
@@ -72,6 +76,7 @@ def _build_corpus_completion_surface(
     top_ugly_clusters: list[dict[str, object]],
     readability_clusters: list[dict[str, object]],
     family_ownership: Mapping[str, object],
+    readability_focus: Mapping[str, object],
 ) -> dict[str, object]:
     scanned = int(scan_summary.get("scanned", 0) or 0)
     failed = int(scan_summary.get("failed", 0) or 0)
@@ -110,6 +115,42 @@ def _build_corpus_completion_surface(
             "top_fallback_functions": top_fallback_functions,
         },
         "readability_backlog": {
+            "top_ugly_clusters": top_ugly_clusters,
+            "readability_clusters": readability_clusters,
+            "family_ownership": family_ownership,
+        },
+        "readability_focus": {
+            "goal_queue": [
+                {
+                    "step": item["step"],
+                    "title": item["title"],
+                    "priority": item["priority"],
+                    "deterministic_goal": item["deterministic_goal"],
+                    "target_clusters": list(item["target_clusters"]),
+                    "owner_surfaces": list(item["owner_surfaces"]),
+                    "completion_signal": item["completion_signal"],
+                    "observed_cluster_count": item["observed_cluster_count"],
+                    "observed_family_count": item["observed_family_count"],
+                    "rank": item["rank"],
+                    "is_next_focus": item["is_next_focus"],
+                }
+                for item in readability_focus["goal_queue"]
+            ],
+            "next_goal": None
+            if readability_focus.get("next_goal") is None
+            else {
+                "step": readability_focus["next_goal"]["step"],
+                "title": readability_focus["next_goal"]["title"],
+                "priority": readability_focus["next_goal"]["priority"],
+                "deterministic_goal": readability_focus["next_goal"]["deterministic_goal"],
+                "target_clusters": list(readability_focus["next_goal"]["target_clusters"]),
+                "owner_surfaces": list(readability_focus["next_goal"]["owner_surfaces"]),
+                "completion_signal": readability_focus["next_goal"]["completion_signal"],
+                "observed_cluster_count": readability_focus["next_goal"]["observed_cluster_count"],
+                "observed_family_count": readability_focus["next_goal"]["observed_family_count"],
+                "rank": readability_focus["next_goal"]["rank"],
+                "is_next_focus": readability_focus["next_goal"]["is_next_focus"],
+            },
             "top_ugly_clusters": top_ugly_clusters,
             "readability_clusters": readability_clusters,
             "family_ownership": family_ownership,
@@ -169,6 +210,7 @@ def build_x86_16_milestone_report(
     source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
     correctness_goal_summary = summarize_x86_16_correctness_goals()
     martypc_progress_summary = summarize_x86_16_martypc_improvement_progress()
+    readability_focus = summarize_readability_focus(top_ugly_clusters, readability_clusters, family_ownership)
     corpus_completion = _build_corpus_completion_surface(
         scan_summary,
         readability_tiers=readability_tier_counts,
@@ -177,6 +219,7 @@ def build_x86_16_milestone_report(
         top_ugly_clusters=top_ugly_clusters,
         readability_clusters=readability_clusters,
         family_ownership=family_ownership,
+        readability_focus=readability_focus,
     )
     readability_goal_summary = summarize_readability_goals(top_ugly_clusters, readability_clusters, family_ownership)
 
@@ -294,6 +337,42 @@ def build_x86_16_milestone_report(
             }
             for item in readability_goal_summary
         ],
+        "readability_goal_queue": [
+            {
+                "step": item["step"],
+                "title": item["title"],
+                "priority": item["priority"],
+                "deterministic_goal": item["deterministic_goal"],
+                "target_clusters": list(item["target_clusters"]),
+                "owner_surfaces": list(item["owner_surfaces"]),
+                "completion_signal": item["completion_signal"],
+                "observed_cluster_count": item["observed_cluster_count"],
+                "observed_family_count": item["observed_family_count"],
+                "rank": item["rank"],
+                "is_next_focus": item["is_next_focus"],
+            }
+            for item in readability_focus["goal_queue"]
+        ],
+        "readability_focus": {
+            "next_goal": None
+            if readability_focus.get("next_goal") is None
+            else {
+                "step": readability_focus["next_goal"]["step"],
+                "title": readability_focus["next_goal"]["title"],
+                "priority": readability_focus["next_goal"]["priority"],
+                "deterministic_goal": readability_focus["next_goal"]["deterministic_goal"],
+                "target_clusters": list(readability_focus["next_goal"]["target_clusters"]),
+                "owner_surfaces": list(readability_focus["next_goal"]["owner_surfaces"]),
+                "completion_signal": readability_focus["next_goal"]["completion_signal"],
+                "observed_cluster_count": readability_focus["next_goal"]["observed_cluster_count"],
+                "observed_family_count": readability_focus["next_goal"]["observed_family_count"],
+                "rank": readability_focus["next_goal"]["rank"],
+                "is_next_focus": readability_focus["next_goal"]["is_next_focus"],
+            },
+            "top_ugly_clusters": top_ugly_clusters,
+            "readability_clusters": readability_clusters,
+            "family_ownership": family_ownership,
+        },
         "hotspots": {
             "failure_counts": failure_counts,
             "fallback_counts": fallback_counts,

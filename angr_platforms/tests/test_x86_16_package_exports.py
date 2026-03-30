@@ -47,6 +47,8 @@ def test_x86_16_package_exports_source_backends():
     assert "validation_manifest" in x8616.__all__
     assert "readability_set" in x8616.__all__
     assert "readability_goals" in x8616.__all__
+    assert "rank_readability_goal_queue" in x8616.__all__
+    assert "summarize_readability_focus" in x8616.__all__
     assert "correctness_goals" in x8616.__all__
     assert "martypc_progress" in x8616.__all__
     assert "milestone_report" in x8616.__all__

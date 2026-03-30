@@ -202,6 +202,46 @@ def summarize_readability_goals(
     return tuple(summaries)
 
 
+def rank_readability_goal_queue(
+    goal_summary: tuple[dict[str, object], ...] | list[dict[str, object]],
+) -> tuple[dict[str, object], ...]:
+    ordered = sorted(
+        goal_summary,
+        key=lambda item: (
+            -int(item.get("observed_cluster_count", 0) or 0),
+            -int(item.get("observed_family_count", 0) or 0),
+            str(item.get("step", "")),
+        ),
+    )
+    queue: list[dict[str, object]] = []
+    for rank, item in enumerate(ordered, start=1):
+        queue.append(
+            {
+                **item,
+                "rank": rank,
+                "is_next_focus": rank == 1,
+            }
+        )
+    return tuple(queue)
+
+
+def summarize_readability_focus(
+    top_ugly_clusters: list[dict[str, object]],
+    readability_clusters: list[dict[str, object]],
+    family_ownership: Mapping[str, object],
+) -> dict[str, object]:
+    goal_summary = summarize_readability_goals(top_ugly_clusters, readability_clusters, family_ownership)
+    goal_queue = rank_readability_goal_queue(goal_summary)
+    next_goal = goal_queue[0] if goal_queue else None
+    return {
+        "goal_queue": goal_queue,
+        "next_goal": next_goal,
+        "top_ugly_clusters": tuple(top_ugly_clusters),
+        "readability_clusters": tuple(readability_clusters),
+        "family_ownership": dict(family_ownership),
+    }
+
+
 __all__ = [
     "READABILITY_CLUSTER_SPECS",
     "READABILITY_GOALS",
@@ -209,5 +249,7 @@ __all__ = [
     "ReadabilityGoalSpec",
     "classify_readability_cluster",
     "describe_x86_16_readability_goals",
+    "rank_readability_goal_queue",
+    "summarize_readability_focus",
     "summarize_readability_goals",
 ]

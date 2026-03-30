@@ -295,7 +295,7 @@ backlog.
 
 This phase is about moving more of the corpus from "alive" to "useful".
 
-### 4.1. Fix the top ugly clusters, not isolated outputs
+### [x] 4.1. Fix the top ugly clusters, not isolated outputs
 
 - `Priority`: `P1`
 - `Why`:
@@ -507,10 +507,10 @@ continues.
 
 ## Current Completion Snapshot
 
-- Completed steps: `16`
+- Completed steps: `17`
 - Total tracked steps: `19`
-- Strict completion: `84.21%`
-- Weighted completion: `84.21%`
+- Strict completion: `89.47%`
+- Weighted completion: `89.47%`
 
 ## Recommended Milestone Loop
 

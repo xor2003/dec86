@@ -1,6 +1,8 @@
 from angr_platforms.X86_16.readability_goals import (
     classify_readability_cluster,
     describe_x86_16_readability_goals,
+    rank_readability_goal_queue,
+    summarize_readability_focus,
     summarize_readability_goals,
 )
 
@@ -44,3 +46,34 @@ def test_x86_16_readability_goal_summary_counts_targets():
     assert summary[0]["observed_family_count"] == 3
     assert summary[1]["observed_cluster_count"] == 7
     assert summary[2]["observed_cluster_count"] == 4
+
+
+def test_x86_16_readability_goal_queue_prioritizes_hot_clusters():
+    summary = summarize_readability_goals(
+        [{"cluster": "byte_pair_arithmetic", "count": 1}],
+        [
+            {"cluster": "byte_pair_arithmetic", "count": 3},
+            {"cluster": "boolean_noise", "count": 2},
+            {"cluster": "fake_locals_and_stack_noise", "count": 4},
+        ],
+        {"top_ugly_clusters": [{"family": "alias_widening", "cluster": "byte_pair_arithmetic", "count": 3}]},
+    )
+
+    queue = rank_readability_goal_queue(summary)
+
+    assert [item["step"] for item in queue] == ["4.1", "4.2", "4.3"]
+    assert queue[0]["is_next_focus"] is True
+    assert queue[0]["observed_cluster_count"] == 9
+    assert queue[1]["observed_cluster_count"] == 7
+
+
+def test_x86_16_readability_focus_surface_keeps_queue_and_clusters():
+    focus = summarize_readability_focus(
+        [{"cluster": "byte_pair_arithmetic", "count": 1}],
+        [{"cluster": "boolean_noise", "count": 2}],
+        {"top_ugly_clusters": [{"family": "alias_widening", "cluster": "byte_pair_arithmetic", "count": 3}]},
+    )
+
+    assert focus["next_goal"]["step"] == "4.1"
+    assert focus["goal_queue"][0]["rank"] == 1
+    assert focus["top_ugly_clusters"][0]["cluster"] == "byte_pair_arithmetic"

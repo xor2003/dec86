@@ -34,6 +34,8 @@ __all__ = [
     "describe_x86_16_mixed_width_instruction_surface",
     "describe_x86_16_projection_cleanup_rules",
     "describe_x86_16_readability_goals",
+    "rank_readability_goal_queue",
+    "summarize_readability_focus",
     "describe_x86_16_correctness_goals",
     "describe_x86_16_martypc_improvement_progress",
     "describe_x86_16_martypc_differential_triage",
@@ -83,7 +85,7 @@ from .analysis_helpers import describe_x86_16_interrupt_lowering_boundary  # noq
 from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
 from .recovery_manifest import describe_x86_16_recovery_layers  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
-from .readability_goals import describe_x86_16_readability_goals  # noqa: F401
+from .readability_goals import describe_x86_16_readability_goals, rank_readability_goal_queue, summarize_readability_focus  # noqa: F401
 from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
 from .martypc_progress import describe_x86_16_martypc_improvement_progress  # noqa: F401
 from .validation_manifest import describe_x86_16_martypc_differential_triage  # noqa: F401
