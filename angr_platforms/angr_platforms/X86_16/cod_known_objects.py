@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from collections import OrderedDict
+
+from angr.sim_type import SimStruct, SimUnion, SimTypeChar, SimTypeShort
+
+
+@dataclass(frozen=True)
+class CODKnownObjectSpec:
+    name: str
+    type: object
+    size: int
+    field_names: tuple[str, ...]
+
+
+def _make_union_regs_type():
+    word = SimTypeShort(False)
+    byte = SimTypeChar()
+
+    x_fields = OrderedDict(
+        (
+            ("ax", word),
+            ("bx", word),
+            ("cx", word),
+            ("dx", word),
+            ("si", word),
+            ("di", word),
+            ("cflag", word),
+        )
+    )
+    h_fields = OrderedDict(
+        (
+            ("al", byte),
+            ("ah", byte),
+            ("bl", byte),
+            ("bh", byte),
+            ("cl", byte),
+            ("ch", byte),
+            ("dl", byte),
+            ("dh", byte),
+        )
+    )
+    return SimUnion(
+        {
+            "x": SimStruct(x_fields, name="x", pack=True),
+            "h": SimStruct(h_fields, name="h", pack=True),
+        },
+        name="union REGS",
+    )
+
+
+def _make_sregs_type():
+    word = SimTypeShort(False)
+    return SimStruct(
+        OrderedDict(
+            (
+                ("es", word),
+                ("cs", word),
+                ("ss", word),
+                ("ds", word),
+            )
+        ),
+        name="struct SREGS",
+        pack=True,
+    )
+
+
+def _make_exe_load_params_type():
+    word = SimTypeShort(False)
+    fields = OrderedDict(
+        (
+            ("envSegment", word),
+            ("cmdlineOffset", word),
+            ("cmdlineSegment", word),
+            ("fcb1Offset", word),
+            ("fcb1Segment", word),
+            ("fcb2Offset", word),
+            ("fcb2Segment", word),
+            ("sp", word),
+            ("ss", word),
+            ("ip", word),
+            ("cs", word),
+        )
+    )
+    return SimStruct(fields, name="struct ExeLoadParams", pack=True)
+
+
+def _make_ovl_load_params_type():
+    word = SimTypeShort(False)
+    return SimStruct(
+        OrderedDict((("segment", word), ("reloc", word))),
+        name="struct OvlLoadParams",
+        pack=True,
+    )
+
+
+_KNOWN_COD_OBJECT_SPECS: dict[str, CODKnownObjectSpec] = {
+    "rin": CODKnownObjectSpec("rin", _make_union_regs_type(), 14, ("x", "h")),
+    "rout": CODKnownObjectSpec("rout", _make_union_regs_type(), 14, ("x", "h")),
+    "sreg": CODKnownObjectSpec("sreg", _make_sregs_type(), 8, ("es", "cs", "ss", "ds")),
+    "exeLoadParams": CODKnownObjectSpec(
+        "exeLoadParams",
+        _make_exe_load_params_type(),
+        22,
+        (
+            "envSegment",
+            "cmdlineOffset",
+            "cmdlineSegment",
+            "fcb1Offset",
+            "fcb1Segment",
+            "fcb2Offset",
+            "fcb2Segment",
+            "sp",
+            "ss",
+            "ip",
+            "cs",
+        ),
+    ),
+    "ovlLoadParams": CODKnownObjectSpec(
+        "ovlLoadParams",
+        _make_ovl_load_params_type(),
+        4,
+        ("segment", "reloc"),
+    ),
+}
+
+
+def _sanitize_known_object_name(name: str | None) -> str | None:
+    if not isinstance(name, str) or not name:
+        return None
+    name = name.lstrip("_")
+    if name.startswith("$") and "_" in name:
+        name = name.rsplit("_", 1)[-1]
+    return name
+
+
+def known_cod_object_spec(name: str | None) -> CODKnownObjectSpec | None:
+    sanitized = _sanitize_known_object_name(name)
+    if sanitized is None:
+        return None
+    return _KNOWN_COD_OBJECT_SPECS.get(sanitized)
+
+
+def known_cod_object_names() -> tuple[str, ...]:
+    return tuple(_KNOWN_COD_OBJECT_SPECS)
+
+
+def describe_x86_16_cod_known_objects() -> dict[str, object]:
+    return {
+        "count": len(_KNOWN_COD_OBJECT_SPECS),
+        "names": known_cod_object_names(),
+        "specs": tuple(
+            {
+                "name": spec.name,
+                "size": spec.size,
+                "field_names": spec.field_names,
+                "type": spec.type,
+            }
+            for spec in _KNOWN_COD_OBJECT_SPECS.values()
+        ),
+    }

@@ -654,7 +654,7 @@ The practical meaning for `.COD` work is:
   - `_dos_loadOverlay`, `_dos_getfree`, and `_dos_getReturnCode` stop dropping
     return semantics and stop degrading into raw numeric helper calls
 
-### 7.5. Recover known COD objects through alias and types
+### [x] 7.5. Recover known COD objects through alias and types
 
 - `Priority`: `P0`
 - `Why`:
@@ -675,6 +675,11 @@ The practical meaning for `.COD` work is:
     - forbidden joins across segments or across clobbers
   - `cod_type_recovery.py` lowers stable object views to field syntax only
     after alias and widening facts are stable
+- `Current implementation note`:
+  - `cod_known_objects.py` now defines the shared COD object catalog
+  - COD-mode annotations attach those object types before decompilation
+  - generic source-backed rewrites now use the known-object catalog rather
+    than per-function rescue paths
 - `Done when`:
   - outputs move from:
     - `rin = 72;`
@@ -704,7 +709,7 @@ The practical meaning for `.COD` work is:
 - `Done when`:
   - `_bios_clearkeyflags` stops decompiling as two anonymous byte stores
 
-### 7.7. Remove non-semantic wrapper stack noise
+### [x] 7.7. Remove non-semantic wrapper stack noise
 
 - `Priority`: `P1`
 - `Why`:
@@ -724,9 +729,10 @@ The practical meaning for `.COD` work is:
     - `s_6 = path;`
 - `Current implementation note`:
   - the one-call forwarding wrapper shape is now cleaned up generically for
-    `_openFileWrapper`, and the remaining work is to apply the same
-    conservative staging-slot cleanup to other wrappers once return
-    propagation is stable
+    `_openFileWrapper` and `_dos_loadOverlay`
+  - the remaining work in this area is to apply the same conservative
+    staging-slot cleanup to any additional wrappers that still expose
+    stack-noise after call/return recovery
 - `Done when`:
   - `_openFileWrapper`, `_dos_loadOverlay`, and similar wrappers decompile as
     direct forwarding calls
@@ -785,10 +791,10 @@ Phase 7 is only done on the fixed target set when:
 
 ## Current Completion Snapshot
 
-- Completed steps: `19`
+- Completed steps: `21`
 - Total tracked steps: `27`
-- Strict completion: `70.37%`
-- Weighted completion: `70.37%`
+- Strict completion: `77.78%`
+- Weighted completion: `77.78%`
 
 ## Recommended Milestone Loop
 

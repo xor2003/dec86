@@ -13,6 +13,7 @@ __all__ = [
     "cod_source_rewrite_summary",
     "describe_x86_16_source_backed_rewrite_status",
     "describe_x86_16_source_backed_rewrite_debt",
+    "describe_x86_16_cod_known_objects",
     "apply_x86_16_compatibility",
     "stack_compat",
     "apply_x86_16_stack_compatibility",
@@ -91,6 +92,7 @@ from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
 from .martypc_progress import describe_x86_16_martypc_improvement_progress  # noqa: F401
 from .validation_manifest import describe_x86_16_martypc_differential_triage  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
+from .cod_known_objects import describe_x86_16_cod_known_objects  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,
     apply_cod_source_rewrites,

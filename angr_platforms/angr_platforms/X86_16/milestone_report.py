@@ -20,6 +20,7 @@ from .cod_source_rewrites import (
     describe_x86_16_source_backed_rewrite_debt,
     describe_x86_16_source_backed_rewrite_status,
 )
+from .cod_known_objects import describe_x86_16_cod_known_objects
 from .correctness_goals import describe_x86_16_correctness_goals, summarize_x86_16_correctness_goals
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .instruction import describe_x86_16_instruction_metadata_surface
@@ -210,6 +211,7 @@ def build_x86_16_milestone_report(
         readability_tier_counts[_readability_tier(result, golden_cases)] += 1
     source_backed_rewrites = describe_x86_16_source_backed_rewrite_status()
     source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
+    cod_known_objects = describe_x86_16_cod_known_objects()
     correctness_goal_summary = summarize_x86_16_correctness_goals()
     martypc_progress_summary = summarize_x86_16_martypc_improvement_progress()
     readability_focus = summarize_readability_focus(top_ugly_clusters, readability_clusters, family_ownership)
@@ -395,6 +397,7 @@ def build_x86_16_milestone_report(
         },
         "source_backed_rewrites": source_backed_rewrites,
         "source_backed_rewrite_debt": source_backed_rewrite_debt,
+        "cod_known_objects": cod_known_objects,
         "corpus_completion": corpus_completion,
     }
     return report

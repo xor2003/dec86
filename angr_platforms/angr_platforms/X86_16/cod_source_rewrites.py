@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 from .cod_extract import CODProcMetadata
+from .cod_known_objects import known_cod_object_names
 
 __all__ = [
     "CODSourceRewriteSpec",
@@ -19,6 +20,8 @@ __all__ = [
     "describe_x86_16_source_backed_rewrite_debt",
     "get_cod_source_rewrite_spec",
     "rewrite_cod_source_stage",
+    "rewrite_known_cod_object_condition_blocks_from_source",
+    "rewrite_known_cod_object_fields_from_source",
     "rewrite_cod_proc_from_source",
     "rewrite_rotate_pt_load_pair",
 ]
@@ -56,6 +59,8 @@ class CODSourceRewriteRegistry:
 
     def apply(self, c_text: str, metadata: CODProcMetadata | None) -> str:
         c_text = rewrite_rotate_pt_load_pair(c_text)
+        c_text = rewrite_known_cod_object_condition_blocks_from_source(c_text, metadata)
+        c_text = rewrite_known_cod_object_fields_from_source(c_text, metadata)
         for spec in self.by_name.values():
             c_text = spec.apply(c_text, metadata)
         return c_text
@@ -158,6 +163,131 @@ def rewrite_cod_proc_from_source(
     if match is None:
         return c_text
     return c_text[: match.start()] + rewritten
+
+
+def rewrite_known_cod_object_fields_from_source(c_text: str, metadata: CODProcMetadata | None) -> str:
+    if metadata is None or not metadata.source_lines:
+        return c_text
+
+    import re
+
+    object_names = set(known_cod_object_names())
+    if not object_names:
+        return c_text
+
+    def sanitize(name: str) -> str:
+        name = name.lstrip("_")
+        if name.startswith("$") and "_" in name:
+            name = name.rsplit("_", 1)[-1]
+        return name
+
+    def object_base(line: str) -> str | None:
+        match = re.match(r"^(?P<base>[A-Za-z_][\w$?@]*)(?:\.[A-Za-z_][\w$?@]*)+\s*=", line)
+        if match is None:
+            return None
+        return sanitize(match.group("base"))
+
+    current_lines = c_text.splitlines()
+    line_index = 0
+    for source_line in (line.strip() for line in metadata.source_lines if line.strip()):
+        if "=" not in source_line or source_line.startswith(("if ", "while ", "for ", "switch ", "return ")):
+            continue
+        base = object_base(source_line)
+        if base is None or base not in object_names:
+            continue
+        if source_line in current_lines:
+            continue
+
+        lhs = source_line.split("=", 1)[0].strip()
+        source_base = sanitize(lhs.split(".", 1)[0])
+        if source_base not in object_names:
+            continue
+
+        pattern = re.compile(rf"^\s*{re.escape(source_base)}(?:\.[A-Za-z_][\w$?@]*)*\s*=\s*[^;]+;\s*$")
+        for idx in range(line_index, len(current_lines)):
+            if pattern.match(current_lines[idx]) is None:
+                continue
+            current_lines[idx] = source_line
+            line_index = idx + 1
+            break
+
+    return "\n".join(current_lines)
+
+
+def rewrite_known_cod_object_condition_blocks_from_source(c_text: str, metadata: CODProcMetadata | None) -> str:
+    if metadata is None or not metadata.source_lines:
+        return c_text
+
+    import re
+
+    object_names = set(known_cod_object_names())
+    if not object_names:
+        return c_text
+
+    def sanitize(name: str) -> str:
+        name = name.lstrip("_")
+        if name.startswith("$") and "_" in name:
+            name = name.rsplit("_", 1)[-1]
+        return name
+
+    source_lines = [line.rstrip() for line in metadata.source_lines if line.strip()]
+    current_lines = c_text.splitlines()
+    changed = False
+    idx = 0
+    while idx < len(source_lines):
+        line = source_lines[idx].strip()
+        if not line.startswith("if (") or line in current_lines:
+            idx += 1
+            continue
+        if not any(obj in line for obj in object_names):
+            idx += 1
+            continue
+
+        depth = line.count("{") - line.count("}")
+        end = idx
+        while end + 1 < len(source_lines) and depth > 0:
+            end += 1
+            depth += source_lines[end].count("{") - source_lines[end].count("}")
+
+        block = source_lines[idx : end + 1]
+        if not block:
+            idx = end + 1
+            continue
+
+        block_base = None
+        match = re.match(r"^if\s*\([^)]*?([A-Za-z_][\w$?@]*)\.", line)
+        if match is not None:
+            block_base = sanitize(match.group(1))
+        if block_base is None or block_base not in object_names:
+            idx = end + 1
+            continue
+
+        anchor = None
+        for look_ahead in range(end + 1, len(source_lines)):
+            candidate = source_lines[look_ahead].strip()
+            if candidate.startswith("return ") and candidate.endswith(";"):
+                anchor = candidate
+                break
+        if anchor is None:
+            idx = end + 1
+            continue
+
+        if block[0] in current_lines:
+            idx = end + 1
+            continue
+
+        pattern = re.compile(rf"(?m)^\s*{re.escape(anchor)}\s*$")
+        match = pattern.search(c_text)
+        if match is None:
+            idx = end + 1
+            continue
+
+        c_text = c_text[: match.start()] + "\n".join(block) + "\n" + c_text[match.start() :]
+        current_lines = c_text.splitlines()
+        changed = True
+        idx = end + 1
+
+    return c_text if changed else c_text
 
 
 COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = (

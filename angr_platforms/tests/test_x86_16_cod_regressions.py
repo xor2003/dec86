@@ -83,7 +83,6 @@ def test_cod_biosfunc_clearkeyflags_far_word_store():
     _assert_has_none(result.stdout, ("*((char *)(es * 16 + 1047))", "*((char *)(es * 16 + 1048))"))
 
 
-@pytest.mark.xfail(strict=True, reason="typed REGS/SREGS object recovery is not landed yet")
 def test_cod_dos_getfree_call_and_return_recovered():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_getfree")
 
@@ -109,7 +108,34 @@ def test_cod_dos_getfree_call_and_return_recovered():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="wrapper return propagation is not landed yet")
+def test_cod_known_object_catalog_is_exposed():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import angr_platforms.X86_16 as x; "
+            "print(x.describe_x86_16_cod_known_objects()['names'])",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    _assert_has_all(
+        result.stdout,
+        (
+            "rin",
+            "rout",
+            "sreg",
+            "exeLoadParams",
+            "ovlLoadParams",
+        ),
+    )
+
+
 def test_cod_dos_loadoverlay_wrapper_returns_loadprog():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_loadOverlay")
 
@@ -123,7 +149,13 @@ def test_cod_dos_loadoverlay_wrapper_returns_loadprog():
             "segment",
         ),
     )
-    assert "return loadprog(file, segment, 3, 0);" in result.stdout
+    assert any(
+        anchor in result.stdout
+        for anchor in (
+            "return loadprog(file, segment, DOS_LOAD_OVL, NULL);",
+            "return loadprog(file, segment, 3, 0);",
+        )
+    )
     _assert_has_none(
         result.stdout,
         (
