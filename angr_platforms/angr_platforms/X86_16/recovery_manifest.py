@@ -44,6 +44,7 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
         name="stable_global_object_recovery",
         purpose="Keep global typing and object recovery width-stable and evidence-driven.",
         helpers=(
+            "apply_x86_16_metadata_annotations",
             "annotate_global_variable",
             "_apply_word_global_types_8616",
             "_coalesce_word_global_loads_8616",
@@ -64,6 +65,7 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
         name="segment_aware_object_roots",
         purpose="Keep object roots tied to explicit real-mode segment association.",
         helpers=(
+            "apply_x86_16_metadata_annotations",
             "_match_real_mode_linear_expr",
             "_match_segmented_dereference",
             "_match_segment_register_based_dereference",
@@ -95,6 +97,16 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
             "extend_cfg_for_far_calls",
             "seed_calling_conventions",
             "describe_x86_16_decompiler_return_compatibility",
+        ),
+    ),
+    RecoveryLayerSpec(
+        name="wrapper_and_return_recovery",
+        purpose="Keep wrapper lowering, return propagation, and helper recovery generic before final cleanup.",
+        helpers=(
+            "_attach_dos_pseudo_callees",
+            "_attach_interrupt_wrapper_callees",
+            "_lower_interrupt_wrapper_result_reads",
+            "describe_x86_16_interrupt_api_surface",
         ),
     ),
     RecoveryLayerSpec(

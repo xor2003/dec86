@@ -564,6 +564,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "trait_to_type_handoff",
         "prototype_evidence_layer",
         "far_near_prototype_recovery",
+        "wrapper_and_return_recovery",
         "thin_late_rewrite_boundary",
     ]
     assert [item["name"] for item in report["object_recovery_focus"]] == [
