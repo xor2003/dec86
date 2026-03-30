@@ -153,6 +153,12 @@ def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | N
     return metadata.data_labels.get(offset)
 
 
+def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: int | None) -> str | None:
+    if metadata is None or addr is None or code_base is None:
+        return None
+    return metadata.code_labels.get(addr - code_base)
+
+
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
     suffix = path.suffix.lower()
 
@@ -276,7 +282,14 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
     return cfg, function
 
 
-def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, window: int):
+def _recover_cfg(
+    project: angr.Project,
+    binary_path: Path,
+    *,
+    base_addr: int,
+    window: int,
+    low_memory: bool = False,
+):
     print(f"[dbg] recover_cfg: entry={hex(project.entry)} base_addr={hex(base_addr)} window={hex(window)} binary={binary_path}")
     sys.stdout.flush()
     if binary_path.suffix.lower() == ".com":
@@ -287,6 +300,7 @@ def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, wi
             regions=regions,
             normalize=True,
             force_complete_scan=False,
+            data_references=not low_memory,
         )
     else:
         print("[dbg] calling CFGFast (non-COM path)")
@@ -294,6 +308,7 @@ def _recover_cfg(project: angr.Project, binary_path: Path, *, base_addr: int, wi
         cfg = project.analyses.CFGFast(
             normalize=True,
             force_complete_scan=False,
+            data_references=not low_memory,
         )
         print("[dbg] CFGFast returned")
         sys.stdout.flush()
@@ -371,7 +386,7 @@ def _function_skip_reason(function):
     return None
 
 
-def _interesting_functions(cfg, *, limit: int):
+def _interesting_functions(cfg, *, limit: int | None):
     functions = []
     skipped = 0
     for function in sorted(cfg.functions.values(), key=lambda function: function.addr):
@@ -383,7 +398,10 @@ def _interesting_functions(cfg, *, limit: int):
             skipped += 1
             continue
         functions.append(function)
-    return functions[:limit], len(functions) + skipped
+    total = len(functions) + skipped
+    if limit is not None and limit > 0:
+        functions = functions[:limit]
+    return functions, total
 
 
 def _decompile_function(
@@ -6122,6 +6140,42 @@ def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int
         signal.signal(signal.SIGALRM, old_handler)
 
 
+def _recover_functions_from_lst_metadata(
+    project: angr.Project,
+    lst_metadata: LSTMetadata,
+    *,
+    timeout: int,
+    window: int,
+    limit: int | None = None,
+    low_memory: bool = False,
+):
+    code_base = project.entry
+    labeled_offsets = sorted(lst_metadata.code_labels.items())
+    if limit is not None and limit > 0:
+        labeled_offsets = labeled_offsets[:limit]
+
+    recovered: list[tuple[object, object]] = []
+    for offset, name in labeled_offsets:
+        addr = code_base + offset
+        old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+        signal.alarm(max(1, timeout))
+        try:
+            if project.arch.name == "86_16":
+                candidate_window = min(window, 0x80 if low_memory else window)
+                regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
+            else:
+                regions = [(addr, addr + window)]
+
+            cfg, func = _pick_function(project, addr, regions=regions)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+        func.name = name
+        recovered.append((cfg, func))
+
+    return recovered
+
+
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
@@ -6203,8 +6257,8 @@ def main() -> int:
     parser.add_argument(
         "--max-functions",
         type=int,
-        default=32,
-        help="Maximum number of recovered functions to print when decompiling a whole binary. Defaults to 32.",
+        default=0,
+        help="Maximum number of recovered functions to print when decompiling a whole binary. Defaults to 0 (all functions).",
     )
     parser.add_argument(
         "--api-style",
@@ -6317,123 +6371,68 @@ def main() -> int:
         return 0
 
     print("/* recovering functions... */", flush=True)
+    cfg = None
+    functions_with_cfg: list[tuple[object, object]] = []
     if low_memory_path:
-        print("/* Low-memory mode: recovering only the entry function first. */")
+        print("/* Low-memory mode: using conservative catalog recovery. */")
+    if lst_metadata is not None and lst_metadata.code_labels:
         try:
-            cfg, func = _fallback_entry_function(
+            functions_with_cfg = _recover_functions_from_lst_metadata(
                 project,
+                lst_metadata,
                 timeout=args.timeout,
                 window=args.window,
-                low_memory=True,
+                limit=args.max_functions if args.max_functions > 0 else None,
+                low_memory=low_memory_path,
             )
-        except _AnalysisTimeout:
-            print("/* Entry-function recovery timed out in low-memory mode. */")
-            print("/* Tip: try a larger --timeout or decompile a specific function with --addr. */")
-            return 3
         except Exception as ex:
-            print(f"/* Entry-function recovery failed: {ex} */")
+            print(f"/* Listing-backed function recovery failed: {ex} */")
             print("\n/* == entry asm == */")
             print(_format_first_block_asm(project, project.entry))
             return 5
-
-        print(f"/* binary: {args.binary} */")
-        print(f"/* arch: {project.arch.name} */")
-        print(f"/* entry: {project.entry:#x} */")
-        print(f"/* fallback function: {func.addr:#x} {func.name} */")
-        status, payload, *_ = _decompile_function_with_stats(
-            project,
-            cfg,
-            func,
-            args.timeout,
-            args.api_style,
-            args.binary,
-            lst_metadata=lst_metadata,
-        )
-        if status != "ok":
-            print(f"\n/* Decompilation {status}: {payload} */")
-            print("\n/* == asm fallback == */")
-            print(_format_first_block_asm(project, func.addr))
-            return 6 if status == "error" else 4
-
-        print("\n/* == c == */")
-        print(payload)
-        return 0
-
-    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(args.timeout)
-    try:
-        cfg = _recover_cfg(project, args.binary, base_addr=args.base_addr, window=args.window)
-    except _AnalysisTimeout:
-        print(f"/* Timed out while recovering functions after {args.timeout}s. */")
-        print("/* Trying bounded entry-function recovery instead... */")
+    else:
         try:
-            cfg, func = _fallback_entry_function(
+            cfg = _recover_cfg(
                 project,
-                timeout=args.timeout,
+                args.binary,
+                base_addr=args.base_addr,
                 window=args.window,
                 low_memory=low_memory_path,
             )
-        except _AnalysisTimeout:
-            print("/* Bounded entry-function recovery also timed out. */")
-            print("/* Tip: try a larger --timeout or decompile a specific function with --addr. */")
-            return 3
         except Exception as ex:
-            print(f"/* Bounded entry-function recovery failed: {ex} */")
+            print(f"/* Function catalog recovery failed: {ex} */")
             print("\n/* == entry asm == */")
             print(_format_first_block_asm(project, project.entry))
             return 5
 
-        print(f"/* binary: {args.binary} */")
-        print(f"/* arch: {project.arch.name} */")
-        print(f"/* entry: {project.entry:#x} */")
-        print(f"/* fallback function: {func.addr:#x} {func.name} */")
-        status, payload, *_ = _decompile_function_with_stats(
-            project,
-            cfg,
-            func,
-            args.timeout,
-            args.api_style,
-            args.binary,
-            lst_metadata=lst_metadata,
-        )
-        if status != "ok":
-            print(f"\n/* Decompilation {status}: {payload} */")
-            print("\n/* == asm fallback == */")
-            print(_format_first_block_asm(project, func.addr))
-            return 6 if status == "error" else 4
+    if cfg is not None:
+        if function_label is not None and project.entry in cfg.functions:
+            cfg.functions[project.entry].name = function_label
+        elif lst_metadata is not None:
+            for addr, func in cfg.functions.items():
+                code_name = _lst_code_label(lst_metadata, addr, project.entry)
+                if code_name is not None:
+                    func.name = code_name
 
-        print("\n/* == c == */")
-        print(payload)
-        return 0
-    except Exception as ex:
-        print(f"/* Function catalog recovery failed: {ex} */")
-        print("\n/* == entry asm == */")
-        print(_format_first_block_asm(project, project.entry))
-        return 5
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-
-    if function_label is not None and project.entry in cfg.functions:
-        cfg.functions[project.entry].name = function_label
-    elif lst_metadata is not None:
-        for addr, func in cfg.functions.items():
-            code_name = lst_metadata.code_labels.get(addr)
-            if code_name is not None:
-                func.name = code_name
-
-    functions, total_functions = _interesting_functions(cfg, limit=args.max_functions)
+    if functions_with_cfg:
+        functions = [func for _cfg, func in functions_with_cfg]
+        total_functions = len(functions)
+        limit = args.max_functions if args.max_functions > 0 else None
+    else:
+        limit = args.max_functions if args.max_functions > 0 else None
+        functions, total_functions = _interesting_functions(cfg, limit=limit)
 
     print(f"/* binary: {args.binary} */")
     print(f"/* arch: {project.arch.name} */")
     print(f"/* entry: {project.entry:#x} */")
     print(f"/* functions recovered: {total_functions} */")
-    if total_functions > len(functions):
+    if limit is not None and total_functions > len(functions):
         print(f"/* showing first {len(functions)} functions; use --max-functions to raise the cap */")
 
     decompiled = 0
     failed = 0
-    for function in functions:
+    function_cfg_pairs = functions_with_cfg if functions_with_cfg else [(cfg, function) for function in functions]
+    for function_cfg, function in function_cfg_pairs:
         print(f"\n/* == function {function.addr:#x} {function.name} == */")
         if args.show_asm:
             print("/* -- asm -- */")
@@ -6441,7 +6440,7 @@ def main() -> int:
 
         status, payload, *_ = _decompile_function_with_stats(
             project,
-            cfg,
+            function_cfg,
             function,
             args.timeout,
             args.api_style,
