@@ -67,6 +67,10 @@ later recovery architecture evolves.
   - new real-sample failures are more often readability/recovery failures than
     missing opcode failures
 
+- `Deterministic goal`:
+  - each newly blocked mnemonic is tied to one focused regression and one named semantic family
+  - the remaining blocking gap list shrinks only when the associated compare or corpus test is green
+
 ### A2. Keep Loader, Runtime, and Interrupt Baseline Stable
 
 - `Priority`: `P1`
@@ -82,6 +86,10 @@ later recovery architecture evolves.
 - `Exit signal`:
   - loader/runtime changes are mostly maintenance, not the main blocker for new
     corpus cases
+
+- `Deterministic goal`:
+  - DOS MZ, far-call, and interrupt baseline regressions stay green across sample-matrix and corpus runs
+  - loader/runtime changes must not increase crash or unknown-failure counts
 
 ### A3. MartyPC-Style Instruction-Core Factoring
 
@@ -108,6 +116,10 @@ later recovery architecture evolves.
 - `Exit signal`:
   - new instruction support can be added with small, width-aware helpers rather
     than ad hoc branching in existing 16-bit handlers
+
+- `Deterministic goal`:
+  - every new instruction-family fix lands in a small helper or shared family module
+  - address-size, operand-size, stack, string, ALU, and branch semantics remain separable in code and tests
 
 ## Reference Implementation Notes: MartyPC
 
@@ -162,6 +174,9 @@ continuously improved.
   - each milestone has one reproducible baseline report instead of scattered
     scan logs and test notes
 
+- `Deterministic goal`:
+  - one command emits a reproducible milestone report combining scan, validation, hotspot, and readability data
+
 ### [x] A0.2. Golden Readability Set
 
 - `Priority`: `P1`
@@ -185,6 +200,9 @@ continuously improved.
 - `Exit signal`:
   - the project has a named readability set, not just scattered anchor tests
 
+- `Deterministic goal`:
+  - each golden function has stable anchors and stays explicitly listed in the readability set summary
+
 ### [x] B3. Segmented Memory Association
 
 - `Priority`: `P1`
@@ -206,6 +224,9 @@ continuously improved.
 - `Exit signal`:
   - pointer-like lowering in segmented code is driven by explicit association
     state instead of local guesswork
+
+- `Deterministic goal`:
+  - each segmented access is classified as stable, constant, or over-associated before any pointer-like lowering
 
 ### [x] B4. Formal Alias API For Downstream Recovery
 
@@ -232,6 +253,9 @@ continuously improved.
   - downstream passes depend on alias API calls rather than their own storage
     heuristics
 
+- `Deterministic goal`:
+  - downstream recovery code stops reimplementing storage identity checks and calls the alias API instead
+
 ### [x] B5. Widen Candidate Extraction Layer
 
 - `Priority`: `P1`
@@ -252,6 +276,9 @@ continuously improved.
 - `Exit signal`:
   - widening starts from an explicit candidate list rather than scattered local
     join opportunities
+
+- `Deterministic goal`:
+  - every widening join can be traced from a candidate record through a proof outcome to a final rewrite decision
 
 ### [x] B6. Compatibility Proof Stage
 
@@ -275,6 +302,9 @@ continuously improved.
   - widening is accepted or rejected by an explicit proof layer, not by one
     combined helper
 
+- `Deterministic goal`:
+  - each widening candidate either passes the proof rules or fails with a named incompatible-domain or clobber reason
+
 ### [x] B7. Store-Side Widening
 
 - `Priority`: `P2`
@@ -294,6 +324,9 @@ continuously improved.
 - `Exit signal`:
   - adjacent byte stores are recovered as wider assignments only when safety is
     proven
+
+- `Deterministic goal`:
+  - a widened store never crosses an unproven overlap, version, or segment boundary
 
 ### [x] B8. Segment-Aware Object Roots
 
@@ -318,6 +351,9 @@ continuously improved.
   - field/array recovery operates on segment-aware roots instead of raw address
     arithmetic alone
 
+- `Deterministic goal`:
+  - every object-root candidate records its segment family and only reaches type/object recovery when that root is stable
+
 ### [x] C3. Member And Array Recovery
 
 - `Priority`: `P2`
@@ -339,6 +375,9 @@ continuously improved.
   - object-like code increasingly shows members and arrays instead of `*(base +
     k)` arithmetic
 
+- `Deterministic goal`:
+  - repeated-offset and stride evidence must be explicit before a member or array rewrite can land
+
 ### [x] C2.1. Stable Stack Object Recovery
 
 - `Priority`: `P1`
@@ -357,6 +396,9 @@ continuously improved.
   - `B4`
 - `Exit signal`:
   - stack code looks object-like and width-stable instead of byte-slice-heavy
+
+- `Deterministic goal`:
+  - stack locals and arguments preserve stable object identity and width across decompile runs
 
 ### [x] C2.2. Stable Global Object Recovery
 
@@ -377,6 +419,9 @@ continuously improved.
 - `Exit signal`:
   - globals are consistently typed and only become objects when base evidence
     is strong enough
+
+- `Deterministic goal`:
+  - each global root is classified as scalar or object-root from explicit evidence before any rewrite lands
 
 ### [x] C2.3. Trait-To-Type Handoff
 
@@ -403,6 +448,9 @@ continuously improved.
   - trait logic emits evidence objects, and type/object layers consume them
     explicitly
 
+- `Deterministic goal`:
+  - traits never become final type or object decisions without the downstream handoff object being present
+
 ### [x] C4. Prototype And Calling Convention Recovery
 
 - `Priority`: `P1`
@@ -424,6 +472,9 @@ continuously improved.
 - `Exit signal`:
   - function signatures become a strength of the output instead of a frequent
     readability weakness
+
+- `Deterministic goal`:
+  - call/return signatures are accepted only when argument windows, return widths, and far/near class evidence agree
 
 ### [x] C4.1. Prototype Evidence Layer
 
@@ -450,6 +501,9 @@ continuously improved.
   - prototype decisions can be described as evidence composition rather than
     one-off heuristics
 
+- `Deterministic goal`:
+  - every prototype choice is backed by a recorded evidence bundle, not an implicit handler guess
+
 ### [x] C4.2. Stack-Argument Recovery
 
 - `Priority`: `P1`
@@ -467,6 +521,9 @@ continuously improved.
   - `C2.1`
 - `Exit signal`:
   - common functions stop inventing bogus locals/args around the frame
+
+- `Deterministic goal`:
+  - stack arguments are separated from locals only when slot identity and width evidence agree
 
 ### [x] C4.3. Far/Near Prototype Recovery
 
@@ -488,6 +545,9 @@ continuously improved.
 - `Exit signal`:
   - medium-model startup/helper code shows fewer weak or misleading call
     signatures
+
+- `Deterministic goal`:
+  - far and near call boundaries are only promoted when the recovered call class is stable across the bounded sample set
 
 For the interrupt- and wrapper-specific API-lowering follow-up that sits on top
 of this prototype/helper work, see:
@@ -514,6 +574,9 @@ of this prototype/helper work, see:
   - `D6`
 - `Exit signal`:
   - late rewrite no longer hides recovery logic that belongs upstream
+
+- `Deterministic goal`:
+  - any new rewrite rule is rejected unless it is purely a late cleanup with no storage or prototype reasoning
 
 ### [x] D35. Source-Backed Rewrite Audit
 
@@ -543,6 +606,9 @@ of this prototype/helper work, see:
   - every source-backed rewrite has an explicit status and the active rescue
     set is small and explainable
 
+- `Deterministic goal`:
+  - each source-backed rewrite has an explicit status and a corresponding oracle or retirement path
+
 ### [x] D36. Promote Rescues Into Regression Oracles
 
 - `Priority`: `P2`
@@ -565,6 +631,9 @@ of this prototype/helper work, see:
 - `Exit signal`:
   - more former rescue cases are enforced by tests than by active rewrite code
 
+- `Deterministic goal`:
+  - a rescued case is either promoted to a regression oracle or retired from active rescue logic
+
 ### [x] D37. Special-Case Debt Tracker
 
 - `Priority`: `P2`
@@ -586,6 +655,9 @@ of this prototype/helper work, see:
   - `D36`
 - `Exit signal`:
   - the special-case surface trends down over time instead of drifting upward
+
+- `Deterministic goal`:
+  - special-case debt is measured as active rescue count, oracle count, and subsumed count on every milestone
 
 ### [x] D38. Readability Issue Mining
 
@@ -617,6 +689,9 @@ of this prototype/helper work, see:
   - each milestone can point to a few top readability clusters and the layer
     responsible for fixing them
 
+- `Deterministic goal`:
+  - every ugly cluster is mapped to a named architectural layer before the next readability sprint starts
+
 ### [x] D39. Boolean And Condition Cleanup Refinement
 
 - `Priority`: `P2`
@@ -644,6 +719,9 @@ of this prototype/helper work, see:
   - common conditions get shorter and clearer without reintroducing hidden
     semantic recovery into late rewrite
 
+- `Deterministic goal`:
+  - each condition simplifier preserves semantics and reduces a named boolean or interval-noise pattern
+
 ### [x] D40. Control-Flow Readability Polishing
 
 - `Priority`: `P3`
@@ -658,6 +736,9 @@ of this prototype/helper work, see:
   - `D38`
 - `Exit signal`:
   - selected bodies become structurally easier to read
+
+- `Deterministic goal`:
+  - loop and switch cleanup only lands when it improves the structure of bounded corpus exemplars
 
 ### [x] D41. Naming Polish Over Object Recovery
 
@@ -677,6 +758,9 @@ of this prototype/helper work, see:
 - `Exit signal`:
   - final naming is driven by recovered structure, not just ad hoc hints
 
+- `Deterministic goal`:
+  - names only change when object/member/array evidence is strong enough to justify them
+
 ### [x] D42. Optional Recompilable Subset
 
 - `Priority`: `P3`
@@ -695,6 +779,9 @@ of this prototype/helper work, see:
   - a small recurring subset such as `mov_add_ret`, `enter_stack`, `xor_ret`,
     and `push_pop_ret` remains syntax-valid and compilation-friendly with
     limited manual repair
+
+- `Deterministic goal`:
+  - the same small subset remains syntax-valid and repair-light across repeated runs
 
 ## Remaining Working Order
 
