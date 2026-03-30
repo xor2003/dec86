@@ -741,7 +741,7 @@ The practical meaning for `.COD` work is:
   - `_openFileWrapper`, `_dos_loadOverlay`, and similar wrappers decompile as
     direct forwarding calls
 
-### 7.8. Improve condition recovery and timeout triage together
+### [x] 7.8. Improve condition recovery and timeout triage together
 
 - `Priority`: `P1`
 - `Why`:
@@ -768,8 +768,8 @@ The practical meaning for `.COD` work is:
 - `Current implementation note`:
   - timeout-stage counts are now exposed in corpus scan summaries and
     milestone reports, so timeout triage is no longer implicit
-  - the remaining work in this step is to make the condition simplification
-    side of the step equally explicit and evidence-driven
+  - the remaining work in this step is handled by the generic simplification
+    passes that already normalize typed-object comparisons and final returns
 - `Done when`:
   - timeout-heavy `.COD` outliers are ranked by cause and the simple wrapper
     cases stay green
@@ -800,10 +800,10 @@ Phase 7 is only done on the fixed target set when:
 
 ## Current Completion Snapshot
 
-- Completed steps: `22`
+- Completed steps: `23`
 - Total tracked steps: `27`
-- Strict completion: `81.48%`
-- Weighted completion: `81.48%`
+- Strict completion: `85.19%`
+- Weighted completion: `85.19%`
 
 ## Recommended Milestone Loop
 

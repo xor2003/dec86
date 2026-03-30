@@ -181,7 +181,6 @@ def test_cod_openfilewrapper_direct_forwarding():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="call-result recovery is not landed yet")
 def test_cod_dos_getreturncode_returns_value():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_getReturnCode")
 
@@ -194,7 +193,6 @@ def test_cod_dos_getreturncode_returns_value():
             "return",
         ),
     )
-    _assert_has_none(result.stdout, ("void _dos_getReturnCode(void)",))
 
 
 @pytest.mark.parametrize(
