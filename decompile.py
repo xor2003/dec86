@@ -5910,7 +5910,49 @@ def _simplify_x86_16_wrapped_stack_offsets(c_text: str) -> str:
 
 
 def _simplify_x86_16_stack_byte_pointers(c_text: str) -> str:
-    return c_text
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+
+    low_store_re = re.compile(
+        r"^(?P<indent>\s*)\*\(\(char \*\)\((?P<seg>.+?) \* 16 \+ (?P<off>0x[0-9A-Fa-f]+|\d+)\)\) = (?P<rhs>[^;]+);\s*$"
+    )
+    high_store_re = re.compile(
+        r"^(?P<indent>\s*)\*\(\(char \*\)\((?P<seg>.+?) \* 16 \+ (?P<off>0x[0-9A-Fa-f]+|\d+)\)\) = (?P<rhs>[^;]+>>\s*8[^;]*);\s*$"
+    )
+
+    def _normalize_rhs(rhs: str) -> str:
+        return rhs.replace("(unsigned short)", "").strip()
+
+    def _rhs_base(rhs: str) -> str:
+        rhs = rhs.strip()
+        rhs = re.sub(r"\s*\(?\s*>>\s*8\s*\)?\s*$", "", rhs)
+        return rhs.strip()
+
+    kept_lines: list[str] = []
+    i = 0
+    while i < len(lines):
+        current = lines[i]
+        next_line = lines[i + 1] if i + 1 < len(lines) else None
+        low_match = low_store_re.match(current)
+        high_match = high_store_re.match(next_line) if next_line is not None else None
+        if low_match is not None and high_match is not None:
+            low_seg = low_match.group("seg").strip()
+            high_seg = high_match.group("seg").strip()
+            low_off = int(low_match.group("off"), 0)
+            high_off = int(high_match.group("off"), 0)
+            low_rhs = low_match.group("rhs").strip()
+            high_rhs = high_match.group("rhs").strip()
+            if low_seg == high_seg and high_off == low_off + 1 and _rhs_base(high_rhs) == _normalize_rhs(low_rhs):
+                kept_lines.append(
+                    f'{low_match.group("indent")}*(unsigned short far *)MK_FP({low_seg}, {low_match.group("off")}) = {low_rhs};'
+                )
+                i += 2
+                continue
+        kept_lines.append(current)
+        i += 1
+
+    return "\n".join(kept_lines)
 
 
 def _normalize_boolean_conditions(c_text: str) -> str:
