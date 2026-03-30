@@ -155,11 +155,21 @@ def _apply_binary_specific_annotations(
     project: angr.Project,
     binary_path: Path | None,
     lst_metadata: LSTMetadata | None,
-) -> None:
-    if lst_metadata is None:
-        return None
-    apply_x86_16_metadata_annotations(project, lst_metadata=lst_metadata)
-    return None
+    *,
+    func_addr: int | None = None,
+    cod_metadata: CODProcMetadata | None = None,
+    synthetic_globals: dict[int, tuple[str, int]] | None = None,
+) -> bool:
+    changed = False
+    if lst_metadata is not None or cod_metadata is not None or synthetic_globals:
+        changed = apply_x86_16_metadata_annotations(
+            project,
+            func_addr=func_addr,
+            cod_metadata=cod_metadata,
+            lst_metadata=lst_metadata,
+            synthetic_globals=synthetic_globals,
+        )
+    return changed
 
 
 def _snapshot_codegen_text(codegen) -> str:
@@ -477,15 +487,14 @@ def _decompile_function(
     lst_metadata: LSTMetadata | None = None,
     enable_structured_simplify: bool = True,
 ) -> tuple[str, str]:
-    _apply_binary_specific_annotations(project, binary_path, lst_metadata)
-    if cod_metadata is not None or synthetic_globals:
-        apply_x86_16_metadata_annotations(
-            project,
-            func_addr=function.addr,
-            cod_metadata=cod_metadata,
-            lst_metadata=lst_metadata,
-            synthetic_globals=synthetic_globals,
-        )
+    _apply_binary_specific_annotations(
+        project,
+        binary_path,
+        lst_metadata,
+        func_addr=function.addr,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+    )
     block_count, byte_count = _function_complexity(function)
     decompiler_options = _preferred_decompiler_options(block_count, byte_count)
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
@@ -6651,7 +6660,13 @@ def main() -> int:
             entry_point=args.entry_point,
         )
         lst_metadata = _load_lst_metadata(args.binary, project)
-        _apply_binary_specific_annotations(project, args.binary, lst_metadata)
+        _apply_binary_specific_annotations(
+            project,
+            args.binary,
+            lst_metadata,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+        )
     low_memory_path = _prefer_low_memory_path()
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
@@ -6687,14 +6702,14 @@ def main() -> int:
             code_name = lst_metadata.code_labels.get(func.addr)
             if code_name is not None:
                 func.name = code_name
-        apply_x86_16_metadata_annotations(
+        _apply_binary_specific_annotations(
             project,
+            args.binary,
+            lst_metadata,
             func_addr=func.addr,
             cod_metadata=cod_metadata,
-            lst_metadata=lst_metadata,
             synthetic_globals=synthetic_globals,
         )
-        _apply_binary_specific_annotations(project, args.binary, lst_metadata)
 
         print(f"/* binary: {args.binary} */")
         print(f"/* arch: {project.arch.name} */")
@@ -6793,7 +6808,14 @@ def main() -> int:
                 window=args.window,
                 low_memory=low_memory_path,
             )
-            apply_x86_16_metadata_annotations(project, func_addr=function.addr, lst_metadata=lst_metadata)
+            _apply_binary_specific_annotations(
+                project,
+                args.binary,
+                lst_metadata,
+                func_addr=function.addr,
+                cod_metadata=cod_metadata,
+                synthetic_globals=synthetic_globals,
+            )
             print(f"\n/* == function {function.addr:#x} {function.name} == */")
             if args.show_asm:
                 print("/* -- asm -- */")
@@ -6832,7 +6854,14 @@ def main() -> int:
     else:
         function_cfg_pairs = [(cfg, function) for function in functions]
         for function_cfg, function in function_cfg_pairs:
-            apply_x86_16_metadata_annotations(project, func_addr=function.addr, lst_metadata=lst_metadata)
+            _apply_binary_specific_annotations(
+                project,
+                args.binary,
+                lst_metadata,
+                func_addr=function.addr,
+                cod_metadata=cod_metadata,
+                synthetic_globals=synthetic_globals,
+            )
             print(f"\n/* == function {function.addr:#x} {function.name} == */")
             if args.show_asm:
                 print("/* -- asm -- */")
