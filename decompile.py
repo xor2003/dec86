@@ -6140,40 +6140,33 @@ def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int
         signal.signal(signal.SIGALRM, old_handler)
 
 
-def _recover_functions_from_lst_metadata(
+def _recover_lst_function(
     project: angr.Project,
     lst_metadata: LSTMetadata,
+    offset: int,
+    name: str,
     *,
     timeout: int,
     window: int,
-    limit: int | None = None,
     low_memory: bool = False,
 ):
-    code_base = project.entry
-    labeled_offsets = sorted(lst_metadata.code_labels.items())
-    if limit is not None and limit > 0:
-        labeled_offsets = labeled_offsets[:limit]
+    addr = project.entry + offset
+    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.alarm(max(1, timeout))
+    try:
+        if project.arch.name == "86_16":
+            candidate_window = min(window, 0x80 if low_memory else window)
+            regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
+        else:
+            regions = [(addr, addr + window)]
 
-    recovered: list[tuple[object, object]] = []
-    for offset, name in labeled_offsets:
-        addr = code_base + offset
-        old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-        signal.alarm(max(1, timeout))
-        try:
-            if project.arch.name == "86_16":
-                candidate_window = min(window, 0x80 if low_memory else window)
-                regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
-            else:
-                regions = [(addr, addr + window)]
+        cfg, func = _pick_function(project, addr, regions=regions)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
-            cfg, func = _pick_function(project, addr, regions=regions)
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
-        func.name = name
-        recovered.append((cfg, func))
-
-    return recovered
+    func.name = name
+    return cfg, func
 
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
@@ -6372,21 +6365,15 @@ def main() -> int:
 
     print("/* recovering functions... */", flush=True)
     cfg = None
-    functions_with_cfg: list[tuple[object, object]] = []
     if low_memory_path:
         print("/* Low-memory mode: using conservative catalog recovery. */")
     if lst_metadata is not None and lst_metadata.code_labels:
         try:
-            functions_with_cfg = _recover_functions_from_lst_metadata(
-                project,
-                lst_metadata,
-                timeout=args.timeout,
-                window=args.window,
-                limit=args.max_functions if args.max_functions > 0 else None,
-                low_memory=low_memory_path,
-            )
+            labeled_offsets = sorted(lst_metadata.code_labels.items())
+            if args.max_functions > 0:
+                labeled_offsets = labeled_offsets[: args.max_functions]
         except Exception as ex:
-            print(f"/* Listing-backed function recovery failed: {ex} */")
+            print(f"/* Listing-backed function catalog setup failed: {ex} */")
             print("\n/* == entry asm == */")
             print(_format_first_block_asm(project, project.entry))
             return 5
@@ -6414,65 +6401,113 @@ def main() -> int:
                 if code_name is not None:
                     func.name = code_name
 
-    if functions_with_cfg:
-        functions = [func for _cfg, func in functions_with_cfg]
-        total_functions = len(functions)
-        limit = args.max_functions if args.max_functions > 0 else None
+    if lst_metadata is not None and lst_metadata.code_labels:
+        total_functions = len(labeled_offsets)
+        shown_total = len(labeled_offsets)
     else:
         limit = args.max_functions if args.max_functions > 0 else None
         functions, total_functions = _interesting_functions(cfg, limit=limit)
+        shown_total = len(functions)
 
     print(f"/* binary: {args.binary} */")
     print(f"/* arch: {project.arch.name} */")
     print(f"/* entry: {project.entry:#x} */")
     print(f"/* functions recovered: {total_functions} */")
-    if limit is not None and total_functions > len(functions):
-        print(f"/* showing first {len(functions)} functions; use --max-functions to raise the cap */")
+    if args.max_functions > 0 and total_functions > shown_total:
+        print(f"/* showing first {shown_total} functions; use --max-functions to raise the cap */")
 
     decompiled = 0
     failed = 0
-    function_cfg_pairs = functions_with_cfg if functions_with_cfg else [(cfg, function) for function in functions]
-    for function_cfg, function in function_cfg_pairs:
-        print(f"\n/* == function {function.addr:#x} {function.name} == */")
-        if args.show_asm:
-            print("/* -- asm -- */")
-            print(_format_first_block_asm(project, function.addr))
+    if lst_metadata is not None and lst_metadata.code_labels:
+        for offset, name in labeled_offsets:
+            function_cfg, function = _recover_lst_function(
+                project,
+                lst_metadata,
+                offset,
+                name,
+                timeout=args.timeout,
+                window=args.window,
+                low_memory=low_memory_path,
+            )
+            print(f"\n/* == function {function.addr:#x} {function.name} == */")
+            if args.show_asm:
+                print("/* -- asm -- */")
+                print(_format_first_block_asm(project, function.addr))
 
-        status, payload, *_ = _decompile_function_with_stats(
-            project,
-            function_cfg,
-            function,
-            args.timeout,
-            args.api_style,
-            args.binary,
-            lst_metadata=lst_metadata,
-            enable_structured_simplify=args.addr is not None,
-        )
-        if status == "ok":
-            decompiled += 1
-            print("/* -- c -- */")
-            print(payload)
-        else:
-            failed += 1
-            asm_fallback = _format_first_block_asm(project, function.addr)
-            # If decompiler produced no code and there are no bytes for the
-            # function block, print a concise explanatory comment instead of
-            # an empty '...' body and an unhelpful asm fallback.
-            if status == "empty":
-                if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
-                    print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
+            status, payload, *_ = _decompile_function_with_stats(
+                project,
+                function_cfg,
+                function,
+                args.timeout,
+                args.api_style,
+                args.binary,
+                lst_metadata=lst_metadata,
+                enable_structured_simplify=args.addr is not None,
+            )
+            if status == "ok":
+                decompiled += 1
+                print("/* -- c -- */")
+                print(payload)
+            else:
+                failed += 1
+                asm_fallback = _format_first_block_asm(project, function.addr)
+                if status == "empty":
+                    if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
+                        print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
+                    else:
+                        print(f"-- {status} --")
+                        print(payload)
+                        print("-- asm fallback --")
+                        print(asm_fallback)
                 else:
                     print(f"-- {status} --")
                     print(payload)
                     print("-- asm fallback --")
                     print(asm_fallback)
-            else:
-                print(f"-- {status} --")
-                print(payload)
-                print("-- asm fallback --")
-                print(asm_fallback)
+    else:
+        function_cfg_pairs = [(cfg, function) for function in functions]
+        for function_cfg, function in function_cfg_pairs:
+            print(f"\n/* == function {function.addr:#x} {function.name} == */")
+            if args.show_asm:
+                print("/* -- asm -- */")
+                print(_format_first_block_asm(project, function.addr))
 
-    print(f"\nsummary: decompiled {decompiled}/{len(functions)} shown functions")
+            status, payload, *_ = _decompile_function_with_stats(
+                project,
+                function_cfg,
+                function,
+                args.timeout,
+                args.api_style,
+                args.binary,
+                lst_metadata=lst_metadata,
+                enable_structured_simplify=args.addr is not None,
+            )
+            if status == "ok":
+                decompiled += 1
+                print("/* -- c -- */")
+                print(payload)
+            else:
+                failed += 1
+                asm_fallback = _format_first_block_asm(project, function.addr)
+                # If decompiler produced no code and there are no bytes for the
+                # function block, print a concise explanatory comment instead of
+                # an empty '...' body and an unhelpful asm fallback.
+                if status == "empty":
+                    if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
+                        print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
+                    else:
+                        print(f"-- {status} --")
+                        print(payload)
+                        print("-- asm fallback --")
+                        print(asm_fallback)
+                else:
+                    print(f"-- {status} --")
+                    print(payload)
+                    print("-- asm fallback --")
+                    print(asm_fallback)
+
+    total_shown = shown_total if lst_metadata is not None and lst_metadata.code_labels else len(functions)
+    print(f"\nsummary: decompiled {decompiled}/{total_shown} shown functions")
     if failed:
         print(f"summary: {failed} functions fell back to asm/details")
     return 0 if decompiled else 2
