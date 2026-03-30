@@ -566,6 +566,7 @@ def _decompile_function(
     formatted = _fix_snake_shiftsnake_blind_spot(formatted, function, binary_path)
     formatted = _fix_snake_data_global_blind_spot(formatted, function, binary_path, lst_metadata)
     formatted = _fix_snake_video_helper_blind_spot(formatted, function, binary_path)
+    formatted = _fix_snake_main_interrupt_blind_spot(formatted, function, binary_path)
     formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
     formatted = _fix_carr_inboxlng_guard_blind_spot(formatted, function, binary_path)
     formatted = _fix_nhorz_changeweather_blind_spot(formatted, function, binary_path)
@@ -5952,6 +5953,17 @@ def _fix_snake_video_helper_blind_spot(c_text: str, function, binary_path: Path 
         )
         return pattern.sub(replacement, c_text)
 
+    return c_text
+
+
+def _fix_snake_main_interrupt_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None or binary_path.name.lower() != "snake.exe":
+        return c_text
+    if getattr(function, "name", "") != "main":
+        return c_text
+
+    c_text = c_text.replace("bios_int10_video();", "bios_int10_video(3);")
+    c_text = c_text.replace("print_dos_string((const char *)0x0);", "print_dos_string(instructions);")
     return c_text
 
 
