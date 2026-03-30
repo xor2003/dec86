@@ -292,6 +292,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "open_codes": (),
     }
     assert [item["code"] for item in report["correctness_goals"]] == ["C6.1", "C6.2", "C6.3", "C6.4"]
+    assert "tests/test_x86_16_cod_samples.py" in report["correctness_goals"][0]["owner_surfaces"]
     assert report["instruction_metadata_surface"] == {
         "normalized_fields": (
             "width_case",

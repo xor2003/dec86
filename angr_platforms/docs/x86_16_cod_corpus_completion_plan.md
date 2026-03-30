@@ -431,7 +431,7 @@ project does not yet explain well.
 - `Deterministic goal`:
   - nontrivial changes cannot increase unclassified results or reduce visibility without an explicit explanation
 
-## Phase 6. Decompilation Correctness
+## Phase 6. Source-C Decompilation Correctness
 
 This phase keeps decompilation correctness explicit while readability work
 continues.
@@ -440,16 +440,15 @@ continues.
 
 - `Priority`: `P0`
 - `Why`:
-  - readable output is only useful if the underlying semantics stay stable
+  - readable output is only useful if the decompiler still matches the source C
 - `Required outcome`:
-  - compare semantics remain green
+  - compare-style probes stay aligned with the original COD C logic
   - runtime samples remain green
-  - correctness regressions are triaged before readability work is counted as a
-    win
+  - correctness regressions are triaged before readability work is counted as a win
 - `Deterministic goal`:
-  - keep `tests/test_x86_16_compare_semantics.py` and
+  - keep `tests/test_x86_16_cod_samples.py`, `tests/test_x86_16_compare_semantics.py`, and
     `tests/test_x86_16_runtime_samples.py` green
-  - keep the correctness report tied to those semantic slices
+  - keep the correctness report tied to source-C and semantic slices
 - `Done when`:
   - semantic and runtime probes stay green across ordinary corpus changes
 
@@ -457,15 +456,14 @@ continues.
 
 - `Priority`: `P0`
 - `Why`:
-  - corpus decompilation has to agree with representative samples and
+  - corpus decompilation has to agree with the original COD source C and
     hardware-backed verification
 - `Required outcome`:
-  - the sample matrix stays representative
+  - the sample matrix stays representative of the COD source C logic
   - the 80286 verifier stays green
-  - correctness work can point at concrete opcode families instead of vague
-    confidence
+  - correctness work can point at concrete opcode families instead of vague confidence
 - `Deterministic goal`:
-  - keep `tests/test_x86_16_sample_matrix.py` and
+  - keep `tests/test_x86_16_cod_samples.py`, `tests/test_x86_16_sample_matrix.py`, and
     `tests/test_x86_16_80286_verifier.py` green
   - keep the sample-matrix / verifier pairing visible in the milestone report
 - `Done when`:
@@ -476,7 +474,7 @@ continues.
 - `Priority`: `P0`
 - `Why`:
   - decompilation correctness collapses if prototypes and returns drift away
-    from the real calling convention
+    from the original COD source C calling surfaces
 - `Required outcome`:
   - calling-convention compat remains explicit
   - return compat remains explicit
@@ -484,7 +482,7 @@ continues.
 - `Deterministic goal`:
   - keep `calling_convention_compat` and `decompiler_return_compat` as the
     source of truth for the decompiler boundary
-  - keep their validation tests green
+  - keep `tests/test_x86_16_cod_samples.py`, `tests/test_x86_16_helper_modeling.py`, and their validation tests green
 - `Done when`:
   - the decompiler boundary continues to preserve correct call/return shape
 
@@ -502,17 +500,17 @@ continues.
 - `Deterministic goal`:
   - keep the interrupt boundary surfaces in `milestone_report`
   - keep `interrupt_api_surface`, `interrupt_core_surface`, and
-    `interrupt_lowering_boundary` aligned with the code
+    `interrupt_lowering_boundary` aligned with the source-C wrapper logic
 - `Done when`:
   - interrupt lowering can be audited without opening the whole decompiler
     pipeline
 
 ## Current Completion Snapshot
 
-- Completed steps: `14`
-- Total tracked steps: `17`
-- Strict completion: `82.35%`
-- Weighted completion: `82.35%`
+- Completed steps: `16`
+- Total tracked steps: `19`
+- Strict completion: `84.21%`
+- Weighted completion: `84.21%`
 
 ## Recommended Milestone Loop
 
