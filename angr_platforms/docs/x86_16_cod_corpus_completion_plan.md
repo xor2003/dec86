@@ -838,7 +838,7 @@ pipeline stable when regeneration or timeout-heavy cases misbehave.
   - helper signatures are part of the normal early recovery surface, not just
     a late formatting hint
 
-### [ ] 8.3. Restore a safe early annotation surface for generic metadata
+### [x] 8.3. Restore a safe early annotation surface for generic metadata
 
 - `Priority`: `P0`
 - `Why`:
@@ -852,7 +852,14 @@ pipeline stable when regeneration or timeout-heavy cases misbehave.
 - `Done when`:
   - binary-specific metadata facts are established early and generically
 
-### [ ] 8.4. Move COD object and segment semantics earlier, thin late rewrite
+- `Current implementation note`:
+  - `_apply_binary_specific_annotations()` now flows through the shared
+    metadata annotation helper before decompilation, so listing-backed names,
+    helper signatures, and known COD object facts are established early
+  - the early annotation surface is generic; it no longer relies on a
+    source-specific rescue path
+
+### [x] 8.4. Move COD object and segment semantics earlier, thin late rewrite
 
 - `Priority`: `P0`
 - `Why`:
@@ -868,7 +875,13 @@ pipeline stable when regeneration or timeout-heavy cases misbehave.
   - known objects and segment spaces are explained before the final rewrite
     chain
 
-### [ ] 8.5. Keep wrapper/return cleanup and timeout triage generic
+- `Current implementation note`:
+  - known COD object annotations now attach before decompilation through the
+    shared metadata path
+  - late COD coalescers remain as fallback cleanup, but they are no longer the
+    only place where object facts appear
+
+### [x] 8.5. Keep wrapper/return cleanup and timeout triage generic
 
 - `Priority`: `P1`
 - `Why`:
@@ -884,12 +897,18 @@ pipeline stable when regeneration or timeout-heavy cases misbehave.
   - wrapper cleanup, return repair, and timeout reporting stay generic and
     stable across the corpus
 
+- `Current implementation note`:
+  - wrapper cleanup and fallthrough-return repair are generic decompiler
+    postpasses
+  - timeout-stage counts remain explicit in scan summaries and milestone
+    reports, so the triage lane is already visible
+
 ## Current Completion Snapshot
 
-- Completed steps: `29`
+- Completed steps: `32`
 - Total tracked steps: `32`
-- Strict completion: `90.62%`
-- Weighted completion: `90.62%`
+- Strict completion: `100.00%`
+- Weighted completion: `100.00%`
 
 ## Recommended Milestone Loop
 

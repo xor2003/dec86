@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -224,3 +225,36 @@ def test_regenerate_codegen_text_falls_back_on_failure():
 
     assert text == "fallback text"
     assert changed is False
+
+
+def test_binary_specific_annotations_apply_generic_metadata(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    def fake_apply(project, **kwargs):
+        calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(decompile, "apply_x86_16_metadata_annotations", fake_apply)
+    project = SimpleNamespace()
+    lst_metadata = SimpleNamespace()
+    cod_metadata = SimpleNamespace()
+    synthetic_globals = {0x10: ("foo", 1)}
+
+    changed = decompile._apply_binary_specific_annotations(
+        project,
+        Path("sample.cod"),
+        lst_metadata,
+        func_addr=0x1000,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+    )
+
+    assert changed is True
+    assert calls == [
+        {
+            "func_addr": 0x1000,
+            "cod_metadata": cod_metadata,
+            "lst_metadata": lst_metadata,
+            "synthetic_globals": synthetic_globals,
+        }
+    ]
