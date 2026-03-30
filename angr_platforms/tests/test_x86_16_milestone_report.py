@@ -599,29 +599,16 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "purpose": "Collapse self-subtractions into typed zero constants once the low-level operands are proven identical.",
         },
     ]
-    assert report["source_backed_rewrites"]["count"] >= 6
-    assert report["source_backed_rewrites"]["status_counts"] == {
-        "permanent_guarded_oracle": 2,
-        "temporary_rescue": 4,
-    }
+    assert report["source_backed_rewrites"]["count"] == 0
+    assert report["source_backed_rewrites"]["status_counts"] == {}
     assert report["source_backed_rewrite_debt"] == {
-        "count": 6,
-        "active_count": 6,
-        "oracle_count": 2,
+        "count": 0,
+        "active_count": 0,
+        "oracle_count": 0,
         "subsumed_count": 0,
-        "status_counts": {
-            "permanent_guarded_oracle": 2,
-            "temporary_rescue": 4,
-        },
-        "active_names": (
-            "configcrts",
-            "setgear",
-            "sethook",
-            "rotate_pt",
-            "mousepos",
-            "tidshowrange",
-        ),
-        "oracle_names": ("configcrts", "rotate_pt"),
+        "status_counts": {},
+        "active_names": (),
+        "oracle_names": (),
         "subsumed_names": (),
     }
     assert report["hotspots"]["fallback_counts"] == {"block_lift": 1, "cfg_only": 2}

@@ -348,7 +348,7 @@ This phase is about moving more of the corpus from "alive" to "useful".
     - `alias_api`
     - `widening_pipeline`
     - `projection_cleanup_rules`
-    - `source_backed_rewrite_debt`
+    - `source_backed_rewrite_debt` as a retired zero-count surface
 
 ### [x] 4.3. Only then spend on traits, types, and objects
 
@@ -677,8 +677,8 @@ The practical meaning for `.COD` work is:
 - `Current implementation note`:
   - `cod_known_objects.py` now defines the shared COD object catalog
   - COD-mode annotations attach those object types before decompilation
-  - generic source-backed rewrites now use the known-object catalog rather
-    than per-function rescue paths
+  - source-backed rewrite rescues are retired; the remaining surface is the
+    generic known-object catalog and its downstream alias/type rewrites
 - `Done when`:
   - outputs move from:
     - `rin = 72;`
