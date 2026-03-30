@@ -630,6 +630,7 @@ def _decompile_function(
     formatted = _fix_billasm_rotate_pt_blind_spot(formatted, function, binary_path)
     formatted = _fix_monoprin_mset_pos_blind_spot(formatted, function, binary_path)
     formatted = _fix_planes3_ready5_blind_spot(formatted, function, binary_path)
+    formatted = _normalize_anonymous_call_targets(formatted)
     return "ok", _annotate_cod_proc_output(formatted, cod_metadata)
 
 
@@ -646,6 +647,19 @@ def _function_complexity(function):
             continue
         total_bytes += len(block.bytes)
     return len(block_addrs), total_bytes
+
+
+def _normalize_anonymous_call_targets(c_text: str) -> str:
+    pattern = re.compile(r"(?<![A-Za-z_])(?P<target>0x[0-9a-fA-F]+|\d+)\s*\(\s*\)")
+
+    def _replace(match: re.Match[str]) -> str:
+        try:
+            target = int(match.group("target"), 0)
+        except ValueError:
+            return match.group(0)
+        return f"sub_{target:x}()"
+
+    return pattern.sub(_replace, c_text)
 
 
 def _decompile_function_with_stats(
@@ -6187,12 +6201,29 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
                 c_text, count = re.subn(candidate, replacement, c_text, count=1)
                 if count:
                     break
-        anonymous_call_pattern = re.compile(r"(?<![A-Za-z_])(?:0x[0-9a-fA-F]+|\d+)\s*\(\s*\)")
+        anonymous_call_pattern = re.compile(
+            r"(?<![A-Za-z_])(?:0x[0-9a-fA-F]+|\d+|sub_[0-9a-fA-F]+)\s*\(\s*\)"
+        )
         for _call_name, call_text in metadata.call_sources:
             replacement = call_text.rstrip(";")
             c_text, count = anonymous_call_pattern.subn(replacement, c_text, count=1)
             if count == 0:
                 break
+        remaining_anonymous_call_pattern = re.compile(
+            r"(?<![A-Za-z_])(?P<target>0x[0-9a-fA-F]+|\d+|sub_[0-9a-fA-F]+)\s*\(\s*\)"
+        )
+
+        def _replace_remaining_anonymous_call(match: re.Match[str]) -> str:
+            target_text = match.group("target")
+            if target_text.startswith("sub_"):
+                return match.group(0)
+            try:
+                target = int(target_text, 0)
+            except ValueError:
+                return match.group(0)
+            return f"sub_{target:x}()"
+
+        c_text = remaining_anonymous_call_pattern.sub(_replace_remaining_anonymous_call, c_text)
         wide_return_pattern = re.compile(
             r"(?m)^(?P<indent>\s*)return\s+[^;]*?\|\s*(?P<call>[A-Za-z_][\w$?@]*\s*\([^;]*\));\s*$"
         )
