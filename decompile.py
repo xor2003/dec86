@@ -325,6 +325,31 @@ def _apply_memory_limit(max_memory_mb: int | None) -> None:
         pass
 
 
+def _memory_availability_ratio() -> float | None:
+    try:
+        meminfo = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as fp:
+            for line in fp:
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                parts = value.strip().split()
+                if parts:
+                    meminfo[key] = int(parts[0])
+        total = meminfo.get("MemTotal")
+        available = meminfo.get("MemAvailable")
+        if total and available:
+            return available / total
+    except OSError:
+        pass
+    return None
+
+
+def _prefer_low_memory_path() -> bool:
+    ratio = _memory_availability_ratio()
+    return ratio is not None and ratio < 0.5
+
+
 def _format_first_block_asm(project: angr.Project, addr: int) -> str:
     try:
         block = project.factory.block(addr, opt_level=0)
@@ -6066,14 +6091,34 @@ def _format_known_helper_calls(
     return _simplify_x86_16_conditions(c_text)
 
 
-def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int):
-    regions = [(project.entry, project.entry + window)]
+def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int, low_memory: bool = False):
+    # If whole-binary recovery already timed out, prefer a much smaller bounded
+    # entry-only recovery window instead of retrying the same expensive search.
+    # When memory pressure is high, keep the scan even narrower so the fallback
+    # uses less memory and avoids the whole-binary CFG path entirely.
+    candidate_windows = (
+        min(window, 0x80 if low_memory else 0x100),
+        min(window, 0x40 if low_memory else 0x80),
+        min(window, 0x20 if low_memory else 0x40),
+    )
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(timeout)
     try:
-        return _pick_function(project, project.entry, regions=regions)
+        for candidate_window in candidate_windows:
+            signal.alarm(max(1, min(timeout, 10)))
+            try:
+                if project.arch.name == "86_16":
+                    regions = [
+                        _infer_x86_16_linear_region(project, project.entry, window=candidate_window)
+                    ]
+                else:
+                    regions = [(project.entry, project.entry + candidate_window)]
+                return _pick_function(project, project.entry, regions=regions)
+            except _AnalysisTimeout:
+                continue
+            finally:
+                signal.alarm(0)
+        raise _AnalysisTimeout()
     finally:
-        signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
 
 
@@ -6204,6 +6249,7 @@ def main() -> int:
             entry_point=args.entry_point,
         )
         lst_metadata = _load_lst_metadata(args.binary, project)
+    low_memory_path = _prefer_low_memory_path()
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
 
@@ -6271,6 +6317,48 @@ def main() -> int:
         return 0
 
     print("/* recovering functions... */", flush=True)
+    if low_memory_path:
+        print("/* Low-memory mode: recovering only the entry function first. */")
+        try:
+            cfg, func = _fallback_entry_function(
+                project,
+                timeout=args.timeout,
+                window=args.window,
+                low_memory=True,
+            )
+        except _AnalysisTimeout:
+            print("/* Entry-function recovery timed out in low-memory mode. */")
+            print("/* Tip: try a larger --timeout or decompile a specific function with --addr. */")
+            return 3
+        except Exception as ex:
+            print(f"/* Entry-function recovery failed: {ex} */")
+            print("\n/* == entry asm == */")
+            print(_format_first_block_asm(project, project.entry))
+            return 5
+
+        print(f"/* binary: {args.binary} */")
+        print(f"/* arch: {project.arch.name} */")
+        print(f"/* entry: {project.entry:#x} */")
+        print(f"/* fallback function: {func.addr:#x} {func.name} */")
+        status, payload, *_ = _decompile_function_with_stats(
+            project,
+            cfg,
+            func,
+            args.timeout,
+            args.api_style,
+            args.binary,
+            lst_metadata=lst_metadata,
+        )
+        if status != "ok":
+            print(f"\n/* Decompilation {status}: {payload} */")
+            print("\n/* == asm fallback == */")
+            print(_format_first_block_asm(project, func.addr))
+            return 6 if status == "error" else 4
+
+        print("\n/* == c == */")
+        print(payload)
+        return 0
+
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(args.timeout)
     try:
@@ -6279,7 +6367,12 @@ def main() -> int:
         print(f"/* Timed out while recovering functions after {args.timeout}s. */")
         print("/* Trying bounded entry-function recovery instead... */")
         try:
-            cfg, func = _fallback_entry_function(project, timeout=args.timeout, window=args.window)
+            cfg, func = _fallback_entry_function(
+                project,
+                timeout=args.timeout,
+                window=args.window,
+                low_memory=low_memory_path,
+            )
         except _AnalysisTimeout:
             print("/* Bounded entry-function recovery also timed out. */")
             print("/* Tip: try a larger --timeout or decompile a specific function with --addr. */")
