@@ -73,7 +73,6 @@ def test_cod_timeout_target_is_classified_deterministically():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="far-pointer object recovery is not landed yet")
 def test_cod_biosfunc_clearkeyflags_far_word_store():
     result = _run_cod_proc(COD_DIR / "BIOSFUNC.COD", "_bios_clearkeyflags")
 

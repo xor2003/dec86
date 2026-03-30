@@ -690,7 +690,7 @@ The practical meaning for `.COD` work is:
     - `rin.x.bx = 0xffff;`
     - `sreg.es = segment;`
 
-### 7.6. Recover segmented and far-pointer semantics conservatively
+### [x] 7.6. Recover segmented and far-pointer semantics conservatively
 
 - `Priority`: `P0`
 - `Why`:
@@ -708,6 +708,10 @@ The practical meaning for `.COD` work is:
   - word-width far stores remain word stores
 - `Done when`:
   - `_bios_clearkeyflags` stops decompiling as two anonymous byte stores
+- `Current implementation note`:
+  - adjacent byte stores into a shared segmented address now coalesce into a
+    single far word store when the address and high-byte pattern prove it is
+    the same object
 
 ### [x] 7.7. Remove non-semantic wrapper stack noise
 
@@ -796,10 +800,10 @@ Phase 7 is only done on the fixed target set when:
 
 ## Current Completion Snapshot
 
-- Completed steps: `21`
+- Completed steps: `22`
 - Total tracked steps: `27`
-- Strict completion: `77.78%`
-- Weighted completion: `77.78%`
+- Strict completion: `81.48%`
+- Weighted completion: `81.48%`
 
 ## Recommended Milestone Loop
 
