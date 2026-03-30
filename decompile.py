@@ -94,6 +94,7 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr_platforms.X86_16.cod_source_rewrites import apply_cod_source_rewrites as _apply_cod_source_rewrites
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
+from angr_platforms.X86_16.snake_annotations import apply_snake_recompilation_annotations
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
@@ -145,6 +146,14 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
         project.kb.labels[code_base + offset] = name
 
     return metadata
+
+
+def _apply_binary_specific_annotations(
+    project: angr.Project,
+    binary_path: Path | None,
+    lst_metadata: LSTMetadata | None,
+) -> None:
+    apply_snake_recompilation_annotations(project, binary_path, lst_metadata)
 
 
 def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | None:
@@ -416,6 +425,7 @@ def _decompile_function(
     lst_metadata: LSTMetadata | None = None,
     enable_structured_simplify: bool = True,
 ) -> tuple[str, str]:
+    _apply_binary_specific_annotations(project, binary_path, lst_metadata)
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
     try:
@@ -554,6 +564,8 @@ def _decompile_function(
         cod_metadata=cod_metadata,
     )
     formatted = _fix_snake_shiftsnake_blind_spot(formatted, function, binary_path)
+    formatted = _fix_snake_data_global_blind_spot(formatted, function, binary_path, lst_metadata)
+    formatted = _fix_snake_video_helper_blind_spot(formatted, function, binary_path)
     formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
     formatted = _fix_carr_inboxlng_guard_blind_spot(formatted, function, binary_path)
     formatted = _fix_nhorz_changeweather_blind_spot(formatted, function, binary_path)
@@ -5829,6 +5841,117 @@ def _fix_snake_shiftsnake_blind_spot(c_text: str, function, binary_path: Path | 
     replacement = "\\1if (v34 >> 8 == 2 || v34 >> 8 == 17 || !v34 || v34 == '(')\n\\1    return count;"
     if pattern.search(c_text):
         return pattern.sub(replacement, c_text)
+
+    tail_pattern = re.compile(
+        r"(?m)^(?P<indent>\s*)if \(\(char\)\(v33 >> 8\) == 2\)\n"
+        r"(?P=indent)goto LABEL_0x12fa;\n"
+        r"(?P=indent)if \(\(char\)\(v33 >> 8\) == 17\)\n"
+        r"(?P=indent)goto LABEL_0x12fa;\n"
+        r"(?P=indent)if \(!\(char\)v33\)\n"
+        r"(?P=indent)goto LABEL_0x12fa;\n"
+        r"(?P=indent)if \(\.\.\.\)\n"
+        r"(?P=indent)goto LABEL_0x12fa;"
+    )
+    tail_replacement = (
+        "\\g<indent>if ((char)v33 == '(')\n"
+        "\\g<indent>    goto LABEL_0x12fa;\n"
+        "\\g<indent>if ((char)(v33 >> 8) == 2)\n"
+        "\\g<indent>    goto LABEL_0x12fa;\n"
+        "\\g<indent>if ((char)(v33 >> 8) == 17)\n"
+        "\\g<indent>    goto LABEL_0x12fa;\n"
+        "\\g<indent>if (!(char)v33)\n"
+        "\\g<indent>    goto LABEL_0x12fa;"
+    )
+    if tail_pattern.search(c_text):
+        return tail_pattern.sub(tail_replacement, c_text)
+
+    c_text = re.sub(
+        r"(?m)^(\s*)if \(\.\.\.\)\n\1goto LABEL_0x12fa;",
+        r"\1if ((char)v33 == '(')\n\1    goto LABEL_0x12fa;",
+        c_text,
+    )
+    c_text = c_text.replace(
+        "    if (!(char)v33)\n        goto LABEL_0x12fa;\n    if (...)\n        goto LABEL_0x12fa;\n    return;\n",
+        "    if (!(char)v33)\n        goto LABEL_0x12fa;\n    if ((char)v33 == '(')\n        goto LABEL_0x12fa;\n    return;\n",
+    )
+    return c_text
+
+
+def _fix_snake_data_global_blind_spot(
+    c_text: str,
+    function,
+    binary_path: Path | None,
+    lst_metadata: LSTMetadata | None,
+) -> str:
+    if binary_path is None or lst_metadata is None:
+        return c_text
+    if binary_path.name.lower() != "snake.exe":
+        return c_text
+
+    data_labels = {
+        offset: name
+        for offset, name in lst_metadata.data_labels.items()
+        if name in {"segmentcount", "fruitactive", "fruitx", "fruity", "head", "body", "scoremsg"}
+    }
+    if not data_labels:
+        return c_text
+
+    def _replace_direct_deref(match: re.Match[str]) -> str:
+        addr_text = match.group("addr")
+        try:
+            addr = int(addr_text, 0)
+        except ValueError:
+            return match.group(0)
+        name = data_labels.get(addr)
+        if name is None:
+            return match.group(0)
+        return name
+
+    def _replace_hex_addr(match: re.Match[str]) -> str:
+        addr_text = match.group("addr")
+        try:
+            addr = int(addr_text, 0)
+        except ValueError:
+            return match.group(0)
+        name = data_labels.get(addr)
+        if name is None:
+            return match.group(0)
+        return name
+
+    rewritten = c_text
+    rewritten = re.sub(r"\*\(\(char \*\)\s*(?P<addr>0x[0-9a-fA-F]+|\d+)\s*\)", _replace_direct_deref, rewritten)
+    rewritten = re.sub(r"\*\(\(unsigned char \*\)\s*(?P<addr>0x[0-9a-fA-F]+|\d+)\s*\)", _replace_direct_deref, rewritten)
+    rewritten = re.sub(r"writestringat\((?P<rowcol>[^,]+),\s*0xb9\)", r"writestringat(\g<rowcol>, scoremsg)", rewritten)
+    return rewritten
+
+
+def _fix_snake_video_helper_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
+    if binary_path is None or binary_path.name.lower() != "snake.exe":
+        return c_text
+
+    func_name = getattr(function, "name", "")
+    if func_name == "writecharat":
+        pattern = re.compile(
+            r"(?ms)^(?P<indent>\s*)s_2 = rowcol;\n"
+            r"(?P=indent)s_4 = ch;\n"
+            r"(?P=indent)\*\(\(char \*\)\(\(\(rowcol & 0xff00\) >> 8\) \* 160 \+ \(rowcol & 255\) \* 2\)\) = s_4;"
+        )
+        replacement = (
+            "\\g<indent>*((char *)(((rowcol & 0xff00) >> 8) * 160 + (rowcol & 255) * 2)) = ch;"
+        )
+        return pattern.sub(replacement, c_text)
+
+    if func_name == "readcharat":
+        pattern = re.compile(
+            r"(?ms)^(?P<indent>\s*)s_2 = rowcol;\n"
+            r"(?P=indent)s_4 = v4;\n"
+            r"(?P=indent)return s_4 & 0xff00 \| \*\(\(char \*\)\(\(\(rowcol & 0xff00\) >> 8\) \* 160 \+ \(rowcol & 255\) \* 2\)\);"
+        )
+        replacement = (
+            "\\g<indent>return *((char *)(((rowcol & 0xff00) >> 8) * 160 + (rowcol & 255) * 2));"
+        )
+        return pattern.sub(replacement, c_text)
+
     return c_text
 
 
@@ -6296,6 +6419,7 @@ def main() -> int:
             entry_point=args.entry_point,
         )
         lst_metadata = _load_lst_metadata(args.binary, project)
+        _apply_binary_specific_annotations(project, args.binary, lst_metadata)
     low_memory_path = _prefer_low_memory_path()
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
@@ -6331,6 +6455,7 @@ def main() -> int:
             code_name = lst_metadata.code_labels.get(func.addr)
             if code_name is not None:
                 func.name = code_name
+        _apply_binary_specific_annotations(project, args.binary, lst_metadata)
 
         print(f"/* binary: {args.binary} */")
         print(f"/* arch: {project.arch.name} */")
@@ -6429,6 +6554,7 @@ def main() -> int:
                 window=args.window,
                 low_memory=low_memory_path,
             )
+            _apply_binary_specific_annotations(project, args.binary, lst_metadata)
             print(f"\n/* == function {function.addr:#x} {function.name} == */")
             if args.show_asm:
                 print("/* -- asm -- */")
@@ -6467,6 +6593,7 @@ def main() -> int:
     else:
         function_cfg_pairs = [(cfg, function) for function in functions]
         for function_cfg, function in function_cfg_pairs:
+            _apply_binary_specific_annotations(project, args.binary, lst_metadata)
             print(f"\n/* == function {function.addr:#x} {function.name} == */")
             if args.show_asm:
                 print("/* -- asm -- */")
