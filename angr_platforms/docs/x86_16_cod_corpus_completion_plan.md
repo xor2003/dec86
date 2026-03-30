@@ -801,12 +801,95 @@ Phase 7 is only done on the fixed target set when:
 - the bounded COD scan reports fewer bogus numeric callees and fewer timeouts
   than before
 
+## Phase 8. Migration to Early Recovery and Stability
+
+Phase 7 got the corpus into a generic COD recovery lane. Phase 8 finishes the
+migration from late rewrite rescue to earlier, typed recovery and keeps the
+pipeline stable when regeneration or timeout-heavy cases misbehave.
+
+### [x] 8.1. Guard code regeneration and preserve degraded text
+
+- `Priority`: `P0`
+- `Why`:
+  - a rewrite-time exception must not abort a recovered function
+- `Deterministic goal`:
+  - `dec.codegen.regenerate_text()` is wrapped so a regeneration failure
+    returns a degraded-but-valid text snapshot instead of aborting the run
+  - the decompiler logs which function failed regeneration
+  - the CLI still returns a classifiable decompilation outcome instead of a
+    traceback
+- `Done when`:
+  - codegen regeneration failures are visible and recoverable rather than
+    fatal
+
+### [x] 8.2. Apply known helper signatures in the shared decompile path
+
+- `Priority`: `P0`
+- `Why`:
+  - helper declarations only matter if they reach the actual decompile path
+- `Deterministic goal`:
+  - `_apply_known_helper_signatures()` runs in the shared `_decompile_function()`
+    path before decompilation
+  - known helper declarations are available to both the single-function and
+    batch `.COD` lanes
+  - helper callsites can render with typed declarations without relying on a
+    source-specific rescue rewrite
+- `Done when`:
+  - helper signatures are part of the normal early recovery surface, not just
+    a late formatting hint
+
+### [ ] 8.3. Restore a safe early annotation surface for generic metadata
+
+- `Priority`: `P0`
+- `Why`:
+  - early metadata is the right place for safe facts, not late text fixes
+- `Deterministic goal`:
+  - generic binary/COD annotations apply before decompilation
+  - helper signatures, known object specs, and listing-backed naming facts are
+    available to the decompiler before rewrite
+  - `_apply_binary_specific_annotations()` stays a compatibility shim or a
+    thin no-op, but not the place where semantics are guessed
+- `Done when`:
+  - binary-specific metadata facts are established early and generically
+
+### [ ] 8.4. Move COD object and segment semantics earlier, thin late rewrite
+
+- `Priority`: `P0`
+- `Why`:
+  - typed objects and segmented memory are recovery problems, not pretty-print
+    problems
+- `Deterministic goal`:
+  - known COD object specs drive alias and type recovery before the late C
+    cleanup stage
+  - segmented and far-pointer objects remain explicit until they are proven
+    safe to lower
+  - late rewrite only polishes already-stable object/field recovery
+- `Done when`:
+  - known objects and segment spaces are explained before the final rewrite
+    chain
+
+### [ ] 8.5. Keep wrapper/return cleanup and timeout triage generic
+
+- `Priority`: `P1`
+- `Why`:
+  - direct wrappers and missing returns should be fixed by generic recovery,
+    not by source-specific rescues
+- `Deterministic goal`:
+  - direct forwarding wrappers stay direct after arg/return recovery
+  - missing fallthrough returns are repaired generically when the evidence is
+    stable
+  - timeout-stage metrics remain explicit for large `.COD` outliers so the
+    scan-safe lane stays classifiable
+- `Done when`:
+  - wrapper cleanup, return repair, and timeout reporting stay generic and
+    stable across the corpus
+
 ## Current Completion Snapshot
 
-- Completed steps: `27`
-- Total tracked steps: `27`
-- Strict completion: `100.00%`
-- Weighted completion: `100.00%`
+- Completed steps: `29`
+- Total tracked steps: `32`
+- Strict completion: `90.62%`
+- Weighted completion: `90.62%`
 
 ## Recommended Milestone Loop
 

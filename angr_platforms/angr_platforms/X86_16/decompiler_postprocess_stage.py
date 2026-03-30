@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable
 
@@ -78,6 +79,19 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     return changed
 
 
+def _regenerate_text_safely(codegen, *, context: str) -> bool:
+    try:
+        codegen.regenerate_text()
+    except Exception as ex:
+        logging.getLogger(__name__).warning(
+            "Skipping 86_16 postprocess regeneration for %s: %s",
+            context,
+            ex,
+        )
+        return False
+    return True
+
+
 def _decompile_8616(self):
     _orig_decompiler_decompile = getattr(_decompile_8616, "_orig_decompiler_decompile", None)
     if _orig_decompiler_decompile is None:
@@ -89,7 +103,9 @@ def _decompile_8616(self):
         and self.codegen is not None
         and _postprocess_codegen_8616(self.project, self.codegen)
     ):
-        self.codegen.regenerate_text()
+        function = getattr(self, "function", None)
+        context = f"{getattr(function, 'addr', 'unknown')!r} {getattr(function, 'name', 'unknown')}"
+        _regenerate_text_safely(self.codegen, context=context)
 
 
 def apply_x86_16_decompiler_postprocess() -> None:

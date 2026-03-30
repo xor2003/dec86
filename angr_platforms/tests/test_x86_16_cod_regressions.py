@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import decompile
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -208,3 +210,17 @@ def test_cod_known_helper_signatures_are_declared(cod_name: str, proc_name: str,
 
     assert result.returncode == 0, result.stderr + result.stdout
     _assert_has_all(result.stdout, anchors)
+
+
+def test_regenerate_codegen_text_falls_back_on_failure():
+    class DummyCodegen:
+        def __init__(self) -> None:
+            self.text = "fallback text"
+
+        def regenerate_text(self) -> None:
+            raise RuntimeError("boom")
+
+    text, changed = decompile._regenerate_codegen_text_safely(DummyCodegen(), context="dummy")
+
+    assert text == "fallback text"
+    assert changed is False
