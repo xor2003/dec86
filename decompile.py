@@ -486,6 +486,8 @@ def _decompile_function(
     _apply_binary_specific_annotations(project, binary_path, lst_metadata)
     if cod_metadata is not None:
         _apply_known_cod_object_annotations(project, function.addr, cod_metadata, synthetic_globals)
+    block_count, byte_count = _function_complexity(function)
+    decompiler_options = _preferred_decompiler_options(block_count, byte_count)
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
     signal.alarm(timeout)
     try:
@@ -496,13 +498,21 @@ def _decompile_function(
             print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
             function.normalize()
         seed_calling_conventions(cfg)
-        dec = project.analyses.Decompiler(function, cfg=cfg)
+        if decompiler_options is None:
+            dec = project.analyses.Decompiler(function, cfg=cfg)
+        else:
+            dec = project.analyses.Decompiler(function, cfg=cfg, options=decompiler_options)
         if dec.codegen is None:
+            fallback_options = None if decompiler_options is not None else [("structurer_cls", "Phoenix")]
             logging.getLogger(__name__).debug(
-                "Default decompiler structurer produced no code for %s; retrying with Phoenix.",
+                "Selected decompiler structurer produced no code for %s; retrying with %s.",
                 function,
+                "SAILR" if decompiler_options is not None else "Phoenix",
             )
-            dec = project.analyses.Decompiler(function, cfg=cfg, options=[("structurer_cls", "Phoenix")])
+            if fallback_options is None:
+                dec = project.analyses.Decompiler(function, cfg=cfg)
+            else:
+                dec = project.analyses.Decompiler(function, cfg=cfg, options=fallback_options)
         print(f"[dbg] Decompiler returned for {hex(function.addr)}")
         sys.stdout.flush()
     except _AnalysisTimeout:
@@ -517,7 +527,6 @@ def _decompile_function(
         return "empty", "Decompiler did not produce code."
     setattr(project, "_inertia_rewrite_cache", {})
     changed = False
-    block_count, byte_count = _function_complexity(function)
     small_function = block_count <= 4 and byte_count <= 32
     fold_values_cod_outlier = (
         binary_path is not None
@@ -647,6 +656,13 @@ def _function_complexity(function):
             continue
         total_bytes += len(block.bytes)
     return len(block_addrs), total_bytes
+
+
+def _preferred_decompiler_options(block_count: int, byte_count: int) -> list[tuple[str, str]] | None:
+    """Choose a cheaper decompiler structurer for tiny wrapper-like functions."""
+    if block_count <= 1 and byte_count <= 24:
+        return [("structurer_cls", "Phoenix")]
+    return None
 
 
 def _normalize_anonymous_call_targets(c_text: str) -> str:
