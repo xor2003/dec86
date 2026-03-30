@@ -267,25 +267,14 @@ def test_decompile_cli_decompiles_snake_loop_function_instead_of_falling_back_to
     assert "function: 0x13b2 writestringat" in result.stdout
     assert "Decompilation empty" not in result.stdout
     assert "== asm fallback ==" not in result.stdout
-    assert "unsigned short writestringat(void)" in result.stdout
+    assert "void writestringat(unsigned short rowcol, const char *s)" in result.stdout
     assert "while (true)" in result.stdout
-    assert "v20 = v20 & 0xff00 | *((char *)v25);" in result.stdout
-    assert "if (!(char)v20)" in result.stdout
-    assert "v6 = (v4 & 0xff00) >> 1;" in result.stdout
-    assert "v8 = (v4 & 0xff00) >> 3;" in result.stdout
-    assert "v10 = (v4 & 0xff00) >> 5;" in result.stdout
-    assert "v13 = (v4 & 0xff00) >> 8;" in result.stdout
-    assert "v22 = ...;" not in result.stdout
-    assert "v27 = ...;" not in result.stdout
-    assert "ds * 16 + v25" not in result.stdout
-    assert "v16 = (v12 >> 1) * 160;" in result.stdout
-    assert "v20 = v13 * 160 + (v4 & 255) * 2;" in result.stdout
-    assert "v29 = v20 + 1;" in result.stdout
-    assert "v23 = v29 + 1;" in result.stdout
-    assert "*((char *)v24) = v20;" in result.stdout
+    assert "s_2 = rowcol;" in result.stdout
+    assert "s_4 = s;" in result.stdout
+    assert "return v20;" not in result.stdout
 
 
-def test_decompile_cli_recovers_snake_draw_data_labels():
+def test_decompile_cli_recovers_snake_draw_call_surface():
     result = subprocess.run(
         [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x11d8"],
         cwd=REPO_ROOT,
@@ -297,11 +286,22 @@ def test_decompile_cli_recovers_snake_draw_data_labels():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x11d8 draw" in result.stdout
-    assert "unsigned short draw(void)" in result.stdout
+    assert "void draw(void)" in result.stdout
+    assert "writestringat(" in result.stdout
+    assert "setcursorpos(" in result.stdout
+    assert "writecharat(" in result.stdout
+    assert "scoremsg" in result.stdout
     assert "segmentcount" in result.stdout
-    assert "fruitactive = 1;" in result.stdout
-    assert "0xf4" not in result.stdout.lower()
-    assert "0xf5" not in result.stdout.lower()
+    assert "fruitactive" in result.stdout
+    assert "fruitx" in result.stdout
+    assert "fruity" in result.stdout
+    assert "*((char *)244)" not in result.stdout
+    assert "*((char *)245)" not in result.stdout
+    assert "*((char *)246)" not in result.stdout
+    assert "*((char *)247)" not in result.stdout
+    assert "writestringat();" not in result.stdout
+    assert "setcursorpos();" not in result.stdout
+    assert "writecharat();" not in result.stdout
 
 
 def test_decompile_cli_recovers_snake_shiftsnake_without_blind_spot():
@@ -318,7 +318,7 @@ def test_decompile_cli_recovers_snake_shiftsnake_without_blind_spot():
     assert "function: 0x1284 shiftsnake" in result.stdout
     assert "if (...)" not in result.stdout
     assert "if (!(char)v33)" in result.stdout
-    assert "if (!((char)v33 - 40))" in result.stdout
+    assert "if ((char)v33 == '(')" in result.stdout
     assert "return;" in result.stdout
 
 
@@ -334,13 +334,12 @@ def test_decompile_cli_recovers_snake_writecharat_pointer_access():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x135c writecharat" in result.stdout
-    assert "long writecharat(void)" in result.stdout
+    assert "void writecharat(unsigned short rowcol, char ch)" in result.stdout
     assert "*((char *)(es * 16 +" not in result.stdout
     assert "*((char *)" in result.stdout
-    assert "s_2 = v4;" in result.stdout
-    assert "s_4 = v5;" in result.stdout
-    assert "return s_2 << 16 | ((v4 & 0xff00) >> 8) * 160 + (v4 & 255) * 2;" in result.stdout
-    assert "return" in result.stdout
+    assert "s_2 = rowcol;" in result.stdout
+    assert "s_4 = ch;" in result.stdout
+    assert "return s_2 << 16" not in result.stdout
 
 
 def test_decompile_cli_recovers_snake_readcharat_listing_name():
@@ -355,11 +354,10 @@ def test_decompile_cli_recovers_snake_readcharat_listing_name():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1387 readcharat" in result.stdout
-    assert "long readcharat(void)" in result.stdout
+    assert "char readcharat(unsigned short rowcol)" in result.stdout
     assert "== asm fallback ==" not in result.stdout
-    assert "s_2 = v4;" in result.stdout
-    assert "s_4 = v5;" in result.stdout
-    assert "return s_2 << 16 | ((v4 & 0xff00) >> 8) * 160 + (v4 & 255) * 2;" in result.stdout
+    assert "s_2 = rowcol;" in result.stdout
+    assert "return s_4 & 0xff00 | *((char *)" in result.stdout
 
 
 def test_decompile_cli_whole_snake_scan_has_no_blank_spot_placeholders():
@@ -410,7 +408,8 @@ def test_decompile_cli_recovers_snake_fruitgeneration_with_phoenix_fallback():
     assert "unsigned short fruitgeneration(void)" in result.stdout
     assert "== asm fallback ==" not in result.stdout
     assert "bios_int1a_clock();" in result.stdout
-    assert "readcharat();" in result.stdout
+    assert "readcharat(" in result.stdout
+    assert "readcharat();" not in result.stdout
 
 
 def test_decompile_cli_recovers_snake_ds_pointer_arithmetic():
@@ -428,8 +427,26 @@ def test_decompile_cli_recovers_snake_ds_pointer_arithmetic():
     assert "void sub_1287(void)" in result.stdout
     assert "ds * 16" not in result.stdout
     assert "s_2 = *((char *)field_1);" in result.stdout
-    assert "readcharat();" in result.stdout
-    assert "writecharat();" in result.stdout
+    assert "readcharat(" in result.stdout
+    assert "writecharat(" in result.stdout
+    assert "readcharat();" not in result.stdout
+    assert "writecharat();" not in result.stdout
+
+
+def test_decompile_cli_recovers_snake_setcursorpos_register_proto():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x11cf"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x11cf setcursorpos" in result.stdout
+    assert "void setcursorpos(unsigned short rowcol)" in result.stdout
+    assert "short setcursorpos(void)" not in result.stdout
 
 
 def test_decompile_cli_keeps_query_interrupts_wrapper_calls_classified_in_matrix_corpus():

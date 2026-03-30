@@ -31,6 +31,7 @@ def annotate_function(
     name: str | None = None,
     c_decl: str | None = None,
     prototype: SimTypeFunction | None = None,
+    calling_convention=None,
     arg_names: list[str] | tuple[str, ...] | None = None,
     stack_vars: dict[int, str | dict] | None = None,
     bp_stack_vars: dict[int, str | dict] | None = None,
@@ -57,6 +58,9 @@ def annotate_function(
     if final_proto is not None:
         func.prototype = final_proto
         func.is_prototype_guessed = False
+
+    if calling_convention is not None:
+        func.calling_convention = calling_convention
 
     if arg_names is not None:
         if func.prototype is None:
