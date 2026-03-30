@@ -84,7 +84,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     render_dos_int21_call,
     seed_calling_conventions,
 )
-from angr_platforms.X86_16.annotations import annotate_function
+from angr_platforms.X86_16.annotations import annotate_function, apply_x86_16_metadata_annotations
 from angr_platforms.X86_16.cod_extract import (
     CODProcMetadata,
     extract_cod_function_entries,
@@ -156,37 +156,10 @@ def _apply_binary_specific_annotations(
     binary_path: Path | None,
     lst_metadata: LSTMetadata | None,
 ) -> None:
+    if lst_metadata is None:
+        return None
+    apply_x86_16_metadata_annotations(project, lst_metadata=lst_metadata)
     return None
-
-
-def _apply_known_helper_signatures(project: angr.Project, cod_metadata: CODProcMetadata | None) -> bool:
-    if cod_metadata is None or not cod_metadata.call_names:
-        return False
-
-    changed = False
-    seen: set[str] = set()
-    for call_name in cod_metadata.call_names:
-        decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
-        if decl is None or decl in seen:
-            continue
-        seen.add(decl)
-
-        helper_name = call_name
-        helper_func = project.kb.functions.function(name=helper_name, create=False)
-        if helper_func is None and helper_name.startswith("_"):
-            helper_func = project.kb.functions.function(name=helper_name.lstrip("_"), create=False)
-        if helper_func is None:
-            continue
-
-        annotate_function(
-            project,
-            helper_func.addr,
-            name=getattr(helper_func, "name", helper_name),
-            c_decl=decl,
-        )
-        changed = True
-
-    return changed
 
 
 def _snapshot_codegen_text(codegen) -> str:
@@ -505,9 +478,14 @@ def _decompile_function(
     enable_structured_simplify: bool = True,
 ) -> tuple[str, str]:
     _apply_binary_specific_annotations(project, binary_path, lst_metadata)
-    if cod_metadata is not None:
-        _apply_known_helper_signatures(project, cod_metadata)
-        _apply_known_cod_object_annotations(project, function.addr, cod_metadata, synthetic_globals)
+    if cod_metadata is not None or synthetic_globals:
+        apply_x86_16_metadata_annotations(
+            project,
+            func_addr=function.addr,
+            cod_metadata=cod_metadata,
+            lst_metadata=lst_metadata,
+            synthetic_globals=synthetic_globals,
+        )
     block_count, byte_count = _function_complexity(function)
     decompiler_options = _preferred_decompiler_options(block_count, byte_count)
     old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
@@ -6709,7 +6687,13 @@ def main() -> int:
             code_name = lst_metadata.code_labels.get(func.addr)
             if code_name is not None:
                 func.name = code_name
-        _apply_known_helper_signatures(project, cod_metadata)
+        apply_x86_16_metadata_annotations(
+            project,
+            func_addr=func.addr,
+            cod_metadata=cod_metadata,
+            lst_metadata=lst_metadata,
+            synthetic_globals=synthetic_globals,
+        )
         _apply_binary_specific_annotations(project, args.binary, lst_metadata)
 
         print(f"/* binary: {args.binary} */")
@@ -6809,7 +6793,7 @@ def main() -> int:
                 window=args.window,
                 low_memory=low_memory_path,
             )
-            _apply_binary_specific_annotations(project, args.binary, lst_metadata)
+            apply_x86_16_metadata_annotations(project, func_addr=function.addr, lst_metadata=lst_metadata)
             print(f"\n/* == function {function.addr:#x} {function.name} == */")
             if args.show_asm:
                 print("/* -- asm -- */")
@@ -6848,7 +6832,7 @@ def main() -> int:
     else:
         function_cfg_pairs = [(cfg, function) for function in functions]
         for function_cfg, function in function_cfg_pairs:
-            _apply_binary_specific_annotations(project, args.binary, lst_metadata)
+            apply_x86_16_metadata_annotations(project, func_addr=function.addr, lst_metadata=lst_metadata)
             print(f"\n/* == function {function.addr:#x} {function.name} == */")
             if args.show_asm:
                 print("/* -- asm -- */")
