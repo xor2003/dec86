@@ -6394,7 +6394,69 @@ def _format_known_helper_calls(
         and getattr(function, "name", "") == "fold_values"
     ):
         c_text = _simplify_x86_16_stack_byte_pointers(c_text)
-    return _simplify_x86_16_conditions(c_text)
+    c_text = _simplify_x86_16_conditions(c_text)
+    return _repair_missing_fallthrough_returns(c_text)
+
+
+def _repair_missing_fallthrough_returns(c_text: str) -> str:
+    header_re = re.compile(
+        r"^(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^;]*)\)\s*(?:\{)?$"
+    )
+    lines = c_text.splitlines()
+    header_match = None
+    for idx in range(len(lines) - 1, -1, -1):
+        match = header_re.match(lines[idx].strip())
+        if match is not None:
+            header_match = match
+            break
+
+    if header_match is None:
+        return c_text
+
+    ret_type = header_match.group("ret").strip()
+    if ret_type == "void" or "return " not in c_text:
+        return c_text
+
+    body_text, sep, closing_brace = c_text.rpartition("}")
+    if not sep:
+        return c_text
+
+    body_lines = body_text.splitlines()
+    if not body_lines:
+        return c_text
+
+    candidates: list[tuple[int, int, str]] = []
+    for line in body_lines:
+        stripped = line.strip()
+        if not stripped.startswith(("unsigned short", "char", "short", "int")):
+            continue
+        if "// ax" in stripped:
+            kind = "ax"
+        elif "// dx" in stripped:
+            kind = "dx"
+        elif "// al" in stripped:
+            kind = "al"
+        elif "// ah" in stripped:
+            kind = "ah"
+        else:
+            continue
+        parts = stripped.split()
+        if len(parts) < 3:
+            continue
+        name = parts[2].rstrip(";")
+        assign_count = body_text.count(f"{name} =")
+        if assign_count == 0:
+            continue
+        priority = {"ax": 3, "dx": 2, "al": 1, "ah": 1}.get(kind, 0)
+        candidates.append((priority, assign_count, name))
+
+    if not candidates:
+        return c_text
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    return_name = candidates[-1][2]
+    indent = "    "
+    return body_text + f"\n{indent}return {return_name};\n" + "}" + closing_brace
 
 
 def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int, low_memory: bool = False):
