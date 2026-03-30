@@ -220,11 +220,13 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     assert "if (!(ejected))" in result.stdout
     assert "if (!G)" in result.stdout
     assert "if (Knots <= 350)" in result.stdout
+    assert "Status = Status | 1;" in result.stdout
+    assert "Status = Status & -2;" in result.stdout
     assert "Message (\"Landing gear lowered\",RIO_MSG);" in result.stdout
+    assert "return v13;" in result.stdout
     assert "if (...)" not in result.stdout
-    assert "v5 * 16" not in result.stdout
-    assert "v14 = 73;" not in result.stdout
-    assert "v14 = 52;" not in result.stdout
+    assert "28674" not in result.stdout
+    assert "28682" not in result.stdout
     assert "sub_102f();" not in result.stdout
 
 
@@ -391,7 +393,7 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
                     "function: 0x1000 _mset_pos",
                     "% 80",
                     "% 25",
-                    "short _mset_pos(unsigned short v0, unsigned short x, unsigned short y)",
+                    "int _mset_pos(int x, int y)",
                 ),
                 ("&v1",),
             ),
@@ -476,7 +478,10 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
                     "if (!(ejected))",
                     "if (!G)",
                     "if (Knots <= 350)",
+                    "Status = Status | 1;",
+                    "Status = Status & -2;",
                     'Message ("Landing gear lowered",RIO_MSG);',
+                    "return v13;",
                 ),
                 (),
             ),
