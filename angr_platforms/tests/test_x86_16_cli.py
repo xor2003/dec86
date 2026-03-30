@@ -362,6 +362,24 @@ def test_decompile_cli_recovers_snake_readcharat_listing_name():
     assert "return s_4 & 0xff00 | *((char *)" not in result.stdout
 
 
+def test_decompile_cli_recovers_snake_main_interrupt_surface():
+    result = subprocess.run(
+        [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "60", "--addr", "0x1100"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "function: 0x1100 main" in result.stdout
+    assert "bios_int10_video(3);" in result.stdout
+    assert "print_dos_string(instructions);" in result.stdout
+    assert "print_dos_string((const char *)0x0)" not in result.stdout
+    assert "exit(0);" in result.stdout
+
+
 def test_decompile_cli_whole_snake_scan_has_no_blank_spot_placeholders():
     result = subprocess.run(
         [sys.executable, str(CLI_PATH), str(SNAKE_EXE), "--timeout", "20", "--max-functions", "20"],

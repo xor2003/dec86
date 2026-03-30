@@ -286,15 +286,15 @@ Leave text cleanup rewrites as the last step and keep them narrow.
 - `S1`: partially landed
 - `S2`: partially landed
 - `S3`: partially landed
-- `S4`: open
+- `S4`: partially landed
 - `S5`: open
 - `S6`: open
 - `S7`: open
 
 Measured by step count:
 - complete: `0/7`
-- partially landed: `3/7`
-- progress including partials at half credit: `21.43%`
+- partially landed: `4/7`
+- progress including partials at half credit: `28.57%`
 
 Current code-backed landing so far:
 - `snake_annotations.py` adds explicit helper ABI metadata.
@@ -304,9 +304,13 @@ Current code-backed landing so far:
   into decompilation-time annotations.
 - `decompile.py` applies a narrow snake DS-global cleanup pass for the known
   snake data labels.
+- `decompile.py` applies a narrow snake `main` interrupt cleanup pass so the
+  checked-in `instructions` label is used instead of a null placeholder.
 - `tests/test_x86_16_snake_annotations.py` covers the helper ABI registry.
 - `tests/test_x86_16_snake_annotations.py` covers typed snake data globals.
 - `tests/test_x86_16_cli.py` now checks the improved snake helper call surface.
+- `tests/test_x86_16_cli.py` now checks the cleaned snake `main` interrupt
+  surface.
 
 ## Immediate Working Order
 
@@ -316,7 +320,9 @@ Current code-backed landing so far:
    into alias / widening / type recovery.
 3. Finish `S3` by removing the synthetic address-return artifacts from the
    video-memory helpers.
-4. Then spend effort on `S4` + `S5` + `S6`.
+4. Finish `S4` by lowering the remaining interrupt call semantics in `main`,
+   `delay`, and `fruitgeneration`.
+5. Then spend effort on `S5` + `S6`.
 
 ## Text Cleanup Policy
 
