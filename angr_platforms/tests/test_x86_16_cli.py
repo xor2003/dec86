@@ -337,8 +337,8 @@ def test_decompile_cli_recovers_snake_writecharat_pointer_access():
     assert "void writecharat(unsigned short rowcol, char ch)" in result.stdout
     assert "*((char *)(es * 16 +" not in result.stdout
     assert "*((char *)" in result.stdout
-    assert "s_2 = rowcol;" in result.stdout
-    assert "s_4 = ch;" in result.stdout
+    assert "s_2 = rowcol;" not in result.stdout
+    assert "s_4 = ch;" not in result.stdout
     assert "return s_2 << 16" not in result.stdout
 
 
@@ -356,8 +356,10 @@ def test_decompile_cli_recovers_snake_readcharat_listing_name():
     assert "function: 0x1387 readcharat" in result.stdout
     assert "char readcharat(unsigned short rowcol)" in result.stdout
     assert "== asm fallback ==" not in result.stdout
-    assert "s_2 = rowcol;" in result.stdout
-    assert "return s_4 & 0xff00 | *((char *)" in result.stdout
+    assert "s_2 = rowcol;" not in result.stdout
+    assert "s_4 = v4;" not in result.stdout
+    assert "return *((char *)" in result.stdout
+    assert "return s_4 & 0xff00 | *((char *)" not in result.stdout
 
 
 def test_decompile_cli_whole_snake_scan_has_no_blank_spot_placeholders():
