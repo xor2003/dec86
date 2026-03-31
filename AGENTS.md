@@ -470,6 +470,11 @@ For issues or maintenance, consider angr's pcode alternatives.
 
 ## Repository Coding Guidelines
 
+- **SRP:** Apply Single Responsibility Principle strictly: one file or module should have one primary responsibility.
+- **File size:** Keep files in the `≤500–700 LOC` range when practical; split larger files before adding more logic.
+- **Function size:** Keep functions in the `≤50–80 LOC` range when practical; prefer small, simple, focused helpers.
+- **Coupling:** Avoid hidden coupling and global state; make data flow explicit and local where possible.
+- **Refactor first:** If a file is growing, or if it starts mixing concerns, refactor or split it before adding new logic.
 - **Files:** Keep individual source files under 300 lines where practical to improve reviewability and maintainability.
 - **Single Responsibility Principle:** Prefer small modules/functions that do one thing. If a file grows beyond its focused purpose, split it into smaller files following SRP.
 - **Why:** Smaller, SRP-aligned files simplify testing, linting, and code review for this project which targets low-level lifters and simulation helpers.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import io
 import logging
@@ -12,6 +13,10 @@ import resource
 import signal
 import sys
 import time
+import threading
+import weakref
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures.thread import _threads_queues, _worker
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +27,100 @@ _VENV_PYTHON = _ROOT / "venv" / "bin" / "python"
 CURRENT_PROJECT: angr.Project | None = None
 START_TIME = time.perf_counter()
 LAST_STEP_TIME = START_TIME
+DECOMPILATION_PREP_LOCK = threading.Lock()
+_REAL_STDOUT = sys.stdout
+_REAL_STDERR = sys.stderr
+
+
+class _ThreadBoundTextIO(io.TextIOBase):
+    def __init__(self, fallback):
+        self._fallback = fallback
+        self._local = threading.local()
+
+    @contextlib.contextmanager
+    def target(self, stream):
+        previous = getattr(self._local, "stream", None)
+        self._local.stream = stream
+        try:
+            yield
+        finally:
+            if previous is None:
+                with contextlib.suppress(AttributeError):
+                    delattr(self._local, "stream")
+            else:
+                self._local.stream = previous
+
+    def _stream(self):
+        return getattr(self._local, "stream", self._fallback)
+
+    def write(self, data):
+        return self._stream().write(data)
+
+    def flush(self):
+        return self._stream().flush()
+
+    def isatty(self):
+        target = self._stream()
+        return bool(getattr(target, "isatty", lambda: False)())
+
+    @property
+    def encoding(self):
+        return getattr(self._stream(), "encoding", getattr(self._fallback, "encoding", "utf-8"))
+
+    @property
+    def errors(self):
+        return getattr(self._stream(), "errors", getattr(self._fallback, "errors", "strict"))
+
+    def __getattr__(self, item):
+        return getattr(self._stream(), item)
+
+
+_THREAD_STDOUT = _ThreadBoundTextIO(_REAL_STDOUT)
+_THREAD_STDERR = _ThreadBoundTextIO(_REAL_STDERR)
+sys.stdout = _THREAD_STDOUT
+sys.stderr = _THREAD_STDERR
+
+
+class DaemonThreadPoolExecutor(ThreadPoolExecutor):
+    def _adjust_thread_count(self):  # noqa: D401
+        if self._idle_semaphore.acquire(timeout=0):
+            return
+
+        def weakref_cb(_, q=self._work_queue):
+            q.put(None)
+
+        num_threads = len(self._threads)
+        if num_threads < self._max_workers:
+            thread_name = "%s_%d" % (self._thread_name_prefix or self, num_threads)
+            t = threading.Thread(
+                name=thread_name,
+                target=_worker,
+                args=(
+                    weakref.ref(self, weakref_cb),
+                    self._create_worker_context(),
+                    self._work_queue,
+                ),
+                daemon=True,
+            )
+            t.start()
+            self._threads.add(t)
+            _threads_queues[t] = self._work_queue
+
+
+@dataclass(frozen=True)
+class FunctionDecompileTask:
+    index: int
+    cfg: object
+    function: object
+
+
+@dataclass(frozen=True)
+class FunctionDecompileResult:
+    index: int
+    status: str
+    payload: str
+    debug_output: str
+    elapsed: float
 
 
 def log_step(step: str) -> None:
@@ -402,6 +501,21 @@ def _raise_timeout(_signum, _frame):
     raise _AnalysisTimeout()
 
 
+@contextlib.contextmanager
+def _analysis_timeout(timeout: int):
+    if timeout <= 0 or threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.alarm(timeout)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+
 def _apply_memory_limit(max_memory_mb: int | None) -> None:
     if max_memory_mb is None or max_memory_mb <= 0:
         return
@@ -412,7 +526,7 @@ def _apply_memory_limit(max_memory_mb: int | None) -> None:
         pass
 
 
-def _memory_availability_ratio() -> float | None:
+def _memory_available_mb() -> int | None:
     try:
         meminfo = {}
         with open("/proc/meminfo", "r", encoding="utf-8") as fp:
@@ -423,18 +537,24 @@ def _memory_availability_ratio() -> float | None:
                 parts = value.strip().split()
                 if parts:
                     meminfo[key] = int(parts[0])
-        total = meminfo.get("MemTotal")
         available = meminfo.get("MemAvailable")
-        if total and available:
-            return available / total
+        if available:
+            return available // 1024
     except OSError:
         pass
     return None
 
 
 def _prefer_low_memory_path() -> bool:
-    ratio = _memory_availability_ratio()
-    return ratio is not None and ratio < 0.5
+    available_mb = _memory_available_mb()
+    return available_mb is not None and available_mb < 4096
+
+
+def _lower_process_priority() -> None:
+    try:
+        os.nice(10)
+    except (AttributeError, OSError):
+        pass
 
 
 def _format_first_block_asm(project: angr.Project, addr: int) -> str:
@@ -488,19 +608,17 @@ def _decompile_function(
     lst_metadata: LSTMetadata | None = None,
     enable_structured_simplify: bool = True,
 ) -> tuple[str, str]:
-    _apply_binary_specific_annotations(
-        project,
-        binary_path,
-        lst_metadata,
-        func_addr=function.addr,
-        cod_metadata=cod_metadata,
-        synthetic_globals=synthetic_globals,
-    )
-    block_count, byte_count = _function_complexity(function)
-    decompiler_options = _preferred_decompiler_options(block_count, byte_count)
-    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(timeout)
-    try:
+    with DECOMPILATION_PREP_LOCK:
+        _apply_binary_specific_annotations(
+            project,
+            binary_path,
+            lst_metadata,
+            func_addr=function.addr,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+        )
+        block_count, byte_count = _function_complexity(function)
+        decompiler_options = _preferred_decompiler_options(block_count, byte_count)
         print(f"[dbg] decompile_function: addr={hex(function.addr)} name={function.name}")
         sys.stdout.flush()
         # Ensure function is normalized before decompilation
@@ -508,30 +626,29 @@ def _decompile_function(
             print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
             function.normalize()
         seed_calling_conventions(cfg)
-        if decompiler_options is None:
-            dec = project.analyses.Decompiler(function, cfg=cfg)
-        else:
-            dec = project.analyses.Decompiler(function, cfg=cfg, options=decompiler_options)
-        if dec.codegen is None:
-            fallback_options = None if decompiler_options is not None else [("structurer_cls", "Phoenix")]
-            logging.getLogger(__name__).debug(
-                "Selected decompiler structurer produced no code for %s; retrying with %s.",
-                function,
-                "SAILR" if decompiler_options is not None else "Phoenix",
-            )
-            if fallback_options is None:
+    try:
+        with _analysis_timeout(timeout):
+            if decompiler_options is None:
                 dec = project.analyses.Decompiler(function, cfg=cfg)
             else:
-                dec = project.analyses.Decompiler(function, cfg=cfg, options=fallback_options)
-        print(f"[dbg] Decompiler returned for {hex(function.addr)}")
-        sys.stdout.flush()
+                dec = project.analyses.Decompiler(function, cfg=cfg, options=decompiler_options)
+            if dec.codegen is None:
+                fallback_options = None if decompiler_options is not None else [("structurer_cls", "Phoenix")]
+                logging.getLogger(__name__).debug(
+                    "Selected decompiler structurer produced no code for %s; retrying with %s.",
+                    function,
+                    "SAILR" if decompiler_options is not None else "Phoenix",
+                )
+                if fallback_options is None:
+                    dec = project.analyses.Decompiler(function, cfg=cfg)
+                else:
+                    dec = project.analyses.Decompiler(function, cfg=cfg, options=fallback_options)
+            print(f"[dbg] Decompiler returned for {hex(function.addr)}")
+            sys.stdout.flush()
     except _AnalysisTimeout:
         return "timeout", f"Timed out after {timeout}s."
     except Exception as ex:
         return "error", str(ex)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
@@ -728,6 +845,86 @@ def _decompile_function_with_stats(
     print(f"[dbg] decompilation time for {function.addr:#x} {function.name}: {elapsed:.2f}s")
     sys.stdout.flush()
     return status, payload, block_count, byte_count, elapsed
+
+
+@dataclass(frozen=True)
+class FunctionWorkItem:
+    index: int
+    function_cfg: object
+    function: object
+
+
+@dataclass(frozen=True)
+class FunctionWorkResult:
+    index: int
+    status: str
+    payload: str
+    debug_output: str
+    function: object
+    function_cfg: object
+
+
+def _choose_function_parallelism(function_count: int) -> int:
+    if function_count <= 1:
+        return 1
+    if _prefer_low_memory_path():
+        return 1
+    cpu_count = os.cpu_count() or 1
+    workers = max(1, cpu_count - 1)
+    available_mb = _memory_available_mb()
+    if available_mb is None:
+        return 1
+    budget_mb = int(available_mb * 0.5)
+    if budget_mb < 4096:
+        return 1
+    workers_by_mem = max(1, budget_mb // 1536)
+    return min(workers, function_count, workers_by_mem)
+
+
+@contextlib.contextmanager
+def _capture_thread_output():
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+    with _THREAD_STDOUT.target(stdout_buf), _THREAD_STDERR.target(stderr_buf):
+        yield stdout_buf, stderr_buf
+
+
+def _run_function_work_item(
+    item: FunctionWorkItem,
+    *,
+    timeout: int,
+    api_style: str,
+    binary_path: Path | None,
+    cod_metadata: CODProcMetadata | None,
+    synthetic_globals: dict[int, tuple[str, int]] | None,
+    lst_metadata: LSTMetadata | None,
+    enable_structured_simplify: bool,
+) -> FunctionWorkResult:
+    with _capture_thread_output() as (stdout_buf, stderr_buf):
+        status, payload, *_ = _decompile_function_with_stats(
+            item.function.project,
+            item.function_cfg,
+            item.function,
+            timeout,
+            api_style,
+            binary_path,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
+            enable_structured_simplify=enable_structured_simplify,
+        )
+    debug_output = stdout_buf.getvalue()
+    err_output = stderr_buf.getvalue()
+    if err_output:
+        debug_output += err_output
+    return FunctionWorkResult(
+        index=item.index,
+        status=status,
+        payload=payload,
+        debug_output=debug_output,
+        function=item.function,
+        function_cfg=item.function_cfg,
+    )
 
 
 def _helper_name(project: angr.Project, addr: int) -> str | None:
@@ -6624,10 +6821,8 @@ def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int
         min(window, 0x40 if low_memory else 0x80),
         min(window, 0x20 if low_memory else 0x40),
     )
-    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-    try:
+    with _analysis_timeout(max(1, min(timeout, 10))):
         for candidate_window in candidate_windows:
-            signal.alarm(max(1, min(timeout, 10)))
             try:
                 if project.arch.name == "86_16":
                     regions = [
@@ -6638,11 +6833,7 @@ def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int
                 return _pick_function(project, project.entry, regions=regions)
             except _AnalysisTimeout:
                 continue
-            finally:
-                signal.alarm(0)
         raise _AnalysisTimeout()
-    finally:
-        signal.signal(signal.SIGALRM, old_handler)
 
 
 def _recover_lst_function(
@@ -6656,9 +6847,7 @@ def _recover_lst_function(
     low_memory: bool = False,
 ):
     addr = project.entry + offset
-    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(max(1, timeout))
-    try:
+    with _analysis_timeout(max(1, timeout)):
         if project.arch.name == "86_16":
             candidate_window = min(window, 0x80 if low_memory else window)
             regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
@@ -6666,32 +6855,24 @@ def _recover_lst_function(
             regions = [(addr, addr + window)]
 
         cfg, func = _pick_function(project, addr, regions=regions)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
 
     func.name = name
     return cfg, func
 
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
-    old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(timeout)
-    try:
+    with _analysis_timeout(timeout):
         cfg = project.analyses.CFGFast(
             normalize=True,
             force_complete_scan=False,
         )
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
 
     if entry_addr not in cfg.functions:
         raise KeyError(f"Function {entry_addr:#x} was not recovered by CFGFast.")
     return cfg, cfg.functions[entry_addr]
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Decompile a DOS/x86-16 sample with angr-platforms.",
     )
@@ -6764,8 +6945,9 @@ def main() -> int:
         default="modern",
         help="Name recovered DOS helpers as modern-style calls, DOS/compiler-style calls, pseudo-callee service calls, or raw interrupt helpers.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
+    _lower_process_priority()
     _apply_memory_limit(args.max_memory_mb)
 
     print(f"/* loading: {args.binary} */", flush=True)
@@ -6820,13 +7002,8 @@ def main() -> int:
                     regions = [_infer_x86_16_linear_region(project, args.addr, window=args.window)]
                 else:
                     regions = [(args.addr, args.addr + args.window)]
-                old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-                signal.alarm(args.timeout)
-                try:
+                with _analysis_timeout(args.timeout):
                     cfg, func = _pick_function(project, args.addr, regions=regions)
-                finally:
-                    signal.alarm(0)
-                    signal.signal(signal.SIGALRM, old_handler)
         except _AnalysisTimeout:
             print(f"/* Timed out while recovering a function after {args.timeout}s. */")
             print("/* Tip: try a larger --timeout for larger binaries. */")
@@ -6928,6 +7105,7 @@ def main() -> int:
         limit = args.max_functions if args.max_functions > 0 else None
         functions, total_functions = _interesting_functions(cfg, limit=limit)
         shown_total = len(functions)
+        function_cfg_pairs = [(cfg, function) for function in functions]
 
     print(f"/* binary: {args.binary} */")
     print(f"/* arch: {project.arch.name} */")
@@ -6936,10 +7114,9 @@ def main() -> int:
     if args.max_functions > 0 and total_functions > shown_total:
         print(f"/* showing first {shown_total} functions; use --max-functions to raise the cap */")
 
-    decompiled = 0
-    failed = 0
+    function_tasks: list[FunctionWorkItem] = []
     if lst_metadata is not None and lst_metadata.code_labels:
-        for offset, name in labeled_offsets:
+        for index, (offset, name) in enumerate(labeled_offsets, start=1):
             function_cfg, function = _recover_lst_function(
                 project,
                 lst_metadata,
@@ -6949,98 +7126,116 @@ def main() -> int:
                 window=args.window,
                 low_memory=low_memory_path,
             )
-            _apply_binary_specific_annotations(
-                project,
-                args.binary,
-                lst_metadata,
-                func_addr=function.addr,
-                cod_metadata=cod_metadata,
-                synthetic_globals=synthetic_globals,
-            )
-            print(f"\n/* == function {function.addr:#x} {function.name} == */")
-            if args.show_asm:
-                print("/* -- asm -- */")
-                print(_format_first_block_asm(project, function.addr))
-
-            status, payload, *_ = _decompile_function_with_stats(
-                project,
-                function_cfg,
-                function,
-                args.timeout,
-                args.api_style,
-                args.binary,
-                lst_metadata=lst_metadata,
-                enable_structured_simplify=args.addr is not None,
-            )
-            if status == "ok":
-                decompiled += 1
-                print("/* -- c -- */")
-                print(payload)
-            else:
-                failed += 1
-                asm_fallback = _format_first_block_asm(project, function.addr)
-                if status == "empty":
-                    if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
-                        print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
-                    else:
-                        print(f"-- {status} --")
-                        print(payload)
-                        print("-- asm fallback --")
-                        print(asm_fallback)
-                else:
-                    print(f"-- {status} --")
-                    print(payload)
-                    print("-- asm fallback --")
-                    print(asm_fallback)
+            function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
     else:
-        function_cfg_pairs = [(cfg, function) for function in functions]
-        for function_cfg, function in function_cfg_pairs:
-            _apply_binary_specific_annotations(
-                project,
-                args.binary,
-                lst_metadata,
-                func_addr=function.addr,
+        for index, (function_cfg, function) in enumerate(function_cfg_pairs, start=1):
+            function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
+
+    workers = _choose_function_parallelism(len(function_tasks))
+    if workers > 1:
+        print(f"/* parallel function decompilation: {workers} workers, shared imports */")
+    else:
+        print("/* parallel function decompilation: disabled (RAM pressure or single function) */")
+
+    result_map: dict[int, FunctionWorkResult] = {}
+    if workers <= 1:
+        for item in function_tasks:
+            result = _run_function_work_item(
+                item,
+                timeout=args.timeout,
+                api_style=args.api_style,
+                binary_path=args.binary,
                 cod_metadata=cod_metadata,
                 synthetic_globals=synthetic_globals,
-            )
-            print(f"\n/* == function {function.addr:#x} {function.name} == */")
-            if args.show_asm:
-                print("/* -- asm -- */")
-                print(_format_first_block_asm(project, function.addr))
-
-            status, payload, *_ = _decompile_function_with_stats(
-                project,
-                function_cfg,
-                function,
-                args.timeout,
-                args.api_style,
-                args.binary,
                 lst_metadata=lst_metadata,
                 enable_structured_simplify=args.addr is not None,
             )
-            if status == "ok":
-                decompiled += 1
-                print("/* -- c -- */")
-                print(payload)
-            else:
-                failed += 1
-                asm_fallback = _format_first_block_asm(project, function.addr)
-                # If decompiler produced no code and there are no bytes for the
-                # function block, print a concise explanatory comment instead of
-                # an empty '...' body and an unhelpful asm fallback.
-                if status == "empty":
-                    if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
-                        print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
-                    else:
-                        print(f"-- {status} --")
-                        print(payload)
-                        print("-- asm fallback --")
-                        print(asm_fallback)
+            result_map[item.index] = result
+    else:
+        executor = DaemonThreadPoolExecutor(max_workers=workers, thread_name_prefix="func")
+        try:
+            future_map = {
+                executor.submit(
+                    _run_function_work_item,
+                    item,
+                    timeout=args.timeout,
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                    cod_metadata=cod_metadata,
+                    synthetic_globals=synthetic_globals,
+                    lst_metadata=lst_metadata,
+                    enable_structured_simplify=args.addr is not None,
+                ): item
+                for item in function_tasks
+            }
+            pending = set(future_map)
+            deadlines = {future: time.monotonic() + max(1, args.timeout) for future in future_map}
+            while pending:
+                done, _ = wait(pending, timeout=0.25, return_when=FIRST_COMPLETED)
+                if done:
+                    for future in done:
+                        item = future_map[future]
+                        try:
+                            result_map[item.index] = future.result()
+                        except Exception as ex:
+                            result_map[item.index] = FunctionWorkResult(
+                                index=item.index,
+                                status="error",
+                                payload=str(ex),
+                                debug_output="",
+                                function=item.function,
+                                function_cfg=item.function_cfg,
+                            )
+                        pending.discard(future)
+                now = time.monotonic()
+                expired = [future for future in pending if now >= deadlines[future]]
+                for future in expired:
+                    item = future_map[future]
+                    result_map[item.index] = FunctionWorkResult(
+                        index=item.index,
+                        status="timeout",
+                        payload=f"Timed out after {args.timeout}s.",
+                        debug_output="",
+                        function=item.function,
+                        function_cfg=item.function_cfg,
+                    )
+                    pending.discard(future)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    decompiled = 0
+    failed = 0
+    for item in function_tasks:
+        result = result_map.get(item.index)
+        if result is None:
+            continue
+        if result.debug_output:
+            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+        function = item.function
+        print(f"\n/* == function {function.addr:#x} {function.name} == */")
+        if args.show_asm:
+            print("/* -- asm -- */")
+            print(_format_first_block_asm(project, function.addr))
+        if result.status == "ok":
+            decompiled += 1
+            print("/* -- c -- */")
+            print(result.payload)
+        else:
+            failed += 1
+            asm_fallback = _format_first_block_asm(project, function.addr)
+            if result.status == "empty":
+                if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
+                    print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
                 else:
-                    print(f"-- {status} --")
-                    print(payload)
+                    print(f"-- {result.status} --")
+                    print(result.payload)
                     print("-- asm fallback --")
                     print(asm_fallback)
+            else:
+                print(f"-- {result.status} --")
+                print(result.payload)
+                print("-- asm fallback --")
+                print(asm_fallback)
 
     total_shown = shown_total if lst_metadata is not None and lst_metadata.code_labels else len(functions)
     print(f"\nsummary: decompiled {decompiled}/{total_shown} shown functions")
