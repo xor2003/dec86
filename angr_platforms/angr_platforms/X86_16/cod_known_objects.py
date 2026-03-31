@@ -12,6 +12,12 @@ class CODKnownObjectSpec:
     type: object
     size: int
     field_names: tuple[str, ...]
+    field_offsets: tuple[int, ...]
+    field_widths: tuple[int, ...]
+    packed: bool
+    allowed_views: tuple[str, ...]
+    segment_domain: str
+    type_name: str
 
 
 def _make_union_regs_type():
@@ -95,10 +101,47 @@ def _make_ovl_load_params_type():
     )
 
 
+def _type_name(type_obj: object) -> str:
+    return getattr(type_obj, "name", None) or type_obj.__class__.__name__
+
+
 _KNOWN_COD_OBJECT_SPECS: dict[str, CODKnownObjectSpec] = {
-    "rin": CODKnownObjectSpec("rin", _make_union_regs_type(), 14, ("x", "h")),
-    "rout": CODKnownObjectSpec("rout", _make_union_regs_type(), 14, ("x", "h")),
-    "sreg": CODKnownObjectSpec("sreg", _make_sregs_type(), 8, ("es", "cs", "ss", "ds")),
+    "rin": CODKnownObjectSpec(
+        "rin",
+        _make_union_regs_type(),
+        14,
+        ("x", "h"),
+        (0, 0),
+        (14, 8),
+        True,
+        ("x", "h"),
+        "register",
+        _type_name(_make_union_regs_type()),
+    ),
+    "rout": CODKnownObjectSpec(
+        "rout",
+        _make_union_regs_type(),
+        14,
+        ("x", "h"),
+        (0, 0),
+        (14, 8),
+        True,
+        ("x", "h"),
+        "register",
+        _type_name(_make_union_regs_type()),
+    ),
+    "sreg": CODKnownObjectSpec(
+        "sreg",
+        _make_sregs_type(),
+        8,
+        ("es", "cs", "ss", "ds"),
+        (0, 2, 4, 6),
+        (2, 2, 2, 2),
+        True,
+        (),
+        "register",
+        _type_name(_make_sregs_type()),
+    ),
     "exeLoadParams": CODKnownObjectSpec(
         "exeLoadParams",
         _make_exe_load_params_type(),
@@ -116,12 +159,24 @@ _KNOWN_COD_OBJECT_SPECS: dict[str, CODKnownObjectSpec] = {
             "ip",
             "cs",
         ),
+        (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20),
+        (2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2),
+        True,
+        (),
+        "stack",
+        _type_name(_make_exe_load_params_type()),
     ),
     "ovlLoadParams": CODKnownObjectSpec(
         "ovlLoadParams",
         _make_ovl_load_params_type(),
         4,
         ("segment", "reloc"),
+        (0, 2),
+        (2, 2),
+        True,
+        (),
+        "global",
+        _type_name(_make_ovl_load_params_type()),
     ),
 }
 
@@ -155,6 +210,12 @@ def describe_x86_16_cod_known_objects() -> dict[str, object]:
                 "name": spec.name,
                 "size": spec.size,
                 "field_names": spec.field_names,
+                "field_offsets": spec.field_offsets,
+                "field_widths": spec.field_widths,
+                "packed": spec.packed,
+                "allowed_views": spec.allowed_views,
+                "segment_domain": spec.segment_domain,
+                "type_name": spec.type_name,
                 "type": spec.type,
             }
             for spec in _KNOWN_COD_OBJECT_SPECS.values()

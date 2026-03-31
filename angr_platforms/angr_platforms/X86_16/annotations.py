@@ -179,6 +179,12 @@ def apply_x86_16_metadata_annotations(
                     func.name = code_name
                     changed = True
 
+    if func_addr is not None and cod_metadata is not None:
+        stack_aliases = getattr(cod_metadata, "stack_aliases", None) or {}
+        if stack_aliases:
+            annotate_function(project, func_addr, bp_stack_vars=stack_aliases)
+            changed = True
+
     if cod_metadata is not None:
         changed |= _apply_known_helper_signatures(project, cod_metadata)
 
@@ -194,7 +200,19 @@ def apply_x86_16_metadata_annotations(
             annotate_function(
                 project,
                 func_addr,
-                global_vars={addr: {"name": spec.name, "type": spec.type}},
+                global_vars={
+                    addr: {
+                        "name": spec.name,
+                        "type": spec.type,
+                        "type_name": spec.type_name,
+                        "field_names": spec.field_names,
+                        "field_offsets": spec.field_offsets,
+                        "field_widths": spec.field_widths,
+                        "packed": spec.packed,
+                        "allowed_views": spec.allowed_views,
+                        "segment_domain": spec.segment_domain,
+                    }
+                },
             )
             changed = True
 
@@ -204,11 +222,40 @@ def apply_x86_16_metadata_annotations(
 def decompile_function(project, func_addr: int, **annotations):
     cfg = project.analyses.CFGFast(normalize=True)
     cod_metadata = annotations.get("cod_metadata")
-    _apply_known_helper_signatures(project, cod_metadata)
+    lst_metadata = annotations.get("lst_metadata")
+    synthetic_globals = annotations.get("synthetic_globals")
+    if cod_metadata is not None or lst_metadata is not None or synthetic_globals is not None:
+        apply_x86_16_metadata_annotations(
+            project,
+            func_addr=func_addr,
+            cod_metadata=cod_metadata,
+            lst_metadata=lst_metadata,
+            synthetic_globals=synthetic_globals,
+        )
     seed_calling_conventions(cfg)
     func = cfg.functions[func_addr]
-    if annotations:
-        annotate_function(project, func_addr, **annotations)
+    direct_annotations = {
+        key: annotations[key]
+        for key in (
+            "name",
+            "c_decl",
+            "prototype",
+            "calling_convention",
+            "arg_names",
+            "stack_vars",
+            "bp_stack_vars",
+            "global_vars",
+        )
+        if key in annotations
+    }
+    if direct_annotations:
+        annotate_function(project, func_addr, **direct_annotations)
         func = project.kb.functions[func_addr]
-    apply_x86_16_metadata_annotations(project, func_addr=func_addr, cod_metadata=cod_metadata)
+    apply_x86_16_metadata_annotations(
+        project,
+        func_addr=func_addr,
+        cod_metadata=cod_metadata,
+        lst_metadata=lst_metadata,
+        synthetic_globals=synthetic_globals,
+    )
     return project.analyses.Decompiler(func, cfg=cfg)

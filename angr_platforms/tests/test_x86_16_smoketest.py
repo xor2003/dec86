@@ -688,6 +688,10 @@ def test_metadata_annotations_apply_before_decompilation():
     changed = apply_x86_16_metadata_annotations(
         project,
         func_addr=func.addr,
+        cod_metadata=SimpleNamespace(
+            call_names=("joyOrKey",),
+            stack_aliases={4: "lhs", 6: "rhs"},
+        ),
         lst_metadata=SimpleNamespace(
             data_labels={0x1234: "data_label"},
             code_labels={0x1000: "entry_label"},
@@ -698,8 +702,41 @@ def test_metadata_annotations_apply_before_decompilation():
     assert changed is True
     assert project.kb.labels[0x1234] == "data_label"
     assert project.kb.functions[0x1000].name == "entry_label"
+    assert project.kb.functions[0x1000].info["x86_16_annotations"]["stack_vars"][2]["name"] == "lhs"
+    assert project.kb.functions[0x1000].info["x86_16_annotations"]["stack_vars"][4]["name"] == "rhs"
     annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["global_vars"]
     assert annotations[0x2000]["name"] == "rin"
+
+
+def test_known_helper_signatures_are_applied_before_decompilation():
+    project = _project_from_asm("ret")
+    helper = project.kb.functions.function(addr=0x2000, create=True)
+    helper.name = "joyOrKey"
+    changed = apply_x86_16_metadata_annotations(
+        project,
+        func_addr=0x2000,
+        cod_metadata=SimpleNamespace(call_names=("joyOrKey",)),
+    )
+
+    assert changed is True
+    assert project.kb.functions.function(addr=0x2000, create=False).prototype is not None
+
+
+def test_synthetic_global_annotation_preserves_known_object_metadata():
+    project = _project_from_asm("mov ax, [0x1234]; ret")
+
+    dec = decompile_function(
+        project,
+        0x1000,
+        synthetic_globals={0x1234: ("rin", 14)},
+    )
+
+    assert dec.codegen is not None
+    annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["global_vars"]
+    assert annotations[0x1234]["name"] == "rin"
+    assert annotations[0x1234]["type_name"] == "union REGS"
+    assert annotations[0x1234]["allowed_views"] == ("x", "h")
+    assert annotations[0x1234]["segment_domain"] == "register"
 
 
 def test_c_decl_annotation_applies_pointer_signature():
