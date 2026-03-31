@@ -258,3 +258,74 @@ def test_binary_specific_annotations_apply_generic_metadata(monkeypatch):
             "synthetic_globals": synthetic_globals,
         }
     ]
+
+
+def test_tiny_wrapper_staging_locals_are_pruned_structurally():
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, statements=None, variables_in_use={}, unified_local_vars={}),
+        project=SimpleNamespace(arch=decompile.Arch86_16()),
+        next_idx=lambda _name: 1,
+    )
+
+    source_value = decompile.structured_c.CVariable(
+        decompile.SimStackVariable(4, 2, base="bp", name="path", region=0),
+        variable_type=decompile.SimTypeShort(False),
+        codegen=codegen,
+    )
+    staging_value = decompile.structured_c.CVariable(
+        decompile.SimStackVariable(0, 2, base="bp", name="s_2", region=0),
+        variable_type=decompile.SimTypeShort(False),
+        codegen=codegen,
+    )
+    staging_mode = decompile.structured_c.CVariable(
+        decompile.SimStackVariable(2, 2, base="bp", name="s_4", region=0),
+        variable_type=decompile.SimTypeShort(False),
+        codegen=codegen,
+    )
+
+    call = decompile.structured_c.CExpressionStatement(
+        decompile.structured_c.CFunctionCall(
+            "openFile",
+            SimpleNamespace(name="openFile"),
+            [staging_value, staging_mode],
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = decompile.structured_c.CStatements(
+        [
+            decompile.structured_c.CAssignment(
+                staging_value,
+                decompile.structured_c.CConstant(0x1234, decompile.SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            decompile.structured_c.CAssignment(
+                staging_mode,
+                decompile.structured_c.CConstant(3, decompile.SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            decompile.structured_c.CAssignment(
+                source_value,
+                decompile.structured_c.CConstant(0x5678, decompile.SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            call,
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use = {
+        staging_value.variable: SimpleNamespace(),
+        staging_mode.variable: SimpleNamespace(),
+        source_value.variable: SimpleNamespace(),
+    }
+
+    changed = decompile._prune_tiny_wrapper_staging_locals(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    assert isinstance(codegen.cfunc.statements.statements[0], decompile.structured_c.CAssignment)
+    assert isinstance(codegen.cfunc.statements.statements[1], decompile.structured_c.CExpressionStatement)
+    assert codegen.cfunc.statements.statements[1].expr.args[0].value == 0x1234
+    assert codegen.cfunc.statements.statements[1].expr.args[1].value == 3
+    assert staging_value.variable not in codegen.cfunc.variables_in_use
+    assert staging_mode.variable not in codegen.cfunc.variables_in_use
