@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import logging
 import os
@@ -577,6 +578,7 @@ def _decompile_function(
             lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
             lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
             lambda: _normalize_scalar_byte_register_types(dec.codegen),
+            lambda: _prune_tiny_wrapper_staging_locals(dec.codegen),
             lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
             lambda: _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals),
             lambda: _attach_cod_global_names(project, dec.codegen, synthetic_globals),
@@ -6342,6 +6344,145 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
         kept_lines.append(line)
 
     return "\n".join(kept_lines)
+
+
+def _is_staging_local_name(name: str | None) -> bool:
+    return isinstance(name, str) and re.fullmatch(r"s_[0-9a-fA-F]+", name) is not None
+
+
+def _clone_structured_c_value(value, memo: dict[int, object] | None = None):
+    if memo is None:
+        memo = {}
+
+    if not _structured_codegen_node(value):
+        if isinstance(value, list):
+            return [_clone_structured_c_value(item, memo) for item in value]
+        if isinstance(value, tuple):
+            return tuple(_clone_structured_c_value(item, memo) for item in value)
+        if isinstance(value, dict):
+            return {
+                _clone_structured_c_value(key, memo): _clone_structured_c_value(item, memo)
+                for key, item in value.items()
+            }
+        return value
+
+    value_id = id(value)
+    if value_id in memo:
+        return memo[value_id]
+
+    clone = copy.copy(value)
+    memo[value_id] = clone
+
+    slot_names: list[str] = []
+    for cls in type(value).__mro__:
+        slots = getattr(cls, "__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        slot_names.extend(slots)
+
+    for attr in dict.fromkeys(slot_names):
+        if attr == "codegen" or not hasattr(value, attr):
+            continue
+        try:
+            child = getattr(value, attr)
+        except Exception:
+            continue
+        cloned_child = _clone_structured_c_value(child, memo)
+        if cloned_child is not child:
+            try:
+                setattr(clone, attr, cloned_child)
+            except Exception:
+                continue
+
+    return clone
+
+
+def _prune_tiny_wrapper_staging_locals(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+    root = getattr(codegen.cfunc, "statements", None)
+    if not isinstance(root, structured_c.CStatements):
+        return False
+
+    statements = list(root.statements)
+    if not statements:
+        return False
+    if any(isinstance(stmt, (structured_c.CIfElse, structured_c.CWhileLoop)) for stmt in statements):
+        return False
+
+    call_count = 0
+    staging_replacements: dict[int, object] = {}
+    staging_variable_ids: set[int] = set()
+
+    for stmt in statements:
+        if isinstance(stmt, structured_c.CExpressionStatement) and isinstance(stmt.expr, structured_c.CFunctionCall):
+            call_count += 1
+        elif isinstance(stmt, structured_c.CFunctionCall):
+            call_count += 1
+
+        if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
+            continue
+        variable = getattr(stmt.lhs, "variable", None)
+        if not _is_staging_local_name(getattr(variable, "name", None)):
+            continue
+        if not _structured_codegen_node(stmt.rhs):
+            continue
+        staging_variable_ids.add(id(variable))
+        staging_replacements[id(variable)] = _clone_structured_c_value(stmt.rhs)
+
+    if call_count != 1 or not staging_replacements:
+        return False
+
+    changed = False
+
+    def transform(node):
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            replacement = staging_replacements.get(id(variable))
+            if replacement is not None:
+                return replacement
+        return node
+
+    new_statements = []
+    for stmt in statements:
+        if isinstance(stmt, structured_c.CAssignment) and isinstance(stmt.lhs, structured_c.CVariable):
+            variable = getattr(stmt.lhs, "variable", None)
+            if id(variable) in staging_variable_ids:
+                changed = True
+                continue
+        if _structured_codegen_node(stmt) and _replace_c_children(stmt, transform):
+            changed = True
+        new_statements.append(stmt)
+
+    if len(new_statements) != len(statements):
+        root.statements = new_statements
+
+    used_variables: set[int] = set()
+    for node in _iter_c_nodes_deep(root):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        variable = getattr(node, "variable", None)
+        if variable is not None:
+            used_variables.add(id(variable))
+        unified = getattr(node, "unified_variable", None)
+        if unified is not None:
+            used_variables.add(id(unified))
+
+    variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        for variable in list(variables_in_use):
+            if id(variable) in staging_variable_ids and id(variable) not in used_variables:
+                del variables_in_use[variable]
+                changed = True
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable in list(unified_locals):
+            if id(variable) in staging_variable_ids and id(variable) not in used_variables:
+                del unified_locals[variable]
+                changed = True
+
+    return changed
 
 
 def _format_known_helper_calls(
