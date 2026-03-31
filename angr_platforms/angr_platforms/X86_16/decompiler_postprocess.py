@@ -55,6 +55,45 @@ from .decompiler_postprocess_utils import (
 )
 
 
+def _function_complexity_8616(project, function) -> tuple[int, int]:
+    block_addrs = sorted(getattr(function, "block_addrs_set", ()) or ())
+    byte_count = 0
+    for block_addr in block_addrs:
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        byte_count += len(block.bytes)
+    return len(block_addrs), byte_count
+
+
+def _is_tiny_function_8616(project, function) -> bool:
+    block_count, byte_count = _function_complexity_8616(project, function)
+    return block_count <= 4 and byte_count <= 32
+
+
+def _unwrap_synthetic_wide_return_8616(retval):
+    if not isinstance(retval, CBinaryOp):
+        return None
+
+    candidates = []
+    if retval.op == "Or":
+        candidates.extend(((retval.lhs, retval.rhs), (retval.rhs, retval.lhs)))
+    elif retval.op == "Concat":
+        candidates.extend(((retval.lhs, retval.rhs),))
+    else:
+        return None
+
+    for maybe_wide, maybe_low in candidates:
+        if isinstance(maybe_wide, CBinaryOp):
+            if maybe_wide.op == "Shl" and _c_constant_value_8616(maybe_wide.rhs) == 16:
+                return maybe_low
+            if maybe_wide.op == "Concat":
+                return maybe_low
+
+    return None
+
+
 def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
@@ -164,6 +203,77 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
     new_proto = prototype.__class__(
         [wide_ty],
         wide_ty,
+        arg_names=getattr(prototype, "arg_names", None),
+        variadic=getattr(prototype, "variadic", False),
+    ).with_arch(project.arch)
+    func.prototype = new_proto
+    func.is_prototype_guessed = False
+    try:
+        codegen.cfunc.prototype = new_proto
+    except Exception:
+        pass
+    return True
+
+
+def _classify_return_shape_8616(project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    func_addr = getattr(codegen.cfunc, "addr", None)
+    if func_addr is None:
+        return False
+
+    func = project.kb.functions.function(addr=func_addr, create=False)
+    if func is None:
+        return False
+
+    prototype = getattr(func, "prototype", None)
+    if prototype is None:
+        return False
+
+    return_nodes = [node for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements) if isinstance(node, CReturn)]
+    if not return_nodes:
+        return False
+
+    tiny_function = _is_tiny_function_8616(project, func)
+    changed = False
+    value_returns = 0
+
+    for ret in return_nodes:
+        retval = getattr(ret, "retval", None)
+        if retval is None:
+            continue
+        value_returns += 1
+        if not tiny_function:
+            continue
+        replacement = _unwrap_synthetic_wide_return_8616(retval)
+        if replacement is None:
+            continue
+        ret.retval = None
+        changed = True
+
+    has_value_return = any(getattr(ret, "retval", None) is not None for ret in return_nodes)
+    shape = "scalar_ax" if has_value_return else "void"
+
+    info = getattr(func, "info", None)
+    if isinstance(info, dict):
+        return_info = info.setdefault("x86_16_return_shape", {})
+        return_info["shape"] = shape
+        return_info["tiny_function"] = tiny_function
+        return_info["value_returns"] = value_returns
+
+    new_returnty = None
+    if shape == "void":
+        new_returnty = SimTypeBottom()
+    elif shape == "scalar_ax" and isinstance(prototype.returnty, SimTypeLong):
+        new_returnty = SimTypeShort(False)
+
+    if new_returnty is None:
+        return changed
+
+    new_proto = prototype.__class__(
+        list(getattr(prototype, "args", ()) or ()),
+        new_returnty,
         arg_names=getattr(prototype, "arg_names", None),
         variadic=getattr(prototype, "variadic", False),
     ).with_arch(project.arch)
