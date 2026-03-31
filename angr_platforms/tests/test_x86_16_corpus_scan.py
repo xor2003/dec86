@@ -23,6 +23,8 @@ def test_corpus_scan_classifies_core_failure_kinds():
     assert classify_failure("cfg", None)[0] == "cfg_failure"
     assert classify_failure("unknown", None)[0] == "analysis_failure"
     assert classify_failure("decompile", None, empty_codegen=True)[0] == "no_code_produced"
+    assert classify_failure("decompile", None, empty_codegen=True, rewrite_failed=True)[0] == "rewrite_failure"
+    assert classify_failure("decompile", None, empty_codegen=True, regeneration_failed=True)[0] == "regeneration_failure"
 
 
 def test_corpus_scan_summary_groups_file_health():
@@ -86,30 +88,49 @@ def test_corpus_scan_summary_groups_file_health():
         decompiled_count=0,
         stages=[StageResult("load", True), StageResult("lift", False, reason="lift_failure")],
     )
+    regenerated = FunctionScanResult(
+        cod_file="D.COD",
+        proc_name="_d",
+        proc_kind="NEAR",
+        byte_len=4,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="decompile",
+        fallback_kind="cfg_only",
+        function_count=1,
+        decompiled_count=0,
+        regeneration_failed=True,
+        regeneration_failure_pass="_rewrite_callsite_names_8616",
+        regeneration_failure_reason="boom",
+        stages=[StageResult("load", True), StageResult("decompile", True, detail="boom")],
+    )
 
-    summary = summarize_results([ok_result, partial_ok, partial_fail, dead_file], "scan-safe")
+    summary = summarize_results([ok_result, partial_ok, partial_fail, dead_file, regenerated], "scan-safe")
 
-    assert summary["ok"] == 2
+    assert summary["ok"] == 3
     assert summary["failed"] == 2
     assert summary["failure_counts"] == {"cfg_failure": 1, "lift_failure": 1}
-    assert summary["fallback_counts"] == {"block_lift": 1, "cfg_only": 1}
+    assert summary["fallback_counts"] == {"block_lift": 1, "cfg_only": 2}
     assert summary["full_decompile_count"] == 1
-    assert summary["cfg_only_count"] == 1
+    assert summary["cfg_only_count"] == 2
     assert summary["lift_only_count"] == 0
     assert summary["block_lift_count"] == 1
+    assert summary["rewrite_failure_count"] == 0
+    assert summary["regeneration_failure_count"] == 1
     assert summary["visibility_debt"] == 2
-    assert summary["recovery_debt"] == 1
+    assert summary["recovery_debt"] == 2
     assert summary["readability_debt"] == 1
     assert summary["unclassified_failure_count"] == 0
     assert summary["blind_spot_budget"] == {
-        "full_decompile_rate": 0.25,
-        "cfg_only_rate": 0.25,
+        "full_decompile_rate": 0.2,
+        "cfg_only_rate": 0.4,
         "lift_only_rate": 0.0,
-        "block_lift_rate": 0.25,
-        "true_failure_rate": 0.5,
+        "block_lift_rate": 0.2,
+        "true_failure_rate": 0.4,
     }
-    assert summary["debt"] == {"traversal": 2, "recovery": 1, "readability": 1}
-    assert summary["files_scan_clean"] == ["A.COD"]
+    assert summary["debt"] == {"traversal": 2, "recovery": 2, "readability": 1}
+    assert summary["files_scan_clean"] == ["A.COD", "D.COD"]
     assert summary["files_partial_success"] == ["B.COD"]
     assert summary["files_zero_success"] == ["C.COD"]
     assert summary["interrupt_api"] == {
@@ -148,6 +169,8 @@ def test_corpus_scan_summary_accumulates_interrupt_api_counts():
         "wrapper_calls": 3,
         "unresolved_wrappers": 1,
     }
+    assert summary["rewrite_failure_count"] == 0
+    assert summary["regeneration_failure_count"] == 0
     assert summary["family_ownership"] == {
         "top_families": [{"family": "interrupt_api", "count": 1}],
         "top_failures": [],

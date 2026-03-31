@@ -92,6 +92,8 @@ def _build_corpus_completion_surface(
     recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
     readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
     unclassified_failure_count = int(scan_summary.get("unclassified_failure_count", 0) or 0)
+    rewrite_failure_count = int(scan_summary.get("rewrite_failure_count", 0) or 0)
+    regeneration_failure_count = int(scan_summary.get("regeneration_failure_count", 0) or 0)
     blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
     return {
         "no_crashes": failed == 0,
@@ -108,6 +110,10 @@ def _build_corpus_completion_surface(
             "visibility": visibility_debt,
             "recovery": recovery_debt,
             "readability": readability_debt,
+        },
+        "postprocess_failures": {
+            "rewrite_failure_count": rewrite_failure_count,
+            "regeneration_failure_count": regeneration_failure_count,
         },
         "blind_spot_budget": blind_spot_budget,
         "stable_by_traversal": failed == 0 and unclassified_failure_count == 0,
@@ -203,6 +209,8 @@ def build_x86_16_milestone_report(
     visibility_debt = int(scan_summary.get("visibility_debt", debt.get("traversal", 0)) or 0)
     recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
     readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
+    rewrite_failure_count = int(scan_summary.get("rewrite_failure_count", 0) or 0)
+    regeneration_failure_count = int(scan_summary.get("regeneration_failure_count", 0) or 0)
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
     readability_clusters = list(scan_summary.get("readability_clusters", []) or [])
     family_ownership = dict(scan_summary.get("family_ownership", {}) or {})
@@ -323,6 +331,10 @@ def build_x86_16_milestone_report(
             "visibility": visibility_debt,
             "recovery": recovery_debt,
             "readability": readability_debt,
+        },
+        "postprocess_failures": {
+            "rewrite_failure_count": rewrite_failure_count,
+            "regeneration_failure_count": regeneration_failure_count,
         },
         "interrupt_api": {
             "dos_helpers": int(interrupt_api.get("dos_helpers", 0) or 0),

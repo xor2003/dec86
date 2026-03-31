@@ -126,6 +126,35 @@ def annotate_global_variable(project, addr: int, name: str):
     return name
 
 
+def _apply_known_helper_signatures(project, cod_metadata=None) -> bool:
+    if cod_metadata is None:
+        return False
+
+    changed = False
+    seen_decls: set[str] = set()
+    for call_name in getattr(cod_metadata, "call_names", ()) or ():
+        decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
+        if decl is None or decl in seen_decls:
+            continue
+        seen_decls.add(decl)
+
+        helper_func = project.kb.functions.function(name=call_name, create=False)
+        if helper_func is None and call_name.startswith("_"):
+            helper_func = project.kb.functions.function(name=call_name.lstrip("_"), create=False)
+        if helper_func is None:
+            continue
+
+        annotate_function(
+            project,
+            helper_func.addr,
+            name=getattr(helper_func, "name", call_name),
+            c_decl=decl,
+        )
+        changed = True
+
+    return changed
+
+
 def apply_x86_16_metadata_annotations(
     project,
     *,
@@ -151,26 +180,7 @@ def apply_x86_16_metadata_annotations(
                     changed = True
 
     if cod_metadata is not None:
-        seen_decls: set[str] = set()
-        for call_name in getattr(cod_metadata, "call_names", ()) or ():
-            decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
-            if decl is None or decl in seen_decls:
-                continue
-            seen_decls.add(decl)
-
-            helper_func = project.kb.functions.function(name=call_name, create=False)
-            if helper_func is None and call_name.startswith("_"):
-                helper_func = project.kb.functions.function(name=call_name.lstrip("_"), create=False)
-            if helper_func is None:
-                continue
-
-            annotate_function(
-                project,
-                helper_func.addr,
-                name=getattr(helper_func, "name", call_name),
-                c_decl=decl,
-            )
-            changed = True
+        changed |= _apply_known_helper_signatures(project, cod_metadata)
 
     if func_addr is not None and synthetic_globals:
         seen_addrs: set[int] = set()
@@ -193,10 +203,12 @@ def apply_x86_16_metadata_annotations(
 
 def decompile_function(project, func_addr: int, **annotations):
     cfg = project.analyses.CFGFast(normalize=True)
+    cod_metadata = annotations.get("cod_metadata")
+    _apply_known_helper_signatures(project, cod_metadata)
     seed_calling_conventions(cfg)
     func = cfg.functions[func_addr]
     if annotations:
         annotate_function(project, func_addr, **annotations)
         func = project.kb.functions[func_addr]
-    apply_x86_16_metadata_annotations(project, func_addr=func_addr)
+    apply_x86_16_metadata_annotations(project, func_addr=func_addr, cod_metadata=cod_metadata)
     return project.analyses.Decompiler(func, cfg=cfg)

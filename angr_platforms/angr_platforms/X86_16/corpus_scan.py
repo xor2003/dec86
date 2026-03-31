@@ -65,6 +65,13 @@ class FunctionScanResult:
     semantic_family_reason: str | None = None
     readability_cluster: str | None = None
     readability_cluster_reason: str | None = None
+    last_postprocess_pass: str | None = None
+    rewrite_failed: bool = False
+    rewrite_failure_pass: str | None = None
+    rewrite_failure_reason: str | None = None
+    regeneration_failed: bool = False
+    regeneration_failure_pass: str | None = None
+    regeneration_failure_reason: str | None = None
     stages: list[StageResult] = field(default_factory=list)
 
 
@@ -323,14 +330,29 @@ def project_from_bytes(code: bytes) -> angr.Project:
     )
 
 
-def classify_failure(stage: str, exc: Exception | None, *, empty_codegen: bool = False) -> tuple[str, str]:
+def classify_failure(
+    stage: str,
+    exc: Exception | None,
+    *,
+    empty_codegen: bool = False,
+    rewrite_failed: bool = False,
+    regeneration_failed: bool = False,
+) -> tuple[str, str]:
     if empty_codegen:
+        if rewrite_failed:
+            return "rewrite_failure", "Decompiler postprocess rewrite failed."
+        if regeneration_failed:
+            return "regeneration_failure", "Decompiler text regeneration failed."
         return "no_code_produced", "Decompiler did not produce code."
     if isinstance(exc, ScanTimeout):
         return "timeout", "timed out"
     if isinstance(exc, AssertionError):
         message = str(exc)
         return "analysis_assertion", message or "assertion failure"
+    if rewrite_failed:
+        return "rewrite_failure", "Decompiler postprocess rewrite failed."
+    if regeneration_failed:
+        return "regeneration_failure", "Decompiler text regeneration failed."
     if exc is None:
         stage_failure_classes = {
             "load": "load_failure",
@@ -604,12 +626,29 @@ def scan_function(
         try:
             dec = project.analyses.Decompiler(func, cfg=cfg)
             codegen = getattr(dec, "codegen", None)
+            if codegen is not None:
+                result.last_postprocess_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
+                result.rewrite_failed = bool(getattr(codegen, "_inertia_rewrite_failed", False))
+                result.rewrite_failure_pass = getattr(codegen, "_inertia_rewrite_failure_pass", None)
+                result.rewrite_failure_reason = getattr(codegen, "_inertia_rewrite_failure_error", None)
+                result.regeneration_failed = bool(getattr(codegen, "_inertia_regeneration_failed", False))
+                result.regeneration_failure_pass = getattr(codegen, "_inertia_regeneration_last_pass", None)
+                result.regeneration_failure_reason = getattr(codegen, "_inertia_regeneration_error", None)
             if codegen is None or not getattr(codegen, "text", ""):
-                failure_class, reason = classify_failure("decompile", None, empty_codegen=True)
+                failure_class, reason = classify_failure(
+                    "decompile",
+                    None,
+                    empty_codegen=True,
+                    rewrite_failed=result.rewrite_failed,
+                    regeneration_failed=result.regeneration_failed,
+                )
                 result.reason = reason
                 if mode == "scan-safe":
                     result.ok = True
                     result.fallback_kind = "cfg_only"
+                    if result.regeneration_failed and result.regeneration_failure_reason:
+                        result.reason = result.regeneration_failure_reason
+                        reason = result.reason
                     _mark_stage(result, "decompile", True, detail=reason)
                     return _finish_scan(result)
                 result.failure_class = failure_class
@@ -628,7 +667,12 @@ def scan_function(
             _mark_stage(result, "decompile", True)
             return _finish_scan(result)
         except Exception as exc:  # noqa: BLE001
-            failure_class, reason = classify_failure("decompile", exc)
+            failure_class, reason = classify_failure(
+                "decompile",
+                exc,
+                rewrite_failed=result.rewrite_failed,
+                regeneration_failed=result.regeneration_failed,
+            )
             result.failure_class = failure_class
             result.reason = reason
             result.fallback_kind = "block_lift"
@@ -706,6 +750,8 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     cfg_only_count = sum(1 for result in results if result.fallback_kind == "cfg_only")
     lift_only_count = sum(1 for result in results if result.fallback_kind == "lift_only")
     block_lift_count = sum(1 for result in results if result.fallback_kind == "block_lift")
+    rewrite_failure_count = sum(1 for result in results if result.rewrite_failed)
+    regeneration_failure_count = sum(1 for result in results if result.regeneration_failed)
     interrupt_dos_helper_count = sum(result.interrupt_dos_helper_count for result in results)
     interrupt_bios_helper_count = sum(result.interrupt_bios_helper_count for result in results)
     interrupt_wrapper_call_count = sum(result.interrupt_wrapper_call_count for result in results)
@@ -834,6 +880,8 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "cfg_only_count": cfg_only_count,
         "lift_only_count": lift_only_count,
         "block_lift_count": block_lift_count,
+        "rewrite_failure_count": rewrite_failure_count,
+        "regeneration_failure_count": regeneration_failure_count,
         "fallback_only_count": fallback_only_count,
         "true_failure_count": true_failure_count,
         "visibility_debt": true_failure_count,

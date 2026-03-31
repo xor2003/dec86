@@ -70,12 +70,33 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     addrs |= _globals._coalesce_word_global_constant_stores_8616(project, codegen)
 
     changed = bool(addrs)
+    last_changed_pass = None
+    codegen._inertia_rewrite_failed = False
+    codegen._inertia_rewrite_failure_pass = None
+    codegen._inertia_rewrite_failure_error = None
+    codegen._inertia_last_postprocess_pass = None
     for spec in DECOMPILER_POSTPROCESS_PASSES:
-        if spec.needs_project:
-            if spec.func(project, codegen):
-                changed = True
-        elif spec.func(codegen):
+        try:
+            if spec.needs_project:
+                spec_changed = spec.func(project, codegen)
+            else:
+                spec_changed = spec.func(codegen)
+        except Exception as ex:  # noqa: BLE001
+            codegen._inertia_rewrite_failed = True
+            codegen._inertia_rewrite_failure_pass = spec.name
+            codegen._inertia_rewrite_failure_error = str(ex)
+            logging.getLogger(__name__).warning(
+                "Skipping 86_16 postprocess pass %s after %s: %s",
+                spec.name,
+                last_changed_pass or "no earlier rewrite",
+                ex,
+            )
+            break
+        if spec_changed:
             changed = True
+            last_changed_pass = spec.name
+            codegen._inertia_last_postprocess_pass = spec.name
+    codegen._inertia_postprocess_changed = changed
     return changed
 
 
@@ -83,12 +104,21 @@ def _regenerate_text_safely(codegen, *, context: str) -> bool:
     try:
         codegen.regenerate_text()
     except Exception as ex:
+        codegen._inertia_regeneration_failed = True
+        codegen._inertia_regeneration_error = str(ex)
+        codegen._inertia_regeneration_context = context
+        codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
         logging.getLogger(__name__).warning(
-            "Skipping 86_16 postprocess regeneration for %s: %s",
+            "Skipping 86_16 postprocess regeneration for %s after %s: %s",
             context,
+            getattr(codegen, "_inertia_last_postprocess_pass", None) or "no prior rewrite",
             ex,
         )
         return False
+    codegen._inertia_regeneration_failed = False
+    codegen._inertia_regeneration_error = None
+    codegen._inertia_regeneration_context = context
+    codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
     return True
 
 
@@ -98,14 +128,33 @@ def _decompile_8616(self):
         _orig_decompiler_decompile = Decompiler._decompile
         _decompile_8616._orig_decompiler_decompile = _orig_decompiler_decompile
     _orig_decompiler_decompile(self)
-    if (
-        self.project.arch.name == "86_16"
-        and self.codegen is not None
-        and _postprocess_codegen_8616(self.project, self.codegen)
-    ):
-        function = getattr(self, "function", None)
-        context = f"{getattr(function, 'addr', 'unknown')!r} {getattr(function, 'name', 'unknown')}"
+    if self.project.arch.name != "86_16" or self.codegen is None:
+        return
+
+    changed = _postprocess_codegen_8616(self.project, self.codegen)
+    function = getattr(self, "function", None)
+    context = f"{getattr(function, 'addr', 'unknown')!r} {getattr(function, 'name', 'unknown')}"
+    if changed:
         _regenerate_text_safely(self.codegen, context=context)
+    if function is not None:
+        info = getattr(function, "info", None)
+        if isinstance(info, dict):
+            postprocess_info = info.setdefault("x86_16_decompiler_postprocess", {})
+            postprocess_info["last_pass"] = getattr(self.codegen, "_inertia_last_postprocess_pass", None)
+            postprocess_info["rewrite_failed"] = bool(getattr(self.codegen, "_inertia_rewrite_failed", False))
+            postprocess_info["rewrite_failure_pass"] = getattr(self.codegen, "_inertia_rewrite_failure_pass", None)
+            postprocess_info["rewrite_failure_error"] = getattr(self.codegen, "_inertia_rewrite_failure_error", None)
+            postprocess_info["regeneration_failed"] = bool(getattr(self.codegen, "_inertia_regeneration_failed", False))
+            postprocess_info["regeneration_failure_pass"] = getattr(
+                self.codegen,
+                "_inertia_regeneration_last_pass",
+                None,
+            )
+            postprocess_info["regeneration_failure_error"] = getattr(
+                self.codegen,
+                "_inertia_regeneration_error",
+                None,
+            )
 
 
 def apply_x86_16_decompiler_postprocess() -> None:

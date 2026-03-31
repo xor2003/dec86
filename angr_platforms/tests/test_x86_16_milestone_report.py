@@ -26,6 +26,8 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "cfg_only_count": 2,
         "lift_only_count": 0,
         "block_lift_count": 1,
+        "rewrite_failure_count": 1,
+        "regeneration_failure_count": 2,
         "blind_spot_budget": {
             "full_decompile_rate": 0.7,
             "cfg_only_rate": 0.2,
@@ -113,6 +115,10 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "visibility": 3,
             "recovery": 2,
             "readability": 7,
+        },
+        "postprocess_failures": {
+            "rewrite_failure_count": 1,
+            "regeneration_failure_count": 2,
         },
         "blind_spot_budget": scan_summary["blind_spot_budget"],
         "stable_by_traversal": False,
@@ -243,6 +249,10 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "visibility": 3,
         "recovery": 2,
         "readability": 7,
+    }
+    assert report["postprocess_failures"] == {
+        "rewrite_failure_count": 1,
+        "regeneration_failure_count": 2,
     }
     assert report["interrupt_api"] == {
         "dos_helpers": 4,
