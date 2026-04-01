@@ -448,6 +448,24 @@ def _should_skip_scan_safe_cfg(code_len: int, mode: str, max_cfg_bytes: int) -> 
     return mode == "scan-safe" and max_cfg_bytes > 0 and code_len > max_cfg_bytes
 
 
+def _should_skip_scan_safe_call_chain(capstone_block, mode: str, max_cfg_bytes: int, min_call_count: int = 4) -> bool:
+    if mode != "scan-safe" or max_cfg_bytes <= 0:
+        return False
+
+    block = getattr(capstone_block, "insns", None)
+    if not block:
+        return False
+
+    call_count = 0
+    for insn in block:
+        if getattr(insn, "mnemonic", "").lower() != "call":
+            continue
+        call_count += 1
+        if call_count >= min_call_count:
+            return True
+    return False
+
+
 def _should_skip_scan_safe_back_edge(capstone_block, mode: str, max_loop_bytes: int) -> bool:
     if mode != "scan-safe" or max_loop_bytes <= 0:
         return False
@@ -541,6 +559,7 @@ def scan_function(
             result.ok = True
             return _finish_scan(result)
 
+        loop_block = None
         if mode == "decompile-reloc-free" and (result.has_near_call_reloc or result.has_far_call_reloc):
             result.failure_class = "skipped_relocation"
             result.reason = "contains unresolved call relocation pattern"
@@ -566,6 +585,23 @@ def scan_function(
                 )
                 _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
                 return _finish_scan(result)
+
+        if mode == "scan-safe" and loop_block is None:
+            loop_block = project.factory.block(0x1000, len(code))
+
+        if loop_block is not None and _should_skip_scan_safe_call_chain(loop_block.capstone, mode, max_cfg_bytes):
+            result.ok = True
+            result.fallback_kind = "lift_only"
+            result.semantic_family, result.semantic_family_reason = "stack_control", "call-heavy helper path"
+            call_count = sum(1 for insn in getattr(loop_block.capstone, "insns", ()) if getattr(insn, "mnemonic", "").lower() == "call")
+            _mark_stage(
+                result,
+                "cfg",
+                True,
+                detail=f"skipped cfg/decompile for call-heavy helper path ({call_count} calls in {len(code)} bytes); lift ok",
+            )
+            _mark_stage(result, "cleanup", True, detail="scan-safe conservative cleanup")
+            return _finish_scan(result)
 
         if _should_skip_scan_safe_cfg(len(code), mode, max_cfg_bytes):
             result.ok = True
@@ -923,6 +959,7 @@ __all__ = [
     "_should_skip_scan_safe_decompile",
     "_should_skip_scan_safe_cfg",
     "_should_skip_scan_safe_back_edge",
+    "_should_skip_scan_safe_call_chain",
     "_should_skip_scan_safe_decompile_for_cfg_shape",
     "_classify_readability_cluster",
 ]

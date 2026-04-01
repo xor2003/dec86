@@ -8,6 +8,10 @@ from types import SimpleNamespace
 import pytest
 
 import decompile
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -101,7 +105,6 @@ def test_cod_dos_getfree_call_and_return_recovered():
             "rin.h.ah",
             "rin.x.bx",
             "rout.x.cflag",
-            "return rout.x.bx",
         ),
     )
     _assert_has_none(
@@ -110,6 +113,23 @@ def test_cod_dos_getfree_call_and_return_recovered():
             "rin = 72;",
             "rin = 65535;",
             "s_2 = &",
+            "s_8 = 28675;",
+            "err = 28673;",
+            "return rout.x.bx",
+        ),
+    )
+
+
+def test_cod_strlen_stack_local_copy_is_declared():
+    result = _run_cod_proc(COD_DIR / "default" / "STRLEN.COD", "_strlen")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    _assert_has_all(
+        result.stdout,
+        (
+            "function: 0x1000 _strlen",
+            "unsigned short _strlen(unsigned short s)",
+            "unsigned short a1;",
         ),
     )
 
@@ -221,14 +241,116 @@ def test_regenerate_codegen_text_falls_back_on_failure():
     class DummyCodegen:
         def __init__(self) -> None:
             self.text = "fallback text"
+            self.cfunc = object()
 
         def regenerate_text(self) -> None:
-            raise RuntimeError("boom")
+            raise RecursionError("maximum recursion depth exceeded")
+
+        def render_text(self, _cfunc) -> tuple[str, object]:
+            return "rendered text", object()
 
     text, changed = decompile._regenerate_codegen_text_safely(DummyCodegen(), context="dummy")
 
-    assert text == "fallback text"
+    assert text == "rendered text"
     assert changed is False
+
+
+def test_dedupe_duplicate_local_declarations_text_prefers_annotated_slot():
+    c_text = (
+        "void _dos_free(unsigned short segment)\n"
+        "{\n"
+        "    char err;  // [bp-0x6]\n"
+        "    char err;  // [bp-0x2] err\n"
+        "    return;\n"
+        "}\n"
+    )
+
+    deduped = decompile._dedupe_duplicate_local_declarations_text(c_text)
+
+    assert "char err_2; // [bp-0x6]" in deduped
+    assert deduped.count("char err;  // [bp-0x2] err") == 1
+
+
+def test_prune_dead_local_assignments_removes_unused_constant_stores():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    dead_var = SimStackVariable(4, 2, base="bp", name="dead", region=0x1000)
+    live_var = SimStackVariable(6, 2, base="bp", name="live", region=0x1000)
+    dead_cvar = structured_c.CVariable(dead_var, variable_type=SimTypeShort(False), codegen=codegen)
+    live_cvar = structured_c.CVariable(live_var, variable_type=SimTypeShort(False), codegen=codegen)
+    statements = structured_c.CStatements(
+        [
+            structured_c.CAssignment(dead_cvar, structured_c.CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            structured_c.CAssignment(
+                live_cvar,
+                structured_c.CBinaryOp(
+                    "Add",
+                    live_cvar,
+                    structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=statements,
+        variables_in_use={
+            dead_var: dead_cvar,
+            live_var: live_cvar,
+        },
+    )
+
+    changed = decompile._prune_dead_local_assignments(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    assert codegen.cfunc.statements.statements[0].lhs.variable is live_var
+
+
+def test_materialize_missing_stack_local_declarations_adds_live_stack_slots():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    arg_var = SimStackVariable(2, 2, base="bp", name="arg", region=0x1000)
+    local_var = SimStackVariable(4, 2, base="bp", name="local", region=0x1000)
+    arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+    local_cvar = structured_c.CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[SimpleNamespace(variable=arg_var)],
+        statements=structured_c.CStatements([], codegen=codegen),
+        unified_local_vars={},
+        variables_in_use={
+            arg_var: arg_cvar,
+            local_var: local_cvar,
+        },
+        sort_local_vars=lambda: None,
+    )
+
+    changed = decompile._materialize_missing_stack_local_declarations(codegen)
+
+    assert changed is True
+    assert local_var in codegen.cfunc.unified_local_vars
+    assert codegen.cfunc.unified_local_vars[local_var] == {(local_cvar, local_cvar.variable_type)}
+    assert arg_var not in codegen.cfunc.unified_local_vars
 
 
 def test_binary_specific_annotations_apply_generic_metadata(monkeypatch):

@@ -31,6 +31,7 @@ class DecompilerPostprocessPassSpec:
 def _build_decompiler_postprocess_passes():
     return (
         DecompilerPostprocessPassSpec("_apply_word_global_types_8616", _globals._apply_word_global_types_8616, True),
+        DecompilerPostprocessPassSpec("_apply_annotations_8616", _post._apply_annotations_8616, True),
         DecompilerPostprocessPassSpec(
             "_promote_stack_prototype_from_bp_loads_8616",
             _post._promote_stack_prototype_from_bp_loads_8616,
@@ -46,7 +47,6 @@ def _build_decompiler_postprocess_passes():
             _globals._prune_unused_unnamed_memory_declarations_8616,
             False,
         ),
-        DecompilerPostprocessPassSpec("_apply_annotations_8616", _post._apply_annotations_8616, True),
         DecompilerPostprocessPassSpec(
             "_simplify_boolean_cites_8616",
             _simplify._simplify_boolean_cites_8616,
@@ -57,6 +57,21 @@ def _build_decompiler_postprocess_passes():
             "_normalize_function_prototype_arg_names_8616",
             _post._normalize_function_prototype_arg_names_8616,
             True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_classify_return_shape_8616",
+            _post._classify_return_shape_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_prune_void_function_return_values_8616",
+            _post._prune_void_function_return_values_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_dedupe_codegen_variable_names_8616",
+            _post._dedupe_codegen_variable_names_8616,
+            False,
         ),
         DecompilerPostprocessPassSpec("_rewrite_flag_condition_pairs_8616", _flags._rewrite_flag_condition_pairs_8616, False),
         DecompilerPostprocessPassSpec("_prune_unused_flag_assignments_8616", _flags._prune_unused_flag_assignments_8616, True),
@@ -83,7 +98,7 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
 
     profile = info.get("x86_16_decompilation_profile", {})
     if isinstance(profile, dict) and profile.get("wrapper_like"):
-        return DECOMPILER_POSTPROCESS_PASSES[:8]
+        return DECOMPILER_POSTPROCESS_PASSES[:10]
 
     return DECOMPILER_POSTPROCESS_PASSES
 

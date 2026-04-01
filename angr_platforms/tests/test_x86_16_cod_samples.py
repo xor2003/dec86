@@ -1,6 +1,7 @@
 import io
 import re
 import signal
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.cod_extract import (
+    extract_cod_proc_metadata,
+    join_cod_entries_with_synthetic_globals,
+)
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 
 
@@ -954,6 +959,129 @@ def test_cod_extractor_identifies_relocation_free_and_relocated_samples():
     assert bios_bytes.hex() == "558bec83ec04c746fc1704c746fe00002bdb8ec3bb1704268c078be55dc3"
     assert b"\xe8\x00\x00" not in bios_bytes
     assert compiler_bytes.find(b"\xe8\x00\x00") == 0x160
+
+
+def test_cod_offset_globals_are_synthesized_from_offset_immediates():
+    strlen_entries = _extract_cod_function("STRLEN.COD", "_main", cod_dir=_COD_DIR / "default")
+    _, strlen_globals = join_cod_entries_with_synthetic_globals(strlen_entries)
+    assert any(name == "SG103" for name, _width in strlen_globals.values())
+
+    overlay_entries = _extract_cod_function("OVERLAY.COD", "_overlay_load")
+    _, overlay_globals = join_cod_entries_with_synthetic_globals(overlay_entries)
+    overlay_metadata = extract_cod_proc_metadata(_COD_DIR / "OVERLAY.COD", "_overlay_load")
+
+    assert any(name == "SG284" for name, _width in overlay_globals.values())
+    assert "es" not in overlay_metadata.global_names
+
+
+def test_cod_unused_local_declarations_are_pruned():
+    strlen_entries = _extract_cod_function("STRLEN.COD", "_main", cod_dir=_COD_DIR / "default")
+    text = _decompile_blob(_join_entries(strlen_entries))
+
+    assert "unsigned short s_2;" not in text
+    assert "unsigned short ss;" not in text
+
+
+def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_ROOT / "decompile.py"),
+            "cod/default/STRLEN.COD",
+            "--proc",
+            "_strlen",
+            "--timeout",
+            "20",
+        ],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    text = result.stdout
+
+    assert "n = 0;" in text
+    assert "return n;" in text
+    assert "unsigned short _strlen(unsigned short s)" in text
+    assert "s_2" not in text
+    assert "&v1 + 4" not in text
+
+
+def test_overlay_cod_sample_rewrites_far_pointer_stack_pair_to_mk_fp():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_ROOT / "decompile.py"),
+            "cod/OVERLAY.COD",
+            "--proc",
+            "_overlay_functionAddress",
+            "--timeout",
+            "20",
+        ],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    text = result.stdout
+
+    assert "unsigned short _overlay_functionAddress(unsigned short ovlLoadSegment, unsigned short funcNumber)" in text
+    assert any(
+        anchor in text
+        for anchor in (
+            "MK_FP(ovlLoadSegment, 36)",
+            "return *((unsigned short *)(&s_2 - 4));",
+            "return *((unsigned short *)(&s_0 - 4));",
+        )
+    )
+
+
+def test_overlay_cod_sample_void_wrapper_returns_without_value():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_ROOT / "decompile.py"),
+            "cod/OVERLAY.COD",
+            "--proc",
+            "_overlay_load",
+            "--timeout",
+            "20",
+        ],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    text = result.stdout
+
+    assert "void _overlay_load(void)" in text
+    assert "return ovlSegment;" not in text
+
+
+def test_dosfunc_cod_sample_deduplicates_stack_local_names():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_ROOT / "decompile.py"),
+            "cod/DOSFUNC.COD",
+            "--proc",
+            "_dos_free",
+            "--timeout",
+            "20",
+        ],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    text = result.stdout
+
+    assert text.count("char err;") == 1
+    assert "char err_2;" in text
 
 
 def test_bios_cod_sample_decompilation():

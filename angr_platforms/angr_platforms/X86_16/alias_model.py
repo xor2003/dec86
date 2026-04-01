@@ -9,6 +9,15 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from .alias_domains import register_pair_name
 
 
+def _canonical_stack_base(base: str | None) -> str:
+    if not isinstance(base, str) or not base:
+        return "bp"
+    normalized = base.lower()
+    if normalized in {"bp", "sp", "ss"}:
+        return "bp"
+    return normalized
+
+
 @dataclass(frozen=True)
 class _StorageView:
     bit_offset: int = 0
@@ -45,6 +54,9 @@ class _StackSlotIdentity:
     offset: int
     width: int | None = None
     region: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "base", _canonical_stack_base(self.base))
 
     def end_offset(self) -> int | None:
         if self.width is None:
@@ -216,7 +228,7 @@ class AliasRecoveryAPISpec:
 def _storage_domain_for_variable(variable) -> _StorageDomainSignature:
     if isinstance(variable, SimStackVariable):
         width = getattr(variable, "size", 0)
-        base = getattr(variable, "base", None) or "sp"
+        base = _canonical_stack_base(getattr(variable, "base", None))
         offset = getattr(variable, "offset", 0)
         region = getattr(variable, "region", None)
         return _StorageDomainSignature(
@@ -254,7 +266,7 @@ def _alias_identity_for_variable(variable) -> tuple[str, Any] | None:
 def _stack_slot_identity_for_variable(variable) -> _StackSlotIdentity | None:
     if not isinstance(variable, SimStackVariable):
         return None
-    base = getattr(variable, "base", None) or "sp"
+    base = _canonical_stack_base(getattr(variable, "base", None))
     offset = getattr(variable, "offset", 0)
     width = getattr(variable, "size", 0) or None
     region = getattr(variable, "region", None)

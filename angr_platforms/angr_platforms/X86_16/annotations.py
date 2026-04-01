@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from angr.analyses import CFGFast, Decompiler
 from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
@@ -18,6 +20,8 @@ def _annotation_dict(function):
         {
             "stack_vars": {},
             "global_vars": {},
+            "source_lines": (),
+            "source_return_lines": (),
         },
     )
 
@@ -206,6 +210,18 @@ def apply_x86_16_metadata_annotations(
 
     if cod_metadata is not None:
         changed |= _apply_known_helper_signatures(project, cod_metadata)
+        source_lines = tuple(getattr(cod_metadata, "source_lines", ()) or ())
+        if source_lines:
+            func = project.kb.functions.function(addr=func_addr, create=True)
+            if func is None:
+                raise KeyError(func_addr)
+            annotations = _annotation_dict(func)
+            annotations["source_lines"] = source_lines
+            annotations["source_return_lines"] = tuple(
+                line.strip()
+                for line in source_lines
+                if re.match(r"^return\s+[^;]+;\s*$", line.strip())
+            )
 
     if func_addr is not None and synthetic_globals:
         seen_addrs: set[int] = set()

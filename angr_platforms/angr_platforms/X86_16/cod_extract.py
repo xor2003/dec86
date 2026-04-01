@@ -69,6 +69,11 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     entry_re = re.compile(r"\*\*\*\s+[0-9A-Fa-f]+\s+(?:[0-9A-Fa-f]{2}\s+)+(.*)$")
     call_re = re.compile(r"\bcall\b(?:\s+far ptr)?\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
     global_re = re.compile(r"\b(?:BYTE|WORD|DWORD)\s+PTR\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
+    offset_global_re = re.compile(
+        r"\bOFFSET\s+(?:[A-Za-z_$?@][\w$?@]*:)?\$?([A-Za-z_$?@][\w$?@]*)",
+        re.IGNORECASE,
+    )
+    segment_registers = {"cs", "ds", "es", "ss", "fs", "gs"}
 
     for line in lines:
         if start_marker in line:
@@ -111,7 +116,14 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
 
         for global_match in global_re.finditer(asm_text):
             global_name = global_match.group(1)
-            if global_name.startswith("$") or global_name == proc_name:
+            if global_name.startswith("$") or global_name == proc_name or global_name.lower() in segment_registers:
+                continue
+            if global_name not in global_names:
+                global_names.append(global_name)
+
+        for offset_match in offset_global_re.finditer(asm_text):
+            global_name = offset_match.group(1)
+            if global_name.startswith("$") or global_name == proc_name or global_name.lower() in segment_registers:
                 continue
             if global_name not in global_names:
                 global_names.append(global_name)
@@ -181,7 +193,12 @@ def join_cod_entries_with_synthetic_globals(
     symbol_base: int = 0x7000,
 ) -> tuple[bytes, dict[int, tuple[str, int]]]:
     global_re = re.compile(r"\b(?:BYTE|WORD|DWORD)\s+PTR\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
+    offset_global_re = re.compile(
+        r"\bOFFSET\s+(?:[A-Za-z_$?@][\w$?@]*:)?\$?([A-Za-z_$?@][\w$?@]*)",
+        re.IGNORECASE,
+    )
     size_re = re.compile(r"\b(BYTE|WORD|DWORD)\s+PTR\b", re.IGNORECASE)
+    segment_registers = {"cs", "ds", "es", "ss", "fs", "gs"}
 
     symbol_addrs: dict[str, int] = {}
     addr_to_name: dict[int, tuple[str, int]] = {}
@@ -200,9 +217,13 @@ def join_cod_entries_with_synthetic_globals(
         patched = False
 
         global_match = global_re.search(text)
+        offset_match = offset_global_re.search(text)
         size_match = size_re.search(text)
-        if global_match is not None and size_match is not None:
-            symbol = global_match.group(1)
+        if size_match is not None and (global_match is not None or offset_match is not None):
+            symbol = global_match.group(1) if global_match is not None else offset_match.group(1)
+            if symbol.lower() in segment_registers:
+                patched_chunks.append(entry["bytes"])
+                continue
             width_name = size_match.group(1).upper()
             width = {"BYTE": 1, "WORD": 2, "DWORD": 4}[width_name]
 
@@ -242,6 +263,41 @@ def join_cod_entries_with_synthetic_globals(
                     if ((modrm >> 6) & 0x3) == 0 and (modrm & 0x7) == 0x6:
                         chunk[prefix_len + 2 : prefix_len + 4] = target_addr.to_bytes(2, "little")
                         patched = True
+
+        elif offset_match is not None:
+            symbol = offset_match.group(1)
+            if symbol.lower() in segment_registers:
+                patched_chunks.append(entry["bytes"])
+                continue
+            if symbol not in symbol_addrs:
+                symbol_addrs[symbol] = next_addr
+                addr_to_name[next_addr] = (symbol, 2)
+                next_addr += 2
+
+            target_addr = symbol_addrs[symbol]
+            prefix_len = 0
+            while prefix_len < len(chunk) and chunk[prefix_len] in {
+                0x26,
+                0x2E,
+                0x36,
+                0x3E,
+                0x64,
+                0x65,
+                0x66,
+                0x67,
+                0xF2,
+                0xF3,
+            }:
+                prefix_len += 1
+
+            if prefix_len < len(chunk):
+                opcode = chunk[prefix_len]
+                if opcode in {0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0x68} and prefix_len + 2 < len(chunk):
+                    chunk[prefix_len + 1 : prefix_len + 3] = target_addr.to_bytes(2, "little")
+                    patched = True
+                elif opcode in {0xC6, 0xC7} and prefix_len + 4 < len(chunk):
+                    chunk[prefix_len + 3 : prefix_len + 5] = target_addr.to_bytes(2, "little")
+                    patched = True
 
         patched_chunks.append(bytes(chunk) if patched else entry["bytes"])
 

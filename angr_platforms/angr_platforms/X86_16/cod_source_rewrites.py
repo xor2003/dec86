@@ -277,7 +277,13 @@ def rewrite_known_cod_object_condition_blocks_from_source(c_text: str, metadata:
         pattern = re.compile(rf"(?m)^\s*{re.escape(anchor)}\s*$")
         match = pattern.search(c_text)
         if match is None:
-            idx = end + 1
+            insert_at = c_text.rfind("}")
+            if insert_at == -1:
+                idx = end + 1
+                continue
+            c_text = c_text[:insert_at].rstrip() + "\n" + "\n".join(block) + "\n" + c_text[insert_at:]
+            current_lines = c_text.splitlines()
+            changed = True
             continue
 
         c_text = c_text[: match.start()] + "\n".join(block) + "\n" + c_text[match.start() :]

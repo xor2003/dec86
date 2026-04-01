@@ -88,6 +88,15 @@ def test_storage_domain_classifier_tracks_bp_stack_slot_identity():
     assert joined == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
 
 
+def test_storage_domain_classifier_canonicalizes_ss_stack_slot_identity():
+    stack = _decompile._storage_domain_for_variable(
+        _decompile.SimStackVariable(-4, 2, base="ss", name="v1", region=0x1000)
+    )
+
+    assert stack.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
+    assert stack.stack_slot.base == "bp"
+
+
 def test_storage_domain_classifier_rejects_mismatched_bp_stack_regions():
     low_view = _StorageDomainSignature(
         "stack",
@@ -125,6 +134,41 @@ def test_same_stack_slot_identity_requires_exact_bp_slot():
     assert not _decompile._same_stack_slot_identity(low, other_region)
 
 
+def test_same_stack_slot_identity_normalizes_ss_backed_slices():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
+        codegen=codegen,
+    )
+    high = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 1, base="ss", name="v2", region=0x1000),
+        codegen=codegen,
+    )
+
+    assert _decompile._same_stack_slot_identity(low, high)
+
+
+def test_stack_offset_classifier_normalizes_wrapped_16bit_offsets():
+    codegen = _make_codegen()
+    stack_var = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000),
+        codegen=codegen,
+    )
+    expr = _decompile.structured_c.CBinaryOp(
+        "Add",
+        _decompile.structured_c.CUnaryOp("Reference", stack_var, codegen=codegen),
+        _decompile.structured_c.CConstant(65532, _decompile.SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    matched = _decompile._match_stack_cvar_and_offset(expr)
+
+    assert matched is not None
+    matched_var, matched_offset = matched
+    assert matched_var is stack_var
+    assert matched_offset == -4
+
+
 def test_stack_slot_identity_can_join_adjacent_bp_slices():
     codegen = _make_codegen()
     low = _decompile.structured_c.CVariable(
@@ -142,6 +186,20 @@ def test_stack_slot_identity_can_join_adjacent_bp_slices():
 
     assert _stack_slot_identity_can_join(low.variable, high.variable)
     assert not _stack_slot_identity_can_join(low.variable, other_region.variable)
+
+
+def test_stack_slot_identity_can_join_adjacent_bp_and_ss_slices():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
+        codegen=codegen,
+    )
+    high = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="ss", name="v2", region=0x1000),
+        codegen=codegen,
+    )
+
+    assert _decompile._stack_slot_identity_can_join(low, high)
 
 
 def test_decompile_stack_slot_identity_can_join_wrapper_accepts_joinable_bp_slices():

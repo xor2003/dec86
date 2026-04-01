@@ -117,12 +117,16 @@ def test_x86_16_calling_convention_compatibility_patches_register_sanity():
 def test_x86_16_decompiler_postprocess_registry_order():
     assert [spec.func.__name__ for spec in decompiler_postprocess_stage.DECOMPILER_POSTPROCESS_PASSES] == [
         "_apply_word_global_types_8616",
-        "_promote_stack_prototype_from_bp_loads_8616",
-        "_prune_unused_unnamed_memory_declarations_8616",
         "_apply_annotations_8616",
+        "_promote_stack_prototype_from_bp_loads_8616",
+        "_prune_return_address_stack_arguments_8616",
+        "_prune_unused_unnamed_memory_declarations_8616",
         "_simplify_boolean_cites_8616",
         "_simplify_structured_expressions_8616",
         "_normalize_function_prototype_arg_names_8616",
+        "_classify_return_shape_8616",
+        "_prune_void_function_return_values_8616",
+        "_dedupe_codegen_variable_names_8616",
         "_rewrite_flag_condition_pairs_8616",
         "_prune_unused_flag_assignments_8616",
         "_prune_overwritten_flag_assignments_8616",
@@ -165,12 +169,15 @@ def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
 
     assert pass_names == (
         "_apply_word_global_types_8616",
-        "_promote_stack_prototype_from_bp_loads_8616",
-        "_prune_unused_unnamed_memory_declarations_8616",
         "_apply_annotations_8616",
+        "_promote_stack_prototype_from_bp_loads_8616",
+        "_prune_return_address_stack_arguments_8616",
+        "_prune_unused_unnamed_memory_declarations_8616",
         "_simplify_boolean_cites_8616",
         "_simplify_structured_expressions_8616",
         "_normalize_function_prototype_arg_names_8616",
+        "_classify_return_shape_8616",
+        "_prune_void_function_return_values_8616",
     )
 
 

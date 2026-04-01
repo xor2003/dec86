@@ -4,6 +4,7 @@ from angr_platforms.X86_16.corpus_scan import (
     FunctionScanResult,
     ScanTimeout,
     StageResult,
+    _should_skip_scan_safe_call_chain,
     _should_skip_scan_safe_cfg,
     _should_skip_scan_safe_back_edge,
     _should_skip_scan_safe_decompile,
@@ -468,6 +469,42 @@ def test_scan_safe_skips_short_loop_heavy_functions():
     assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x1010)]), "scan-safe", 128) is False
     assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "mov", None)]), "scan-safe", 128) is False
     assert _should_skip_scan_safe_back_edge(_FakeCapstoneBlock([_FakeInsn(0x1000, "jmp", 0x0FFF)]), "lift", 128) is False
+
+
+def test_scan_safe_skips_call_heavy_helpers():
+    class _FakeInsn:
+        def __init__(self, mnemonic: str):
+            self.mnemonic = mnemonic
+
+    class _FakeCapstoneBlock:
+        def __init__(self, insns):
+            self.insns = insns
+
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 4), "scan-safe", 192) is True
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 3), "scan-safe", 192) is False
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 4), "lift", 192) is False
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 4), "scan-safe", 0) is False
+
+
+def test_scan_safe_skips_dos_resize_before_cfg_timeout():
+    repo_root = Path(__file__).resolve().parents[2]
+    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "DOSFUNC.COD"
+    funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
+    kind, code = funcs["_dos_resize"]
+
+    result = scan_function(
+        cod_path,
+        "_dos_resize",
+        kind,
+        code,
+        timeout_sec=5,
+        mode="scan-safe",
+    )
+
+    assert result.ok is True
+    assert result.failure_class is None
+    assert result.fallback_kind == "lift_only"
+    assert result.semantic_family == "stack_control"
 
 
 def test_scan_safe_keeps_empty_codegen_as_fallback_for_known_hotspots():

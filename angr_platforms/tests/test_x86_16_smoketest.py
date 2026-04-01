@@ -6,12 +6,15 @@ import keystone as ks
 import pytest
 from angr import options as o
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
+from angr.analyses.decompiler.structured_codegen.c import CVariable
+from angr.sim_variable import SimStackVariable
 
 from angr_platforms.X86_16.annotations import decompile_function
 from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.simos_86_16 import SimCC8616MSCsmall  # noqa: F401
+from decompile import _resolve_stack_cvar_at_offset
 
 
 def _project_from_bytes(code: bytes):
@@ -132,6 +135,27 @@ def test_enter_local_stack_smoke():
     assert dec.codegen is not None
     assert "flag = 1;" in dec.codegen.text
     assert "return flag;" in dec.codegen.text or "return 1;" in dec.codegen.text
+
+
+def test_resolve_stack_cvar_at_offset_prefers_exact_stack_slots():
+    class _DummyCodegen:
+        def __init__(self):
+            self.cfunc = SimpleNamespace(variables_in_use={})
+            self._idx = 0
+
+        def next_idx(self, _kind):
+            self._idx += 1
+            return self._idx
+
+    codegen = _DummyCodegen()
+    frame = SimStackVariable(0, 2, base="bp", name="frame", region=0x1000)
+    arg = SimStackVariable(4, 2, base="bp", name="arg", region=0x1000)
+    frame_cvar = CVariable(frame, codegen=codegen)
+    arg_cvar = CVariable(arg, codegen=codegen)
+    codegen.cfunc.variables_in_use = {frame: frame_cvar, arg: arg_cvar}
+
+    assert _resolve_stack_cvar_at_offset(codegen, 4) is arg_cvar
+    assert _resolve_stack_cvar_at_offset(codegen, 5) is arg_cvar
 
 
 def test_near_call_smoke():

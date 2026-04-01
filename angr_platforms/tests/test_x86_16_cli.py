@@ -16,6 +16,7 @@ TRACE_PATH = REPO_ROOT / "angr_platforms" / "scripts" / "trace_x86_16_paths.py"
 MONOPRIN_COD = REPO_ROOT / "cod" / "f14" / "MONOPRIN.COD"
 NHORZ_COD = REPO_ROOT / "cod" / "f14" / "NHORZ.COD"
 MAX_COD = REPO_ROOT / "cod" / "default" / "MAX.COD"
+DOSFUNC_COD = REPO_ROOT / "cod" / "DOSFUNC.COD"
 ICOMDO_COM = REPO_ROOT / "angr_platforms" / "x16_samples" / "ICOMDO.COM"
 ISOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ISOD.COD"
 IMOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOD.COD"
@@ -352,6 +353,39 @@ def test_normalize_function_signature_arg_names_deduplicates_duplicate_parameter
     assert decompile._normalize_function_signature_arg_names(text) == (
         "unsigned short _strlen(unsigned short s, unsigned short s_2)\n"
     )
+
+
+def test_prune_void_function_return_values_text_handles_multiline_headers():
+    text = (
+        "void _dos_free()\n"
+        "{\n"
+        "    if (rout.x.cflag != 0) {\n"
+        "        return err;\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n"
+    )
+
+    assert decompile._prune_void_function_return_values_text(text) == (
+        "void _dos_free()\n"
+        "{\n"
+        "    if (rout.x.cflag != 0) {\n"
+        "        return;\n"
+        "    }\n"
+        "    return;\n"
+        "}\n"
+    )
+
+
+def test_decompile_cli_prunes_void_returns_for_multiline_headers():
+    result = _run_decompile_proc(DOSFUNC_COD, "_dos_free")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "void _dos_free(unsigned short segment)" in result.stdout
+    assert "sreg.es = segment;" in result.stdout
+    assert "return err;" not in result.stdout
+    assert "return 0;" not in result.stdout
+    assert "return;" in result.stdout
 
 
 def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
