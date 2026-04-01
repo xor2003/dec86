@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import hashlib
 import os
 import re
@@ -27,11 +28,14 @@ class HarnessError(RuntimeError):
 
 
 class MetaHarness:
+    step_order = ("full-sweep", "checker", "planner", "worker", "reviewer")
+
     def __init__(self, cfg: RuntimeConfig, llm_cfg: LlmConfig):
         self.cfg = cfg
         self.llm_cfg = llm_cfg
         self.current_cycle_dir: Path | None = None
         self.current_cycle_index = 0
+        self.cycle_state: dict[str, object] | None = None
         self.crash_review_active = False
         self.lock_fp: object | None = None
         self.script_checksums = self._compute_script_checksums()
@@ -173,6 +177,8 @@ class MetaHarness:
         self.write_status(context, "resources-ok", f"disk={disk}MB ram={ram if ram is not None else 'unknown'}MB state={self.state_dir_mb()}MB")
 
     def sha256_file(self, path: Path) -> str:
+        if not path.exists():
+            return ""
         h = hashlib.sha256()
         with path.open("rb") as fp:
             for chunk in iter(lambda: fp.read(1024 * 1024), b""):
@@ -198,11 +204,88 @@ class MetaHarness:
                         h.update(chunk)
         return h.hexdigest()
 
+    def latest_cycle_dir(self) -> Path | None:
+        if not self.cfg.runs_dir.exists():
+            return None
+        cycles = sorted(p for p in self.cfg.runs_dir.iterdir() if p.is_dir())
+        return cycles[-1] if cycles else None
+
+    def cycle_state_file(self, cycle_dir: Path | None = None) -> Path | None:
+        base = cycle_dir or self.current_cycle_dir
+        return None if base is None else base / "cycle.state.json"
+
+    def _empty_cycle_state(self, cycle_index: int) -> dict[str, object]:
+        return {
+            "cycle": cycle_index,
+            "started_at": self.iso_now(),
+            "updated_at": self.iso_now(),
+            "completed": False,
+            "steps": {step: {"status": "pending", "updated_at": "", "extra": ""} for step in self.step_order},
+        }
+
+    def _save_cycle_state(self) -> None:
+        if self.current_cycle_dir is None or self.cycle_state is None:
+            return
+        self.cycle_state["updated_at"] = self.iso_now()
+        state_file = self.cycle_state_file()
+        if state_file is not None:
+            state_file.write_text(json.dumps(self.cycle_state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    def _load_cycle_state(self, cycle_dir: Path) -> dict[str, object] | None:
+        state_file = cycle_dir / "cycle.state.json"
+        if not state_file.exists():
+            return None
+        try:
+            return json.loads(state_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+
+    def _resume_step_from_state(self, state: dict[str, object]) -> str | None:
+        steps = state.get("steps")
+        if not isinstance(steps, dict):
+            return None
+        for step in self.step_order:
+            entry = steps.get(step)
+            if not isinstance(entry, dict) or entry.get("status") != "done":
+                return step
+        return None
+
+    def peek_resume_step(self) -> str | None:
+        latest = self.latest_cycle_dir()
+        if latest is None:
+            return None
+        state = self._load_cycle_state(latest)
+        if state is None or state.get("completed") is True:
+            return None
+        return self._resume_step_from_state(state)
+
+    def resume_latest_cycle(self) -> str | None:
+        latest = self.latest_cycle_dir()
+        if latest is None:
+            return None
+        state = self._load_cycle_state(latest)
+        if state is None or state.get("completed") is True:
+            return None
+        resume_step = self._resume_step_from_state(state)
+        if resume_step is None:
+            return None
+        self.current_cycle_dir = latest
+        self.current_cycle_index = int(state.get("cycle", 0) or 0)
+        self.cycle_state = state
+        latest_link = self.cfg.state_dir / "latest_cycle"
+        if latest_link.exists() or latest_link.is_symlink():
+            latest_link.unlink()
+        latest_link.symlink_to(self.current_cycle_dir)
+        self.log(f"Resuming cycle {self.current_cycle_index:03d} from {resume_step}")
+        return resume_step
+
     def prepare_cycle_workspace(self) -> None:
         self.cleanup_state_dir()
         self.current_cycle_index += 1
         self.current_cycle_dir = self.cfg.runs_dir / f"{self.timestamp()}_cycle{self.current_cycle_index:03d}"
         self.current_cycle_dir.mkdir(parents=True, exist_ok=True)
+        self.cycle_state = self._empty_cycle_state(self.current_cycle_index)
+        self._save_cycle_state()
         latest = self.cfg.state_dir / "latest_cycle"
         if latest.exists() or latest.is_symlink():
             latest.unlink()
@@ -217,6 +300,7 @@ class MetaHarness:
         self.capture_git_state("start")
         if self.cfg.plan_path.exists():
             shutil.copy2(self.cfg.plan_path, self.current_cycle_dir / "PLAN.start.md")
+        self._save_cycle_state()
 
     def capture_git_state(self, tag: str) -> None:
         if self.current_cycle_dir is None:
@@ -235,9 +319,26 @@ class MetaHarness:
         self.capture_cycle_artifact(self.cfg.status_file, f"status.{tag}.txt")
         self.capture_cycle_artifact(self.cfg.last_log_file, f"last.{tag}.log")
         self.capture_cycle_artifact(self.cfg.evidence_log_file, f"evidence_sweep.{tag}.log")
+        state_file = self.cycle_state_file()
+        if state_file is not None and state_file.exists():
+            self.capture_cycle_artifact(state_file, f"cycle.{tag}.json")
         if self.current_cycle_dir is not None and self.cfg.plan_path.exists():
             shutil.copy2(self.cfg.plan_path, self.current_cycle_dir / f"PLAN.{tag}.md")
         self.capture_git_state(tag)
+
+    def mark_cycle_step(self, step: str, status: str, extra: str = "") -> None:
+        if self.cycle_state is None:
+            return
+        steps = self.cycle_state.setdefault("steps", {})
+        if isinstance(steps, dict):
+            steps[step] = {
+                "status": status,
+                "updated_at": self.iso_now(),
+                "extra": extra,
+            }
+        if status == "done" and step == self.step_order[-1]:
+            self.cycle_state["completed"] = True
+        self._save_cycle_state()
 
     def maybe_self_restart(self, reason: str) -> bool:
         current = self._compute_script_checksums()
@@ -343,6 +444,7 @@ class MetaHarness:
     def sweep_step(self) -> None:
         self.check_stop_file()
         self.preflight_resource_check("full-sweep")
+        self.mark_cycle_step("full-sweep", "running", f"log={self.cfg.evidence_log_file.name}")
         self.prepare_evidence_subset()
         self.write_status("full-sweep", "running", f"log={self.cfg.evidence_log_file.name}")
         self.log(f"Starting {self.cfg.sweep_label}")
@@ -355,9 +457,11 @@ class MetaHarness:
             if self.cfg.evidence_log_file.exists():
                 shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
             self.write_status("full-sweep", "failed", f"see {self.cfg.evidence_log_file.name}")
+            self.mark_cycle_step("full-sweep", "failed", f"rc={result.returncode}")
             self.die(f"{self.cfg.sweep_label} failed")
         shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
         self.write_status("full-sweep", "done", f"log={self.cfg.evidence_log_file.name}")
+        self.mark_cycle_step("full-sweep", "done", f"log={self.cfg.evidence_log_file.name}")
         self.capture_cycle_artifact(self.cfg.evidence_log_file, "evidence_sweep.log")
         self.capture_cycle_snapshot("sweep")
         self.trim_old_logs()
@@ -365,17 +469,20 @@ class MetaHarness:
     def checker_step(self) -> None:
         self.check_stop_file()
         self.preflight_resource_check("checker")
+        self.mark_cycle_step("checker", "running")
         log_file = self.run_role("checker", self.cfg.checker_model, build_checker_prompt(self.cfg))
         remaining = self.extract_remaining_steps(log_file)
         if not remaining:
             self.die("Checker did not print remaining step count")
         self.save_role_markers("checker", log_file, remaining)
         self.capture_cycle_artifact(log_file, "checker.log")
+        self.mark_cycle_step("checker", "done", f"remaining={remaining}")
         self.capture_cycle_snapshot("checker")
 
     def planner_step(self) -> None:
         self.check_stop_file()
         self.preflight_resource_check("planner")
+        self.mark_cycle_step("planner", "running")
         log_file = self.run_role("planner", self.cfg.planner_model, build_planner_prompt(self.cfg))
         remaining = self.extract_remaining_steps(log_file)
         if not remaining:
@@ -391,9 +498,11 @@ class MetaHarness:
             self.die(f"Planner did not create or update {self.cfg.plan_path}")
         self.save_role_markers("planner", log_file, remaining)
         self.capture_cycle_artifact(log_file, "planner.log")
+        self.mark_cycle_step("planner", "done", f"remaining={remaining}")
         self.capture_cycle_snapshot("planner")
 
     def worker_cycle(self) -> None:
+        self.mark_cycle_step("worker", "running")
         for i in range(1, self.cfg.max_worker_iters + 1):
             self.check_stop_file()
             self.preflight_resource_check("worker")
@@ -410,6 +519,7 @@ class MetaHarness:
             self.capture_cycle_artifact(log_file, f"worker.iter{i:02d}.log")
             self.capture_cycle_snapshot(f"worker-iter{i:02d}")
             if self.cfg.worker_finish_token in log_file.read_text(encoding="utf-8", errors="replace"):
+                self.mark_cycle_step("worker", "done", f"remaining={remaining}")
                 return
             time.sleep(self.cfg.worker_sleep_secs)
         self.die(f"Reached MAX_WORKER_ITERS={self.cfg.max_worker_iters} without finishing worker cycle")
@@ -417,12 +527,14 @@ class MetaHarness:
     def reviewer_step(self) -> str:
         self.check_stop_file()
         self.preflight_resource_check("reviewer")
+        self.mark_cycle_step("reviewer", "running")
         log_file = self.run_role("reviewer", self.cfg.reviewer_model, build_reviewer_prompt(self.cfg))
         remaining = self.extract_remaining_steps(log_file)
         if not remaining:
             self.die("Reviewer did not print remaining step count")
         self.save_role_markers("reviewer", log_file, remaining)
         self.capture_cycle_artifact(log_file, "reviewer.log")
+        self.mark_cycle_step("reviewer", "done", f"remaining={remaining}")
         self.capture_cycle_snapshot("reviewer")
         return remaining
 
@@ -444,18 +556,29 @@ class MetaHarness:
             self.write_status("crash-reviewer", "restart-requested", f"log={log_file.name}")
             self.maybe_self_restart("crash-reviewer")
 
-    def run(self) -> int:
+    def run(self, resume: bool = False) -> int:
         self.ensure_prereqs()
         self.acquire_lock()
         self.write_status("startup", "ready", f"timeout={self.cfg.codex_timeout_secs}s")
         while True:
-            self.prepare_cycle_workspace()
+            start_step = self.resume_latest_cycle() if resume else None
+            if start_step is None:
+                self.prepare_cycle_workspace()
+                start_step = self.step_order[0]
+                self.write_status("cycle", "fresh", f"cycle={self.current_cycle_index} start={start_step}")
+            else:
+                self.write_status("cycle", "resumed", f"cycle={self.current_cycle_index} start={start_step}")
             self.capture_cycle_snapshot("cycle-start")
             self.check_stop_file()
-            self.sweep_step()
-            self.checker_step()
-            self.planner_step()
-            self.worker_cycle()
+            start_idx = self.step_order.index(start_step)
+            if start_idx <= 0:
+                self.sweep_step()
+            if start_idx <= 1:
+                self.checker_step()
+            if start_idx <= 2:
+                self.planner_step()
+            if start_idx <= 3:
+                self.worker_cycle()
             remaining = self.reviewer_step()
             self.log(f"Reviewer says {remaining} steps remain")
             self.maybe_self_restart("reviewer")
