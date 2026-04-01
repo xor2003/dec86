@@ -1,3 +1,10 @@
+try:
+    import pyvex_compat
+
+    pyvex_compat.apply_pyvex_runtime_compatibility()
+except Exception:
+    pass
+
 __all__ = [
     "COD_SOURCE_REWRITE_REGISTRY",
     "annotations",

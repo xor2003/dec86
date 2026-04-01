@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import angr_platforms.X86_16 as x8616
 from angr.analyses.calling_convention import calling_convention as _cc_analysis
 from angr.analyses.calling_convention import fact_collector as _cc_fact_collector
@@ -120,6 +122,7 @@ def test_x86_16_decompiler_postprocess_registry_order():
         "_apply_annotations_8616",
         "_simplify_boolean_cites_8616",
         "_simplify_structured_expressions_8616",
+        "_normalize_function_prototype_arg_names_8616",
         "_rewrite_flag_condition_pairs_8616",
         "_prune_unused_flag_assignments_8616",
         "_prune_overwritten_flag_assignments_8616",
@@ -143,6 +146,32 @@ def test_x86_16_decompiler_postprocess_stage_exports():
     assert "DECOMPILER_POSTPROCESS_PASSES" in decompiler_postprocess_stage.__all__
     assert "describe_x86_16_decompiler_postprocess_stage" in decompiler_postprocess_stage.__all__
     assert "apply_x86_16_decompiler_postprocess" in decompiler_postprocess_stage.__all__
+
+
+def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
+    function = SimpleNamespace(info={"x86_16_decompilation_profile": {"wrapper_like": True}})
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: function,
+            )
+        )
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))
+
+    pass_names = tuple(
+        spec.name for spec in decompiler_postprocess_stage._decompiler_postprocess_passes_for_function(project, codegen)
+    )
+
+    assert pass_names == (
+        "_apply_word_global_types_8616",
+        "_promote_stack_prototype_from_bp_loads_8616",
+        "_prune_unused_unnamed_memory_declarations_8616",
+        "_apply_annotations_8616",
+        "_simplify_boolean_cites_8616",
+        "_simplify_structured_expressions_8616",
+        "_normalize_function_prototype_arg_names_8616",
+    )
 
 
 def test_x86_16_bootstrap_module_exports():

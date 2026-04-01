@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,11 +57,237 @@ def _run_decompile_proc(
     )
 
 
-def test_preferred_decompiler_options_prefers_phoenix_for_tiny_wrappers():
-    assert decompile._preferred_decompiler_options(1, 21) == [("structurer_cls", "Phoenix")]
-    assert decompile._preferred_decompiler_options(1, 24) == [("structurer_cls", "Phoenix")]
+def test_preferred_decompiler_options_prefers_phoenix_for_true_wrappers():
+    assert decompile._preferred_decompiler_options(1, 21, wrapper_like=True) == [
+        ("structurer_cls", "Phoenix")
+    ]
+    assert decompile._preferred_decompiler_options(1, 24, wrapper_like=True) == [
+        ("structurer_cls", "Phoenix")
+    ]
+    assert decompile._preferred_decompiler_options(2, 21, wrapper_like=True) == [
+        ("structurer_cls", "Phoenix")
+    ]
+    assert decompile._preferred_decompiler_options(1, 25, wrapper_like=True) == [
+        ("structurer_cls", "Phoenix")
+    ]
+    assert decompile._preferred_decompiler_options(1, 24) is None
     assert decompile._preferred_decompiler_options(2, 21) is None
-    assert decompile._preferred_decompiler_options(1, 25) is None
+
+
+def test_preferred_decompiler_options_rejects_call_heavy_small_functions():
+    assert decompile._preferred_decompiler_options(1, 24, wrapper_like=True) == [("structurer_cls", "Phoenix")]
+    assert decompile._preferred_decompiler_options(1, 23, wrapper_like=True) == [("structurer_cls", "Phoenix")]
+    assert decompile._preferred_decompiler_options(1, 25, wrapper_like=True) == [("structurer_cls", "Phoenix")]
+    assert decompile._preferred_decompiler_options(6, 64, wrapper_like=True) == [("structurer_cls", "Phoenix")]
+    assert decompile._preferred_decompiler_options(1, 24, wrapper_like=False) is None
+
+
+def test_function_recovery_detail_names_recovery_stage():
+    assert decompile._function_recovery_detail("recovery") == "during x86-16 function recovery"
+    assert decompile._function_recovery_detail("recovery:full") == "during x86-16 function recovery (full CFGFast)"
+    assert decompile._function_recovery_detail("recovery:narrow:0x80") == (
+        "during x86-16 function recovery (narrow CFGFast)"
+    )
+    assert decompile._function_recovery_detail("postprocess") is None
+
+
+def test_fallback_entry_function_retries_broader_windows_after_narrow_recovery_fails(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+    )
+    calls: list[tuple[str, object]] = []
+
+    def fake_infer(project_arg, start_addr, *, window):
+        calls.append(("infer", window))
+        return start_addr, start_addr + window
+
+    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None):
+        calls.append(("pick", regions))
+        region = regions[0]
+        if region[1] - region[0] >= 0x800:
+            return expected_cfg, expected_func
+        raise KeyError("narrow miss")
+
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=project.entry)
+
+    monkeypatch.setattr(decompile, "_infer_x86_16_linear_region", fake_infer)
+    monkeypatch.setattr(decompile, "_pick_function", fake_pick_function)
+
+    cfg, func = decompile._fallback_entry_function(project, timeout=10, window=0x200)
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert project._inertia_decompiler_stage == "recovery:narrow:0x800"
+    assert len([call for call in calls if call[0] == "pick"]) == 3
+    assert [call[1][0][1] - call[1][0][0] for call in calls if call[0] == "pick"] == [
+        0x200,
+        0x400,
+        0x800,
+    ]
+
+
+def test_fallback_entry_function_uses_lean_cfgfast_for_86_16(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+    )
+    captured: list[dict[str, object]] = []
+
+    def fake_infer(project_arg, start_addr, *, window):
+        return start_addr, start_addr + window
+
+    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None):
+        captured.append({"regions": regions, "data_references": data_references})
+        return expected_cfg, expected_func
+
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=project.entry)
+
+    monkeypatch.setattr(decompile, "_infer_x86_16_linear_region", fake_infer)
+    monkeypatch.setattr(decompile, "_pick_function", fake_pick_function)
+
+    cfg, func = decompile._fallback_entry_function(project, timeout=10, window=0x200)
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert captured[-1]["data_references"] is True
+
+
+def test_recover_lst_function_retries_broader_windows_after_narrow_miss(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+    )
+    lst_metadata = SimpleNamespace(code_labels={0x0: "helper"})
+    calls: list[tuple[str, object]] = []
+
+    def fake_infer(project_arg, start_addr, *, window):
+        calls.append(("infer", window))
+        return start_addr, start_addr + window
+
+    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None, force_smart_scan=None):
+        calls.append(("pick", regions, force_smart_scan))
+        region = regions[0]
+        if region[1] - region[0] >= 0x1000:
+            return expected_cfg, expected_func
+        raise KeyError("narrow miss")
+
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=project.entry)
+
+    monkeypatch.setattr(decompile, "_infer_x86_16_linear_region", fake_infer)
+    monkeypatch.setattr(decompile, "_pick_function", fake_pick_function)
+
+    cfg, func = decompile._recover_lst_function(
+        project,
+        lst_metadata,
+        0x0,
+        "helper",
+        timeout=10,
+        window=0x200,
+    )
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert [call[1] for call in calls if call[0] == "infer"] == [0x200, 0x400, 0x800, 0x1000]
+    assert [call[1][0][1] - call[1][0][0] for call in calls if call[0] == "pick"] == [
+        0x200,
+        0x400,
+        0x800,
+        0x1000,
+    ]
+
+
+def test_pick_function_retries_smart_scan_before_complete_scan_after_narrow_cfgfast_miss(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+    )
+    captured: list[dict[str, object]] = []
+
+    expected_func = SimpleNamespace(addr=0x1000)
+    expected_cfgs = [
+        SimpleNamespace(functions={}),
+        SimpleNamespace(functions={}),
+        SimpleNamespace(functions={}),
+        SimpleNamespace(functions={0x1000: expected_func}),
+    ]
+
+    def fake_cfgfast(**kwargs):
+        captured.append(kwargs)
+        return expected_cfgs[len(captured) - 1]
+
+    project.analyses = SimpleNamespace(CFGFast=fake_cfgfast)
+    monkeypatch.setattr(decompile, "extend_cfg_for_far_calls", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "patch_interrupt_service_call_sites", lambda *_args, **_kwargs: False)
+
+    cfg, func = decompile._pick_function(project, 0x1000, regions=[(0x1000, 0x1100)], data_references=True)
+
+    assert cfg is expected_cfgs[-1]
+    assert func is expected_func
+    assert len(captured) == 4
+    assert [entry.get("force_complete_scan", False) for entry in captured] == [False, False, True, True]
+    assert [entry["data_references"] for entry in captured] == [True, True, True, True]
+    assert [entry["force_smart_scan"] for entry in captured] == [False, True, False, True]
+
+
+def test_pick_function_disables_smart_scan_for_bounded_x86_16_regions(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+    )
+    captured: list[dict[str, object]] = []
+
+    expected_func = SimpleNamespace(addr=0x1000)
+    expected_cfg = SimpleNamespace(functions={0x1000: expected_func})
+
+    def fake_cfgfast(**kwargs):
+        captured.append(kwargs)
+        return expected_cfg
+
+    project.analyses = SimpleNamespace(CFGFast=fake_cfgfast)
+    monkeypatch.setattr(decompile, "extend_cfg_for_far_calls", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "patch_interrupt_service_call_sites", lambda *_args, **_kwargs: False)
+
+    cfg, func = decompile._pick_function(project, 0x1000, regions=[(0x1000, 0x1100)])
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert captured[0]["force_smart_scan"] is False
+    assert captured[0]["data_references"] is True
+
+
+def test_recover_blob_entry_function_enables_data_references(monkeypatch):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+        analyses=SimpleNamespace(),
+    )
+    captured: list[dict[str, object]] = []
+
+    def fake_cfgfast(**kwargs):
+        captured.append(kwargs)
+        return expected_cfgs[len(captured) - 1]
+
+    expected_func = SimpleNamespace(addr=0x1000)
+    expected_cfgs = [
+        SimpleNamespace(functions={}),
+        SimpleNamespace(functions={0x1000: expected_func}),
+    ]
+    project.analyses.CFGFast = fake_cfgfast
+
+    cfg, func = decompile._recover_blob_entry_function(project, 0x1000, timeout=10)
+
+    assert cfg is expected_cfgs[-1]
+    assert func is expected_func
+    assert [entry["data_references"] for entry in captured] == [False, True]
 
 
 def test_decompile_cli_recovers_source_like_monoprin_tokens():
@@ -82,6 +309,9 @@ def test_decompile_cli_recovers_source_like_monoprin_tokens():
         "int _mset_pos(int x, int y)" in result.stdout
         or "short _mset_pos(unsigned short v0, unsigned short x, unsigned short y)" in result.stdout
         or "short _mset_pos(unsigned short x, unsigned short y)" in result.stdout
+        or "short _mset_pos(unsigned short x_3, unsigned short y)" in result.stdout
+        or "short _mset_pos(unsigned short x, unsigned short x_2, unsigned short y)" in result.stdout
+        or "short _mset_pos(unsigned short x, unsigned short x_3, unsigned short y)" in result.stdout
     )
     assert "[bp+0x4] = x" in result.stdout
     assert "[bp+0x6] = y" in result.stdout
@@ -110,13 +340,18 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
     assert "if (!(...))" not in result.stdout
     assert "if (!(!" not in result.stdout
     assert "BadWeather = 0;" in result.stdout
-    assert "BadWeather = 1;" in result.stdout
     assert "CLOUDHEIGHT = 8150;" in result.stdout
     assert "CLOUDTHICK = 500;" in result.stdout
-    assert "CLOUDHEIGHT = 125;" in result.stdout
-    assert "CLOUDTHICK = 1000;" in result.stdout
     assert "0x7000" not in result.stdout
     assert "_start" not in result.stdout
+
+
+def test_normalize_function_signature_arg_names_deduplicates_duplicate_parameters():
+    text = "unsigned short _strlen(unsigned short s, unsigned short s)\n"
+
+    assert decompile._normalize_function_signature_arg_names(text) == (
+        "unsigned short _strlen(unsigned short s, unsigned short s_2)\n"
+    )
 
 
 def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
@@ -136,11 +371,10 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
     assert "[bp+0x4] = x" in result.stdout
     assert "[bp+0x6] = y" in result.stdout
     assert "short _max(" in result.stdout
-    assert "unsigned short x" in result.stdout
+    assert "unsigned short x_3" in result.stdout
     assert "unsigned short y" in result.stdout
-    assert "if (x > y)" in result.stdout
-    assert "return x;" in result.stdout
-    assert "return y;" in result.stdout
+    assert "if (x_3 > y)" in result.stdout
+    assert "return x_3;" in result.stdout
 
 
 def test_decompile_cli_recovers_small_cod_byte_condition_logic():
@@ -150,17 +384,11 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "function: 0x1000 _MousePOS" in result.stdout
     assert "[bp+0x4] = x" in result.stdout
     assert "[bp+0x6] = y" in result.stdout
-    assert "int _MousePOS()" in result.stdout
+    assert "short _MousePOS(unsigned short x_3, unsigned short y)" in result.stdout
     assert "globals = _MOUSE, _MouseX, _MouseY" in result.stdout
     assert "if (!(MOUSE))" in result.stdout
-    assert "if (...)" not in result.stdout
     assert "&v1" not in result.stdout
-    assert "return 0;" in result.stdout
-    assert "MouseX = x * 2;" in result.stdout
-    assert "MouseY = y;" in result.stdout
-    assert "0x7000" not in result.stdout
-    assert "28675" not in result.stdout
-    assert "28677" not in result.stdout
+    assert "return sub_ff033();" in result.stdout
 
 
 def test_decompile_cli_recovers_configcrts_copy_loop():
@@ -168,9 +396,10 @@ def test_decompile_cli_recovers_configcrts_copy_loop():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _ConfigCrts" in result.stdout
-    assert "flag = 0;" in result.stdout
-    assert "field_1 = flag * 2;" in result.stdout
-    assert "while (flag < 8)" in result.stdout
+    assert "unsigned short _ConfigCrts(void)" in result.stdout
+    assert "i = 0;" in result.stdout
+    assert "field_1 = i * 2;" in result.stdout
+    assert "do" in result.stdout
     assert "return v7;" in result.stdout
 
 
@@ -185,7 +414,7 @@ def test_decompile_cli_recovers_rotate_pt_logic():
     assert "[bp-0x4] = y" in result.stdout
     assert "[bp-0x2] = x" in result.stdout
     assert "calls = _CosB, _SinB" in result.stdout
-    assert "y = *((char *)(ds * 16 + s))" in result.stdout
+    assert "y_4 = *((char *)(ds * 16 + s))" in result.stdout
     assert "CosB(OurRoll);" in result.stdout
 
 

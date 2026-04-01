@@ -48,9 +48,13 @@ def _assert_has_none(text: str, anchors: tuple[str, ...]) -> None:
     ("cod_name", "proc_name", "timeout"),
     (
         ("BIOSFUNC.COD", "_bios_clearkeyflags", 20),
+        ("DOSFUNC.COD", "_dos_alloc", 20),
+        ("DOSFUNC.COD", "_dos_resize", 20),
         ("DOSFUNC.COD", "_dos_getfree", 20),
+        ("DOSFUNC.COD", "loadprog", 20),
         ("DOSFUNC.COD", "_dos_loadOverlay", 20),
         ("DOSFUNC.COD", "_dos_getReturnCode", 20),
+        ("DOSFUNC.COD", "_dos_mcbInfo", 20),
         ("OVERLAY.COD", "_overlay_load", 20),
         ("EGAME2.COD", "_openFileWrapper", 20),
     ),

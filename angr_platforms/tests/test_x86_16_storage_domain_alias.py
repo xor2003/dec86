@@ -20,6 +20,7 @@ from angr_platforms.X86_16.alias_model import (
     _StorageDomainSignature,
     _StorageView,
     _merge_storage_domains,
+    _stack_slot_identity_can_join,
 )
 
 
@@ -105,7 +106,7 @@ def test_storage_domain_classifier_rejects_mismatched_bp_stack_regions():
     assert low_view.join(high_view) is None
 
 
-def test_same_stack_slot_identity_checks_bp_region():
+def test_same_stack_slot_identity_requires_exact_bp_slot():
     codegen = _make_codegen()
     low = _decompile.structured_c.CVariable(
         _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
@@ -120,8 +121,46 @@ def test_same_stack_slot_identity_checks_bp_region():
         codegen=codegen,
     )
 
-    assert _decompile._same_stack_slot_identity(low, high)
+    assert not _decompile._same_stack_slot_identity(low, high)
     assert not _decompile._same_stack_slot_identity(low, other_region)
+
+
+def test_stack_slot_identity_can_join_adjacent_bp_slices():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
+        codegen=codegen,
+    )
+    high = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="v2", region=0x1000),
+        codegen=codegen,
+    )
+    other_region = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="v3", region=0x2000),
+        codegen=codegen,
+    )
+
+    assert _stack_slot_identity_can_join(low.variable, high.variable)
+    assert not _stack_slot_identity_can_join(low.variable, other_region.variable)
+
+
+def test_decompile_stack_slot_identity_can_join_wrapper_accepts_joinable_bp_slices():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
+        codegen=codegen,
+    )
+    high = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="v2", region=0x1000),
+        codegen=codegen,
+    )
+    other_region = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="v3", region=0x2000),
+        codegen=codegen,
+    )
+
+    assert _decompile._stack_slot_identity_can_join(low, high)
+    assert not _decompile._stack_slot_identity_can_join(low, other_region)
 
 
 def test_storage_domain_merge_helper_prefers_joinable_domains():

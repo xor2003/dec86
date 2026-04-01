@@ -42,7 +42,7 @@ from angr.sim_variable import SimStackVariable
 from angr.sim_variable import SimStackVariable
 from .annotations import ANNOTATION_KEY
 from .analysis_helpers import resolve_direct_call_target_from_block
-from .alias_model import _same_stack_slot_identity, _stack_slot_identity_for_variable
+from .alias_model import _same_stack_slot_identity, _stack_slot_identity_can_join, _stack_slot_identity_for_variable
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
     _iter_c_nodes_deep_8616,
@@ -92,6 +92,147 @@ def _unwrap_synthetic_wide_return_8616(retval):
                 return maybe_low
 
     return None
+
+
+def _normalize_arg_names_8616(arg_names: tuple[str | None, ...] | list[str | None] | None, count: int) -> list[str | None]:
+    normalized: list[str | None] = []
+    used: set[str] = set()
+    source = list(arg_names or ())
+    for index in range(count):
+        base_name = source[index] if index < len(source) else None
+        if not isinstance(base_name, str) or not base_name:
+            base_name = f"a{index}"
+        candidate = base_name
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        normalized.append(candidate)
+        used.add(candidate)
+    return normalized
+
+
+def _prune_return_address_stack_arguments_8616(project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    func_addr = getattr(codegen.cfunc, "addr", None)
+    if func_addr is None:
+        return False
+
+    func = project.kb.functions.function(addr=func_addr, create=False)
+    if func is None:
+        return False
+
+    prototype = getattr(func, "prototype", None)
+    arg_list = list(getattr(codegen.cfunc, "arg_list", ()) or ())
+    if prototype is None or not arg_list:
+        return False
+
+    kept_args = []
+    changed = False
+    for arg in arg_list:
+        variable = getattr(arg, "variable", None)
+        if isinstance(variable, SimStackVariable):
+            identity = _stack_slot_identity_for_variable(variable)
+            if (
+                identity is not None
+                and getattr(identity, "base", None) == "bp"
+                and getattr(identity, "offset", None) == 2
+            ):
+                changed = True
+                continue
+        kept_args.append(arg)
+
+    if not changed:
+        return False
+
+    annotations = getattr(func, "info", {}).get(ANNOTATION_KEY, {})
+    stack_specs = annotations.get("stack_vars", {}) if isinstance(annotations, dict) else {}
+    codegen.cfunc.arg_list = kept_args
+    proto_args = list(getattr(prototype, "args", ()) or ())
+    arg_types = []
+    arg_names = []
+    for index, arg in enumerate(kept_args):
+        arg_type = getattr(arg, "variable_type", None)
+        if arg_type is None and index < len(proto_args):
+            arg_type = proto_args[index]
+        arg_types.append(arg_type)
+        variable = getattr(arg, "variable", None)
+        arg_name = getattr(variable, "name", None)
+        if isinstance(variable, SimStackVariable):
+            offset = getattr(variable, "offset", None)
+            if isinstance(offset, int) and offset > 0:
+                spec = stack_specs.get(offset - 2)
+                if isinstance(spec, str):
+                    arg_name = spec
+                elif isinstance(spec, dict):
+                    spec_name = spec.get("name")
+                    if isinstance(spec_name, str) and spec_name:
+                        arg_name = spec_name
+        if arg_name is not None:
+            try:
+                arg.name = arg_name
+            except Exception:
+                pass
+            if variable is not None and getattr(variable, "name", None) != arg_name:
+                variable.name = arg_name
+            unified = getattr(arg, "unified_variable", None)
+            if unified is not None and getattr(unified, "name", None) != arg_name:
+                unified.name = arg_name
+        arg_names.append(arg_name)
+
+    new_proto = prototype.__class__(
+        arg_types,
+        prototype.returnty,
+        arg_names=_normalize_arg_names_8616(arg_names, len(arg_types)),
+        variadic=getattr(prototype, "variadic", False),
+    ).with_arch(project.arch)
+    func.prototype = new_proto
+    func.is_prototype_guessed = False
+    try:
+        codegen.cfunc.prototype = new_proto
+    except Exception:
+        pass
+    return True
+
+
+def _normalize_function_prototype_arg_names_8616(project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    func_addr = getattr(codegen.cfunc, "addr", None)
+    if func_addr is None:
+        return False
+
+    func = project.kb.functions.function(addr=func_addr, create=False)
+    if func is None:
+        return False
+
+    prototype = getattr(func, "prototype", None)
+    if prototype is None:
+        return False
+
+    arg_names = getattr(prototype, "arg_names", None)
+    if arg_names is None:
+        return False
+
+    normalized = _normalize_arg_names_8616(arg_names, len(getattr(prototype, "args", ()) or ()))
+    if list(arg_names) == normalized:
+        return False
+
+    new_proto = prototype.__class__(
+        list(getattr(prototype, "args", ()) or ()),
+        prototype.returnty,
+        arg_names=normalized,
+        variadic=getattr(prototype, "variadic", False),
+    ).with_arch(project.arch)
+    func.prototype = new_proto
+    try:
+        codegen.cfunc.prototype = new_proto
+    except Exception:
+        pass
+    return True
 
 
 def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
@@ -159,11 +300,10 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             )
         else:
             new_args = list(existing_args)
-        arg_names = list(getattr(prototype, "arg_names", None) or ())
-        if arg_names:
-            arg_names.extend([None] * (len(new_args) - len(arg_names)))
+        arg_names = _normalize_arg_names_8616(getattr(prototype, "arg_names", None), len(new_args))
     else:
-        arg_names = getattr(prototype, "arg_names", None)
+        existing_names = getattr(prototype, "arg_names", None)
+        arg_names = _normalize_arg_names_8616(existing_names, len(existing_args)) if existing_names is not None else None
 
     def has_wide_return_pattern() -> bool:
         for stmt in getattr(codegen.cfunc.statements, "statements", ()) or ():
@@ -203,7 +343,7 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
     new_proto = prototype.__class__(
         [wide_ty],
         wide_ty,
-        arg_names=getattr(prototype, "arg_names", None),
+        arg_names=_normalize_arg_names_8616(getattr(prototype, "arg_names", None), 1),
         variadic=getattr(prototype, "variadic", False),
     ).with_arch(project.arch)
     func.prototype = new_proto
@@ -317,9 +457,21 @@ def _apply_annotations_8616(project, codegen) -> bool:
 
     changed = False
     stack_vars_by_offset = {}
+    used_stack_names: set[str] = set()
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
         if isinstance(variable, SimStackVariable):
             stack_vars_by_offset[getattr(variable, "offset", None)] = cvar
+
+    def unique_stack_name(base_name: str | None) -> str | None:
+        if not isinstance(base_name, str) or not base_name:
+            return None
+        candidate = base_name
+        suffix = 2
+        while candidate in used_stack_names:
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        used_stack_names.add(candidate)
+        return candidate
 
     def spec_name_for(variable):
         offset = getattr(variable, "offset", None)
@@ -342,6 +494,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
             if current and not current.startswith(("arg_", "s_", "v")):
                 name = current
 
+        name = unique_stack_name(name)
         if name is not None:
             target = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
             if target is not None and getattr(target, "name", None) != name:
@@ -416,7 +569,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
                     low_var = getattr(low_cvar, "variable", None)
                     high_var = getattr(high_cvar, "variable", None)
                     if isinstance(low_var, SimStackVariable) and isinstance(high_var, SimStackVariable):
-                        if not _same_stack_slot_identity(low_var, high_var):
+                        if not _stack_slot_identity_can_join(low_var, high_var):
                             continue
                 cvar = low_cvar
                 if cvar is not None:

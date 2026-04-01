@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -36,6 +37,11 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
+            "_prune_return_address_stack_arguments_8616",
+            _post._prune_return_address_stack_arguments_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_prune_unused_unnamed_memory_declarations_8616",
             _globals._prune_unused_unnamed_memory_declarations_8616,
             False,
@@ -47,6 +53,11 @@ def _build_decompiler_postprocess_passes():
             False,
         ),
         DecompilerPostprocessPassSpec("_simplify_structured_expressions_8616", _simplify._simplify_structured_expressions_8616, False),
+        DecompilerPostprocessPassSpec(
+            "_normalize_function_prototype_arg_names_8616",
+            _post._normalize_function_prototype_arg_names_8616,
+            True,
+        ),
         DecompilerPostprocessPassSpec("_rewrite_flag_condition_pairs_8616", _flags._rewrite_flag_condition_pairs_8616, False),
         DecompilerPostprocessPassSpec("_prune_unused_flag_assignments_8616", _flags._prune_unused_flag_assignments_8616, True),
         DecompilerPostprocessPassSpec("_prune_overwritten_flag_assignments_8616", _flags._prune_overwritten_flag_assignments_8616, True),
@@ -55,6 +66,26 @@ def _build_decompiler_postprocess_passes():
 
 
 DECOMPILER_POSTPROCESS_PASSES = _build_decompiler_postprocess_passes()
+
+
+def _decompiler_postprocess_passes_for_function(project, codegen):
+    func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    if func_addr is None:
+        return DECOMPILER_POSTPROCESS_PASSES
+
+    func = project.kb.functions.function(addr=func_addr, create=False)
+    if func is None:
+        return DECOMPILER_POSTPROCESS_PASSES
+
+    info = getattr(func, "info", None)
+    if not isinstance(info, dict):
+        return DECOMPILER_POSTPROCESS_PASSES
+
+    profile = info.get("x86_16_decompilation_profile", {})
+    if isinstance(profile, dict) and profile.get("wrapper_like"):
+        return DECOMPILER_POSTPROCESS_PASSES[:8]
+
+    return DECOMPILER_POSTPROCESS_PASSES
 
 
 def describe_x86_16_decompiler_postprocess_stage():
@@ -75,8 +106,11 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     codegen._inertia_rewrite_failure_pass = None
     codegen._inertia_rewrite_failure_error = None
     codegen._inertia_last_postprocess_pass = None
-    for spec in DECOMPILER_POSTPROCESS_PASSES:
+    pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
+    codegen._inertia_postprocess_passes = tuple(spec.name for spec in pass_specs)
+    for spec in pass_specs:
         try:
+            project._inertia_decompiler_stage = f"postprocess:{spec.name}"
             if spec.needs_project:
                 spec_changed = spec.func(project, codegen)
             else:
@@ -97,6 +131,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             last_changed_pass = spec.name
             codegen._inertia_last_postprocess_pass = spec.name
     codegen._inertia_postprocess_changed = changed
+    project._inertia_decompiler_stage = "postprocess"
     return changed
 
 
@@ -127,11 +162,16 @@ def _decompile_8616(self):
     if _orig_decompiler_decompile is None:
         _orig_decompiler_decompile = Decompiler._decompile
         _decompile_8616._orig_decompiler_decompile = _orig_decompiler_decompile
+    core_started = time.perf_counter()
+    self.project._inertia_decompiler_stage = "core"
     _orig_decompiler_decompile(self)
+    core_elapsed = time.perf_counter() - core_started
     if self.project.arch.name != "86_16" or self.codegen is None:
         return
 
+    postprocess_started = time.perf_counter()
     changed = _postprocess_codegen_8616(self.project, self.codegen)
+    postprocess_elapsed = time.perf_counter() - postprocess_started
     function = getattr(self, "function", None)
     context = f"{getattr(function, 'addr', 'unknown')!r} {getattr(function, 'name', 'unknown')}"
     if changed:
@@ -140,6 +180,8 @@ def _decompile_8616(self):
         info = getattr(function, "info", None)
         if isinstance(info, dict):
             postprocess_info = info.setdefault("x86_16_decompiler_postprocess", {})
+            postprocess_info["core_elapsed"] = core_elapsed
+            postprocess_info["postprocess_elapsed"] = postprocess_elapsed
             postprocess_info["last_pass"] = getattr(self.codegen, "_inertia_last_postprocess_pass", None)
             postprocess_info["rewrite_failed"] = bool(getattr(self.codegen, "_inertia_rewrite_failed", False))
             postprocess_info["rewrite_failure_pass"] = getattr(self.codegen, "_inertia_rewrite_failure_pass", None)
@@ -155,6 +197,9 @@ def _decompile_8616(self):
                 "_inertia_regeneration_error",
                 None,
             )
+            postprocess_info["pass_names"] = getattr(self.codegen, "_inertia_postprocess_passes", ())
+            postprocess_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
+    self.project._inertia_decompiler_stage = "done"
 
 
 def apply_x86_16_decompiler_postprocess() -> None:

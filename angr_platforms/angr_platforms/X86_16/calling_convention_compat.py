@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pyvex.expr import Get
 from pyvex.stmt import Put
 
 from angr.analyses.calling_convention import calling_convention as _cc_analysis
@@ -22,6 +23,26 @@ def _has_explicit_arg_names_8616(prototype) -> bool:
     return False
 
 
+def _irsb_reads_word_bp_8616(irsb, arch) -> bool:
+    bp_offset = arch.registers["bp"][0]
+    for stmt in irsb.statements:
+        for expr in stmt.expressions:
+            if isinstance(expr, Get) and expr.offset == bp_offset and expr.ty == "Ity_I16":
+                return True
+    return False
+
+
+def _count_ax_dx_puts_8616(irsb, arch) -> int:
+    count = 0
+    for stmt in irsb.statements:
+        if not isinstance(stmt, Put):
+            continue
+        reg_name = arch.translate_register_name(stmt.offset, size=arch.bytes)
+        if reg_name in {"ax", "dx"}:
+            count += 1
+    return count
+
+
 def _guess_retval_type_8616(self, cc, ret_val_size):
     ret_type = _guess_retval_type_8616._orig(self, cc, ret_val_size)
     if self.project.arch.bits != 16 or ret_type is None:
@@ -39,8 +60,7 @@ def _guess_retval_type_8616(self, cc, ret_val_size):
             irsb = self.project.factory.block(ret_block.addr, size=ret_block.size).vex
         except SimTranslationError:
             continue
-        irsb_text = irsb._pp_str()
-        if "GET:I16(bp)" in irsb_text:
+        if _irsb_reads_word_bp_8616(irsb, self.project.arch):
             continue
         for stmt in irsb.statements:
             if isinstance(stmt, Put):
@@ -65,15 +85,8 @@ def _promote_wide_stack_return_to_wide_arg_8616(self, prototype):
             except SimTranslationError:
                 irsb = None
             if irsb is not None:
-                irsb_text = irsb._pp_str()
-                if "GET:I16(bp)" in irsb_text:
-                    ax_dx_puts = 0
-                    for stmt in irsb.statements:
-                        if isinstance(stmt, Put):
-                            reg_name = self.project.arch.translate_register_name(stmt.offset, size=self.project.arch.bytes)
-                            if reg_name in {"ax", "dx"}:
-                                ax_dx_puts += 1
-                    if ax_dx_puts == 2:
+                if _irsb_reads_word_bp_8616(irsb, self.project.arch):
+                    if _count_ax_dx_puts_8616(irsb, self.project.arch) == 2:
                         wide_ty = SimTypeLong().with_arch(self.project.arch)
                         return prototype.__class__([wide_ty], wide_ty).with_arch(self.project.arch)
     if len(prototype.args) != 2:
@@ -92,18 +105,10 @@ def _promote_wide_stack_return_to_wide_arg_8616(self, prototype):
     except SimTranslationError:
         return prototype
 
-    irsb_text = irsb._pp_str()
-    if "GET:I16(bp)" not in irsb_text:
+    if not _irsb_reads_word_bp_8616(irsb, self.project.arch):
         return prototype
 
-    ax_dx_puts = 0
-    for stmt in irsb.statements:
-        if isinstance(stmt, Put):
-            reg_name = self.project.arch.translate_register_name(stmt.offset, size=self.project.arch.bytes)
-            if reg_name in {"ax", "dx"}:
-                ax_dx_puts += 1
-
-    if ax_dx_puts != 2:
+    if _count_ax_dx_puts_8616(irsb, self.project.arch) != 2:
         return prototype
 
     wide_ty = SimTypeLong().with_arch(self.project.arch)
@@ -120,18 +125,10 @@ def _fallback_wide_stack_return_prototype_8616(self):
     except SimTranslationError:
         return None
 
-    irsb_text = irsb._pp_str()
-    if "GET:I16(bp)" not in irsb_text or "Ijk_Ret" not in irsb_text:
+    if not _irsb_reads_word_bp_8616(irsb, self.project.arch) or irsb.jumpkind != "Ijk_Ret":
         return None
 
-    ax_dx_puts = 0
-    for stmt in irsb.statements:
-        if isinstance(stmt, Put):
-            reg_name = self.project.arch.translate_register_name(stmt.offset, size=self.project.arch.bytes)
-            if reg_name in {"ax", "dx"}:
-                ax_dx_puts += 1
-
-    if ax_dx_puts != 2:
+    if _count_ax_dx_puts_8616(irsb, self.project.arch) != 2:
         return None
 
     wide_ty = SimTypeLong().with_arch(self.project.arch)

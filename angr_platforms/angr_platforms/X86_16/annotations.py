@@ -26,6 +26,24 @@ def _normalize_bp_disp(offset: int) -> int:
     return offset - 2
 
 
+def _normalize_arg_names(arg_names: list[str] | tuple[str, ...], count: int) -> list[str]:
+    normalized: list[str] = []
+    used: set[str] = set()
+    source = list(arg_names)
+    for index in range(count):
+        base_name = source[index] if index < len(source) else None
+        if not isinstance(base_name, str) or not base_name:
+            base_name = f"a{index}"
+        candidate = base_name
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        normalized.append(candidate)
+        used.add(candidate)
+    return normalized
+
+
 def annotate_function(
     project,
     func_addr: int,
@@ -67,10 +85,11 @@ def annotate_function(
     if arg_names is not None:
         if func.prototype is None:
             raise ValueError("Cannot assign argument names without a prototype.")
+        normalized_names = _normalize_arg_names(arg_names, len(func.prototype.args))
         func.prototype = SimTypeFunction(
             func.prototype.args,
             func.prototype.returnty,
-            arg_names=tuple(arg_names),
+            arg_names=tuple(normalized_names),
             variadic=func.prototype.variadic,
         ).with_arch(project.arch)
         func.is_prototype_guessed = False

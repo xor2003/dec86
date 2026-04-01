@@ -268,7 +268,17 @@ def _same_stack_slot_identity(lhs, rhs) -> bool:
     rhs_identity = _stack_slot_identity_for_variable(rhs)
     if lhs_identity is None or rhs_identity is None:
         return False
-    return lhs_identity == rhs_identity or lhs_identity.can_join(rhs_identity)
+    return lhs_identity == rhs_identity
+
+
+def _stack_slot_identity_can_join(lhs, rhs) -> bool:
+    if not isinstance(lhs, SimStackVariable) or not isinstance(rhs, SimStackVariable):
+        return False
+    lhs_identity = _stack_slot_identity_for_variable(lhs)
+    rhs_identity = _stack_slot_identity_for_variable(rhs)
+    if lhs_identity is None or rhs_identity is None:
+        return False
+    return lhs_identity.can_join(rhs_identity)
 
 
 def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
@@ -385,6 +395,7 @@ __all__ = [
     "_StackPointerAliasState",
     "_stack_slot_identity_for_variable",
     "_same_stack_slot_identity",
+    "_stack_slot_identity_can_join",
     "_storage_view_for_variable",
     "_storage_domain_for_variable",
     "_storage_domain_for_expr",

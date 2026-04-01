@@ -12,6 +12,7 @@ def test_x86_16_recovery_layers_cover_current_recovery_boundary():
         "trait_to_type_handoff",
         "prototype_evidence_layer",
         "far_near_prototype_recovery",
+        "wrapper_and_return_recovery",
         "thin_late_rewrite_boundary",
     ]
     assert describe_x86_16_recovery_layers() == tuple((layer.name, layer.purpose, layer.helpers) for layer in RECOVERY_LAYERS)
