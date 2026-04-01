@@ -83,3 +83,73 @@ def test_run_resume_skips_completed_steps(monkeypatch, tmp_path):
     assert "planner" not in calls
     assert "worker" in calls
 
+
+def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    cfg.evidence_log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    for rel in cfg.evidence_input_files:
+        path = cfg.root_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stub\n", encoding="utf-8")
+
+    calls = {}
+
+    class DummyProc:
+        pid = 4321
+
+        def wait(self):
+            return 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):
+        calls["cmd"] = cmd
+        if hasattr(stdout, "write"):
+            stdout.write("sweep output\n")
+            stdout.flush()
+        return DummyProc()
+
+    class RunResult:
+        def __init__(self, stdout=""):
+            self.stdout = stdout
+            self.returncode = 0
+
+    def fake_run(*args, **kwargs):
+        return RunResult("")
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "trim_old_logs", lambda: None)
+    monkeypatch.setattr("meta_harness.orchestrator.register_child_process", lambda *args, **kwargs: None)
+    monkeypatch.setattr("meta_harness.orchestrator.unregister_child_process", lambda *args, **kwargs: None)
+    monkeypatch.setattr("meta_harness.orchestrator.subprocess.run", fake_run)
+    monkeypatch.setattr("meta_harness.orchestrator.subprocess.Popen", fake_popen)
+
+    harness.sweep_step()
+
+    assert calls["cmd"][-1] == cfg.sweep_cmd
+    assert "tee -a" not in calls["cmd"][-1]
+
+
+def test_finalize_run_marks_terminated_cycle_and_captures_snapshot(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    harness.mark_cycle_step("planner", "running")
+
+    captured = []
+    monkeypatch.setattr(harness, "capture_cycle_snapshot", lambda tag: captured.append(tag))
+
+    harness.finalize_run("terminated", 143)
+
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["planner"]["status"] == "terminated"
+    assert state["steps"]["planner"]["extra"] == "exit_code=143"
+    assert captured == ["terminated"]
