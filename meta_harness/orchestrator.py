@@ -28,6 +28,13 @@ class HarnessError(RuntimeError):
     pass
 
 
+class RoleRunError(HarnessError):
+    def __init__(self, role: str, log_file: Path, message: str):
+        super().__init__(message)
+        self.role = role
+        self.log_file = log_file
+
+
 class MetaHarness:
     step_order = ("full-sweep", "checker", "planner", "worker", "reviewer")
 
@@ -426,6 +433,13 @@ class MetaHarness:
         log_file = self.cfg.log_dir / f"{self.timestamp()}_{role}.log"
         session_file = self.cfg.state_dir / f"{role}.session"
         previous_log = self.last_role_log_file(role)
+
+        def _raise_role_error(message: str) -> None:
+            if log_file.exists():
+                shutil.copy2(log_file, self.cfg.last_log_file)
+                self.save_role_markers(role, log_file)
+            raise RoleRunError(role, log_file, message)
+
         prompt_file.write_text(prompt, encoding="utf-8")
         effective = build_effective_prompt(role, provider, prompt, self.llm_cfg, previous_log)
         prompt_file.write_text(effective, encoding="utf-8")
@@ -436,7 +450,7 @@ class MetaHarness:
         if mode == "resume":
             session_id = session_file.read_text(encoding="utf-8").strip()
             if run_provider_once(provider, "resume", model, effective, prompt_file, log_file, self.llm_cfg, session_id) != 0:
-                raise HarnessError(f"{role} resume failed")
+                _raise_role_error(f"{role} resume failed")
         else:
             max_attempts = self.llm_cfg.local_model_max_retries + 1 if provider in {"ollama", "llamacpp"} else 1
             for attempt in range(1, max_attempts + 1):
@@ -444,7 +458,7 @@ class MetaHarness:
                 if rc == 0 and validate_output(role, provider, log_file, self.llm_cfg):
                     break
                 if provider not in {"ollama", "llamacpp"}:
-                    raise HarnessError(f"{role} failed")
+                    _raise_role_error(f"{role} failed")
                 self.log(f"{role} produced invalid output via {provider}/{model}; retry {attempt}/{self.llm_cfg.local_model_max_retries}")
             else:
                 fallback_provider = self.llm_cfg.local_model_fallback_provider
@@ -461,9 +475,9 @@ class MetaHarness:
                     rc = run_provider_once(fallback_provider, "new", fallback_model, effective, prompt_file, log_file, self.llm_cfg)
                     provider = fallback_provider
                     if rc != 0 or not validate_output(role, provider, log_file, self.llm_cfg):
-                        raise HarnessError(f"{role} failed after retries")
+                        _raise_role_error(f"{role} failed after retries")
                 else:
-                    raise HarnessError(f"{role} failed after retries")
+                    _raise_role_error(f"{role} failed after retries")
 
         shutil.copy2(log_file, self.cfg.last_log_file)
         text = log_file.read_text(encoding="utf-8", errors="replace")
@@ -575,9 +589,21 @@ class MetaHarness:
             self.log(f"Worker iteration {i}/{self.cfg.max_worker_iters}")
             try:
                 log_file = self.run_role("worker", self.cfg.worker_model, build_worker_prompt(self.cfg), resume=True)
-            except HarnessError:
+            except HarnessError as exc:
+                if isinstance(exc, RoleRunError):
+                    self.capture_cycle_artifact(exc.log_file, f"worker.iter{i:02d}.resume-failed.log")
                 (self.cfg.state_dir / "worker.session").unlink(missing_ok=True)
-                log_file = self.run_role("worker", self.cfg.worker_model, build_worker_prompt(self.cfg), resume=False)
+                try:
+                    log_file = self.run_role("worker", self.cfg.worker_model, build_worker_prompt(self.cfg), resume=False)
+                except HarnessError as final_exc:
+                    failed_log = final_exc.log_file if isinstance(final_exc, RoleRunError) else None
+                    if failed_log is not None:
+                        self.capture_cycle_artifact(failed_log, f"worker.iter{i:02d}.failed.log")
+                    self.log(f"Worker iteration {i} failed: {final_exc}")
+                    self.write_status("worker", "retrying-after-error", f"iteration={i} error={final_exc}")
+                    self.mark_cycle_step("worker", "running", f"iteration={i} error={final_exc}")
+                    time.sleep(self.cfg.worker_sleep_secs)
+                    continue
             remaining = self.extract_remaining_steps(log_file)
             if not remaining:
                 self.die("Worker did not print remaining step count")

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from meta_harness.config import LlmConfig, RuntimeConfig
-from meta_harness.orchestrator import MetaHarness
+from meta_harness.orchestrator import MetaHarness, RoleRunError
 
 
 def _make_cfg(monkeypatch, tmp_path: Path) -> tuple[RuntimeConfig, LlmConfig]:
@@ -201,3 +201,40 @@ def test_finalize_run_marks_terminated_cycle_and_captures_snapshot(monkeypatch, 
     assert state["steps"]["planner"]["status"] == "terminated"
     assert state["steps"]["planner"]["extra"] == "exit_code=143"
     assert captured == ["terminated"]
+
+
+def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    failed_log = cfg.log_dir / "failed_worker.log"
+    failed_log.parent.mkdir(parents=True, exist_ok=True)
+    failed_log.write_text("partial output\n", encoding="utf-8")
+
+    success_log = cfg.log_dir / "ok_worker.log"
+    success_log.write_text("correctness\nrecompilation\nGlobal Remaining steps: 0\n", encoding="utf-8")
+
+    calls = {"count": 0}
+
+    def fake_run_role(role, model, prompt, resume=False):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RoleRunError(role, failed_log, "worker resume failed")
+        if calls["count"] == 2:
+            raise RoleRunError(role, failed_log, "worker failed")
+        return success_log
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "run_role", fake_run_role)
+    monkeypatch.setattr("meta_harness.orchestrator.time.sleep", lambda _secs: None)
+
+    harness.worker_cycle()
+
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert calls["count"] == 3
+    assert state["steps"]["worker"]["status"] == "done"
+    assert (harness.current_cycle_dir / "worker.iter01.resume-failed.log").exists()
+    assert (harness.current_cycle_dir / "worker.iter01.failed.log").exists()
+    assert (harness.current_cycle_dir / "worker.iter02.log").exists()

@@ -3,9 +3,11 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from .config import LlmConfig
+from .procguard import register_child_process, unregister_child_process
 
 
 SESSION_RE = re.compile(r"session id:\s*(\S+)", re.IGNORECASE)
@@ -29,6 +31,10 @@ def is_local_provider(provider: str) -> bool:
 def extract_session_id(text: str) -> str:
     match = SESSION_RE.search(text)
     return match.group(1) if match else ""
+
+
+def _timestamp() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def build_effective_prompt(
@@ -85,6 +91,10 @@ def run_provider_once(
     session_id: str = "",
 ) -> int:
     timeout_cmd = ["timeout", "--foreground", f"{config.codex_timeout_secs}s"]
+    header = (
+        f"[{_timestamp()}] start provider={provider} mode={mode} model={model} "
+        f"prompt={prompt_file.name} root={config.root_dir}\n"
+    )
     if provider == "codex":
         if mode == "resume":
             cmd = [
@@ -109,22 +119,58 @@ def run_provider_once(
                 prompt,
             ]
         with log_file.open("w", encoding="utf-8") as out:
-            return subprocess.run(timeout_cmd + cmd, stdout=out, stderr=subprocess.STDOUT, check=False).returncode
+            out.write(header)
+            out.flush()
+            proc = subprocess.Popen(
+                timeout_cmd + cmd,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+            )
+            register_child_process(config.status_file.parent, proc.pid, "codex", str(config.root_dir), _timestamp())
+            try:
+                rc = proc.wait()
+            finally:
+                unregister_child_process(config.status_file.parent, proc.pid)
+        with log_file.open("a", encoding="utf-8") as out:
+            out.write(f"[{_timestamp()}] end rc={rc}\n")
+        return rc
     if provider == "ollama":
         with prompt_file.open("rb") as inp, log_file.open("w", encoding="utf-8") as out:
-            return subprocess.run(
+            out.write(header)
+            out.flush()
+            proc = subprocess.Popen(
                 timeout_cmd + [config.ollama_cmd, "run", model],
                 stdin=inp,
                 stdout=out,
                 stderr=subprocess.STDOUT,
-                check=False,
-            ).returncode
+            )
+            register_child_process(config.status_file.parent, proc.pid, "ollama", str(config.root_dir), _timestamp())
+            try:
+                rc = proc.wait()
+            finally:
+                unregister_child_process(config.status_file.parent, proc.pid)
+        with log_file.open("a", encoding="utf-8") as out:
+            out.write(f"[{_timestamp()}] end rc={rc}\n")
+        return rc
     if provider == "llamacpp":
         cmd = timeout_cmd + [config.llamacpp_cmd, "-m", model]
         if config.llamacpp_extra_args:
             cmd.extend(shlex.split(config.llamacpp_extra_args))
         cmd.extend(["-f", str(prompt_file)])
         with log_file.open("w", encoding="utf-8") as out:
-            return subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT, check=False).returncode
+            out.write(header)
+            out.flush()
+            proc = subprocess.Popen(
+                cmd,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+            )
+            register_child_process(config.status_file.parent, proc.pid, "llamacpp", str(config.root_dir), _timestamp())
+            try:
+                rc = proc.wait()
+            finally:
+                unregister_child_process(config.status_file.parent, proc.pid)
+        with log_file.open("a", encoding="utf-8") as out:
+            out.write(f"[{_timestamp()}] end rc={rc}\n")
+        return rc
     raise ValueError(f"Unsupported provider: {provider}")
-

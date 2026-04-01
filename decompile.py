@@ -59,7 +59,10 @@ class _ThreadBoundTextIO(io.TextIOBase):
         return self._stream().write(data)
 
     def flush(self):
-        return self._stream().flush()
+        try:
+            return self._stream().flush()
+        except ValueError:
+            return None
 
     def isatty(self):
         target = self._stream()
@@ -212,6 +215,7 @@ from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.alias_model import (
     _CopyAliasState,
     _StackPointerAliasState,
+    _stack_slot_identity_can_join as _stack_slot_identity_can_join_var,
     _same_stack_slot_identity as _same_stack_slot_identity_var,
     _stack_slot_identity_for_variable,
     _storage_domain_for_expr,
@@ -391,6 +395,7 @@ def _infer_x86_16_linear_region(project: angr.Project, start_addr: int, *, windo
     end_limit = start_addr + max(window, 1)
     current = start_addr
     ah = None
+    padding_bytes = {0x00, 0x90, 0xCC}
 
     while current < end_limit:
         try:
@@ -421,7 +426,14 @@ def _infer_x86_16_linear_region(project: angr.Project, start_addr: int, *, windo
         current += insn.size
 
         if insn.mnemonic in {"ret", "retf", "iret"}:
-            break
+            if current >= end_limit:
+                break
+            try:
+                lookahead = bytes(project.loader.memory.load(current, min(16, end_limit - current)))
+            except Exception:
+                break
+            if lookahead and all(byte in padding_bytes for byte in lookahead):
+                break
         if insn.mnemonic == "int":
             if insn.op_str.lower() == "0x20":
                 break
@@ -433,16 +445,38 @@ def _infer_x86_16_linear_region(project: angr.Project, start_addr: int, *, windo
     return start_addr, max(start_addr + 1, current)
 
 
-def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
+def _pick_function(
+    project: angr.Project,
+    addr: int | None,
+    *,
+    regions=None,
+    data_references: bool | None = None,
+    force_smart_scan: bool | None = None,
+):
     target_addr = project.entry if addr is None else addr
-    cfg = project.analyses.CFGFast(
-        start_at_entry=False,
-        function_starts=[target_addr],
-        regions=regions,
-        normalize=True,
-        force_complete_scan=False,
-    )
-    if target_addr not in cfg.functions:
+    data_refs = True if data_references is None else data_references
+    if force_smart_scan is None and project.arch.name == "86_16" and regions is not None:
+        smart_scan_modes = (False, True)
+    else:
+        smart_scan_modes = (force_smart_scan,)
+
+    cfg = None
+    for complete_scan in (False, True) if project.arch.name == "86_16" else (False,):
+        for smart_scan in smart_scan_modes:
+            cfg = project.analyses.CFGFast(
+                start_at_entry=False,
+                function_starts=[target_addr],
+                regions=regions,
+                normalize=True,
+                data_references=data_refs,
+                force_smart_scan=smart_scan,
+                force_complete_scan=complete_scan,
+            )
+            if target_addr in cfg.functions:
+                break
+        if cfg is not None and target_addr in cfg.functions:
+            break
+    if cfg is None or target_addr not in cfg.functions:
         raise KeyError(f"Function {target_addr:#x} was not recovered by CFGFast.")
     function = cfg.functions[target_addr]
 
@@ -461,6 +495,11 @@ def _pick_function(project: angr.Project, addr: int | None, *, regions=None):
     return cfg, function
 
 
+def _x86_16_recovery_windows(window: int, *, low_memory: bool = False) -> tuple[int, ...]:
+    base_window = max(window, 0x80 if low_memory else 0x200)
+    return tuple(base_window * factor for factor in (1, 2, 4, 8, 16))
+
+
 def _recover_cfg(
     project: angr.Project,
     binary_path: Path,
@@ -472,6 +511,7 @@ def _recover_cfg(
     print(f"[dbg] recover_cfg: entry={hex(project.entry)} base_addr={hex(base_addr)} window={hex(window)} binary={binary_path}")
     sys.stdout.flush()
     if binary_path.suffix.lower() == ".com":
+        force_smart_scan = False if project.arch.name == "86_16" else None
         regions = [infer_com_region(binary_path, base_addr=base_addr, window=window, arch=project.arch)]
         cfg = project.analyses.CFGFast(
             start_at_entry=False,
@@ -480,6 +520,7 @@ def _recover_cfg(
             normalize=True,
             force_complete_scan=False,
             data_references=not low_memory,
+            force_smart_scan=force_smart_scan,
         )
     else:
         print("[dbg] calling CFGFast (non-COM path)")
@@ -682,7 +723,7 @@ def _decompile_function(
         return "empty", "Decompiler did not produce code."
     setattr(project, "_inertia_rewrite_cache", {})
     changed = False
-    small_function = block_count <= 4 and byte_count <= 32
+    small_function = bool(profile.get("wrapper_like"))
     fold_values_cod_outlier = (
         binary_path is not None
         and binary_path.name.lower().endswith(".cod")
@@ -801,6 +842,7 @@ def _decompile_function(
     formatted = _fix_monoprin_mset_pos_blind_spot(formatted, function, binary_path)
     formatted = _fix_planes3_ready5_blind_spot(formatted, function, binary_path)
     formatted = _normalize_anonymous_call_targets(formatted)
+    formatted = _normalize_function_signature_arg_names(formatted)
     return "ok", _annotate_cod_proc_output(formatted, cod_metadata)
 
 
@@ -834,13 +876,37 @@ def _function_decompilation_profile(
             call_sites = ()
 
     call_site_count = len(call_sites)
-    wrapper_like = block_count <= 8 and byte_count <= 96 and 1 <= call_site_count <= 2
-    if block_count <= 1 and byte_count <= 24:
-        wrapper_like = True
+    project = getattr(function, "project", None)
+    internal_call_count = 0
+    has_non_wrapper_traffic = False
+    if project is not None:
+        for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
+            try:
+                block = project.factory.block(block_addr, opt_level=0)
+            except Exception:
+                continue
+            for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ():
+                mnemonic = getattr(insn, "mnemonic", "").lower()
+                op_str = getattr(insn, "op_str", "").lower()
+                if mnemonic == "call":
+                    internal_call_count += 1
+                elif mnemonic.startswith("j"):
+                    has_non_wrapper_traffic = True
+                elif "[" in op_str and not any(marker in op_str for marker in ("[bp", "[sp", "[ss:")):
+                    has_non_wrapper_traffic = True
+
+    wrapper_like = (
+        block_count <= 2
+        and byte_count <= 32
+        and call_site_count <= 1
+        and internal_call_count == 0
+        and not has_non_wrapper_traffic
+    )
     return {
         "block_count": block_count,
         "byte_count": byte_count,
         "call_site_count": call_site_count,
+        "internal_call_count": internal_call_count,
         "wrapper_like": wrapper_like,
     }
 
@@ -851,11 +917,22 @@ def _preferred_decompiler_options(
     *,
     wrapper_like: bool = False,
 ) -> list[tuple[str, str]] | None:
-    """Choose a cheaper decompiler structurer for tiny wrapper-like functions."""
-    if block_count <= 1 and byte_count <= 24:
+    """Choose a cheaper decompiler structurer for true wrapper-like functions."""
+    if wrapper_like:
         return [("structurer_cls", "Phoenix")]
-    if wrapper_like and block_count <= 8 and byte_count <= 96:
-        return [("structurer_cls", "Phoenix")]
+    return None
+
+
+def _function_recovery_detail(stage: str | None) -> str | None:
+    if stage == "recovery":
+        return "during x86-16 function recovery"
+    if isinstance(stage, str) and stage.startswith("recovery:"):
+        recovery_stage = stage.split(":", 1)[1]
+        if recovery_stage.startswith("narrow"):
+            return "during x86-16 function recovery (narrow CFGFast)"
+        if recovery_stage == "full":
+            return "during x86-16 function recovery (full CFGFast)"
+        return f"during x86-16 function recovery ({recovery_stage})"
     return None
 
 
@@ -870,6 +947,119 @@ def _normalize_anonymous_call_targets(c_text: str) -> str:
         return f"sub_{target:x}()"
 
     return pattern.sub(_replace, c_text)
+
+
+def _normalize_function_signature_arg_names(c_text: str) -> str:
+    trailing_newline = c_text.endswith("\n")
+    header_pattern = re.compile(
+        r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
+    )
+    type_keywords = {
+        "void",
+        "char",
+        "short",
+        "int",
+        "long",
+        "signed",
+        "unsigned",
+        "const",
+        "volatile",
+        "struct",
+        "union",
+        "enum",
+    }
+
+    def split_args(args_text: str) -> list[str]:
+        if not args_text.strip():
+            return []
+        parts: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for char in args_text:
+            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+            if char == "(":
+                depth_paren += 1
+            elif char == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif char == "[":
+                depth_bracket += 1
+            elif char == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            parts.append("".join(current).strip())
+        return parts
+
+    def split_decl_name(arg_text: str) -> tuple[str, str] | None:
+        text = arg_text.rstrip()
+        if not text or text == "void" or text == "...":
+            return None
+        idx = len(text)
+        while idx > 0 and text[idx - 1].isspace():
+            idx -= 1
+        end = idx
+        while idx > 0 and (text[idx - 1].isalnum() or text[idx - 1] == "_"):
+            idx -= 1
+        if idx == end:
+            return None
+        name = text[idx:end]
+        if name in type_keywords:
+            return None
+        prefix = text[:idx]
+        if not prefix.strip():
+            return None
+        return prefix, name
+
+    def normalize_args(args_text: str) -> str:
+        args = split_args(args_text)
+        if not args:
+            return args_text
+        used: set[str] = set()
+        normalized: list[str] = []
+        for arg in args:
+            split = split_decl_name(arg)
+            if split is None:
+                normalized.append(arg)
+                continue
+            prefix, name = split
+            candidate = name
+            suffix = 2
+            while candidate in used:
+                candidate = f"{name}_{suffix}"
+                suffix += 1
+            used.add(candidate)
+            normalized.append(f"{prefix}{candidate}")
+        return ", ".join(normalized)
+
+    lines = c_text.splitlines()
+    changed = False
+    for index, line in enumerate(lines):
+        match = header_pattern.match(line)
+        if match is None:
+            continue
+        args_text = match.group("args")
+        normalized_args = normalize_args(args_text)
+        if normalized_args == args_text:
+            continue
+        changed = True
+        lines[index] = (
+            f"{match.group('indent')}{match.group('ret').rstrip()} {match.group('name')}("
+            f"{normalized_args}){match.group('suffix')}"
+        )
+
+    if not changed:
+        return c_text
+    normalized = "\n".join(lines)
+    if trailing_newline:
+        normalized += "\n"
+    return normalized
 
 
 def _decompile_function_with_stats(
@@ -1712,7 +1902,31 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
     )
 
     changed = False
-    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+    variables_in_use = getattr(codegen.cfunc, "variables_in_use", {})
+    used_names: set[str] = set()
+    for variable, cvar in variables_in_use.items():
+        if getattr(variable, "base", None) != "bp":
+            continue
+        current_name = getattr(variable, "name", None)
+        if isinstance(current_name, str) and current_name:
+            used_names.add(current_name)
+        unified = getattr(cvar, "unified_variable", None)
+        unified_name = getattr(unified, "name", None)
+        if isinstance(unified_name, str) and unified_name:
+            used_names.add(unified_name)
+    ordered_variables = sorted(
+        [
+            (variable, cvar)
+            for variable, cvar in variables_in_use.items()
+            if getattr(variable, "base", None) == "bp"
+        ],
+        key=lambda item: (
+            getattr(item[0], "offset", 0) if isinstance(getattr(item[0], "offset", 0), int) else 0,
+            getattr(item[0], "size", 0) if isinstance(getattr(item[0], "size", 0), int) else 0,
+            getattr(item[0], "name", "") or "",
+        ),
+    )
+    for variable, cvar in ordered_variables:
         if getattr(variable, "base", None) != "bp":
             continue
         disp = getattr(variable, "offset", None)
@@ -1721,6 +1935,11 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
         alias = _cod_stack_alias_for_disp(disp, cod_metadata, positive_aliases=positive_aliases)
         if alias is None:
             continue
+        current_name = getattr(variable, "name", None)
+        if alias in used_names:
+            alias = _make_unique_identifier(alias, used_names)
+        else:
+            used_names.add(alias)
 
         if getattr(variable, "name", None) != alias:
             variable.name = alias
@@ -1756,6 +1975,16 @@ def _sanitize_cod_identifier(name: str) -> str:
     if name[0].isdigit():
         return f"g_{name}"
     return name
+
+
+def _make_unique_identifier(base: str, used: set[str]) -> str:
+    candidate = base
+    suffix = 2
+    while candidate in used:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
 
 
 def _structured_codegen_node(value) -> bool:
@@ -1865,7 +2094,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
     const_offset = 0
     other_terms = []
     base_terms = 0
-    stack_slots = set()
+    stack_slots: list[object] = []
 
     for term in _flatten_c_add_terms(node):
         inner = _unwrap_c_casts(term)
@@ -1898,14 +2127,32 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
                     stack_var = matched_var
                     identity = _stack_slot_identity_for_variable(matched_var)
                     if identity is not None:
-                        stack_slots.add(identity)
+                        if not stack_slots:
+                            stack_slots.append(identity)
+                        elif stack_slots[0] == identity:
+                            pass
+                        elif hasattr(stack_slots[0], "can_join") and stack_slots[0].can_join(identity):
+                            joined_identity = stack_slots[0].join(identity)
+                            if joined_identity is not None:
+                                stack_slots[0] = joined_identity
+                        else:
+                            stack_slots.append(identity)
                 const_offset += stack_offset
                 base_terms += 1
             elif current_var is matched_var:
                 if isinstance(matched_var, SimStackVariable):
                     identity = _stack_slot_identity_for_variable(matched_var)
                     if identity is not None:
-                        stack_slots.add(identity)
+                        if not stack_slots:
+                            stack_slots.append(identity)
+                        elif stack_slots[0] == identity:
+                            pass
+                        elif hasattr(stack_slots[0], "can_join") and stack_slots[0].can_join(identity):
+                            joined_identity = stack_slots[0].join(identity)
+                            if joined_identity is not None:
+                                stack_slots[0] = joined_identity
+                        else:
+                            stack_slots.append(identity)
                 const_offset += stack_offset
                 base_terms += 1
             else:
@@ -2362,6 +2609,14 @@ def _same_stack_slot_identity(lhs, rhs) -> bool:
     lvar = getattr(lhs, "variable", None)
     rvar = getattr(rhs, "variable", None)
     return _same_stack_slot_identity_var(lvar, rvar)
+
+
+def _stack_slot_identity_can_join(lhs, rhs) -> bool:
+    if not isinstance(lhs, structured_c.CVariable) or not isinstance(rhs, structured_c.CVariable):
+        return False
+    lvar = getattr(lhs, "variable", None)
+    rvar = getattr(rhs, "variable", None)
+    return _stack_slot_identity_can_join_var(lvar, rvar)
 
 
 def _is_c_constant_int(node, value: int) -> bool:
@@ -5230,7 +5485,7 @@ def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) ->
                         high_expr = _match_shift_right_8_expr(next_stmt.rhs)
                         if (
                             extra_offset == 1
-                            and (_same_stack_slot_identity(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
+                            and (_stack_slot_identity_can_join(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
                             and high_expr is not None
                             and _same_c_expression(_unwrap_c_casts(high_expr), _unwrap_c_casts(stmt.rhs))
                         ):
@@ -5602,7 +5857,7 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
                             rhs_word = _match_word_rhs_from_byte_pair(stmt.rhs, next_stmt.rhs, codegen, project)
                             if (
                                 extra_offset == 1
-                                and (_same_stack_slot_identity(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
+                            and (_stack_slot_identity_can_join(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
                                 and rhs_word is not None
                             ):
                                 if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, target_type):
@@ -5815,8 +6070,8 @@ def _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project: angr.Proje
         high_class = _classify_segmented_addr_expr(high_addr_expr, project)
         if low_class is not None and high_class is not None:
             if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
-                if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:
-                    if _same_c_expression(low_class.cvar, high_class.cvar):
+                if low_class.kind == "stack" and low_class.stack_var is not None and high_class.stack_var is not None:
+                    if _stack_slot_identity_can_join_var(low_class.stack_var, high_class.stack_var):
                         return high_class.extra_offset == low_class.extra_offset + 1
                 if low_class.kind in {"global", "extra", "segment_const"}:
                     if low_class.linear is not None and high_class.linear is not None:
@@ -6877,22 +7132,25 @@ def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int
     # entry-only recovery window instead of retrying the same expensive search.
     # When memory pressure is high, keep the scan even narrower so the fallback
     # uses less memory and avoids the whole-binary CFG path entirely.
-    candidate_windows = (
-        min(window, 0x80 if low_memory else 0x100),
-        min(window, 0x40 if low_memory else 0x80),
-        min(window, 0x20 if low_memory else 0x40),
-    )
+    project._inertia_decompiler_stage = "recovery"
+    candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
     with _analysis_timeout(max(1, min(timeout, 10))):
         for candidate_window in candidate_windows:
             try:
+                project._inertia_decompiler_stage = f"recovery:narrow:{candidate_window:#x}"
                 if project.arch.name == "86_16":
                     regions = [
                         _infer_x86_16_linear_region(project, project.entry, window=candidate_window)
                     ]
                 else:
                     regions = [(project.entry, project.entry + candidate_window)]
-                return _pick_function(project, project.entry, regions=regions)
-            except _AnalysisTimeout:
+                return _pick_function(
+                    project,
+                    project.entry,
+                    regions=regions,
+                    data_references=True if project.arch.name == "86_16" else None,
+                )
+            except (_AnalysisTimeout, KeyError):
                 continue
         raise _AnalysisTimeout()
 
@@ -6910,23 +7168,57 @@ def _recover_lst_function(
     addr = project.entry + offset
     with _analysis_timeout(max(1, timeout)):
         if project.arch.name == "86_16":
-            candidate_window = min(window, 0x80 if low_memory else window)
-            regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
+            candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
+            last_error: Exception | None = None
+            for candidate_window in candidate_windows:
+                regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
+                try:
+                    cfg, func = _pick_function(
+                        project,
+                        addr,
+                        regions=regions,
+                    )
+                    break
+                except KeyError as ex:
+                    last_error = ex
+            else:
+                if last_error is not None:
+                    raise last_error
+                raise KeyError(f"Function {addr:#x} was not recovered by CFGFast.")
         else:
             regions = [(addr, addr + window)]
-
-        cfg, func = _pick_function(project, addr, regions=regions)
+            cfg, func = _pick_function(project, addr, regions=regions)
 
     func.name = name
     return cfg, func
 
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
+    project._inertia_decompiler_stage = "recovery:full"
     with _analysis_timeout(timeout):
         cfg = project.analyses.CFGFast(
+            start_at_entry=False,
+            function_starts=[entry_addr],
             normalize=True,
             force_complete_scan=False,
+            data_references=False,
         )
+        if entry_addr not in cfg.functions:
+            cfg = project.analyses.CFGFast(
+                start_at_entry=False,
+                function_starts=[entry_addr],
+                normalize=True,
+                force_complete_scan=False,
+                data_references=True,
+            )
+        if entry_addr not in cfg.functions and project.arch.name == "86_16":
+            cfg = project.analyses.CFGFast(
+                start_at_entry=False,
+                function_starts=[entry_addr],
+                normalize=True,
+                force_complete_scan=True,
+                data_references=True,
+            )
 
     if entry_addr not in cfg.functions:
         raise KeyError(f"Function {entry_addr:#x} was not recovered by CFGFast.")
@@ -7077,7 +7369,11 @@ def main(argv: list[str] | None = None) -> int:
             print("/* Tip: try a larger --timeout for larger binaries. */")
             return 3
         except Exception as ex:
-            print(f"/* Function recovery failed: {ex} */")
+            recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
+            if recovery_detail is None:
+                print(f"/* Function recovery failed: {ex} */")
+            else:
+                print(f"/* Function recovery failed {recovery_detail}: {ex} */")
             print("\n/* == first block asm == */")
             print(_format_first_block_asm(project, args.addr))
             return 5
