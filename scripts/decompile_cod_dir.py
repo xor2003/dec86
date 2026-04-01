@@ -10,6 +10,7 @@ import io
 import logging
 import multiprocessing as mp
 import os
+import resource
 import sys
 import tempfile
 import threading
@@ -19,10 +20,20 @@ from pathlib import Path
 from typing import TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MAX_MEMORY_MB = 15 * 1024
+DEFAULT_MAX_MEMORY_MB = 1024
+DEFAULT_MAX_WORKERS = max(1, (os.cpu_count() or 1) - 1)
+DEFAULT_FREE_RAM_BUDGET_FRACTION = 0.45
+DEFAULT_MAX_TASKS_PER_WORKER = 1
 
 sys.path.insert(0, str(REPO_ROOT / "angr_platforms"))
 sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    import pyvex_compat
+
+    pyvex_compat.apply_pyvex_runtime_compatibility()
+except Exception:
+    pass
 
 from angr_platforms.X86_16.corpus_scan import extract_cod_functions
 
@@ -201,6 +212,16 @@ def _lower_process_priority() -> None:
         pass
 
 
+def _apply_memory_limit(max_memory_mb: int | None) -> None:
+    if max_memory_mb is None or max_memory_mb <= 0:
+        return
+    limit = max_memory_mb * 1024 * 1024
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (ValueError, OSError):
+        pass
+
+
 def _mem_available_mb() -> int | None:
     try:
         with open("/proc/meminfo", "r", encoding="utf-8") as fp:
@@ -212,40 +233,69 @@ def _mem_available_mb() -> int | None:
     return None
 
 
-def _choose_parallelism(task_count: int, max_memory_mb: int) -> int:
+def _choose_parallelism(task_count: int, max_memory_mb: int, max_workers_cap: int) -> int:
     cpu_count = os.cpu_count() or 1
     cpu_workers = max(1, cpu_count - 1)
     if task_count <= 1:
         return 1
 
-    available_mb = _mem_available_mb()
-    if available_mb is None:
+    worker_cap = max(1, max_workers_cap)
+    if worker_cap == 1:
         return 1
 
-    # Keep the pool under 75% of currently free RAM.
-    budget_mb = int(available_mb * 0.75)
-    worker_floor_mb = min(max_memory_mb, 1024) if max_memory_mb > 0 else 1024
-    worker_floor_mb = max(512, worker_floor_mb)
+    available_mb = _mem_available_mb()
+    if available_mb is None:
+        return min(worker_cap, cpu_workers, task_count)
+
+    # Keep the pool under the free-RAM budget, then cap it by CPU and task count.
+    # The per-worker RLIMIT_AS already keeps each worker bounded independently.
+    budget_mb = int(available_mb * DEFAULT_FREE_RAM_BUDGET_FRACTION)
+    worker_floor_mb = max(256, max_memory_mb if max_memory_mb > 0 else 1024)
     if budget_mb < worker_floor_mb * 2:
         return 1
 
     workers_by_mem = max(1, budget_mb // worker_floor_mb)
-    workers = min(cpu_workers, task_count, workers_by_mem)
+    workers = min(worker_cap, cpu_workers, task_count, workers_by_mem)
     return workers if workers > 1 else 1
 
 
-def _make_executor(max_workers: int) -> ProcessPoolExecutor:
+def _determine_worker_memory_limit_mb(requested_max_memory_mb: int, workers: int) -> int:
+    available_mb = _mem_available_mb()
+    if available_mb is None:
+        return requested_max_memory_mb
+
+    total_budget_mb = max(512, int(available_mb * DEFAULT_FREE_RAM_BUDGET_FRACTION))
+    per_worker_mb = max(768, total_budget_mb // max(1, workers))
+    if requested_max_memory_mb > 0:
+        per_worker_mb = min(per_worker_mb, requested_max_memory_mb)
+    return per_worker_mb
+
+
+def _worker_initializer(max_memory_mb: int) -> None:
+    _lower_process_priority()
+    _apply_memory_limit(max_memory_mb)
+
+
+def _make_executor(max_workers: int, worker_memory_limit_mb: int) -> ProcessPoolExecutor:
     try:
         mp_context = mp.get_context("fork")
     except ValueError:
         mp_context = None
     kwargs = {
         "max_workers": max_workers,
-        "initializer": _lower_process_priority,
+        "initializer": _worker_initializer,
+        "initargs": (worker_memory_limit_mb,),
     }
     if mp_context is not None:
         kwargs["mp_context"] = mp_context
     return ProcessPoolExecutor(**kwargs)
+
+
+def _iter_task_batches(
+    work_items: list[CodWorkItem], workers: int, max_tasks_per_worker: int
+) -> list[list[CodWorkItem]]:
+    batch_size = max(1, workers) * max(1, max_tasks_per_worker)
+    return [work_items[index : index + batch_size] for index in range(0, len(work_items), batch_size)]
 
 
 def _load_worker_decompile_module():
@@ -282,7 +332,7 @@ def _build_work_items(cod_path: Path) -> list[CodWorkItem]:
     ]
 
 
-def _run_work_item(item: CodWorkItem, *, timeout: int) -> CodWorkResult:
+def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> CodWorkResult:
     stdout_fd, stdout_name = tempfile.mkstemp(
         prefix=f"{item.cod_path.stem}.{item.proc_index:04d}.",
         suffix=".dec.stdout",
@@ -297,7 +347,7 @@ def _run_work_item(item: CodWorkItem, *, timeout: int) -> CodWorkResult:
         with stdout_path.open("w", encoding="utf-8") as stdout_file:
             with _THREAD_STDOUT.target(stdout_file), _THREAD_STDERR.target(stderr_buf):
                 module = _load_worker_decompile_module()
-                argv = [str(item.cod_path), "--timeout", str(timeout), "--max-memory-mb", "0"]
+                argv = [str(item.cod_path), "--timeout", str(timeout), "--max-memory-mb", str(max_memory_mb)]
                 if item.proc_name is not None:
                     argv.extend(["--proc", item.proc_name, "--proc-kind", item.proc_kind or "NEAR"])
                 try:
@@ -372,7 +422,19 @@ def main() -> int:
         "--max-memory-mb",
         type=int,
         default=DEFAULT_MAX_MEMORY_MB,
-        help="Heuristic memory floor used to decide whether to parallelize. Workers themselves run without RLIMIT_AS.",
+        help="Per-worker RLIMIT_AS cap in MB, also used as the parallelism memory floor.",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help="Hard cap for the worker pool. Lower this if decompilation memory grows too high.",
+    )
+    parser.add_argument(
+        "--max-tasks-per-worker",
+        type=int,
+        default=DEFAULT_MAX_TASKS_PER_WORKER,
+        help="Recycle the worker pool after this many procedures per worker to bound memory growth.",
     )
     parser.add_argument(
         "--subprocess-timeout",
@@ -406,11 +468,24 @@ def main() -> int:
         print("done in 0.0s; failures=0/0")
         return 0
 
-    workers = _choose_parallelism(len(work_items), args.max_memory_mb)
+    workers = _choose_parallelism(len(work_items), args.max_memory_mb, args.max_workers)
+    worker_memory_limit_mb = _determine_worker_memory_limit_mb(args.max_memory_mb, workers)
     if workers <= 1:
-        print("/* parallelism: disabled (insufficient RAM or single procedure) */")
+        print(
+            f"/* parallelism: single worker process, "
+            f"worker-memory-limit={worker_memory_limit_mb}MB */"
+        )
     else:
-        print(f"/* parallelism: {workers} worker processes, shared imports, n-1 CPU target */")
+        available_mb = _mem_available_mb()
+        budget_mb = int(available_mb * DEFAULT_FREE_RAM_BUDGET_FRACTION) if available_mb is not None else -1
+        print(
+            f"/* parallelism: {workers} worker processes, shared imports, n-1 CPU target, "
+            f"max-workers={args.max_workers}, budget={budget_mb}MB, "
+            f"worker-memory-limit={worker_memory_limit_mb}MB, "
+            f"max-tasks-per-worker={args.max_tasks_per_worker}, "
+            f"free-ram-fraction={DEFAULT_FREE_RAM_BUDGET_FRACTION:.2f}, "
+            f"avail={available_mb if available_mb is not None else 'unknown'}MB */"
+        )
 
     file_writers: dict[Path, CodFileWriter] = {
         cod_path: CodFileWriter(
@@ -422,59 +497,70 @@ def main() -> int:
     }
     failures = 0
 
-    future_map = {}
-    executor = _make_executor(max(1, workers))
-    try:
-        for index, item in enumerate(work_items, start=1):
-            print(f"[{index}/{len(work_items)}] {item.cod_path} :: {item.label}")
-            future = executor.submit(_run_work_item, item, timeout=args.timeout)
-            future_map[future] = item
+    task_batches = _iter_task_batches(work_items, workers, args.max_tasks_per_worker)
+    task_counter = 0
+    for batch_index, batch in enumerate(task_batches, start=1):
+        if workers > 1:
+            print(f"/* batch {batch_index}/{len(task_batches)}: recycling worker pool */")
+        future_map = {}
+        executor = _make_executor(max(1, workers), worker_memory_limit_mb)
+        try:
+            for item in batch:
+                task_counter += 1
+                print(f"[{task_counter}/{len(work_items)}] {item.cod_path} :: {item.label}")
+                future = executor.submit(
+                    _run_work_item,
+                    item,
+                    timeout=args.timeout,
+                    max_memory_mb=worker_memory_limit_mb,
+                )
+                future_map[future] = item
 
-        pending = set(future_map)
-        deadline = time.monotonic() + max(1, args.subprocess_timeout)
-        while pending:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                for future in pending:
+            pending = set(future_map)
+            deadline = time.monotonic() + max(1, args.subprocess_timeout)
+            while pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    for future in pending:
+                        item = future_map[future]
+                        failures += 1
+                        print(f"  timeout after {args.subprocess_timeout}s: {item.cod_path} :: {item.label}")
+                        writer = file_writers[item.cod_path]
+                        writer.add_failure(
+                            item.proc_index,
+                            f"/* timeout after {args.subprocess_timeout}s */",
+                        )
+                        if writer.is_complete():
+                            writer.close()
+                            writer.reported = True
+                            print(f"  wrote {writer.out_path}")
+                    break
+
+                done, pending = wait(pending, timeout=min(1.0, remaining), return_when=FIRST_COMPLETED)
+                for future in done:
                     item = future_map[future]
-                    failures += 1
-                    print(f"  timeout after {args.subprocess_timeout}s: {item.cod_path} :: {item.label}")
                     writer = file_writers[item.cod_path]
-                    writer.add_failure(
-                        item.proc_index,
-                        f"/* timeout after {args.subprocess_timeout}s */",
-                    )
+                    try:
+                        result = future.result()
+                    except Exception as ex:  # pragma: no cover - defensive fallback
+                        failures += 1
+                        print(f"  worker failed: {item.cod_path} :: {item.label}: {ex}")
+                        writer.add_failure(item.proc_index, f"/* worker failed: {type(ex).__name__}: {ex} */")
+                        if writer.is_complete():
+                            writer.close()
+                            writer.reported = True
+                            print(f"  wrote {writer.out_path}")
+                        continue
+                    writer.add_block(item.proc_index, _render_result_block(result))
+                    if result.returncode != 0:
+                        failures += 1
+                    print(f"  captured {item.label}")
                     if writer.is_complete():
                         writer.close()
                         writer.reported = True
                         print(f"  wrote {writer.out_path}")
-                break
-
-            done, pending = wait(pending, timeout=min(1.0, remaining), return_when=FIRST_COMPLETED)
-            for future in done:
-                item = future_map[future]
-                writer = file_writers[item.cod_path]
-                try:
-                    result = future.result()
-                except Exception as ex:  # pragma: no cover - defensive fallback
-                    failures += 1
-                    print(f"  worker failed: {item.cod_path} :: {item.label}: {ex}")
-                    writer.add_failure(item.proc_index, f"/* worker failed: {type(ex).__name__}: {ex} */")
-                    if writer.is_complete():
-                        writer.close()
-                        writer.reported = True
-                        print(f"  wrote {writer.out_path}")
-                    continue
-                writer.add_block(item.proc_index, _render_result_block(result))
-                if result.returncode != 0:
-                    failures += 1
-                print(f"  captured {item.label}")
-                if writer.is_complete():
-                    writer.close()
-                    writer.reported = True
-                    print(f"  wrote {writer.out_path}")
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     for cod_path, writer in file_writers.items():
         if not writer.closed:
