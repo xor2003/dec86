@@ -507,6 +507,18 @@ class MetaHarness:
                 unregister_child_process(self.cfg.state_dir, proc.pid)
         with self.cfg.evidence_log_file.open("a", encoding="utf-8") as out:
             out.write(f"[{self.iso_now()}] end rc={rc}\n")
+        log_text = self.cfg.evidence_log_file.read_text(encoding="utf-8", errors="replace") if self.cfg.evidence_log_file.exists() else ""
+        completed_sweep = "done in" in log_text
+        if rc != 0 and completed_sweep:
+            self.log(f"{self.cfg.sweep_label} completed with non-zero rc={rc}; continuing because evidence was produced")
+            if self.cfg.evidence_log_file.exists():
+                shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
+            self.write_status("full-sweep", "done-with-failures", f"log={self.cfg.evidence_log_file.name} rc={rc}")
+            self.mark_cycle_step("full-sweep", "done-with-failures", f"rc={rc}")
+            self.capture_cycle_artifact(self.cfg.evidence_log_file, "evidence_sweep.log")
+            self.capture_cycle_snapshot("sweep")
+            self.trim_old_logs()
+            return
         if rc != 0:
             if self.cfg.evidence_log_file.exists():
                 shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
