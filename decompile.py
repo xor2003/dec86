@@ -30,6 +30,8 @@ LAST_STEP_TIME = START_TIME
 DECOMPILATION_PREP_LOCK = threading.Lock()
 _REAL_STDOUT = sys.stdout
 _REAL_STDERR = sys.stderr
+DEFAULT_FREE_RAM_BUDGET_FRACTION = 0.45
+DEFAULT_WORKER_MEMORY_FLOOR_MB = 1536
 
 
 class _ThreadBoundTextIO(io.TextIOBase):
@@ -161,6 +163,12 @@ except ModuleNotFoundError:
     raise
 
 sys.path.insert(0, str(_ROOT / "angr_platforms"))
+try:
+    import pyvex_compat
+
+    pyvex_compat.apply_pyvex_runtime_compatibility()
+except Exception:
+    pass
 
 import angr_platforms.X86_16  # noqa: F401
 
@@ -618,7 +626,16 @@ def _decompile_function(
             synthetic_globals=synthetic_globals,
         )
         block_count, byte_count = _function_complexity(function)
-        decompiler_options = _preferred_decompiler_options(block_count, byte_count)
+        profile = _function_decompilation_profile(function, block_count, byte_count)
+        function_info = getattr(function, "info", None)
+        if isinstance(function_info, dict):
+            profile_info = function_info.setdefault("x86_16_decompilation_profile", {})
+            profile_info.update(profile)
+        decompiler_options = _preferred_decompiler_options(
+            block_count,
+            byte_count,
+            wrapper_like=bool(profile.get("wrapper_like")),
+        )
         print(f"[dbg] decompile_function: addr={hex(function.addr)} name={function.name}")
         sys.stdout.flush()
         # Ensure function is normalized before decompilation
@@ -646,7 +663,18 @@ def _decompile_function(
             print(f"[dbg] Decompiler returned for {hex(function.addr)}")
             sys.stdout.flush()
     except _AnalysisTimeout:
-        return "timeout", f"Timed out after {timeout}s."
+        timeout_stage = getattr(project, "_inertia_decompiler_stage", None)
+        if timeout_stage == "core":
+            detail = "during core decompilation"
+        elif isinstance(timeout_stage, str) and timeout_stage.startswith("postprocess:"):
+            detail = f"during x86-16 postprocess pass {timeout_stage.split(':', 1)[1]}"
+        elif timeout_stage == "postprocess":
+            detail = "during x86-16 postprocess"
+        else:
+            detail = None
+        if detail is None:
+            return "timeout", f"Timed out after {timeout}s."
+        return "timeout", f"Timed out after {timeout}s {detail}."
     except Exception as ex:
         return "error", str(ex)
 
@@ -791,9 +819,42 @@ def _function_complexity(function):
     return len(block_addrs), total_bytes
 
 
-def _preferred_decompiler_options(block_count: int, byte_count: int) -> list[tuple[str, str]] | None:
+def _function_decompilation_profile(
+    function,
+    block_count: int | None = None,
+    byte_count: int | None = None,
+) -> dict[str, object]:
+    if block_count is None or byte_count is None:
+        block_count, byte_count = _function_complexity(function)
+    call_sites = ()
+    if hasattr(function, "get_call_sites"):
+        try:
+            call_sites = tuple(function.get_call_sites())
+        except Exception:
+            call_sites = ()
+
+    call_site_count = len(call_sites)
+    wrapper_like = block_count <= 8 and byte_count <= 96 and 1 <= call_site_count <= 2
+    if block_count <= 1 and byte_count <= 24:
+        wrapper_like = True
+    return {
+        "block_count": block_count,
+        "byte_count": byte_count,
+        "call_site_count": call_site_count,
+        "wrapper_like": wrapper_like,
+    }
+
+
+def _preferred_decompiler_options(
+    block_count: int,
+    byte_count: int,
+    *,
+    wrapper_like: bool = False,
+) -> list[tuple[str, str]] | None:
     """Choose a cheaper decompiler structurer for tiny wrapper-like functions."""
     if block_count <= 1 and byte_count <= 24:
+        return [("structurer_cls", "Phoenix")]
+    if wrapper_like and block_count <= 8 and byte_count <= 96:
         return [("structurer_cls", "Phoenix")]
     return None
 
@@ -873,11 +934,11 @@ def _choose_function_parallelism(function_count: int) -> int:
     workers = max(1, cpu_count - 1)
     available_mb = _memory_available_mb()
     if available_mb is None:
+        return min(workers, function_count)
+    budget_mb = int(available_mb * DEFAULT_FREE_RAM_BUDGET_FRACTION)
+    if budget_mb < DEFAULT_WORKER_MEMORY_FLOOR_MB:
         return 1
-    budget_mb = int(available_mb * 0.5)
-    if budget_mb < 4096:
-        return 1
-    workers_by_mem = max(1, budget_mb // 1536)
+    workers_by_mem = max(1, budget_mb // DEFAULT_WORKER_MEMORY_FLOOR_MB)
     return min(workers, function_count, workers_by_mem)
 
 
@@ -6995,7 +7056,14 @@ def main(argv: list[str] | None = None) -> int:
         print("/* recovering function... */", flush=True)
 
         try:
-            if function_label is not None and args.addr == project.entry:
+            if function_label is not None and args.addr == project.entry and project.arch.name == "86_16":
+                cfg, func = _fallback_entry_function(
+                    project,
+                    timeout=args.timeout,
+                    window=args.window,
+                    low_memory=low_memory_path,
+                )
+            elif function_label is not None and args.addr == project.entry:
                 cfg, func = _recover_blob_entry_function(project, args.addr, timeout=args.timeout)
             else:
                 if project.arch.name == "86_16":

@@ -556,3 +556,20 @@ cd /home/xor/vextest/angr_platforms && ../.venv/bin/python -m pytest -q tests/te
 For day-to-day x86-16 work, prefer small corpus-backed changes, keep the
 scan-safe lane conservative, and use the dedicated docs for current progress
 instead of duplicating history here.
+
+### Profiling And Runtime Fixes
+
+When a decompiler path grows memory or gets slow, profile the real repro first.
+Prefer the following order:
+
+1. Reproduce on the smallest real corpus subset or PROC that still shows the issue.
+2. Confirm RSS growth with `ps`, `/proc/<pid>/status`, or `/usr/bin/time -v`.
+3. Use `memray run --native` on the exact script or PROC once the growth is real.
+4. Compare the same target before and after the change.
+
+Keep the evidence tied to the fix:
+
+- record the minimal repro subset
+- note the peak RSS and top `memray` allocators
+- prefer a repo-local compatibility shim over editing `.venv`
+- if a temporary `.venv` edit is unavoidable, move the fix into the project and revert the environment copy afterward
