@@ -211,7 +211,7 @@ from angr_platforms.X86_16.cod_source_rewrites import rewrite_known_cod_object_f
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.alias_model import (
     _CopyAliasState,
     _StackPointerAliasState,
@@ -294,14 +294,48 @@ def _snapshot_codegen_text(codegen) -> str:
 def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool]:
     fallback_text = _snapshot_codegen_text(codegen)
     try:
+        rendered = codegen.render_text(codegen.cfunc)
+        if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
+            return rendered[0], False
+        if isinstance(rendered, str):
+            return rendered, False
+    except Exception:
+        pass
+    try:
         codegen.regenerate_text()
+    except RecursionError:
+        try:
+            rendered = codegen.render_text(codegen.cfunc)
+            if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
+                return rendered[0], False
+            if isinstance(rendered, str):
+                return rendered, False
+        except Exception:
+            pass
+        return fallback_text, False
     except Exception as ex:
+        try:
+            rendered = codegen.render_text(codegen.cfunc)
+            if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
+                return rendered[0], False
+            if isinstance(rendered, str):
+                return rendered, False
+        except Exception:
+            pass
         logging.getLogger(__name__).warning(
             "Skipping C text regeneration for %s: %s",
             context,
             ex,
         )
         return fallback_text, False
+    try:
+        rendered = codegen.render_text(codegen.cfunc)
+        if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
+            return rendered[0], False
+        if isinstance(rendered, str):
+            return rendered, False
+    except Exception:
+        pass
     return _snapshot_codegen_text(codegen), True
 
 
@@ -666,6 +700,13 @@ def _decompile_function(
             cod_metadata=cod_metadata,
             synthetic_globals=synthetic_globals,
         )
+        print(f"[dbg] decompile_function: addr={hex(function.addr)} name={function.name}")
+        sys.stdout.flush()
+        # Ensure function is normalized before decompilation
+        if not function.normalized:
+            print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
+            function.normalize()
+        seed_calling_conventions(cfg)
         block_count, byte_count = _function_complexity(function)
         profile = _function_decompilation_profile(function, block_count, byte_count)
         function_info = getattr(function, "info", None)
@@ -677,13 +718,6 @@ def _decompile_function(
             byte_count,
             wrapper_like=bool(profile.get("wrapper_like")),
         )
-        print(f"[dbg] decompile_function: addr={hex(function.addr)} name={function.name}")
-        sys.stdout.flush()
-        # Ensure function is normalized before decompilation
-        if not function.normalized:
-            print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
-            function.normalize()
-        seed_calling_conventions(cfg)
     try:
         with _analysis_timeout(timeout):
             if decompiler_options is None:
@@ -722,6 +756,18 @@ def _decompile_function(
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
     setattr(project, "_inertia_rewrite_cache", {})
+    stack_local_candidates = {
+        id(variable): (variable, cvar)
+        for variable, cvar in getattr(dec.codegen.cfunc, "variables_in_use", {}).items()
+        if isinstance(variable, SimStackVariable)
+        and id(variable)
+        not in {
+            id(getattr(arg, "variable", None))
+            for arg in getattr(dec.codegen.cfunc, "arg_list", ()) or ()
+            if getattr(arg, "variable", None) is not None
+        }
+    }
+    setattr(dec.codegen, "_inertia_stack_local_declaration_candidates", stack_local_candidates)
     changed = False
     small_function = bool(profile.get("wrapper_like"))
     fold_values_cod_outlier = (
@@ -740,9 +786,14 @@ def _decompile_function(
         lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
+        lambda: _prune_dead_local_assignments(dec.codegen),
+        lambda: _prune_unused_local_declarations(dec.codegen),
+        lambda: _prune_void_function_return_values(dec.codegen),
         lambda: _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals),
         lambda: _coalesce_segmented_word_store_statements(project, dec.codegen),
         lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
+        lambda: _coalesce_far_pointer_stack_expressions(project, dec.codegen),
+        lambda: _simplify_nested_mk_fp_calls(dec.codegen),
         lambda: _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_names(project, dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
@@ -753,6 +804,8 @@ def _decompile_function(
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
         lambda: _simplify_basic_algebraic_identities(dec.codegen),
+        lambda: _materialize_missing_stack_local_declarations(dec.codegen),
+        lambda: _materialize_missing_register_local_declarations(dec.codegen),
     )
     if small_function:
         rewrite_passes = (
@@ -763,17 +816,30 @@ def _decompile_function(
             lambda: _attach_ss_stack_variables(project, dec.codegen),
             lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
             lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
+            lambda: _coalesce_segmented_word_store_statements(project, dec.codegen),
+            lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
             lambda: _normalize_scalar_byte_register_types(dec.codegen),
             lambda: _prune_tiny_wrapper_staging_locals(dec.codegen),
             lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
+            lambda: _prune_dead_local_assignments(dec.codegen),
+            lambda: _prune_unused_local_declarations(dec.codegen),
+            lambda: _prune_void_function_return_values(dec.codegen),
             lambda: _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals),
+            lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
             lambda: _attach_cod_global_names(project, dec.codegen, synthetic_globals),
             lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
             lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
+            lambda: _collect_access_traits(project, dec.codegen),
+            lambda: _attach_access_trait_field_names(project, dec.codegen),
+            lambda: _attach_pointer_member_names(project, dec.codegen),
+            lambda: _coalesce_far_pointer_stack_expressions(project, dec.codegen),
+            lambda: _simplify_nested_mk_fp_calls(dec.codegen),
             lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
             lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
             lambda: _simplify_basic_algebraic_identities(dec.codegen),
-            )
+            lambda: _materialize_missing_stack_local_declarations(dec.codegen),
+            lambda: _materialize_missing_register_local_declarations(dec.codegen),
+        )
         if lst_metadata is not None:
             logging.getLogger(__name__).debug(
                 "Skipping x86-16 postpasses for tiny function %s (%d blocks, %d bytes).",
@@ -842,7 +908,9 @@ def _decompile_function(
     formatted = _fix_monoprin_mset_pos_blind_spot(formatted, function, binary_path)
     formatted = _fix_planes3_ready5_blind_spot(formatted, function, binary_path)
     formatted = _normalize_anonymous_call_targets(formatted)
+    formatted = _prune_void_function_return_values_text(formatted)
     formatted = _normalize_function_signature_arg_names(formatted)
+    formatted = _materialize_missing_generic_local_declarations_text(formatted)
     return "ok", _annotate_cod_proc_output(formatted, cod_metadata)
 
 
@@ -947,6 +1015,97 @@ def _normalize_anonymous_call_targets(c_text: str) -> str:
         return f"sub_{target:x}()"
 
     return pattern.sub(_replace, c_text)
+
+
+def _prune_void_function_return_values_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    out_lines: list[str] = []
+    changed = False
+    header_start_re = re.compile(r"^\s*void\s+[A-Za-z_]\w*\s*\(")
+    return_re = re.compile(r"^(?P<indent>\s*)return\s+[^;]+;\s*$")
+
+    index = 0
+    line_count = len(lines)
+    while index < line_count:
+        line = lines[index]
+        if not header_start_re.match(line):
+            out_lines.append(line)
+            index += 1
+            continue
+
+        header_lines = [line]
+        brace_index = index if "{" in line else None
+        scan_index = index + 1
+        while scan_index < line_count and brace_index is None:
+            header_line = lines[scan_index]
+            header_lines.append(header_line)
+            if "{" in header_line:
+                brace_index = scan_index
+                break
+            if ";" in header_line:
+                break
+            scan_index += 1
+
+        if brace_index is None:
+            out_lines.extend(header_lines)
+            index = scan_index
+            continue
+
+        if ";" in lines[brace_index] and "{" not in lines[brace_index]:
+            out_lines.extend(header_lines)
+            index = brace_index + 1
+            continue
+
+        out_lines.extend(header_lines)
+        brace_depth = sum(part.count("{") - part.count("}") for part in header_lines)
+        index = brace_index + 1
+
+        while index < line_count and brace_depth > 0:
+            body_line = lines[index]
+            return_match = return_re.match(body_line)
+            if return_match is not None:
+                body_line = f"{return_match.group('indent')}return;"
+                changed = True
+            out_lines.append(body_line)
+            brace_depth += body_line.count("{") - body_line.count("}")
+            index += 1
+
+    if not changed:
+        return c_text
+
+    result = "\n".join(out_lines)
+    if c_text.endswith("\n"):
+        result += "\n"
+    return result
+
+
+def _contains_void_function_definition_text(c_text: str) -> bool:
+    lines = c_text.splitlines()
+    header_start_re = re.compile(r"^\s*void\s+[A-Za-z_]\w*\s*\(")
+
+    index = 0
+    line_count = len(lines)
+    while index < line_count:
+        if not header_start_re.match(lines[index]):
+            index += 1
+            continue
+
+        paren_depth = lines[index].count("(") - lines[index].count(")")
+        scan_index = index
+        while scan_index < line_count:
+            scan_line = lines[scan_index]
+            if scan_index != index:
+                paren_depth += scan_line.count("(") - scan_line.count(")")
+            if paren_depth <= 0:
+                if ";" in scan_line and "{" not in scan_line:
+                    break
+                if "{" in scan_line:
+                    return True
+            scan_index += 1
+
+        index += 1
+
+    return False
 
 
 def _normalize_function_signature_arg_names(c_text: str) -> str:
@@ -1056,6 +1215,277 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
 
     if not changed:
         return c_text
+    normalized = "\n".join(lines)
+    if trailing_newline:
+        normalized += "\n"
+    return normalized
+
+
+def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
+    trailing_newline = c_text.endswith("\n")
+    lines = c_text.splitlines()
+    generic_name_re = re.compile(r"^(?:a\d+|v\d+|vvar_\d+)$")
+    decl_name_re = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*;\s*$")
+    generic_use_re = re.compile(r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+)(?![A-Za-z_])")
+    arg_name_re = re.compile(r"\((?P<args>[^()]*)\)")
+    header_re = re.compile(r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)")
+
+    def _split_args(args_text: str) -> list[str]:
+        if not args_text.strip():
+            return []
+        args: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for char in args_text:
+            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                args.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+            if char == "(":
+                depth_paren += 1
+            elif char == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif char == "[":
+                depth_bracket += 1
+            elif char == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            args.append("".join(current).strip())
+        return args
+
+    def _declared_name(line: str) -> str | None:
+        decl_part = line.split("//", 1)[0].strip()
+        if not decl_part or decl_part.startswith(("/*", "*")):
+            return None
+        if "(" in decl_part or ")" in decl_part or "{" in decl_part or "}" in decl_part:
+            return None
+        match = decl_name_re.search(decl_part)
+        if match is None:
+            return None
+        name = match.group("name")
+        if not generic_name_re.fullmatch(name):
+            return None
+        return name
+
+    changed = False
+    index = 0
+    while index < len(lines):
+        match = header_re.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+
+        arg_names: set[str] = set()
+        for arg in _split_args(match.group("args")):
+            arg_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg)
+            if arg_match is not None:
+                arg_names.add(arg_match.group(1))
+
+        brace_index = None
+        scan_index = index
+        while scan_index < len(lines):
+            if "{" in lines[scan_index]:
+                brace_index = scan_index
+                break
+            if ";" in lines[scan_index] and "{" not in lines[scan_index]:
+                break
+            scan_index += 1
+        if brace_index is None:
+            index = scan_index + 1
+            continue
+
+        body_start = brace_index + 1
+        body_end = body_start
+        brace_depth = lines[brace_index].count("{") - lines[brace_index].count("}")
+        while body_end < len(lines) and brace_depth > 0:
+            brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
+            body_end += 1
+
+        declared_names: set[str] = set()
+        insertion_index = body_start
+        scan_index = body_start
+        while scan_index < body_end:
+            line = lines[scan_index]
+            declared_name = _declared_name(line)
+            if declared_name is None:
+                if line.strip() and not line.lstrip().startswith("//"):
+                    break
+            else:
+                declared_names.add(declared_name)
+                insertion_index = scan_index + 1
+            scan_index += 1
+
+        used_names: list[str] = []
+        seen_used: set[str] = set()
+        for scan_index in range(body_start, body_end):
+            text = lines[scan_index].split("//", 1)[0]
+            for use_match in generic_use_re.finditer(text):
+                name = use_match.group("name")
+                if name in seen_used:
+                    continue
+                seen_used.add(name)
+                used_names.append(name)
+
+        missing_names = [
+            name
+            for name in used_names
+            if name not in declared_names and name not in arg_names
+        ]
+        if not missing_names:
+            index = body_end
+            continue
+
+        decl_lines = [f"    unsigned short {name};" for name in missing_names]
+        lines[insertion_index:insertion_index] = decl_lines
+        changed = True
+        delta = len(decl_lines)
+        body_end += delta
+        index = body_end
+
+    if not changed:
+        return c_text
+
+    normalized = "\n".join(lines)
+    if trailing_newline:
+        normalized += "\n"
+    return normalized
+
+
+def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
+    trailing_newline = c_text.endswith("\n")
+    lines = c_text.splitlines()
+    if any(re.search(r"\b(?:for|while|do|goto|switch)\b", line) for line in lines):
+        return c_text
+    header_re = re.compile(
+        r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
+    )
+    decl_re = re.compile(
+        r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
+    )
+    word_re = re.compile(r"(?<![A-Za-z_])(?P<name>[A-Za-z_]\w*)(?![A-Za-z_])")
+
+    def _split_args(args_text: str) -> list[str]:
+        if not args_text.strip():
+            return []
+        parts: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for char in args_text:
+            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+            if char == "(":
+                depth_paren += 1
+            elif char == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif char == "[":
+                depth_bracket += 1
+            elif char == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            parts.append("".join(current).strip())
+        return parts
+
+    changed = False
+    index = 0
+    while index < len(lines):
+        match = header_re.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+
+        brace_index = None
+        scan_index = index
+        while scan_index < len(lines):
+            if "{" in lines[scan_index]:
+                brace_index = scan_index
+                break
+            if ";" in lines[scan_index] and "{" not in lines[scan_index]:
+                break
+            scan_index += 1
+        if brace_index is None:
+            index = scan_index + 1
+            continue
+
+        body_start = brace_index + 1
+        body_end = body_start
+        brace_depth = lines[brace_index].count("{") - lines[brace_index].count("}")
+        while body_end < len(lines) and brace_depth > 0:
+            brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
+            body_end += 1
+
+        reserved_names = {
+            arg_match.group(1)
+            for arg in _split_args(match.group("args"))
+            if (arg_match := re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg)) is not None
+        }
+        used_names = set(reserved_names)
+        decl_counts: dict[str, int] = {}
+        decl_lines: list[tuple[int, str, str]] = []
+
+        for scan_index in range(body_start, body_end):
+            line = lines[scan_index]
+            decl_match = decl_re.match(line)
+            if decl_match is not None:
+                name = decl_match.group("name")
+                comment = decl_match.group("comment") or ""
+                decl_counts[name] = decl_counts.get(name, 0) + 1
+                decl_lines.append((scan_index, name, comment))
+                used_names.add(name)
+
+        if not decl_lines:
+            index = body_end
+            continue
+
+        grouped: dict[str, list[tuple[int, str]]] = {}
+        for line_index, name, comment in decl_lines:
+            grouped.setdefault(name, []).append((line_index, comment))
+
+        for name, entries in grouped.items():
+            if len(entries) <= 1:
+                continue
+            preferred = [
+                (line_index, comment)
+                for line_index, comment in entries
+                if name in comment
+            ]
+            if not preferred:
+                preferred = [entries[0]]
+            keep_line_indexes = {line_index for line_index, _comment in preferred}
+            for line_index, comment in entries:
+                if line_index in keep_line_indexes:
+                    continue
+                if name in comment:
+                    continue
+                if decl_counts.get(name, 0) <= 1:
+                    continue
+                if not comment and len(preferred) == 0:
+                    continue
+                unique_name = _make_unique_identifier(name, used_names)
+                lines[line_index] = decl_re.sub(
+                    lambda m: f"{m.group('indent')}{m.group('type')} {unique_name};"
+                    + (f" {m.group('comment')}" if m.group("comment") else ""),
+                    lines[line_index],
+                    count=1,
+                )
+                changed = True
+
+        index = body_end
+
+    if not changed:
+        return c_text
+
     normalized = "\n".join(lines)
     if trailing_newline:
         normalized += "\n"
@@ -1896,7 +2326,8 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
         [
             getattr(variable, "offset", None)
             for variable in getattr(codegen.cfunc, "variables_in_use", {})
-            if getattr(variable, "base", None) == "bp" and isinstance(getattr(variable, "offset", None), int)
+            if _stack_slot_identity_for_variable(variable) is not None
+            and isinstance(getattr(variable, "offset", None), int)
         ],
         cod_metadata,
     )
@@ -1904,42 +2335,91 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
     changed = False
     variables_in_use = getattr(codegen.cfunc, "variables_in_use", {})
     used_names: set[str] = set()
+    name_owner_offsets: dict[str, int] = {}
     for variable, cvar in variables_in_use.items():
-        if getattr(variable, "base", None) != "bp":
+        if _stack_slot_identity_for_variable(variable) is None:
             continue
         current_name = getattr(variable, "name", None)
         if isinstance(current_name, str) and current_name:
-            used_names.add(current_name)
+            offset = getattr(variable, "offset", None)
+            if not isinstance(offset, int) or offset not in {0, 2}:
+                used_names.add(current_name)
+                name_owner_offsets[current_name] = offset if isinstance(offset, int) else 0
         unified = getattr(cvar, "unified_variable", None)
         unified_name = getattr(unified, "name", None)
         if isinstance(unified_name, str) and unified_name:
-            used_names.add(unified_name)
+            offset = getattr(variable, "offset", None)
+            if not isinstance(offset, int) or offset not in {0, 2}:
+                used_names.add(unified_name)
+                name_owner_offsets[unified_name] = offset if isinstance(offset, int) else 0
     ordered_variables = sorted(
         [
             (variable, cvar)
             for variable, cvar in variables_in_use.items()
-            if getattr(variable, "base", None) == "bp"
+            if _stack_slot_identity_for_variable(variable) is not None
         ],
         key=lambda item: (
+            0 if isinstance(getattr(item[0], "offset", None), int) and getattr(item[0], "offset", 0) > 0 else 1,
             getattr(item[0], "offset", 0) if isinstance(getattr(item[0], "offset", 0), int) else 0,
             getattr(item[0], "size", 0) if isinstance(getattr(item[0], "size", 0), int) else 0,
             getattr(item[0], "name", "") or "",
         ),
     )
     for variable, cvar in ordered_variables:
-        if getattr(variable, "base", None) != "bp":
+        if _stack_slot_identity_for_variable(variable) is None:
             continue
         disp = getattr(variable, "offset", None)
         if disp is None:
             continue
+        current_name = getattr(variable, "name", None)
+        current_owner = name_owner_offsets.get(current_name) if isinstance(current_name, str) else None
+        if (
+            isinstance(current_name, str)
+            and current_name
+            and current_owner == disp
+            and not re.fullmatch(r"(?:v\d+|vvar_\d+|s_\d+)", current_name)
+        ):
+            used_names.add(current_name)
+            name_owner_offsets[current_name] = disp if isinstance(disp, int) else 0
+            continue
+
         alias = _cod_stack_alias_for_disp(disp, cod_metadata, positive_aliases=positive_aliases)
         if alias is None:
             continue
-        current_name = getattr(variable, "name", None)
+        if isinstance(disp, int) and disp in {0, 2} and (
+            cod_metadata is None or disp not in getattr(cod_metadata, "stack_aliases", {})
+        ):
+            unified = getattr(cvar, "unified_variable", None)
+            unified_name = getattr(unified, "name", None)
+            if isinstance(unified_name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", unified_name):
+                if getattr(variable, "name", None) != unified_name:
+                    variable.name = unified_name
+                    changed = True
+                if unified is not None and getattr(unified, "name", None) != unified_name:
+                    unified.name = unified_name
+                    changed = True
+                if getattr(cvar, "name", None) != unified_name:
+                    try:
+                        cvar.name = unified_name
+                    except Exception:
+                        pass
+                    else:
+                        changed = True
+            continue
         if alias in used_names:
-            alias = _make_unique_identifier(alias, used_names)
+            owner_offset = name_owner_offsets.get(alias)
+            if owner_offset == disp:
+                used_names.add(alias)
+                name_owner_offsets[alias] = disp if isinstance(disp, int) else 0
+            elif isinstance(disp, int) and disp > 2 and owner_offset in {0, 2}:
+                used_names.add(alias)
+                name_owner_offsets[alias] = disp
+            else:
+                alias = _make_unique_identifier(alias, used_names)
+                name_owner_offsets[alias] = disp if isinstance(disp, int) else 0
         else:
             used_names.add(alias)
+            name_owner_offsets[alias] = disp if isinstance(disp, int) else 0
 
         if getattr(variable, "name", None) != alias:
             variable.name = alias
@@ -1995,6 +2475,13 @@ def _c_constant_value(node) -> int | None:
     if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
         return node.value
     return None
+
+
+def _normalize_16bit_signed_offset(offset: int) -> int:
+    wrapped = offset & 0xFFFF
+    if wrapped >= 0x8000:
+        return wrapped - 0x10000
+    return wrapped
 
 
 def _project_rewrite_cache(project: angr.Project) -> dict[str, dict[int, object]]:
@@ -2119,6 +2606,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
         matched_stack = _match_stack_cvar_and_offset(inner)
         if matched_stack is not None:
             matched_cvar, stack_offset = matched_stack
+            stack_offset = _normalize_16bit_signed_offset(stack_offset)
             matched_var = getattr(matched_cvar, "variable", None)
             current_var = getattr(cvar, "variable", None) if cvar is not None else None
             if cvar is None:
@@ -2175,6 +2663,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
     assoc_kind = assoc_state.assoc_kind
 
     if seg_name == "ss" and cvar is not None and not other_terms:
+        normalized_offset = _normalize_16bit_signed_offset(const_offset)
         result = _SegmentedAccess(
             "stack",
             seg_name,
@@ -2182,7 +2671,7 @@ def _classify_segmented_addr_expr(node, project: angr.Project) -> _SegmentedAcce
             assoc_state=assoc_state,
             cvar=cvar,
             stack_var=stack_var,
-            extra_offset=const_offset,
+            extra_offset=normalized_offset,
             addr_expr=node,
         )
         cache[key] = result
@@ -2367,7 +2856,7 @@ def _match_stack_cvar_and_offset(node):
 
     if isinstance(node, structured_c.CVariable):
         variable = getattr(node, "variable", None)
-        if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+        if isinstance(variable, SimStackVariable) and _stack_slot_identity_for_variable(variable) is not None:
             return node, 0
         return None
 
@@ -2375,7 +2864,7 @@ def _match_stack_cvar_and_offset(node):
         operand = _unwrap_c_casts(node.operand)
         if isinstance(operand, structured_c.CVariable):
             variable = getattr(operand, "variable", None)
-            if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+            if isinstance(variable, SimStackVariable) and _stack_slot_identity_for_variable(variable) is not None:
                 return operand, 0
         return None
 
@@ -2387,10 +2876,10 @@ def _match_stack_cvar_and_offset(node):
 
         if lhs is not None and rhs_const is not None:
             base, offset = lhs
-            return base, offset + (rhs_const if node.op == "Add" else -rhs_const)
+            return base, _normalize_16bit_signed_offset(offset + (rhs_const if node.op == "Add" else -rhs_const))
         if rhs is not None and lhs_const is not None:
             base, offset = rhs
-            return base, offset + lhs_const
+            return base, _normalize_16bit_signed_offset(offset + lhs_const)
         return None
 
     return None
@@ -2406,8 +2895,9 @@ def _match_ss_local_plus_const(node, project: angr.Project):
     if classified is None or classified.kind != "stack" or classified.cvar is None:
         cache[key] = None
         return None
-    result = (classified.cvar, classified.extra_offset)
-    cache[key] = result
+    extra_offset = _normalize_16bit_signed_offset(classified.extra_offset)
+    result = (classified.cvar, extra_offset)
+    cache[key] = (classified.cvar, extra_offset)
     return result
 
 
@@ -3267,6 +3757,75 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             return _expr_is_copy_alias_candidate(expr.expr)
         return False
 
+    def _stack_name_root(name: str | None) -> str | None:
+        if not isinstance(name, str) or not name:
+            return None
+        match = re.fullmatch(r"(?P<root>.*?)(?:_(?P<suffix>\d+))?", name)
+        if match is None:
+            return name
+        suffix = match.group("suffix")
+        root = match.group("root")
+        if suffix is None:
+            return root
+        return root if root else name
+
+    def _collect_far_pointer_stack_aliases(node):
+        groups: dict[str, dict[str, list[tuple[structured_c.CVariable, object]]]] = {}
+        for walk_node in _iter_c_nodes_deep(node):
+            if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                continue
+            lhs_var = getattr(walk_node.lhs, "variable", None)
+            if not isinstance(lhs_var, SimStackVariable):
+                continue
+            root = _stack_name_root(getattr(lhs_var, "name", None))
+            if root is None:
+                continue
+            rhs = _unwrap_c_casts(walk_node.rhs)
+            if _c_constant_value(rhs) is None and not _expr_is_safe_inline_candidate(rhs):
+                continue
+            bucket = groups.setdefault(root, {"zero": [], "source": []})
+            if _c_constant_value(rhs) == 0:
+                bucket["zero"].append((walk_node.lhs, rhs))
+            else:
+                bucket["source"].append((walk_node.lhs, rhs))
+
+        def _source_score(_cvar, expr) -> tuple[int, int, int]:
+            expr = _unwrap_c_casts(expr)
+            variable = getattr(expr, "variable", None)
+            name = getattr(variable, "name", None) or getattr(expr, "name", None)
+            generic_name = isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
+            if isinstance(variable, SimStackVariable):
+                return (0 if not generic_name else 2, getattr(variable, "offset", 0), getattr(variable, "size", 0))
+            if isinstance(variable, SimMemoryVariable):
+                return (0 if not generic_name else 2, getattr(variable, "addr", 0), getattr(variable, "size", 0))
+            if isinstance(variable, SimRegisterVariable):
+                return (3 if generic_name else 1, getattr(variable, "reg", 0), getattr(variable, "size", 0))
+            if isinstance(expr, structured_c.CConstant):
+                return (4, int(expr.value) if isinstance(expr.value, int) else 0, 0)
+            return (4, 0, 0)
+
+        aliases: dict[int, object] = {}
+        for root, parts in groups.items():
+            if not parts["zero"] or not parts["source"]:
+                continue
+            source_expr = None
+            for cvar, rhs in sorted(parts["source"], key=lambda item: _source_score(item[0], item[1])):
+                variable = getattr(cvar, "variable", None)
+                if not isinstance(variable, SimStackVariable):
+                    continue
+                if _stack_name_root(getattr(variable, "name", None)) != root:
+                    continue
+                source_expr = rhs
+                break
+            if source_expr is None:
+                continue
+            for cvar, _rhs in parts["zero"]:
+                variable = getattr(cvar, "variable", None)
+                if not isinstance(variable, SimStackVariable):
+                    continue
+                aliases[id(variable)] = source_expr
+        return aliases
+
     def _match_adjacent_byte_pair_var_expr(low_expr, high_expr):
         key = (id(low_expr), id(high_expr))
         if key in adjacent_byte_pair_cache:
@@ -3431,11 +3990,14 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             codegen=codegen,
         )
 
+    def _make_mk_fp(segment_expr, offset_expr):
+        return structured_c.CFunctionCall("MK_FP", None, [segment_expr, offset_expr], codegen=codegen)
+
     def _is_dead_stack_address_init(stmt) -> bool:
         if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
             return False
         lhs_var = getattr(stmt.lhs, "variable", None)
-        if not isinstance(lhs_var, SimStackVariable) or getattr(lhs_var, "base", None) != "bp":
+        if not isinstance(lhs_var, SimStackVariable) or _stack_slot_identity_for_variable(lhs_var) is None:
             return False
         if variable_use_counts.get(id(lhs_var), 0) != 1:
             return False
@@ -3446,7 +4008,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         if not isinstance(operand, structured_c.CVariable):
             return False
         ref_var = getattr(operand, "variable", None)
-        return isinstance(ref_var, SimStackVariable) and getattr(ref_var, "base", None) == "bp"
+        return isinstance(ref_var, SimStackVariable) and _stack_slot_identity_for_variable(ref_var) is not None
 
     def _is_redundant_self_copy(stmt) -> bool:
         if not isinstance(stmt, structured_c.CAssignment):
@@ -3519,6 +4081,17 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                     widened = _match_adjacent_byte_pair_var_expr(rhs, lhs)
                 if widened is not None:
                     return widened
+                if node.op == "Add":
+                    if isinstance(lhs, structured_c.CVariable) and isinstance(getattr(lhs, "variable", None), SimStackVariable):
+                        if _c_constant_value(rhs) is not None:
+                            alias_expr = far_pointer_aliases.get(id(getattr(lhs, "variable", None)))
+                            if alias_expr is not None:
+                                return _make_mk_fp(alias_expr, rhs)
+                    if isinstance(rhs, structured_c.CVariable) and isinstance(getattr(rhs, "variable", None), SimStackVariable):
+                        if _c_constant_value(lhs) is not None:
+                            alias_expr = far_pointer_aliases.get(id(getattr(rhs, "variable", None)))
+                            if alias_expr is not None:
+                                return _make_mk_fp(alias_expr, lhs)
                 delta = _match_word_plus_minus_one_expr(node)
                 if delta is not None:
                     return delta
@@ -3784,6 +4357,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         shift_extract_aliases = _collect_shift_extract_aliases(root)
         mask_shift_aliases = _collect_mask_shift_aliases(root)
         copy_aliases = _collect_copy_aliases(root)
+        far_pointer_aliases = _collect_far_pointer_stack_aliases(root)
         new_root = transform(root)
         if new_root is not root:
             codegen.cfunc.statements = new_root
@@ -4079,7 +4653,10 @@ def _access_trait_variable_key(variable) -> tuple[object, ...] | None:
     if isinstance(variable, SimRegisterVariable):
         return ("reg", getattr(variable, "reg", None))
     if isinstance(variable, SimStackVariable):
-        return ("stack", getattr(variable, "base", None), getattr(variable, "offset", None))
+        identity = _stack_slot_identity_for_variable(variable)
+        if identity is None:
+            return None
+        return ("stack", identity.base, getattr(variable, "offset", None), getattr(variable, "region", None))
     if isinstance(variable, SimMemoryVariable):
         return ("mem", getattr(variable, "addr", None))
     return None
@@ -4926,7 +5503,10 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
         if isinstance(variable, SimRegisterVariable):
             return ("reg", getattr(variable, "reg", None))
         if isinstance(variable, SimStackVariable):
-            return ("stack", getattr(variable, "base", None), getattr(variable, "offset", None))
+            identity = _stack_slot_identity_for_variable(variable)
+            if identity is None:
+                return None
+            return ("stack", identity.base, getattr(variable, "offset", None), getattr(variable, "region", None))
         if isinstance(variable, SimMemoryVariable):
             return ("mem", getattr(variable, "addr", None))
         return None
@@ -5140,6 +5720,598 @@ def _prune_unused_linear_register_declarations(codegen) -> bool:
 
     return changed
 
+
+def _prune_unused_local_declarations(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    used_variables: set[int] = set()
+    for node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        variable = getattr(node, "variable", None)
+        if variable is not None:
+            used_variables.add(id(variable))
+        unified = getattr(node, "unified_variable", None)
+        if unified is not None:
+            used_variables.add(id(unified))
+
+    changed = False
+
+    variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        for variable in list(variables_in_use):
+            if not isinstance(variable, (SimRegisterVariable, SimStackVariable)):
+                continue
+            if id(variable) in used_variables:
+                continue
+            del variables_in_use[variable]
+            changed = True
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable in list(unified_locals):
+            if not isinstance(variable, (SimRegisterVariable, SimStackVariable)):
+                continue
+            if id(variable) in used_variables:
+                continue
+            del unified_locals[variable]
+            changed = True
+
+    return changed
+
+
+def _expr_has_side_effects(node) -> bool:
+    return any(isinstance(subnode, structured_c.CFunctionCall) for subnode in _iter_c_nodes_deep(node))
+
+
+def _collect_c_variable_reads(node, reads: set[int], seen: set[int] | None = None, *, allow_variable_read: bool = True) -> None:
+    if not _structured_codegen_node(node):
+        return
+    if seen is None:
+        seen = set()
+    node_id = id(node)
+    if node_id in seen:
+        return
+    seen.add(node_id)
+    try:
+        if isinstance(node, structured_c.CVariable):
+            if allow_variable_read:
+                variable = getattr(node, "variable", None)
+                if variable is not None:
+                    reads.add(id(variable))
+                unified = getattr(node, "unified_variable", None)
+                if unified is not None:
+                    reads.add(id(unified))
+            return
+
+        if isinstance(node, structured_c.CAssignment):
+            if _structured_codegen_node(node.lhs):
+                _collect_c_variable_reads(node.lhs, reads, seen, allow_variable_read=False)
+            if _structured_codegen_node(node.rhs):
+                _collect_c_variable_reads(node.rhs, reads, seen, allow_variable_read=True)
+            return
+
+        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "else_node", "retval"):
+            if not hasattr(node, attr):
+                continue
+            try:
+                value = getattr(node, attr)
+            except Exception:
+                continue
+            if _structured_codegen_node(value):
+                _collect_c_variable_reads(value, reads, seen, allow_variable_read=allow_variable_read)
+
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(node, attr):
+                continue
+            try:
+                items = getattr(node, attr)
+            except Exception:
+                continue
+            if not items:
+                continue
+            for item in items:
+                if _structured_codegen_node(item):
+                    _collect_c_variable_reads(item, reads, seen, allow_variable_read=allow_variable_read)
+
+        if hasattr(node, "condition_and_nodes"):
+            try:
+                pairs = getattr(node, "condition_and_nodes")
+            except Exception:
+                pairs = None
+            if pairs:
+                for cond, body in pairs:
+                    if _structured_codegen_node(cond):
+                        _collect_c_variable_reads(cond, reads, seen, allow_variable_read=allow_variable_read)
+                    if _structured_codegen_node(body):
+                        _collect_c_variable_reads(body, reads, seen, allow_variable_read=allow_variable_read)
+    finally:
+        seen.remove(node_id)
+
+
+def _prune_dead_local_assignments(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+    root = getattr(codegen.cfunc, "statements", None)
+    if not _structured_codegen_node(root):
+        return False
+
+    reads: set[int] = set()
+    _collect_c_variable_reads(root, reads)
+
+    def _is_local_variable(variable) -> bool:
+        return isinstance(variable, (SimRegisterVariable, SimStackVariable))
+
+    changed = False
+
+    def prune(node) -> None:
+        nonlocal changed
+        if not _structured_codegen_node(node):
+            return
+
+        if isinstance(node, structured_c.CStatements):
+            new_statements = []
+            for stmt in list(node.statements):
+                if (
+                    isinstance(stmt, structured_c.CAssignment)
+                    and isinstance(stmt.lhs, structured_c.CVariable)
+                    and _is_local_variable(getattr(stmt.lhs, "variable", None))
+                    and not _expr_has_side_effects(getattr(stmt, "rhs", None))
+                ):
+                    lhs_variable = getattr(stmt.lhs, "variable", None)
+                    lhs_unified = getattr(stmt.lhs, "unified_variable", None)
+                    if (lhs_variable is not None and id(lhs_variable) not in reads) or (
+                        lhs_unified is not None and id(lhs_unified) not in reads
+                    ):
+                        changed = True
+                        continue
+                prune(stmt)
+                new_statements.append(stmt)
+            if new_statements != list(node.statements):
+                node.statements = new_statements
+                changed = True
+            return
+
+        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "else_node", "retval"):
+            if not hasattr(node, attr):
+                continue
+            try:
+                value = getattr(node, attr)
+            except Exception:
+                continue
+            if _structured_codegen_node(value):
+                prune(value)
+
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(node, attr):
+                continue
+            try:
+                items = getattr(node, attr)
+            except Exception:
+                continue
+            if not items:
+                continue
+            for item in items:
+                if _structured_codegen_node(item):
+                    prune(item)
+
+        if hasattr(node, "condition_and_nodes"):
+            try:
+                pairs = getattr(node, "condition_and_nodes")
+            except Exception:
+                pairs = None
+            if pairs:
+                for cond, body in pairs:
+                    if _structured_codegen_node(cond):
+                        prune(cond)
+                    if _structured_codegen_node(body):
+                        prune(body)
+
+    prune(root)
+    return changed
+
+
+def _materialize_missing_stack_local_declarations(codegen) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+
+    unified_locals = getattr(cfunc, "unified_local_vars", None)
+    if not isinstance(unified_locals, dict):
+        return False
+
+    arg_variables = {
+        id(getattr(arg, "variable", None))
+        for arg in getattr(cfunc, "arg_list", ()) or ()
+        if getattr(arg, "variable", None) is not None
+    }
+    existing_identities = {
+        identity
+        for variable in unified_locals
+        for identity in (_stack_slot_identity_for_variable(variable),)
+        if identity is not None
+    }
+
+    stack_local_candidates = getattr(codegen, "_inertia_stack_local_declaration_candidates", None)
+    source_variables = stack_local_candidates.values() if isinstance(stack_local_candidates, dict) else getattr(cfunc, "variables_in_use", {}).items()
+
+    changed = False
+    for variable, cvar in source_variables:
+        if not isinstance(variable, SimStackVariable):
+            continue
+        if id(variable) in arg_variables:
+            continue
+        identity = _stack_slot_identity_for_variable(variable)
+        if identity is None or identity in existing_identities:
+            continue
+        variable_type = getattr(cvar, "variable_type", None)
+        if variable_type is None:
+            continue
+        unified_locals[variable] = {(cvar, variable_type)}
+        existing_identities.add(identity)
+        changed = True
+
+    if changed:
+        sort_local_vars = getattr(cfunc, "sort_local_vars", None)
+        if callable(sort_local_vars):
+            with contextlib.suppress(Exception):
+                sort_local_vars()
+    return changed
+
+
+def _materialize_missing_register_local_declarations(codegen) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+
+    unified_locals = getattr(cfunc, "unified_local_vars", None)
+    if not isinstance(unified_locals, dict):
+        return False
+
+    arg_variables = {
+        id(getattr(arg, "variable", None))
+        for arg in getattr(cfunc, "arg_list", ()) or ()
+        if getattr(arg, "variable", None) is not None
+    }
+    def _local_identity(variable) -> tuple[object, ...] | None:
+        if isinstance(variable, SimStackVariable):
+            identity = _stack_slot_identity_for_variable(variable)
+            if identity is not None:
+                return ("stack", identity.base, getattr(identity, "offset", None), getattr(variable, "size", None))
+            return ("stack", getattr(variable, "base", None), getattr(variable, "offset", None), getattr(variable, "size", None))
+        if isinstance(variable, SimRegisterVariable):
+            return ("reg", getattr(variable, "reg", None), getattr(variable, "size", None))
+        return None
+
+    existing_identities = {
+        identity
+        for variable in unified_locals
+        if (identity := _local_identity(variable)) is not None
+    }
+
+    desired_segment_regs = {"cs", "ds", "es", "ss", "fs", "gs", "flags"}
+    changed = False
+
+    register_candidates: dict[int, tuple[object, object]] = {}
+    for variable, cvar in getattr(cfunc, "variables_in_use", {}).items():
+        if isinstance(variable, (SimRegisterVariable, SimStackVariable)):
+            register_candidates[id(variable)] = (variable, cvar)
+
+    root = getattr(cfunc, "statements", None)
+    if _structured_codegen_node(root):
+        for node in _iter_c_nodes_deep(root):
+            if not isinstance(node, structured_c.CVariable):
+                continue
+            variable = getattr(node, "variable", None)
+            if not isinstance(variable, (SimRegisterVariable, SimStackVariable)):
+                continue
+            register_candidates.setdefault(id(variable), (variable, node))
+
+    for variable, cvar in register_candidates.values():
+        identity = _local_identity(variable)
+        if id(variable) in arg_variables or identity in existing_identities:
+            continue
+
+        reg_name = getattr(variable, "name", None)
+        if isinstance(reg_name, str) and reg_name in desired_segment_regs:
+            continue
+
+        variable_type = getattr(cvar, "variable_type", None)
+        if variable_type is None:
+            variable_type = _stack_type_for_size(getattr(variable, "size", 0) or 2)
+        if variable_type is None:
+            continue
+
+        unified_locals[variable] = {(cvar, variable_type)}
+        if identity is not None:
+            existing_identities.add(identity)
+        changed = True
+
+    if changed:
+        sort_local_vars = getattr(cfunc, "sort_local_vars", None)
+        if callable(sort_local_vars):
+            with contextlib.suppress(Exception):
+                sort_local_vars()
+    return changed
+
+
+def _prune_void_function_return_values(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    prototype = getattr(codegen.cfunc, "prototype", None)
+    if prototype is None or type(getattr(prototype, "returnty", None)) is not SimTypeBottom:
+        return False
+
+    changed = False
+    for node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if not isinstance(node, structured_c.CReturn):
+            continue
+        if getattr(node, "retval", None) is None:
+            continue
+        node.retval = None
+        changed = True
+
+    return changed
+
+
+def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    def _expr_is_safe_inline_candidate(expr):
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, (structured_c.CConstant, structured_c.CVariable)):
+            return True
+        if isinstance(expr, structured_c.CTypeCast):
+            return _expr_is_safe_inline_candidate(expr.expr)
+        if isinstance(expr, structured_c.CUnaryOp):
+            return expr.op in {"Neg", "Not"} and _expr_is_safe_inline_candidate(expr.operand)
+        if isinstance(expr, structured_c.CBinaryOp):
+            if expr.op not in {"Add", "Sub", "Mul", "And", "Or", "Xor", "Shl", "Shr"}:
+                return False
+            return _expr_is_safe_inline_candidate(expr.lhs) and _expr_is_safe_inline_candidate(expr.rhs)
+        return False
+
+    def _stack_name_root(name: str | None) -> str | None:
+        if not isinstance(name, str) or not name:
+            return None
+        match = re.fullmatch(r"(?P<root>.*?)(?:_(?P<suffix>\d+))?", name)
+        if match is None:
+            return name
+        root = match.group("root")
+        return root if root else name
+
+    def _make_mk_fp(segment_expr, offset_expr):
+        return structured_c.CFunctionCall("MK_FP", None, [segment_expr, offset_expr], codegen=codegen)
+
+    traits_cache = getattr(project, "_inertia_access_traits", None)
+    evidence_profiles = None
+    if isinstance(traits_cache, dict):
+        traits = traits_cache.get(getattr(codegen.cfunc, "addr", None))
+        if isinstance(traits, dict):
+            evidence_profiles = _build_access_trait_evidence_profiles(traits)
+    if evidence_profiles is None or not any(profile.member_like for profile in evidence_profiles.values()):
+        return False
+
+    def _member_offset_for_variable(variable) -> int | None:
+        if evidence_profiles is None:
+            return None
+        base_key = _access_trait_variable_key(variable)
+        if base_key is None:
+            return None
+        profile = evidence_profiles.get(base_key)
+        if profile is None or not profile.member_like:
+            return None
+        offset, _size, _count = sorted(profile.member_like, key=lambda item: (-item[2], item[0], item[1]))[0]
+        return offset
+
+    copy_aliases: dict[int, object] = {}
+    for _ in range(3):
+        changed_alias = False
+        for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+            if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                continue
+            lhs_var = getattr(walk_node.lhs, "variable", None)
+            if lhs_var is None:
+                continue
+            rhs = _unwrap_c_casts(walk_node.rhs)
+            resolved_rhs = None
+            if isinstance(rhs, structured_c.CVariable):
+                rhs_var = getattr(rhs, "variable", None)
+                if rhs_var is not None:
+                    resolved_rhs = copy_aliases.get(id(rhs_var))
+                    if resolved_rhs is None:
+                        resolved_rhs = rhs
+            elif _c_constant_value(rhs) is not None or _expr_is_safe_inline_candidate(rhs):
+                resolved_rhs = rhs
+            if resolved_rhs is None:
+                continue
+            if copy_aliases.get(id(lhs_var)) != resolved_rhs:
+                copy_aliases[id(lhs_var)] = resolved_rhs
+                changed_alias = True
+        if not changed_alias:
+            break
+
+    def _resolve_alias_expr(expr):
+        expr = _unwrap_c_casts(expr)
+        seen: set[int] = set()
+        while isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if variable is None:
+                break
+            key = id(variable)
+            if key in seen:
+                break
+            seen.add(key)
+            if key in far_pointer_aliases:
+                expr = far_pointer_aliases[key]
+                continue
+            alias_expr = copy_aliases.get(key)
+            if alias_expr is None:
+                break
+            expr = _unwrap_c_casts(alias_expr)
+        return expr
+
+    groups: dict[str, dict[str, list[tuple[structured_c.CVariable, object]]]] = {}
+    for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+            continue
+        lhs_var = getattr(walk_node.lhs, "variable", None)
+        if not isinstance(lhs_var, SimStackVariable):
+            continue
+        root = _stack_name_root(getattr(lhs_var, "name", None))
+        if root is None:
+            continue
+        rhs = _unwrap_c_casts(walk_node.rhs)
+        if _c_constant_value(rhs) is None and not _expr_is_safe_inline_candidate(rhs):
+            continue
+        bucket = groups.setdefault(root, {"zero": [], "source": []})
+        if _c_constant_value(rhs) == 0:
+            bucket["zero"].append((walk_node.lhs, rhs))
+        else:
+            bucket["source"].append((walk_node.lhs, rhs))
+
+    def _source_score(_cvar, expr) -> tuple[int, int, int]:
+        expr = _unwrap_c_casts(expr)
+        variable = getattr(expr, "variable", None)
+        name = getattr(variable, "name", None) or getattr(expr, "name", None)
+        generic_name = isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
+        if isinstance(variable, SimStackVariable):
+            return (0 if not generic_name else 2, getattr(variable, "offset", 0), getattr(variable, "size", 0))
+        if isinstance(variable, SimMemoryVariable):
+            return (0 if not generic_name else 2, getattr(variable, "addr", 0), getattr(variable, "size", 0))
+        if isinstance(variable, SimRegisterVariable):
+            return (3 if generic_name else 1, getattr(variable, "reg", 0), getattr(variable, "size", 0))
+        if isinstance(expr, structured_c.CConstant):
+            return (4, int(expr.value) if isinstance(expr.value, int) else 0, 0)
+        return (4, 0, 0)
+
+    far_pointer_aliases: dict[int, object] = {}
+    for root, parts in groups.items():
+        if not parts["source"]:
+            continue
+        source_expr = None
+        for cvar, rhs in sorted(parts["source"], key=lambda item: _source_score(item[0], item[1])):
+            variable = getattr(cvar, "variable", None)
+            if not isinstance(variable, SimStackVariable):
+                continue
+            if _stack_name_root(getattr(variable, "name", None)) != root:
+                continue
+            source_expr = _resolve_alias_expr(rhs)
+            member_offset = _member_offset_for_variable(variable)
+            if member_offset is not None:
+                source_expr = _make_mk_fp(
+                    source_expr,
+                    structured_c.CConstant(member_offset, SimTypeShort(False), codegen=codegen),
+                )
+            break
+        if source_expr is None:
+            continue
+        for cvar, _rhs in parts["source"] + parts["zero"]:
+            variable = getattr(cvar, "variable", None)
+            if not isinstance(variable, SimStackVariable):
+                continue
+            far_pointer_aliases[id(variable)] = source_expr
+
+    if not far_pointer_aliases:
+        return False
+
+    changed = False
+
+    def transform(node):
+        nonlocal changed
+
+        if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
+            return node
+
+        for lhs, rhs in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            lhs_unwrapped = _resolve_alias_expr(lhs)
+            if lhs_unwrapped is not lhs and _expr_is_safe_inline_candidate(rhs):
+                changed = True
+                return _make_mk_fp(lhs_unwrapped, rhs)
+
+            rhs_unwrapped = _resolve_alias_expr(rhs)
+            if rhs_unwrapped is not rhs and _expr_is_safe_inline_candidate(lhs):
+                changed = True
+                return _make_mk_fp(rhs_unwrapped, lhs)
+
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+
+    if _replace_c_children(root, transform):
+        changed = True
+
+    return changed
+
+
+def _simplify_nested_mk_fp_calls(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    def _is_zero_offset_mk_fp(expr) -> bool:
+        expr = _unwrap_c_casts(expr)
+        if not isinstance(expr, structured_c.CFunctionCall) or getattr(expr, "callee_target", None) != "MK_FP":
+            return False
+        args = list(getattr(expr, "args", ()) or ())
+        if len(args) != 2:
+            return False
+        return _c_constant_value(_unwrap_c_casts(args[1])) == 0
+
+    def transform(node):
+        nonlocal changed
+        if not isinstance(node, structured_c.CFunctionCall) or getattr(node, "callee_target", None) != "MK_FP":
+            return node
+        args = list(getattr(node, "args", ()) or ())
+        if len(args) != 2:
+            return node
+
+        seg_expr = _unwrap_c_casts(args[0])
+        off_expr = _unwrap_c_casts(args[1])
+        if isinstance(seg_expr, structured_c.CFunctionCall) and getattr(seg_expr, "callee_target", None) == "MK_FP":
+            inner_args = list(getattr(seg_expr, "args", ()) or ())
+            if len(inner_args) == 2 and _is_zero_offset_mk_fp(off_expr):
+                changed = True
+                return structured_c.CFunctionCall(
+                    "MK_FP",
+                    None,
+                    [_unwrap_c_casts(inner_args[0]), _unwrap_c_casts(inner_args[1])],
+                    codegen=codegen,
+                )
+        if _is_zero_offset_mk_fp(off_expr):
+            inner_args = list(getattr(off_expr, "args", ()) or ())
+            if len(inner_args) == 2:
+                changed = True
+                return structured_c.CFunctionCall(
+                    "MK_FP",
+                    None,
+                    [seg_expr, _unwrap_c_casts(inner_args[0])],
+                    codegen=codegen,
+                )
+
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    if _replace_c_children(root, transform):
+        changed = True
+
+    return changed
+
+
 def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
@@ -5209,7 +6381,8 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
         changed = True
 
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
-        if getattr(variable, "base", None) != "bp":
+        identity = _stack_slot_identity_for_variable(variable)
+        if identity is None:
             continue
         offset = getattr(variable, "offset", None)
         matching = [size for promoted_offset, size in promoted if promoted_offset == offset]
@@ -5234,7 +6407,8 @@ def _attach_ss_stack_variables(project: angr.Project, codegen) -> bool:
     unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
     if isinstance(unified_locals, dict):
         for variable, cvar_and_vartypes in list(unified_locals.items()):
-            if getattr(variable, "base", None) != "bp":
+            identity = _stack_slot_identity_for_variable(variable)
+            if identity is None:
                 continue
             offset = getattr(variable, "offset", None)
             matching = [size for promoted_offset, size in promoted if promoted_offset == offset]
@@ -5270,8 +6444,10 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
         node = _unwrap_c_casts(node)
         if isinstance(node, structured_c.CVariable):
             variable = getattr(node, "variable", None)
-            if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
-                return node, 0
+            if isinstance(variable, SimStackVariable):
+                identity = _stack_slot_identity_for_variable(variable)
+                if identity is not None and identity.base == "bp":
+                    return node, 0
             alias = stack_pointer_aliases.get(id(variable))
             if alias is not None:
                 return alias.base, alias.offset
@@ -5280,8 +6456,10 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
             operand = _unwrap_c_casts(node.operand)
             if isinstance(operand, structured_c.CVariable):
                 variable = getattr(operand, "variable", None)
-                if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
-                    return operand, 0
+                if isinstance(variable, SimStackVariable):
+                    identity = _stack_slot_identity_for_variable(variable)
+                    if identity is not None and identity.base == "bp":
+                        return operand, 0
                 alias = stack_pointer_aliases.get(id(variable))
                 if alias is not None:
                     return alias.base, alias.offset
@@ -5389,6 +6567,11 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
                 return node
             cvar = classified.cvar
             extra_offset = classified.extra_offset
+            base_variable = getattr(cvar, "variable", None)
+            if isinstance(base_variable, SimStackVariable):
+                resolved_cvar = _resolve_stack_cvar_at_offset(codegen, getattr(base_variable, "offset", 0) + extra_offset)
+                if resolved_cvar is not None:
+                    return resolved_cvar
         type_ = getattr(node, "type", None)
         bits = getattr(type_, "size", None)
         if bits not in {8, 16}:
@@ -5457,6 +6640,52 @@ def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
 
 def _stack_type_for_size(size: int):
     return SimTypeChar() if size == 1 else SimTypeShort(False)
+
+
+def _resolve_stack_cvar_at_offset(codegen, offset: int):
+    if getattr(codegen, "cfunc", None) is None:
+        return None
+    if not isinstance(offset, int):
+        return None
+
+    covering_match = None
+    covering_size = None
+    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        if not isinstance(variable, SimStackVariable):
+            continue
+        identity = _stack_slot_identity_for_variable(variable)
+        if identity is None:
+            continue
+
+        base_offset = getattr(variable, "offset", None)
+        size = getattr(variable, "size", None)
+        if not isinstance(base_offset, int) or not isinstance(size, int):
+            continue
+
+        if base_offset == offset:
+            return cvar
+
+        if base_offset <= offset < base_offset + size and (covering_match is None or size < covering_size):
+            covering_match = cvar
+            covering_size = size
+
+    return covering_match
+
+
+def _resolve_stack_cvar_from_addr_expr(project: angr.Project, codegen, addr_expr):
+    classified = _classify_segmented_addr_expr(addr_expr, project)
+    if classified is None or classified.kind != "stack" or classified.cvar is None:
+        return None
+
+    variable = getattr(classified.cvar, "variable", None)
+    if not isinstance(variable, SimStackVariable):
+        return None
+
+    target_offset = getattr(variable, "offset", None)
+    if not isinstance(target_offset, int):
+        return None
+
+    return _resolve_stack_cvar_at_offset(codegen, target_offset + classified.extra_offset)
 
 
 def _coalesce_direct_ss_local_word_statements(project: angr.Project, codegen) -> bool:
@@ -5874,8 +7103,9 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
                             and rhs_word is not None
                             and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project)
                         ):
+                            resolved_lhs = _resolve_stack_cvar_from_addr_expr(project, codegen, low_addr_expr)
                             replacement = structured_c.CAssignment(
-                                _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
+                                resolved_lhs if resolved_lhs is not None else _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
                                 rhs_word,
                                 codegen=codegen,
                             )
@@ -6276,6 +7506,9 @@ def _coalesce_segmented_word_load_expressions(project: angr.Project, codegen) ->
                 continue
 
             if _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project):
+                resolved_lhs = _resolve_stack_cvar_from_addr_expr(project, codegen, low_addr_expr)
+                if resolved_lhs is not None:
+                    return resolved_lhs
                 return _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
 
         return node
@@ -6478,17 +7711,19 @@ def _simplify_x86_16_conditions(c_text: str) -> str:
 
 
 def _simplify_x86_16_wrapped_stack_offsets(c_text: str) -> str:
-    wrapped_offsets = {
-        0xFFFF: 1,
-        0xFFFE: 2,
-    }
+    def _replace(match: re.Match[str]) -> str:
+        name = match.group("name")
+        value = int(match.group("value"), 0)
+        normalized = _normalize_16bit_signed_offset(value)
+        if normalized >= 0:
+            return match.group(0)
+        return f"&{name} - {-normalized}"
 
-    for wrapped, magnitude in wrapped_offsets.items():
-        c_text = re.sub(
-            rf"&([A-Za-z_][\w$?@]*)\s*\+\s*{wrapped}",
-            rf"&\1 - {magnitude}",
-            c_text,
-        )
+    c_text = re.sub(
+        r"&(?P<name>[A-Za-z_][\w$?@]*)\s*\+\s*(?P<value>0x[0-9A-Fa-f]+|\d+)",
+        _replace,
+        c_text,
+    )
     return c_text
 
 
@@ -6536,6 +7771,75 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str) -> str:
         i += 1
 
     return "\n".join(kept_lines)
+
+
+def _simplify_x86_16_stack_references(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+
+    decl_re = re.compile(
+        r"^\s*(?P<decl>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_][\w$?@]*)\s*;\s*// \[bp(?P<sign>[+-])0x(?P<value>[0-9A-Fa-f]+)\](?P<suffix>.*)$"
+    )
+
+    offset_to_name: dict[int, str] = {}
+    for line in lines:
+        match = decl_re.match(line)
+        if match is None:
+            continue
+        name = match.group("name")
+        value = int(match.group("value"), 16)
+        if match.group("sign") == "-":
+            value = -value
+        offset_to_name.setdefault(value, name)
+
+    if not offset_to_name:
+        return c_text
+
+    def _replace(match: re.Match[str]) -> str:
+        anchor = match.group("anchor")
+        sign = match.group("sign")
+        value = int(match.group("value"), 0)
+        offset = value if sign == "+" else -value
+        name = offset_to_name.get(offset)
+        if name is None:
+            return match.group(0)
+        if offset == 0:
+            return f"&{name}"
+        return f"&{name}"
+
+    pattern = re.compile(
+        r"&(?P<anchor>v\d+)\s*(?P<sign>[+-])\s*(?P<value>0x[0-9A-Fa-f]+|\d+)"
+    )
+    return pattern.sub(_replace, c_text)
+
+
+def _normalize_mk_fp_segment_names(c_text: str, metadata: CODProcMetadata | None) -> str:
+    if metadata is None:
+        return c_text
+
+    positive_aliases = [
+        (disp, name)
+        for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: item[0])
+        if disp > 0 and isinstance(name, str) and name
+    ]
+    if not positive_aliases:
+        return c_text
+
+    segment_name = positive_aliases[0][1]
+
+    def _replace(match: re.Match[str]) -> str:
+        temp = match.group("temp")
+        offset = match.group("offset")
+        if not re.fullmatch(r"v\d+|vvar_\d+", temp):
+            return match.group(0)
+        return f"MK_FP({segment_name}, {offset})"
+
+    return re.sub(
+        r"MK_FP\((?P<temp>v\d+|vvar_\d+),\s*(?P<offset>[^)]+)\)",
+        _replace,
+        c_text,
+    )
 
 
 def _normalize_boolean_conditions(c_text: str) -> str:
@@ -6730,6 +8034,8 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
         metadata,
     )
 
+    generic_stack_name_re = re.compile(r"^(?:s_[0-9a-fA-F]+|v\d+|vvar_\d+|a\d+)$")
+    alias_replacements: dict[str, str] = {}
     lines: list[str] = []
     for line in c_text.splitlines():
         match = re.search(r"// \[bp([+-])0x([0-9a-f]+)\]", line)
@@ -6740,7 +8046,25 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
             alias = _cod_stack_alias_for_disp(disp, metadata, positive_aliases=positive_aliases)
             if alias is not None and not line.rstrip().endswith(f" {alias}"):
                 line = f"{line} {alias}"
+            declaration_part = line.split("//", 1)[0]
+            decl_match = re.search(r"(?P<name>[A-Za-z_][\w$?@]*)\s*;\s*$", declaration_part.strip())
+            if decl_match is not None:
+                current_name = decl_match.group("name")
+                if isinstance(alias, str) and alias and generic_stack_name_re.fullmatch(current_name):
+                    alias_replacements.setdefault(current_name, alias)
         lines.append(line)
+
+    if alias_replacements:
+        replacement_pattern = re.compile(
+            r"(?<![A-Za-z_])("
+            + "|".join(sorted((re.escape(name) for name in alias_replacements), key=len, reverse=True))
+            + r")(?![A-Za-z_])"
+        )
+
+        def _replace_alias(match: re.Match[str]) -> str:
+            return alias_replacements.get(match.group(1), match.group(1))
+
+        lines = [replacement_pattern.sub(_replace_alias, line) for line in lines]
 
     comments: list[str] = []
     if metadata.stack_aliases or metadata.call_names or metadata.global_names:
@@ -6819,8 +8143,9 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
             for line in metadata.source_lines
             if re.match(r"^return\s+[^;]+;\s*$", line.strip())
         ]
+        void_signature = _contains_void_function_definition_text(c_text)
         has_value_return = re.search(r"(?m)^\s*return\s+[^;]+;\s*$", c_text) is not None
-        if source_return_lines and not has_value_return:
+        if source_return_lines and not has_value_return and not void_signature:
             insert_at = c_text.rfind("}")
             if insert_at != -1:
                 tail = source_return_lines[-1]
@@ -6828,6 +8153,10 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
                 c_text = f"{body}\n    {tail}\n{c_text[insert_at:]}"
     c_text = _prune_unused_staging_assignments(c_text)
     c_text = _apply_cod_source_rewrites(c_text, metadata)
+    c_text = _simplify_x86_16_stack_references(c_text)
+    c_text = _normalize_mk_fp_segment_names(c_text, metadata)
+    c_text = _prune_void_function_return_values_text(c_text)
+    c_text = _dedupe_duplicate_local_declarations_text(c_text)
     return _simplify_x86_16_wrapped_stack_offsets(c_text)
 
 
