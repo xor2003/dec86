@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .config import LlmConfig, RuntimeConfig
 from .llm import backend_supports_sessions, build_effective_prompt, extract_session_id, run_provider_once, validate_output
+from .procguard import cleanup_stale_child_processes, install_child_cleanup_handler, register_child_process, unregister_child_process
 from .prompts import (
     build_checker_prompt,
     build_crash_reviewer_prompt,
@@ -44,6 +45,7 @@ class MetaHarness:
     def _ensure_dirs(self) -> None:
         for path in (self.cfg.state_dir, self.cfg.log_dir, self.cfg.prompt_dir, self.cfg.runs_dir):
             path.mkdir(parents=True, exist_ok=True)
+        install_child_cleanup_handler(self.cfg.state_dir, self.cfg.root_dir)
 
     def timestamp(self) -> str:
         return datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -250,6 +252,18 @@ class MetaHarness:
                 return step
         return None
 
+    def current_cycle_step(self) -> str | None:
+        if self.cycle_state is None:
+            return None
+        steps = self.cycle_state.get("steps")
+        if not isinstance(steps, dict):
+            return None
+        for step in self.step_order:
+            entry = steps.get(step)
+            if isinstance(entry, dict) and entry.get("status") in {"running", "paused-low-ram", "blocked-low-ram", "blocked-low-disk"}:
+                return step
+        return self._resume_step_from_state(self.cycle_state)
+
     def peek_resume_step(self) -> str | None:
         latest = self.latest_cycle_dir()
         if latest is None:
@@ -353,6 +367,28 @@ class MetaHarness:
         env["EVIDENCE_INPUT_FILES"] = "\n".join(self.cfg.evidence_input_files)
         os.execvpe(self.cfg.python_bin.as_posix(), [self.cfg.python_bin.as_posix(), "-m", "meta_harness", *self.cfg.original_args], env)
 
+    def finalize_run(self, reason: str, exit_code: int | None = None) -> None:
+        if self.cycle_state is None:
+            return
+        status_text = self.cfg.status_file.read_text(encoding="utf-8", errors="replace") if self.cfg.status_file.exists() else ""
+        if "status=done" in status_text or "status=stop-file-detected" in status_text or "status=restart-requested" in status_text:
+            return
+        current_step = self.current_cycle_step() or "cycle"
+        step_state = self.cycle_state.get("steps", {})
+        if isinstance(step_state, dict):
+            for step, entry in step_state.items():
+                if isinstance(entry, dict) and entry.get("status") == "running":
+                    step_state[step] = {
+                        "status": reason,
+                        "updated_at": self.iso_now(),
+                        "extra": f"exit_code={exit_code}" if exit_code is not None else "",
+                    }
+                    break
+        self.cycle_state["completed"] = False
+        self._save_cycle_state()
+        self.write_status("harness", reason, f"cycle={self.current_cycle_index} step={current_step} exit_code={exit_code}")
+        self.capture_cycle_snapshot(reason)
+
     def prepare_evidence_subset(self) -> None:
         if self.cfg.evidence_subset_dir.exists():
             shutil.rmtree(self.cfg.evidence_subset_dir, ignore_errors=True)
@@ -451,13 +487,31 @@ class MetaHarness:
         env = self.cfg.export_env()
         env["EVIDENCE_INPUT_FILES"] = "\n".join(self.cfg.evidence_input_files)
         env["EVIDENCE_SUBSET_DIR"] = str(self.cfg.evidence_subset_dir)
-        cmd = ["timeout", "--foreground", f"{self.cfg.codex_timeout_secs}s", "bash", "-lc", f'{self.cfg.sweep_cmd} | tee "{self.cfg.evidence_log_file}"']
-        result = subprocess.run(cmd, cwd=self.cfg.root_dir, env=env, check=False)
-        if result.returncode != 0:
+        header = f"[{self.iso_now()}] start sweep={self.cfg.sweep_label} root={self.cfg.root_dir}\n"
+        cmd = [
+            "timeout",
+            "--foreground",
+            f"{self.cfg.codex_timeout_secs}s",
+            "bash",
+            "-lc",
+            self.cfg.sweep_cmd,
+        ]
+        with self.cfg.evidence_log_file.open("w", encoding="utf-8") as out:
+            out.write(header)
+            out.flush()
+            proc = subprocess.Popen(cmd, cwd=self.cfg.root_dir, env=env, stdout=out, stderr=subprocess.STDOUT)
+            register_child_process(self.cfg.state_dir, proc.pid, self.cfg.sweep_cmd, str(self.cfg.root_dir), self.iso_now())
+            try:
+                rc = proc.wait()
+            finally:
+                unregister_child_process(self.cfg.state_dir, proc.pid)
+        with self.cfg.evidence_log_file.open("a", encoding="utf-8") as out:
+            out.write(f"[{self.iso_now()}] end rc={rc}\n")
+        if rc != 0:
             if self.cfg.evidence_log_file.exists():
                 shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
             self.write_status("full-sweep", "failed", f"see {self.cfg.evidence_log_file.name}")
-            self.mark_cycle_step("full-sweep", "failed", f"rc={result.returncode}")
+            self.mark_cycle_step("full-sweep", "failed", f"rc={rc}")
             self.die(f"{self.cfg.sweep_label} failed")
         shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
         self.write_status("full-sweep", "done", f"log={self.cfg.evidence_log_file.name}")
@@ -559,6 +613,7 @@ class MetaHarness:
     def run(self, resume: bool = False) -> int:
         self.ensure_prereqs()
         self.acquire_lock()
+        cleanup_stale_child_processes(self.cfg.state_dir, self.cfg.root_dir)
         self.write_status("startup", "ready", f"timeout={self.cfg.codex_timeout_secs}s")
         while True:
             start_step = self.resume_latest_cycle() if resume else None

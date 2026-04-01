@@ -22,21 +22,31 @@ def main(argv: list[str] | None = None) -> int:
     harness = MetaHarness(cfg, llm_cfg)
     peek_resume_step = getattr(harness, "peek_resume_step", lambda: None)
     resume = args.resume or (not args.fresh and peek_resume_step() is not None)
+    exit_code = 0
     try:
-        return harness.run(resume=resume)
+        exit_code = harness.run(resume=resume)
+        return exit_code
     except SystemExit as exc:
         code = int(exc.code) if isinstance(exc.code, int) else 1
-        if code not in (0, 10):
+        if code not in (0, 10, 130, 143):
             harness.run_crash_review(code)
+        exit_code = code
         raise
     except HarnessError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         harness.run_crash_review(1)
+        exit_code = 1
         return 1
     except KeyboardInterrupt:
         print("Interrupted", file=sys.stderr)
+        exit_code = 130
         return 130
     except Exception as exc:  # pragma: no cover
         print(f"ERROR: {exc}", file=sys.stderr)
         harness.run_crash_review(1)
+        exit_code = 1
         return 1
+    finally:
+        if exit_code not in (0, 10):
+            reason = "terminated" if exit_code == 143 else "interrupted"
+            harness.finalize_run(reason, exit_code)
