@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from meta_harness.config import LlmConfig
-from meta_harness.llm import build_effective_prompt, extract_session_id, is_local_provider, validate_output
+from meta_harness.llm import (
+    build_effective_prompt,
+    extract_session_id,
+    is_local_provider,
+    run_provider_once,
+    validate_output,
+)
 
 
 def _cfg(monkeypatch, tmp_path):
@@ -44,3 +50,25 @@ def test_extract_session_id_and_provider_kind():
     assert extract_session_id("session id: abc-123\n") == "abc-123"
     assert is_local_provider("ollama")
     assert not is_local_provider("codex")
+
+
+def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("hello", encoding="utf-8")
+    log = tmp_path / "run.log"
+
+    class Proc:
+        pid = 1234
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("meta_harness.llm.subprocess.Popen", lambda *args, **kwargs: Proc())
+
+    rc = run_provider_once("ollama", "new", "tiny", "prompt", prompt, log, cfg)
+
+    assert rc == 0
+    text = log.read_text(encoding="utf-8")
+    assert "start provider=ollama" in text
+    assert "end rc=0" in text
