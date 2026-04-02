@@ -742,6 +742,10 @@ def _decompile_function(
         timeout_stage = getattr(project, "_inertia_decompiler_stage", None)
         if timeout_stage == "core":
             detail = "during core decompilation"
+        elif isinstance(timeout_stage, str) and timeout_stage.startswith("structuring:"):
+            detail = f"during x86-16 structuring pass {timeout_stage.split(':', 1)[1]}"
+        elif timeout_stage == "structuring":
+            detail = "during x86-16 structuring"
         elif isinstance(timeout_stage, str) and timeout_stage.startswith("postprocess:"):
             detail = f"during x86-16 postprocess pass {timeout_stage.split(':', 1)[1]}"
         elif timeout_stage == "postprocess":
@@ -776,6 +780,11 @@ def _decompile_function(
         and binary_path.name.lower().endswith(".cod")
         and getattr(function, "name", "") == "fold_values"
     )
+    setattr(
+        project,
+        "_inertia_structuring_enabled",
+        bool(enable_structured_simplify and not small_function and not fold_values_cod_outlier),
+    )
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
         lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
@@ -784,6 +793,7 @@ def _decompile_function(
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
         lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
+        lambda: _canonicalize_stack_cvars(dec.codegen),
         lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
@@ -810,6 +820,7 @@ def _decompile_function(
         lambda: _prune_unused_local_declarations(dec.codegen),
         lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
         lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
+        lambda: _prune_unused_local_declarations(dec.codegen),
     )
     if small_function:
         rewrite_passes = (
@@ -819,6 +830,7 @@ def _decompile_function(
             lambda: _attach_segment_register_names(dec.codegen, project),
             lambda: _attach_ss_stack_variables(project, dec.codegen),
             lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
+            lambda: _canonicalize_stack_cvars(dec.codegen),
             lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
             lambda: _coalesce_segmented_word_store_statements(project, dec.codegen),
             lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
@@ -846,6 +858,7 @@ def _decompile_function(
             lambda: _prune_unused_local_declarations(dec.codegen),
             lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
             lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
+            lambda: _prune_unused_local_declarations(dec.codegen),
         )
         if lst_metadata is not None:
             logging.getLogger(__name__).debug(
@@ -863,22 +876,9 @@ def _decompile_function(
             ) + rewrite_passes[6:14] + (
                 lambda: _attach_lst_data_names(project, dec.codegen, lst_metadata),
             ) + rewrite_passes[14:]
-    if enable_structured_simplify and not small_function and not fold_values_cod_outlier:
-        structured_simplify_failed = [False]
-
-        def _safe_structured_simplify():
-            if structured_simplify_failed[0]:
-                return False
-            try:
-                return _simplify_structured_c_expressions(dec.codegen)
-            except RecursionError:
-                structured_simplify_failed[0] = True
-                return False
-
-        rewrite_passes += (_safe_structured_simplify,)
-    elif small_function:
+    if not enable_structured_simplify or small_function or fold_values_cod_outlier:
         logging.getLogger(__name__).debug(
-            "Skipping structured simplify for tiny function %s (%d blocks, %d bytes).",
+            "Skipping x86-16 structuring for function %s (%d blocks, %d bytes).",
             function,
             block_count,
             byte_count,
@@ -917,9 +917,11 @@ def _decompile_function(
     formatted = _normalize_anonymous_call_targets(formatted)
     formatted = _prune_void_function_return_values_text(formatted)
     formatted = _normalize_function_signature_arg_names(formatted)
+    formatted = _collapse_annotated_stack_aliases_text(formatted)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
     formatted = _annotate_cod_proc_output(formatted, cod_metadata)
+    formatted = _collapse_annotated_stack_aliases_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
     return "ok", formatted
 
@@ -1526,6 +1528,126 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
             if rewritten_line != original_line:
                 lines[line_index] = rewritten_line
                 changed = True
+
+        index = body_end
+
+    if not changed:
+        return c_text
+
+    normalized = "\n".join(lines)
+    if trailing_newline:
+        normalized += "\n"
+    return normalized
+
+
+def _collapse_annotated_stack_aliases_text(c_text: str) -> str:
+    trailing_newline = c_text.endswith("\n")
+    lines = c_text.splitlines()
+    header_re = re.compile(
+        r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
+    )
+    decl_re = re.compile(
+        r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*// \[bp(?P<sign>[+-])0x(?P<value>[0-9A-Fa-f]+)\]\s*(?P<alias>[A-Za-z_]\w*)\s*$"
+    )
+
+    def _split_args(args_text: str) -> list[str]:
+        if not args_text.strip():
+            return []
+        parts: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for char in args_text:
+            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+            if char == "(":
+                depth_paren += 1
+            elif char == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif char == "[":
+                depth_bracket += 1
+            elif char == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            parts.append("".join(current).strip())
+        return parts
+
+    changed = False
+    index = 0
+    while index < len(lines):
+        match = header_re.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+
+        arg_names: set[str] = set()
+        for arg in _split_args(match.group("args")):
+            arg_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg)
+            if arg_match is not None:
+                arg_names.add(arg_match.group(1))
+
+        brace_index = None
+        scan_index = index
+        while scan_index < len(lines):
+            if "{" in lines[scan_index]:
+                brace_index = scan_index
+                break
+            if ";" in lines[scan_index] and "{" not in lines[scan_index]:
+                break
+            scan_index += 1
+        if brace_index is None:
+            index = scan_index + 1
+            continue
+
+        body_start = brace_index + 1
+        body_end = body_start
+        brace_depth = lines[brace_index].count("{") - lines[brace_index].count("}")
+        while body_end < len(lines) and brace_depth > 0:
+            brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
+            body_end += 1
+
+        renames: dict[str, str] = {}
+        removed_indexes: set[int] = set()
+        for scan_index in range(body_start, body_end):
+            match = decl_re.match(lines[scan_index])
+            if match is None:
+                continue
+            local_name = match.group("name")
+            alias_name = match.group("alias")
+            if local_name == alias_name or alias_name not in arg_names:
+                continue
+            renames[local_name] = alias_name
+            removed_indexes.add(scan_index)
+
+        if not renames:
+            index = body_end
+            continue
+
+        def _rename_in_line(line: str) -> str:
+            updated = line
+            for local_name, alias_name in sorted(renames.items(), key=lambda item: -len(item[0])):
+                updated = re.sub(rf"(?<![A-Za-z_]){re.escape(local_name)}(?![A-Za-z_])", alias_name, updated)
+            return updated
+
+        for scan_index in range(body_start, body_end):
+            if scan_index in removed_indexes:
+                continue
+            renamed = _rename_in_line(lines[scan_index])
+            if renamed != lines[scan_index]:
+                lines[scan_index] = renamed
+                changed = True
+
+        if removed_indexes:
+            lines = [line for idx, line in enumerate(lines) if idx not in removed_indexes]
+            changed = True
+            index = 0
+            continue
 
         index = body_end
 
@@ -7035,6 +7157,11 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int):
         return None
 
     arg_candidates: list[tuple[object, object]] = []
+    arg_variable_ids = {
+        id(getattr(arg, "variable", None))
+        for arg in getattr(codegen.cfunc, "arg_list", ()) or ()
+        if getattr(arg, "variable", None) is not None
+    }
     arg_slot_identities = {
         _stack_slot_identity_for_variable(getattr(arg, "variable", None))
         for arg in getattr(codegen.cfunc, "arg_list", ()) or ()
@@ -7065,12 +7192,13 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int):
             (name for name in (variable_name, cvar_name, unified_name) if isinstance(name, str) and name and not _stack_name_is_generic(name)),
             None,
         )
+        is_arg_variable = 1 if id(variable) in arg_variable_ids else 0
         is_arg_slot = 1 if identity in arg_slot_identities else 0
         has_preferred_name = 1 if preferred_name is not None else 0
         size = getattr(variable, "size", None)
         size_rank = -size if isinstance(size, int) else 0
         exact_rank = 1 if exact else 0
-        return (exact_rank, is_arg_slot, has_preferred_name, size_rank, -getattr(variable, "offset", 0))
+        return (exact_rank, is_arg_variable, is_arg_slot, has_preferred_name, size_rank, -getattr(variable, "offset", 0))
 
     candidates = list(arg_candidates)
     candidates.extend(list(getattr(codegen.cfunc, "variables_in_use", {}).items()))
@@ -7103,6 +7231,68 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int):
     if best_exact is not None:
         return best_exact
     return best_covering
+
+
+def _canonicalize_stack_cvar_expr(expr, codegen):
+    expr = _unwrap_c_casts(expr)
+    if isinstance(expr, structured_c.CVariable):
+        variable = getattr(expr, "variable", None)
+        if isinstance(variable, SimStackVariable):
+            offset = getattr(variable, "offset", None)
+            if isinstance(offset, int):
+                resolved = _resolve_stack_cvar_at_offset(codegen, offset)
+                if isinstance(resolved, structured_c.CVariable):
+                    return resolved
+                resolved_variable = getattr(resolved, "variable", None)
+                if isinstance(resolved_variable, SimStackVariable):
+                    variable_type = getattr(resolved, "variable_type", None) or getattr(expr, "variable_type", None)
+                    return structured_c.CVariable(resolved_variable, variable_type=variable_type, codegen=codegen)
+        return expr
+    if isinstance(expr, structured_c.CUnaryOp):
+        operand = _canonicalize_stack_cvar_expr(expr.operand, codegen)
+        if operand is not expr.operand:
+            return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
+        return expr
+    if isinstance(expr, structured_c.CBinaryOp):
+        lhs = _canonicalize_stack_cvar_expr(expr.lhs, codegen)
+        rhs = _canonicalize_stack_cvar_expr(expr.rhs, codegen)
+        if lhs is not expr.lhs or rhs is not expr.rhs:
+            return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
+        return expr
+    if isinstance(expr, structured_c.CTypeCast):
+        inner = _canonicalize_stack_cvar_expr(expr.expr, codegen)
+        if inner is not expr.expr:
+            return structured_c.CTypeCast(None, expr.type, inner, codegen=getattr(expr, "codegen", None))
+        return expr
+    return expr
+
+
+def _canonicalize_stack_cvars(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    def transform(node):
+        nonlocal changed
+        if not isinstance(node, structured_c.CVariable):
+            return node
+        canonical = _canonicalize_stack_cvar_expr(node, codegen)
+        if canonical is not node:
+            changed = True
+            return canonical
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
+    if _replace_c_children(root, transform):
+        changed = True
+
+    return changed
 
 
 def _resolve_stack_cvar_from_addr_expr(project: angr.Project, codegen, addr_expr):
@@ -7459,18 +7649,18 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             inner = _resolve_known_copy_alias_expr(expr.expr)
             if inner is not expr.expr:
                 return structured_c.CTypeCast(None, expr.type, inner, codegen=getattr(expr, "codegen", None))
-            return expr
+            return _canonicalize_stack_cvar_expr(expr, codegen)
         if isinstance(expr, structured_c.CUnaryOp):
             operand = _resolve_known_copy_alias_expr(expr.operand)
             if operand is not expr.operand:
                 return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
-            return expr
+            return _canonicalize_stack_cvar_expr(expr, codegen)
         if isinstance(expr, structured_c.CBinaryOp):
             lhs = _resolve_known_copy_alias_expr(expr.lhs)
             rhs = _resolve_known_copy_alias_expr(expr.rhs)
             if lhs is not expr.lhs or rhs is not expr.rhs:
                 return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
-        return expr
+        return _canonicalize_stack_cvar_expr(expr, codegen)
 
     def visit(node):
         nonlocal changed
@@ -7682,12 +7872,14 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
                             rhs_word = _match_word_rhs_from_byte_pair(stmt.rhs, next_stmt.rhs, codegen, project)
                             if (
                                 extra_offset == 1
-                            and (_stack_slot_identity_can_join(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
+                                and (_stack_slot_identity_can_join(target_cvar, stmt.lhs) or _same_c_storage(target_cvar, stmt.lhs))
                                 and rhs_word is not None
                             ):
-                                if _promote_direct_stack_cvariable(codegen, stmt.lhs, 2, target_type):
+                                replacement_lhs = _canonicalize_stack_cvar_expr(stmt.lhs, codegen)
+                                rhs_word = _canonicalize_stack_cvar_expr(rhs_word, codegen)
+                                if _promote_direct_stack_cvariable(codegen, replacement_lhs, 2, target_type):
                                     changed = True
-                                replacement = structured_c.CAssignment(stmt.lhs, rhs_word, codegen=codegen)
+                                replacement = structured_c.CAssignment(replacement_lhs, rhs_word, codegen=codegen)
 
                     if replacement is None:
                         low_addr_expr = _match_byte_store_addr_expr(stmt.lhs)
@@ -7939,10 +8131,13 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
         and isinstance(high_unwrapped, structured_c.CConstant)
         and isinstance(high_unwrapped.value, int)
     ):
-        return structured_c.CConstant(
+        return _canonicalize_stack_cvar_expr(
+            structured_c.CConstant(
             (low_unwrapped.value & 0xFF) | ((high_unwrapped.value & 0xFF) << 8),
             SimTypeShort(False),
             codegen=codegen,
+            ),
+            codegen,
         )
 
     low_mem_addr = _global_memory_addr(low_unwrapped)
@@ -7961,10 +8156,13 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
         name = getattr(low_var, "name", None) if isinstance(low_var, SimMemoryVariable) else None
         if not isinstance(name, str) or not name or re.fullmatch(r"(?:v\d+|vvar_\d+)", name):
             return None
-        return structured_c.CVariable(
-            SimMemoryVariable(low_mem_addr, 2, name=_sanitize_cod_identifier(name), region=codegen.cfunc.addr),
-            variable_type=SimTypeShort(False),
-            codegen=codegen,
+        return _canonicalize_stack_cvar_expr(
+            structured_c.CVariable(
+                SimMemoryVariable(low_mem_addr, 2, name=_sanitize_cod_identifier(name), region=codegen.cfunc.addr),
+                variable_type=SimTypeShort(False),
+                codegen=codegen,
+            ),
+            codegen,
         )
 
     shifted_source = _match_shift_right_8_expr(high_rhs)
@@ -7978,7 +8176,7 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
                 or low_bits == 16
             )
         ):
-            return low_rhs
+            return _canonicalize_stack_cvar_expr(low_rhs, codegen)
 
         low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
         word_addr_expr = _match_word_dereference_addr_expr(shifted_source)
@@ -7987,7 +8185,7 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
             and word_addr_expr is not None
             and _addr_exprs_are_same(low_addr_expr, word_addr_expr, project)
         ):
-            return shifted_source
+            return _canonicalize_stack_cvar_expr(shifted_source, codegen)
 
     low_pair_addr = _match_word_pair_low_addr_expr(low_unwrapped, project)
     if low_pair_addr is not None:
@@ -7995,12 +8193,18 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
         if shifted_source is not None:
             word_addr_expr = _match_word_dereference_addr_expr(_unwrap_c_casts(shifted_source))
             if word_addr_expr is not None and _addr_exprs_are_same(low_pair_addr, word_addr_expr, project):
-                return _make_word_dereference_from_addr_expr(codegen, project, low_pair_addr)
+                return _canonicalize_stack_cvar_expr(
+                    _make_word_dereference_from_addr_expr(codegen, project, low_pair_addr),
+                    codegen,
+                )
 
     low_addr_expr = _match_byte_load_addr_expr(low_unwrapped)
     high_addr_expr = _match_shifted_high_byte_addr_expr(high_rhs)
     if low_addr_expr is not None and high_addr_expr is not None and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project):
-        return _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
+        return _canonicalize_stack_cvar_expr(
+            _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
+            codegen,
+        )
 
     shifted_source = _match_shift_right_8_expr(high_rhs)
     if shifted_source is not None:
@@ -8013,9 +8217,9 @@ def _match_word_rhs_from_byte_pair(low_rhs, high_rhs, codegen, project: angr.Pro
         )
         if analysis is not None and analysis.kind == "linear" and analysis.delta in {1, -1}:
             if _same_c_expression(low_expr, analysis.base_expr):
-                return shifted_source
+                return _canonicalize_stack_cvar_expr(shifted_source, codegen)
         if _same_c_expression(low_expr, shifted_source):
-            return shifted_source
+            return _canonicalize_stack_cvar_expr(shifted_source, codegen)
 
     return None
 
@@ -8857,7 +9061,7 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
         r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
     )
     decl_re = re.compile(
-        r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
+        r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default)\b)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
     )
 
     def _split_args(args_text: str) -> list[str]:
@@ -8924,6 +9128,9 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
 
         local_decl_names: list[tuple[int, str]] = []
         for scan_index in range(body_start, body_end):
+            stripped_line = lines[scan_index].lstrip()
+            if stripped_line.startswith(("return ", "if ", "while ", "for ", "switch ", "goto ", "break;", "continue;")):
+                continue
             decl_match = decl_re.match(lines[scan_index])
             if decl_match is not None:
                 local_decl_names.append((scan_index, decl_match.group("name")))
