@@ -321,6 +321,8 @@ class MetaHarness:
         self.capture_git_state("start")
         if self.cfg.plan_path.exists():
             shutil.copy2(self.cfg.plan_path, self.current_cycle_dir / "PLAN.start.md")
+        for role in ("checker", "planner", "worker", "reviewer", "crash-reviewer"):
+            self.clear_role_session(role)
         self._save_cycle_state()
 
     def capture_git_state(self, tag: str) -> None:
@@ -335,6 +337,29 @@ class MetaHarness:
         if self.current_cycle_dir is None or not src.exists():
             return
         shutil.copy2(src, self.current_cycle_dir / (dst_name or src.name))
+
+    def role_session_file(self, role: str) -> Path:
+        if self.current_cycle_dir is not None:
+            return self.current_cycle_dir / f"{role}.session"
+        return self.cfg.state_dir / f"{role}.session"
+
+    def clear_role_session(self, role: str) -> None:
+        self.role_session_file(role).unlink(missing_ok=True)
+        (self.cfg.state_dir / f"{role}.session").unlink(missing_ok=True)
+
+    def consume_operator_comments(self, role: str) -> str:
+        path = self.cfg.operator_comments_file
+        if not path.exists():
+            return ""
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        if not text:
+            return ""
+        if self.current_cycle_dir is not None:
+            archived = self.current_cycle_dir / f"operator-comments.{self.timestamp()}.{role}.md"
+            archived.write_text(text + "\n", encoding="utf-8")
+        path.write_text("", encoding="utf-8")
+        self.log(f"Consumed operator comments for {role} from {path}")
+        return text
 
     def capture_cycle_snapshot(self, tag: str) -> None:
         self.capture_cycle_artifact(self.cfg.status_file, f"status.{tag}.txt")
@@ -418,6 +443,36 @@ class MetaHarness:
                 return match.group(1)
         return ""
 
+    def plan_remaining_steps(self) -> int | None:
+        if not self.cfg.plan_path.exists():
+            return None
+        text = self.cfg.plan_path.read_text(encoding="utf-8", errors="replace")
+        for pat in (r"Global Remaining steps:\s*(\d+)", r"Remaining steps:\s*(\d+)"):
+            match = re.search(pat, text)
+            if match:
+                return int(match.group(1))
+
+        capture = False
+        numbered = 0
+        unchecked = 0
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if re.match(r"^##+\s+Remaining steps\b", line, re.IGNORECASE):
+                capture = True
+                continue
+            if capture and re.match(r"^##+\s+", line):
+                break
+            if not capture:
+                continue
+            if re.match(r"^\d+\.\s+\S", line):
+                numbered += 1
+            elif re.match(r"^[-*]\s+\[\s\]\s+\S", line):
+                unchecked += 1
+
+        if numbered or unchecked:
+            return numbered + unchecked
+        return None
+
     def save_role_markers(self, role: str, log_file: Path, remaining: str | None = None) -> None:
         if remaining is not None:
             (self.cfg.state_dir / f"{role}.remaining").write_text(remaining + "\n", encoding="utf-8")
@@ -431,7 +486,7 @@ class MetaHarness:
         provider = self.llm_cfg.provider_for_key(role)
         prompt_file = self.cfg.prompt_dir / f"{role}.prompt.txt"
         log_file = self.cfg.log_dir / f"{self.timestamp()}_{role}.log"
-        session_file = self.cfg.state_dir / f"{role}.session"
+        session_file = self.role_session_file(role)
         previous_log = self.last_role_log_file(role)
 
         def _raise_role_error(message: str) -> None:
@@ -489,7 +544,15 @@ class MetaHarness:
         return log_file
 
     def run_role(self, role: str, model: str, prompt: str, resume: bool = False) -> Path:
-        return self._run_llm_attempt(role, model, prompt, resume=resume)
+        comments = self.consume_operator_comments(role)
+        effective_prompt = prompt
+        if comments:
+            effective_prompt += (
+                "\n\nOperator comments to apply now:\n"
+                "Treat these as highest-priority human guidance for this step.\n"
+                f"{comments}\n"
+            )
+        return self._run_llm_attempt(role, model, effective_prompt, resume=resume)
 
     def sweep_step(self) -> None:
         self.check_stop_file()
@@ -583,6 +646,7 @@ class MetaHarness:
 
     def worker_cycle(self) -> None:
         self.mark_cycle_step("worker", "running")
+        consecutive_failures = 0
         for i in range(1, self.cfg.max_worker_iters + 1):
             self.check_stop_file()
             self.preflight_resource_check("worker")
@@ -592,25 +656,56 @@ class MetaHarness:
             except HarnessError as exc:
                 if isinstance(exc, RoleRunError):
                     self.capture_cycle_artifact(exc.log_file, f"worker.iter{i:02d}.resume-failed.log")
-                (self.cfg.state_dir / "worker.session").unlink(missing_ok=True)
+                self.clear_role_session("worker")
                 try:
                     log_file = self.run_role("worker", self.cfg.worker_model, build_worker_prompt(self.cfg), resume=False)
                 except HarnessError as final_exc:
                     failed_log = final_exc.log_file if isinstance(final_exc, RoleRunError) else None
                     if failed_log is not None:
                         self.capture_cycle_artifact(failed_log, f"worker.iter{i:02d}.failed.log")
+                    consecutive_failures += 1
                     self.log(f"Worker iteration {i} failed: {final_exc}")
                     self.write_status("worker", "retrying-after-error", f"iteration={i} error={final_exc}")
-                    self.mark_cycle_step("worker", "running", f"iteration={i} error={final_exc}")
+                    if consecutive_failures >= self.cfg.max_consecutive_worker_failures:
+                        self.log(
+                            f"Worker stalled after {consecutive_failures} consecutive failures; handing control to reviewer"
+                        )
+                        self.mark_cycle_step(
+                            "worker",
+                            "stalled",
+                            f"iteration={i} consecutive_failures={consecutive_failures} error={final_exc}",
+                        )
+                        return
+                    self.mark_cycle_step(
+                        "worker",
+                        "running",
+                        f"iteration={i} consecutive_failures={consecutive_failures} error={final_exc}",
+                    )
                     time.sleep(self.cfg.worker_sleep_secs)
                     continue
             remaining = self.extract_remaining_steps(log_file)
             if not remaining:
                 self.die("Worker did not print remaining step count")
+            consecutive_failures = 0
             self.save_role_markers("worker", log_file, remaining)
             self.capture_cycle_artifact(log_file, f"worker.iter{i:02d}.log")
             self.capture_cycle_snapshot(f"worker-iter{i:02d}")
             if self.cfg.worker_finish_token in log_file.read_text(encoding="utf-8", errors="replace"):
+                plan_remaining = self.plan_remaining_steps()
+                if plan_remaining is not None and plan_remaining > 0:
+                    self.log(
+                        f"Worker reported 0 remaining steps but {self.cfg.plan_path.name} still has {plan_remaining}; "
+                        "discarding worker session and retrying fresh"
+                    )
+                    self.clear_role_session("worker")
+                    self.write_status(
+                        "worker",
+                        "retrying-after-mismatch",
+                        f"iteration={i} worker_remaining=0 plan_remaining={plan_remaining}",
+                    )
+                    self.mark_cycle_step("worker", "running", f"iteration={i} mismatch plan_remaining={plan_remaining}")
+                    time.sleep(self.cfg.worker_sleep_secs)
+                    continue
                 self.mark_cycle_step("worker", "done", f"remaining={remaining}")
                 return
             time.sleep(self.cfg.worker_sleep_secs)

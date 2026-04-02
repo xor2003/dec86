@@ -238,3 +238,95 @@ def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path):
     assert (harness.current_cycle_dir / "worker.iter01.resume-failed.log").exists()
     assert (harness.current_cycle_dir / "worker.iter01.failed.log").exists()
     assert (harness.current_cycle_dir / "worker.iter02.log").exists()
+
+
+def test_worker_cycle_retries_when_worker_claims_zero_but_plan_has_steps(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    cfg.plan_path.write_text("## Remaining steps\n\n1. First\n2. Second\n\nGlobal Remaining steps: 2\n", encoding="utf-8")
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    stale_log = cfg.log_dir / "stale_worker.log"
+    stale_log.parent.mkdir(parents=True, exist_ok=True)
+    stale_log.write_text("correctness\nrecompilation\nGlobal Remaining steps: 0\n", encoding="utf-8")
+
+    good_log = cfg.log_dir / "good_worker.log"
+    good_log.write_text("correctness\nrecompilation\nGlobal Remaining steps: 0\n", encoding="utf-8")
+
+    session_file = cfg.state_dir / "worker.session"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.write_text("stale-session\n", encoding="utf-8")
+
+    calls = {"count": 0}
+
+    def fake_run_role(role, model, prompt, resume=False):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return stale_log
+        cfg.plan_path.write_text("Global Remaining steps: 0\n", encoding="utf-8")
+        return good_log
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "run_role", fake_run_role)
+    monkeypatch.setattr("meta_harness.orchestrator.time.sleep", lambda _secs: None)
+
+    harness.worker_cycle()
+
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert calls["count"] == 2
+    assert not session_file.exists()
+    assert state["steps"]["worker"]["status"] == "done"
+    assert (harness.current_cycle_dir / "worker.iter01.log").exists()
+    assert (harness.current_cycle_dir / "worker.iter02.log").exists()
+
+
+def test_consume_operator_comments_archives_and_clears_file(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    cfg.operator_comments_file.write_text("Please improve harness retry logic.\n", encoding="utf-8")
+
+    comments = harness.consume_operator_comments("worker")
+
+    assert "retry logic" in comments
+    assert cfg.operator_comments_file.read_text(encoding="utf-8") == ""
+    archived = list(harness.current_cycle_dir.glob("operator-comments.*.worker.md"))
+    assert len(archived) == 1
+    assert "retry logic" in archived[0].read_text(encoding="utf-8")
+
+
+def test_prepare_cycle_workspace_clears_legacy_worker_session(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    legacy = cfg.state_dir / "worker.session"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("old-session\n", encoding="utf-8")
+
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    assert not legacy.exists()
+
+
+def test_worker_cycle_stalls_after_consecutive_failures(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    failed_log = cfg.log_dir / "failed_worker.log"
+    failed_log.parent.mkdir(parents=True, exist_ok=True)
+    failed_log.write_text("partial output\n", encoding="utf-8")
+
+    def fake_run_role(role, model, prompt, resume=False):
+        raise RoleRunError(role, failed_log, "worker failed")
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "run_role", fake_run_role)
+    monkeypatch.setattr("meta_harness.orchestrator.time.sleep", lambda _secs: None)
+
+    harness.worker_cycle()
+
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["worker"]["status"] == "stalled"
+    assert "consecutive_failures=3" in state["steps"]["worker"]["extra"]

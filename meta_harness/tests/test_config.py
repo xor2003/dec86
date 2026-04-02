@@ -24,3 +24,15 @@ def test_llm_config_provider_override(monkeypatch, tmp_path):
     cfg = LlmConfig.from_env()
     assert cfg.provider_for_key("worker") == "ollama"
     assert cfg.provider_for_key("reviewer") == "codex"
+
+
+def test_runtime_config_uses_default_operator_comments_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROOT_DIR", str(tmp_path))
+    cfg = RuntimeConfig.from_env([])
+    assert cfg.operator_comments_file == tmp_path / "HARNESS_COMMENTS.md"
+
+
+def test_runtime_config_uses_default_consecutive_worker_failure_limit(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROOT_DIR", str(tmp_path))
+    cfg = RuntimeConfig.from_env([])
+    assert cfg.max_consecutive_worker_failures == 3

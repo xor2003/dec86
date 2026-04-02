@@ -98,6 +98,7 @@ class RuntimeConfig:
     lock_file: Path
     status_file: Path
     last_log_file: Path
+    operator_comments_file: Path
     prompt_dir: Path
     evidence_subset_dir: Path
     evidence_log_file: Path
@@ -108,6 +109,7 @@ class RuntimeConfig:
     max_state_dir_mb: int
     max_single_artifact_mb: int
     max_worker_iters: int
+    max_consecutive_worker_failures: int
     worker_sleep_secs: int
     planner_pause_secs: int
     codex_timeout_secs: int
@@ -157,6 +159,7 @@ class RuntimeConfig:
             lock_file=Path(os.environ.get("LOCK_FILE", state_dir / "run.lock")),
             status_file=Path(os.environ.get("STATUS_FILE", state_dir / "status.txt")),
             last_log_file=Path(os.environ.get("LAST_LOG_FILE", state_dir / "last.log")),
+            operator_comments_file=Path(os.environ.get("OPERATOR_COMMENTS_FILE", root_dir / "HARNESS_COMMENTS.md")),
             prompt_dir=Path(os.environ.get("PROMPT_DIR", state_dir / "prompts")),
             evidence_subset_dir=evidence_subset_dir,
             evidence_log_file=Path(os.environ.get("EVIDENCE_LOG_FILE", state_dir / "evidence.log")),
@@ -167,6 +170,7 @@ class RuntimeConfig:
             max_state_dir_mb=int(os.environ.get("MAX_STATE_DIR_MB", "12288")),
             max_single_artifact_mb=int(os.environ.get("MAX_SINGLE_ARTIFACT_MB", "1024")),
             max_worker_iters=int(os.environ.get("MAX_WORKER_ITERS", "40")),
+            max_consecutive_worker_failures=int(os.environ.get("MAX_CONSECUTIVE_WORKER_FAILURES", "3")),
             worker_sleep_secs=int(os.environ.get("WORKER_SLEEP_SECS", "4")),
             planner_pause_secs=int(os.environ.get("PLANNER_PAUSE_SECS", "60")),
             codex_timeout_secs=int(os.environ.get("CODEX_TIMEOUT_SECS", "600")),
