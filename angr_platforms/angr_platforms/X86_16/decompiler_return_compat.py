@@ -65,26 +65,23 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
             and self.function.prototype.returnty is not None
             and type(self.function.prototype.returnty) is not SimTypeBottom
         ):
-            new_stmt = stmt.copy()
-            returnty = (
-                dereference_simtype_by_lib(self.function.prototype.returnty, self.function.prototype_libname)
-                if self.function.prototype_libname
-                else self.function.prototype.returnty
-            )
-            ret_val = self.function.calling_convention.return_val(returnty)
+            ret_val = self.function.calling_convention.return_val(self.function.prototype.returnty)
+            ret_expr = None
             if isinstance(ret_val, SimRegArg):
                 ret_expr = _make_return_register_expr_8616(self, stmt, ret_val)
             elif isinstance(ret_val, SimComboArg):
                 ret_expr = _make_return_combo_expr_8616(self, stmt, ret_val)
-            else:
-                ret_expr = None
 
-            if ret_expr is not None:
-                new_stmt.ret_exprs.append(ret_expr)
-                return new_stmt
+            if ret_expr is None:
+                return _orig_handle_return(self, stmt, block)
 
-            l.warning("Unsupported type of return expression %s.", type(ret_val))
-            return new_stmt
+            new_stmt = stmt.copy()
+            new_stmt.ret_exprs.append(ret_expr)
+
+            new_statements = block.statements[::]
+            new_statements[stmt_idx] = new_stmt
+            self._new_block = block.copy(statements=new_statements)
+            return None
 
         return _orig_handle_return(self, stmt, block)
 

@@ -11,6 +11,8 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16 import bootstrap
 from angr_platforms.X86_16 import decompiler_postprocess
 from angr_platforms.X86_16 import decompiler_postprocess_stage
+from angr_platforms.X86_16 import decompiler_structuring_stage
+from angr_platforms.X86_16 import recovery_confidence
 
 
 def test_x86_16_package_exports_source_backends():
@@ -35,6 +37,7 @@ def test_x86_16_package_exports_source_backends():
     assert "apply_x86_16_decompiler_postprocess" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__
     assert "decompiler_postprocess_simplify" in x8616.__all__
+    assert "decompiler_structuring_stage" in x8616.__all__
     assert "decompiler_postprocess_flags" in x8616.__all__
     assert "calling_convention_compat" in x8616.__all__
     assert "decompiler_return_compat" in x8616.__all__
@@ -75,6 +78,7 @@ def test_x86_16_package_exports_source_backends():
     assert "describe_x86_16_widening_pipeline" in x8616.__all__
     assert "describe_x86_16_object_recovery_focus" in x8616.__all__
     assert "describe_x86_16_recovery_layers" in x8616.__all__
+    assert "describe_x86_16_recovery_confidence_axes" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__
     assert "decompiler_postprocess_globals" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__
@@ -122,7 +126,6 @@ def test_x86_16_decompiler_postprocess_registry_order():
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
         "_simplify_boolean_cites_8616",
-        "_simplify_structured_expressions_8616",
         "_normalize_function_prototype_arg_names_8616",
         "_classify_return_shape_8616",
         "_prune_void_function_return_values_8616",
@@ -174,11 +177,28 @@ def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
         "_simplify_boolean_cites_8616",
-        "_simplify_structured_expressions_8616",
         "_normalize_function_prototype_arg_names_8616",
         "_classify_return_shape_8616",
         "_prune_void_function_return_values_8616",
     )
+
+
+def test_x86_16_decompiler_structuring_stage_exports():
+    assert "DecompilerStructuringPassSpec" in decompiler_structuring_stage.__all__
+    assert "DECOMPILER_STRUCTURING_PASSES" in decompiler_structuring_stage.__all__
+    assert "describe_x86_16_decompiler_structuring_stage" in decompiler_structuring_stage.__all__
+    assert "apply_x86_16_decompiler_structuring" in decompiler_structuring_stage.__all__
+
+
+def test_x86_16_decompiler_structuring_stage_description():
+    assert decompiler_structuring_stage.describe_x86_16_decompiler_structuring_stage() == tuple(
+        (spec.name, spec.needs_project) for spec in decompiler_structuring_stage.DECOMPILER_STRUCTURING_PASSES
+    )
+
+
+def test_x86_16_recovery_confidence_module_exports():
+    assert "RecoveryEvidence" in recovery_confidence.__all__ or hasattr(recovery_confidence, "RecoveryEvidence")
+    assert "describe_x86_16_recovery_confidence_axes" in recovery_confidence.__all__
 
 
 def test_x86_16_bootstrap_module_exports():
@@ -190,6 +210,7 @@ def test_x86_16_bootstrap_module_description():
         "apply_x86_16_calling_convention_compatibility",
         "apply_x86_16_compatibility",
         "apply_x86_16_decompiler_return_compatibility",
+        "apply_x86_16_decompiler_structuring",
         "apply_x86_16_decompiler_postprocess",
     )
 

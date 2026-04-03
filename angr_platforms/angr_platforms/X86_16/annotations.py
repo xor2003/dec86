@@ -48,6 +48,43 @@ def _normalize_arg_names(arg_names: list[str] | tuple[str, ...], count: int) -> 
     return normalized
 
 
+def _normalize_c_decl_text(c_decl: str) -> str:
+    normalized = c_decl
+    replacements = (
+        (r"\buint8\b", "unsigned char"),
+        (r"\buint16\b", "unsigned short"),
+        (r"\buint32\b", "unsigned long"),
+        (r"\bint8\b", "signed char"),
+        (r"\bint16\b", "short"),
+        (r"\bint32\b", "long"),
+        (r"\bFAR\b", ""),
+        (r"\bfar\b", ""),
+    )
+    for pattern, replacement in replacements:
+        normalized = re.sub(pattern, replacement, normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = re.sub(r"\s+\)", ")", normalized)
+    normalized = re.sub(r"\(\s+", "(", normalized)
+    normalized = re.sub(r"\s+;", ";", normalized)
+    return normalized
+
+
+def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...]) -> str | None:
+    for line in source_lines:
+        stripped = line.strip()
+        if not stripped or stripped == "}":
+            continue
+        header = stripped
+        if header.endswith("{"):
+            header = header[:-1].rstrip()
+        if not header.endswith(";"):
+            header = f"{header};"
+        if header.startswith(("if ", "while ", "for ", "switch ", "return ")):
+            continue
+        return header
+    return None
+
+
 def annotate_function(
     project,
     func_addr: int,
@@ -69,7 +106,8 @@ def annotate_function(
     parsed_name = None
     parsed_proto = None
     if c_decl is not None:
-        parsed_name, parsed_proto, _ = convert_cproto_to_py(c_decl)
+        normalized_decl = _normalize_c_decl_text(c_decl)
+        parsed_name, parsed_proto, _ = convert_cproto_to_py(normalized_decl)
         if parsed_proto is None:
             raise ValueError(f"Failed to parse C declaration: {c_decl}")
         parsed_proto = parsed_proto.with_arch(project.arch)
@@ -205,7 +243,24 @@ def apply_x86_16_metadata_annotations(
     if func_addr is not None and cod_metadata is not None:
         stack_aliases = getattr(cod_metadata, "stack_aliases", None) or {}
         if stack_aliases:
-            annotate_function(project, func_addr, bp_stack_vars=stack_aliases)
+            typed_stack_aliases = {}
+            for bp_disp, alias in stack_aliases.items():
+                spec = known_cod_object_spec(alias)
+                if spec is None:
+                    typed_stack_aliases[bp_disp] = alias
+                    continue
+                typed_stack_aliases[bp_disp] = {
+                    "name": spec.name,
+                    "type": spec.type,
+                    "type_name": spec.type_name,
+                    "field_names": spec.field_names,
+                    "field_offsets": spec.field_offsets,
+                    "field_widths": spec.field_widths,
+                    "packed": spec.packed,
+                    "allowed_views": spec.allowed_views,
+                    "segment_domain": spec.segment_domain,
+                }
+            annotate_function(project, func_addr, bp_stack_vars=typed_stack_aliases)
             changed = True
 
     if cod_metadata is not None:
@@ -222,6 +277,19 @@ def apply_x86_16_metadata_annotations(
                 for line in source_lines
                 if re.match(r"^return\s+[^;]+;\s*$", line.strip())
             )
+            source_decl = _source_decl_from_cod_source_lines(source_lines)
+            if source_decl is not None:
+                try:
+                    annotate_function(
+                        project,
+                        func_addr,
+                        name=getattr(func, "name", None),
+                        c_decl=source_decl,
+                    )
+                except ValueError:
+                    pass
+                else:
+                    changed = True
 
     if func_addr is not None and synthetic_globals:
         seen_addrs: set[int] = set()

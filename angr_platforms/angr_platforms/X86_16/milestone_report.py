@@ -23,6 +23,7 @@ from .cod_source_rewrites import (
 from .cod_known_objects import describe_x86_16_cod_known_objects
 from .correctness_goals import describe_x86_16_correctness_goals, summarize_x86_16_correctness_goals
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
+from .recovery_confidence import describe_x86_16_recovery_confidence_axes
 from .instruction import describe_x86_16_instruction_metadata_surface
 from .martypc_progress import describe_x86_16_martypc_improvement_progress, summarize_x86_16_martypc_improvement_progress
 from .readability_goals import (
@@ -93,7 +94,14 @@ def _build_corpus_completion_surface(
     readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
     unclassified_failure_count = int(scan_summary.get("unclassified_failure_count", 0) or 0)
     rewrite_failure_count = int(scan_summary.get("rewrite_failure_count", 0) or 0)
+    structuring_failure_count = int(scan_summary.get("structuring_failure_count", 0) or 0)
     regeneration_failure_count = int(scan_summary.get("regeneration_failure_count", 0) or 0)
+    confidence = dict(scan_summary.get("confidence", {}) or {})
+    confidence_status_counts = dict(scan_summary.get("confidence_status_counts", {}) or {})
+    confidence_scan_safe_counts = dict(scan_summary.get("confidence_scan_safe_counts", {}) or {})
+    confidence_assumption_counts = dict(scan_summary.get("confidence_assumption_counts", {}) or {})
+    confidence_evidence_counts = dict(scan_summary.get("confidence_evidence_counts", {}) or {})
+    confidence_diagnostic_counts = dict(scan_summary.get("confidence_diagnostic_counts", {}) or {})
     blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
     return {
         "no_crashes": failed == 0,
@@ -113,8 +121,15 @@ def _build_corpus_completion_surface(
         },
         "postprocess_failures": {
             "rewrite_failure_count": rewrite_failure_count,
+            "structuring_failure_count": structuring_failure_count,
             "regeneration_failure_count": regeneration_failure_count,
         },
+        "confidence": confidence,
+        "confidence_status_counts": confidence_status_counts,
+        "confidence_scan_safe_counts": confidence_scan_safe_counts,
+        "confidence_assumption_counts": confidence_assumption_counts,
+        "confidence_evidence_counts": confidence_evidence_counts,
+        "confidence_diagnostic_counts": confidence_diagnostic_counts,
         "blind_spot_budget": blind_spot_budget,
         "stable_by_traversal": failed == 0 and unclassified_failure_count == 0,
         "merge_gate": failed == 0 and unclassified_failure_count == 0,
@@ -185,6 +200,7 @@ def build_x86_16_milestone_report(
     widening_pipeline = describe_x86_16_widening_pipeline()
     recovery_layers = describe_x86_16_recovery_layers()
     object_recovery_focus = describe_x86_16_object_recovery_focus()
+    recovery_confidence_axes = describe_x86_16_recovery_confidence_axes()
     projection_cleanup_rules = describe_x86_16_projection_cleanup_rules()
     readability_goals = describe_x86_16_readability_goals()
     decode_width_matrix = describe_x86_16_decode_width_matrix()
@@ -210,7 +226,14 @@ def build_x86_16_milestone_report(
     recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
     readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
     rewrite_failure_count = int(scan_summary.get("rewrite_failure_count", 0) or 0)
+    structuring_failure_count = int(scan_summary.get("structuring_failure_count", 0) or 0)
     regeneration_failure_count = int(scan_summary.get("regeneration_failure_count", 0) or 0)
+    confidence = dict(scan_summary.get("confidence", {}) or {})
+    confidence_status_counts = dict(scan_summary.get("confidence_status_counts", {}) or {})
+    confidence_scan_safe_counts = dict(scan_summary.get("confidence_scan_safe_counts", {}) or {})
+    confidence_assumption_counts = dict(scan_summary.get("confidence_assumption_counts", {}) or {})
+    confidence_evidence_counts = dict(scan_summary.get("confidence_evidence_counts", {}) or {})
+    confidence_diagnostic_counts = dict(scan_summary.get("confidence_diagnostic_counts", {}) or {})
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
     readability_clusters = list(scan_summary.get("readability_clusters", []) or [])
     family_ownership = dict(scan_summary.get("family_ownership", {}) or {})
@@ -280,6 +303,10 @@ def build_x86_16_milestone_report(
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in recovery_layers
         ],
+        "recovery_confidence_axes": [
+            {"status": status, "meaning": meaning}
+            for status, meaning in recovery_confidence_axes
+        ],
         "object_recovery_focus": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in object_recovery_focus
@@ -334,8 +361,15 @@ def build_x86_16_milestone_report(
         },
         "postprocess_failures": {
             "rewrite_failure_count": rewrite_failure_count,
+            "structuring_failure_count": structuring_failure_count,
             "regeneration_failure_count": regeneration_failure_count,
         },
+        "confidence": confidence,
+        "confidence_status_counts": confidence_status_counts,
+        "confidence_scan_safe_counts": confidence_scan_safe_counts,
+        "confidence_assumption_counts": confidence_assumption_counts,
+        "confidence_evidence_counts": confidence_evidence_counts,
+        "confidence_diagnostic_counts": confidence_diagnostic_counts,
         "interrupt_api": {
             "dos_helpers": int(interrupt_api.get("dos_helpers", 0) or 0),
             "bios_helpers": int(interrupt_api.get("bios_helpers", 0) or 0),

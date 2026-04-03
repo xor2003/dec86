@@ -26,6 +26,7 @@ import angr
 
 from .arch_86_16 import Arch86_16
 from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed_calling_conventions
+from .recovery_confidence import classify_x86_16_recovery_confidence, summarize_recovery_confidence
 from .readability_goals import classify_readability_cluster
 from .lift_86_16 import Lifter86_16  # noqa: F401
 
@@ -72,6 +73,18 @@ class FunctionScanResult:
     regeneration_failed: bool = False
     regeneration_failure_pass: str | None = None
     regeneration_failure_reason: str | None = None
+    structuring_failed: bool = False
+    structuring_failure_pass: str | None = None
+    structuring_failure_reason: str | None = None
+    last_structuring_pass: str | None = None
+    confidence_status: str | None = None
+    confidence_scan_safe_classification: str | None = None
+    confidence_evidence_count: int = 0
+    confidence_assumption_count: int = 0
+    confidence_diagnostic_count: int = 0
+    confidence_evidence_kinds: tuple[str, ...] = ()
+    confidence_assumption_kinds: tuple[str, ...] = ()
+    confidence_diagnostics: tuple[str, ...] = ()
     stages: list[StageResult] = field(default_factory=list)
 
 
@@ -118,6 +131,15 @@ def _clear_alarm() -> None:
 def _finish_scan(result: FunctionScanResult) -> FunctionScanResult:
     global _SCAN_ACTIVE
     _SCAN_ACTIVE = False
+    confidence = classify_x86_16_recovery_confidence(result)
+    result.confidence_status = confidence.status
+    result.confidence_scan_safe_classification = confidence.scan_safe_classification
+    result.confidence_evidence_count = len(confidence.evidence)
+    result.confidence_assumption_count = len(confidence.assumptions)
+    result.confidence_diagnostic_count = len(confidence.diagnostics)
+    result.confidence_evidence_kinds = tuple(item.kind for item in confidence.evidence)
+    result.confidence_assumption_kinds = tuple(item.kind for item in confidence.assumptions)
+    result.confidence_diagnostics = confidence.diagnostics
     _clear_alarm()
     return result
 
@@ -448,7 +470,7 @@ def _should_skip_scan_safe_cfg(code_len: int, mode: str, max_cfg_bytes: int) -> 
     return mode == "scan-safe" and max_cfg_bytes > 0 and code_len > max_cfg_bytes
 
 
-def _should_skip_scan_safe_call_chain(capstone_block, mode: str, max_cfg_bytes: int, min_call_count: int = 4) -> bool:
+def _should_skip_scan_safe_call_chain(capstone_block, mode: str, max_cfg_bytes: int, min_call_count: int = 3) -> bool:
     if mode != "scan-safe" or max_cfg_bytes <= 0:
         return False
 
@@ -487,7 +509,7 @@ def _should_skip_scan_safe_back_edge(capstone_block, mode: str, max_loop_bytes: 
             target = getattr(operands[0].value, "imm", None)
         if target is None:
             continue
-        if target < insn.address and insn.address < 0x1000 + max_loop_bytes:
+        if target < insn.address and insn.address < 0x1000 + (max_loop_bytes * 2):
             return True
 
     return False
@@ -572,7 +594,7 @@ def scan_function(
             loop_block = project.factory.block(0x1000, len(code))
             if _should_skip_scan_safe_back_edge(loop_block.capstone, mode, max_loop_bytes):
                 result.ok = True
-                result.fallback_kind = "lift_only"
+                result.fallback_kind = "cfg_only"
                 result.semantic_family, result.semantic_family_reason = "stack_control", "loop-heavy helper path"
                 _mark_stage(
                     result,
@@ -591,7 +613,7 @@ def scan_function(
 
         if loop_block is not None and _should_skip_scan_safe_call_chain(loop_block.capstone, mode, max_cfg_bytes):
             result.ok = True
-            result.fallback_kind = "lift_only"
+            result.fallback_kind = "cfg_only"
             result.semantic_family, result.semantic_family_reason = "stack_control", "call-heavy helper path"
             call_count = sum(1 for insn in getattr(loop_block.capstone, "insns", ()) if getattr(insn, "mnemonic", "").lower() == "call")
             _mark_stage(
@@ -664,9 +686,13 @@ def scan_function(
             codegen = getattr(dec, "codegen", None)
             if codegen is not None:
                 result.last_postprocess_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
+                result.last_structuring_pass = getattr(codegen, "_inertia_last_structuring_pass", None)
                 result.rewrite_failed = bool(getattr(codegen, "_inertia_rewrite_failed", False))
                 result.rewrite_failure_pass = getattr(codegen, "_inertia_rewrite_failure_pass", None)
                 result.rewrite_failure_reason = getattr(codegen, "_inertia_rewrite_failure_error", None)
+                result.structuring_failed = bool(getattr(codegen, "_inertia_structuring_failed", False))
+                result.structuring_failure_pass = getattr(codegen, "_inertia_structuring_failure_pass", None)
+                result.structuring_failure_reason = getattr(codegen, "_inertia_structuring_failure_error", None)
                 result.regeneration_failed = bool(getattr(codegen, "_inertia_regeneration_failed", False))
                 result.regeneration_failure_pass = getattr(codegen, "_inertia_regeneration_last_pass", None)
                 result.regeneration_failure_reason = getattr(codegen, "_inertia_regeneration_error", None)
@@ -725,6 +751,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     def _has_fallback_kind(result: FunctionScanResult) -> bool:
         return result.fallback_kind not in (None, "none")
 
+    confidence_summaries = [classify_x86_16_recovery_confidence(result) for result in results]
     failure_counter = Counter(result.failure_class for result in results if result.failure_class is not None)
     fallback_counter = Counter(result.fallback_kind for result in results if _has_fallback_kind(result))
     stage_failure_counter = Counter(
@@ -787,7 +814,13 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
     lift_only_count = sum(1 for result in results if result.fallback_kind == "lift_only")
     block_lift_count = sum(1 for result in results if result.fallback_kind == "block_lift")
     rewrite_failure_count = sum(1 for result in results if result.rewrite_failed)
+    structuring_failure_count = sum(1 for result in results if result.structuring_failed)
     regeneration_failure_count = sum(1 for result in results if result.regeneration_failed)
+    confidence_status_counter = Counter(summary.status for summary in confidence_summaries)
+    confidence_scan_safe_counter = Counter(summary.scan_safe_classification for summary in confidence_summaries)
+    confidence_assumption_counter = Counter(item.kind for summary in confidence_summaries for item in summary.assumptions)
+    confidence_evidence_counter = Counter(item.kind for summary in confidence_summaries for item in summary.evidence)
+    confidence_diagnostic_counter = Counter(diagnostic for summary in confidence_summaries for diagnostic in summary.diagnostics)
     interrupt_dos_helper_count = sum(result.interrupt_dos_helper_count for result in results)
     interrupt_bios_helper_count = sum(result.interrupt_bios_helper_count for result in results)
     interrupt_wrapper_call_count = sum(result.interrupt_wrapper_call_count for result in results)
@@ -917,6 +950,7 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "lift_only_count": lift_only_count,
         "block_lift_count": block_lift_count,
         "rewrite_failure_count": rewrite_failure_count,
+        "structuring_failure_count": structuring_failure_count,
         "regeneration_failure_count": regeneration_failure_count,
         "fallback_only_count": fallback_only_count,
         "true_failure_count": true_failure_count,
@@ -930,6 +964,12 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
             "wrapper_calls": interrupt_wrapper_call_count,
             "unresolved_wrappers": interrupt_unresolved_wrapper_count,
         },
+        "confidence": summarize_recovery_confidence(results),
+        "confidence_status_counts": dict(sorted(confidence_status_counter.items())),
+        "confidence_scan_safe_counts": dict(sorted(confidence_scan_safe_counter.items())),
+        "confidence_assumption_counts": dict(sorted(confidence_assumption_counter.items())),
+        "confidence_evidence_counts": dict(sorted(confidence_evidence_counter.items())),
+        "confidence_diagnostic_counts": dict(sorted(confidence_diagnostic_counter.items())),
         "blind_spot_budget": {
             "full_decompile_rate": _rate(full_decompile_count),
             "cfg_only_rate": _rate(cfg_only_count),

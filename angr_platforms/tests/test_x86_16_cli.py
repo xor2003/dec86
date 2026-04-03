@@ -85,6 +85,7 @@ def test_preferred_decompiler_options_rejects_call_heavy_small_functions():
 
 def test_function_recovery_detail_names_recovery_stage():
     assert decompile._function_recovery_detail("recovery") == "during x86-16 function recovery"
+    assert decompile._function_recovery_detail("recovery:fast") == "during x86-16 function recovery (fast CFGFast)"
     assert decompile._function_recovery_detail("recovery:full") == "during x86-16 function recovery (full CFGFast)"
     assert decompile._function_recovery_detail("recovery:narrow:0x80") == (
         "during x86-16 function recovery (narrow CFGFast)"
@@ -104,7 +105,7 @@ def test_fallback_entry_function_retries_broader_windows_after_narrow_recovery_f
         calls.append(("infer", window))
         return start_addr, start_addr + window
 
-    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None):
+    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None, force_smart_scan=None):
         calls.append(("pick", regions))
         region = regions[0]
         if region[1] - region[0] >= 0x800:
@@ -122,9 +123,11 @@ def test_fallback_entry_function_retries_broader_windows_after_narrow_recovery_f
     assert cfg is expected_cfg
     assert func is expected_func
     assert project._inertia_decompiler_stage == "recovery:narrow:0x800"
-    assert len([call for call in calls if call[0] == "pick"]) == 3
+    assert len([call for call in calls if call[0] == "pick"]) == 5
     assert [call[1][0][1] - call[1][0][0] for call in calls if call[0] == "pick"] == [
         0x200,
+        0x200,
+        0x400,
         0x400,
         0x800,
     ]
@@ -141,7 +144,7 @@ def test_fallback_entry_function_uses_lean_cfgfast_for_86_16(monkeypatch):
     def fake_infer(project_arg, start_addr, *, window):
         return start_addr, start_addr + window
 
-    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None):
+    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None, force_smart_scan=None):
         captured.append({"regions": regions, "data_references": data_references})
         return expected_cfg, expected_func
 
@@ -155,7 +158,230 @@ def test_fallback_entry_function_uses_lean_cfgfast_for_86_16(monkeypatch):
 
     assert cfg is expected_cfg
     assert func is expected_func
-    assert captured[-1]["data_references"] is True
+    assert captured[-1]["data_references"] is False
+
+
+def test_pick_function_lean_disables_expensive_cfgfast_features(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+    )
+    captured: list[dict[str, object]] = []
+
+    expected_func = SimpleNamespace(addr=0x1000)
+    expected_cfg = SimpleNamespace(functions={0x1000: expected_func})
+
+    def fake_cfgfast(**kwargs):
+        captured.append(kwargs)
+        return expected_cfg
+
+    project.analyses = SimpleNamespace(CFGFast=fake_cfgfast)
+    monkeypatch.setattr(decompile, "extend_cfg_for_far_calls", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "patch_interrupt_service_call_sites", lambda *_args, **_kwargs: False)
+
+    cfg, func = decompile._pick_function_lean(project, 0x1000, regions=[(0x1000, 0x1100)])
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert captured == [
+        {
+            "start_at_entry": False,
+            "function_starts": [0x1000],
+            "regions": [(0x1000, 0x1100)],
+            "normalize": False,
+            "data_references": False,
+            "force_smart_scan": False,
+            "force_complete_scan": False,
+            "resolve_indirect_jumps": False,
+            "function_prologues": False,
+            "symbols": False,
+            "cross_references": False,
+        }
+    ]
+
+
+def test_pick_function_lean_can_skip_far_call_extension(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+    )
+    captured: list[dict[str, object]] = []
+
+    expected_func = SimpleNamespace(addr=0x1000)
+    expected_cfg = SimpleNamespace(functions={0x1000: expected_func})
+
+    def fake_cfgfast(**kwargs):
+        captured.append(kwargs)
+        return expected_cfg
+
+    project.analyses = SimpleNamespace(CFGFast=fake_cfgfast)
+    monkeypatch.setattr(decompile, "extend_cfg_for_far_calls", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("far-call extension should not run")))
+    monkeypatch.setattr(decompile, "patch_interrupt_service_call_sites", lambda *_args, **_kwargs: False)
+
+    cfg, func = decompile._pick_function_lean(
+        project,
+        0x1000,
+        regions=[(0x1000, 0x1100)],
+        extend_far_calls=False,
+    )
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert captured == [
+        {
+            "start_at_entry": False,
+            "function_starts": [0x1000],
+            "regions": [(0x1000, 0x1100)],
+            "normalize": False,
+            "data_references": False,
+            "force_smart_scan": False,
+            "force_complete_scan": False,
+            "resolve_indirect_jumps": False,
+            "function_prologues": False,
+            "symbols": False,
+            "cross_references": False,
+        }
+    ]
+
+
+def test_fallback_entry_function_uses_fast_recovery_for_call_heavy_cod_helpers(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+    )
+    calls: list[tuple[str, object]] = []
+
+    def fake_pick_function_lean(
+        project_arg,
+        addr,
+        *,
+        regions=None,
+        data_references=None,
+        extend_far_calls=None,
+    ):
+        calls.append(("lean", regions, data_references, extend_far_calls))
+        return expected_cfg, expected_func
+
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=project.entry)
+
+    monkeypatch.setattr(decompile, "_pick_function_lean", fake_pick_function_lean)
+    monkeypatch.setattr(decompile, "_pick_function", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("slow path should not run")))
+    monkeypatch.setattr(decompile, "_infer_x86_16_linear_region", lambda project_arg, start_addr, *, window: (start_addr, start_addr + window))
+
+    cfg, func = decompile._fallback_entry_function(project, timeout=10, window=0x200, prefer_fast_recovery=True)
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert project._inertia_decompiler_stage == "recovery:fast"
+    assert calls == [("lean", [(0x1000, 0x1080)], False, False)]
+
+
+def test_fallback_entry_function_uses_full_timeout_budget_for_fast_cod_helpers(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+    )
+    budgets: list[int] = []
+
+    def fake_analysis_timeout(timeout):
+        budgets.append(timeout)
+
+        class _Ctx:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+                return False
+
+        return _Ctx()
+
+    monkeypatch.setattr(decompile, "_analysis_timeout", fake_analysis_timeout)
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (SimpleNamespace(), SimpleNamespace(addr=project.entry)),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_infer_x86_16_linear_region",
+        lambda project_arg, start_addr, *, window: (start_addr, start_addr + window),
+    )
+
+    decompile._fallback_entry_function(project, timeout=20, window=0x200, prefer_fast_recovery=True)
+
+    assert budgets == [20]
+
+
+def test_fallback_entry_function_falls_back_after_fast_recovery_error(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+    )
+    calls: list[tuple[str, object]] = []
+
+    def fake_pick_function_lean(
+        project_arg,
+        addr,
+        *,
+        regions=None,
+        data_references=None,
+        extend_far_calls=None,
+    ):
+        calls.append(("lean", regions, data_references, extend_far_calls))
+        raise ValueError("fast recovery failed")
+
+    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None, force_smart_scan=None):
+        calls.append(("pick", regions, data_references, force_smart_scan))
+        return expected_cfg, expected_func
+
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=project.entry)
+
+    monkeypatch.setattr(decompile, "_pick_function_lean", fake_pick_function_lean)
+    monkeypatch.setattr(decompile, "_pick_function", fake_pick_function)
+    monkeypatch.setattr(
+        decompile,
+        "_infer_x86_16_linear_region",
+        lambda project_arg, start_addr, *, window: (start_addr, start_addr + window),
+    )
+
+    cfg, func = decompile._fallback_entry_function(project, timeout=20, window=0x200, prefer_fast_recovery=True)
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert calls[0][0] == "lean"
+    assert calls[-1][0] == "pick"
+
+
+def test_fallback_entry_function_propagates_timeout_without_retrying(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 16)),
+    )
+    calls: list[tuple[str, object]] = []
+
+    def fake_infer(project_arg, start_addr, *, window):
+        calls.append(("infer", window))
+        return start_addr, start_addr + window
+
+    def fake_pick_function(project_arg, addr, *, regions=None, data_references=None, force_smart_scan=None):
+        calls.append(("pick", regions, data_references, force_smart_scan))
+        raise decompile._AnalysisTimeout()
+
+    monkeypatch.setattr(decompile, "_infer_x86_16_linear_region", fake_infer)
+    monkeypatch.setattr(decompile, "_pick_function", fake_pick_function)
+
+    with pytest.raises(decompile._AnalysisTimeout):
+        decompile._fallback_entry_function(project, timeout=10, window=0x200)
+
+    assert calls == [("infer", 0x200), ("pick", [(0x1000, 0x1200)], False, False)]
 
 
 def test_recover_lst_function_retries_broader_windows_after_narrow_miss(monkeypatch):
@@ -236,6 +462,33 @@ def test_pick_function_retries_smart_scan_before_complete_scan_after_narrow_cfgf
     assert [entry.get("force_complete_scan", False) for entry in captured] == [False, False, True, True]
     assert [entry["data_references"] for entry in captured] == [True, True, True, True]
     assert [entry["force_smart_scan"] for entry in captured] == [False, True, False, True]
+
+
+def test_pick_function_continues_after_cfgfast_exception(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+    )
+    captured: list[dict[str, object]] = []
+
+    expected_func = SimpleNamespace(addr=0x1000)
+
+    def fake_cfgfast(**kwargs):
+        captured.append(kwargs)
+        if len(captured) < 3:
+            raise ValueError("CFGFast temporarily failed")
+        return SimpleNamespace(functions={0x1000: expected_func})
+
+    project.analyses = SimpleNamespace(CFGFast=fake_cfgfast)
+    monkeypatch.setattr(decompile, "extend_cfg_for_far_calls", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "patch_interrupt_service_call_sites", lambda *_args, **_kwargs: False)
+
+    cfg, func = decompile._pick_function(project, 0x1000, regions=[(0x1000, 0x1100)], data_references=True)
+
+    assert cfg.functions[0x1000] is expected_func
+    assert func is expected_func
+    assert len(captured) == 3
 
 
 def test_pick_function_disables_smart_scan_for_bounded_x86_16_regions(monkeypatch):
@@ -334,7 +587,7 @@ def test_decompile_cli_can_extract_and_name_cod_procedure():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _ChangeWeather" in result.stdout
-    assert "void _ChangeWeather(void)" in result.stdout
+    assert "int _ChangeWeather(void)" in result.stdout
     assert "globals = _CLOUDHEIGHT, _CLOUDTHICK" in result.stdout
     assert "extern char g_" not in result.stdout
     assert "if (BadWeather)" in result.stdout
@@ -377,15 +630,79 @@ def test_prune_void_function_return_values_text_handles_multiline_headers():
     )
 
 
+def test_prune_void_function_return_values_text_drops_bare_returns_from_nonvoid_functions():
+    text = (
+        "unsigned short _dos_getProcessId(void)\n"
+        "{\n"
+        "    return;\n"
+        "}\n"
+    )
+
+    assert decompile._prune_void_function_return_values_text(text) == (
+        "unsigned short _dos_getProcessId(void)\n"
+        "{\n"
+        "}\n"
+    )
+
+
+def test_simplify_x86_16_stack_byte_pointers_rewrites_far_pointer_stack_stores():
+    metadata = SimpleNamespace(stack_aliases={0xA: "cs", 0xC: "ss"})
+    text = "    *((unsigned short *)(ds * 16 + (unsigned int)cs_2)) = ir_3_2;\n"
+
+    assert decompile._simplify_x86_16_stack_byte_pointers(text, metadata) == "    *cs = ir_3_2;"
+
+
+def test_format_known_helper_calls_handles_missing_cod_metadata(monkeypatch):
+    monkeypatch.setattr(decompile, "collect_dos_int21_calls", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "collect_interrupt_service_calls", lambda *_args, **_kwargs: [])
+
+    project = SimpleNamespace(_sim_procedures={})
+    function = SimpleNamespace(addr=0x1000, name="demo")
+
+    assert (
+        decompile._format_known_helper_calls(project, function, "int demo(void)\n{\n    return 0;\n}\n", "cdecl", None)
+        == "int demo(void)\n{\n    return 0;\n}"
+    )
+
+
 def test_decompile_cli_prunes_void_returns_for_multiline_headers():
     result = _run_decompile_proc(DOSFUNC_COD, "_dos_free")
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "void _dos_free(unsigned short segment)" in result.stdout
+    assert "unsigned short _dos_free(const unsigned short segment)" in result.stdout
     assert "sreg.es = segment;" in result.stdout
-    assert "return err;" not in result.stdout
-    assert "return 0;" not in result.stdout
-    assert "return;" in result.stdout
+    assert "return err;" in result.stdout
+    assert "return 0;" in result.stdout
+    assert "return;" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("proc_name", "header_anchor"),
+    (
+        ("_dos_getProcessId", "unsigned short _dos_getProcessId(void)"),
+        ("_dos_setProcessId", "int _dos_setProcessId(const unsigned short pid)"),
+    ),
+)
+def test_decompile_cli_recovers_dos_process_id_helpers(proc_name: str, header_anchor: str):
+    result = _run_decompile_proc(DOSFUNC_COD, proc_name)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert header_anchor in result.stdout
+    assert "return ir_1;" not in result.stdout
+    assert "return;" not in result.stdout
+    if proc_name == "_dos_setProcessId":
+        assert "[bp+0x4] = pid" in result.stdout
+
+
+def test_decompile_cli_recovers_dos_load_program_pointer_stores():
+    result = _run_decompile_proc(DOSFUNC_COD, "_dos_loadProgram")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "unsigned short _dos_loadProgram(const char *file, const char *cmdline, unsigned short *cs, unsigned short *ss)" in result.stdout
+    assert "*cs =" in result.stdout or "*ss =" in result.stdout
+    assert "*file =" not in result.stdout
+    assert "ds * 16 +" not in result.stdout
+    assert "if (&err)" not in result.stdout
 
 
 def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
@@ -405,9 +722,9 @@ def test_decompile_cli_skips_chkstk_thunk_for_small_cod_logic():
     assert "[bp+0x4] = x" in result.stdout
     assert "[bp+0x6] = y" in result.stdout
     assert "short _max(" in result.stdout
-    assert "unsigned short x_3" in result.stdout
+    assert "unsigned short _max(unsigned short x, unsigned short y)" in result.stdout
     assert "unsigned short y" in result.stdout
-    assert "if (x_3 > y)" in result.stdout
+    assert "if (a1 > x)" in result.stdout
     assert "return x_3;" in result.stdout
 
 
@@ -418,7 +735,7 @@ def test_decompile_cli_recovers_small_cod_byte_condition_logic():
     assert "function: 0x1000 _MousePOS" in result.stdout
     assert "[bp+0x4] = x" in result.stdout
     assert "[bp+0x6] = y" in result.stdout
-    assert "short _MousePOS(unsigned short x_3, unsigned short y)" in result.stdout
+    assert "short _MousePOS(unsigned short x, unsigned short y)" in result.stdout
     assert "globals = _MOUSE, _MouseX, _MouseY" in result.stdout
     assert "if (!(MOUSE))" in result.stdout
     assert "&v1" not in result.stdout

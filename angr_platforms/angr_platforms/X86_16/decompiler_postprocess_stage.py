@@ -52,7 +52,6 @@ def _build_decompiler_postprocess_passes():
             _simplify._simplify_boolean_cites_8616,
             False,
         ),
-        DecompilerPostprocessPassSpec("_simplify_structured_expressions_8616", _simplify._simplify_structured_expressions_8616, False),
         DecompilerPostprocessPassSpec(
             "_normalize_function_prototype_arg_names_8616",
             _post._normalize_function_prototype_arg_names_8616,

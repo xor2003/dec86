@@ -27,6 +27,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "lift_only_count": 0,
         "block_lift_count": 1,
         "rewrite_failure_count": 1,
+        "structuring_failure_count": 0,
         "regeneration_failure_count": 2,
         "blind_spot_budget": {
             "full_decompile_rate": 0.7,
@@ -42,6 +43,18 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "wrapper_calls": 6,
             "unresolved_wrappers": 1,
         },
+        "confidence": {
+            "status_counts": {"partial_recovery": 1, "target_recovered_strong": 2},
+            "scan_safe_counts": {"partial": 1, "strong": 2},
+            "assumption_counts": {"far_pointer_unresolved": 1},
+            "evidence_counts": {"decompiled_output": 2},
+            "diagnostic_counts": {"failure_class=cfg_failure": 1},
+        },
+        "confidence_status_counts": {"partial_recovery": 1, "target_recovered_strong": 2},
+        "confidence_scan_safe_counts": {"partial": 1, "strong": 2},
+        "confidence_assumption_counts": {"far_pointer_unresolved": 1},
+        "confidence_evidence_counts": {"decompiled_output": 2},
+        "confidence_diagnostic_counts": {"failure_class=cfg_failure": 1},
         "results": [
             {
                 "cod_file": "cod/f14/MONOPRIN.COD",
@@ -118,8 +131,15 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         },
         "postprocess_failures": {
             "rewrite_failure_count": 1,
+            "structuring_failure_count": 0,
             "regeneration_failure_count": 2,
         },
+        "confidence": scan_summary["confidence"],
+        "confidence_status_counts": scan_summary["confidence_status_counts"],
+        "confidence_scan_safe_counts": scan_summary["confidence_scan_safe_counts"],
+        "confidence_assumption_counts": scan_summary["confidence_assumption_counts"],
+        "confidence_evidence_counts": scan_summary["confidence_evidence_counts"],
+        "confidence_diagnostic_counts": scan_summary["confidence_diagnostic_counts"],
         "blind_spot_budget": scan_summary["blind_spot_budget"],
         "stable_by_traversal": False,
         "merge_gate": False,
@@ -252,8 +272,12 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
     }
     assert report["postprocess_failures"] == {
         "rewrite_failure_count": 1,
+        "structuring_failure_count": 0,
         "regeneration_failure_count": 2,
     }
+    assert report["confidence"] == scan_summary["confidence"]
+    assert report["confidence_status_counts"] == scan_summary["confidence_status_counts"]
+    assert report["confidence_scan_safe_counts"] == scan_summary["confidence_scan_safe_counts"]
     assert report["interrupt_api"] == {
         "dos_helpers": 4,
         "bios_helpers": 2,
@@ -572,9 +596,11 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "store_side_widening",
         "segment_aware_object_roots",
         "trait_to_type_handoff",
+        "control_flow_structuring",
         "prototype_evidence_layer",
         "far_near_prototype_recovery",
         "wrapper_and_return_recovery",
+        "confidence_axis",
         "thin_late_rewrite_boundary",
     ]
     assert [item["name"] for item in report["object_recovery_focus"]] == [

@@ -1,22 +1,36 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
+import time
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import decompile
+from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_type import SimTypeChar, SimTypeShort
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.cod_extract import extract_cod_proc_metadata
+from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
+from angr_platforms.X86_16.decompiler_return_compat import apply_x86_16_decompiler_return_compatibility
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
 COD_DIR = REPO_ROOT / "cod"
+RUNNER_PATH = REPO_ROOT / "scripts" / "decompile_cod_dir.py"
+
+_runner_spec = spec_from_file_location("decompile_cod_dir_test_runner", RUNNER_PATH)
+assert _runner_spec is not None and _runner_spec.loader is not None
+_runner = module_from_spec(_runner_spec)
+sys.modules[_runner_spec.name] = _runner
+_runner_spec.loader.exec_module(_runner)
 
 
 def _run_cod_proc(path: Path, proc: str, *, timeout: int = 20) -> subprocess.CompletedProcess[str]:
@@ -52,13 +66,9 @@ def _assert_has_none(text: str, anchors: tuple[str, ...]) -> None:
     ("cod_name", "proc_name", "timeout"),
     (
         ("BIOSFUNC.COD", "_bios_clearkeyflags", 20),
-        ("DOSFUNC.COD", "_dos_alloc", 20),
-        ("DOSFUNC.COD", "_dos_resize", 20),
         ("DOSFUNC.COD", "_dos_getfree", 20),
-        ("DOSFUNC.COD", "loadprog", 20),
         ("DOSFUNC.COD", "_dos_loadOverlay", 20),
         ("DOSFUNC.COD", "_dos_getReturnCode", 20),
-        ("DOSFUNC.COD", "_dos_mcbInfo", 20),
         ("OVERLAY.COD", "_overlay_load", 20),
         ("EGAME2.COD", "_openFileWrapper", 20),
     ),
@@ -72,16 +82,74 @@ def test_cod_regression_targets_are_recoverable(cod_name: str, proc_name: str, t
 
 
 def test_cod_timeout_target_is_classified_deterministically():
-    result = _run_cod_proc(COD_DIR / "EGAME11.COD", "_drawCockpit", timeout=20)
+    for cod_name, proc_name in (("EGAME11.COD", "_drawCockpit"),):
+        start = time.monotonic()
+        result = _run_cod_proc(COD_DIR / cod_name, proc_name, timeout=20)
+        elapsed = time.monotonic() - start
 
-    assert result.returncode != 0
-    _assert_has_all(
-        result.stdout,
-        (
-            "Timed out while recovering a function after 20s.",
-            "Tip: try a larger --timeout for larger binaries.",
-        ),
+        assert result.returncode == 3, result.stderr + result.stdout
+        _assert_has_all(
+            result.stdout,
+            (
+                "Timed out while recovering a function after 20s",
+                "Tip: try a larger --timeout for larger binaries.",
+            ),
+        )
+        assert "during x86-16 function recovery" in result.stdout
+        assert elapsed < 60, elapsed
+
+
+@pytest.mark.parametrize(
+    "proc_name",
+    ("_dos_alloc", "_dos_resize", "_dos_mcbInfo"),
+)
+def test_cod_runner_hotspots_fall_back_through_scan_safe_classifier(monkeypatch, tmp_path, proc_name: str):
+    item = _runner.CodWorkItem(
+        cod_path=tmp_path / "DOSFUNC.COD",
+        proc_name=proc_name,
+        proc_kind="NEAR",
+        proc_index=1,
+        proc_total=1,
+        code=b"\x90",
     )
+    scan_result = _runner.FunctionScanResult(
+        cod_file="DOSFUNC.COD",
+        proc_name=proc_name,
+        proc_kind="NEAR",
+        byte_len=1,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="decompile",
+        fallback_kind="cfg_only",
+        semantic_family="stack_control",
+        semantic_family_reason="call-heavy helper path",
+        function_count=1,
+        decompiled_count=0,
+        confidence_status="bounded_recovery",
+        confidence_scan_safe_classification="strong",
+        stages=[],
+    )
+
+    def fake_run(*args, **kwargs):  # noqa: ANN001
+        stdout_file = kwargs["stdout"]
+        stdout_file.write("/* Timed out while recovering a function after 20s. */\n")
+        return subprocess.CompletedProcess(args=args[0], returncode=3, stdout="", stderr="")
+
+    monkeypatch.setattr(_runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(_runner, "_run_scan_safe_fallback", lambda *_args, **_kwargs: scan_result)
+
+    result = _runner._run_work_item(item, timeout=20, max_memory_mb=1024)
+    rendered = _runner._render_result_block(result)
+
+    assert result.exit_kind == "fallback"
+    assert result.child_exit_kind == "timeout"
+    assert result.scan_safe_result is scan_result
+    assert "fallback kind: cfg_only" in rendered
+    assert "confidence status: bounded_recovery" in rendered
+    assert "confidence scan-safe: strong" in rendered
+    assert "child exit kind: timeout" in rendered
+    assert "worker process terminated abruptly" not in rendered
 
 
 def test_cod_biosfunc_clearkeyflags_far_word_store():
@@ -101,10 +169,12 @@ def test_cod_dos_getfree_call_and_return_recovered():
         result.stdout,
         (
             "function: 0x1000 _dos_getfree",
+            "unsigned short _dos_getfree(void)",
             "intdos(&rin, &rout)",
             "rin.h.ah",
             "rin.x.bx",
             "rout.x.cflag",
+            "return rout.x.bx",
         ),
     )
     _assert_has_none(
@@ -115,9 +185,27 @@ def test_cod_dos_getfree_call_and_return_recovered():
             "s_2 = &",
             "s_8 = 28675;",
             "err = 28673;",
-            "return rout.x.bx",
+            "void _dos_getfree(void)",
         ),
     )
+    assert "rout" in result.stdout
+    assert "rin" in result.stdout
+    assert "S425_rout" not in result.stdout
+
+
+def test_cod_process_id_source_headers_are_captured():
+    get_meta = extract_cod_proc_metadata(COD_DIR / "DOSFUNC.COD", "_dos_getProcessId")
+    set_meta = extract_cod_proc_metadata(COD_DIR / "DOSFUNC.COD", "_dos_setProcessId")
+
+    assert "uint16 dos_getProcessId(void) {" in get_meta.source_lines
+    assert "int dos_setProcessId(const uint16 pid) {" in set_meta.source_lines
+
+
+def test_cod_extract_canonicalizes_known_object_names():
+    get_meta = extract_cod_proc_metadata(COD_DIR / "DOSFUNC.COD", "_dos_getfree")
+
+    assert "rout" in get_meta.global_names
+    assert "S425_rout" not in get_meta.global_names
 
 
 def test_cod_strlen_stack_local_copy_is_declared():
@@ -129,9 +217,16 @@ def test_cod_strlen_stack_local_copy_is_declared():
         (
             "function: 0x1000 _strlen",
             "unsigned short _strlen(unsigned short s)",
-            "unsigned short a1;",
+            "s += 1;",
+            "if (!(s + 1))",
+            "n += 1;",
+            "return (n);",
         ),
     )
+    assert re.search(r"\bir_\d+\b", result.stdout) is None
+    assert "ir_3 = s_3;" not in result.stdout
+    assert "ir_4 = s_3;" not in result.stdout
+    assert "s_3" not in result.stdout
 
 
 def test_cod_known_object_catalog_is_exposed():
@@ -158,8 +253,19 @@ def test_cod_known_object_catalog_is_exposed():
             "sreg",
             "exeLoadParams",
             "ovlLoadParams",
+            "ovlHeader",
+            "slotArray",
         ),
     )
+
+
+def test_cod_overlay_header_known_object_is_pointer_typed():
+    spec = known_cod_object_spec("ovlHeader")
+
+    assert spec is not None
+    assert spec.type.__class__.__name__ == "SimTypePointer"
+    assert getattr(spec.type, "pts_to", None) is not None
+    assert getattr(spec.type.pts_to, "name", None) == "struct OvlHeader"
 
 
 def test_cod_dos_loadoverlay_wrapper_returns_loadprog():
@@ -189,6 +295,45 @@ def test_cod_dos_loadoverlay_wrapper_returns_loadprog():
             "v12 << 16",
             "s_4 =",
             "s_6 =",
+        ),
+    )
+
+
+def test_cod_loadprog_uses_known_helper_signature_and_no_missing_type():
+    result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "loadprog")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    _assert_has_all(
+        result.stdout,
+        (
+            "function: 0x1000 loadprog",
+            "int loadprog(const char *file, unsigned short segment, unsigned short mode, unsigned short flags)",
+            "int err;",
+            "rin.h.al = mode",
+            "rin.x.dx = (unsigned int)file",
+            "err = intdos(&rin, &rout);",
+            "ERROR(\"dos_loadprog: unable to load %s at 0x%x, error 0x%x\", file, segment, err);",
+            "return err;",
+        ),
+    )
+    assert re.search(
+        r"rin\.x\.dx = \(unsigned int\)file;\s+err = intdos\(&rin, &rout\);\s+if \(rout\.x\.cflag != 0\)",
+        result.stdout,
+        re.S,
+    ), result.stdout
+    assert not re.search(
+        r"rin\.x\.dx = \(unsigned int\)file;\s*if \(rout\.x\.cflag != 0\)",
+        result.stdout,
+        re.S,
+    ), result.stdout
+    _assert_has_none(
+        result.stdout,
+        (
+            "<missing-type>",
+            "file_2",
+            "type_2",
+            "unsigned short loadprog(unsigned short file, unsigned short file_2, unsigned short type, unsigned short type_2)",
+            "return err_2;",
         ),
     )
 
@@ -271,6 +416,22 @@ def test_dedupe_duplicate_local_declarations_text_prefers_annotated_slot():
     assert deduped.count("char err;  // [bp-0x2] err") == 1
 
 
+def test_prune_unused_local_declarations_text_keeps_return_statements():
+    c_text = (
+        "unsigned short _overlay_load(void)\n"
+        "{\n"
+        "    unsigned short ovlSegment;\n"
+        "    dos_getfree();\n"
+        "    return ovlSegment;\n"
+        "}\n"
+    )
+
+    pruned = decompile._prune_unused_local_declarations_text(c_text)
+
+    assert "unsigned short ovlSegment;" in pruned
+    assert "return ovlSegment;" in pruned
+
+
 def test_prune_dead_local_assignments_removes_unused_constant_stores():
     class _FakeCodegen:
         def __init__(self):
@@ -318,6 +479,512 @@ def test_prune_dead_local_assignments_removes_unused_constant_stores():
     assert codegen.cfunc.statements.statements[0].lhs.variable is live_var
 
 
+def test_prune_dead_local_assignments_removes_overwritten_local_stores():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    local_var = SimStackVariable(-2, 2, base="bp", name="local", region=0x1000)
+    local_cvar = structured_c.CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    overwritten = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                local_cvar,
+                structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                local_cvar,
+                structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CReturn(local_cvar, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=overwritten,
+        variables_in_use={local_var: local_cvar},
+    )
+
+    changed = decompile._prune_dead_local_assignments(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    assert codegen.cfunc.statements.statements[0].rhs.value == 2
+    assert codegen.cfunc.statements.statements[1].retval.variable is local_var
+
+
+def test_prune_dead_local_assignments_removes_overwritten_storage_aliases():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    first_var = SimStackVariable(-2, 2, base="bp", name="first", region=0x1000)
+    second_var = SimStackVariable(-2, 2, base="bp", name="second", region=0x1000)
+    first_cvar = structured_c.CVariable(first_var, variable_type=SimTypeShort(False), codegen=codegen)
+    second_cvar = structured_c.CVariable(second_var, variable_type=SimTypeShort(False), codegen=codegen)
+    overwritten = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                first_cvar,
+                structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                second_cvar,
+                structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CReturn(second_cvar, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=overwritten,
+        variables_in_use={
+            first_var: first_cvar,
+            second_var: second_cvar,
+        },
+    )
+
+    changed = decompile._prune_dead_local_assignments(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    assert codegen.cfunc.statements.statements[0].rhs.value == 2
+    assert codegen.cfunc.statements.statements[1].retval.variable is second_var
+
+
+def test_resolve_stack_cvar_at_offset_prefers_canonical_argument_storage():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+            self.cfunc = SimpleNamespace(arg_list=[], variables_in_use={})
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    arg_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    alias_var = SimStackVariable(4, 2, base="bp", name="s_3", region=0x1000)
+    arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+    alias_cvar = structured_c.CVariable(alias_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.arg_list = [arg_cvar]
+    codegen.cfunc.variables_in_use = {
+        arg_var: arg_cvar,
+        alias_var: alias_cvar,
+    }
+
+    resolved = decompile._resolve_stack_cvar_at_offset(codegen, 4)
+    canonical = decompile._canonicalize_stack_cvar_expr(alias_cvar, codegen)
+
+    assert resolved is arg_cvar
+    assert canonical is arg_cvar
+
+
+def test_collapse_annotated_stack_aliases_text_prefers_argument_name():
+    c_text = (
+        "unsigned short _strlen(unsigned short s)\n"
+        "{\n"
+        "    unsigned short n;  // [bp-0x2] n\n"
+        "    unsigned short s_3; // [bp+0x4] s\n"
+        "\n"
+        "    n = 0;\n"
+        "    while (true)\n"
+        "    {\n"
+        "        s_3 += 1;\n"
+        "        if (!(s_3 + 1))\n"
+        "            break;\n"
+        "        n = s_3 + 1;\n"
+        "    }\n"
+        "    return (n);\n"
+        "}\n"
+    )
+
+    collapsed = decompile._collapse_annotated_stack_aliases_text(c_text)
+
+    assert "unsigned short s_3;" not in collapsed
+    assert "s += 1;" in collapsed
+    assert "if (!(s + 1))" in collapsed
+    assert "n = s + 1;" in collapsed
+
+
+def test_simplify_x86_16_stack_byte_pointers_rewrites_segment_math():
+    c_text = "    *((unsigned short *)(ds * 16 + (unsigned int)cs_2)) = ir_3_2;\n"
+
+    assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
+        "    *((unsigned short far *)MK_FP(ds, (unsigned int)cs_2)) = ir_3_2;\n"
+    )
+
+
+def test_decompiler_return_compat_falls_back_when_return_expression_is_unsupported():
+    original_handle_return = ReturnMaker._handle_Return
+    calls: list[tuple[int, object, object]] = []
+
+    def fake_handle_return(self, stmt_idx, stmt, block):
+        calls.append((stmt_idx, stmt, block))
+        return "orig"
+
+    try:
+        ReturnMaker._handle_Return = fake_handle_return
+        apply_x86_16_decompiler_return_compatibility()
+
+        fake_stmt = SimpleNamespace(ret_exprs=[], copy=lambda: SimpleNamespace(ret_exprs=[]), tags={"ins_addr": 0x1000})
+        fake_block = SimpleNamespace(statements=[fake_stmt], copy=lambda **kwargs: SimpleNamespace(**kwargs))
+        fake_cc = SimpleNamespace(return_val=lambda _returnty: object())
+        fake_function = SimpleNamespace(prototype=SimpleNamespace(returnty=SimpleNamespace()), calling_convention=fake_cc)
+        fake_self = SimpleNamespace(function=fake_function, arch=SimpleNamespace(byte_width=2), _next_atom=lambda: 1, _new_block=None)
+
+        result = ReturnMaker._handle_Return(fake_self, 0, fake_stmt, fake_block)
+
+        assert result == "orig"
+        assert calls
+        assert fake_self._new_block is None
+    finally:
+        ReturnMaker._handle_Return = original_handle_return
+
+
+def test_duplicate_word_increment_shift_expr_collapses_to_word_increment():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    source_var = SimStackVariable(4, 2, base="bp", name="s_3", region=0x1000)
+    low_tmp_var = SimStackVariable(6, 1, base="bp", name="ir_3", region=0x1000)
+    high_tmp_var = SimStackVariable(8, 1, base="bp", name="ir_4", region=0x1000)
+
+    source_cvar = structured_c.CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    low_tmp = structured_c.CVariable(low_tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_tmp = structured_c.CVariable(high_tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
+
+    alias_map = {
+        id(low_tmp_var): source_cvar,
+        id(high_tmp_var): source_cvar,
+    }
+
+    def resolve_copy_alias_expr(expr):
+        variable = getattr(expr, "variable", None)
+        if variable is None:
+            return expr
+        return alias_map.get(id(variable), expr)
+
+    expr = structured_c.CBinaryOp(
+        "Shr",
+        structured_c.CBinaryOp(
+            "Add",
+            structured_c.CBinaryOp(
+                "Or",
+                low_tmp,
+                structured_c.CBinaryOp(
+                    "Mul",
+                    high_tmp,
+                    structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    matched = decompile._match_duplicate_word_increment_shift_expr(expr, resolve_copy_alias_expr, codegen)
+
+    assert isinstance(matched, structured_c.CBinaryOp)
+    assert matched.op == "Add"
+    assert matched.lhs.variable is source_var
+    assert matched.rhs.value == 1
+
+
+def test_duplicate_word_increment_shift_expr_rejects_mismatched_storage_aliases():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    left_var = SimStackVariable(4, 2, base="bp", name="left", region=0x1000)
+    right_var = SimStackVariable(6, 2, base="bp", name="right", region=0x1000)
+    low_tmp_var = SimStackVariable(8, 1, base="bp", name="ir_3", region=0x1000)
+    high_tmp_var = SimStackVariable(10, 1, base="bp", name="ir_4", region=0x1000)
+
+    left_cvar = structured_c.CVariable(left_var, variable_type=SimTypeShort(False), codegen=codegen)
+    right_cvar = structured_c.CVariable(right_var, variable_type=SimTypeShort(False), codegen=codegen)
+    low_tmp = structured_c.CVariable(low_tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_tmp = structured_c.CVariable(high_tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
+
+    alias_map = {
+        id(low_tmp_var): left_cvar,
+        id(high_tmp_var): right_cvar,
+    }
+
+    def resolve_copy_alias_expr(expr):
+        variable = getattr(expr, "variable", None)
+        if variable is None:
+            return expr
+        return alias_map.get(id(variable), expr)
+
+    expr = structured_c.CBinaryOp(
+        "Shr",
+        structured_c.CBinaryOp(
+            "Add",
+            structured_c.CBinaryOp(
+                "Or",
+                low_tmp,
+                structured_c.CBinaryOp(
+                    "Mul",
+                    high_tmp,
+                    structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    matched = decompile._match_duplicate_word_increment_shift_expr(expr, resolve_copy_alias_expr, codegen)
+
+    assert matched is None
+
+
+def test_adjacent_byte_pair_alias_seed_widens_into_one_word():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    low_tmp_var = SimStackVariable(6, 1, base="bp", name="ir_3", region=0x1000)
+    high_tmp_var = SimStackVariable(8, 1, base="bp", name="ir_4", region=0x1000)
+    low_tmp = structured_c.CVariable(low_tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_tmp = structured_c.CVariable(high_tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
+
+    low_load = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CTypeCast(
+            None,
+            SimTypeShort(False),
+            structured_c.CConstant(0x2000, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    object.__setattr__(low_load, "_type", SimTypeChar())
+    high_load = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CTypeCast(
+            None,
+            SimTypeShort(False),
+            structured_c.CConstant(0x2001, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    object.__setattr__(high_load, "_type", SimTypeChar())
+
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements(
+            [
+                structured_c.CAssignment(low_tmp, low_load, codegen=codegen),
+                structured_c.CAssignment(high_tmp, high_load, codegen=codegen),
+            ],
+            codegen=codegen,
+        ),
+    )
+
+    aliases = decompile._seed_adjacent_byte_pair_aliases(codegen.project, codegen)
+
+    assert id(low_tmp_var) in aliases
+    assert id(high_tmp_var) in aliases
+    assert decompile._same_c_expression(aliases[id(low_tmp_var)], aliases[id(high_tmp_var)])
+    assert isinstance(aliases[id(low_tmp_var)], structured_c.CUnaryOp)
+    assert getattr(aliases[id(low_tmp_var)], "op", None) == "Dereference"
+
+    def resolve_copy_alias_expr(expr):
+        variable = getattr(expr, "variable", None)
+        if variable is None:
+            return expr
+        return aliases.get(id(variable), expr)
+
+    expr = structured_c.CBinaryOp(
+        "Shr",
+        structured_c.CBinaryOp(
+            "Add",
+            structured_c.CBinaryOp(
+                "Or",
+                low_tmp,
+                structured_c.CBinaryOp(
+                    "Mul",
+                    high_tmp,
+                    structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    matched = decompile._match_duplicate_word_increment_shift_expr(expr, resolve_copy_alias_expr, codegen)
+
+    assert isinstance(matched, structured_c.CBinaryOp)
+    assert matched.op == "Add"
+    assert isinstance(matched.lhs, structured_c.CUnaryOp)
+    assert getattr(matched.lhs, "op", None) == "Dereference"
+    assert matched.rhs.value == 1
+
+
+def test_linear_recurrence_reuses_canonical_word_form_for_assignments_and_conditions():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    base_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    temp_var = SimRegisterVariable(10, 2, name="ir_3")
+    base_cvar = structured_c.CVariable(base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    widened_word = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Or",
+            base_cvar,
+            structured_c.CBinaryOp(
+                "Mul",
+                base_cvar,
+                structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    condition = structured_c.CUnaryOp("Not", widened_word, codegen=codegen)
+    body = structured_c.CStatements([], addr=0x1000, codegen=codegen)
+    if_stmt = structured_c.CIfElse([(condition, body)], codegen=codegen)
+
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements(
+            [
+                structured_c.CAssignment(temp_cvar, widened_word, codegen=codegen),
+                if_stmt,
+            ],
+            addr=0x1000,
+            codegen=codegen,
+        ),
+    )
+
+    changed = decompile._coalesce_linear_recurrence_statements(codegen.project, codegen)
+
+    assert changed
+    first_stmt = codegen.cfunc.statements.statements[0]
+    assert isinstance(first_stmt, structured_c.CAssignment)
+    assert isinstance(first_stmt.rhs, structured_c.CBinaryOp)
+    assert first_stmt.rhs.op == "Add"
+    assert first_stmt.rhs.rhs.value == 1
+    rewritten_if = codegen.cfunc.statements.statements[1]
+    assert isinstance(rewritten_if, structured_c.CIfElse)
+    rewritten_cond = rewritten_if.condition_and_nodes[0][0]
+    assert isinstance(rewritten_cond, structured_c.CUnaryOp)
+    assert rewritten_cond.op == "Not"
+    assert isinstance(rewritten_cond.operand, structured_c.CBinaryOp)
+    assert rewritten_cond.operand.op == "Add"
+    assert rewritten_cond.operand.lhs.variable is base_var
+    assert rewritten_cond.operand.rhs.value == 1
+
+
+def test_canonicalize_stack_cvar_expr_prefers_annotated_slot():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    arg_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    alias_var = SimStackVariable(4, 2, base="bp", name="s_3", region=0x1000)
+    arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+    alias_cvar = structured_c.CVariable(alias_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[arg_cvar],
+        variables_in_use={
+            arg_var: arg_cvar,
+            alias_var: alias_cvar,
+        },
+    )
+
+    expr = structured_c.CBinaryOp(
+        "Add",
+        alias_cvar,
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    canonical = decompile._canonicalize_stack_cvar_expr(expr, codegen)
+
+    assert isinstance(canonical, structured_c.CBinaryOp)
+    assert canonical.lhs.variable is arg_var
+    assert canonical.rhs.value == 1
+    assert decompile._canonicalize_stack_cvar_expr(alias_cvar, codegen).variable is arg_var
+
+
 def test_materialize_missing_stack_local_declarations_adds_live_stack_slots():
     class _FakeCodegen:
         def __init__(self):
@@ -350,6 +1017,40 @@ def test_materialize_missing_stack_local_declarations_adds_live_stack_slots():
     assert changed is True
     assert local_var in codegen.cfunc.unified_local_vars
     assert codegen.cfunc.unified_local_vars[local_var] == {(local_cvar, local_cvar.variable_type)}
+    assert arg_var not in codegen.cfunc.unified_local_vars
+
+
+def test_materialize_missing_stack_local_declarations_skips_arg_slot_aliases():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    arg_var = SimStackVariable(2, 2, base="bp", name="arg", region=0x1000)
+    alias_var = SimStackVariable(2, 2, base="bp", name="s_3", region=0x1000)
+    arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+    alias_cvar = structured_c.CVariable(alias_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[SimpleNamespace(variable=arg_var)],
+        statements=structured_c.CStatements([], codegen=codegen),
+        unified_local_vars={},
+        variables_in_use={
+            arg_var: arg_cvar,
+            alias_var: alias_cvar,
+        },
+        sort_local_vars=lambda: None,
+    )
+
+    changed = decompile._materialize_missing_stack_local_declarations(codegen)
+
+    assert changed is False
+    assert alias_var not in codegen.cfunc.unified_local_vars
     assert arg_var not in codegen.cfunc.unified_local_vars
 
 

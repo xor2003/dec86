@@ -1001,11 +1001,23 @@ def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
     assert result.returncode == 0
     text = result.stdout
 
+    assert "ir_3 = s_3;" not in text
+    assert "ir_4 = s_3;" not in text
+    assert "s_3 = (ir_3 | ir_4 * 0x100) + 1;" not in text
+    assert "s_3 = ir_3 + 1 >> 8;" not in text
+    assert "s_3 += 1;" not in text
+    assert "s += 1;" in text
+    assert "if (!(s + 1))" in text
+    assert "n += 1;" in text
     assert "n = 0;" in text
-    assert "return n;" in text
+    assert "return (n);" in text
     assert "unsigned short _strlen(unsigned short s)" in text
-    assert "s_2" not in text
+    assert "unsigned short s_3;" not in text
+    assert "s_3" not in text
+    assert "char s_0;" not in text
+    assert "unsigned short s_2;" not in text
     assert "&v1 + 4" not in text
+    assert "&s_0 - 2" not in text
 
 
 def test_overlay_cod_sample_rewrites_far_pointer_stack_pair_to_mk_fp():
@@ -1027,18 +1039,17 @@ def test_overlay_cod_sample_rewrites_far_pointer_stack_pair_to_mk_fp():
     assert result.returncode == 0
     text = result.stdout
 
-    assert "unsigned short _overlay_functionAddress(unsigned short ovlLoadSegment, unsigned short funcNumber)" in text
-    assert any(
-        anchor in text
-        for anchor in (
-            "MK_FP(ovlLoadSegment, 36)",
-            "return *((unsigned short *)(&s_2 - 4));",
-            "return *((unsigned short *)(&s_0 - 4));",
-        )
-    )
+    assert "long _overlay_functionAddress(unsigned short ovlLoadSegment, unsigned short funcNumber)" in text
+    assert "struct OvlHeader FAR *ovlHeader = MK_FP(ovlLoadSegment, 0);" in text
+    assert "uint16 FAR* slotArray=&(ovlHeader->slot);" in text
+    assert "return MK_FP(ovlHeader->code_segment, slotArray[funcNumber]);" in text
+    assert "ovlHeader = 0;" not in text
+    assert "slotArray = ovlHeader + 36;" not in text
+    assert "return *((unsigned short *)(&s_2 - 4));" not in text
+    assert "return *((unsigned short *)(&s_0 - 4));" not in text
 
 
-def test_overlay_cod_sample_void_wrapper_returns_without_value():
+def test_overlay_cod_sample_wrapper_returns_overlay_segment():
     result = subprocess.run(
         [
             sys.executable,
@@ -1057,8 +1068,10 @@ def test_overlay_cod_sample_void_wrapper_returns_without_value():
     assert result.returncode == 0
     text = result.stdout
 
-    assert "void _overlay_load(void)" in text
-    assert "return ovlSegment;" not in text
+    assert "unsigned short _overlay_load(void)" in text
+    assert "dos_getfree();" in text
+    assert "return ovlSegment;" in text
+    assert "return;" not in text
 
 
 def test_dosfunc_cod_sample_deduplicates_stack_local_names():
@@ -1080,8 +1093,9 @@ def test_dosfunc_cod_sample_deduplicates_stack_local_names():
     assert result.returncode == 0
     text = result.stdout
 
-    assert text.count("char err;") == 1
-    assert "char err_2;" in text
+    assert text.count("return err;") == 1
+    assert "ERROR(\"dos_free: error freeing segment 0x%x: error 0x%x\", segment, (int)err);" in text
+    assert "err_2" not in text
 
 
 def test_bios_cod_sample_decompilation():

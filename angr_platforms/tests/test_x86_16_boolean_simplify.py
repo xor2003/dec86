@@ -102,6 +102,41 @@ def test_widening_analysis_helper_handles_linear_and_projection_forms():
         ),
         codegen=codegen,
     )
+    duplicate_word = _decompile.structured_c.CBinaryOp(
+        "Add",
+        _decompile.structured_c.CBinaryOp(
+            "Or",
+            base,
+            _decompile.structured_c.CBinaryOp(
+                "Mul",
+                base,
+                _decompile.structured_c.CConstant(0x100, _decompile.SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        _decompile.structured_c.CConstant(1, _decompile.SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    mismatched_word = _decompile.structured_c.CBinaryOp(
+        "Add",
+        _decompile.structured_c.CBinaryOp(
+            "Or",
+            base,
+            _decompile.structured_c.CBinaryOp(
+                "Mul",
+                _decompile.structured_c.CVariable(
+                    _decompile.SimRegisterVariable(31, 2, name="bx"),
+                    codegen=codegen,
+                ),
+                _decompile.structured_c.CConstant(0x100, _decompile.SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        _decompile.structured_c.CConstant(1, _decompile.SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
 
     linear_match = _decompile._analyze_widening_expr(
         linear,
@@ -113,6 +148,16 @@ def test_widening_analysis_helper_handles_linear_and_projection_forms():
         lambda expr: expr,
         lambda expr: expr,
     )
+    duplicate_word_match = _decompile._analyze_widening_expr(
+        duplicate_word,
+        lambda expr: expr,
+        lambda expr: expr,
+    )
+    mismatched_word_match = _decompile._analyze_widening_expr(
+        mismatched_word,
+        lambda expr: expr,
+        lambda expr: expr,
+    )
 
     assert linear_match is not None
     assert linear_match.kind == "linear"
@@ -121,3 +166,8 @@ def test_widening_analysis_helper_handles_linear_and_projection_forms():
     assert projection_match is not None
     assert projection_match.kind == "high_byte_preserving"
     assert projection_match.delta == 0x100
+    assert duplicate_word_match is not None
+    assert duplicate_word_match.kind == "linear"
+    assert duplicate_word_match.base_expr is base
+    assert duplicate_word_match.delta == 1
+    assert mismatched_word_match is None

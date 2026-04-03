@@ -783,6 +783,29 @@ of this prototype/helper work, see:
 - `Deterministic goal`:
   - the same small subset remains syntax-valid and repair-light across repeated runs
 
+### [ ] D43. Pattern-Independent Control-Flow Structuring
+
+- `Priority`: `P2`
+- `Complexity`: `Very High`
+- `How it helps`:
+  - gives the CFG/structuring layer a general way to normalize abnormal loop entries and exits before late cleanup
+  - can reduce goto-like leftovers without treating goto elimination as the goal itself
+  - is useful when loop headers or cyclic regions remain structurally noisy after alias, widening, and type evidence have already stabilized
+- `Low-level steps`:
+  - evaluate a dedicated structuring-variable approach for abnormal loop entries and exits
+  - keep the normalization logic in the CFG/structuring layer, not in final C rewrite
+  - use dominator and nearest-common-dominator facts to place the normalization safely
+  - keep the transformation semantics-preserving and conservative when the entry/exit evidence is weak
+  - add focused tests for synthetic multi-entry and multi-exit loop shapes before trying corpus-driven cases
+- `Dependencies`:
+  - `D38`
+  - stable alias/widening/type recovery for the affected region
+- `Exit signal`:
+  - structurally hard loops become single-entry/single-successor where justified, and the remaining postprocess cleanup is thinner rather than more semantic
+
+- `Deterministic goal`:
+  - abnormal-entry and abnormal-exit normalization improves readability only after the CFG evidence is strong enough to justify it
+
 ## Remaining Working Order
 
 If we compress the remaining roadmap into the next major execution sequence,

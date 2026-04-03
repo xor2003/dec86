@@ -55,11 +55,14 @@ __all__ = [
     "decompiler_postprocess_utils",
     "decompiler_postprocess_flags",
     "decompiler_postprocess_simplify",
+    "decompiler_structuring_stage",
     "widening_alias",
     "widening_model",
     "describe_x86_16_widening_pipeline",
     "describe_x86_16_object_recovery_focus",
     "describe_x86_16_recovery_layers",
+    "recovery_confidence",
+    "describe_x86_16_recovery_confidence_axes",
     "validation_manifest",
     "readability_set",
     "readability_goals",
@@ -77,10 +80,12 @@ __all__ = [
     "apply_x86_16_bootstrap",
     "decompiler_postprocess_stage",
     "describe_x86_16_decompiler_postprocess_stage",
+    "describe_x86_16_decompiler_structuring_stage",
     "DecompilerPostprocessPassSpec",
+    "DecompilerStructuringPassSpec",
 ]
 
-from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, lift_86_16, load_dos_mz, simos_86_16  # noqa: F401
+from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, decompiler_structuring_stage, lift_86_16, load_dos_mz, recovery_confidence, simos_86_16  # noqa: F401
 from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, recovery_manifest, recompilable_subset, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
 from . import readability_goals  # noqa: F401
 from . import correctness_goals  # noqa: F401
@@ -96,11 +101,13 @@ from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F
 from .annotations import apply_x86_16_metadata_annotations  # noqa: F401
 from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
+from .decompiler_structuring_stage import DecompilerStructuringPassSpec, apply_x86_16_decompiler_structuring, describe_x86_16_decompiler_structuring_stage  # noqa: F401
 from .readability_goals import describe_x86_16_readability_goals, rank_readability_goal_queue, summarize_readability_focus  # noqa: F401
 from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
 from .martypc_progress import describe_x86_16_martypc_improvement_progress  # noqa: F401
 from .validation_manifest import describe_x86_16_martypc_differential_triage  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
+from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
 from .cod_known_objects import describe_x86_16_cod_known_objects  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,

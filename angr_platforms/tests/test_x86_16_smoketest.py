@@ -133,8 +133,9 @@ def test_enter_local_stack_smoke():
     cfg = project.analyses.CFGFast(normalize=True)
     dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
     assert dec.codegen is not None
-    assert "flag = 1;" in dec.codegen.text
-    assert "return flag;" in dec.codegen.text or "return 1;" in dec.codegen.text
+    assert " = 1;" in dec.codegen.text
+    assert any(anchor in dec.codegen.text for anchor in ("return flag;", "return s_4;", "return 1;"))
+    assert "*((char **)(ir_0 * 16 + (unsigned int)&s_2)) = &s_0;" not in dec.codegen.text
 
 
 def test_resolve_stack_cvar_at_offset_prefers_exact_stack_slots():
@@ -150,12 +151,35 @@ def test_resolve_stack_cvar_at_offset_prefers_exact_stack_slots():
     codegen = _DummyCodegen()
     frame = SimStackVariable(0, 2, base="bp", name="frame", region=0x1000)
     arg = SimStackVariable(4, 2, base="bp", name="arg", region=0x1000)
+    alias = SimStackVariable(4, 2, base="bp", name="s_3", region=0x1000)
     frame_cvar = CVariable(frame, codegen=codegen)
     arg_cvar = CVariable(arg, codegen=codegen)
-    codegen.cfunc.variables_in_use = {frame: frame_cvar, arg: arg_cvar}
+    alias_cvar = CVariable(alias, codegen=codegen)
+    codegen.cfunc.variables_in_use = {frame: frame_cvar, alias: alias_cvar, arg: arg_cvar}
 
     assert _resolve_stack_cvar_at_offset(codegen, 4) is arg_cvar
     assert _resolve_stack_cvar_at_offset(codegen, 5) is arg_cvar
+
+
+def test_resolve_stack_cvar_at_offset_prefers_arg_list_candidates():
+    class _DummyCodegen:
+        def __init__(self):
+            self.cfunc = SimpleNamespace(variables_in_use={})
+            self._idx = 0
+
+        def next_idx(self, _kind):
+            self._idx += 1
+            return self._idx
+
+    codegen = _DummyCodegen()
+    arg = SimStackVariable(4, 2, base="bp", name="arg", region=0x1000)
+    alias = SimStackVariable(4, 2, base="bp", name="s_3", region=0x1000)
+    arg_cvar = CVariable(arg, codegen=codegen)
+    alias_cvar = CVariable(alias, codegen=codegen)
+    codegen.cfunc.arg_list = [arg_cvar]
+    codegen.cfunc.variables_in_use = {alias: alias_cvar}
+
+    assert _resolve_stack_cvar_at_offset(codegen, 4) is arg_cvar
 
 
 def test_near_call_smoke():

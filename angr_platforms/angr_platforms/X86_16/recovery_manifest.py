@@ -82,6 +82,14 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
         ),
     ),
     RecoveryLayerSpec(
+        name="control_flow_structuring",
+        purpose="Keep control-flow structuring explicit and downstream of stable alias and widening facts.",
+        helpers=(
+            "describe_x86_16_decompiler_structuring_stage",
+            "apply_x86_16_decompiler_structuring",
+        ),
+    ),
+    RecoveryLayerSpec(
         name="prototype_evidence_layer",
         purpose="Unify stack args, returns, helper calls, and far/near class evidence.",
         helpers=(
@@ -107,6 +115,13 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
             "_attach_interrupt_wrapper_callees",
             "_lower_interrupt_wrapper_result_reads",
             "describe_x86_16_interrupt_api_surface",
+        ),
+    ),
+    RecoveryLayerSpec(
+        name="confidence_axis",
+        purpose="Expose evidence, assumptions, diagnostics, and scan-safe classification as first-class output.",
+        helpers=(
+            "describe_x86_16_recovery_confidence_axes",
         ),
     ),
     RecoveryLayerSpec(

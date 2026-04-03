@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import re
 from pathlib import Path
 
+from .cod_known_objects import canonical_known_cod_object_name
+
 
 @dataclass(frozen=True)
 class CODProcMetadata:
@@ -58,12 +60,27 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     start_marker = f"{proc_name}\tPROC {proc_kind}"
     end_marker = f"{proc_name}\tENDP"
 
+    start_index = next((idx for idx, line in enumerate(lines) if start_marker in line), None)
+    end_index = next((idx for idx, line in enumerate(lines) if end_marker in line), None)
+    if start_index is None or end_index is None or end_index <= start_index:
+        raise ValueError(f"did not find {proc_name} ({proc_kind}) in {cod_path}")
+
     collect = False
     stack_aliases: dict[int, str] = {}
     call_names: list[str] = []
     call_sources: list[tuple[str, str]] = []
     global_names: list[str] = []
     source_lines: list[str] = []
+
+    previous_end_index = next(
+        (idx for idx in range(start_index - 1, -1, -1) if lines[idx].strip().endswith("ENDP")),
+        -1,
+    )
+    prelude_lines = [
+        line
+        for line in lines[previous_end_index + 1 : start_index]
+        if line.lstrip().startswith(";")
+    ]
 
     alias_re = re.compile(r"^\s*;\s*([A-Za-z_$?@][\w$?@]*)\s*=\s*(-?[0-9A-Fa-f]+)\s*$")
     entry_re = re.compile(r"\*\*\*\s+[0-9A-Fa-f]+\s+(?:[0-9A-Fa-f]{2}\s+)+(.*)$")
@@ -75,18 +92,26 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
     )
     segment_registers = {"cs", "ds", "es", "ss", "fs", "gs"}
 
-    for line in lines:
+    source_lines.extend(
+        re.sub(r"^\s*;\|\*+\s*", "", line).strip()
+        for line in prelude_lines
+        if line.lstrip().startswith(";|***")
+    )
+
+    for line in lines[start_index:end_index + 1]:
         if start_marker in line:
             collect = True
             continue
-        if collect and end_marker in line:
+        if line.endswith("ENDP") and end_marker in line:
             break
         if not collect:
             continue
 
         alias_match = alias_re.match(line)
         if alias_match:
-            stack_aliases[int(alias_match.group(2), 0)] = alias_match.group(1)
+            alias_name = canonical_known_cod_object_name(alias_match.group(1))
+            if alias_name is not None:
+                stack_aliases[int(alias_match.group(2), 0)] = alias_name
             continue
 
         if line.lstrip().startswith(";|***"):
@@ -99,7 +124,8 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
                     if call_name.startswith("$"):
                         continue
                     if call_text not in {text for _, text in call_sources}:
-                        call_sources.append((call_name, call_text))
+                        canonical_call_name = canonical_known_cod_object_name(call_name) or call_name
+                        call_sources.append((canonical_call_name, call_text))
             continue
 
         entry_match = entry_re.search(line)
@@ -111,22 +137,26 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             callee = call_match.group(1)
             if callee == "__chkstk":
                 continue
-            if not callee.startswith("$") and callee not in call_names:
-                call_names.append(callee)
+            if not callee.startswith("$"):
+                canonical_callee = canonical_known_cod_object_name(callee) or callee
+                if canonical_callee not in call_names:
+                    call_names.append(canonical_callee)
 
         for global_match in global_re.finditer(asm_text):
             global_name = global_match.group(1)
             if global_name.startswith("$") or global_name == proc_name or global_name.lower() in segment_registers:
                 continue
-            if global_name not in global_names:
-                global_names.append(global_name)
+            canonical_name = canonical_known_cod_object_name(global_name) or global_name
+            if canonical_name not in global_names:
+                global_names.append(canonical_name)
 
         for offset_match in offset_global_re.finditer(asm_text):
             global_name = offset_match.group(1)
             if global_name.startswith("$") or global_name == proc_name or global_name.lower() in segment_registers:
                 continue
-            if global_name not in global_names:
-                global_names.append(global_name)
+            canonical_name = canonical_known_cod_object_name(global_name) or global_name
+            if canonical_name not in global_names:
+                global_names.append(canonical_name)
 
     return CODProcMetadata(
         stack_aliases=stack_aliases,
@@ -227,6 +257,7 @@ def join_cod_entries_with_synthetic_globals(
             width_name = size_match.group(1).upper()
             width = {"BYTE": 1, "WORD": 2, "DWORD": 4}[width_name]
 
+            symbol = canonical_known_cod_object_name(symbol) or symbol
             if symbol not in symbol_addrs:
                 align = min(width, 2)
                 if next_addr % align:
@@ -265,7 +296,7 @@ def join_cod_entries_with_synthetic_globals(
                         patched = True
 
         elif offset_match is not None:
-            symbol = offset_match.group(1)
+            symbol = canonical_known_cod_object_name(offset_match.group(1)) or offset_match.group(1)
             if symbol.lower() in segment_registers:
                 patched_chunks.append(entry["bytes"])
                 continue

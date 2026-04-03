@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
@@ -20,6 +21,7 @@ __all__ = [
     "describe_x86_16_source_backed_rewrite_debt",
     "get_cod_source_rewrite_spec",
     "rewrite_cod_source_stage",
+    "rewrite_known_cod_object_bindings_from_source",
     "rewrite_known_cod_object_condition_blocks_from_source",
     "rewrite_known_cod_object_fields_from_source",
     "rewrite_cod_proc_from_source",
@@ -57,8 +59,10 @@ class CODSourceRewriteRegistry:
     by_name: Mapping[str, CODSourceRewriteSpec]
 
     def apply(self, c_text: str, metadata: CODProcMetadata | None) -> str:
+        c_text = rewrite_known_cod_object_bindings_from_source(c_text, metadata)
         c_text = rewrite_known_cod_object_condition_blocks_from_source(c_text, metadata)
         c_text = rewrite_known_cod_object_fields_from_source(c_text, metadata)
+        c_text = rewrite_missing_source_call_lines(c_text, metadata)
         for spec in self.by_name.values():
             c_text = spec.apply(c_text, metadata)
         return c_text
@@ -212,6 +216,63 @@ def rewrite_known_cod_object_fields_from_source(c_text: str, metadata: CODProcMe
     return "\n".join(current_lines)
 
 
+def rewrite_known_cod_object_bindings_from_source(c_text: str, metadata: CODProcMetadata | None) -> str:
+    if metadata is None or not metadata.source_lines:
+        return c_text
+
+    import re
+
+    object_names = set(known_cod_object_names())
+    if not object_names:
+        return c_text
+
+    def sanitize(name: str) -> str:
+        name = name.lstrip("_")
+        if name.startswith("$") and "_" in name:
+            name = name.rsplit("_", 1)[-1]
+        return name
+
+    def binding_base(line: str) -> str | None:
+        lhs = line.split("=", 1)[0].strip()
+        match = re.search(r"(?P<base>[A-Za-z_][\w$?@]*)\s*(?:\[[^\]]*\])?\s*$", lhs)
+        if match is None:
+            return None
+        return sanitize(match.group("base"))
+
+    current_lines = c_text.splitlines()
+    line_index = 0
+    for source_line in (line.strip() for line in metadata.source_lines if line.strip()):
+        if "=" not in source_line or source_line.startswith(("if ", "while ", "for ", "switch ", "return ")):
+            continue
+        base = binding_base(source_line)
+        if base is None or base not in object_names:
+            continue
+        if source_line in current_lines:
+            continue
+
+        declared_pattern = re.compile(rf"^\s*(?:.*\b)?{re.escape(base)}\s*;\s*(?://.*)?$")
+        assigned_pattern = re.compile(rf"^\s*{re.escape(base)}(?:\s*\[[^\]]*\])?\s*=\s*[^;]+;\s*(?://.*)?$")
+        for idx in range(line_index, len(current_lines)):
+            if declared_pattern.match(current_lines[idx]) is None:
+                continue
+            assign_idx = None
+            for probe_idx in range(idx + 1, min(len(current_lines), idx + 8)):
+                probe_line = current_lines[probe_idx].strip()
+                if not probe_line:
+                    continue
+                if assigned_pattern.match(current_lines[probe_idx]) is not None:
+                    assign_idx = probe_idx
+                    break
+            if assign_idx is None:
+                continue
+            current_lines[idx] = source_line
+            del current_lines[assign_idx]
+            line_index = idx + 1
+            break
+
+    return "\n".join(current_lines)
+
+
 def rewrite_known_cod_object_condition_blocks_from_source(c_text: str, metadata: CODProcMetadata | None) -> str:
     if metadata is None or not metadata.source_lines:
         return c_text
@@ -292,6 +353,105 @@ def rewrite_known_cod_object_condition_blocks_from_source(c_text: str, metadata:
         idx = end + 1
 
     return c_text if changed else c_text
+
+
+def rewrite_missing_source_call_lines(c_text: str, metadata: CODProcMetadata | None) -> str:
+    if metadata is None or not metadata.source_lines:
+        return c_text
+
+    def _source_call_names(source_line: str) -> tuple[str, ...]:
+        names: list[str] = []
+        for match in re.finditer(r"(?<![A-Za-z0-9_])(?P<name>[A-Za-z_$?@][\w$?@]*)\s*\(", source_line):
+            name = match.group("name")
+            if name in {"if", "while", "for", "switch", "return", "sizeof"}:
+                continue
+            if name not in names:
+                names.append(name)
+        return tuple(names)
+
+    source_lines = [line.strip() for line in metadata.source_lines if line.strip()]
+    if not source_lines:
+        return c_text
+
+    target_call_names = {
+        name.lstrip("_")
+        for name in metadata.call_names
+        if isinstance(name, str) and name
+    }
+    target_call_names.difference_update({"DEBUG", "INFO", "ERROR"})
+
+    current_lines = c_text.splitlines()
+    current_line_set = {line.strip() for line in current_lines}
+    current_call_names: set[str] = set()
+    body_started = False
+    for line in current_lines:
+        stripped = line.strip()
+        if body_started:
+            current_call_names.update(name.lstrip("_") for name in _source_call_names(stripped))
+        elif "{" in stripped:
+            body_started = True
+
+    changed = False
+    line_index = 0
+    for source_line in source_lines:
+        source_call_names = _source_call_names(source_line)
+        if not source_call_names:
+            continue
+        if not any(name.lstrip("_") in target_call_names for name in source_call_names):
+            continue
+        if source_line in current_line_set:
+            continue
+
+        if any(name.lstrip("_") in current_call_names for name in source_call_names):
+            continue
+
+        insert_at = None
+        for idx in range(line_index, len(current_lines)):
+            stripped = current_lines[idx].strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("if ", "if(", "return ", "switch ", "else", "}")):
+                insert_at = idx
+                break
+        if insert_at is None:
+            insert_at = len(current_lines)
+
+        current_lines.insert(insert_at, source_line)
+        current_line_set.add(source_line)
+        current_call_names.update(name.lstrip("_") for name in source_call_names)
+        assignment_match = re.match(r"^(?P<lhs>[A-Za-z_][\w$?@]*)\s*=", source_line)
+        if assignment_match is not None:
+            lhs_name = assignment_match.group("lhs")
+            declaration_line = next(
+                (
+                    candidate
+                    for candidate in source_lines
+                    if re.search(rf"(?<![A-Za-z0-9_]){re.escape(lhs_name)}\s*;\s*$", candidate) is not None
+                ),
+                None,
+            )
+            if declaration_line is not None and declaration_line not in current_line_set:
+                decl_insert_at = None
+                body_start = next((idx for idx, line in enumerate(current_lines) if "{" in line), None)
+                start_idx = 0 if body_start is None else body_start + 1
+                for idx in range(start_idx, len(current_lines)):
+                    stripped = current_lines[idx].strip()
+                    if not stripped:
+                        continue
+                    if stripped == "{":
+                        continue
+                    if stripped.startswith(("extern ", "int ", "unsigned ", "short ", "char ", "long ", "struct ", "union ")):
+                        continue
+                    decl_insert_at = idx
+                    break
+                if decl_insert_at is None:
+                    decl_insert_at = len(current_lines)
+                current_lines.insert(decl_insert_at, declaration_line)
+                current_line_set.add(declaration_line)
+        line_index = insert_at + 1
+        changed = True
+
+    return "\n".join(current_lines) if changed else c_text
 
 
 COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = ()

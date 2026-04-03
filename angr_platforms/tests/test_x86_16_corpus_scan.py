@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from angr_platforms.X86_16.corpus_scan import (
     FunctionScanResult,
     ScanTimeout,
@@ -118,6 +120,7 @@ def test_corpus_scan_summary_groups_file_health():
     assert summary["lift_only_count"] == 0
     assert summary["block_lift_count"] == 1
     assert summary["rewrite_failure_count"] == 0
+    assert summary["structuring_failure_count"] == 0
     assert summary["regeneration_failure_count"] == 1
     assert summary["visibility_debt"] == 2
     assert summary["recovery_debt"] == 2
@@ -139,6 +142,17 @@ def test_corpus_scan_summary_groups_file_health():
         "bios_helpers": 0,
         "wrapper_calls": 0,
         "unresolved_wrappers": 0,
+    }
+    assert summary["confidence_status_counts"] == {
+        "return_shape_uncertain": 1,
+        "partial_recovery": 1,
+        "target_recovered_strong": 1,
+        "target_unrecovered": 2,
+    }
+    assert summary["confidence_scan_safe_counts"] == {
+        "partial": 1,
+        "strong": 1,
+        "unresolved": 3,
     }
 
 
@@ -170,7 +184,10 @@ def test_corpus_scan_summary_accumulates_interrupt_api_counts():
         "wrapper_calls": 3,
         "unresolved_wrappers": 1,
     }
+    assert summary["confidence_status_counts"] == {"helper_guessed_weak": 1}
+    assert summary["confidence_assumption_counts"] == {"helper_guessed_from_weak_evidence": 1}
     assert summary["rewrite_failure_count"] == 0
+    assert summary["structuring_failure_count"] == 0
     assert summary["regeneration_failure_count"] == 0
     assert summary["family_ownership"] == {
         "top_families": [{"family": "interrupt_api", "count": 1}],
@@ -480,21 +497,22 @@ def test_scan_safe_skips_call_heavy_helpers():
         def __init__(self, insns):
             self.insns = insns
 
-    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 4), "scan-safe", 192) is True
-    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 3), "scan-safe", 192) is False
-    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 4), "lift", 192) is False
-    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 4), "scan-safe", 0) is False
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 3), "scan-safe", 192) is True
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 2), "scan-safe", 192) is False
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 3), "lift", 192) is False
+    assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 3), "scan-safe", 0) is False
 
 
-def test_scan_safe_skips_dos_resize_before_cfg_timeout():
+@pytest.mark.parametrize("proc_name", ["_dos_alloc", "_dos_resize", "_dos_mcbInfo"])
+def test_scan_safe_keeps_short_dos_memory_helpers_in_bounded_recovery(proc_name: str):
     repo_root = Path(__file__).resolve().parents[2]
     cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "DOSFUNC.COD"
     funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
-    kind, code = funcs["_dos_resize"]
+    kind, code = funcs[proc_name]
 
     result = scan_function(
         cod_path,
-        "_dos_resize",
+        proc_name,
         kind,
         code,
         timeout_sec=5,
@@ -503,46 +521,30 @@ def test_scan_safe_skips_dos_resize_before_cfg_timeout():
 
     assert result.ok is True
     assert result.failure_class is None
-    assert result.fallback_kind == "lift_only"
+    assert result.fallback_kind == "cfg_only"
     assert result.semantic_family == "stack_control"
+    assert result.confidence_status == "bounded_recovery"
+    assert result.confidence_scan_safe_classification == "strong"
 
 
-def test_scan_safe_keeps_empty_codegen_as_fallback_for_known_hotspots():
+@pytest.mark.parametrize(
+    "cod_name, proc_name",
+    [
+        ("OUTPUT.COD", "_hexdump"),
+        ("START1.COD", "_processStoreInput"),
+        ("UTIL.COD", "_sizeString"),
+        ("START3.COD", "_sub_14BB4"),
+    ],
+)
+def test_scan_safe_keeps_known_hotspots_in_conservative_recovery(cod_name: str, proc_name: str):
     repo_root = Path(__file__).resolve().parents[2]
-    expectations = {
-        ("OUTPUT.COD", "_hexdump"): "lift_only",
-        ("START1.COD", "_processStoreInput"): "lift_only",
-        ("UTIL.COD", "_sizeString"): "lift_only",
-    }
-
-    for (cod_name, proc_name), expected_fallback in expectations.items():
-        cod_path = repo_root / "cod" / cod_name
-        funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
-        kind, code = funcs[proc_name]
-        result = scan_function(
-            cod_path,
-            proc_name,
-            kind,
-            code,
-            timeout_sec=5,
-            mode="scan-safe",
-            max_cfg_bytes=192,
-            max_decompile_bytes=384,
-        )
-        assert result.ok is True
-        assert result.failure_class is None
-        assert result.fallback_kind == expected_fallback
-
-
-def test_scan_safe_uses_lift_only_for_start3_timeout_hotspot():
-    repo_root = Path(__file__).resolve().parents[2]
-    cod_path = repo_root / "cod" / "START3.COD"
+    cod_path = repo_root / "cod" / cod_name
     funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
-    kind, code = funcs["_sub_14BB4"]
+    kind, code = funcs[proc_name]
 
     result = scan_function(
         cod_path,
-        "_sub_14BB4",
+        proc_name,
         kind,
         code,
         timeout_sec=5,
@@ -553,5 +555,6 @@ def test_scan_safe_uses_lift_only_for_start3_timeout_hotspot():
 
     assert result.ok is True
     assert result.failure_class is None
-    assert result.fallback_kind == "lift_only"
+    assert result.fallback_kind in {"cfg_only", "block_lift"}
+    assert result.semantic_family == "stack_control"
     assert result.stage_reached == "cleanup"

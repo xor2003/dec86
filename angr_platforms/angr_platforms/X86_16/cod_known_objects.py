@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from collections import OrderedDict
 
-from angr.sim_type import SimStruct, SimUnion, SimTypeChar, SimTypeShort
+from angr.sim_type import SimStruct, SimUnion, SimTypeChar, SimTypePointer, SimTypeShort
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,20 @@ def _make_ovl_load_params_type():
     )
 
 
+def _make_ovl_header_type():
+    word = SimTypeShort(False)
+    header = SimStruct(
+        OrderedDict((("code_segment", word), ("slot", word))),
+        name="struct OvlHeader",
+        pack=True,
+    )
+    return SimTypePointer(header)
+
+
+def _make_slot_array_type():
+    return SimTypePointer(SimTypeShort(False))
+
+
 def _type_name(type_obj: object) -> str:
     return getattr(type_obj, "name", None) or type_obj.__class__.__name__
 
@@ -178,6 +193,30 @@ _KNOWN_COD_OBJECT_SPECS: dict[str, CODKnownObjectSpec] = {
         "global",
         _type_name(_make_ovl_load_params_type()),
     ),
+    "ovlHeader": CODKnownObjectSpec(
+        "ovlHeader",
+        _make_ovl_header_type(),
+        4,
+        ("code_segment", "slot"),
+        (0, 2),
+        (2, 2),
+        True,
+        (),
+        "global",
+        _type_name(_make_ovl_header_type()),
+    ),
+    "slotArray": CODKnownObjectSpec(
+        "slotArray",
+        _make_slot_array_type(),
+        2,
+        (),
+        (),
+        (),
+        False,
+        (),
+        "global",
+        _type_name(_make_slot_array_type()),
+    ),
 }
 
 
@@ -187,6 +226,9 @@ def _sanitize_known_object_name(name: str | None) -> str | None:
     name = name.lstrip("_")
     if name.startswith("$") and "_" in name:
         name = name.rsplit("_", 1)[-1]
+    prefixed_match = re.match(r"^[A-Za-z]+\d+_(?P<rest>.+)$", name)
+    if prefixed_match is not None:
+        name = prefixed_match.group("rest")
     return name
 
 
@@ -195,6 +237,13 @@ def known_cod_object_spec(name: str | None) -> CODKnownObjectSpec | None:
     if sanitized is None:
         return None
     return _KNOWN_COD_OBJECT_SPECS.get(sanitized)
+
+
+def canonical_known_cod_object_name(name: str | None) -> str | None:
+    spec = known_cod_object_spec(name)
+    if spec is not None:
+        return spec.name
+    return _sanitize_known_object_name(name)
 
 
 def known_cod_object_names() -> tuple[str, ...]:
