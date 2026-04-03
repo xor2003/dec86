@@ -3,8 +3,15 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+import os
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
+
+try:
+    import resource
+except ImportError:  # pragma: no cover
+    resource = None
 
 from .config import LlmConfig
 from .procguard import register_child_process, unregister_child_process
@@ -35,6 +42,28 @@ def extract_session_id(text: str) -> str:
 
 def _timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _build_codex_memory_preexec_fn(memory_limit_mb: int) -> Callable[[], None] | None:
+    if memory_limit_mb <= 0 or resource is None:
+        return None
+
+    limit_bytes = memory_limit_mb * 1024 * 1024
+
+    def _set_limits() -> None:
+        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+        if hasattr(resource, "RLIMIT_DATA"):
+            resource.setrlimit(resource.RLIMIT_DATA, (limit_bytes, limit_bytes))
+
+    return _set_limits
+
+
+def _provider_env(config: LlmConfig) -> dict[str, str]:
+    env = os.environ.copy()
+    root = str(config.root_dir)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{root}:{existing}" if existing else root
+    return env
 
 
 def build_effective_prompt(
@@ -91,6 +120,8 @@ def run_provider_once(
     session_id: str = "",
 ) -> int:
     timeout_cmd = ["timeout", "--foreground", f"{config.codex_timeout_secs}s"]
+    codex_preexec = _build_codex_memory_preexec_fn(config.codex_memory_limit_mb)
+    provider_env = _provider_env(config)
     header = (
         f"[{_timestamp()}] start provider={provider} mode={mode} model={model} "
         f"prompt={prompt_file.name} root={config.root_dir}\n"
@@ -125,6 +156,8 @@ def run_provider_once(
                 timeout_cmd + cmd,
                 stdout=out,
                 stderr=subprocess.STDOUT,
+                preexec_fn=codex_preexec,
+                env=provider_env,
             )
             register_child_process(config.status_file.parent, proc.pid, "codex", str(config.root_dir), _timestamp())
             try:
@@ -143,6 +176,7 @@ def run_provider_once(
                 stdin=inp,
                 stdout=out,
                 stderr=subprocess.STDOUT,
+                env=provider_env,
             )
             register_child_process(config.status_file.parent, proc.pid, "ollama", str(config.root_dir), _timestamp())
             try:
@@ -164,6 +198,7 @@ def run_provider_once(
                 cmd,
                 stdout=out,
                 stderr=subprocess.STDOUT,
+                env=provider_env,
             )
             register_child_process(config.status_file.parent, proc.pid, "llamacpp", str(config.root_dir), _timestamp())
             try:

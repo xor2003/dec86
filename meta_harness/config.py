@@ -29,6 +29,7 @@ class LlmConfig:
     evidence_log_file: Path
     status_file: Path
     codex_timeout_secs: int
+    codex_memory_limit_mb: int
     planner_provider: str
     checker_provider: str
     worker_provider: str
@@ -53,6 +54,7 @@ class LlmConfig:
             evidence_log_file=Path(os.environ.get("EVIDENCE_LOG_FILE", root_dir / ".codex_automation" / "evidence.log")),
             status_file=Path(os.environ.get("STATUS_FILE", root_dir / ".codex_automation" / "status.txt")),
             codex_timeout_secs=int(os.environ.get("CODEX_TIMEOUT_SECS", "600")),
+            codex_memory_limit_mb=int(os.environ.get("CODEX_MEMORY_LIMIT_MB", "6144")),
             planner_provider=os.environ.get("PLANNER_PROVIDER", os.environ.get("LLM_PROVIDER", "codex")),
             checker_provider=os.environ.get("CHECKER_PROVIDER", os.environ.get("LLM_PROVIDER", "codex")),
             worker_provider=os.environ.get("WORKER_PROVIDER", os.environ.get("LLM_PROVIDER", "codex")),
@@ -102,6 +104,9 @@ class RuntimeConfig:
     prompt_dir: Path
     evidence_subset_dir: Path
     evidence_log_file: Path
+    compact_prompts: bool
+    delta_resume_prompts: bool
+    codex_memory_limit_mb: int
     keep_log_count: int
     min_free_disk_mb: int
     min_free_ram_mb: int
@@ -113,6 +118,7 @@ class RuntimeConfig:
     worker_sleep_secs: int
     planner_pause_secs: int
     codex_timeout_secs: int
+    status_heartbeat_secs: float
     max_self_restarts: int
     self_restart_count: int
     worker_finish_token: str
@@ -163,6 +169,10 @@ class RuntimeConfig:
             prompt_dir=Path(os.environ.get("PROMPT_DIR", state_dir / "prompts")),
             evidence_subset_dir=evidence_subset_dir,
             evidence_log_file=Path(os.environ.get("EVIDENCE_LOG_FILE", state_dir / "evidence.log")),
+            compact_prompts=os.environ.get("COMPACT_PROMPTS", "1").strip().lower() not in {"0", "false", "no"},
+            delta_resume_prompts=os.environ.get("DELTA_RESUME_PROMPTS", "1").strip().lower()
+            not in {"0", "false", "no"},
+            codex_memory_limit_mb=int(os.environ.get("CODEX_MEMORY_LIMIT_MB", "6144")),
             keep_log_count=int(os.environ.get("KEEP_LOG_COUNT", "40")),
             min_free_disk_mb=int(os.environ.get("MIN_FREE_DISK_MB", "8192")),
             min_free_ram_mb=int(os.environ.get("MIN_FREE_RAM_MB", "4096")),
@@ -174,6 +184,7 @@ class RuntimeConfig:
             worker_sleep_secs=int(os.environ.get("WORKER_SLEEP_SECS", "4")),
             planner_pause_secs=int(os.environ.get("PLANNER_PAUSE_SECS", "60")),
             codex_timeout_secs=int(os.environ.get("CODEX_TIMEOUT_SECS", "600")),
+            status_heartbeat_secs=float(os.environ.get("STATUS_HEARTBEAT_SECS", "60")),
             max_self_restarts=int(os.environ.get("MAX_SELF_RESTARTS", "5")),
             self_restart_count=int(os.environ.get("SELF_RESTART_COUNT", "0")),
             worker_finish_token=os.environ.get("WORKER_FINISH_TOKEN", "Global Remaining steps: 0"),
@@ -198,10 +209,10 @@ class RuntimeConfig:
             compare_input_description=os.environ.get(
                 "COMPARE_INPUT_DESCRIPTION", "the relevant source inputs, generated outputs, and the current code state"
             ),
-            planner_model=os.environ.get("PLANNER_MODEL", "gpt-5.4"),
+            planner_model=os.environ.get("PLANNER_MODEL", "gpt-5.4-mini"),
             checker_model=os.environ.get("CHECKER_MODEL", "gpt-5.4-mini"),
             worker_model=os.environ.get("WORKER_MODEL", "gpt-5.4-mini"),
-            reviewer_model=os.environ.get("REVIEWER_MODEL", "gpt-5.4"),
+            reviewer_model=os.environ.get("REVIEWER_MODEL", "gpt-5.4-mini"),
             crash_reviewer_model=os.environ.get("CRASH_REVIEWER_MODEL", "gpt-5.4"),
             evidence_input_files=_split_env_lines("EVIDENCE_INPUT_FILES", DEFAULT_EVIDENCE_INPUT_FILES),
             original_args=argv,
@@ -216,6 +227,10 @@ class RuntimeConfig:
                 "STATUS_FILE": str(self.status_file),
                 "EVIDENCE_LOG_FILE": str(self.evidence_log_file),
                 "CODEX_TIMEOUT_SECS": str(self.codex_timeout_secs),
+                "STATUS_HEARTBEAT_SECS": str(self.status_heartbeat_secs),
+                "CODEX_MEMORY_LIMIT_MB": str(self.codex_memory_limit_mb),
+                "COMPACT_PROMPTS": "1" if self.compact_prompts else "0",
+                "DELTA_RESUME_PROMPTS": "1" if self.delta_resume_prompts else "0",
                 "HARNESS_CONFIG": str(self.harness_config),
                 "RUN_SH_PATH": str(self.run_sh_path),
                 "PYTHON_BIN": str(self.python_bin),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from meta_harness import cli
+from meta_harness.orchestrator import RoleRunError
 
 
 def test_cli_main_invokes_harness_run(monkeypatch):
@@ -86,3 +87,29 @@ def test_cli_main_marks_sigterm_exit_as_terminated(monkeypatch):
         raise AssertionError("Expected SystemExit(143)")
 
     assert called["finalize"] == ("terminated", 143)
+
+
+def test_cli_main_treats_planner_timeout_as_terminated(monkeypatch):
+    called = {}
+
+    class DummyHarness:
+        def __init__(self, cfg, llm_cfg):
+            called["cfg"] = cfg
+            called["llm_cfg"] = llm_cfg
+
+        def peek_resume_step(self):
+            return None
+
+        def run(self, resume=False):
+            raise RoleRunError("planner", object(), "planner timed out", 124)
+
+        def run_crash_review(self, exit_code):
+            called["crash"] = exit_code
+
+        def finalize_run(self, reason, exit_code):
+            called["finalize"] = (reason, exit_code)
+
+    monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
+    assert cli.main([]) == 124
+    assert called["finalize"] == ("terminated", 124)
+    assert "crash" not in called

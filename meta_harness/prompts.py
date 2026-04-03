@@ -3,7 +3,28 @@ from __future__ import annotations
 from .config import RuntimeConfig
 
 
+def _style_contract() -> str:
+    return (
+        "Response style:\n"
+        "- Minimal and actionable.\n"
+        "- No repetition.\n"
+        "- No explanations unless needed for the role.\n"
+        "- Prefer concrete results over narration.\n\n"
+    )
+
+
 def build_master_prompt(cfg: RuntimeConfig) -> str:
+    if cfg.compact_prompts:
+        return (
+            f"Work in {cfg.root_dir}. Repo rules: {cfg.rules_file}.\n"
+            f"Maintain {cfg.plan_path}. Use {cfg.evidence_log_file} as current evidence.\n\n"
+            f"Priorities: 1) {cfg.primary_priority}; 2) {cfg.secondary_priority}; "
+            f"3) {cfg.general_improvement_rule}; 4) {cfg.architecture_guidance}.\n"
+            f"Compare against: {cfg.compare_input_description}.\n"
+            "Always state current quality for correctness and recompilation.\n"
+            "Use concrete repository evidence, not vague claims.\n\n"
+            + _style_contract()
+        )
     return (
         f"You are working on {cfg.root_dir}, a {cfg.project_description}.\n\n"
         f"Always use the repository rules from {cfg.rules_file}.\n\n"
@@ -25,7 +46,8 @@ def build_master_prompt(cfg: RuntimeConfig) -> str:
         "Always report current quality for:\n"
         "- correctness\n"
         "- recompilation\n\n"
-        "Use concrete evidence from the project, not vague claims.\n"
+        "Use concrete evidence from the project, not vague claims.\n\n"
+        + _style_contract()
     )
 
 
@@ -45,12 +67,17 @@ def build_planner_prompt(cfg: RuntimeConfig) -> str:
         "- Analyze the current difference between relevant inputs and generated outputs.\n"
         "- Inspect the current code state.\n"
         f"- Do not rerun the evidence sweep; the sweep step already produced {cfg.evidence_log_file} and the checker step reviewed it for this cycle.\n"
-        f"- Create or update {cfg.plan_path} with a deterministic step list, files and functions to change, and what to do.\n"
+        f"- Create or update {cfg.plan_path} as a flat numbered checklist.\n"
+        "- Each item must name the target file(s) and exact source line numbers when available.\n"
+        "- Each item must specify the concrete functions, tests, or scripts to change.\n"
+        "- Each item must include a deterministic definition of done.\n"
+        "- Keep items deterministic, short, and directly actionable.\n"
         "- The plan must prioritize correctness first and recompilation second.\n"
+        "- Preserve unfinished strategic items already present in the plan unless they are now done or clearly superseded by a more precise item.\n"
+        "- Do not drop user-added unfinished goals just because the current cycle focuses on a different bug.\n"
         "- Remove any done items from the plan and leave only unfinished work.\n"
         "- Print current quality of correctness and recompilation.\n"
         "- If there is nothing meaningful left to do, say that clearly.\n"
-        "- If work should pause before the next cycle, print exactly: Pause for minute\n"
         "- At the end, print exactly: Global Remaining steps: N\n"
     )
 
@@ -95,3 +122,37 @@ def build_crash_reviewer_prompt(cfg: RuntimeConfig, current_cycle_dir: str, exit
         "- If the harness was changed and should restart with the new code, print exactly: Harness restart required\n"
     )
 
+
+def build_resume_prompt(role: str, cfg: RuntimeConfig, *, comments: str = "") -> str:
+    role_instructions = {
+        "worker": (
+            f"Continue the existing {role} session.\n"
+            f"Implement the next unfinished item(s) from {cfg.plan_path}.\n"
+            "Use the existing session context instead of re-deriving the whole plan.\n"
+            "Keep output minimal and actionable.\n"
+            "At the end, print exactly: Global Remaining steps: N\n"
+        ),
+        "planner": (
+            f"Continue the existing {role} session.\n"
+            f"Update only {cfg.plan_path}.\n"
+            "Keep unfinished strategic items unless done or superseded.\n"
+            "At the end, print exactly: Global Remaining steps: N\n"
+        ),
+        "reviewer": (
+            f"Continue the existing {role} session.\n"
+            "Re-check the current code state and remaining plan items.\n"
+            "At the end, print exactly: Global Remaining steps: N\n"
+        ),
+        "checker": (
+            f"Continue the existing {role} session.\n"
+            f"Validate {cfg.evidence_log_file} only.\n"
+            "At the end, print exactly: Global Remaining steps: N\n"
+        ),
+    }
+    prompt = role_instructions.get(
+        role,
+        f"Continue the existing {role} session.\nKeep output minimal and actionable.\n",
+    )
+    if comments.strip():
+        prompt += "\nOperator comments to apply now:\n" + comments.strip() + "\n"
+    return prompt

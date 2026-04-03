@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from .config import LlmConfig, RuntimeConfig
-from .orchestrator import HarnessError, MetaHarness
+from .orchestrator import HarnessError, MetaHarness, RoleRunError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,11 +28,15 @@ def main(argv: list[str] | None = None) -> int:
         return exit_code
     except SystemExit as exc:
         code = int(exc.code) if isinstance(exc.code, int) else 1
-        if code not in (0, 10, 130, 143):
+        if code not in (0, 10, 124, 130, 143):
             harness.run_crash_review(code)
         exit_code = code
         raise
     except HarnessError as exc:
+        graceful_codes = {124, 130, 143}
+        if isinstance(exc, RoleRunError) and exc.exit_code in graceful_codes:
+            exit_code = exc.exit_code
+            return exit_code
         print(f"ERROR: {exc}", file=sys.stderr)
         harness.run_crash_review(1)
         exit_code = 1
@@ -48,5 +52,5 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     finally:
         if exit_code not in (0, 10):
-            reason = "terminated" if exit_code == 143 else "interrupted"
+            reason = "terminated" if exit_code in (124, 143) else "interrupted"
             harness.finalize_run(reason, exit_code)

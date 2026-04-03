@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from meta_harness.config import LlmConfig
+import meta_harness.llm as llm_mod
 from meta_harness.llm import (
     build_effective_prompt,
     extract_session_id,
@@ -64,7 +67,11 @@ def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
         def wait(self):
             return 0
 
-    monkeypatch.setattr("meta_harness.llm.subprocess.Popen", lambda *args, **kwargs: Proc())
+    def fake_popen(*args, **kwargs):
+        assert str(cfg.root_dir) in kwargs["env"].get("PYTHONPATH", "")
+        return Proc()
+
+    monkeypatch.setattr("meta_harness.llm.subprocess.Popen", fake_popen)
 
     rc = run_provider_once("ollama", "new", "tiny", "prompt", prompt, log, cfg)
 
@@ -72,3 +79,44 @@ def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
     text = log.read_text(encoding="utf-8")
     assert "start provider=ollama" in text
     assert "end rc=0" in text
+
+
+def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_MEMORY_LIMIT_MB", "512")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    cfg = _cfg(monkeypatch, tmp_path)
+    if llm_mod.resource is None:
+        pytest.skip("resource module unavailable")
+
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("hello", encoding="utf-8")
+    log = tmp_path / "run.log"
+    seen = {}
+
+    class Proc:
+        pid = 1235
+
+        def wait(self):
+            return 0
+
+    def fake_popen(*args, **kwargs):
+        seen["kwargs"] = kwargs
+        preexec = kwargs.get("preexec_fn")
+        assert preexec is not None
+        preexec()
+        assert str(cfg.root_dir) in kwargs["env"].get("PYTHONPATH", "")
+        return Proc()
+
+    calls = []
+
+    def fake_setrlimit(limit_type, limits):
+        calls.append((limit_type, limits))
+
+    monkeypatch.setattr(llm_mod.resource, "setrlimit", fake_setrlimit)
+    monkeypatch.setattr("meta_harness.llm.subprocess.Popen", fake_popen)
+
+    rc = run_provider_once("codex", "new", "tiny", "prompt", prompt, log, cfg)
+
+    assert rc == 0
+    assert "preexec_fn" in seen["kwargs"]
+    assert calls

@@ -15,7 +15,7 @@ import sys
 import time
 import threading
 import weakref
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, wait
 from concurrent.futures.thread import _threads_queues, _worker
 from dataclasses import dataclass
 from datetime import datetime
@@ -195,7 +195,11 @@ from angr_platforms.X86_16.analysis_helpers import (
     render_dos_int21_call,
     seed_calling_conventions,
 )
-from angr_platforms.X86_16.annotations import annotate_function, apply_x86_16_metadata_annotations
+from angr_platforms.X86_16.annotations import (
+    _apply_known_helper_signatures,
+    annotate_function,
+    apply_x86_16_metadata_annotations,
+)
 from angr_platforms.X86_16.cod_extract import (
     CODProcMetadata,
     extract_cod_function_entries,
@@ -210,6 +214,7 @@ from angr_platforms.X86_16.cod_source_rewrites import apply_cod_source_rewrites 
 from angr_platforms.X86_16.cod_source_rewrites import rewrite_known_cod_object_fields_from_source
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.utils.library import convert_cproto_to_py
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.alias_model import (
@@ -274,6 +279,11 @@ def _apply_binary_specific_annotations(
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
 ) -> bool:
     changed = False
+    if func_addr is None:
+        if cod_metadata is not None:
+            changed |= _apply_known_helper_signatures(project, cod_metadata)
+        return changed
+
     if lst_metadata is not None or cod_metadata is not None or synthetic_globals:
         changed = apply_x86_16_metadata_annotations(
             project,
@@ -498,15 +508,25 @@ def _pick_function(
     cfg = None
     for complete_scan in (False, True) if project.arch.name == "86_16" else (False,):
         for smart_scan in smart_scan_modes:
-            cfg = project.analyses.CFGFast(
-                start_at_entry=False,
-                function_starts=[target_addr],
-                regions=regions,
-                normalize=True,
-                data_references=data_refs,
-                force_smart_scan=smart_scan,
-                force_complete_scan=complete_scan,
-            )
+            try:
+                cfg = project.analyses.CFGFast(
+                    start_at_entry=False,
+                    function_starts=[target_addr],
+                    regions=regions,
+                    normalize=True,
+                    data_references=data_refs,
+                    force_smart_scan=smart_scan,
+                    force_complete_scan=complete_scan,
+                )
+            except Exception as ex:  # noqa: BLE001
+                logging.getLogger(__name__).debug(
+                    "CFGFast recovery attempt failed for %s (complete=%s smart=%s): %s",
+                    hex(target_addr),
+                    complete_scan,
+                    smart_scan,
+                    ex,
+                )
+                continue
             if target_addr in cfg.functions:
                 break
         if cfg is not None and target_addr in cfg.functions:
@@ -530,9 +550,80 @@ def _pick_function(
     return cfg, function
 
 
+def _pick_function_lean(
+    project: angr.Project,
+    addr: int | None,
+    *,
+    regions=None,
+    data_references: bool = False,
+    extend_far_calls: bool = True,
+):
+    """
+    Recover a known entry point with a deliberately cheap CFGFast pass.
+
+    This is used as an early fast path for COD procedures that are dominated by
+    helper calls. For those procedures, indirect-jump resolution and cross-
+    reference discovery are often unnecessary and can dominate the recovery
+    budget before the function is even identified.
+    """
+
+    target_addr = project.entry if addr is None else addr
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[target_addr],
+        regions=regions,
+        normalize=False,
+        data_references=data_references,
+        force_smart_scan=False,
+        force_complete_scan=False,
+        resolve_indirect_jumps=False,
+        function_prologues=False,
+        symbols=False,
+        cross_references=False,
+    )
+    if target_addr not in cfg.functions:
+        raise KeyError(f"Function {target_addr:#x} was not recovered by CFGFast.")
+
+    function = cfg.functions[target_addr]
+    if extend_far_calls and project.arch.name == "86_16":
+        extended_cfg = extend_cfg_for_far_calls(
+            project,
+            function,
+            entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+        )
+        if extended_cfg is not None and target_addr in extended_cfg.functions:
+            cfg = extended_cfg
+            function = cfg.functions[target_addr]
+        patch_interrupt_service_call_sites(function, getattr(project.loader.main_object, "binary", None))
+    seed_calling_conventions(cfg)
+    return cfg, function
+
+
 def _x86_16_recovery_windows(window: int, *, low_memory: bool = False) -> tuple[int, ...]:
     base_window = max(window, 0x80 if low_memory else 0x200)
     return tuple(base_window * factor for factor in (1, 2, 4, 8, 16))
+
+
+def _x86_16_fast_recovery_windows(window: int, *, low_memory: bool = False) -> tuple[int, ...]:
+    candidate_windows = (0x40, 0x80, 0x100) if low_memory else (0x80, 0x100, 0x200)
+    windows: list[int] = []
+    for candidate in candidate_windows:
+        if window <= candidate:
+            effective_window = window
+        else:
+            effective_window = candidate
+        if effective_window not in windows:
+            windows.append(effective_window)
+    if not windows:
+        windows.append(window)
+    return tuple(windows)
+
+
+def _cod_proc_has_call_heavy_helper_profile(cod_metadata: CODProcMetadata | None) -> bool:
+    if cod_metadata is None:
+        return False
+    call_names = tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ()))
+    return len(call_names) >= 4
 
 
 def _recover_cfg(
@@ -598,6 +689,31 @@ def _analysis_timeout(timeout: int):
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
+
+
+def _run_with_timeout_in_daemon_thread(
+    func,
+    *,
+    timeout: int,
+    thread_name_prefix: str,
+):
+    executor = DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix=thread_name_prefix)
+    future = executor.submit(func)
+    try:
+        return future.result(timeout=max(1, timeout))
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _emit_timeout_and_exit(args_timeout: int, recovery_detail: str | None) -> None:
+    if recovery_detail is None:
+        print(f"/* Timed out while recovering a function after {args_timeout}s. */")
+    else:
+        print(f"/* Timed out while recovering a function after {args_timeout}s {recovery_detail}. */")
+    print("/* Tip: try a larger --timeout for larger binaries. */")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(3)
 
 
 def _apply_memory_limit(max_memory_mb: int | None) -> None:
@@ -920,9 +1036,15 @@ def _decompile_function(
     formatted = _collapse_annotated_stack_aliases_text(formatted)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
-    formatted = _annotate_cod_proc_output(formatted, cod_metadata)
+    formatted = _annotate_cod_proc_output(formatted, function, cod_metadata)
     formatted = _collapse_annotated_stack_aliases_text(formatted)
+    formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
+    formatted = _rewrite_known_helper_signature_text(formatted, function)
+    formatted = _prune_trailing_generic_return_text(formatted)
+    formatted = _materialize_annotated_cod_declarations_text(formatted, function, cod_metadata)
+    formatted = _collapse_duplicate_type_keywords_text(formatted)
+    formatted = _normalize_spurious_duplicate_local_suffixes(formatted)
     return "ok", formatted
 
 
@@ -1008,6 +1130,8 @@ def _function_recovery_detail(stage: str | None) -> str | None:
         return "during x86-16 function recovery"
     if isinstance(stage, str) and stage.startswith("recovery:"):
         recovery_stage = stage.split(":", 1)[1]
+        if recovery_stage == "fast":
+            return "during x86-16 function recovery (fast CFGFast)"
         if recovery_stage.startswith("narrow"):
             return "during x86-16 function recovery (narrow CFGFast)"
         if recovery_stage == "full":
@@ -1033,17 +1157,20 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
     lines = c_text.splitlines()
     out_lines: list[str] = []
     changed = False
-    header_start_re = re.compile(r"^\s*void\s+[A-Za-z_]\w*\s*\(")
+    header_start_re = re.compile(r"^\s*(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+[A-Za-z_]\w*\s*\(")
     return_re = re.compile(r"^(?P<indent>\s*)return\s+[^;]+;\s*$")
+    bare_return_re = re.compile(r"^\s*return;\s*$")
 
     index = 0
     line_count = len(lines)
     while index < line_count:
         line = lines[index]
-        if not header_start_re.match(line):
+        header_match = header_start_re.match(line)
+        if header_match is None:
             out_lines.append(line)
             index += 1
             continue
+        is_void = header_match.group("ret").strip() == "void"
 
         header_lines = [line]
         brace_index = index if "{" in line else None
@@ -1075,9 +1202,14 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
         while index < line_count and brace_depth > 0:
             body_line = lines[index]
             return_match = return_re.match(body_line)
-            if return_match is not None:
+            if is_void and return_match is not None:
                 body_line = f"{return_match.group('indent')}return;"
                 changed = True
+            elif not is_void and bare_return_re.match(body_line) is not None:
+                changed = True
+                brace_depth += body_line.count("{") - body_line.count("}")
+                index += 1
+                continue
             out_lines.append(body_line)
             brace_depth += body_line.count("{") - body_line.count("}")
             index += 1
@@ -1241,9 +1373,9 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
 def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
     trailing_newline = c_text.endswith("\n")
     lines = c_text.splitlines()
-    generic_name_re = re.compile(r"^(?:a\d+|v\d+|vvar_\d+)$")
+    generic_name_re = re.compile(r"^(?:a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?)$")
     decl_name_re = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*;\s*$")
-    generic_use_re = re.compile(r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+)(?![A-Za-z_])")
+    generic_use_re = re.compile(r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+|ir_\d+(?:_\d+)?)(?![A-Za-z_])")
     arg_name_re = re.compile(r"\((?P<args>[^()]*)\)")
     header_re = re.compile(r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)")
 
@@ -1369,6 +1501,107 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
 
     normalized = "\n".join(lines)
     if trailing_newline:
+        normalized += "\n"
+    return normalized
+
+
+def _materialize_annotated_cod_declarations_text(
+    c_text: str,
+    function,
+    metadata: CODProcMetadata | None,
+) -> str:
+    if metadata is None or function is None:
+        return c_text
+
+    func_name = getattr(function, "name", None)
+    if not isinstance(func_name, str) or not func_name:
+        return c_text
+
+    lines = c_text.splitlines()
+    header_re = re.compile(
+        rf"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{{;]?)\s*$"
+    )
+    header_index = None
+    for index, line in enumerate(lines):
+        if header_re.match(line):
+            header_index = index
+            break
+    if header_index is None:
+        return c_text
+
+    brace_index = header_index
+    while brace_index < len(lines):
+        if "{" in lines[brace_index]:
+            break
+        if ";" in lines[brace_index] and "{" not in lines[brace_index]:
+            return c_text
+        brace_index += 1
+    if brace_index >= len(lines):
+        return c_text
+
+    body_start = brace_index + 1
+    body_end = body_start
+    brace_depth = lines[brace_index].count("{") - lines[brace_index].count("}")
+    while body_end < len(lines) and brace_depth > 0:
+        brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
+        body_end += 1
+
+    body_text = "\n".join(lines[body_start:body_end])
+    declared_names: set[str] = set()
+    insertion_index = body_start
+    decl_re = re.compile(
+        r"^(?P<indent>\s*)(?:(?:extern|static)\s+)?(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
+    )
+
+    for scan_index in range(0, body_start):
+        line = lines[scan_index]
+        stripped = line.split("//", 1)[0].strip()
+        if not stripped or stripped.startswith(("/*", "*")):
+            continue
+        decl_match = decl_re.match(line)
+        if decl_match is None:
+            continue
+        declared_name = decl_match.group("name")
+        spec = known_cod_object_spec(declared_name)
+        if spec is not None:
+            normalized_name = spec.name
+            declared_names.add(normalized_name)
+            if normalized_name != declared_name:
+                lines[scan_index] = re.sub(
+                    rf"(?<![A-Za-z_]){re.escape(declared_name)}(?![A-Za-z_])\s*;\s*(?://.*)?$",
+                    f"{normalized_name};",
+                    line,
+                    count=1,
+                )
+        else:
+            declared_names.add(declared_name)
+
+    declarations: list[str] = []
+    seen_declared = set(declared_names)
+
+    for global_name in metadata.global_names:
+        if not isinstance(global_name, str) or not global_name:
+            continue
+        spec = known_cod_object_spec(global_name)
+        if spec is None:
+            continue
+        candidate_name = spec.name or global_name
+        if global_name in seen_declared or candidate_name in seen_declared:
+            continue
+        if not re.search(rf"(?<![A-Za-z_]){re.escape(global_name)}(?![A-Za-z_])", body_text) and not re.search(
+            rf"(?<![A-Za-z_]){re.escape(candidate_name)}(?![A-Za-z_])",
+            body_text,
+        ):
+            continue
+        declarations.append(f"    extern {spec.type_name} {candidate_name};")
+        seen_declared.add(candidate_name)
+
+    if not declarations:
+        return c_text
+
+    lines[insertion_index:insertion_index] = declarations
+    normalized = "\n".join(lines)
+    if c_text.endswith("\n"):
         normalized += "\n"
     return normalized
 
@@ -1534,6 +1767,90 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
     if not changed:
         return c_text
 
+    normalized = "\n".join(lines)
+    if trailing_newline:
+        normalized += "\n"
+    return normalized
+
+
+def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
+    trailing_newline = c_text.endswith("\n")
+    lines = c_text.splitlines()
+    decl_re = re.compile(r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$")
+    declared_names: set[str] = set()
+    for line in lines:
+        if line.lstrip().startswith("return "):
+            continue
+        match = decl_re.match(line)
+        if match is not None:
+            declared_names.add(match.group("name"))
+
+    rename_map: dict[str, str] = {}
+    for name in declared_names:
+        suffixed = f"{name}_2"
+        if suffixed in declared_names:
+            continue
+        if any(re.search(rf"(?<![A-Za-z_]){re.escape(suffixed)}(?![A-Za-z_])", line) is not None for line in lines):
+            rename_map[suffixed] = name
+
+    if not rename_map:
+        return c_text
+
+    pattern = re.compile(
+        r"(?<![A-Za-z_])("
+        + "|".join(sorted((re.escape(name) for name in rename_map), key=len, reverse=True))
+        + r")(?![A-Za-z_])"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        return rename_map.get(match.group(1), match.group(1))
+
+    normalized = pattern.sub(_replace, c_text)
+    if trailing_newline and not normalized.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
+def _collapse_duplicate_type_keywords_text(c_text: str) -> str:
+    replacements = (
+        (r"\bextern\s+union\s+union\s+REGS\b", "extern union REGS"),
+        (r"\bunion\s+union\s+REGS\b", "union REGS"),
+        (r"\bextern\s+struct\s+struct\s+SREGS\b", "extern struct SREGS"),
+        (r"\bstruct\s+struct\s+SREGS\b", "struct SREGS"),
+    )
+    normalized = c_text
+    for pattern, replacement in replacements:
+        normalized = re.sub(pattern, replacement, normalized)
+    return normalized
+
+
+def _prune_trailing_generic_return_text(c_text: str) -> str:
+    trailing_newline = c_text.endswith("\n")
+    lines = c_text.splitlines()
+    return_re = re.compile(r"^\s*return\s+(?P<expr>[A-Za-z_]\w*)\s*;\s*$")
+    any_return_re = re.compile(r"^\s*return\s+[^;]+;\s*$")
+    generic_return_re = re.compile(r"^(?:ir_\d+(?:_\d+)?|v\d+|vvar_\d+|a\d+)$")
+
+    index = len(lines) - 1
+    while index >= 0 and not lines[index].strip():
+        index -= 1
+    if index < 0 or lines[index].strip() != "}":
+        return c_text
+
+    index -= 1
+    while index >= 0 and not lines[index].strip():
+        index -= 1
+    if index < 0:
+        return c_text
+
+    match = return_re.match(lines[index])
+    if match is None or not generic_return_re.fullmatch(match.group("expr")):
+        return c_text
+
+    if not any(any_return_re.match(line) for line in lines[:index]):
+        return c_text
+
+    del lines[index]
     normalized = "\n".join(lines)
     if trailing_newline:
         normalized += "\n"
@@ -3783,6 +4100,10 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             if _same_c_expression(left_base, right_base) and expr.op == "Add":
                 return left_base, left_delta + right_delta
             return expr, 0
+        if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Or":
+            duplicate_word_base = _match_duplicate_word_base_expr(expr, resolve_copy_alias_expr)
+            if duplicate_word_base is not None:
+                return duplicate_word_base, 0
         if left_base is not None:
             if expr.op == "Add":
                 return left_base, left_delta + right_delta
@@ -4199,6 +4520,8 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         analysis = _analyze_widening_expr_cached(node)
         if analysis is None or analysis.kind != "linear":
             return None
+        if analysis.delta == 0:
+            return analysis.base_expr
         delta = analysis.delta
         base_expr = analysis.base_expr
         op = "Add" if delta > 0 else "Sub"
@@ -4703,6 +5026,25 @@ def _match_duplicate_word_increment_shift_expr(node, resolve_copy_alias_expr, co
     return None
 
 
+def _match_duplicate_word_base_expr(node, resolve_copy_alias_expr):
+    node = _unwrap_c_casts(node)
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Or":
+        return None
+
+    for maybe_low, maybe_high in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        low_expr = resolve_copy_alias_expr(_unwrap_c_casts(maybe_low))
+        high_expr = _unwrap_c_casts(maybe_high)
+        if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op not in {"Mul", "Shl"}:
+            continue
+        for maybe_inner, maybe_scale in ((high_expr.lhs, high_expr.rhs), (high_expr.rhs, high_expr.lhs)):
+            if _c_constant_value(_unwrap_c_casts(maybe_scale)) != 0x100:
+                continue
+            if _same_c_expression(low_expr, resolve_copy_alias_expr(_unwrap_c_casts(maybe_inner))):
+                return low_expr
+
+    return None
+
+
 def _attach_cod_global_names(project: angr.Project, codegen, synthetic_globals: dict[int, tuple[str, int]] | None) -> bool:
     if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
         return False
@@ -4888,6 +5230,11 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
         if new_type is None:
             continue
         new_size = desired_size(variable)
+        raw_name = getattr(variable, "name", None)
+        if not isinstance(raw_name, str) or not raw_name:
+            raw_name = getattr(cvar, "name", None)
+        known_spec = known_cod_object_spec(raw_name)
+        target_name = known_spec.name if known_spec is not None else None
         if new_size is not None and getattr(variable, "size", None) != new_size:
             variable.size = new_size
             changed = True
@@ -4901,6 +5248,16 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
                 changed = True
             except Exception:
                 pass
+        if target_name is not None:
+            if getattr(variable, "name", None) != target_name:
+                variable.name = target_name
+                changed = True
+            if getattr(cvar, "name", None) != target_name:
+                cvar.name = target_name
+                changed = True
+            if unified is not None and getattr(unified, "name", None) != target_name:
+                unified.name = target_name
+                changed = True
 
     for cextern in getattr(codegen, "cexterns", ()) or ():
         variable = getattr(cextern, "variable", None)
@@ -5121,11 +5478,25 @@ def _analyze_widening_expr(
         seen.add(key)
         if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
             return None, int(expr.value)
+        if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Or":
+            duplicate_word_base = _match_duplicate_word_base_expr(expr, resolve_copy_alias_expr)
+            if duplicate_word_base is not None:
+                return duplicate_word_base, 0
         if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
             return expr, 0
 
         left_base, left_delta = _extract(expr.lhs, seen)
         right_base, right_delta = _extract(expr.rhs, seen)
+        if isinstance(left_base, structured_c.CBinaryOp) and left_base.op == "Or":
+            duplicate_word_base = _match_duplicate_word_base_expr(left_base, resolve_copy_alias_expr)
+            if duplicate_word_base is None:
+                return expr, 0
+            left_base = duplicate_word_base
+        if isinstance(right_base, structured_c.CBinaryOp) and right_base.op == "Or":
+            duplicate_word_base = _match_duplicate_word_base_expr(right_base, resolve_copy_alias_expr)
+            if duplicate_word_base is None:
+                return expr, 0
+            right_base = duplicate_word_base
         if left_base is not None and right_base is not None:
             if _same_c_expression(left_base, right_base) and expr.op == "Add":
                 return left_base, left_delta + right_delta
@@ -5196,18 +5567,21 @@ def _access_trait_member_candidates(traits: dict[str, dict[tuple[object, ...], i
     }
 
 
-_ACCESS_TRAIT_REWRITE_TARGETS = {"sub_1287", "_rotate_pt", "_ConfigCrts", "_TIDShowRange", "_SetGear", "_DrawRadarAlt", "_SetHook", "_ChangeWeather", "_LookDown", "_LookUp", "_MousePOS"}
-
-
 def _should_attach_access_trait_names(codegen) -> bool:
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return False
-
-    if getattr(cfunc, "name", None) in _ACCESS_TRAIT_REWRITE_TARGETS:
-        return True
-
-    return getattr(cfunc, "addr", None) == 0x1287
+    project = getattr(codegen, "project", None)
+    if project is None:
+        return False
+    cache = getattr(project, "_inertia_access_traits", None)
+    if not isinstance(cache, dict):
+        return False
+    traits = cache.get(getattr(cfunc, "addr", None))
+    if not isinstance(traits, dict):
+        return False
+    profiles = _build_access_trait_evidence_profiles(traits)
+    return any(profile.has_any_evidence() for profile in profiles.values())
 
 
 def _attach_access_trait_field_names(project: angr.Project, codegen) -> bool:
@@ -7471,6 +7845,10 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
         expr = _unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
             return None, int(expr.value)
+        if isinstance(expr, structured_c.CBinaryOp) and expr.op == "Or":
+            duplicate_word_base = _match_duplicate_word_base_expr(expr, _resolve_known_copy_alias_expr)
+            if duplicate_word_base is not None:
+                return duplicate_word_base, 0
         if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
             return expr, 0
         left_base, left_delta = _extract_linear_delta(expr.lhs)
@@ -7566,7 +7944,11 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             lhs = _inline_known_linear_defs(expr.lhs, seen_vars, seen_exprs, depth + 1)
             rhs = _inline_known_linear_defs(expr.rhs, seen_vars, seen_exprs, depth + 1)
             if lhs is not expr.lhs or rhs is not expr.rhs:
-                return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=codegen)
+                expr = structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=codegen)
+            linear_expr = _match_linear_word_delta_expr(expr)
+            if linear_expr is not None and not _same_c_expression(linear_expr, expr):
+                return linear_expr
+            return expr
         if isinstance(expr, structured_c.CUnaryOp):
             operand = _inline_known_linear_defs(expr.operand, seen_vars, seen_exprs, depth + 1)
             if operand is not expr.operand:
@@ -7661,6 +8043,18 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             if lhs is not expr.lhs or rhs is not expr.rhs:
                 return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
         return _canonicalize_stack_cvar_expr(expr, codegen)
+
+    def _match_linear_word_delta_expr(expr):
+        analysis = _analyze_widening_expr(
+            expr,
+            _resolve_known_copy_alias_expr,
+            _match_high_byte_projection_base,
+        )
+        if analysis is None or analysis.kind != "linear":
+            return None
+        if analysis.delta == 0:
+            return analysis.base_expr
+        return _build_linear_expr(analysis.base_expr, analysis.delta, codegen)
 
     def visit(node):
         nonlocal changed
@@ -7819,6 +8213,7 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             for cond, body in node.condition_and_nodes:
                 new_cond = cond
                 if _structured_codegen_node(cond):
+                    new_cond = _resolve_known_copy_alias_expr(new_cond)
                     new_cond = _inline_known_linear_defs(new_cond)
                 if new_cond is not cond:
                     pair_changed = True
@@ -7830,12 +8225,47 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             if node.else_node is not None:
                 visit(node.else_node)
         elif isinstance(node, structured_c.CWhileLoop):
+            condition = getattr(node, "condition", None)
+            if _structured_codegen_node(condition):
+                new_condition = _resolve_known_copy_alias_expr(condition)
+                new_condition = _inline_known_linear_defs(new_condition)
+                if new_condition is not condition:
+                    node.condition = new_condition
+                    changed = True
             visit(getattr(node, "condition", None))
             visit(getattr(node, "body", None))
         elif hasattr(structured_c, "CDoWhileLoop") and isinstance(node, getattr(structured_c, "CDoWhileLoop")):
+            condition = getattr(node, "condition", None)
+            if _structured_codegen_node(condition):
+                new_condition = _resolve_known_copy_alias_expr(condition)
+                new_condition = _inline_known_linear_defs(new_condition)
+                if new_condition is not condition:
+                    node.condition = new_condition
+                    changed = True
             visit(getattr(node, "condition", None))
             visit(getattr(node, "body", None))
         elif hasattr(structured_c, "CForLoop") and isinstance(node, getattr(structured_c, "CForLoop")):
+            init = getattr(node, "init", None)
+            if _structured_codegen_node(init):
+                new_init = _resolve_known_copy_alias_expr(init)
+                new_init = _inline_known_linear_defs(new_init)
+                if new_init is not init:
+                    node.init = new_init
+                    changed = True
+            condition = getattr(node, "condition", None)
+            if _structured_codegen_node(condition):
+                new_condition = _resolve_known_copy_alias_expr(condition)
+                new_condition = _inline_known_linear_defs(new_condition)
+                if new_condition is not condition:
+                    node.condition = new_condition
+                    changed = True
+            iteration = getattr(node, "iteration", None)
+            if _structured_codegen_node(iteration):
+                new_iteration = _resolve_known_copy_alias_expr(iteration)
+                new_iteration = _inline_known_linear_defs(new_iteration)
+                if new_iteration is not iteration:
+                    node.iteration = new_iteration
+                    changed = True
             visit(getattr(node, "init", None))
             visit(getattr(node, "condition", None))
             visit(getattr(node, "iteration", None))
@@ -8542,16 +8972,28 @@ def _simplify_x86_16_wrapped_stack_offsets(c_text: str) -> str:
     return c_text
 
 
-def _simplify_x86_16_stack_byte_pointers(c_text: str) -> str:
+def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata | None = None) -> str:
     lines = c_text.splitlines()
     if not lines:
         return c_text
+
+    stack_pointer_names: set[str] = set()
+    if metadata is not None:
+        for _disp, name in getattr(metadata, "stack_aliases", {}).items():
+            if isinstance(name, str) and name:
+                stack_pointer_names.add(name)
 
     low_store_re = re.compile(
         r"^(?P<indent>\s*)\*\(\(char \*\)\((?P<seg>.+?) \* 16 \+ (?P<off>0x[0-9A-Fa-f]+|\d+)\)\) = (?P<rhs>[^;]+);\s*$"
     )
     high_store_re = re.compile(
         r"^(?P<indent>\s*)\*\(\(char \*\)\((?P<seg>.+?) \* 16 \+ (?P<off>0x[0-9A-Fa-f]+|\d+)\)\) = (?P<rhs>[^;]+>>\s*8[^;]*);\s*$"
+    )
+    pointer_store_re = re.compile(
+        r"^(?P<indent>\s*)\*\(\((?P<type>[^()]+?)\s*\*\)\((?P<seg>.+?) \* 16 \+ (?P<off>[^)]+)\)\) = (?P<rhs>[^;]+);\s*$"
+    )
+    far_pointer_store_re = re.compile(
+        r"^(?P<indent>\s*)\*\(\((?P<type>[^()]+?)\s*\*\)\((?P<seg>.+?) \* 16 \+ (?P<off>(?:\(unsigned int\)\s*)?(?P<name>[A-Za-z_][\w$?@]*)(?:_\d+)?)(?:\s*\+\s*0)?\)\) = (?P<rhs>[^;]+);\s*$"
     )
 
     def _normalize_rhs(rhs: str) -> str:
@@ -8581,6 +9023,36 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str) -> str:
                     f'{low_match.group("indent")}*(unsigned short far *)MK_FP({low_seg}, {low_match.group("off")}) = {low_rhs};'
                 )
                 i += 2
+                continue
+        far_pointer_match = far_pointer_store_re.match(current)
+        if far_pointer_match is not None:
+            ptr_name = far_pointer_match.group("name")
+            ptr_base_name = re.sub(r"_\d+$", "", ptr_name)
+            stack_target_name = None
+            if ptr_name in stack_pointer_names:
+                stack_target_name = ptr_name
+            elif ptr_base_name in stack_pointer_names:
+                stack_target_name = ptr_base_name
+            if stack_target_name is not None:
+                kept_lines.append(
+                    f'{far_pointer_match.group("indent")}*{stack_target_name} = {far_pointer_match.group("rhs").strip()};'
+                )
+                i += 1
+                continue
+        pointer_match = pointer_store_re.match(current)
+        if pointer_match is not None:
+            pointer_type = pointer_match.group("type").strip()
+            if pointer_type != "char":
+                kept_lines.append(
+                    f'{pointer_match.group("indent")}*((%s far *)MK_FP(%s, %s)) = %s;'
+                    % (
+                        pointer_type,
+                        pointer_match.group("seg").strip(),
+                        pointer_match.group("off").strip(),
+                        pointer_match.group("rhs").strip(),
+                    )
+                )
+                i += 1
                 continue
         kept_lines.append(current)
         i += 1
@@ -8678,6 +9150,11 @@ def _normalize_boolean_conditions(c_text: str) -> str:
         r"(?m)^(?P<indent>\s*)\}\s*while \(!\(\((?P<expr>[^()]*(?:\([^()]*\)[^()]*)*)\)\)\);"
     )
     rewritten = brace_while_pattern.sub(lambda m: f"{m.group('indent')}}} while (({m.group('expr')}) == 0);", rewritten)
+
+    addr_pattern = re.compile(
+        r"(?m)^(?P<indent>\s*)(?P<kind>if|while) \(&(?P<name>[A-Za-z_][\w$?@]*)\)$"
+    )
+    rewritten = addr_pattern.sub(lambda m: f"{m.group('indent')}{m.group('kind')} ({m.group('name')})", rewritten)
 
     index_pattern = re.compile(
         r"(?m)^(?P<indent>\s*)(?P<name>[A-Za-z_][\w$?@]*) = &v\d+\[(?P<delta>\d+)\];$"
@@ -8848,10 +9325,15 @@ def _format_bp_disp(disp: int) -> str:
     return f"[bp-0x{-disp:x}]"
 
 
-def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> str:
+def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata | None) -> str:
     if metadata is None:
         return c_text
 
+    positive_arg_aliases = [
+        name
+        for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: item[0])
+        if disp > 0 and isinstance(name, str) and name
+    ]
     positive_aliases = _build_cod_positive_bp_alias_map(
         [
             disp
@@ -8867,13 +9349,105 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
     generic_stack_name_re = re.compile(r"^(?:s_[0-9a-fA-F]+|v\d+|vvar_\d+|a\d+)$")
     alias_replacements: dict[str, str] = {}
     lines: list[str] = []
-    for line in c_text.splitlines():
+
+    def _split_decl_name(arg_text: str) -> tuple[str, str] | None:
+        text = arg_text.rstrip()
+        if not text or text == "void" or text == "...":
+            return None
+        idx = len(text)
+        while idx > 0 and text[idx - 1].isspace():
+            idx -= 1
+        end = idx
+        while idx > 0 and (text[idx - 1].isalnum() or text[idx - 1] == "_"):
+            idx -= 1
+        if idx == end:
+            return None
+        name = text[idx:end]
+        if not name or not re.match(r"[A-Za-z_]\w*$", name):
+            return None
+        prefix = text[:idx]
+        if not prefix.strip():
+            return None
+        return prefix, name
+
+    def _rewrite_header_args(line: str, next_line: str | None) -> str:
+        if not positive_arg_aliases:
+            return line
+        header_match = re.match(
+            r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)(?P<suffix>\s*[;{]?\s*)$",
+            line,
+        )
+        if header_match is None:
+            return line
+        suffix = header_match.group("suffix")
+        if "{" not in suffix and (next_line is None or next_line.strip() != "{"):
+            return line
+
+        args_text = header_match.group("args")
+        if not args_text.strip():
+            return line
+
+        parts: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for char in args_text:
+            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+            if char == "(":
+                depth_paren += 1
+            elif char == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif char == "[":
+                depth_bracket += 1
+            elif char == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            parts.append("".join(current).strip())
+
+        rewritten: list[str] = []
+        changed = False
+        for index, part in enumerate(parts):
+            split = _split_decl_name(part)
+            if split is None or index >= len(positive_arg_aliases):
+                rewritten.append(part)
+                continue
+            prefix, _name = split
+            alias = positive_arg_aliases[index]
+            if _name == alias:
+                rewritten.append(part)
+                continue
+            rewritten.append(f"{prefix}{alias}")
+            changed = True
+
+        if not changed:
+            return line
+        return (
+            f"{header_match.group('indent')}{header_match.group('ret').rstrip()} {header_match.group('name')}("
+            f"{', '.join(rewritten)}){header_match.group('suffix')}"
+        )
+
+    input_lines = c_text.splitlines()
+    for index, line in enumerate(input_lines):
+        next_line = input_lines[index + 1] if index + 1 < len(input_lines) else None
+        header_rewritten = _rewrite_header_args(line, next_line)
+        if header_rewritten != line:
+            line = header_rewritten
+
         match = re.search(r"// \[bp([+-])0x([0-9a-f]+)\]", line)
         if match:
             disp = int(match.group(2), 16)
             if match.group(1) == "-":
                 disp = -disp
             alias = _cod_stack_alias_for_disp(disp, metadata, positive_aliases=positive_aliases)
+            if disp > 0 and "<missing-type>" in line:
+                continue
             if alias is not None and not line.rstrip().endswith(f" {alias}"):
                 line = f"{line} {alias}"
             declaration_part = line.split("//", 1)[0]
@@ -9023,6 +9597,8 @@ def _annotate_cod_proc_output(c_text: str, metadata: CODProcMetadata | None) -> 
     c_text = _prune_void_function_return_values_text(c_text)
     c_text = _prune_unused_local_declarations_text(c_text)
     c_text = _dedupe_duplicate_local_declarations_text(c_text)
+    c_text = _normalize_spurious_duplicate_local_suffixes(c_text)
+    c_text = _collapse_duplicate_type_keywords_text(c_text)
     return _simplify_x86_16_wrapped_stack_offsets(c_text)
 
 
@@ -9052,6 +9628,150 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
         kept_lines.append(line)
 
     return "\n".join(kept_lines)
+
+
+def _rewrite_known_helper_signature_text(c_text: str, function) -> str:
+    helper_decl = known_helper_signature_decl(getattr(function, "name", None))
+    if helper_decl is None and getattr(function, "name", None):
+        helper_decl = known_helper_signature_decl(getattr(function, "name", "").lstrip("_"))
+    if helper_decl is None:
+        return c_text
+
+    try:
+        _helper_name, helper_proto, _ = convert_cproto_to_py(helper_decl)
+    except Exception:
+        return c_text
+
+    helper_decl = helper_decl.rstrip(";").strip()
+    helper_arg_names = tuple(getattr(helper_proto, "arg_names", ()) or ())
+    if not helper_arg_names:
+        return c_text
+
+    def split_decl_name(arg_text: str) -> tuple[str, str] | None:
+        text = arg_text.rstrip()
+        if not text or text in {"void", "..."}:
+            return None
+        idx = len(text)
+        while idx > 0 and text[idx - 1].isspace():
+            idx -= 1
+        end = idx
+        while idx > 0 and (text[idx - 1].isalnum() or text[idx - 1] == "_"):
+            idx -= 1
+        if idx == end:
+            return None
+        name = text[idx:end]
+        prefix = text[:idx]
+        if not prefix.strip():
+            return None
+        return prefix, name
+
+    func_name = getattr(function, "name", "")
+    header_pattern = re.compile(
+        rf"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{{;]?)\s*$"
+    )
+    lines = c_text.splitlines()
+    header_index = None
+    body_open_index = None
+    for index, line in enumerate(lines):
+        match = header_pattern.match(line)
+        if match is None:
+            continue
+        suffix = match.group("suffix")
+        if suffix == "{":
+            header_index = index
+            body_open_index = index
+            break
+        if index + 1 < len(lines) and lines[index + 1].strip() == "{":
+            header_index = index
+            body_open_index = index + 1
+            break
+    if header_index is None or body_open_index is None:
+        return c_text
+
+    header_match = header_pattern.match(lines[header_index])
+    if header_match is None:
+        return c_text
+
+    current_arg_text = header_match.group("args")
+    current_args: list[str] = []
+    current: list[str] = []
+    depth_paren = depth_bracket = depth_brace = 0
+    for char in current_arg_text:
+        if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+            current_args.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+        if char == "(":
+            depth_paren += 1
+        elif char == ")" and depth_paren > 0:
+            depth_paren -= 1
+        elif char == "[":
+            depth_bracket += 1
+        elif char == "]" and depth_bracket > 0:
+            depth_bracket -= 1
+        elif char == "{":
+            depth_brace += 1
+        elif char == "}" and depth_brace > 0:
+            depth_brace -= 1
+    if current:
+        current_args.append("".join(current).strip())
+
+    old_arg_names: list[str | None] = []
+    for arg_text in current_args:
+        split = split_decl_name(arg_text)
+        if split is None:
+            old_arg_names.append(None)
+            continue
+        _prefix, name = split
+        old_arg_names.append(name)
+
+    renamed_pairs = [
+        (old_name, new_name)
+        for old_name, new_name in zip(old_arg_names, helper_arg_names)
+        if old_name and old_name != new_name
+    ]
+    if not renamed_pairs:
+        return c_text
+
+    replacement_header = f"{header_match.group('indent')}{helper_decl}"
+    if header_match.group("suffix") == "{":
+        replacement_header += " {"
+    lines[header_index] = replacement_header
+
+    body_end = body_open_index + 1
+    brace_depth = lines[body_open_index].count("{") - lines[body_open_index].count("}")
+    while body_end < len(lines) and brace_depth > 0:
+        brace_depth += lines[body_end].count("{") - lines[body_end].count("}")
+        body_end += 1
+
+    rename_patterns = [
+        (re.compile(rf"(?<![A-Za-z_]){re.escape(old)}(?![A-Za-z_])"), new)
+        for old, new in renamed_pairs
+    ]
+    for index in range(body_open_index + 1, body_end):
+        line = lines[index]
+        for pattern, new in rename_patterns:
+            line = pattern.sub(new, line)
+        lines[index] = line
+
+    helper_arg_name_set = set(helper_arg_names)
+    for index in range(body_open_index + 1, body_end):
+        line = lines[index]
+        if "<missing-" not in line and "// [bp" not in line:
+            continue
+        stripped = line.strip()
+        if any(
+            re.match(rf"^<missing-[^>]+>\s+{re.escape(arg)}\s*;\s*(?://.*)?$", stripped)
+            for arg in helper_arg_name_set
+        ):
+            lines[index] = ""
+
+    normalized = "\n".join(lines)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized
 
 
 def _prune_unused_local_declarations_text(c_text: str) -> str:
@@ -9360,13 +10080,14 @@ def _format_known_helper_calls(
     declarations.extend(_known_helper_declarations(cod_metadata))
     if declarations:
         c_text = "\n".join(declarations) + "\n\n" + c_text
+    c_text = _rewrite_known_helper_signature_text(c_text, function)
     c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
     if not (
         binary_path is not None
         and binary_path.name.lower().endswith(".cod")
         and getattr(function, "name", "") == "fold_values"
     ):
-        c_text = _simplify_x86_16_stack_byte_pointers(c_text)
+        c_text = _simplify_x86_16_stack_byte_pointers(c_text, cod_metadata)
     c_text = _simplify_x86_16_conditions(c_text)
     return _repair_missing_fallthrough_returns(c_text)
 
@@ -9432,14 +10153,49 @@ def _repair_missing_fallthrough_returns(c_text: str) -> str:
     return body_text + f"\n{indent}return {return_name};\n" + "}" + closing_brace
 
 
-def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int, low_memory: bool = False):
+def _fallback_entry_function(
+    project: angr.Project,
+    *,
+    timeout: int,
+    window: int,
+    low_memory: bool = False,
+    prefer_fast_recovery: bool = False,
+):
     # If whole-binary recovery already timed out, prefer a much smaller bounded
     # entry-only recovery window instead of retrying the same expensive search.
     # When memory pressure is high, keep the scan even narrower so the fallback
     # uses less memory and avoids the whole-binary CFG path entirely.
     project._inertia_decompiler_stage = "recovery"
     candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
-    with _analysis_timeout(max(1, min(timeout, 10))):
+    recovery_timeout = max(1, timeout if prefer_fast_recovery else min(timeout, 10))
+    with _analysis_timeout(recovery_timeout):
+        if prefer_fast_recovery:
+            project._inertia_decompiler_stage = "recovery:fast"
+            for fast_window in _x86_16_fast_recovery_windows(window, low_memory=low_memory):
+                try:
+                    if project.arch.name == "86_16":
+                        fast_regions = [
+                            _infer_x86_16_linear_region(project, project.entry, window=fast_window)
+                        ]
+                    else:
+                        fast_regions = [(project.entry, project.entry + fast_window)]
+                    return _pick_function_lean(
+                        project,
+                        project.entry,
+                        regions=fast_regions,
+                        data_references=False,
+                        extend_far_calls=False,
+                    )
+                except (KeyError, _AnalysisTimeout):
+                    continue
+                except Exception as ex:  # noqa: BLE001
+                    logging.getLogger(__name__).debug(
+                        "Skipping fast x86-16 recovery for %s after %s",
+                        hex(project.entry),
+                        ex,
+                    )
+                    continue
+
         for candidate_window in candidate_windows:
             try:
                 project._inertia_decompiler_stage = f"recovery:narrow:{candidate_window:#x}"
@@ -9449,13 +10205,25 @@ def _fallback_entry_function(project: angr.Project, *, timeout: int, window: int
                     ]
                 else:
                     regions = [(project.entry, project.entry + candidate_window)]
+                try:
+                    return _pick_function(
+                        project,
+                        project.entry,
+                        regions=regions,
+                        data_references=False,
+                        force_smart_scan=False,
+                    )
+                except KeyError:
+                    pass
                 return _pick_function(
                     project,
                     project.entry,
                     regions=regions,
                     data_references=True if project.arch.name == "86_16" else None,
                 )
-            except (_AnalysisTimeout, KeyError):
+            except _AnalysisTimeout:
+                raise
+            except KeyError:
                 continue
         raise _AnalysisTimeout()
 
@@ -9616,6 +10384,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.proc is not None:
         entries = extract_cod_function_entries(args.binary, args.proc, args.proc_kind)
         cod_metadata = extract_cod_proc_metadata(args.binary, args.proc, args.proc_kind)
+        prefer_fast_recovery = _cod_proc_has_call_heavy_helper_profile(cod_metadata)
         selected_entries = extract_small_two_arg_cod_logic_entries(entries)
         if selected_entries is None:
             selected_entries = extract_simple_cod_logic_entries(entries)
@@ -9628,6 +10397,13 @@ def main(argv: list[str] | None = None) -> int:
             proc_code,
             base_addr=args.base_addr,
             entry_point=args.entry_point,
+        )
+        _apply_binary_specific_annotations(
+            project,
+            args.binary,
+            lst_metadata,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
         )
         function_label = args.proc
         if args.addr is None:
@@ -9653,26 +10429,35 @@ def main(argv: list[str] | None = None) -> int:
         print("/* recovering function... */", flush=True)
 
         try:
-            if function_label is not None and args.addr == project.entry and project.arch.name == "86_16":
-                cfg, func = _fallback_entry_function(
-                    project,
-                    timeout=args.timeout,
-                    window=args.window,
-                    low_memory=low_memory_path,
-                )
-            elif function_label is not None and args.addr == project.entry:
-                cfg, func = _recover_blob_entry_function(project, args.addr, timeout=args.timeout)
-            else:
+            def _recover_target_function():
+                if function_label is not None and args.addr == project.entry and project.arch.name == "86_16":
+                    return _fallback_entry_function(
+                        project,
+                        timeout=args.timeout,
+                        window=args.window,
+                        low_memory=low_memory_path,
+                        prefer_fast_recovery=bool(function_label is not None and prefer_fast_recovery),
+                    )
+                if function_label is not None and args.addr == project.entry:
+                    return _recover_blob_entry_function(project, args.addr, timeout=args.timeout)
                 if project.arch.name == "86_16":
                     regions = [_infer_x86_16_linear_region(project, args.addr, window=args.window)]
                 else:
                     regions = [(args.addr, args.addr + args.window)]
                 with _analysis_timeout(args.timeout):
-                    cfg, func = _pick_function(project, args.addr, regions=regions)
+                    return _pick_function(project, args.addr, regions=regions)
+
+            cfg, func = _run_with_timeout_in_daemon_thread(
+                _recover_target_function,
+                timeout=args.timeout,
+                thread_name_prefix="recovery",
+            )
         except _AnalysisTimeout:
-            print(f"/* Timed out while recovering a function after {args.timeout}s. */")
-            print("/* Tip: try a larger --timeout for larger binaries. */")
-            return 3
+            recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
+            _emit_timeout_and_exit(args.timeout, recovery_detail)
+        except FuturesTimeoutError:
+            recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
+            _emit_timeout_and_exit(args.timeout, recovery_detail)
         except Exception as ex:
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
             if recovery_detail is None:

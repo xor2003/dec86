@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
+
+import pytest
 
 from meta_harness.config import LlmConfig, RuntimeConfig
 from meta_harness.orchestrator import MetaHarness, RoleRunError
@@ -36,6 +39,24 @@ def test_peek_resume_step_reads_latest_cycle_state(monkeypatch, tmp_path):
         latest,
         {
             "full-sweep": "done",
+            "checker": "done",
+            "planner": "done",
+            "worker": "running",
+            "reviewer": "pending",
+        },
+    )
+
+    harness = MetaHarness(cfg, llm_cfg)
+    assert harness.peek_resume_step() == "worker"
+
+
+def test_peek_resume_step_treats_done_with_failures_as_completed(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    latest = cfg.runs_dir / "20260401_000001_cycle001"
+    _write_cycle_state(
+        latest,
+        {
+            "full-sweep": "done-with-failures",
             "checker": "done",
             "planner": "done",
             "worker": "running",
@@ -82,6 +103,100 @@ def test_run_resume_skips_completed_steps(monkeypatch, tmp_path):
     assert "checker" not in calls
     assert "planner" not in calls
     assert "worker" in calls
+
+
+def test_run_keeps_loop_open_when_reviewer_claims_zero_but_evidence_has_failures(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    cfg.evidence_log_file.parent.mkdir(parents=True, exist_ok=True)
+    cfg.evidence_log_file.write_text("done in 1.0s; failures=4/21\n", encoding="utf-8")
+
+    harness = MetaHarness(cfg, llm_cfg)
+    cycle_starts: list[int] = []
+
+    monkeypatch.setattr(harness, "ensure_prereqs", lambda: None)
+    monkeypatch.setattr(harness, "acquire_lock", lambda: None)
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "capture_cycle_snapshot", lambda _tag: None)
+    monkeypatch.setattr(harness, "maybe_self_restart", lambda _reason: False)
+    monkeypatch.setattr(harness, "sweep_step", lambda: None)
+    monkeypatch.setattr(harness, "checker_step", lambda: None)
+    monkeypatch.setattr(harness, "planner_step", lambda: None)
+    monkeypatch.setattr(harness, "worker_cycle", lambda: None)
+    monkeypatch.setattr(harness, "reviewer_step", lambda: "0")
+
+    original_prepare = harness.prepare_cycle_workspace
+
+    def fake_prepare() -> None:
+        cycle_starts.append(len(cycle_starts) + 1)
+        if len(cycle_starts) > 1:
+            raise RuntimeError("stop-after-second-cycle")
+        original_prepare()
+
+    monkeypatch.setattr(harness, "prepare_cycle_workspace", fake_prepare)
+
+    with pytest.raises(RuntimeError, match="stop-after-second-cycle"):
+        harness.run(resume=False)
+
+    assert cycle_starts == [1, 2]
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["reviewer"]["status"] == "done"
+    assert "evidence_failures=4" in state["steps"]["reviewer"]["extra"]
+
+
+def test_run_role_uses_delta_resume_prompt_for_codex_sessions(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    harness.role_session_file("worker").write_text("session-123\n", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(harness, "consume_operator_comments", lambda _role: "Use only the current plan delta.")
+
+    def fake_run(role, model, prompt, resume=False):
+        captured["role"] = role
+        captured["model"] = model
+        captured["prompt"] = prompt
+        captured["resume"] = resume
+        return cfg.log_dir / "worker.log"
+
+    monkeypatch.setattr(harness, "_run_llm_attempt", fake_run)
+
+    harness.run_role("worker", cfg.worker_model, "FULL WORKER PROMPT", resume=True)
+
+    assert captured["role"] == "worker"
+    assert captured["resume"] is True
+    assert "Continue the existing worker session." in str(captured["prompt"])
+    assert "FULL WORKER PROMPT" not in str(captured["prompt"])
+    assert "Use only the current plan delta." in str(captured["prompt"])
+
+
+def test_run_role_emits_status_heartbeat_during_long_provider_call(monkeypatch, tmp_path):
+    monkeypatch.setenv("STATUS_HEARTBEAT_SECS", "0.01")
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    status_updates: list[tuple[str, str, str]] = []
+
+    def fake_write_status(step: str, status: str, extra: str = "") -> None:
+        status_updates.append((step, status, extra))
+
+    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id=""):
+        time.sleep(0.05)
+        log_file.write_text("x" * 200 + "\nGlobal Remaining steps: 1\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(harness, "write_status", fake_write_status)
+    monkeypatch.setattr("meta_harness.orchestrator.run_provider_once", fake_run_provider_once)
+
+    log_file = harness.run_role("worker", cfg.worker_model, "WORKER PROMPT", resume=False)
+
+    assert log_file.exists()
+    assert any(step == "worker" and status == "running" for step, status, _ in status_updates)
+    assert any("heartbeat_elapsed=" in extra for _, _, extra in status_updates)
+    assert status_updates[-1][1] == "done"
 
 
 def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):

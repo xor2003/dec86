@@ -2,6 +2,57 @@
 
 Inertia decompiler provides support for decompiling 16-bit x86 real mode binaries using the angr framework, with custom agents for architecture, lifting, and simulation.
 
+## Project overview
+
+Inertia is an angr-based decompiler focused on readable, evidence-driven C for real-mode x86 binaries.
+
+The project priorities are:
+
+- correctness first
+- readability second
+- recompilable output where practical
+
+The project is not aiming to become a transpiler.
+
+## Decompiler Shape
+
+The current x86-16 decompiler is organized around the recovery pipeline:
+
+`IR -> Alias model -> Widening -> Traits -> Types -> Rewrite`
+
+Recent work made two parts explicit:
+
+- `control-flow structuring` now has its own stage instead of living inside late cleanup.
+- `confidence` and `assumption` reporting now travel through scan and milestone outputs so the decompiler can say what is recovered, what is uncertain, and what is still unresolved.
+
+## x86-16 platform map
+
+The main x86-16 implementation lives under [`angr_platforms/angr_platforms/X86_16`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16).
+
+Key modules:
+
+- Arch: [`arch_86_16.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/arch_86_16.py)
+- Lifter: [`lift_86_16.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/lift_86_16.py)
+- Instructions: [`instr_base.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/instr_base.py), [`instr16.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/instr16.py)
+- Runtime/core: [`emulator.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/emulator.py), [`processor.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/processor.py)
+- SimOS: [`simos_86_16.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/simos_86_16.py)
+- Hardware helpers: [`memory.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/memory.py), [`io.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/io.py), [`interrupt.py`](/home/xor/vextest/angr_platforms/angr_platforms/X86_16/interrupt.py)
+
+AIL lifting and decompilation use the in-tree x86-16 platform; this is the main supported path for the real-mode work in this repo.
+
+Quick smoke example:
+
+```python
+import angr
+import angr_platforms.X86_16
+
+binary = b'\xb8\x01\x00\x05\x02\x00\xc3'  # MOV AX,1; ADD AX,2; RET
+p = angr.Project(binary, backend="blob", arch="X86_16")
+cfg = p.analyses.CFG()
+decomp = p.analyses.Decompiler(target_addr=0x0)
+print(decomp.code)
+```
+
 ## TODO
 - Unreal mode support
 
@@ -82,6 +133,33 @@ For legacy script usage:
 ./decompile.py test.bin
 ```
 
+## Project docs and current status
+
+Main docs:
+
+- [`PLAN.md`](/home/xor/vextest/PLAN.md)
+- [`angr_platforms/docs/dream_decompiler_execution_plan.md`](/home/xor/vextest/angr_platforms/docs/dream_decompiler_execution_plan.md)
+- [`angr_platforms/docs/x86_16_80286_real_mode_coverage.md`](/home/xor/vextest/angr_platforms/docs/x86_16_80286_real_mode_coverage.md)
+- [`angr_platforms/docs/x86_16_mnemonic_coverage.md`](/home/xor/vextest/angr_platforms/docs/x86_16_mnemonic_coverage.md)
+- [`angr_platforms/docs/x86_16_reference_priority.md`](/home/xor/vextest/angr_platforms/docs/x86_16_reference_priority.md)
+
+Focused x86-16 tests:
+
+- [`angr_platforms/tests/test_x86_16_smoketest.py`](/home/xor/vextest/angr_platforms/tests/test_x86_16_smoketest.py)
+- [`angr_platforms/tests/test_x86_16_cod_samples.py`](/home/xor/vextest/angr_platforms/tests/test_x86_16_cod_samples.py)
+- [`angr_platforms/tests/test_x86_16_dos_mz_loader.py`](/home/xor/vextest/angr_platforms/tests/test_x86_16_dos_mz_loader.py)
+- [`angr_platforms/tests/test_x86_16_sample_matrix.py`](/home/xor/vextest/angr_platforms/tests/test_x86_16_sample_matrix.py)
+- [`angr_platforms/tests/test_x86_16_runtime_samples.py`](/home/xor/vextest/angr_platforms/tests/test_x86_16_runtime_samples.py)
+- [`angr_platforms/tests/test_x86_16_compare_semantics.py`](/home/xor/vextest/angr_platforms/tests/test_x86_16_compare_semantics.py)
+- [`angr_platforms/tests/test_x86_16_cli.py`](/home/xor/vextest/angr_platforms/tests/test_x86_16_cli.py)
+
+Focused commands:
+
+```bash
+cd /home/xor/vextest/angr_platforms && ../.venv/bin/python -m pytest -q tests/test_x86_16_smoketest.py tests/test_x86_16_cod_samples.py tests/test_x86_16_dos_mz_loader.py tests/test_x86_16_sample_matrix.py tests/test_x86_16_runtime_samples.py
+cd /home/xor/vextest/angr_platforms && ../.venv/bin/python scripts/scan_cod_dir.py ../cod --mode scan-safe --timeout-sec 5 --max-memory-mb 1024
+```
+
 
 ## x86-16 Quick Start
 
@@ -108,4 +186,4 @@ This repo includes an in-tree real-mode DOS sample corpus under `x16_samples/`.
 
 The sample rebuild uses the DOS toolchain from `/home/xor/games/f15se2-re` by default. If your toolchain checkout lives somewhere else, set `X16_TOOLCHAIN_ROOT=/path/to/f15se2-re`.
 
-See [AGENTS.md](AGENTS.md) for more details on supported platforms and agents.
+For repository operating rules and architecture constraints, see [`AGENTS.md`](/home/xor/vextest/AGENTS.md). For harness behavior and knobs, see [`meta_harness/README.md`](/home/xor/vextest/meta_harness/README.md).

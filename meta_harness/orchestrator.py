@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from .prompts import (
     build_checker_prompt,
     build_crash_reviewer_prompt,
     build_planner_prompt,
+    build_resume_prompt,
     build_reviewer_prompt,
     build_worker_prompt,
 )
@@ -29,14 +31,16 @@ class HarnessError(RuntimeError):
 
 
 class RoleRunError(HarnessError):
-    def __init__(self, role: str, log_file: Path, message: str):
+    def __init__(self, role: str, log_file: Path, message: str, exit_code: int | None = None):
         super().__init__(message)
         self.role = role
         self.log_file = log_file
+        self.exit_code = exit_code
 
 
 class MetaHarness:
     step_order = ("full-sweep", "checker", "planner", "worker", "reviewer")
+    completed_step_statuses = {"done", "done-with-failures"}
 
     def __init__(self, cfg: RuntimeConfig, llm_cfg: LlmConfig):
         self.cfg = cfg
@@ -46,6 +50,7 @@ class MetaHarness:
         self.cycle_state: dict[str, object] | None = None
         self.crash_review_active = False
         self.lock_fp: object | None = None
+        self.status_lock = threading.Lock()
         self.script_checksums = self._compute_script_checksums()
         self._ensure_dirs()
 
@@ -71,7 +76,30 @@ class MetaHarness:
         if extra:
             lines.append(f"extra={extra}")
         lines.append(f"updated_at={self.iso_now()}")
-        self.cfg.status_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with self.status_lock:
+            self.cfg.status_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _start_status_heartbeat(self, step: str, status: str, extra: str = ""):
+        interval = float(self.cfg.status_heartbeat_secs)
+        if interval <= 0:
+            return None
+
+        started = time.monotonic()
+        stop_event = threading.Event()
+
+        def _run() -> None:
+            while not stop_event.wait(interval):
+                elapsed = int(time.monotonic() - started)
+                heartbeat_extra = extra
+                if heartbeat_extra:
+                    heartbeat_extra += " "
+                heartbeat_extra += f"heartbeat_elapsed={elapsed}s"
+                self.write_status(step, status, heartbeat_extra)
+                self.log(f"{step} still {status}; elapsed={elapsed}s")
+
+        thread = threading.Thread(target=_run, name=f"{step}-status-heartbeat", daemon=True)
+        thread.start()
+        return stop_event, thread
 
     def check_stop_file(self) -> None:
         if self.cfg.stop_file.exists():
@@ -255,7 +283,7 @@ class MetaHarness:
             return None
         for step in self.step_order:
             entry = steps.get(step)
-            if not isinstance(entry, dict) or entry.get("status") != "done":
+            if not isinstance(entry, dict) or entry.get("status") not in self.completed_step_statuses:
                 return step
         return None
 
@@ -299,6 +327,16 @@ class MetaHarness:
         latest_link.symlink_to(self.current_cycle_dir)
         self.log(f"Resuming cycle {self.current_cycle_index:03d} from {resume_step}")
         return resume_step
+
+    def evidence_failure_count(self) -> int | None:
+        if not self.cfg.evidence_log_file.exists():
+            return None
+        text = self.cfg.evidence_log_file.read_text(encoding="utf-8", errors="replace")
+        matches = re.findall(r"failures=(\d+)/(\d+)", text)
+        if not matches:
+            return None
+        failed, _total = matches[-1]
+        return int(failed)
 
     def prepare_cycle_workspace(self) -> None:
         self.cleanup_state_dir()
@@ -489,11 +527,11 @@ class MetaHarness:
         session_file = self.role_session_file(role)
         previous_log = self.last_role_log_file(role)
 
-        def _raise_role_error(message: str) -> None:
+        def _raise_role_error(message: str, exit_code: int | None = None) -> None:
             if log_file.exists():
                 shutil.copy2(log_file, self.cfg.last_log_file)
                 self.save_role_markers(role, log_file)
-            raise RoleRunError(role, log_file, message)
+            raise RoleRunError(role, log_file, message, exit_code=exit_code)
 
         prompt_file.write_text(prompt, encoding="utf-8")
         effective = build_effective_prompt(role, provider, prompt, self.llm_cfg, previous_log)
@@ -501,38 +539,46 @@ class MetaHarness:
         mode = "resume" if resume and backend_supports_sessions(provider) and session_file.exists() else "new"
         self.write_status(role, "running", f"provider={provider} model={model} log={log_file.name}")
         self.log(f"Starting {role} with {provider}/{model}{' via resume' if mode == 'resume' else ''}")
+        heartbeat = self._start_status_heartbeat(role, "running", f"provider={provider} model={model} log={log_file.name}")
 
-        if mode == "resume":
-            session_id = session_file.read_text(encoding="utf-8").strip()
-            if run_provider_once(provider, "resume", model, effective, prompt_file, log_file, self.llm_cfg, session_id) != 0:
-                _raise_role_error(f"{role} resume failed")
-        else:
-            max_attempts = self.llm_cfg.local_model_max_retries + 1 if provider in {"ollama", "llamacpp"} else 1
-            for attempt in range(1, max_attempts + 1):
-                rc = run_provider_once(provider, "new", model, effective, prompt_file, log_file, self.llm_cfg)
-                if rc == 0 and validate_output(role, provider, log_file, self.llm_cfg):
-                    break
-                if provider not in {"ollama", "llamacpp"}:
-                    _raise_role_error(f"{role} failed")
-                self.log(f"{role} produced invalid output via {provider}/{model}; retry {attempt}/{self.llm_cfg.local_model_max_retries}")
+        try:
+            if mode == "resume":
+                session_id = session_file.read_text(encoding="utf-8").strip()
+                rc = run_provider_once(provider, "resume", model, effective, prompt_file, log_file, self.llm_cfg, session_id)
+                if rc != 0:
+                    _raise_role_error(f"{role} resume failed", exit_code=rc)
             else:
-                fallback_provider = self.llm_cfg.local_model_fallback_provider
-                fallback_model = self.llm_cfg.local_model_fallback_model
-                if fallback_provider and fallback_model:
-                    effective = build_effective_prompt(
-                        role,
-                        fallback_provider,
-                        prompt + "\n\nFallback instruction:\n" + self.llm_cfg.local_model_fallback_context,
-                        self.llm_cfg,
-                        previous_log,
-                    )
-                    prompt_file.write_text(effective, encoding="utf-8")
-                    rc = run_provider_once(fallback_provider, "new", fallback_model, effective, prompt_file, log_file, self.llm_cfg)
-                    provider = fallback_provider
-                    if rc != 0 or not validate_output(role, provider, log_file, self.llm_cfg):
-                        _raise_role_error(f"{role} failed after retries")
+                max_attempts = self.llm_cfg.local_model_max_retries + 1 if provider in {"ollama", "llamacpp"} else 1
+                for attempt in range(1, max_attempts + 1):
+                    rc = run_provider_once(provider, "new", model, effective, prompt_file, log_file, self.llm_cfg)
+                    if rc == 0 and validate_output(role, provider, log_file, self.llm_cfg):
+                        break
+                    if provider not in {"ollama", "llamacpp"}:
+                        _raise_role_error(f"{role} failed", exit_code=rc)
+                    self.log(f"{role} produced invalid output via {provider}/{model}; retry {attempt}/{self.llm_cfg.local_model_max_retries}")
                 else:
-                    _raise_role_error(f"{role} failed after retries")
+                    fallback_provider = self.llm_cfg.local_model_fallback_provider
+                    fallback_model = self.llm_cfg.local_model_fallback_model
+                    if fallback_provider and fallback_model:
+                        effective = build_effective_prompt(
+                            role,
+                            fallback_provider,
+                            prompt + "\n\nFallback instruction:\n" + self.llm_cfg.local_model_fallback_context,
+                            self.llm_cfg,
+                            previous_log,
+                        )
+                        prompt_file.write_text(effective, encoding="utf-8")
+                        rc = run_provider_once(fallback_provider, "new", fallback_model, effective, prompt_file, log_file, self.llm_cfg)
+                        provider = fallback_provider
+                        if rc != 0 or not validate_output(role, provider, log_file, self.llm_cfg):
+                            _raise_role_error(f"{role} failed after retries", exit_code=rc)
+                    else:
+                        _raise_role_error(f"{role} failed after retries", exit_code=rc)
+        finally:
+            if heartbeat is not None:
+                stop_event, thread = heartbeat
+                stop_event.set()
+                thread.join(timeout=max(1.0, float(self.cfg.status_heartbeat_secs)))
 
         shutil.copy2(log_file, self.cfg.last_log_file)
         text = log_file.read_text(encoding="utf-8", errors="replace")
@@ -545,13 +591,23 @@ class MetaHarness:
 
     def run_role(self, role: str, model: str, prompt: str, resume: bool = False) -> Path:
         comments = self.consume_operator_comments(role)
-        effective_prompt = prompt
-        if comments:
-            effective_prompt += (
-                "\n\nOperator comments to apply now:\n"
-                "Treat these as highest-priority human guidance for this step.\n"
-                f"{comments}\n"
-            )
+        provider = self.llm_cfg.provider_for_key(role)
+        session_file = self.role_session_file(role)
+        if (
+            resume
+            and self.cfg.delta_resume_prompts
+            and backend_supports_sessions(provider)
+            and session_file.exists()
+        ):
+            effective_prompt = build_resume_prompt(role, self.cfg, comments=comments)
+        else:
+            effective_prompt = prompt
+            if comments:
+                effective_prompt += (
+                    "\n\nOperator comments to apply now:\n"
+                    "Treat these as highest-priority human guidance for this step.\n"
+                    f"{comments}\n"
+                )
         return self._run_llm_attempt(role, model, effective_prompt, resume=resume)
 
     def sweep_step(self) -> None:
@@ -630,10 +686,6 @@ class MetaHarness:
         remaining = self.extract_remaining_steps(log_file)
         if not remaining:
             self.die("Planner did not print remaining step count")
-        text = log_file.read_text(encoding="utf-8", errors="replace")
-        if "Pause for minute" in text:
-            self.log("Planner requested a pause")
-            time.sleep(self.cfg.planner_pause_secs)
         if remaining == "0":
             print("Global Remaining steps: 0")
             raise SystemExit(0)
@@ -769,6 +821,23 @@ class MetaHarness:
                 self.worker_cycle()
             remaining = self.reviewer_step()
             self.log(f"Reviewer says {remaining} steps remain")
+            evidence_failures = self.evidence_failure_count()
+            if remaining == "0" and evidence_failures and evidence_failures > 0:
+                self.log(
+                    f"Reviewer reported 0 remaining steps but {self.cfg.evidence_log_file.name} "
+                    f"still reports failures={evidence_failures}; keeping the loop open"
+                )
+                self.write_status(
+                    "reviewer",
+                    "evidence-failures-remain",
+                    f"reviewer_remaining=0 evidence_failures={evidence_failures}",
+                )
+                self.mark_cycle_step(
+                    "reviewer",
+                    "done",
+                    f"remaining=0 evidence_failures={evidence_failures} forced_remaining=1",
+                )
+                remaining = "1"
             self.maybe_self_restart("reviewer")
             if remaining == "0":
                 self.capture_cycle_snapshot("complete")

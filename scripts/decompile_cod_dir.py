@@ -5,17 +5,19 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
-import importlib.util
 import io
 import logging
 import multiprocessing as mp
 import os
 import resource
+import signal
+import subprocess
 import sys
 import tempfile
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import TextIO
 
@@ -35,7 +37,7 @@ try:
 except Exception:
     pass
 
-from angr_platforms.X86_16.corpus_scan import extract_cod_functions
+from angr_platforms.X86_16.corpus_scan import FunctionScanResult, extract_cod_functions, scan_function
 
 
 _REAL_STDOUT = sys.stdout
@@ -117,6 +119,7 @@ class CodWorkItem:
     proc_kind: str | None
     proc_index: int
     proc_total: int
+    code: bytes
 
     @property
     def label(self) -> str:
@@ -134,7 +137,134 @@ class CodWorkResult:
     proc_total: int
     stdout_path: Path
     stderr: str
-    returncode: int
+    returncode: int | None
+    child_exit_kind: str = "ok"
+    child_exit_detail: str = ""
+    exit_kind: str = "ok"
+    exit_detail: str = ""
+    scan_safe_result: FunctionScanResult | None = None
+
+
+def _worker_failure_summary(item: CodWorkItem, ex: BaseException) -> str:
+    if isinstance(ex, BrokenProcessPool):
+        return f"parent pool breakage while recovering {item.label}"
+    return f"worker failed: {type(ex).__name__}: {ex}"
+
+
+def _format_worker_failure(item: CodWorkItem, ex: BaseException) -> str:
+    return f"/* {_worker_failure_summary(item, ex)} */"
+
+
+def _combined_output(stdout_text: str, stderr_text: str) -> str:
+    if stdout_text and stderr_text:
+        return f"{stdout_text}\n{stderr_text}"
+    return stdout_text or stderr_text
+
+
+def _output_looks_like_memory_pressure(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "memoryerror",
+            "cannot allocate memory",
+            "out of memory",
+            "malloc failed",
+            "bad_alloc",
+            "rlimit",
+            "killed",
+        )
+    )
+
+
+def _describe_returncode(returncode: int | None, stdout_text: str, stderr_text: str, *, subprocess_timed_out: bool = False) -> tuple[str, str]:
+    if subprocess_timed_out:
+        return "subprocess_timeout", "worker-side subprocess timed out before the CLI returned"
+    if returncode is None:
+        return "unknown_exit", "child exit status unavailable"
+    if returncode == 0:
+        return "ok", ""
+
+    combined = _combined_output(stdout_text, stderr_text)
+    if returncode == 3 and "timed out while recovering" in combined.lower():
+        return "timeout", "decompiler CLI reported a recovery timeout"
+    if returncode < 0:
+        signum = -returncode
+        try:
+            sig_name = signal.Signals(signum).name
+        except ValueError:
+            sig_name = f"SIG{signum}"
+        if signum == signal.SIGKILL and _output_looks_like_memory_pressure(combined):
+            return "rlimit_kill", f"child terminated by {sig_name} ({signum}) after memory pressure"
+        return "signal_termination", f"child terminated by {sig_name} ({signum})"
+    if _output_looks_like_memory_pressure(combined):
+        return "rlimit_kill", f"child exited with status {returncode} after memory pressure"
+    return "cli_exit", f"child exited with status {returncode}"
+
+
+def _run_scan_safe_fallback(item: CodWorkItem, timeout: int) -> FunctionScanResult | None:
+    if item.proc_name is None:
+        return None
+    try:
+        return scan_function(
+            item.cod_path,
+            item.proc_name,
+            item.proc_kind or "NEAR",
+            item.code,
+            timeout,
+            mode="scan-safe",
+        )
+    except Exception:
+        return None
+
+
+def _describe_scan_safe_result(item: CodWorkItem, scan_result: FunctionScanResult) -> tuple[str, str]:
+    if scan_result.ok and scan_result.fallback_kind not in (None, "none"):
+        reason = scan_result.reason or scan_result.semantic_family_reason or "scan-safe fallback"
+        return "fallback", f"scan-safe {scan_result.fallback_kind} recovery: {reason}"
+    if scan_result.ok:
+        return "ok", "scan-safe recovery succeeded without fallback"
+    failure_class = scan_result.failure_class or "scan_safe_failure"
+    reason = scan_result.reason or "scan-safe recovery failed"
+    return failure_class, f"scan-safe {failure_class}: {reason}"
+
+
+def _render_scan_safe_block(result: CodWorkResult, scan_result: FunctionScanResult) -> str:
+    parts = [
+        f"/* == scan-safe {result.proc_index}/{result.proc_total} {result.cod_path.name}",
+    ]
+    if result.proc_name is not None:
+        parts[0] += f" :: {result.proc_name}"
+        if result.proc_kind:
+            parts[0] += f" [{result.proc_kind}]"
+    else:
+        parts[0] += " :: whole-file"
+    parts[0] += " == */"
+    parts.append(f"/* child exit kind: {result.child_exit_kind} */")
+    if result.child_exit_detail:
+        parts.append(f"/* child exit detail: {result.child_exit_detail} */")
+    parts.append(f"/* scan-safe ok: {scan_result.ok} */")
+    if scan_result.fallback_kind not in (None, "none"):
+        parts.append(f"/* fallback kind: {scan_result.fallback_kind} */")
+    if scan_result.failure_class is not None:
+        parts.append(f"/* failure class: {scan_result.failure_class} */")
+    if scan_result.reason is not None:
+        parts.append(f"/* reason: {scan_result.reason} */")
+    if scan_result.stage_reached:
+        parts.append(f"/* stage reached: {scan_result.stage_reached} */")
+    if scan_result.semantic_family is not None:
+        parts.append(f"/* semantic family: {scan_result.semantic_family} */")
+    if scan_result.semantic_family_reason is not None:
+        parts.append(f"/* family reason: {scan_result.semantic_family_reason} */")
+    if scan_result.confidence_scan_safe_classification is not None:
+        parts.append(f"/* confidence scan-safe: {scan_result.confidence_scan_safe_classification} */")
+    if scan_result.confidence_status is not None:
+        parts.append(f"/* confidence status: {scan_result.confidence_status} */")
+    if scan_result.confidence_assumption_kinds:
+        parts.append(f"/* assumptions: {', '.join(scan_result.confidence_assumption_kinds)} */")
+    if scan_result.confidence_evidence_kinds:
+        parts.append(f"/* evidence: {', '.join(scan_result.confidence_evidence_kinds)} */")
+    return "\n".join(parts)
 
 
 @dataclasses.dataclass
@@ -298,26 +428,10 @@ def _iter_task_batches(
     return [work_items[index : index + batch_size] for index in range(0, len(work_items), batch_size)]
 
 
-def _load_worker_decompile_module():
-    module = getattr(_THREAD_LOCAL, "decompile_module", None)
-    if module is not None:
-        return module
-
-    module_name = f"_inertia_decompile_worker_{os.getpid()}_{threading.get_ident()}"
-    spec = importlib.util.spec_from_file_location(module_name, REPO_ROOT / "decompile.py")
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Failed to load decompile.py worker module")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    _THREAD_LOCAL.decompile_module = module
-    return module
-
-
 def _build_work_items(cod_path: Path) -> list[CodWorkItem]:
     entries = list(extract_cod_functions(cod_path))
     if not entries:
-        return [CodWorkItem(cod_path=cod_path, proc_name=None, proc_kind=None, proc_index=1, proc_total=1)]
+        return [CodWorkItem(cod_path=cod_path, proc_name=None, proc_kind=None, proc_index=1, proc_total=1, code=b"")]
 
     total = len(entries)
     return [
@@ -327,8 +441,9 @@ def _build_work_items(cod_path: Path) -> list[CodWorkItem]:
             proc_kind=proc_kind,
             proc_index=index,
             proc_total=total,
+            code=code,
         )
-        for index, (proc_name, proc_kind, _code) in enumerate(entries, start=1)
+        for index, (proc_name, proc_kind, code) in enumerate(entries, start=1)
     ]
 
 
@@ -340,23 +455,75 @@ def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> Co
     )
     os.close(stdout_fd)
     stdout_path = Path(stdout_name)
-    stderr_buf = io.StringIO()
-    returncode = 0
+    stderr_text = ""
+    returncode: int | None = None
+    child_exit_kind = "ok"
+    child_exit_detail = ""
+    exit_kind = "ok"
+    exit_detail = ""
+    scan_safe_result: FunctionScanResult | None = None
+    child_timeout = max(60, timeout * 6)
+    command = [
+        sys.executable,
+        str(REPO_ROOT / "decompile.py"),
+        str(item.cod_path),
+        "--timeout",
+        str(timeout),
+        "--max-memory-mb",
+        str(max_memory_mb),
+    ]
+    if item.proc_name is not None:
+        command.extend(["--proc", item.proc_name, "--proc-kind", item.proc_kind or "NEAR"])
 
     try:
         with stdout_path.open("w", encoding="utf-8") as stdout_file:
-            with _THREAD_STDOUT.target(stdout_file), _THREAD_STDERR.target(stderr_buf):
-                module = _load_worker_decompile_module()
-                argv = [str(item.cod_path), "--timeout", str(timeout), "--max-memory-mb", str(max_memory_mb)]
-                if item.proc_name is not None:
-                    argv.extend(["--proc", item.proc_name, "--proc-kind", item.proc_kind or "NEAR"])
-                try:
-                    returncode = int(module.main(argv))
-                except SystemExit as ex:
-                    returncode = int(ex.code or 0)
+            completed = subprocess.run(
+                command,
+                cwd=str(REPO_ROOT),
+                stdout=stdout_file,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=child_timeout,
+                check=False,
+            )
+        returncode = int(completed.returncode)
+        stderr_text = completed.stderr or ""
+        child_exit_kind, child_exit_detail = _describe_returncode(
+            returncode,
+            stdout_path.read_text(encoding="utf-8", errors="replace"),
+            stderr_text,
+        )
+        exit_kind, exit_detail = child_exit_kind, child_exit_detail
+        if exit_kind != "ok":
+            scan_safe_result = _run_scan_safe_fallback(item, timeout)
+            if scan_safe_result is not None:
+                exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
+    except subprocess.TimeoutExpired as ex:
+        returncode = None
+        child_exit_kind, child_exit_detail = _describe_returncode(
+            None,
+            ex.stdout or "",
+            ex.stderr or "",
+            subprocess_timed_out=True,
+        )
+        exit_kind, exit_detail = child_exit_kind, child_exit_detail
+        scan_safe_result = _run_scan_safe_fallback(item, timeout)
+        if scan_safe_result is not None:
+            exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
+        if ex.stderr:
+            stderr_text = ex.stderr
+        elif ex.stdout:
+            stderr_text = ex.stdout
     except Exception as ex:  # pragma: no cover - defensive fallback
         returncode = 99
-        stderr_buf.write(f"{type(ex).__name__}: {ex}\n")
+        stderr_text = f"{type(ex).__name__}: {ex}\n"
+        child_exit_kind = "worker_exception"
+        child_exit_detail = f"worker-side exception: {type(ex).__name__}"
+        exit_kind = child_exit_kind
+        exit_detail = child_exit_detail
+        scan_safe_result = _run_scan_safe_fallback(item, timeout)
+        if scan_safe_result is not None:
+            exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
 
     return CodWorkResult(
         cod_path=item.cod_path,
@@ -365,8 +532,13 @@ def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> Co
         proc_index=item.proc_index,
         proc_total=item.proc_total,
         stdout_path=stdout_path,
-        stderr=stderr_buf.getvalue(),
+        stderr=stderr_text,
         returncode=returncode,
+        child_exit_kind=child_exit_kind,
+        child_exit_detail=child_exit_detail,
+        exit_kind=exit_kind,
+        exit_detail=exit_detail,
+        scan_safe_result=scan_safe_result,
     )
 
 
@@ -380,12 +552,14 @@ def _extract_proc_body(raw_output: str) -> str:
 
 def _render_result_block(result: CodWorkResult) -> str:
     raw_output = result.stdout_path.read_text(encoding="utf-8", errors="replace")
-    if result.returncode == 0:
+    if result.exit_kind == "ok":
         body = _extract_proc_body(raw_output)
         if body:
             rendered = body
         else:
             rendered = raw_output.strip()
+    elif result.scan_safe_result is not None:
+        rendered = _render_scan_safe_block(result, result.scan_safe_result)
     else:
         rendered = raw_output.strip()
 
@@ -399,12 +573,16 @@ def _render_result_block(result: CodWorkResult) -> str:
     else:
         parts[0] += " :: whole-file"
     parts[0] += " == */"
+    if result.exit_kind not in {"ok"}:
+        parts.append(f"/* == exit kind {result.exit_kind} == */")
+        detail = result.exit_detail or "no further detail"
+        parts.append(f"/* {detail} */")
     if rendered:
         parts.append(rendered)
     if result.stderr.strip():
         parts.append(f"/* == stderr {result.cod_path.name} == */")
         parts.append(result.stderr.rstrip())
-    if result.returncode != 0:
+    if result.returncode not in (None, 0):
         parts.append(f"/* == exit code {result.cod_path.name} == */")
         parts.append(str(result.returncode))
 
@@ -440,7 +618,7 @@ def main() -> int:
         "--subprocess-timeout",
         type=int,
         default=900,
-        help="Soft wait timeout in seconds for the thread worker pool. Results still come from one shared process.",
+        help="Soft wait timeout in seconds for the worker pool scheduler before outstanding work is marked failed.",
     )
     parser.add_argument(
         "--skip-existing",
@@ -544,15 +722,15 @@ def main() -> int:
                         result = future.result()
                     except Exception as ex:  # pragma: no cover - defensive fallback
                         failures += 1
-                        print(f"  worker failed: {item.cod_path} :: {item.label}: {ex}")
-                        writer.add_failure(item.proc_index, f"/* worker failed: {type(ex).__name__}: {ex} */")
+                        print(f"  {_worker_failure_summary(item, ex)}: {item.cod_path} :: {item.label}")
+                        writer.add_failure(item.proc_index, _format_worker_failure(item, ex))
                         if writer.is_complete():
                             writer.close()
                             writer.reported = True
                             print(f"  wrote {writer.out_path}")
                         continue
                     writer.add_block(item.proc_index, _render_result_block(result))
-                    if result.returncode != 0:
+                    if result.exit_kind not in {"ok", "fallback"}:
                         failures += 1
                     print(f"  captured {item.label}")
                     if writer.is_complete():

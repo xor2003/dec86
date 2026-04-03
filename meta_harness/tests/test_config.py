@@ -36,3 +36,13 @@ def test_runtime_config_uses_default_consecutive_worker_failure_limit(monkeypatc
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.max_consecutive_worker_failures == 3
+
+
+def test_runtime_config_uses_compact_prompt_defaults_and_mini_roles(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROOT_DIR", str(tmp_path))
+    cfg = RuntimeConfig.from_env([])
+    assert cfg.compact_prompts is True
+    assert cfg.delta_resume_prompts is True
+    assert cfg.planner_model == "gpt-5.4-mini"
+    assert cfg.reviewer_model == "gpt-5.4-mini"
+    assert cfg.crash_reviewer_model == "gpt-5.4"
