@@ -5,6 +5,7 @@ from meta_harness.prompts import (
     build_checker_prompt,
     build_crash_reviewer_prompt,
     build_planner_prompt,
+    build_resume_prompt,
     build_reviewer_prompt,
     build_worker_prompt,
 )
@@ -21,6 +22,13 @@ def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path)
     assert str(cfg.plan_path) in prompt
     assert "Global Remaining steps: N" in prompt
     assert "Do not rerun the evidence sweep" in prompt
+    assert "flat numbered checklist" in prompt
+    assert "source line numbers" in prompt
+    assert "definition of done" in prompt
+    assert "Preserve unfinished strategic items" in prompt
+    assert "Do not drop user-added unfinished goals" in prompt
+    assert "Pause for minute" not in prompt
+    assert "Minimal and actionable" in prompt
 
 
 def test_worker_prompt_mentions_implementation_role(monkeypatch, tmp_path):
@@ -43,3 +51,13 @@ def test_checker_and_crash_prompts_reference_evidence(monkeypatch, tmp_path):
     assert str(cfg.evidence_log_file) in checker
     assert "Harness restart required" in crash
     assert "/tmp/cycle" in crash
+
+
+def test_resume_prompt_is_short_and_keeps_required_marker(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    prompt = build_resume_prompt("worker", cfg, comments="Use current DOSFUNC evidence only.")
+    assert "Continue the existing worker session." in prompt
+    assert "Use the existing session context" in prompt
+    assert "Global Remaining steps: N" in prompt
+    assert "Use current DOSFUNC evidence only." in prompt
+    assert str(cfg.rules_file) not in prompt

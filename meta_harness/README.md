@@ -37,6 +37,25 @@ This separation helps reduce role confusion:
 - `cli.py`
   Main entry point used by `python -m meta_harness`.
 
+## Token efficiency
+
+The harness now tries to stay cheap by default:
+
+- `planner`, `checker`, `worker`, and `reviewer` default to `gpt-5.4-mini`.
+- Prompts are compact by default instead of repeating a long role preamble.
+- `codex resume` uses a short continuation prompt instead of resending the full role prompt.
+- Local Python one-liners launched from the repo root inherit the repo memory guard.
+
+The main knobs are:
+
+- `COMPACT_PROMPTS=1`
+- `DELTA_RESUME_PROMPTS=1`
+- `PLANNER_MODEL`
+- `CHECKER_MODEL`
+- `WORKER_MODEL`
+- `REVIEWER_MODEL`
+- `CRASH_REVIEWER_MODEL`
+
 ## Tests
 
 Run:
@@ -56,3 +75,7 @@ python -m meta_harness --resume
 
 to continue from the first unfinished step, or `--fresh` to ignore the saved
 state and start a new cycle.
+
+The harness also respects a root-level `STOP` file. If `STOP` exists, the next
+run will stop before advancing the current cycle. Remove `STOP` before running
+again if you want the harness to continue.
