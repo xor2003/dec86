@@ -24,6 +24,7 @@ from .prompts import (
     build_reviewer_prompt,
     build_worker_prompt,
 )
+from .webui import append_chat_entry
 
 
 class HarnessError(RuntimeError):
@@ -41,6 +42,7 @@ class RoleRunError(HarnessError):
 class MetaHarness:
     step_order = ("full-sweep", "checker", "planner", "worker", "reviewer")
     completed_step_statuses = {"done", "done-with-failures"}
+    graceful_exit_codes = {124, 130, 143}
 
     def __init__(self, cfg: RuntimeConfig, llm_cfg: LlmConfig):
         self.cfg = cfg
@@ -51,7 +53,10 @@ class MetaHarness:
         self.crash_review_active = False
         self.lock_fp: object | None = None
         self.status_lock = threading.Lock()
+        self.log_lock = threading.Lock()
         self.script_checksums = self._compute_script_checksums()
+        self.next_cycle_start_step: str | None = None
+        self.worker_stall_streak = 0
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -66,7 +71,15 @@ class MetaHarness:
         return datetime.now().astimezone().isoformat(timespec="seconds")
 
     def log(self, msg: str) -> None:
-        print(f"[{self.iso_now()}] {msg}", file=sys.stderr)
+        line = f"[{self.iso_now()}] {msg}"
+        print(line, file=sys.stderr)
+        try:
+            self.cfg.last_log_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_lock:
+                with self.cfg.last_log_file.open("a", encoding="utf-8") as fp:
+                    fp.write(line + "\n")
+        except OSError:
+            pass
 
     def die(self, msg: str) -> None:
         raise HarnessError(msg)
@@ -257,12 +270,41 @@ class MetaHarness:
             "started_at": self.iso_now(),
             "updated_at": self.iso_now(),
             "completed": False,
+            "next_cycle_start_step": self.next_cycle_start_step or "",
             "steps": {step: {"status": "pending", "updated_at": "", "extra": ""} for step in self.step_order},
+            "worker_stall_streak": self.worker_stall_streak,
         }
+
+    def _normalize_next_cycle_start_step(self, value: object) -> str | None:
+        if isinstance(value, str) and value in self.step_order:
+            return value
+        return None
+
+    def _reviewer_completed_in_state(self, state: dict[str, object]) -> bool:
+        steps = state.get("steps")
+        if not isinstance(steps, dict):
+            return False
+        entry = steps.get("reviewer")
+        return isinstance(entry, dict) and entry.get("status") in self.completed_step_statuses
+
+    def _hydrate_runtime_hints_from_state(self, state: dict[str, object]) -> None:
+        raw_streak = state.get("worker_stall_streak", 0)
+        try:
+            self.worker_stall_streak = max(0, int(raw_streak))
+        except (TypeError, ValueError):
+            self.worker_stall_streak = 0
+        self.next_cycle_start_step = self._normalize_next_cycle_start_step(state.get("next_cycle_start_step"))
+
+    def _state_has_next_cycle_handoff(self, state: dict[str, object]) -> bool:
+        return self._reviewer_completed_in_state(state) and self._normalize_next_cycle_start_step(
+            state.get("next_cycle_start_step")
+        ) is not None
 
     def _save_cycle_state(self) -> None:
         if self.current_cycle_dir is None or self.cycle_state is None:
             return
+        self.cycle_state["next_cycle_start_step"] = self.next_cycle_start_step or ""
+        self.cycle_state["worker_stall_streak"] = self.worker_stall_streak
         self.cycle_state["updated_at"] = self.iso_now()
         state_file = self.cycle_state_file()
         if state_file is not None:
@@ -278,6 +320,8 @@ class MetaHarness:
             return None
 
     def _resume_step_from_state(self, state: dict[str, object]) -> str | None:
+        if self._state_has_next_cycle_handoff(state):
+            return None
         steps = state.get("steps")
         if not isinstance(steps, dict):
             return None
@@ -299,6 +343,17 @@ class MetaHarness:
                 return step
         return self._resume_step_from_state(self.cycle_state)
 
+    def cycle_step_status(self, step: str) -> str:
+        if self.cycle_state is None:
+            return ""
+        steps = self.cycle_state.get("steps")
+        if not isinstance(steps, dict):
+            return ""
+        entry = steps.get(step)
+        if not isinstance(entry, dict):
+            return ""
+        return str(entry.get("status", ""))
+
     def peek_resume_step(self) -> str | None:
         latest = self.latest_cycle_dir()
         if latest is None:
@@ -315,11 +370,12 @@ class MetaHarness:
         state = self._load_cycle_state(latest)
         if state is None or state.get("completed") is True:
             return None
+        self.current_cycle_index = int(state.get("cycle", 0) or 0)
+        self._hydrate_runtime_hints_from_state(state)
         resume_step = self._resume_step_from_state(state)
         if resume_step is None:
             return None
         self.current_cycle_dir = latest
-        self.current_cycle_index = int(state.get("cycle", 0) or 0)
         self.cycle_state = state
         latest_link = self.cfg.state_dir / "latest_cycle"
         if latest_link.exists() or latest_link.is_symlink():
@@ -327,6 +383,16 @@ class MetaHarness:
         latest_link.symlink_to(self.current_cycle_dir)
         self.log(f"Resuming cycle {self.current_cycle_index:03d} from {resume_step}")
         return resume_step
+
+    def prime_next_cycle_handoff_from_latest_cycle(self) -> None:
+        latest = self.latest_cycle_dir()
+        if latest is None:
+            return
+        state = self._load_cycle_state(latest)
+        if state is None or state.get("completed") is True or not self._state_has_next_cycle_handoff(state):
+            return
+        self.current_cycle_index = int(state.get("cycle", 0) or 0)
+        self._hydrate_runtime_hints_from_state(state)
 
     def evidence_failure_count(self) -> int | None:
         if not self.cfg.evidence_log_file.exists():
@@ -392,6 +458,12 @@ class MetaHarness:
         text = path.read_text(encoding="utf-8", errors="replace").strip()
         if not text:
             return ""
+        append_chat_entry(
+            self.cfg.chat_log_file,
+            "system",
+            f"Delivered operator guidance to {role}.",
+            at=self.iso_now(),
+        )
         if self.current_cycle_dir is not None:
             archived = self.current_cycle_dir / f"operator-comments.{self.timestamp()}.{role}.md"
             archived.write_text(text + "\n", encoding="utf-8")
@@ -409,6 +481,60 @@ class MetaHarness:
         if self.current_cycle_dir is not None and self.cfg.plan_path.exists():
             shutil.copy2(self.cfg.plan_path, self.current_cycle_dir / f"PLAN.{tag}.md")
         self.capture_git_state(tag)
+
+    def recent_worker_iteration_logs(self, limit: int = 6) -> list[Path]:
+        if self.current_cycle_dir is None:
+            return []
+        return sorted(self.current_cycle_dir.glob("worker.iter*.log"))[-limit:]
+
+    def build_worker_stall_context(self) -> str:
+        if self.cycle_step_status("worker") != "stalled":
+            return ""
+        logs = self.recent_worker_iteration_logs()
+        if not logs:
+            return "Recent worker logs were not archived for this stalled cycle."
+        lines = ["Recent worker iteration logs for this stalled cycle:"]
+        for path in logs:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            rc_match = re.search(r"end rc=(\d+)", text)
+            remaining_match = re.findall(r"Global Remaining steps:\s*(\d+)", text)
+            timeout = "yes" if ("timed out" in text or "end rc=124" in text) else "no"
+            failure = "yes" if ("FAILED " in text or "failed" in text.lower()) else "no"
+            lines.append(
+                f"- {path}: rc={rc_match.group(1) if rc_match else '?'} "
+                f"remaining={remaining_match[-1] if remaining_match else '-'} timeout={timeout} failed_test_or_error={failure}"
+            )
+        lines.append("Inspect those logs before deciding whether to keep retrying worker unchanged.")
+        return "\n".join(lines)
+
+    def current_worker_model(self) -> str:
+        if self.worker_stall_streak >= self.cfg.worker_stall_escalation_threshold:
+            return self.cfg.worker_stall_model
+        return self.cfg.worker_model
+
+    def current_worker_failure_limit(self) -> int:
+        if self.worker_stall_streak > 0:
+            return max(1, min(self.cfg.max_consecutive_worker_failures, self.cfg.worker_stall_failure_limit))
+        return self.cfg.max_consecutive_worker_failures
+
+    def note_cycle_outcome(self, reviewer_remaining: str) -> None:
+        if reviewer_remaining == "0":
+            self.worker_stall_streak = 0
+            self.next_cycle_start_step = None
+            self._save_cycle_state()
+            return
+        if self.cycle_step_status("worker") == "stalled":
+            self.worker_stall_streak += 1
+            self.next_cycle_start_step = "worker"
+            self._save_cycle_state()
+            self.log(
+                f"Worker stalled with {reviewer_remaining} steps remaining; "
+                f"next cycle will resume directly at worker (stall_streak={self.worker_stall_streak})"
+            )
+            return
+        self.worker_stall_streak = 0
+        self.next_cycle_start_step = None
+        self._save_cycle_state()
 
     def mark_cycle_step(self, step: str, status: str, extra: str = "") -> None:
         if self.cycle_state is None:
@@ -431,6 +557,11 @@ class MetaHarness:
         if self.cfg.self_restart_count >= self.cfg.max_self_restarts:
             self.die(f"Harness files changed during {reason}, but MAX_SELF_RESTARTS={self.cfg.max_self_restarts} was reached")
         self.capture_cycle_snapshot(f"restart-{reason}")
+        self.write_status(
+            "harness",
+            "restarting",
+            f"reason={reason} cycle={self.current_cycle_index} self_restart_count={self.cfg.self_restart_count + 1}",
+        )
         self.log(f"Harness files changed during {reason}; restarting with updated code")
         env = self.cfg.export_env()
         env["SELF_RESTART_COUNT"] = str(self.cfg.self_restart_count + 1)
@@ -520,6 +651,36 @@ class MetaHarness:
         path = self.cfg.state_dir / f"{role}.lastlog"
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
+    def _reset_oversized_worker_resume_session(self, role: str, resume: bool) -> bool:
+        if role != "worker" or not resume:
+            return False
+        session_file = self.role_session_file(role)
+        if not session_file.exists():
+            return False
+        max_bytes = self.cfg.max_worker_session_log_bytes
+        if max_bytes <= 0:
+            return False
+        previous_log = self.last_role_log_file(role)
+        if not previous_log:
+            return False
+        log_path = Path(previous_log)
+        if not log_path.exists():
+            return False
+        log_size = log_path.stat().st_size
+        if log_size <= max_bytes:
+            return False
+        self.log(
+            f"Discarding {role} session before resume because {log_path.name} reached "
+            f"{log_size} bytes (limit {max_bytes})"
+        )
+        self.clear_role_session(role)
+        self.write_status(
+            role,
+            "restarting-fresh-context",
+            f"previous_log={log_path.name} size={log_size} limit={max_bytes}",
+        )
+        return True
+
     def _run_llm_attempt(self, role: str, model: str, prompt: str, resume: bool = False) -> Path:
         provider = self.llm_cfg.provider_for_key(role)
         prompt_file = self.cfg.prompt_dir / f"{role}.prompt.txt"
@@ -592,6 +753,8 @@ class MetaHarness:
     def run_role(self, role: str, model: str, prompt: str, resume: bool = False) -> Path:
         comments = self.consume_operator_comments(role)
         provider = self.llm_cfg.provider_for_key(role)
+        if backend_supports_sessions(provider):
+            self._reset_oversized_worker_resume_session(role, resume)
         session_file = self.role_session_file(role)
         if (
             resume
@@ -610,13 +773,54 @@ class MetaHarness:
                 )
         return self._run_llm_attempt(role, model, effective_prompt, resume=resume)
 
+    def _handle_worker_timeout(
+        self,
+        iteration: int,
+        exc: RoleRunError,
+        *,
+        resumed: bool,
+        consecutive_failures: int,
+        failure_limit: int,
+    ) -> int:
+        suffix = "resume-timeout" if resumed else "timeout"
+        self.capture_cycle_artifact(exc.log_file, f"worker.iter{iteration:02d}.{suffix}.log")
+        self.clear_role_session("worker")
+        consecutive_failures += 1
+        self.log(
+            f"Worker iteration {iteration} timed out"
+            f"{' during resume' if resumed else ''}; retrying next iteration with fresh context"
+        )
+        self.write_status(
+            "worker",
+            "retrying-after-timeout",
+            f"iteration={iteration} exit_code={exc.exit_code} consecutive_failures={consecutive_failures}",
+        )
+        if consecutive_failures >= failure_limit:
+            self.log(
+                f"Worker stalled after {consecutive_failures} consecutive timeouts/failures; handing control to reviewer"
+            )
+            self.mark_cycle_step(
+                "worker",
+                "stalled",
+                f"iteration={iteration} consecutive_failures={consecutive_failures} exit_code={exc.exit_code}",
+            )
+            return consecutive_failures
+        self.mark_cycle_step(
+            "worker",
+            "running",
+            f"iteration={iteration} consecutive_failures={consecutive_failures} exit_code={exc.exit_code}",
+        )
+        return consecutive_failures
+
     def sweep_step(self) -> None:
         self.check_stop_file()
         self.preflight_resource_check("full-sweep")
-        self.mark_cycle_step("full-sweep", "running", f"log={self.cfg.evidence_log_file.name}")
+        self.mark_cycle_step("full-sweep", "running", f"phase=preparing-subset log={self.cfg.evidence_log_file.name}")
         self.prepare_evidence_subset()
-        self.write_status("full-sweep", "running", f"log={self.cfg.evidence_log_file.name}")
+        self.write_status("full-sweep", "running", f"phase=preparing-subset log={self.cfg.evidence_log_file.name}")
         self.log(f"Starting {self.cfg.sweep_label}")
+        self.write_status("full-sweep", "running", f"phase=executing log={self.cfg.evidence_log_file.name}")
+        self.mark_cycle_step("full-sweep", "running", f"phase=executing log={self.cfg.evidence_log_file.name}")
         env = self.cfg.export_env()
         env["EVIDENCE_INPUT_FILES"] = "\n".join(self.cfg.evidence_input_files)
         env["EVIDENCE_SUBSET_DIR"] = str(self.cfg.evidence_subset_dir)
@@ -629,17 +833,43 @@ class MetaHarness:
             "-lc",
             self.cfg.sweep_cmd,
         ]
-        with self.cfg.evidence_log_file.open("w", encoding="utf-8") as out:
-            out.write(header)
-            out.flush()
-            proc = subprocess.Popen(cmd, cwd=self.cfg.root_dir, env=env, stdout=out, stderr=subprocess.STDOUT)
+        self.cfg.last_log_file.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            self.cfg.evidence_log_file.open("w", encoding="utf-8") as out,
+            self.cfg.last_log_file.open("w", encoding="utf-8") as mirror,
+        ):
+            for fp in (out, mirror):
+                fp.write(header)
+                fp.flush()
+            proc = subprocess.Popen(
+                cmd,
+                cwd=self.cfg.root_dir,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
             register_child_process(self.cfg.state_dir, proc.pid, self.cfg.sweep_cmd, str(self.cfg.root_dir), self.iso_now())
             try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    for fp in (out, mirror):
+                        fp.write(line)
+                        fp.flush()
                 rc = proc.wait()
             finally:
                 unregister_child_process(self.cfg.state_dir, proc.pid)
-        with self.cfg.evidence_log_file.open("a", encoding="utf-8") as out:
-            out.write(f"[{self.iso_now()}] end rc={rc}\n")
+        footer = f"[{self.iso_now()}] end rc={rc}\n"
+        with (
+            self.cfg.evidence_log_file.open("a", encoding="utf-8") as out,
+            self.cfg.last_log_file.open("a", encoding="utf-8") as mirror,
+        ):
+            for fp in (out, mirror):
+                fp.write(footer)
+                fp.flush()
         log_text = self.cfg.evidence_log_file.read_text(encoding="utf-8", errors="replace") if self.cfg.evidence_log_file.exists() else ""
         completed_sweep = "done in" in log_text
         if rc != 0 and completed_sweep:
@@ -699,26 +929,55 @@ class MetaHarness:
     def worker_cycle(self) -> None:
         self.mark_cycle_step("worker", "running")
         consecutive_failures = 0
+        failure_limit = self.current_worker_failure_limit()
+        worker_model = self.current_worker_model()
         for i in range(1, self.cfg.max_worker_iters + 1):
             self.check_stop_file()
             self.preflight_resource_check("worker")
-            self.log(f"Worker iteration {i}/{self.cfg.max_worker_iters}")
+            self.log(
+                f"Worker iteration {i}/{self.cfg.max_worker_iters}"
+                f" model={worker_model} failure_limit={failure_limit}"
+            )
             try:
-                log_file = self.run_role("worker", self.cfg.worker_model, build_worker_prompt(self.cfg), resume=True)
+                log_file = self.run_role("worker", worker_model, build_worker_prompt(self.cfg), resume=True)
             except HarnessError as exc:
                 if isinstance(exc, RoleRunError):
+                    if exc.exit_code in self.graceful_exit_codes:
+                        consecutive_failures = self._handle_worker_timeout(
+                            i,
+                            exc,
+                            resumed=True,
+                            consecutive_failures=consecutive_failures,
+                            failure_limit=failure_limit,
+                        )
+                        if consecutive_failures >= failure_limit:
+                            return
+                        time.sleep(self.cfg.worker_sleep_secs)
+                        continue
                     self.capture_cycle_artifact(exc.log_file, f"worker.iter{i:02d}.resume-failed.log")
                 self.clear_role_session("worker")
                 try:
-                    log_file = self.run_role("worker", self.cfg.worker_model, build_worker_prompt(self.cfg), resume=False)
+                    log_file = self.run_role("worker", worker_model, build_worker_prompt(self.cfg), resume=False)
                 except HarnessError as final_exc:
                     failed_log = final_exc.log_file if isinstance(final_exc, RoleRunError) else None
+                    if isinstance(final_exc, RoleRunError) and final_exc.exit_code in self.graceful_exit_codes:
+                        consecutive_failures = self._handle_worker_timeout(
+                            i,
+                            final_exc,
+                            resumed=False,
+                            consecutive_failures=consecutive_failures,
+                            failure_limit=failure_limit,
+                        )
+                        if consecutive_failures >= failure_limit:
+                            return
+                        time.sleep(self.cfg.worker_sleep_secs)
+                        continue
                     if failed_log is not None:
                         self.capture_cycle_artifact(failed_log, f"worker.iter{i:02d}.failed.log")
                     consecutive_failures += 1
                     self.log(f"Worker iteration {i} failed: {final_exc}")
                     self.write_status("worker", "retrying-after-error", f"iteration={i} error={final_exc}")
-                    if consecutive_failures >= self.cfg.max_consecutive_worker_failures:
+                    if consecutive_failures >= failure_limit:
                         self.log(
                             f"Worker stalled after {consecutive_failures} consecutive failures; handing control to reviewer"
                         )
@@ -767,7 +1026,11 @@ class MetaHarness:
         self.check_stop_file()
         self.preflight_resource_check("reviewer")
         self.mark_cycle_step("reviewer", "running")
-        log_file = self.run_role("reviewer", self.cfg.reviewer_model, build_reviewer_prompt(self.cfg))
+        log_file = self.run_role(
+            "reviewer",
+            self.cfg.reviewer_model,
+            build_reviewer_prompt(self.cfg, stall_context=self.build_worker_stall_context()),
+        )
         remaining = self.extract_remaining_steps(log_file)
         if not remaining:
             self.die("Reviewer did not print remaining step count")
@@ -799,12 +1062,15 @@ class MetaHarness:
         self.ensure_prereqs()
         self.acquire_lock()
         cleanup_stale_child_processes(self.cfg.state_dir, self.cfg.root_dir)
+        if not resume:
+            self.prime_next_cycle_handoff_from_latest_cycle()
         self.write_status("startup", "ready", f"timeout={self.cfg.codex_timeout_secs}s")
         while True:
             start_step = self.resume_latest_cycle() if resume else None
             if start_step is None:
                 self.prepare_cycle_workspace()
-                start_step = self.step_order[0]
+                start_step = self.next_cycle_start_step or self.step_order[0]
+                self.next_cycle_start_step = None
                 self.write_status("cycle", "fresh", f"cycle={self.current_cycle_index} start={start_step}")
             else:
                 self.write_status("cycle", "resumed", f"cycle={self.current_cycle_index} start={start_step}")
@@ -838,6 +1104,7 @@ class MetaHarness:
                     f"remaining=0 evidence_failures={evidence_failures} forced_remaining=1",
                 )
                 remaining = "1"
+            self.note_cycle_outcome(remaining)
             self.maybe_self_restart("reviewer")
             if remaining == "0":
                 self.capture_cycle_snapshot("complete")

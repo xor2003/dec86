@@ -17,17 +17,26 @@ def _make_cfg(monkeypatch, tmp_path: Path) -> tuple[RuntimeConfig, LlmConfig]:
     return cfg, llm_cfg
 
 
-def _write_cycle_state(cycle_dir: Path, steps: dict[str, str], cycle: int = 1) -> None:
+def _write_cycle_state(
+    cycle_dir: Path,
+    steps: dict[str, str],
+    cycle: int = 1,
+    *,
+    next_cycle_start_step: str = "",
+    worker_stall_streak: int = 0,
+) -> None:
     cycle_dir.mkdir(parents=True, exist_ok=True)
     state = {
         "cycle": cycle,
         "started_at": "2026-04-01T00:00:00+00:00",
         "updated_at": "2026-04-01T00:00:00+00:00",
         "completed": False,
+        "next_cycle_start_step": next_cycle_start_step,
         "steps": {
             name: {"status": status, "updated_at": "2026-04-01T00:00:00+00:00", "extra": ""}
             for name, status in steps.items()
         },
+        "worker_stall_streak": worker_stall_streak,
     }
     (cycle_dir / "cycle.state.json").write_text(json.dumps(state), encoding="utf-8")
 
@@ -144,6 +153,55 @@ def test_run_keeps_loop_open_when_reviewer_claims_zero_but_evidence_has_failures
     assert "evidence_failures=4" in state["steps"]["reviewer"]["extra"]
 
 
+def test_run_fresh_uses_persisted_worker_stall_handoff_after_restart(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    latest = cfg.runs_dir / "20260404_000001_cycle001"
+    _write_cycle_state(
+        latest,
+        {
+            "full-sweep": "done",
+            "checker": "done",
+            "planner": "done",
+            "worker": "stalled",
+            "reviewer": "done",
+        },
+        cycle=1,
+        next_cycle_start_step="worker",
+        worker_stall_streak=1,
+    )
+
+    harness = MetaHarness(cfg, llm_cfg)
+    calls: list[str] = []
+    worker_state: dict[str, object] = {}
+
+    monkeypatch.setattr(harness, "ensure_prereqs", lambda: None)
+    monkeypatch.setattr(harness, "acquire_lock", lambda: None)
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "capture_cycle_snapshot", lambda _tag: None)
+    monkeypatch.setattr(harness, "maybe_self_restart", lambda _reason: False)
+    monkeypatch.setattr(harness, "sweep_step", lambda: calls.append("sweep"))
+    monkeypatch.setattr(harness, "checker_step", lambda: calls.append("checker"))
+    monkeypatch.setattr(harness, "planner_step", lambda: calls.append("planner"))
+
+    def fake_worker() -> None:
+        calls.append("worker")
+        worker_state["model"] = harness.current_worker_model()
+        worker_state["failure_limit"] = harness.current_worker_failure_limit()
+        worker_state["cycle"] = harness.current_cycle_index
+
+    monkeypatch.setattr(harness, "worker_cycle", fake_worker)
+    monkeypatch.setattr(harness, "reviewer_step", lambda: "0")
+
+    assert harness.run(resume=False) == 0
+    assert calls == ["worker"]
+    assert worker_state == {
+        "model": cfg.worker_stall_model,
+        "failure_limit": cfg.worker_stall_failure_limit,
+        "cycle": 2,
+    }
+
+
 def test_run_role_uses_delta_resume_prompt_for_codex_sessions(monkeypatch, tmp_path):
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -199,6 +257,46 @@ def test_run_role_emits_status_heartbeat_during_long_provider_call(monkeypatch, 
     assert status_updates[-1][1] == "done"
 
 
+def test_log_appends_harness_events_to_last_log(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+
+    harness.log("Starting curated evidence sweep")
+
+    assert "Starting curated evidence sweep" in cfg.last_log_file.read_text(encoding="utf-8")
+
+
+def test_run_role_drops_oversized_worker_session_before_resume(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAX_WORKER_SESSION_LOG_BYTES", "100")
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    session_file = harness.role_session_file("worker")
+    session_file.write_text("session-123\n", encoding="utf-8")
+
+    old_log = cfg.log_dir / "old_worker.log"
+    old_log.parent.mkdir(parents=True, exist_ok=True)
+    old_log.write_text("x" * 200, encoding="utf-8")
+    harness.save_role_markers("worker", old_log)
+
+    captured: dict[str, object] = {}
+
+    def fake_run(role, model, prompt, resume=False):
+        captured["resume"] = resume
+        captured["prompt"] = prompt
+        return cfg.log_dir / "worker.log"
+
+    monkeypatch.setattr(harness, "_run_llm_attempt", fake_run)
+
+    harness.run_role("worker", cfg.worker_model, "FULL WORKER PROMPT", resume=True)
+
+    assert captured["resume"] is True
+    assert "Continue the existing worker session." not in str(captured["prompt"])
+    assert "FULL WORKER PROMPT" in str(captured["prompt"])
+    assert not session_file.exists()
+
+
 def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -214,6 +312,7 @@ def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
 
     class DummyProc:
         pid = 4321
+        stdout = iter(["sweep output\n"])
 
         def wait(self):
             return 0
@@ -226,9 +325,6 @@ def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
 
     def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):
         calls["cmd"] = cmd
-        if hasattr(stdout, "write"):
-            stdout.write("sweep output\n")
-            stdout.flush()
         return DummyProc()
 
     class RunResult:
@@ -251,6 +347,9 @@ def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
 
     assert calls["cmd"][-1] == cfg.sweep_cmd
     assert "tee -a" not in calls["cmd"][-1]
+    last_log = cfg.last_log_file.read_text(encoding="utf-8")
+    assert "start sweep=curated evidence sweep" in last_log
+    assert "sweep output" in last_log
 
 
 def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path):
@@ -266,6 +365,7 @@ def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path):
 
     class DummyProc:
         pid = 4322
+        stdout = iter(["done in 1.0s; failures=1/2\n"])
 
         def wait(self):
             return 1
@@ -277,9 +377,6 @@ def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path):
             return False
 
     def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):
-        if hasattr(stdout, "write"):
-            stdout.write("done in 1.0s; failures=1/2\n")
-            stdout.flush()
         return DummyProc()
 
     class RunResult:
@@ -318,6 +415,37 @@ def test_finalize_run_marks_terminated_cycle_and_captures_snapshot(monkeypatch, 
     assert captured == ["terminated"]
 
 
+def test_maybe_self_restart_writes_restarting_status_before_exec(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    monkeypatch.setattr(harness, "_compute_script_checksums", lambda: {"run.sh": "new", "meta_harness": "new"})
+    monkeypatch.setattr("meta_harness.orchestrator.os.execvpe", lambda *args, **kwargs: (_ for _ in ()).throw(SystemExit(0)))
+
+    with pytest.raises(SystemExit):
+        harness.maybe_self_restart("reviewer")
+
+    status_text = cfg.status_file.read_text(encoding="utf-8")
+    assert "step=harness" in status_text
+    assert "status=restarting" in status_text
+    assert "reason=reviewer" in status_text
+
+
+def test_note_cycle_outcome_persists_worker_stall_handoff(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    harness.mark_cycle_step("worker", "stalled", "iteration=3")
+    harness.mark_cycle_step("reviewer", "done", "remaining=3")
+
+    harness.note_cycle_outcome("3")
+
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert state["next_cycle_start_step"] == "worker"
+    assert state["worker_stall_streak"] == 1
+
+
 def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path):
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -352,6 +480,41 @@ def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path):
     assert state["steps"]["worker"]["status"] == "done"
     assert (harness.current_cycle_dir / "worker.iter01.resume-failed.log").exists()
     assert (harness.current_cycle_dir / "worker.iter01.failed.log").exists()
+    assert (harness.current_cycle_dir / "worker.iter02.log").exists()
+
+
+def test_worker_cycle_does_not_retry_fresh_immediately_after_resume_timeout(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+
+    timed_out_log = cfg.log_dir / "timed_out_worker.log"
+    timed_out_log.parent.mkdir(parents=True, exist_ok=True)
+    timed_out_log.write_text("partial output before timeout\n", encoding="utf-8")
+
+    success_log = cfg.log_dir / "ok_worker.log"
+    success_log.write_text("correctness\nrecompilation\nGlobal Remaining steps: 0\n", encoding="utf-8")
+
+    calls = {"count": 0}
+
+    def fake_run_role(role, model, prompt, resume=False):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RoleRunError(role, timed_out_log, "worker resume timed out", 124)
+        return success_log
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "run_role", fake_run_role)
+    monkeypatch.setattr("meta_harness.orchestrator.time.sleep", lambda _secs: None)
+
+    harness.worker_cycle()
+
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert calls["count"] == 2
+    assert state["steps"]["worker"]["status"] == "done"
+    assert (harness.current_cycle_dir / "worker.iter01.resume-timeout.log").exists()
+    assert not (harness.current_cycle_dir / "worker.iter01.failed.log").exists()
     assert (harness.current_cycle_dir / "worker.iter02.log").exists()
 
 
@@ -445,3 +608,129 @@ def test_worker_cycle_stalls_after_consecutive_failures(monkeypatch, tmp_path):
     state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
     assert state["steps"]["worker"]["status"] == "stalled"
     assert "consecutive_failures=3" in state["steps"]["worker"]["extra"]
+
+
+def test_reviewer_step_receives_worker_stall_context(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    harness.mark_cycle_step("worker", "stalled", "iteration=3 consecutive_failures=3")
+    stalled_log = harness.current_cycle_dir / "worker.iter03.resume-timeout.log"
+    stalled_log.write_text("partial output\n[2026-04-04T00:00:00+00:00] end rc=124\n", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+    reviewer_log = cfg.log_dir / "reviewer.log"
+    reviewer_log.parent.mkdir(parents=True, exist_ok=True)
+    reviewer_log.write_text("correctness\nrecompilation\nGlobal Remaining steps: 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+
+    def fake_run_role(role, model, prompt, resume=False):
+        captured["role"] = role
+        captured["prompt"] = prompt
+        return reviewer_log
+
+    monkeypatch.setattr(harness, "run_role", fake_run_role)
+
+    remaining = harness.reviewer_step()
+
+    assert remaining == "1"
+    assert captured["role"] == "reviewer"
+    assert "Worker stall diagnosis for this cycle" in str(captured["prompt"])
+    assert "worker.iter03.resume-timeout.log" in str(captured["prompt"])
+
+
+def test_run_fast_resumes_next_cycle_at_worker_after_stall(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    calls: list[str] = []
+    cycle_numbers: list[int] = []
+
+    monkeypatch.setattr(harness, "ensure_prereqs", lambda: None)
+    monkeypatch.setattr(harness, "acquire_lock", lambda: None)
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "capture_cycle_snapshot", lambda _tag: None)
+    monkeypatch.setattr(harness, "maybe_self_restart", lambda _reason: False)
+
+    original_prepare = harness.prepare_cycle_workspace
+
+    def fake_prepare() -> None:
+        original_prepare()
+        cycle_numbers.append(harness.current_cycle_index)
+
+    def fake_sweep() -> None:
+        calls.append(f"sweep:{harness.current_cycle_index}")
+        harness.mark_cycle_step("full-sweep", "done")
+
+    def fake_checker() -> None:
+        calls.append(f"checker:{harness.current_cycle_index}")
+        harness.mark_cycle_step("checker", "done", "remaining=4")
+
+    def fake_planner() -> None:
+        calls.append(f"planner:{harness.current_cycle_index}")
+        harness.mark_cycle_step("planner", "done", "remaining=4")
+
+    def fake_worker() -> None:
+        calls.append(f"worker:{harness.current_cycle_index}")
+        if harness.current_cycle_index == 1:
+            harness.mark_cycle_step("worker", "stalled", "iteration=3 consecutive_failures=3")
+        else:
+            harness.mark_cycle_step("worker", "done", "remaining=0")
+
+    reviewer_returns = iter(["4", "0"])
+
+    def fake_reviewer() -> str:
+        calls.append(f"reviewer:{harness.current_cycle_index}")
+        remaining = next(reviewer_returns)
+        harness.mark_cycle_step("reviewer", "done", f"remaining={remaining}")
+        return remaining
+
+    monkeypatch.setattr(harness, "prepare_cycle_workspace", fake_prepare)
+    monkeypatch.setattr(harness, "sweep_step", fake_sweep)
+    monkeypatch.setattr(harness, "checker_step", fake_checker)
+    monkeypatch.setattr(harness, "planner_step", fake_planner)
+    monkeypatch.setattr(harness, "worker_cycle", fake_worker)
+    monkeypatch.setattr(harness, "reviewer_step", fake_reviewer)
+
+    assert harness.run(resume=False) == 0
+    assert calls == [
+        "sweep:1",
+        "checker:1",
+        "planner:1",
+        "worker:1",
+        "reviewer:1",
+        "worker:2",
+        "reviewer:2",
+    ]
+    assert cycle_numbers == [1, 2]
+
+
+def test_worker_cycle_uses_escalated_model_and_failure_limit_after_stall(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    harness.worker_stall_streak = 1
+
+    timed_out_log = cfg.log_dir / "timed_out_worker.log"
+    timed_out_log.parent.mkdir(parents=True, exist_ok=True)
+    timed_out_log.write_text("partial output before timeout\n", encoding="utf-8")
+
+    calls: list[tuple[str, bool]] = []
+
+    def fake_run_role(role, model, prompt, resume=False):
+        calls.append((model, resume))
+        raise RoleRunError(role, timed_out_log, "worker timed out", 124)
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "run_role", fake_run_role)
+    monkeypatch.setattr("meta_harness.orchestrator.time.sleep", lambda _secs: None)
+
+    harness.worker_cycle()
+
+    state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
+    assert state["steps"]["worker"]["status"] == "stalled"
+    assert len(calls) == cfg.worker_stall_failure_limit
+    assert all(model == cfg.worker_stall_model for model, _resume in calls)

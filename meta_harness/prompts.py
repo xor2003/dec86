@@ -13,6 +13,17 @@ def _style_contract() -> str:
     )
 
 
+def _token_discipline() -> str:
+    return (
+        "Token discipline:\n"
+        "- Do not narrate progress before using tools unless a brief note is essential.\n"
+        "- Read only the smallest relevant file slices; avoid dumping full files when a targeted window or `rg` hit is enough.\n"
+        "- Prefer focused searches (`rg`, exact symbols, exact test names) over broad repository scans.\n"
+        "- Do not rerun the same test or command without a concrete code or hypothesis change.\n"
+        "- When a command already proved a point, reuse that result instead of re-reading the same evidence.\n\n"
+    )
+
+
 def build_master_prompt(cfg: RuntimeConfig) -> str:
     if cfg.compact_prompts:
         return (
@@ -24,6 +35,7 @@ def build_master_prompt(cfg: RuntimeConfig) -> str:
             "Always state current quality for correctness and recompilation.\n"
             "Use concrete repository evidence, not vague claims.\n\n"
             + _style_contract()
+            + _token_discipline()
         )
     return (
         f"You are working on {cfg.root_dir}, a {cfg.project_description}.\n\n"
@@ -48,6 +60,7 @@ def build_master_prompt(cfg: RuntimeConfig) -> str:
         "- recompilation\n\n"
         "Use concrete evidence from the project, not vague claims.\n\n"
         + _style_contract()
+        + _token_discipline()
     )
 
 
@@ -55,6 +68,8 @@ def build_checker_prompt(cfg: RuntimeConfig) -> str:
     return build_master_prompt(cfg) + (
         "\nChecker step:\n"
         f"- Inspect {cfg.evidence_log_file} for crashes, timeouts, or obvious regressions.\n"
+        "- Prefer the existing evidence, current plan, and current logs over fresh exploration.\n"
+        "- Do not run pytest, corpus scans, or broad repository searches in this step unless the current evidence is missing a fact you cannot otherwise obtain.\n"
         "- Print current quality for correctness and recompilation.\n"
         "- Do not update the plan or implement code changes in this step.\n"
         "- At the end, print exactly: Global Remaining steps: N\n"
@@ -68,7 +83,9 @@ def build_planner_prompt(cfg: RuntimeConfig) -> str:
         "- Inspect the current code state.\n"
         f"- Do not rerun the evidence sweep; the sweep step already produced {cfg.evidence_log_file} and the checker step reviewed it for this cycle.\n"
         f"- Create or update {cfg.plan_path} as a flat numbered checklist.\n"
+        "- Each item must include exact implementation steps, not just a goal statement.\n"
         "- Each item must name the target file(s) and exact source line numbers when available.\n"
+        "- Each item must say what to edit in those files in execution order.\n"
         "- Each item must specify the concrete functions, tests, or scripts to change.\n"
         "- Each item must include a deterministic definition of done.\n"
         "- Keep items deterministic, short, and directly actionable.\n"
@@ -76,6 +93,8 @@ def build_planner_prompt(cfg: RuntimeConfig) -> str:
         "- Preserve unfinished strategic items already present in the plan unless they are now done or clearly superseded by a more precise item.\n"
         "- Do not drop user-added unfinished goals just because the current cycle focuses on a different bug.\n"
         "- Remove any done items from the plan and leave only unfinished work.\n"
+        "- Avoid spending tokens on implementation, long code excerpts, or repeated repo tours in this step.\n"
+        "- Do not run pytest, corpus scans, or large validation commands in this step; use the existing evidence and repository state.\n"
         "- Print current quality of correctness and recompilation.\n"
         "- If there is nothing meaningful left to do, say that clearly.\n"
         "- At the end, print exactly: Global Remaining steps: N\n"
@@ -90,21 +109,34 @@ def build_worker_prompt(cfg: RuntimeConfig) -> str:
         "- Work like an ongoing continuation: make real code changes, update tests, verify results, and commit often.\n"
         "- Never use source-specific hacks.\n"
         "- If the harness itself can be improved safely while you work, you may improve it too.\n"
+        "- Prefer one tight edit/verify loop over many exploratory reads.\n"
+        "- Run the smallest test that proves the touched behavior before considering broader validation.\n"
+        "- Avoid repeating `git status`, large `sed`/`cat` dumps, or the same targeted test unless new changes justify it.\n"
         "- At the end of each step, print exactly: Global Remaining steps: N\n"
     )
 
 
-def build_reviewer_prompt(cfg: RuntimeConfig) -> str:
-    return build_master_prompt(cfg) + (
+def build_reviewer_prompt(cfg: RuntimeConfig, *, stall_context: str = "") -> str:
+    prompt = build_master_prompt(cfg) + (
         "\nReviewer step:\n"
         "- In a fresh session, review the current code state and current plan.\n"
         "- Check what is genuinely finished and what is not.\n"
         f"- Remove completed steps from {cfg.plan_path}.\n"
         "- You may also improve the harness itself if that reduces future failures or manual babysitting.\n"
         "- Do not run worker cycles in this step.\n"
+        "- Avoid pytest, sweep reruns, or broad repository exploration unless a missing fact blocks the review.\n"
         "- Print achieved results.\n"
         "- Print the true remaining step count at the end as: Global Remaining steps: N\n"
     )
+    if stall_context.strip():
+        prompt += (
+            "\nWorker stall diagnosis for this cycle:\n"
+            "- Review the recent worker timeout/failure logs listed below before deciding what remains.\n"
+            "- If the worker loop is stuck, prefer tightening the plan, improving harness retry/model strategy, or both.\n"
+            "- Keep the next cycle open only when there is a concrete better next step.\n"
+            f"{stall_context.strip()}\n"
+        )
+    return prompt
 
 
 def build_crash_reviewer_prompt(cfg: RuntimeConfig, current_cycle_dir: str, exit_code: int) -> str:
@@ -130,6 +162,7 @@ def build_resume_prompt(role: str, cfg: RuntimeConfig, *, comments: str = "") ->
             f"Implement the next unfinished item(s) from {cfg.plan_path}.\n"
             "Use the existing session context instead of re-deriving the whole plan.\n"
             "Keep output minimal and actionable.\n"
+            "Avoid re-reading evidence already established in the session unless the code changed.\n"
             "At the end, print exactly: Global Remaining steps: N\n"
         ),
         "planner": (

@@ -5,6 +5,7 @@ import sys
 
 from .config import LlmConfig, RuntimeConfig
 from .orchestrator import HarnessError, MetaHarness, RoleRunError
+from .webui import launch_web_ui
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,6 +21,9 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RuntimeConfig.from_env(argv)
     llm_cfg = LlmConfig.from_env()
     harness = MetaHarness(cfg, llm_cfg)
+    web_ui = launch_web_ui(cfg)
+    if web_ui is not None:
+        print(f"Web UI: {web_ui.url}", file=sys.stderr)
     peek_resume_step = getattr(harness, "peek_resume_step", lambda: None)
     resume = args.resume or (not args.fresh and peek_resume_step() is not None)
     exit_code = 0
@@ -51,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = 1
         return 1
     finally:
+        if web_ui is not None:
+            web_ui.stop()
         if exit_code not in (0, 10):
             reason = "terminated" if exit_code in (124, 143) else "interrupted"
             harness.finalize_run(reason, exit_code)
