@@ -114,15 +114,26 @@ def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasStat
         return WideningProof(False, "domain_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version)
     if not can_join_alias_storage(low_expr, high_expr):
         return WideningProof(False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version)
-    if low_version is not None and high_version is not None and low_version != high_version:
-        return WideningProof(
-            False,
-            "version_mismatch",
-            low_facts,
-            high_facts,
-            left_version=low_version,
-            right_version=high_version,
-        )
+    if alias_state is not None:
+        if low_facts.identity is not None and low_facts.identity[0] == "register":
+            if low_version <= 0 or high_version <= 0:
+                return WideningProof(
+                    False,
+                    "missing_version_evidence",
+                    low_facts,
+                    high_facts,
+                    left_version=low_version,
+                    right_version=high_version,
+                )
+        if low_version != high_version:
+            return WideningProof(
+                False,
+                "version_mismatch",
+                low_facts,
+                high_facts,
+                left_version=low_version,
+                right_version=high_version,
+            )
 
     merged_domain = _merge_storage_domains(_storage_domain_for_expr(low_expr), _storage_domain_for_expr(high_expr))
     return WideningProof(
@@ -188,8 +199,8 @@ def describe_x86_16_widening_pipeline() -> tuple[tuple[str, str, tuple[str, ...]
     return tuple((spec.name, spec.purpose, spec.helpers) for spec in WIDENING_PIPELINE)
 
 
-def can_join_adjacent_storage_slices(low_expr, high_expr) -> bool:
-    proof = prove_adjacent_storage_slices(low_expr, high_expr)
+def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasState | None = None) -> bool:
+    proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
     if not proof.ok:
         return False
     try:
@@ -199,7 +210,7 @@ def can_join_adjacent_storage_slices(low_expr, high_expr) -> bool:
         low_candidate = None
         high_candidate = None
     if low_candidate is not None and high_candidate is not None:
-        return can_join_adjacent_register_slices(low_expr, high_expr)
+        return can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state)
 
     try:
         low_candidate = WideningCandidate.from_expr(low_expr)

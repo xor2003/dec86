@@ -4,7 +4,7 @@ import sys
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeBottom, SimTypeLong, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -102,6 +102,89 @@ def test_bp_stack_prototype_promotion_uses_annotated_stack_vars():
     assert changed is True
     assert len(func.prototype.args) == 2
     assert func.prototype.arg_names == ["ovlLoadSegment", "funcNumber"]
+
+
+def test_bp_stack_prototype_promotion_preserves_pointer_evidence():
+    stack_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False), codegen=c_codegen)
+    func = SimpleNamespace(
+        prototype=_FakePrototype(
+            args=[SimTypeShort(False)],
+            arg_names=("s",),
+            returnty=SimTypeShort(False),
+        ),
+        is_prototype_guessed=True,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {
+                    4: {"name": "s"},
+                },
+            }
+        },
+    )
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            statements=SimpleNamespace(
+                statements=[
+                    structured_c.CUnaryOp("Dereference", stack_cvar, codegen=c_codegen),
+                ]
+            ),
+            variables_in_use={stack_var: stack_cvar},
+        )
+    )
+    stack_cvar.codegen = codegen
+
+    changed = postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(func.prototype.args[0], SimTypePointer)
+    assert "s *" in str(func.prototype.args[0]) or func.prototype.args[0].__class__.__name__ == "SimTypePointer"
+
+
+def test_bp_stack_prototype_promotion_preserves_pointer_evidence_without_annotations():
+    stack_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False), codegen=c_codegen)
+    func = SimpleNamespace(
+        prototype=_FakePrototype(
+            args=[SimTypeShort(False)],
+            arg_names=("s",),
+            returnty=SimTypeShort(False),
+        ),
+        is_prototype_guessed=True,
+        info={ANNOTATION_KEY: {}},
+    )
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            statements=SimpleNamespace(
+                statements=[
+                    structured_c.CUnaryOp("Dereference", stack_cvar, codegen=c_codegen),
+                ]
+            ),
+            variables_in_use={stack_var: stack_cvar},
+            arg_list=[stack_cvar],
+            functy=func.prototype,
+        )
+    )
+    stack_cvar.codegen = codegen
+
+    changed = postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(func.prototype.args[0], SimTypePointer)
+    assert codegen.cfunc.functy is func.prototype
+    assert codegen.cfunc.arg_list == [stack_cvar]
 
 
 def test_bp_stack_prototype_promotion_shrinks_overguessed_stack_arguments():

@@ -90,6 +90,11 @@ def _storage_view_for_variable(variable) -> _StorageView:
     width_bits = size * 8 if size else None
     name = (getattr(variable, "ident", None) or getattr(variable, "name", None) or "").lower()
     if isinstance(variable, SimRegisterVariable):
+        reg = getattr(variable, "reg", None)
+        if isinstance(reg, int) and size in {1, 2}:
+            if size == 1:
+                return _StorageView(8 if reg % 2 else 0, 8)
+            return _StorageView(0, width_bits)
         low_high_offsets = {
             "al": 0,
             "ah": 8,
@@ -109,6 +114,27 @@ def _storage_view_for_variable(variable) -> _StorageView:
         if isinstance(addr, int):
             return _StorageView(addr * 8, width_bits)
     return _StorageView(0, width_bits)
+
+
+def _constant_int_value(expr) -> int | None:
+    expr = _unwrap_c_casts(expr)
+    if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
+        return expr.value
+    return None
+
+
+def _mk_fp_linear_address(expr) -> int | None:
+    expr = _unwrap_c_casts(expr)
+    if not isinstance(expr, structured_c.CFunctionCall) or getattr(expr, "callee_target", None) != "MK_FP":
+        return None
+    args = list(getattr(expr, "args", ()) or ())
+    if len(args) != 2:
+        return None
+    seg = _constant_int_value(args[0])
+    off = _constant_int_value(args[1])
+    if seg is None or off is None:
+        return None
+    return (seg << 4) + off
 
 
 @dataclass(frozen=True)
@@ -253,6 +279,13 @@ def _alias_identity_for_variable(variable) -> tuple[str, Any] | None:
             return ("stack", slot)
     if isinstance(variable, SimRegisterVariable):
         name = getattr(variable, "name", None)
+        reg = getattr(variable, "reg", None)
+        size = getattr(variable, "size", 0) or 0
+        if isinstance(reg, int) and size in {1, 2}:
+            pair_index = reg // 2
+            pair_names = ("ax", "cx", "dx", "bx")
+            if 0 <= pair_index < len(pair_names):
+                return ("register", pair_names[pair_index])
         pair_name = register_pair_name(name)
         if pair_name is not None:
             return ("register", pair_name)
@@ -302,6 +335,9 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
         return _storage_domain_for_variable(variable)
     if isinstance(expr, structured_c.CConstant):
         return _StorageDomainSignature("const")
+    mk_fp_linear = _mk_fp_linear_address(expr)
+    if mk_fp_linear is not None:
+        return _StorageDomainSignature("far_pointer", 32, _StorageView(0, 32))
     if isinstance(expr, structured_c.CUnaryOp):
         return _storage_domain_for_expr(expr.operand)
     if isinstance(expr, structured_c.CBinaryOp):
@@ -335,6 +371,10 @@ def describe_alias_storage(expr) -> AliasStorageFacts:
         variable = getattr(expr, "variable", None)
         if variable is not None:
             identity = _alias_identity_for_variable(variable)
+    else:
+        mk_fp_linear = _mk_fp_linear_address(expr)
+        if mk_fp_linear is not None:
+            identity = ("far_pointer", mk_fp_linear)
     return AliasStorageFacts(domain, identity)
 
 

@@ -25,15 +25,49 @@ class RegisterWideningCandidate:
         variable = getattr(expr, "variable", None)
         if not isinstance(variable, SimRegisterVariable):
             raise ValueError("expected a register variable")
-        name = getattr(variable, "name", None)
-        domain = register_domain_for_name(name)
-        view = register_view_for_name(name)
+        domain, view = _register_domain_and_view(variable)
         if domain is None or view is None:
             raise ValueError("unsupported register slice")
         return cls(domain, view, expr)
 
 
-def can_join_adjacent_register_slices(low_expr, high_expr) -> bool:
+def _register_pair_name_for_variable(variable) -> str | None:
+    reg = getattr(variable, "reg", None)
+    size = getattr(variable, "size", 0) or 0
+    if isinstance(reg, int) and size in {1, 2}:
+        pair_names = ("ax", "cx", "dx", "bx")
+        pair_index = reg // 2
+        if 0 <= pair_index < len(pair_names):
+            return pair_names[pair_index]
+    return register_pair_name(getattr(variable, "name", None))
+
+
+def _register_domain_and_view(variable) -> tuple[DomainKey | None, object | None]:
+    pair_name = _register_pair_name_for_variable(variable)
+    if pair_name is None:
+        return None, None
+    domain = register_domain_for_name(pair_name)
+    if domain is None:
+        return None, None
+    reg = getattr(variable, "reg", None)
+    size = getattr(variable, "size", 0) or 0
+    if isinstance(reg, int) and size == 1:
+        view = HIGH8 if reg % 2 else LOW8
+    elif isinstance(reg, int) and size == 2:
+        view = FULL16
+    else:
+        view = register_view_for_name(getattr(variable, "name", None))
+    return domain, view
+
+
+def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None) -> bool:
+    if alias_state is None:
+        return False
+    from .widening_model import prove_adjacent_storage_slices
+
+    proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+    if not proof.ok:
+        return False
     try:
         low_candidate = RegisterWideningCandidate.from_expr(low_expr)
         high_candidate = RegisterWideningCandidate.from_expr(high_expr)
@@ -44,14 +78,14 @@ def can_join_adjacent_register_slices(low_expr, high_expr) -> bool:
     return low_candidate.is_joinable_with(high_candidate)
 
 
-def join_adjacent_register_slices(low_expr, high_expr, codegen) -> structured_c.CVariable | None:
-    if not can_join_adjacent_register_slices(low_expr, high_expr):
+def join_adjacent_register_slices(low_expr, high_expr, codegen, *, alias_state=None) -> structured_c.CVariable | None:
+    if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state):
         return None
 
     low_var = getattr(low_expr, "variable", None)
     high_var = getattr(high_expr, "variable", None)
-    low_name = register_pair_name(getattr(low_var, "name", None))
-    high_name = register_pair_name(getattr(high_var, "name", None))
+    low_name = _register_pair_name_for_variable(low_var)
+    high_name = _register_pair_name_for_variable(high_var)
     pair_name = low_name if low_name is not None else high_name
     if pair_name is None:
         return None

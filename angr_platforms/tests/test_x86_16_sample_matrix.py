@@ -264,8 +264,12 @@ def test_cod_access_traits_are_collected_for_segmented_proc():
     assert any(key[0] == "ss" and key[2] == 16 and key[3] == 0 and key[4] == 2 for key in function_traits["base_stride"])
     assert function_traits["induction_evidence"]
     assert any(
-        key[0] == ("reg", 30) and key[1] == 16 and key[2] == 0 and key[3] == 2
-        for key in function_traits["induction_evidence"]
+        evidence.index_key == ("reg", 30)
+        and evidence.stride == 16
+        and evidence.offset == 0
+        and evidence.width == 2
+        and evidence.count >= 1
+        for evidence in function_traits["induction_evidence"].values()
     )
     assert function_traits["member_evidence"]
     assert any(

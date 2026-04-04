@@ -77,6 +77,8 @@ def test_register_widening_candidate_requires_same_domain_and_adjacent_views():
     low = _make_reg_var("al", 0)
     high = _make_reg_var("ah", 1)
     far = _make_reg_var("bh", 7)
+    state = AliasState()
+    state.bump_domain(AX)
 
     low_candidate = RegisterWideningCandidate.from_expr(low)
     high_candidate = RegisterWideningCandidate.from_expr(high)
@@ -84,12 +86,14 @@ def test_register_widening_candidate_requires_same_domain_and_adjacent_views():
 
     assert low_candidate.is_joinable_with(high_candidate)
     assert not low_candidate.is_joinable_with(far_candidate)
-    assert can_join_adjacent_register_slices(low, high)
-    assert not can_join_adjacent_register_slices(low, far)
+    assert can_join_adjacent_register_slices(low, high, alias_state=state)
+    assert not can_join_adjacent_register_slices(low, far, alias_state=state)
 
 
 def test_register_pair_cleanup_helper_rebuilds_ax_from_al_and_ah():
     codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
+    codegen._inertia_alias_state.bump_domain(AX)
     low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
     high_base = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
     high = _decompile.structured_c.CBinaryOp(
@@ -105,3 +109,66 @@ def test_register_pair_cleanup_helper_rebuilds_ax_from_al_and_ah():
     assert isinstance(widened.variable, _decompile.SimRegisterVariable)
     assert widened.variable.size == 2
     assert widened.variable.name == "ax"
+
+
+def test_register_pair_cleanup_helper_requires_a_proof_before_widening(monkeypatch):
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+
+    monkeypatch.setattr(
+        _decompile,
+        "analyze_adjacent_storage_slices",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=False),
+    )
+    monkeypatch.setattr(
+        _decompile,
+        "join_adjacent_register_slices",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("join should not be called")),
+    )
+
+    assert _decompile._match_adjacent_register_pair_var_expr(low, high, codegen) is None
+
+
+def test_register_pair_cleanup_helper_requires_version_agreement(monkeypatch):
+    codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
+    codegen._inertia_alias_state.bump_domain(AX)
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+
+    monkeypatch.setattr(
+        _decompile,
+        "can_join_adjacent_register_slices",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        _decompile,
+        "join_adjacent_register_slices",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("join should not be called")),
+    )
+
+    assert _decompile._match_adjacent_register_pair_var_expr(low, high, codegen) is None
+
+
+def test_register_pair_cleanup_helper_refuses_to_widen_without_alias_state():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+
+    assert _decompile._match_adjacent_register_pair_var_expr(low, high, codegen) is None
+
+
+def test_register_pair_cleanup_helper_keeps_byte_slices_byte_typed_even_if_renamed_like_pairs():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="ax"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ax"), codegen=codegen)
+    full = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 2, name="ax"), codegen=codegen)
+
+    low_candidate = RegisterWideningCandidate.from_expr(low)
+    high_candidate = RegisterWideningCandidate.from_expr(high)
+    full_candidate = RegisterWideningCandidate.from_expr(full)
+
+    assert low_candidate.view == LOW8
+    assert high_candidate.view == HIGH8
+    assert full_candidate.view == FULL16

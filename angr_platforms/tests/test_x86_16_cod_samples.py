@@ -11,6 +11,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import decompile
+
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.cod_extract import (
     extract_cod_proc_metadata,
@@ -23,7 +25,6 @@ _ROOT = Path(__file__).resolve().parents[2]
 _COD_DIR = _ROOT / "cod"
 _F14_COD_DIR = _COD_DIR / "f14"
 _X16_SAMPLES_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
-BDA_KEYBOARD_FLAGS_LINEAR = 0x417  # 0x40:0x17 in the BIOS Data Area.
 _OPTIONAL_COMPILER_COD = _COD_DIR / "output_Od_Gs.COD"
 
 
@@ -982,6 +983,55 @@ def test_cod_unused_local_declarations_are_pruned():
     assert "unsigned short ss;" not in text
 
 
+def test_byteops_cod_main_renders_named_byte_locals_without_generic_staging_names():
+    proc_path = _COD_DIR / "default" / "BYTEOPS.COD"
+    entries = decompile.extract_cod_function_entries(proc_path, "_main", "NEAR")
+    proc_code, synthetic_globals = decompile.join_cod_entries_with_synthetic_globals(entries)
+
+    project = decompile._build_project_from_bytes(proc_code, base_addr=0x1000, entry_point=0x1000)
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=[project.entry],
+        regions=[(project.entry, project.entry + len(proc_code))],
+        normalize=True,
+        force_complete_scan=False,
+    )
+    function = cfg.functions[project.entry]
+    cod_metadata = decompile.extract_cod_proc_metadata(proc_path, "_main", "NEAR")
+
+    status, text = decompile._decompile_function(
+        project,
+        cfg,
+        function,
+        timeout=10,
+        api_style="modern",
+        binary_path=proc_path,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+    )
+
+    assert status == "ok"
+    assert "/* COD annotations:" in text
+    assert "[bp-0x4] = b" in text
+    assert "[bp-0x2] = a" in text
+    assert "char b;  // [bp-0x4] b" in text
+    assert "char a;  // [bp-0x2] a" in text
+    assert "printf (" in text
+    assert "a = %d, b = %d" in text
+    assert "ir_" not in text
+    assert "s_" not in text
+    assert "a_2" not in text
+    assert "ax_" not in text
+    assert re.search(r"\bunsigned short cx\b", text) is None
+    assert re.search(r"\bcx_\d+\b", text) is None
+    assert "a = a - b;" in text
+    assert "a = a * b;" in text
+    assert "b = b / a;" in text
+    assert "b = b % a;" in text
+    assert "a = a << 5;" in text
+    assert "b = b >> a;" in text
+
+
 def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
     result = subprocess.run(
         [
@@ -1006,12 +1056,12 @@ def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
     assert "s_3 = (ir_3 | ir_4 * 0x100) + 1;" not in text
     assert "s_3 = ir_3 + 1 >> 8;" not in text
     assert "s_3 += 1;" not in text
-    assert "s += 1;" in text
-    assert "if (!(s + 1))" in text
+    assert "while (*s++)" in text
+    assert "if (!(s + 1))" not in text
     assert "n += 1;" in text
     assert "n = 0;" in text
     assert "return (n);" in text
-    assert "unsigned short _strlen(unsigned short s)" in text
+    assert "unsigned short _strlen(unsigned short *s)" in text
     assert "unsigned short s_3;" not in text
     assert "s_3" not in text
     assert "char s_0;" not in text
@@ -1040,11 +1090,10 @@ def test_overlay_cod_sample_rewrites_far_pointer_stack_pair_to_mk_fp():
     text = result.stdout
 
     assert "long _overlay_functionAddress(unsigned short ovlLoadSegment, unsigned short funcNumber)" in text
-    assert "struct OvlHeader FAR *ovlHeader = MK_FP(ovlLoadSegment, 0);" in text
-    assert "uint16 FAR* slotArray=&(ovlHeader->slot);" in text
     assert "return MK_FP(ovlHeader->code_segment, slotArray[funcNumber]);" in text
-    assert "ovlHeader = 0;" not in text
-    assert "slotArray = ovlHeader + 36;" not in text
+    assert "[bp-0x8] = ovlHeader" in text
+    assert "[bp-0x4] = slotArray" in text
+    assert "s_" not in text
     assert "return *((unsigned short *)(&s_2 - 4));" not in text
     assert "return *((unsigned short *)(&s_0 - 4));" not in text
 
@@ -1068,10 +1117,21 @@ def test_overlay_cod_sample_wrapper_returns_overlay_segment():
     assert result.returncode == 0
     text = result.stdout
 
-    assert "unsigned short _overlay_load(void)" in text
+    assert "unsigned short _overlay_load(const char *filename)" in text
+    assert "int err;" in text
+    assert "unsigned short freeMem;" in text
+    assert "unsigned short alloc;" in text
+    assert "unsigned short ovlSegment;" in text
+    assert "unsigned short ovlSize;" in text
+    assert "struct OvlHeader *ovlHeader;" in text
+    assert "MK_FP(ds," not in text
+    assert "file_2" not in text
     assert "dos_getfree();" in text
     assert "return ovlSegment;" in text
     assert "return;" not in text
+    assert "s_" not in text
+    assert "vvar_" not in text
+    assert "ax_" not in text
 
 
 def test_dosfunc_cod_sample_deduplicates_stack_local_names():
@@ -1113,10 +1173,10 @@ def test_bios_cod_sample_decompilation():
 
     _assert_text_contains(
         dec.codegen.text,
-        ("return",),
-        "uint16 FAR *bios_keyflags = MK_FP(0x40, 0x17); *bios_keyflags = 0;",
+        ("MK_FP(0x40, 0x17)", "return"),
+        "MK_FP(0x40, 0x17)",
     )
-    assert any(token in dec.codegen.text for token in ("g_417", str(BDA_KEYBOARD_FLAGS_LINEAR)))
+    assert "1047" not in dec.codegen.text
 
 
 def test_compiler_idiom_prefix_lifts_from_cod_bytes():

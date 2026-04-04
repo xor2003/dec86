@@ -65,6 +65,29 @@ _RECOMPILABLE_SUBSET_CASES: Final[tuple[RecompilableSubsetCase, ...]] = (
         note="Live repaired STRLEN.COD output for _strlen, used as a recompilation anchor.",
         cod_path=Path(__file__).resolve().parents[3] / "cod" / "default" / "STRLEN.COD",
         proc_name="_strlen",
+        expected_c_anchors=(
+            "unsigned short _strlen(unsigned short *s)",
+            "while (*s++)",
+        ),
+        forbidden_c_anchors=("unsigned short _strlen(unsigned short s)", "s_3"),
+    ),
+    RecompilableSubsetCase(
+        name="byteops_real",
+        asm="",
+        expected_kind="real recovered COD main",
+        note="Live repaired BYTEOPS.COD output for _main, used as a recompilation anchor.",
+        cod_path=Path(__file__).resolve().parents[3] / "cod" / "default" / "BYTEOPS.COD",
+        proc_name="_main",
+        expected_c_anchors=(
+            "a = a - b;",
+            "a = a * b;",
+            "b = b / a;",
+            "b = b % a;",
+            "a = a << 5;",
+            "b = b >> a;",
+            'printf ("a = %d, b = %d\\n", a, b);',
+        ),
+        forbidden_c_anchors=("ax_", "cx_", 'printf ("a = %d, b = %d\n'),
     ),
     RecompilableSubsetCase(
         name="loadprog_real",
@@ -73,6 +96,11 @@ _RECOMPILABLE_SUBSET_CASES: Final[tuple[RecompilableSubsetCase, ...]] = (
         note="Live repaired DOSFUNC.COD output for loadprog, used as a recompilation anchor.",
         cod_path=Path(__file__).resolve().parents[3] / "cod" / "DOSFUNC.COD",
         proc_name="loadprog",
+        expected_c_anchors=(
+            "int loadprog(const char *file, unsigned short segment, unsigned short mode, unsigned short flags)",
+            "rin.x.dx = (unsigned int)file;",
+        ),
+        forbidden_c_anchors=("file_2", "type_2", "ds * 16 +"),
     ),
     RecompilableSubsetCase(
         name="dos_loadOverlay_real",
@@ -86,6 +114,19 @@ _RECOMPILABLE_SUBSET_CASES: Final[tuple[RecompilableSubsetCase, ...]] = (
             "return loadprog(file, segment, DOS_LOAD_OVL, NULL);",
         ),
         forbidden_c_anchors=("return;",),
+    ),
+    RecompilableSubsetCase(
+        name="bios_clearkeyflags_real",
+        asm="",
+        expected_kind="real recovered BIOS helper",
+        note="Live repaired BIOSFUNC.COD output for _bios_clearkeyflags, used as a recompilation anchor.",
+        cod_path=Path(__file__).resolve().parents[3] / "cod" / "BIOSFUNC.COD",
+        proc_name="_bios_clearkeyflags",
+        expected_c_anchors=(
+            "void _bios_clearkeyflags(void)",
+            "MK_FP(0x40, 0x17)",
+        ),
+        forbidden_c_anchors=("return;", "*((unsigned short *)1047)"),
     ),
 )
 

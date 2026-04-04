@@ -600,6 +600,23 @@ def known_helper_signature_decl(name: str) -> str | None:
     return KNOWN_HELPER_SIGNATURE_DECLS.get(name)
 
 
+def preferred_known_helper_signature_decl(name: str) -> str | None:
+    if name in KNOWN_HELPER_SIGNATURE_DECLS:
+        if not name.startswith("_"):
+            underscored = f"_{name}"
+            if underscored in KNOWN_HELPER_SIGNATURE_DECLS:
+                return KNOWN_HELPER_SIGNATURE_DECLS[underscored]
+        return KNOWN_HELPER_SIGNATURE_DECLS[name]
+    if not name.startswith("_"):
+        underscored = f"_{name}"
+        if underscored in KNOWN_HELPER_SIGNATURE_DECLS:
+            return KNOWN_HELPER_SIGNATURE_DECLS[underscored]
+    stripped = name.lstrip("_")
+    if stripped != name:
+        return KNOWN_HELPER_SIGNATURE_DECLS.get(stripped)
+    return None
+
+
 def describe_x86_16_known_helper_signatures() -> dict[str, object]:
     return {
         "signature_count": len(KNOWN_HELPER_SIGNATURE_DECLS),

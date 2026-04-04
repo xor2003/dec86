@@ -44,8 +44,7 @@ from angr.sim_variable import SimRegisterVariable
 from angr.sim_variable import SimStackVariable
 from .annotations import ANNOTATION_KEY
 from .annotations import annotate_function
-from .analysis_helpers import resolve_direct_call_target_from_block
-from .analysis_helpers import known_helper_signature_decl
+from .analysis_helpers import preferred_known_helper_signature_decl, resolve_direct_call_target_from_block
 from .alias_model import _same_stack_slot_identity, _stack_slot_identity_can_join, _stack_slot_identity_for_variable
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
@@ -125,7 +124,7 @@ def _known_helper_arg_names_8616(name: str | None) -> list[str] | None:
     if not isinstance(name, str) or not name:
         return None
 
-    decl = known_helper_signature_decl(name) or known_helper_signature_decl(name.lstrip("_"))
+    decl = preferred_known_helper_signature_decl(name)
     if decl is None:
         return None
 
@@ -405,6 +404,25 @@ def _return_value_shape_8616(retval) -> str | None:
     return "scalar"
 
 
+def _stack_arg_has_pointer_evidence_8616(codegen, variable) -> bool:
+    identity = _stack_slot_identity_for_variable(variable)
+    if identity is None:
+        return False
+
+    statements = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    for stmt in getattr(statements, "statements", ()) or ():
+        for node in _iter_c_nodes_deep_8616(stmt):
+            if not isinstance(node, CUnaryOp) or node.op != "Dereference":
+                continue
+            for operand_node in _iter_c_nodes_deep_8616(node.operand):
+                if not isinstance(operand_node, CVariable):
+                    continue
+                operand_var = getattr(operand_node, "variable", None)
+                if _stack_slot_identity_for_variable(operand_var) == identity:
+                    return True
+    return False
+
+
 def _source_return_shape_8616(source_return_lines) -> str | None:
     if not source_return_lines:
         return None
@@ -444,6 +462,8 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
     prototype = getattr(func, "prototype", None)
     if prototype is None:
         return False
+    current_proto = getattr(getattr(codegen, "cfunc", None), "functy", None) or prototype
+    existing_args = list(getattr(codegen.cfunc, "arg_list", ()) or ())
 
     annotations = {}
     info = getattr(func, "info", None)
@@ -485,8 +505,27 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             existing_name = arg_names[index] if index < len(arg_names) else None
             desired_names.append(annotated_name or existing_name)
         normalized_names = _normalize_arg_names_8616(desired_names, target_arg_count)
+        pointer_promoted = False
+        for index in range(min(target_arg_count, len(existing_args))):
+            resolved_arg = existing_args[index]
+            if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
+                continue
+            pointer_type = SimTypePointer(SimTypeShort(False))
+            arch = getattr(getattr(codegen, "project", None), "arch", None)
+            if arch is not None and hasattr(pointer_type, "with_arch"):
+                pointer_type = pointer_type.with_arch(arch)
+            if getattr(resolved_arg, "variable_type", None) != pointer_type:
+                resolved_arg.variable_type = pointer_type
+                pointer_promoted = True
+            if new_args[index] != pointer_type:
+                new_args[index] = pointer_type
+                pointer_promoted = True
 
-        if target_arg_count > len(getattr(prototype, "args", ()) or ()) or list(arg_names) != normalized_names:
+        if (
+            pointer_promoted
+            or target_arg_count > len(getattr(prototype, "args", ()) or ())
+            or list(arg_names) != normalized_names
+        ):
             new_proto = prototype.__class__(
                 new_args,
                 prototype.returnty,
@@ -499,6 +538,64 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             arg_list = getattr(codegen.cfunc, "arg_list", None)
             if isinstance(arg_list, list) and len(arg_list) > target_arg_count:
                 codegen.cfunc.arg_list = arg_list[:target_arg_count]
+            return True
+
+    fallback_args = [
+        arg
+        for arg in existing_args
+        if isinstance(getattr(arg, "variable", None), SimStackVariable)
+    ]
+    if fallback_args:
+        target_arg_count = len(fallback_args)
+        new_args = list(getattr(current_proto, "args", ()) or ())
+        if len(new_args) < target_arg_count:
+            new_args.extend(
+                SimTypeShort(False).with_arch(project.arch)
+                for _ in range(target_arg_count - len(new_args))
+            )
+        elif len(new_args) > target_arg_count:
+            new_args = new_args[:target_arg_count]
+
+        pointer_promoted = False
+        for index, resolved_arg in enumerate(fallback_args):
+            if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
+                continue
+            pointer_type = SimTypePointer(SimTypeShort(False))
+            arch = getattr(getattr(codegen, "project", None), "arch", None)
+            if arch is not None and hasattr(pointer_type, "with_arch"):
+                pointer_type = pointer_type.with_arch(arch)
+            if getattr(resolved_arg, "variable_type", None) != pointer_type:
+                resolved_arg.variable_type = pointer_type
+                pointer_promoted = True
+            if index < len(new_args) and new_args[index] != pointer_type:
+                new_args[index] = pointer_type
+                pointer_promoted = True
+
+        if pointer_promoted:
+            desired_names = []
+            for index in range(target_arg_count):
+                if index < len(fallback_args):
+                    desired_names.append(
+                        getattr(getattr(fallback_args[index], "unified_variable", None), "name", None)
+                        or fallback_args[index].name
+                    )
+                elif index < len(getattr(current_proto, "arg_names", ()) or ()):
+                    desired_names.append(current_proto.arg_names[index])
+                else:
+                    desired_names.append(None)
+            normalized_names = _normalize_arg_names_8616(desired_names, target_arg_count)
+            new_proto = current_proto.__class__(
+                new_args,
+                current_proto.returnty,
+                arg_names=normalized_names,
+                variadic=getattr(current_proto, "variadic", False),
+            )
+            arch = getattr(getattr(codegen, "project", None), "arch", None)
+            if arch is not None and hasattr(new_proto, "with_arch"):
+                new_proto = new_proto.with_arch(arch)
+            func.prototype = new_proto
+            codegen.cfunc.functy = new_proto
+            codegen.cfunc.arg_list = fallback_args
             return True
 
     for name in arg_names:
@@ -731,9 +828,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
         return False
 
     changed = False
-    helper_decl = known_helper_signature_decl(getattr(func, "name", None))
-    if helper_decl is None and getattr(func, "name", None):
-        helper_decl = known_helper_signature_decl(getattr(func, "name", "").lstrip("_"))
+    helper_decl = preferred_known_helper_signature_decl(getattr(func, "name", None))
     if helper_decl is not None:
         annotate_function(project, func_addr, name=getattr(func, "name", None), c_decl=helper_decl)
         func = project.kb.functions.function(addr=func_addr, create=False)
@@ -944,6 +1039,21 @@ def _apply_annotations_8616(project, codegen) -> bool:
         elif len(new_args) > target_arg_count:
             new_args = new_args[:target_arg_count]
 
+        pointer_promoted = False
+        for index, resolved_arg in enumerate(resolved_args):
+            if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
+                continue
+            pointer_type = SimTypePointer(SimTypeShort(False))
+            arch = getattr(getattr(codegen, "project", None), "arch", None)
+            if arch is not None and hasattr(pointer_type, "with_arch"):
+                pointer_type = pointer_type.with_arch(arch)
+            if getattr(resolved_arg, "variable_type", None) != pointer_type:
+                resolved_arg.variable_type = pointer_type
+                pointer_promoted = True
+            if index < len(new_args) and new_args[index] != pointer_type:
+                new_args[index] = pointer_type
+                pointer_promoted = True
+
         desired_names = []
         for index in range(target_arg_count):
             if index < len(resolved_args):
@@ -959,6 +1069,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
             and len(getattr(current_proto, "args", ()) or ()) == target_arg_count
             and list(getattr(current_proto, "arg_names", ()) or ()) == normalized_names
             and all(existing is resolved for existing, resolved in zip(existing_args, resolved_args))
+            and not pointer_promoted
         ):
             return False
 
@@ -1023,13 +1134,7 @@ def _apply_annotations_8616(project, codegen) -> bool:
                 name = current
 
         current_name = getattr(variable, "name", None)
-        current_owner = name_owner_offsets.get(current_name) if isinstance(current_name, str) else None
-        if (
-            isinstance(current_name, str)
-            and current_name
-            and current_owner == getattr(variable, "offset", None)
-            and not current_name.startswith(("arg_", "s_", "v"))
-        ):
+        if isinstance(current_name, str) and current_name and current_name == name:
             used_stack_names.add(current_name)
             name_owner_offsets[current_name] = getattr(variable, "offset", 0) if isinstance(getattr(variable, "offset", None), int) else 0
             if getattr(variable, "name", None) != current_name:

@@ -6,8 +6,7 @@ from angr.analyses import CFGFast, Decompiler
 from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
 
-from .analysis_helpers import seed_calling_conventions
-from .analysis_helpers import known_helper_signature_decl
+from .analysis_helpers import preferred_known_helper_signature_decl, seed_calling_conventions
 from .cod_known_objects import known_cod_object_spec
 
 
@@ -70,17 +69,23 @@ def _normalize_c_decl_text(c_decl: str) -> str:
 
 
 def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...]) -> str | None:
+    decl_re = re.compile(
+        r"^(?P<prefix>(?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*)|\s|\*)+)"
+        r"\s+[A-Za-z_][\w$?@]*\s*\([^()]*\)\s*(?:\{|;)?\s*$"
+    )
     for line in source_lines:
         stripped = line.strip()
         if not stripped or stripped == "}":
             continue
-        header = stripped
-        if header.endswith("{"):
-            header = header[:-1].rstrip()
+        if stripped.startswith(("if ", "while ", "for ", "switch ", "return ", "case ", "default ")):
+            continue
+        if "(" not in stripped or ")" not in stripped:
+            continue
+        header = stripped[:-1].rstrip() if stripped.endswith("{") else stripped
+        if decl_re.match(header) is None:
+            continue
         if not header.endswith(";"):
             header = f"{header};"
-        if header.startswith(("if ", "while ", "for ", "switch ", "return ")):
-            continue
         return header
     return None
 
@@ -194,7 +199,7 @@ def _apply_known_helper_signatures(project, cod_metadata=None) -> bool:
     changed = False
     seen_decls: set[str] = set()
     for call_name in getattr(cod_metadata, "call_names", ()) or ():
-        decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
+        decl = preferred_known_helper_signature_decl(call_name)
         if decl is None or decl in seen_decls:
             continue
         seen_decls.add(decl)
@@ -279,17 +284,56 @@ def apply_x86_16_metadata_annotations(
             )
             source_decl = _source_decl_from_cod_source_lines(source_lines)
             if source_decl is not None:
-                try:
-                    annotate_function(
-                        project,
-                        func_addr,
-                        name=getattr(func, "name", None),
-                        c_decl=source_decl,
-                    )
-                except ValueError:
-                    pass
-                else:
-                    changed = True
+                current_proto = getattr(func, "prototype", None)
+                if current_proto is not None:
+                    source_arg_text = _source_args_from_cod_source_lines(source_lines, getattr(func, "name", None))
+                    source_arg_names: list[str] = []
+                    if source_arg_text:
+                        current: list[str] = []
+                        depth_paren = depth_bracket = depth_brace = 0
+                        for char in source_arg_text:
+                            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                                part = "".join(current).strip()
+                                if part:
+                                    match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", part)
+                                    if match is not None:
+                                        source_arg_names.append(match.group(1))
+                                current = []
+                                continue
+                            current.append(char)
+                            if char == "(":
+                                depth_paren += 1
+                            elif char == ")" and depth_paren > 0:
+                                depth_paren -= 1
+                            elif char == "[":
+                                depth_bracket += 1
+                            elif char == "]" and depth_bracket > 0:
+                                depth_bracket -= 1
+                            elif char == "{":
+                                depth_brace += 1
+                            elif char == "}" and depth_brace > 0:
+                                depth_brace -= 1
+                        if current:
+                            part = "".join(current).strip()
+                            if part:
+                                match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", part)
+                                if match is not None:
+                                    source_arg_names.append(match.group(1))
+                    if source_arg_names and len(source_arg_names) == len(getattr(current_proto, "args", ()) or ()):
+                        try:
+                            annotate_function(
+                                project,
+                                func_addr,
+                                name=getattr(func, "name", None),
+                                prototype=current_proto,
+                                arg_names=source_arg_names,
+                            )
+                        except ValueError:
+                            pass
+                        else:
+                            changed = True
+                # Keep recovered widths; source comments are only used for names
+                # when the analysis has already produced a prototype.
 
     if func_addr is not None and synthetic_globals:
         seen_addrs: set[int] = set()

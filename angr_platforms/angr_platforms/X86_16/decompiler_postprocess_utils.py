@@ -54,6 +54,10 @@ def _segment_reg_name_8616(node, project) -> str | None:
 
 
 def _match_real_mode_linear_expr_8616(node, project) -> tuple[str | None, int | None]:
+    if isinstance(node, CConstant) and isinstance(node.value, int):
+        if 0 <= node.value <= 0xFFFFF:
+            return "ds", node.value
+
     if isinstance(node, CBinaryOp) and node.op == "Mul":
         for maybe_seg, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
             if _c_constant_value_8616(maybe_scale) != 16:

@@ -29,6 +29,7 @@ from angr_platforms.X86_16.widening_model import (
     describe_x86_16_widening_pipeline,
     prove_adjacent_storage_slices,
 )
+from angr_platforms.X86_16.widening_alias import can_join_adjacent_register_slices
 
 
 def _make_codegen():
@@ -87,6 +88,28 @@ def test_widening_candidate_extraction_and_debug_description():
     assert descriptions[0]["view"]["bit_width"] == 8
 
 
+def test_constant_mk_fp_literals_are_recovered_as_far_pointer_storage():
+    codegen = _make_codegen()
+    expr = _decompile.structured_c.CFunctionCall(
+        "MK_FP",
+        None,
+        [
+            _decompile.structured_c.CConstant(0x40, _decompile.SimTypeShort(False), codegen=codegen),
+            _decompile.structured_c.CConstant(0x17, _decompile.SimTypeShort(False), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+
+    facts = describe_alias_storage(expr)
+    candidates = collect_widening_candidates([expr])
+
+    assert facts.domain.space == "far_pointer"
+    assert facts.identity == ("far_pointer", 0x417)
+    assert len(candidates) == 1
+    assert candidates[0].domain.space == "far_pointer"
+    assert candidates[0].view.bit_width == 32
+
+
 def test_widening_pipeline_is_explicit_and_stable():
     pipeline = describe_x86_16_widening_pipeline()
 
@@ -123,3 +146,24 @@ def test_widening_proof_can_surface_version_mismatches(monkeypatch):
 
     assert not proof.ok
     assert proof.reason == "version_mismatch"
+
+
+def test_register_pair_join_rejects_version_mismatch_when_alias_state_is_available(monkeypatch):
+    low = _reg("al", 0)
+    high = _reg("ah", 1)
+    state = AliasState()
+    state._versions[AX] = 1
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.widening_model._register_version_for_expr",
+        lambda expr, _state: 1 if getattr(expr.variable, "name", "") == "al" else 2,
+    )
+
+    assert not can_join_adjacent_register_slices(low, high, alias_state=state)
+
+
+def test_register_pair_join_requires_alias_state():
+    low = _reg("al", 0)
+    high = _reg("ah", 1)
+
+    assert not can_join_adjacent_register_slices(low, high)

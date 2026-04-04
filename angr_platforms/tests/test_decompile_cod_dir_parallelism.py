@@ -1,6 +1,7 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
+import subprocess
 from subprocess import CompletedProcess
 import sys
 
@@ -135,3 +136,33 @@ def test_run_work_item_uses_scan_safe_fallback_for_worker_failures(monkeypatch, 
     assert "scan-safe" in rendered
     assert "fallback kind: lift_only" in rendered
     assert "Timed out while recovering" not in rendered
+
+
+def test_run_work_item_normalizes_timeout_expired_bytes(monkeypatch, tmp_path):
+    item = _script.CodWorkItem(
+        cod_path=tmp_path / "DOSFUNC.COD",
+        proc_name="_dos_alloc",
+        proc_kind="NEAR",
+        proc_index=2,
+        proc_total=15,
+        code=b"\x90",
+    )
+
+    def fake_run(*args, **kwargs):  # noqa: ANN001
+        raise subprocess.TimeoutExpired(
+            cmd=args[0],
+            timeout=120,
+            output=b"stdout bytes\n",
+            stderr=b"stderr bytes\n",
+        )
+
+    monkeypatch.setattr(_script.subprocess, "run", fake_run)
+    monkeypatch.setattr(_script, "_run_scan_safe_fallback", lambda *_args, **_kwargs: None)
+
+    result = _script._run_work_item(item, timeout=20, max_memory_mb=1024)
+
+    assert result.exit_kind == "subprocess_timeout"
+    assert result.stderr == "stderr bytes\n"
+    rendered = _script._render_result_block(result)
+    assert "stderr bytes" in rendered
+    assert "bytes found" not in rendered

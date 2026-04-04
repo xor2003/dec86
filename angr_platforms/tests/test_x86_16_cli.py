@@ -649,7 +649,22 @@ def test_simplify_x86_16_stack_byte_pointers_rewrites_far_pointer_stack_stores()
     metadata = SimpleNamespace(stack_aliases={0xA: "cs", 0xC: "ss"})
     text = "    *((unsigned short *)(ds * 16 + (unsigned int)cs_2)) = ir_3_2;\n"
 
-    assert decompile._simplify_x86_16_stack_byte_pointers(text, metadata) == "    *cs = ir_3_2;"
+    assert decompile._simplify_x86_16_stack_byte_pointers(text, metadata) == "    *cs = ir_3_2;\n"
+
+
+def test_simplify_x86_16_stack_byte_pointers_keeps_const_pointer_inputs_stable():
+    metadata = SimpleNamespace(stack_aliases={0x4: "file"})
+    text = (
+        "unsigned short demo(const char *file, const char *cmdline, unsigned short *cs, unsigned short *ss)\n"
+        "{\n"
+        "    *((unsigned short *)(ds * 16 + (unsigned int)file)) = ir_4_2;\n"
+        "}\n"
+    )
+
+    simplified = decompile._simplify_x86_16_stack_byte_pointers(text, metadata)
+
+    assert "*file =" not in simplified
+    assert "MK_FP(ds, (unsigned int)file)" in simplified
 
 
 def test_format_known_helper_calls_handles_missing_cod_metadata(monkeypatch):
