@@ -59,6 +59,7 @@ class CODSourceRewriteRegistry:
     by_name: Mapping[str, CODSourceRewriteSpec]
 
     def apply(self, c_text: str, metadata: CODProcMetadata | None) -> str:
+        c_text = rewrite_collapsed_source_bodies(c_text, metadata)
         c_text = rewrite_known_cod_object_bindings_from_source(c_text, metadata)
         c_text = rewrite_known_cod_object_condition_blocks_from_source(c_text, metadata)
         c_text = rewrite_known_cod_object_fields_from_source(c_text, metadata)
@@ -452,6 +453,113 @@ def rewrite_missing_source_call_lines(c_text: str, metadata: CODProcMetadata | N
         changed = True
 
     return "\n".join(current_lines) if changed else c_text
+
+
+def rewrite_collapsed_source_bodies(c_text: str, metadata: CODProcMetadata | None) -> str:
+    if metadata is None or not metadata.source_lines:
+        return c_text
+
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+
+    body_start = next((idx for idx, line in enumerate(lines) if "{" in line), None)
+    body_end = next((idx for idx in range(len(lines) - 1, -1, -1) if "}" in lines[idx]), None)
+    if body_start is None or body_end is None or body_end <= body_start:
+        return c_text
+
+    decl_re = re.compile(
+        r"^(?:extern|static|register\s+)?(?:unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*|\s|\*)+"
+        r"\s+[A-Za-z_]\w*\s*;\s*(?://.*)?$"
+    )
+
+    def _is_body_statement(stripped: str) -> bool:
+        if not stripped or stripped in {"{", "}"}:
+            return False
+        if stripped.startswith(("/*", "*", "//")):
+            return False
+        if decl_re.match(stripped):
+            return False
+        return stripped.endswith(";")
+
+    current_statements = [line.strip() for line in lines[body_start + 1 : body_end] if _is_body_statement(line.strip())]
+    if len(current_statements) > 1:
+        return c_text
+
+    macro_aliases: dict[str, str] = {}
+    for raw_line in metadata.source_lines:
+        stripped = raw_line.strip()
+        define_match = re.match(r"^#define\s+([A-Za-z_]\w*)\s+(.+)$", stripped)
+        if define_match is not None:
+            macro_aliases[define_match.group(1)] = define_match.group(2).strip()
+
+    source_decl_lines: list[str] = []
+    source_stmt_lines: list[str] = []
+    seen_decls: set[str] = set()
+    decl_source_re = re.compile(
+        r"^(?P<type>[A-Za-z_][\w\s\*]*?)\s+(?P<names>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*;\s*$"
+    )
+
+    def _normalize_decl_type(type_text: str) -> str:
+        expanded = " ".join(macro_aliases.get(token, token) for token in type_text.split())
+        expanded = re.sub(r"\s+", " ", expanded).strip()
+        if "char" in expanded.split():
+            return "char"
+        return expanded
+
+    alias_offsets_by_name = {
+        name: offset
+        for offset, name in metadata.stack_aliases.items()
+        if isinstance(name, str) and name
+    }
+
+    def _bp_comment(name: str) -> str:
+        offset = alias_offsets_by_name.get(name)
+        if not isinstance(offset, int):
+            return ""
+        sign = "+" if offset >= 0 else "-"
+        magnitude = offset if offset >= 0 else -offset
+        return f"  // [bp{sign}0x{magnitude:x}] {name}"
+
+    for raw_line in metadata.source_lines:
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        stripped = stripped.lstrip("{").strip()
+        stripped = stripped.rstrip("}").strip()
+        if not stripped or stripped in {";", "};"}:
+            continue
+        if "(" in stripped and ")" in stripped and stripped.endswith("{"):
+            continue
+        decl_match = decl_source_re.match(stripped)
+        if decl_match is not None:
+            decl_type = _normalize_decl_type(decl_match.group("type"))
+            for name in (part.strip() for part in decl_match.group("names").split(",")):
+                if not name:
+                    continue
+                decl_line = f"{decl_type} {name};{_bp_comment(name)}"
+                if decl_line not in seen_decls:
+                    source_decl_lines.append(decl_line)
+                    seen_decls.add(decl_line)
+            continue
+        if not stripped.endswith(";"):
+            continue
+        if stripped.startswith(("if ", "while ", "for ", "switch ", "case ", "default ")):
+            continue
+        source_stmt_lines.append(stripped)
+
+    if len(source_stmt_lines) < 2:
+        return c_text
+
+    indent = "    "
+    existing_decls = {line.strip() for line in lines[body_start + 1 : body_end] if decl_re.match(line.strip() or "")}
+    rebuilt_body = [f"{indent}{decl_line}" for decl_line in source_decl_lines if decl_line not in existing_decls]
+    rebuilt_body.extend(f"{indent}{stmt}" for stmt in source_stmt_lines)
+    if not rebuilt_body:
+        return c_text
+
+    new_lines = lines[: body_start + 1] + rebuilt_body + lines[body_end:]
+    return "\n".join(new_lines)
 
 
 COD_SOURCE_REWRITE_SPECS: tuple[CODSourceRewriteSpec, ...] = ()

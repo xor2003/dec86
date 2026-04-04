@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from angr_platforms.X86_16.cod_extract import CODProcMetadata
 from angr_platforms.X86_16.cod_source_rewrites import (
     COD_SOURCE_REWRITE_SPECS,
     COD_SOURCE_REWRITE_SPECS_BY_NAME,
     COD_SOURCE_REWRITE_REGISTRY,
+    apply_cod_source_rewrites,
     cod_source_rewrite_description,
     cod_source_rewrite_names,
     cod_source_rewrite_summary,
@@ -104,3 +106,51 @@ def test_cod_source_rewrite_spec_lookup_map_is_read_only():
     except TypeError:
         return
     raise AssertionError("spec lookup map should be read-only")
+
+
+def test_apply_cod_source_rewrites_rebuilds_collapsed_straight_line_body_from_source():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("printf",),
+        call_sources=(("printf", 'printf ("a = %d, b = %d\\n", a, b)'),),
+        global_names=(),
+        source_lines=(
+            "#define TYPE unsigned char",
+            "main()",
+            "{ TYPE a, b;",
+            "a = 255;",
+            "b = 143;",
+            "b = a + b;",
+            "a = a - b;",
+            'printf ("a = %d, b = %d\\n", a, b);',
+            "}",
+        ),
+        source_line_set=frozenset(
+            {
+                "#define TYPE unsigned char",
+                "main()",
+                "{ TYPE a, b;",
+                "a = 255;",
+                "b = 143;",
+                "b = a + b;",
+                "a = a - b;",
+                'printf ("a = %d, b = %d\\n", a, b);',
+                "}",
+            }
+        ),
+    )
+    collapsed = """void _start(void)
+{
+    printf ("a = %d, b = %d
+", a, b);
+}"""
+
+    rewritten = apply_cod_source_rewrites(collapsed, metadata)
+
+    assert "char a;" in rewritten
+    assert "char b;" in rewritten
+    assert "a = 255;" in rewritten
+    assert "b = 143;" in rewritten
+    assert "b = a + b;" in rewritten
+    assert "a = a - b;" in rewritten
+    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
