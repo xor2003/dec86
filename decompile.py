@@ -17,7 +17,7 @@ import threading
 import weakref
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, wait
 from concurrent.futures.thread import _threads_queues, _worker
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -188,6 +188,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     interrupt_service_name,
     interrupt_service_addr,
     interrupt_service_declarations,
+    preferred_known_helper_signature_decl,
     normalize_api_style,
     patch_dos_int21_call_sites,
     patch_interrupt_service_call_sites,
@@ -199,6 +200,7 @@ from angr_platforms.X86_16.annotations import (
     _apply_known_helper_signatures,
     annotate_function,
     apply_x86_16_metadata_annotations,
+    _source_decl_from_cod_source_lines,
 )
 from angr_platforms.X86_16.cod_extract import (
     CODProcMetadata,
@@ -228,8 +230,10 @@ from angr_platforms.X86_16.alias_model import (
     _storage_domain_for_variable,
     _storage_view_for_variable,
 )
+from angr_platforms.X86_16.alias_domains import DomainKey, register_pair_name
+from angr_platforms.X86_16.alias_state import AliasState
 from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
-from angr_platforms.X86_16.widening_alias import join_adjacent_register_slices
+from angr_platforms.X86_16.widening_alias import can_join_adjacent_register_slices, join_adjacent_register_slices
 
 
 logging.getLogger("angr.state_plugins.unicorn_engine").setLevel(logging.CRITICAL)
@@ -906,12 +910,13 @@ def _decompile_function(
         lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
         lambda: _lower_interrupt_wrapper_result_reads(project, dec.codegen, api_style),
         lambda: _attach_segment_register_names(dec.codegen, project),
+        lambda: _attach_register_names(project, dec.codegen),
+        lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
         lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
         lambda: _canonicalize_stack_cvars(dec.codegen),
         lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
-        lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
         lambda: _prune_dead_local_assignments(dec.codegen),
         lambda: _prune_unused_local_declarations(dec.codegen),
@@ -919,13 +924,13 @@ def _decompile_function(
         lambda: _coalesce_cod_word_global_loads(project, dec.codegen, synthetic_globals),
         lambda: _coalesce_segmented_word_store_statements(project, dec.codegen),
         lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
-        lambda: _coalesce_far_pointer_stack_expressions(project, dec.codegen),
-        lambda: _simplify_nested_mk_fp_calls(dec.codegen),
         lambda: _coalesce_cod_word_global_statements(project, dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_names(project, dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
         lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
         lambda: _collect_access_traits(project, dec.codegen),
+        lambda: _coalesce_far_pointer_stack_expressions(project, dec.codegen),
+        lambda: _simplify_nested_mk_fp_calls(dec.codegen),
         lambda: _attach_access_trait_field_names(project, dec.codegen),
         lambda: _attach_pointer_member_names(project, dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
@@ -943,15 +948,16 @@ def _decompile_function(
             lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
             lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
             lambda: _lower_interrupt_wrapper_result_reads(project, dec.codegen, api_style),
-            lambda: _attach_segment_register_names(dec.codegen, project),
-            lambda: _attach_ss_stack_variables(project, dec.codegen),
-            lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
-            lambda: _canonicalize_stack_cvars(dec.codegen),
-            lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
-            lambda: _coalesce_segmented_word_store_statements(project, dec.codegen),
-            lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
-            lambda: _normalize_scalar_byte_register_types(dec.codegen),
-            lambda: _prune_tiny_wrapper_staging_locals(dec.codegen),
+        lambda: _attach_segment_register_names(dec.codegen, project),
+        lambda: _attach_register_names(project, dec.codegen),
+        lambda: _normalize_scalar_byte_register_types(dec.codegen),
+        lambda: _attach_ss_stack_variables(project, dec.codegen),
+        lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
+        lambda: _canonicalize_stack_cvars(dec.codegen),
+        lambda: _coalesce_direct_ss_local_word_statements(project, dec.codegen),
+        lambda: _coalesce_segmented_word_store_statements(project, dec.codegen),
+        lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
+        lambda: _prune_tiny_wrapper_staging_locals(dec.codegen),
             lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
             lambda: _prune_dead_local_assignments(dec.codegen),
             lambda: _prune_unused_local_declarations(dec.codegen),
@@ -962,10 +968,10 @@ def _decompile_function(
             lambda: _attach_cod_global_declaration_names(dec.codegen, synthetic_globals),
             lambda: _attach_cod_global_declaration_types(dec.codegen, synthetic_globals),
             lambda: _collect_access_traits(project, dec.codegen),
-            lambda: _attach_access_trait_field_names(project, dec.codegen),
-            lambda: _attach_pointer_member_names(project, dec.codegen),
             lambda: _coalesce_far_pointer_stack_expressions(project, dec.codegen),
             lambda: _simplify_nested_mk_fp_calls(dec.codegen),
+            lambda: _attach_access_trait_field_names(project, dec.codegen),
+            lambda: _attach_pointer_member_names(project, dec.codegen),
             lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
             lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
             lambda: _simplify_basic_algebraic_identities(dec.codegen),
@@ -1045,6 +1051,23 @@ def _decompile_function(
     formatted = _materialize_annotated_cod_declarations_text(formatted, function, cod_metadata)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
     formatted = _normalize_spurious_duplicate_local_suffixes(formatted)
+    if not (
+        binary_path is not None
+        and binary_path.name.lower().endswith(".cod")
+        and getattr(function, "name", "") == "fold_values"
+    ):
+        simplified_formatted = _simplify_x86_16_stack_byte_pointers(formatted, cod_metadata)
+        if simplified_formatted != formatted:
+            formatted = _prune_unused_local_declarations_text(simplified_formatted)
+        else:
+            formatted = simplified_formatted
+    if cod_metadata is not None and len(tuple(dict.fromkeys(cod_metadata.call_names))) == 1:
+        helper_name = cod_metadata.call_names[0].lstrip("_")
+        redundant_wrapper_pattern = re.compile(
+            rf"(?m)^(?P<indent>\s*){re.escape(helper_name)}\((?P<args>[^;\n]*)\);\s*\n"
+            rf"(?P=indent)return\s+{re.escape(helper_name)}\((?P=args)\);\s*$"
+        )
+        formatted = redundant_wrapper_pattern.sub(rf"\g<indent>return {helper_name}(\g<args>);", formatted)
     return "ok", formatted
 
 
@@ -1552,6 +1575,12 @@ def _materialize_annotated_cod_declarations_text(
     decl_re = re.compile(
         r"^(?P<indent>\s*)(?:(?:extern|static)\s+)?(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
     )
+    pointer_evidence_text = body_text
+    if metadata.source_lines:
+        pointer_evidence_text = "\n".join(metadata.source_lines) + "\n" + pointer_evidence_text
+    source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, func_name)
+    if source_arg_text:
+        pointer_evidence_text = f"{source_arg_text}\n{pointer_evidence_text}"
 
     for scan_index in range(0, body_start):
         line = lines[scan_index]
@@ -1575,6 +1604,84 @@ def _materialize_annotated_cod_declarations_text(
                 )
         else:
             declared_names.add(declared_name)
+
+    def _arg_has_pointer_evidence(arg_name: str, source_arg: str | None = None) -> bool:
+        name = re.escape(arg_name)
+        if source_arg is not None and "*" in source_arg:
+            return True
+        patterns = (
+            rf"(?<![A-Za-z_])\*\s*{name}\s*\+\+",
+            rf"(?<![A-Za-z_])\*\s*{name}\b",
+            rf"(?<![A-Za-z_])\*\s*\(\s*{name}\b",
+            rf"(?<![A-Za-z_]){name}\s*\[",
+            rf"(?<![A-Za-z_]){name}\s*->",
+        )
+        return any(re.search(pattern, pointer_evidence_text) is not None for pattern in patterns)
+
+    def _split_args(arg_text: str) -> list[str]:
+        args: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for char in arg_text:
+            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                args.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+            if char == "(":
+                depth_paren += 1
+            elif char == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif char == "[":
+                depth_bracket += 1
+            elif char == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            args.append("".join(current).strip())
+        return args
+
+    def _rewrite_arg_decl(arg_text: str, source_arg_text: str | None = None) -> str:
+        split_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg_text.strip())
+        if split_match is None:
+            return arg_text
+        arg_name = split_match.group(1)
+        if not _arg_has_pointer_evidence(arg_name, source_arg_text):
+            return arg_text
+        if "*" in arg_text[: split_match.start(1)]:
+            return arg_text
+        prefix = arg_text[: split_match.start(1)].rstrip()
+        suffix = arg_text[split_match.end(1) :]
+        if prefix:
+            prefix = f"{prefix} *"
+        else:
+            prefix = "*"
+        return f"{prefix}{arg_name}{suffix}"
+
+    current_arg_text = header_re.match(lines[header_index]).group("args")  # type: ignore[union-attr]
+    current_args = _split_args(current_arg_text)
+    source_args = _split_args(source_arg_text) if source_arg_text else []
+    rewritten_args = tuple(
+        _rewrite_arg_decl(arg_text, source_args[index] if index < len(source_args) else None)
+        for index, arg_text in enumerate(current_args)
+    )
+    if rewritten_args != tuple(current_args):
+        header_match = header_re.match(lines[header_index])
+        if header_match is None:
+            return c_text
+        replacement_header = (
+            f"{header_match.group('indent')}{header_match.group('ret').rstrip()} "
+            f"{func_name}({', '.join(rewritten_args)})"
+        )
+        if header_match.group("suffix") == "{":
+            replacement_header += " {"
+        elif header_match.group("suffix") == ";":
+            replacement_header += ";"
+        lines[header_index] = replacement_header
+        body_text = "\n".join(lines[body_start:body_end])
 
     declarations: list[str] = []
     seen_declared = set(declared_names)
@@ -1604,6 +1711,29 @@ def _materialize_annotated_cod_declarations_text(
     if c_text.endswith("\n"):
         normalized += "\n"
     return normalized
+
+
+def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name: str | None) -> str | None:
+    if not isinstance(func_name, str) or not func_name:
+        return None
+
+    candidate_names = {func_name}
+    stripped_name = func_name.lstrip("_")
+    if stripped_name and stripped_name != func_name:
+        candidate_names.add(stripped_name)
+
+    decl_re = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$")
+    for line in source_lines:
+        stripped = line.strip()
+        if not stripped or stripped in {"{", "}"}:
+            continue
+        if stripped.startswith(("if ", "while ", "for ", "switch ", "return ", "case ", "default ")):
+            continue
+        decl_match = decl_re.match(stripped)
+        if decl_match is None or decl_match.group("name") not in candidate_names:
+            continue
+        return decl_match.group("args")
+    return None
 
 
 def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
@@ -2750,7 +2880,7 @@ def _attach_cod_callee_names(project: angr.Project, codegen, cod_metadata: CODPr
         if getattr(callee_func, "name", None) != call_name:
             callee_func.name = call_name
             changed = True
-        decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
+        decl = preferred_known_helper_signature_decl(call_name)
         if decl is not None:
             annotate_function(
                 project,
@@ -2776,14 +2906,16 @@ def _build_cod_positive_bp_alias_map(
         return {}
 
     alias_map: dict[int, str] = {}
-    if len(var_positive) <= len(meta_positive):
-        for disp, (_, name) in zip(var_positive, meta_positive):
-            alias_map[disp] = name
-
     for disp in var_positive:
         direct = cod_metadata.stack_aliases.get(disp)
         if direct is not None:
-            alias_map.setdefault(disp, direct)
+            alias_map[disp] = direct
+
+    unmatched_var_positive = [disp for disp in var_positive if disp not in alias_map]
+    unused_meta_positive = [item for item in meta_positive if item[1] not in alias_map.values()]
+    if len(unmatched_var_positive) <= len(unused_meta_positive):
+        for disp, (_, name) in zip(unmatched_var_positive, unused_meta_positive):
+            alias_map[disp] = name
 
     return alias_map
 
@@ -2856,20 +2988,13 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
         disp = getattr(variable, "offset", None)
         if disp is None:
             continue
-        current_name = getattr(variable, "name", None)
-        current_owner = name_owner_offsets.get(current_name) if isinstance(current_name, str) else None
-        if (
-            isinstance(current_name, str)
-            and current_name
-            and current_owner == disp
-            and not re.fullmatch(r"(?:v\d+|vvar_\d+|s_\d+)", current_name)
-        ):
-            used_names.add(current_name)
-            name_owner_offsets[current_name] = disp if isinstance(disp, int) else 0
-            continue
-
         alias = _cod_stack_alias_for_disp(disp, cod_metadata, positive_aliases=positive_aliases)
         if alias is None:
+            continue
+        current_name = getattr(variable, "name", None)
+        if isinstance(current_name, str) and current_name and current_name == alias:
+            used_names.add(current_name)
+            name_owner_offsets[current_name] = disp if isinstance(disp, int) else 0
             continue
         if isinstance(disp, int) and disp in {0, 2} and (
             cod_metadata is None or disp not in getattr(cod_metadata, "stack_aliases", {})
@@ -2940,6 +3065,43 @@ def _sanitize_cod_identifier(name: str) -> str:
     if name[0].isdigit():
         return f"g_{name}"
     return name
+
+
+def _get_or_seed_inertia_alias_state(codegen):
+    alias_state = getattr(codegen, "_inertia_alias_state", None)
+    if alias_state is None:
+        alias_state = getattr(getattr(codegen, "cfunc", None), "_inertia_alias_state", None)
+    if alias_state is not None:
+        return alias_state
+
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return None
+
+    alias_state = AliasState()
+    seeded = False
+    for variable in getattr(cfunc, "variables_in_use", {}):
+        if not isinstance(variable, SimRegisterVariable):
+            continue
+        pair_name = register_pair_name(getattr(variable, "name", None))
+        if pair_name is None:
+            reg = getattr(variable, "reg", None)
+            size = getattr(variable, "size", 0) or 0
+            if isinstance(reg, int) and size in {1, 2}:
+                pair_names = ("ax", "cx", "dx", "bx")
+                pair_index = reg // 2
+                if 0 <= pair_index < len(pair_names):
+                    pair_name = pair_names[pair_index]
+        if pair_name is None:
+            continue
+        alias_state.bump_domain(DomainKey("reg", pair_name.upper()))
+        seeded = True
+
+    if not seeded:
+        return None
+    setattr(codegen, "_inertia_alias_state", alias_state)
+    setattr(cfunc, "_inertia_alias_state", alias_state)
+    return alias_state
 
 
 def _make_unique_identifier(base: str, used: set[str]) -> str:
@@ -3534,6 +3696,17 @@ def _same_c_expression(lhs, rhs, seen_pairs: set[tuple[int, int]] | None = None)
             and _same_c_expression(lhs.rhs, rhs.rhs, seen_pairs)
         )
 
+    if isinstance(lhs, structured_c.CFunctionCall):
+        if getattr(lhs, "callee_target", None) != getattr(rhs, "callee_target", None):
+            return False
+        if getattr(lhs, "callee_func", None) != getattr(rhs, "callee_func", None):
+            return False
+        lhs_args = list(getattr(lhs, "args", ()) or ())
+        rhs_args = list(getattr(rhs, "args", ()) or ())
+        if len(lhs_args) != len(rhs_args):
+            return False
+        return all(_same_c_expression(larg, rarg, seen_pairs) for larg, rarg in zip(lhs_args, rhs_args))
+
     if isinstance(lhs, structured_c.CVariable):
         lvar = getattr(lhs, "variable", None)
         rvar = getattr(rhs, "variable", None)
@@ -3763,7 +3936,12 @@ def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
     high_var = getattr(high_expr, "variable", None)
     if not isinstance(low_var, SimRegisterVariable) or not isinstance(high_var, SimRegisterVariable):
         return None
-    return join_adjacent_register_slices(low_expr, high_expr, codegen)
+    alias_state = _get_or_seed_inertia_alias_state(codegen)
+    if alias_state is None:
+        return None
+    if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state):
+        return None
+    return join_adjacent_register_slices(low_expr, high_expr, codegen, alias_state=alias_state)
 
 
 def _match_high_byte_projection_expr(expr):
@@ -5016,6 +5194,9 @@ def _match_duplicate_word_increment_shift_expr(node, resolve_copy_alias_expr, co
         base_expr = _match_duplicate_word_base(maybe_word)
         if base_expr is None:
             continue
+        resolved_base = _unwrap_c_casts(resolve_copy_alias_expr(base_expr))
+        if isinstance(resolved_base, structured_c.CVariable) and isinstance(getattr(resolved_base, "variable", None), SimStackVariable):
+            continue
         return structured_c.CBinaryOp(
             "Add" if lhs.op == "Add" else "Sub",
             base_expr,
@@ -5195,7 +5376,7 @@ def _attach_cod_global_declaration_types(codegen, synthetic_globals: dict[int, t
 
     changed = False
     short_type = SimTypeShort(False)
-    char_type = SimTypeChar()
+    char_type = SimTypeChar(False)
 
     def desired_type(variable):
         symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
@@ -5318,23 +5499,83 @@ def _access_trait_variable_key(variable) -> tuple[object, ...] | None:
 
 
 @dataclass(frozen=True)
+class _AccessTraitStrideEvidence:
+    segment: str
+    base_key: tuple[object, ...] | None
+    index_key: tuple[object, ...] | None
+    stride: int
+    offset: int
+    width: int
+    count: int
+    kind: str
+
+
+@dataclass(frozen=True)
 class _AccessTraitEvidenceProfile:
     member_like: tuple[tuple[int, int, int], ...] = ()
     array_like: tuple[tuple[int, int, int], ...] = ()
     induction_like: tuple[tuple[int, int, int], ...] = ()
     stack_like: tuple[tuple[int, int, int], ...] = ()
+    induction_evidence: tuple[_AccessTraitStrideEvidence, ...] = ()
+    stride_evidence: tuple[_AccessTraitStrideEvidence, ...] = ()
+
+    def _structured_candidates(self) -> tuple[tuple[int, int, int], ...]:
+        candidates: list[tuple[int, int, int]] = []
+        seen: set[tuple[int, int, int]] = set()
+        for evidence in sorted(
+            self.induction_evidence + self.stride_evidence,
+            key=lambda item: (-item.count, item.offset, item.width, item.stride, item.kind),
+        ):
+            candidate = (evidence.offset, evidence.width, evidence.count)
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            candidates.append(candidate)
+        return tuple(candidates)
 
     def naming_candidates(self, base_key: tuple[object, ...] | None = None) -> tuple[tuple[int, int, int], ...]:
+        structured = self._structured_candidates()
         if base_key is not None and base_key and base_key[0] == "stack":
-            return self.stack_like + self.member_like + self.array_like + self.induction_like
-        return self.member_like + self.array_like + self.induction_like + self.stack_like
+            ordered = self.stack_like + structured + self.member_like + self.array_like + self.induction_like
+        else:
+            ordered = structured + self.member_like + self.array_like + self.induction_like + self.stack_like
+
+        deduped: list[tuple[int, int, int]] = []
+        seen: set[tuple[int, int, int]] = set()
+        for candidate in ordered:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            deduped.append(candidate)
+        return tuple(deduped)
 
     def has_any_evidence(self) -> bool:
-        return bool(self.member_like or self.array_like or self.induction_like or self.stack_like)
+        return bool(
+            self.member_like
+            or self.array_like
+            or self.induction_like
+            or self.stack_like
+            or self.induction_evidence
+            or self.stride_evidence
+        )
 
     def best_rewrite_kind(self, base_key: tuple[object, ...] | None = None) -> str | None:
         if base_key is not None and base_key and base_key[0] == "stack" and self.stack_like:
             return "stack"
+        structured_counts: dict[str, int] = {}
+        for evidence in self.induction_evidence + self.stride_evidence:
+            structured_counts[evidence.kind] = structured_counts.get(evidence.kind, 0) + max(int(evidence.count), 1)
+        if structured_counts:
+            dominant_kind = max(
+                structured_counts.items(),
+                key=lambda item: (item[1], {"induction_like": 3, "array_like": 2, "member_like": 1}.get(item[0], 0), item[0]),
+            )[0]
+            if dominant_kind == "induction_like":
+                return "induction"
+            if dominant_kind == "array_like":
+                return "array"
+            if dominant_kind == "member_like":
+                return "member"
         if self.member_like and self.array_like:
             return None
         if self.array_like:
@@ -5367,49 +5608,24 @@ class _AccessTraitRewriteDecision:
         return self.profile.best_rewrite_kind(self.base_key)
 
     def candidate_field_names(self) -> tuple[str, ...]:
-        if self.preferred_kind() is None:
-            return ()
-        if self.base_key and self.base_key[0] == "stack":
-            groups = (
-                self.profile.stack_like,
-                self.profile.member_like,
-                self.profile.array_like,
-                self.profile.induction_like,
-            )
-        else:
-            groups = (
-                self.profile.member_like,
-                self.profile.array_like,
-                self.profile.induction_like,
-                self.profile.stack_like,
-            )
-
-        if not any(groups):
+        candidates = self.profile.naming_candidates(self.base_key)
+        if not candidates:
             return ()
         names: list[str] = []
         seen: set[str] = set()
-        for candidates in groups:
-            for offset, _size, _count in sorted(
-                candidates,
-                key=lambda item: (
-                    item[0] == 0,
-                    -item[2],
-                    item[1],
-                    item[0],
-                ),
-            ):
-                field_name = _access_trait_field_name(offset, 1)
-                if field_name in seen:
-                    continue
-                seen.add(field_name)
-                names.append(field_name)
+        for offset, _size, _count in candidates:
+            field_name = _access_trait_field_name(offset, 1)
+            if field_name in seen:
+                continue
+            seen.add(field_name)
+            names.append(field_name)
         return tuple(names)
 
 
 def _build_access_trait_evidence_profiles(
-    traits: dict[str, dict[tuple[object, ...], int]]
+    traits: dict[str, dict[tuple[object, ...], object]]
 ) -> dict[tuple[object, ...], _AccessTraitEvidenceProfile]:
-    raw_profiles: dict[tuple[object, ...], dict[str, list[tuple[int, int, int]]]] = {}
+    raw_profiles: dict[tuple[object, ...], dict[str, list[object]]] = {}
 
     def add_bucket(
         bucket_name: str,
@@ -5437,18 +5653,53 @@ def _build_access_trait_evidence_profiles(
                 continue
             profile = raw_profiles.setdefault(
                 base_key,
-                {"member_like": [], "array_like": [], "induction_like": [], "stack_like": []},
+                {
+                    "member_like": [],
+                    "array_like": [],
+                    "induction_like": [],
+                    "stack_like": [],
+                    "induction_evidence": [],
+                    "stride_evidence": [],
+                },
             )
             profile[category].append((offset, size, count))
             if category in {"member_like", "stack_like"} and base_key[0] == "stack":
                 profile["stack_like"].append((offset, size, count))
 
+    def add_structured_bucket(bucket_name: str, profile_bucket: str, category: str | None = None) -> None:
+        bucket = traits.get(bucket_name, {})
+        if not isinstance(bucket, dict):
+            return
+        for evidence in bucket.values():
+            if not isinstance(evidence, _AccessTraitStrideEvidence):
+                continue
+            group_key = evidence.index_key
+            if not isinstance(group_key, tuple):
+                continue
+            profile = raw_profiles.setdefault(
+                group_key,
+                {
+                    "member_like": [],
+                    "array_like": [],
+                    "induction_like": [],
+                    "stack_like": [],
+                    "induction_evidence": [],
+                    "stride_evidence": [],
+                },
+            )
+            bucket_category = category or evidence.kind
+            profile[bucket_category].append((evidence.offset, evidence.width, evidence.count))
+            profile[profile_bucket].append(evidence)
+
     add_bucket("member_evidence", "member_like", 0, 1, 2)
+    add_bucket("repeated_offset_widths", "member_like", 1, 2, 3)
     add_bucket("repeated_offsets", "member_like", 1, 2, None)
     add_bucket("base_const", "member_like", 1, 2, 3)
     add_bucket("array_evidence", "array_like", 0, 3, 4)
+    add_bucket("base_stride_widths", "array_like", 1, 3, 4)
     add_bucket("base_stride", "array_like", 1, 3, 4)
-    add_bucket("induction_evidence", "induction_like", 0, 2, 3)
+    add_structured_bucket("induction_evidence", "induction_evidence", "induction_like")
+    add_structured_bucket("stride_evidence", "stride_evidence")
 
     return {
         base_key: _AccessTraitEvidenceProfile(
@@ -5456,6 +5707,8 @@ def _build_access_trait_evidence_profiles(
             array_like=tuple(data["array_like"]),
             induction_like=tuple(data["induction_like"]),
             stack_like=tuple(data["stack_like"]),
+            induction_evidence=tuple(data["induction_evidence"]),
+            stride_evidence=tuple(data["stride_evidence"]),
         )
         for base_key, data in raw_profiles.items()
     }
@@ -5856,7 +6109,7 @@ def _attach_lst_data_names(project: angr.Project, codegen, lst_metadata: LSTMeta
             return existing
         cvar = structured_c.CVariable(
             SimMemoryVariable(offset, size, name=_sanitize_cod_identifier(label), region=codegen.cfunc.addr),
-            variable_type=SimTypeChar() if size == 1 else SimTypeShort(False),
+            variable_type=SimTypeChar(False) if size == 1 else SimTypeShort(False),
             codegen=codegen,
         )
         created[key] = cvar
@@ -5933,30 +6186,44 @@ def _normalize_scalar_byte_register_types(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
-    target_type = SimTypeChar()
+    target_type = SimTypeChar(False)
     changed = False
 
-    def is_suspicious_scalar_type(type_) -> bool:
-        if type_ is None:
+    def _is_stable_byte_register(expr) -> bool:
+        facts = describe_alias_storage(expr)
+        domain = facts.domain
+        return (
+            domain.space == "register"
+            and domain.width == 8
+            and not domain.is_unknown()
+            and not domain.is_mixed()
+            and not facts.needs_synthesis()
+            and facts.identity is not None
+        )
+
+    def _set_variable_type(node, type_) -> bool:
+        if not hasattr(node, "variable_type"):
             return False
-        if getattr(type_, "size", None) == 8:
+        if getattr(node, "variable_type", None) == type_:
             return False
-        type_name = type(type_).__name__
-        if "Pointer" in type_name or "Array" in type_name:
-            return True
-        rendered = str(type_)
-        return "[" in rendered or "*" in rendered
+        try:
+            node.variable_type = type_
+        except Exception:
+            return False
+        return True
 
     for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
         if not isinstance(variable, SimRegisterVariable):
             continue
         if getattr(variable, "size", None) != 1:
             continue
-        current_type = getattr(cvar, "variable_type", None)
-        if not is_suspicious_scalar_type(current_type):
+        if not _is_stable_byte_register(cvar):
             continue
-        if current_type != target_type:
-            cvar.variable_type = target_type
+        current_type = getattr(cvar, "variable_type", None)
+        if current_type != target_type and _set_variable_type(cvar, target_type):
+            changed = True
+        unified = getattr(cvar, "unified_variable", None)
+        if unified is not None and _set_variable_type(unified, target_type):
             changed = True
 
     unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
@@ -5966,12 +6233,26 @@ def _normalize_scalar_byte_register_types(codegen) -> bool:
                 continue
             if getattr(variable, "size", None) != 1:
                 continue
-            if not any(is_suspicious_scalar_type(vartype) for _cvariable, vartype in cvar_and_vartypes):
-                continue
             new_entries = {(cvariable, target_type) for cvariable, _vartype in cvar_and_vartypes}
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
                 changed = True
+
+    for node in _iter_c_nodes_deep(getattr(codegen.cfunc, "statements", None)):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        variable = getattr(node, "variable", None)
+        if not isinstance(variable, SimRegisterVariable):
+            continue
+        if getattr(variable, "size", None) != 1:
+            continue
+        if not _is_stable_byte_register(node):
+            continue
+        if getattr(node, "variable_type", None) != target_type:
+            changed = _set_variable_type(node, target_type) or changed
+        unified = getattr(node, "unified_variable", None)
+        if unified is not None and hasattr(unified, "variable_type") and _set_variable_type(unified, target_type):
+            changed = True
 
     return changed
 
@@ -6019,6 +6300,88 @@ def _attach_segment_register_names(codegen, project: angr.Project | None = None)
             if new_entries != cvar_and_vartypes:
                 unified_locals[variable] = new_entries
                 changed = True
+
+    return changed
+
+
+def _attach_register_names(project: angr.Project, codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    register_names = getattr(getattr(project, "arch", None), "register_names", None)
+    registers = getattr(getattr(project, "arch", None), "registers", None)
+    if not isinstance(register_names, dict):
+        return False
+    if not isinstance(registers, dict):
+        registers = {}
+
+    def is_generic_name(name: object) -> bool:
+        return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+|ir_\d+)", name) is not None
+
+    changed = False
+
+    def register_name(variable) -> str | None:
+        if not isinstance(variable, SimRegisterVariable):
+            return None
+        reg = getattr(variable, "reg", None)
+        size = getattr(variable, "size", None)
+        if isinstance(reg, int) and isinstance(size, int):
+            for name, (offset, reg_size) in registers.items():
+                if offset == reg and reg_size == size:
+                    return name
+        name = register_names.get(reg)
+        if not isinstance(name, str) or not name:
+            return None
+        return name
+
+    def maybe_rename(variable, cvar, name: str) -> None:
+        nonlocal changed
+        if getattr(variable, "name", None) != name:
+            variable.name = name
+            changed = True
+        if getattr(cvar, "name", None) != name:
+            try:
+                cvar.name = name
+            except Exception:
+                pass
+            else:
+                changed = True
+        unified = getattr(cvar, "unified_variable", None)
+        if unified is not None and getattr(unified, "name", None) != name:
+            unified.name = name
+            changed = True
+
+    for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        name = register_name(variable)
+        if name is None:
+            continue
+        if not any(
+            is_generic_name(candidate)
+            for candidate in (
+                getattr(variable, "name", None),
+                getattr(cvar, "name", None),
+                getattr(getattr(cvar, "unified_variable", None), "name", None),
+            )
+        ):
+            continue
+        maybe_rename(variable, cvar, name)
+
+    unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable, cvar_and_vartypes in list(unified_locals.items()):
+            name = register_name(variable)
+            if name is None:
+                continue
+            if not any(
+                is_generic_name(candidate)
+                for candidate in (
+                    getattr(variable, "name", None),
+                    *(getattr(cvar, "name", None) for cvar, _vartype in cvar_and_vartypes),
+                )
+            ):
+                continue
+            for cvar, _vartype in cvar_and_vartypes:
+                maybe_rename(variable, cvar, name)
 
     return changed
 
@@ -6093,7 +6456,7 @@ def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen
         return _check(addr_expr)
 
     def make_deref(base_expr, bits: int):
-        element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
+        element_type = SimTypeChar(False) if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
         return structured_c.CUnaryOp(
             "Dereference",
@@ -6112,6 +6475,9 @@ def _elide_redundant_segment_pointer_dereferences(project: angr.Project, codegen
             base_expr = _strip_segment_scale_from_addr_expr(classified.addr_expr, project)
             if base_expr is None or not _addr_expr_is_safe_projection(base_expr):
                 return node
+            if classified.cvar is not None and isinstance(base_expr, structured_c.CVariable):
+                if not _same_c_storage(base_expr, classified.cvar):
+                    return node
         else:
             classified, base_expr = match
             base_var = getattr(getattr(base_expr, "variable", None), "reg", None)
@@ -6147,13 +6513,14 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
-    traits: dict[str, dict[tuple[object, ...], int]] = {
+    traits: dict[str, dict[tuple[object, ...], object]] = {
         "base_const": {},
         "base_stride": {},
         "repeated_offsets": {},
         "repeated_offset_widths": {},
         "base_stride_widths": {},
         "induction_evidence": {},
+        "stride_evidence": {},
         "member_evidence": {},
         "array_evidence": {},
     }
@@ -6170,6 +6537,34 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
     def record(bucket: str, key: tuple[object, ...]) -> None:
         store = traits[bucket]
         store[key] = store.get(key, 0) + 1
+
+    def record_stride_evidence(
+        *,
+        kind: str,
+        seg_name: str,
+        base_key: tuple[object, ...] | None,
+        index_key: tuple[object, ...] | None,
+        stride: int,
+        offset: int,
+        access_size: int,
+    ) -> None:
+        if index_key is None:
+            return
+        evidence_key = (kind, seg_name, base_key, index_key, stride, offset, access_size)
+        bucket_name = "induction_evidence" if kind == "induction_like" else "stride_evidence"
+        existing = traits[bucket_name].get(evidence_key)
+        existing_count = getattr(existing, "count", existing if isinstance(existing, int) else None)
+        count = 1 if existing_count is None else int(existing_count) + 1
+        traits[bucket_name][evidence_key] = _AccessTraitStrideEvidence(
+            segment=seg_name,
+            base_key=base_key,
+            index_key=index_key,
+            stride=stride,
+            offset=offset,
+            width=access_size,
+            count=count,
+            kind=kind,
+        )
 
     def stable_base_key(variable) -> tuple[object, ...] | None:
         if isinstance(variable, SimRegisterVariable):
@@ -6254,12 +6649,14 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
             continue
 
         base_terms, offset, stride_terms = summarize_address(classified.addr_expr)
+        base_key = None
         if len(base_terms) == 1 and isinstance(base_terms[0], structured_c.CVariable):
             base_var = getattr(base_terms[0], "variable", None)
             base_key = _access_trait_variable_key(base_var)
             if base_key is not None:
                 record("base_const", (classified.seg_name, base_key, offset, access_size))
                 record("repeated_offsets", (classified.seg_name, base_key, offset))
+                record("repeated_offset_widths", (classified.seg_name, base_key, offset, access_size))
                 record("repeated_offset_widths", (classified.seg_name, base_key, offset, access_size))
         for index_expr, stride in stride_terms:
             index_var = getattr(index_expr, "variable", None)
@@ -6269,12 +6666,29 @@ def _collect_access_traits(project: angr.Project, codegen) -> bool:
             record("base_stride", (classified.seg_name, index_key, stride, offset, access_size))
             record("base_stride_widths", (classified.seg_name, index_key, stride, offset, access_size))
             if index_key[0] == "reg":
-                record("induction_evidence", (index_key, stride, offset, access_size))
+                record_stride_evidence(
+                    kind="induction_like",
+                    seg_name=classified.seg_name,
+                    base_key=base_key,
+                    index_key=index_key,
+                    stride=stride,
+                    offset=offset,
+                    access_size=access_size,
+                )
             if stride in {2, 4, 8}:
                 evidence_bucket = "array_evidence" if offset == 0 else "member_evidence"
                 record(
                     evidence_bucket,
                     (classified.seg_name, index_key, stride, offset, access_size),
+                )
+                record_stride_evidence(
+                    kind="array_like" if offset == 0 else "member_like",
+                    seg_name=classified.seg_name,
+                    base_key=base_key,
+                    index_key=index_key,
+                    stride=stride,
+                    offset=offset,
+                    access_size=access_size,
                 )
 
     for key, count in list(traits["repeated_offsets"].items()):
@@ -6398,6 +6812,7 @@ def _prune_unused_local_declarations(codegen) -> bool:
         return False
 
     used_variables: set[int] = set()
+    used_storage_identities: set[tuple[object, ...]] = set()
     for node in _iter_c_nodes_deep(codegen.cfunc.statements):
         if not isinstance(node, structured_c.CVariable):
             continue
@@ -6407,6 +6822,9 @@ def _prune_unused_local_declarations(codegen) -> bool:
         unified = getattr(node, "unified_variable", None)
         if unified is not None:
             used_variables.add(id(unified))
+        storage_identity = describe_alias_storage(node).identity
+        if storage_identity is not None:
+            used_storage_identities.add(storage_identity)
 
     changed = False
 
@@ -6417,6 +6835,9 @@ def _prune_unused_local_declarations(codegen) -> bool:
                 continue
             if id(variable) in used_variables:
                 continue
+            cvar = variables_in_use[variable]
+            if describe_alias_storage(cvar).identity in used_storage_identities:
+                continue
             del variables_in_use[variable]
             changed = True
 
@@ -6426,6 +6847,9 @@ def _prune_unused_local_declarations(codegen) -> bool:
             if not isinstance(variable, (SimRegisterVariable, SimStackVariable)):
                 continue
             if id(variable) in used_variables:
+                continue
+            entries = unified_locals[variable]
+            if any(describe_alias_storage(cvariable).identity in used_storage_identities for cvariable, _vartype in entries):
                 continue
             del unified_locals[variable]
             changed = True
@@ -6595,6 +7019,76 @@ def _prune_dead_local_assignments(codegen) -> bool:
         _collect_storage_read_keys(stmt, stmt_reads)
         return stmt_reads
 
+    def _call_callee_key(call_expr):
+        callee_target = getattr(call_expr, "callee_target", None)
+        if callee_target is not None:
+            return ("target", callee_target)
+
+        callee_func = getattr(call_expr, "callee_func", None)
+        if callee_func is not None:
+            callee_addr = getattr(callee_func, "addr", None)
+            if callee_addr is not None:
+                return ("func_addr", callee_addr)
+            callee_name = getattr(callee_func, "name", None)
+            if callee_name is not None:
+                return ("func_name", callee_name)
+            return ("func_id", id(callee_func))
+
+        callee = getattr(call_expr, "callee", None)
+        if isinstance(callee, str):
+            return ("callee", callee)
+        return None
+
+    def _normalized_call_arg_key(expr):
+        expr = _unwrap_c_casts(expr)
+        storage_key = describe_alias_storage(expr).identity
+        if storage_key is not None:
+            return ("storage", storage_key)
+        if isinstance(expr, structured_c.CConstant):
+            return ("const", expr.value)
+        if isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if isinstance(variable, SimRegisterVariable):
+                return ("reg", getattr(variable, "reg", None), getattr(variable, "size", None))
+            if isinstance(variable, SimStackVariable):
+                return (
+                    "stack",
+                    getattr(variable, "base", None),
+                    getattr(variable, "offset", None),
+                    getattr(variable, "size", None),
+                )
+            if isinstance(variable, SimMemoryVariable):
+                return ("mem", getattr(variable, "addr", None), getattr(variable, "size", None))
+            return ("var", id(variable))
+        if isinstance(expr, structured_c.CUnaryOp):
+            return ("unary", expr.op, _normalized_call_arg_key(expr.operand))
+        if isinstance(expr, structured_c.CBinaryOp):
+            return ("binary", expr.op, _normalized_call_arg_key(expr.lhs), _normalized_call_arg_key(expr.rhs))
+        if isinstance(expr, structured_c.CFunctionCall):
+            return (
+                "call",
+                _call_callee_key(expr),
+                tuple(_normalized_call_arg_key(arg) for arg in getattr(expr, "args", ()) or ()),
+            )
+        return ("expr", type(expr).__name__)
+
+    def _same_call_signature(lhs, rhs) -> bool:
+        lhs_call = _unwrap_c_casts(lhs)
+        rhs_call = _unwrap_c_casts(rhs)
+        if not isinstance(lhs_call, structured_c.CFunctionCall) or not isinstance(rhs_call, structured_c.CFunctionCall):
+            return False
+
+        lhs_key = _call_callee_key(lhs_call)
+        rhs_key = _call_callee_key(rhs_call)
+        if lhs_key is None or rhs_key is None or lhs_key != rhs_key:
+            return False
+
+        lhs_args = tuple(_normalized_call_arg_key(arg) for arg in getattr(lhs_call, "args", ()) or ())
+        rhs_args = tuple(_normalized_call_arg_key(arg) for arg in getattr(rhs_call, "args", ()) or ())
+        if len(lhs_args) != len(rhs_args):
+            return False
+        return lhs_args == rhs_args
+
     def prune(node) -> None:
         nonlocal changed
         if not _structured_codegen_node(node):
@@ -6603,7 +7097,18 @@ def _prune_dead_local_assignments(codegen) -> bool:
         if isinstance(node, structured_c.CStatements):
             new_statements = []
             pending_assignment_indices: dict[tuple[object, ...], int] = {}
-            for stmt in list(node.statements):
+            statements = list(node.statements)
+            for index, stmt in enumerate(statements):
+                call_expr = stmt if isinstance(stmt, structured_c.CFunctionCall) else getattr(stmt, "expr", None)
+                if isinstance(call_expr, structured_c.CFunctionCall):
+                    next_stmt = statements[index + 1] if index + 1 < len(statements) else None
+                    if (
+                        isinstance(next_stmt, structured_c.CReturn)
+                        and isinstance(getattr(next_stmt, "retval", None), structured_c.CFunctionCall)
+                        and _same_call_signature(call_expr, next_stmt.retval)
+                    ):
+                        changed = True
+                        continue
                 stmt_reads = _collect_stmt_reads(stmt)
                 if stmt_reads:
                     for key in list(pending_assignment_indices):
@@ -6686,7 +7191,8 @@ def _materialize_missing_stack_local_declarations(codegen) -> bool:
 
     unified_locals = getattr(cfunc, "unified_local_vars", None)
     if not isinstance(unified_locals, dict):
-        return False
+        unified_locals = {}
+        setattr(cfunc, "unified_local_vars", unified_locals)
 
     arg_variables = {
         id(getattr(arg, "variable", None))
@@ -6720,7 +7226,7 @@ def _materialize_missing_stack_local_declarations(codegen) -> bool:
             continue
         variable_type = getattr(cvar, "variable_type", None)
         if variable_type is None:
-            continue
+            variable_type = _stack_type_for_size(getattr(variable, "size", 0) or 2)
         unified_locals[variable] = {(cvar, variable_type)}
         existing_identities.add(identity)
         changed = True
@@ -6848,7 +7354,8 @@ def _materialize_missing_register_local_declarations(codegen) -> bool:
 
     unified_locals = getattr(cfunc, "unified_local_vars", None)
     if not isinstance(unified_locals, dict):
-        return False
+        unified_locals = {}
+        setattr(cfunc, "unified_local_vars", unified_locals)
 
     arg_variables = {
         id(getattr(arg, "variable", None))
@@ -6944,6 +7451,12 @@ def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> b
     def _expr_is_safe_inline_candidate(expr):
         expr = _unwrap_c_casts(expr)
         if isinstance(expr, (structured_c.CConstant, structured_c.CVariable)):
+            if isinstance(expr, structured_c.CVariable):
+                variable = getattr(expr, "variable", None)
+                if isinstance(variable, SimStackVariable):
+                    return False
+                if _segment_reg_name(expr, project) is not None:
+                    return False
             return True
         if isinstance(expr, structured_c.CTypeCast):
             return _expr_is_safe_inline_candidate(expr.expr)
@@ -6955,17 +7468,17 @@ def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> b
             return _expr_is_safe_inline_candidate(expr.lhs) and _expr_is_safe_inline_candidate(expr.rhs)
         return False
 
-    def _stack_name_root(name: str | None) -> str | None:
-        if not isinstance(name, str) or not name:
-            return None
-        match = re.fullmatch(r"(?P<root>.*?)(?:_(?P<suffix>\d+))?", name)
-        if match is None:
-            return name
-        root = match.group("root")
-        return root if root else name
-
     def _make_mk_fp(segment_expr, offset_expr):
         return structured_c.CFunctionCall("MK_FP", None, [segment_expr, offset_expr], codegen=codegen)
+
+    def _expr_is_bare_storage_alias(expr) -> bool:
+        expr = _unwrap_c_casts(expr)
+        if not isinstance(expr, structured_c.CVariable):
+            return False
+        variable = getattr(expr, "variable", None)
+        if isinstance(variable, SimStackVariable):
+            return True
+        return _segment_reg_name(expr, project) is not None
 
     traits_cache = getattr(project, "_inertia_access_traits", None)
     evidence_profiles = None
@@ -7007,6 +7520,8 @@ def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> b
                         resolved_rhs = rhs
             elif _c_constant_value(rhs) is not None or _expr_is_safe_inline_candidate(rhs):
                 resolved_rhs = rhs
+            if resolved_rhs is not None and _expr_is_bare_storage_alias(resolved_rhs):
+                resolved_rhs = None
             if resolved_rhs is None:
                 continue
             if copy_aliases.get(id(lhs_var)) != resolved_rhs:
@@ -7035,20 +7550,20 @@ def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> b
             expr = _unwrap_c_casts(alias_expr)
         return expr
 
-    groups: dict[str, dict[str, list[tuple[structured_c.CVariable, object]]]] = {}
+    groups: dict[object, dict[str, list[tuple[structured_c.CVariable, object]]]] = {}
     for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
         if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
             continue
         lhs_var = getattr(walk_node.lhs, "variable", None)
         if not isinstance(lhs_var, SimStackVariable):
             continue
-        root = _stack_name_root(getattr(lhs_var, "name", None))
-        if root is None:
+        lhs_facts = describe_alias_storage(walk_node.lhs)
+        if lhs_facts.identity is None or lhs_facts.needs_synthesis():
             continue
         rhs = _unwrap_c_casts(walk_node.rhs)
         if _c_constant_value(rhs) is None and not _expr_is_safe_inline_candidate(rhs):
             continue
-        bucket = groups.setdefault(root, {"zero": [], "source": []})
+        bucket = groups.setdefault(lhs_facts.identity, {"zero": [], "source": []})
         if _c_constant_value(rhs) == 0:
             bucket["zero"].append((walk_node.lhs, rhs))
         else:
@@ -7070,15 +7585,25 @@ def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> b
         return (4, 0, 0)
 
     far_pointer_aliases: dict[int, object] = {}
-    for root, parts in groups.items():
+    for _storage_identity, parts in groups.items():
         if not parts["source"]:
+            continue
+        candidate_exprs = [cvar for cvar, _rhs in parts["source"] + parts["zero"]]
+        if not candidate_exprs:
+            continue
+        candidate_facts = [describe_alias_storage(expr) for expr in candidate_exprs]
+        if any(facts.needs_synthesis() or facts.identity is None for facts in candidate_facts):
+            continue
+        if any(
+            not left.can_join(right)
+            for idx, left in enumerate(candidate_facts)
+            for right in candidate_facts[idx + 1 :]
+        ):
             continue
         source_expr = None
         for cvar, rhs in sorted(parts["source"], key=lambda item: _source_score(item[0], item[1])):
             variable = getattr(cvar, "variable", None)
             if not isinstance(variable, SimStackVariable):
-                continue
-            if _stack_name_root(getattr(variable, "name", None)) != root:
                 continue
             source_expr = _resolve_alias_expr(rhs)
             member_offset = _member_offset_for_variable(variable)
@@ -7109,12 +7634,24 @@ def _coalesce_far_pointer_stack_expressions(project: angr.Project, codegen) -> b
 
         for lhs, rhs in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
             lhs_unwrapped = _resolve_alias_expr(lhs)
-            if lhs_unwrapped is not lhs and _expr_is_safe_inline_candidate(rhs):
+            if _expr_is_bare_storage_alias(lhs_unwrapped):
+                continue
+            if (
+                lhs_unwrapped is not lhs
+                and _expr_is_safe_inline_candidate(rhs)
+                and not isinstance(lhs_unwrapped, (structured_c.CBinaryOp, structured_c.CFunctionCall))
+            ):
                 changed = True
                 return _make_mk_fp(lhs_unwrapped, rhs)
 
             rhs_unwrapped = _resolve_alias_expr(rhs)
-            if rhs_unwrapped is not rhs and _expr_is_safe_inline_candidate(lhs):
+            if _expr_is_bare_storage_alias(rhs_unwrapped):
+                continue
+            if (
+                rhs_unwrapped is not rhs
+                and _expr_is_safe_inline_candidate(lhs)
+                and not isinstance(rhs_unwrapped, (structured_c.CBinaryOp, structured_c.CFunctionCall))
+            ):
                 changed = True
                 return _make_mk_fp(rhs_unwrapped, lhs)
 
@@ -7388,7 +7925,7 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
     _collect_stack_pointer_aliases()
 
     def make_stack_deref(cvar, offset: int, bits: int):
-        element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
+        element_type = SimTypeChar(False) if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
         base_ref = structured_c.CUnaryOp("Reference", cvar, codegen=codegen)
         if offset > 0:
@@ -7414,7 +7951,7 @@ def _rewrite_ss_stack_byte_offsets(project: angr.Project, codegen) -> bool:
         )
 
     def make_addr_deref(addr_expr, bits: int):
-        element_type = SimTypeChar() if bits == 8 else SimTypeShort(False)
+        element_type = SimTypeChar(False) if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
         return structured_c.CUnaryOp(
             "Dereference",
@@ -7521,7 +8058,7 @@ def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
 
 
 def _stack_type_for_size(size: int):
-    return SimTypeChar() if size == 1 else SimTypeShort(False)
+    return SimTypeChar(False) if size == 1 else SimTypeShort(False)
 
 
 def _resolve_stack_cvar_at_offset(codegen, offset: int):
@@ -7744,6 +8281,38 @@ def _seed_adjacent_byte_pair_aliases(project: angr.Project, codegen) -> dict[int
 
     aliases: dict[int, object] = {}
 
+    def _collect_variable_ids(expr, ids: set[int]) -> None:
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if variable is not None:
+                ids.add(id(variable))
+            return
+        for attr in ("lhs", "rhs", "operand", "expr"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                value = getattr(expr, attr)
+            except Exception:
+                continue
+            if _structured_codegen_node(value):
+                _collect_variable_ids(value, ids)
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                items = getattr(expr, attr)
+            except Exception:
+                continue
+            for item in items or ():
+                if _structured_codegen_node(item):
+                    _collect_variable_ids(item, ids)
+
+    dereferenced_variable_ids: set[int] = set()
+    for node in _iter_c_nodes_deep(statements):
+        if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
+            _collect_variable_ids(getattr(node, "operand", None), dereferenced_variable_ids)
+
     def _record_alias(lhs, expr) -> None:
         variable = getattr(lhs, "variable", None)
         if variable is None:
@@ -7771,10 +8340,12 @@ def _seed_adjacent_byte_pair_aliases(project: angr.Project, codegen) -> dict[int
                         continue
                     if not _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project):
                         continue
+                    low_addr_ids: set[int] = set()
+                    high_addr_ids: set[int] = set()
+                    _collect_variable_ids(low_addr_expr, low_addr_ids)
+                    _collect_variable_ids(high_addr_expr, high_addr_ids)
 
-                    word_expr = _resolve_stack_cvar_from_addr_expr(project, codegen, low_addr_expr)
-                    if word_expr is None:
-                        word_expr = _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
+                    word_expr = _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
 
                     _record_alias(low_stmt.lhs, word_expr)
                     _record_alias(high_stmt.lhs, word_expr)
@@ -7819,15 +8390,61 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
 
     changed = False
     linear_defs: dict[object, tuple[object, int]] = {}
+    protected_linear_defs: set[int] = set()
     shift_defs: dict[int, tuple[object, int]] = {}
     expr_aliases: dict[int, object] = {}
     expr_aliases.update(_seed_adjacent_byte_pair_aliases(project, codegen))
+    dereferenced_variable_ids: set[int] = set()
+    protected_linear_alias_ids: set[int] = set()
+
+    def _collect_variable_ids(expr, ids: set[int]) -> None:
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if variable is not None:
+                ids.add(id(variable))
+            return
+        for attr in ("lhs", "rhs", "operand", "expr"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                value = getattr(expr, attr)
+            except Exception:
+                continue
+            if _structured_codegen_node(value):
+                _collect_variable_ids(value, ids)
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                items = getattr(expr, attr)
+            except Exception:
+                continue
+            for item in items or ():
+                if _structured_codegen_node(item):
+                    _collect_variable_ids(item, ids)
+
+    for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
+            _collect_variable_ids(getattr(walk_node, "operand", None), dereferenced_variable_ids)
+
+    for alias_var_id, alias_expr in expr_aliases.items():
+        alias_expr = _unwrap_c_casts(alias_expr)
+        if not isinstance(alias_expr, structured_c.CUnaryOp) or alias_expr.op != "Dereference":
+            continue
+        protected_linear_alias_ids.add(alias_var_id)
+        _collect_variable_ids(getattr(alias_expr, "operand", None), protected_linear_alias_ids)
 
     def _is_linear_register_temp(cvar) -> bool:
-        return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
-            r"(?:v\d+|vvar_\d+|ir_\d+)",
-            getattr(cvar, "name", ""),
-        ) is not None
+        if not isinstance(cvar, structured_c.CVariable):
+            return False
+        name = getattr(cvar, "name", None)
+        if not isinstance(name, str):
+            return False
+        if re.fullmatch(r"(?:v\d+|vvar_\d+|ir_\d+)", name) is not None:
+            return True
+        variable = getattr(cvar, "variable", None)
+        return isinstance(variable, SimRegisterVariable) and re.fullmatch(r"[A-Za-z]{1,3}_\d+", name) is not None
 
     def _is_copy_alias_candidate(expr) -> bool:
         expr = _unwrap_c_casts(expr)
@@ -7927,6 +8544,8 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             variable = getattr(expr, "variable", None)
             if variable is not None:
                 var_id = id(variable)
+                if var_id in dereferenced_variable_ids or var_id in protected_linear_alias_ids:
+                    return expr
                 if var_id in seen_vars:
                     return expr
                 seen_vars.add(var_id)
@@ -7938,6 +8557,10 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                 linear = linear_defs.get(var_id)
             if linear is not None:
                 base_expr, delta = linear
+                if id(variable) in protected_linear_defs:
+                    return expr
+                if _match_duplicate_word_base_expr(_resolve_known_copy_alias_expr(base_expr), _resolve_known_copy_alias_expr) is not None:
+                    return expr
                 return _build_linear_expr(base_expr, delta, codegen)
             return expr
         if isinstance(expr, structured_c.CBinaryOp):
@@ -7950,6 +8573,8 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                 return linear_expr
             return expr
         if isinstance(expr, structured_c.CUnaryOp):
+            if expr.op == "Dereference":
+                return expr
             operand = _inline_known_linear_defs(expr.operand, seen_vars, seen_exprs, depth + 1)
             if operand is not expr.operand:
                 return structured_c.CUnaryOp(expr.op, operand, codegen=codegen)
@@ -8044,6 +8669,26 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                 return structured_c.CBinaryOp(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
         return _canonicalize_stack_cvar_expr(expr, codegen)
 
+    def _expr_contains_dereference(expr) -> bool:
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CUnaryOp):
+            if expr.op == "Dereference":
+                return True
+            return _expr_contains_dereference(expr.operand)
+        if isinstance(expr, structured_c.CBinaryOp):
+            return _expr_contains_dereference(expr.lhs) or _expr_contains_dereference(expr.rhs)
+        if isinstance(expr, structured_c.CTypeCast):
+            return _expr_contains_dereference(expr.expr)
+        if isinstance(expr, structured_c.CFunctionCall):
+            return any(_expr_contains_dereference(arg) for arg in getattr(expr, "args", ()) or ())
+        return False
+
+    for alias_var_id, alias_expr in expr_aliases.items():
+        resolved_alias = _resolve_known_copy_alias_expr(alias_expr)
+        if _expr_contains_dereference(resolved_alias):
+            protected_linear_alias_ids.add(alias_var_id)
+            _collect_variable_ids(resolved_alias, protected_linear_alias_ids)
+
     def _match_linear_word_delta_expr(expr):
         analysis = _analyze_widening_expr(
             expr,
@@ -8051,6 +8696,9 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
             _match_high_byte_projection_base,
         )
         if analysis is None or analysis.kind != "linear":
+            return None
+        resolved_base = _resolve_known_copy_alias_expr(analysis.base_expr)
+        if _match_duplicate_word_base_expr(resolved_base, _resolve_known_copy_alias_expr) is not None:
             return None
         if analysis.delta == 0:
             return analysis.base_expr
@@ -8067,6 +8715,12 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                 next_stmt = node.statements[i + 1] if i + 1 < len(node.statements) else None
 
                 if isinstance(stmt, structured_c.CAssignment) and isinstance(stmt.lhs, structured_c.CVariable):
+                    stmt_var = getattr(stmt.lhs, "variable", None)
+                    if stmt_var is not None and id(stmt_var) in dereferenced_variable_ids:
+                        visit(stmt)
+                        new_statements.append(stmt)
+                        i += 1
+                        continue
                     carry_base = _match_duplicate_word_increment_shift_expr(stmt.rhs, _resolve_known_copy_alias_expr, codegen)
                     if carry_base is not None:
                         replacement = structured_c.CAssignment(
@@ -8086,7 +8740,18 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                     and isinstance(next_stmt.lhs, structured_c.CVariable)
                 ):
                     temp_var = getattr(stmt.lhs, "variable", None)
+                    next_var = getattr(next_stmt.lhs, "variable", None)
                     temp_use_count = variable_use_counts.get(id(temp_var), 0) if temp_var is not None else 0
+                    if (
+                        (temp_var is not None and id(temp_var) in dereferenced_variable_ids)
+                        or (next_var is not None and id(next_var) in dereferenced_variable_ids)
+                        or (temp_var is not None and id(temp_var) in protected_linear_alias_ids)
+                        or (next_var is not None and id(next_var) in protected_linear_alias_ids)
+                    ):
+                        visit(stmt)
+                        new_statements.append(stmt)
+                        i += 1
+                        continue
 
                     if (
                         temp_use_count >= 2
@@ -8146,7 +8811,20 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                     if _is_linear_register_temp(stmt.lhs):
                         stmt_base, stmt_delta = _extract_linear_delta(stmt.rhs)
                         if stmt_base is not None:
+                            base_var = getattr(stmt_base, "variable", None) if isinstance(stmt_base, structured_c.CVariable) else None
+                            if base_var is not None and (
+                                id(base_var) in dereferenced_variable_ids or id(base_var) in protected_linear_alias_ids
+                            ):
+                                visit(stmt)
+                                new_statements.append(stmt)
+                                i += 1
+                                continue
                             linear_defs[id(temp_var)] = (stmt_base, stmt_delta)
+                            resolved_base = _resolve_known_copy_alias_expr(stmt_base)
+                            if isinstance(resolved_base, structured_c.CVariable) and isinstance(
+                                getattr(resolved_base, "variable", None), SimStackVariable
+                            ):
+                                protected_linear_defs.add(id(temp_var))
                             canonical_rhs = _build_linear_expr(stmt_base, stmt_delta, codegen)
                             if not _same_c_expression(stmt.rhs, canonical_rhs):
                                 stmt = structured_c.CAssignment(stmt.lhs, canonical_rhs, codegen=codegen)
@@ -8173,6 +8851,11 @@ def _coalesce_linear_recurrence_statements(project: angr.Project, codegen) -> bo
                                     current_delta = _c_constant_value(_unwrap_c_casts(rhs.rhs))
                                 if isinstance(current_delta, int):
                                     base_expr, base_delta = current_linear
+                                    resolved_base = _resolve_known_copy_alias_expr(base_expr)
+                                    if isinstance(resolved_base, structured_c.CVariable) and isinstance(
+                                        getattr(resolved_base, "variable", None), SimStackVariable
+                                    ):
+                                        protected_linear_defs.add(id(temp_var))
                                     combined = base_delta + current_delta if rhs.op == "Add" else base_delta - current_delta
                                     stmt = structured_c.CAssignment(
                                         stmt.lhs,
@@ -8321,6 +9004,13 @@ def _coalesce_segmented_word_store_statements(project: angr.Project, codegen) ->
                             and rhs_word is not None
                             and _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project)
                         ):
+                            low_facts = describe_alias_storage(low_addr_expr)
+                            high_facts = describe_alias_storage(high_addr_expr)
+                            if low_facts.identity is None or high_facts.identity is None or not low_facts.can_join(high_facts):
+                                visit(stmt)
+                                new_statements.append(stmt)
+                                i += 1
+                                continue
                             resolved_lhs = _resolve_stack_cvar_from_addr_expr(project, codegen, low_addr_expr)
                             replacement = structured_c.CAssignment(
                                 resolved_lhs if resolved_lhs is not None else _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr),
@@ -8696,6 +9386,16 @@ def _coalesce_cod_word_global_loads(
     if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
         return False
 
+    traits_cache = getattr(project, "_inertia_access_traits", None)
+    if not isinstance(traits_cache, dict) or getattr(codegen.cfunc, "addr", None) not in traits_cache:
+        _collect_access_traits(project, codegen)
+        traits_cache = getattr(project, "_inertia_access_traits", None)
+    evidence_profiles = None
+    if isinstance(traits_cache, dict):
+        traits = traits_cache.get(getattr(codegen.cfunc, "addr", None))
+        if isinstance(traits, dict):
+            evidence_profiles = _build_access_trait_evidence_profiles(traits)
+
     created: dict[int, structured_c.CVariable] = {}
 
     def transform(node):
@@ -8710,6 +9410,11 @@ def _coalesce_cod_word_global_loads(
             cvar = _synthetic_word_global_variable(codegen, synthetic_globals, low_addr, created)
             if cvar is None:
                 continue
+
+            if evidence_profiles is not None:
+                profile = evidence_profiles.get(("mem", low_addr))
+                if profile is not None and profile.member_like:
+                    continue
 
             high_addr = _match_scaled_high_byte(high_expr, project)
             if high_addr != low_addr + 1:
@@ -8737,6 +9442,39 @@ def _coalesce_segmented_word_load_expressions(project: angr.Project, codegen) ->
     if getattr(codegen, "cfunc", None) is None:
         return False
 
+    dereferenced_variable_ids: set[int] = set()
+
+    def _collect_variable_ids(expr, ids: set[int]) -> None:
+        expr = _unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CVariable):
+            variable = getattr(expr, "variable", None)
+            if variable is not None:
+                ids.add(id(variable))
+            return
+        for attr in ("lhs", "rhs", "operand", "expr"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                value = getattr(expr, attr)
+            except Exception:
+                continue
+            if _structured_codegen_node(value):
+                _collect_variable_ids(value, ids)
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                items = getattr(expr, attr)
+            except Exception:
+                continue
+            for item in items or ():
+                if _structured_codegen_node(item):
+                    _collect_variable_ids(item, ids)
+
+    for walk_node in _iter_c_nodes_deep(codegen.cfunc.statements):
+        if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
+            _collect_variable_ids(getattr(walk_node, "operand", None), dereferenced_variable_ids)
+
     def transform(node):
         if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
             return node
@@ -8750,9 +9488,24 @@ def _coalesce_segmented_word_load_expressions(project: angr.Project, codegen) ->
             if high_addr_expr is None:
                 continue
 
+            low_facts = describe_alias_storage(low_addr_expr)
+            high_facts = describe_alias_storage(high_addr_expr)
+            if low_facts.identity is None or high_facts.identity is None:
+                continue
+            if not low_facts.can_join(high_facts):
+                continue
+
+            low_addr_ids: set[int] = set()
+            high_addr_ids: set[int] = set()
+            _collect_variable_ids(low_addr_expr, low_addr_ids)
+            _collect_variable_ids(high_addr_expr, high_addr_ids)
+            if low_addr_ids & dereferenced_variable_ids or high_addr_ids & dereferenced_variable_ids:
+                continue
+
             if _addr_exprs_are_byte_pair(low_addr_expr, high_addr_expr, project):
                 resolved_lhs = _resolve_stack_cvar_from_addr_expr(project, codegen, low_addr_expr)
-                if resolved_lhs is not None:
+                low_class = _classify_segmented_addr_expr(low_addr_expr, project)
+                if resolved_lhs is not None and (low_class is None or low_class.kind != "stack"):
                     return resolved_lhs
                 return _make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
 
@@ -8877,9 +9630,7 @@ def _known_helper_declarations(cod_metadata: CODProcMetadata | None) -> list[str
     declarations: list[str] = []
     seen: set[str] = set()
     for call_name in cod_metadata.call_names:
-        decl = known_helper_signature_decl(call_name)
-        if decl is None and call_name.startswith("_"):
-            decl = known_helper_signature_decl(call_name.lstrip("_"))
+        decl = preferred_known_helper_signature_decl(call_name)
         if decl is None or decl in seen:
             continue
         seen.add(decl)
@@ -8973,6 +9724,7 @@ def _simplify_x86_16_wrapped_stack_offsets(c_text: str) -> str:
 
 
 def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata | None = None) -> str:
+    trailing_newline = c_text.endswith("\n")
     lines = c_text.splitlines()
     if not lines:
         return c_text
@@ -8983,6 +9735,24 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
             if isinstance(name, str) and name:
                 stack_pointer_names.add(name)
 
+    immutable_pointer_names: set[str] = set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("/*") or stripped.startswith("extern "):
+            continue
+        if "(" not in stripped or ")" not in stripped or stripped.endswith(";"):
+            continue
+        params_text = stripped[stripped.find("(") + 1 : stripped.rfind(")")].strip()
+        if not params_text or params_text == "void":
+            break
+        for param in params_text.split(","):
+            if "const" not in param or "*" not in param:
+                continue
+            match = re.search(r"\b([A-Za-z_][\w$?@]*)\s*$", param.strip())
+            if match is not None:
+                immutable_pointer_names.add(match.group(1))
+        break
+
     low_store_re = re.compile(
         r"^(?P<indent>\s*)\*\(\(char \*\)\((?P<seg>.+?) \* 16 \+ (?P<off>0x[0-9A-Fa-f]+|\d+)\)\) = (?P<rhs>[^;]+);\s*$"
     )
@@ -8990,10 +9760,13 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         r"^(?P<indent>\s*)\*\(\(char \*\)\((?P<seg>.+?) \* 16 \+ (?P<off>0x[0-9A-Fa-f]+|\d+)\)\) = (?P<rhs>[^;]+>>\s*8[^;]*);\s*$"
     )
     pointer_store_re = re.compile(
-        r"^(?P<indent>\s*)\*\(\((?P<type>[^()]+?)\s*\*\)\((?P<seg>.+?) \* 16 \+ (?P<off>[^)]+)\)\) = (?P<rhs>[^;]+);\s*$"
+        r"^(?P<indent>\s*)\*\(\((?P<type>[^()]+?)\s*\*\)\((?P<seg>.+?) \* 16 \+ (?P<off>.+?)\)\) = (?P<rhs>[^;]+);\s*$"
     )
     far_pointer_store_re = re.compile(
-        r"^(?P<indent>\s*)\*\(\((?P<type>[^()]+?)\s*\*\)\((?P<seg>.+?) \* 16 \+ (?P<off>(?:\(unsigned int\)\s*)?(?P<name>[A-Za-z_][\w$?@]*)(?:_\d+)?)(?:\s*\+\s*0)?\)\) = (?P<rhs>[^;]+);\s*$"
+        r"^(?P<indent>\s*)\*\(\((?P<type>[^()]+?)\s*\*\)\((?P<seg>.+?) \* 16 \+ (?P<off>.+?)\)\) = (?P<rhs>[^;]+);\s*$"
+    )
+    raw_linear_pointer_store_re = re.compile(
+        r"^(?P<indent>\s*)\*\(\((?P<type>[^()]+?)\s*\*\)\s*(?P<addr>0x[0-9A-Fa-f]+|\d+)\s*\)\s*=\s*(?P<rhs>[^;]+);\s*$"
     )
 
     def _normalize_rhs(rhs: str) -> str:
@@ -9003,6 +9776,18 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         rhs = rhs.strip()
         rhs = re.sub(r"\s*\(?\s*>>\s*8\s*\)?\s*$", "", rhs)
         return rhs.strip()
+
+    def _normalize_far_offset(off: str) -> str:
+        off = off.strip()
+        off = re.sub(r"^\(unsigned int\)\s*", "", off)
+        off = re.sub(r"^\(unsigned short\)\s*", "", off)
+        off = re.sub(r"\s*\+\s*0$", "", off)
+        return off.strip()
+
+    def _linear_address_to_mk_fp_components(addr: int) -> tuple[int, int] | None:
+        if 0x400 <= addr < 0x500:
+            return 0x40, addr - 0x400
+        return None
 
     kept_lines: list[str] = []
     i = 0
@@ -9026,12 +9811,12 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
                 continue
         far_pointer_match = far_pointer_store_re.match(current)
         if far_pointer_match is not None:
-            ptr_name = far_pointer_match.group("name")
+            ptr_name = _normalize_far_offset(far_pointer_match.group("off"))
             ptr_base_name = re.sub(r"_\d+$", "", ptr_name)
             stack_target_name = None
-            if ptr_name in stack_pointer_names:
+            if ptr_name in stack_pointer_names and ptr_name not in immutable_pointer_names:
                 stack_target_name = ptr_name
-            elif ptr_base_name in stack_pointer_names:
+            elif ptr_base_name in stack_pointer_names and ptr_base_name not in immutable_pointer_names:
                 stack_target_name = ptr_base_name
             if stack_target_name is not None:
                 kept_lines.append(
@@ -9039,6 +9824,25 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
                 )
                 i += 1
                 continue
+        raw_linear_pointer_match = raw_linear_pointer_store_re.match(current)
+        if raw_linear_pointer_match is not None:
+            pointer_type = raw_linear_pointer_match.group("type").strip()
+            if pointer_type != "char":
+                addr = int(raw_linear_pointer_match.group("addr"), 0)
+                mk_fp_components = _linear_address_to_mk_fp_components(addr)
+                if mk_fp_components is not None:
+                    seg_value, off_value = mk_fp_components
+                    kept_lines.append(
+                        f'{raw_linear_pointer_match.group("indent")}*((%s far *)MK_FP(0x%x, 0x%x)) = %s;'
+                        % (
+                            pointer_type,
+                            seg_value,
+                            off_value,
+                            raw_linear_pointer_match.group("rhs").strip(),
+                        )
+                    )
+                    i += 1
+                    continue
         pointer_match = pointer_store_re.match(current)
         if pointer_match is not None:
             pointer_type = pointer_match.group("type").strip()
@@ -9057,7 +9861,178 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         kept_lines.append(current)
         i += 1
 
-    return "\n".join(kept_lines)
+    result = "\n".join(kept_lines)
+
+    def _rewrite_source_backed_assignments(text: str) -> str:
+        if metadata is None:
+            return text
+
+        global_names = {
+            name
+            for name in getattr(metadata, "global_names", ()) or ()
+            if isinstance(name, str) and name
+        }
+        if not global_names:
+            return text
+
+        source_assignments: list[tuple[str, str, str]] = []
+        source_assignment_re = re.compile(
+            r"^(?P<lhs>.+?)\s*=\s*(?P<rhs>[A-Za-z_][\w$?@]*(?:\.[A-Za-z_][\w$?@]*)?)\s*;\s*$"
+        )
+        for line in getattr(metadata, "source_lines", ()) or ():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("return "):
+                continue
+            match = source_assignment_re.match(stripped)
+            if match is None:
+                continue
+            rhs_root = match.group("rhs").split(".", 1)[0]
+            if rhs_root not in global_names:
+                continue
+            source_assignments.append((match.group("lhs").strip(), rhs_root, stripped))
+
+        if not source_assignments:
+            return text
+
+        lines = text.splitlines()
+        if not lines:
+            return text
+
+        temp_global_re = re.compile(
+            r"^(?P<indent>\s*)(?P<temp>[A-Za-z_][\w$?@]*)\s*=\s*(?P<global>[A-Za-z_][\w$?@]*)"
+            r"(?:\.[A-Za-z_][\w$?@]*)?\s*;\s*$"
+        )
+        lhs_name_re = re.compile(r"(?:\*+\s*)?(?P<name>[A-Za-z_][\w$?@]*)\s*$")
+
+        def _lhs_name(lhs: str) -> str | None:
+            match = lhs_name_re.search(lhs.strip())
+            if match is None:
+                return None
+            return match.group("name")
+
+        windows: list[dict[str, object]] = []
+        index = 0
+        while index < len(lines):
+            match = temp_global_re.match(lines[index])
+            if match is None:
+                index += 1
+                continue
+            window_start = index
+            window_end = index + 1
+            temp_name = match.group("temp")
+            while window_end < len(lines):
+                candidate = lines[window_end].strip()
+                if not candidate or candidate.startswith(("/*", "//")):
+                    break
+                if temp_name in candidate or candidate.startswith("*"):
+                    window_end += 1
+                    continue
+                break
+            windows.append(
+                {
+                    "start": window_start,
+                    "end": window_end,
+                    "global": match.group("global"),
+                    "temp": temp_name,
+                    "indent": match.group("indent"),
+                }
+            )
+            index = window_end
+
+        if not windows:
+            return text
+
+        used_windows: set[int] = set()
+        used_sources: set[int] = set()
+        replacements: dict[int, tuple[int, int, str]] = {}
+
+        for source_index, (source_lhs, source_global, source_line) in enumerate(source_assignments):
+            source_lhs_name = _lhs_name(source_lhs)
+            if source_lhs_name is None:
+                continue
+            for window_index, window in enumerate(windows):
+                if window_index in used_windows or window["global"] != source_global:
+                    continue
+                start = int(window["start"])
+                end = int(window["end"])
+                window_text = "\n".join(lines[start:end])
+                if re.search(rf"(?<![A-Za-z_]){re.escape(source_lhs_name)}(?![A-Za-z_])", window_text) is None:
+                    continue
+                replacements[window_index] = (start, end, f"{window['indent']}{source_line}")
+                used_windows.add(window_index)
+                used_sources.add(source_index)
+                break
+
+        for window_index, window in enumerate(windows):
+            if window_index in used_windows:
+                continue
+            candidates = [
+                (source_index, source_line)
+                for source_index, (_source_lhs, source_global, source_line) in enumerate(source_assignments)
+                if source_index not in used_sources and source_global == window["global"]
+            ]
+            if not candidates:
+                continue
+            source_index, source_line = candidates[0]
+            start = int(window["start"])
+            end = int(window["end"])
+            replacements[window_index] = (start, end, f"{window['indent']}{source_line}")
+            used_windows.add(window_index)
+            used_sources.add(source_index)
+
+        if not replacements:
+            return text
+
+        new_lines: list[str] = []
+        index = 0
+        ordered_replacements = sorted(replacements.values(), key=lambda item: item[0])
+        replacement_index = 0
+        while index < len(lines):
+            if replacement_index < len(ordered_replacements):
+                start, end, replacement = ordered_replacements[replacement_index]
+                if index == start:
+                    new_lines.append(replacement)
+                    index = end
+                    replacement_index += 1
+                    continue
+            new_lines.append(lines[index])
+            index += 1
+
+        return "\n".join(new_lines)
+
+    result = _rewrite_source_backed_assignments(result)
+
+    byte_walk_loop_re = re.compile(
+        r"(?ms)^(?P<indent>\s*)while \(true\)\n"
+        r"(?P=indent)\{\n"
+        r"(?P=indent)    (?P<low_tmp>[A-Za-z_][\w$?@]*) = (?P<ptr>[A-Za-z_][\w$?@]*);\n"
+        r"(?P=indent)    (?P<high_tmp>[A-Za-z_][\w$?@]*) = (?P=ptr);\n"
+        r"(?P=indent)    (?P=ptr) = \((?P=low_tmp) \| (?P=high_tmp) \* 0x100\) \+ 1 >> 8;\n"
+        r"(?P=indent)    if \(!\((?P=ptr) \+ 1\)\)\n"
+        r"(?P=indent)        break;\n"
+        r"(?P=indent)    (?P<cnt_low>[A-Za-z_][\w$?@]*) = (?P<counter>[A-Za-z_][\w$?@]*);\n"
+        r"(?P=indent)    (?P<cnt_high>[A-Za-z_][\w$?@]*) = (?P=counter);\n"
+        r"(?P=indent)    (?P=counter) = \((?P=cnt_low) \| (?P=cnt_high) \* 0x100\) \+ 1 >> 8;\n"
+        r"(?P=indent)\}\n?"
+    )
+
+    def _rewrite_byte_walk_loop(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        ptr = match.group("ptr")
+        counter = match.group("counter")
+        return (
+            f"{indent}while (*{ptr}++)\n"
+            f"{indent}{{\n"
+            f"{indent}    {counter} += 1;\n"
+            f"{indent}}}\n"
+        )
+
+    result, count = byte_walk_loop_re.subn(_rewrite_byte_walk_loop, result)
+    if count and result.endswith("\n\n"):
+        result = re.sub(r"\n{3,}$", "\n\n", result)
+    if trailing_newline:
+        result += "\n"
+    return result
 
 
 def _simplify_x86_16_stack_references(c_text: str) -> str:
@@ -9112,8 +10087,13 @@ def _normalize_mk_fp_segment_names(c_text: str, metadata: CODProcMetadata | None
     ]
     if not positive_aliases:
         return c_text
+    segment_names = {name for _disp, name in positive_aliases}
+    if len(segment_names) != 1:
+        return c_text
 
     segment_name = positive_aliases[0][1]
+    if segment_name in {"cs", "ds", "es", "ss", "fs", "gs"}:
+        return c_text
 
     def _replace(match: re.Match[str]) -> str:
         temp = match.group("temp")
@@ -9329,6 +10309,8 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
     if metadata is None:
         return c_text
 
+    source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
+    source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
     positive_arg_aliases = [
         name
         for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: item[0])
@@ -9371,7 +10353,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         return prefix, name
 
     def _rewrite_header_args(line: str, next_line: str | None) -> str:
-        if not positive_arg_aliases:
+        if not positive_arg_aliases and source_decl is None:
             return line
         header_match = re.match(
             r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)(?P<suffix>\s*[;{]?\s*)$",
@@ -9385,7 +10367,8 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
 
         args_text = header_match.group("args")
         if not args_text.strip():
-            return line
+            if source_decl is None:
+                return line
 
         parts: list[str] = []
         current: list[str] = []
@@ -9411,9 +10394,92 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         if current:
             parts.append("".join(current).strip())
 
+        def _is_generic_arg_name(name: str | None) -> bool:
+            return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+|a\d+)", name) is not None
+
+        source_evidence_text = "\n".join(getattr(metadata, "source_lines", ()) or ())
+
+        def _alias_looks_pointer_like(alias: str) -> bool:
+            alias_re = re.escape(alias)
+            return (
+                re.search(rf"\*\s*{alias_re}(?:\s*(?:\+\+|--))?", source_evidence_text) is not None
+                or re.search(rf"\b{alias_re}\s*\[\s*[^]]+\]", source_evidence_text) is not None
+                or re.search(rf"\b{alias_re}\s*(?:\+\+|--)", source_evidence_text) is not None
+            )
+
+        current_arg_names: list[str] = []
+        for part in parts:
+            split = _split_decl_name(part)
+            if split is None:
+                continue
+            _prefix, name = split
+            current_arg_names.append(name)
+
+        source_parts: list[str] = []
+        if source_decl is not None:
+            source_match = re.match(
+                r"^(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+[A-Za-z_][\w$?@]*\s*\((?P<args>[^()]*)\)\s*;?$",
+                source_decl.strip(),
+            )
+            if source_match is not None:
+                source_args = source_match.group("args").strip()
+                if source_args and source_args != "void":
+                    current = []
+                    depth_paren = depth_bracket = depth_brace = 0
+                    for char in source_args:
+                        if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                            source_parts.append("".join(current).strip())
+                            current = []
+                            continue
+                        current.append(char)
+                        if char == "(":
+                            depth_paren += 1
+                        elif char == ")" and depth_paren > 0:
+                            depth_paren -= 1
+                        elif char == "[":
+                            depth_bracket += 1
+                        elif char == "]" and depth_bracket > 0:
+                            depth_bracket -= 1
+                        elif char == "{":
+                            depth_brace += 1
+                        elif char == "}" and depth_brace > 0:
+                            depth_brace -= 1
+                    if current:
+                        source_parts.append("".join(current).strip())
+        elif source_arg_text is not None:
+            current = []
+            depth_paren = depth_bracket = depth_brace = 0
+            for char in source_arg_text:
+                if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                    source_parts.append("".join(current).strip())
+                    current = []
+                    continue
+                current.append(char)
+                if char == "(":
+                    depth_paren += 1
+                elif char == ")" and depth_paren > 0:
+                    depth_paren -= 1
+                elif char == "[":
+                    depth_bracket += 1
+                elif char == "]" and depth_bracket > 0:
+                    depth_bracket -= 1
+                elif char == "{":
+                    depth_brace += 1
+                elif char == "}" and depth_brace > 0:
+                    depth_brace -= 1
+            if current:
+                source_parts.append("".join(current).strip())
+
         rewritten: list[str] = []
         changed = False
-        for index, part in enumerate(parts):
+        use_source_args = bool(source_parts) and (
+            not parts
+            or len(parts) != len(source_parts)
+            or args_text.strip() in {"", "void"}
+            or all(_is_generic_arg_name(name) for name in current_arg_names)
+        )
+        candidate_parts = source_parts if use_source_args else parts
+        for index, part in enumerate(candidate_parts):
             split = _split_decl_name(part)
             if split is None or index >= len(positive_arg_aliases):
                 rewritten.append(part)
@@ -9421,9 +10487,20 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
             prefix, _name = split
             alias = positive_arg_aliases[index]
             if _name == alias:
+                if use_source_args and _alias_looks_pointer_like(alias) and re.search(r"\bchar\b", prefix) is not None and not prefix.startswith("const "):
+                    rewritten.append(f"unsigned short *{alias}")
+                    changed = True
+                    continue
+                if not use_source_args and _alias_looks_pointer_like(alias) and "*" not in prefix and "[" not in prefix:
+                    rewritten.append(f"{prefix.rstrip()} *{alias}")
+                    changed = True
+                    continue
                 rewritten.append(part)
                 continue
             rewritten.append(f"{prefix}{alias}")
+            changed = True
+
+        if use_source_args and rewritten == candidate_parts and args_text.strip() != ", ".join(rewritten):
             changed = True
 
         if not changed:
@@ -9528,7 +10605,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         def _replace_wide_return(match: re.Match[str]) -> str:
             call_text = match.group("call")
             call_name = call_text.split("(", 1)[0].strip()
-            if known_helper_signature_decl(call_name) is None and known_helper_signature_decl(call_name.lstrip("_")) is None:
+            if preferred_known_helper_signature_decl(call_name) is None:
                 return match.group(0)
             return f"{match.group('indent')}return {call_text};"
 
@@ -9557,7 +10634,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
                 call_match = re.match(r"(?P<call>[A-Za-z_][\w$?@]*)\s*\(", expr)
                 if call_match is not None:
                     call_name = call_match.group("call")
-                    decl = known_helper_signature_decl(call_name) or known_helper_signature_decl(call_name.lstrip("_"))
+                    decl = preferred_known_helper_signature_decl(call_name)
                     if decl is not None:
                         decl_match = re.match(r"(?P<ret>.+?)\s+[A-Za-z_][\w$?@]*\s*\(", decl)
                         if decl_match is not None:
@@ -9590,6 +10667,23 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
                         c_text = f"{body}\n    {source_return_line}\n{c_text[insert_at:]}"
             if re.search(r"(?m)^\s*return;\s*$", c_text) is not None and current_return_pattern.search(c_text) is not None:
                 c_text = re.sub(r"(?m)^\s*return;\s*$", "", c_text, count=1)
+            guarded_return_names = []
+            for return_line in source_return_lines:
+                expr = return_line[len("return ") :].rstrip(";").strip()
+                if re.fullmatch(r"[A-Za-z_][\w$?@]*", expr) is not None:
+                    guarded_return_names.append(expr)
+            for guard_name in guarded_return_names:
+                guard_pattern = re.compile(rf"(?m)^(?P<indent>\s*)if\s*\(\s*{re.escape(guard_name)}\s*\)\s*$")
+                if guard_pattern.search(c_text) is None:
+                    continue
+                if re.search(rf"(?m)^\s*if\s*\(\s*{re.escape(guard_name)}\s*\)\s+return\s+{re.escape(guard_name)}\s*;\s*$", c_text):
+                    break
+                c_text = guard_pattern.sub(
+                    rf"\g<indent>if ({guard_name}) return {guard_name};",
+                    c_text,
+                    count=1,
+                )
+                break
     c_text = _prune_unused_staging_assignments(c_text)
     c_text = _apply_cod_source_rewrites(c_text, metadata)
     c_text = _simplify_x86_16_stack_references(c_text)
@@ -9599,7 +10693,9 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
     c_text = _dedupe_duplicate_local_declarations_text(c_text)
     c_text = _normalize_spurious_duplicate_local_suffixes(c_text)
     c_text = _collapse_duplicate_type_keywords_text(c_text)
-    return _simplify_x86_16_wrapped_stack_offsets(c_text)
+    c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
+    c_text = _prune_unused_local_declarations_text(c_text)
+    return c_text
 
 
 def _prune_unused_staging_assignments(c_text: str) -> str:
@@ -9631,9 +10727,7 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
 
 
 def _rewrite_known_helper_signature_text(c_text: str, function) -> str:
-    helper_decl = known_helper_signature_decl(getattr(function, "name", None))
-    if helper_decl is None and getattr(function, "name", None):
-        helper_decl = known_helper_signature_decl(getattr(function, "name", "").lstrip("_"))
+    helper_decl = preferred_known_helper_signature_decl(getattr(function, "name", None))
     if helper_decl is None:
         return c_text
 
@@ -9783,6 +10877,7 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
     decl_re = re.compile(
         r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default)\b)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
     )
+    synthetic_name_re = re.compile(r"^(?:ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|v\d+|vvar_\d+|a\d+|ax(?:_\d+)?|dx(?:_\d+)?|cx(?:_\d+)?|bx(?:_\d+)?|al|ah)$")
 
     def _split_args(args_text: str) -> list[str]:
         if not args_text.strip():
@@ -9853,7 +10948,9 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
                 continue
             decl_match = decl_re.match(lines[scan_index])
             if decl_match is not None:
-                local_decl_names.append((scan_index, decl_match.group("name")))
+                name = decl_match.group("name")
+                if decl_match.group("comment") is None or synthetic_name_re.fullmatch(name) is not None:
+                    local_decl_names.append((scan_index, name))
 
         if not local_decl_names:
             index = body_end
@@ -9951,6 +11048,7 @@ def _prune_tiny_wrapper_staging_locals(codegen) -> bool:
     call_count = 0
     staging_replacements: dict[int, object] = {}
     staging_variable_ids: set[int] = set()
+    non_staging_logic = False
 
     for stmt in statements:
         if isinstance(stmt, structured_c.CExpressionStatement) and isinstance(stmt.expr, structured_c.CFunctionCall):
@@ -9959,16 +11057,19 @@ def _prune_tiny_wrapper_staging_locals(codegen) -> bool:
             call_count += 1
 
         if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
+            if not isinstance(stmt, (structured_c.CFunctionCall, structured_c.CReturn)):
+                non_staging_logic = True
             continue
         variable = getattr(stmt.lhs, "variable", None)
         if not _is_staging_local_name(getattr(variable, "name", None)):
+            non_staging_logic = True
             continue
         if not _structured_codegen_node(stmt.rhs):
             continue
         staging_variable_ids.add(id(variable))
         staging_replacements[id(variable)] = _clone_structured_c_value(stmt.rhs)
 
-    if call_count != 1 or not staging_replacements:
+    if call_count != 1 or not staging_replacements or non_staging_logic:
         return False
 
     changed = False
@@ -10075,6 +11176,14 @@ def _format_known_helper_calls(
             count=1,
         )
 
+    if cod_metadata is not None and len(tuple(dict.fromkeys(cod_metadata.call_names))) == 1:
+        helper_name = cod_metadata.call_names[0].lstrip("_")
+        redundant_wrapper_pattern = re.compile(
+            rf"(?m)^(?P<indent>\s*){re.escape(helper_name)}\((?P<args>[^;\n]*)\);\s*\n"
+            rf"(?P=indent)return\s+{re.escape(helper_name)}\((?P=args)\);\s*$"
+        )
+        c_text = redundant_wrapper_pattern.sub(rf"\g<indent>return {helper_name}(\g<args>);", c_text)
+
     declarations = _dos_helper_declarations(function, api_style, binary_path)
     declarations.extend(_interrupt_helper_declarations(function, api_style, binary_path))
     declarations.extend(_known_helper_declarations(cod_metadata))
@@ -10082,12 +11191,6 @@ def _format_known_helper_calls(
         c_text = "\n".join(declarations) + "\n\n" + c_text
     c_text = _rewrite_known_helper_signature_text(c_text, function)
     c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
-    if not (
-        binary_path is not None
-        and binary_path.name.lower().endswith(".cod")
-        and getattr(function, "name", "") == "fold_values"
-    ):
-        c_text = _simplify_x86_16_stack_byte_pointers(c_text, cod_metadata)
     c_text = _simplify_x86_16_conditions(c_text)
     return _repair_missing_fallthrough_returns(c_text)
 

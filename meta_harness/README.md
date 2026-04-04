@@ -41,7 +41,8 @@ This separation helps reduce role confusion:
 
 The harness now tries to stay cheap by default:
 
-- `planner`, `checker`, `worker`, and `reviewer` default to `gpt-5.4-mini`.
+- `planner` defaults to `gpt-5.4`.
+- `checker`, `worker`, and `reviewer` default to `gpt-5.4-mini`.
 - Prompts are compact by default instead of repeating a long role preamble.
 - `codex resume` uses a short continuation prompt instead of resending the full role prompt.
 - Local Python one-liners launched from the repo root inherit the repo memory guard.

@@ -24,11 +24,15 @@ def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path)
     assert "Do not rerun the evidence sweep" in prompt
     assert "flat numbered checklist" in prompt
     assert "source line numbers" in prompt
+    assert "exact implementation steps" in prompt
+    assert "what to edit in those files in execution order" in prompt
     assert "definition of done" in prompt
     assert "Preserve unfinished strategic items" in prompt
     assert "Do not drop user-added unfinished goals" in prompt
     assert "Pause for minute" not in prompt
     assert "Minimal and actionable" in prompt
+    assert "Avoid spending tokens on implementation" in prompt
+    assert "Do not run pytest, corpus scans, or large validation commands" in prompt
 
 
 def test_worker_prompt_mentions_implementation_role(monkeypatch, tmp_path):
@@ -36,12 +40,21 @@ def test_worker_prompt_mentions_implementation_role(monkeypatch, tmp_path):
     prompt = build_worker_prompt(cfg)
     assert "Continue implementing the unfinished steps" in prompt
     assert "Never use source-specific hacks" in prompt
+    assert "Run the smallest test that proves the touched behavior" in prompt
 
 
 def test_reviewer_prompt_allows_harness_improvements(monkeypatch, tmp_path):
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_reviewer_prompt(cfg)
     assert "improve the harness itself" in prompt
+    assert "Avoid pytest, sweep reruns, or broad repository exploration" in prompt
+
+
+def test_reviewer_prompt_accepts_worker_stall_context(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    prompt = build_reviewer_prompt(cfg, stall_context="Recent worker iteration logs for this stalled cycle:\n- worker.iter01.log")
+    assert "Worker stall diagnosis for this cycle" in prompt
+    assert "worker.iter01.log" in prompt
 
 
 def test_checker_and_crash_prompts_reference_evidence(monkeypatch, tmp_path):
@@ -49,6 +62,7 @@ def test_checker_and_crash_prompts_reference_evidence(monkeypatch, tmp_path):
     checker = build_checker_prompt(cfg)
     crash = build_crash_reviewer_prompt(cfg, "/tmp/cycle", 7)
     assert str(cfg.evidence_log_file) in checker
+    assert "Do not run pytest, corpus scans, or broad repository searches" in checker
     assert "Harness restart required" in crash
     assert "/tmp/cycle" in crash
 
@@ -61,3 +75,4 @@ def test_resume_prompt_is_short_and_keeps_required_marker(monkeypatch, tmp_path)
     assert "Global Remaining steps: N" in prompt
     assert "Use current DOSFUNC evidence only." in prompt
     assert str(cfg.rules_file) not in prompt
+    assert "Avoid re-reading evidence already established in the session" in prompt

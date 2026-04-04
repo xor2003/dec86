@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,7 @@ def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
 
     class Proc:
         pid = 1234
+        stdout = io.StringIO("provider output\n")
 
         def wait(self):
             return 0
@@ -78,7 +80,9 @@ def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
     assert rc == 0
     text = log.read_text(encoding="utf-8")
     assert "start provider=ollama" in text
+    assert "provider output" in text
     assert "end rc=0" in text
+    assert "provider output" in cfg.last_log_file.read_text(encoding="utf-8")
 
 
 def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
@@ -95,6 +99,7 @@ def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
 
     class Proc:
         pid = 1235
+        stdout = io.StringIO("")
 
         def wait(self):
             return 0
@@ -120,3 +125,33 @@ def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
     assert rc == 0
     assert "preexec_fn" in seen["kwargs"]
     assert calls
+
+
+def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("hello", encoding="utf-8")
+    log = tmp_path / "run.log"
+    events: list[str] = []
+
+    class StreamingStdout:
+        def __iter__(self):
+            yield "first line\n"
+            events.append(cfg.last_log_file.read_text(encoding="utf-8"))
+            yield "second line\n"
+
+    class Proc:
+        pid = 9999
+        stdout = StreamingStdout()
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr("meta_harness.llm.subprocess.Popen", lambda *args, **kwargs: Proc())
+
+    rc = run_provider_once("codex", "new", "tiny", "prompt", prompt, log, cfg)
+
+    assert rc == 0
+    assert events
+    assert "first line" in events[0]
+    assert "second line" in cfg.last_log_file.read_text(encoding="utf-8")

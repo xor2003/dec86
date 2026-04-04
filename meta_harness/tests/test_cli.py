@@ -24,6 +24,7 @@ def test_cli_main_invokes_harness_run(monkeypatch):
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
+    monkeypatch.setattr(cli, "launch_web_ui", lambda _cfg: None)
     assert cli.main([]) == 0
     assert called["run"] is True
     assert called["resume"] is False
@@ -53,6 +54,7 @@ def test_cli_main_passes_resume_flag(monkeypatch):
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
+    monkeypatch.setattr(cli, "launch_web_ui", lambda _cfg: None)
     assert cli.main(["--resume"]) == 0
     assert called["resume"] is True
     assert "finalize" not in called
@@ -79,6 +81,7 @@ def test_cli_main_marks_sigterm_exit_as_terminated(monkeypatch):
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
+    monkeypatch.setattr(cli, "launch_web_ui", lambda _cfg: None)
     try:
         cli.main([])
     except SystemExit as exc:
@@ -110,6 +113,38 @@ def test_cli_main_treats_planner_timeout_as_terminated(monkeypatch):
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
+    monkeypatch.setattr(cli, "launch_web_ui", lambda _cfg: None)
     assert cli.main([]) == 124
     assert called["finalize"] == ("terminated", 124)
     assert "crash" not in called
+
+
+def test_cli_main_starts_and_stops_web_ui(monkeypatch):
+    called = {}
+
+    class DummyHarness:
+        def __init__(self, cfg, llm_cfg):
+            called["cfg"] = cfg
+            called["llm_cfg"] = llm_cfg
+
+        def run(self, resume=False):
+            called["resume"] = resume
+            return 0
+
+        def run_crash_review(self, exit_code):
+            called["crash"] = exit_code
+
+        def finalize_run(self, reason, exit_code):
+            called["finalize"] = (reason, exit_code)
+
+    class DummyUI:
+        url = "http://127.0.0.1:8765/"
+
+        def stop(self):
+            called["stopped"] = True
+
+    monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
+    monkeypatch.setattr(cli, "launch_web_ui", lambda _cfg: DummyUI())
+
+    assert cli.main([]) == 0
+    assert called["stopped"] is True

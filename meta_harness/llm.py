@@ -109,6 +109,53 @@ def validate_output(key: str, provider: str, log_path: Path, config: LlmConfig) 
     return True
 
 
+def _append_to_logs(outputs: tuple[object, ...], text: str) -> None:
+    for out in outputs:
+        out.write(text)
+        out.flush()
+
+
+def _run_and_mirror_output(
+    cmd: list[str],
+    *,
+    log_file: Path,
+    config: LlmConfig,
+    header: str,
+    env: dict[str, str],
+    proc_name: str,
+    stdin=None,
+    preexec_fn: Callable[[], None] | None = None,
+) -> int:
+    config.last_log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("w", encoding="utf-8") as out, config.last_log_file.open("w", encoding="utf-8") as mirror:
+        outputs = (out, mirror)
+        _append_to_logs(outputs, header)
+        proc = subprocess.Popen(
+            cmd,
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            preexec_fn=preexec_fn,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        register_child_process(config.status_file.parent, proc.pid, proc_name, str(config.root_dir), _timestamp())
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                _append_to_logs(outputs, line)
+            rc = proc.wait()
+        finally:
+            unregister_child_process(config.status_file.parent, proc.pid)
+    footer = f"[{_timestamp()}] end rc={rc}\n"
+    with log_file.open("a", encoding="utf-8") as out, config.last_log_file.open("a", encoding="utf-8") as mirror:
+        _append_to_logs((out, mirror), footer)
+    return rc
+
+
 def run_provider_once(
     provider: str,
     mode: str,
@@ -149,63 +196,37 @@ def run_provider_once(
                 "--dangerously-bypass-approvals-and-sandbox",
                 prompt,
             ]
-        with log_file.open("w", encoding="utf-8") as out:
-            out.write(header)
-            out.flush()
-            proc = subprocess.Popen(
-                timeout_cmd + cmd,
-                stdout=out,
-                stderr=subprocess.STDOUT,
-                preexec_fn=codex_preexec,
-                env=provider_env,
-            )
-            register_child_process(config.status_file.parent, proc.pid, "codex", str(config.root_dir), _timestamp())
-            try:
-                rc = proc.wait()
-            finally:
-                unregister_child_process(config.status_file.parent, proc.pid)
-        with log_file.open("a", encoding="utf-8") as out:
-            out.write(f"[{_timestamp()}] end rc={rc}\n")
-        return rc
+        return _run_and_mirror_output(
+            timeout_cmd + cmd,
+            log_file=log_file,
+            config=config,
+            header=header,
+            env=provider_env,
+            proc_name="codex",
+            preexec_fn=codex_preexec,
+        )
     if provider == "ollama":
-        with prompt_file.open("rb") as inp, log_file.open("w", encoding="utf-8") as out:
-            out.write(header)
-            out.flush()
-            proc = subprocess.Popen(
+        with prompt_file.open("rb") as inp:
+            return _run_and_mirror_output(
                 timeout_cmd + [config.ollama_cmd, "run", model],
-                stdin=inp,
-                stdout=out,
-                stderr=subprocess.STDOUT,
+                log_file=log_file,
+                config=config,
+                header=header,
                 env=provider_env,
+                proc_name="ollama",
+                stdin=inp,
             )
-            register_child_process(config.status_file.parent, proc.pid, "ollama", str(config.root_dir), _timestamp())
-            try:
-                rc = proc.wait()
-            finally:
-                unregister_child_process(config.status_file.parent, proc.pid)
-        with log_file.open("a", encoding="utf-8") as out:
-            out.write(f"[{_timestamp()}] end rc={rc}\n")
-        return rc
     if provider == "llamacpp":
         cmd = timeout_cmd + [config.llamacpp_cmd, "-m", model]
         if config.llamacpp_extra_args:
             cmd.extend(shlex.split(config.llamacpp_extra_args))
         cmd.extend(["-f", str(prompt_file)])
-        with log_file.open("w", encoding="utf-8") as out:
-            out.write(header)
-            out.flush()
-            proc = subprocess.Popen(
-                cmd,
-                stdout=out,
-                stderr=subprocess.STDOUT,
-                env=provider_env,
-            )
-            register_child_process(config.status_file.parent, proc.pid, "llamacpp", str(config.root_dir), _timestamp())
-            try:
-                rc = proc.wait()
-            finally:
-                unregister_child_process(config.status_file.parent, proc.pid)
-        with log_file.open("a", encoding="utf-8") as out:
-            out.write(f"[{_timestamp()}] end rc={rc}\n")
-        return rc
+        return _run_and_mirror_output(
+            cmd,
+            log_file=log_file,
+            config=config,
+            header=header,
+            env=provider_env,
+            proc_name="llamacpp",
+        )
     raise ValueError(f"Unsupported provider: {provider}")

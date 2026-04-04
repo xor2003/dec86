@@ -1,17 +1,40 @@
 from __future__ import annotations
 
+import math
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_EVIDENCE_INPUT_FILES = [
+CORE_EVIDENCE_INPUT_FILES = [
     "cod/BIOSFUNC.COD",
     "cod/DOSFUNC.COD",
     "cod/OVERLAY.COD",
     "cod/default/BYTEOPS.COD",
     "cod/default/STRLEN.COD",
+]
+
+F14_EVIDENCE_INPUT_FILES = [
+    "cod/f14/3DLOADER.COD",
+    "cod/f14/3DPLANES.COD",
+    "cod/f14/ADICRT.COD",
+    "cod/f14/BILLASM.COD",
+    "cod/f14/BULLETS.COD",
+    "cod/f14/CARR.COD",
+    "cod/f14/COCKPIT.COD",
+    "cod/f14/MONOPRIN.COD",
+    "cod/f14/NHORZ.COD",
+    "cod/f14/OVL.COD",
+    "cod/f14/PLANES3.COD",
+    "cod/f14/RIOHEAD.COD",
+    "cod/f14/RIOMAP.COD",
+    "cod/f14/SAVEMODE.COD",
+    "cod/f14/VDI.COD",
+]
+
+DEFAULT_EVIDENCE_INPUT_FILES = CORE_EVIDENCE_INPUT_FILES + F14_EVIDENCE_INPUT_FILES[
+    :max(1, math.ceil(len(F14_EVIDENCE_INPUT_FILES) * 0.10))
 ]
 
 
@@ -28,6 +51,7 @@ class LlmConfig:
     plan_path: Path
     evidence_log_file: Path
     status_file: Path
+    last_log_file: Path
     codex_timeout_secs: int
     codex_memory_limit_mb: int
     planner_provider: str
@@ -53,6 +77,7 @@ class LlmConfig:
             plan_path=Path(os.environ.get("PLAN_PATH", root_dir / "PLAN.md")),
             evidence_log_file=Path(os.environ.get("EVIDENCE_LOG_FILE", root_dir / ".codex_automation" / "evidence.log")),
             status_file=Path(os.environ.get("STATUS_FILE", root_dir / ".codex_automation" / "status.txt")),
+            last_log_file=Path(os.environ.get("LAST_LOG_FILE", root_dir / ".codex_automation" / "last.log")),
             codex_timeout_secs=int(os.environ.get("CODEX_TIMEOUT_SECS", "600")),
             codex_memory_limit_mb=int(os.environ.get("CODEX_MEMORY_LIMIT_MB", "6144")),
             planner_provider=os.environ.get("PLANNER_PROVIDER", os.environ.get("LLM_PROVIDER", "codex")),
@@ -100,6 +125,7 @@ class RuntimeConfig:
     lock_file: Path
     status_file: Path
     last_log_file: Path
+    chat_log_file: Path
     operator_comments_file: Path
     prompt_dir: Path
     evidence_subset_dir: Path
@@ -115,10 +141,17 @@ class RuntimeConfig:
     max_single_artifact_mb: int
     max_worker_iters: int
     max_consecutive_worker_failures: int
+    worker_stall_failure_limit: int
+    max_worker_session_log_bytes: int
     worker_sleep_secs: int
     planner_pause_secs: int
     codex_timeout_secs: int
     status_heartbeat_secs: float
+    web_ui_enabled: bool
+    web_ui_auto_open: bool
+    web_ui_host: str
+    web_ui_port: int
+    web_ui_poll_secs: float
     max_self_restarts: int
     self_restart_count: int
     worker_finish_token: str
@@ -136,6 +169,8 @@ class RuntimeConfig:
     planner_model: str
     checker_model: str
     worker_model: str
+    worker_stall_model: str
+    worker_stall_escalation_threshold: int
     reviewer_model: str
     crash_reviewer_model: str
     evidence_input_files: list[str]
@@ -165,6 +200,7 @@ class RuntimeConfig:
             lock_file=Path(os.environ.get("LOCK_FILE", state_dir / "run.lock")),
             status_file=Path(os.environ.get("STATUS_FILE", state_dir / "status.txt")),
             last_log_file=Path(os.environ.get("LAST_LOG_FILE", state_dir / "last.log")),
+            chat_log_file=Path(os.environ.get("CHAT_LOG_FILE", state_dir / "chat.jsonl")),
             operator_comments_file=Path(os.environ.get("OPERATOR_COMMENTS_FILE", root_dir / "HARNESS_COMMENTS.md")),
             prompt_dir=Path(os.environ.get("PROMPT_DIR", state_dir / "prompts")),
             evidence_subset_dir=evidence_subset_dir,
@@ -181,10 +217,17 @@ class RuntimeConfig:
             max_single_artifact_mb=int(os.environ.get("MAX_SINGLE_ARTIFACT_MB", "1024")),
             max_worker_iters=int(os.environ.get("MAX_WORKER_ITERS", "40")),
             max_consecutive_worker_failures=int(os.environ.get("MAX_CONSECUTIVE_WORKER_FAILURES", "3")),
+            worker_stall_failure_limit=int(os.environ.get("WORKER_STALL_FAILURE_LIMIT", "2")),
+            max_worker_session_log_bytes=int(os.environ.get("MAX_WORKER_SESSION_LOG_BYTES", str(512 * 1024))),
             worker_sleep_secs=int(os.environ.get("WORKER_SLEEP_SECS", "4")),
             planner_pause_secs=int(os.environ.get("PLANNER_PAUSE_SECS", "60")),
             codex_timeout_secs=int(os.environ.get("CODEX_TIMEOUT_SECS", "600")),
             status_heartbeat_secs=float(os.environ.get("STATUS_HEARTBEAT_SECS", "60")),
+            web_ui_enabled=os.environ.get("WEB_UI_ENABLED", "1").strip().lower() not in {"0", "false", "no"},
+            web_ui_auto_open=os.environ.get("WEB_UI_AUTO_OPEN", "1").strip().lower() not in {"0", "false", "no"},
+            web_ui_host=os.environ.get("WEB_UI_HOST", "127.0.0.1"),
+            web_ui_port=int(os.environ.get("WEB_UI_PORT", "8765")),
+            web_ui_poll_secs=float(os.environ.get("WEB_UI_POLL_SECS", "2")),
             max_self_restarts=int(os.environ.get("MAX_SELF_RESTARTS", "5")),
             self_restart_count=int(os.environ.get("SELF_RESTART_COUNT", "0")),
             worker_finish_token=os.environ.get("WORKER_FINISH_TOKEN", "Global Remaining steps: 0"),
@@ -209,9 +252,11 @@ class RuntimeConfig:
             compare_input_description=os.environ.get(
                 "COMPARE_INPUT_DESCRIPTION", "the relevant source inputs, generated outputs, and the current code state"
             ),
-            planner_model=os.environ.get("PLANNER_MODEL", "gpt-5.4-mini"),
+            planner_model=os.environ.get("PLANNER_MODEL", "gpt-5.4"),
             checker_model=os.environ.get("CHECKER_MODEL", "gpt-5.4-mini"),
             worker_model=os.environ.get("WORKER_MODEL", "gpt-5.4-mini"),
+            worker_stall_model=os.environ.get("WORKER_STALL_MODEL", "gpt-5.4"),
+            worker_stall_escalation_threshold=int(os.environ.get("WORKER_STALL_ESCALATION_THRESHOLD", "1")),
             reviewer_model=os.environ.get("REVIEWER_MODEL", "gpt-5.4-mini"),
             crash_reviewer_model=os.environ.get("CRASH_REVIEWER_MODEL", "gpt-5.4"),
             evidence_input_files=_split_env_lines("EVIDENCE_INPUT_FILES", DEFAULT_EVIDENCE_INPUT_FILES),
@@ -228,7 +273,16 @@ class RuntimeConfig:
                 "EVIDENCE_LOG_FILE": str(self.evidence_log_file),
                 "CODEX_TIMEOUT_SECS": str(self.codex_timeout_secs),
                 "STATUS_HEARTBEAT_SECS": str(self.status_heartbeat_secs),
+                "WEB_UI_ENABLED": "1" if self.web_ui_enabled else "0",
+                "WEB_UI_AUTO_OPEN": "1" if self.web_ui_auto_open else "0",
+                "WEB_UI_HOST": self.web_ui_host,
+                "WEB_UI_PORT": str(self.web_ui_port),
+                "WEB_UI_POLL_SECS": str(self.web_ui_poll_secs),
                 "CODEX_MEMORY_LIMIT_MB": str(self.codex_memory_limit_mb),
+                "MAX_WORKER_SESSION_LOG_BYTES": str(self.max_worker_session_log_bytes),
+                "WORKER_STALL_FAILURE_LIMIT": str(self.worker_stall_failure_limit),
+                "WORKER_STALL_MODEL": str(self.worker_stall_model),
+                "WORKER_STALL_ESCALATION_THRESHOLD": str(self.worker_stall_escalation_threshold),
                 "COMPACT_PROMPTS": "1" if self.compact_prompts else "0",
                 "DELTA_RESUME_PROMPTS": "1" if self.delta_resume_prompts else "0",
                 "HARNESS_CONFIG": str(self.harness_config),

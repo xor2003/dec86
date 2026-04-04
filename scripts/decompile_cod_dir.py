@@ -155,10 +155,20 @@ def _format_worker_failure(item: CodWorkItem, ex: BaseException) -> str:
     return f"/* {_worker_failure_summary(item, ex)} */"
 
 
-def _combined_output(stdout_text: str, stderr_text: str) -> str:
-    if stdout_text and stderr_text:
-        return f"{stdout_text}\n{stderr_text}"
-    return stdout_text or stderr_text
+def _coerce_output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _combined_output(stdout_text: str | bytes | None, stderr_text: str | bytes | None) -> str:
+    stdout = _coerce_output_text(stdout_text)
+    stderr = _coerce_output_text(stderr_text)
+    if stdout and stderr:
+        return f"{stdout}\n{stderr}"
+    return stdout or stderr
 
 
 def _output_looks_like_memory_pressure(text: str) -> bool:
@@ -487,7 +497,7 @@ def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> Co
                 check=False,
             )
         returncode = int(completed.returncode)
-        stderr_text = completed.stderr or ""
+        stderr_text = _coerce_output_text(completed.stderr)
         child_exit_kind, child_exit_detail = _describe_returncode(
             returncode,
             stdout_path.read_text(encoding="utf-8", errors="replace"),
@@ -500,20 +510,19 @@ def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> Co
                 exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
     except subprocess.TimeoutExpired as ex:
         returncode = None
+        timeout_stdout = _coerce_output_text(ex.stdout)
+        timeout_stderr = _coerce_output_text(ex.stderr)
         child_exit_kind, child_exit_detail = _describe_returncode(
             None,
-            ex.stdout or "",
-            ex.stderr or "",
+            timeout_stdout,
+            timeout_stderr,
             subprocess_timed_out=True,
         )
         exit_kind, exit_detail = child_exit_kind, child_exit_detail
         scan_safe_result = _run_scan_safe_fallback(item, timeout)
         if scan_safe_result is not None:
             exit_kind, exit_detail = _describe_scan_safe_result(item, scan_safe_result)
-        if ex.stderr:
-            stderr_text = ex.stderr
-        elif ex.stdout:
-            stderr_text = ex.stdout
+        stderr_text = timeout_stderr or timeout_stdout
     except Exception as ex:  # pragma: no cover - defensive fallback
         returncode = 99
         stderr_text = f"{type(ex).__name__}: {ex}\n"
@@ -552,6 +561,7 @@ def _extract_proc_body(raw_output: str) -> str:
 
 def _render_result_block(result: CodWorkResult) -> str:
     raw_output = result.stdout_path.read_text(encoding="utf-8", errors="replace")
+    stderr_text = _coerce_output_text(result.stderr)
     if result.exit_kind == "ok":
         body = _extract_proc_body(raw_output)
         if body:
@@ -579,9 +589,9 @@ def _render_result_block(result: CodWorkResult) -> str:
         parts.append(f"/* {detail} */")
     if rendered:
         parts.append(rendered)
-    if result.stderr.strip():
+    if stderr_text.strip():
         parts.append(f"/* == stderr {result.cod_path.name} == */")
-        parts.append(result.stderr.rstrip())
+        parts.append(stderr_text.rstrip())
     if result.returncode not in (None, 0):
         parts.append(f"/* == exit code {result.cod_path.name} == */")
         parts.append(str(result.returncode))
