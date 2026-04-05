@@ -1,4 +1,5 @@
 {
     "git.ignoreLimitWarning": true,
-    "cmake.sourceDirectory": "/home/xor/vextest/86Box"
+    "cmake.sourceDirectory": "/home/xor/vextest/86Box",
+    "rust-analyzer.enable": false
 }

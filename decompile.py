@@ -180,10 +180,12 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.analysis_helpers import (
     DOS_SERVICE_BASE_ADDR,
     InterruptCall,
+    collect_neighbor_call_targets,
     collect_dos_int21_calls,
     collect_interrupt_service_calls,
     dos_helper_declarations,
     extend_cfg_for_far_calls,
+    extend_cfg_for_neighbor_calls,
     infer_com_region,
     known_helper_signature_decl,
     interrupt_service_name,
@@ -220,7 +222,9 @@ from angr_platforms.X86_16.cod_source_rewrites import rewrite_known_cod_object_f
 from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
 from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
+from angr_platforms.X86_16.turbo_debug_tdinfo import parse_tdinfo_exe
 from omf_pat import discover_local_pat_matches
+from signature_catalog import match_signature_catalog
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.utils.library import convert_cproto_to_py
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -348,6 +352,7 @@ def _parse_ida_map_metadata(
     code_labels: dict[int, str] = {}
     data_labels: dict[int, str] = {}
     segment_offsets: dict[str, int] = {}
+    segment_classes: dict[int, str] = {}
     in_publics = False
     for line in map_path.read_text(errors="ignore").splitlines():
         stripped = line.strip()
@@ -361,7 +366,9 @@ def _parse_ida_map_metadata(
             if match is not None:
                 start = int(match.group(1), 16)
                 segment_name = match.group(2)
+                segment_class = match.group(3).upper()
                 segment_offsets[segment_name] = start
+                segment_classes[start >> 4] = segment_class
             continue
         match = _IDA_MAP_PUBLIC_RE.match(stripped)
         if match is None:
@@ -370,7 +377,12 @@ def _parse_ida_map_metadata(
         offset = int(match.group(2), 16)
         name = match.group(3)
         linear = load_base_linear + (segment << 4) + offset
-        if _label_looks_like_code(name):
+        segment_class = segment_classes.get(segment)
+        if segment_class == "CODE":
+            code_labels.setdefault(linear, name.lstrip("_"))
+        elif segment_class in {"DATA", "BSS", "STACK"}:
+            data_labels.setdefault(linear, name)
+        elif _label_looks_like_code(name):
             code_labels.setdefault(linear, name.lstrip("_"))
         else:
             data_labels.setdefault(linear, name)
@@ -467,9 +479,64 @@ def _parse_cod_sidecar_metadata(
     return CODListingMetadata(code_labels=code_labels, code_ranges=code_ranges, proc_kinds=proc_kinds)
 
 
+def _ranges_overlap_or_touch(
+    left: tuple[int, int] | None,
+    right: tuple[int, int] | None,
+    *,
+    slop: int = 0x20,
+) -> bool:
+    if left is None or right is None:
+        return False
+    return max(left[0], right[0]) <= min(left[1], right[1]) + slop
+
+
+def _reconcile_cod_listing_with_codeview(
+    cod_listing: CODListingMetadata,
+    codeview_code: dict[int, str],
+    codeview_ranges: dict[int, tuple[int, int]],
+) -> CODListingMetadata:
+    if not cod_listing.code_labels or not codeview_code:
+        return cod_listing
+
+    codeview_by_name: dict[str, list[tuple[int, tuple[int, int] | None]]] = {}
+    for addr, name in codeview_code.items():
+        codeview_by_name.setdefault(name.lstrip("_"), []).append((addr, codeview_ranges.get(addr)))
+
+    filtered_labels: dict[int, str] = {}
+    filtered_ranges: dict[int, tuple[int, int]] = {}
+    filtered_proc_kinds: dict[int, str] = {}
+    for addr, name in cod_listing.code_labels.items():
+        normalized_name = name.lstrip("_")
+        cod_range = cod_listing.code_ranges.get(addr)
+        matched_codeview_addr: int | None = None
+        for codeview_addr, codeview_range in codeview_by_name.get(normalized_name, ()):
+            if abs(codeview_addr - addr) <= 0x400 or _ranges_overlap_or_touch(cod_range, codeview_range):
+                matched_codeview_addr = codeview_addr
+                break
+        proc_kind = cod_listing.proc_kinds.get(addr)
+        if matched_codeview_addr is not None:
+            if proc_kind is not None:
+                filtered_proc_kinds.setdefault(matched_codeview_addr, proc_kind)
+            continue
+        filtered_labels[addr] = name
+        if cod_range is not None:
+            filtered_ranges[addr] = cod_range
+        if proc_kind is not None:
+            filtered_proc_kinds[addr] = proc_kind
+
+    return CODListingMetadata(
+        code_labels=filtered_labels,
+        code_ranges=filtered_ranges,
+        proc_kinds=filtered_proc_kinds,
+    )
+
+
 def _detect_flair_metadata(
     binary: Path,
     project: angr.Project,
+    *,
+    pat_backend: str | None = None,
+    signature_catalog: Path | None = None,
 ) -> tuple[dict[int, str], dict[int, tuple[int, int]], tuple[str, ...]]:
     flair_root = Path("/home/xor/ida77/flair77")
     if not flair_root.exists():
@@ -513,7 +580,20 @@ def _detect_flair_metadata(
             "_inertia_flair_startup_matches",
             tuple(match.pat_path for match in startup_matches),
         )
-    local_pat_matches = discover_local_pat_matches(binary, project, flair_root=flair_root)
+    if signature_catalog is not None:
+        catalog_matches = match_signature_catalog(
+            signature_catalog,
+            binary,
+            project,
+            backend=pat_backend,
+        )
+        if catalog_matches.code_labels or catalog_matches.code_ranges:
+            for addr, name in catalog_matches.code_labels.items():
+                code_labels.setdefault(addr, name)
+            for addr, span in catalog_matches.code_ranges.items():
+                code_ranges.setdefault(addr, span)
+            source_parts.extend(catalog_matches.source_formats)
+    local_pat_matches = discover_local_pat_matches(binary, project, flair_root=flair_root, backend=pat_backend)
     if local_pat_matches.code_labels or local_pat_matches.code_ranges:
         for addr, name in local_pat_matches.code_labels.items():
             code_labels.setdefault(addr, name)
@@ -577,15 +657,116 @@ def _synthesize_code_ranges(
     return synthesized
 
 
-def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | None:
+def _signature_matched_code_addrs(metadata: LSTMetadata | None) -> frozenset[int]:
+    if metadata is None:
+        return frozenset()
+    addrs = getattr(metadata, "signature_code_addrs", frozenset())
+    if isinstance(addrs, frozenset):
+        return addrs
+    return frozenset(addrs)
+
+
+def _visible_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
+    if metadata is None:
+        return {}
+    skipped = _signature_matched_code_addrs(metadata)
+    if not skipped:
+        return dict(metadata.code_labels)
+    return {addr: name for addr, name in metadata.code_labels.items() if addr not in skipped}
+
+
+def _seed_scan_windows(project: angr.Project) -> list[tuple[int, int]]:
+    main_object = getattr(project.loader, "main_object", None)
+    if main_object is None:
+        return []
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    if not isinstance(linked_base, int) or not isinstance(max_addr, int):
+        return []
+
+    image_end = linked_base + max_addr + 1
+    windows: list[tuple[int, int]] = []
+
+    metadata = getattr(project, "_inertia_lst_metadata", None)
+    if metadata is not None:
+        for start, end in sorted(getattr(metadata, "code_ranges", {}).values()):
+            if start >= end:
+                continue
+            if _lst_code_label(metadata, start, project.entry) is None:
+                continue
+            windows.append((max(linked_base, start), min(image_end, end)))
+
+    for span in getattr(main_object, "mz_segment_spans", ()):
+        start = max(linked_base, getattr(span, "start_linear", linked_base))
+        end = min(image_end, getattr(span, "end_linear", image_end))
+        if start < end:
+            windows.append((start, end))
+
+    if not windows:
+        return [(linked_base, image_end)]
+
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(windows):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _entry_window_seed_targets(
+    project: angr.Project,
+    code: bytes,
+    *,
+    linked_base: int,
+    entry_window: int = 0x200,
+) -> set[int]:
+    start = max(linked_base, project.entry)
+    end = min(linked_base + len(code), project.entry + max(1, entry_window))
+    if start >= end:
+        return set()
+
+    entry_targets: set[int] = set()
+    start_offset = start - linked_base
+    end_offset = end - linked_base
+    for offset in range(start_offset, end_offset):
+        opcode = code[offset]
+        callsite = linked_base + offset
+        if opcode == 0xE8 and offset + 2 < len(code):
+            rel = int.from_bytes(code[offset + 1 : offset + 3], "little", signed=True)
+            entry_targets.add(callsite + 3 + rel)
+        elif opcode == 0x9A and offset + 4 < len(code):
+            off = int.from_bytes(code[offset + 1 : offset + 3], "little")
+            seg = int.from_bytes(code[offset + 3 : offset + 5], "little")
+            entry_targets.add(linked_base + (seg << 4) + off)
+        elif opcode == 0xE9 and offset + 2 < len(code):
+            rel = int.from_bytes(code[offset + 1 : offset + 3], "little", signed=True)
+            entry_targets.add(callsite + 3 + rel)
+        elif opcode == 0xEB and offset + 1 < len(code):
+            rel = int.from_bytes(code[offset + 1 : offset + 2], "little", signed=True)
+            entry_targets.add(callsite + 2 + rel)
+    return entry_targets
+
+
+def _load_lst_metadata(
+    binary: Path,
+    project: angr.Project,
+    *,
+    pat_backend: str | None = None,
+    signature_catalog: Path | None = None,
+) -> LSTMetadata | None:
     load_base_linear = _probe_ida_base_linear(binary, getattr(project.loader.main_object, "linked_base", 0))
     code_labels: dict[int, str] = {}
     data_labels: dict[int, str] = {}
     code_ranges: dict[int, tuple[int, int]] = {}
+    signature_code_addrs: set[int] = set()
     cod_proc_kinds: dict[int, str] = {}
     struct_names: list[str] = []
     source_formats: list[str] = []
     cod_path: Path | None = None
+    codeview_code: dict[int, str] = {}
+    codeview_data: dict[int, str] = {}
+    codeview_ranges: dict[int, tuple[int, int]] = {}
 
     map_path = binary.with_suffix(".map")
     segment_offsets: dict[str, int] = {}
@@ -652,15 +833,41 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
         except Exception as exc:
             print(f"[dbg] failed to parse INC file {inc_path}: {exc}")
 
+    try:
+        codeview_code, codeview_data, codeview_ranges = _parse_codeview_nb00_metadata(
+            binary,
+            load_base_linear=load_base_linear,
+        )
+    except Exception as exc:
+        print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
+
+    try:
+        tdinfo = parse_tdinfo_exe(binary, load_base_linear=load_base_linear)
+        if tdinfo is not None and (tdinfo.code_labels or tdinfo.data_labels):
+            for addr, name in tdinfo.code_labels.items():
+                code_labels.setdefault(addr, name)
+            for addr, name in tdinfo.data_labels.items():
+                data_labels.setdefault(addr, name)
+            source_formats.append("turbo_debug_tdinfo")
+    except Exception as exc:
+        print(f"[dbg] failed to parse Turbo Debug TDInfo metadata from {binary}: {exc}")
+
     sibling_cod_path = binary.with_suffix(".COD")
     if sibling_cod_path.exists():
         try:
+            cod_anchor_labels = dict(code_labels)
+            cod_anchor_labels.update(codeview_code)
             cod_listing = _parse_cod_sidecar_metadata(
                 sibling_cod_path,
                 load_base_linear=load_base_linear,
-                existing_code_labels=code_labels,
+                existing_code_labels=cod_anchor_labels,
             )
-            if cod_listing.code_labels or cod_listing.code_ranges:
+            cod_listing = _reconcile_cod_listing_with_codeview(
+                cod_listing,
+                codeview_code,
+                codeview_ranges,
+            )
+            if cod_listing.code_labels or cod_listing.code_ranges or cod_listing.proc_kinds:
                 for addr, name in cod_listing.code_labels.items():
                     code_labels.setdefault(addr, name)
                 for addr, span in cod_listing.code_ranges.items():
@@ -670,6 +877,15 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
                 source_formats.append("cod_listing")
         except Exception as exc:
             print(f"[dbg] failed to parse COD listing {sibling_cod_path}: {exc}")
+
+    if codeview_code or codeview_data or codeview_ranges:
+        for addr, name in codeview_code.items():
+            code_labels.setdefault(addr, name)
+        for addr, name in codeview_data.items():
+            data_labels.setdefault(addr, name)
+        for addr, span in codeview_ranges.items():
+            code_ranges.setdefault(addr, span)
+        source_formats.append("codeview_nb00")
 
     external_mzre_map = Path("/home/xor/games/f15se2-re/map") / f"{binary.stem}.map"
     if external_mzre_map.exists():
@@ -690,26 +906,16 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
             print(f"[dbg] failed to parse mzretools map {external_mzre_map}: {exc}")
 
     try:
-        cv_code, cv_data, cv_ranges = _parse_codeview_nb00_metadata(
+        flair_code, flair_ranges, flair_formats = _detect_flair_metadata(
             binary,
-            load_base_linear=load_base_linear,
+            project,
+            pat_backend=pat_backend,
+            signature_catalog=signature_catalog,
         )
-        if cv_code or cv_data or cv_ranges:
-            for addr, name in cv_code.items():
-                code_labels.setdefault(addr, name)
-            for addr, name in cv_data.items():
-                data_labels.setdefault(addr, name)
-            for addr, span in cv_ranges.items():
-                code_ranges.setdefault(addr, span)
-            source_formats.append("codeview_nb00")
-    except Exception as exc:
-        print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
-
-    try:
-        flair_code, flair_ranges, flair_formats = _detect_flair_metadata(binary, project)
         if flair_code or flair_ranges:
             for addr, name in flair_code.items():
                 code_labels.setdefault(addr, name)
+                signature_code_addrs.add(addr)
             for addr, span in flair_ranges.items():
                 code_ranges.setdefault(addr, span)
         source_formats.extend(flair_formats)
@@ -733,12 +939,14 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
         data_labels=data_labels,
         code_labels=code_labels,
         code_ranges=code_ranges,
+        signature_code_addrs=frozenset(signature_code_addrs),
         absolute_addrs=True,
         source_format="+".join(dict.fromkeys(source_formats)) or "sidecars",
         struct_names=tuple(dict.fromkeys(struct_names)),
         cod_path=str(cod_path) if cod_path is not None else None,
         cod_proc_kinds=cod_proc_kinds,
     )
+    project._inertia_lst_metadata = metadata
     print(
         f"[dbg] loaded sidecar metadata: format={metadata.source_format} "
         f"code_labels={len(metadata.code_labels)} data_labels={len(metadata.data_labels)} structs={len(metadata.struct_names)}"
@@ -1139,6 +1347,14 @@ def _pick_function(
         if extended_cfg is not None and target_addr in extended_cfg.functions:
             cfg = extended_cfg
             function = cfg.functions[target_addr]
+        extended_cfg = extend_cfg_for_neighbor_calls(
+            project,
+            function,
+            entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+        )
+        if extended_cfg is not None and target_addr in extended_cfg.functions:
+            cfg = extended_cfg
+            function = cfg.functions[target_addr]
         patch_interrupt_service_call_sites(function, getattr(project.loader.main_object, "binary", None))
     seed_calling_conventions(cfg)
 
@@ -1182,6 +1398,14 @@ def _pick_function_lean(
     function = cfg.functions[target_addr]
     if extend_far_calls and project.arch.name == "86_16":
         extended_cfg = extend_cfg_for_far_calls(
+            project,
+            function,
+            entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+        )
+        if extended_cfg is not None and target_addr in extended_cfg.functions:
+            cfg = extended_cfg
+            function = cfg.functions[target_addr]
+        extended_cfg = extend_cfg_for_neighbor_calls(
             project,
             function,
             entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
@@ -1256,6 +1480,9 @@ def _recover_cfg(
 
     if project.arch.name == "86_16" and project.entry in cfg.functions:
         extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
+        if extended_cfg is not None and project.entry in extended_cfg.functions:
+            cfg = extended_cfg
+        extended_cfg = extend_cfg_for_neighbor_calls(project, cfg.functions[project.entry], entry_window=window)
         if extended_cfg is not None and project.entry in extended_cfg.functions:
             cfg = extended_cfg
         patch_interrupt_service_call_sites(cfg.functions[project.entry], binary_path)
@@ -1442,6 +1669,13 @@ def _recover_partial_cfg(
                 continue
             if project.arch.name == "86_16":
                 extended_cfg = extend_cfg_for_far_calls(
+                    project,
+                    cfg.functions[project.entry],
+                    entry_window=(regions[0][1] - regions[0][0]) if regions else candidate_window,
+                )
+                if extended_cfg is not None and project.entry in extended_cfg.functions:
+                    cfg = extended_cfg
+                extended_cfg = extend_cfg_for_neighbor_calls(
                     project,
                     cfg.functions[project.entry],
                     entry_window=(regions[0][1] - regions[0][0]) if regions else candidate_window,
@@ -1917,6 +2151,25 @@ def _rank_exe_function_seeds(project: angr.Project) -> list[int]:
         code = bytes(main_object.memory.load(0, max_addr + 1))
     except Exception:
         return []
+    seed_windows = _seed_scan_windows(project)
+    neighbor_targets: set[int] = set()
+    entry_window_targets = _entry_window_seed_targets(project, code, linked_base=linked_base)
+
+    def _window_contains(addr: int) -> bool:
+        return any(start <= addr < end for start, end in seed_windows)
+
+    try:
+        _entry_cfg, entry_function = _pick_function_lean(
+            project,
+            project.entry,
+            regions=[(project.entry, min(project.entry + 0x200, linked_base + len(code)))],
+            data_references=False,
+            extend_far_calls=True,
+        )
+        for target in collect_neighbor_call_targets(entry_function):
+            neighbor_targets.add(target.target_addr)
+    except Exception:
+        pass
 
     ranked: dict[int, tuple[int, int]] = {}
     near_call_targets: set[int] = set()
@@ -1926,6 +2179,8 @@ def _rank_exe_function_seeds(project: angr.Project) -> list[int]:
     def _consider(addr: int, priority: int) -> None:
         if not (linked_base <= addr < linked_base + len(code)):
             return
+        if not _window_contains(addr):
+            return
         if addr == project.entry:
             return
         distance = abs(addr - project.entry)
@@ -1933,6 +2188,9 @@ def _rank_exe_function_seeds(project: angr.Project) -> list[int]:
         candidate = (priority, distance)
         if existing is None or candidate < existing:
             ranked[addr] = candidate
+
+    for target in entry_window_targets:
+        _consider(target, 0)
 
     for offset in range(len(code) - 2):
         opcode = code[offset]
@@ -1980,18 +2238,33 @@ def _rank_exe_function_seeds(project: angr.Project) -> list[int]:
         in_far_call = addr in far_call_targets
         in_prologue = addr in prologue_targets
         in_terminal_next = addr in terminal_next_targets
-        if in_prologue and (in_near_call or in_far_call):
+        in_neighbor = addr in neighbor_targets
+        in_entry_window = addr in entry_window_targets
+        entry_descends_from_stub = in_entry_window and addr < project.entry
+        if entry_descends_from_stub and (in_neighbor or in_near_call or in_far_call):
             final_priority = 0
-        elif in_prologue:
+        elif entry_descends_from_stub:
             final_priority = 1
-        elif in_terminal_next and (in_near_call or in_far_call):
+        elif in_entry_window and (in_neighbor or in_near_call or in_far_call):
+            final_priority = 1
+        elif in_neighbor and in_prologue:
             final_priority = 2
-        elif in_terminal_next:
+        elif in_entry_window:
+            final_priority = 2
+        elif in_neighbor:
             final_priority = 3
-        elif in_near_call or in_far_call:
+        elif in_prologue and (in_near_call or in_far_call):
+            final_priority = 2
+        elif in_prologue:
+            final_priority = 3
+        elif in_terminal_next and (in_near_call or in_far_call):
             final_priority = 4
-        else:
+        elif in_terminal_next:
             final_priority = 5
+        elif in_near_call or in_far_call:
+            final_priority = 6
+        else:
+            final_priority = 7
         reranked.append(((final_priority, distance), addr))
 
     return [addr for _meta, addr in sorted(reranked)]
@@ -2035,35 +2308,66 @@ def _recover_seeded_exe_functions(
     deadline = time.monotonic() + max(1, timeout)
     recovered: list[tuple[object, object]] = []
     seen_addrs: set[int] = {project.entry}
-    for addr in ranked_seeds:
+    queued_addrs: set[int] = set(ranked_seeds)
+    pending_addrs: list[int] = list(ranked_seeds)
+    metadata = getattr(project, "_inertia_lst_metadata", None)
+    image_end = linked_base + max_addr + 1
+
+    def _candidate_regions(addr: int) -> list[tuple[int, int]]:
+        exact_region = _lst_code_region(metadata, addr)
+        if exact_region is not None:
+            return [exact_region]
+        regions: list[tuple[int, int]] = []
+        for candidate_window in _x86_16_fast_recovery_windows(region_span):
+            region = (addr, min(addr + candidate_window, image_end))
+            if region not in regions:
+                regions.append(region)
+        return regions
+
+    while pending_addrs:
+        addr = pending_addrs.pop(0)
         if limit is not None and len(recovered) >= limit:
             break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
 
-        def _recover_candidate(candidate_addr=addr):
-            candidate_project = _build_project(
-                Path(binary_path),
-                force_blob=False,
-                base_addr=linked_base,
-                entry_point=project.entry,
-            )
+        def _recover_candidate(candidate_project, candidate_addr=addr):
             block = candidate_project.factory.block(candidate_addr, size=8, opt_level=0)
             insns = block.capstone.insns
             if len(insns) < 1:
                 raise KeyError(f"Function {candidate_addr:#x} does not have a valid first instruction.")
-            return _pick_function_lean(
-                candidate_project,
-                candidate_addr,
-                regions=[(candidate_addr, min(candidate_addr + region_span, linked_base + max_addr + 1))],
-                data_references=False,
-                extend_far_calls=False,
-            )
+            last_error: Exception | None = None
+            for candidate_region in _candidate_regions(candidate_addr):
+                try:
+                    return _pick_function_lean(
+                        candidate_project,
+                        candidate_addr,
+                        regions=[candidate_region],
+                        data_references=False,
+                        extend_far_calls=False,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    continue
+            if last_error is not None:
+                raise last_error
+            raise KeyError(f"Function {candidate_addr:#x} was not recovered.")
 
         try:
             with _analysis_timeout(min(per_function_timeout, max(1, int(remaining)))):
-                function_cfg, function = _recover_candidate()
+                try:
+                    function_cfg, function = _recover_candidate(project)
+                except KeyError:
+                    raise
+                except Exception:
+                    candidate_project = _build_project(
+                        Path(binary_path),
+                        force_blob=False,
+                        base_addr=linked_base,
+                        entry_point=project.entry,
+                    )
+                    function_cfg, function = _recover_candidate(candidate_project)
         except (_AnalysisTimeout, KeyError):
             continue
         except Exception:
@@ -2076,6 +2380,16 @@ def _recover_seeded_exe_functions(
             continue
         seen_addrs.add(function.addr)
         recovered.append((function_cfg, function))
+        for target in collect_neighbor_call_targets(function):
+            target_addr = getattr(target, "target_addr", None)
+            if not isinstance(target_addr, int):
+                continue
+            if target_addr in seen_addrs or target_addr in queued_addrs:
+                continue
+            if not (linked_base <= target_addr < image_end):
+                continue
+            pending_addrs.insert(0, target_addr)
+            queued_addrs.add(target_addr)
 
     if recovered:
         print(f"/* seeded EXE catalog recovered {len(recovered)} additional function(s). */")
@@ -13157,7 +13471,7 @@ def _select_sidecar_showcase_entries(
 
 def _format_sidecar_function_catalog(metadata: LSTMetadata, *, limit: int | None = None) -> str:
     lines: list[str] = []
-    entries = sorted(metadata.code_labels.items())
+    entries = sorted(_visible_code_labels(metadata).items())
     if limit is not None and limit > 0:
         entries = entries[:limit]
     for addr, name in entries:
@@ -13275,6 +13589,18 @@ def main(argv: list[str] | None = None) -> int:
         default="modern",
         help="Name recovered DOS helpers as modern-style calls, DOS/compiler-style calls, pseudo-callee service calls, or raw interrupt helpers.",
     )
+    parser.add_argument(
+        "--pat-backend",
+        choices=("python_regex", "hyperscan"),
+        default="hyperscan",
+        help="PAT matcher backend. Use python_regex for the portable fallback or hyperscan for the faster scanner.",
+    )
+    parser.add_argument(
+        "--signature-catalog",
+        type=Path,
+        default=None,
+        help="Optional deduplicated PAT catalog built from .pat/.obj/.lib inputs.",
+    )
     args = parser.parse_args(argv)
 
     _lower_process_priority()
@@ -13320,7 +13646,12 @@ def main(argv: list[str] | None = None) -> int:
             base_addr=args.base_addr,
             entry_point=args.entry_point,
         )
-        lst_metadata = _load_lst_metadata(args.binary, project)
+        lst_metadata = _load_lst_metadata(
+            args.binary,
+            project,
+            pat_backend=args.pat_backend,
+            signature_catalog=args.signature_catalog,
+        )
         _apply_binary_specific_annotations(
             project,
             args.binary,
@@ -13583,14 +13914,18 @@ def main(argv: list[str] | None = None) -> int:
     cfg = None
     function_cfg_pairs: list[tuple[object, object]] = []
     labeled_offsets: list[tuple[int, str]] = []
+    visible_code_labels = _visible_code_labels(lst_metadata)
+    skipped_signature_labels = (
+        len(getattr(lst_metadata, "code_labels", {})) - len(visible_code_labels) if lst_metadata is not None else 0
+    )
     if low_memory_path:
         print("/* Low-memory mode: using conservative catalog recovery. */")
     packed_exe = None if args.proc is not None else getattr(project, "_inertia_packed_exe", None)
-    if lst_metadata is not None and lst_metadata.code_labels:
+    if lst_metadata is not None and visible_code_labels:
         try:
             labeled_offsets = _rank_labeled_function_entries(
                 project,
-                list(lst_metadata.code_labels.items()),
+                list(visible_code_labels.items()),
                 lst_metadata,
             )
             if args.max_functions > 0:
@@ -13602,22 +13937,47 @@ def main(argv: list[str] | None = None) -> int:
             return 5
     else:
         catalog_error: Exception | None = None
-        try:
-            cfg = _run_with_timeout_in_daemon_thread(
-                lambda: _recover_cfg(
-                    project,
-                    args.binary,
-                    base_addr=args.base_addr,
-                    window=args.window,
-                    low_memory=low_memory_path,
-                ),
-                timeout=args.timeout,
-                thread_name_prefix="catalog",
+        prefer_bounded_catalog = (
+            lst_metadata is None
+            and project.arch.name == "86_16"
+            and args.binary.suffix.lower() == ".exe"
+        )
+        if prefer_bounded_catalog:
+            print(
+                "/* No helper metadata for x86-16 EXE; preferring bounded entry-window recovery before whole-binary CFG. */"
             )
-        except Exception as ex:  # noqa: BLE001
-            catalog_error = ex
+            try:
+                cfg = _run_with_timeout_in_daemon_thread(
+                    lambda: _recover_partial_cfg(
+                        project,
+                        window=args.window,
+                        low_memory=low_memory_path,
+                    ),
+                    timeout=args.timeout,
+                    thread_name_prefix="catalog-fallback",
+                )
+            except Exception as ex:  # noqa: BLE001
+                catalog_error = ex
 
-        if cfg is None and project.arch.name == "86_16":
+        if cfg is None:
+            if prefer_bounded_catalog:
+                print("/* Bounded entry-window recovery failed; attempting whole-binary CFG as a last resort. */")
+            try:
+                cfg = _run_with_timeout_in_daemon_thread(
+                    lambda: _recover_cfg(
+                        project,
+                        args.binary,
+                        base_addr=args.base_addr,
+                        window=args.window,
+                        low_memory=low_memory_path,
+                    ),
+                    timeout=args.timeout,
+                    thread_name_prefix="catalog",
+                )
+            except Exception as ex:  # noqa: BLE001
+                catalog_error = ex
+
+        if cfg is None and project.arch.name == "86_16" and not prefer_bounded_catalog:
             print(
                 "/* Whole-binary catalog recovery failed; attempting bounded entry-window recovery. */"
             )
@@ -13662,6 +14022,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(_format_asm_range(project, start, end))
                 return 5
 
+    if skipped_signature_labels > 0:
+        print(f"/* skipping {skipped_signature_labels} signature-matched function(s) by default. */")
+
     if cfg is not None:
         if function_label is not None and project.entry in cfg.functions:
             cfg.functions[project.entry].name = function_label
@@ -13671,7 +14034,7 @@ def main(argv: list[str] | None = None) -> int:
                 if code_name is not None:
                     func.name = code_name
 
-    if lst_metadata is not None and lst_metadata.code_labels:
+    if lst_metadata is not None and visible_code_labels:
         total_functions = len(labeled_offsets)
         shown_total = len(labeled_offsets)
     elif not function_cfg_pairs:
@@ -13714,13 +14077,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"/* arch: {project.arch.name} */")
     print(f"/* entry: {project.entry:#x} */")
     print(f"/* functions recovered: {total_functions} */")
-    if lst_metadata is not None and lst_metadata.code_labels:
+    if lst_metadata is not None and visible_code_labels:
         print("/* == known function catalog (sidecar-backed) == */")
         print(_format_sidecar_function_catalog(lst_metadata))
 
     if (
         lst_metadata is not None
-        and lst_metadata.code_labels
+        and visible_code_labels
         and args.max_functions <= 0
         and shown_total > 24
     ):
@@ -13742,7 +14105,7 @@ def main(argv: list[str] | None = None) -> int:
 
     function_tasks: list[FunctionWorkItem] = []
     result_map: dict[int, FunctionWorkResult] = {}
-    if lst_metadata is not None and lst_metadata.code_labels:
+    if lst_metadata is not None and visible_code_labels:
         for index, (offset, name) in enumerate(labeled_offsets, start=1):
             placeholder = _make_placeholder_function(project, offset, name)
             function_tasks.append(FunctionWorkItem(index=index, function_cfg=None, function=placeholder))
@@ -13751,7 +14114,7 @@ def main(argv: list[str] | None = None) -> int:
             function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
 
     workers = _choose_function_parallelism(len(function_tasks))
-    if lst_metadata is not None and lst_metadata.code_labels:
+    if lst_metadata is not None and visible_code_labels:
         workers = 1
     if getattr(project, "_inertia_supplemental_scan_used", False) and len(function_tasks) <= 8:
         workers = 1

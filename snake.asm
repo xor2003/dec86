@@ -19,7 +19,7 @@ bottom equ top+row
 .model small
 data segment
     msg db "Welcome to the snake game!!",0
-    instructions db 0AH,0DH,"Use a, s, d and f to control your snake",0AH,0DH,"Use q anytime to quit",0DH,0AH, "Press any key to continue$"
+    instructions db 0AH,0DH,"Use a, s, d and w to control your snake",0AH,0DH,"Use q anytime to quit",0DH,0AH, "Press any key to continue$"
     quitmsg db "Thanks for playing! hope you enjoyed",0
     gameovermsg db "OOPS!! your snake died! :P ", 0
     scoremsg db "Score: ",0
@@ -33,7 +33,6 @@ data segment
     quit db 0   
     delaytime db 5
 data ends
-
 
 text segment
 main proc far
