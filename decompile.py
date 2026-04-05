@@ -204,7 +204,9 @@ from angr_platforms.X86_16.annotations import (
     _source_decl_from_cod_source_lines,
 )
 from angr_platforms.X86_16.cod_extract import (
+    CODListingMetadata,
     CODProcMetadata,
+    extract_cod_listing_metadata,
     extract_cod_function_entries,
     extract_cod_proc_metadata,
     extract_small_two_arg_cod_logic_entries,
@@ -215,7 +217,10 @@ from angr_platforms.X86_16.cod_extract import (
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 from angr_platforms.X86_16.cod_source_rewrites import apply_cod_source_rewrites as _apply_cod_source_rewrites
 from angr_platforms.X86_16.cod_source_rewrites import rewrite_known_cod_object_fields_from_source
+from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
+from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
+from omf_pat import discover_local_pat_matches
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.utils.library import convert_cproto_to_py
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -266,12 +271,54 @@ _MZRE_ROUTINE_RE = re.compile(
     r"^([A-Za-z_]\w*):\s+([A-Za-z_]\w*)\s+(?:NEAR|FAR)\s+([0-9A-Fa-f]+)-([0-9A-Fa-f]+)",
     re.IGNORECASE,
 )
+_NON_FUNCTION_CODE_PREFIXES = (
+    "loc_",
+    "locret_",
+    "byte_",
+    "word_",
+    "dword_",
+    "off_",
+    "stru_",
+    "align_",
+    "cond_",
+    "else_",
+    "loop_",
+    "next_",
+    "break_",
+    "continue_",
+    "endif_",
+)
+_CONTROL_FLOW_LABEL_TOKENS = (
+    "cond",
+    "else",
+    "loop",
+    "next",
+    "break",
+    "continue",
+    "endif",
+    "out",
+    "inner",
+    "openok",
+)
 
 
 def _label_looks_like_code(name: str) -> bool:
     lowered = name.lower()
-    if lowered.startswith(("loc_", "locret_", "byte_", "word_", "dword_", "off_", "stru_", "align_")):
+    if not _label_looks_like_function(name):
         return False
+    return True
+
+
+def _label_looks_like_function(name: str) -> bool:
+    lowered = name.lower()
+    if lowered.startswith(_NON_FUNCTION_CODE_PREFIXES):
+        return False
+    if "_" not in lowered:
+        return True
+    prefix, suffix = lowered.rsplit("_", 1)
+    if suffix and all(ch in "0123456789abcdef" for ch in suffix):
+        if any(token in prefix for token in _CONTROL_FLOW_LABEL_TOKENS):
+            return False
     return True
 
 
@@ -359,7 +406,7 @@ def _parse_idc_metadata(idc_path: Path) -> tuple[dict[int, str], dict[int, str]]
             continue
         addr = int(match.group(1), 16)
         name = match.group(2)
-        if _label_looks_like_code(name):
+        if _label_looks_like_function(name):
             code_labels.setdefault(addr, name.lstrip("_"))
         else:
             data_labels.setdefault(addr, name)
@@ -373,6 +420,112 @@ def _parse_inc_struct_names(inc_path: Path) -> tuple[str, ...]:
         if match is not None:
             names.append(match.group(1))
     return tuple(names)
+
+
+def _parse_codeview_nb00_metadata(
+    binary: Path,
+    *,
+    load_base_linear: int,
+) -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]]]:
+    parsed = parse_codeview_nb00(binary, load_base_linear=load_base_linear)
+    if parsed is None:
+        return {}, {}, {}
+    code_labels = {addr: name for addr, name in parsed.code_labels.items() if _label_looks_like_code(name)}
+    data_labels = {addr: name for addr, name in parsed.data_labels.items() if addr not in code_labels}
+    code_ranges = {
+        addr: span for addr, span in parsed.code_ranges.items() if addr in code_labels and span[0] < span[1]
+    }
+    return code_labels, data_labels, code_ranges
+
+
+def _parse_cod_sidecar_metadata(
+    cod_path: Path,
+    *,
+    load_base_linear: int,
+    existing_code_labels: dict[int, str] | None = None,
+) -> CODListingMetadata:
+    metadata = extract_cod_listing_metadata(cod_path)
+    existing = existing_code_labels or {}
+    delta_candidates: dict[int, int] = {}
+    normalized_existing = {name.lstrip("_"): addr for addr, name in existing.items()}
+    for offset, name in metadata.code_labels.items():
+        existing_addr = normalized_existing.get(name.lstrip("_"))
+        if existing_addr is None:
+            continue
+        delta = existing_addr - offset
+        delta_candidates[delta] = delta_candidates.get(delta, 0) + 1
+    if delta_candidates:
+        cod_linear_base = sorted(delta_candidates.items(), key=lambda item: (-item[1], item[0]))[0][0]
+    else:
+        cod_linear_base = load_base_linear
+    code_labels = {cod_linear_base + offset: name.lstrip("_") for offset, name in metadata.code_labels.items()}
+    code_ranges = {
+        cod_linear_base + offset: (cod_linear_base + span[0], cod_linear_base + span[1])
+        for offset, span in metadata.code_ranges.items()
+    }
+    proc_kinds = {cod_linear_base + offset: kind for offset, kind in metadata.proc_kinds.items()}
+    return CODListingMetadata(code_labels=code_labels, code_ranges=code_ranges, proc_kinds=proc_kinds)
+
+
+def _detect_flair_metadata(
+    binary: Path,
+    project: angr.Project,
+) -> tuple[dict[int, str], dict[int, tuple[int, int]], tuple[str, ...]]:
+    flair_root = Path("/home/xor/ida77/flair77")
+    if not flair_root.exists():
+        return {}, {}, ()
+    main_object = getattr(project.loader, "main_object", None)
+    if main_object is None:
+        return {}, {}, ()
+    try:
+        entry_bytes = bytes(project.loader.memory.load(project.entry, 32))
+    except Exception:
+        entry_bytes = b""
+    code_labels: dict[int, str] = {}
+    code_ranges: dict[int, tuple[int, int]] = {}
+    source_parts: list[str] = []
+    startup_matches = match_flair_startup_entry(entry_bytes, flair_root)
+    if startup_matches:
+        source_parts.append("flair_pat")
+        first = startup_matches[0]
+        for offset, name in first.public_names:
+            linear = project.entry + offset
+            code_labels.setdefault(linear, name.lstrip("_"))
+        if first.public_names:
+            first_offset = min(offset for offset, _name in first.public_names)
+            start = project.entry + first_offset
+            code_ranges.setdefault(start, (start, start + 0x100))
+    sig_libraries = [
+        library
+        for library in list_flair_sig_libraries(flair_root)
+        if "MSDOS" in library.os_types.upper() and "16BIT" in library.app_types.upper()
+    ]
+    if sig_libraries:
+        source_parts.append("flair_sig")
+        setattr(
+            project,
+            "_inertia_flair_sig_titles",
+            tuple(library.title for library in sig_libraries[:8]),
+        )
+    if startup_matches:
+        setattr(
+            project,
+            "_inertia_flair_startup_matches",
+            tuple(match.pat_path for match in startup_matches),
+        )
+    local_pat_matches = discover_local_pat_matches(binary, project, flair_root=flair_root)
+    if local_pat_matches.code_labels or local_pat_matches.code_ranges:
+        for addr, name in local_pat_matches.code_labels.items():
+            code_labels.setdefault(addr, name)
+        for addr, span in local_pat_matches.code_ranges.items():
+            code_ranges.setdefault(addr, span)
+        source_parts.extend(local_pat_matches.source_formats)
+        setattr(
+            project,
+            "_inertia_flair_local_pat_sources",
+            tuple(dict.fromkeys(local_pat_matches.source_formats)),
+        )
+    return code_labels, code_ranges, tuple(source_parts)
 
 
 def _parse_mzre_map_metadata(
@@ -429,8 +582,10 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
     code_labels: dict[int, str] = {}
     data_labels: dict[int, str] = {}
     code_ranges: dict[int, tuple[int, int]] = {}
+    cod_proc_kinds: dict[int, str] = {}
     struct_names: list[str] = []
     source_formats: list[str] = []
+    cod_path: Path | None = None
 
     map_path = binary.with_suffix(".map")
     segment_offsets: dict[str, int] = {}
@@ -497,6 +652,25 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
         except Exception as exc:
             print(f"[dbg] failed to parse INC file {inc_path}: {exc}")
 
+    sibling_cod_path = binary.with_suffix(".COD")
+    if sibling_cod_path.exists():
+        try:
+            cod_listing = _parse_cod_sidecar_metadata(
+                sibling_cod_path,
+                load_base_linear=load_base_linear,
+                existing_code_labels=code_labels,
+            )
+            if cod_listing.code_labels or cod_listing.code_ranges:
+                for addr, name in cod_listing.code_labels.items():
+                    code_labels.setdefault(addr, name)
+                for addr, span in cod_listing.code_ranges.items():
+                    code_ranges.setdefault(addr, span)
+                cod_proc_kinds.update(cod_listing.proc_kinds)
+                cod_path = sibling_cod_path
+                source_formats.append("cod_listing")
+        except Exception as exc:
+            print(f"[dbg] failed to parse COD listing {sibling_cod_path}: {exc}")
+
     external_mzre_map = Path("/home/xor/games/f15se2-re/map") / f"{binary.stem}.map"
     if external_mzre_map.exists():
         try:
@@ -514,6 +688,33 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
                 source_formats.append("mzre_map")
         except Exception as exc:
             print(f"[dbg] failed to parse mzretools map {external_mzre_map}: {exc}")
+
+    try:
+        cv_code, cv_data, cv_ranges = _parse_codeview_nb00_metadata(
+            binary,
+            load_base_linear=load_base_linear,
+        )
+        if cv_code or cv_data or cv_ranges:
+            for addr, name in cv_code.items():
+                code_labels.setdefault(addr, name)
+            for addr, name in cv_data.items():
+                data_labels.setdefault(addr, name)
+            for addr, span in cv_ranges.items():
+                code_ranges.setdefault(addr, span)
+            source_formats.append("codeview_nb00")
+    except Exception as exc:
+        print(f"[dbg] failed to parse CodeView NB00 metadata from {binary}: {exc}")
+
+    try:
+        flair_code, flair_ranges, flair_formats = _detect_flair_metadata(binary, project)
+        if flair_code or flair_ranges:
+            for addr, name in flair_code.items():
+                code_labels.setdefault(addr, name)
+            for addr, span in flair_ranges.items():
+                code_ranges.setdefault(addr, span)
+        source_formats.extend(flair_formats)
+    except Exception as exc:
+        print(f"[dbg] failed to inspect FLAIR metadata for {binary}: {exc}")
 
     if not code_labels and not data_labels and not struct_names:
         return None
@@ -535,11 +736,16 @@ def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | Non
         absolute_addrs=True,
         source_format="+".join(dict.fromkeys(source_formats)) or "sidecars",
         struct_names=tuple(dict.fromkeys(struct_names)),
+        cod_path=str(cod_path) if cod_path is not None else None,
+        cod_proc_kinds=cod_proc_kinds,
     )
     print(
         f"[dbg] loaded sidecar metadata: format={metadata.source_format} "
         f"code_labels={len(metadata.code_labels)} data_labels={len(metadata.data_labels)} structs={len(metadata.struct_names)}"
     )
+    flair_titles = getattr(project, "_inertia_flair_sig_titles", ())
+    if flair_titles:
+        print(f"[dbg] flair signature catalogs: {', '.join(flair_titles[:3])}")
     return metadata
 
 
@@ -567,6 +773,41 @@ def _apply_binary_specific_annotations(
             synthetic_globals=synthetic_globals,
         )
     return changed
+
+
+def _sidecar_cod_metadata_for_function(
+    project: angr.Project,
+    function,
+    binary_path: Path | None,
+    lst_metadata: LSTMetadata | None,
+) -> CODProcMetadata | None:
+    if binary_path is None or lst_metadata is None or not lst_metadata.cod_path:
+        return None
+    proc_kind = (lst_metadata.cod_proc_kinds.get(function.addr) or "NEAR").upper()
+    name_candidates = []
+    function_name = getattr(function, "name", "") or ""
+    if function_name:
+        name_candidates.append(function_name)
+        if not function_name.startswith("_"):
+            name_candidates.append(f"_{function_name}")
+        else:
+            name_candidates.append(function_name.lstrip("_"))
+    cod_path = Path(lst_metadata.cod_path)
+    cache = getattr(project, "_inertia_sidecar_cod_metadata_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(project, "_inertia_sidecar_cod_metadata_cache", cache)
+    for candidate in name_candidates:
+        cache_key = (str(cod_path), candidate, proc_kind)
+        if cache_key in cache:
+            return cache[cache_key]
+        try:
+            metadata = extract_cod_proc_metadata(cod_path, candidate, proc_kind)
+        except Exception:
+            continue
+        cache[cache_key] = metadata
+        return metadata
+    return None
 
 
 def _snapshot_codegen_text(codegen) -> str:
@@ -1320,15 +1561,18 @@ def _format_first_block_asm(project: angr.Project, addr: int) -> str:
     return "\n".join(lines) if lines else "<no instructions>"
 
 
+def _linear_disassembly(project: angr.Project, start: int, end: int):
+    if end <= start:
+        return []
+    code = bytes(project.loader.memory.load(start, end - start))
+    return list(project.arch.capstone.disasm(code, start))
+
+
 def _format_asm_range(project: angr.Project, start: int, end: int, *, max_instructions: int = 128) -> str:
     if end <= start:
         return "<no instructions>"
     try:
-        code = bytes(project.loader.memory.load(start, end - start))
-    except Exception as ex:
-        return f"<assembly unavailable: {ex}>"
-    try:
-        insns = list(project.arch.capstone.disasm(code, start))
+        insns = _linear_disassembly(project, start, end)
     except Exception as ex:
         return f"<assembly unavailable: {ex}>"
     if not insns:
@@ -1337,6 +1581,55 @@ def _format_asm_range(project: angr.Project, start: int, end: int, *, max_instru
     if len(insns) > max_instructions:
         lines.append(f"... <truncated after {max_instructions} instructions>")
     return "\n".join(lines)
+
+
+def _infer_linear_disassembly_window(
+    project: angr.Project,
+    addr: int,
+    *,
+    max_window: int = 0x180,
+) -> tuple[int, int]:
+    main_object = getattr(project.loader, "main_object", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    if not isinstance(linked_base, int) or not isinstance(max_addr, int):
+        return addr, addr + max_window
+    end = min(addr + max_window, max_addr + 1)
+    try:
+        insns = _linear_disassembly(project, addr, end)
+    except Exception:
+        return addr, end
+    if not insns:
+        return addr, end
+    for insn in insns:
+        mnemonic = insn.mnemonic.lower()
+        if mnemonic.startswith("ret") or mnemonic in {"iret", "jmp"}:
+            return addr, min(end, insn.address + insn.size)
+    return addr, min(end, insns[-1].address + insns[-1].size)
+
+
+def _probe_lift_break(project: angr.Project, addr: int, *, max_window: int = 0x80) -> str:
+    start, end = _infer_linear_disassembly_window(project, addr, max_window=max_window)
+    try:
+        insns = _linear_disassembly(project, start, end)
+    except Exception as ex:
+        return f"<lift probe unavailable: {ex}>"
+    if not insns:
+        return "<lift probe unavailable: no instructions>"
+    for index, insn in enumerate(insns):
+        try:
+            project.factory.block(insn.address, size=max(1, insn.size), opt_level=0)
+        except Exception as ex:
+            window = insns[max(0, index - 3) : min(len(insns), index + 5)]
+            lines = [
+                f"{cur.address:#06x}: {cur.mnemonic} {cur.op_str}".rstrip()
+                for cur in window
+            ]
+            return (
+                f"first lift failure at {insn.address:#x}: {_describe_exception(ex)}\n"
+                + "\n".join(lines)
+            )
+    return "no per-instruction lift failure detected in linear probe window"
 
 
 def _try_decompile_sidecar_slice(
@@ -1392,6 +1685,84 @@ def _try_decompile_sidecar_slice(
     if status != "ok":
         return None
     return status, payload
+
+
+def _try_decompile_non_optimized_slice(
+    project: angr.Project,
+    addr: int,
+    name: str,
+    *,
+    timeout: int,
+    api_style: str,
+    binary_path: Path | None,
+    lst_metadata: LSTMetadata | None,
+    cod_metadata: CODProcMetadata | None = None,
+) -> str | None:
+    region = _lst_code_region(lst_metadata, addr)
+    if region is None:
+        region = _infer_linear_disassembly_window(project, addr, max_window=0x240)
+    start, end = region
+    if end <= start:
+        return None
+    try:
+        code = bytes(project.loader.memory.load(start, end - start))
+    except Exception:
+        return None
+
+    def _recover_and_decompile():
+        slice_project = _build_project_from_bytes(code, base_addr=start, entry_point=start)
+        cfg, func = _pick_function_lean(
+            slice_project,
+            start,
+            regions=[(start, end)],
+            data_references=False,
+            extend_far_calls=False,
+        )
+        func.name = name
+        effective_cod_metadata = cod_metadata
+        if effective_cod_metadata is None:
+            effective_cod_metadata = _sidecar_cod_metadata_for_function(slice_project, func, binary_path, lst_metadata)
+        status, payload, *_ = _decompile_function_with_stats(
+            slice_project,
+            cfg,
+            func,
+            max(1, min(timeout, 4)),
+            api_style,
+            binary_path,
+            cod_metadata=effective_cod_metadata,
+            lst_metadata=lst_metadata,
+            enable_structured_simplify=False,
+            enable_postprocess=False,
+        )
+        return status, payload
+
+    try:
+        status, payload = _run_with_timeout_in_daemon_thread(
+            _recover_and_decompile,
+            timeout=max(2, min(timeout, 6)),
+            thread_name_prefix="nonopt-fallback",
+        )
+    except Exception:
+        return None
+    if status != "ok":
+        return None
+    return payload
+
+
+def _try_emit_trivial_sidecar_c(
+    project: angr.Project,
+    lst_metadata: LSTMetadata | None,
+    addr: int,
+    name: str,
+) -> str | None:
+    region = _lst_code_region(lst_metadata, addr)
+    if region is None:
+        return None
+    asm = _format_asm_range(project, region[0], region[1], max_instructions=8)
+    lines = [line.strip() for line in asm.splitlines() if line.strip()]
+    if len(lines) == 1 and lines[0].endswith(": ret"):
+        return f"void {name}(void)\n{{\n}}\n"
+    return None
 
 
 def _function_skip_reason(function):
@@ -1585,22 +1956,59 @@ def _rank_exe_function_seeds(project: angr.Project) -> list[int]:
         far_call_targets.add(target)
         _consider(target, 0)
 
+    try:
+        insns = _linear_disassembly(project, linked_base, linked_base + len(code))
+    except Exception:
+        insns = []
+    terminal_next_targets: set[int] = set()
+    for insn in insns:
+        mnemonic = insn.mnemonic.lower()
+        if not (mnemonic.startswith("ret") or mnemonic == "iret"):
+            continue
+        target = insn.address + insn.size
+        if not (linked_base <= target < linked_base + len(code)):
+            continue
+        next_byte = code[target - linked_base : target - linked_base + 1]
+        if next_byte in {b"\x00", b"\x90", b"\xcc"}:
+            continue
+        terminal_next_targets.add(target)
+        _consider(target, 2)
+
     reranked: list[tuple[tuple[int, int], int]] = []
     for addr, (_priority, distance) in ranked.items():
         in_near_call = addr in near_call_targets
         in_far_call = addr in far_call_targets
         in_prologue = addr in prologue_targets
+        in_terminal_next = addr in terminal_next_targets
         if in_prologue and (in_near_call or in_far_call):
             final_priority = 0
         elif in_prologue:
             final_priority = 1
-        elif in_near_call or in_far_call:
+        elif in_terminal_next and (in_near_call or in_far_call):
             final_priority = 2
-        else:
+        elif in_terminal_next:
             final_priority = 3
+        elif in_near_call or in_far_call:
+            final_priority = 4
+        else:
+            final_priority = 5
         reranked.append(((final_priority, distance), addr))
 
     return [addr for _meta, addr in sorted(reranked)]
+
+
+def _recover_fast_seed_functions(
+    project: angr.Project,
+    *,
+    timeout: int,
+    limit: int | None,
+):
+    if project.arch.name != "86_16":
+        return []
+    recovered = _recover_seeded_exe_functions(project, timeout=timeout, limit=limit)
+    if recovered:
+        print("/* fast seed scan: using call/prologue/epilog heuristics without helper metadata. */")
+    return recovered
 
 
 def _recover_seeded_exe_functions(
@@ -1685,14 +2093,21 @@ def _decompile_function(
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
     lst_metadata: LSTMetadata | None = None,
     enable_structured_simplify: bool = True,
+    enable_postprocess: bool = True,
 ) -> tuple[str, str]:
+    effective_cod_metadata = cod_metadata or _sidecar_cod_metadata_for_function(
+        project,
+        function,
+        binary_path,
+        lst_metadata,
+    )
     with DECOMPILATION_PREP_LOCK:
         _apply_binary_specific_annotations(
             project,
             binary_path,
             lst_metadata,
             func_addr=function.addr,
-            cod_metadata=cod_metadata,
+            cod_metadata=effective_cod_metadata,
             synthetic_globals=synthetic_globals,
         )
         print(f"[dbg] decompile_function: addr={hex(function.addr)} name={function.name}")
@@ -1754,6 +2169,22 @@ def _decompile_function(
 
     if dec.codegen is None:
         return "empty", "Decompiler did not produce code."
+    if not enable_postprocess:
+        rendered_text, _ = _regenerate_codegen_text_safely(
+            dec.codegen,
+            context=f"{hex(function.addr)} {function.name} (non-optimized)",
+        )
+        formatted = _format_known_helper_calls(
+            project,
+            function,
+            rendered_text,
+            api_style,
+            binary_path,
+            cod_metadata=effective_cod_metadata,
+        )
+        formatted = _dedupe_adjacent_prototype_lines(formatted)
+        formatted = _sanitize_mangled_autonames_text(formatted)
+        return "ok", formatted
     setattr(project, "_inertia_rewrite_cache", {})
     stack_local_candidates = {
         id(variable): (variable, cvar)
@@ -1900,7 +2331,7 @@ def _decompile_function(
         rendered_text,
         api_style,
         binary_path,
-        cod_metadata=cod_metadata,
+        cod_metadata=effective_cod_metadata,
     )
     formatted = _normalize_boolean_conditions(formatted)
     formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
@@ -1916,13 +2347,13 @@ def _decompile_function(
     formatted = _collapse_annotated_stack_aliases_text(formatted)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
-    formatted = _annotate_cod_proc_output(formatted, function, cod_metadata)
+    formatted = _annotate_cod_proc_output(formatted, function, effective_cod_metadata)
     formatted = _collapse_annotated_stack_aliases_text(formatted)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
     formatted = _rewrite_known_helper_signature_text(formatted, function)
     formatted = _prune_trailing_generic_return_text(formatted)
-    formatted = _materialize_annotated_cod_declarations_text(formatted, function, cod_metadata)
+    formatted = _materialize_annotated_cod_declarations_text(formatted, function, effective_cod_metadata)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
     formatted = _normalize_spurious_duplicate_local_suffixes(formatted)
     formatted = _dedupe_adjacent_prototype_lines(formatted)
@@ -1932,13 +2363,13 @@ def _decompile_function(
         and binary_path.name.lower().endswith(".cod")
         and getattr(function, "name", "") == "fold_values"
     ):
-        simplified_formatted = _simplify_x86_16_stack_byte_pointers(formatted, cod_metadata)
+        simplified_formatted = _simplify_x86_16_stack_byte_pointers(formatted, effective_cod_metadata)
         if simplified_formatted != formatted:
             formatted = _prune_unused_local_declarations_text(simplified_formatted)
         else:
             formatted = simplified_formatted
-    if cod_metadata is not None and len(tuple(dict.fromkeys(cod_metadata.call_names))) == 1:
-        helper_name = cod_metadata.call_names[0].lstrip("_")
+    if effective_cod_metadata is not None and len(tuple(dict.fromkeys(effective_cod_metadata.call_names))) == 1:
+        helper_name = effective_cod_metadata.call_names[0].lstrip("_")
         redundant_wrapper_pattern = re.compile(
             rf"(?m)^(?P<indent>\s*){re.escape(helper_name)}\((?P<args>[^;\n]*)\);\s*\n"
             rf"(?P=indent)return\s+{re.escape(helper_name)}\((?P=args)\);\s*$"
@@ -3201,6 +3632,7 @@ def _decompile_function_with_stats(
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
     lst_metadata: LSTMetadata | None = None,
     enable_structured_simplify: bool = True,
+    enable_postprocess: bool = True,
 ):
     block_count, byte_count = _function_complexity(function)
     print(
@@ -3219,6 +3651,7 @@ def _decompile_function_with_stats(
         synthetic_globals=synthetic_globals,
         lst_metadata=lst_metadata,
         enable_structured_simplify=enable_structured_simplify,
+        enable_postprocess=enable_postprocess,
     )
     elapsed = time.perf_counter() - start
     print(f"[dbg] decompilation time for {function.addr:#x} {function.name}: {elapsed:.2f}s")
@@ -3278,6 +3711,7 @@ def _run_function_work_item(
     synthetic_globals: dict[int, tuple[str, int]] | None,
     lst_metadata: LSTMetadata | None,
     enable_structured_simplify: bool,
+    enable_postprocess: bool = True,
 ) -> FunctionWorkResult:
     with _capture_thread_output() as (stdout_buf, stderr_buf):
         status, payload, *_ = _decompile_function_with_stats(
@@ -3291,6 +3725,7 @@ def _run_function_work_item(
             synthetic_globals=synthetic_globals,
             lst_metadata=lst_metadata,
             enable_structured_simplify=enable_structured_simplify,
+            enable_postprocess=enable_postprocess,
         )
     debug_output = stdout_buf.getvalue()
     err_output = stderr_buf.getvalue()
@@ -12621,25 +13056,118 @@ def _is_zero_filled_region(project: angr.Project, addr: int, *, size: int = 8) -
 def _rank_labeled_function_entries(
     project: angr.Project,
     labeled_entries: list[tuple[int, str]],
+    metadata: LSTMetadata | None = None,
 ) -> list[tuple[int, str]]:
     entry_addr = getattr(project, "entry", None)
 
     def _priority(item: tuple[int, str]) -> tuple[int, int, int]:
         addr, name = item
         lowered = name.lower()
+        region = _lst_code_region(metadata, addr)
+        size = (region[1] - region[0]) if region is not None else None
         if addr == entry_addr:
             return (0, 0, addr)
         if lowered in {"start", "_start"} or lowered.endswith("_start"):
             return (1, abs(addr - entry_addr), addr)
         if lowered in {"main", "_main"} or lowered.endswith("main"):
             return (2, abs(addr - entry_addr), addr)
+        if size is not None and size <= 0x20:
+            return (3, abs(addr - entry_addr), addr)
+        if size is not None and size <= 0x80:
+            return (4, abs(addr - entry_addr), addr)
         if "padding" in lowered or lowered.startswith("align_"):
             return (8, abs(addr - entry_addr), addr)
         if _is_zero_filled_region(project, addr):
             return (7, abs(addr - entry_addr), addr)
-        return (3, abs(addr - entry_addr), addr)
+        return (5, abs(addr - entry_addr), addr)
 
     return sorted(labeled_entries, key=_priority)
+
+
+def _select_sidecar_showcase_entries(
+    project: angr.Project,
+    metadata: LSTMetadata,
+    labeled_entries: list[tuple[int, str]],
+    *,
+    max_count: int,
+) -> list[tuple[int, str]]:
+    ranked = _rank_labeled_function_entries(project, labeled_entries, metadata)
+    if max_count <= 0 or not ranked:
+        return []
+
+    by_addr = {addr: name for addr, name in ranked}
+    selected: list[tuple[int, str]] = []
+    seen: set[int] = set()
+
+    def _add(addr: int | None) -> None:
+        if addr is None or addr in seen or addr not in by_addr or len(selected) >= max_count:
+            return
+        selected.append((addr, by_addr[addr]))
+        seen.add(addr)
+
+    entry_addr = getattr(project, "entry", None)
+    _add(entry_addr)
+
+    def _tiny_candidate_priority(item: tuple[int, str]) -> tuple[int, int, int]:
+        addr, name = item
+        lowered = name.lower()
+        region = _lst_code_region(metadata, addr)
+        size = (region[1] - region[0]) if region is not None else 0xFFFF
+        if lowered.startswith("nullsub"):
+            bucket = 0
+        elif lowered.startswith("sub_"):
+            bucket = 1
+        elif "exit" in lowered or "amsg" in lowered:
+            bucket = 4
+        else:
+            bucket = 2
+        return (bucket, size, abs(addr - getattr(project, "entry", 0)))
+
+    tiny_candidates = [
+        (addr, name)
+        for addr, name in ranked
+        if addr not in seen
+        and (span := _lst_code_region(metadata, addr)) is not None
+        and (span[1] - span[0]) <= 0x20
+        and "padding" not in name.lower()
+        and name.lower() not in {"main", "_main", "start", "_start"}
+    ]
+    tiny_candidates.sort(key=_tiny_candidate_priority)
+    if tiny_candidates:
+        _add(tiny_candidates[0][0])
+
+    main_candidates = [
+        addr
+        for addr, name in ranked
+        if name.lower() in {"main", "_main"} or name.lower().endswith("main")
+    ]
+    additional_tiny_candidates = tiny_candidates[1:3]
+    for addr, _name in additional_tiny_candidates:
+        _add(addr)
+    if main_candidates:
+        _add(main_candidates[0])
+
+    for addr, _name in ranked:
+        _add(addr)
+        if len(selected) >= max_count:
+            break
+
+    return selected
+
+
+def _format_sidecar_function_catalog(metadata: LSTMetadata, *, limit: int | None = None) -> str:
+    lines: list[str] = []
+    entries = sorted(metadata.code_labels.items())
+    if limit is not None and limit > 0:
+        entries = entries[:limit]
+    for addr, name in entries:
+        region = _lst_code_region(metadata, addr)
+        if region is not None:
+            size = region[1] - region[0]
+            lines.append(f"{addr:#x} {name} size={size:#x} range=[{region[0]:#x}, {region[1]:#x})")
+        else:
+            lines.append(f"{addr:#x} {name}")
+    return "\n".join(lines)
 
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
@@ -12800,6 +13328,8 @@ def main(argv: list[str] | None = None) -> int:
             cod_metadata=cod_metadata,
             synthetic_globals=synthetic_globals,
         )
+        if lst_metadata is None:
+            print("/* helper metadata: none detected; proceeding with raw recovery and fast seed scan fallbacks. */")
     low_memory_path = _prefer_low_memory_path()
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
@@ -12874,6 +13404,24 @@ def main(argv: list[str] | None = None) -> int:
                 print("\n/* == asm fallback == */")
                 print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
                 return 4
+            nonopt_c = _try_decompile_non_optimized_slice(
+                project,
+                args.addr,
+                function_label or f"sub_{args.addr:x}",
+                timeout=args.timeout,
+                api_style=args.api_style,
+                binary_path=args.binary,
+                lst_metadata=lst_metadata,
+            )
+            if nonopt_c is not None:
+                print("/* Function recovery timed out; produced non-optimized slice decompilation. */")
+                print(f"/* binary: {args.binary} */")
+                print(f"/* arch: {project.arch.name} */")
+                print(f"/* entry: {project.entry:#x} */")
+                print(f"/* function: {args.addr:#x} {function_label or f'sub_{args.addr:x}'} */")
+                print("\n/* == c (non-optimized fallback) == */")
+                print(nonopt_c)
+                return 0
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
             _emit_timeout_and_exit(args.timeout, recovery_detail)
         except FuturesTimeoutError:
@@ -12907,6 +13455,24 @@ def main(argv: list[str] | None = None) -> int:
                 print("\n/* == asm fallback == */")
                 print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
                 return 4
+            nonopt_c = _try_decompile_non_optimized_slice(
+                project,
+                args.addr,
+                function_label or f"sub_{args.addr:x}",
+                timeout=args.timeout,
+                api_style=args.api_style,
+                binary_path=args.binary,
+                lst_metadata=lst_metadata,
+            )
+            if nonopt_c is not None:
+                print("/* Function recovery timed out; produced non-optimized slice decompilation. */")
+                print(f"/* binary: {args.binary} */")
+                print(f"/* arch: {project.arch.name} */")
+                print(f"/* entry: {project.entry:#x} */")
+                print(f"/* function: {args.addr:#x} {function_label or f'sub_{args.addr:x}'} */")
+                print("\n/* == c (non-optimized fallback) == */")
+                print(nonopt_c)
+                return 0
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
             _emit_timeout_and_exit(args.timeout, recovery_detail)
         except Exception as ex:
@@ -12915,8 +13481,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"/* Function recovery failed: {ex} */")
             else:
                 print(f"/* Function recovery failed {recovery_detail}: {ex} */")
+            print("\n/* == lift break probe == */")
+            print(_probe_lift_break(project, args.addr))
             print("\n/* == first block asm == */")
             print(_format_first_block_asm(project, args.addr))
+            print("\n/* == non-optimized disassembly == */")
+            start, end = _infer_linear_disassembly_window(project, args.addr)
+            print(_format_asm_range(project, start, end))
             return 5
 
         if function_label is not None:
@@ -12956,9 +13527,52 @@ def main(argv: list[str] | None = None) -> int:
             lst_metadata=lst_metadata,
         )
         if status != "ok":
+            slice_result = None
+            if lst_metadata is not None:
+                slice_result = _try_decompile_sidecar_slice(
+                    project,
+                    lst_metadata,
+                    func.addr,
+                    func.name,
+                    timeout=args.timeout,
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                )
+            if slice_result is not None:
+                print("\n/* == c (sidecar slice fallback) == */")
+                print(slice_result[1])
+                return 0
+            trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, func.addr, func.name)
+            if trivial_c is not None:
+                print("\n/* == c (trivial sidecar fallback) == */")
+                print(trivial_c)
+                return 0
+            nonopt_c = _try_decompile_non_optimized_slice(
+                project,
+                func.addr,
+                func.name,
+                timeout=args.timeout,
+                api_style=args.api_style,
+                binary_path=args.binary,
+                lst_metadata=lst_metadata,
+            )
+            if nonopt_c is not None:
+                print(f"\n/* Decompilation {status}: {payload} */")
+                print("/* Falling back to non-optimized slice decompilation. */")
+                print("\n/* == c (non-optimized fallback) == */")
+                print(nonopt_c)
+                return 0
             print(f"\n/* Decompilation {status}: {payload} */")
+            print("/* Falling back to non-optimized disassembly. */")
+            print("\n/* == lift break probe == */")
+            print(_probe_lift_break(project, func.addr))
             print("\n/* == asm fallback == */")
-            print(_format_first_block_asm(project, func.addr))
+            sidecar_region = _lst_code_region(lst_metadata, func.addr) if lst_metadata is not None else None
+            if sidecar_region is not None:
+                print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
+            else:
+                start, end = _infer_linear_disassembly_window(project, func.addr)
+                print(_format_asm_range(project, start, end))
             return 6 if status == "error" else 4
 
         print("\n/* == c == */")
@@ -12967,6 +13581,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print("/* recovering functions... */", flush=True)
     cfg = None
+    function_cfg_pairs: list[tuple[object, object]] = []
+    labeled_offsets: list[tuple[int, str]] = []
     if low_memory_path:
         print("/* Low-memory mode: using conservative catalog recovery. */")
     packed_exe = None if args.proc is not None else getattr(project, "_inertia_packed_exe", None)
@@ -12975,6 +13591,7 @@ def main(argv: list[str] | None = None) -> int:
             labeled_offsets = _rank_labeled_function_entries(
                 project,
                 list(lst_metadata.code_labels.items()),
+                lst_metadata,
             )
             if args.max_functions > 0:
                 labeled_offsets = labeled_offsets[: args.max_functions]
@@ -13018,13 +13635,32 @@ def main(argv: list[str] | None = None) -> int:
                 catalog_error = ex
 
         if cfg is None:
-            detail = "Timed out" if isinstance(catalog_error, FuturesTimeoutError) else _describe_exception(catalog_error) if catalog_error is not None else "Unknown failure"
-            print(f"/* Function catalog recovery failed: {detail} */")
-            if packed_exe is not None:
-                print(f"/* hint: {args.binary.name} looks packed ({packed_exe}); startup-stub output may be the current limit. */")
-            print("\n/* == entry asm == */")
-            print(_format_first_block_asm(project, project.entry))
-            return 5
+            fast_seed_pairs: list[tuple[object, object]] = []
+            if lst_metadata is None:
+                print("/* Whole-binary CFG recovery failed; attempting fast seed scan without helper metadata. */")
+                fast_seed_pairs = _recover_fast_seed_functions(
+                    project,
+                    timeout=min(max(4, args.timeout), 8),
+                    limit=args.max_functions if args.max_functions > 0 else 16,
+                )
+            if fast_seed_pairs:
+                function_cfg_pairs = fast_seed_pairs
+                total_functions = len(function_cfg_pairs)
+                shown_total = len(function_cfg_pairs)
+                cfg = None
+            else:
+                detail = "Timed out" if isinstance(catalog_error, FuturesTimeoutError) else _describe_exception(catalog_error) if catalog_error is not None else "Unknown failure"
+                print(f"/* Function catalog recovery failed: {detail} */")
+                if packed_exe is not None:
+                    print(f"/* hint: {args.binary.name} looks packed ({packed_exe}); startup-stub output may be the current limit. */")
+                print("\n/* == lift break probe == */")
+                print(_probe_lift_break(project, project.entry))
+                print("\n/* == entry asm == */")
+                print(_format_first_block_asm(project, project.entry))
+                print("\n/* == non-optimized disassembly == */")
+                start, end = _infer_linear_disassembly_window(project, project.entry)
+                print(_format_asm_range(project, start, end))
+                return 5
 
     if cfg is not None:
         if function_label is not None and project.entry in cfg.functions:
@@ -13038,7 +13674,7 @@ def main(argv: list[str] | None = None) -> int:
     if lst_metadata is not None and lst_metadata.code_labels:
         total_functions = len(labeled_offsets)
         shown_total = len(labeled_offsets)
-    else:
+    elif not function_cfg_pairs:
         limit = args.max_functions if args.max_functions > 0 else None
         functions, total_functions = _interesting_functions(cfg, limit=limit)
         shown_total = len(functions)
@@ -13078,6 +13714,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"/* arch: {project.arch.name} */")
     print(f"/* entry: {project.entry:#x} */")
     print(f"/* functions recovered: {total_functions} */")
+    if lst_metadata is not None and lst_metadata.code_labels:
+        print("/* == known function catalog (sidecar-backed) == */")
+        print(_format_sidecar_function_catalog(lst_metadata))
 
     if (
         lst_metadata is not None
@@ -13086,7 +13725,12 @@ def main(argv: list[str] | None = None) -> int:
         and shown_total > 24
     ):
         auto_cap = 4 if total_functions > 256 else min(24, max(8, args.timeout))
-        labeled_offsets = labeled_offsets[:auto_cap]
+        labeled_offsets = _select_sidecar_showcase_entries(
+            project,
+            lst_metadata,
+            labeled_offsets,
+            max_count=auto_cap,
+        )
         shown_total = len(labeled_offsets)
         print(
             f"/* sidecar catalog detected {total_functions} functions; "
@@ -13099,50 +13743,16 @@ def main(argv: list[str] | None = None) -> int:
     function_tasks: list[FunctionWorkItem] = []
     result_map: dict[int, FunctionWorkResult] = {}
     if lst_metadata is not None and lst_metadata.code_labels:
-        recover_timeout = min(args.timeout, 2)
         for index, (offset, name) in enumerate(labeled_offsets, start=1):
-            try:
-                function_cfg, function = _run_with_timeout_in_daemon_thread(
-                    lambda offset=offset, name=name: _recover_lst_function(
-                        project,
-                        lst_metadata,
-                        offset,
-                        name,
-                        timeout=recover_timeout,
-                        window=args.window,
-                        low_memory=low_memory_path,
-                    ),
-                    timeout=recover_timeout + 1,
-                    thread_name_prefix="lst-recover",
-                )
-                function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
-            except FuturesTimeoutError:
-                placeholder = _make_placeholder_function(project, offset, name)
-                function_tasks.append(FunctionWorkItem(index=index, function_cfg=None, function=placeholder))
-                result_map[index] = FunctionWorkResult(
-                    index=index,
-                    status="timeout",
-                    payload=f"Timed out while recovering {name} at {offset:#x}.",
-                    debug_output="",
-                    function=placeholder,
-                    function_cfg=None,
-                )
-            except Exception as ex:
-                placeholder = _make_placeholder_function(project, offset, name)
-                function_tasks.append(FunctionWorkItem(index=index, function_cfg=None, function=placeholder))
-                result_map[index] = FunctionWorkResult(
-                    index=index,
-                    status="error",
-                    payload=f"Recovery failed for {name} at {offset:#x}: {_describe_exception(ex)}",
-                    debug_output="",
-                    function=placeholder,
-                    function_cfg=None,
-                )
+            placeholder = _make_placeholder_function(project, offset, name)
+            function_tasks.append(FunctionWorkItem(index=index, function_cfg=None, function=placeholder))
     else:
         for index, (function_cfg, function) in enumerate(function_cfg_pairs, start=1):
             function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
 
     workers = _choose_function_parallelism(len(function_tasks))
+    if lst_metadata is not None and lst_metadata.code_labels:
+        workers = 1
     if getattr(project, "_inertia_supplemental_scan_used", False) and len(function_tasks) <= 8:
         workers = 1
     if workers > 1:
@@ -13150,21 +13760,154 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("/* parallel function decompilation: disabled (RAM pressure or single function) */")
 
-    if workers <= 1:
-        for item in function_tasks:
-            if item.function_cfg is None:
-                continue
-            result = _run_function_work_item(
-                item,
+    def _emit_function_result(item: FunctionWorkItem, result: FunctionWorkResult) -> tuple[int, int]:
+        decompiled_local = 0
+        failed_local = 0
+        if result.debug_output:
+            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+        function = item.function
+        print(f"\n/* == function {function.addr:#x} {function.name} == */")
+        if args.show_asm:
+            print("/* -- asm -- */")
+            print(_format_first_block_asm(project, function.addr))
+        if result.status == "ok":
+            decompiled_local += 1
+            print("/* -- c -- */")
+            print(result.payload)
+            return decompiled_local, failed_local
+
+        slice_result = None
+        if lst_metadata is not None:
+            slice_result = _try_decompile_sidecar_slice(
+                project,
+                lst_metadata,
+                function.addr,
+                function.name,
                 timeout=args.timeout,
                 api_style=args.api_style,
                 binary_path=args.binary,
-                cod_metadata=cod_metadata,
-                synthetic_globals=synthetic_globals,
-                lst_metadata=lst_metadata,
-                enable_structured_simplify=args.addr is not None,
             )
-            result_map[item.index] = result
+        if slice_result is not None:
+            decompiled_local += 1
+            print("/* -- c (sidecar slice fallback) -- */")
+            print(slice_result[1])
+            return decompiled_local, failed_local
+
+        trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, function.addr, function.name)
+        if trivial_c is not None:
+            decompiled_local += 1
+            print("/* -- c (trivial sidecar fallback) -- */")
+            print(trivial_c)
+            return decompiled_local, failed_local
+        nonopt_c = _try_decompile_non_optimized_slice(
+            project,
+            function.addr,
+            function.name,
+            timeout=args.timeout,
+            api_style=args.api_style,
+            binary_path=args.binary,
+            lst_metadata=lst_metadata,
+        )
+        if nonopt_c is not None:
+            decompiled_local += 1
+            print(f"/* problem: {result.status} */")
+            print(result.payload)
+            print("/* -- c (non-optimized fallback) -- */")
+            print(nonopt_c)
+            return decompiled_local, failed_local
+
+        failed_local += 1
+        sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
+        asm_fallback = (
+            _format_asm_range(project, sidecar_region[0], sidecar_region[1])
+            if sidecar_region is not None
+            else _format_asm_range(project, *_infer_linear_disassembly_window(project, function.addr))
+        )
+        if result.status == "empty":
+            if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
+                print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
+            else:
+                print(f"-- {result.status} --")
+                print(result.payload)
+                print("-- asm fallback --")
+                print(asm_fallback)
+        else:
+            print(f"-- {result.status} --")
+            print(result.payload)
+            print("-- lift break probe --")
+            print(_probe_lift_break(project, function.addr))
+            print("-- asm fallback --")
+            print(asm_fallback)
+        return decompiled_local, failed_local
+
+    if workers <= 1:
+        decompiled = 0
+        failed = 0
+        recover_timeout = min(args.timeout, 2)
+        for item in function_tasks:
+            result = result_map.get(item.index)
+            if result is None:
+                active_item = item
+                if item.function_cfg is None and lst_metadata is not None:
+                    try:
+                        function_cfg, function = _run_with_timeout_in_daemon_thread(
+                            lambda offset=item.function.addr, name=item.function.name: _recover_lst_function(
+                                project,
+                                lst_metadata,
+                                offset,
+                                name,
+                                timeout=recover_timeout,
+                                window=args.window,
+                                low_memory=low_memory_path,
+                            ),
+                            timeout=recover_timeout + 1,
+                            thread_name_prefix="lst-recover",
+                        )
+                        active_item = FunctionWorkItem(
+                            index=item.index,
+                            function_cfg=function_cfg,
+                            function=function,
+                        )
+                    except FuturesTimeoutError:
+                        result = FunctionWorkResult(
+                            index=item.index,
+                            status="timeout",
+                            payload=f"Timed out while recovering {item.function.name} at {item.function.addr:#x}.",
+                            debug_output="",
+                            function=item.function,
+                            function_cfg=None,
+                        )
+                    except Exception as ex:
+                        result = FunctionWorkResult(
+                            index=item.index,
+                            status="error",
+                            payload=f"Recovery failed for {item.function.name} at {item.function.addr:#x}: {_describe_exception(ex)}",
+                            debug_output="",
+                            function=item.function,
+                            function_cfg=None,
+                        )
+                if result is None:
+                    if active_item.function_cfg is None:
+                        continue
+                    result = _run_function_work_item(
+                        active_item,
+                        timeout=args.timeout,
+                        api_style=args.api_style,
+                        binary_path=args.binary,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        lst_metadata=lst_metadata,
+                        enable_structured_simplify=args.addr is not None,
+                    )
+                result_map[item.index] = result
+            d, f = _emit_function_result(item, result)
+            decompiled += d
+            failed += f
+        total_shown = shown_total
+        print(f"\nsummary: decompiled {decompiled}/{total_shown} shown functions")
+        if failed:
+            print(f"summary: {failed} functions fell back to asm/details")
+        return 0 if decompiled else 2
     else:
         executor = DaemonThreadPoolExecutor(max_workers=workers, thread_name_prefix="func")
         try:
@@ -13224,54 +13967,9 @@ def main(argv: list[str] | None = None) -> int:
         result = result_map.get(item.index)
         if result is None:
             continue
-        if result.debug_output:
-            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
-        function = item.function
-        print(f"\n/* == function {function.addr:#x} {function.name} == */")
-        if args.show_asm:
-            print("/* -- asm -- */")
-            print(_format_first_block_asm(project, function.addr))
-        if result.status == "ok":
-            decompiled += 1
-            print("/* -- c -- */")
-            print(result.payload)
-        else:
-            slice_result = None
-            if lst_metadata is not None:
-                slice_result = _try_decompile_sidecar_slice(
-                    project,
-                    lst_metadata,
-                    function.addr,
-                    function.name,
-                    timeout=args.timeout,
-                    api_style=args.api_style,
-                    binary_path=args.binary,
-                )
-            if slice_result is not None:
-                decompiled += 1
-                print("/* -- c (sidecar slice fallback) -- */")
-                print(slice_result[1])
-                continue
-            failed += 1
-            sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
-            asm_fallback = (
-                _format_asm_range(project, sidecar_region[0], sidecar_region[1])
-                if sidecar_region is not None
-                else _format_first_block_asm(project, function.addr)
-            )
-            if result.status == "empty":
-                if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
-                    print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
-                else:
-                    print(f"-- {result.status} --")
-                    print(result.payload)
-                    print("-- asm fallback --")
-                    print(asm_fallback)
-            else:
-                print(f"-- {result.status} --")
-                print(result.payload)
-                print("-- asm fallback --")
-                print(asm_fallback)
+        d, f = _emit_function_result(item, result)
+        decompiled += d
+        failed += f
 
     total_shown = shown_total
     print(f"\nsummary: decompiled {decompiled}/{total_shown} shown functions")
