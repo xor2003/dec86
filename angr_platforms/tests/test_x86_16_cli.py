@@ -8,7 +8,20 @@ from types import SimpleNamespace
 import pytest
 
 import decompile
+from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
+from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
+from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
 from angr_platforms.X86_16.load_dos_mz import DOSMZ
+from omf_pat import (
+    PatModule,
+    PatPublicName,
+    ensure_pat_from_omf_input,
+    extract_omf_modules_from_lib,
+    generate_pat_from_omf_lib,
+    parse_microsoft_lib,
+    match_pat_modules,
+    parse_pat_file,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +42,56 @@ ILOD_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOD.COD"
 ILOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOT.COD"
 IMOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOT.COD"
 IMOX_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOX.COD"
+LIFE_EXE = REPO_ROOT / "LIFE.EXE"
+LIFE_COD = REPO_ROOT / "LIFE.COD"
+EM86_OBJ = REPO_ROOT / "reko" / "subjects" / "OBJ-msdos-x86" / "em86.obj"
+
+
+def _build_synthetic_microsoft_lib(
+    module_bytes: bytes,
+    *,
+    page_size: int = 512,
+    case_sensitive: bool = False,
+    extended_records: list[tuple[int, tuple[int, ...]]] | None = None,
+) -> bytes:
+    header_payload_len = page_size - 3
+    module_page = module_bytes + (b"\x00" * ((page_size - (len(module_bytes) % page_size)) % page_size))
+    dict_offset = page_size + len(module_page)
+    dict_blocks = 1
+    header = bytearray(page_size)
+    header[0] = 0xF0
+    header[1:3] = header_payload_len.to_bytes(2, "little")
+    header[3:7] = dict_offset.to_bytes(4, "little")
+    header[7:9] = dict_blocks.to_bytes(2, "little")
+    header[9] = 0x01 if case_sensitive else 0x00
+    dict_page = bytearray(512)
+    blob = bytes(header) + module_page + bytes(dict_page)
+    if extended_records:
+        payload = bytearray()
+        payload += len(extended_records).to_bytes(2, "little")
+        table_size = len(extended_records) * 4
+        dependency_lists = bytearray()
+        offsets: list[int] = []
+        for _page_number, deps in extended_records:
+            offsets.append(2 + table_size + len(dependency_lists))
+            for dep in deps:
+                dependency_lists += int(dep).to_bytes(2, "little")
+            dependency_lists += (0).to_bytes(2, "little")
+        for (page_number, _deps), dep_offset in zip(extended_records, offsets, strict=True):
+            payload += int(page_number).to_bytes(2, "little")
+            payload += int(dep_offset).to_bytes(2, "little")
+        payload += dependency_lists
+        record_length = len(payload) + 1
+        ext = bytearray()
+        ext.append(0xF2)
+        ext += record_length.to_bytes(2, "little")
+        ext += payload
+        ext.append(0)
+        blob += bytes(ext)
+    trailer = bytearray(512)
+    trailer[0] = 0xF1
+    trailer[1:3] = (509).to_bytes(2, "little")
+    return blob + bytes(trailer)
 
 
 def _run_decompile_proc(
@@ -247,6 +310,139 @@ def test_pick_function_lean_can_skip_far_call_extension(monkeypatch):
     ]
 
 
+def test_find_codeview_nb00_detects_life_exe():
+    found = find_codeview_nb00(LIFE_EXE.read_bytes())
+    assert found is not None
+    signature, debug_base, subdir_addr = found
+    assert signature == "NB00"
+    assert debug_base == 23926
+    assert subdir_addr == 31887
+
+
+def test_parse_codeview_nb00_extracts_life_functions_and_data():
+    info = parse_codeview_nb00(LIFE_EXE, load_base_linear=0x10000)
+
+    assert info is not None
+    assert len(info.modules) >= 3
+    assert len(info.publics) >= 100
+    assert "main" in {name.lstrip("_") for name in info.code_labels.values()}
+    assert "init_life" in {name.lstrip("_") for name in info.code_labels.values()}
+    assert "draw_box" in {name.lstrip("_") for name in info.code_labels.values()}
+    assert "generation" in {name.lstrip("_") for name in info.code_labels.values()}
+    assert "speed" in {name.lstrip("_") for name in info.data_labels.values()}
+    assert info.code_labels[0x10010].lstrip("_") == "main"
+    assert info.code_labels[0x100ea].lstrip("_") == "init_life"
+    assert info.code_labels[0x101a3].lstrip("_") == "draw_box"
+    assert info.data_labels[0x15bb0].lstrip("_") == "speed"
+    assert "LIFE.OBJ" in {module.name for module in info.modules}
+
+
+def test_parse_codeview_nb00_agrees_with_life_cod_proc_names():
+    info = parse_codeview_nb00(LIFE_EXE, load_base_linear=0x10000)
+
+    assert info is not None
+    cod_text = LIFE_COD.read_text(errors="ignore")
+
+    for proc_name in ("_main", "_init_life", "_draw_box", "_generation", "_proc_key"):
+        assert f"PUBLIC\t{proc_name}" in cod_text
+        assert proc_name.lstrip("_") in {name.lstrip("_") for name in info.code_labels.values()}
+
+
+def test_extract_cod_listing_metadata_reads_life_cod_ranges():
+    metadata = extract_cod_listing_metadata(LIFE_COD)
+
+    assert metadata.code_labels[0] == "_main"
+    assert metadata.proc_kinds[0] == "NEAR"
+    assert metadata.code_ranges[0][1] > metadata.code_ranges[0][0]
+
+
+def test_load_lst_metadata_uses_codeview_nb00_when_sidecars_absent():
+    project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+    metadata = decompile._load_lst_metadata(LIFE_EXE, project)
+
+    assert metadata is not None
+    assert metadata.absolute_addrs is True
+    assert "codeview_nb00" in metadata.source_format
+    assert "cod_listing" in metadata.source_format
+    assert metadata.code_labels[0x10010] == "main"
+    assert metadata.code_labels[0x100ea] == "init_life"
+    assert metadata.data_labels[0x15bb0] == "_speed"
+
+
+def test_sidecar_cod_metadata_for_function_uses_sibling_cod():
+    project = SimpleNamespace()
+    function = SimpleNamespace(addr=0x10010, name="main")
+    metadata = SimpleNamespace(
+        cod_path=str(LIFE_COD),
+        cod_proc_kinds={0x10010: "NEAR"},
+    )
+
+    cod_metadata = decompile._sidecar_cod_metadata_for_function(project, function, LIFE_EXE, metadata)
+
+    assert cod_metadata is not None
+    assert cod_metadata.has_source_lines(("main(argc, argv)",))
+
+
+def test_dosmz_loader_handles_life_exe_sparse_relocations():
+    project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+
+    assert project.arch.name == "86_16"
+    assert project.entry == 0x11423
+    assert project.loader.main_object.max_addr >= 0x18be1
+
+
+def test_probe_lift_break_reports_first_bad_instruction(monkeypatch):
+    insns = [
+        SimpleNamespace(address=0x1000, size=1, mnemonic="push", op_str="bp"),
+        SimpleNamespace(address=0x1001, size=2, mnemonic="mov", op_str="bp, sp"),
+        SimpleNamespace(address=0x1003, size=2, mnemonic="int", op_str="0x21"),
+    ]
+    project = SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda addr, size, opt_level=0: (_ for _ in ()).throw(ValueError("bad lift")) if addr == 0x1003 else object()
+        ),
+    )
+
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x1000, 0x1005))
+    monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: insns)
+
+    rendered = decompile._probe_lift_break(project, 0x1000)
+
+    assert "first lift failure at 0x1003" in rendered
+    assert "0x1003: int 0x21" in rendered
+
+
+def test_try_decompile_non_optimized_slice_uses_raw_slice(monkeypatch):
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\x90\xc3")),
+    )
+    function = SimpleNamespace(name="main")
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1003))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (SimpleNamespace(), function),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("ok", "int main(void)\n{\n    return 0;\n}\n", 1, 3, 0.01),
+    )
+
+    rendered = decompile._try_decompile_non_optimized_slice(
+        project,
+        0x1000,
+        "main",
+        timeout=1,
+        api_style="modern",
+        binary_path=None,
+        lst_metadata=None,
+    )
+
+    assert "int main" in rendered
+
+
 def test_recover_lst_function_prefers_lean_cfgfast_for_labeled_x86_16(monkeypatch):
     project = SimpleNamespace(entry=0x1E432, arch=SimpleNamespace(name="86_16"))
     metadata = SimpleNamespace(absolute_addrs=True)
@@ -283,9 +479,168 @@ def test_recover_lst_function_prefers_lean_cfgfast_for_labeled_x86_16(monkeypatc
     assert func.name == "main"
 
 
+def test_rank_exe_function_seeds_uses_epilog_follow_ons(monkeypatch):
+    code = b"\xc3\x55\x8b\xec\x90"
+    project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                max_addr=0x1004,
+                linked_base=0x1000,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_linear_disassembly",
+        lambda *_args, **_kwargs: [SimpleNamespace(address=0x1000, size=1, mnemonic="ret", op_str="")],
+    )
+
+    ranked = decompile._rank_exe_function_seeds(project)
+
+    assert 0x1001 in ranked
+
+
+def test_match_flair_startup_entry_matches_watcom_startup_pattern():
+    entry_bytes = bytes.fromhex("CCEBFD90909090" + "90" * 25)
+
+    matches = match_flair_startup_entry(entry_bytes, Path("/home/xor/ida77/flair77"))
+
+    assert matches
+    assert any(match.pat_path.endswith("exe_wa16.pat") for match in matches)
+
+
+def test_list_flair_sig_libraries_reads_pascal_catalogs():
+    libraries = list_flair_sig_libraries(Path("/home/xor/ida77/flair77"))
+
+    assert any("Turbo Pascal" in library.title for library in libraries)
+
+
+def test_ensure_pat_from_omf_input_generates_fallback_pat_for_obj(tmp_path):
+    pat_path = ensure_pat_from_omf_input(EM86_OBJ, tmp_path, flair_root=Path("/home/xor/ida77/flair77"))
+
+    assert pat_path is not None
+    modules = parse_pat_file(pat_path)
+    assert [module.module_name for module in modules] == ["E086_SHORTCUT", "E086_ENTRY"]
+
+
+def test_ensure_pat_from_omf_input_merges_plb_and_fallback_for_life_obj(tmp_path):
+    pat_path = ensure_pat_from_omf_input(REPO_ROOT / "LIFE.OBJ", tmp_path, flair_root=Path("/home/xor/ida77/flair77"))
+
+    assert pat_path is not None
+    modules = parse_pat_file(pat_path)
+    names = {module.module_name for module in modules}
+    assert "_main" in names
+    assert "_generation" in names
+    rich_module = next(module for module in modules if module.referenced_names and any(pub.name == "_main" for pub in module.public_names))
+    assert any(ref.name == "__chkstk" for ref in rich_module.referenced_names)
+    assert len(modules) >= 15
+
+
+def test_extract_omf_modules_from_lib_reads_page_aligned_module(tmp_path):
+    lib_path = tmp_path / "sample.lib"
+    lib_path.write_bytes(_build_synthetic_microsoft_lib(EM86_OBJ.read_bytes()))
+
+    modules = extract_omf_modules_from_lib(lib_path)
+
+    assert len(modules) == 1
+    assert modules[0].module_name == "emu086.ASM"
+    assert modules[0].data.startswith(EM86_OBJ.read_bytes()[:16])
+
+
+def test_parse_microsoft_lib_reads_header_and_extended_dictionary(tmp_path):
+    lib_path = tmp_path / "sample.lib"
+    lib_path.write_bytes(
+        _build_synthetic_microsoft_lib(
+            EM86_OBJ.read_bytes(),
+            case_sensitive=True,
+            extended_records=[(1, (7, 9))],
+        )
+    )
+
+    metadata = parse_microsoft_lib(lib_path)
+
+    assert metadata.header.page_size == 512
+    assert metadata.header.case_sensitive is True
+    assert metadata.header.dictionary_blocks == 1
+    assert len(metadata.modules) == 1
+    assert metadata.modules[0].page_number == 1
+    assert metadata.modules[0].dependency_indexes == (7, 9)
+    assert metadata.extended_records[0].page_number == 1
+    assert metadata.extended_records[0].dependency_indexes == (7, 9)
+
+
+def test_generate_pat_from_omf_lib_extracts_obj_members(tmp_path):
+    lib_path = tmp_path / "sample.lib"
+    lib_path.write_bytes(_build_synthetic_microsoft_lib(EM86_OBJ.read_bytes()))
+    pat_path = tmp_path / "sample.pat"
+
+    count = generate_pat_from_omf_lib(lib_path, pat_path)
+
+    assert count >= 2
+    modules = parse_pat_file(pat_path)
+    assert [module.module_name for module in modules[:2]] == ["E086_SHORTCUT", "E086_ENTRY"]
+
+
+def test_match_pat_modules_labels_unique_generated_function_match():
+    image = bytes.fromhex(
+        "90 90 90 FB FC 52 50 53 55 56 57 06 51 1E 8B EC 36 89 2E DE 00 C5 76 12 AD 89 76 12 8C D7 8E DF 8A CC 98 C3 90"
+    )
+    module = PatModule(
+        source_path="<memory>",
+        module_name="demo_func",
+        pattern_bytes=tuple([0xFB, 0xFC, 0x52, 0x50, 0x53, 0x55, 0x56, 0x57, 0x06, 0x51, 0x1E, 0x8B] + [None] * 20),
+        module_length=0x0C,
+        public_names=(PatPublicName(offset=0, name="demo_func"),),
+        referenced_names=(),
+        tail_bytes=(),
+    )
+
+    code_labels, code_ranges = match_pat_modules(image, 0x1000, [module])
+
+    assert code_labels == {0x1003: "demo_func"}
+    assert code_ranges == {0x1003: (0x1003, 0x100F)}
+
+
+def test_detect_flair_metadata_merges_local_pat_matches(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x2000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(),
+            memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 32),
+        ),
+    )
+    monkeypatch.setattr(decompile, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(decompile, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(
+        decompile,
+        "discover_local_pat_matches",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            code_labels={0x1234: "helper_func"},
+            code_ranges={0x1234: (0x1234, 0x1250)},
+            source_formats=("local_omf_pat",),
+        ),
+    )
+
+    code_labels, code_ranges, source_formats = decompile._detect_flair_metadata(Path("/tmp/demo.exe"), project)
+
+    assert code_labels[0x1234] == "helper_func"
+    assert code_ranges[0x1234] == (0x1234, 0x1250)
+    assert "local_omf_pat" in source_formats
+
+
 def test_rank_labeled_function_entries_prefers_entry_and_main(monkeypatch):
     project = SimpleNamespace(entry=0x1E432)
     monkeypatch.setattr(decompile, "_is_zero_filled_region", lambda *_args, **_kwargs: False)
+    metadata = SimpleNamespace(
+        code_ranges={
+            0x10000: (0x10000, 0x10010),
+            0x10010: (0x10010, 0x10147),
+            0x1E432: (0x1E432, 0x1E4E4),
+            0x1E4C6: (0x1E4C6, 0x1E4D5),
+        }
+    )
 
     ranked = decompile._rank_labeled_function_entries(
         project,
@@ -295,6 +650,7 @@ def test_rank_labeled_function_entries_prefers_entry_and_main(monkeypatch):
             (0x1E432, "start"),
             (0x1E4C6, "cintDIV"),
         ],
+        metadata,
     )
 
     assert ranked[:4] == [
@@ -351,6 +707,52 @@ def test_lst_code_region_prefers_exact_or_containing_sidecar_span():
     assert decompile._lst_code_region(metadata, 0x10080) == (0x10010, 0x10147)
     assert decompile._lst_code_region(metadata, 0x10147) == (0x10147, 0x10211)
     assert decompile._lst_code_region(metadata, 0x20000) is None
+
+
+def test_format_sidecar_function_catalog_includes_ranges_and_sizes():
+    metadata = SimpleNamespace(
+        code_labels={
+            0x10010: "main",
+            0x10147: "drawCockpit",
+        },
+        code_ranges={
+            0x10010: (0x10010, 0x10147),
+            0x10147: (0x10147, 0x10211),
+        },
+    )
+
+    rendered = decompile._format_sidecar_function_catalog(metadata)
+
+    assert "0x10010 main size=0x137 range=[0x10010, 0x10147)" in rendered
+    assert "0x10147 drawCockpit size=0xca range=[0x10147, 0x10211)" in rendered
+
+
+def test_parse_idc_metadata_filters_control_flow_labels(tmp_path):
+    idc_path = tmp_path / "sample.idc"
+    idc_path.write_text(
+        'set_name(0X10010, "main");\n'
+        'set_name(0X1008C, "cond_1008C");\n'
+        'set_name(0X1009D, "else_1009D");\n',
+        encoding="utf-8",
+    )
+
+    code_labels, data_labels = decompile._parse_idc_metadata(idc_path)
+
+    assert code_labels == {0x10010: "main"}
+    assert data_labels == {
+        0x1008C: "cond_1008C",
+        0x1009D: "else_1009D",
+    }
+
+
+def test_label_looks_like_function_filters_internal_hex_suffixed_flow_labels():
+    assert decompile._label_looks_like_function("main")
+    assert decompile._label_looks_like_function("MainGameLoop")
+    assert decompile._label_looks_like_function("cintDIV")
+    assert not decompile._label_looks_like_function("cond_1008C")
+    assert not decompile._label_looks_like_function("innerCond_12D71")
+    assert not decompile._label_looks_like_function("nextInner2_12D9E")
+    assert not decompile._label_looks_like_function("out_12C7D")
 
 
 def test_fallback_entry_function_uses_fast_recovery_for_call_heavy_cod_helpers(monkeypatch):
