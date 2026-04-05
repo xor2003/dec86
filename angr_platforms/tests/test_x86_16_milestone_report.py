@@ -1,5 +1,5 @@
 from angr_platforms.X86_16.milestone_report import build_x86_16_milestone_report
-from angr_platforms.X86_16.validation_manifest import describe_x86_16_martypc_differential_triage
+from angr_platforms.X86_16.validation_manifest import describe_x86_16_validation_triage
 
 
 def test_x86_16_milestone_report_combines_scan_and_quality_context():
@@ -455,46 +455,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "conditional_jump",
         ),
     }
-    assert report["martypc_differential_triage"] == describe_x86_16_martypc_differential_triage()
-    assert report["martypc_progress_summary"] == {
-        "total": 13,
-        "landed": 13,
-        "partial": 0,
-        "open": 0,
-        "strict_percent": 100.0,
-        "weighted_percent": 100.0,
-        "landed_codes": (
-            "P0.1",
-            "P0.2",
-            "P0.3",
-            "P0.4",
-            "P0.5",
-            "P1.1",
-            "P1.2",
-            "P1.3",
-            "P2.1",
-            "P2.2",
-            "P2.3",
-            "P3.1",
-            "P3.2",
-        ),
-        "partial_codes": (),
-        "open_codes": (),
-    }
-    assert report["martypc_improvement_progress"][0] == {
-        "code": "P0.1",
-        "title": "Split address-width and operand-width explicitly",
-        "priority": "P0",
-        "status": "landed",
-        "code_surfaces": [
-            "addressing_helpers.py",
-            "exec.py",
-            "parse.py",
-            "instr16.py",
-            "instr32.py",
-        ],
-        "completion_signal": "No instruction handler should guess whether an add is address math or operand math.",
-    }
+    assert report["validation_triage"] == describe_x86_16_validation_triage()
     assert report["mixed_width_extension_surface"] == {
         "matrix": (
             {

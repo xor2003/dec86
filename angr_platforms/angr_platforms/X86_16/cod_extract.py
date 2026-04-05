@@ -22,6 +22,13 @@ class CODProcMetadata:
         return set(required_lines).issubset(self.source_line_set)
 
 
+@dataclass(frozen=True)
+class CODListingMetadata:
+    code_labels: dict[int, str]
+    code_ranges: dict[int, tuple[int, int]]
+    proc_kinds: dict[int, str]
+
+
 def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> list[dict[str, object]]:
     lines = cod_path.read_text(errors="ignore").splitlines()
     start_marker = f"{proc_name}\tPROC {proc_kind}"
@@ -53,6 +60,64 @@ def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str 
     if not entries:
         raise ValueError(f"did not find {proc_name} ({proc_kind}) in {cod_path}")
     return entries
+
+
+def extract_cod_listing_metadata(cod_path: Path) -> CODListingMetadata:
+    lines = cod_path.read_text(errors="ignore").splitlines()
+    proc_re = re.compile(r"^\s*(?P<name>[A-Za-z_$?@][\w$?@]*)\s+PROC\s+(?P<kind>[A-Za-z]+)\b", re.IGNORECASE)
+    endp_re = re.compile(r"^\s*(?P<name>[A-Za-z_$?@][\w$?@]*)\s+ENDP\b", re.IGNORECASE)
+    entry_re = re.compile(r"\*\*\*\s+(?P<offset>[0-9A-Fa-f]+)\s+(?P<bytes>(?:[0-9A-Fa-f]{2}\s+)+)")
+
+    code_labels: dict[int, str] = {}
+    code_ranges: dict[int, tuple[int, int]] = {}
+    proc_kinds: dict[int, str] = {}
+
+    current_name: str | None = None
+    current_kind: str | None = None
+    current_start: int | None = None
+    current_end: int | None = None
+
+    def _finalize_current() -> None:
+        nonlocal current_name, current_kind, current_start, current_end
+        if current_name is None or current_kind is None or current_start is None:
+            current_name = None
+            current_kind = None
+            current_start = None
+            current_end = None
+            return
+        end = current_end if current_end is not None and current_end > current_start else current_start + 1
+        code_labels.setdefault(current_start, current_name)
+        code_ranges.setdefault(current_start, (current_start, end))
+        proc_kinds.setdefault(current_start, current_kind)
+        current_name = None
+        current_kind = None
+        current_start = None
+        current_end = None
+
+    for line in lines:
+        proc_match = proc_re.match(line)
+        if proc_match is not None:
+            _finalize_current()
+            current_name = proc_match.group("name")
+            current_kind = proc_match.group("kind").upper()
+            continue
+        if current_name is None:
+            continue
+        end_match = endp_re.match(line)
+        if end_match is not None and end_match.group("name") == current_name:
+            _finalize_current()
+            continue
+        entry_match = entry_re.search(line)
+        if entry_match is None:
+            continue
+        offset = int(entry_match.group("offset"), 16)
+        byte_count = len(entry_match.group("bytes").split())
+        if current_start is None:
+            current_start = offset
+        current_end = max(current_end or 0, offset + max(byte_count, 1))
+
+    _finalize_current()
+    return CODListingMetadata(code_labels=code_labels, code_ranges=code_ranges, proc_kinds=proc_kinds)
 
 
 def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> CODProcMetadata:

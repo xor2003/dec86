@@ -34,6 +34,14 @@ class DOSMZHeader:
         )
 
 
+@dataclass(frozen=True)
+class MZSegmentSpan:
+    segment: int
+    start_linear: int
+    end_linear: int
+    evidence: tuple[str, ...]
+
+
 class DOSMZ(Blob):
     """
     Minimal DOS MZ loader for 16-bit real-mode executables.
@@ -53,6 +61,7 @@ class DOSMZ(Blob):
         header = DOSMZHeader.from_stream(stream)
         image_offset = header.header_paragraphs * 0x10 if offset is None else offset
         load_base = kwargs.pop("base_addr", self.DEFAULT_LOAD_BASE)
+        image_end = self._image_end_linear(stream, image_offset, load_base)
         load_segment = load_base >> 4
         entry_point = load_base + (header.initial_cs << 4) + header.initial_ip
         arch = arch_from_id("86_16")
@@ -70,7 +79,8 @@ class DOSMZ(Blob):
             **kwargs,
         )
 
-        self._apply_relocations(stream, header, load_base, load_segment)
+        relocation_entries = self._read_relocation_entries(stream, header)
+        self._apply_relocations(relocation_entries, load_base, load_segment)
 
         self.os = "DOS"
         self.initial_register_values = {
@@ -82,8 +92,21 @@ class DOSMZ(Blob):
         self.mz_header_paragraphs = header.header_paragraphs
         self.mz_image_offset = image_offset
         self.mz_load_segment = load_segment
+        self.mz_segment_spans = self._infer_segment_spans(
+            header,
+            relocation_entries,
+            load_base=load_base,
+            image_end=image_end,
+        )
 
-    def _apply_relocations(self, stream, header: DOSMZHeader, load_base: int, load_segment: int) -> None:
+    @staticmethod
+    def _image_end_linear(stream, image_offset: int, load_base: int) -> int:
+        stream.seek(0, 2)
+        return load_base + max(0, stream.tell() - image_offset)
+
+    @staticmethod
+    def _read_relocation_entries(stream, header: DOSMZHeader) -> list[tuple[int, int]]:
+        entries: list[tuple[int, int]] = []
         for idx in range(header.relocation_count):
             entry_off = header.relocation_offset + idx * 4
             stream.seek(entry_off)
@@ -92,10 +115,58 @@ class DOSMZ(Blob):
                 break
             reloc_offset = int.from_bytes(reloc[0:2], "little")
             reloc_segment = int.from_bytes(reloc[2:4], "little")
+            entries.append((reloc_offset, reloc_segment))
+        return entries
+
+    @staticmethod
+    def _infer_segment_spans(
+        header: DOSMZHeader,
+        relocation_entries: list[tuple[int, int]],
+        *,
+        load_base: int,
+        image_end: int,
+    ) -> tuple[MZSegmentSpan, ...]:
+        evidence_by_segment: dict[int, set[str]] = {
+            header.initial_cs: {"entry_cs:ip"},
+            header.initial_ss: {"stack_ss:sp"},
+        }
+        for _reloc_offset, reloc_segment in relocation_entries:
+            evidence_by_segment.setdefault(reloc_segment, set()).add("relocation")
+
+        ordered_segments = sorted(evidence_by_segment)
+        spans: list[MZSegmentSpan] = []
+        for idx, segment in enumerate(ordered_segments):
+            start_linear = load_base + (segment << 4)
+            next_start = image_end
+            if idx + 1 < len(ordered_segments):
+                next_start = load_base + (ordered_segments[idx + 1] << 4)
+            # Adjacent real-mode segments can overlap by up to 15 bytes.
+            end_linear = min(image_end, next_start + 0xF)
+            if end_linear <= start_linear:
+                end_linear = min(image_end, start_linear + 1)
+            spans.append(
+                MZSegmentSpan(
+                    segment=segment,
+                    start_linear=start_linear,
+                    end_linear=end_linear,
+                    evidence=tuple(sorted(evidence_by_segment[segment])),
+                )
+            )
+        return tuple(spans)
+
+    def _apply_relocations(self, relocation_entries: list[tuple[int, int]], load_base: int, load_segment: int) -> None:
+        for reloc_offset, reloc_segment in relocation_entries:
             reloc_addr = load_base + (reloc_segment << 4) + reloc_offset
-            current = int.from_bytes(self.memory.load(reloc_addr - self.linked_base, 2), "little")
+            relative_addr = reloc_addr - self.linked_base
+            try:
+                current_bytes = self.memory.load(relative_addr, 2)
+            except KeyError:
+                self.memory.add_backer(relative_addr, b"\x00\x00")
+                self._max_addr = max(self._max_addr, reloc_addr + 1)
+                current_bytes = b"\x00\x00"
+            current = int.from_bytes(current_bytes, "little")
             patched = (current + load_segment) & 0xFFFF
-            self.memory.store(reloc_addr - self.linked_base, patched.to_bytes(2, "little"))
+            self.memory.store(relative_addr, patched.to_bytes(2, "little"))
 
     @staticmethod
     def is_compatible(stream):

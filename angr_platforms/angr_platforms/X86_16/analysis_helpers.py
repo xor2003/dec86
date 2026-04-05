@@ -48,6 +48,14 @@ class FarCallTarget:
 
 
 @dataclass(frozen=True)
+class CallTargetSeed:
+    callsite_addr: int
+    target_addr: int
+    return_addr: int | None
+    kind: str
+
+
+@dataclass(frozen=True)
 class InterruptCall:
     insn_addr: int
     vector: int = 0x21
@@ -1260,6 +1268,33 @@ def resolve_direct_call_target_from_block(project, block_addr: int) -> int | Non
     return None
 
 
+def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | None:
+    """
+    Recover a direct jump target from the last instruction in a block.
+
+    This is used for tail-jump thunks that should seed neighbor recovery even
+    when no explicit call edge exists.
+    """
+
+    block = project.factory.block(block_addr, opt_level=0)
+    insns = getattr(block.capstone, "insns", ())
+    if not insns:
+        return None
+
+    last = insns[-1]
+    operands = getattr(last.insn, "operands", ())
+
+    if last.mnemonic == "ljmp" and len(operands) == 2 and all(op.type == 2 for op in operands):
+        seg = operands[0].imm & 0xFFFF
+        off = operands[1].imm & 0xFFFF
+        return (seg << 4) + off
+
+    if last.mnemonic == "jmp" and len(operands) == 1 and operands[0].type == 2:
+        return operands[0].imm & 0xFFFF
+
+    return None
+
+
 def resolve_stored_near_call_target_from_function(function, callsite_addr: int) -> int | None:
     """
     Recover a near call target from a startup-built absolute pointer slot.
@@ -1318,6 +1353,59 @@ def resolve_stored_near_call_target_from_function(function, callsite_addr: int) 
     return None
 
 
+def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> int | None:
+    """
+    Recover a near jump target from a startup-built absolute pointer slot.
+
+    This mirrors ``resolve_stored_near_call_target_from_function`` for tail-jump
+    thunks that end in ``jmp word ptr [slot]``.
+    """
+
+    project = function.project
+    if project is None:
+        return None
+
+    block = project.factory.block(jump_addr, opt_level=0)
+    insns = getattr(block.capstone, "insns", ())
+    if not insns:
+        return None
+    last = insns[-1]
+    operands = getattr(last.insn, "operands", ())
+    if last.mnemonic != "jmp" or len(operands) != 1 or operands[0].type != 3:
+        return None
+
+    slot_disp = _absolute_mem_disp(operands[0])
+    if slot_disp is None:
+        return None
+
+    cs_base = _initial_cs_linear_base(project)
+    if cs_base is None:
+        return None
+
+    prior_insns = []
+    for addr in sorted(function.block_addrs_set):
+        if addr >= jump_addr:
+            continue
+        prior_block = project.factory.block(addr, opt_level=0)
+        prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
+
+    for ins in reversed(prior_insns):
+        if ins.address >= jump_addr:
+            continue
+        opers = getattr(ins.insn, "operands", ())
+        if ins.mnemonic != "mov" or len(opers) != 2:
+            continue
+        dst, src = opers
+        if dst.type != 3 or src.type != 2:
+            continue
+        dst_disp = _absolute_mem_disp(dst)
+        if dst_disp != slot_disp:
+            continue
+        return cs_base + (src.imm & 0xFFFF)
+
+    return None
+
+
 def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
     """
     Recover direct or startup-recoverable call targets directly from lifted blocks.
@@ -1350,6 +1438,105 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
                 callsite_addr=callsite_addr,
                 target_addr=target_addr,
                 return_addr=function.get_call_return(callsite_addr),
+            )
+        )
+
+    return recovered
+
+
+def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
+    """
+    Recover direct x86-16 call neighbors from a function's traced call sites.
+
+    We prefer targets already recorded by CFG when they stay inside the loaded
+    image, then fall back to block-level decoding for direct near/far calls and
+    the narrow startup pointer-slot recovery used by MSC-style startup code.
+    """
+
+    project = getattr(function, "project", None)
+    if project is None or project.arch.name != "86_16":
+        return []
+
+    main_object = getattr(project.loader, "main_object", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    image_end = None
+    if isinstance(linked_base, int) and isinstance(max_addr, int):
+        image_end = linked_base + max_addr + 1
+
+    recovered: list[CallTargetSeed] = []
+    seen: set[tuple[int, int]] = set()
+    far_targets = {
+        (target.callsite_addr, target.target_addr): target for target in collect_direct_far_call_targets(function)
+    }
+
+    for callsite_addr in sorted(function.get_call_sites()):
+        target_addr = None
+        kind = "existing"
+        try:
+            target_addr = function.get_call_target(callsite_addr)
+        except Exception:
+            target_addr = None
+        if not isinstance(target_addr, int):
+            target_addr = None
+        if target_addr is not None and image_end is not None and not (linked_base <= target_addr < image_end):
+            target_addr = None
+
+        far_target = far_targets.get((callsite_addr, target_addr)) if target_addr is not None else None
+        if far_target is not None:
+            kind = "direct_far"
+        elif target_addr is None:
+            direct_target = resolve_direct_call_target_from_block(project, callsite_addr)
+            if direct_target is not None:
+                target_addr = direct_target
+                kind = "direct_far" if (callsite_addr, direct_target) in far_targets else "direct_near"
+            else:
+                stored_target = resolve_stored_near_call_target_from_function(function, callsite_addr)
+                if stored_target is not None:
+                    target_addr = stored_target
+                    kind = "stored_near"
+        if target_addr is None:
+            continue
+        if image_end is not None and not (linked_base <= target_addr < image_end):
+            continue
+        key = (callsite_addr, target_addr)
+        if key in seen:
+            continue
+        seen.add(key)
+        recovered.append(
+            CallTargetSeed(
+                callsite_addr=callsite_addr,
+                target_addr=target_addr,
+                return_addr=function.get_call_return(callsite_addr),
+                kind=kind,
+            )
+        )
+
+    block_addrs = sorted(getattr(function, "block_addrs_set", ()))
+    block_addr_set = set(block_addrs)
+    for block_addr in block_addrs:
+        jump_target = resolve_direct_jump_target_from_block(project, block_addr)
+        kind = "tail_jump"
+        if jump_target is None:
+            jump_target = resolve_stored_near_jump_target_from_function(function, block_addr)
+            if jump_target is not None:
+                kind = "stored_tail_jump"
+        if jump_target is None:
+            continue
+        if jump_target in block_addr_set or jump_target == function.addr:
+            continue
+        if image_end is not None and not (linked_base <= jump_target < image_end):
+            continue
+        key = (block_addr, jump_target)
+        if key in seen:
+            continue
+        seen.add(key)
+        recovered.append(
+            CallTargetSeed(
+                callsite_addr=block_addr,
+                target_addr=jump_target,
+                return_addr=None,
+                kind=kind,
             )
         )
 
@@ -1437,6 +1624,71 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
         all_targets = list(merged.values())
         patch_far_call_sites(recovered_function, all_targets)
     for target in all_targets:
+        callee = cfg.kb.functions.function(addr=target.target_addr, create=True)
+        if callee is not None:
+            callee._init_prototype_and_calling_convention()
+    seed_calling_conventions(cfg)
+    return cfg
+
+
+def extend_cfg_for_neighbor_calls(
+    project,
+    function,
+    *,
+    entry_window: int,
+    callee_window: int = 0x80,
+    max_targets: int = 8,
+):
+    """
+    Re-run bounded CFG with nearby traced callees seeded as extra starts.
+
+    This keeps 16-bit function recovery local: once we recover one function we
+    immediately reuse its traced call neighbors instead of widening into a
+    broader scan of unrelated code bytes.
+    """
+
+    neighbor_targets = collect_neighbor_call_targets(function)
+    if not neighbor_targets:
+        return None
+
+    far_targets = collect_direct_far_call_targets(function)
+    if far_targets:
+        patch_far_call_sites(function, far_targets)
+
+    unique_targets: list[CallTargetSeed] = []
+    seen_targets: set[int] = {function.addr}
+    for target in sorted(
+        neighbor_targets,
+        key=lambda item: (abs(item.target_addr - function.addr), item.callsite_addr, item.target_addr),
+    ):
+        if target.target_addr in seen_targets:
+            continue
+        seen_targets.add(target.target_addr)
+        unique_targets.append(target)
+        if len(unique_targets) >= max_targets:
+            break
+    if not unique_targets:
+        return None
+
+    function_starts = [function.addr, *(target.target_addr for target in unique_targets)]
+    regions = [(function.addr, function.addr + entry_window)]
+    regions.extend((target.target_addr, target.target_addr + callee_window) for target in unique_targets)
+
+    cfg = project.analyses.CFGFast(
+        start_at_entry=False,
+        function_starts=sorted(set(function_starts)),
+        regions=regions,
+        normalize=True,
+        force_complete_scan=False,
+    )
+    seed_calling_conventions(cfg)
+
+    if function.addr in cfg.functions:
+        recovered_function = cfg.functions[function.addr]
+        recovered_far_targets = collect_direct_far_call_targets(recovered_function)
+        if recovered_far_targets:
+            patch_far_call_sites(recovered_function, recovered_far_targets)
+    for target in unique_targets:
         callee = cfg.kb.functions.function(addr=target.target_addr, create=True)
         if callee is not None:
             callee._init_prototype_and_calling_convention()

@@ -12,16 +12,25 @@ from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codevi
 from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
 from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
 from angr_platforms.X86_16.load_dos_mz import DOSMZ
+from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
+from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoSymbolClass, parse_tdinfo_exe
 from omf_pat import (
     PatModule,
     PatPublicName,
+    CachedPatRegexSpec,
+    _normalize_pat_backend_choice,
+    enumerate_microsoft_lib_dictionary_symbols,
     ensure_pat_from_omf_input,
     extract_omf_modules_from_lib,
+    generate_pat_from_omf_obj,
     generate_pat_from_omf_lib,
+    load_cached_pat_regex_specs,
+    lookup_microsoft_lib_symbol,
     parse_microsoft_lib,
     match_pat_modules,
     parse_pat_file,
 )
+from signature_catalog import build_signature_catalog, match_signature_catalog
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -44,7 +53,8 @@ IMOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOT.COD"
 IMOX_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOX.COD"
 LIFE_EXE = REPO_ROOT / "LIFE.EXE"
 LIFE_COD = REPO_ROOT / "LIFE.COD"
-EM86_OBJ = REPO_ROOT / "reko" / "subjects" / "OBJ-msdos-x86" / "em86.obj"
+NONAME_TDINFO_EXE = REPO_ROOT / "tdinfo-parser" / "NONAME.EXE"
+SYNTHETIC_OBJ = REPO_ROOT / "angr_platforms" / "tests" / "fixtures" / "synthetic.obj"
 
 
 def _build_synthetic_microsoft_lib(
@@ -53,6 +63,7 @@ def _build_synthetic_microsoft_lib(
     page_size: int = 512,
     case_sensitive: bool = False,
     extended_records: list[tuple[int, tuple[int, ...]]] | None = None,
+    dictionary_entries: list[tuple[str, int]] | None = None,
 ) -> bytes:
     header_payload_len = page_size - 3
     module_page = module_bytes + (b"\x00" * ((page_size - (len(module_bytes) % page_size)) % page_size))
@@ -65,6 +76,27 @@ def _build_synthetic_microsoft_lib(
     header[7:9] = dict_blocks.to_bytes(2, "little")
     header[9] = 0x01 if case_sensitive else 0x00
     dict_page = bytearray(512)
+    if dictionary_entries:
+        free_offset = 38 * 2
+        for symbol_name, module_page_number in dictionary_entries:
+            encoded_name = symbol_name.encode("latin1")
+            entry = bytes([len(encoded_name)]) + encoded_name + int(module_page_number).to_bytes(2, "little")
+            assert free_offset + len(entry) <= len(dict_page)
+            _page_index, _page_delta, bucket, bucket_delta = _hash_synthetic_microsoft_lib_symbol(
+                symbol_name,
+                dict_blocks,
+                case_sensitive=case_sensitive,
+            )
+            start_bucket = bucket
+            while dict_page[bucket] != 0:
+                bucket = (bucket + bucket_delta) % 37
+                assert bucket != start_bucket
+            dict_page[bucket] = free_offset // 2
+            dict_page[free_offset : free_offset + len(entry)] = entry
+            free_offset += len(entry)
+            if free_offset & 1:
+                free_offset += 1
+        dict_page[37] = free_offset // 2
     blob = bytes(header) + module_page + bytes(dict_page)
     if extended_records:
         payload = bytearray()
@@ -92,6 +124,26 @@ def _build_synthetic_microsoft_lib(
     trailer[0] = 0xF1
     trailer[1:3] = (509).to_bytes(2, "little")
     return blob + bytes(trailer)
+
+
+def _hash_synthetic_microsoft_lib_symbol(symbol_name: str, dictionary_pages: int, *, case_sensitive: bool) -> tuple[int, int, int, int]:
+    name_bytes = symbol_name.encode("latin1", errors="ignore")
+    if not case_sensitive:
+        name_bytes = bytes((byte | 0x20) if 0x41 <= byte <= 0x5A else byte for byte in name_bytes)
+    page_index = 0
+    page_index_delta = 0
+    bucket_index = 0
+    bucket_index_delta = 0
+    for forward, reverse in zip(name_bytes, reversed(name_bytes), strict=True):
+        page_index = ((page_index << 2) ^ forward) & 0xFFFFFFFF
+        bucket_index_delta = ((bucket_index_delta >> 2) ^ forward) & 0xFFFFFFFF
+        bucket_index = ((bucket_index >> 2) ^ reverse) & 0xFFFFFFFF
+        page_index_delta = ((page_index_delta << 2) ^ reverse) & 0xFFFFFFFF
+    page_index %= dictionary_pages
+    page_index_delta = (page_index_delta % dictionary_pages) or 1
+    bucket_index %= 37
+    bucket_index_delta = (bucket_index_delta % 37) or 1
+    return page_index, page_index_delta, bucket_index, bucket_index_delta
 
 
 def _run_decompile_proc(
@@ -310,6 +362,39 @@ def test_pick_function_lean_can_skip_far_call_extension(monkeypatch):
     ]
 
 
+def test_pick_function_lean_can_extend_traced_neighbor_calls(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+    )
+
+    initial_func = SimpleNamespace(addr=0x1000)
+    extended_func = SimpleNamespace(addr=0x1000)
+    initial_cfg = SimpleNamespace(functions={0x1000: initial_func})
+    extended_cfg = SimpleNamespace(functions={0x1000: extended_func})
+    patched: list[object] = []
+
+    project.analyses = SimpleNamespace(CFGFast=lambda **_kwargs: initial_cfg)
+    monkeypatch.setattr(decompile, "extend_cfg_for_far_calls", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "extend_cfg_for_neighbor_calls",
+        lambda project_arg, function, *, entry_window: (
+            extended_cfg
+            if project_arg is project and function is initial_func and entry_window == 0x100
+            else None
+        ),
+    )
+    monkeypatch.setattr(decompile, "patch_interrupt_service_call_sites", lambda function, *_args, **_kwargs: patched.append(function))
+
+    cfg, func = decompile._pick_function_lean(project, 0x1000, regions=[(0x1000, 0x1100)])
+
+    assert cfg is extended_cfg
+    assert func is extended_func
+    assert patched == [extended_func]
+
+
 def test_find_codeview_nb00_detects_life_exe():
     found = find_codeview_nb00(LIFE_EXE.read_bytes())
     assert found is not None
@@ -365,7 +450,9 @@ def test_load_lst_metadata_uses_codeview_nb00_when_sidecars_absent():
     assert "codeview_nb00" in metadata.source_format
     assert "cod_listing" in metadata.source_format
     assert metadata.code_labels[0x10010] == "main"
+    assert 0x100c6 not in metadata.code_labels
     assert metadata.code_labels[0x100ea] == "init_life"
+    assert 0x10000 not in metadata.code_labels
     assert metadata.data_labels[0x15bb0] == "_speed"
 
 
@@ -502,6 +589,144 @@ def test_rank_exe_function_seeds_uses_epilog_follow_ons(monkeypatch):
     assert 0x1001 in ranked
 
 
+def test_rank_exe_function_seeds_respects_known_code_windows(monkeypatch):
+    code = b"\x90" * 0x300
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1100: "main"},
+        code_ranges={0x1100: (0x1100, 0x1120)},
+        absolute_addrs=True,
+    )
+    project = SimpleNamespace(
+        entry=0x1000,
+        _inertia_lst_metadata=metadata,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                max_addr=len(code) - 1,
+                linked_base=0x1000,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+                mz_segment_spans=(),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyError("no entry CFG")),
+    )
+    monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
+
+    ranked = decompile._rank_exe_function_seeds(project)
+
+    assert ranked == []
+
+
+def test_rank_exe_function_seeds_prioritizes_entry_window_call_targets(monkeypatch):
+    code = bytearray(b"\x90" * 0x200)
+    entry = 0x1080
+    target = 0x1010
+    helper = 0x10c0
+    call_offset = entry - 0x1000
+    rel = target - (entry + 3)
+    helper_rel = helper - (entry + 6)
+    code[call_offset : call_offset + 3] = b"\xE8" + int(rel).to_bytes(2, "little", signed=True)
+    code[call_offset + 3 : call_offset + 6] = b"\xE8" + int(helper_rel).to_bytes(2, "little", signed=True)
+    project = SimpleNamespace(
+        entry=entry,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                max_addr=len(code) - 1,
+                linked_base=0x1000,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: bytes(code)),
+                mz_segment_spans=(),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyError("no entry CFG")),
+    )
+    monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
+
+    ranked = decompile._rank_exe_function_seeds(project)
+
+    assert ranked
+    assert ranked[0] == target
+    assert ranked.index(target) < ranked.index(helper)
+
+
+def test_recover_seeded_exe_functions_reuses_existing_project_before_rebuild(monkeypatch):
+    code = b"\x55\x8B\xEC" + b"\x90" * 0x20
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x1000,
+                max_addr=len(code) - 1,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+            )
+        ),
+        factory=SimpleNamespace(
+            block=lambda addr, **_kwargs: SimpleNamespace(capstone=SimpleNamespace(insns=[SimpleNamespace(address=addr)]))
+        ),
+    )
+    monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [0x1003])
+    rebuilds: list[Path] = []
+    monkeypatch.setattr(
+        decompile,
+        "_build_project",
+        lambda path, **_kwargs: rebuilds.append(path) or (_ for _ in ()).throw(AssertionError("seed recovery should not rebuild")),
+    )
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=0x1003, name="sub_1003", is_plt=False, is_simprocedure=False)
+    monkeypatch.setattr(decompile, "_pick_function_lean", lambda *_args, **_kwargs: (expected_cfg, expected_func))
+
+    recovered = decompile._recover_seeded_exe_functions(project, timeout=4, limit=1)
+
+    assert recovered == [(expected_cfg, expected_func)]
+    assert rebuilds == []
+
+
+def test_recover_seeded_exe_functions_prioritizes_neighbors_from_recovered_function(monkeypatch):
+    code = b"\x55\x8B\xEC" + b"\x90" * 0x40
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x1000,
+                max_addr=len(code) - 1,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+            )
+        ),
+        factory=SimpleNamespace(
+            block=lambda addr, **_kwargs: SimpleNamespace(capstone=SimpleNamespace(insns=[SimpleNamespace(address=addr)]))
+        ),
+    )
+    monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [0x1010, 0x1200])
+    recovered_order: list[int] = []
+
+    def _fake_pick(_project, addr, **_kwargs):
+        recovered_order.append(addr)
+        return SimpleNamespace(), SimpleNamespace(addr=addr, name=f"sub_{addr:x}", is_plt=False, is_simprocedure=False)
+
+    monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick)
+    monkeypatch.setattr(
+        decompile,
+        "collect_neighbor_call_targets",
+        lambda function: [SimpleNamespace(target_addr=0x1030)] if function.addr == 0x1010 else [],
+    )
+
+    recovered = decompile._recover_seeded_exe_functions(project, timeout=4, limit=3)
+
+    assert [func.addr for _cfg, func in recovered] == [0x1010, 0x1030, 0x1200]
+    assert recovered_order[:3] == [0x1010, 0x1030, 0x1200]
+
+
 def test_match_flair_startup_entry_matches_watcom_startup_pattern():
     entry_bytes = bytes.fromhex("CCEBFD90909090" + "90" * 25)
 
@@ -518,7 +743,7 @@ def test_list_flair_sig_libraries_reads_pascal_catalogs():
 
 
 def test_ensure_pat_from_omf_input_generates_fallback_pat_for_obj(tmp_path):
-    pat_path = ensure_pat_from_omf_input(EM86_OBJ, tmp_path, flair_root=Path("/home/xor/ida77/flair77"))
+    pat_path = ensure_pat_from_omf_input(SYNTHETIC_OBJ, tmp_path, flair_root=Path("/home/xor/ida77/flair77"))
 
     assert pat_path is not None
     modules = parse_pat_file(pat_path)
@@ -538,22 +763,36 @@ def test_ensure_pat_from_omf_input_merges_plb_and_fallback_for_life_obj(tmp_path
     assert len(modules) >= 15
 
 
+def test_generate_pat_from_omf_obj_captures_fixupp_external_refs_for_life_obj(tmp_path):
+    pat_path = tmp_path / "life-fallback.pat"
+
+    count = generate_pat_from_omf_obj(REPO_ROOT / "LIFE.OBJ", pat_path)
+
+    assert count >= 5
+    modules = parse_pat_file(pat_path)
+    main_module = next(module for module in modules if module.module_name == "_main")
+    assert main_module.referenced_names
+    all_ref_names = {ref.name for module in modules for ref in module.referenced_names}
+    assert "__chkstk" in all_ref_names
+    assert "_printf" in all_ref_names or "_sprintf" in all_ref_names
+
+
 def test_extract_omf_modules_from_lib_reads_page_aligned_module(tmp_path):
     lib_path = tmp_path / "sample.lib"
-    lib_path.write_bytes(_build_synthetic_microsoft_lib(EM86_OBJ.read_bytes()))
+    lib_path.write_bytes(_build_synthetic_microsoft_lib(SYNTHETIC_OBJ.read_bytes()))
 
     modules = extract_omf_modules_from_lib(lib_path)
 
     assert len(modules) == 1
-    assert modules[0].module_name == "emu086.ASM"
-    assert modules[0].data.startswith(EM86_OBJ.read_bytes()[:16])
+    assert modules[0].module_name == "SYNTHETIC.OBJ"
+    assert modules[0].data.startswith(SYNTHETIC_OBJ.read_bytes()[:16])
 
 
 def test_parse_microsoft_lib_reads_header_and_extended_dictionary(tmp_path):
     lib_path = tmp_path / "sample.lib"
     lib_path.write_bytes(
         _build_synthetic_microsoft_lib(
-            EM86_OBJ.read_bytes(),
+            SYNTHETIC_OBJ.read_bytes(),
             case_sensitive=True,
             extended_records=[(1, (7, 9))],
         )
@@ -571,9 +810,46 @@ def test_parse_microsoft_lib_reads_header_and_extended_dictionary(tmp_path):
     assert metadata.extended_records[0].dependency_indexes == (7, 9)
 
 
+def test_parse_microsoft_lib_reads_dictionary_entries_and_lookup(tmp_path):
+    lib_path = tmp_path / "sample.lib"
+    lib_path.write_bytes(
+        _build_synthetic_microsoft_lib(
+            SYNTHETIC_OBJ.read_bytes(),
+            dictionary_entries=[("__chkstk", 1), ("_main", 1)],
+        )
+    )
+
+    metadata = parse_microsoft_lib(lib_path)
+
+    assert {(entry.symbol_name, entry.module_page) for entry in metadata.dictionary_entries} == {
+        ("__chkstk", 1),
+        ("_main", 1),
+    }
+    assert lookup_microsoft_lib_symbol(lib_path, "__CHKSTK") is not None
+    assert lookup_microsoft_lib_symbol(lib_path, "__CHKSTK").module_page == 1
+    assert lookup_microsoft_lib_symbol(lib_path, "_main").symbol_name == "_main"
+
+
+def test_enumerate_microsoft_lib_dictionary_symbols_preserves_case_sensitive_lookup(tmp_path):
+    lib_path = tmp_path / "sample.lib"
+    lib_path.write_bytes(
+        _build_synthetic_microsoft_lib(
+            SYNTHETIC_OBJ.read_bytes(),
+            case_sensitive=True,
+            dictionary_entries=[("SymbolExact", 1)],
+        )
+    )
+
+    entries = enumerate_microsoft_lib_dictionary_symbols(lib_path)
+
+    assert [(entry.symbol_name, entry.module_page) for entry in entries] == [("SymbolExact", 1)]
+    assert lookup_microsoft_lib_symbol(lib_path, "SymbolExact") is not None
+    assert lookup_microsoft_lib_symbol(lib_path, "symbolexact") is None
+
+
 def test_generate_pat_from_omf_lib_extracts_obj_members(tmp_path):
     lib_path = tmp_path / "sample.lib"
-    lib_path.write_bytes(_build_synthetic_microsoft_lib(EM86_OBJ.read_bytes()))
+    lib_path.write_bytes(_build_synthetic_microsoft_lib(SYNTHETIC_OBJ.read_bytes()))
     pat_path = tmp_path / "sample.pat"
 
     count = generate_pat_from_omf_lib(lib_path, pat_path)
@@ -603,6 +879,123 @@ def test_match_pat_modules_labels_unique_generated_function_match():
     assert code_ranges == {0x1003: (0x1003, 0x100F)}
 
 
+def test_load_cached_pat_regex_specs_creates_reusable_disk_cache(tmp_path):
+    pat_path = tmp_path / "demo.pat"
+    pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
+    pat_path.write_text(f"{pattern} 00 0000 000C :0000 demo_func\n---\n")
+
+    specs = load_cached_pat_regex_specs(pat_path, tmp_path)
+
+    assert len(specs) == 1
+    assert isinstance(specs[0], CachedPatRegexSpec)
+    assert any(path.suffixes[-2:] == [".patrx", ".pickle"] for path in tmp_path.iterdir() if path.is_file())
+
+
+def test_match_pat_modules_accepts_cached_regex_specs(tmp_path):
+    pat_path = tmp_path / "demo.pat"
+    pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
+    pat_path.write_text(f"{pattern} 00 0000 000C :0000 demo_func\n---\n")
+    specs = load_cached_pat_regex_specs(pat_path, tmp_path)
+    image = bytes.fromhex(
+        "90 90 90 FB FC 52 50 53 55 56 57 06 51 1E 8B EC 36 89 2E DE 00 C5 76 12 AD 89 76 12 8C D7 8E DF 8A CC 98 C3 90"
+    )
+
+    code_labels, code_ranges = match_pat_modules(image, 0x1000, specs)
+
+    assert code_labels == {0x1003: "demo_func"}
+    assert code_ranges == {0x1003: (0x1003, 0x100F)}
+
+
+def test_match_pat_modules_supports_both_explicit_backends(tmp_path):
+    pat_path = tmp_path / "demo.pat"
+    pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
+    pat_path.write_text(f"{pattern} 00 0000 000C :0000 demo_func\n---\n")
+    specs = load_cached_pat_regex_specs(pat_path, tmp_path)
+    image = bytes.fromhex(
+        "90 90 90 FB FC 52 50 53 55 56 57 06 51 1E 8B EC 36 89 2E DE 00 C5 76 12 AD 89 76 12 8C D7 8E DF 8A CC 98 C3 90"
+    )
+
+    py_labels, py_ranges = match_pat_modules(image, 0x1000, specs, backend="python_regex")
+    hs_labels, hs_ranges = match_pat_modules(image, 0x1000, specs, backend="hyperscan")
+
+    assert py_labels == {0x1003: "demo_func"}
+    assert py_ranges == {0x1003: (0x1003, 0x100F)}
+    assert hs_labels == py_labels
+    assert hs_ranges == py_ranges
+
+
+def test_normalize_pat_backend_choice_rejects_unknown_backend():
+    with pytest.raises(ValueError):
+        _normalize_pat_backend_choice("wat")
+
+
+def test_detect_flair_metadata_forwards_pat_backend(monkeypatch):
+    recorded = {}
+    project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(),
+            memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 32),
+        ),
+    )
+
+    monkeypatch.setattr(decompile.Path, "exists", lambda self: True)
+    monkeypatch.setattr(decompile, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(decompile, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+
+    def _fake_discover(binary, project_arg, *, flair_root=None, backend=None, **_kwargs):
+        recorded["binary"] = binary
+        recorded["project"] = project_arg
+        recorded["flair_root"] = flair_root
+        recorded["backend"] = backend
+        return SimpleNamespace(code_labels={}, code_ranges={}, source_formats=())
+
+    monkeypatch.setattr(decompile, "discover_local_pat_matches", _fake_discover)
+
+    decompile._detect_flair_metadata(Path("/tmp/demo.exe"), project, pat_backend="python_regex")
+
+    assert recorded["backend"] == "python_regex"
+
+
+def test_build_signature_catalog_skips_duplicate_modules(tmp_path):
+    left = tmp_path / "left.pat"
+    right = tmp_path / "right.pat"
+    pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
+    left.write_text(f"{pattern} 00 0000 000C :0000 demo_func\n---\n")
+    right.write_text(f"{pattern} 00 0000 000C :0000 demo_func\n---\n")
+    output = tmp_path / "catalog.pat"
+
+    result = build_signature_catalog([left, right], output, recursive=False, cache_dir=tmp_path / "cache")
+
+    assert result.input_count == 2
+    assert result.imported_module_count == 2
+    assert result.unique_module_count == 1
+    assert result.duplicate_module_count == 1
+    modules = parse_pat_file(output)
+    assert [module.module_name for module in modules] == ["demo_func"]
+
+
+def test_match_signature_catalog_matches_prebuilt_catalog(tmp_path):
+    pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
+    catalog = tmp_path / "catalog.pat"
+    catalog.write_text(f"{pattern} 00 0000 000C :0000 demo_func\n---\n")
+    image = bytes.fromhex(
+        "90 90 90 FB FC 52 50 53 55 56 57 06 51 1E 8B EC 36 89 2E DE 00 C5 76 12 AD 89 76 12 8C D7 8E DF 8A CC 98 C3 90"
+    )
+    project = SimpleNamespace(
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(min_addr=0x1000, max_addr=0x1000 + len(image) - 1),
+            memory=SimpleNamespace(load=lambda addr, size: image[addr - 0x1000 : addr - 0x1000 + size]),
+        )
+    )
+
+    result = match_signature_catalog(catalog, tmp_path / "demo.exe", project, backend="python_regex")
+
+    assert result.code_labels == {0x1003: "demo_func"}
+    assert result.code_ranges == {0x1003: (0x1003, 0x100F)}
+    assert result.source_formats == ("signature_catalog",)
+
+
 def test_detect_flair_metadata_merges_local_pat_matches(monkeypatch):
     project = SimpleNamespace(
         entry=0x2000,
@@ -628,6 +1021,174 @@ def test_detect_flair_metadata_merges_local_pat_matches(monkeypatch):
     assert code_labels[0x1234] == "helper_func"
     assert code_ranges[0x1234] == (0x1234, 0x1250)
     assert "local_omf_pat" in source_formats
+
+
+def test_detect_flair_metadata_merges_signature_catalog(monkeypatch, tmp_path):
+    project = SimpleNamespace(
+        entry=0x2000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(),
+            memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 32),
+        ),
+    )
+    catalog = tmp_path / "catalog.pat"
+    catalog.write_text("---\n")
+    monkeypatch.setattr(decompile, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(decompile, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(
+        decompile,
+        "match_signature_catalog",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            code_labels={0x2345: "catalog_func"},
+            code_ranges={0x2345: (0x2345, 0x2350)},
+            source_formats=("signature_catalog",),
+        ),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "discover_local_pat_matches",
+        lambda *_args, **_kwargs: SimpleNamespace(code_labels={}, code_ranges={}, source_formats=()),
+    )
+
+    code_labels, code_ranges, source_formats = decompile._detect_flair_metadata(
+        Path("/tmp/demo.exe"),
+        project,
+        pat_backend="python_regex",
+        signature_catalog=catalog,
+    )
+
+    assert code_labels[0x2345] == "catalog_func"
+    assert code_ranges[0x2345] == (0x2345, 0x2350)
+    assert "signature_catalog" in source_formats
+
+
+def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeypatch, tmp_path):
+    binary = tmp_path / "demo.exe"
+    binary.write_bytes(b"MZ")
+    catalog = tmp_path / "catalog.pat"
+    catalog.write_text("---\n")
+    project = SimpleNamespace(
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x1000, max_addr=0x40)),
+        kb=SimpleNamespace(labels={}),
+    )
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(decompile, "_probe_ida_base_linear", lambda *_args, **_kwargs: 0x1000)
+    monkeypatch.setattr(decompile, "_parse_codeview_nb00_metadata", lambda *_args, **_kwargs: ({}, {}, {}))
+    monkeypatch.setattr(
+        decompile,
+        "_detect_flair_metadata",
+        lambda _binary, _project, *, pat_backend=None, signature_catalog=None: (
+            seen.setdefault("pat_backend", pat_backend) and {0x1010: "sig_func"},
+            seen.setdefault("signature_catalog", signature_catalog) and {0x1010: (0x1010, 0x1020)},
+            ("signature_catalog",),
+        ),
+    )
+
+    metadata = decompile._load_lst_metadata(
+        binary,
+        project,
+        pat_backend="python_regex",
+        signature_catalog=catalog,
+    )
+
+    assert metadata is not None
+    assert seen == {"pat_backend": "python_regex", "signature_catalog": catalog}
+    assert metadata.code_labels[0x1010] == "sig_func"
+    assert metadata.signature_code_addrs == frozenset({0x1010})
+
+
+def test_parse_ida_map_metadata_prefers_segment_class_over_loc_name(tmp_path):
+    map_path = tmp_path / "demo.map"
+    map_path.write_text(
+        "\n"
+        " Start  Stop   Length Name               Class\n"
+        "\n"
+        " 00000H 0001FH 00020H seg000             CODE\n"
+        " 00020H 0002FH 00010H dseg               DATA\n"
+        "\n"
+        "  Address         Publics by Value\n"
+        "\n"
+        " 0000:0004       loc_10004\n"
+        " 0000:0010       main\n"
+        " 0002:0002       word_10022\n"
+    )
+
+    code_labels, data_labels, segment_offsets = decompile._parse_ida_map_metadata(map_path, load_base_linear=0x10000)
+
+    assert segment_offsets == {"seg000": 0x0000, "dseg": 0x0020}
+    assert code_labels[0x10004] == "loc_10004"
+    assert code_labels[0x10010] == "main"
+    assert data_labels[0x10022] == "word_10022"
+
+
+def test_visible_code_labels_skip_signature_matched_functions_by_default():
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1200: "real_func", 0x1300: "sig_func"},
+        code_ranges={0x1200: (0x1200, 0x1220), 0x1300: (0x1300, 0x1310)},
+        signature_code_addrs=frozenset({0x1300}),
+        absolute_addrs=True,
+        source_format="ida_map+signature_catalog",
+    )
+
+    assert decompile._visible_code_labels(metadata) == {0x1200: "real_func"}
+
+
+def test_format_sidecar_function_catalog_omits_signature_matched_functions():
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1200: "real_func", 0x1300: "sig_func"},
+        code_ranges={0x1200: (0x1200, 0x1220), 0x1300: (0x1300, 0x1310)},
+        signature_code_addrs=frozenset({0x1300}),
+        absolute_addrs=True,
+        source_format="signature_catalog",
+    )
+
+    formatted = decompile._format_sidecar_function_catalog(metadata)
+
+    assert "real_func" in formatted
+    assert "sig_func" not in formatted
+
+
+def test_extract_lst_metadata_supports_uasm_proc_ranges_from_snake_listing():
+    metadata = extract_lst_metadata(REPO_ROOT / "snake.lst")
+
+    assert metadata.source_format == "uasm_lst"
+    assert metadata.data_labels[0x00] == "msg"
+    assert metadata.code_labels[0x00] == "main"
+    assert metadata.code_labels[0x92] == "delay"
+    assert metadata.code_ranges[0x00] == (0x00, 0x92)
+    assert metadata.code_ranges[0x92] == (0x92, 0xA3)
+
+
+def test_extract_lst_metadata_supports_uasm_entry_labels_in_com_listing():
+    metadata = extract_lst_metadata(REPO_ROOT / "angr_platforms" / "x16_samples" / "ICOMDO.LST")
+
+    assert metadata.source_format == "uasm_lst"
+    assert metadata.code_labels[0x100] == "start"
+    assert metadata.data_labels[0x110] == "msg"
+
+
+def test_extract_lst_metadata_supports_masm_snow_listing():
+    metadata = extract_lst_metadata(REPO_ROOT / "snow.lst")
+
+    assert metadata.source_format == "masm_lst"
+    assert metadata.code_labels[0x0000] == "start"
+    assert metadata.code_ranges[0x0000] == (0x0000, 0x00B8)
+    assert metadata.data_labels[0x00B8] == "const005"
+
+
+def test_extract_lst_metadata_supports_ida_prefixed_listing(tmp_path):
+    listing = """seg000:0000 seg000          segment byte public 'CODE' use16\nseg000:0010 main            proc near\nseg000:0010                 push    bp\nseg000:0012 main            endp\nseg001:0000 seg001          segment word public 'DATA' use16\nseg001:0004 value           db 1\n"""
+    tmp = tmp_path / "ida_style.lst"
+    tmp.write_text(listing)
+    metadata = extract_lst_metadata(tmp)
+
+    assert metadata.source_format == "ida_lst"
+    assert metadata.code_labels[0x0010] == "main"
+    assert metadata.code_ranges[0x0010] == (0x0010, 0x0012)
+    assert metadata.data_labels[0x0004] == "value"
 
 
 def test_rank_labeled_function_entries_prefers_entry_and_main(monkeypatch):

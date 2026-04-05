@@ -117,7 +117,7 @@ def describe_x86_16_validation_families() -> tuple[tuple[str, tuple[str, ...]], 
     return tuple((family.name, family.default_checks) for family in VALIDATION_FAMILIES)
 
 
-def describe_x86_16_martypc_differential_triage() -> dict[str, object]:
+def describe_x86_16_validation_triage() -> dict[str, object]:
     return {
         "reference_role": "secondary semantic reference",
         "target_families": (
@@ -151,10 +151,9 @@ def describe_x86_16_martypc_differential_triage() -> dict[str, object]:
         ),
         "workflow": (
             "compare Inertia output first",
-            "compare MartyPC behavior next",
             "confirm against hardware-backed or compare-style references when available",
         ),
-        "evidence_sources": ("Inertia output", "MartyPC behavior", "hardware-backed or compare-style reference"),
+        "evidence_sources": ("Inertia output", "hardware-backed or compare-style reference"),
         "use_case": "debugging and triage only, not sole truth source",
         "outputs": (
             "family notes",
@@ -170,7 +169,7 @@ __all__ = [
     "VALIDATION_LAYERS",
     "ValidationFamilySpec",
     "ValidationLayerSpec",
-    "describe_x86_16_martypc_differential_triage",
+    "describe_x86_16_validation_triage",
     "describe_x86_16_validation_families",
     "describe_x86_16_validation_layers",
 ]

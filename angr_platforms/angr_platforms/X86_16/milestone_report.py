@@ -25,7 +25,6 @@ from .correctness_goals import describe_x86_16_correctness_goals, summarize_x86_
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
 from .recovery_confidence import describe_x86_16_recovery_confidence_axes
 from .instruction import describe_x86_16_instruction_metadata_surface
-from .martypc_progress import describe_x86_16_martypc_improvement_progress, summarize_x86_16_martypc_improvement_progress
 from .readability_goals import (
     describe_x86_16_readability_goals,
     summarize_readability_focus,
@@ -35,7 +34,7 @@ from .recovery_manifest import describe_x86_16_object_recovery_focus
 from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
 from .validation_manifest import (
-    describe_x86_16_martypc_differential_triage,
+    describe_x86_16_validation_triage,
     describe_x86_16_validation_families,
     describe_x86_16_validation_layers,
 )
@@ -192,8 +191,7 @@ def build_x86_16_milestone_report(
 ) -> dict[str, object]:
     validation_layers = describe_x86_16_validation_layers()
     validation_families = describe_x86_16_validation_families()
-    martypc_differential_triage = describe_x86_16_martypc_differential_triage()
-    martypc_improvement_progress = describe_x86_16_martypc_improvement_progress()
+    validation_triage = describe_x86_16_validation_triage()
     readability_set = describe_x86_16_golden_readability_set()
     correctness_goals = describe_x86_16_correctness_goals()
     alias_api = describe_x86_16_alias_recovery_api()
@@ -247,7 +245,6 @@ def build_x86_16_milestone_report(
     source_backed_rewrite_debt = describe_x86_16_source_backed_rewrite_debt()
     cod_known_objects = describe_x86_16_cod_known_objects()
     correctness_goal_summary = summarize_x86_16_correctness_goals()
-    martypc_progress_summary = summarize_x86_16_martypc_improvement_progress()
     readability_focus = summarize_readability_focus(top_ugly_clusters, readability_clusters, family_ownership)
     corpus_completion = _build_corpus_completion_surface(
         scan_summary,
@@ -272,19 +269,7 @@ def build_x86_16_milestone_report(
         "validation_families": [
             {"name": name, "default_checks": list(checks)} for name, checks in validation_families
         ],
-        "martypc_differential_triage": martypc_differential_triage,
-        "martypc_improvement_progress": [
-            {
-                "code": code,
-                "title": title,
-                "priority": priority,
-                "status": status,
-                "code_surfaces": list(code_surfaces),
-                "completion_signal": completion_signal,
-            }
-            for code, title, priority, status, code_surfaces, completion_signal in martypc_improvement_progress
-        ],
-        "martypc_progress_summary": martypc_progress_summary,
+        "validation_triage": validation_triage,
         "alias_api": [
             {"name": name, "purpose": purpose, "helpers": list(helpers)}
             for name, purpose, helpers in alias_api

@@ -67,6 +67,58 @@ def test_dos_mz_header_parser_reads_core_fields():
     assert parsed.initial_ss == 0x1111
 
 
+def test_dos_mz_loader_infers_segment_spans_from_entry_stack_and_relocations(tmp_path):
+    header = bytearray(0x40)
+    header[0:2] = b"MZ"
+    header[0x06:0x08] = (2).to_bytes(2, "little")
+    header[0x08:0x0A] = (4).to_bytes(2, "little")
+    header[0x0E:0x10] = (0x0010).to_bytes(2, "little")
+    header[0x10:0x12] = (0x0020).to_bytes(2, "little")
+    header[0x14:0x16] = (0x0030).to_bytes(2, "little")
+    header[0x16:0x18] = (0x0000).to_bytes(2, "little")
+    header[0x18:0x1A] = (0x20).to_bytes(2, "little")
+    header[0x20:0x24] = (0x0002).to_bytes(2, "little") + (0x0000).to_bytes(2, "little")
+    header[0x24:0x28] = (0x0004).to_bytes(2, "little") + (0x0010).to_bytes(2, "little")
+    image = bytes(index & 0xFF for index in range(0x140))
+    sample = tmp_path / "segments.exe"
+    sample.write_bytes(bytes(header) + image)
+
+    with sample.open("rb") as fp:
+        obj = DOSMZ(str(sample), fp, base_addr=0x1000)
+
+    assert [(span.segment, span.evidence) for span in obj.mz_segment_spans] == [
+        (0x0000, ("entry_cs:ip", "relocation")),
+        (0x0010, ("relocation", "stack_ss:sp")),
+    ]
+    assert obj.mz_segment_spans[0].start_linear == 0x1000
+    assert obj.mz_segment_spans[0].end_linear == 0x110F
+    assert obj.mz_segment_spans[1].start_linear == 0x1100
+    assert obj.mz_segment_spans[1].end_linear == 0x1140
+
+
+def test_dos_mz_loader_allows_up_to_fifteen_bytes_of_overlap_between_neighbor_segments(tmp_path):
+    header = bytearray(0x40)
+    header[0:2] = b"MZ"
+    header[0x06:0x08] = (1).to_bytes(2, "little")
+    header[0x08:0x0A] = (4).to_bytes(2, "little")
+    header[0x0E:0x10] = (0x0002).to_bytes(2, "little")
+    header[0x10:0x12] = (0x0000).to_bytes(2, "little")
+    header[0x14:0x16] = (0x0000).to_bytes(2, "little")
+    header[0x16:0x18] = (0x0001).to_bytes(2, "little")
+    header[0x18:0x1A] = (0x20).to_bytes(2, "little")
+    header[0x20:0x24] = (0x0000).to_bytes(2, "little") + (0x0000).to_bytes(2, "little")
+    sample = tmp_path / "overlap.exe"
+    sample.write_bytes(bytes(header) + b"\x90" * 0x60)
+
+    with sample.open("rb") as fp:
+        obj = DOSMZ(str(sample), fp, base_addr=0x1000)
+
+    spans = obj.mz_segment_spans
+    assert len(spans) == 3
+    assert spans[0].end_linear - spans[1].start_linear == 0x0F
+    assert spans[1].end_linear - spans[2].start_linear == 0x0F
+
+
 @pytest.mark.skipif(not T_EXE_PATH.exists(), reason="f15se2-re test executable is not available")
 def test_dos_mz_backend_loads_real_executable():
     header = _read_mz_header(T_EXE_PATH)

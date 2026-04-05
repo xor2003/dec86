@@ -46,8 +46,7 @@ __all__ = [
     "rank_readability_goal_queue",
     "summarize_readability_focus",
     "describe_x86_16_correctness_goals",
-    "describe_x86_16_martypc_improvement_progress",
-    "describe_x86_16_martypc_differential_triage",
+    "describe_x86_16_validation_triage",
     "simos_86_16",
     "rewrite_cod_source_stage",
     "decompiler_postprocess",
@@ -67,7 +66,6 @@ __all__ = [
     "readability_set",
     "readability_goals",
     "correctness_goals",
-    "martypc_progress",
     "milestone_report",
     "recovery_manifest",
     "recompilable_subset",
@@ -89,7 +87,6 @@ from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod
 from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, recovery_manifest, recompilable_subset, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
 from . import readability_goals  # noqa: F401
 from . import correctness_goals  # noqa: F401
-from . import martypc_progress  # noqa: F401
 from .alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
 from .addressing_helpers import describe_x86_16_decode_width_matrix  # noqa: F401
 from .addressing_helpers import describe_x86_16_mixed_width_extension_surface  # noqa: F401
@@ -104,8 +101,7 @@ from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_
 from .decompiler_structuring_stage import DecompilerStructuringPassSpec, apply_x86_16_decompiler_structuring, describe_x86_16_decompiler_structuring_stage  # noqa: F401
 from .readability_goals import describe_x86_16_readability_goals, rank_readability_goal_queue, summarize_readability_focus  # noqa: F401
 from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
-from .martypc_progress import describe_x86_16_martypc_improvement_progress  # noqa: F401
-from .validation_manifest import describe_x86_16_martypc_differential_triage  # noqa: F401
+from .validation_manifest import describe_x86_16_validation_triage  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
 from .cod_known_objects import describe_x86_16_cod_known_objects  # noqa: F401

@@ -1,7 +1,7 @@
 from angr_platforms.X86_16.validation_manifest import (
     VALIDATION_FAMILIES,
     VALIDATION_LAYERS,
-    describe_x86_16_martypc_differential_triage,
+    describe_x86_16_validation_triage,
     describe_x86_16_validation_families,
     describe_x86_16_validation_layers,
 )
@@ -43,8 +43,8 @@ def test_x86_16_validation_families_cover_key_instruction_core_slices():
     assert "tests/test_x86_16_80286_verifier.py" in VALIDATION_FAMILIES[5].default_checks
 
 
-def test_x86_16_martypc_differential_triage_surface_spells_out_workflow():
-    assert describe_x86_16_martypc_differential_triage() == {
+def test_x86_16_validation_triage_surface_spells_out_workflow():
+    assert describe_x86_16_validation_triage() == {
         "reference_role": "secondary semantic reference",
         "target_families": ("string", "stack_control", "addressing", "interrupt_api", "alu"),
         "bounded_opcode_sets": (
@@ -71,10 +71,9 @@ def test_x86_16_martypc_differential_triage_surface_spells_out_workflow():
         ),
         "workflow": (
             "compare Inertia output first",
-            "compare MartyPC behavior next",
             "confirm against hardware-backed or compare-style references when available",
         ),
-        "evidence_sources": ("Inertia output", "MartyPC behavior", "hardware-backed or compare-style reference"),
+        "evidence_sources": ("Inertia output", "hardware-backed or compare-style reference"),
         "use_case": "debugging and triage only, not sole truth source",
         "outputs": ("family notes", "opcode notes", "minimal repro snippets"),
         "artifacts": ("disassembly", "decompile text", "semantic notes"),
