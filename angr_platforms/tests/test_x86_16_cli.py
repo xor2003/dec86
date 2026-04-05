@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import decompile
+from angr_platforms.X86_16.load_dos_mz import DOSMZ
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -244,6 +245,112 @@ def test_pick_function_lean_can_skip_far_call_extension(monkeypatch):
             "cross_references": False,
         }
     ]
+
+
+def test_recover_lst_function_prefers_lean_cfgfast_for_labeled_x86_16(monkeypatch):
+    project = SimpleNamespace(entry=0x1E432, arch=SimpleNamespace(name="86_16"))
+    metadata = SimpleNamespace(absolute_addrs=True)
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=0x10010, name="main")
+
+    monkeypatch.setattr(
+        decompile,
+        "_infer_x86_16_linear_region",
+        lambda _project, start_addr, *, window: (start_addr, start_addr + window),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (expected_cfg, expected_func),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("full CFGFast should not run")),
+    )
+
+    cfg, func = decompile._recover_lst_function(
+        project,
+        metadata,
+        0x10010,
+        "main",
+        timeout=4,
+        window=0x200,
+    )
+
+    assert cfg is expected_cfg
+    assert func is expected_func
+    assert func.name == "main"
+
+
+def test_rank_labeled_function_entries_prefers_entry_and_main(monkeypatch):
+    project = SimpleNamespace(entry=0x1E432)
+    monkeypatch.setattr(decompile, "_is_zero_filled_region", lambda *_args, **_kwargs: False)
+
+    ranked = decompile._rank_labeled_function_entries(
+        project,
+        [
+            (0x10000, "padding"),
+            (0x10010, "main"),
+            (0x1E432, "start"),
+            (0x1E4C6, "cintDIV"),
+        ],
+    )
+
+    assert ranked[:4] == [
+        (0x1E432, "start"),
+        (0x10010, "main"),
+        (0x1E4C6, "cintDIV"),
+        (0x10000, "padding"),
+    ]
+
+
+def test_dosmz_loader_widens_linear_address_space_without_widening_near_words(tmp_path):
+    mz = bytearray(0x20)
+    mz[0:2] = b"MZ"
+    mz[0x08:0x0A] = (2).to_bytes(2, "little")
+    mz[0x10:0x12] = (0x200).to_bytes(2, "little")
+    sample = tmp_path / "sample.exe"
+    sample.write_bytes(bytes(mz) + b"\x90" * 32)
+
+    with sample.open("rb") as fp:
+        obj = DOSMZ(str(sample), fp, base_addr=0x10000)
+
+    assert obj.arch.bits == 32
+    assert obj.arch.bytes == 2
+    assert obj.linked_base == 0x10000
+
+
+def test_parse_mzre_map_metadata_extracts_code_ranges(tmp_path):
+    map_path = tmp_path / "sample.map"
+    map_path.write_text(
+        "seg000 CODE 0000\n"
+        "main: seg000 NEAR 0010-0146 R0010-0146\n",
+        encoding="utf-8",
+    )
+
+    code_labels, data_labels, code_ranges = decompile._parse_mzre_map_metadata(
+        map_path,
+        load_base_linear=0x10000,
+    )
+
+    assert data_labels == {}
+    assert code_labels == {0x10010: "main"}
+    assert code_ranges == {0x10010: (0x10010, 0x10147)}
+
+
+def test_lst_code_region_prefers_exact_or_containing_sidecar_span():
+    metadata = SimpleNamespace(
+        code_ranges={
+            0x10010: (0x10010, 0x10147),
+            0x10147: (0x10147, 0x10211),
+        }
+    )
+
+    assert decompile._lst_code_region(metadata, 0x10010) == (0x10010, 0x10147)
+    assert decompile._lst_code_region(metadata, 0x10080) == (0x10010, 0x10147)
+    assert decompile._lst_code_region(metadata, 0x10147) == (0x10147, 0x10211)
+    assert decompile._lst_code_region(metadata, 0x20000) is None
 
 
 def test_fallback_entry_function_uses_fast_recovery_for_call_heavy_cod_helpers(monkeypatch):
@@ -612,7 +719,23 @@ def test_supplement_functions_from_prologue_scan_adds_confirmed_recoveries(monke
 
     supplemental = decompile._supplement_functions_from_prologue_scan(project, existing_addrs={0x1500})
 
-    assert [function.addr for _, function in supplemental] == [0x1770, 0x1750]
+    assert [function.addr for _, function in supplemental] == [0x1750]
+
+
+def test_dedupe_adjacent_prototype_lines_removes_only_consecutive_duplicates():
+    source = "int dos_int21(void);\nint dos_int21(void);\nint other(void);\n\nint dos_int21(void);\n"
+
+    assert decompile._dedupe_adjacent_prototype_lines(source) == (
+        "int dos_int21(void);\nint other(void);\n\nint dos_int21(void);\n"
+    )
+
+
+def test_sanitize_mangled_autonames_text_fixes_repeated_autonames():
+    source = "long sub_6c5sub_6()\n{\n    dos_int2sub_1();\n}\n"
+
+    assert decompile._sanitize_mangled_autonames_text(source) == (
+        "long sub_6c5()\n{\n    dos_int2();\n}\n"
+    )
 
 
 def test_recover_blob_entry_function_enables_data_references(monkeypatch):

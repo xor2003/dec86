@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 from pathlib import Path
 
@@ -9,6 +9,10 @@ from pathlib import Path
 class LSTMetadata:
     data_labels: dict[int, str]
     code_labels: dict[int, str]
+    code_ranges: dict[int, tuple[int, int]] = field(default_factory=dict)
+    absolute_addrs: bool = False
+    source_format: str = "generic_lst"
+    struct_names: tuple[str, ...] = ()
 
 
 _DATA_LABEL_RE = re.compile(
@@ -54,4 +58,4 @@ def extract_lst_metadata(lst_path: Path) -> LSTMetadata:
                 offset = int(match.group(1), 16)
                 code_labels.setdefault(offset, match.group(2))
 
-    return LSTMetadata(data_labels=data_labels, code_labels=code_labels)
+    return LSTMetadata(data_labels=data_labels, code_labels=code_labels, code_ranges={})

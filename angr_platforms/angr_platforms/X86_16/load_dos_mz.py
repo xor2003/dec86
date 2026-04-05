@@ -55,10 +55,15 @@ class DOSMZ(Blob):
         load_base = kwargs.pop("base_addr", self.DEFAULT_LOAD_BASE)
         load_segment = load_base >> 4
         entry_point = load_base + (header.initial_cs << 4) + header.initial_ip
+        arch = arch_from_id("86_16")
+        # Real-mode code still executes with 16-bit registers, but MZ images can
+        # span well beyond 64K in linear memory. CLE uses arch.bits for loader
+        # address-space checks, so widen only the loader-visible address width.
+        arch.bits = max(arch.bits, 32)
 
         super().__init__(
             *args,
-            arch=arch_from_id("86_16"),
+            arch=arch,
             offset=image_offset,
             entry_point=entry_point,
             base_addr=load_base,
