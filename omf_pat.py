@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 import hashlib
+import pickle
 import re
 import subprocess
 import tempfile
+
+try:
+    import hyperscan as _hyperscan
+except Exception:
+    _hyperscan = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,20 @@ class _OMFPublic:
 
 
 @dataclass(frozen=True)
+class _OMFFixupRef:
+    seg_index: int
+    offset: int
+    name: str
+
+
+@dataclass(frozen=True)
+class _OMFDataRecordContext:
+    seg_index: int
+    data_offset: int
+    data_length: int
+
+
+@dataclass(frozen=True)
 class OMFModuleBlob:
     module_name: str
     data: bytes
@@ -73,10 +94,31 @@ class MicrosoftLibExtendedRecord:
 
 
 @dataclass(frozen=True)
+class MicrosoftLibDictionaryEntry:
+    symbol_name: str
+    module_page: int
+    page_index: int
+    bucket_index: int
+
+
+@dataclass(frozen=True)
 class MicrosoftLibMetadata:
     header: MicrosoftLibHeader
     modules: tuple[OMFModuleBlob, ...]
+    dictionary_entries: tuple[MicrosoftLibDictionaryEntry, ...]
     extended_records: tuple[MicrosoftLibExtendedRecord, ...]
+
+
+@dataclass(frozen=True)
+class CachedPatRegexSpec:
+    source_path: str
+    module_name: str
+    regex_source: bytes
+    scan_source: bytes
+    checked_match_length: int
+    module_length: int
+    public_names: tuple[PatPublicName, ...]
+    referenced_names: tuple[PatPublicName, ...]
 
 
 _PAT_HEX_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}|\.\.)+$")
@@ -153,6 +195,22 @@ def parse_pat_line(line: str, *, source_path: str = "<memory>") -> PatModule | N
     )
 
 
+def format_pat_module_line(module: PatModule) -> str:
+    head = _encode_pat_bytes(module.pattern_bytes)
+    public_tokens = " ".join(f":{public.offset:04X} {public.name}" for public in module.public_names)
+    ref_tokens = " ".join(f"^{ref.offset:04X} {ref.name}" for ref in module.referenced_names)
+    tail = _encode_pat_bytes(module.tail_bytes)
+    comment = _sanitize_pat_comment(f"{module.module_name} {module.source_path}".strip())
+    parts = [head, "00", "0000", f"{module.module_length:04X}", public_tokens]
+    if ref_tokens:
+        parts.append(ref_tokens)
+    if tail:
+        parts.append(tail)
+    if comment:
+        parts.append(f"; {comment}")
+    return " ".join(part for part in parts if part).rstrip()
+
+
 def ensure_pat_from_omf_input(
     input_path: Path,
     cache_dir: Path,
@@ -221,13 +279,15 @@ def discover_local_pat_matches(
     flair_root: Path | None = None,
     max_candidate_inputs: int = 32,
     max_pat_modules: int = 512,
+    backend: str | None = None,
 ) -> LocalPatMatchResult:
     candidate_inputs = _discover_candidate_pat_inputs(binary_path)[:max_candidate_inputs]
     if not candidate_inputs:
         return LocalPatMatchResult({}, {}, ())
 
+    selected_backend = _normalize_pat_backend_choice(backend)
     cache_dir = _pick_pat_cache_dir(binary_path)
-    modules: list[PatModule] = []
+    modules: list[PatModule | CachedPatRegexSpec] = []
     used_generated = False
     used_plain_pat = False
     for candidate in candidate_inputs:
@@ -236,7 +296,7 @@ def discover_local_pat_matches(
             continue
         used_generated |= pat_path != candidate
         used_plain_pat |= pat_path == candidate
-        modules.extend(parse_pat_file(pat_path))
+        modules.extend(load_cached_pat_regex_specs(pat_path, cache_dir))
         if len(modules) >= max_pat_modules:
             modules = modules[:max_pat_modules]
             break
@@ -247,36 +307,42 @@ def discover_local_pat_matches(
     if image is None:
         return LocalPatMatchResult({}, {}, ())
     base_addr, image_bytes = image
-    code_labels, code_ranges = match_pat_modules(image_bytes, base_addr, modules)
+    code_labels, code_ranges = match_pat_modules(image_bytes, base_addr, modules, backend=selected_backend)
     source_formats: list[str] = []
     if code_labels:
         if used_plain_pat:
             source_formats.append("local_pat")
         if used_generated:
             source_formats.append("local_omf_pat")
+        source_formats.append(f"pat_backend:{selected_backend}")
     return LocalPatMatchResult(code_labels, code_ranges, tuple(source_formats))
 
 
 def match_pat_modules(
     image_bytes: bytes,
     base_addr: int,
-    modules: tuple[PatModule, ...] | list[PatModule],
+    modules: tuple[PatModule | CachedPatRegexSpec, ...] | list[PatModule | CachedPatRegexSpec],
+    *,
+    backend: str | None = None,
 ) -> tuple[dict[int, str], dict[int, tuple[int, int]]]:
+    selected_backend = _normalize_pat_backend_choice(backend)
     code_labels: dict[int, str] = {}
     code_ranges: dict[int, tuple[int, int]] = {}
     for module in modules:
-        hits = _find_pat_matches(image_bytes, module)
+        hits = _find_pat_matches(image_bytes, module, backend=selected_backend)
         if len(hits) != 1:
             continue
         start_off = hits[0]
         match_addr = base_addr + start_off
-        if module.public_names:
-            first_public = min(module.public_names, key=lambda pub: pub.offset)
+        public_names = module.public_names
+        module_length = module.module_length
+        if public_names:
+            first_public = min(public_names, key=lambda pub: pub.offset)
             code_start = match_addr + first_public.offset
-            code_end = match_addr + module.module_length
+            code_end = match_addr + module_length
             if code_end > code_start:
                 code_ranges.setdefault(code_start, (code_start, code_end))
-        for public_name in module.public_names:
+        for public_name in public_names:
             linear = match_addr + public_name.offset
             code_labels.setdefault(linear, public_name.name.lstrip("_"))
     return code_labels, code_ranges
@@ -304,14 +370,15 @@ def parse_microsoft_lib(lib_path: Path) -> MicrosoftLibMetadata:
     blob = lib_path.read_bytes()
     if len(blob) < 16 or blob[0] != 0xF0:
         empty_header = MicrosoftLibHeader(page_size=0, dictionary_offset=0, dictionary_blocks=0, case_sensitive=False)
-        return MicrosoftLibMetadata(header=empty_header, modules=(), extended_records=())
+        return MicrosoftLibMetadata(header=empty_header, modules=(), dictionary_entries=(), extended_records=())
     header = _parse_microsoft_lib_header(blob)
     page_size = header.page_size
     if page_size <= 0 or len(blob) < page_size:
-        return MicrosoftLibMetadata(header=header, modules=(), extended_records=())
+        return MicrosoftLibMetadata(header=header, modules=(), dictionary_entries=(), extended_records=())
     dict_offset = header.dictionary_offset
     if dict_offset <= 0 or dict_offset > len(blob):
         dict_offset = len(blob)
+    dictionary_entries = _parse_microsoft_lib_dictionary(blob, header)
     extended_records = _parse_microsoft_lib_extended_dict(blob, header)
     deps_by_page = {record.page_number: record.dependency_indexes for record in extended_records}
     modules: list[OMFModuleBlob] = []
@@ -339,30 +406,70 @@ def parse_microsoft_lib(lib_path: Path) -> MicrosoftLibMetadata:
             )
         )
         offset = _align_up(module_end, page_size)
-    return MicrosoftLibMetadata(header=header, modules=tuple(modules), extended_records=extended_records)
+    return MicrosoftLibMetadata(
+        header=header,
+        modules=tuple(modules),
+        dictionary_entries=dictionary_entries,
+        extended_records=extended_records,
+    )
 
 
-def _build_pat_line(function_bytes: bytes, *, public_name: str, module_name: str) -> str | None:
+def enumerate_microsoft_lib_dictionary_symbols(lib_path: Path) -> tuple[MicrosoftLibDictionaryEntry, ...]:
+    return parse_microsoft_lib(lib_path).dictionary_entries
+
+
+def lookup_microsoft_lib_symbol(lib_path: Path, symbol_name: str) -> MicrosoftLibDictionaryEntry | None:
+    metadata = parse_microsoft_lib(lib_path)
+    entry = _lookup_microsoft_lib_symbol_in_metadata(metadata, symbol_name)
+    if entry is None and not metadata.header.case_sensitive:
+        folded = symbol_name.casefold()
+        for candidate in metadata.dictionary_entries:
+            if candidate.symbol_name.casefold() == folded:
+                return candidate
+    return entry
+
+
+def _build_pat_line(
+    function_bytes: bytes,
+    *,
+    public_name: str,
+    module_name: str,
+    referenced_names: tuple[PatPublicName, ...] = (),
+) -> str | None:
     if len(function_bytes) < 4:
         return None
     head = list(function_bytes[:32])
     while len(head) < 32:
         head.append(None)
     tail = function_bytes[32:]
-    return (
+    ref_tokens = " ".join(f"^{ref.offset:04X} {ref.name}" for ref in _dedupe_referenced_names(referenced_names))
+    line = (
         f"{_encode_pat_bytes(head)} 00 0000 {len(function_bytes):04X} "
-        f":0000 {public_name} {_encode_pat_bytes(tail)} ; {module_name}"
-    ).rstrip()
+        f":0000 {public_name}"
+    )
+    if ref_tokens:
+        line += f" {ref_tokens}"
+    line += f" {_encode_pat_bytes(tail)} ; {module_name}"
+    return line.rstrip()
 
 
-def _parse_omf_obj(obj_path: Path) -> tuple[str, list[_OMFSegment], list[_OMFPublic]]:
+def _parse_omf_obj(obj_path: Path) -> tuple[str, list[_OMFSegment], list[_OMFPublic], list[_OMFFixupRef]]:
     return _parse_omf_blob(obj_path.read_bytes(), module_name_hint=obj_path.stem)
 
 
-def _parse_omf_blob(blob: bytes, *, module_name_hint: str) -> tuple[str, list[_OMFSegment], list[_OMFPublic]]:
+def _parse_omf_blob(
+    blob: bytes,
+    *,
+    module_name_hint: str,
+) -> tuple[str, list[_OMFSegment], list[_OMFPublic], list[_OMFFixupRef]]:
     lnames: list[str] = [""]
     segments: list[_OMFSegment] = []
     publics: list[_OMFPublic] = []
+    external_names: list[str] = [""]
+    fixup_refs: list[_OMFFixupRef] = []
+    target_threads: dict[int, tuple[int, int]] = {}
+    frame_threads: dict[int, tuple[int, int]] = {}
+    last_data_context: _OMFDataRecordContext | None = None
     module_name = module_name_hint
     for record_type, payload in _iter_omf_records(blob):
         if record_type == 0x80 and payload:
@@ -374,17 +481,34 @@ def _parse_omf_blob(blob: bytes, *, module_name_hint: str) -> tuple[str, list[_O
             segments.append(_parse_segdef(payload, lnames))
         elif record_type in {0x90, 0xB6}:
             publics.extend(_parse_pubdef(payload))
+        elif record_type in {0x8C, 0xB4}:
+            external_names.extend(_parse_extdef_names(payload))
+        elif record_type in {0xB0, 0xB8}:
+            external_names.extend(_parse_comdef_names(payload))
         elif record_type == 0xA0:
-            _apply_ledata(payload, segments)
-    return module_name, segments, publics
+            last_data_context = _apply_ledata(payload, segments)
+        elif record_type == 0x9C and last_data_context is not None:
+            fixup_refs.extend(
+                _parse_fixupp_refs(
+                    payload,
+                    last_data_context,
+                    external_names,
+                    target_threads,
+                    frame_threads,
+                )
+            )
+    return module_name, segments, publics, fixup_refs
 
 
 def _generate_pat_lines_from_omf_blob(blob: bytes, *, source_name: str) -> list[str]:
-    module_name, segments, publics = _parse_omf_blob(blob, module_name_hint=Path(source_name).stem)
+    module_name, segments, publics, fixup_refs = _parse_omf_blob(blob, module_name_hint=Path(source_name).stem)
     lines: list[str] = []
     publics_by_segment: dict[int, list[_OMFPublic]] = {}
     for public in publics:
         publics_by_segment.setdefault(public.seg_index, []).append(public)
+    refs_by_segment: dict[int, list[_OMFFixupRef]] = {}
+    for fixup_ref in fixup_refs:
+        refs_by_segment.setdefault(fixup_ref.seg_index, []).append(fixup_ref)
     for seg_index, seg_publics in sorted(publics_by_segment.items()):
         if seg_index <= 0 or seg_index > len(segments):
             continue
@@ -393,6 +517,7 @@ def _generate_pat_lines_from_omf_blob(blob: bytes, *, source_name: str) -> list[
             continue
         seg_publics.sort(key=lambda item: item.offset)
         seg_limit = segment.max_written_end or len(segment.data)
+        segment_refs = sorted(refs_by_segment.get(seg_index, ()), key=lambda item: (item.offset, item.name))
         for index, public in enumerate(seg_publics):
             start = public.offset
             next_public = seg_publics[index + 1].offset if index + 1 < len(seg_publics) else seg_limit
@@ -402,10 +527,16 @@ def _generate_pat_lines_from_omf_blob(blob: bytes, *, source_name: str) -> list[
             func_bytes = bytes(segment.data[start:end])
             if sum(1 for _ in func_bytes[:32]) < 4:
                 continue
+            function_refs = tuple(
+                PatPublicName(offset=fixup_ref.offset - start, name=fixup_ref.name)
+                for fixup_ref in segment_refs
+                if start <= fixup_ref.offset < end
+            )
             line = _build_pat_line(
                 func_bytes,
                 public_name=public.name,
                 module_name=f"{module_name}:{public.name}",
+                referenced_names=function_refs,
             )
             if line is not None:
                 lines.append(line)
@@ -513,6 +644,136 @@ def _parse_extended_dependency_list(payload: bytes, dependency_offset: int) -> t
     return tuple(values)
 
 
+def _parse_microsoft_lib_dictionary(
+    blob: bytes,
+    header: MicrosoftLibHeader,
+) -> tuple[MicrosoftLibDictionaryEntry, ...]:
+    if header.dictionary_blocks <= 0 or header.dictionary_offset <= 0:
+        return ()
+    dict_start = header.dictionary_offset
+    dict_end = min(len(blob), dict_start + header.dictionary_blocks * 512)
+    if dict_end - dict_start < 512:
+        return ()
+    entries: dict[tuple[str, int], MicrosoftLibDictionaryEntry] = {}
+    page_count = (dict_end - dict_start) // 512
+    for page_index in range(page_count):
+        page_off = dict_start + page_index * 512
+        page = blob[page_off : page_off + 512]
+        if len(page) < 39:
+            continue
+        bucket_table = page[:38]
+        for bucket_index in range(37):
+            pointer = bucket_table[bucket_index]
+            if pointer == 0:
+                continue
+            entry = _parse_microsoft_lib_dictionary_entry(page, pointer * 2, page_index, bucket_index)
+            if entry is None:
+                continue
+            entries.setdefault((entry.symbol_name, entry.module_page), entry)
+    return tuple(sorted(entries.values(), key=lambda item: (item.symbol_name.lower(), item.module_page, item.page_index, item.bucket_index)))
+
+
+def _parse_microsoft_lib_dictionary_entry(
+    page: bytes,
+    offset: int,
+    page_index: int,
+    bucket_index: int,
+) -> MicrosoftLibDictionaryEntry | None:
+    if offset <= 0 or offset + 3 > len(page):
+        return None
+    name_len = page[offset]
+    name_start = offset + 1
+    name_end = name_start + name_len
+    if name_len <= 0 or name_end + 2 > len(page):
+        return None
+    symbol_name = page[name_start:name_end].decode("latin1", errors="ignore")
+    if not symbol_name:
+        return None
+    module_page = int.from_bytes(page[name_end : name_end + 2], "little")
+    if module_page <= 0:
+        return None
+    return MicrosoftLibDictionaryEntry(
+        symbol_name=symbol_name,
+        module_page=module_page,
+        page_index=page_index,
+        bucket_index=bucket_index,
+    )
+
+
+def _lookup_microsoft_lib_symbol_in_metadata(
+    metadata: MicrosoftLibMetadata,
+    symbol_name: str,
+) -> MicrosoftLibDictionaryEntry | None:
+    entries = metadata.dictionary_entries
+    header = metadata.header
+    if not entries or header.dictionary_blocks <= 0:
+        return None
+    page_index, page_index_delta, bucket_index, bucket_index_delta = _hash_microsoft_lib_symbol(
+        symbol_name,
+        header.dictionary_blocks,
+        case_sensitive=header.case_sensitive,
+    )
+    if page_index_delta <= 0 or bucket_index_delta <= 0:
+        return None
+    entries_by_slot = {(entry.page_index, entry.bucket_index): entry for entry in entries}
+    current_page = page_index
+    current_bucket = bucket_index
+    visited: set[tuple[int, int]] = set()
+    for _page_try in range(header.dictionary_blocks):
+        for _bucket_try in range(37):
+            slot = (current_page, current_bucket)
+            if slot in visited:
+                break
+            visited.add(slot)
+            entry = entries_by_slot.get(slot)
+            if entry is None:
+                return None
+            if _microsoft_lib_symbol_equals(entry.symbol_name, symbol_name, case_sensitive=header.case_sensitive):
+                return entry
+            current_bucket = (current_bucket + bucket_index_delta) % 37
+        current_page = (current_page + page_index_delta) % header.dictionary_blocks
+    return None
+
+
+def _hash_microsoft_lib_symbol(
+    symbol_name: str,
+    dictionary_pages: int,
+    *,
+    case_sensitive: bool,
+) -> tuple[int, int, int, int]:
+    if dictionary_pages <= 0:
+        return 0, 0, 0, 0
+    name_bytes = symbol_name.encode("latin1", errors="ignore")
+    if not case_sensitive:
+        name_bytes = bytes((byte | 0x20) if 0x41 <= byte <= 0x5A else byte for byte in name_bytes)
+    page_index = 0
+    page_index_delta = 0
+    bucket_index = 0
+    bucket_index_delta = 0
+    if not name_bytes:
+        return 0, 1, 0, 1
+    for forward, reverse in zip(name_bytes, reversed(name_bytes), strict=True):
+        page_index = ((page_index << 2) ^ forward) & 0xFFFFFFFF
+        bucket_index_delta = ((bucket_index_delta >> 2) ^ forward) & 0xFFFFFFFF
+        bucket_index = ((bucket_index >> 2) ^ reverse) & 0xFFFFFFFF
+        page_index_delta = ((page_index_delta << 2) ^ reverse) & 0xFFFFFFFF
+    page_index %= dictionary_pages
+    page_index_delta %= dictionary_pages
+    if page_index_delta == 0:
+        page_index_delta = 1
+    bucket_index %= 37
+    bucket_index_delta %= 37
+    if bucket_index_delta == 0:
+        bucket_index_delta = 1
+    return page_index, page_index_delta, bucket_index, bucket_index_delta
+
+
+def _microsoft_lib_symbol_equals(left: str, right: str, *, case_sensitive: bool) -> bool:
+    if case_sensitive:
+        return left == right
+    return left.casefold() == right.casefold()
+
+
 def _parse_lnames(payload: bytes) -> list[str]:
     names: list[str] = []
     offset = 0
@@ -568,10 +829,10 @@ def _parse_pubdef(payload: bytes) -> list[_OMFPublic]:
     return publics
 
 
-def _apply_ledata(payload: bytes, segments: list[_OMFSegment]) -> None:
+def _apply_ledata(payload: bytes, segments: list[_OMFSegment]) -> _OMFDataRecordContext | None:
     seg_index, offset = _read_omf_index(payload, 0)
     if seg_index <= 0 or seg_index > len(segments) or offset + 2 > len(payload):
-        return
+        return None
     data_offset = int.from_bytes(payload[offset : offset + 2], "little")
     offset += 2
     data = payload[offset:]
@@ -581,6 +842,167 @@ def _apply_ledata(payload: bytes, segments: list[_OMFSegment]) -> None:
         segment.data.extend(b"\x00" * (end - len(segment.data)))
     segment.data[data_offset:end] = data
     segment.max_written_end = max(segment.max_written_end, end)
+    return _OMFDataRecordContext(seg_index=seg_index, data_offset=data_offset, data_length=len(data))
+
+
+def _parse_extdef_names(payload: bytes) -> list[str]:
+    names: list[str] = []
+    offset = 0
+    while offset < len(payload):
+        name_len = payload[offset]
+        offset += 1
+        name = payload[offset : offset + name_len].decode("latin1", errors="ignore")
+        offset += name_len
+        _type_index, offset = _read_omf_index(payload, offset)
+        if name:
+            names.append(name)
+    return names
+
+
+def _parse_comdef_names(payload: bytes) -> list[str]:
+    names: list[str] = []
+    offset = 0
+    while offset < len(payload):
+        name_len = payload[offset]
+        offset += 1
+        name = payload[offset : offset + name_len].decode("latin1", errors="ignore")
+        offset += name_len
+        _type_index, offset = _read_omf_index(payload, offset)
+        if offset >= len(payload):
+            break
+        communal_kind = payload[offset]
+        offset += 1
+        _size, offset = _read_omf_numeric_value(payload, offset)
+        if communal_kind == 0x61:
+            _count, offset = _read_omf_numeric_value(payload, offset)
+        if name:
+            names.append(name)
+    return names
+
+
+def _parse_fixupp_refs(
+    payload: bytes,
+    last_data_context: _OMFDataRecordContext,
+    external_names: list[str],
+    target_threads: dict[int, tuple[int, int]],
+    frame_threads: dict[int, tuple[int, int]],
+) -> list[_OMFFixupRef]:
+    refs: list[_OMFFixupRef] = []
+    offset = 0
+    while offset < len(payload):
+        first = payload[offset]
+        if first & 0x80 == 0:
+            offset = _consume_fixupp_thread(payload, offset, target_threads, frame_threads)
+            continue
+        if offset + 3 > len(payload):
+            break
+        locat = int.from_bytes(payload[offset : offset + 2], "little")
+        offset += 2
+        fixdat = payload[offset]
+        offset += 1
+        _frame_method, offset = _consume_fixupp_frame(payload, offset, fixdat, frame_threads)
+        target_method, target_index, offset = _consume_fixupp_target(payload, offset, fixdat, target_threads)
+        if not (fixdat & 0x04):
+            location_kind = (locat >> 10) & 0x0F
+            displacement_size = 4 if location_kind in {9, 11, 13} else 2
+            offset = min(len(payload), offset + displacement_size)
+        if target_method != 2 or target_index <= 0 or target_index >= len(external_names):
+            continue
+        dro = locat & 0x03FF
+        if dro >= last_data_context.data_length:
+            continue
+        target_name = external_names[target_index]
+        if not target_name:
+            continue
+        refs.append(
+            _OMFFixupRef(
+                seg_index=last_data_context.seg_index,
+                offset=last_data_context.data_offset + dro,
+                name=target_name,
+            )
+        )
+    return refs
+
+
+def _consume_fixupp_thread(
+    payload: bytes,
+    offset: int,
+    target_threads: dict[int, tuple[int, int]],
+    frame_threads: dict[int, tuple[int, int]],
+) -> int:
+    thread_byte = payload[offset]
+    offset += 1
+    is_frame = bool(thread_byte & 0x40)
+    method = (thread_byte >> 2) & 0x07
+    thread_no = thread_byte & 0x03
+    index = 0
+    if method < 3:
+        index, offset = _read_omf_index(payload, offset)
+    if is_frame:
+        frame_threads[thread_no] = (method, index)
+    else:
+        target_threads[thread_no] = (method, index)
+    return offset
+
+
+def _consume_fixupp_frame(
+    payload: bytes,
+    offset: int,
+    fixdat: int,
+    frame_threads: dict[int, tuple[int, int]],
+) -> tuple[int | None, int]:
+    if fixdat & 0x80:
+        thread_no = (fixdat >> 4) & 0x03
+        thread = frame_threads.get(thread_no)
+        return (thread[0] if thread is not None else None), offset
+    method = (fixdat >> 4) & 0x07
+    if method <= 2:
+        _index, offset = _read_omf_index(payload, offset)
+    return method, offset
+
+
+def _consume_fixupp_target(
+    payload: bytes,
+    offset: int,
+    fixdat: int,
+    target_threads: dict[int, tuple[int, int]],
+) -> tuple[int | None, int, int]:
+    if fixdat & 0x08:
+        thread_no = fixdat & 0x03
+        thread = target_threads.get(thread_no)
+        if thread is None:
+            return None, 0, offset
+        return thread[0], thread[1], offset
+    method = fixdat & 0x03
+    index, offset = _read_omf_index(payload, offset)
+    return method, index, offset
+
+
+def _read_omf_numeric_value(payload: bytes, offset: int) -> tuple[int, int]:
+    if offset >= len(payload):
+        return 0, offset
+    code = payload[offset]
+    offset += 1
+    if code <= 0x80:
+        return code, offset
+    sizes = {0x81: 2, 0x84: 3, 0x88: 4}
+    size = sizes.get(code, 0)
+    if size <= 0 or offset + size > len(payload):
+        return 0, len(payload)
+    value = int.from_bytes(payload[offset : offset + size], "little")
+    return value, offset + size
+
+
+def _dedupe_referenced_names(referenced_names: tuple[PatPublicName, ...]) -> tuple[PatPublicName, ...]:
+    seen: set[tuple[int, str]] = set()
+    unique: list[PatPublicName] = []
+    for ref in sorted(referenced_names, key=lambda item: (item.offset, item.name)):
+        key = (ref.offset, ref.name)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(ref)
+    return tuple(unique)
 
 
 def _read_omf_index(payload: bytes, offset: int) -> tuple[int, int]:
@@ -683,29 +1105,179 @@ def _load_project_image(project) -> tuple[int, bytes] | None:
         return None
 
 
-def _find_pat_matches(image_bytes: bytes, module: PatModule) -> list[int]:
-    if module.module_length <= 0 or module.module_length > len(image_bytes):
+def _find_pat_matches(
+    image_bytes: bytes,
+    module: PatModule | CachedPatRegexSpec,
+    *,
+    backend: str | None = None,
+) -> list[int]:
+    selected_backend = _normalize_pat_backend_choice(backend)
+    module_length = module.module_length
+    if module_length <= 0 or module_length > len(image_bytes):
         return []
-    constant_positions = [idx for idx, byte in enumerate(module.pattern_bytes) if byte is not None]
-    if not constant_positions:
-        return []
-    anchor_index = constant_positions[0]
-    anchor_value = module.pattern_bytes[anchor_index]
-    assert anchor_value is not None
+    checked_match_length = _get_pat_checked_match_length(module)
+    if selected_backend == "hyperscan":
+        hits = _find_pat_matches_hyperscan(image_bytes, module, checked_match_length)
+        return hits if hits is not None else []
     hits: list[int] = []
-    end_limit = len(image_bytes) - module.module_length + 1
-    for start in range(0, end_limit):
-        if image_bytes[start + anchor_index] != anchor_value:
-            continue
-        if not _bytes_match_pattern(image_bytes, start, module.pattern_bytes, min(module.module_length, 32)):
-            continue
-        tail_start = start + 32
-        if module.tail_bytes and not _bytes_match_pattern(image_bytes, tail_start, module.tail_bytes, len(module.tail_bytes)):
+    end_limit = len(image_bytes) - module_length + 1
+    regex = _get_pat_module_regex(module)
+    for match in regex.finditer(image_bytes):
+        start = match.start()
+        if start >= end_limit:
             continue
         hits.append(start)
         if len(hits) > 4:
             break
     return hits
+
+
+def _find_pat_matches_hyperscan(
+    image_bytes: bytes,
+    module: PatModule | CachedPatRegexSpec,
+    checked_match_length: int,
+) -> list[int] | None:
+    if _hyperscan is None or checked_match_length <= 0:
+        return None
+    try:
+        db = _get_pat_module_hyperscan_db(module)
+    except Exception:
+        return None
+    hits: list[int] = []
+    end_limit = len(image_bytes) - module.module_length + 1
+
+    def _on_match(_expr_id, _from_offset, end_offset, _flags, _context):
+        start = end_offset - checked_match_length
+        if 0 <= start < end_limit:
+            hits.append(start)
+        return len(hits) > 4
+
+    try:
+        db.scan(image_bytes, _on_match)
+    except Exception:
+        return None
+    return hits
+
+
+def _normalize_pat_backend_choice(backend: str | None) -> str:
+    choice = (backend or _default_pat_backend()).strip().lower()
+    if choice not in {"python_regex", "hyperscan"}:
+        raise ValueError(f"Unsupported PAT backend: {backend!r}")
+    if choice == "hyperscan" and _hyperscan is None:
+        raise RuntimeError("PAT backend 'hyperscan' requested but the hyperscan module is not installed.")
+    return choice
+
+
+def _default_pat_backend() -> str:
+    return "hyperscan" if _hyperscan is not None else "python_regex"
+
+
+def load_cached_pat_regex_specs(pat_path: Path, cache_dir: Path) -> tuple[CachedPatRegexSpec, ...]:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_key = _cache_key_for_file(pat_path)
+    cache_path = cache_dir / f"{_sanitize_component(pat_path.stem)}-{cache_key}.patrx.pickle"
+    try:
+        cached = pickle.loads(cache_path.read_bytes())
+        if isinstance(cached, tuple) and all(isinstance(item, CachedPatRegexSpec) for item in cached):
+            return cached
+    except Exception:
+        pass
+    modules = parse_pat_file(pat_path)
+    specs = tuple(_compile_pat_module_to_cached_regex(module) for module in modules)
+    try:
+        cache_path.write_bytes(pickle.dumps(specs, protocol=pickle.HIGHEST_PROTOCOL))
+    except OSError:
+        pass
+    return specs
+
+
+def _compile_pat_module_to_cached_regex(module: PatModule) -> CachedPatRegexSpec:
+    regex_source, scan_source, checked_match_length = _build_pat_regex_source(module)
+    return CachedPatRegexSpec(
+        source_path=module.source_path,
+        module_name=module.module_name,
+        regex_source=regex_source,
+        scan_source=scan_source,
+        checked_match_length=checked_match_length,
+        module_length=module.module_length,
+        public_names=module.public_names,
+        referenced_names=module.referenced_names,
+    )
+
+
+def _get_pat_module_regex(module: PatModule | CachedPatRegexSpec):
+    if isinstance(module, CachedPatRegexSpec):
+        return _compile_regex_bytes(module.regex_source)
+    regex_source, _scan_source, _checked_match_length = _build_pat_regex_source(module)
+    return _compile_regex_bytes(regex_source)
+
+
+def _build_pat_regex_source(module: PatModule) -> tuple[bytes, bytes, int]:
+    checked_prefix_len = min(module.module_length, 32)
+    python_parts = [_pattern_bytes_to_regex(module.pattern_bytes[:checked_prefix_len])]
+    hyperscan_parts = [_pattern_bytes_to_hyperscan_regex(module.pattern_bytes[:checked_prefix_len])]
+    if module.module_length > 32 and module.tail_bytes:
+        python_parts.append(_pattern_bytes_to_regex(module.tail_bytes))
+        hyperscan_parts.append(_pattern_bytes_to_hyperscan_regex(module.tail_bytes))
+    scan_source = b"".join(hyperscan_parts)
+    checked_match_length = checked_prefix_len + (len(module.tail_bytes) if module.module_length > 32 and module.tail_bytes else 0)
+    return b"(?=(" + b"".join(python_parts) + b"))", scan_source, checked_match_length
+
+
+def _pattern_bytes_to_regex(pattern: tuple[int | None, ...]) -> bytes:
+    chunks: list[bytes] = []
+    for byte in pattern:
+        if byte is None:
+            chunks.append(b".")
+        else:
+            chunks.append(re.escape(bytes([byte])))
+    return b"".join(chunks)
+
+
+def _pattern_bytes_to_hyperscan_regex(pattern: tuple[int | None, ...]) -> bytes:
+    chunks: list[bytes] = []
+    for byte in pattern:
+        if byte is None:
+            chunks.append(b".")
+        else:
+            chunks.append(f"\\x{byte:02x}".encode("ascii"))
+    return b"".join(chunks)
+
+
+@lru_cache(maxsize=4096)
+def _compile_regex_bytes(regex_source: bytes):
+    return re.compile(regex_source, re.DOTALL)
+
+
+def _get_pat_checked_match_length(module: PatModule | CachedPatRegexSpec) -> int:
+    if isinstance(module, CachedPatRegexSpec):
+        return module.checked_match_length
+    _regex_source, _scan_source, checked_match_length = _build_pat_regex_source(module)
+    return checked_match_length
+
+
+def _get_pat_module_hyperscan_db(module: PatModule | CachedPatRegexSpec):
+    if _hyperscan is None:
+        raise RuntimeError("hyperscan unavailable")
+    if isinstance(module, CachedPatRegexSpec):
+        scan_source = module.scan_source
+    else:
+        _regex_source, scan_source, _checked_match_length = _build_pat_regex_source(module)
+    return _compile_hyperscan_database(scan_source)
+
+
+@lru_cache(maxsize=4096)
+def _compile_hyperscan_database(regex_source: bytes):
+    if _hyperscan is None:
+        raise RuntimeError("hyperscan unavailable")
+    db = _hyperscan.Database(mode=_hyperscan.HS_MODE_BLOCK)
+    db.compile(
+        expressions=[regex_source.decode("latin1")],
+        ids=[0],
+        elements=1,
+        flags=[_hyperscan.HS_FLAG_DOTALL | _hyperscan.HS_FLAG_SINGLEMATCH],
+    )
+    return db
 
 
 def _bytes_match_pattern(image_bytes: bytes, start: int, pattern: tuple[int | None, ...], limit: int) -> bool:
@@ -737,6 +1309,10 @@ def _encode_pat_bytes(data: bytes | bytearray | list[int | None]) -> str:
 
 def _sanitize_component(text: str) -> str:
     return _SAFE_NAME_RE.sub("-", text).strip("-") or "pat"
+
+
+def _sanitize_pat_comment(text: str) -> str:
+    return " ".join(text.replace("\n", " ").replace("\r", " ").split())
 
 
 def _cache_key_for_file(path: Path) -> str:
