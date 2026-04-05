@@ -20,6 +20,7 @@ from concurrent.futures.thread import _threads_queues, _worker
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 
 _ROOT = Path(__file__).resolve().parent
@@ -249,27 +250,296 @@ def _parse_int(value: str) -> int:
     return int(value, 0)
 
 
-def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | None:
+_IDA_BASE_ADDRESS_RE = re.compile(r"Base Address:\s*([0-9A-Fa-f]+)h", re.IGNORECASE)
+_IDA_MAP_SEGMENT_RE = re.compile(
+    r"^\s*([0-9A-Fa-f]+)H\s+[0-9A-Fa-f]+H\s+[0-9A-Fa-f]+H\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*$"
+)
+_IDA_MAP_PUBLIC_RE = re.compile(r"^\s*([0-9A-Fa-f]+):([0-9A-Fa-f]+)\s+([A-Za-z_$?@][\w$?@]*)\s*$")
+_IDA_LST_PROC_RE = re.compile(
+    r"^(?P<seg>[A-Za-z_]\w*):(?P<off>[0-9A-Fa-f]{4,5})\s+(?P<name>[A-Za-z_$?@][\w$?@]*)\s+proc\b",
+    re.IGNORECASE,
+)
+_IDC_SET_NAME_RE = re.compile(r"set_name\s*\(\s*0X([0-9A-Fa-f]+)\s*,\s*\"([^\"]+)\"", re.IGNORECASE)
+_INC_STRUCT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s+struc\b")
+_MZRE_SEGMENT_RE = re.compile(r"^([A-Za-z_]\w*)\s+(CODE|DATA|STACK)\s+([0-9A-Fa-f]+)$", re.IGNORECASE)
+_MZRE_ROUTINE_RE = re.compile(
+    r"^([A-Za-z_]\w*):\s+([A-Za-z_]\w*)\s+(?:NEAR|FAR)\s+([0-9A-Fa-f]+)-([0-9A-Fa-f]+)",
+    re.IGNORECASE,
+)
+
+
+def _label_looks_like_code(name: str) -> bool:
+    lowered = name.lower()
+    if lowered.startswith(("loc_", "locret_", "byte_", "word_", "dword_", "off_", "stru_", "align_")):
+        return False
+    return True
+
+
+def _probe_ida_base_linear(binary: Path, fallback_linear: int) -> int:
     lst_path = binary.with_suffix(".lst")
     if not lst_path.exists():
-        return None
-
+        return fallback_linear
     try:
-        metadata = extract_lst_metadata(lst_path)
-    except Exception as exc:
-        print(f"[dbg] failed to parse source listing {lst_path}: {exc}")
+        with lst_path.open("r", encoding="utf-8", errors="ignore") as fp:
+            for _ in range(64):
+                line = fp.readline()
+                if not line:
+                    break
+                match = _IDA_BASE_ADDRESS_RE.search(line)
+                if match is not None:
+                    return int(match.group(1), 16) << 4
+    except OSError:
+        return fallback_linear
+    return fallback_linear
+
+
+def _parse_ida_map_metadata(
+    map_path: Path,
+    *,
+    load_base_linear: int,
+) -> tuple[dict[int, str], dict[int, str], dict[str, int]]:
+    code_labels: dict[int, str] = {}
+    data_labels: dict[int, str] = {}
+    segment_offsets: dict[str, int] = {}
+    in_publics = False
+    for line in map_path.read_text(errors="ignore").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if "Publics by Value" in stripped:
+            in_publics = True
+            continue
+        if not in_publics:
+            match = _IDA_MAP_SEGMENT_RE.match(stripped)
+            if match is not None:
+                start = int(match.group(1), 16)
+                segment_name = match.group(2)
+                segment_offsets[segment_name] = start
+            continue
+        match = _IDA_MAP_PUBLIC_RE.match(stripped)
+        if match is None:
+            continue
+        segment = int(match.group(1), 16)
+        offset = int(match.group(2), 16)
+        name = match.group(3)
+        linear = load_base_linear + (segment << 4) + offset
+        if _label_looks_like_code(name):
+            code_labels.setdefault(linear, name.lstrip("_"))
+        else:
+            data_labels.setdefault(linear, name)
+    return code_labels, data_labels, segment_offsets
+
+
+def _parse_ida_lst_proc_metadata(
+    lst_path: Path,
+    *,
+    load_base_linear: int,
+    segment_offsets: dict[str, int],
+) -> dict[int, str]:
+    code_labels: dict[int, str] = {}
+    for line in lst_path.read_text(errors="ignore").splitlines():
+        match = _IDA_LST_PROC_RE.match(line.strip())
+        if match is None:
+            continue
+        segment_name = match.group("seg")
+        if segment_name not in segment_offsets:
+            continue
+        offset = int(match.group("off"), 16)
+        linear = load_base_linear + segment_offsets[segment_name] + offset
+        code_labels.setdefault(linear, match.group("name").lstrip("_"))
+    return code_labels
+
+
+def _parse_idc_metadata(idc_path: Path) -> tuple[dict[int, str], dict[int, str]]:
+    code_labels: dict[int, str] = {}
+    data_labels: dict[int, str] = {}
+    for line in idc_path.read_text(errors="ignore").splitlines():
+        match = _IDC_SET_NAME_RE.search(line)
+        if match is None:
+            continue
+        addr = int(match.group(1), 16)
+        name = match.group(2)
+        if _label_looks_like_code(name):
+            code_labels.setdefault(addr, name.lstrip("_"))
+        else:
+            data_labels.setdefault(addr, name)
+    return code_labels, data_labels
+
+
+def _parse_inc_struct_names(inc_path: Path) -> tuple[str, ...]:
+    names: list[str] = []
+    for line in inc_path.read_text(errors="ignore").splitlines():
+        match = _INC_STRUCT_RE.match(line)
+        if match is not None:
+            names.append(match.group(1))
+    return tuple(names)
+
+
+def _parse_mzre_map_metadata(
+    map_path: Path,
+    *,
+    load_base_linear: int,
+) -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]]]:
+    code_labels: dict[int, str] = {}
+    data_labels: dict[int, str] = {}
+    code_ranges: dict[int, tuple[int, int]] = {}
+    segment_paragraphs: dict[str, int] = {}
+    for line in map_path.read_text(errors="ignore").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        segment_match = _MZRE_SEGMENT_RE.match(stripped)
+        if segment_match is not None:
+            segment_paragraphs[segment_match.group(1)] = int(segment_match.group(3), 16)
+            continue
+        routine_match = _MZRE_ROUTINE_RE.match(stripped)
+        if routine_match is not None:
+            segment_name = routine_match.group(2)
+            if segment_name not in segment_paragraphs:
+                continue
+            start = int(routine_match.group(3), 16)
+            end = int(routine_match.group(4), 16)
+            linear = load_base_linear + (segment_paragraphs[segment_name] << 4) + start
+            linear_end = load_base_linear + (segment_paragraphs[segment_name] << 4) + end + 1
+            code_labels.setdefault(linear, routine_match.group(1).lstrip("_"))
+            code_ranges.setdefault(linear, (linear, linear_end))
+    return code_labels, data_labels, code_ranges
+
+
+def _synthesize_code_ranges(
+    code_labels: dict[int, str],
+    existing_ranges: dict[int, tuple[int, int]],
+    *,
+    image_end: int | None,
+) -> dict[int, tuple[int, int]]:
+    synthesized = dict(existing_ranges)
+    ordered = sorted(code_labels)
+    for index, start in enumerate(ordered):
+        if start in synthesized:
+            continue
+        next_start = ordered[index + 1] if index + 1 < len(ordered) else image_end
+        if next_start is None or next_start <= start:
+            continue
+        synthesized[start] = (start, next_start)
+    return synthesized
+
+
+def _load_lst_metadata(binary: Path, project: angr.Project) -> LSTMetadata | None:
+    load_base_linear = _probe_ida_base_linear(binary, getattr(project.loader.main_object, "linked_base", 0))
+    code_labels: dict[int, str] = {}
+    data_labels: dict[int, str] = {}
+    code_ranges: dict[int, tuple[int, int]] = {}
+    struct_names: list[str] = []
+    source_formats: list[str] = []
+
+    map_path = binary.with_suffix(".map")
+    segment_offsets: dict[str, int] = {}
+    if map_path.exists():
+        try:
+            ida_code, ida_data, segment_offsets = _parse_ida_map_metadata(map_path, load_base_linear=load_base_linear)
+            if ida_code or ida_data or segment_offsets:
+                code_labels.update(ida_code)
+                data_labels.update(ida_data)
+                source_formats.append("ida_map")
+        except Exception as exc:
+            print(f"[dbg] failed to parse IDA map {map_path}: {exc}")
+
+    lst_path = binary.with_suffix(".lst")
+    if lst_path.exists():
+        try:
+            metadata = extract_lst_metadata(lst_path)
+            if metadata.code_labels or metadata.data_labels:
+                if metadata.absolute_addrs:
+                    code_labels.update(metadata.code_labels)
+                    data_labels.update(metadata.data_labels)
+                    code_ranges.update(metadata.code_ranges)
+                else:
+                    for offset, name in metadata.data_labels.items():
+                        data_labels.setdefault(load_base_linear + offset, name)
+                    for offset, name in metadata.code_labels.items():
+                        code_labels.setdefault(load_base_linear + offset, name)
+                    for offset, span in metadata.code_ranges.items():
+                        code_ranges.setdefault(
+                            load_base_linear + offset,
+                            (load_base_linear + span[0], load_base_linear + span[1]),
+                        )
+                source_formats.append(metadata.source_format)
+        except Exception as exc:
+            print(f"[dbg] failed to parse source listing {lst_path}: {exc}")
+        try:
+            ida_proc_labels = _parse_ida_lst_proc_metadata(
+                lst_path,
+                load_base_linear=load_base_linear,
+                segment_offsets=segment_offsets,
+            )
+            if ida_proc_labels:
+                code_labels.update(ida_proc_labels)
+                source_formats.append("ida_lst")
+        except Exception as exc:
+            print(f"[dbg] failed to parse IDA proc listing {lst_path}: {exc}")
+
+    idc_path = binary.with_suffix(".idc")
+    if idc_path.exists():
+        try:
+            idc_code, idc_data = _parse_idc_metadata(idc_path)
+            if idc_code or idc_data:
+                code_labels.update(idc_code)
+                data_labels.update(idc_data)
+                source_formats.append("ida_idc")
+        except Exception as exc:
+            print(f"[dbg] failed to parse IDC file {idc_path}: {exc}")
+
+    inc_path = binary.with_suffix(".inc")
+    if inc_path.exists():
+        try:
+            struct_names.extend(_parse_inc_struct_names(inc_path))
+            source_formats.append("ida_inc")
+        except Exception as exc:
+            print(f"[dbg] failed to parse INC file {inc_path}: {exc}")
+
+    external_mzre_map = Path("/home/xor/games/f15se2-re/map") / f"{binary.stem}.map"
+    if external_mzre_map.exists():
+        try:
+            mzre_code, mzre_data, mzre_ranges = _parse_mzre_map_metadata(
+                external_mzre_map,
+                load_base_linear=load_base_linear,
+            )
+            if mzre_code or mzre_data or mzre_ranges:
+                for addr, name in mzre_code.items():
+                    code_labels.setdefault(addr, name)
+                for addr, name in mzre_data.items():
+                    data_labels.setdefault(addr, name)
+                for addr, span in mzre_ranges.items():
+                    code_ranges.setdefault(addr, span)
+                source_formats.append("mzre_map")
+        except Exception as exc:
+            print(f"[dbg] failed to parse mzretools map {external_mzre_map}: {exc}")
+
+    if not code_labels and not data_labels and not struct_names:
         return None
 
-    data_base = getattr(getattr(project.loader, "main_object", None), "mapped_base", None)
-    code_base = project.entry
-    if data_base is None:
-        return None
+    for addr, name in data_labels.items():
+        project.kb.labels[addr] = name
+    for addr, name in code_labels.items():
+        project.kb.labels[addr] = name
 
-    for offset, name in metadata.data_labels.items():
-        project.kb.labels[data_base + offset] = name
-    for offset, name in metadata.code_labels.items():
-        project.kb.labels[code_base + offset] = name
+    image_end = getattr(getattr(project.loader, "main_object", None), "max_addr", None)
+    if isinstance(image_end, int):
+        image_end += 1
+    code_ranges = _synthesize_code_ranges(code_labels, code_ranges, image_end=image_end)
 
+    metadata = LSTMetadata(
+        data_labels=data_labels,
+        code_labels=code_labels,
+        code_ranges=code_ranges,
+        absolute_addrs=True,
+        source_format="+".join(dict.fromkeys(source_formats)) or "sidecars",
+        struct_names=tuple(dict.fromkeys(struct_names)),
+    )
+    print(
+        f"[dbg] loaded sidecar metadata: format={metadata.source_format} "
+        f"code_labels={len(metadata.code_labels)} data_labels={len(metadata.data_labels)} structs={len(metadata.struct_names)}"
+    )
     return metadata
 
 
@@ -382,13 +652,33 @@ def _apply_known_cod_object_annotations(
 def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | None:
     if metadata is None or offset is None:
         return None
+    if metadata.absolute_addrs:
+        return metadata.data_labels.get(offset)
     return metadata.data_labels.get(offset)
 
 
 def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: int | None) -> str | None:
-    if metadata is None or addr is None or code_base is None:
+    if metadata is None or addr is None:
+        return None
+    if metadata.absolute_addrs:
+        return metadata.code_labels.get(addr)
+    if code_base is None:
         return None
     return metadata.code_labels.get(addr - code_base)
+
+
+def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[int, int] | None:
+    if metadata is None or addr is None:
+        return None
+    code_ranges = getattr(metadata, "code_ranges", None) or {}
+    span = code_ranges.get(addr)
+    if span is not None:
+        return span
+    for start, span in code_ranges.items():
+        end = span[1]
+        if start <= addr < end:
+            return span
+    return None
 
 
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
@@ -442,19 +732,58 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
         sys.stdout.flush()
         return project
 
-    proj = angr.Project(path, auto_load_libs=False)
+    if suffix == ".exe":
+        explicit_base = _probe_ida_base_linear(path, base_addr << 4 if base_addr < 0x10000 else base_addr)
+        try:
+            proj = angr.Project(
+                path,
+                auto_load_libs=False,
+                main_opts={
+                    "backend": "dos_mz",
+                    "base_addr": explicit_base,
+                },
+                simos="DOS",
+            )
+            print(f"[dbg] DOS MZ load base={hex(explicit_base)}")
+            sys.stdout.flush()
+            print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
+            sys.stdout.flush()
+            return proj
+        except Exception as ex:
+            print(f"[dbg] explicit DOS MZ load failed at {hex(explicit_base)}: {_describe_exception(ex)}")
+            sys.stdout.flush()
+
+    try:
+        proj = angr.Project(path, auto_load_libs=False)
+    except Exception as ex:
+        if suffix == ".exe" and "Position-DEPENDENT object" in str(ex):
+            explicit_base = _probe_ida_base_linear(path, base_addr << 4 if base_addr < 0x10000 else base_addr)
+            print(f"[dbg] retrying DOS MZ load with explicit base_addr={hex(explicit_base)} after {type(ex).__name__}")
+            sys.stdout.flush()
+            proj = angr.Project(
+                path,
+                auto_load_libs=False,
+                main_opts={
+                    "backend": "dos_mz",
+                    "base_addr": explicit_base,
+                },
+            )
+        else:
+            raise
     print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
     sys.stdout.flush()
     return proj
 
 
 def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) -> angr.Project:
+    arch = Arch86_16()
+    arch.bits = max(arch.bits, 32)
     return angr.Project(
         io.BytesIO(code),
         auto_load_libs=False,
         main_opts={
             "backend": "blob",
-            "arch": Arch86_16(),
+            "arch": arch,
             "base_addr": base_addr,
             "entry_point": entry_point,
         },
@@ -991,6 +1320,80 @@ def _format_first_block_asm(project: angr.Project, addr: int) -> str:
     return "\n".join(lines) if lines else "<no instructions>"
 
 
+def _format_asm_range(project: angr.Project, start: int, end: int, *, max_instructions: int = 128) -> str:
+    if end <= start:
+        return "<no instructions>"
+    try:
+        code = bytes(project.loader.memory.load(start, end - start))
+    except Exception as ex:
+        return f"<assembly unavailable: {ex}>"
+    try:
+        insns = list(project.arch.capstone.disasm(code, start))
+    except Exception as ex:
+        return f"<assembly unavailable: {ex}>"
+    if not insns:
+        return "<no instructions>"
+    lines = [f"{insn.address:#06x}: {insn.mnemonic} {insn.op_str}".rstrip() for insn in insns[:max_instructions]]
+    if len(insns) > max_instructions:
+        lines.append(f"... <truncated after {max_instructions} instructions>")
+    return "\n".join(lines)
+
+
+def _try_decompile_sidecar_slice(
+    project: angr.Project,
+    lst_metadata: LSTMetadata | None,
+    addr: int,
+    name: str,
+    *,
+    timeout: int,
+    api_style: str,
+    binary_path: Path | None,
+) -> tuple[str, str] | None:
+    region = _lst_code_region(lst_metadata, addr)
+    if region is None:
+        return None
+    start, end = region
+    if end <= start:
+        return None
+    try:
+        code = bytes(project.loader.memory.load(start, end - start))
+    except Exception:
+        return None
+
+    def _recover_and_decompile():
+        slice_project = _build_project_from_bytes(code, base_addr=start, entry_point=start)
+        cfg, func = _pick_function_lean(
+            slice_project,
+            start,
+            regions=[(start, end)],
+            data_references=False,
+            extend_far_calls=False,
+        )
+        func.name = name
+        status, payload, *_ = _decompile_function_with_stats(
+            slice_project,
+            cfg,
+            func,
+            max(1, min(timeout, 6)),
+            api_style,
+            binary_path,
+            lst_metadata=lst_metadata,
+        )
+        return status, payload
+
+    try:
+        status, payload = _run_with_timeout_in_daemon_thread(
+            _recover_and_decompile,
+            timeout=max(2, min(timeout, 8)),
+            thread_name_prefix="slice-fallback",
+        )
+    except Exception:
+        return None
+    if status != "ok":
+        return None
+    return status, payload
+
+
 def _function_skip_reason(function):
     if getattr(function, "is_simprocedure", False):
         return "SimProcedure (DOS helper)"
@@ -1024,8 +1427,8 @@ def _supplement_functions_from_prologue_scan(
     *,
     search_span: int = 0x2000,
     region_span: int = 0x120,
-    scan_limit: int = 16,
-    recover_limit: int = 4,
+    scan_limit: int = 8,
+    recover_limit: int = 1,
     per_function_timeout: int = 2,
 ):
     if project.arch.name != "86_16":
@@ -1057,17 +1460,13 @@ def _supplement_functions_from_prologue_scan(
     if not candidates:
         return []
 
-    supplemental: list[tuple[object, object]] = []
-    scanned = 0
+    ranked_candidates: list[tuple[int, int]] = []
     for addr in reversed(candidates):
-        if len(supplemental) >= recover_limit or scanned >= scan_limit:
-            break
-        scanned += 1
         try:
-            block = project.factory.block(addr, size=8, opt_level=0)
+            block = project.factory.block(addr, size=16, opt_level=0)
         except Exception:
             continue
-        insns = block.capstone.insns[:2]
+        insns = block.capstone.insns
         if (
             len(insns) < 2
             or insns[0].mnemonic != "push"
@@ -1076,6 +1475,15 @@ def _supplement_functions_from_prologue_scan(
             or insns[1].op_str != "bp, sp"
         ):
             continue
+        has_dos_interrupt = any(insn.mnemonic == "int" and insn.op_str == "0x21" for insn in insns[:8])
+        ranked_candidates.append((0 if has_dos_interrupt else 1, addr))
+
+    supplemental: list[tuple[object, object]] = []
+    scanned = 0
+    for _priority, addr in sorted(ranked_candidates):
+        if len(supplemental) >= recover_limit or scanned >= scan_limit:
+            break
+        scanned += 1
 
         def _recover_candidate(candidate_addr=addr):
             candidate_project = project
@@ -1123,6 +1531,147 @@ def _supplement_functions_from_prologue_scan(
             f"/* supplemental prologue scan recovered {len(supplemental)} additional function(s) near entry. */"
         )
     return supplemental
+
+
+def _rank_exe_function_seeds(project: angr.Project) -> list[int]:
+    main_object = getattr(project.loader, "main_object", None)
+    if main_object is None:
+        return []
+    max_addr = getattr(main_object, "max_addr", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    if not isinstance(max_addr, int) or not isinstance(linked_base, int):
+        return []
+
+    try:
+        code = bytes(main_object.memory.load(0, max_addr + 1))
+    except Exception:
+        return []
+
+    ranked: dict[int, tuple[int, int]] = {}
+    near_call_targets: set[int] = set()
+    far_call_targets: set[int] = set()
+    prologue_targets: set[int] = set()
+
+    def _consider(addr: int, priority: int) -> None:
+        if not (linked_base <= addr < linked_base + len(code)):
+            return
+        if addr == project.entry:
+            return
+        distance = abs(addr - project.entry)
+        existing = ranked.get(addr)
+        candidate = (priority, distance)
+        if existing is None or candidate < existing:
+            ranked[addr] = candidate
+
+    for offset in range(len(code) - 2):
+        opcode = code[offset]
+        if opcode == 0xE8:
+            rel = int.from_bytes(code[offset + 1 : offset + 3], "little", signed=True)
+            callsite = linked_base + offset
+            target = callsite + 3 + rel
+            near_call_targets.add(target)
+            _consider(target, 0)
+        if code[offset : offset + 3] == b"\x55\x8b\xec":
+            target = linked_base + offset
+            prologue_targets.add(target)
+            _consider(target, 1)
+
+    for offset in range(len(code) - 4):
+        if code[offset] != 0x9A:
+            continue
+        off = int.from_bytes(code[offset + 1 : offset + 3], "little")
+        seg = int.from_bytes(code[offset + 3 : offset + 5], "little")
+        target = linked_base + (seg << 4) + off
+        far_call_targets.add(target)
+        _consider(target, 0)
+
+    reranked: list[tuple[tuple[int, int], int]] = []
+    for addr, (_priority, distance) in ranked.items():
+        in_near_call = addr in near_call_targets
+        in_far_call = addr in far_call_targets
+        in_prologue = addr in prologue_targets
+        if in_prologue and (in_near_call or in_far_call):
+            final_priority = 0
+        elif in_prologue:
+            final_priority = 1
+        elif in_near_call or in_far_call:
+            final_priority = 2
+        else:
+            final_priority = 3
+        reranked.append(((final_priority, distance), addr))
+
+    return [addr for _meta, addr in sorted(reranked)]
+
+
+def _recover_seeded_exe_functions(
+    project: angr.Project,
+    *,
+    timeout: int,
+    limit: int | None,
+    region_span: int = 0x120,
+    per_function_timeout: int = 1,
+):
+    main_object = getattr(project.loader, "main_object", None)
+    if main_object is None:
+        return []
+    binary_path = getattr(main_object, "binary", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    if binary_path is None or not isinstance(linked_base, int) or not isinstance(max_addr, int):
+        return []
+
+    ranked_seeds = _rank_exe_function_seeds(project)
+    if not ranked_seeds:
+        return []
+
+    deadline = time.monotonic() + max(1, timeout)
+    recovered: list[tuple[object, object]] = []
+    seen_addrs: set[int] = {project.entry}
+    for addr in ranked_seeds:
+        if limit is not None and len(recovered) >= limit:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+
+        def _recover_candidate(candidate_addr=addr):
+            candidate_project = _build_project(
+                Path(binary_path),
+                force_blob=False,
+                base_addr=linked_base,
+                entry_point=project.entry,
+            )
+            block = candidate_project.factory.block(candidate_addr, size=8, opt_level=0)
+            insns = block.capstone.insns
+            if len(insns) < 1:
+                raise KeyError(f"Function {candidate_addr:#x} does not have a valid first instruction.")
+            return _pick_function_lean(
+                candidate_project,
+                candidate_addr,
+                regions=[(candidate_addr, min(candidate_addr + region_span, linked_base + max_addr + 1))],
+                data_references=False,
+                extend_far_calls=False,
+            )
+
+        try:
+            with _analysis_timeout(min(per_function_timeout, max(1, int(remaining)))):
+                function_cfg, function = _recover_candidate()
+        except (_AnalysisTimeout, KeyError):
+            continue
+        except Exception:
+            continue
+
+        if function.addr in seen_addrs:
+            continue
+        reason = _function_skip_reason(function)
+        if reason is not None:
+            continue
+        seen_addrs.add(function.addr)
+        recovered.append((function_cfg, function))
+
+    if recovered:
+        print(f"/* seeded EXE catalog recovered {len(recovered)} additional function(s). */")
+    return recovered
 
 
 def _decompile_function(
@@ -1376,6 +1925,8 @@ def _decompile_function(
     formatted = _materialize_annotated_cod_declarations_text(formatted, function, cod_metadata)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
     formatted = _normalize_spurious_duplicate_local_suffixes(formatted)
+    formatted = _dedupe_adjacent_prototype_lines(formatted)
+    formatted = _sanitize_mangled_autonames_text(formatted)
     if not (
         binary_path is not None
         and binary_path.name.lower().endswith(".cod")
@@ -2447,6 +2998,43 @@ def _collapse_duplicate_type_keywords_text(c_text: str) -> str:
     for pattern, replacement in replacements:
         normalized = re.sub(pattern, replacement, normalized)
     return normalized
+
+
+def _dedupe_adjacent_prototype_lines(c_text: str) -> str:
+    trailing_newline = c_text.endswith("\n")
+    lines = c_text.splitlines()
+    prototype_re = re.compile(r"^\s*[A-Za-z_][\w\s\*\[\]]*?\s+[A-Za-z_]\w*\s*\([^)]*\)\s*;\s*$")
+    deduped: list[str] = []
+    last_prototype: str | None = None
+
+    for line in lines:
+        stripped = line.strip()
+        if prototype_re.match(stripped):
+            if stripped == last_prototype:
+                continue
+            last_prototype = stripped
+            deduped.append(line)
+            continue
+        if stripped:
+            last_prototype = None
+        deduped.append(line)
+
+    normalized = "\n".join(deduped)
+    if trailing_newline:
+        normalized += "\n"
+    return normalized
+
+
+def _sanitize_mangled_autonames_text(c_text: str) -> str:
+    token_re = re.compile(r"\b(?:sub_[0-9a-f]+sub_[0-9a-f]+|dos_int\d+sub_[0-9a-f]+)\b")
+
+    def _replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        token = re.sub(r"\b(sub_[0-9a-f]+)sub_[0-9a-f]+\b", r"\1", token)
+        token = re.sub(r"\b(dos_int\d+)sub_[0-9a-f]+\b", r"\1", token)
+        return token
+
+    return token_re.sub(_replace, c_text)
 
 
 def _prune_trailing_generic_return_text(c_text: str) -> str:
@@ -11955,32 +12543,103 @@ def _recover_lst_function(
     window: int,
     low_memory: bool = False,
 ):
-    addr = project.entry + offset
+    addr = offset if lst_metadata.absolute_addrs else project.entry + offset
+    exact_region = _lst_code_region(lst_metadata, addr)
     with _analysis_timeout(max(1, timeout)):
         if project.arch.name == "86_16":
+            fast_windows = _x86_16_fast_recovery_windows(window, low_memory=low_memory)
             candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
             last_error: Exception | None = None
-            for candidate_window in candidate_windows:
-                regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
+            for candidate_window in fast_windows:
+                if exact_region is not None:
+                    regions = [exact_region]
+                else:
+                    regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
                 try:
-                    cfg, func = _pick_function(
+                    cfg, func = _pick_function_lean(
                         project,
                         addr,
                         regions=regions,
+                        data_references=False,
+                        extend_far_calls=False,
                     )
                     break
                 except KeyError as ex:
                     last_error = ex
             else:
-                if last_error is not None:
-                    raise last_error
-                raise KeyError(f"Function {addr:#x} was not recovered by CFGFast.")
+                cfg = None
+                func = None
+
+            if cfg is not None and func is not None:
+                pass
+            else:
+                last_error = None
+                for candidate_window in candidate_windows:
+                    if exact_region is not None:
+                        regions = [exact_region]
+                    else:
+                        regions = [_infer_x86_16_linear_region(project, addr, window=candidate_window)]
+                    try:
+                        cfg, func = _pick_function(
+                            project,
+                            addr,
+                            regions=regions,
+                        )
+                        break
+                    except KeyError as ex:
+                        last_error = ex
+                else:
+                    if last_error is not None:
+                        raise last_error
+                    raise KeyError(f"Function {addr:#x} was not recovered by CFGFast.")
         else:
             regions = [(addr, addr + window)]
             cfg, func = _pick_function(project, addr, regions=regions)
 
     func.name = name
     return cfg, func
+
+
+def _make_placeholder_function(project: angr.Project, addr: int, name: str):
+    return SimpleNamespace(
+        addr=addr,
+        name=name,
+        project=project,
+        is_plt=False,
+        is_simprocedure=False,
+    )
+
+
+def _is_zero_filled_region(project: angr.Project, addr: int, *, size: int = 8) -> bool:
+    try:
+        data = bytes(project.loader.memory.load(addr, size))
+    except Exception:
+        return False
+    return bool(data) and all(byte == 0x00 for byte in data)
+
+
+def _rank_labeled_function_entries(
+    project: angr.Project,
+    labeled_entries: list[tuple[int, str]],
+) -> list[tuple[int, str]]:
+    entry_addr = getattr(project, "entry", None)
+
+    def _priority(item: tuple[int, str]) -> tuple[int, int, int]:
+        addr, name = item
+        lowered = name.lower()
+        if addr == entry_addr:
+            return (0, 0, addr)
+        if lowered in {"start", "_start"} or lowered.endswith("_start"):
+            return (1, abs(addr - entry_addr), addr)
+        if lowered in {"main", "_main"} or lowered.endswith("main"):
+            return (2, abs(addr - entry_addr), addr)
+        if "padding" in lowered or lowered.startswith("align_"):
+            return (8, abs(addr - entry_addr), addr)
+        if _is_zero_filled_region(project, addr):
+            return (7, abs(addr - entry_addr), addr)
+        return (3, abs(addr - entry_addr), addr)
+
+    return sorted(labeled_entries, key=_priority)
 
 
 def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
@@ -12147,6 +12806,21 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             def _recover_target_function():
+                if (
+                    lst_metadata is not None
+                    and project.arch.name == "86_16"
+                    and _lst_code_region(lst_metadata, args.addr) is not None
+                ):
+                    code_name = _lst_code_label(lst_metadata, args.addr, project.entry) or f"sub_{args.addr:x}"
+                    return _recover_lst_function(
+                        project,
+                        lst_metadata,
+                        args.addr if lst_metadata.absolute_addrs else args.addr - project.entry,
+                        code_name,
+                        timeout=args.timeout,
+                        window=args.window,
+                        low_memory=low_memory_path,
+                    )
                 if function_label is not None and args.addr == project.entry and project.arch.name == "86_16":
                     return _fallback_entry_function(
                         project,
@@ -12170,9 +12844,69 @@ def main(argv: list[str] | None = None) -> int:
                 thread_name_prefix="recovery",
             )
         except _AnalysisTimeout:
+            sidecar_region = _lst_code_region(lst_metadata, args.addr) if lst_metadata is not None else None
+            if sidecar_region is not None:
+                code_name = _lst_code_label(lst_metadata, sidecar_region[0], project.entry) or f"sub_{args.addr:x}"
+                slice_result = _try_decompile_sidecar_slice(
+                    project,
+                    lst_metadata,
+                    sidecar_region[0],
+                    code_name,
+                    timeout=args.timeout,
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                )
+                if slice_result is not None:
+                    _status, payload = slice_result
+                    print("/* Function recovery timed out; recovered function slice from sidecar bounds. */")
+                    print(f"/* binary: {args.binary} */")
+                    print(f"/* arch: {project.arch.name} */")
+                    print(f"/* entry: {project.entry:#x} */")
+                    print(f"/* function: {sidecar_region[0]:#x} {code_name} */")
+                    print("\n/* == c == */")
+                    print(payload)
+                    return 0
+                print("/* Function recovery timed out; using sidecar-bounded asm fallback. */")
+                print(f"/* binary: {args.binary} */")
+                print(f"/* arch: {project.arch.name} */")
+                print(f"/* entry: {project.entry:#x} */")
+                print(f"/* function: {sidecar_region[0]:#x} {code_name} */")
+                print("\n/* == asm fallback == */")
+                print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
+                return 4
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
             _emit_timeout_and_exit(args.timeout, recovery_detail)
         except FuturesTimeoutError:
+            sidecar_region = _lst_code_region(lst_metadata, args.addr) if lst_metadata is not None else None
+            if sidecar_region is not None:
+                code_name = _lst_code_label(lst_metadata, sidecar_region[0], project.entry) or f"sub_{args.addr:x}"
+                slice_result = _try_decompile_sidecar_slice(
+                    project,
+                    lst_metadata,
+                    sidecar_region[0],
+                    code_name,
+                    timeout=args.timeout,
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                )
+                if slice_result is not None:
+                    _status, payload = slice_result
+                    print("/* Function recovery timed out; recovered function slice from sidecar bounds. */")
+                    print(f"/* binary: {args.binary} */")
+                    print(f"/* arch: {project.arch.name} */")
+                    print(f"/* entry: {project.entry:#x} */")
+                    print(f"/* function: {sidecar_region[0]:#x} {code_name} */")
+                    print("\n/* == c == */")
+                    print(payload)
+                    return 0
+                print("/* Function recovery timed out; using sidecar-bounded asm fallback. */")
+                print(f"/* binary: {args.binary} */")
+                print(f"/* arch: {project.arch.name} */")
+                print(f"/* entry: {project.entry:#x} */")
+                print(f"/* function: {sidecar_region[0]:#x} {code_name} */")
+                print("\n/* == asm fallback == */")
+                print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
+                return 4
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
             _emit_timeout_and_exit(args.timeout, recovery_detail)
         except Exception as ex:
@@ -12238,7 +12972,10 @@ def main(argv: list[str] | None = None) -> int:
     packed_exe = None if args.proc is not None else getattr(project, "_inertia_packed_exe", None)
     if lst_metadata is not None and lst_metadata.code_labels:
         try:
-            labeled_offsets = sorted(lst_metadata.code_labels.items())
+            labeled_offsets = _rank_labeled_function_entries(
+                project,
+                list(lst_metadata.code_labels.items()),
+            )
             if args.max_functions > 0:
                 labeled_offsets = labeled_offsets[: args.max_functions]
         except Exception as ex:
@@ -12306,6 +13043,22 @@ def main(argv: list[str] | None = None) -> int:
         functions, total_functions = _interesting_functions(cfg, limit=limit)
         shown_total = len(functions)
         function_cfg_pairs = [(cfg, function) for function in functions]
+        if args.addr is None and args.binary.suffix.lower() == ".exe":
+            seeded_pairs = _recover_seeded_exe_functions(
+                project,
+                timeout=min(max(4, args.timeout // 2), 8),
+                limit=None if limit is None else max(0, limit - shown_total),
+            )
+            if seeded_pairs:
+                seen_existing = {function.addr for function in functions}
+                for function_cfg, function in seeded_pairs:
+                    if function.addr in seen_existing:
+                        continue
+                    function_cfg_pairs.append((function_cfg, function))
+                    seen_existing.add(function.addr)
+                shown_total = len(function_cfg_pairs)
+                total_functions = max(total_functions, shown_total)
+                project._inertia_supplemental_scan_used = True
         if (
             args.addr is None
             and args.binary.suffix.lower() == ".exe"
@@ -12325,22 +13078,66 @@ def main(argv: list[str] | None = None) -> int:
     print(f"/* arch: {project.arch.name} */")
     print(f"/* entry: {project.entry:#x} */")
     print(f"/* functions recovered: {total_functions} */")
+
+    if (
+        lst_metadata is not None
+        and lst_metadata.code_labels
+        and args.max_functions <= 0
+        and shown_total > 24
+    ):
+        auto_cap = 4 if total_functions > 256 else min(24, max(8, args.timeout))
+        labeled_offsets = labeled_offsets[:auto_cap]
+        shown_total = len(labeled_offsets)
+        print(
+            f"/* sidecar catalog detected {total_functions} functions; "
+            f"showing first {shown_total} by default for responsiveness. Use --max-functions to change the cap. */"
+        )
+
     if args.max_functions > 0 and total_functions > shown_total:
         print(f"/* showing first {shown_total} functions; use --max-functions to raise the cap */")
 
     function_tasks: list[FunctionWorkItem] = []
+    result_map: dict[int, FunctionWorkResult] = {}
     if lst_metadata is not None and lst_metadata.code_labels:
+        recover_timeout = min(args.timeout, 2)
         for index, (offset, name) in enumerate(labeled_offsets, start=1):
-            function_cfg, function = _recover_lst_function(
-                project,
-                lst_metadata,
-                offset,
-                name,
-                timeout=args.timeout,
-                window=args.window,
-                low_memory=low_memory_path,
-            )
-            function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
+            try:
+                function_cfg, function = _run_with_timeout_in_daemon_thread(
+                    lambda offset=offset, name=name: _recover_lst_function(
+                        project,
+                        lst_metadata,
+                        offset,
+                        name,
+                        timeout=recover_timeout,
+                        window=args.window,
+                        low_memory=low_memory_path,
+                    ),
+                    timeout=recover_timeout + 1,
+                    thread_name_prefix="lst-recover",
+                )
+                function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
+            except FuturesTimeoutError:
+                placeholder = _make_placeholder_function(project, offset, name)
+                function_tasks.append(FunctionWorkItem(index=index, function_cfg=None, function=placeholder))
+                result_map[index] = FunctionWorkResult(
+                    index=index,
+                    status="timeout",
+                    payload=f"Timed out while recovering {name} at {offset:#x}.",
+                    debug_output="",
+                    function=placeholder,
+                    function_cfg=None,
+                )
+            except Exception as ex:
+                placeholder = _make_placeholder_function(project, offset, name)
+                function_tasks.append(FunctionWorkItem(index=index, function_cfg=None, function=placeholder))
+                result_map[index] = FunctionWorkResult(
+                    index=index,
+                    status="error",
+                    payload=f"Recovery failed for {name} at {offset:#x}: {_describe_exception(ex)}",
+                    debug_output="",
+                    function=placeholder,
+                    function_cfg=None,
+                )
     else:
         for index, (function_cfg, function) in enumerate(function_cfg_pairs, start=1):
             function_tasks.append(FunctionWorkItem(index=index, function_cfg=function_cfg, function=function))
@@ -12353,9 +13150,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("/* parallel function decompilation: disabled (RAM pressure or single function) */")
 
-    result_map: dict[int, FunctionWorkResult] = {}
     if workers <= 1:
         for item in function_tasks:
+            if item.function_cfg is None:
+                continue
             result = _run_function_work_item(
                 item,
                 timeout=args.timeout,
@@ -12383,6 +13181,7 @@ def main(argv: list[str] | None = None) -> int:
                     enable_structured_simplify=args.addr is not None,
                 ): item
                 for item in function_tasks
+                if item.function_cfg is not None
             }
             pending = set(future_map)
             deadlines = {future: time.monotonic() + max(1, args.timeout) for future in future_map}
@@ -12437,8 +13236,29 @@ def main(argv: list[str] | None = None) -> int:
             print("/* -- c -- */")
             print(result.payload)
         else:
+            slice_result = None
+            if lst_metadata is not None:
+                slice_result = _try_decompile_sidecar_slice(
+                    project,
+                    lst_metadata,
+                    function.addr,
+                    function.name,
+                    timeout=args.timeout,
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                )
+            if slice_result is not None:
+                decompiled += 1
+                print("/* -- c (sidecar slice fallback) -- */")
+                print(slice_result[1])
+                continue
             failed += 1
-            asm_fallback = _format_first_block_asm(project, function.addr)
+            sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
+            asm_fallback = (
+                _format_asm_range(project, sidecar_region[0], sidecar_region[1])
+                if sidecar_region is not None
+                else _format_first_block_asm(project, function.addr)
+            )
             if result.status == "empty":
                 if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
                     print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
