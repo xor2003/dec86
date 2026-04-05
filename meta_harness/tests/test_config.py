@@ -42,11 +42,26 @@ def test_runtime_config_uses_default_operator_comments_file(monkeypatch, tmp_pat
     assert cfg.operator_comments_file == tmp_path / "HARNESS_COMMENTS.md"
 
 
+def test_runtime_config_uses_default_runtime_record_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROOT_DIR", str(tmp_path))
+    cfg = RuntimeConfig.from_env([])
+    assert cfg.history_log_file == tmp_path / ".codex_automation" / "history.jsonl"
+    assert cfg.maintenance_file == tmp_path / ".codex_automation" / "maintenance.json"
+    assert cfg.preflight_state_file == tmp_path / ".codex_automation" / "preflight.json"
+    assert cfg.session_ledger_file == tmp_path / ".codex_automation" / "sessions.jsonl"
+
+
 def test_runtime_config_uses_default_consecutive_worker_failure_limit(monkeypatch, tmp_path):
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.max_consecutive_worker_failures == 3
     assert cfg.worker_stall_failure_limit == 2
+    assert cfg.auto_commit_enabled is False
+    assert cfg.auto_commit_require_clean_start is True
+    assert cfg.unattended_max_cycles == 0
+    assert cfg.background_maintenance_enabled is True
+    assert cfg.maintenance_compaction_limit == 200
+    assert cfg.scheduled_maintenance_interval_cycles == 3
 
 
 def test_runtime_config_uses_default_worker_session_log_budget(monkeypatch, tmp_path):

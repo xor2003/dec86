@@ -76,19 +76,34 @@ def build_checker_prompt(cfg: RuntimeConfig) -> str:
     )
 
 
-def build_planner_prompt(cfg: RuntimeConfig) -> str:
-    return build_master_prompt(cfg) + (
+def build_planner_prompt(
+    cfg: RuntimeConfig,
+    *,
+    current_item: str = "",
+    rewrite_target: str = "",
+    task_packet: str = "",
+) -> str:
+    prompt = build_master_prompt(cfg) + (
         "\nPlanner step:\n"
         "- Analyze the current difference between relevant inputs and generated outputs.\n"
         "- Inspect the current code state.\n"
         f"- Do not rerun the evidence sweep; the sweep step already produced {cfg.evidence_log_file} and the checker step reviewed it for this cycle.\n"
         f"- Create or update {cfg.plan_path} as a flat numbered checklist.\n"
+        "- The plan is an execution specification, not a roadmap, status memo, or theme list.\n"
+        "- Each top-level numbered item must be small enough for one focused worker cycle, not a whole theme.\n"
         "- Each item must include exact implementation steps, not just a goal statement.\n"
         "- Each item must name the target file(s) and exact source line numbers when available.\n"
         "- Each item must say what to edit in those files in execution order.\n"
         "- Each item must specify the concrete functions, tests, or scripts to change.\n"
+        "- Each item must contain these explicit fields in this order: Goal, Why now, Edit targets, Required edits, Required tests, Verification commands, Definition of done, Stop conditions.\n"
+        "- Required edits must be imperative and executable, not descriptive.\n"
+        "- Verification commands must be concrete shell commands, not generic advice.\n"
         "- Each item must include a deterministic definition of done.\n"
         "- Keep items deterministic, short, and directly actionable.\n"
+        "- Do not emit vague planner language such as investigate, improve, refine, polish, or optimize unless the same item also names the exact files, functions, tests, and concrete edit sequence.\n"
+        "- Do not emit phase headers, aspirational themes, or research bullets without executable targets.\n"
+        "- If you cannot fill the required fields for an item, inspect the code and existing tests until you can.\n"
+        "- If a current item still contains multiple independent fixes, split it into smaller numbered items before sending it back to worker.\n"
         "- The plan must prioritize correctness first and recompilation second.\n"
         "- Preserve unfinished strategic items already present in the plan unless they are now done or clearly superseded by a more precise item.\n"
         "- Do not drop user-added unfinished goals just because the current cycle focuses on a different bug.\n"
@@ -96,36 +111,89 @@ def build_planner_prompt(cfg: RuntimeConfig) -> str:
         "- Avoid spending tokens on implementation, long code excerpts, or repeated repo tours in this step.\n"
         "- Do not run pytest, corpus scans, or large validation commands in this step; use the existing evidence and repository state.\n"
         "- Print current quality of correctness and recompilation.\n"
+        "- Print exactly one line at the end as: Green level: red\n"
         "- If there is nothing meaningful left to do, say that clearly.\n"
         "- At the end, print exactly: Global Remaining steps: N\n"
     )
+    if current_item.strip():
+        prompt += (
+            "\nCurrent plan item in progress:\n"
+            "- Keep this item first unless it is done or needs to be split.\n"
+            f"{current_item.strip()}\n"
+        )
+    if rewrite_target.strip():
+        prompt += (
+            "\nPlanner rewrite request:\n"
+            "- Rewrite this item into smaller numbered items that are easier for worker to finish one by one.\n"
+            f"{rewrite_target.strip()}\n"
+        )
+    if task_packet.strip():
+        prompt += (
+            "\nCurrent task packet:\n"
+            "- Keep the updated plan aligned with this packet unless it is now done or needs rewrite.\n"
+            f"{task_packet.strip()}\n"
+        )
+    return prompt
 
 
-def build_worker_prompt(cfg: RuntimeConfig) -> str:
-    return build_master_prompt(cfg) + (
+def build_worker_prompt(
+    cfg: RuntimeConfig,
+    *,
+    focus_item: str = "",
+    retry_context: str = "",
+    task_packet: str = "",
+) -> str:
+    prompt = build_master_prompt(cfg) + (
         "\nWorker step:\n"
         f"- Use the most recent {cfg.evidence_log_file} and the checker review as current evidence for correctness, recompilation quality, crashes, and smoothness.\n"
         f"- Continue implementing the unfinished steps from {cfg.plan_path}.\n"
+        "- Work on exactly one unfinished top-level plan item at a time.\n"
+        "- Start with the first unfinished numbered plan item unless a narrower current focus item is provided below.\n"
+        "- Do not move to a later top-level plan item until the current item is done or you can name the concrete blocker.\n"
         "- Work like an ongoing continuation: make real code changes, update tests, verify results, and commit often.\n"
         "- Never use source-specific hacks.\n"
         "- If the harness itself can be improved safely while you work, you may improve it too.\n"
         "- Prefer one tight edit/verify loop over many exploratory reads.\n"
         "- Run the smallest test that proves the touched behavior before considering broader validation.\n"
+        "- If a focused test already failed, change code or the hypothesis before rerunning that same test.\n"
         "- Avoid repeating `git status`, large `sed`/`cat` dumps, or the same targeted test unless new changes justify it.\n"
+        "- Print exactly one line at the end as: Green level: focused-item-green|cycle-green|merge-safe-green|red\n"
         "- At the end of each step, print exactly: Global Remaining steps: N\n"
     )
+    if focus_item.strip():
+        prompt += (
+            "\nCurrent focus item:\n"
+            "- Treat this as the primary task for this worker step.\n"
+            f"{focus_item.strip()}\n"
+        )
+    if retry_context.strip():
+        prompt += (
+            "\nRecent worker retry context:\n"
+            "- Use this to avoid repeating the same failed loop.\n"
+            f"{retry_context.strip()}\n"
+        )
+    if task_packet.strip():
+        prompt += (
+            "\nActive task packet:\n"
+            "- Stay inside this packet's scope until done or concretely blocked.\n"
+            f"{task_packet.strip()}\n"
+        )
+    return prompt
 
 
-def build_reviewer_prompt(cfg: RuntimeConfig, *, stall_context: str = "") -> str:
+def build_reviewer_prompt(cfg: RuntimeConfig, *, stall_context: str = "", task_packet: str = "") -> str:
     prompt = build_master_prompt(cfg) + (
         "\nReviewer step:\n"
         "- In a fresh session, review the current code state and current plan.\n"
         "- Check what is genuinely finished and what is not.\n"
         f"- Remove completed steps from {cfg.plan_path}.\n"
+        "- Evaluate the current active task packet explicitly as done, partial, blocked, or needing rewrite.\n"
         "- You may also improve the harness itself if that reduces future failures or manual babysitting.\n"
         "- Do not run worker cycles in this step.\n"
         "- Avoid pytest, sweep reruns, or broad repository exploration unless a missing fact blocks the review.\n"
         "- Print achieved results.\n"
+        "- Print exactly one line at the end as: Task packet status: done|partial|blocked|rewrite\n"
+        "- Print exactly one line at the end as: Green level: focused-item-green|cycle-green|merge-safe-green|red\n"
         "- Print the true remaining step count at the end as: Global Remaining steps: N\n"
     )
     if stall_context.strip():
@@ -135,6 +203,12 @@ def build_reviewer_prompt(cfg: RuntimeConfig, *, stall_context: str = "") -> str
             "- If the worker loop is stuck, prefer tightening the plan, improving harness retry/model strategy, or both.\n"
             "- Keep the next cycle open only when there is a concrete better next step.\n"
             f"{stall_context.strip()}\n"
+        )
+    if task_packet.strip():
+        prompt += (
+            "\nActive task packet:\n"
+            "- Base the review on this packet before broader plan speculation.\n"
+            f"{task_packet.strip()}\n"
         )
     return prompt
 
@@ -155,7 +229,7 @@ def build_crash_reviewer_prompt(cfg: RuntimeConfig, current_cycle_dir: str, exit
     )
 
 
-def build_resume_prompt(role: str, cfg: RuntimeConfig, *, comments: str = "") -> str:
+def build_resume_prompt(role: str, cfg: RuntimeConfig, *, comments: str = "", role_context: str = "") -> str:
     role_instructions = {
         "worker": (
             f"Continue the existing {role} session.\n"
@@ -188,4 +262,6 @@ def build_resume_prompt(role: str, cfg: RuntimeConfig, *, comments: str = "") ->
     )
     if comments.strip():
         prompt += "\nOperator comments to apply now:\n" + comments.strip() + "\n"
+    if role_context.strip():
+        prompt += "\nCurrent context:\n" + role_context.strip() + "\n"
     return prompt

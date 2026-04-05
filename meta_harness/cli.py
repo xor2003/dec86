@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from .config import LlmConfig, RuntimeConfig
-from .orchestrator import HarnessError, MetaHarness, RoleRunError
+from .orchestrator import HarnessError, MetaHarness, ResourceBlockedError, RoleRunError
 from .webui import launch_web_ui
 
 
@@ -21,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RuntimeConfig.from_env(argv)
     llm_cfg = LlmConfig.from_env()
     harness = MetaHarness(cfg, llm_cfg)
-    web_ui = launch_web_ui(cfg)
+    web_ui = launch_web_ui(cfg, harness=harness)
     if web_ui is not None:
         print(f"Web UI: {web_ui.url}", file=sys.stderr)
     peek_resume_step = getattr(harness, "peek_resume_step", lambda: None)
@@ -37,6 +37,10 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = code
         raise
     except HarnessError as exc:
+        if isinstance(exc, ResourceBlockedError):
+            print(f"BLOCKED: {exc}", file=sys.stderr)
+            exit_code = exc.exit_code
+            return exit_code
         graceful_codes = {124, 130, 143}
         if isinstance(exc, RoleRunError) and exc.exit_code in graceful_codes:
             exit_code = exc.exit_code
@@ -58,5 +62,8 @@ def main(argv: list[str] | None = None) -> int:
         if web_ui is not None:
             web_ui.stop()
         if exit_code not in (0, 10):
-            reason = "terminated" if exit_code in (124, 143) else "interrupted"
+            if exit_code == 75:
+                reason = "blocked"
+            else:
+                reason = "terminated" if exit_code in (124, 143) else "interrupted"
             harness.finalize_run(reason, exit_code)

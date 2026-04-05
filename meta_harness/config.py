@@ -126,10 +126,20 @@ class RuntimeConfig:
     status_file: Path
     last_log_file: Path
     chat_log_file: Path
+    history_log_file: Path
+    maintenance_file: Path
     operator_comments_file: Path
     prompt_dir: Path
     evidence_subset_dir: Path
     evidence_log_file: Path
+    preflight_state_file: Path
+    session_ledger_file: Path
+    auto_commit_enabled: bool
+    auto_commit_require_clean_start: bool
+    unattended_max_cycles: int
+    background_maintenance_enabled: bool
+    maintenance_compaction_limit: int
+    scheduled_maintenance_interval_cycles: int
     compact_prompts: bool
     delta_resume_prompts: bool
     codex_memory_limit_mb: int
@@ -201,10 +211,22 @@ class RuntimeConfig:
             status_file=Path(os.environ.get("STATUS_FILE", state_dir / "status.txt")),
             last_log_file=Path(os.environ.get("LAST_LOG_FILE", state_dir / "last.log")),
             chat_log_file=Path(os.environ.get("CHAT_LOG_FILE", state_dir / "chat.jsonl")),
+            history_log_file=Path(os.environ.get("HISTORY_LOG_FILE", state_dir / "history.jsonl")),
+            maintenance_file=Path(os.environ.get("MAINTENANCE_FILE", state_dir / "maintenance.json")),
             operator_comments_file=Path(os.environ.get("OPERATOR_COMMENTS_FILE", root_dir / "HARNESS_COMMENTS.md")),
             prompt_dir=Path(os.environ.get("PROMPT_DIR", state_dir / "prompts")),
             evidence_subset_dir=evidence_subset_dir,
             evidence_log_file=Path(os.environ.get("EVIDENCE_LOG_FILE", state_dir / "evidence.log")),
+            preflight_state_file=Path(os.environ.get("PREFLIGHT_STATE_FILE", state_dir / "preflight.json")),
+            session_ledger_file=Path(os.environ.get("SESSION_LEDGER_FILE", state_dir / "sessions.jsonl")),
+            auto_commit_enabled=os.environ.get("AUTO_COMMIT_ENABLED", "0").strip().lower() in {"1", "true", "yes"},
+            auto_commit_require_clean_start=os.environ.get("AUTO_COMMIT_REQUIRE_CLEAN_START", "1").strip().lower()
+            not in {"0", "false", "no"},
+            unattended_max_cycles=int(os.environ.get("UNATTENDED_MAX_CYCLES", "0")),
+            background_maintenance_enabled=os.environ.get("BACKGROUND_MAINTENANCE_ENABLED", "1").strip().lower()
+            not in {"0", "false", "no"},
+            maintenance_compaction_limit=int(os.environ.get("MAINTENANCE_COMPACTION_LIMIT", "200")),
+            scheduled_maintenance_interval_cycles=int(os.environ.get("SCHEDULED_MAINTENANCE_INTERVAL_CYCLES", "3")),
             compact_prompts=os.environ.get("COMPACT_PROMPTS", "1").strip().lower() not in {"0", "false", "no"},
             delta_resume_prompts=os.environ.get("DELTA_RESUME_PROMPTS", "1").strip().lower()
             not in {"0", "false", "no"},
@@ -271,6 +293,16 @@ class RuntimeConfig:
                 "PLAN_PATH": str(self.plan_path),
                 "STATUS_FILE": str(self.status_file),
                 "EVIDENCE_LOG_FILE": str(self.evidence_log_file),
+                "HISTORY_LOG_FILE": str(self.history_log_file),
+                "MAINTENANCE_FILE": str(self.maintenance_file),
+                "PREFLIGHT_STATE_FILE": str(self.preflight_state_file),
+                "SESSION_LEDGER_FILE": str(self.session_ledger_file),
+                "AUTO_COMMIT_ENABLED": "1" if self.auto_commit_enabled else "0",
+                "AUTO_COMMIT_REQUIRE_CLEAN_START": "1" if self.auto_commit_require_clean_start else "0",
+                "UNATTENDED_MAX_CYCLES": str(self.unattended_max_cycles),
+                "BACKGROUND_MAINTENANCE_ENABLED": "1" if self.background_maintenance_enabled else "0",
+                "MAINTENANCE_COMPACTION_LIMIT": str(self.maintenance_compaction_limit),
+                "SCHEDULED_MAINTENANCE_INTERVAL_CYCLES": str(self.scheduled_maintenance_interval_cycles),
                 "CODEX_TIMEOUT_SECS": str(self.codex_timeout_secs),
                 "STATUS_HEARTBEAT_SECS": str(self.status_heartbeat_secs),
                 "WEB_UI_ENABLED": "1" if self.web_ui_enabled else "0",

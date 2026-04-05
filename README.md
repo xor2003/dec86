@@ -14,6 +14,23 @@ The project priorities are:
 
 The project is not aiming to become a transpiler.
 
+## Why This Repo Is Interesting
+
+This is not just "angr pointed at 16-bit DOS." The repo already contains several pieces that are unusual enough to be fun to work on:
+
+- custom `x86-16` architecture, lifter, and `SimOS` support for real-mode binaries
+- in-tree DOS MZ loader with relocation handling instead of treating every sample like a flat blob
+- bounded recovery windows and timeout-aware fallback paths for scan-safe decompilation
+- DOS and BIOS interrupt modeling that turns `int 0x21`/friends into synthetic helper calls
+- far-call-aware CFG extension so recovery can stay narrow without losing obvious callees
+- `COD` and `LST` sidecar ingestion for names, procedure slicing, and evidence-backed annotations
+- explicit `confidence` and `assumption` reporting so uncertain recovery is visible instead of hidden
+- a recompilable-subset ratchet, not just “pretty pseudocode”
+- an in-progress region-based structuring pipeline for loops, ifs, gotos, and future switch recovery
+- corpus-first harnessing for regressions, bounded scans, and real-binary progress tracking
+
+If you like decompilers that try to be honest about segmented memory, calling conventions, and uncertain evidence, this codebase already has real architecture to extend.
+
 ## Decompiler Shape
 
 The current x86-16 decompiler is organized around the recovery pipeline:
@@ -135,9 +152,18 @@ For legacy script usage:
 
 ## Project docs and current status
 
-Main docs:
+**Main roadmap** (deterministic, actionable):
+- [`GLOBAL_PLAN3.md`](/home/xor/vextest/GLOBAL_PLAN3.md) — **Active roadmap** (4 phases, deterministic DoD, PC reasoning assistant)
+  - For forward planning and architecture decisions
+- [`PLAN.md`](/home/xor/vextest/PLAN.md) — **Immediate fixes** (4 regression items, see completed + in-progress)
+  - Completed first, then follow GLOBAL_PLAN3 phases
 
-- [`PLAN.md`](/home/xor/vextest/PLAN.md)
+**Reference docs** (philosophical, not action items):
+- [`AGENTS.md`](/home/xor/vextest/AGENTS.md) — Operating rules and architecture constraints (read first)
+- [`GLOBAL_PLAN.md`](/home/xor/vextest/GLOBAL_PLAN.md) — Architectural thinking (historical reference)
+- [`GLOBAL_PLAN2.md`](/home/xor/vextest/GLOBAL_PLAN2.md) — Pre-implementation roadmap (historical reference)
+
+**Implementation docs**:
 - [`angr_platforms/docs/dream_decompiler_execution_plan.md`](/home/xor/vextest/angr_platforms/docs/dream_decompiler_execution_plan.md)
 - [`angr_platforms/docs/x86_16_80286_real_mode_coverage.md`](/home/xor/vextest/angr_platforms/docs/x86_16_80286_real_mode_coverage.md)
 - [`angr_platforms/docs/x86_16_mnemonic_coverage.md`](/home/xor/vextest/angr_platforms/docs/x86_16_mnemonic_coverage.md)

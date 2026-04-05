@@ -4,6 +4,7 @@ import re
 import shlex
 import subprocess
 import os
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -229,4 +230,47 @@ def run_provider_once(
             env=provider_env,
             proc_name="llamacpp",
         )
+    if provider == "mock":
+        scenario_path = os.environ.get("MOCK_PROVIDER_SCRIPT", "").strip()
+        if not scenario_path:
+            raise ValueError("MOCK_PROVIDER_SCRIPT is required for provider=mock")
+        role = prompt_file.name.split(".", 1)[0]
+        responses = []
+        with Path(scenario_path).open("r", encoding="utf-8") as fp:
+            for raw_line in fp:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                responses.append(json.loads(line))
+        index_file = Path(os.environ.get("MOCK_PROVIDER_INDEX_FILE", str(Path(scenario_path).with_suffix(".idx"))))
+        try:
+            index = int(index_file.read_text(encoding="utf-8").strip()) if index_file.exists() else 0
+        except ValueError:
+            index = 0
+        if index >= len(responses):
+            raise ValueError(f"Mock provider script exhausted at index {index}")
+        entry = responses[index]
+        index_file.parent.mkdir(parents=True, exist_ok=True)
+        index_file.write_text(str(index + 1), encoding="utf-8")
+        output = str(entry.get("output", ""))
+        exit_code = int(entry.get("exit_code", 0))
+        entry_role = str(entry.get("role", "") or "")
+        entry_mode = str(entry.get("mode", "") or "")
+        if entry_role and entry_role not in {"*", role}:
+            raise ValueError(f"Mock provider role mismatch: expected {role}, got {entry_role}")
+        if entry_mode and entry_mode not in {"*", mode}:
+            raise ValueError(f"Mock provider mode mismatch: expected {mode}, got {entry_mode}")
+        session_hint = str(entry.get("session_id", "") or "")
+        config.last_log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("w", encoding="utf-8") as out, config.last_log_file.open("w", encoding="utf-8") as mirror:
+            outputs = (out, mirror)
+            _append_to_logs(outputs, header)
+            if session_hint:
+                _append_to_logs(outputs, f"session id: {session_hint}\n")
+            if output:
+                _append_to_logs(outputs, output if output.endswith("\n") else output + "\n")
+        footer = f"[{_timestamp()}] end rc={exit_code}\n"
+        with log_file.open("a", encoding="utf-8") as out, config.last_log_file.open("a", encoding="utf-8") as mirror:
+            _append_to_logs((out, mirror), footer)
+        return exit_code
     raise ValueError(f"Unsupported provider: {provider}")

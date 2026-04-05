@@ -37,6 +37,102 @@ This separation helps reduce role confusion:
 - `cli.py`
   Main entry point used by `python -m meta_harness`.
 
+## State Contracts
+
+The harness persists a small set of machine-readable runtime artifacts under `.codex_automation/`.
+
+- `cycles/*/cycle.state.json`
+  Canonical cycle state with `schema_version=meta_harness.cycle_state.v1`, step statuses, current plan item, current task packet, current green level, last policy decision, and next-cycle handoff hints.
+- `preflight.json`
+  Preflight and resource readiness snapshot with `schema_version=meta_harness.preflight.v1`.
+- `sessions.jsonl`
+  One JSON row per role run with `schema_version=meta_harness.session.v1`, role/model/provider, duration, outcome, and parsed token/cost usage when available.
+- `history.jsonl`
+  Typed event stream with `schema_version=meta_harness.event.v1`.
+- `maintenance.json`
+  Bounded autonomy and maintenance summary with `schema_version=meta_harness.maintenance.v1`.
+
+`history.jsonl` rows use these stable fields:
+
+- `event`
+  Canonical event name such as `cycle.started`, `cycle.resumed`, `branch.stale_against_main`, `role.started`, `role.finished`, `role.timed_out`, `worker.stalled`, `planner.rewrite_requested`, `sweep.started`, `sweep.finished`, `sweep.failed`, `harness.restarting`.
+- `status`
+  One of `running`, `ready`, `retrying`, `blocked`, `completed`, `failed`, `warning`.
+- `failure_class`
+  Empty for non-failures, otherwise a canonical class such as `provider_failure`, `worker_timeout`, `worker_no_progress`, `plan_item_too_broad`, `reviewer_plan_mismatch`, `sweep_failure`, `resource_blocked`, `restart_required`.
+- `details`
+  Structured event-specific context.
+
+The web UI should treat these persisted files as the source of truth for runtime visibility rather than scraping raw terminal prose.
+
+The most important cycle-state fields beyond step statuses are:
+
+- `current_task_packet`
+  Structured representation of the active numbered plan item.
+- `current_task_packet_status`
+  Reviewer classification for the active packet: `done`, `partial`, `blocked`, or `rewrite`.
+- `current_green_level`
+  Current verification level, for example `red`, `focused-item-green`, or `cycle-green`.
+- `last_policy_decision`
+  The latest machine decision chosen by the harness runtime policy.
+- `last_closeout_action`
+  The latest autonomy closeout action, for example `continue`, `rewrite`, `stop`, or `commit`.
+- `git_clean_start`
+  Whether the cycle started from a clean worktree.
+- `branch_name` and `branch_freshness`
+  Branch identity plus ahead/behind/stale state versus `main`.
+
+`maintenance.json` summarizes bounded unattended behavior:
+
+- aggregated session usage and cost
+- recent typed event counts
+- recent failure counts
+- lightweight next-step recommendations for the harness
+
+Useful autonomy controls:
+
+- `AUTO_COMMIT_ENABLED=1`
+  Allow conservative harness-managed auto-commit after a successful green cycle.
+- `AUTO_COMMIT_REQUIRE_CLEAN_START=1`
+  Require the cycle to begin from a clean worktree before auto-commit is allowed.
+- `UNATTENDED_MAX_CYCLES=N`
+  Stop intentionally after `N` open cycles so unattended runs stay bounded.
+- `BACKGROUND_MAINTENANCE_ENABLED=1`
+  Keep maintenance compaction and recommendation generation enabled.
+- `MAINTENANCE_COMPACTION_LIMIT=N`
+  Limit how many recent session/event rows are compacted into the maintenance summary.
+
+The web UI now exposes bounded operator actions:
+
+- `Pause`
+  Creates the repo `STOP` signal so the harness stops cleanly at the next guard point.
+- `Resume`
+  Clears the `STOP` signal.
+- `Force Planner Rewrite`
+  Schedules the next cycle to route through planner for the current task packet.
+- `Force Stronger Worker`
+  Applies a live worker model/failure-limit override using the configured stall model policy.
+- `Run Maintenance`
+  Refreshes the maintenance summary and compaction data immediately.
+
+The UI also keeps a dedicated `Operator Action History` panel sourced from typed runtime events, so manual interventions stay visible after polling refreshes.
+
+When `AUTO_COMMIT_ENABLED=1`, the harness can now commit at two scopes:
+
+- whole successful cycle: `meta_harness: cycle NNN complete`
+- completed task packet with focused green status: `meta_harness: packet X complete`
+
+Packet-level auto-commit is intentionally narrow:
+
+- it requires `target_files` on the completed task packet
+- it stages only those files
+- it refuses to commit if tracked changes exist outside the packet scope
+
+Scheduled maintenance controls:
+
+- `SCHEDULED_MAINTENANCE_INTERVAL_CYCLES=N`
+  Run an explicit scheduled maintenance interval every `N` open cycles during unattended operation.
+
 ## Token efficiency
 
 The harness now tries to stay cheap by default:
