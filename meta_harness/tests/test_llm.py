@@ -155,3 +155,25 @@ def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_pa
     assert events
     assert "first line" in events[0]
     assert "second line" in cfg.last_log_file.read_text(encoding="utf-8")
+
+
+def test_run_provider_once_supports_mock_provider(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    prompt = tmp_path / "worker.prompt.txt"
+    prompt.write_text("hello", encoding="utf-8")
+    log = tmp_path / "run.log"
+    script = tmp_path / "mock.jsonl"
+    script.write_text(
+        '{"role":"worker","mode":"new","output":"Green level: focused-item-green\\nGlobal Remaining steps: 0","exit_code":0}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MOCK_PROVIDER_SCRIPT", str(script))
+    monkeypatch.setenv("MOCK_PROVIDER_INDEX_FILE", str(tmp_path / "mock.idx"))
+
+    rc = run_provider_once("mock", "new", "mock-model", "prompt", prompt, log, cfg)
+
+    assert rc == 0
+    text = log.read_text(encoding="utf-8")
+    assert "start provider=mock" in text
+    assert "Green level: focused-item-green" in text
+    assert "Global Remaining steps: 0" in text
