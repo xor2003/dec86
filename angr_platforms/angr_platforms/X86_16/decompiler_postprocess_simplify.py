@@ -84,6 +84,24 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     def _is_c_constant_int_8616(expr, value: int) -> bool:
         return isinstance(expr, CConstant) and isinstance(expr.value, int) and expr.value == value
 
+    def _is_power_of_two_minus_one_8616(value: int) -> bool:
+        """Check if value is of form 2^n - 1 (all bits set up to position n-1)."""
+        if value <= 0:
+            return False
+        return (value & (value + 1)) == 0
+
+    def _bit_position_of_power_of_two_8616(value: int) -> int | None:
+        """Return n if value == 2^n, else None."""
+        if value <= 0 or (value & (value - 1)) != 0:
+            return None
+        return (value - 1).bit_length()
+
+    def _leading_set_bits_8616(value: int) -> int:
+        """Return position of highest set bit (1-indexed, so 0xFF -> 8)."""
+        if value == 0:
+            return 0
+        return value.bit_length()
+
     def _extract_same_zero_compare_expr_8616(expr):
         if not isinstance(expr, CBinaryOp) or expr.op != "CmpEQ":
             return None
@@ -192,6 +210,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         simplified = _simplify_zero_flag_comparison_8616(node)
         if simplified is not node:
             return simplified
+        
         if (
             isinstance(node, CBinaryOp)
             and node.op in {"LogicalAnd", "LogicalOr", "And", "Or"}

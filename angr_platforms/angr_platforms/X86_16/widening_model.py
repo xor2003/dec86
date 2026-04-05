@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from .alias_domains import DomainKey
+from .alias_domains import DomainKey, register_pair_name
 from .alias_model import (
     AliasStorageFacts,
     _StorageDomainSignature,
@@ -42,6 +42,7 @@ class WideningProof:
     left: AliasStorageFacts
     right: AliasStorageFacts
     merged_domain: _StorageDomainSignature | None = None
+    register_pair: str | None = None
     left_version: int | None = None
     right_version: int | None = None
 
@@ -99,12 +100,29 @@ def _register_version_for_expr(expr: object, state: AliasState | None) -> int | 
     kind, name = facts.identity
     if kind != "register" or not isinstance(name, str):
         return None
-    return state.version_of(DomainKey("reg", name.upper()))
+    pair_name = register_pair_name(name)
+    if pair_name is None:
+        return None
+    return state.version_of(DomainKey("reg", pair_name.upper()))
 
 
 def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasState | None = None) -> WideningProof:
     low_facts = describe_alias_storage(low_expr)
     high_facts = describe_alias_storage(high_expr)
+    register_pair = None
+    if low_facts.identity is not None and high_facts.identity is not None:
+        low_kind, low_value = low_facts.identity
+        high_kind, high_value = high_facts.identity
+        low_view = low_facts.domain.view
+        high_view = high_facts.domain.view
+        if (
+            low_kind == high_kind == "register"
+            and low_value == high_value
+            and low_view is not None
+            and high_view is not None
+            and low_view.bit_offset < high_view.bit_offset
+        ):
+            register_pair = low_value
     low_version = _register_version_for_expr(low_expr, alias_state)
     high_version = _register_version_for_expr(high_expr, alias_state)
 
@@ -115,8 +133,22 @@ def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasStat
     if not can_join_alias_storage(low_expr, high_expr):
         return WideningProof(False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version)
     if alias_state is not None:
-        if low_facts.identity is not None and low_facts.identity[0] == "register":
-            if low_version <= 0 or high_version <= 0:
+        if (
+            low_facts.identity is not None
+            and high_facts.identity is not None
+            and low_facts.identity[0] == "register"
+            and high_facts.identity[0] == "register"
+        ):
+            if register_pair is None:
+                return WideningProof(
+                    False,
+                    "register_pair_mismatch",
+                    low_facts,
+                    high_facts,
+                    left_version=low_version,
+                    right_version=high_version,
+                )
+            if low_version is None or high_version is None:
                 return WideningProof(
                     False,
                     "missing_version_evidence",
@@ -125,15 +157,15 @@ def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasStat
                     left_version=low_version,
                     right_version=high_version,
                 )
-        if low_version != high_version:
-            return WideningProof(
-                False,
-                "version_mismatch",
-                low_facts,
-                high_facts,
-                left_version=low_version,
-                right_version=high_version,
-            )
+            if low_version != high_version:
+                return WideningProof(
+                    False,
+                    "version_mismatch",
+                    low_facts,
+                    high_facts,
+                    left_version=low_version,
+                    right_version=high_version,
+                )
 
     merged_domain = _merge_storage_domains(_storage_domain_for_expr(low_expr), _storage_domain_for_expr(high_expr))
     return WideningProof(
@@ -142,6 +174,7 @@ def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasStat
         low_facts,
         high_facts,
         merged_domain=merged_domain,
+        register_pair=register_pair,
         left_version=low_version,
         right_version=high_version,
     )
@@ -210,7 +243,7 @@ def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasS
         low_candidate = None
         high_candidate = None
     if low_candidate is not None and high_candidate is not None:
-        return can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state)
+        return can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof)
 
     try:
         low_candidate = WideningCandidate.from_expr(low_expr)

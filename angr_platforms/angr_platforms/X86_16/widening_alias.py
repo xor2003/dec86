@@ -60,33 +60,43 @@ def _register_domain_and_view(variable) -> tuple[DomainKey | None, object | None
     return domain, view
 
 
-def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None) -> bool:
+def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, proof=None) -> bool:
     if alias_state is None:
         return False
-    from .widening_model import prove_adjacent_storage_slices
+    if proof is None:
+        from .widening_model import prove_adjacent_storage_slices
 
-    proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+        proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
     if not proof.ok:
+        return False
+    if proof.register_pair is None:
+        return False
+    if proof.left_version is None or proof.right_version is None:
+        return False
+    if proof.left_version != proof.right_version:
         return False
     try:
         low_candidate = RegisterWideningCandidate.from_expr(low_expr)
         high_candidate = RegisterWideningCandidate.from_expr(high_expr)
     except ValueError:
         return False
-    if low_candidate.domain is None or high_candidate.domain is None:
+    expected_domain = register_domain_for_name(proof.register_pair)
+    if expected_domain is None:
+        return False
+    if low_candidate.domain != expected_domain or high_candidate.domain != expected_domain:
         return False
     return low_candidate.is_joinable_with(high_candidate)
 
 
-def join_adjacent_register_slices(low_expr, high_expr, codegen, *, alias_state=None) -> structured_c.CVariable | None:
-    if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state):
+def join_adjacent_register_slices(low_expr, high_expr, codegen, *, alias_state=None, proof=None) -> structured_c.CVariable | None:
+    if proof is None and alias_state is not None:
+        from .widening_model import prove_adjacent_storage_slices
+
+        proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+    if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof):
         return None
 
-    low_var = getattr(low_expr, "variable", None)
-    high_var = getattr(high_expr, "variable", None)
-    low_name = _register_pair_name_for_variable(low_var)
-    high_name = _register_pair_name_for_variable(high_var)
-    pair_name = low_name if low_name is not None else high_name
+    pair_name = proof.register_pair if proof is not None else None
     if pair_name is None:
         return None
 

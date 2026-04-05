@@ -154,3 +154,240 @@ def test_apply_cod_source_rewrites_rebuilds_collapsed_straight_line_body_from_so
     assert "b = a + b;" in rewritten
     assert "a = a - b;" in rewritten
     assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
+
+
+def test_apply_cod_source_rewrites_repairs_split_source_backed_call_lines_in_live_body():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("printf",),
+        call_sources=(("printf", 'printf ("a = %d, b = %d\\n", a, b)'),),
+        global_names=(),
+        source_lines=(
+            "main()",
+            "{",
+            "a = a - b;",
+            'printf ("a = %d, b = %d\\n", a, b);',
+            "}",
+        ),
+        source_line_set=frozenset(
+            {
+                "main()",
+                "{",
+                "a = a - b;",
+                'printf ("a = %d, b = %d\\n", a, b);',
+                "}",
+            }
+        ),
+    )
+    live_body = """void _main(void)
+{
+    a = a - b;
+    printf ("a = %d, b = %d
+", a, b);
+}"""
+
+    rewritten = apply_cod_source_rewrites(live_body, metadata)
+
+    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
+    assert 'printf ("a = %d, b = %d\n' not in rewritten
+
+
+def test_apply_cod_source_rewrites_keeps_multi_statement_live_body_while_repairing_split_calls():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("printf",),
+        call_sources=(("printf", 'printf ("a = %d, b = %d\\n", a, b)'),),
+        global_names=(),
+        source_lines=(
+            "main()",
+            "{",
+            "a = 255;",
+            "b = 143;",
+            "b = a + b;",
+            "a = a - b;",
+            "a = a * b;",
+            'printf ("a = %d, b = %d\\n", a, b);',
+            "}",
+        ),
+        source_line_set=frozenset(
+            {
+                "main()",
+                "{",
+                "a = 255;",
+                "b = 143;",
+                "b = a + b;",
+                "a = a - b;",
+                "a = a * b;",
+                'printf ("a = %d, b = %d\\n", a, b);',
+                "}",
+            }
+        ),
+    )
+    live_body = """void _main(void)
+{
+    a = a - b;
+    a = a * b;
+    printf ("a = %d, b = %d
+", a, b);
+}"""
+
+    rewritten = apply_cod_source_rewrites(live_body, metadata)
+
+    assert "a = 255;" not in rewritten
+    assert "b = 143;" not in rewritten
+    assert "b = a + b;" not in rewritten
+    assert "a = a - b;" in rewritten
+    assert "a = a * b;" in rewritten
+    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
+    assert 'printf ("a = %d, b = %d\n' not in rewritten
+
+
+def test_apply_cod_source_rewrites_ignores_prelude_globals_when_rebuilding_function_body():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("intdos",),
+        call_sources=(),
+        global_names=("exeLoadParams", "rin", "rout"),
+        source_lines=(
+            "#define DOS_LOAD_NOEXEC 1",
+            "struct ExeLoadParams {",
+            "unsigned short cs;",
+            "unsigned short ss;",
+            "} exeLoadParams;",
+            "static int loadprog(const char *file, unsigned short segment, unsigned short type, const char *cmdline) {",
+            "int err;",
+            "rin.x.dx = (unsigned int)file;",
+            "err = intdos(&rin, &rout);",
+            "if (rout.x.cflag != 0) {",
+            "return err;",
+            "}",
+            "return 0;",
+            "}",
+        ),
+        source_line_set=frozenset(
+            {
+                "#define DOS_LOAD_NOEXEC 1",
+                "struct ExeLoadParams {",
+                "unsigned short cs;",
+                "unsigned short ss;",
+                "} exeLoadParams;",
+                "static int loadprog(const char *file, unsigned short segment, unsigned short type, const char *cmdline) {",
+                "int err;",
+                "rin.x.dx = (unsigned int)file;",
+                "err = intdos(&rin, &rout);",
+                "if (rout.x.cflag != 0) {",
+                "return err;",
+                "}",
+                "return 0;",
+            }
+        ),
+    )
+    collapsed = """int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline)
+{
+    return DOSERR_INVFUNC;
+}"""
+
+    rewritten = apply_cod_source_rewrites(collapsed, metadata)
+
+    assert "int err;" in rewritten
+    assert "rin.x.dx = (unsigned int)file;" in rewritten
+    assert "err = intdos(&rin, &rout);" in rewritten
+    assert "} exeLoadParams;" not in rewritten
+    assert "unsigned short cs;" not in rewritten
+
+
+def test_apply_cod_source_rewrites_skips_complex_switch_bodies():
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("DEBUG", "INFO"),
+        call_sources=(),
+        global_names=(),
+        source_lines=(
+            "static int loadprog(unsigned short mode) {",
+            "switch (mode) {",
+            "case 0:",
+            "DEBUG(\"exec\");",
+            "break;",
+            "default:",
+            "INFO(\"other\");",
+            "break;",
+            "}",
+            "return 0;",
+            "}",
+        ),
+        source_line_set=frozenset(
+            {
+                "static int loadprog(unsigned short mode) {",
+                "switch (mode) {",
+                "case 0:",
+                'DEBUG("exec");',
+                "break;",
+                "default:",
+                'INFO("other");',
+                "}",
+                "return 0;",
+            }
+        ),
+    )
+    collapsed = """int loadprog(unsigned short mode)
+{
+    return 1;
+}"""
+
+    rewritten = apply_cod_source_rewrites(collapsed, metadata)
+
+    assert rewritten == collapsed
+
+
+def test_apply_cod_source_rewrites_preserves_multistatement_live_bodies_while_repairing_split_lines():
+    """Multi-statement live bodies should NOT be rebuilt—only split lines repaired."""
+    metadata = CODProcMetadata(
+        stack_aliases={},
+        call_names=("printf",),
+        call_sources=(("printf", 'printf ("a = %d, b = %d\\n", a, b)'),),
+        global_names=(),
+        source_lines=(
+            "main()",
+            "{ char a, b;",
+            "a = 255;",
+            "b = 143;",
+            "b = a + b;",
+            "a = a - b;",
+            'printf ("a = %d, b = %d\\n", a, b);',
+            "}",
+        ),
+        source_line_set=frozenset(
+            {
+                "main()",
+                "{ char a, b;",
+                "a = 255;",
+                "b = 143;",
+                "b = a + b;",
+                "a = a - b;",
+                'printf ("a = %d, b = %d\\n", a, b);',
+                "}",
+            }
+        ),
+    )
+    # Live body has 5 statements (good recovery) but split printf
+    live_body = """void _main(void)
+{
+    a = 255;
+    b = 143;
+    b = a + b;
+    a = a - b;
+    printf ("a = %d, b = %d
+", a, b);
+}"""
+
+    rewritten = apply_cod_source_rewrites(live_body, metadata)
+
+    # Should keep the 5 live statements
+    assert "a = 255;" in rewritten
+    assert "b = 143;" in rewritten
+    assert "b = a + b;" in rewritten
+    assert "a = a - b;" in rewritten
+
+    # Should repair the split printf
+    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
+    assert 'printf ("a = %d, b = %d\n' not in rewritten

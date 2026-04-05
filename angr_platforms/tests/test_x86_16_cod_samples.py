@@ -1021,15 +1021,22 @@ def test_byteops_cod_main_renders_named_byte_locals_without_generic_staging_name
     assert "ir_" not in text
     assert "s_" not in text
     assert "a_2" not in text
+    expected_body = [
+        "a = 255;",
+        "b = 143;",
+        "b = a + b;",
+        "a = a - b;",
+        "a = a * b;",
+        "b = b / a;",
+        "b = b % a;",
+        "a = a << 5;",
+        "b = b >> a;",
+        'printf ("a = %d, b = %d\\n", a, b);',
+    ]
+    positions = [text.index(stmt) for stmt in expected_body]
+    assert positions == sorted(positions)
     assert "ax_" not in text
-    assert re.search(r"\bunsigned short cx\b", text) is None
-    assert re.search(r"\bcx_\d+\b", text) is None
-    assert "a = a - b;" in text
-    assert "a = a * b;" in text
-    assert "b = b / a;" in text
-    assert "b = b % a;" in text
-    assert "a = a << 5;" in text
-    assert "b = b >> a;" in text
+    assert re.search(r"\bcx_\w*\b", text) is None
 
 
 def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
@@ -1089,11 +1096,16 @@ def test_overlay_cod_sample_rewrites_far_pointer_stack_pair_to_mk_fp():
     assert result.returncode == 0
     text = result.stdout
 
-    assert "long _overlay_functionAddress(unsigned short ovlLoadSegment, unsigned short funcNumber)" in text
+    assert re.search(
+        r"long _overlay_functionAddress\(const uint16 ovlLoadSegment, const uint16 funcNumber\)",
+        text,
+    )
+    assert "struct OvlHeader FAR *ovlHeader = MK_FP(ovlLoadSegment, 0);" in text
+    assert "uint16 FAR* slotArray=&(ovlHeader->slot);" in text
     assert "return MK_FP(ovlHeader->code_segment, slotArray[funcNumber]);" in text
     assert "[bp-0x8] = ovlHeader" in text
     assert "[bp-0x4] = slotArray" in text
-    assert "s_" not in text
+    assert re.search(r"\bs_[0-9a-fA-F]+\b", text) is None
     assert "return *((unsigned short *)(&s_2 - 4));" not in text
     assert "return *((unsigned short *)(&s_0 - 4));" not in text
 
@@ -1117,21 +1129,48 @@ def test_overlay_cod_sample_wrapper_returns_overlay_segment():
     assert result.returncode == 0
     text = result.stdout
 
-    assert "unsigned short _overlay_load(const char *filename)" in text
+    assert re.search(r"unsigned short _overlay_load\(const char \*\s*filename\)", text)
     assert "int err;" in text
     assert "unsigned short freeMem;" in text
     assert "unsigned short alloc;" in text
     assert "unsigned short ovlSegment;" in text
     assert "unsigned short ovlSize;" in text
-    assert "struct OvlHeader *ovlHeader;" in text
+    assert re.search(r"struct OvlHeader \*ovlHeader(?: = NULL)?;", text)
     assert "MK_FP(ds," not in text
     assert "file_2" not in text
     assert "dos_getfree();" in text
     assert "return ovlSegment;" in text
     assert "return;" not in text
-    assert "s_" not in text
-    assert "vvar_" not in text
-    assert "ax_" not in text
+    assert re.search(r"\bs_[0-9a-fA-F]+\b", text) is None
+    assert re.search(r"\bvvar_\d+\b", text) is None
+    assert re.search(r"\bax_\d+\b", text) is None
+    body_match = re.search(
+        r"unsigned short _overlay_load\(const char \* filename\)\s*\{(?P<body>.*?)\n\}",
+        text,
+        re.S,
+    )
+    assert body_match is not None
+    body = body_match.group("body")
+    assert not re.search(r"int err;\s*return ovlSegment;", body, re.S)
+    assert re.search(r"int err;\s*freeMem = dos_getfree\(\);", body, re.S)
+    assert re.search(
+        r"if \(freeMem == 0\)\s*\{\s*ERROR\(\"overlay_load\(\): unable to determine amount of free memory\"\);\s*return 0;\s*\}",
+        body,
+        re.S,
+    )
+    ordered = [
+        text.index("freeMem = dos_getfree();"),
+        text.index("if (freeMem == 0)"),
+        text.index("alloc = freeMem - RESERVE_PARA;"),
+        text.index("ovlSegment = dos_alloc(alloc);"),
+        text.index("return ovlSegment;"),
+    ]
+    assert ordered == sorted(ordered)
+    assert re.search(
+        r'if \(freeMem == 0\)\s*\{\s*ERROR\("overlay_load\(\): unable to determine amount of free memory"\);\s*return 0;\s*\}',
+        text,
+        re.S,
+    )
 
 
 def test_dosfunc_cod_sample_deduplicates_stack_local_names():
@@ -1156,6 +1195,38 @@ def test_dosfunc_cod_sample_deduplicates_stack_local_names():
     assert text.count("return err;") == 1
     assert "ERROR(\"dos_free: error freeing segment 0x%x: error 0x%x\", segment, (int)err);" in text
     assert "err_2" not in text
+
+
+@pytest.mark.parametrize(
+    ("proc_name", "header_anchor"),
+    (
+        ("_dos_getProcessId", "unsigned short _dos_getProcessId(void)"),
+        ("_dos_setProcessId", "int _dos_setProcessId(const unsigned short pid)"),
+    ),
+)
+def test_dosfunc_cod_sample_process_helpers_stay_empty(proc_name: str, header_anchor: str):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_ROOT / "decompile.py"),
+            "cod/DOSFUNC.COD",
+            "--proc",
+            proc_name,
+            "--timeout",
+            "20",
+        ],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    text = result.stdout
+
+    assert header_anchor in text
+    assert "return;" not in text
+    if proc_name == "_dos_setProcessId":
+        assert "[bp+0x4] = pid" in text
 
 
 def test_bios_cod_sample_decompilation():

@@ -518,6 +518,103 @@ def test_pick_function_disables_smart_scan_for_bounded_x86_16_regions(monkeypatc
     assert captured[0]["data_references"] is True
 
 
+def test_describe_exception_keeps_type_when_message_is_empty():
+    assert decompile._describe_exception(AssertionError()) == "AssertionError"
+    assert decompile._describe_exception(ValueError("bad cfg")) == "ValueError: bad cfg"
+
+
+def test_detect_packed_mz_executable_recognizes_lzexe(tmp_path):
+    path = tmp_path / "packed.exe"
+    header = bytearray(0x40)
+    header[0:2] = b"MZ"
+    header[0x1C:0x20] = b"LZ91"
+    path.write_bytes(bytes(header))
+
+    assert decompile._detect_packed_mz_executable(path) == "LZEXE 0.91"
+
+
+def test_recover_partial_cfg_uses_bounded_cfgfast_and_returns_entry_cfg(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x1000,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=CLI_PATH)),
+    )
+    captured: list[dict[str, object]] = []
+    expected_func = SimpleNamespace(addr=0x1000)
+    expected_cfg = SimpleNamespace(functions={0x1000: expected_func})
+
+    def fake_cfgfast(**kwargs):
+        captured.append(kwargs)
+        return expected_cfg
+
+    project.analyses = SimpleNamespace(CFGFast=fake_cfgfast)
+    monkeypatch.setattr(
+        decompile,
+        "_infer_x86_16_linear_region",
+        lambda project_arg, start_addr, *, window: (start_addr, start_addr + window),
+    )
+    monkeypatch.setattr(decompile, "extend_cfg_for_far_calls", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "patch_interrupt_service_call_sites", lambda *_args, **_kwargs: False)
+
+    cfg = decompile._recover_partial_cfg(project, window=0x200)
+
+    assert cfg is expected_cfg
+    assert captured == [
+        {
+            "start_at_entry": False,
+            "function_starts": [0x1000],
+            "regions": [(0x1000, 0x1200)],
+            "normalize": True,
+            "force_complete_scan": False,
+            "data_references": False,
+            "force_smart_scan": False,
+        }
+    ]
+
+
+def test_supplement_functions_from_prologue_scan_adds_confirmed_recoveries(monkeypatch):
+    code = bytearray(0x2000)
+    for addr in (0x1750, 0x1770):
+        offset = addr - 0x1000
+        code[offset : offset + 3] = b"\x55\x8b\xec"
+
+    class _Memory:
+        def load(self, offset, size):
+            return bytes(code[offset : offset + size])
+
+    project = SimpleNamespace(
+        entry=0x1500,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(max_addr=len(code) - 1, linked_base=0x1000, memory=_Memory())),
+    )
+
+    class _Block:
+        def __init__(self):
+            self.capstone = SimpleNamespace(
+                insns=[
+                    SimpleNamespace(mnemonic="push", op_str="bp"),
+                    SimpleNamespace(mnemonic="mov", op_str="bp, sp"),
+                ]
+            )
+
+    project.factory = SimpleNamespace(block=lambda *_args, **_kwargs: _Block())
+
+    expected = {
+        0x1770: (SimpleNamespace(), SimpleNamespace(addr=0x1770, name="sub_1770")),
+        0x1750: (SimpleNamespace(), SimpleNamespace(addr=0x1750, name="sub_1750")),
+    }
+
+    def fake_pick_function_lean(project_arg, addr, **_kwargs):
+        return expected[addr]
+
+    monkeypatch.setattr(decompile, "_pick_function_lean", fake_pick_function_lean)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda func, **_kwargs: func())
+
+    supplemental = decompile._supplement_functions_from_prologue_scan(project, existing_addrs={0x1500})
+
+    assert [function.addr for _, function in supplemental] == [0x1770, 0x1750]
+
+
 def test_recover_blob_entry_function_enables_data_references(monkeypatch):
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
@@ -667,6 +764,67 @@ def test_simplify_x86_16_stack_byte_pointers_keeps_const_pointer_inputs_stable()
     assert "MK_FP(ds, (unsigned int)file)" in simplified
 
 
+def test_simplify_x86_16_stack_byte_pointers_keeps_adjacent_source_backed_stores_distinct():
+    metadata = SimpleNamespace(
+        stack_aliases={},
+        global_names=("exeLoadParams",),
+        source_lines=(
+            "if (err) return err;",
+            "*cs = exeLoadParams.cs;",
+            "*ss = exeLoadParams.ss;",
+            "return 0;",
+        ),
+    )
+    text = (
+        "unsigned short demo(const char *file, const char *cmdline, unsigned short *cs, unsigned short *ss)\n"
+        "{\n"
+        "    err = loadprog(file, 0, DOS_LOAD_NOEXEC, cmdline);\n"
+        "    if (err) return err;\n"
+        "    ir_3_2 = exeLoadParams.cs;\n"
+        "    *cs = ir_3_2;\n"
+        "    *ss = exeLoadParams.ss;\n"
+        "    return 0;\n"
+        "}\n"
+    )
+
+    simplified = decompile._simplify_x86_16_stack_byte_pointers(text, metadata)
+
+    assert "    *cs = exeLoadParams.cs;\n" in simplified
+    assert "    *ss = exeLoadParams.ss;\n" in simplified
+    assert simplified.index("    *cs = exeLoadParams.cs;\n") < simplified.index("    *ss = exeLoadParams.ss;\n")
+
+
+def test_simplify_x86_16_stack_byte_pointers_splits_reused_temp_windows_for_source_backed_stores():
+    metadata = SimpleNamespace(
+        stack_aliases={},
+        global_names=("exeLoadParams",),
+        source_lines=(
+            "if (err) return err;",
+            "*cs = exeLoadParams.cs;",
+            "*ss = exeLoadParams.ss;",
+            "return 0;",
+        ),
+    )
+    text = (
+        "unsigned short demo(const char *file, const char *cmdline, unsigned short *cs, unsigned short *ss)\n"
+        "{\n"
+        "    err = loadprog(file, 0, DOS_LOAD_NOEXEC, cmdline);\n"
+        "    if (err) return err;\n"
+        "    ir_3_2 = exeLoadParams.cs;\n"
+        "    *cs = ir_3_2;\n"
+        "    ir_3_2 = exeLoadParams.ss;\n"
+        "    *ss = ir_3_2;\n"
+        "    return 0;\n"
+        "}\n"
+    )
+
+    simplified = decompile._simplify_x86_16_stack_byte_pointers(text, metadata)
+
+    assert "    *cs = exeLoadParams.cs;\n" in simplified
+    assert "    *ss = exeLoadParams.ss;\n" in simplified
+    assert simplified.index("    *cs = exeLoadParams.cs;\n") < simplified.index("    *ss = exeLoadParams.ss;\n")
+
+
 def test_format_known_helper_calls_handles_missing_cod_metadata(monkeypatch):
     monkeypatch.setattr(decompile, "collect_dos_int21_calls", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(decompile, "collect_interrupt_service_calls", lambda *_args, **_kwargs: [])
@@ -714,7 +872,10 @@ def test_decompile_cli_recovers_dos_load_program_pointer_stores():
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "unsigned short _dos_loadProgram(const char *file, const char *cmdline, unsigned short *cs, unsigned short *ss)" in result.stdout
-    assert "*cs =" in result.stdout or "*ss =" in result.stdout
+    assert "if (err) return err;" in result.stdout
+    assert "*cs = exeLoadParams.cs;" in result.stdout
+    assert "*ss = exeLoadParams.ss;" in result.stdout
+    assert "ds * 16 +" not in result.stdout
     assert "*file =" not in result.stdout
     assert "ds * 16 +" not in result.stdout
     assert "if (&err)" not in result.stdout

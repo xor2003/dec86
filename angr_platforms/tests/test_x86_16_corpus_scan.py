@@ -6,9 +6,11 @@ from angr_platforms.X86_16.corpus_scan import (
     FunctionScanResult,
     ScanTimeout,
     StageResult,
+    _should_skip_scan_safe_call_chain_from_insns,
     _should_skip_scan_safe_call_chain,
     _should_skip_scan_safe_cfg,
     _should_skip_scan_safe_back_edge,
+    _should_skip_scan_safe_tiny_guard_call_helper,
     _should_skip_scan_safe_decompile,
     _should_skip_scan_safe_decompile_for_cfg_shape,
     extract_cod_functions,
@@ -444,6 +446,41 @@ def test_scan_safe_skips_oversized_cfg_attempts():
     assert _should_skip_scan_safe_cfg(2608, "scan-safe", 0) is False
 
 
+def test_scan_safe_oversized_functions_use_bounded_probe_before_lift_only(monkeypatch):
+    code = b"\x90" * 2608
+
+    class FakeFactory:
+        def block(self, addr: int, size: int):  # noqa: ANN001
+            raise AssertionError("oversized scan-safe lift_only should not call factory.block before the gate")
+
+    class FakeAnalyses:
+        def CFGFast(self, *args, **kwargs):  # noqa: ANN001, ARG002
+            raise AssertionError("CFGFast should not run for oversized scan-safe lift_only")
+
+    class FakeProject:
+        def __init__(self):
+            self.factory = FakeFactory()
+            self.analyses = FakeAnalyses()
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.corpus_scan.project_from_bytes",
+        lambda _code: FakeProject(),
+    )
+
+    result = scan_function(
+        Path("oversized.COD"),
+        "_oversized",
+        "NEAR",
+        code,
+        timeout_sec=5,
+        mode="scan-safe",
+        max_cfg_bytes=192,
+    )
+
+    assert result.ok is True
+    assert result.fallback_kind == "lift_only"
+
+
 def test_scan_safe_skips_complex_cfg_shapes():
     class _FakeBlock:
         def __init__(self, insn_count: int):
@@ -501,6 +538,37 @@ def test_scan_safe_skips_call_heavy_helpers():
     assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 2), "scan-safe", 192) is False
     assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 3), "lift", 192) is False
     assert _should_skip_scan_safe_call_chain(_FakeCapstoneBlock([_FakeInsn("call")] * 3), "scan-safe", 0) is False
+    assert _should_skip_scan_safe_call_chain_from_insns([_FakeInsn("call")] * 3, "scan-safe", 192) is True
+    assert _should_skip_scan_safe_call_chain_from_insns([_FakeInsn("call")] * 2, "scan-safe", 192) is False
+    assert _should_skip_scan_safe_call_chain_from_insns([_FakeInsn("call")] * 3, "lift", 192) is False
+    assert _should_skip_scan_safe_call_chain_from_insns([_FakeInsn("call")] * 3, "scan-safe", 0) is False
+
+
+def test_scan_safe_skips_tiny_guard_call_helpers():
+    class _FakeOp:
+        def __init__(self, imm):
+            self.imm = imm
+
+    class _FakeInsn:
+        def __init__(self, address: int, mnemonic: str, op_str: str = "", size: int = 1, imm: int | None = None):
+            self.address = address
+            self.mnemonic = mnemonic
+            self.op_str = op_str
+            self.bytes = b"\x90" * size
+            self.operands = [] if imm is None else [_FakeOp(imm)]
+
+    insns = [
+        _FakeInsn(0x1000, "cmp"),
+        _FakeInsn(0x1005, "je", imm=0x1011),
+        _FakeInsn(0x1007, "push"),
+        _FakeInsn(0x100B, "call"),
+        _FakeInsn(0x100E, "add", "sp, 2"),
+        _FakeInsn(0x1011, "ret"),
+    ]
+    assert _should_skip_scan_safe_tiny_guard_call_helper(insns, "scan-safe", 192) is True
+    assert _should_skip_scan_safe_tiny_guard_call_helper(insns[:-1], "scan-safe", 192) is False
+    assert _should_skip_scan_safe_tiny_guard_call_helper(insns, "lift", 192) is False
+    assert _should_skip_scan_safe_tiny_guard_call_helper(insns, "scan-safe", 0) is False
 
 
 @pytest.mark.parametrize("proc_name", ["_dos_alloc", "_dos_resize", "_dos_mcbInfo"])
@@ -557,4 +625,94 @@ def test_scan_safe_keeps_known_hotspots_in_conservative_recovery(cod_name: str, 
     assert result.failure_class is None
     assert result.fallback_kind in {"cfg_only", "block_lift"}
     assert result.semantic_family == "stack_control"
+    assert result.stage_reached == "cleanup"
+
+
+@pytest.mark.parametrize(
+    "proc_name, expected_len",
+    [
+        ("_DrawMissile", 216),
+        ("_DrawCoolF14", 1098),
+        ("_DrawTexPlane", 1008),
+    ],
+)
+def test_scan_safe_3dplanes_oversized_functions_stay_in_lift_only_recovery(proc_name: str, expected_len: int):
+    repo_root = Path(__file__).resolve().parents[2]
+    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "f14" / "3DPLANES.COD"
+    funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
+    kind, code = funcs[proc_name]
+
+    assert len(code) == expected_len
+
+    result = scan_function(
+        cod_path,
+        proc_name,
+        kind,
+        code,
+        timeout_sec=5,
+        mode="scan-safe",
+        max_cfg_bytes=192,
+        max_decompile_bytes=384,
+    )
+
+    assert result.ok is True
+    assert result.failure_class is None
+    assert result.fallback_kind == "lift_only"
+    assert result.confidence_status == "partial_recovery"
+    assert result.stage_reached != "lift"
+    assert result.confidence_scan_safe_classification != "none"
+
+
+@pytest.mark.parametrize("proc_name", ["_DrawRegBoat", "_shape_only_regression"])
+def test_scan_safe_call_heavy_helper_classification_is_shape_based(proc_name: str):
+    repo_root = Path(__file__).resolve().parents[2]
+    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "f14" / "3DPLANES.COD"
+    funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
+    kind, code = funcs["_DrawRegBoat"]
+
+    assert len(code) == 96
+
+    result = scan_function(
+        cod_path,
+        proc_name,
+        kind,
+        code,
+        timeout_sec=5,
+        mode="scan-safe",
+        max_cfg_bytes=192,
+        max_decompile_bytes=384,
+    )
+
+    assert result.ok is True
+    assert result.failure_class is None
+    assert result.fallback_kind == "cfg_only"
+    assert result.semantic_family == "stack_control"
+    assert result.confidence_status == "bounded_recovery"
+    assert result.stage_reached == "cleanup"
+
+
+@pytest.mark.parametrize("proc_name", ["_Release3DMemory", "_shape_only_release"])
+def test_scan_safe_tiny_guard_call_helper_bypass_is_shape_based(proc_name: str):
+    repo_root = Path(__file__).resolve().parents[2]
+    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "f14" / "3DLOADER.COD"
+    funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
+    kind, code = funcs["_Release3DMemory"]
+
+    assert len(code) == 18
+
+    result = scan_function(
+        cod_path,
+        proc_name,
+        kind,
+        code,
+        timeout_sec=5,
+        mode="scan-safe",
+        max_cfg_bytes=192,
+        max_decompile_bytes=384,
+    )
+
+    assert result.ok is True
+    assert result.failure_class is None
+    assert result.confidence_status != "target_unrecovered"
+    assert result.fallback_kind == "cfg_only"
     assert result.stage_reached == "cleanup"

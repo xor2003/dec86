@@ -8,6 +8,14 @@ from typing import Callable
 from angr.analyses.decompiler.decompiler import Decompiler
 
 from . import decompiler_postprocess_simplify as _simplify
+from . import structuring_analysis as _structuring
+from . import structuring_codegen as _codegen
+from . import type_equivalence_classes as _type_equiv
+from . import type_array_matching as _array_match
+from . import type_structure_merging as _struct_merge
+from . import segmented_memory_reasoning as _segmented_mem
+from . import confidence_and_assumptions as _confidence
+from . import structuring_diagnostics as _diagnostics
 
 __all__ = [
     "DecompilerStructuringPassSpec",
@@ -28,8 +36,51 @@ class DecompilerStructuringPassSpec:
 def _build_decompiler_structuring_passes():
     return (
         DecompilerStructuringPassSpec(
+            "_region_based_structuring_8616",
+            _structuring.apply_region_based_structuring,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
             "_simplify_structured_expressions_8616",
             _simplify._simplify_structured_expressions_8616,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_structuring_codegen_8616",
+            _codegen.apply_structuring_codegen_8616,
+            False,
+        ),
+        # Phase 2: Type Inference and Recovery
+        DecompilerStructuringPassSpec(
+            "_type_equivalence_classes_8616",
+            _type_equiv.apply_x86_16_type_equivalence_classes,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_array_expression_matching_8616",
+            _array_match.apply_x86_16_array_expression_matching,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_structure_field_merging_8616",
+            _struct_merge.apply_x86_16_structure_field_merging,
+            False,
+        ),
+        # Phase 3: Segmented Memory Association Reasoning
+        DecompilerStructuringPassSpec(
+            "_segmented_memory_reasoning_8616",
+            _segmented_mem.apply_x86_16_segmented_memory_reasoning,
+            False,
+        ),
+        # Phase 4: Robustness & Diagnostics
+        DecompilerStructuringPassSpec(
+            "_confidence_and_assumptions_8616",
+            _confidence.apply_x86_16_confidence_and_assumptions,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_structuring_diagnostics_8616",
+            _diagnostics.apply_x86_16_structuring_diagnostics,
             False,
         ),
     )

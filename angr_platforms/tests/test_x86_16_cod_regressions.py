@@ -201,6 +201,23 @@ def test_cod_process_id_source_headers_are_captured():
     assert "int dos_setProcessId(const uint16 pid) {" in set_meta.source_lines
 
 
+@pytest.mark.parametrize(
+    ("proc_name", "header_anchor"),
+    (
+        ("_dos_getProcessId", "unsigned short _dos_getProcessId(void)"),
+        ("_dos_setProcessId", "int _dos_setProcessId(const unsigned short pid)"),
+    ),
+)
+def test_cod_process_id_helpers_keep_empty_bodies(proc_name: str, header_anchor: str):
+    result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", proc_name)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert header_anchor in result.stdout
+    assert "return;" not in result.stdout
+    if proc_name == "_dos_setProcessId":
+        assert "[bp+0x4] = pid" in result.stdout
+
+
 def test_cod_extract_canonicalizes_known_object_names():
     get_meta = extract_cod_proc_metadata(COD_DIR / "DOSFUNC.COD", "_dos_getfree")
 
@@ -280,6 +297,45 @@ def test_cod_overlay_header_known_object_is_pointer_typed():
     assert getattr(spec.type.pts_to, "name", None) == "struct OvlHeader"
 
 
+def test_cod_overlay_load_preserves_guarded_free_memory_probe_before_final_return():
+    result = _run_cod_proc(COD_DIR / "OVERLAY.COD", "_overlay_load")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = result.stdout
+    body_match = re.search(
+        r"unsigned short _overlay_load\(const char \* filename\)\s*\{(?P<body>.*?)\n\}",
+        text,
+        re.S,
+    )
+    assert body_match is not None
+    body = body_match.group("body")
+    assert not re.search(r"int err;\s*return ovlSegment;", body, re.S)
+    ordered = [
+        text.index("freeMem = dos_getfree();"),
+        text.index("if (freeMem == 0)"),
+        text.index("alloc = freeMem - RESERVE_PARA;"),
+        text.index("ovlSegment = dos_alloc(alloc);"),
+        text.index("return ovlSegment;"),
+    ]
+    assert ordered == sorted(ordered)
+    assert re.search(
+        r'if \(freeMem == 0\)\s*\{\s*ERROR\("overlay_load\(\): unable to determine amount of free memory"\);\s*return 0;\s*\}',
+        text,
+        re.S,
+    )
+
+
+def test_cod_overlay_function_address_keeps_proven_known_object_bindings():
+    result = _run_cod_proc(COD_DIR / "OVERLAY.COD", "_overlay_functionAddress")
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    text = result.stdout
+    assert "struct OvlHeader FAR *ovlHeader = MK_FP(ovlLoadSegment, 0);" in text
+    assert "uint16 FAR* slotArray=&(ovlHeader->slot);" in text
+    assert "return MK_FP(ovlHeader->code_segment, slotArray[funcNumber]);" in text
+    assert re.search(r"(?m)^\s*MK_FP\(ovlHeader->code_segment, slotArray\[funcNumber\]\);\s*$", text) is None
+
+
 def test_cod_dos_loadoverlay_wrapper_returns_loadprog():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_loadOverlay")
 
@@ -340,7 +396,7 @@ def test_cod_loadprog_uses_known_helper_signature_and_no_missing_type():
         result.stdout,
         (
             "function: 0x1000 loadprog",
-            "int loadprog(const char *file, unsigned short segment, unsigned short mode, unsigned short flags)",
+            "int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline)",
             "int err;",
             "rin.h.al = mode",
             "rin.x.dx = (unsigned int)file",
@@ -351,7 +407,12 @@ def test_cod_loadprog_uses_known_helper_signature_and_no_missing_type():
     )
     assert len(re.findall(r"(?m)^\s*err = intdos\(&rin, &rout\);\s*$", result.stdout)) == 1
     assert re.search(
-        r"rin\.x\.dx = \(unsigned int\)file;\s+err = intdos\(&rin, &rout\);\s+if \(rout\.x\.cflag != 0\)",
+        r"rin\.x\.dx = \(unsigned int\)file;\s+switch \(mode\)\s*\{",
+        result.stdout,
+        re.S,
+    ), result.stdout
+    assert re.search(
+        r"err = intdos\(&rin, &rout\);\s+if \(rout\.x\.cflag != 0\)",
         result.stdout,
         re.S,
     ), result.stdout
@@ -405,7 +466,7 @@ def test_cod_dos_getreturncode_returns_value():
     ("cod_name", "proc_name", "anchors"),
     (
         ("DOSFUNC.COD", "_dos_getfree", ("int _intdos(union REGS *in, union REGS *out);", "int _ERROR(const char *fmt, ...);")),
-        ("DOSFUNC.COD", "_dos_loadOverlay", ("int loadprog(const char *file, unsigned short segment, unsigned short mode, unsigned short flags);",)),
+        ("DOSFUNC.COD", "_dos_loadOverlay", ("int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline);",)),
         ("EGAME2.COD", "_openFileWrapper", ("int _openFile(const char *path, unsigned short mode);",)),
     ),
 )

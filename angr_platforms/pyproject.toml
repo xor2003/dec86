@@ -49,6 +49,13 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*.py" = ["E402"]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+log_cli = false
+log_level = "CRITICAL"
+
 [tool.mypy]
 python_version = "3.10"
 files = [

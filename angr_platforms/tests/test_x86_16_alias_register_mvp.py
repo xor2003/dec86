@@ -17,6 +17,7 @@ from angr_platforms.X86_16.alias_domains import FULL16, HIGH8, LOW8, AX, registe
 from angr_platforms.X86_16.alias_state import AliasState
 from angr_platforms.X86_16.alias_transfer import RegisterConcatExpr, RegisterSliceExpr, read_register, write_register
 from angr_platforms.X86_16.widening_alias import RegisterWideningCandidate, can_join_adjacent_register_slices
+from angr_platforms.X86_16 import widening_alias, widening_model
 
 
 def _make_codegen():
@@ -32,6 +33,16 @@ def _make_reg_var(name: str, reg: int, size: int = 1):
     return _decompile.structured_c.CVariable(
         _decompile.SimRegisterVariable(reg, size, name=name),
         codegen=codegen,
+    )
+
+
+def _make_register_proof(*, ok=True, register_pair="ax", left_version=1, right_version=1, reason="ok"):
+    return SimpleNamespace(
+        ok=ok,
+        reason=reason,
+        register_pair=register_pair,
+        left_version=left_version,
+        right_version=right_version,
     )
 
 
@@ -121,6 +132,77 @@ def test_register_pair_cleanup_helper_requires_a_proof_before_widening(monkeypat
         "analyze_adjacent_storage_slices",
         lambda *_args, **_kwargs: SimpleNamespace(ok=False),
     )
+
+    assert _decompile._match_adjacent_register_pair_var_expr(low, high, codegen) is None
+
+
+def test_register_pair_cleanup_helper_accepts_same_version_proof_backed_pair():
+    codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
+    codegen._inertia_alias_state.bump_domain(AX)
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+
+    widened = _decompile._match_adjacent_register_pair_var_expr(low, high, codegen)
+
+    assert widened is not None
+    assert widened.variable.name == "ax"
+
+
+def test_adjacent_register_pair_proof_and_join_succeed_for_the_proved_low_high_pair():
+    codegen = _make_codegen()
+    state = AliasState()
+    state.bump_domain(AX)
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+
+    proof = widening_model.prove_adjacent_storage_slices(low, high, alias_state=state)
+
+    assert proof.ok
+    assert proof.register_pair == "ax"
+    assert proof.left_version == proof.right_version == 1
+    assert widening_alias.can_join_adjacent_register_slices(low, high, alias_state=state, proof=proof)
+
+    widened = widening_alias.join_adjacent_register_slices(low, high, codegen, alias_state=state, proof=proof)
+
+    assert widened is not None
+    assert widened.variable.name == "ax"
+
+
+def test_register_pair_cleanup_helper_rejects_missing_version_proof():
+    codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+    proof = _make_register_proof(register_pair="ax", left_version=1, right_version=None)
+
+    assert not widening_alias.can_join_adjacent_register_slices(low, high, alias_state=codegen._inertia_alias_state, proof=proof)
+    assert widening_alias.join_adjacent_register_slices(low, high, codegen, alias_state=codegen._inertia_alias_state, proof=proof) is None
+
+
+def test_register_pair_cleanup_helper_rejects_pair_mismatch_proof():
+    codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
+    codegen._inertia_alias_state.bump_domain(AX)
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+    proof = _make_register_proof(register_pair="bx", left_version=1, right_version=1)
+
+    assert not widening_alias.can_join_adjacent_register_slices(low, high, alias_state=codegen._inertia_alias_state, proof=proof)
+    assert widening_alias.join_adjacent_register_slices(low, high, codegen, alias_state=codegen._inertia_alias_state, proof=proof) is None
+
+
+def test_register_pair_cleanup_helper_rejects_missing_version_proof(monkeypatch):
+    codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+
+    monkeypatch.setattr(
+        _decompile,
+        "analyze_adjacent_storage_slices",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=True, proof=_make_register_proof(right_version=None)),
+    )
     monkeypatch.setattr(
         _decompile,
         "join_adjacent_register_slices",
@@ -130,17 +212,38 @@ def test_register_pair_cleanup_helper_requires_a_proof_before_widening(monkeypat
     assert _decompile._match_adjacent_register_pair_var_expr(low, high, codegen) is None
 
 
-def test_register_pair_cleanup_helper_requires_version_agreement(monkeypatch):
+def test_register_pair_cleanup_helper_rejects_mismatched_version_proof(monkeypatch):
     codegen = _make_codegen()
     codegen._inertia_alias_state = AliasState()
-    codegen._inertia_alias_state.bump_domain(AX)
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+
+    proof = _make_register_proof(left_version=1, right_version=2)
+
+    monkeypatch.setattr(
+        _decompile,
+        "analyze_adjacent_storage_slices",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=True, proof=proof),
+    )
+    monkeypatch.setattr(
+        _decompile,
+        "join_adjacent_register_slices",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("join should not be called")),
+    )
+
+    assert _decompile._match_adjacent_register_pair_var_expr(low, high, codegen) is None
+
+
+def test_register_pair_cleanup_helper_rejects_mixed_pair_proof(monkeypatch):
+    codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
     low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
     high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
 
     monkeypatch.setattr(
         _decompile,
-        "can_join_adjacent_register_slices",
-        lambda *_args, **_kwargs: False,
+        "analyze_adjacent_storage_slices",
+        lambda *_args, **_kwargs: SimpleNamespace(ok=True, proof=_make_register_proof(register_pair="bx")),
     )
     monkeypatch.setattr(
         _decompile,

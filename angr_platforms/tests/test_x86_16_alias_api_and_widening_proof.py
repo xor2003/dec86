@@ -162,6 +162,20 @@ def test_register_pair_join_rejects_version_mismatch_when_alias_state_is_availab
     assert not can_join_adjacent_register_slices(low, high, alias_state=state)
 
 
+def test_register_pair_join_rejects_missing_version_evidence_when_alias_state_is_available(monkeypatch):
+    low = _reg("al", 0)
+    high = _reg("ah", 1)
+    state = AliasState()
+    state._versions[AX] = 1
+
+    def _version_for_expr(expr, _state):
+        return 1 if getattr(expr.variable, "name", "") == "al" else None
+
+    monkeypatch.setattr("angr_platforms.X86_16.widening_model._register_version_for_expr", _version_for_expr)
+
+    assert not can_join_adjacent_register_slices(low, high, alias_state=state)
+
+
 def test_register_pair_join_requires_alias_state():
     low = _reg("al", 0)
     high = _reg("ah", 1)
