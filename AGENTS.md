@@ -180,6 +180,14 @@ Rules:
 - experimental quality passes must stay out of the default scan-safe lane
 - every crash or timeout must remain classifiable
 
+## Failure reporting rules
+
+- If lifting breaks, report the first known failing address when possible and dump assembly around it.
+- If structured decompilation times out or returns empty, try a non-optimized decompilation fallback before dropping to raw assembly.
+- If helper files are absent, say so explicitly and keep going with raw recovery plus fast seed heuristics.
+- Prefer local `.pat` evidence when available; if only OMF `.obj`/`.lib` inputs exist, generate deterministic `.pat` files locally before giving up on FLAIR-style matching.
+- Record fallback mode honestly in output; do not silently replace failures with guessed high-level C.
+
 ## One-off rescues
 
 Special rewrites, allowlists, or source-backed rescues are allowed only if:
