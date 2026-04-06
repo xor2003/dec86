@@ -16,6 +16,7 @@ __all__ = [
     "apply_cod_source_rewrites",
     "lift_86_16",
     "load_dos_mz",
+    "load_dos_ne",
     "cod_source_rewrite_description",
     "cod_source_rewrite_names",
     "cod_source_rewrite_summary",
@@ -83,7 +84,7 @@ __all__ = [
     "DecompilerStructuringPassSpec",
 ]
 
-from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, decompiler_structuring_stage, lift_86_16, load_dos_mz, recovery_confidence, simos_86_16  # noqa: F401
+from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, decompiler_structuring_stage, lift_86_16, load_dos_mz, load_dos_ne, recovery_confidence, simos_86_16  # noqa: F401
 from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, recovery_manifest, recompilable_subset, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
 from . import readability_goals  # noqa: F401
 from . import correctness_goals  # noqa: F401

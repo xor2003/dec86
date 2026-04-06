@@ -6,6 +6,21 @@ from archinfo import arch_from_id
 from cle.backends import Blob, register_backend
 
 
+def _read_mz_extended_signature(stream) -> bytes | None:
+    stream.seek(0)
+    header = stream.read(0x40)
+    if len(header) < 0x40 or header[:2] != b"MZ":
+        return None
+    new_header_offset = int.from_bytes(header[0x3C:0x40], "little")
+    if new_header_offset < 0x40:
+        return None
+    stream.seek(new_header_offset)
+    signature = stream.read(2)
+    if len(signature) < 2:
+        return None
+    return signature
+
+
 @dataclass(frozen=True)
 class DOSMZHeader:
     header_paragraphs: int
@@ -172,7 +187,10 @@ class DOSMZ(Blob):
     def is_compatible(stream):
         stream.seek(0)
         magic = stream.read(2)
-        return magic == b"MZ"
+        if magic != b"MZ":
+            return False
+        # Reject MZ stubs that hand off to a distinct extended executable format.
+        return _read_mz_extended_signature(stream) not in {b"NE", b"PE", b"LE", b"LX"}
 
 
 register_backend("dos_mz", DOSMZ)
