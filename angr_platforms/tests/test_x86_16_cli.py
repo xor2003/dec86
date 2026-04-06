@@ -56,6 +56,7 @@ ILOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "ILOT.COD"
 IMOT_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOT.COD"
 IMOX_COD = REPO_ROOT / "angr_platforms" / "x16_samples" / "IMOX.COD"
 LIFE_EXE = REPO_ROOT / "LIFE.EXE"
+LIFE2_EXE = REPO_ROOT / "LIFE2.EXE"
 LIFE_COD = REPO_ROOT / "LIFE.COD"
 NONAME_TDINFO_EXE = REPO_ROOT / "tdinfo-parser" / "NONAME.EXE"
 SYNTHETIC_OBJ = REPO_ROOT / "angr_platforms" / "tests" / "fixtures" / "synthetic.obj"
@@ -2053,6 +2054,71 @@ def test_detect_flair_metadata_searches_startup_pats_across_whole_binary(monkeyp
     assert "flair_pat" in source_formats
 
 
+def test_peer_exe_catalog_requires_exact_span_byte_match():
+    image = bytes.fromhex("90 90 55 8B EC C3 90 55 8B EC 90 C3 90")
+    peer_image = bytes.fromhex("90 90 55 8B EC C3 90 55 8B ED 90 C3 90")
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda addr, size: image[addr - 0x1000 : addr - 0x1000 + size]))
+    )
+    peer_project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda addr, size: peer_image[addr - 0x1000 : addr - 0x1000 + size]))
+    )
+    peer_metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1002: "match_func", 0x1007: "mismatch_func"},
+        code_ranges={0x1002: (0x1002, 0x1006), 0x1007: (0x1007, 0x100C)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
+
+    labels, ranges = sidecar_metadata._merge_peer_function_catalog(project, peer_project, peer_metadata)
+
+    assert labels == {0x1002: "match_func"}
+    assert ranges == {0x1002: (0x1002, 0x1006)}
+
+
+def test_discover_peer_exe_catalog_matches_merges_exact_sibling_catalog(monkeypatch, tmp_path):
+    binary = tmp_path / "demo2.exe"
+    peer_binary = tmp_path / "demo.exe"
+    binary.write_bytes(b"MZ")
+    peer_binary.write_bytes(b"MZ")
+    image = bytes.fromhex("90 90 55 8B EC C3 90")
+    project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x10000),
+            memory=SimpleNamespace(load=lambda addr, size: image[addr - 0x1000 : addr - 0x1000 + size]),
+        ),
+    )
+    peer_project = SimpleNamespace(
+        loader=SimpleNamespace(
+            memory=SimpleNamespace(load=lambda addr, size: image[addr - 0x1000 : addr - 0x1000 + size]),
+        )
+    )
+    peer_metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1002: "peer_func"},
+        code_ranges={0x1002: (0x1002, 0x1006)},
+        absolute_addrs=True,
+        source_format="cod_listing+codeview_nb00",
+    )
+
+    monkeypatch.setattr(sidecar_metadata, "_peer_exe_family_candidates", lambda _binary: (peer_binary,))
+    monkeypatch.setattr(sidecar_metadata, "_build_project", lambda *args, **kwargs: peer_project)
+    monkeypatch.setattr(
+        sidecar_metadata,
+        "_load_lst_metadata",
+        lambda path, *_args, **kwargs: peer_metadata if path == peer_binary and kwargs.get("allow_peer_exe") is False else None,
+    )
+
+    labels, ranges, source_formats = sidecar_metadata._discover_peer_exe_catalog_matches(binary, project)
+
+    assert labels == {0x1002: "peer_func"}
+    assert ranges == {0x1002: (0x1002, 0x1006)}
+    assert source_formats == ("peer_exe",)
+    assert getattr(project, "_inertia_peer_exe_titles", ()) == (peer_binary.name,)
+
+
 def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeypatch, tmp_path):
     binary = tmp_path / "demo.exe"
     binary.write_bytes(b"MZ")
@@ -2086,6 +2152,32 @@ def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeyp
     assert seen == {"pat_backend": "python_regex", "signature_catalog": catalog}
     assert metadata.code_labels[0x1010] == "sig_func"
     assert metadata.signature_code_addrs == frozenset({0x1010})
+
+
+def test_life2_without_peer_exe_metadata_has_no_sidecars_but_life_does():
+    life_project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+    life_metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, life_project, allow_peer_exe=False)
+
+    life2_project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+    life2_metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, life2_project, allow_peer_exe=False)
+
+    assert life_metadata is not None
+    assert sidecar_metadata._visible_code_labels(life_metadata)
+    assert life2_metadata is not None
+    assert sidecar_metadata._visible_code_labels(life2_metadata) == {}
+    assert life2_metadata.source_format == "flair_pat+flair_sig"
+
+
+def test_life2_reuses_life_function_catalog_when_spans_are_identical():
+    project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project)
+
+    assert metadata is not None
+    assert "peer_exe" in metadata.source_format
+    assert getattr(project, "_inertia_peer_exe_titles", ()) == ("LIFE.EXE",)
+    visible = sidecar_metadata._visible_code_labels(metadata)
+    for name in ("main", "init_life", "init_buf", "draw_box", "init_mats"):
+        assert name in visible.values()
 
 
 def test_parse_ida_map_metadata_prefers_segment_class_over_loc_name(tmp_path):
