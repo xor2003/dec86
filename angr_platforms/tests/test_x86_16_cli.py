@@ -2119,6 +2119,61 @@ def test_discover_peer_exe_catalog_matches_merges_exact_sibling_catalog(monkeypa
     assert getattr(project, "_inertia_peer_exe_titles", ()) == (peer_binary.name,)
 
 
+def test_try_decompile_peer_sidecar_slice_uses_native_peer_metadata(monkeypatch, tmp_path):
+    peer_binary = tmp_path / "demo.exe"
+    peer_binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000)),
+        _inertia_peer_exe_paths=(str(peer_binary),),
+    )
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x1006)},
+        absolute_addrs=True,
+        source_format="peer_exe",
+    )
+    peer_project = SimpleNamespace(entry=0x1000)
+    peer_metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x1006)},
+        absolute_addrs=True,
+        source_format="cod_listing+codeview_nb00",
+        cod_path=str(tmp_path / "demo.cod"),
+    )
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *args, **kwargs: peer_project)
+    monkeypatch.setattr(
+        decompile,
+        "_load_lst_metadata",
+        lambda path, *_args, **kwargs: peer_metadata if path == peer_binary and kwargs.get("allow_peer_exe") is False else None,
+    )
+    monkeypatch.setattr(decompile, "_exact_function_span_matches", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_sidecar_slice",
+        lambda project_arg, metadata_arg, addr, name, **_kwargs: (
+            ("ok", "void func(void)\n{\n}\n")
+            if project_arg is peer_project and metadata_arg is peer_metadata and addr == 0x1000 and name == "func"
+            else None
+        ),
+    )
+
+    rendered = decompile._try_decompile_peer_sidecar_slice(
+        project,
+        metadata,
+        0x1000,
+        "func",
+        timeout=6,
+        api_style="default",
+        binary_path=tmp_path / "demo2.exe",
+    )
+
+    assert rendered == "void func(void)\n{\n}\n"
+
+
 def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeypatch, tmp_path):
     binary = tmp_path / "demo.exe"
     binary.write_bytes(b"MZ")
@@ -2178,6 +2233,19 @@ def test_life2_reuses_life_function_catalog_when_spans_are_identical():
     visible = sidecar_metadata._visible_code_labels(metadata)
     for name in ("main", "init_life", "init_buf", "draw_box", "init_mats"):
         assert name in visible.values()
+
+
+def test_life2_peer_catalog_ranks_application_functions_before_runtime_helpers():
+    project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project)
+
+    assert metadata is not None
+    ranked = decompile._rank_labeled_function_entries(project, list(sidecar_metadata._visible_code_labels(metadata).items()), metadata)
+    top_names = [name for _addr, name in ranked[:8]]
+
+    assert top_names[0] == "main"
+    assert {"init_adapter", "init_mats", "init_buf", "init_life"} <= set(top_names[:5])
+    assert {"astart", "chkstk", "atol", "exit"} & set(top_names[:8]) == set()
 
 
 def test_parse_ida_map_metadata_prefers_segment_class_over_loc_name(tmp_path):
