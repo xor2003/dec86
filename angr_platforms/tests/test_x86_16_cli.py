@@ -2174,6 +2174,53 @@ def test_try_decompile_peer_sidecar_slice_uses_native_peer_metadata(monkeypatch,
     assert rendered == "void func(void)\n{\n}\n"
 
 
+def test_try_decompile_sidecar_slice_retries_with_broader_exact_region_recovery(monkeypatch):
+    slice_project = SimpleNamespace()
+    function = SimpleNamespace(name="func")
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\xc3")),
+    )
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x1002)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: slice_project)
+
+    def _fake_pick_lean(*_args, **_kwargs):
+        calls.append("lean")
+        raise KeyError("lean failed")
+
+    def _fake_pick_full(*_args, data_references=None, **_kwargs):
+        calls.append(f"full:{data_references}")
+        return "cfg", function
+
+    monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick_lean)
+    monkeypatch.setattr(decompile, "_pick_function", _fake_pick_full)
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("ok", "void func(void)\n{\n}\n", 1, 2, 0.01),
+    )
+
+    result = decompile._try_decompile_sidecar_slice(
+        project,
+        metadata,
+        0x1000,
+        "func",
+        timeout=6,
+        api_style="default",
+        binary_path=None,
+    )
+
+    assert result == ("ok", "void func(void)\n{\n}\n")
+    assert calls == ["lean", "full:False"]
+
+
 def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeypatch, tmp_path):
     binary = tmp_path / "demo.exe"
     binary.write_bytes(b"MZ")
