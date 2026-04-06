@@ -2117,6 +2117,7 @@ def test_discover_peer_exe_catalog_matches_merges_exact_sibling_catalog(monkeypa
     assert ranges == {0x1002: (0x1002, 0x1006)}
     assert source_formats == ("peer_exe",)
     assert getattr(project, "_inertia_peer_exe_titles", ()) == (peer_binary.name,)
+    assert getattr(project, "_inertia_peer_exe_paths", ()) == (str(peer_binary),)
 
 
 def test_try_decompile_peer_sidecar_slice_uses_native_peer_metadata(monkeypatch, tmp_path):
@@ -2219,6 +2220,53 @@ def test_try_decompile_sidecar_slice_retries_with_broader_exact_region_recovery(
 
     assert result == ("ok", "void func(void)\n{\n}\n")
     assert calls == ["lean", "full:False"]
+
+
+def test_try_decompile_sidecar_slice_falls_back_to_cod_source_when_decompiler_stays_empty(monkeypatch):
+    slice_project = SimpleNamespace()
+    function = SimpleNamespace(name="func")
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\xc3")),
+    )
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x1002)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+        cod_path="/tmp/demo.cod",
+    )
+
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: slice_project)
+    monkeypatch.setattr(decompile, "_pick_function_lean", lambda *_args, **_kwargs: ("cfg", function))
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("empty", "Decompiler did not produce code.", 1, 2, 0.01),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_sidecar_cod_metadata_for_function",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            source_lines=(
+                "func() {",
+                "value = 1;",
+                "}",
+            )
+        ),
+    )
+
+    result = decompile._try_decompile_sidecar_slice(
+        project,
+        metadata,
+        0x1000,
+        "func",
+        timeout=6,
+        api_style="default",
+        binary_path=Path("/tmp/demo.exe"),
+    )
+
+    assert result == ("ok", "func() {\nvalue = 1;\n}\n")
 
 
 def test_recover_lst_function_retries_full_exact_region_when_lean_result_is_truncated(monkeypatch):
