@@ -2118,6 +2118,7 @@ def test_discover_peer_exe_catalog_matches_merges_exact_sibling_catalog(monkeypa
     assert source_formats == ("peer_exe",)
     assert getattr(project, "_inertia_peer_exe_titles", ()) == (peer_binary.name,)
     assert getattr(project, "_inertia_peer_exe_paths", ()) == (str(peer_binary),)
+    assert getattr(project, "_inertia_peer_sidecar_cache", {}).get(str(peer_binary)) == (peer_project, peer_metadata)
 
 
 def test_try_decompile_peer_sidecar_slice_uses_native_peer_metadata(monkeypatch, tmp_path):
@@ -2173,6 +2174,78 @@ def test_try_decompile_peer_sidecar_slice_uses_native_peer_metadata(monkeypatch,
     )
 
     assert rendered == "void func(void)\n{\n}\n"
+
+
+def test_try_decompile_peer_sidecar_slice_reuses_cached_peer_bundle(monkeypatch, tmp_path):
+    peer_binary = tmp_path / "demo.exe"
+    peer_binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000)),
+        _inertia_peer_exe_paths=(str(peer_binary),),
+    )
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x1006)},
+        absolute_addrs=True,
+        source_format="peer_exe",
+    )
+    peer_project = SimpleNamespace(entry=0x1000)
+    peer_metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x1006)},
+        absolute_addrs=True,
+        source_format="cod_listing+codeview_nb00",
+    )
+    build_calls = []
+    metadata_calls = []
+
+    def _fake_build(*_args, **_kwargs):
+        build_calls.append("build")
+        return peer_project
+
+    def _fake_load(path, *_args, **kwargs):
+        metadata_calls.append((path, kwargs.get("allow_peer_exe")))
+        return peer_metadata if path == peer_binary and kwargs.get("allow_peer_exe") is False else None
+
+    monkeypatch.setattr(decompile, "_build_project", _fake_build)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", _fake_load)
+    monkeypatch.setattr(decompile, "_exact_function_span_matches", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_sidecar_slice",
+        lambda project_arg, metadata_arg, addr, name, **_kwargs: (
+            ("ok", f"void {name}(void)\n{{\n}}\n")
+            if project_arg is peer_project and metadata_arg is peer_metadata and addr == 0x1000
+            else None
+        ),
+    )
+
+    rendered_once = decompile._try_decompile_peer_sidecar_slice(
+        project,
+        metadata,
+        0x1000,
+        "func",
+        timeout=6,
+        api_style="default",
+        binary_path=tmp_path / "demo2.exe",
+    )
+    rendered_twice = decompile._try_decompile_peer_sidecar_slice(
+        project,
+        metadata,
+        0x1000,
+        "func",
+        timeout=6,
+        api_style="default",
+        binary_path=tmp_path / "demo2.exe",
+    )
+
+    assert rendered_once == "void func(void)\n{\n}\n"
+    assert rendered_twice == "void func(void)\n{\n}\n"
+    assert build_calls == ["build"]
+    assert metadata_calls == [(peer_binary, False)]
 
 
 def test_try_decompile_sidecar_slice_retries_with_broader_exact_region_recovery(monkeypatch):
