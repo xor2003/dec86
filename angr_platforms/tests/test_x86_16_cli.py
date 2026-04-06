@@ -2440,29 +2440,25 @@ def test_life2_without_peer_exe_metadata_has_no_sidecars_but_life_does():
     assert life2_metadata.source_format == "flair_pat+flair_sig"
 
 
-def test_life2_reuses_life_function_catalog_when_spans_are_identical():
+def test_life2_default_metadata_stays_independent_from_life_peer_catalog():
     project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
     metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project)
 
     assert metadata is not None
-    assert "peer_exe" in metadata.source_format
-    assert getattr(project, "_inertia_peer_exe_titles", ()) == ("LIFE.EXE",)
-    visible = sidecar_metadata._visible_code_labels(metadata)
-    for name in ("main", "init_life", "init_buf", "draw_box", "init_mats"):
-        assert name in visible.values()
+    assert "peer_exe" not in metadata.source_format
+    assert getattr(project, "_inertia_peer_exe_titles", ()) == ()
+    assert getattr(project, "_inertia_peer_exe_paths", ()) == ()
+    assert sidecar_metadata._visible_code_labels(metadata) == {}
 
 
-def test_life2_peer_catalog_ranks_application_functions_before_runtime_helpers():
+def test_life2_peer_catalog_oracle_requires_explicit_helper_call():
     project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
-    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project)
+    labels, ranges, source_formats = sidecar_metadata._discover_peer_exe_catalog_matches(LIFE2_EXE, project)
 
-    assert metadata is not None
-    ranked = decompile._rank_labeled_function_entries(project, list(sidecar_metadata._visible_code_labels(metadata).items()), metadata)
-    top_names = [name for _addr, name in ranked[:8]]
-
-    assert top_names[0] == "main"
-    assert {"init_adapter", "init_mats", "init_buf", "init_life"} <= set(top_names[:5])
-    assert {"astart", "chkstk", "atol", "exit"} & set(top_names[:8]) == set()
+    assert source_formats == ("peer_exe",)
+    assert labels
+    assert ranges
+    assert {"main", "init_life", "init_buf", "draw_box", "init_mats"} <= set(labels.values())
 
 
 def test_parse_ida_map_metadata_prefers_segment_class_over_loc_name(tmp_path):
