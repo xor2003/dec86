@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import decompile
+from inertia_decompiler import sidecar_metadata, sidecar_parsers
 from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
 from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
 from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
@@ -1886,9 +1887,10 @@ def test_detect_flair_metadata_forwards_pat_backend(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr(decompile.Path, "exists", lambda self: True)
-    monkeypatch.setattr(decompile, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(decompile, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers.Path, "exists", lambda self: True)
+    monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "_match_flair_startup_pat_functions", lambda *_args, **_kwargs: ({}, {}))
 
     def _fake_discover(binary, project_arg, *, flair_root=None, backend=None, **_kwargs):
         recorded["binary"] = binary
@@ -1897,9 +1899,9 @@ def test_detect_flair_metadata_forwards_pat_backend(monkeypatch):
         recorded["backend"] = backend
         return SimpleNamespace(code_labels={}, code_ranges={}, source_formats=())
 
-    monkeypatch.setattr(decompile, "discover_local_pat_matches", _fake_discover)
+    monkeypatch.setattr(sidecar_parsers, "discover_local_pat_matches", _fake_discover)
 
-    decompile._detect_flair_metadata(Path("/tmp/demo.exe"), project, pat_backend="python_regex")
+    sidecar_parsers._detect_flair_metadata(Path("/tmp/demo.exe"), project, pat_backend="python_regex")
 
     assert recorded["backend"] == "python_regex"
 
@@ -1951,10 +1953,11 @@ def test_detect_flair_metadata_merges_local_pat_matches(monkeypatch):
             memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 32),
         ),
     )
-    monkeypatch.setattr(decompile, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(decompile, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "_match_flair_startup_pat_functions", lambda *_args, **_kwargs: ({}, {}))
     monkeypatch.setattr(
-        decompile,
+        sidecar_parsers,
         "discover_local_pat_matches",
         lambda *_args, **_kwargs: SimpleNamespace(
             code_labels={0x1234: "helper_func"},
@@ -1963,7 +1966,7 @@ def test_detect_flair_metadata_merges_local_pat_matches(monkeypatch):
         ),
     )
 
-    code_labels, code_ranges, source_formats = decompile._detect_flair_metadata(Path("/tmp/demo.exe"), project)
+    code_labels, code_ranges, source_formats = sidecar_parsers._detect_flair_metadata(Path("/tmp/demo.exe"), project)
 
     assert code_labels[0x1234] == "helper_func"
     assert code_ranges[0x1234] == (0x1234, 0x1250)
@@ -1980,10 +1983,11 @@ def test_detect_flair_metadata_merges_signature_catalog(monkeypatch, tmp_path):
     )
     catalog = tmp_path / "catalog.pat"
     catalog.write_text("---\n")
-    monkeypatch.setattr(decompile, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(decompile, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "_match_flair_startup_pat_functions", lambda *_args, **_kwargs: ({}, {}))
     monkeypatch.setattr(
-        decompile,
+        sidecar_parsers,
         "match_signature_catalog",
         lambda *_args, **_kwargs: SimpleNamespace(
             code_labels={0x2345: "catalog_func"},
@@ -1992,12 +1996,12 @@ def test_detect_flair_metadata_merges_signature_catalog(monkeypatch, tmp_path):
         ),
     )
     monkeypatch.setattr(
-        decompile,
+        sidecar_parsers,
         "discover_local_pat_matches",
         lambda *_args, **_kwargs: SimpleNamespace(code_labels={}, code_ranges={}, source_formats=()),
     )
 
-    code_labels, code_ranges, source_formats = decompile._detect_flair_metadata(
+    code_labels, code_ranges, source_formats = sidecar_parsers._detect_flair_metadata(
         Path("/tmp/demo.exe"),
         project,
         pat_backend="python_regex",
@@ -2007,6 +2011,46 @@ def test_detect_flair_metadata_merges_signature_catalog(monkeypatch, tmp_path):
     assert code_labels[0x2345] == "catalog_func"
     assert code_ranges[0x2345] == (0x2345, 0x2350)
     assert "signature_catalog" in source_formats
+
+
+def test_detect_flair_metadata_searches_startup_pats_across_whole_binary(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x2000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(min_addr=0x2000, max_addr=0x203F),
+            memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 64),
+        ),
+    )
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sidecar_parsers, "match_flair_startup_entry", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "list_flair_sig_libraries", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(sidecar_parsers, "_load_flair_startup_pat_modules", lambda *_args, **_kwargs: ("module",))
+
+    def _fake_match(image_bytes, base_addr, modules, *, backend=None):
+        seen["image_len"] = len(image_bytes)
+        seen["base_addr"] = base_addr
+        seen["modules"] = modules
+        seen["backend"] = backend
+        return {0x2010: "startup_sig_func"}, {0x2010: (0x2010, 0x2020)}
+
+    monkeypatch.setattr(sidecar_parsers, "match_pat_modules", _fake_match)
+    monkeypatch.setattr(
+        sidecar_parsers,
+        "discover_local_pat_matches",
+        lambda *_args, **_kwargs: SimpleNamespace(code_labels={}, code_ranges={}, source_formats=()),
+    )
+
+    code_labels, code_ranges, source_formats = sidecar_parsers._detect_flair_metadata(
+        Path("/tmp/demo.exe"),
+        project,
+        pat_backend="python_regex",
+    )
+
+    assert seen == {"image_len": 64, "base_addr": 0x2000, "modules": ("module",), "backend": "python_regex"}
+    assert code_labels[0x2010] == "startup_sig_func"
+    assert code_ranges[0x2010] == (0x2010, 0x2020)
+    assert "flair_pat" in source_formats
 
 
 def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeypatch, tmp_path):
@@ -2020,10 +2064,9 @@ def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeyp
     )
     seen: dict[str, object] = {}
 
-    monkeypatch.setattr(decompile, "_probe_ida_base_linear", lambda *_args, **_kwargs: 0x1000)
-    monkeypatch.setattr(decompile, "_parse_codeview_nb00_metadata", lambda *_args, **_kwargs: ({}, {}, {}))
+    monkeypatch.setattr(sidecar_metadata, "_probe_ida_base_linear", lambda *_args, **_kwargs: 0x1000)
     monkeypatch.setattr(
-        decompile,
+        sidecar_metadata,
         "_detect_flair_metadata",
         lambda _binary, _project, *, pat_backend=None, signature_catalog=None: (
             seen.setdefault("pat_backend", pat_backend) and {0x1010: "sig_func"},
@@ -2032,7 +2075,7 @@ def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeyp
         ),
     )
 
-    metadata = decompile._load_lst_metadata(
+    metadata = sidecar_metadata._load_lst_metadata(
         binary,
         project,
         pat_backend="python_regex",
