@@ -2221,6 +2221,55 @@ def test_try_decompile_sidecar_slice_retries_with_broader_exact_region_recovery(
     assert calls == ["lean", "full:False"]
 
 
+def test_recover_lst_function_retries_full_exact_region_when_lean_result_is_truncated(monkeypatch):
+    project = SimpleNamespace(entry=0x2000, arch=SimpleNamespace(name="86_16"))
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x10c0)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
+    tiny_func = SimpleNamespace(name="func", blocks=(SimpleNamespace(addr=0x1000, size=8), SimpleNamespace(addr=0x1008, size=8)))
+    full_func = SimpleNamespace(
+        name="func",
+        blocks=(
+            SimpleNamespace(addr=0x1000, size=0x30),
+            SimpleNamespace(addr=0x1030, size=0x30),
+            SimpleNamespace(addr=0x1060, size=0x30),
+        ),
+    )
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(decompile, "_analysis_timeout", lambda *_args, **_kwargs: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(decompile, "_x86_16_fast_recovery_windows", lambda *_args, **_kwargs: (0x80,))
+    monkeypatch.setattr(decompile, "_x86_16_recovery_windows", lambda *_args, **_kwargs: (0x80,))
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (calls.append(("lean", None)) or ("cfg-lean", tiny_func)),
+    )
+
+    def _fake_pick_function(*_args, data_references=None, **_kwargs):
+        calls.append(("full", data_references))
+        return "cfg-full", full_func
+
+    monkeypatch.setattr(decompile, "_pick_function", _fake_pick_function)
+
+    cfg, func = decompile._recover_lst_function(
+        project,
+        metadata,
+        0x1000,
+        "func",
+        timeout=2,
+        window=0x200,
+    )
+
+    assert cfg == "cfg-full"
+    assert func is full_func
+    assert calls == [("lean", None), ("full", False), ("full", True)]
+
+
 def test_load_lst_metadata_forwards_flair_parameters_without_global_args(monkeypatch, tmp_path):
     binary = tmp_path / "demo.exe"
     binary.write_bytes(b"MZ")
