@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import decompile
+import inertia_decompiler.cache as recovery_cache
 from inertia_decompiler import sidecar_metadata, sidecar_parsers
 from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
 from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
@@ -684,6 +685,54 @@ def test_rank_exe_function_seeds_prioritizes_entry_window_call_targets(monkeypat
     assert ranked.index(target) < ranked.index(helper)
 
 
+def test_rank_exe_function_seeds_uses_recovery_labels_when_visible_catalog_is_empty(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    code = b"\x90" * 0x200
+    binary.write_bytes(code)
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1100: "sig_func"},
+        code_ranges={0x1100: (0x1100, 0x1120)},
+        signature_code_addrs=frozenset({0x1100}),
+        absolute_addrs=True,
+        source_format="flair_pat+flair_sig",
+    )
+    project = SimpleNamespace(
+        entry=0x1000,
+        _inertia_lst_metadata=metadata,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=binary,
+                linked_base=0x1000,
+                max_addr=len(code) - 1,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+            )
+        ),
+    )
+    monkeypatch.setattr(decompile, "_seed_scan_windows", lambda _project: [(0x1100, 0x1120)])
+    monkeypatch.setattr(decompile, "_entry_window_seed_targets", lambda *_args, **_kwargs: set())
+    monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyError("no entry CFG")),
+    )
+    recovery_calls = {"count": 0}
+
+    def _counting_recovery_labels(meta):
+        recovery_calls["count"] += 1
+        return sidecar_metadata._recovery_code_labels(meta)
+
+    monkeypatch.setattr(decompile, "_recovery_code_labels", _counting_recovery_labels)
+
+    ranked = decompile._rank_exe_function_seeds(project)
+
+    assert sidecar_metadata._visible_code_labels(metadata) == {}
+    assert sidecar_metadata._recovery_code_labels(metadata) == {0x1100: "sig_func"}
+    assert recovery_calls["count"] == 1
+    assert ranked == [0x1100]
+
+
 def test_recover_seeded_exe_functions_reuses_existing_project_before_rebuild(monkeypatch):
     code = b"\x55\x8B\xEC" + b"\x90" * 0x20
     project = SimpleNamespace(
@@ -948,6 +997,64 @@ def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatc
     assert rendered == "int sub_11593(void) { return 0; }"
 
 
+def test_try_decompile_non_optimized_slice_retries_with_blob_project_for_cod_inputs(monkeypatch):
+    shared_project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x1000),
+            memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size),
+        ),
+    )
+    fresh_project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x1000),
+            memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size),
+        ),
+    )
+    slice_project = SimpleNamespace()
+    cfg = SimpleNamespace()
+    func = SimpleNamespace(name="sub_11593")
+    calls = {"decompile": 0, "build": []}
+
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x11593, 0x115b5))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *_args, **_kwargs: slice_project)
+    monkeypatch.setattr(decompile, "_pick_function_lean", lambda *_args, **_kwargs: (cfg, func))
+    monkeypatch.setattr(decompile, "_sidecar_cod_metadata_for_function", lambda *_args, **_kwargs: None)
+
+    def _fake_build_project(path, *, force_blob, base_addr, entry_point):
+        calls["build"].append((Path(path), force_blob, base_addr, entry_point))
+        assert Path(path) == LIFE_COD
+        assert force_blob is True
+        return fresh_project
+
+    monkeypatch.setattr(decompile, "_build_project", _fake_build_project)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+
+    def _fake_decompile(project, *_args, **_kwargs):
+        calls["decompile"] += 1
+        if calls["decompile"] == 1:
+            return "timeout", "Timed out after 6s.", 1, 0x20, 6.0
+        return "ok", "int sub_11593(void) { return 0; }", 1, 0x20, 1.0
+
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
+
+    rendered = decompile._try_decompile_non_optimized_slice(
+        shared_project,
+        0x11593,
+        "sub_11593",
+        timeout=6,
+        api_style="modern",
+        binary_path=LIFE_COD,
+        lst_metadata=None,
+    )
+
+    assert calls["build"] == [(LIFE_COD, True, 0x1000, 0x1000)]
+    assert calls["decompile"] == 2
+    assert rendered == "int sub_11593(void) { return 0; }"
+
+
 def test_try_decompile_non_optimized_slice_never_caches_results(monkeypatch, tmp_path):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"\x90" * 0x40)
@@ -1075,8 +1182,8 @@ def test_rank_exe_function_seeds_uses_persistent_cache(monkeypatch, tmp_path):
         calls["count"] += 1
         return SimpleNamespace(), SimpleNamespace(addr=0x1000, blocks=(SimpleNamespace(size=4),))
 
-    monkeypatch.setattr(decompile, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
-    monkeypatch.setattr(decompile, "_cache_source_digest", lambda _paths: "digest-r")
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-r")
     monkeypatch.setattr(decompile, "_seed_scan_windows", lambda _project: [(0x1000, 0x1004)])
     monkeypatch.setattr(decompile, "_entry_window_seed_targets", lambda *_args, **_kwargs: {0x1003})
     monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick)
@@ -1088,6 +1195,63 @@ def test_rank_exe_function_seeds_uses_persistent_cache(monkeypatch, tmp_path):
 
     assert first == second
     assert calls["count"] == 1
+
+
+def test_rank_exe_function_seeds_cache_key_changes_when_recovery_metadata_changes(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    code = b"\x90" * 0x400
+    binary.write_bytes(code)
+    metadata_a = LSTMetadata(
+        data_labels={},
+        code_labels={0x1100: "sig_a"},
+        code_ranges={0x1100: (0x1100, 0x1120)},
+        signature_code_addrs=frozenset({0x1100}),
+        absolute_addrs=True,
+        source_format="flair_pat+flair_sig",
+    )
+    metadata_b = LSTMetadata(
+        data_labels={},
+        code_labels={0x1200: "sig_b"},
+        code_ranges={0x1200: (0x1200, 0x1240)},
+        signature_code_addrs=frozenset({0x1200}),
+        absolute_addrs=True,
+        source_format="flair_pat+flair_sig",
+    )
+    calls = {"count": 0}
+
+    def _make_project(metadata):
+        return SimpleNamespace(
+            entry=0x1000,
+            _inertia_lst_metadata=metadata,
+            loader=SimpleNamespace(
+                main_object=SimpleNamespace(
+                    binary=binary,
+                    linked_base=0x1000,
+                    max_addr=len(code) - 1,
+                    memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+                )
+            ),
+        )
+
+    def _fake_pick(*_args, **_kwargs):
+        calls["count"] += 1
+        return SimpleNamespace(), SimpleNamespace(addr=0x1000, blocks=(SimpleNamespace(size=4),))
+
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-r")
+    monkeypatch.setattr(decompile, "_seed_scan_windows", lambda _project: [(0x1100, 0x1240)])
+    monkeypatch.setattr(decompile, "_entry_window_seed_targets", lambda *_args, **_kwargs: set())
+    monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "collect_neighbor_call_targets", lambda _function: [])
+    monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
+
+    first = decompile._rank_exe_function_seeds(_make_project(metadata_a))
+    second = decompile._rank_exe_function_seeds(_make_project(metadata_b))
+
+    assert first == [0x1100]
+    assert second == [0x1200]
+    assert calls["count"] == 2
 
 
 def test_main_uses_cached_exe_catalog_addresses_before_cfg(monkeypatch, tmp_path, capsys):
@@ -1298,6 +1462,61 @@ def test_main_falls_back_after_fast_exe_catalog_timeout(monkeypatch, tmp_path, c
     assert rc == 0
     assert "Quick EXE function discovery timed out" in out
     assert "/* == function 0x11423 _start == */" in out
+
+
+def test_main_uses_seed_recovery_when_only_hidden_signature_labels_exist(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "life2.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    recovered_cfg = SimpleNamespace(functions={})
+    recovered_function = SimpleNamespace(addr=0x10010, name="main", project=project)
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x11423: "_startup_sig"},
+        code_ranges={},
+        absolute_addrs=True,
+        source_format="flair_pat+flair_sig",
+    )
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_visible_code_labels", lambda _metadata: {})
+    monkeypatch.setattr(decompile, "_recovery_code_labels", lambda _metadata: {0x11423: "_startup_sig"})
+    monkeypatch.setattr(decompile, "_rank_labeled_function_entries", lambda *_args, **_kwargs: pytest.fail("visible-label ranking should not run"))
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(
+        decompile,
+        "_recover_seeded_exe_functions",
+        lambda *_args, **_kwargs: [(recovered_cfg, recovered_function)],
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "Signature-bounded sidecar labels available" in out
+    assert "/* == function 0x10010 main == */" in out
 
 
 def test_main_serial_function_timeout_does_not_stall_whole_run(monkeypatch, tmp_path, capsys):
@@ -2451,6 +2670,25 @@ def test_life2_default_metadata_stays_independent_from_life_peer_catalog():
     assert sidecar_metadata._visible_code_labels(metadata) == {}
 
 
+def test_life2_signature_metadata_seeds_bounded_recovery_without_peer_catalog():
+    project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project, allow_peer_exe=False)
+
+    assert metadata is not None
+    assert sidecar_metadata._visible_code_labels(metadata) == {}
+    recovery_labels = sidecar_metadata._recovery_code_labels(metadata)
+    assert recovery_labels
+    span_start, _span = next((addr, span) for addr, span in metadata.code_ranges.items() if span[1] - span[0] > 1)
+    start_name = sidecar_metadata._lst_code_label(metadata, span_start, project.entry)
+    assert start_name is not None
+    assert sidecar_metadata._lst_code_label(metadata, span_start + 1, project.entry) == start_name
+
+    ranked = decompile._rank_exe_function_seeds(project)
+
+    assert ranked
+    assert any(addr in recovery_labels for addr in ranked)
+
+
 def test_life2_peer_catalog_oracle_requires_explicit_helper_call():
     project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
     labels, ranges, source_formats = sidecar_metadata._discover_peer_exe_catalog_matches(LIFE2_EXE, project)
@@ -2496,6 +2734,23 @@ def test_visible_code_labels_skip_signature_matched_functions_by_default():
     )
 
     assert decompile._visible_code_labels(metadata) == {0x1200: "real_func"}
+
+
+def test_recovery_code_labels_include_bounded_signature_matches_without_changing_visible_catalog():
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1200: "real_func", 0x1300: "sig_func", 0x1400: "loose_sig_func"},
+        code_ranges={0x1200: (0x1200, 0x1220), 0x1300: (0x1300, 0x1310)},
+        signature_code_addrs=frozenset({0x1300, 0x1400}),
+        absolute_addrs=True,
+        source_format="ida_map+signature_catalog",
+    )
+
+    assert decompile._visible_code_labels(metadata) == {0x1200: "real_func"}
+    assert sidecar_metadata._recovery_code_labels(metadata) == {
+        0x1200: "real_func",
+        0x1300: "sig_func",
+    }
 
 
 def test_format_sidecar_function_catalog_omits_signature_matched_functions():
@@ -2631,6 +2886,22 @@ def test_lst_code_region_prefers_exact_or_containing_sidecar_span():
     assert decompile._lst_code_region(metadata, 0x10080) == (0x10010, 0x10147)
     assert decompile._lst_code_region(metadata, 0x10147) == (0x10147, 0x10211)
     assert decompile._lst_code_region(metadata, 0x20000) is None
+
+
+def test_lst_code_label_uses_containing_sidecar_span_name():
+    metadata = SimpleNamespace(
+        absolute_addrs=True,
+        code_labels={0x10010: "main", 0x10147: "drawCockpit"},
+        code_ranges={
+            0x10010: (0x10010, 0x10147),
+            0x10147: (0x10147, 0x10211),
+        },
+    )
+
+    assert decompile._lst_code_label(metadata, 0x10010, 0x1000) == "main"
+    assert decompile._lst_code_label(metadata, 0x10080, 0x1000) == "main"
+    assert decompile._lst_code_label(metadata, 0x10147, 0x1000) == "drawCockpit"
+    assert decompile._lst_code_label(metadata, 0x20000, 0x1000) is None
 
 
 def test_format_sidecar_function_catalog_includes_ranges_and_sizes():
