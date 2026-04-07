@@ -68,6 +68,7 @@ __all__ = [
     "readability_goals",
     "correctness_goals",
     "milestone_report",
+    "render_x86_16_tail_validation_console_summary",
     "recovery_manifest",
     "recompilable_subset",
     "calling_convention_compat",
@@ -80,11 +81,29 @@ __all__ = [
     "decompiler_postprocess_stage",
     "describe_x86_16_decompiler_postprocess_stage",
     "describe_x86_16_decompiler_structuring_stage",
+    "tail_validation",
+    "X86_16TailValidationSummary",
+    "X86_16ValidationCacheDescriptor",
+    "build_x86_16_tail_validation_aggregate",
+    "build_x86_16_tail_validation_surface",
+    "build_x86_16_tail_validation_cached_result",
+    "build_x86_16_validation_cache_descriptor",
+    "persist_x86_16_tail_validation_snapshot",
+    "extract_x86_16_tail_validation_snapshot",
+    "x86_16_tail_validation_snapshot_passed",
+    "collect_x86_16_tail_validation_summary",
+    "compare_x86_16_tail_validation_summaries",
+    "build_x86_16_tail_validation_verdict",
+    "fingerprint_x86_16_tail_validation_boundary",
+    "format_x86_16_tail_validation_diff",
+    "resolve_x86_16_validation_cached_artifact",
+    "summarize_x86_16_tail_validation_records",
+    "describe_x86_16_tail_validation_scope",
     "DecompilerPostprocessPassSpec",
     "DecompilerStructuringPassSpec",
 ]
 
-from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, decompiler_structuring_stage, lift_86_16, load_dos_mz, load_dos_ne, recovery_confidence, simos_86_16  # noqa: F401
+from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, decompiler_structuring_stage, lift_86_16, load_dos_mz, load_dos_ne, recovery_confidence, simos_86_16, tail_validation  # noqa: F401
 from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, recovery_manifest, recompilable_subset, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
 from . import readability_goals  # noqa: F401
 from . import correctness_goals  # noqa: F401
@@ -103,6 +122,7 @@ from .decompiler_structuring_stage import DecompilerStructuringPassSpec, apply_x
 from .readability_goals import describe_x86_16_readability_goals, rank_readability_goal_queue, summarize_readability_focus  # noqa: F401
 from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
 from .validation_manifest import describe_x86_16_validation_triage  # noqa: F401
+from .milestone_report import render_x86_16_tail_validation_console_summary  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
 from .cod_known_objects import describe_x86_16_cod_known_objects  # noqa: F401
@@ -122,6 +142,25 @@ from .calling_convention_compat import apply_x86_16_calling_convention_compatibi
 from .decompiler_return_compat import apply_x86_16_decompiler_return_compatibility  # noqa: F401
 from .stack_compat import apply_x86_16_stack_compatibility  # noqa: F401
 from .decompiler_postprocess_stage import DecompilerPostprocessPassSpec, apply_x86_16_decompiler_postprocess, describe_x86_16_decompiler_postprocess_stage  # noqa: F401
+from .tail_validation import (  # noqa: F401
+    X86_16TailValidationSummary,
+    X86_16ValidationCacheDescriptor,
+    build_x86_16_tail_validation_aggregate,
+    build_x86_16_tail_validation_cached_result,
+    build_x86_16_tail_validation_surface,
+    build_x86_16_tail_validation_verdict,
+    build_x86_16_validation_cache_descriptor,
+    persist_x86_16_tail_validation_snapshot,
+    extract_x86_16_tail_validation_snapshot,
+    x86_16_tail_validation_snapshot_passed,
+    fingerprint_x86_16_tail_validation_boundary,
+    collect_x86_16_tail_validation_summary,
+    compare_x86_16_tail_validation_summaries,
+    format_x86_16_tail_validation_diff,
+    resolve_x86_16_validation_cached_artifact,
+    summarize_x86_16_tail_validation_records,
+    describe_x86_16_tail_validation_scope,
+)
 
 try:
     apply_x86_16_bootstrap()

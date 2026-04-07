@@ -200,6 +200,181 @@ def test_corpus_scan_summary_accumulates_interrupt_api_counts():
     assert summary["readability_clusters"] == []
 
 
+def test_corpus_scan_summary_aggregates_tail_validation():
+    stable = FunctionScanResult(
+        cod_file="A.COD",
+        proc_name="_stable",
+        proc_kind="NEAR",
+        byte_len=4,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="decompile",
+        function_count=1,
+        decompiled_count=1,
+        tail_validation={
+            "structuring": {
+                "changed": False,
+                "mode": "live_out",
+                "verdict": "structuring whole-tail validation [live_out] stable: no observable whole-tail changes",
+            },
+            "postprocess": {
+                "changed": False,
+                "mode": "live_out",
+                "verdict": "postprocess whole-tail validation [live_out] stable: no observable whole-tail changes",
+            },
+        },
+        stages=[StageResult("load", True), StageResult("decompile", True)],
+    )
+    changed = FunctionScanResult(
+        cod_file="B.COD",
+        proc_name="_changed",
+        proc_kind="NEAR",
+        byte_len=4,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="decompile",
+        function_count=1,
+        decompiled_count=1,
+        tail_validation={
+            "postprocess": {
+                "changed": True,
+                "mode": "live_out",
+                "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+            }
+        },
+        stages=[StageResult("load", True), StageResult("decompile", True)],
+    )
+    unknown = FunctionScanResult(
+        cod_file="C.COD",
+        proc_name="_unknown",
+        proc_kind="NEAR",
+        byte_len=4,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=False,
+        stage_reached="cfg",
+        failure_class="cfg_failure",
+        reason="cfg broke",
+        fallback_kind="block_lift",
+        function_count=1,
+        decompiled_count=0,
+        stages=[StageResult("load", True), StageResult("cfg", False, reason="cfg_failure")],
+    )
+
+    summary = summarize_results([stable, changed, unknown], "scan-safe")
+
+    assert summary["tail_validation"]["severity"] == "changed"
+    assert summary["tail_validation"]["changed_function_count"] == 1
+    assert summary["tail_validation"]["coverage_count"] == 3
+    assert summary["tail_validation"]["missing_count"] == 3
+    assert summary["tail_validation"]["unknown_count"] == 0
+    assert summary["tail_validation"]["structuring"]["stable_count"] == 1
+    assert summary["tail_validation"]["structuring"]["unknown_count"] == 0
+    assert summary["tail_validation"]["structuring"]["missing_count"] == 2
+    assert summary["tail_validation"]["structuring"]["coverage_count"] == 1
+    assert summary["tail_validation"]["postprocess"]["stable_count"] == 1
+    assert summary["tail_validation"]["postprocess"]["changed_count"] == 1
+    assert summary["tail_validation"]["postprocess"]["unknown_count"] == 0
+    assert summary["tail_validation"]["postprocess"]["missing_count"] == 1
+    assert summary["tail_validation"]["postprocess"]["coverage_count"] == 2
+    assert summary["tail_validation"]["postprocess"]["mode_counts"] == {"live_out": 2}
+    assert summary["tail_validation"]["postprocess"]["top_verdicts"] == [
+        {"verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping", "count": 1}
+    ]
+    assert summary["tail_validation"]["changed_functions"] == [
+        {
+            "cod_file": "B.COD",
+            "proc_name": "_changed",
+            "proc_kind": "NEAR",
+            "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+        }
+    ]
+    assert summary["tail_validation_surface"] == {
+        "headline": "whole-tail validation changed in 1 functions",
+        "severity": "changed",
+        "merge_gate": False,
+        "changed_function_count": 1,
+        "changed_stage_total": 1,
+        "coverage_count": 3,
+        "missing_stage_total": 3,
+        "unknown_stage_total": 0,
+        "stage_rows": [
+            {
+                "stage": "structuring",
+                "changed_count": 0,
+                "stable_count": 1,
+                "unknown_count": 0,
+                "missing_count": 2,
+                "coverage_count": 1,
+                "changed_rate": 0.0,
+                "coverage_rate": 0.333333,
+                "mode_counts": {"live_out": 1},
+                "top_verdicts": [],
+            },
+            {
+                "stage": "postprocess",
+                "changed_count": 1,
+                "stable_count": 1,
+                "unknown_count": 0,
+                "missing_count": 1,
+                "coverage_count": 2,
+                "changed_rate": 0.333333,
+                "coverage_rate": 0.666667,
+                "mode_counts": {"live_out": 2},
+                "top_verdicts": [
+                    {"verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping", "count": 1}
+                ],
+            },
+        ],
+        "stage_hotspots": [
+            {
+                "stage": "postprocess",
+                "changed_count": 1,
+                "changed_rate": 0.333333,
+                "top_verdicts": [
+                    {"verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping", "count": 1}
+                ],
+            }
+        ],
+        "top_changed_verdicts": [
+            {"verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping", "count": 1}
+        ],
+    }
+    assert summary["tail_validation_cache"]["cache_hit"] is False
+    assert isinstance(summary["tail_validation_cache"]["cache_key"], str)
+
+    cached_summary = summarize_results([stable, changed, unknown], "scan-safe")
+    assert cached_summary["tail_validation_cache"]["cache_hit"] is True
+    assert cached_summary["tail_validation_cache"]["cache_key"] == summary["tail_validation_cache"]["cache_key"]
+
+
+def test_corpus_scan_summary_marks_uncollected_tail_validation_when_metadata_is_absent():
+    result = FunctionScanResult(
+        cod_file="A.COD",
+        proc_name="_cfg_only",
+        proc_kind="NEAR",
+        byte_len=4,
+        has_near_call_reloc=False,
+        has_far_call_reloc=False,
+        ok=True,
+        stage_reached="cfg",
+        fallback_kind="cfg_only",
+        function_count=1,
+        decompiled_count=0,
+        stages=[StageResult("load", True), StageResult("cfg", True)],
+    )
+
+    summary = summarize_results([result], "scan-safe")
+
+    assert summary["tail_validation"]["severity"] == "uncollected"
+    assert summary["tail_validation"]["coverage_count"] == 0
+    assert summary["tail_validation"]["missing_count"] == 2
+    assert summary["tail_validation"]["unknown_count"] == 0
+    assert summary["tail_validation_surface"]["headline"] == "whole-tail validation not collected across 1 functions"
+
+
 def test_corpus_scan_summary_ranks_repeat_failures():
     repeated_a = FunctionScanResult(
         cod_file="A.COD",

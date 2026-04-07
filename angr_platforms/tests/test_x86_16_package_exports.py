@@ -13,6 +13,7 @@ from angr_platforms.X86_16 import decompiler_postprocess
 from angr_platforms.X86_16 import decompiler_postprocess_stage
 from angr_platforms.X86_16 import decompiler_structuring_stage
 from angr_platforms.X86_16 import recovery_confidence
+from angr_platforms.X86_16 import tail_validation
 
 
 def test_x86_16_package_exports_source_backends():
@@ -58,6 +59,7 @@ def test_x86_16_package_exports_source_backends():
     assert "summarize_readability_focus" in x8616.__all__
     assert "correctness_goals" in x8616.__all__
     assert "milestone_report" in x8616.__all__
+    assert "render_x86_16_tail_validation_console_summary" in x8616.__all__
     assert "recovery_manifest" in x8616.__all__
     assert "describe_x86_16_source_backed_rewrite_status" in x8616.__all__
     assert "describe_x86_16_source_backed_rewrite_debt" in x8616.__all__
@@ -77,6 +79,24 @@ def test_x86_16_package_exports_source_backends():
     assert "describe_x86_16_object_recovery_focus" in x8616.__all__
     assert "describe_x86_16_recovery_layers" in x8616.__all__
     assert "describe_x86_16_recovery_confidence_axes" in x8616.__all__
+    assert "tail_validation" in x8616.__all__
+    assert "X86_16TailValidationSummary" in x8616.__all__
+    assert "X86_16ValidationCacheDescriptor" in x8616.__all__
+    assert "build_x86_16_tail_validation_aggregate" in x8616.__all__
+    assert "build_x86_16_tail_validation_cached_result" in x8616.__all__
+    assert "build_x86_16_tail_validation_surface" in x8616.__all__
+    assert "build_x86_16_tail_validation_verdict" in x8616.__all__
+    assert "build_x86_16_validation_cache_descriptor" in x8616.__all__
+    assert "persist_x86_16_tail_validation_snapshot" in x8616.__all__
+    assert "extract_x86_16_tail_validation_snapshot" in x8616.__all__
+    assert "x86_16_tail_validation_snapshot_passed" in x8616.__all__
+    assert "fingerprint_x86_16_tail_validation_boundary" in x8616.__all__
+    assert "collect_x86_16_tail_validation_summary" in x8616.__all__
+    assert "compare_x86_16_tail_validation_summaries" in x8616.__all__
+    assert "format_x86_16_tail_validation_diff" in x8616.__all__
+    assert "resolve_x86_16_validation_cached_artifact" in x8616.__all__
+    assert "summarize_x86_16_tail_validation_records" in x8616.__all__
+    assert "describe_x86_16_tail_validation_scope" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__
     assert "decompiler_postprocess_globals" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__
@@ -178,6 +198,7 @@ def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
         "_normalize_function_prototype_arg_names_8616",
         "_classify_return_shape_8616",
         "_prune_void_function_return_values_8616",
+        "_dedupe_codegen_variable_names_8616",
     )
 
 
@@ -192,6 +213,27 @@ def test_x86_16_decompiler_structuring_stage_description():
     assert decompiler_structuring_stage.describe_x86_16_decompiler_structuring_stage() == tuple(
         (spec.name, spec.needs_project) for spec in decompiler_structuring_stage.DECOMPILER_STRUCTURING_PASSES
     )
+
+
+def test_x86_16_tail_validation_exports():
+    assert "X86_16TailValidationSummary" in tail_validation.__all__
+    assert "X86_16ValidationCacheDescriptor" in tail_validation.__all__
+    assert "build_x86_16_tail_validation_aggregate" in tail_validation.__all__
+    assert "build_x86_16_tail_validation_cached_result" in tail_validation.__all__
+    assert "build_x86_16_tail_validation_surface" in tail_validation.__all__
+    assert "build_x86_16_tail_validation_verdict" in tail_validation.__all__
+    assert "build_x86_16_validation_cache_descriptor" in tail_validation.__all__
+    assert "persist_x86_16_tail_validation_snapshot" in tail_validation.__all__
+    assert "extract_x86_16_tail_validation_snapshot" in tail_validation.__all__
+    assert "x86_16_tail_validation_snapshot_passed" in tail_validation.__all__
+    assert "fingerprint_x86_16_tail_validation_boundary" in tail_validation.__all__
+    assert "collect_x86_16_tail_validation_summary" in tail_validation.__all__
+    assert "compare_x86_16_tail_validation_summaries" in tail_validation.__all__
+    assert "format_x86_16_tail_validation_diff" in tail_validation.__all__
+    assert "resolve_x86_16_validation_cached_artifact" in tail_validation.__all__
+    assert "summarize_x86_16_tail_validation_records" in tail_validation.__all__
+    assert "describe_x86_16_tail_validation_scope" in tail_validation.__all__
+    assert tail_validation.describe_x86_16_tail_validation_scope()["layers"] == ("structuring", "postprocess")
 
 
 def test_x86_16_recovery_confidence_module_exports():

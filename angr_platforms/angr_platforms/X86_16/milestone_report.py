@@ -39,12 +39,156 @@ from .validation_manifest import (
     describe_x86_16_validation_layers,
 )
 from .widening_model import describe_x86_16_widening_pipeline
+from .tail_validation import build_x86_16_validation_cache_descriptor
 
 
 @dataclass(frozen=True)
 class MilestoneReportSection:
     name: str
     summary: Mapping[str, object]
+
+
+def _tail_validation_cache_key(surface: Mapping[str, object]) -> str:
+    return build_x86_16_validation_cache_descriptor("tail_validation.console_summary", surface).cache_key
+
+
+def _render_tail_validation_lines(surface: Mapping[str, object]) -> list[str]:
+    headline = str(surface.get("headline", "whole-tail validation summary unavailable"))
+    severity = str(surface.get("severity", "uncollected"))
+    merge_gate = bool(surface.get("merge_gate", False))
+    stage_hotspots = list(surface.get("stage_hotspots", []) or [])
+    top_changed_verdicts = list(surface.get("top_changed_verdicts", []) or [])
+    top_changed_functions = list(surface.get("top_changed_functions", []) or [])
+    coverage_count = int(surface.get("coverage_count", 0) or 0)
+    missing_stage_total = int(surface.get("missing_stage_total", 0) or 0)
+    unknown_stage_total = int(surface.get("unknown_stage_total", 0) or 0)
+    baseline_status = surface.get("baseline_status")
+    baseline_unexpected_count = int(surface.get("baseline_unexpected_count", 0) or 0)
+    baseline_missing_count = int(surface.get("baseline_missing_count", 0) or 0)
+
+    lines = [headline]
+    if severity == "clean":
+        if isinstance(baseline_status, str) and baseline_status:
+            lines.append(
+                f"baseline={baseline_status} unexpected={baseline_unexpected_count} missing={baseline_missing_count}"
+            )
+        return lines
+
+    lines.append(f"severity={severity} merge_gate={'pass' if merge_gate else 'hold'}")
+    if isinstance(baseline_status, str) and baseline_status:
+        lines.append(f"baseline={baseline_status} unexpected={baseline_unexpected_count} missing={baseline_missing_count}")
+    lines.append(
+        f"coverage={coverage_count} missing={missing_stage_total} unknown={unknown_stage_total}"
+    )
+    for hotspot in stage_hotspots[:2]:
+        stage = hotspot.get("stage", "unknown")
+        changed_count = hotspot.get("changed_count", 0)
+        changed_rate = hotspot.get("changed_rate", 0.0)
+        lines.append(f"stage={stage} changed={changed_count} rate={changed_rate}")
+    for item in top_changed_verdicts[:3]:
+        verdict = item.get("verdict")
+        count = item.get("count")
+        if isinstance(verdict, str) and verdict:
+            lines.append(f"verdict[{count}] {verdict}")
+    for item in top_changed_functions[:3]:
+        proc_name = item.get("proc_name")
+        proc_kind = item.get("proc_kind")
+        cod_file = item.get("cod_file")
+        stages = ",".join(item.get("stages", ()) or ())
+        verdicts = list(item.get("verdicts", ()) or ())
+        if not isinstance(proc_name, str) or not proc_name:
+            continue
+        label = proc_name
+        if isinstance(cod_file, str) and cod_file:
+            label = f"{cod_file}:{label}"
+        if isinstance(proc_kind, str) and proc_kind:
+            label = f"{label} ({proc_kind})"
+        if verdicts:
+            lines.append(f"function[{stages}] {label}: {verdicts[0]}")
+        else:
+            lines.append(f"function[{stages}] {label}")
+    return lines
+
+
+def render_x86_16_tail_validation_console_summary(
+    surface: Mapping[str, object],
+    *,
+    cache_path: str | Path | None = None,
+) -> dict[str, object]:
+    cache_key = _tail_validation_cache_key(surface)
+    if cache_path is not None:
+        path = Path(cache_path)
+        try:
+            cached = json.loads(path.read_text())
+            if cached.get("cache_key") == cache_key:
+                return {
+                    "cache_key": cache_key,
+                    "cache_hit": True,
+                    "lines": list(cached.get("lines", []) or []),
+                }
+        except Exception:
+            pass
+
+    lines = _render_tail_validation_lines(surface)
+    rendered = {
+        "cache_key": cache_key,
+        "cache_hit": False,
+        "lines": lines,
+    }
+    if cache_path is not None:
+        path = Path(cache_path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"cache_key": cache_key, "lines": lines}, indent=2, sort_keys=True) + "\n")
+        except Exception:
+            pass
+    return rendered
+
+
+def cache_x86_16_tail_validation_detail_artifact(
+    surface: Mapping[str, object],
+    *,
+    cache_path: str | Path | None,
+) -> dict[str, object]:
+    artifact = dict(surface)
+    cache_key = _tail_validation_cache_key(artifact)
+    if cache_path is None:
+        return {
+            "cache_key": cache_key,
+            "cache_hit": False,
+            "artifact": artifact,
+            "path": None,
+        }
+
+    path = Path(cache_path)
+    try:
+        cached = json.loads(path.read_text())
+        if cached.get("cache_key") == cache_key:
+            cached_artifact = cached.get("artifact", {})
+            return {
+                "cache_key": cache_key,
+                "cache_hit": True,
+                "artifact": dict(cached_artifact) if isinstance(cached_artifact, Mapping) else artifact,
+                "path": path,
+            }
+    except Exception:
+        pass
+
+    payload = {
+        "cache_key": cache_key,
+        "artifact": artifact,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    except Exception:
+        pass
+    return {
+        "cache_key": cache_key,
+        "cache_hit": False,
+        "artifact": artifact,
+        "path": path,
+    }
 
 
 def _success_rate(summary: Mapping[str, object]) -> float:
@@ -101,6 +245,8 @@ def _build_corpus_completion_surface(
     confidence_assumption_counts = dict(scan_summary.get("confidence_assumption_counts", {}) or {})
     confidence_evidence_counts = dict(scan_summary.get("confidence_evidence_counts", {}) or {})
     confidence_diagnostic_counts = dict(scan_summary.get("confidence_diagnostic_counts", {}) or {})
+    tail_validation = dict(scan_summary.get("tail_validation", {}) or {})
+    tail_validation_surface = dict(scan_summary.get("tail_validation_surface", {}) or {})
     blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
     return {
         "no_crashes": failed == 0,
@@ -129,6 +275,8 @@ def _build_corpus_completion_surface(
         "confidence_assumption_counts": confidence_assumption_counts,
         "confidence_evidence_counts": confidence_evidence_counts,
         "confidence_diagnostic_counts": confidence_diagnostic_counts,
+        "tail_validation": tail_validation,
+        "tail_validation_surface": tail_validation_surface,
         "blind_spot_budget": blind_spot_budget,
         "stable_by_traversal": failed == 0 and unclassified_failure_count == 0,
         "merge_gate": failed == 0 and unclassified_failure_count == 0,
@@ -232,6 +380,8 @@ def build_x86_16_milestone_report(
     confidence_assumption_counts = dict(scan_summary.get("confidence_assumption_counts", {}) or {})
     confidence_evidence_counts = dict(scan_summary.get("confidence_evidence_counts", {}) or {})
     confidence_diagnostic_counts = dict(scan_summary.get("confidence_diagnostic_counts", {}) or {})
+    tail_validation = dict(scan_summary.get("tail_validation", {}) or {})
+    tail_validation_surface = dict(scan_summary.get("tail_validation_surface", {}) or {})
     top_ugly_clusters = list(scan_summary.get("top_ugly_clusters", []) or [])
     readability_clusters = list(scan_summary.get("readability_clusters", []) or [])
     family_ownership = dict(scan_summary.get("family_ownership", {}) or {})
@@ -355,6 +505,8 @@ def build_x86_16_milestone_report(
         "confidence_assumption_counts": confidence_assumption_counts,
         "confidence_evidence_counts": confidence_evidence_counts,
         "confidence_diagnostic_counts": confidence_diagnostic_counts,
+        "tail_validation": tail_validation,
+        "tail_validation_surface": tail_validation_surface,
         "interrupt_api": {
             "dos_helpers": int(interrupt_api.get("dos_helpers", 0) or 0),
             "bios_helpers": int(interrupt_api.get("bios_helpers", 0) or 0),
@@ -467,5 +619,7 @@ def write_x86_16_milestone_report(
 __all__ = [
     "MilestoneReportSection",
     "build_x86_16_milestone_report",
+    "cache_x86_16_tail_validation_detail_artifact",
+    "render_x86_16_tail_validation_console_summary",
     "write_x86_16_milestone_report",
 ]

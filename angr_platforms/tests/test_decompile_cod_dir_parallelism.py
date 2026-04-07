@@ -1,6 +1,7 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
+import json
 import subprocess
 from subprocess import CompletedProcess
 import sys
@@ -166,3 +167,126 @@ def test_run_work_item_normalizes_timeout_expired_bytes(monkeypatch, tmp_path):
     rendered = _script._render_result_block(result)
     assert "stderr bytes" in rendered
     assert "bytes found" not in rendered
+
+
+def test_run_work_item_extracts_tail_validation_metadata_from_stderr(monkeypatch, tmp_path):
+    item = _script.CodWorkItem(
+        cod_path=tmp_path / "DOSFUNC.COD",
+        proc_name="_dos_alloc",
+        proc_kind="NEAR",
+        proc_index=2,
+        proc_total=15,
+        code=b"\x90",
+    )
+
+    def fake_run(*args, **kwargs):  # noqa: ANN001
+        stdout_file = kwargs["stdout"]
+        stdout_file.write("/* == c == */\nreturn 1;\n")
+        return CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout="",
+            stderr=(
+                "[tail-validation] whole-tail validation clean across 1 functions\n"
+                '@@INERTIA_TAIL_VALIDATION@@ {"records":[{"function_addr":4096,"function_name":"_dos_alloc","structuring":{"changed":false},"postprocess":{"changed":false}}],"scanned":1}\n'
+            ),
+        )
+
+    monkeypatch.setattr(_script.subprocess, "run", fake_run)
+    monkeypatch.setattr(_script, "_run_scan_safe_fallback", lambda *_args, **_kwargs: None)
+
+    result = _script._run_work_item(item, timeout=20, max_memory_mb=1024)
+
+    assert result.stderr == ""
+    assert result.tail_validation_scanned == 1
+    assert result.tail_validation_records == (
+        {
+            "cod_file": "DOSFUNC.COD",
+            "function_addr": 4096,
+            "function_name": "_dos_alloc",
+            "proc_name": "_dos_alloc",
+            "proc_kind": "NEAR",
+            "structuring": {"changed": False},
+            "postprocess": {"changed": False},
+        },
+    )
+    rendered = _script._render_result_block(result)
+    assert "tail-validation" not in rendered
+
+
+def test_run_work_item_uses_bounded_child_timeout(monkeypatch, tmp_path):
+    item = _script.CodWorkItem(
+        cod_path=tmp_path / "DOSFUNC.COD",
+        proc_name="_dos_alloc",
+        proc_kind="NEAR",
+        proc_index=2,
+        proc_total=15,
+        code=b"\x90",
+    )
+    seen: dict[str, object] = {}
+
+    def fake_run(*args, **kwargs):  # noqa: ANN001
+        seen["timeout"] = kwargs["timeout"]
+        stdout_file = kwargs["stdout"]
+        stdout_file.write("/* == c == */\nreturn 1;\n")
+        return CompletedProcess(args=args[0], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(_script.subprocess, "run", fake_run)
+    monkeypatch.setattr(_script, "_run_scan_safe_fallback", lambda *_args, **_kwargs: None)
+
+    result = _script._run_work_item(item, timeout=3, max_memory_mb=1024)
+
+    assert result.exit_kind == "ok"
+    assert seen["timeout"] == 10
+
+
+def test_uncollected_tail_validation_record_keeps_proc_identity():
+    record = _script._uncollected_tail_validation_record(
+        cod_path=Path("/tmp/COCKPIT.COD"),
+        proc_name="_DisplayMaster",
+        proc_kind="NEAR",
+        exit_kind="timeout",
+        exit_detail="decompiler CLI reported a recovery timeout",
+    )
+
+    assert record == {
+        "cod_file": "COCKPIT.COD",
+        "proc_name": "_DisplayMaster",
+        "proc_kind": "NEAR",
+        "tail_validation_uncollected": True,
+        "exit_kind": "timeout",
+        "exit_detail": "decompiler CLI reported a recovery timeout",
+    }
+
+
+def test_tail_validation_baseline_helpers_round_trip(tmp_path, monkeypatch):
+    cod_dir = tmp_path / "default"
+    cod_dir.mkdir()
+    cod_file = cod_dir / "DOSFUNC.COD"
+    cod_file.write_bytes(b"")
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_BASELINE_DIR", tmp_path / ".cache" / "tail_validation_baselines")
+    baseline_path = _script._default_tail_validation_baseline_path(cod_dir, timeout=3, cod_files=[cod_file])
+    baseline = {"version": 1, "entries": [{"proc_name": "_dos_alloc"}], "entry_count": 1}
+
+    assert baseline_path.name == "DOSFUNC.timeout3.json"
+    assert _script._load_tail_validation_baseline(baseline_path) is None
+
+    _script._write_tail_validation_baseline(baseline_path, baseline)
+
+    assert json.loads(baseline_path.read_text()) == baseline
+    assert _script._load_tail_validation_baseline(baseline_path) == baseline
+
+
+def test_tail_validation_cache_paths_are_stable_for_single_file_corpus(tmp_path, monkeypatch):
+    cod_dir = tmp_path / "corpus"
+    cod_dir.mkdir()
+    cod_file = cod_dir / "DOSFUNC.COD"
+    cod_file.write_bytes(b"\x90")
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_CONSOLE_CACHE_DIR", tmp_path / ".cache" / "decompile_cod_dir")
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_DETAIL_DIR", tmp_path / ".cache" / "tail_validation_details")
+
+    console_path = _script._default_tail_validation_console_cache_path(cod_dir, timeout=3, cod_files=[cod_file])
+    detail_path = _script._default_tail_validation_detail_path(cod_dir, timeout=3, cod_files=[cod_file])
+
+    assert console_path.name == "DOSFUNC.timeout3.tail_validation_console.json"
+    assert detail_path.name == "DOSFUNC.timeout3.tail_validation_surface.json"

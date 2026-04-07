@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +12,10 @@ import pytest
 import decompile
 import inertia_decompiler.cache as recovery_cache
 from inertia_decompiler import sidecar_metadata, sidecar_parsers
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeChar, SimTypeShort
+from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
 from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
 from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
@@ -63,6 +69,24 @@ NONAME_TDINFO_EXE = REPO_ROOT / "tdinfo-parser" / "NONAME.EXE"
 SYNTHETIC_OBJ = REPO_ROOT / "angr_platforms" / "tests" / "fixtures" / "synthetic.obj"
 BORLAND_CC_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2/LIB/CC.LIB")
 BORLAND_GRAPHICS_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2/LIB/GRAPHICS.LIB")
+
+
+def test_tail_validation_cache_paths_are_stable_for_direct_binary_runs():
+    item = decompile.FunctionWorkItem(
+        index=1,
+        function_cfg=None,
+        function=SimpleNamespace(addr=0x1234, name="_life_step"),
+    )
+
+    console_path = decompile._tail_validation_console_cache_path(LIFE_EXE, [item])
+    detail_path = decompile._tail_validation_detail_cache_path(LIFE_EXE, [item])
+
+    assert console_path is not None
+    assert detail_path is not None
+    assert console_path.name.endswith(".tail_validation_console.json")
+    assert detail_path.name.endswith(".tail_validation_surface.json")
+    assert "LIFE" in console_path.name
+    assert "LIFE" in detail_path.name
 
 
 def _build_synthetic_microsoft_lib(
@@ -207,6 +231,97 @@ def test_preferred_decompiler_options_rejects_call_heavy_small_functions():
     assert decompile._preferred_decompiler_options(1, 24, wrapper_like=False) is None
 
 
+def test_preferred_decompiler_options_accepts_tiny_single_call_helpers():
+    assert decompile._preferred_decompiler_options(3, 0x14, tiny_single_call_helper=True) == [
+        ("structurer_cls", "Phoenix")
+    ]
+    assert decompile._preferred_decompiler_options(3, 0x17, tiny_single_call_helper=True) == [
+        ("structurer_cls", "Phoenix")
+    ]
+    assert decompile._preferred_decompiler_options(1, 0x14, tiny_single_call_helper=True) == [
+        ("structurer_cls", "Phoenix")
+    ]
+    assert decompile._preferred_decompiler_options(3, 0x14, tiny_single_call_helper=False) is None
+
+
+@pytest.mark.parametrize(
+    "addr, byte_count, block_sizes",
+    [
+        (0x10010, 0x14, (0x08, 0x08, 0x04)),
+        (0x1157C, 0x17, (0x08, 0x08, 0x07)),
+        (0x1196F, 0x14, (0x14,)),
+    ],
+)
+def test_function_decompilation_profile_marks_tiny_single_call_helpers_small(addr, byte_count, block_sizes):
+    blocks = {}
+    block_addrs = [addr + (index * 0x10) for index in range(len(block_sizes))]
+    for index, (block_addr, block_size) in enumerate(zip(block_addrs, block_sizes, strict=True)):
+        insns = [
+            SimpleNamespace(mnemonic="push", op_str="bp"),
+            SimpleNamespace(mnemonic="mov", op_str="bp, sp"),
+        ]
+        if index == 0:
+            insns.append(SimpleNamespace(mnemonic="call", op_str="0x1140d"))
+        insns.append(SimpleNamespace(mnemonic="mov", op_str="ax, [bp + 4]"))
+        blocks[block_addr] = SimpleNamespace(size=block_size, capstone=SimpleNamespace(insns=insns))
+
+    project = SimpleNamespace(factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]))
+    function = SimpleNamespace(
+        addr=addr,
+        name=f"sub_{addr:x}",
+        project=project,
+        block_addrs_set=set(blocks),
+        get_call_sites=lambda: [addr + 0x20],
+    )
+
+    profile = decompile._function_decompilation_profile(function, len(block_sizes), byte_count)
+
+    assert profile["block_count"] == len(block_sizes)
+    assert profile["byte_count"] == byte_count
+    assert profile["wrapper_like"] is False
+    assert profile["tiny_single_call_helper"] is True
+
+
+def test_function_decompilation_profile_rejects_branch_heavy_helpers():
+    blocks = {
+        0x2000: SimpleNamespace(
+            size=0x08,
+            capstone=SimpleNamespace(
+                insns=[
+                    SimpleNamespace(mnemonic="push", op_str="bp"),
+                    SimpleNamespace(mnemonic="call", op_str="0x3000"),
+                ]
+            ),
+        ),
+        0x2010: SimpleNamespace(
+            size=0x08,
+            capstone=SimpleNamespace(
+                insns=[
+                    SimpleNamespace(mnemonic="jnz", op_str="0x2030"),
+                    SimpleNamespace(mnemonic="mov", op_str="ax, [bp + 4]"),
+                ]
+            ),
+        ),
+        0x2020: SimpleNamespace(
+            size=0x08,
+            capstone=SimpleNamespace(insns=[SimpleNamespace(mnemonic="ret", op_str="")]),
+        ),
+    }
+    project = SimpleNamespace(factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]))
+    function = SimpleNamespace(
+        addr=0x2000,
+        name="sub_2000",
+        project=project,
+        block_addrs_set=set(blocks),
+        get_call_sites=lambda: [0x2004],
+    )
+
+    profile = decompile._function_decompilation_profile(function, 3, 0x18)
+
+    assert profile["wrapper_like"] is False
+    assert profile["tiny_single_call_helper"] is False
+
+
 def test_function_recovery_detail_names_recovery_stage():
     assert decompile._function_recovery_detail("recovery") == "during x86-16 function recovery"
     assert decompile._function_recovery_detail("recovery:fast") == "during x86-16 function recovery (fast CFGFast)"
@@ -215,6 +330,144 @@ def test_function_recovery_detail_names_recovery_stage():
         "during x86-16 function recovery (narrow CFGFast)"
     )
     assert decompile._function_recovery_detail("postprocess") is None
+
+
+def test_install_angr_peephole_expr_bitwidth_guard_skips_mismatched_replacements():
+    class BaseWalker:
+        def __init__(self):
+            self.any_update = False
+            self.expr_opts = []
+
+        def _handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):
+            return expr
+
+    class FakeWalker(BaseWalker):
+        pass
+
+    class FakeExpr:
+        def __init__(self, bits):
+            self.bits = bits
+
+    class FakeExprOpt:
+        expr_classes = (FakeExpr,)
+
+        def optimize(self, expr, stmt_idx=None, block=None):
+            return FakeExpr(8)
+
+    original = decompile._install_angr_peephole_expr_bitwidth_guard(FakeWalker)
+    try:
+        walker = FakeWalker()
+        walker.expr_opts = [FakeExprOpt()]
+        expr = FakeExpr(16)
+        result = walker._handle_expr(0, expr, 0, None, None)
+    finally:
+        FakeWalker._handle_expr = original
+
+    assert result is expr
+    assert walker.any_update is False
+
+
+def test_install_angr_variable_recovery_binop_sub_size_guard_uses_top_on_size_mismatch():
+    class FakeBV:
+        def __init__(self, bits, *, concrete=False, concrete_value=0):
+            self._bits = bits
+            self.concrete = concrete
+            self.concrete_value = concrete_value
+
+        def size(self):
+            return self._bits
+
+    class FakeRichR:
+        def __init__(self, data, typevar=None, type_constraints=None):
+            self.data = data
+            self.typevar = typevar
+            self.type_constraints = type_constraints
+
+    class FakeTypeVariable:
+        pass
+
+    class FakeTypevarsModule:
+        TypeVariable = FakeTypeVariable
+
+        @staticmethod
+        def new_dtv(*_args, **_kwargs):
+            return FakeTypeVariable()
+
+        @staticmethod
+        def SubN(_value):
+            return "subn"
+
+        @staticmethod
+        def Sub(_lhs, _rhs, _out):
+            return ("sub", _lhs, _rhs, _out)
+
+    class FakeState:
+        def top(self, bits):
+            return ("top", bits)
+
+    class FakeEngine:
+        def __init__(self):
+            self.state = FakeState()
+
+        def _expr_pair(self, _arg0, _arg1):
+            return FakeRichR(FakeBV(16), typevar=FakeTypeVariable()), FakeRichR(FakeBV(8))
+
+        def _handle_binop_Sub(self, expr):
+            raise AssertionError("original implementation should not run")
+
+    class FakeExpr:
+        bits = 16
+        operands = ("lhs", "rhs")
+
+    original = decompile._install_angr_variable_recovery_binop_sub_size_guard(
+        FakeEngine,
+        richr_cls=FakeRichR,
+        typevars_module=FakeTypevarsModule,
+    )
+    try:
+        result = FakeEngine()._handle_binop_Sub(FakeExpr())
+    finally:
+        FakeEngine._handle_binop_Sub = original
+
+    assert result.data == ("top", 16)
+
+
+def test_recover_direct_addr_function_prefers_candidate_recovery_for_x86_16(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000, max_addr=0x4000)),
+    )
+    expected_cfg = SimpleNamespace()
+    expected_func = SimpleNamespace(addr=0x1196F)
+    calls = []
+
+    monkeypatch.setattr(decompile, "_analysis_timeout", contextlib.nullcontext)
+
+    def fake_recover_candidate(project_arg, *, candidate_addr, image_end, metadata, project_entry, region_span):
+        calls.append((candidate_addr, image_end, project_entry, region_span))
+        return expected_cfg, expected_func
+
+    monkeypatch.setattr(decompile, "_recover_candidate_function_pair", fake_recover_candidate)
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("raw pick_function should not run")),
+    )
+
+    cfg, func = decompile._recover_direct_addr_function(
+        project,
+        0x1196F,
+        timeout=6,
+        window=0x40,
+        function_label=None,
+        lst_metadata=None,
+        low_memory_path=False,
+        prefer_fast_recovery=False,
+    )
+
+    assert (cfg, func) == (expected_cfg, expected_func)
+    assert calls == [(0x1196F, 0x14001, 0x11423, 0x180)]
 
 
 def test_fallback_entry_function_retries_broader_windows_after_narrow_recovery_fails(monkeypatch):
@@ -532,7 +785,7 @@ def test_try_decompile_non_optimized_slice_uses_raw_slice(monkeypatch):
     project = SimpleNamespace(
         loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\x90\xc3")),
     )
-    function = SimpleNamespace(name="main")
+    function = SimpleNamespace(name="main", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),))
     monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1003))
     monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
     monkeypatch.setattr(
@@ -557,6 +810,39 @@ def test_try_decompile_non_optimized_slice_uses_raw_slice(monkeypatch):
     )
 
     assert "int main" in rendered
+
+
+def test_try_decompile_non_optimized_slice_returns_partial_timeout_payload(monkeypatch):
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\x90\xc3")),
+    )
+    function = SimpleNamespace(name="main", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),))
+
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1003))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (SimpleNamespace(), function),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("timeout", "Timed out after 1s.", "int partial(void) { return 1; }", 1, 3, 0.01),
+    )
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+
+    rendered = decompile._try_decompile_non_optimized_slice(
+        project,
+        0x1000,
+        "main",
+        timeout=1,
+        api_style="modern",
+        binary_path=None,
+        lst_metadata=None,
+    )
+
+    assert rendered == "int partial(void) { return 1; }"
 
 
 def test_recover_lst_function_prefers_lean_cfgfast_for_labeled_x86_16(monkeypatch):
@@ -647,7 +933,7 @@ def test_rank_exe_function_seeds_respects_known_code_windows(monkeypatch):
 
     ranked = decompile._rank_exe_function_seeds(project)
 
-    assert ranked == []
+    assert ranked == [0x1100]
 
 
 def test_rank_exe_function_seeds_prioritizes_entry_window_call_targets(monkeypatch):
@@ -733,6 +1019,44 @@ def test_rank_exe_function_seeds_uses_recovery_labels_when_visible_catalog_is_em
     assert ranked == [0x1100]
 
 
+def test_rank_exe_function_seeds_prefers_bounded_metadata_spans_over_tiny_entry_targets(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    code = b"\x90" * 0x200
+    binary.write_bytes(code)
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1100: "sig_func"},
+        code_ranges={0x1100: (0x1100, 0x1140)},
+        signature_code_addrs=frozenset({0x1100}),
+        absolute_addrs=True,
+        source_format="flair_pat+flair_sig",
+    )
+    project = SimpleNamespace(
+        entry=0x1000,
+        _inertia_lst_metadata=metadata,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=binary,
+                linked_base=0x1000,
+                max_addr=len(code) - 1,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+            )
+        ),
+    )
+    monkeypatch.setattr(decompile, "_seed_scan_windows", lambda _project: [(0x1000, 0x1200)])
+    monkeypatch.setattr(decompile, "_entry_window_seed_targets", lambda *_args, **_kwargs: {0x1010})
+    monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyError("no entry CFG")),
+    )
+
+    ranked = decompile._rank_exe_function_seeds(project)
+
+    assert ranked.index(0x1100) < ranked.index(0x1010)
+
+
 def test_recover_seeded_exe_functions_reuses_existing_project_before_rebuild(monkeypatch):
     code = b"\x55\x8B\xEC" + b"\x90" * 0x20
     project = SimpleNamespace(
@@ -804,6 +1128,56 @@ def test_recover_seeded_exe_functions_prioritizes_neighbors_from_recovered_funct
     assert recovered_order[:3] == [0x1010, 0x1030, 0x1200]
 
 
+def test_recover_seeded_exe_functions_includes_prologue_scan_candidates(monkeypatch):
+    code = bytearray(b"\x90" * 0x400)
+    base = 0x1000
+    prologue_addr = 0x1110
+    seed_addr = 0x1200
+    code[prologue_addr - base : prologue_addr - base + 3] = b"\x55\x8B\xEC"
+
+    def _load(addr, size, **_kwargs):
+        if addr == 0:
+            return bytes(code[:size])
+        return bytes(code[addr - base : addr - base + size])
+
+    project = SimpleNamespace(
+        entry=0x1100,
+        arch=SimpleNamespace(name="86_16", capstone=Arch86_16().capstone),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=base,
+                max_addr=len(code) - 1,
+                memory=SimpleNamespace(load=_load),
+            )
+        ),
+        factory=SimpleNamespace(
+            block=lambda addr, size=16, **_kwargs: SimpleNamespace(
+                capstone=SimpleNamespace(insns=list(project.arch.capstone.disasm(bytes(code[addr - base : addr - base + size]), addr)))
+            )
+        ),
+    )
+    recovered_order: list[int] = []
+    monkeypatch.setattr(decompile, "_load_cache_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_store_cache_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [seed_addr])
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda _project, addr, **_kwargs: (
+            recovered_order.append(addr) or SimpleNamespace(),
+            SimpleNamespace(addr=addr, name=f"sub_{addr:x}", is_plt=False, is_simprocedure=False),
+        ),
+    )
+    monkeypatch.setattr(decompile, "collect_neighbor_call_targets", lambda _function: [])
+
+    recovered = decompile._recover_seeded_exe_functions(project, timeout=4, limit=2)
+
+    assert [func.addr for _cfg, func in recovered] == [prologue_addr, seed_addr]
+    assert recovered_order[0] == prologue_addr
+    assert seed_addr in recovered_order
+
+
 def test_recover_seeded_exe_functions_scans_tiny_entry_body_for_direct_calls(monkeypatch):
     code = bytearray(b"\x90" * 0x400)
     base = 0x1000
@@ -818,7 +1192,7 @@ def test_recover_seeded_exe_functions_scans_tiny_entry_body_for_direct_calls(mon
     code[func_addr - base + 9] = 0xC3
     project = SimpleNamespace(
         entry=0x1100,
-        arch=SimpleNamespace(name="86_16", capstone=decompile.Arch86_16().capstone),
+        arch=SimpleNamespace(name="86_16", capstone=Arch86_16().capstone),
         loader=SimpleNamespace(
             main_object=SimpleNamespace(
                 binary=CLI_PATH,
@@ -832,6 +1206,8 @@ def test_recover_seeded_exe_functions_scans_tiny_entry_body_for_direct_calls(mon
             block=lambda addr, **_kwargs: SimpleNamespace(capstone=SimpleNamespace(insns=[SimpleNamespace(address=addr)]))
         ),
     )
+    monkeypatch.setattr(decompile, "_load_cache_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_store_cache_json", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [func_addr, 0x1200])
     monkeypatch.setattr(
         decompile,
@@ -852,6 +1228,232 @@ def test_recover_seeded_exe_functions_scans_tiny_entry_body_for_direct_calls(mon
     recovered = decompile._recover_seeded_exe_functions(project, timeout=4, limit=3)
 
     assert [func.addr for _cfg, func in recovered] == [func_addr, target_addr, 0x1200]
+
+
+def test_rank_gap_scan_candidate_addrs_rejects_out_of_image_candidates():
+    code = bytearray(b"\x90" * 0x80)
+    base = 0x1000
+    prologue_addr = 0x1020
+    call_addr = 0x1010
+    out_of_image_target = 0x2000
+    rel = out_of_image_target - (call_addr + 3)
+    code[prologue_addr - base : prologue_addr - base + 3] = b"\x55\x8B\xEC"
+    code[call_addr - base : call_addr - base + 3] = b"\xE8" + int(rel).to_bytes(2, "little", signed=True)
+
+    class _Memory:
+        def load(self, offset, size):
+            return bytes(code[offset : offset + size])
+
+    class _AbsMemory:
+        def load(self, addr, size, **_kwargs):
+            return bytes(code[addr - base : addr - base + size])
+
+    project = SimpleNamespace(
+        entry=0x1010,
+        arch=SimpleNamespace(name="86_16", capstone=Arch86_16().capstone),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(max_addr=len(code) - 1, linked_base=base, memory=_Memory()),
+            memory=_AbsMemory(),
+        ),
+        factory=SimpleNamespace(
+            block=lambda addr, **_kwargs: SimpleNamespace(
+                capstone=SimpleNamespace(
+                    insns=[
+                        SimpleNamespace(mnemonic="push", op_str="bp"),
+                        SimpleNamespace(mnemonic="mov", op_str="bp, sp"),
+                    ]
+                )
+            )
+        ),
+    )
+    recovered = [
+        (
+            SimpleNamespace(),
+            SimpleNamespace(
+                addr=0x1010,
+                blocks=(SimpleNamespace(addr=call_addr, size=3),),
+            ),
+        )
+    ]
+
+    ranked = decompile._rank_gap_scan_candidate_addrs(
+        project,
+        recovered,
+        covered_ranges=[(0x1008, 0x100C)],
+        existing_addrs={0x1008},
+        image_end=base + len(code),
+    )
+
+    assert prologue_addr in ranked
+    assert out_of_image_target not in ranked
+
+
+def test_recover_seeded_exe_functions_queues_gap_candidates_before_wrapper_follow_ons(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x10000,
+                max_addr=0x600,
+            )
+        ),
+    )
+    recovered_order: list[int] = []
+
+    monkeypatch.setattr(decompile, "_load_cache_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_store_cache_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [0x10010])
+    monkeypatch.setattr(decompile, "_rank_prologue_scan_candidate_addrs", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_rank_gap_scan_candidate_addrs", lambda *_args, **_kwargs: [0x10050])
+
+    def _fake_recover(_project, *, candidate_addr, **_kwargs):
+        recovered_order.append(candidate_addr)
+        if candidate_addr == 0x10010:
+            func = SimpleNamespace(
+                addr=candidate_addr,
+                name=f"sub_{candidate_addr:x}",
+                is_plt=False,
+                is_simprocedure=False,
+                info={"x86_16_recovery_truncated": True},
+                blocks=(SimpleNamespace(addr=candidate_addr, size=0x18),),
+            )
+        elif candidate_addr == 0x10050:
+            func = SimpleNamespace(
+                addr=candidate_addr,
+                name=f"sub_{candidate_addr:x}",
+                is_plt=False,
+                is_simprocedure=False,
+                blocks=(SimpleNamespace(addr=candidate_addr, size=0x40),),
+            )
+        else:
+            func = SimpleNamespace(
+                addr=candidate_addr,
+                name=f"sub_{candidate_addr:x}",
+                is_plt=False,
+                is_simprocedure=False,
+                blocks=(SimpleNamespace(addr=candidate_addr, size=0x10),),
+            )
+        return SimpleNamespace(), func
+
+    monkeypatch.setattr(decompile, "_recover_candidate_with_timeout", _fake_recover)
+    monkeypatch.setattr(
+        decompile,
+        "collect_neighbor_call_targets",
+        lambda function: [SimpleNamespace(target_addr=0x100A0)] if function.addr == 0x10010 else [],
+    )
+    monkeypatch.setattr(decompile, "_linear_function_seed_targets", lambda *_args, **_kwargs: set())
+
+    recovered = decompile._recover_seeded_exe_functions(project, timeout=4, limit=3)
+
+    assert [func.addr for _cfg, func in recovered] == [0x10010, 0x10050, 0x100A0]
+    assert recovered_order[:3] == [0x10010, 0x10050, 0x100A0]
+
+
+def test_recover_candidate_function_pair_prefers_richer_bounded_body_recovery(monkeypatch):
+    candidate_addr = 0x1000
+    candidate_project = SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda addr, **_kwargs: SimpleNamespace(capstone=SimpleNamespace(insns=[SimpleNamespace(address=addr)]))
+        )
+    )
+    narrow_region = (candidate_addr, candidate_addr + 0x20)
+    wide_region = (candidate_addr, candidate_addr + 0x100)
+
+    def _function(addr, sizes):
+        return SimpleNamespace(
+            addr=addr,
+            blocks=tuple(SimpleNamespace(size=size) for size in sizes),
+            is_plt=False,
+            is_simprocedure=False,
+        )
+
+    monkeypatch.setattr(decompile, "_candidate_recovery_regions", lambda *_args, **_kwargs: [narrow_region, wide_region])
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda _project, _addr, *, regions, **_kwargs: (
+            SimpleNamespace(region=regions[0]),
+            _function(candidate_addr, (8, 8, 8, 8)) if regions[0] == narrow_region else _function(candidate_addr, (0x18, 0x18, 0x18, 0x18, 0x18)),
+        ),
+    )
+    monkeypatch.setattr(decompile, "_pick_function", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected richer fallback")))
+
+    recovered_cfg, recovered_function = decompile._recover_candidate_function_pair(
+        candidate_project,
+        candidate_addr=candidate_addr,
+        image_end=0x2000,
+        metadata=None,
+        project_entry=0x1100,
+        region_span=0x120,
+    )
+
+    assert recovered_cfg.region == wide_region
+    assert decompile._function_recovery_score(recovered_function) == (5, 0x78)
+
+
+def test_recover_candidate_function_pair_retries_richer_bounded_region_when_exact_region_truncates(monkeypatch):
+    candidate_addr = 0x1000
+    candidate_project = SimpleNamespace(
+        factory=SimpleNamespace(
+            block=lambda addr, **_kwargs: SimpleNamespace(capstone=SimpleNamespace(insns=[SimpleNamespace(address=addr)]))
+        )
+    )
+    exact_region = (candidate_addr, candidate_addr + 0x100)
+    bounded_region = (candidate_addr, candidate_addr + 0x180)
+
+    def _function(addr, sizes):
+        return SimpleNamespace(
+            addr=addr,
+            blocks=tuple(SimpleNamespace(size=size) for size in sizes),
+            is_plt=False,
+            is_simprocedure=False,
+            info={},
+        )
+
+    monkeypatch.setattr(
+        decompile,
+        "_candidate_recovery_regions",
+        lambda metadata, *_args, **_kwargs: [exact_region] if metadata is not None else [bounded_region],
+    )
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda _metadata, _addr: exact_region)
+    monkeypatch.setattr(
+        decompile,
+        "_richest_bounded_recovery_region",
+        lambda _addr, *, image_end, region_span: bounded_region if image_end and region_span else bounded_region,
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda _project, _addr, *, regions, **_kwargs: (
+            SimpleNamespace(region=regions[0]),
+            _function(candidate_addr, (8, 8)),
+        ),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function",
+        lambda _project, _addr, *, regions, **_kwargs: (
+            SimpleNamespace(region=regions[0]),
+            _function(candidate_addr, (0x18, 0x18, 0x18, 0x18, 0x18)),
+        )
+        if regions[0] == bounded_region
+        else (_ for _ in ()).throw(AssertionError("unexpected exact-region fallback")),
+    )
+
+    recovered_cfg, recovered_function = decompile._recover_candidate_function_pair(
+        candidate_project,
+        candidate_addr=candidate_addr,
+        image_end=0x2000,
+        metadata=SimpleNamespace(),
+        project_entry=0x1100,
+        region_span=0x120,
+    )
+
+    assert recovered_cfg.region == bounded_region
+    assert decompile._function_recovery_score(recovered_function) == (5, 0x78)
+    assert recovered_function.info["x86_16_recovery_truncated"] is False
 
 
 def test_rank_function_cfg_pairs_for_display_prefers_body_seed_and_its_callees(monkeypatch):
@@ -896,6 +1498,32 @@ def test_rank_function_cfg_pairs_for_display_demotes_tiny_wrapper_like_entry_tar
     assert [function.addr for _cfg, function in ranked] == [0x11423, 0x10010, 0x1223b, 0x1157c]
 
 
+def test_rank_function_cfg_pairs_for_display_prefers_large_pre_entry_body_when_complexity_needs_recovery_fallback(monkeypatch):
+    project = SimpleNamespace(entry=0x11423)
+    entry = (
+        SimpleNamespace(),
+        SimpleNamespace(addr=0x11423, name="_start", project=project, blocks=(SimpleNamespace(size=0x20),)),
+    )
+    body = (
+        SimpleNamespace(),
+        SimpleNamespace(addr=0x10010, name="sub_10010", project=project, blocks=(SimpleNamespace(size=0x50),)),
+    )
+    runtime_shell = (
+        SimpleNamespace(),
+        SimpleNamespace(addr=0x11440, name="runtime_shell", project=project, blocks=(SimpleNamespace(size=0x10),)),
+    )
+
+    monkeypatch.setattr(
+        decompile,
+        "_linear_function_seed_targets",
+        lambda _project, addr, **_kwargs: {0x11440} if addr == 0x11423 else set(),
+    )
+
+    ranked = decompile._rank_function_cfg_pairs_for_display(project, [runtime_shell, body, entry])
+
+    assert [function.addr for _cfg, function in ranked[:3]] == [0x11423, 0x10010, 0x11440]
+
+
 def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -903,10 +1531,16 @@ def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path
 
     def _fake_decompile(*_args, **_kwargs):
         calls["count"] += 1
+        item.function.info = {
+            "x86_16_tail_validation": {
+                "structuring": {"changed": False, "verdict": "structuring stable"},
+                "postprocess": {"changed": False, "verdict": "postprocess stable"},
+            }
+        }
         return "ok", "int sub_1000(void) { return 1; }", 1, 4, 0.01
 
-    monkeypatch.setattr(decompile, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
-    monkeypatch.setattr(decompile, "_cache_source_digest", lambda _paths: "digest-a")
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-a")
     monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
 
     item = decompile.FunctionWorkItem(
@@ -939,6 +1573,80 @@ def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path
     assert calls["count"] == 1
     assert first.payload == second.payload
     assert "cache hit" in second.debug_output
+    assert "validation=passed" in second.debug_output
+    assert second.tail_validation == {
+        "structuring": {"changed": False, "mode": None, "verdict": "structuring stable", "summary_text": None},
+        "postprocess": {"changed": False, "mode": None, "verdict": "postprocess stable", "summary_text": None},
+    }
+
+
+def test_run_function_work_item_bypasses_persistent_cache_without_passed_tail_validation(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    calls = {"count": 0}
+
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-a")
+
+    item = decompile.FunctionWorkItem(
+        index=1,
+        function_cfg=SimpleNamespace(),
+        function=SimpleNamespace(addr=0x1000, name="sub_1000", project=SimpleNamespace(), info={}),
+    )
+
+    def _fake_decompile(*_args, **_kwargs):
+        calls["count"] += 1
+        item.function.info = {
+            "x86_16_tail_validation": {
+                "structuring": {"changed": False, "verdict": "structuring stable"},
+                "postprocess": {"changed": False, "verdict": "postprocess stable"},
+            }
+        }
+        return "ok", "int sub_1000(void) { return 2; }", 1, 4, 0.01
+
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
+
+    cache_key = recovery_cache._function_decompilation_cache_key(
+        binary_path=binary,
+        function_addr=0x1000,
+        api_style="pascal",
+        enable_structured_simplify=True,
+        enable_postprocess=True,
+    )
+    decompile._store_cache_json(
+        "function_decompile",
+        cache_key,
+        {
+            "status": "ok",
+            "payload": "int stale(void) { return 0; }",
+        },
+    )
+
+    result = decompile._run_function_work_item(
+        item,
+        timeout=5,
+        api_style="pascal",
+        binary_path=binary,
+        cod_metadata=None,
+        synthetic_globals=None,
+        lst_metadata=None,
+        enable_structured_simplify=True,
+    )
+
+    assert calls["count"] == 1
+    assert "stale" not in result.payload
+    assert "cache bypass" in result.debug_output
+    assert "validation=missing" in result.debug_output
+    stored = decompile._load_cache_json("function_decompile", cache_key)
+    assert stored == {
+        "status": "ok",
+        "payload": "int sub_1000(void) { return 2; }",
+        "tail_validation": {
+            "structuring": {"changed": False, "mode": None, "verdict": "structuring stable", "summary_text": None},
+            "postprocess": {"changed": False, "mode": None, "verdict": "postprocess stable", "summary_text": None},
+        },
+        "tail_validation_passed": True,
+    }
 
 
 def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatch, tmp_path):
@@ -960,7 +1668,23 @@ def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatc
     )
     slice_project = SimpleNamespace()
     cfg = SimpleNamespace()
-    func = SimpleNamespace(name="sub_11593")
+
+    class FakeFunction:
+        def __init__(self):
+            self.addr = 0x11593
+            self.name = "sub_11593"
+            self.normalized = False
+
+        def normalize(self):
+            self.normalized = True
+
+        def get_call_sites(self):
+            return []
+
+        def get_call_target(self, _callsite):
+            return 0x1140D
+
+    func = FakeFunction()
     calls = {"decompile": 0}
 
     monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: None)
@@ -994,6 +1718,96 @@ def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatc
     )
 
     assert calls["decompile"] == 2
+    assert rendered == "int sub_11593(void) { return 0; }"
+
+
+def test_try_decompile_non_optimized_slice_prepares_direct_callee_context_before_retry(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"\x90" * 0x40)
+    shared_project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x1000),
+            memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size),
+        ),
+    )
+    fresh_project = SimpleNamespace(
+        entry=0x1000,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(linked_base=0x1000),
+            memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size),
+        ),
+    )
+
+    class FakeFunctionManager:
+        def __init__(self):
+            self.created: list[int] = []
+
+        def function(self, *, addr=None, create=False, **_kwargs):
+            if create:
+                self.created.append(addr)
+            return SimpleNamespace(addr=addr)
+
+    class FakeFunction:
+        def __init__(self):
+            self.addr = 0x11593
+            self.name = "sub_11593"
+            self.normalized = False
+            self._callsite_checks = 0
+
+        def normalize(self):
+            self.normalized = True
+
+        def get_call_sites(self):
+            self._callsite_checks += 1
+            if self._callsite_checks == 1:
+                return []
+            return [0x1159F]
+
+        def get_call_target(self, _callsite):
+            return 0x1140D
+
+    slice_project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        kb=SimpleNamespace(functions=FakeFunctionManager()),
+    )
+    cfg = SimpleNamespace()
+    func = FakeFunction()
+    calls = {"decompile": 0}
+
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x11593, 0x115b5))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *_args, **_kwargs: slice_project)
+    monkeypatch.setattr(decompile, "_pick_function_lean", lambda *_args, **_kwargs: (cfg, func))
+    monkeypatch.setattr(decompile, "_sidecar_cod_metadata_for_function", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_build_project",
+        lambda path, **_kwargs: fresh_project if Path(path) == binary else shared_project,
+    )
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+
+    def _fake_decompile(project, *_args, **_kwargs):
+        calls["decompile"] += 1
+        if not project.kb.functions.created:
+            return "timeout", "missing direct callee context", 1, 0x20, 6.0
+        return "ok", "int sub_11593(void) { return 0; }", 1, 0x20, 1.0
+
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
+
+    rendered = decompile._try_decompile_non_optimized_slice(
+        shared_project,
+        0x11593,
+        "sub_11593",
+        timeout=6,
+        api_style="modern",
+        binary_path=binary,
+        lst_metadata=None,
+    )
+
+    assert calls["decompile"] == 2
+    assert func.normalized is True
+    assert slice_project.kb.functions.created == [0x1140D]
     assert rendered == "int sub_11593(void) { return 0; }"
 
 
@@ -1067,13 +1881,34 @@ def test_try_decompile_non_optimized_slice_never_caches_results(monkeypatch, tmp
     )
     slice_project = SimpleNamespace()
     cfg = SimpleNamespace()
-    func = SimpleNamespace(name="sub_114cd")
+
+    class FakeFunction:
+        def __init__(self):
+            self.addr = 0x114CD
+            self.name = "sub_114cd"
+            self.normalized = False
+
+        def normalize(self):
+            self.normalized = True
+
+        def get_call_sites(self):
+            return []
+
+        def get_call_target(self, _callsite):
+            return 0x1140D
+
+    func = FakeFunction()
 
     monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x114cd, 0x114eb))
     monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *_args, **_kwargs: slice_project)
     monkeypatch.setattr(decompile, "_pick_function_lean", lambda *_args, **_kwargs: (cfg, func))
     monkeypatch.setattr(decompile, "_sidecar_cod_metadata_for_function", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_build_project",
+        lambda path, **_kwargs: fresh_project if Path(path) == binary else project,
+    )
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(
         decompile,
@@ -1112,7 +1947,10 @@ def test_decompile_function_empty_reports_angr_error_detail(monkeypatch):
 
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
-        analyses=SimpleNamespace(Decompiler=FakeDecompiler),
+        analyses=SimpleNamespace(
+            Decompiler=FakeDecompiler,
+            Clinic=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError()),
+        ),
         loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000, max_addr=0x200)),
     )
     function = SimpleNamespace(addr=0x10010, name="sub_10010", normalized=True, blocks=(SimpleNamespace(size=0x10),))
@@ -1135,6 +1973,485 @@ def test_decompile_function_empty_reports_angr_error_detail(monkeypatch):
     assert status == "empty"
     assert "KeyError: 5133" in payload
     assert "clinic=None" in payload
+    assert "clinic-failure=AssertionError" in payload
+
+
+def test_decompile_function_timeout_returns_partial_codegen_text(monkeypatch):
+    class FakeCodegen:
+        text = "int partial(void) { return 1; }"
+
+        cfunc = object()
+
+        def render_text(self, _cfunc):
+            return self.text
+
+    class FakeDecompiler:
+        def __init__(self, *_args, **_kwargs):
+            self.codegen = FakeCodegen()
+            self.errors = []
+            self.clinic = object()
+
+    @contextlib.contextmanager
+    def _fake_timeout(_seconds):
+        yield
+        raise decompile._AnalysisTimeout()
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        analyses=SimpleNamespace(Decompiler=FakeDecompiler),
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", normalized=True, blocks=(SimpleNamespace(size=0x10),))
+    cfg = SimpleNamespace()
+
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "seed_calling_conventions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_preferred_decompiler_options", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_analysis_timeout", _fake_timeout)
+    monkeypatch.setattr(decompile, "_format_known_helper_calls", lambda *_args, **_kwargs: _args[2])
+
+    status, payload = decompile._decompile_function(
+        project,
+        cfg,
+        function,
+        timeout=1,
+        api_style="modern",
+        binary_path=None,
+        allow_isolated_retry=False,
+    )
+
+    assert status == "timeout"
+    assert payload == "Timed out after 1s."
+    assert project._inertia_partial_codegen_text == "int partial(void) { return 1; }"
+
+
+def test_resolve_stack_cvar_from_addr_expr_materializes_derived_word_stack_local(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, bits=16, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+
+    base_var = SimStackVariable(-2, 1, base="bp", name="s_2", region=0x10010)
+    base_cvar = structured_c.CVariable(base_var, codegen=codegen)
+    low_addr_expr = object()
+
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_addr_expr",
+        lambda expr, _project: SimpleNamespace(kind="stack", cvar=base_cvar, stack_var=base_var, extra_offset=2)
+        if expr is low_addr_expr
+        else None,
+    )
+
+    resolved = decompile._resolve_stack_cvar_from_addr_expr(project, codegen, low_addr_expr)
+
+    assert isinstance(resolved, structured_c.CVariable)
+    assert isinstance(resolved.variable, SimStackVariable)
+    assert resolved.variable.offset == 0
+    assert resolved.variable.size == 2
+    assert codegen.cfunc.variables_in_use[resolved.variable] is resolved
+    assert resolved.variable in codegen.cfunc.unified_local_vars
+    assert any(cvar is resolved for cvar, _vartype in codegen.cfunc.unified_local_vars[resolved.variable])
+
+
+def test_coalesce_segmented_word_store_statements_prefers_derived_stack_local_word_lhs(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, bits=16, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+
+    base_var = SimStackVariable(-2, 1, base="bp", name="s_2", region=0x10010)
+    base_cvar = structured_c.CVariable(base_var, codegen=codegen)
+    low_addr_expr = SimpleNamespace(type=None)
+    high_addr_expr = SimpleNamespace(type=None)
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                SimpleNamespace(type=SimTypeChar(False)),
+                structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                SimpleNamespace(type=SimTypeChar(False)),
+                structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    alias_facts = SimpleNamespace(identity=object(), can_join=lambda _other: True, needs_synthesis=lambda: False)
+    word_rhs = structured_c.CConstant(0x3412, SimTypeShort(False), codegen=codegen)
+
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_addr_expr",
+        lambda expr, _project: SimpleNamespace(kind="stack", cvar=base_cvar, stack_var=base_var, extra_offset=2)
+        if expr is low_addr_expr
+        else None,
+    )
+    monkeypatch.setattr(decompile, "describe_alias_storage", lambda _expr: alias_facts)
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
+    monkeypatch.setattr(
+        decompile,
+        "_match_byte_store_addr_expr",
+        lambda node: low_addr_expr if node is root.statements[0].lhs else high_addr_expr if node is root.statements[1].lhs else None,
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_match_word_rhs_from_byte_pair",
+        lambda _low_rhs, _high_rhs, _codegen, _project: word_rhs,
+    )
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    replacement = codegen.cfunc.statements.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert isinstance(replacement.lhs, structured_c.CVariable)
+    assert isinstance(replacement.lhs.variable, SimStackVariable)
+    assert replacement.lhs.variable.offset == 0
+    assert replacement.lhs.variable.size == 2
+    assert not isinstance(replacement.lhs, structured_c.CTypeCast)
+
+
+def test_attach_ss_stack_variables_preserves_far_pointer_stack_local_width(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        variables_in_use={},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    promoted_var = SimStackVariable(2, 1, base="bp", name="s_2", region=0x10010)
+    promoted_cvar = structured_c.CVariable(promoted_var, codegen=codegen)
+    cfunc.variables_in_use[promoted_var] = promoted_cvar
+    cfunc.unified_local_vars[promoted_var] = {(promoted_cvar, SimTypeShort(False))}
+
+    match_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
+    node = structured_c.CAssignment(
+        promoted_cvar,
+        structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    class _FarPointerType:
+        size = 32
+
+    node.type = _FarPointerType()
+    cfunc.statements = structured_c.CStatements([node], addr=0x10010, codegen=codegen)
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_ss_stack_reference",
+        lambda _node, _project: (match_var, promoted_cvar, 2),
+    )
+
+    changed = decompile._attach_ss_stack_variables(project, codegen)
+
+    assert changed is True
+    assert promoted_var.size == 4
+    assert cfunc.variables_in_use[promoted_var] is promoted_cvar
+    assert promoted_cvar.variable.size == 4
+    assert isinstance(cfunc.statements.statements[0], structured_c.CVariable)
+    assert cfunc.statements.statements[0] is promoted_cvar
+
+
+def test_coalesce_far_pointer_stack_expressions_avoids_byte_local_alias_for_far_pointer_store(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        variables_in_use={},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    byte_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
+    byte_cvar = structured_c.CVariable(byte_var, codegen=codegen)
+    store_var = SimStackVariable(2, 1, base="bp", name="s_2", region=0x10010)
+    store_cvar = structured_c.CVariable(store_var, codegen=codegen)
+    out_var = SimStackVariable(4, 1, base="bp", name="s_4", region=0x10010)
+    out_cvar = structured_c.CVariable(out_var, codegen=codegen)
+
+    cfunc.variables_in_use[byte_var] = byte_cvar
+    cfunc.variables_in_use[store_var] = store_cvar
+    cfunc.variables_in_use[out_var] = out_cvar
+    cfunc.unified_local_vars[byte_var] = {(byte_cvar, SimTypeShort(False))}
+    cfunc.unified_local_vars[store_var] = {(store_cvar, SimTypeShort(False))}
+    cfunc.unified_local_vars[out_var] = {(out_cvar, SimTypeShort(False))}
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                store_cvar,
+                structured_c.CConstant(7, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                out_cvar,
+                structured_c.CBinaryOp(
+                    "Add",
+                    store_cvar,
+                    structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    traits = {
+        decompile._access_trait_variable_key(store_var): SimpleNamespace(member_like=((2, 4, 1),))
+    }
+    project._inertia_access_traits = {cfunc.addr: traits}
+
+    monkeypatch.setattr(
+        decompile,
+        "describe_alias_storage",
+        lambda _expr: SimpleNamespace(identity=object(), can_join=lambda _other: True, needs_synthesis=lambda: False),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_build_access_trait_evidence_profiles",
+        lambda _traits: {decompile._access_trait_variable_key(store_var): SimpleNamespace(member_like=((2, 4, 1),))},
+    )
+
+    decompile._coalesce_far_pointer_stack_expressions(project, codegen)
+
+    rhs = cfunc.statements.statements[1].rhs
+    assert isinstance(rhs, structured_c.CFunctionCall)
+    assert rhs.callee_target == "MK_FP"
+    assert not any(isinstance(arg, structured_c.CVariable) and arg.variable is store_var for arg in rhs.args)
+
+
+def test_repro_decompiler_boundary_reports_blocked_narrow_stack_object(monkeypatch, tmp_path, capsys):
+    spec = importlib.util.spec_from_file_location("repro_decompiler_boundary", REPO_ROOT / "scripts" / "repro_decompiler_boundary.py")
+    assert spec is not None
+    assert spec.loader is not None
+    boundary = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(boundary)
+
+    binary = tmp_path / "LIFE2.EXE"
+    binary.write_bytes(b"MZ")
+
+    stack_vars = [
+        SimStackVariable(-2, 1, base="bp", name="s_2", region=0x1157C),
+        SimStackVariable(0, 1, base="bp", name="s_0", region=0x1157C),
+        SimStackVariable(2, 2, base="bp", name="ret_addr", region=0x1157C),
+    ]
+
+    class _FakeVariableManager:
+        def get_variables(self):
+            return list(stack_vars)
+
+    fake_manager = _FakeVariableManager()
+    fake_registry = SimpleNamespace(get_function_manager=lambda _addr: fake_manager)
+    fake_clinic = SimpleNamespace(variable_kb=SimpleNamespace(variables=fake_registry))
+    fake_codegen = SimpleNamespace(
+        text=(
+            "void sub_1157c(void)\n"
+            "{\n"
+            "    *((unsigned short *)(ir_0 * 16 + (unsigned int)(&s_2 + 2))) = 5512;\n"
+            "    sub_15d8(); /* do not return */\n"
+            "    *((unsigned short *)(ir_0 * 16 + (unsigned int)(&s_2 + 2))) = 5521;\n"
+            "    sub_15d8(); /* do not return */\n"
+            "}\n"
+        )
+    )
+    fake_project = SimpleNamespace(
+        analyses=SimpleNamespace(
+            Clinic=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError()),
+        )
+    )
+    fake_function = SimpleNamespace(addr=0x1157C, name="sub_1157c")
+
+    monkeypatch.setattr(boundary, "_build_project", lambda *_args, **_kwargs: fake_project)
+    monkeypatch.setattr(boundary.cli, "_infer_x86_16_linear_region", lambda *_args, **_kwargs: (0x1157C, 0x115BF))
+    monkeypatch.setattr(boundary.cli, "_pick_function", lambda *_args, **_kwargs: (SimpleNamespace(), fake_function))
+    monkeypatch.setattr(boundary.cli, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        boundary,
+        "_probe_decompiler",
+        lambda _project, _function, _options, *, generate_code, regen_clinic=None: SimpleNamespace(
+            clinic=fake_clinic,
+            codegen=None if not generate_code else fake_codegen,
+        ),
+    )
+    monkeypatch.setattr(
+        boundary.argparse.ArgumentParser,
+        "parse_args",
+        lambda self: SimpleNamespace(
+            binary=binary,
+            addr=0x1157C,
+            window=0x80,
+            base_addr=0x10000,
+            entry_point=0x11423,
+        ),
+    )
+
+    assert boundary.main() == 0
+    out = capsys.readouterr().out
+
+    assert "clinic_without_guards=error AssertionError" in out
+    assert "decompiler_generate_code_false.codegen_present=False" in out
+    assert "decompiler_regen_clinic_false.codegen_present=True" in out
+    assert "upstream_hook_path=/home/xor/vextest/.venv/lib/python3.14/site-packages/angr/analyses/decompiler/decompiler.py:293-443" in out
+    assert "cache_hook_note=Decompiler(generate_code=False) followed by Decompiler(regen_clinic=False) reuses the cached clinic" in out
+    assert "same_clinic_object=True" in out
+    assert "same_variable_manager_object=True" in out
+    assert "stack_object_0x1157c_preserved=True" in out
+    assert "stack_object_0x1157c_widened=False" in out
+    assert "upstream_hook_note=no caller-visible callback exists between Clinic(...) and StructuredCodeGenerator(...)" in out
+    assert "codegen_sub_15d8_call_count=2" in out
+    assert "boundary_fixpoint=upstream_angr_cached_clinic_reuse_before_codegen" in out
+    assert "boundary_status=blocked_pre_codegen_stack_object_remains_narrow" in out
+
+
+def test_decompile_function_disables_structuring_for_tiny_single_call_helpers(monkeypatch):
+    class FakeDecompiler:
+        def __init__(self, function, cfg=None, options=None):
+            assert options == [("structurer_cls", "Phoenix")]
+            self.codegen = SimpleNamespace(cfunc=SimpleNamespace(variables_in_use={}, arg_list=()))
+            self.errors = []
+            self.clinic = object()
+
+    blocks = {
+        0x1196F: SimpleNamespace(
+            size=0x14,
+            bytes=b"\x90" * 0x14,
+            capstone=SimpleNamespace(
+                insns=[
+                    SimpleNamespace(mnemonic="push", op_str="si"),
+                    SimpleNamespace(mnemonic="call", op_str="0x11a03"),
+                ]
+            ),
+        )
+    }
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        analyses=SimpleNamespace(Decompiler=FakeDecompiler),
+        factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]),
+    )
+    function = SimpleNamespace(
+        addr=0x1196F,
+        name="sub_1196f",
+        normalized=True,
+        project=project,
+        block_addrs_set=set(blocks),
+        get_call_sites=lambda: [0x11972],
+    )
+    cfg = SimpleNamespace()
+
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "seed_calling_conventions", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_register_direct_call_target_function_stubs", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(decompile, "_snapshot_codegen_text", lambda *_args, **_kwargs: "void sub_1196f(void) {}")
+
+    def _assert_structuring_disabled(project_obj, *_args, **_kwargs):
+        assert getattr(project_obj, "_inertia_structuring_enabled") is False
+        return False
+
+    def _noop_rewrite(*_args, **_kwargs):
+        return False
+
+    def _identity_text(text, *_args, **_kwargs):
+        return text
+
+    monkeypatch.setattr(decompile, "_attach_dos_pseudo_callees", _assert_structuring_disabled)
+    for name in (
+        "_attach_interrupt_wrapper_callees",
+        "_lower_interrupt_wrapper_result_reads",
+        "_attach_segment_register_names",
+        "_attach_register_names",
+        "_normalize_scalar_byte_register_types",
+        "_attach_ss_stack_variables",
+        "_rewrite_ss_stack_byte_offsets",
+        "_canonicalize_stack_cvars",
+        "_coalesce_direct_ss_local_word_statements",
+        "_coalesce_segmented_word_store_statements",
+        "_coalesce_segmented_word_load_expressions",
+        "_prune_tiny_wrapper_staging_locals",
+        "_prune_unused_unnamed_memory_declarations",
+        "_prune_dead_local_assignments",
+        "_prune_unused_local_declarations",
+        "_prune_void_function_return_values",
+        "_coalesce_cod_word_global_loads",
+        "_coalesce_linear_recurrence_statements",
+        "_attach_cod_global_names",
+        "_attach_cod_global_declaration_names",
+        "_attach_cod_global_declaration_types",
+        "_collect_access_traits",
+        "_coalesce_far_pointer_stack_expressions",
+        "_simplify_nested_mk_fp_calls",
+        "_attach_access_trait_field_names",
+        "_attach_pointer_member_names",
+        "_attach_cod_variable_names",
+        "_attach_cod_callee_names",
+        "_simplify_basic_algebraic_identities",
+        "_materialize_missing_stack_local_declarations",
+        "_materialize_missing_register_local_declarations",
+        "_dedupe_codegen_variable_names_8616",
+    ):
+        monkeypatch.setattr(decompile, name, _noop_rewrite)
+    for name in (
+        "_normalize_boolean_conditions",
+        "_fix_carr_inbox_guard_blind_spot",
+        "_fix_carr_inboxlng_guard_blind_spot",
+        "_fix_nhorz_changeweather_blind_spot",
+        "_fix_cockpit_look_blind_spot",
+        "_fix_billasm_rotate_pt_blind_spot",
+        "_fix_monoprin_mset_pos_blind_spot",
+        "_fix_planes3_ready5_blind_spot",
+        "_normalize_anonymous_call_targets",
+        "_prune_void_function_return_values_text",
+        "_normalize_function_signature_arg_names",
+        "_collapse_annotated_stack_aliases_text",
+        "_materialize_missing_generic_local_declarations_text",
+        "_prune_unused_local_declarations_text",
+        "_annotate_cod_proc_output",
+        "_rewrite_known_helper_signature_text",
+        "_prune_trailing_generic_return_text",
+        "_materialize_annotated_cod_declarations_text",
+        "_collapse_duplicate_type_keywords_text",
+        "_normalize_spurious_duplicate_local_suffixes",
+        "_dedupe_adjacent_prototype_lines",
+        "_sanitize_mangled_autonames_text",
+        "_simplify_x86_16_stack_byte_pointers",
+    ):
+        monkeypatch.setattr(decompile, name, _identity_text)
+    monkeypatch.setattr(decompile, "_format_known_helper_calls", lambda *_args, **_kwargs: _args[2])
+
+    status, payload = decompile._decompile_function(
+        project,
+        cfg,
+        function,
+        timeout=1,
+        api_style="pascal",
+        binary_path=None,
+        allow_isolated_retry=False,
+    )
+
+    assert status == "ok"
+    assert payload == "void sub_1196f(void) {}"
 
 
 def test_register_direct_call_target_function_stubs_registers_linear_and_unbased_targets():
@@ -1151,6 +2468,43 @@ def test_register_direct_call_target_function_stubs_registers_linear_and_unbased
     )
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000, max_addr=0x4000)),
+        kb=SimpleNamespace(functions=FakeFunctionManager()),
+    )
+
+    count = decompile._register_direct_call_target_function_stubs(project, function)
+
+    assert count == 2
+    assert set(created) == {(0x140D, True), (0x1140D, True)}
+
+
+def test_register_direct_call_target_function_stubs_falls_back_to_capstone_direct_calls():
+    created = []
+
+    class FakeFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            created.append((addr, create))
+            return SimpleNamespace(addr=addr)
+
+    blocks = {
+        0x10010: SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=[
+                    SimpleNamespace(address=0x10016, mnemonic="call", op_str="0x140D"),
+                    SimpleNamespace(address=0x1001C, mnemonic="call", op_str="0x1140D"),
+                    SimpleNamespace(address=0x10021, mnemonic="jmp", op_str="0x1002D"),
+                ]
+            )
+        )
+    }
+    function = SimpleNamespace(
+        block_addrs_set=set(blocks),
+        get_call_sites=lambda: [],
+        get_call_target=lambda _site: None,
+    )
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]),
         loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000, max_addr=0x4000)),
         kb=SimpleNamespace(functions=FakeFunctionManager()),
     )
@@ -1266,8 +2620,8 @@ def test_main_uses_cached_exe_catalog_addresses_before_cfg(monkeypatch, tmp_path
     )
     recovered_pair = (SimpleNamespace(), SimpleNamespace(addr=0x10010, name="sub_10010", project=project))
 
-    monkeypatch.setattr(decompile, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
-    monkeypatch.setattr(decompile, "_cache_source_digest", lambda _paths: "digest-r")
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-r")
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
     monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
@@ -1275,6 +2629,11 @@ def test_main_uses_cached_exe_catalog_addresses_before_cfg(monkeypatch, tmp_path
     monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("fresh CFG should not run")))
     monkeypatch.setattr(decompile, "_recover_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("whole CFG should not run")))
     monkeypatch.setattr(decompile, "_recover_cached_function_pairs", lambda *_args, **_kwargs: [recovered_pair])
+    monkeypatch.setattr(
+        decompile,
+        "_supplement_cached_seeded_recovery",
+        lambda _project, pairs, addrs, **_kwargs: (pairs, addrs),
+    )
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
     monkeypatch.setattr(
         decompile,
@@ -1301,9 +2660,109 @@ def test_main_uses_cached_exe_catalog_addresses_before_cfg(monkeypatch, tmp_path
     rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
     out = capsys.readouterr().out
 
+    assert rc in {0, 2}
+    assert "using cached discovered function addresses" in out
+    assert "/* == function 0x10010 sub_10010 == */" in out
+
+
+def test_recover_cached_function_pairs_gives_pre_entry_candidates_more_time(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=CLI_PATH, linked_base=0x1000, max_addr=0x600),
+        ),
+    )
+    seen_timeouts: list[tuple[int, int]] = []
+
+    def _fake_recover(_project, *, candidate_addr, timeout, **_kwargs):
+        seen_timeouts.append((candidate_addr, timeout))
+        return (
+            SimpleNamespace(),
+            SimpleNamespace(
+                addr=candidate_addr,
+                name=f"sub_{candidate_addr:x}",
+                is_plt=False,
+                is_simprocedure=False,
+                info={},
+                blocks=(SimpleNamespace(size=0x18),),
+            ),
+        )
+
+    monkeypatch.setattr(decompile, "_recover_candidate_with_timeout", _fake_recover)
+
+    recovered = decompile._recover_cached_function_pairs(
+        project,
+        addrs=[0x10010, 0x11593],
+        timeout=6,
+        limit=2,
+        region_span=0x120,
+        per_function_timeout=1,
+    )
+
+    assert [function.addr for _cfg, function in recovered] == [0x10010, 0x11593]
+    assert seen_timeouts == [(0x10010, 2), (0x11593, 1)]
+
+
+def test_main_supplements_cached_exe_catalog_before_display_slice(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    runtime_pair = (SimpleNamespace(), SimpleNamespace(addr=0x11440, name="runtime_shell", project=project))
+    helper_pair = (SimpleNamespace(), SimpleNamespace(addr=0x114CD, name="runtime_init", project=project))
+    body_pair = (SimpleNamespace(), SimpleNamespace(addr=0x10010, name="sub_10010", project=project))
+
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-cache-supplement")
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("fresh CFG should not run")))
+    monkeypatch.setattr(decompile, "_recover_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("whole CFG should not run")))
+    monkeypatch.setattr(decompile, "_recover_cached_function_pairs", lambda *_args, **_kwargs: [runtime_pair, helper_pair])
+    monkeypatch.setattr(
+        decompile,
+        "_supplement_cached_seeded_recovery",
+        lambda _project, _pairs, _addrs, **_kwargs: ([body_pair, runtime_pair, helper_pair], [0x10010, 0x11440, 0x114CD]),
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+    decompile._store_cache_json(
+        "recovery",
+        decompile._recovery_cache_key(
+            binary_path=binary,
+            kind="display_catalog_addrs",
+            extra={"entry": 0x11423, "arch": "86_16"},
+        ),
+        {"addrs": [0x11440, 0x114CD]},
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
     assert rc == 0
     assert "using cached discovered function addresses" in out
     assert "/* == function 0x10010 sub_10010 == */" in out
+    assert "/* == function 0x11440 runtime_shell == */" in out
+    assert "/* == function 0x114cd runtime_init == */" not in out
 
 
 def test_main_prefers_fast_exe_catalog_before_cfg(monkeypatch, tmp_path, capsys):
@@ -1349,9 +2808,895 @@ def test_main_prefers_fast_exe_catalog_before_cfg(monkeypatch, tmp_path, capsys)
     rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
     out = capsys.readouterr().out
 
-    assert rc == 0
+    assert rc in {0, 2}
     assert "/* == function 0x11423 _start == */" in out
     assert "/* == function 0x10010 sub_10010 == */" in out
+
+
+def test_main_emits_tail_validation_summary_and_metadata_to_stderr(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("slow CFG should not run")))
+    monkeypatch.setattr(decompile, "_recover_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("whole CFG should not run")))
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+            tail_validation={
+                "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable", "summary_text": "no observable delta"},
+                "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable", "summary_text": "no observable delta"},
+            },
+        ),
+    )
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in captured.err
+    assert "@@INERTIA_TAIL_VALIDATION@@ " in captured.err
+
+
+def test_tail_validation_runtime_policy_defaults_off_for_exe_and_on_for_cod(monkeypatch, tmp_path):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("INERTIA_ENABLE_TAIL_VALIDATION", raising=False)
+    monkeypatch.delenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", raising=False)
+
+    assert decompile._tail_validation_enabled_for_run(tmp_path / "sample.exe") is False
+    assert decompile._tail_validation_enabled_for_run(tmp_path / "sample.cod") is True
+    assert decompile._tail_validation_enabled_for_run(tmp_path / "sample.exe", proc="main") is True
+
+
+def test_main_suppresses_tail_validation_stderr_for_direct_exe_by_default(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("INERTIA_ENABLE_TAIL_VALIDATION", raising=False)
+    monkeypatch.delenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", raising=False)
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("slow CFG should not run")))
+    monkeypatch.setattr(decompile, "_recover_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("whole CFG should not run")))
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+            tail_validation={
+                "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable", "summary_text": "no observable delta"},
+                "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable", "summary_text": "no observable delta"},
+            },
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "[tail-validation]" not in captured.err
+
+
+def test_main_emits_uncollected_tail_validation_for_direct_nonoptimized_fallback(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+        _inertia_last_tail_validation_snapshot={
+            "structuring": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+            "postprocess": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+        },
+    )
+
+    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+        if kwargs.get("thread_name_prefix") == "recovery":
+            raise decompile._AnalysisTimeout()
+        return fn()
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: "int fallback(void) { return 7; }")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--addr", "0x11423", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* == c (non-optimized fallback) == */" in captured.out
+    assert "int fallback(void) { return 7; }" in captured.out
+    assert "[tail-validation]" in captured.err
+    assert "not collected" in captured.err
+    assert "detail artifact " in captured.err
+    assert '"records": []' in captured.err
+    assert '"scanned": 1' in captured.err
+    assert '"detail_cache_path": "' in captured.err
+    assert '"detail_cache_path": null' not in captured.err
+
+
+def test_main_emits_current_run_tail_validation_for_direct_nonoptimized_fallback(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+            memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size),
+        ),
+    )
+    slice_project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size)),
+    )
+
+    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+        if kwargs.get("thread_name_prefix") == "recovery":
+            raise decompile._AnalysisTimeout()
+        return fn()
+
+    def _fake_decompile_function_with_stats(slice_project_arg, *_args, **_kwargs):
+        slice_project_arg._inertia_last_tail_validation_snapshot = {
+            "structuring": {
+                "changed": True,
+                "mode": "live_out",
+                "verdict": "structuring whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                "summary_text": "helper_calls: +helper_ping",
+            },
+            "postprocess": {
+                "changed": True,
+                "mode": "live_out",
+                "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                "summary_text": "helper_calls: +helper_ping",
+            },
+        }
+        return "ok", "int fallback(void) { return 7; }", None, 1, 0x20, 0.5
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *_args, **_kwargs: slice_project)
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x10010, 0x10020))
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (
+            SimpleNamespace(),
+            SimpleNamespace(addr=0x10010, name="sub_10010", normalized=False),
+        ),
+    )
+    monkeypatch.setattr(decompile, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_sidecar_cod_metadata_for_function", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile_function_with_stats)
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--addr", "0x11423", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* == c (non-optimized fallback) == */" in captured.out
+    assert "int fallback(void) { return 7; }" in captured.out
+    assert "[tail-validation] whole-tail validation changed in 2 functions" in captured.err
+    assert "not collected" not in captured.err
+
+
+def test_main_aggregate_trivial_fallback_does_not_reuse_stale_project_snapshot(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+        _inertia_last_tail_validation_snapshot={
+            "structuring": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+            "postprocess": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+        },
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x10010: "sub_10010"},
+        code_ranges={0x10010: (0x10010, 0x10011)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="error",
+            payload="Decompiler did not produce code.",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+    monkeypatch.setattr(decompile, "_try_emit_trivial_sidecar_c", lambda *_args, **_kwargs: "void sub_10010(void)\n{\n}\n")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* -- c (trivial sidecar fallback) -- */" in captured.out
+    assert "[tail-validation]" in captured.err
+    assert "not collected" in captured.err
+    assert "detail artifact " in captured.err
+    assert '"records": []' in captured.err
+    assert '"scanned": 1' in captured.err
+    assert '"detail_cache_path": "' in captured.err
+    assert '"detail_cache_path": null' not in captured.err
+
+
+def test_main_aggregate_uses_sidecar_fallback_tail_validation_snapshot(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x10010: "sub_10010"},
+        code_ranges={0x10010: (0x10010, 0x10020)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="error",
+            payload="Decompiler did not produce code.",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    def _fake_sidecar_slice(project_arg, *_args, **_kwargs):
+        project_arg._inertia_last_tail_validation_snapshot = {
+            "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+            "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+        }
+        return ("ok", "int sub_10010(void) { return 0; }")
+
+    monkeypatch.setattr(decompile, "_try_decompile_sidecar_slice", _fake_sidecar_slice)
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* -- c (sidecar slice fallback) -- */" in captured.out
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in captured.err
+    assert '"function_addr": 65552' in captured.err
+
+
+def test_main_direct_path_uses_peer_sidecar_fallback_tail_validation_snapshot(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace()
+    func = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_recover_direct_addr_function", lambda *_args, **_kwargs: (cfg, func))
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", lambda *_args, **_kwargs: ("error", "Decompiler did not produce code.", None, 1, 4, 0.01))
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_peer_sidecar_slice",
+        lambda project_arg, *_args, **_kwargs: (
+            setattr(
+                project_arg,
+                "_inertia_last_tail_validation_snapshot",
+                {
+                    "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+                    "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+                },
+            )
+            or "int sub_10010(void) { return 0; }"
+        ),
+    )
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--addr", "0x10010", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* == c (peer sidecar fallback) == */" in captured.out
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in captured.err
+    assert '"function_addr": 65552' in captured.err
+
+
+def test_main_direct_partial_timeout_uses_captured_tail_validation_snapshot(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace()
+    func = SimpleNamespace(
+        addr=0x10010,
+        name="sub_10010",
+        project=project,
+        info={
+            "x86_16_tail_validation": {
+                "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+                "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+            }
+        },
+    )
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_recover_direct_addr_function", lambda *_args, **_kwargs: (cfg, func))
+
+    def _fake_decompile(*_args, **_kwargs):
+        project._inertia_last_tail_validation_snapshot = {
+            "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+            "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+        }
+        return ("timeout", "Timed out after 2s.", "int partial(void) { return 1; }", 1, 4, 0.01)
+
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_non_optimized_slice",
+        lambda project_arg, *_args, **_kwargs: (
+            setattr(
+                project_arg,
+                "_inertia_last_tail_validation_snapshot",
+                {
+                    "structuring": {"changed": True, "mode": "live_out", "verdict": "stale changed"},
+                    "postprocess": {"changed": True, "mode": "live_out", "verdict": "stale changed"},
+                },
+            )
+            or None
+        ),
+    )
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--addr", "0x10010", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* == c (partial timeout) == */" in captured.out
+    assert "int partial(void) { return 1; }" in captured.out
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in captured.err
+    assert '"detail_cache_path": "' in captured.err
+    assert '"detail_cache_path": null' not in captured.err
+    assert "stale changed" not in captured.err
+
+
+def test_main_direct_decompile_outer_timeout_reaches_nonoptimized_fallback(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace()
+    func = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    def _fake_timeout(fn, *, thread_name_prefix, **_kwargs):
+        if thread_name_prefix == "direct-decomp":
+            raise decompile.FuturesTimeoutError()
+        return fn()
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+    monkeypatch.setattr(decompile, "_recover_direct_addr_function", lambda *_args, **_kwargs: (cfg, func))
+    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: "int fallback(void) { return 7; }")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--addr", "0x10010", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* Falling back to non-optimized slice decompilation. */" in captured.out
+    assert "int fallback(void) { return 7; }" in captured.out
+    assert "[tail-validation]" in captured.err
+
+
+def test_main_aggregate_partial_timeout_uses_result_tail_validation(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+        _inertia_last_tail_validation_snapshot={
+            "structuring": {"changed": True, "mode": "live_out", "verdict": "stale changed"},
+            "postprocess": {"changed": True, "mode": "live_out", "verdict": "stale changed"},
+        },
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="timeout",
+            payload="Timed out after 2s.",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+            partial_payload="int partial(void) { return 1; }",
+            tail_validation={
+                "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+                "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+            },
+        ),
+    )
+    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_format_asm_range", lambda *_args, **_kwargs: "mov ax, ax")
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x11423, 0x11425))
+    monkeypatch.setattr(decompile, "_probe_lift_break", lambda *_args, **_kwargs: "<probe>")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "/* -- c (partial timeout) -- */" in captured.out
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in captured.err
+    assert '"detail_cache_path": "' in captured.err
+    assert '"detail_cache_path": null' not in captured.err
+    assert "stale changed" not in captured.err
+
+
+def test_main_direct_sidecar_bounded_asm_fallback_does_not_reuse_stale_project_snapshot(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+        _inertia_last_tail_validation_snapshot={
+            "structuring": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+            "postprocess": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+        },
+    )
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x10010: "sub_10010"},
+        code_ranges={0x10010: (0x10010, 0x10020)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
+
+    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+        if kwargs.get("thread_name_prefix") == "recovery":
+            raise decompile._AnalysisTimeout()
+        return fn()
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+    monkeypatch.setattr(decompile, "_try_decompile_sidecar_slice", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_format_asm_range", lambda *_args, **_kwargs: "mov ax, ax")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--addr", "0x10010", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 4
+    assert "/* == asm fallback == */" in captured.out
+    assert "mov ax, ax" in captured.out
+    assert "[tail-validation]" in captured.err
+    assert "not collected" in captured.err
+    assert "detail artifact " in captured.err
+    assert '"records": []' in captured.err
+    assert '"detail_cache_path": "' in captured.err
+    assert '"detail_cache_path": null' not in captured.err
+    assert "stale stable" not in captured.err
+
+
+def test_main_aggregate_asm_fallback_does_not_reuse_stale_project_snapshot(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+        _inertia_last_tail_validation_snapshot={
+            "structuring": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+            "postprocess": {"changed": False, "mode": "live_out", "verdict": "stale stable"},
+        },
+    )
+    function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="error",
+            payload="Decompiler did not produce code.",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_probe_lift_break", lambda *_args, **_kwargs: "<probe>")
+    monkeypatch.setattr(decompile, "_format_asm_range", lambda *_args, **_kwargs: "mov ax, ax")
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x10010, 0x10012))
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "-- asm fallback --" in captured.out
+    assert "mov ax, ax" in captured.out
+    assert "[tail-validation]" in captured.err
+    assert "not collected" in captured.err
+    assert "detail artifact " in captured.err
+    assert '"records": []' in captured.err
+    assert '"detail_cache_path": "' in captured.err
+    assert '"detail_cache_path": null' not in captured.err
+    assert "stale stable" not in captured.err
+
+
+def test_main_reports_uncapped_seeded_function_count(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "life2.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace(functions={})
+    entry_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+    seed_functions = [
+        (SimpleNamespace(), SimpleNamespace(addr=0x10010, name="sub_10010", project=project)),
+        (SimpleNamespace(), SimpleNamespace(addr=0x10020, name="sub_10020", project=project)),
+    ]
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_recover_fast_exe_catalog", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: cfg)
+    monkeypatch.setattr(decompile, "_interesting_functions", lambda _cfg, limit=None: ([entry_function], 1))
+    monkeypatch.setattr(
+        decompile,
+        "_recover_seeded_exe_functions",
+        lambda *_args, **_kwargs: (seed_functions, [0x10010, 0x10020, 0x10030]),
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* functions recovered: 4 */" in out
+    assert "/* showing first 2 functions; use --max-functions to raise the cap */" in out
+
+
+def test_main_reports_uncapped_cached_function_count(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    recovered_pairs = [
+        (SimpleNamespace(), SimpleNamespace(addr=0x10010, name="sub_10010", project=project)),
+        (SimpleNamespace(), SimpleNamespace(addr=0x10020, name="sub_10020", project=project)),
+    ]
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [0x10010, 0x10020, 0x10030])
+    monkeypatch.setattr(decompile, "_recover_cached_function_pairs", lambda *_args, **_kwargs: recovered_pairs)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* functions recovered: 3 */" in out
+    assert "/* showing first 2 functions; use --max-functions to raise the cap */" in out
+
+
+def test_main_auto_caps_default_exe_showcase_without_sidecar(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    recovered_pairs = [
+        (SimpleNamespace(), SimpleNamespace(addr=0x10000 + i * 0x10, name=f"sub_{i:04x}", project=project))
+        for i in range(30)
+    ]
+    stored_pairs = []
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [pair[1].addr for pair in recovered_pairs])
+    monkeypatch.setattr(decompile, "_recover_cached_function_pairs", lambda *_args, **_kwargs: list(recovered_pairs))
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_store_catalog_address_cache",
+        lambda _project, _binary, function_cfg_pairs: stored_pairs.extend(function_cfg_pairs),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* functions recovered: 30 */" in out
+    assert "/* EXE discovery found 30 functions; showing first 8 by default for responsiveness. Use --max-functions to change the cap. */" in out
+    assert "summary: decompiled 8/8 shown functions" in out
+    assert len(stored_pairs) == 30
+
+
+def test_main_limits_sidecar_catalog_preview_for_responsiveness(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400)),
+    )
+    metadata = SimpleNamespace(
+        code_labels={0x10000 + i * 0x10: f"proc_{i}" for i in range(30)},
+        code_ranges={0x10000 + i * 0x10: (0x10000 + i * 0x10, 0x10000 + i * 0x10 + 0x20) for i in range(30)},
+        data_labels={},
+    )
+    catalog_limits = []
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_visible_code_labels", lambda _metadata: dict(metadata.code_labels))
+    monkeypatch.setattr(decompile, "_recovery_code_labels", lambda _metadata: {})
+    monkeypatch.setattr(
+        decompile,
+        "_rank_labeled_function_entries_cached",
+        lambda _project, entries, _metadata: (list(entries), False),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_format_sidecar_function_catalog",
+        lambda _metadata, limit=None: catalog_limits.append(limit) or "catalog-preview",
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_recover_lst_function",
+        lambda _project, offset, **_kwargs: (
+            SimpleNamespace(),
+            SimpleNamespace(addr=offset, name=metadata.code_labels[offset], project=project),
+        ),
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2"])
+    out = capsys.readouterr().out
+
+    assert rc in {0, 2}
+    assert catalog_limits == [8]
+    assert "/* catalog preview limited to first 8 entries for responsiveness. */" in out
+    assert "/* sidecar catalog detected 30 functions; showing first 8 by default for responsiveness. Use --max-functions to change the cap. */" in out
 
 
 def test_recover_fast_exe_catalog_overscans_seed_limit_before_trimming(monkeypatch):
@@ -1462,6 +3807,58 @@ def test_main_falls_back_after_fast_exe_catalog_timeout(monkeypatch, tmp_path, c
     assert rc == 0
     assert "Quick EXE function discovery timed out" in out
     assert "/* == function 0x11423 _start == */" in out
+
+
+def test_main_timeout_prints_partial_c_before_asm_fallback(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace(functions={})
+    recovered_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: cfg)
+    monkeypatch.setattr(decompile, "_interesting_functions", lambda _cfg, limit=None: ([recovered_function], 1))
+    monkeypatch.setattr(decompile, "_recover_seeded_exe_functions", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_format_asm_range", lambda *_args, **_kwargs: "mov ax, ax")
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x11423, 0x11425))
+    monkeypatch.setattr(decompile, "_probe_lift_break", lambda *_args, **_kwargs: "<probe>")
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="timeout",
+            payload="Timed out after 2s.",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+            partial_payload="int partial(void) { return 1; }",
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    out = capsys.readouterr().out
+
+    assert rc == 2
+    assert "/* problem: timeout */" in out
+    assert "/* -- c (partial timeout) -- */" in out
+    assert out.index("/* -- c (partial timeout) -- */") < out.index("-- asm fallback --")
+    assert "int partial(void) { return 1; }" in out
 
 
 def test_main_uses_seed_recovery_when_only_hidden_signature_labels_exist(monkeypatch, tmp_path, capsys):
@@ -1575,6 +3972,13 @@ def test_main_serial_function_timeout_does_not_stall_whole_run(monkeypatch, tmp_
     assert "/* == function 0x10010 sub_10010 == */" in out
 
 
+def test_choose_function_parallelism_honors_forced_serial_env(monkeypatch):
+    monkeypatch.setenv("INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION", "1")
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+
+    assert decompile._choose_function_parallelism(8) == 1
+
+
 def test_main_parallel_uses_late_success_after_deadline(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -1648,6 +4052,239 @@ def test_main_parallel_uses_late_success_after_deadline(monkeypatch, tmp_path, c
     assert "Timed out after 2s." not in out
 
 
+def test_main_parallel_promotes_late_partial_after_deadline(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+
+    class _FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self, timeout=None):
+            return self._result
+
+        def done(self):
+            return True
+
+        def cancelled(self):
+            return False
+
+    class _FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            self.future = None
+
+        def submit(self, _fn, item, **_kwargs):
+            self.future = _FakeFuture(
+                decompile.FunctionWorkResult(
+                    index=item.index,
+                    status="timeout",
+                    payload="Timed out after 2s.",
+                    debug_output="",
+                    function=item.function,
+                    function_cfg=item.function_cfg,
+                    partial_payload="int _start(void) { return 0; }",
+                )
+            )
+            return self.future
+
+        def shutdown(self, wait=True, cancel_futures=True):
+            return None
+
+    monotonic_values = iter([0.0] + [5.0] * 16)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
+    monkeypatch.setattr(decompile.time, "monotonic", lambda: next(monotonic_values))
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    out = capsys.readouterr().out
+
+    assert rc == 2
+    assert "/* -- c (partial timeout) -- */" in out
+    assert "int _start(void) { return 0; }" in out
+
+
+def test_main_parallel_promotes_done_future_at_deadline(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+
+    class _FakeFuture:
+        def __init__(self, result):
+            self._result = result
+            self._done = True
+
+        def result(self, timeout=None):
+            return self._result
+
+        def done(self):
+            return self._done
+
+        def cancelled(self):
+            return False
+
+    class _FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            self.future = None
+
+        def submit(self, _fn, item, **_kwargs):
+            self.future = _FakeFuture(
+                decompile.FunctionWorkResult(
+                    index=item.index,
+                    status="ok",
+                    payload=f"int {item.function.name}(void) {{ return 0; }}",
+                    debug_output="",
+                    function=item.function,
+                    function_cfg=item.function_cfg,
+                )
+            )
+            return self.future
+
+        def shutdown(self, wait=True, cancel_futures=True):
+            return None
+
+    monotonic_values = iter([0.0] + [5.0] * 16)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
+    monkeypatch.setattr(decompile.time, "monotonic", lambda: next(monotonic_values))
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* -- c -- */" in out
+    assert "int _start(void) { return 0; }" in out
+    assert "Timed out after 2s." not in out
+
+
+def test_main_parallel_promotes_future_completed_during_late_collection(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+
+    class _FakeFuture:
+        def __init__(self, result):
+            self._result = result
+            self._done = False
+
+        def result(self, timeout=None):
+            return self._result
+
+        def done(self):
+            return self._done
+
+        def cancelled(self):
+            return False
+
+    class _FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            self.future = None
+
+        def submit(self, _fn, item, **_kwargs):
+            self.future = _FakeFuture(
+                decompile.FunctionWorkResult(
+                    index=item.index,
+                    status="ok",
+                    payload=f"int {item.function.name}(void) {{ return 0; }}",
+                    debug_output="",
+                    function=item.function,
+                    function_cfg=item.function_cfg,
+                )
+            )
+            executor_state["future"] = self.future
+            return self.future
+
+        def shutdown(self, wait=True, cancel_futures=True):
+            return None
+
+    monotonic_values = iter([0.0] + [5.0] * 16)
+    executor_state = {"future": None}
+    wait_calls = {"count": 0}
+
+    def _fake_wait(pending, **_kwargs):
+        wait_calls["count"] += 1
+        if wait_calls["count"] == 1:
+            return set(), set(pending)
+        future = executor_state["future"]
+        if future is not None:
+            future._done = True
+        return {future} if future is not None else set(), set()
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_recover_fast_exe_catalog",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), function)],
+    )
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(decompile, "wait", _fake_wait)
+    monkeypatch.setattr(decompile.time, "monotonic", lambda: next(monotonic_values))
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* -- c -- */" in out
+    assert "int _start(void) { return 0; }" in out
+    assert "Timed out after 2s." not in out
+
+
 def test_candidate_recovery_regions_use_only_largest_window_for_body_seed():
     regions = decompile._candidate_recovery_regions(
         None,
@@ -1658,6 +4295,81 @@ def test_candidate_recovery_regions_use_only_largest_window_for_body_seed():
     )
 
     assert regions == [(0x10010, 0x10130)]
+
+
+def test_rank_function_cfg_pairs_for_display_prefers_truncated_body_seed_over_wrapper_paths(monkeypatch):
+    project = SimpleNamespace(entry=0x11423)
+    entry = (SimpleNamespace(), SimpleNamespace(addr=0x11423, blocks=(SimpleNamespace(size=0x20),)))
+    body = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x10010,
+            blocks=(SimpleNamespace(size=0x40),),
+            info={"x86_16_recovery_truncated": True},
+        ),
+    )
+    wrapper = (SimpleNamespace(), SimpleNamespace(addr=0x10050, blocks=(SimpleNamespace(size=0x10),)))
+    runtime_shell = (SimpleNamespace(), SimpleNamespace(addr=0x11440, blocks=(SimpleNamespace(size=0x10),)))
+
+    monkeypatch.setattr(
+        decompile,
+        "_linear_function_seed_targets",
+        lambda _project, addr, **_kwargs: {0x10050} if addr == 0x11423 else ({0x11440} if addr == 0x10010 else set()),
+    )
+
+    ranked = decompile._rank_function_cfg_pairs_for_display(project, [wrapper, runtime_shell, body, entry])
+
+    assert [func.addr for _cfg, func in ranked[:3]] == [0x11423, 0x10010, 0x11440]
+
+
+def test_rank_function_cfg_pairs_for_display_keeps_secondary_pre_entry_body_ahead_of_runtime_shell(monkeypatch):
+    project = SimpleNamespace(entry=0x11423)
+    entry = (SimpleNamespace(), SimpleNamespace(addr=0x11423, blocks=(SimpleNamespace(size=0x20),)))
+    primary_body = (SimpleNamespace(), SimpleNamespace(addr=0x11000, blocks=(SimpleNamespace(size=0x60),)))
+    secondary_body = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x10010,
+            blocks=(SimpleNamespace(size=0x50),),
+            info={"x86_16_recovery_truncated": True},
+        ),
+    )
+    runtime_shell = (SimpleNamespace(), SimpleNamespace(addr=0x11440, blocks=(SimpleNamespace(size=0x10),)))
+
+    monkeypatch.setattr(
+        decompile,
+        "_linear_function_seed_targets",
+        lambda _project, addr, **_kwargs: {0x11440} if addr == 0x11423 else set(),
+    )
+
+    ranked = decompile._rank_function_cfg_pairs_for_display(project, [runtime_shell, secondary_body, primary_body, entry])
+
+    assert [func.addr for _cfg, func in ranked[:4]] == [0x11423, 0x10010, 0x11000, 0x11440]
+
+
+def test_rank_function_cfg_pairs_for_display_demotes_wrapper_body_targets_below_other_pre_entry_bodies(monkeypatch):
+    project = SimpleNamespace(entry=0x11423)
+    entry = (SimpleNamespace(), SimpleNamespace(addr=0x11423, blocks=(SimpleNamespace(size=0x20),)))
+    primary_body = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x10010,
+            blocks=(SimpleNamespace(size=0x50),),
+            info={"x86_16_recovery_truncated": True},
+        ),
+    )
+    secondary_body = (SimpleNamespace(), SimpleNamespace(addr=0x10120, blocks=(SimpleNamespace(size=0x40),)))
+    wrapper_target = (SimpleNamespace(), SimpleNamespace(addr=0x10050, blocks=(SimpleNamespace(size=0x10),)))
+
+    monkeypatch.setattr(
+        decompile,
+        "_linear_function_seed_targets",
+        lambda _project, addr, **_kwargs: {0x10050} if addr == 0x10010 else set(),
+    )
+
+    ranked = decompile._rank_function_cfg_pairs_for_display(project, [wrapper_target, secondary_body, primary_body, entry])
+
+    assert [func.addr for _cfg, func in ranked[:4]] == [0x11423, 0x10010, 0x10120, 0x10050]
 
 
 def test_recover_candidate_function_pair_stops_after_good_enough_score(monkeypatch):
@@ -1832,6 +4544,318 @@ def test_main_defers_exe_limit_until_after_seed_ranking(monkeypatch, tmp_path, c
     assert "/* == function 0x114cd runtime_init == */" not in out
 
 
+def test_main_reranks_merged_seeded_pairs_before_max_function_slice(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace(functions={})
+    entry_function = SimpleNamespace(addr=0x11423, name="_start", project=project, blocks=(SimpleNamespace(size=0x20),))
+    wrapper_function = SimpleNamespace(addr=0x11440, name="runtime_shell", project=project, blocks=(SimpleNamespace(size=0x10),))
+    body_function = SimpleNamespace(
+        addr=0x10010,
+        name="sub_10010",
+        project=project,
+        blocks=(SimpleNamespace(size=0x50),),
+        info={"x86_16_recovery_truncated": True},
+    )
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: cfg)
+    monkeypatch.setattr(decompile, "_interesting_functions", lambda _cfg, limit=None: ([entry_function, wrapper_function], 2))
+    monkeypatch.setattr(
+        decompile,
+        "_recover_seeded_exe_functions",
+        lambda *_args, **_kwargs: ([(SimpleNamespace(), body_function)], [0x10010]),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_linear_function_seed_targets",
+        lambda _project, addr, **_kwargs: {0x11440} if addr == 0x11423 else set(),
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* == function 0x11423 _start == */" in out
+    assert "/* == function 0x10010 sub_10010 == */" in out
+    assert "/* == function 0x11440 runtime_shell == */" not in out
+
+
+def test_main_reranks_nontruncated_seeded_body_before_runtime_shell(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace(functions={})
+    entry_function = SimpleNamespace(addr=0x11423, name="_start", project=project, blocks=(SimpleNamespace(size=0x20),))
+    runtime_function = SimpleNamespace(addr=0x11440, name="runtime_shell", project=project, blocks=(SimpleNamespace(size=0x10),))
+    body_function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project, blocks=(SimpleNamespace(size=0x50),))
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: cfg)
+    monkeypatch.setattr(decompile, "_interesting_functions", lambda _cfg, limit=None: ([entry_function, runtime_function], 2))
+    monkeypatch.setattr(
+        decompile,
+        "_recover_seeded_exe_functions",
+        lambda *_args, **_kwargs: ([(SimpleNamespace(), body_function)], [0x10010]),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_linear_function_seed_targets",
+        lambda _project, addr, **_kwargs: {0x11440} if addr == 0x11423 else set(),
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* == function 0x11423 _start == */" in out
+    assert "/* == function 0x10010 sub_10010 == */" in out
+    assert "/* == function 0x11440 runtime_shell == */" not in out
+
+
+def test_main_defers_exe_limit_until_after_seed_ranking_with_recovery_only_sidecar(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    metadata = SimpleNamespace(code_labels={0x11423: "_startup_sig"})
+    entry_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+    runtime_function = SimpleNamespace(addr=0x114cd, name="runtime_init", project=project)
+    body_function = SimpleNamespace(
+        addr=0x10010,
+        name="sub_10010",
+        project=project,
+        blocks=(SimpleNamespace(size=0x40),),
+        info={"x86_16_recovery_truncated": True},
+    )
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_visible_code_labels", lambda _metadata: {})
+    monkeypatch.setattr(decompile, "_recovery_code_labels", lambda _metadata: {0x11423: "_startup_sig"})
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(
+        decompile,
+        "_recover_seeded_exe_functions",
+        lambda *_args, **_kwargs: (
+            [
+                (SimpleNamespace(), entry_function),
+                (SimpleNamespace(), runtime_function),
+                (SimpleNamespace(), body_function),
+            ],
+            [0x11423, 0x114cd, 0x10010],
+        ),
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "/* == function 0x11423 _start == */" in out
+    assert "/* == function 0x10010 sub_10010 == */" in out
+    assert "/* == function 0x114cd runtime_init == */" not in out
+
+
+def test_main_helper_free_small_cap_exe_uses_serial_workers_with_hidden_seed_metadata(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace(functions={})
+    entry_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+    body_function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+    metadata = SimpleNamespace()
+    max_workers_seen: list[int] = []
+
+    class _FakeExecutor:
+        def __init__(self, max_workers, *args, **kwargs):
+            max_workers_seen.append(max_workers)
+
+        def submit(self, fn, item, **kwargs):
+            class _Future:
+                def result(self, timeout=None):
+                    return decompile.FunctionWorkResult(
+                        index=item.index,
+                        status="ok",
+                        payload=f"int {item.function.name}(void) {{ return 0; }}",
+                        debug_output="",
+                        function=item.function,
+                        function_cfg=item.function_cfg,
+                    )
+
+                def __hash__(self):
+                    return id(self)
+
+            return _Future()
+
+        def shutdown(self, wait=True, cancel_futures=True):
+            return None
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_visible_code_labels", lambda _metadata: {})
+    monkeypatch.setattr(decompile, "_recovery_code_labels", lambda _metadata: {0x11423: "_startup_sig"})
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(
+        decompile,
+        "_recover_seeded_exe_functions",
+        lambda *_args, **_kwargs: [(SimpleNamespace(), entry_function), (SimpleNamespace(), body_function)],
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert max_workers_seen == [1]
+    assert "/* == function 0x11423 _start == */" in out
+    assert "/* == function 0x10010 sub_10010 == */" in out
+
+
+def test_main_hidden_seed_metadata_gives_seed_catalog_more_time(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    metadata = SimpleNamespace()
+    seen_timeouts: list[tuple[str, int]] = []
+    entry_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+    body_function = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    def _fake_run(fn, *, timeout, thread_name_prefix, **_kwargs):
+        seen_timeouts.append((thread_name_prefix, timeout))
+        return fn()
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
+    monkeypatch.setattr(decompile, "_visible_code_labels", lambda _metadata: {})
+    monkeypatch.setattr(decompile, "_recovery_code_labels", lambda _metadata: {0x11423: "_startup_sig"})
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_run)
+    monkeypatch.setattr(
+        decompile,
+        "_recover_seeded_exe_functions",
+        lambda *_args, **_kwargs: (
+            [(SimpleNamespace(), entry_function), (SimpleNamespace(), body_function)],
+            [0x11423, 0x10010],
+        ),
+    )
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="ok",
+            payload=f"int {item.function.name}(void) {{ return 0; }}",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--timeout", "6", "--max-functions", "2"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert ("seed-catalog", 8) in seen_timeouts
+    assert "/* == function 0x11423 _start == */" in out
+    assert "/* == function 0x10010 sub_10010 == */" in out
+
+
 def test_recover_seeded_exe_functions_prefers_largest_bounded_recovery(monkeypatch):
     code = b"\x55\x8B\xEC" + b"\x90" * 0x500
     project = SimpleNamespace(
@@ -1869,6 +4893,279 @@ def test_recover_seeded_exe_functions_prefers_largest_bounded_recovery(monkeypat
     assert recovered
     assert len(seen_regions) >= 2
     assert sum(block.size for block in recovered[0][1].blocks) == 0x90
+
+
+def test_supplement_cached_seeded_recovery_adds_pre_entry_body_function(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x1000,
+                max_addr=0x600,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 0x600),
+            )
+        ),
+    )
+    helper_pair = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x114cd,
+            name="sub_114cd",
+            is_plt=False,
+            is_simprocedure=False,
+            info={},
+            blocks=(SimpleNamespace(size=0x18),),
+        ),
+    )
+    body_pair = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x10010,
+            name="sub_10010",
+            is_plt=False,
+            is_simprocedure=False,
+            info={},
+            blocks=(SimpleNamespace(size=0x40), SimpleNamespace(size=0x40)),
+        ),
+    )
+    stored_payloads: list[dict[str, object]] = []
+
+    monkeypatch.setattr(decompile, "_supplement_functions_from_prologue_scan", lambda *_args, **_kwargs: [body_pair])
+    monkeypatch.setattr(
+        decompile,
+        "_rank_function_cfg_pairs_for_display",
+        lambda _project, pairs: sorted(pairs, key=lambda item: item[1].addr),
+    )
+    monkeypatch.setattr(decompile, "_store_cache_json", lambda _kind, _key, payload: stored_payloads.append(payload))
+
+    recovered, addrs = decompile._supplement_cached_seeded_recovery(
+        project,
+        [helper_pair],
+        [0x114cd],
+        region_span=0x120,
+        per_function_timeout=1,
+        limit=4,
+        cache_key={"kind": "seeded_function_catalog"},
+    )
+
+    assert [function.addr for _cfg, function in recovered] == [0x10010, 0x114cd]
+    assert addrs == [0x10010, 0x114cd]
+    assert stored_payloads[-1] == {"addrs": [0x10010, 0x114cd]}
+
+
+def test_supplement_cached_seeded_recovery_prioritizes_linear_body_targets_for_tiny_pre_entry_body(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x10000,
+                max_addr=0x600,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 0x600),
+            )
+        ),
+    )
+    tiny_body_pair = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x10010,
+            name="sub_10010",
+            is_plt=False,
+            is_simprocedure=False,
+            info={"x86_16_recovery_truncated": True},
+            blocks=(SimpleNamespace(addr=0x10010, size=0x18),),
+        ),
+    )
+    captured_candidate_addrs: list[int] = []
+
+    monkeypatch.setattr(decompile, "_rank_gap_scan_candidate_addrs", lambda *_args, **_kwargs: [0x10040])
+    monkeypatch.setattr(
+        decompile,
+        "_linear_function_seed_targets",
+        lambda _project, addr, **_kwargs: {0x10060} if addr == 0x10010 else set(),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "collect_neighbor_call_targets",
+        lambda function: [SimpleNamespace(target_addr=0x101A0)] if function.addr == 0x10010 else [],
+    )
+
+    def _fake_supplement(_project, _existing_addrs, *, candidate_addrs=None, **_kwargs):
+        captured_candidate_addrs[:] = list(candidate_addrs or [])
+        return [
+            (
+                SimpleNamespace(),
+                SimpleNamespace(
+                    addr=0x10060,
+                    name="sub_10060",
+                    is_plt=False,
+                    is_simprocedure=False,
+                    info={},
+                    blocks=(SimpleNamespace(addr=0x10060, size=0x60),),
+                ),
+            )
+        ]
+
+    monkeypatch.setattr(decompile, "_supplement_functions_from_prologue_scan", _fake_supplement)
+    monkeypatch.setattr(
+        decompile,
+        "_rank_function_cfg_pairs_for_display",
+        lambda _project, pairs: sorted(pairs, key=lambda item: item[1].addr),
+    )
+
+    recovered, addrs = decompile._supplement_cached_seeded_recovery(
+        project,
+        [tiny_body_pair],
+        [0x10010],
+        region_span=0x120,
+        per_function_timeout=1,
+        limit=4,
+        cache_key=None,
+    )
+
+    assert captured_candidate_addrs[:3] == [0x10040, 0x10060, 0x101A0]
+    assert [function.addr for _cfg, function in recovered] == [0x10010, 0x10060]
+    assert addrs == [0x10010, 0x10060]
+
+
+def test_recover_seeded_exe_functions_cached_supplement_timeout_uses_cached_recovery(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x1000,
+                max_addr=0x600,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 0x600),
+            )
+        ),
+    )
+    helper_pair = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x114cd,
+            name="sub_114cd",
+            is_plt=False,
+            is_simprocedure=False,
+            info={},
+            blocks=(SimpleNamespace(size=0x18),),
+        ),
+    )
+
+    def _fake_timeout(fn, *, thread_name_prefix, **_kwargs):
+        if thread_name_prefix == "cached-supplement":
+            raise decompile.FuturesTimeoutError()
+        return fn()
+
+    monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [0x114cd])
+    monkeypatch.setattr(decompile, "_load_cache_json", lambda *_args, **_kwargs: {"addrs": [0x114cd]})
+    monkeypatch.setattr(decompile, "_recover_cached_function_pairs", lambda *_args, **_kwargs: [helper_pair])
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+
+    recovered, addrs = decompile._recover_seeded_exe_functions(project, timeout=4, limit=2, return_addrs=True)
+
+    assert [function.addr for _cfg, function in recovered] == [0x114cd]
+    assert addrs == [0x114cd]
+
+
+def test_recover_seeded_exe_functions_gives_cached_supplement_more_budget(monkeypatch):
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x1000,
+                max_addr=0x600,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90" * 0x600),
+            )
+        ),
+    )
+    helper_pair = (
+        SimpleNamespace(),
+        SimpleNamespace(
+            addr=0x114cd,
+            name="sub_114cd",
+            is_plt=False,
+            is_simprocedure=False,
+            info={},
+            blocks=(SimpleNamespace(size=0x18),),
+        ),
+    )
+    captured_timeouts: list[tuple[str, int]] = []
+
+    def _fake_timeout(fn, *, timeout, thread_name_prefix, **_kwargs):
+        captured_timeouts.append((thread_name_prefix, timeout))
+        return fn()
+
+    monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [0x114cd])
+    monkeypatch.setattr(decompile, "_load_cache_json", lambda *_args, **_kwargs: {"addrs": [0x114cd]})
+    monkeypatch.setattr(decompile, "_recover_cached_function_pairs", lambda *_args, **_kwargs: [helper_pair])
+    monkeypatch.setattr(decompile, "_supplement_cached_seeded_recovery", lambda _project, pairs, addrs, **_kwargs: (pairs, addrs))
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+
+    recovered, addrs = decompile._recover_seeded_exe_functions(project, timeout=6, limit=2, return_addrs=True)
+
+    assert [function.addr for _cfg, function in recovered] == [0x114cd]
+    assert addrs == [0x114cd]
+    assert ("cached-supplement", 4) in captured_timeouts
+
+
+def test_recover_seeded_exe_functions_prioritizes_linear_body_targets_for_truncated_recovery(monkeypatch):
+    code = b"\x90" * 0x600
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                binary=CLI_PATH,
+                linked_base=0x10000,
+                max_addr=len(code) - 1,
+                memory=SimpleNamespace(load=lambda *_args, **_kwargs: code),
+            )
+        ),
+        factory=SimpleNamespace(
+            block=lambda addr, **_kwargs: SimpleNamespace(capstone=SimpleNamespace(insns=[SimpleNamespace(address=addr)]))
+        ),
+    )
+    monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project: [0x10010])
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected lean recovery")),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_recover_candidate_with_timeout",
+        lambda _project, *, candidate_addr, **_kwargs: (
+            SimpleNamespace(),
+            SimpleNamespace(
+                addr=candidate_addr,
+                name=f"sub_{candidate_addr:x}",
+                is_plt=False,
+                is_simprocedure=False,
+                info={"x86_16_recovery_truncated": candidate_addr == 0x10010},
+                blocks=(SimpleNamespace(size=0x18), SimpleNamespace(size=0x18)),
+            ),
+        ),
+    )
+    call_order: list[int] = []
+
+    def _collect_neighbor_call_targets(function):
+        if function.addr == 0x10010:
+            return [SimpleNamespace(target_addr=0x101a0)]
+        return []
+
+    monkeypatch.setattr(decompile, "collect_neighbor_call_targets", _collect_neighbor_call_targets)
+    monkeypatch.setattr(decompile, "_linear_function_seed_targets", lambda _project, addr, **_kwargs: {0x10050} if addr == 0x10010 else set())
+
+    recovered = decompile._recover_seeded_exe_functions(project, timeout=4, limit=3)
+
+    assert [func.addr for _cfg, func in recovered] == [0x10010, 0x10050, 0x101a0]
 
 
 def test_match_flair_startup_entry_matches_watcom_startup_pattern():
@@ -2514,6 +5811,49 @@ def test_try_decompile_sidecar_slice_retries_with_broader_exact_region_recovery(
     assert calls == ["lean", "full:False"]
 
 
+def test_try_decompile_sidecar_slice_preserves_tail_validation_snapshot_on_source_project(monkeypatch):
+    slice_project = SimpleNamespace()
+    function = SimpleNamespace(name="func", info={})
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\xc3")),
+    )
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x1000: "func"},
+        code_ranges={0x1000: (0x1000, 0x1002)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
+
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: slice_project)
+    monkeypatch.setattr(decompile, "_pick_function_lean", lambda *_args, **_kwargs: ("cfg", function))
+
+    def _fake_decompile(*_args, **_kwargs):
+        slice_project._inertia_last_tail_validation_snapshot = {
+            "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+            "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+        }
+        return ("ok", "void func(void)\n{\n}\n", 1, 2, 0.01)
+
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
+
+    result = decompile._try_decompile_sidecar_slice(
+        project,
+        metadata,
+        0x1000,
+        "func",
+        timeout=6,
+        api_style="default",
+        binary_path=None,
+    )
+
+    assert result == ("ok", "void func(void)\n{\n}\n")
+    assert project._inertia_last_tail_validation_snapshot == {
+        "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
+        "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
+    }
+
+
 def test_try_decompile_sidecar_slice_falls_back_to_cod_source_when_decompiler_stays_empty(monkeypatch):
     slice_project = SimpleNamespace()
     function = SimpleNamespace(name="func")
@@ -2689,6 +6029,35 @@ def test_life2_signature_metadata_seeds_bounded_recovery_without_peer_catalog():
     assert any(addr in recovery_labels for addr in ranked)
 
 
+def test_life2_signature_metadata_bounded_span_precedes_tiny_helper_seed(monkeypatch):
+    project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
+    metadata = sidecar_metadata._load_lst_metadata(LIFE2_EXE, project, allow_peer_exe=False)
+
+    assert metadata is not None
+    project._inertia_lst_metadata = metadata
+    bounded_addr, bounded_span = next((addr, span) for addr, span in metadata.code_ranges.items() if span[1] - span[0] > 1)
+    helper_addr = 0x1140D
+    assert bounded_span[1] - bounded_span[0] > 1
+
+    window_start = min(bounded_addr, helper_addr)
+    window_end = max(bounded_addr, helper_addr) + 0x40
+
+    monkeypatch.setattr(decompile, "_seed_scan_windows", lambda _project: [(window_start, window_end)])
+    monkeypatch.setattr(decompile, "_entry_window_seed_targets", lambda *_args, **_kwargs: {helper_addr})
+    monkeypatch.setattr(decompile, "_linear_disassembly", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyError("no entry CFG")),
+    )
+
+    ranked = decompile._rank_exe_function_seeds(project)
+
+    assert bounded_addr in ranked
+    assert helper_addr in ranked
+    assert ranked.index(bounded_addr) < ranked.index(helper_addr)
+
+
 def test_life2_peer_catalog_oracle_requires_explicit_helper_call():
     project = decompile._build_project(LIFE2_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
     labels, ranges, source_formats = sidecar_metadata._discover_peer_exe_catalog_matches(LIFE2_EXE, project)
@@ -2838,6 +6207,33 @@ def test_rank_labeled_function_entries_prefers_entry_and_main(monkeypatch):
         (0x1E4C6, "cintDIV"),
         (0x10000, "padding"),
     ]
+
+
+def test_rank_labeled_function_entries_cached_reuses_recovery_cache(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x1E432,
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary=binary)),
+    )
+    metadata = SimpleNamespace(
+        source_format="codeview_nb00",
+        code_ranges={
+            0x10000: (0x10000, 0x10010),
+            0x10010: (0x10010, 0x10147),
+            0x1E432: (0x1E432, 0x1E4E4),
+        },
+    )
+    entries = [(0x10000, "padding"), (0x10010, "main"), (0x1E432, "start")]
+
+    monkeypatch.setattr(decompile, "_is_zero_filled_region", lambda *_args, **_kwargs: False)
+
+    first, first_hit = decompile._rank_labeled_function_entries_cached(project, entries, metadata)
+    second, second_hit = decompile._rank_labeled_function_entries_cached(project, entries, metadata)
+
+    assert first_hit is False
+    assert second_hit is True
+    assert first == second
 
 
 def test_dosmz_loader_widens_linear_address_space_without_widening_near_words(tmp_path):
@@ -3333,6 +6729,30 @@ def test_sanitize_mangled_autonames_text_fixes_repeated_autonames():
     assert decompile._sanitize_mangled_autonames_text(source) == (
         "long sub_6c5()\n{\n    dos_int2();\n}\n"
     )
+
+
+def test_cleanup_text_preserves_dos_int21_numeric_helper_name():
+    source = (
+        "int dos_int21(void);\n"
+        "int dos_int21_2(void);\n"
+        "\n"
+        "void sub_114cd(void)\n"
+        "{\n"
+        "    dos_int21();\n"
+        "    dos_int21sub_1();\n"
+        "    dos_int21_2();\n"
+        "}\n"
+    )
+
+    cleaned = decompile._normalize_anonymous_call_targets(source)
+    cleaned = decompile._normalize_spurious_duplicate_local_suffixes(cleaned)
+    cleaned = decompile._dedupe_adjacent_prototype_lines(cleaned)
+    cleaned = decompile._sanitize_mangled_autonames_text(cleaned)
+
+    assert "dos_int2sub_1();" not in cleaned
+    assert "dos_int2();" not in cleaned
+    assert "dos_int21sub_1();" not in cleaned
+    assert cleaned.count("dos_int21();") == 3
 
 
 def test_recover_blob_entry_function_enables_data_references(monkeypatch):

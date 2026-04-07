@@ -1,4 +1,8 @@
-from angr_platforms.X86_16.milestone_report import build_x86_16_milestone_report
+from angr_platforms.X86_16.milestone_report import (
+    build_x86_16_milestone_report,
+    cache_x86_16_tail_validation_detail_artifact,
+    render_x86_16_tail_validation_console_summary,
+)
 from angr_platforms.X86_16.validation_manifest import describe_x86_16_validation_triage
 
 
@@ -55,6 +59,113 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "confidence_assumption_counts": {"far_pointer_unresolved": 1},
         "confidence_evidence_counts": {"decompiled_output": 2},
         "confidence_diagnostic_counts": {"failure_class=cfg_failure": 1},
+        "tail_validation": {
+            "severity": "changed",
+            "changed_function_count": 1,
+            "coverage_count": 5,
+            "missing_count": 3,
+            "unknown_count": 0,
+            "structuring": {
+                "stable_count": 3,
+                "changed_count": 0,
+                "unknown_count": 0,
+                "missing_count": 1,
+                "coverage_count": 3,
+                "mode_counts": {"live_out": 3},
+                "top_verdicts": [],
+                "changed_functions": [],
+            },
+            "postprocess": {
+                "stable_count": 2,
+                "changed_count": 1,
+                "unknown_count": 0,
+                "missing_count": 2,
+                "coverage_count": 2,
+                "mode_counts": {"live_out": 3},
+                "top_verdicts": [
+                    {
+                        "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                        "count": 1,
+                    }
+                ],
+                "changed_functions": [
+                    {
+                        "cod_file": "cod/f14/OTHER.COD",
+                        "proc_name": "_other",
+                        "proc_kind": "NEAR",
+                        "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                    }
+                ],
+            },
+            "changed_functions": [
+                {
+                    "cod_file": "cod/f14/OTHER.COD",
+                    "proc_name": "_other",
+                    "proc_kind": "NEAR",
+                    "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                }
+            ],
+        },
+        "tail_validation_surface": {
+            "headline": "whole-tail validation changed in 1 functions",
+            "severity": "changed",
+            "merge_gate": False,
+            "changed_function_count": 1,
+            "changed_stage_total": 1,
+            "coverage_count": 5,
+            "missing_stage_total": 3,
+            "unknown_stage_total": 0,
+            "stage_rows": [
+                {
+                    "stage": "structuring",
+                    "changed_count": 0,
+                    "stable_count": 3,
+                    "unknown_count": 0,
+                    "missing_count": 1,
+                    "coverage_count": 3,
+                    "changed_rate": 0.0,
+                    "coverage_rate": 0.3,
+                    "mode_counts": {"live_out": 3},
+                    "top_verdicts": [],
+                },
+                {
+                    "stage": "postprocess",
+                    "changed_count": 1,
+                    "stable_count": 2,
+                    "unknown_count": 0,
+                    "missing_count": 2,
+                    "coverage_count": 2,
+                    "changed_rate": 0.1,
+                    "coverage_rate": 0.3,
+                    "mode_counts": {"live_out": 3},
+                    "top_verdicts": [
+                        {
+                            "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                            "count": 1,
+                        }
+                    ],
+                },
+            ],
+            "stage_hotspots": [
+                {
+                    "stage": "postprocess",
+                    "changed_count": 1,
+                    "changed_rate": 0.1,
+                    "top_verdicts": [
+                        {
+                            "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                            "count": 1,
+                        }
+                    ],
+                }
+            ],
+            "top_changed_verdicts": [
+                {
+                    "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                    "count": 1,
+                }
+            ],
+        },
         "results": [
             {
                 "cod_file": "cod/f14/MONOPRIN.COD",
@@ -113,6 +224,8 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "block_lift_rate": 0.1,
     }
     assert report["blind_spot_budget"] == scan_summary["blind_spot_budget"]
+    assert report["tail_validation"] == scan_summary["tail_validation"]
+    assert report["tail_validation_surface"] == scan_summary["tail_validation_surface"]
     assert report["corpus_completion"] == {
         "no_crashes": False,
         "no_blind_spots": True,
@@ -140,6 +253,8 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "confidence_assumption_counts": scan_summary["confidence_assumption_counts"],
         "confidence_evidence_counts": scan_summary["confidence_evidence_counts"],
         "confidence_diagnostic_counts": scan_summary["confidence_diagnostic_counts"],
+        "tail_validation": scan_summary["tail_validation"],
+        "tail_validation_surface": scan_summary["tail_validation_surface"],
         "blind_spot_budget": scan_summary["blind_spot_budget"],
         "stable_by_traversal": False,
         "merge_gate": False,
@@ -757,3 +872,149 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
     ]
     assert len(report["readability_set"]) >= 4
     assert report["hotspots"]["top_failure_classes"][0]["failure_class"] == "cfg_failure"
+
+
+def test_x86_16_tail_validation_console_summary_is_brief_when_clean(tmp_path):
+    rendered = render_x86_16_tail_validation_console_summary(
+        {
+            "headline": "whole-tail validation clean across 12 functions",
+            "severity": "clean",
+            "merge_gate": True,
+            "baseline_status": "matches_baseline",
+            "baseline_unexpected_count": 0,
+            "baseline_missing_count": 0,
+            "stage_hotspots": [],
+            "top_changed_verdicts": [],
+        },
+        cache_path=tmp_path / "tail_validation_console.json",
+    )
+
+    assert rendered["cache_hit"] is False
+    assert rendered["lines"] == [
+        "whole-tail validation clean across 12 functions",
+        "baseline=matches_baseline unexpected=0 missing=0",
+    ]
+
+
+def test_x86_16_tail_validation_console_summary_expands_when_changed_and_uses_cache(tmp_path):
+    cache_path = tmp_path / "tail_validation_console.json"
+    surface = {
+        "headline": "whole-tail validation changed in 2 functions",
+        "severity": "changed",
+        "merge_gate": False,
+        "baseline_status": "regressed",
+        "baseline_unexpected_count": 2,
+        "baseline_missing_count": 0,
+        "coverage_count": 0,
+        "missing_stage_total": 0,
+        "unknown_stage_total": 0,
+        "stage_hotspots": [
+            {
+                "stage": "postprocess",
+                "changed_count": 2,
+                "changed_rate": 0.25,
+                "top_verdicts": [
+                    {"verdict": "postprocess whole-tail validation [live_out] changed: helper", "count": 2}
+                ],
+            },
+            {
+                "stage": "structuring",
+                "changed_count": 1,
+                "changed_rate": 0.125,
+                "top_verdicts": [
+                    {"verdict": "structuring whole-tail validation [live_out] changed: guard", "count": 1}
+                ],
+            },
+        ],
+        "top_changed_verdicts": [
+            {"verdict": "postprocess whole-tail validation [live_out] changed: helper", "count": 2},
+            {"verdict": "structuring whole-tail validation [live_out] changed: guard", "count": 1},
+        ],
+        "top_changed_functions": [
+            {
+                "cod_file": "DOSFUNC.COD",
+                "proc_name": "_dos_resize",
+                "proc_kind": "NEAR",
+                "stages": ("postprocess", "structuring"),
+                "verdicts": (
+                    "structuring whole-tail validation [live_out] changed: guard",
+                    "postprocess whole-tail validation [live_out] changed: helper",
+                ),
+                "changed_stage_count": 2,
+            },
+            {
+                "cod_file": "DOSFUNC.COD",
+                "proc_name": "_dos_alloc",
+                "proc_kind": "NEAR",
+                "stages": ("postprocess",),
+                "verdicts": ("postprocess whole-tail validation [live_out] changed: helper",),
+                "changed_stage_count": 1,
+            },
+        ],
+    }
+
+    first = render_x86_16_tail_validation_console_summary(surface, cache_path=cache_path)
+    second = render_x86_16_tail_validation_console_summary(surface, cache_path=cache_path)
+
+    assert first["cache_hit"] is False
+    assert first["lines"] == [
+        "whole-tail validation changed in 2 functions",
+        "severity=changed merge_gate=hold",
+        "baseline=regressed unexpected=2 missing=0",
+        "coverage=0 missing=0 unknown=0",
+        "stage=postprocess changed=2 rate=0.25",
+        "stage=structuring changed=1 rate=0.125",
+        "verdict[2] postprocess whole-tail validation [live_out] changed: helper",
+        "verdict[1] structuring whole-tail validation [live_out] changed: guard",
+        "function[postprocess,structuring] DOSFUNC.COD:_dos_resize (NEAR): structuring whole-tail validation [live_out] changed: guard",
+        "function[postprocess] DOSFUNC.COD:_dos_alloc (NEAR): postprocess whole-tail validation [live_out] changed: helper",
+    ]
+    assert second["cache_hit"] is True
+    assert second["lines"] == first["lines"]
+
+
+def test_x86_16_tail_validation_console_summary_calls_out_uncollected_coverage(tmp_path):
+    rendered = render_x86_16_tail_validation_console_summary(
+        {
+            "headline": "whole-tail validation not collected across 8 functions",
+            "severity": "uncollected",
+            "merge_gate": False,
+            "coverage_count": 0,
+            "missing_stage_total": 16,
+            "unknown_stage_total": 0,
+            "stage_hotspots": [],
+            "top_changed_verdicts": [],
+        },
+        cache_path=tmp_path / "tail_validation_console.json",
+    )
+
+    assert rendered["lines"] == [
+        "whole-tail validation not collected across 8 functions",
+        "severity=uncollected merge_gate=hold",
+        "coverage=0 missing=16 unknown=0",
+    ]
+
+
+def test_x86_16_tail_validation_detail_artifact_uses_cache(tmp_path):
+    cache_path = tmp_path / "tail_validation_surface.json"
+    surface = {
+        "headline": "whole-tail validation changed in 1 functions",
+        "severity": "changed",
+        "top_changed_functions": [
+            {
+                "cod_file": "LIFE.COD",
+                "proc_name": "_step",
+                "proc_kind": "NEAR",
+                "stages": ("postprocess",),
+                "verdicts": ("postprocess whole-tail validation [live_out] changed: helper",),
+                "changed_stage_count": 1,
+            }
+        ],
+    }
+
+    first = cache_x86_16_tail_validation_detail_artifact(surface, cache_path=cache_path)
+    second = cache_x86_16_tail_validation_detail_artifact(surface, cache_path=cache_path)
+
+    assert first["cache_hit"] is False
+    assert second["cache_hit"] is True
+    assert second["artifact"]["top_changed_functions"][0]["proc_name"] == "_step"

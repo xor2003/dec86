@@ -29,6 +29,10 @@ from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed
 from .recovery_confidence import classify_x86_16_recovery_confidence, summarize_recovery_confidence
 from .readability_goals import classify_readability_cluster
 from .lift_86_16 import Lifter86_16  # noqa: F401
+from .tail_validation import (
+    build_x86_16_tail_validation_aggregate,
+    extract_x86_16_tail_validation_snapshot,
+)
 
 
 ENTRY_RE = re.compile(r"\*\*\*\s+([0-9A-Fa-f]+)\s+((?:[0-9A-Fa-f]{2}\s+)+)(.*)$")
@@ -85,6 +89,7 @@ class FunctionScanResult:
     confidence_evidence_kinds: tuple[str, ...] = ()
     confidence_assumption_kinds: tuple[str, ...] = ()
     confidence_diagnostics: tuple[str, ...] = ()
+    tail_validation: dict[str, object] | None = None
     stages: list[StageResult] = field(default_factory=list)
 
 
@@ -885,6 +890,10 @@ def scan_function(
         try:
             dec = project.analyses.Decompiler(func, cfg=cfg)
             codegen = getattr(dec, "codegen", None)
+            func_info = getattr(func, "info", None)
+            result.tail_validation = extract_x86_16_tail_validation_snapshot(func_info)
+            if not result.tail_validation and codegen is not None:
+                result.tail_validation = dict(getattr(codegen, "_inertia_tail_validation_snapshot", {}) or {})
             if codegen is not None:
                 result.last_postprocess_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
                 result.last_structuring_pass = getattr(codegen, "_inertia_last_structuring_pass", None)
@@ -1119,6 +1128,20 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         {"cluster": cluster, "count": count}
         for cluster, count in sorted(readability_cluster_counter.items(), key=lambda item: (-item[1], item[0]))
     ]
+    tail_validation_records = []
+    for result in results:
+        tail_validation_records.append(
+            {
+                "cod_file": result.cod_file,
+                "proc_name": result.proc_name,
+                "proc_kind": result.proc_kind,
+                "structuring": (result.tail_validation or {}).get("structuring"),
+                "postprocess": (result.tail_validation or {}).get("postprocess"),
+            }
+        )
+    tail_validation_aggregate = build_x86_16_tail_validation_aggregate(tail_validation_records, scanned=len(results))
+    tail_validation_summary = tail_validation_aggregate["summary"]
+    tail_validation_surface = tail_validation_aggregate["surface"]
 
     return {
         "mode": mode,
@@ -1171,6 +1194,12 @@ def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str,
         "confidence_assumption_counts": dict(sorted(confidence_assumption_counter.items())),
         "confidence_evidence_counts": dict(sorted(confidence_evidence_counter.items())),
         "confidence_diagnostic_counts": dict(sorted(confidence_diagnostic_counter.items())),
+        "tail_validation": tail_validation_summary,
+        "tail_validation_surface": tail_validation_surface,
+        "tail_validation_cache": {
+            "cache_key": tail_validation_aggregate["cache_key"],
+            "cache_hit": bool(tail_validation_aggregate["cache_hit"]),
+        },
         "blind_spot_budget": {
             "full_decompile_rate": _rate(full_decompile_count),
             "cfg_only_rate": _rate(cfg_only_count),

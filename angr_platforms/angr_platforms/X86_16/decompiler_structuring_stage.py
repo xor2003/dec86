@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Callable
 
@@ -16,6 +18,16 @@ from . import type_structure_merging as _struct_merge
 from . import segmented_memory_reasoning as _segmented_mem
 from . import confidence_and_assumptions as _confidence
 from . import structuring_diagnostics as _diagnostics
+from .tail_validation import (
+    build_x86_16_tail_validation_cached_result,
+    build_x86_16_tail_validation_verdict,
+    collect_x86_16_tail_validation_summary,
+    compare_x86_16_tail_validation_summaries,
+    describe_x86_16_tail_validation_scope,
+    fingerprint_x86_16_tail_validation_boundary,
+    format_x86_16_tail_validation_diff,
+    persist_x86_16_tail_validation_snapshot,
+)
 
 __all__ = [
     "DecompilerStructuringPassSpec",
@@ -169,14 +181,69 @@ def _decompile_structuring_8616(self):
     structuring_elapsed = time.perf_counter() - structuring_started
     if self.project.arch.name != "86_16" or self.codegen is None:
         return
+    if not bool(getattr(self.project, "_inertia_tail_validation_enabled", True)):
+        changed = _structuring_codegen_8616(self.project, self.codegen)
+        function = getattr(self, "function", None) or getattr(self, "func", None)
+        if function is not None:
+            info = getattr(function, "info", None)
+            if isinstance(info, MutableMapping):
+                structuring_info = info.setdefault("x86_16_decompiler_structuring", {})
+                structuring_info["elapsed"] = structuring_elapsed
+                structuring_info["last_pass"] = getattr(self.codegen, "_inertia_last_structuring_pass", None)
+                structuring_info["changed"] = bool(changed)
+                structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
+                structuring_info["failure_pass"] = getattr(self.codegen, "_inertia_structuring_failure_pass", None)
+                structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
+                structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
+                structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
+        setattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+        self.project._inertia_decompiler_stage = "structuring_done"
+        return
 
+    validation_mode = "live_out"
+    before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
+    before_collect_started = time.perf_counter()
+    before_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
+    before_collect_elapsed = time.perf_counter() - before_collect_started
     changed = _structuring_codegen_8616(self.project, self.codegen)
-    function = getattr(self, "function", None)
+    after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
+    after_collect_started = time.perf_counter()
+    after_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
+    after_collect_elapsed = time.perf_counter() - after_collect_started
+    function = getattr(self, "function", None) or getattr(self, "func", None)
+    if function is None and getattr(getattr(self, "codegen", None), "cfunc", None) is not None:
+        addr = getattr(self.codegen.cfunc, "addr", None)
+        kb_functions = getattr(getattr(self, "project", None), "kb", None)
+        kb_functions = getattr(kb_functions, "functions", None)
+        if isinstance(addr, int) and kb_functions is not None:
+            with contextlib.suppress(Exception):
+                function = kb_functions.function(addr, create=False)
+    owner = getattr(function, "info", None) if function is not None else None
+    validation_started = time.perf_counter()
+    validation = build_x86_16_tail_validation_cached_result(
+        owner=owner if isinstance(owner, MutableMapping) else None,
+        stage="structuring",
+        mode=validation_mode,
+        before_fingerprint=before_fingerprint,
+        after_fingerprint=after_fingerprint,
+        before_summary=before_summary,
+        after_summary=after_summary,
+    )
+    validation_compare_elapsed = time.perf_counter() - validation_started
+    validation_timings = {
+        "collect_before_ms": round(before_collect_elapsed * 1000.0, 3),
+        "collect_after_ms": round(after_collect_elapsed * 1000.0, 3),
+        "compare_ms": round(validation_compare_elapsed * 1000.0, 3),
+        "total_ms": round((before_collect_elapsed + after_collect_elapsed + validation_compare_elapsed) * 1000.0, 3),
+    }
+    validation["timings"] = validation_timings
+    validation["verdict"] = build_x86_16_tail_validation_verdict("structuring", validation)
     if function is not None:
         info = getattr(function, "info", None)
-        if isinstance(info, dict):
+        if isinstance(info, MutableMapping):
             structuring_info = info.setdefault("x86_16_decompiler_structuring", {})
             structuring_info["elapsed"] = structuring_elapsed
+            structuring_info["tail_validation_timings"] = validation_timings
             structuring_info["last_pass"] = getattr(self.codegen, "_inertia_last_structuring_pass", None)
             structuring_info["changed"] = bool(changed)
             structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
@@ -184,6 +251,19 @@ def _decompile_structuring_8616(self):
             structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
             structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
             structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
+            structuring_info["tail_validation_verdict"] = validation["verdict"]
+            structuring_info["tail_validation_cache_hit"] = bool(validation.get("cache_hit", False))
+            persist_x86_16_tail_validation_snapshot(
+                function_info=info,
+                codegen=self.codegen,
+                stage="structuring",
+                validation=validation,
+            )
+    log = logging.getLogger(__name__)
+    if validation["changed"]:
+        log.warning("%s", validation["verdict"])
+    else:
+        log.info("%s", validation["verdict"])
     self.project._inertia_decompiler_stage = "structuring_done"
 
 

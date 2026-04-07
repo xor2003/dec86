@@ -1378,6 +1378,43 @@ def test_linear_recurrence_preserves_stack_byte_pair_evidence_for_assignments_an
     assert rewritten_cond.operand.rhs.value == 1
 
 
+def test_linear_recurrence_tolerates_self_referential_condition_nodes():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    temp_var = SimRegisterVariable(10, 2, name="ir_7")
+    temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    cyclic_cond = structured_c.CUnaryOp("Not", temp_cvar, codegen=codegen)
+    cyclic_cond.operand = cyclic_cond
+
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements(
+            [
+                structured_c.CIfElse(
+                    [(cyclic_cond, structured_c.CStatements([], addr=0x1000, codegen=codegen))],
+                    codegen=codegen,
+                )
+            ],
+            addr=0x1000,
+            codegen=codegen,
+        ),
+    )
+
+    decompile._coalesce_linear_recurrence_statements(codegen.project, codegen)
+    rewritten_if = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten_if, structured_c.CIfElse)
+    assert rewritten_if.condition_and_nodes[0][0] is cyclic_cond
+
+
 def test_canonicalize_stack_cvar_expr_prefers_annotated_slot():
     class _FakeCodegen:
         def __init__(self):
