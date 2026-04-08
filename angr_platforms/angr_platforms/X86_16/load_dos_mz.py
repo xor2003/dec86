@@ -107,6 +107,7 @@ class DOSMZ(Blob):
         self.mz_header_paragraphs = header.header_paragraphs
         self.mz_image_offset = image_offset
         self.mz_load_segment = load_segment
+        self.mz_relocation_entries = tuple(relocation_entries)
         self.mz_segment_spans = self._infer_segment_spans(
             header,
             relocation_entries,
