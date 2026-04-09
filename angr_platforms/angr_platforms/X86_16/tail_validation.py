@@ -47,6 +47,7 @@ __all__ = [
     "build_x86_16_tail_validation_surface",
     "build_x86_16_tail_validation_cached_result",
     "build_x86_16_validation_cache_descriptor",
+    "check_x86_16_tail_validation_surface_consistency",
     "compare_x86_16_tail_validation_baseline",
     "persist_x86_16_tail_validation_snapshot",
     "fingerprint_x86_16_tail_validation_boundary",
@@ -64,6 +65,16 @@ __all__ = [
 _TAIL_VALIDATION_MODES = {"coarse", "live_out"}
 _TAIL_VALIDATION_AGGREGATE_CACHE: dict[str, dict[str, object]] = {}
 _T = TypeVar("_T")
+_TAIL_VALIDATION_OBSERVABLE_FIELDS = (
+    "helper_calls",
+    "register_writes",
+    "stack_writes",
+    "global_writes",
+    "segmented_writes",
+    "returns",
+    "conditions",
+    "control_flow_effects",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +275,49 @@ def _normalize_zero_flag_comparison_8616(node):
     return CUnaryOp("Not", source_expr, codegen=getattr(node, "codegen", None))
 
 
+def _load_location_addr_for_word_alias_8616(node, project) -> int | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    location = _location_fingerprint(node, project)
+    for prefix in ("global:", "deref:ds:"):
+        addr = _parse_prefixed_hex_location(location, prefix)
+        if addr is not None:
+            return addr
+    return None
+
+
+def _scaled_high_byte_addr_for_word_alias_8616(node, project) -> int | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    if not isinstance(node, CBinaryOp) or node.op != "Mul":
+        return None
+    for maybe_load, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        if _c_constant_int_value(maybe_scale) != 256:
+            continue
+        return _load_location_addr_for_word_alias_8616(maybe_load, project)
+    return None
+
+
+def _word_alias_fingerprint_8616(node, project) -> str | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    if isinstance(node, CVariable):
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimMemoryVariable) and getattr(variable, "size", None) == 2:
+            addr = getattr(variable, "addr", None)
+            return f"global:{addr:#x}" if isinstance(addr, int) else None
+    if not isinstance(node, CBinaryOp) or node.op not in {"Or", "Add"}:
+        return None
+    for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        low_addr = _load_location_addr_for_word_alias_8616(low_expr, project)
+        if low_addr is None:
+            continue
+        high_addr = _scaled_high_byte_addr_for_word_alias_8616(high_expr, project)
+        if high_addr == low_addr + 1:
+            return f"global:{low_addr:#x}"
+    return None
+
+
 def _expr_fingerprint(node, project) -> str:
     if node is None:
         return "none"
@@ -271,6 +325,9 @@ def _expr_fingerprint(node, project) -> str:
     if bool_projection is not None:
         return bool_projection
     node = _normalize_zero_flag_comparison_8616(node)
+    word_alias = _word_alias_fingerprint_8616(node, project)
+    if word_alias is not None:
+        return word_alias
     if isinstance(node, CConstant):
         return f"const:{node.value!r}"
     if isinstance(node, CVariable):
@@ -466,11 +523,173 @@ def _tail_validation_records_fingerprint(records: Sequence[Mapping[str, object]]
                 "proc_kind": record.get("proc_kind"),
                 "structuring": record.get("structuring"),
                 "postprocess": record.get("postprocess"),
+                "tail_validation_uncollected": record.get("tail_validation_uncollected"),
+                "exit_kind": record.get("exit_kind"),
+                "exit_detail": record.get("exit_detail"),
             }
             for record in records
         ],
     }
     return build_x86_16_validation_cache_descriptor("tail_validation.aggregate.records", payload).fingerprint
+
+
+def _tail_validation_changed_observable_fields(entry: Mapping[str, object]) -> tuple[str, ...]:
+    delta = entry.get("delta")
+    changed_fields: list[str] = []
+    if isinstance(delta, Mapping):
+        for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS:
+            field_delta = delta.get(field_name)
+            if not isinstance(field_delta, Mapping):
+                continue
+            added = field_delta.get("added", ()) or ()
+            removed = field_delta.get("removed", ()) or ()
+            if added or removed:
+                changed_fields.append(field_name)
+        if changed_fields:
+            return tuple(changed_fields)
+
+    text_parts = []
+    for key in ("summary_text", "verdict"):
+        value = entry.get(key)
+        if isinstance(value, str):
+            text_parts.append(value)
+    combined = " ".join(text_parts)
+    return tuple(field_name for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS if f"{field_name}:" in combined)
+
+
+def _tail_validation_changed_families(entry: Mapping[str, object]) -> tuple[str, ...]:
+    fields = set(_tail_validation_changed_observable_fields(entry))
+    families: list[str] = []
+    if "helper_calls" in fields:
+        families.append("helper call delta")
+    if "register_writes" in fields:
+        families.append("live-out register delta")
+    if "stack_writes" in fields:
+        families.append("stack write delta")
+    if {"global_writes", "segmented_writes"} <= fields:
+        families.append("segmented/global write delta")
+    else:
+        if "global_writes" in fields:
+            families.append("global write delta")
+        if "segmented_writes" in fields:
+            families.append("segmented write delta")
+    if "returns" in fields:
+        families.append("return delta")
+    if "conditions" in fields or "control_flow_effects" in fields:
+        families.append("control-flow/guard delta")
+    if not families:
+        families.append("unclassified observable delta")
+    return tuple(families)
+
+
+def _tail_validation_changed_family_summary(changed_functions: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    rows: dict[str, dict[str, object]] = {}
+    for item in changed_functions:
+        if not isinstance(item, Mapping):
+            continue
+        stage = item.get("stage")
+        function_key = (item.get("cod_file"), item.get("proc_name"), item.get("proc_kind"))
+        function_label = {
+            "cod_file": item.get("cod_file"),
+            "proc_name": item.get("proc_name"),
+            "proc_kind": item.get("proc_kind"),
+        }
+        families = item.get("families")
+        if not isinstance(families, Sequence) or isinstance(families, (str, bytes)):
+            families = ("unclassified observable delta",)
+        for family in families:
+            if not isinstance(family, str) or not family:
+                continue
+            row = rows.setdefault(
+                family,
+                {
+                    "family": family,
+                    "count": 0,
+                    "stages": set(),
+                    "functions": set(),
+                    "examples": [],
+                },
+            )
+            row["count"] += 1
+            if isinstance(stage, str) and stage:
+                row["stages"].add(stage)
+            row["functions"].add(function_key)
+            if len(row["examples"]) < 5 and function_label not in row["examples"]:
+                row["examples"].append(function_label)
+
+    summarized = []
+    for row in rows.values():
+        summarized.append(
+            {
+                "family": row["family"],
+                "count": row["count"],
+                "function_count": len(row["functions"]),
+                "stages": tuple(sorted(row["stages"])),
+                "examples": tuple(row["examples"]),
+            }
+        )
+    return sorted(summarized, key=lambda item: (-int(item["count"]), item["family"]))
+
+
+def _tail_validation_sort_value(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _tail_validation_function_sort_key(item: Mapping[str, object]) -> tuple[str, str, str, str]:
+    return (
+        "" if isinstance(item.get("cod_file"), str) else "~",
+        _tail_validation_sort_value(item.get("cod_file")),
+        _tail_validation_sort_value(item.get("proc_name")),
+        _tail_validation_sort_value(item.get("proc_kind")),
+    )
+
+
+def _tail_validation_stage_status(entry: object) -> str:
+    if not isinstance(entry, Mapping):
+        return "uncollected"
+    if "changed" not in entry:
+        return "unknown"
+    return "changed" if bool(entry.get("changed", False)) else "passed"
+
+
+def _tail_validation_function_accounting(records: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    status_counts: Counter[str] = Counter()
+    for record in records:
+        stage_statuses = {
+            stage: _tail_validation_stage_status(record.get(stage))
+            for stage in ("structuring", "postprocess")
+        }
+        if "changed" in stage_statuses.values():
+            status = "changed"
+        elif "unknown" in stage_statuses.values():
+            status = "unknown"
+        elif "uncollected" in stage_statuses.values():
+            status = "uncollected"
+        else:
+            status = "passed"
+        status_counts[status] += 1
+        rows.append(
+            {
+                "cod_file": record.get("cod_file"),
+                "proc_name": record.get("proc_name"),
+                "proc_kind": record.get("proc_kind"),
+                "status": status,
+                "stage_statuses": dict(sorted(stage_statuses.items())),
+                "exit_kind": record.get("exit_kind"),
+                "exit_detail": record.get("exit_detail"),
+                "tail_validation_uncollected": bool(record.get("tail_validation_uncollected", False)),
+            }
+        )
+    rows.sort(key=_tail_validation_function_sort_key)
+    return {
+        "function_status_counts": dict(sorted(status_counts.items())),
+        "function_statuses": rows,
+        "passed_functions": [row for row in rows if row["status"] == "passed"],
+        "changed_functions": [row for row in rows if row["status"] == "changed"],
+        "unknown_functions": [row for row in rows if row["status"] == "unknown"],
+        "uncollected_functions": [row for row in rows if row["status"] == "uncollected"],
+    }
 
 
 def _tail_validation_stage_summary(records: Sequence[Mapping[str, object]], stage: str) -> dict[str, object]:
@@ -499,6 +718,7 @@ def _tail_validation_stage_summary(records: Sequence[Mapping[str, object]], stag
             changed_count += 1
             if isinstance(verdict, str) and verdict:
                 verdict_counter[verdict] += 1
+            families = _tail_validation_changed_families(entry)
             changed_functions.append(
                 {
                     "cod_file": record.get("cod_file"),
@@ -506,6 +726,7 @@ def _tail_validation_stage_summary(records: Sequence[Mapping[str, object]], stag
                     "proc_kind": record.get("proc_kind"),
                     "stage": stage,
                     "verdict": verdict,
+                    "families": families,
                 }
             )
         else:
@@ -532,6 +753,7 @@ def _tail_validation_stage_summary(records: Sequence[Mapping[str, object]], stag
         "mode_counts": dict(sorted(mode_counter.items())),
         "top_verdicts": top_verdicts,
         "changed_functions": changed_functions,
+        "changed_families": _tail_validation_changed_family_summary(changed_functions),
     }
 
 
@@ -570,6 +792,9 @@ def extract_x86_16_tail_validation_snapshot(function_info: Mapping[str, object] 
             "verdict": entry.get("verdict"),
             "summary_text": entry.get("summary_text"),
         }
+        delta = entry.get("delta")
+        if isinstance(delta, Mapping):
+            stages[stage]["delta"] = dict(delta)
     return stages
 
 
@@ -605,6 +830,9 @@ def persist_x86_16_tail_validation_snapshot(
         "verdict": validation.get("verdict"),
         "summary_text": validation.get("summary_text"),
     }
+    delta = validation.get("delta")
+    if isinstance(delta, Mapping):
+        snapshot_entry["delta"] = dict(delta)
     if isinstance(function_info, MutableMapping):
         validation_info = function_info.setdefault("x86_16_tail_validation", {})
         if isinstance(validation_info, MutableMapping):
@@ -618,6 +846,59 @@ def persist_x86_16_tail_validation_snapshot(
     return snapshot_entry
 
 
+def check_x86_16_tail_validation_surface_consistency(
+    summary: Mapping[str, object],
+    surface: Mapping[str, object],
+    *,
+    scanned: int,
+) -> tuple[str, ...]:
+    issues: list[str] = []
+    scanned_count = max(int(scanned or 0), 0)
+    structuring = dict(summary.get("structuring", {}) or {})
+    postprocess = dict(summary.get("postprocess", {}) or {})
+    stage_summaries = {"structuring": structuring, "postprocess": postprocess}
+    stage_rows = {
+        row.get("stage"): row
+        for row in surface.get("stage_rows", ()) or ()
+        if isinstance(row, Mapping) and isinstance(row.get("stage"), str)
+    }
+    expected_changed_total = sum(int(stage.get("changed_count", 0) or 0) for stage in stage_summaries.values())
+    expected_missing_total = sum(int(stage.get("missing_count", 0) or 0) for stage in stage_summaries.values())
+    expected_unknown_total = sum(int(stage.get("unknown_count", 0) or 0) for stage in stage_summaries.values())
+    expected_coverage_total = sum(int(stage.get("coverage_count", 0) or 0) for stage in stage_summaries.values())
+    checks = (
+        ("changed_stage_total", expected_changed_total),
+        ("missing_stage_total", expected_missing_total),
+        ("unknown_stage_total", expected_unknown_total),
+        ("coverage_count", expected_coverage_total),
+        ("changed_function_count", int(summary.get("changed_function_count", 0) or 0)),
+        ("passed_function_count", int(summary.get("passed_function_count", 0) or 0)),
+        ("unknown_function_count", int(summary.get("unknown_function_count", 0) or 0)),
+        ("uncollected_function_count", int(summary.get("uncollected_function_count", 0) or 0)),
+    )
+    for key, expected in checks:
+        actual = int(surface.get(key, 0) or 0)
+        if actual != expected:
+            issues.append(f"{key}: surface={actual} summary={expected}")
+    if dict(surface.get("function_status_counts", {}) or {}) != dict(summary.get("function_status_counts", {}) or {}):
+        issues.append("function_status_counts mismatch")
+    if len(surface.get("function_statuses", ()) or ()) != scanned_count:
+        issues.append(
+            f"function_statuses: surface={len(surface.get('function_statuses', ()) or ())} scanned={scanned_count}"
+        )
+    for stage_name, stage_summary in stage_summaries.items():
+        row = stage_rows.get(stage_name)
+        if not isinstance(row, Mapping):
+            issues.append(f"{stage_name}: missing stage row")
+            continue
+        for key in ("changed_count", "stable_count", "unknown_count", "missing_count", "coverage_count"):
+            actual = int(row.get(key, 0) or 0)
+            expected = int(stage_summary.get(key, 0) or 0)
+            if actual != expected:
+                issues.append(f"{stage_name}.{key}: surface={actual} summary={expected}")
+    return tuple(issues)
+
+
 def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scanned: int) -> dict[str, object]:
     scanned_count = max(int(scanned or 0), 0)
     severity = str(summary.get("severity", "uncollected"))
@@ -625,6 +906,10 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
     structuring = dict(summary.get("structuring", {}) or {})
     postprocess = dict(summary.get("postprocess", {}) or {})
     changed_functions = list(summary.get("changed_functions", []) or [])
+    function_status_counts = dict(summary.get("function_status_counts", {}) or {})
+    function_statuses = list(summary.get("function_statuses", []) or [])
+    uncollected_functions = list(summary.get("uncollected_functions", []) or [])
+    unknown_functions = list(summary.get("unknown_functions", []) or [])
     stage_rows = []
     total_changed = 0
     total_missing = 0
@@ -722,6 +1007,15 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
             item.get("proc_kind"),
         ),
     )
+    changed_families = _tail_validation_changed_family_summary(changed_functions)
+    top_uncollected_functions = sorted(
+        (dict(item) for item in uncollected_functions if isinstance(item, Mapping)),
+        key=_tail_validation_function_sort_key,
+    )
+    top_unknown_functions = sorted(
+        (dict(item) for item in unknown_functions if isinstance(item, Mapping)),
+        key=_tail_validation_function_sort_key,
+    )
 
     merge_gate = severity == "clean"
     if scanned_count == 0:
@@ -737,7 +1031,7 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
     else:
         headline = f"whole-tail validation changed in {changed_function_count} functions"
 
-    return {
+    surface = {
         "headline": headline,
         "severity": severity,
         "merge_gate": merge_gate,
@@ -746,11 +1040,25 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
         "coverage_count": total_coverage,
         "missing_stage_total": total_missing,
         "unknown_stage_total": total_unknown,
+        "function_status_counts": function_status_counts,
+        "function_statuses": function_statuses,
+        "passed_function_count": int(summary.get("passed_function_count", 0) or 0),
+        "unknown_function_count": int(summary.get("unknown_function_count", 0) or 0),
+        "uncollected_function_count": int(summary.get("uncollected_function_count", 0) or 0),
+        "top_unknown_functions": top_unknown_functions,
+        "top_uncollected_functions": top_uncollected_functions,
         "stage_rows": stage_rows,
         "stage_hotspots": stage_hotspots,
         "top_changed_verdicts": top_changed_verdicts,
         "top_changed_functions": top_changed_functions,
+        "changed_families": changed_families,
     }
+    surface["consistency_issues"] = check_x86_16_tail_validation_surface_consistency(
+        summary,
+        surface,
+        scanned=scanned_count,
+    )
+    return surface
 
 
 def _normalized_tail_validation_baseline_entries(
@@ -923,6 +1231,7 @@ def build_x86_16_tail_validation_aggregate(
 def summarize_x86_16_tail_validation_records(records: Sequence[Mapping[str, object]]) -> dict[str, object]:
     structuring = _tail_validation_stage_summary(records, "structuring")
     postprocess = _tail_validation_stage_summary(records, "postprocess")
+    function_accounting = _tail_validation_function_accounting(records)
     changed_functions = sorted(
         structuring["changed_functions"] + postprocess["changed_functions"],
         key=lambda item: (
@@ -934,6 +1243,7 @@ def summarize_x86_16_tail_validation_records(records: Sequence[Mapping[str, obje
         ),
     )
     changed_function_count = len(changed_functions)
+    changed_families = _tail_validation_changed_family_summary(changed_functions)
     coverage_count = int(structuring["coverage_count"]) + int(postprocess["coverage_count"])
     missing_count = int(structuring["missing_count"]) + int(postprocess["missing_count"])
     unknown_count = int(structuring["unknown_count"]) + int(postprocess["unknown_count"])
@@ -955,6 +1265,15 @@ def summarize_x86_16_tail_validation_records(records: Sequence[Mapping[str, obje
         "structuring": structuring,
         "postprocess": postprocess,
         "changed_functions": changed_functions,
+        "changed_families": changed_families,
+        "function_status_counts": function_accounting["function_status_counts"],
+        "function_statuses": function_accounting["function_statuses"],
+        "passed_functions": function_accounting["passed_functions"],
+        "unknown_functions": function_accounting["unknown_functions"],
+        "uncollected_functions": function_accounting["uncollected_functions"],
+        "passed_function_count": len(function_accounting["passed_functions"]),
+        "unknown_function_count": len(function_accounting["unknown_functions"]),
+        "uncollected_function_count": len(function_accounting["uncollected_functions"]),
     }
 
 
@@ -1129,16 +1448,7 @@ def compare_x86_16_tail_validation_summaries(
 ) -> dict[str, object]:
     changed = False
     diff: dict[str, object] = {"changed": False, "before": before.as_dict(), "after": after.as_dict(), "delta": {}}
-    for field_name in (
-        "helper_calls",
-        "register_writes",
-        "stack_writes",
-        "global_writes",
-        "segmented_writes",
-        "returns",
-        "conditions",
-        "control_flow_effects",
-    ):
+    for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS:
         before_values = set(getattr(before, field_name))
         after_values = set(getattr(after, field_name))
         added = tuple(sorted(after_values - before_values))
@@ -1146,8 +1456,54 @@ def compare_x86_16_tail_validation_summaries(
         if added or removed:
             changed = True
         diff["delta"][field_name] = {"added": added, "removed": removed}
+    if _cancel_ds_global_write_alias_delta(diff):
+        changed = any(
+            bool((diff["delta"].get(field_name, {}) or {}).get("added"))
+            or bool((diff["delta"].get(field_name, {}) or {}).get("removed"))
+            for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS
+        )
     diff["changed"] = changed
     return diff
+
+
+def _parse_prefixed_hex_location(value: str, prefix: str) -> int | None:
+    if not isinstance(value, str) or not value.startswith(prefix):
+        return None
+    try:
+        return int(value[len(prefix) :], 16)
+    except ValueError:
+        return None
+
+
+def _cancel_ds_global_write_alias_delta(diff: dict[str, object]) -> bool:
+    delta = diff.get("delta", {})
+    if not isinstance(delta, dict):
+        return False
+    global_delta = delta.get("global_writes", {})
+    segmented_delta = delta.get("segmented_writes", {})
+    if not isinstance(global_delta, dict) or not isinstance(segmented_delta, dict):
+        return False
+
+    changed = False
+    for global_side, segmented_side in (("added", "removed"), ("removed", "added")):
+        globals_set = set(global_delta.get(global_side, ()) or ())
+        segmented_set = set(segmented_delta.get(segmented_side, ()) or ())
+        for global_location in tuple(globals_set):
+            addr = _parse_prefixed_hex_location(global_location, "global:")
+            if addr is None:
+                continue
+            low = f"deref:ds:{addr:#x}"
+            high = f"deref:ds:{addr + 1:#x}"
+            if low not in segmented_set:
+                continue
+            globals_set.remove(global_location)
+            segmented_set.remove(low)
+            segmented_set.discard(high)
+            changed = True
+        global_delta[global_side] = tuple(sorted(globals_set))
+        segmented_delta[segmented_side] = tuple(sorted(segmented_set))
+
+    return changed
 
 
 def format_x86_16_tail_validation_diff(validation: dict[str, object]) -> str:
@@ -1156,16 +1512,7 @@ def format_x86_16_tail_validation_diff(validation: dict[str, object]) -> str:
 
     delta = validation.get("delta", {})
     parts: list[str] = []
-    for field_name in (
-        "helper_calls",
-        "register_writes",
-        "stack_writes",
-        "global_writes",
-        "segmented_writes",
-        "returns",
-        "conditions",
-        "control_flow_effects",
-    ):
+    for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS:
         field_delta = delta.get(field_name, {})
         added = field_delta.get("added", ()) or ()
         removed = field_delta.get("removed", ()) or ()
@@ -1223,16 +1570,7 @@ def describe_x86_16_tail_validation_scope() -> dict[str, object]:
             "unknown": "validation metadata existed but could not be classified into stable or changed",
         },
         "layers": ("structuring", "postprocess"),
-        "observables": (
-            "helper_calls",
-            "register_writes",
-            "stack_writes",
-            "global_writes",
-            "segmented_writes",
-            "returns",
-            "conditions",
-            "control_flow_effects",
-        ),
+        "observables": _TAIL_VALIDATION_OBSERVABLE_FIELDS,
         "ignored": (
             "temporary names",
             "dead internal rewrites",

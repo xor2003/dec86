@@ -31,6 +31,7 @@ from angr_platforms.X86_16.tail_validation import (
     build_x86_16_tail_validation_surface,
     build_x86_16_tail_validation_verdict,
     build_x86_16_validation_cache_descriptor,
+    check_x86_16_tail_validation_surface_consistency,
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_baseline,
     compare_x86_16_tail_validation_summaries,
@@ -546,6 +547,86 @@ def test_tail_validation_normalizes_ss_stack_dereference_to_stack_write():
     assert before.segmented_writes == ()
 
 
+def test_tail_validation_normalizes_ds_byte_pair_to_word_global_write():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+
+    before = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CAssignment(_ds_deref(project, 0x7002, before_codegen), _const(0x34, before_codegen), codegen=before_codegen),
+                CAssignment(_ds_deref(project, 0x7003, before_codegen), _const(0x12, before_codegen), codegen=before_codegen),
+            ],
+            before_codegen,
+        ),
+        mode="coarse",
+    )
+    after = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CAssignment(_global(0x7002, after_codegen), _const(0x1234, after_codegen), codegen=after_codegen),
+            ],
+            after_codegen,
+        ),
+        mode="coarse",
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["delta"]["global_writes"] == {"added": (), "removed": ()}
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_normalizes_ds_word_load_to_global_word_condition():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_word = CBinaryOp(
+        "Or",
+        _ds_deref(project, 0x7000, before_codegen),
+        CBinaryOp(
+            "Mul",
+            _ds_deref(project, 0x7001, before_codegen),
+            _const(256, before_codegen),
+            codegen=before_codegen,
+        ),
+        codegen=before_codegen,
+    )
+    before_condition = CBinaryOp(
+        "CmpEQ",
+        _ds_deref(project, 0x7002, before_codegen),
+        before_word,
+        codegen=before_codegen,
+    )
+    after_condition = CBinaryOp(
+        "CmpEQ",
+        _ds_deref(project, 0x7002, after_codegen),
+        _global(0x7000, after_codegen),
+        codegen=after_codegen,
+    )
+
+    before = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen([CIfElse([(before_condition, CStatements([], codegen=before_codegen))], None, codegen=before_codegen)], before_codegen),
+        mode="live_out",
+    )
+    after = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen([CIfElse([(after_condition, CStatements([], codegen=after_codegen))], None, codegen=after_codegen)], after_codegen),
+        mode="live_out",
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["delta"]["conditions"] == {"added": (), "removed": ()}
+    assert diff["delta"]["control_flow_effects"] == {"added": (), "removed": ()}
+
+
 def test_tail_validation_diff_formatter_reports_observable_delta():
     project = _project()
     before_codegen = _DummyCodegen()
@@ -605,6 +686,25 @@ def test_tail_validation_snapshot_extracts_known_stage_fields():
             "summary_text": "no observable whole-tail changes",
         }
     }
+
+
+def test_tail_validation_snapshot_preserves_delta_for_aggregate_family_reports():
+    delta = {"helper_calls": {"added": ("helper_ping",), "removed": ()}}
+    snapshot = extract_x86_16_tail_validation_snapshot(
+        {
+            "x86_16_tail_validation": {
+                "postprocess": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                    "summary_text": "helper_calls: +helper_ping",
+                    "delta": delta,
+                }
+            }
+        }
+    )
+
+    assert snapshot["postprocess"]["delta"] == delta
 
 
 def test_tail_validation_snapshot_can_be_persisted_on_codegen_without_function_info():
@@ -827,6 +927,60 @@ def test_tail_validation_surface_summarizes_headline_rates_and_hotspots():
     ]
 
 
+def test_tail_validation_surface_groups_changed_observables_into_families():
+    summary = summarize_x86_16_tail_validation_records(
+        [
+            {
+                "cod_file": "COCKPIT.COD",
+                "proc_name": "_DoCRT",
+                "proc_kind": "NEAR",
+                "postprocess": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "postprocess whole-tail validation [live_out] changed: global_writes: +global:0x7000; segmented_writes: -deref:ds:0x7000",
+                    "delta": {
+                        "global_writes": {"added": ("global:0x7000",), "removed": ()},
+                        "segmented_writes": {"added": (), "removed": ("deref:ds:0x7000",)},
+                    },
+                },
+            },
+            {
+                "cod_file": "COCKPIT.COD",
+                "proc_name": "_DisplayMaster",
+                "proc_kind": "NEAR",
+                "postprocess": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "postprocess whole-tail validation [live_out] changed: conditions: +cmp; control_flow_effects: +if:cmp",
+                    "delta": {
+                        "conditions": {"added": ("cmp",), "removed": ()},
+                        "control_flow_effects": {"added": ("if:cmp",), "removed": ()},
+                    },
+                },
+            },
+        ]
+    )
+    surface = build_x86_16_tail_validation_surface(summary, scanned=2)
+
+    assert summary["changed_families"] == [
+        {
+            "family": "control-flow/guard delta",
+            "count": 1,
+            "function_count": 1,
+            "stages": ("postprocess",),
+            "examples": ({"cod_file": "COCKPIT.COD", "proc_name": "_DisplayMaster", "proc_kind": "NEAR"},),
+        },
+        {
+            "family": "segmented/global write delta",
+            "count": 1,
+            "function_count": 1,
+            "stages": ("postprocess",),
+            "examples": ({"cod_file": "COCKPIT.COD", "proc_name": "_DoCRT", "proc_kind": "NEAR"},),
+        },
+    ]
+    assert surface["changed_families"] == summary["changed_families"]
+
+
 def test_tail_validation_record_summary_marks_uncollected_separately_from_unknown():
     summary = summarize_x86_16_tail_validation_records(
         [
@@ -840,10 +994,61 @@ def test_tail_validation_record_summary_marks_uncollected_separately_from_unknow
     assert summary["coverage_count"] == 0
     assert summary["missing_count"] == 4
     assert summary["unknown_count"] == 0
+    assert summary["function_status_counts"] == {"uncollected": 2}
+    assert summary["uncollected_function_count"] == 2
+    assert summary["uncollected_functions"] == [
+        {
+            "cod_file": "A.COD",
+            "proc_name": "_a",
+            "proc_kind": "NEAR",
+            "status": "uncollected",
+            "stage_statuses": {"postprocess": "uncollected", "structuring": "uncollected"},
+            "exit_kind": None,
+            "exit_detail": None,
+            "tail_validation_uncollected": False,
+        },
+        {
+            "cod_file": "B.COD",
+            "proc_name": "_b",
+            "proc_kind": "NEAR",
+            "status": "uncollected",
+            "stage_statuses": {"postprocess": "uncollected", "structuring": "uncollected"},
+            "exit_kind": None,
+            "exit_detail": None,
+            "tail_validation_uncollected": False,
+        },
+    ]
     assert surface["headline"] == "whole-tail validation not collected across 2 functions"
     assert surface["coverage_count"] == 0
     assert surface["missing_stage_total"] == 4
     assert surface["unknown_stage_total"] == 0
+    assert surface["function_status_counts"] == {"uncollected": 2}
+    assert surface["uncollected_function_count"] == 2
+    assert surface["top_uncollected_functions"] == summary["uncollected_functions"]
+    assert surface["consistency_issues"] == ()
+
+
+def test_tail_validation_surface_consistency_checker_reports_counter_drift():
+    summary = summarize_x86_16_tail_validation_records(
+        [
+            {
+                "cod_file": "A.COD",
+                "proc_name": "_a",
+                "proc_kind": "NEAR",
+                "structuring": {"changed": False, "mode": "live_out"},
+                "postprocess": {"changed": False, "mode": "live_out"},
+            }
+        ]
+    )
+    surface = build_x86_16_tail_validation_surface(summary, scanned=1)
+    broken_surface = dict(surface)
+    broken_surface["coverage_count"] = 0
+    broken_surface["function_status_counts"] = {"uncollected": 1}
+
+    issues = check_x86_16_tail_validation_surface_consistency(summary, broken_surface, scanned=1)
+
+    assert "coverage_count: surface=0 summary=2" in issues
+    assert "function_status_counts mismatch" in issues
 
 
 def test_tail_validation_aggregate_reuses_record_fingerprint_cache():
@@ -869,12 +1074,70 @@ def test_tail_validation_aggregate_reuses_record_fingerprint_cache():
     assert second["surface"] == first["surface"]
 
 
+def test_tail_validation_function_accounting_covers_passed_changed_unknown_and_uncollected():
+    summary = summarize_x86_16_tail_validation_records(
+        [
+            {
+                "cod_file": "A.COD",
+                "proc_name": "_passed",
+                "proc_kind": "NEAR",
+                "structuring": {"changed": False, "mode": "live_out"},
+                "postprocess": {"changed": False, "mode": "live_out"},
+            },
+            {
+                "cod_file": "B.COD",
+                "proc_name": "_changed",
+                "proc_kind": "NEAR",
+                "structuring": {"changed": False, "mode": "live_out"},
+                "postprocess": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                },
+            },
+            {
+                "cod_file": "C.COD",
+                "proc_name": "_unknown",
+                "proc_kind": "NEAR",
+                "structuring": {"mode": "live_out"},
+                "postprocess": {"changed": False, "mode": "live_out"},
+            },
+            {
+                "cod_file": "D.COD",
+                "proc_name": "_uncollected",
+                "proc_kind": "NEAR",
+                "tail_validation_uncollected": True,
+                "exit_kind": "timeout",
+            },
+        ]
+    )
+    surface = build_x86_16_tail_validation_surface(summary, scanned=4)
+
+    assert summary["function_status_counts"] == {
+        "changed": 1,
+        "passed": 1,
+        "uncollected": 1,
+        "unknown": 1,
+    }
+    assert summary["passed_function_count"] == 1
+    assert summary["changed_function_count"] == 1
+    assert summary["unknown_function_count"] == 1
+    assert summary["uncollected_function_count"] == 1
+    assert surface["function_status_counts"] == summary["function_status_counts"]
+    assert surface["top_unknown_functions"][0]["proc_name"] == "_unknown"
+    assert surface["top_uncollected_functions"][0]["proc_name"] == "_uncollected"
+
+
 def test_tail_validation_aggregate_marks_missing_records_as_uncollected():
     aggregate = build_x86_16_tail_validation_aggregate([], scanned=1)
 
     assert aggregate["summary"]["severity"] == "uncollected"
     assert aggregate["summary"]["coverage_count"] == 0
     assert aggregate["summary"]["missing_count"] == 2
+    assert aggregate["summary"]["function_status_counts"] == {"uncollected": 1}
+    assert aggregate["summary"]["uncollected_function_count"] == 1
+    assert aggregate["surface"]["function_status_counts"] == {"uncollected": 1}
+    assert aggregate["surface"]["uncollected_function_count"] == 1
     assert aggregate["surface"]["headline"] == "whole-tail validation not collected across 1 functions"
 
 

@@ -86,6 +86,7 @@ def test_x86_16_package_exports_source_backends():
     assert "build_x86_16_tail_validation_cached_result" in x8616.__all__
     assert "build_x86_16_tail_validation_surface" in x8616.__all__
     assert "build_x86_16_tail_validation_verdict" in x8616.__all__
+    assert "check_x86_16_tail_validation_surface_consistency" in x8616.__all__
     assert "build_x86_16_validation_cache_descriptor" in x8616.__all__
     assert "persist_x86_16_tail_validation_snapshot" in x8616.__all__
     assert "extract_x86_16_tail_validation_snapshot" in x8616.__all__
@@ -223,6 +224,7 @@ def test_x86_16_tail_validation_exports():
     assert "build_x86_16_tail_validation_surface" in tail_validation.__all__
     assert "build_x86_16_tail_validation_verdict" in tail_validation.__all__
     assert "build_x86_16_validation_cache_descriptor" in tail_validation.__all__
+    assert "check_x86_16_tail_validation_surface_consistency" in tail_validation.__all__
     assert "persist_x86_16_tail_validation_snapshot" in tail_validation.__all__
     assert "extract_x86_16_tail_validation_snapshot" in tail_validation.__all__
     assert "x86_16_tail_validation_snapshot_passed" in tail_validation.__all__

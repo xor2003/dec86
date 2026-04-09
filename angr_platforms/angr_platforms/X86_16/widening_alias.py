@@ -32,6 +32,9 @@ class RegisterWideningCandidate:
 
 
 def _register_pair_name_for_variable(variable) -> str | None:
+    pair_name = register_pair_name(getattr(variable, "name", None))
+    if pair_name is not None:
+        return pair_name
     reg = getattr(variable, "reg", None)
     size = getattr(variable, "size", 0) or 0
     if isinstance(reg, int) and size in {1, 2}:
@@ -39,7 +42,7 @@ def _register_pair_name_for_variable(variable) -> str | None:
         pair_index = reg // 2
         if 0 <= pair_index < len(pair_names):
             return pair_names[pair_index]
-    return register_pair_name(getattr(variable, "name", None))
+    return None
 
 
 def _register_domain_and_view(variable) -> tuple[DomainKey | None, object | None]:
@@ -49,8 +52,11 @@ def _register_domain_and_view(variable) -> tuple[DomainKey | None, object | None
     domain = register_domain_for_name(pair_name)
     if domain is None:
         return None, None
-    reg = getattr(variable, "reg", None)
+    view = register_view_for_name(getattr(variable, "name", None))
     size = getattr(variable, "size", 0) or 0
+    if view is not None and view.bit_width == size * 8:
+        return domain, view
+    reg = getattr(variable, "reg", None)
     if isinstance(reg, int) and size == 1:
         view = HIGH8 if reg % 2 else LOW8
     elif isinstance(reg, int) and size == 2:

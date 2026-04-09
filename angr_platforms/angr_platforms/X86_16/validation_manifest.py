@@ -106,6 +106,61 @@ VALIDATION_FAMILIES = (
             "tests/test_x86_16_80286_verifier.py",
         ),
     ),
+    ValidationFamilySpec(
+        name="tail_validation_accounting",
+        purpose="Keep changed, unknown, and uncollected PROC identities attributable in summaries and artifacts.",
+        default_checks=(
+            "tests/test_x86_16_tail_validation.py",
+            "tests/test_x86_16_milestone_report.py",
+            "tests/test_x86_16_corpus_scan.py",
+            "tests/test_decompile_cod_dir_parallelism.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="alias_model",
+        purpose="Keep storage identity evidence-driven before widening, traits, types, or rewrite consume it.",
+        default_checks=(
+            "tests/test_x86_16_alias_register_mvp.py",
+            "tests/test_x86_16_alias_api_and_widening_proof.py",
+            "tests/test_x86_16_storage_domain_alias.py",
+            "tests/test_x86_16_segmented_memory.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="widening",
+        purpose="Keep widened storage alias-gated instead of shape-only.",
+        default_checks=(
+            "tests/test_x86_16_widening_model.py",
+            "tests/test_x86_16_alias_api_and_widening_proof.py",
+            "tests/test_x86_16_word_global_store_widening.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="segmented_memory",
+        purpose="Keep real-mode DS, SS, and ES storage distinct unless association is proven.",
+        default_checks=(
+            "tests/test_x86_16_segmented_memory.py",
+            "tests/test_x86_16_storage_domain_alias.py",
+            "tests/test_x86_16_tail_validation.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="types_objects",
+        purpose="Keep type and object recovery downstream from stable evidence.",
+        default_checks=(
+            "tests/test_x86_16_type_equivalence_classes.py",
+            "tests/test_x86_16_stack_prototype_promotion.py",
+        ),
+    ),
+    ValidationFamilySpec(
+        name="readability_guard",
+        purpose="Keep readability work non-semantic and behind validation guardrails.",
+        default_checks=(
+            "tests/test_x86_16_readability_set.py",
+            "tests/test_x86_16_readability_goals.py",
+            "tests/test_x86_16_tail_validation.py",
+        ),
+    ),
 )
 
 

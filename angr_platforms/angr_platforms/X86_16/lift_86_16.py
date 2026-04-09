@@ -760,22 +760,22 @@ class Instruction_ANY(Instruction):
 
     def compute_result(self):
         try:
-            logger.debug(f"Lifting instruction at {self.addr:04x}: {self.cs.mnemonic} {self.cs.op_str}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("Lifting instruction at %04x: %s %s", self.addr, self.cs.mnemonic, self.cs.op_str)
             if self.is_mode32 ^ bool(self.chsz_op):
                 self.instr32.exec()
             else:
                 self.instr16.exec()
 
-            # Debug: Log the IRSB and its statements
-            if hasattr(self.emu, 'irsb') and self.emu.irsb:
-                logger.debug(f"IRSB at {self.addr:04x}: {self.emu.irsb}")
-                # Access statements through the underlying IRSB if it's an IRSBCustomizer
-                irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, 'irsb') else self.emu.irsb
-                if hasattr(irsb_obj, 'statements'):
-                    for stmt in irsb_obj.statements:
-                        logger.debug(f"Statement: {type(stmt).__name__} (type: {type(stmt)})")
+            if logger.isEnabledFor(logging.DEBUG):
+                if hasattr(self.emu, 'irsb') and self.emu.irsb:
+                    logger.debug("IRSB at %04x: %s", self.addr, self.emu.irsb)
+                    irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, 'irsb') else self.emu.irsb
+                    if hasattr(irsb_obj, 'statements'):
+                        for stmt in irsb_obj.statements:
+                            logger.debug("Statement: %s (type: %s)", type(stmt).__name__, type(stmt))
 
-            logger.debug(f"IRSB generated successfully for {self.addr:04x}")
+                logger.debug("IRSB generated successfully for %04x", self.addr)
 
         except Exception as ex:
             if ex.__class__.__name__ == "ScanTimeout":

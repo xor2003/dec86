@@ -30,6 +30,12 @@ def test_x86_16_validation_families_cover_key_instruction_core_slices():
         "alu",
         "interrupt_api",
         "correctness",
+        "tail_validation_accounting",
+        "alias_model",
+        "widening",
+        "segmented_memory",
+        "types_objects",
+        "readability_guard",
     ]
     assert describe_x86_16_validation_families() == tuple(
         (family.name, family.default_checks) for family in VALIDATION_FAMILIES
@@ -41,6 +47,13 @@ def test_x86_16_validation_families_cover_key_instruction_core_slices():
     assert "tests/test_x86_16_milestone_report.py" in VALIDATION_FAMILIES[4].default_checks
     assert "tests/test_x86_16_compare_semantics.py" in VALIDATION_FAMILIES[5].default_checks
     assert "tests/test_x86_16_80286_verifier.py" in VALIDATION_FAMILIES[5].default_checks
+    assert "tests/test_x86_16_tail_validation.py" in VALIDATION_FAMILIES[6].default_checks
+    assert "tests/test_decompile_cod_dir_parallelism.py" in VALIDATION_FAMILIES[6].default_checks
+    assert "tests/test_x86_16_storage_domain_alias.py" in VALIDATION_FAMILIES[7].default_checks
+    assert "tests/test_x86_16_widening_model.py" in VALIDATION_FAMILIES[8].default_checks
+    assert "tests/test_x86_16_segmented_memory.py" in VALIDATION_FAMILIES[9].default_checks
+    assert "tests/test_x86_16_type_equivalence_classes.py" in VALIDATION_FAMILIES[10].default_checks
+    assert "tests/test_x86_16_readability_set.py" in VALIDATION_FAMILIES[11].default_checks
 
 
 def test_x86_16_validation_triage_surface_spells_out_workflow():

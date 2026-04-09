@@ -74,6 +74,134 @@ BORLAND_CC_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2
 BORLAND_GRAPHICS_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2/LIB/GRAPHICS.LIB")
 
 
+def test_emit_function_timing_summary_orders_slowest_first(capsys):
+    function_fast = SimpleNamespace(addr=0x1000, name="fast")
+    function_slow = SimpleNamespace(addr=0x2000, name="slow")
+    tasks = [
+        decompile.FunctionWorkItem(index=1, function_cfg=object(), function=function_fast),
+        decompile.FunctionWorkItem(index=2, function_cfg=object(), function=function_slow),
+    ]
+    results = {
+        1: decompile.FunctionWorkResult(
+            index=1,
+            status="ok",
+            payload="",
+            debug_output="",
+            function=function_fast,
+            function_cfg=tasks[0].function_cfg,
+            elapsed=0.25,
+        ),
+        2: decompile.FunctionWorkResult(
+            index=2,
+            status="timeout",
+            payload="",
+            debug_output="",
+            function=function_slow,
+            function_cfg=tasks[1].function_cfg,
+            elapsed=2.0,
+        ),
+    }
+
+    decompile._emit_function_timing_summary(tasks, results)
+
+    out = capsys.readouterr().out
+    assert "summary: slowest function attempt(s), top 2:" in out
+    assert out.index("0x2000 slow: 2.00s status=timed_out") < out.index(
+        "0x1000 fast: 0.25s status=decompiled"
+    )
+
+
+def test_sidecar_metadata_cache_sources_do_not_include_cli():
+    sources = {path.name for path in recovery_cache.SIDECAR_METADATA_CACHE_SOURCE_FILES}
+
+    assert "cli.py" not in sources
+    assert "sidecar_metadata.py" in sources
+    assert "sidecar_parsers.py" in sources
+    assert "omf_pat.py" in sources
+
+
+def test_emit_function_timing_summary_ignores_cached_timings(capsys):
+    function_cached = SimpleNamespace(addr=0x1000, name="cached")
+    function_current = SimpleNamespace(addr=0x2000, name="current")
+    tasks = [
+        decompile.FunctionWorkItem(index=1, function_cfg=object(), function=function_cached),
+        decompile.FunctionWorkItem(index=2, function_cfg=object(), function=function_current),
+    ]
+    results = {
+        1: decompile.FunctionWorkResult(
+            index=1,
+            status="ok",
+            payload="",
+            debug_output="",
+            function=function_cached,
+            function_cfg=tasks[0].function_cfg,
+            elapsed=99.0,
+            from_cache=True,
+        ),
+        2: decompile.FunctionWorkResult(
+            index=2,
+            status="ok",
+            payload="",
+            debug_output="",
+            function=function_current,
+            function_cfg=tasks[1].function_cfg,
+            elapsed=0.5,
+        ),
+    }
+
+    decompile._emit_function_timing_summary(tasks, results)
+
+    out = capsys.readouterr().out
+    assert "0x2000 current: 0.50s status=decompiled" in out
+    assert "0x1000 cached" not in out
+
+
+def test_asm_fallback_pattern_note_names_string_instruction_evidence():
+    note = decompile._asm_fallback_pattern_note(
+        "0x1168f: rep movsb byte ptr es:[di], byte ptr [si]\n"
+        "0x116db: rep stosw word ptr es:[di], ax\n"
+        "0x11555: repne scasb al, byte ptr es:[di]\n"
+        "0x12be2: repe cmpsb byte ptr [si], byte ptr es:[di]\n"
+    )
+
+    assert note is not None
+    assert "assembly pattern" in note
+    assert "x86 string-instruction" in note
+    assert "copy loop" in note
+    assert "fill loop" in note
+    assert "scan loop" in note
+    assert "compare loop" in note
+    assert "not guessed C" in note
+
+
+def test_function_work_cache_ignores_timeout_records(monkeypatch):
+    function = SimpleNamespace(addr=0x1234, name="sub_1234", project=None)
+    item = decompile.FunctionWorkItem(index=1, function_cfg=object(), function=function)
+    monkeypatch.setattr(decompile, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        decompile,
+        "_load_cache_json",
+        lambda *_args, **_kwargs: {
+            "status": "timeout",
+            "payload": "Timed out.",
+            "timeout": 2,
+        },
+    )
+
+    result, _debug, _cache_key, _tail_enabled, _expected_stages = decompile._function_work_cache_lookup(
+        item,
+        binary_path=None,
+        timeout=2,
+        api_style="dos",
+        enable_structured_simplify=True,
+        enable_postprocess=True,
+    )
+
+    assert result is None
+    assert "ignoring cached failed function result" in _debug
+    assert "status=timeout" in _debug
+
+
 def test_tail_validation_cache_paths_are_stable_for_direct_binary_runs():
     item = decompile.FunctionWorkItem(
         index=1,
@@ -1806,7 +1934,7 @@ def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path
                 "postprocess": {"changed": False, "verdict": "postprocess stable"},
             }
         }
-        return "ok", "int sub_1000(void) { return 1; }", 1, 4, 0.01
+        return "ok", "int sub_1000(void) { return 1; }", None, 1, 4, 0.01
 
     monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-a")
@@ -1871,13 +1999,14 @@ def test_run_function_work_item_bypasses_persistent_cache_without_passed_tail_va
                 "postprocess": {"changed": False, "verdict": "postprocess stable"},
             }
         }
-        return "ok", "int sub_1000(void) { return 2; }", 1, 4, 0.01
+        return "ok", "int sub_1000(void) { return 2; }", None, 1, 4, 0.01
 
     monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
 
     cache_key = recovery_cache._function_decompilation_cache_key(
         binary_path=binary,
         function_addr=0x1000,
+        function_name="sub_1000",
         api_style="pascal",
         enable_structured_simplify=True,
         enable_postprocess=True,
@@ -1915,10 +2044,65 @@ def test_run_function_work_item_bypasses_persistent_cache_without_passed_tail_va
             "postprocess": {"changed": False, "mode": None, "verdict": "postprocess stable", "summary_text": None},
         },
         "tail_validation_passed": True,
+        "elapsed": 0.01,
     }
 
 
-def test_run_function_work_item_uses_timeout_cache_only_with_same_or_lower_timeout(monkeypatch, tmp_path):
+def test_run_function_work_item_cache_separates_same_addr_cod_proc_names(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.cod"
+    binary.write_bytes(b"PROC")
+    calls = {"count": 0}
+
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "digest-a")
+
+    def _item(name):
+        return decompile.FunctionWorkItem(
+            index=1,
+            function_cfg=SimpleNamespace(),
+            function=SimpleNamespace(addr=0x1000, name=name, project=SimpleNamespace(), info={}),
+        )
+
+    def _fake_decompile(_project, _cfg, function, *_args, **_kwargs):
+        calls["count"] += 1
+        function.info = {
+            "x86_16_tail_validation": {
+                "structuring": {"changed": False, "verdict": "structuring stable"},
+                "postprocess": {"changed": False, "verdict": "postprocess stable"},
+            }
+        }
+        return "ok", f"void {function.name}(void) {{}}", None, 1, 4, 0.01
+
+    monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
+
+    first = decompile._run_function_work_item(
+        _item("_FirstProc"),
+        timeout=5,
+        api_style="pascal",
+        binary_path=binary,
+        cod_metadata=None,
+        synthetic_globals=None,
+        lst_metadata=None,
+        enable_structured_simplify=True,
+    )
+    second = decompile._run_function_work_item(
+        _item("_SecondProc"),
+        timeout=5,
+        api_style="pascal",
+        binary_path=binary,
+        cod_metadata=None,
+        synthetic_globals=None,
+        lst_metadata=None,
+        enable_structured_simplify=True,
+    )
+
+    assert calls["count"] == 2
+    assert "_FirstProc" in first.payload
+    assert "_SecondProc" in second.payload
+    assert "cache hit" not in second.debug_output
+
+
+def test_run_function_work_item_does_not_cache_timeout_results(monkeypatch, tmp_path):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     calls = {"count": 0}
@@ -1958,25 +2142,22 @@ def test_run_function_work_item_uses_timeout_cache_only_with_same_or_lower_timeo
         lst_metadata=None,
         enable_structured_simplify=True,
     )
-    third = decompile._run_function_work_item(
-        item,
-        timeout=6,
-        api_style="pascal",
-        binary_path=binary,
-        cod_metadata=None,
-        synthetic_globals=None,
-        lst_metadata=None,
-        enable_structured_simplify=True,
-    )
 
     assert first.status == "timeout"
     assert second.status == "timeout"
-    assert third.status == "timeout"
     assert calls["count"] == 2
-    assert "timeout cache hit" in second.debug_output
-    assert "cached_timeout=5s requested_timeout=5s" in second.debug_output
-    assert "timeout cache bypass" in third.debug_output
-    assert "cached_timeout=5 requested_timeout=6s" in third.debug_output
+    cached = decompile._load_cache_json(
+        "function_decompile",
+        recovery_cache._function_decompilation_cache_key(
+            binary_path=binary,
+            function_addr=0x1000,
+            function_name="sub_1000",
+            api_style="pascal",
+            enable_structured_simplify=True,
+            enable_postprocess=True,
+        ),
+    )
+    assert cached is None
 
 
 def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatch, tmp_path):

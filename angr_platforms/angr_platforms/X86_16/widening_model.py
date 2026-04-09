@@ -243,6 +243,8 @@ def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasS
         low_candidate = None
         high_candidate = None
     if low_candidate is not None and high_candidate is not None:
+        if alias_state is None:
+            return low_candidate.is_joinable_with(high_candidate)
         return can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof)
 
     try:

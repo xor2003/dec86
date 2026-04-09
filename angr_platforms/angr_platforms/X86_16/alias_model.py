@@ -90,11 +90,6 @@ def _storage_view_for_variable(variable) -> _StorageView:
     width_bits = size * 8 if size else None
     name = (getattr(variable, "ident", None) or getattr(variable, "name", None) or "").lower()
     if isinstance(variable, SimRegisterVariable):
-        reg = getattr(variable, "reg", None)
-        if isinstance(reg, int) and size in {1, 2}:
-            if size == 1:
-                return _StorageView(8 if reg % 2 else 0, 8)
-            return _StorageView(0, width_bits)
         low_high_offsets = {
             "al": 0,
             "ah": 8,
@@ -107,6 +102,11 @@ def _storage_view_for_variable(variable) -> _StorageView:
         }
         if name in low_high_offsets:
             return _StorageView(low_high_offsets[name], width_bits)
+        reg = getattr(variable, "reg", None)
+        if isinstance(reg, int) and size in {1, 2}:
+            if size == 1:
+                return _StorageView(8 if reg % 2 else 0, 8)
+            return _StorageView(0, width_bits)
     if isinstance(variable, SimStackVariable):
         return _StorageView(getattr(variable, "offset", 0) * 8, width_bits)
     if isinstance(variable, SimMemoryVariable):

@@ -68,6 +68,7 @@ def test_access_trait_array_evidence_can_rename_stack_objects():
             }
         }
     )
+    codegen.project = project
 
     changed = _attach_access_trait_field_names(project, codegen)
 
@@ -107,6 +108,7 @@ def test_access_trait_stack_like_evidence_uses_stack_object_naming():
             }
         }
     )
+    codegen.project = project
 
     changed = _attach_access_trait_field_names(project, codegen)
 

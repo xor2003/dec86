@@ -505,9 +505,22 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             existing_name = arg_names[index] if index < len(arg_names) else None
             desired_names.append(annotated_name or existing_name)
         normalized_names = _normalize_arg_names_8616(desired_names, target_arg_count)
+
+        stack_cvars_by_offset = {}
+        for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+            if isinstance(variable, SimStackVariable):
+                stack_cvars_by_offset.setdefault(getattr(variable, "offset", None), cvar)
         pointer_promoted = False
-        for index in range(min(target_arg_count, len(existing_args))):
-            resolved_arg = existing_args[index]
+        resolved_args = []
+        for index in range(target_arg_count):
+            annotated_offset = annotated_args[index][0] if index < len(annotated_args) else None
+            if index < len(existing_args):
+                resolved_arg = existing_args[index]
+            else:
+                resolved_arg = stack_cvars_by_offset.get(annotated_offset)
+            resolved_args.append(resolved_arg)
+            if resolved_arg is None:
+                continue
             if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
                 continue
             pointer_type = SimTypePointer(SimTypeShort(False))
@@ -538,6 +551,8 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             arg_list = getattr(codegen.cfunc, "arg_list", None)
             if isinstance(arg_list, list) and len(arg_list) > target_arg_count:
                 codegen.cfunc.arg_list = arg_list[:target_arg_count]
+            elif not arg_list and any(resolved_arg is not None for resolved_arg in resolved_args):
+                codegen.cfunc.arg_list = [resolved_arg for resolved_arg in resolved_args if resolved_arg is not None]
             return True
 
     fallback_args = [

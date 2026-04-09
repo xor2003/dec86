@@ -651,6 +651,12 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "alu",
         "interrupt_api",
         "correctness",
+        "tail_validation_accounting",
+        "alias_model",
+        "widening",
+        "segmented_memory",
+        "types_objects",
+        "readability_guard",
     ]
     assert report["decode_width_matrix"] == [
         {"name": "16/16", "operand_bits": 16, "address_bits": 16},
@@ -930,6 +936,22 @@ def test_x86_16_tail_validation_console_summary_expands_when_changed_and_uses_ca
             {"verdict": "postprocess whole-tail validation [live_out] changed: helper", "count": 2},
             {"verdict": "structuring whole-tail validation [live_out] changed: guard", "count": 1},
         ],
+        "changed_families": [
+            {
+                "family": "segmented/global write delta",
+                "count": 2,
+                "function_count": 2,
+                "stages": ("postprocess",),
+                "examples": (),
+            },
+            {
+                "family": "control-flow/guard delta",
+                "count": 1,
+                "function_count": 1,
+                "stages": ("structuring",),
+                "examples": (),
+            },
+        ],
         "top_changed_functions": [
             {
                 "cod_file": "DOSFUNC.COD",
@@ -964,6 +986,8 @@ def test_x86_16_tail_validation_console_summary_expands_when_changed_and_uses_ca
         "coverage=0 missing=0 unknown=0",
         "stage=postprocess changed=2 rate=0.25",
         "stage=structuring changed=1 rate=0.125",
+        "family[2] segmented/global write delta functions=2 stages=postprocess",
+        "family[1] control-flow/guard delta functions=1 stages=structuring",
         "verdict[2] postprocess whole-tail validation [live_out] changed: helper",
         "verdict[1] structuring whole-tail validation [live_out] changed: guard",
         "function[postprocess,structuring] DOSFUNC.COD:_dos_resize (NEAR): structuring whole-tail validation [live_out] changed: guard",
@@ -984,6 +1008,14 @@ def test_x86_16_tail_validation_console_summary_calls_out_uncollected_coverage(t
             "unknown_stage_total": 0,
             "stage_hotspots": [],
             "top_changed_verdicts": [],
+            "top_uncollected_functions": [
+                {
+                    "cod_file": "COCKPIT.COD",
+                    "proc_name": "_DisplayMaster",
+                    "proc_kind": "NEAR",
+                    "exit_kind": "timeout",
+                }
+            ],
         },
         cache_path=tmp_path / "tail_validation_console.json",
     )
@@ -992,6 +1024,7 @@ def test_x86_16_tail_validation_console_summary_calls_out_uncollected_coverage(t
         "whole-tail validation not collected across 8 functions",
         "severity=uncollected merge_gate=hold",
         "coverage=0 missing=16 unknown=0",
+        "uncollected COCKPIT.COD:_DisplayMaster (NEAR): timeout",
     ]
 
 

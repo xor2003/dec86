@@ -57,8 +57,11 @@ def _render_tail_validation_lines(surface: Mapping[str, object]) -> list[str]:
     severity = str(surface.get("severity", "uncollected"))
     merge_gate = bool(surface.get("merge_gate", False))
     stage_hotspots = list(surface.get("stage_hotspots", []) or [])
+    changed_families = list(surface.get("changed_families", []) or [])
     top_changed_verdicts = list(surface.get("top_changed_verdicts", []) or [])
     top_changed_functions = list(surface.get("top_changed_functions", []) or [])
+    top_uncollected_functions = list(surface.get("top_uncollected_functions", []) or [])
+    top_unknown_functions = list(surface.get("top_unknown_functions", []) or [])
     coverage_count = int(surface.get("coverage_count", 0) or 0)
     missing_stage_total = int(surface.get("missing_stage_total", 0) or 0)
     unknown_stage_total = int(surface.get("unknown_stage_total", 0) or 0)
@@ -80,11 +83,46 @@ def _render_tail_validation_lines(surface: Mapping[str, object]) -> list[str]:
     lines.append(
         f"coverage={coverage_count} missing={missing_stage_total} unknown={unknown_stage_total}"
     )
+    for item in top_uncollected_functions[:3]:
+        proc_name = item.get("proc_name")
+        proc_kind = item.get("proc_kind")
+        cod_file = item.get("cod_file")
+        exit_kind = item.get("exit_kind")
+        if not isinstance(proc_name, str) or not proc_name:
+            continue
+        label = proc_name
+        if isinstance(cod_file, str) and cod_file:
+            label = f"{cod_file}:{label}"
+        if isinstance(proc_kind, str) and proc_kind:
+            label = f"{label} ({proc_kind})"
+        if isinstance(exit_kind, str) and exit_kind:
+            lines.append(f"uncollected {label}: {exit_kind}")
+        else:
+            lines.append(f"uncollected {label}")
+    for item in top_unknown_functions[:3]:
+        proc_name = item.get("proc_name")
+        proc_kind = item.get("proc_kind")
+        cod_file = item.get("cod_file")
+        if not isinstance(proc_name, str) or not proc_name:
+            continue
+        label = proc_name
+        if isinstance(cod_file, str) and cod_file:
+            label = f"{cod_file}:{label}"
+        if isinstance(proc_kind, str) and proc_kind:
+            label = f"{label} ({proc_kind})"
+        lines.append(f"unknown {label}")
     for hotspot in stage_hotspots[:2]:
         stage = hotspot.get("stage", "unknown")
         changed_count = hotspot.get("changed_count", 0)
         changed_rate = hotspot.get("changed_rate", 0.0)
         lines.append(f"stage={stage} changed={changed_count} rate={changed_rate}")
+    for family_row in changed_families[:3]:
+        family = family_row.get("family")
+        count = family_row.get("count")
+        function_count = family_row.get("function_count")
+        stages = ",".join(family_row.get("stages", ()) or ())
+        if isinstance(family, str) and family:
+            lines.append(f"family[{count}] {family} functions={function_count} stages={stages}")
     for item in top_changed_verdicts[:3]:
         verdict = item.get("verdict")
         count = item.get("count")

@@ -238,9 +238,11 @@ def _decompile_structuring_8616(self):
     }
     validation["timings"] = validation_timings
     validation["verdict"] = build_x86_16_tail_validation_verdict("structuring", validation)
+    snapshot_function_info = None
     if function is not None:
         info = getattr(function, "info", None)
         if isinstance(info, MutableMapping):
+            snapshot_function_info = info
             structuring_info = info.setdefault("x86_16_decompiler_structuring", {})
             structuring_info["elapsed"] = structuring_elapsed
             structuring_info["tail_validation_timings"] = validation_timings
@@ -253,12 +255,15 @@ def _decompile_structuring_8616(self):
             structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
             structuring_info["tail_validation_verdict"] = validation["verdict"]
             structuring_info["tail_validation_cache_hit"] = bool(validation.get("cache_hit", False))
-            persist_x86_16_tail_validation_snapshot(
-                function_info=info,
-                codegen=self.codegen,
-                stage="structuring",
-                validation=validation,
-            )
+    persist_x86_16_tail_validation_snapshot(
+        function_info=snapshot_function_info,
+        codegen=self.codegen,
+        stage="structuring",
+        validation=validation,
+    )
+    snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+    if isinstance(snapshot, dict):
+        setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
     log = logging.getLogger(__name__)
     if validation["changed"]:
         log.warning("%s", validation["verdict"])

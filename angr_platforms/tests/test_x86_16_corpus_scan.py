@@ -288,7 +288,9 @@ def test_corpus_scan_summary_aggregates_tail_validation():
             "cod_file": "B.COD",
             "proc_name": "_changed",
             "proc_kind": "NEAR",
+            "stage": "postprocess",
             "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+            "families": ("helper call delta",),
         }
     ]
     assert summary["tail_validation_surface"] == {
@@ -300,6 +302,56 @@ def test_corpus_scan_summary_aggregates_tail_validation():
         "coverage_count": 3,
         "missing_stage_total": 3,
         "unknown_stage_total": 0,
+        "consistency_issues": (),
+        "function_status_counts": {"changed": 1, "passed": 1, "uncollected": 1},
+        "function_statuses": [
+            {
+                "cod_file": "A.COD",
+                "proc_name": "_stable",
+                "proc_kind": "NEAR",
+                "status": "passed",
+                "stage_statuses": {"postprocess": "passed", "structuring": "passed"},
+                "exit_kind": None,
+                "exit_detail": None,
+                "tail_validation_uncollected": False,
+            },
+            {
+                "cod_file": "B.COD",
+                "proc_name": "_changed",
+                "proc_kind": "NEAR",
+                "status": "changed",
+                "stage_statuses": {"postprocess": "changed", "structuring": "uncollected"},
+                "exit_kind": None,
+                "exit_detail": None,
+                "tail_validation_uncollected": False,
+            },
+            {
+                "cod_file": "C.COD",
+                "proc_name": "_unknown",
+                "proc_kind": "NEAR",
+                "status": "uncollected",
+                "stage_statuses": {"postprocess": "uncollected", "structuring": "uncollected"},
+                "exit_kind": None,
+                "exit_detail": None,
+                "tail_validation_uncollected": False,
+            },
+        ],
+        "passed_function_count": 1,
+        "unknown_function_count": 0,
+        "uncollected_function_count": 1,
+        "top_unknown_functions": [],
+        "top_uncollected_functions": [
+            {
+                "cod_file": "C.COD",
+                "proc_name": "_unknown",
+                "proc_kind": "NEAR",
+                "status": "uncollected",
+                "stage_statuses": {"postprocess": "uncollected", "structuring": "uncollected"},
+                "exit_kind": None,
+                "exit_detail": None,
+                "tail_validation_uncollected": False,
+            }
+        ],
         "stage_rows": [
             {
                 "stage": "structuring",
@@ -340,6 +392,25 @@ def test_corpus_scan_summary_aggregates_tail_validation():
         ],
         "top_changed_verdicts": [
             {"verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping", "count": 1}
+        ],
+        "top_changed_functions": [
+            {
+                "cod_file": "B.COD",
+                "proc_name": "_changed",
+                "proc_kind": "NEAR",
+                "stages": ("postprocess",),
+                "verdicts": ("postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",),
+                "changed_stage_count": 1,
+            }
+        ],
+        "changed_families": [
+            {
+                "family": "helper call delta",
+                "count": 1,
+                "function_count": 1,
+                "stages": ("postprocess",),
+                "examples": ({"cod_file": "B.COD", "proc_name": "_changed", "proc_kind": "NEAR"},),
+            }
         ],
     }
     assert summary["tail_validation_cache"]["cache_hit"] is False
