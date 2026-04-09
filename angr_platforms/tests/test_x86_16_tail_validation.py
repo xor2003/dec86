@@ -973,7 +973,10 @@ def test_tail_validation_verdict_includes_collection_timing_suffix():
 
 
 def test_postprocess_codegen_restores_last_clean_state_on_live_out_delta(monkeypatch):
-    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_postprocess_per_pass_validation_enabled=True,
+    )
     codegen = SimpleNamespace(cfunc=SimpleNamespace(state="baseline"), project=project)
 
     def _summary(_project, codegen_arg, *, mode="live_out"):
@@ -1021,7 +1024,10 @@ def test_postprocess_codegen_restores_last_clean_state_on_live_out_delta(monkeyp
 
 
 def test_postprocess_codegen_keeps_accepted_changes_when_live_out_stays_stable(monkeypatch):
-    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_postprocess_per_pass_validation_enabled=True,
+    )
     codegen = SimpleNamespace(cfunc=SimpleNamespace(state="baseline"), project=project)
 
     def _summary(_project, codegen_arg, *, mode="live_out"):

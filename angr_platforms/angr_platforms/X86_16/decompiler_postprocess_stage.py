@@ -158,19 +158,24 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
     codegen._inertia_postprocess_passes = tuple(spec.name for spec in pass_specs)
     validation_enabled = bool(getattr(project, "_inertia_tail_validation_enabled", True))
+    per_pass_validation_enabled = bool(
+        getattr(project, "_inertia_postprocess_per_pass_validation_enabled", False)
+    )
 
     baseline_summary = (
         collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
-        if validation_enabled
+        if validation_enabled and per_pass_validation_enabled
         else None
     )
 
     def _apply_step(pass_name: str, step_func) -> bool:
         nonlocal accepted_changed, last_changed_pass
-        snapshot = _snapshot_codegen_cfunc(codegen)
+        snapshot = _snapshot_codegen_cfunc(codegen) if per_pass_validation_enabled else None
         try:
             step_changed = bool(step_func())
         except Exception as ex:  # noqa: BLE001
+            if per_pass_validation_enabled:
+                _restore_codegen_cfunc(codegen, snapshot)
             codegen._inertia_rewrite_failed = True
             codegen._inertia_rewrite_failure_pass = pass_name
             codegen._inertia_rewrite_failure_error = str(ex)
@@ -181,7 +186,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                 ex,
             )
             return False
-        if validation_enabled:
+        if validation_enabled and per_pass_validation_enabled:
             current_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
             validation = compare_x86_16_tail_validation_summaries(baseline_summary, current_summary)
             if validation["changed"]:
