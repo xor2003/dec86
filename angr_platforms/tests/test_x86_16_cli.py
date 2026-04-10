@@ -174,6 +174,26 @@ def test_asm_fallback_pattern_note_names_string_instruction_evidence():
     assert "not guessed C" in note
 
 
+def test_default_recovery_timeout_uses_wider_default_gate():
+    assert decompile._default_recovery_timeout(20, explicit_timeout=False) == 5
+    assert decompile._default_recovery_timeout(20, explicit_timeout=True) == 5
+    assert decompile._default_recovery_timeout(3, explicit_timeout=True) == 3
+
+
+def test_adaptive_per_byte_timeout_model_scales_from_successes():
+    model = decompile._AdaptivePerByteTimeoutModel(20, explicit_timeout=False, margin=1.5)
+
+    baseline = model.timeout_for_byte_count(0x20)
+    model.observe_success(0x20, 1.0)
+    model.observe_success(0x40, 2.2)
+    model.observe_success(0x80, 4.6)
+
+    assert model.timeout_for_byte_count(0x80) > model.timeout_for_byte_count(0x20)
+    assert model.timeout_for_byte_count(0x100) >= model.timeout_for_byte_count(0x80)
+    assert model.timeout_for_byte_count(0x20) <= baseline
+
+
+
 def test_function_work_cache_ignores_timeout_records(monkeypatch):
     function = SimpleNamespace(addr=0x1234, name="sub_1234", project=None)
     item = decompile.FunctionWorkItem(index=1, function_cfg=object(), function=function)

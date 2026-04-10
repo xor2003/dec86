@@ -26,6 +26,7 @@ import angr
 
 from .arch_86_16 import Arch86_16
 from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed_calling_conventions
+from .cod_extract import join_cod_entries_with_synthetic_globals
 from .recovery_confidence import classify_x86_16_recovery_confidence, summarize_recovery_confidence
 from .readability_goals import classify_readability_cluster
 from .lift_86_16 import Lifter86_16  # noqa: F401
@@ -317,22 +318,23 @@ def extract_cod_functions(cod_path: Path) -> list[tuple[str, str, bytes]]:
     collect = False
     proc_name = ""
     proc_kind = ""
-    chunks: list[bytes] = []
+    entries: list[dict[str, object]] = []
 
     for line in lines:
         proc_match = PROC_RE.match(line)
         if proc_match:
             collect = True
             proc_name, proc_kind = proc_match.groups()
-            chunks = []
+            entries = []
             continue
 
         if collect and f"{proc_name}\tENDP" in line:
-            out.append((proc_name, proc_kind, b"".join(chunks)))
+            proc_code, _synthetic_globals = join_cod_entries_with_synthetic_globals(entries)
+            out.append((proc_name, proc_kind, proc_code))
             collect = False
             proc_name = ""
             proc_kind = ""
-            chunks = []
+            entries = []
             continue
 
         if not collect:
@@ -340,7 +342,13 @@ def extract_cod_functions(cod_path: Path) -> list[tuple[str, str, bytes]]:
 
         entry_match = ENTRY_RE.search(line)
         if entry_match:
-            chunks.append(bytes.fromhex("".join(entry_match.group(2).split())))
+            entries.append(
+                {
+                    "offset": int(entry_match.group(1), 16),
+                    "bytes": bytes.fromhex("".join(entry_match.group(2).split())),
+                    "text": entry_match.group(3).strip(),
+                }
+            )
 
     return out
 

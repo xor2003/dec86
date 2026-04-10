@@ -287,51 +287,103 @@ def join_cod_entries_with_synthetic_globals(
     end_offset: int | None = None,
     symbol_base: int = 0x7000,
 ) -> tuple[bytes, dict[int, tuple[str, int]]]:
-    global_re = re.compile(r"\b(?:BYTE|WORD|DWORD)\s+PTR\s+([A-Za-z_$?@][\w$?@]*)", re.IGNORECASE)
-    offset_global_re = re.compile(
-        r"\bOFFSET\s+(?:[A-Za-z_$?@][\w$?@]*:)?\$?([A-Za-z_$?@][\w$?@]*)",
+    displacement_re = r"(?P<disp>[+-](?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|\d+))?"
+    global_re = re.compile(
+        rf"\b(?P<width>BYTE|WORD|DWORD)\s+PTR\s+(?P<symbol>[A-Za-z_$?@][\w$?@]*){displacement_re}",
         re.IGNORECASE,
     )
-    size_re = re.compile(r"\b(BYTE|WORD|DWORD)\s+PTR\b", re.IGNORECASE)
+    offset_global_re = re.compile(
+        rf"\bOFFSET\s+(?:[A-Za-z_$?@][\w$?@]*:)?\$?(?P<symbol>[A-Za-z_$?@][\w$?@]*){displacement_re}",
+        re.IGNORECASE,
+    )
     segment_registers = {"cs", "ds", "es", "ss", "fs", "gs"}
 
-    symbol_addrs: dict[str, int] = {}
-    addr_to_name: dict[int, tuple[str, int]] = {}
-    next_addr = symbol_base
-    patched_chunks: list[bytes] = []
+    def parse_disp(value: str | None) -> int:
+        if not value:
+            return 0
+        sign = -1 if value[0] == "-" else 1
+        text = value[1:]
+        if text.lower().startswith("0x"):
+            parsed = int(text, 16)
+        elif text.upper().endswith("H"):
+            parsed = int(text[:-1], 16)
+        else:
+            parsed = int(text, 10)
+        return sign * parsed
 
+    def width_for(name: str) -> int:
+        return {"BYTE": 1, "WORD": 2, "DWORD": 4}[name.upper()]
+
+    symbol_order: list[str] = []
+    symbol_spans: dict[str, tuple[int, int, int]] = {}
+
+    def remember_symbol(symbol: str, displacement: int, width: int) -> None:
+        if symbol.lower() in segment_registers:
+            return
+        canonical_symbol = canonical_known_cod_object_name(symbol) or symbol
+        if canonical_symbol not in symbol_spans:
+            symbol_order.append(canonical_symbol)
+            symbol_spans[canonical_symbol] = (displacement, displacement + width, width)
+            return
+        start, end, max_width = symbol_spans[canonical_symbol]
+        symbol_spans[canonical_symbol] = (
+            min(start, displacement),
+            max(end, displacement + width),
+            max(max_width, width),
+        )
+
+    selected_entries: list[dict[str, object]] = []
     for entry in entries:
         offset = int(entry["offset"])
         if start_offset is not None and offset < start_offset:
             continue
         if end_offset is not None and offset >= end_offset:
             continue
+        selected_entries.append(entry)
+        text = str(entry.get("text", ""))
+        global_match = global_re.search(text)
+        if global_match is not None:
+            remember_symbol(
+                global_match.group("symbol"),
+                parse_disp(global_match.group("disp")),
+                width_for(global_match.group("width")),
+            )
+            continue
+        offset_match = offset_global_re.search(text)
+        if offset_match is not None:
+            remember_symbol(offset_match.group("symbol"), parse_disp(offset_match.group("disp")), 2)
 
+    symbol_addrs: dict[str, int] = {}
+    addr_to_name: dict[int, tuple[str, int]] = {}
+    next_addr = symbol_base
+    for symbol in symbol_order:
+        start, end, max_width = symbol_spans[symbol]
+        align = min(max_width, 2)
+        if next_addr % align:
+            next_addr += align - (next_addr % align)
+        bias = -start if start < 0 else 0
+        base_addr = next_addr + bias
+        symbol_addrs[symbol] = base_addr
+        addr_to_name[base_addr] = (symbol, max(end - min(start, 0), max_width))
+        next_addr += max(end - min(start, 0), max_width)
+
+    patched_chunks: list[bytes] = []
+
+    for entry in selected_entries:
         chunk = bytearray(entry["bytes"])
         text = str(entry.get("text", ""))
         patched = False
 
         global_match = global_re.search(text)
         offset_match = offset_global_re.search(text)
-        size_match = size_re.search(text)
-        if size_match is not None and (global_match is not None or offset_match is not None):
-            symbol = global_match.group(1) if global_match is not None else offset_match.group(1)
+        if global_match is not None:
+            symbol = global_match.group("symbol")
             if symbol.lower() in segment_registers:
                 patched_chunks.append(entry["bytes"])
                 continue
-            width_name = size_match.group(1).upper()
-            width = {"BYTE": 1, "WORD": 2, "DWORD": 4}[width_name]
 
             symbol = canonical_known_cod_object_name(symbol) or symbol
-            if symbol not in symbol_addrs:
-                align = min(width, 2)
-                if next_addr % align:
-                    next_addr += align - (next_addr % align)
-                symbol_addrs[symbol] = next_addr
-                addr_to_name[next_addr] = (symbol, width)
-                next_addr += width
-
-            target_addr = symbol_addrs[symbol]
+            target_addr = symbol_addrs[symbol] + parse_disp(global_match.group("disp"))
 
             prefix_len = 0
             while prefix_len < len(chunk) and chunk[prefix_len] in {
@@ -361,16 +413,12 @@ def join_cod_entries_with_synthetic_globals(
                         patched = True
 
         elif offset_match is not None:
-            symbol = canonical_known_cod_object_name(offset_match.group(1)) or offset_match.group(1)
+            symbol = canonical_known_cod_object_name(offset_match.group("symbol")) or offset_match.group("symbol")
             if symbol.lower() in segment_registers:
                 patched_chunks.append(entry["bytes"])
                 continue
-            if symbol not in symbol_addrs:
-                symbol_addrs[symbol] = next_addr
-                addr_to_name[next_addr] = (symbol, 2)
-                next_addr += 2
 
-            target_addr = symbol_addrs[symbol]
+            target_addr = symbol_addrs[symbol] + parse_disp(offset_match.group("disp"))
             prefix_len = 0
             while prefix_len < len(chunk) and chunk[prefix_len] in {
                 0x26,

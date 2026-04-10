@@ -975,6 +975,31 @@ def test_cod_offset_globals_are_synthesized_from_offset_immediates():
     assert "es" not in overlay_metadata.global_names
 
 
+def test_cod_synthetic_globals_preserve_symbol_displacements():
+    entries = [
+        {
+            "offset": 0,
+            "bytes": bytes.fromhex("c6 06 17 00 48"),
+            "text": "mov BYTE PTR $S424_rin+1,72",
+        },
+        {
+            "offset": 5,
+            "bytes": bytes.fromhex("c7 06 18 00 ff ff"),
+            "text": "mov WORD PTR $S424_rin+2,-1",
+        },
+        {
+            "offset": 11,
+            "bytes": bytes.fromhex("b8 16 00"),
+            "text": "mov ax,OFFSET DGROUP:$S424_rin",
+        },
+    ]
+
+    proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(entries)
+
+    assert proc_code.hex(" ") == "c6 06 01 70 48 c7 06 02 70 ff ff b8 00 70"
+    assert synthetic_globals == {0x7000: ("rin", 4)}
+
+
 def test_cod_unused_local_declarations_are_pruned():
     strlen_entries = _extract_cod_function("STRLEN.COD", "_main", cod_dir=_COD_DIR / "default")
     text = _decompile_blob(_join_entries(strlen_entries))

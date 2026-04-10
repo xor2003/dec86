@@ -200,6 +200,32 @@ def test_corpus_scan_summary_accumulates_interrupt_api_counts():
     assert summary["readability_clusters"] == []
 
 
+def test_extract_cod_functions_uses_synthetic_global_offsets(tmp_path: Path):
+    cod_path = tmp_path / "DOSFUNC.COD"
+    cod_path.write_text(
+        "\n".join(
+            [
+                "_dos_getfree\tPROC NEAR",
+                "\t*** 000000\tc6 06 17 00 48 \t\tmov\tBYTE PTR $S424_rin+1,72",
+                "\t*** 000005\tc7 06 18 00 ff ff \tmov\tWORD PTR $S424_rin+2,-1",
+                "\t*** 00000b\tb8 16 00 \t\tmov\tax,OFFSET DGROUP:$S424_rin",
+                "_dos_getfree\tENDP",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    funcs = extract_cod_functions(cod_path)
+
+    assert funcs == [
+        (
+            "_dos_getfree",
+            "NEAR",
+            bytes.fromhex("c6 06 01 70 48 c7 06 02 70 ff ff b8 00 70"),
+        )
+    ]
+
+
 def test_corpus_scan_summary_aggregates_tail_validation():
     stable = FunctionScanResult(
         cod_file="A.COD",
