@@ -104,10 +104,50 @@ def test_constant_mk_fp_literals_are_recovered_as_far_pointer_storage():
     candidates = collect_widening_candidates([expr])
 
     assert facts.domain.space == "far_pointer"
-    assert facts.identity == ("far_pointer", 0x417)
+    assert facts.identity == ("far_pointer", (0x40, 0x17))
     assert len(candidates) == 1
     assert candidates[0].domain.space == "far_pointer"
     assert candidates[0].view.bit_width == 32
+
+
+def test_far_pointers_with_same_linear_address_but_different_segments_do_not_alias():
+    codegen = _make_codegen()
+    lhs = _decompile.structured_c.CFunctionCall(
+        "MK_FP",
+        None,
+        [
+            _decompile.structured_c.CConstant(0x40, _decompile.SimTypeShort(False), codegen=codegen),
+            _decompile.structured_c.CConstant(0x17, _decompile.SimTypeShort(False), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    rhs = _decompile.structured_c.CFunctionCall(
+        "MK_FP",
+        None,
+        [
+            _decompile.structured_c.CConstant(0x41, _decompile.SimTypeShort(False), codegen=codegen),
+            _decompile.structured_c.CConstant(0x07, _decompile.SimTypeShort(False), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+
+    assert not same_alias_storage_domain(lhs, rhs)
+    assert not can_join_alias_storage(lhs, rhs)
+
+
+def test_alias_api_rejects_adjacent_memory_bytes_without_shared_identity():
+    codegen = _make_codegen()
+    low = _decompile.structured_c.CVariable(
+        _decompile.SimMemoryVariable(0x2000, 1, name="field_0"),
+        codegen=codegen,
+    )
+    high = _decompile.structured_c.CVariable(
+        _decompile.SimMemoryVariable(0x2001, 1, name="field_1"),
+        codegen=codegen,
+    )
+
+    assert same_alias_storage_domain(low, high) is False
+    assert can_join_alias_storage(low, high) is False
 
 
 def test_widening_pipeline_is_explicit_and_stable():

@@ -123,7 +123,7 @@ def _constant_int_value(expr) -> int | None:
     return None
 
 
-def _mk_fp_linear_address(expr) -> int | None:
+def _mk_fp_components(expr) -> tuple[int, int] | None:
     expr = _unwrap_c_casts(expr)
     if not isinstance(expr, structured_c.CFunctionCall) or getattr(expr, "callee_target", None) != "MK_FP":
         return None
@@ -134,7 +134,7 @@ def _mk_fp_linear_address(expr) -> int | None:
     off = _constant_int_value(args[1])
     if seg is None or off is None:
         return None
-    return (seg << 4) + off
+    return seg, off
 
 
 @dataclass(frozen=True)
@@ -230,7 +230,9 @@ class AliasStorageFacts:
             return value == other_value
         if kind == "stack":
             return value == other_value or (hasattr(value, "can_join") and value.can_join(other_value))
-        return True
+        if kind in {"memory", "far_pointer"}:
+            return value == other_value
+        return value == other_value
 
     def compatible_view(self, other: "AliasStorageFacts") -> bool:
         if self.domain.view is None or other.domain.view is None:
@@ -335,8 +337,8 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
         return _storage_domain_for_variable(variable)
     if isinstance(expr, structured_c.CConstant):
         return _StorageDomainSignature("const")
-    mk_fp_linear = _mk_fp_linear_address(expr)
-    if mk_fp_linear is not None:
+    mk_fp_components = _mk_fp_components(expr)
+    if mk_fp_components is not None:
         return _StorageDomainSignature("far_pointer", 32, _StorageView(0, 32))
     if isinstance(expr, structured_c.CUnaryOp):
         return _storage_domain_for_expr(expr.operand)
@@ -372,9 +374,9 @@ def describe_alias_storage(expr) -> AliasStorageFacts:
         if variable is not None:
             identity = _alias_identity_for_variable(variable)
     else:
-        mk_fp_linear = _mk_fp_linear_address(expr)
-        if mk_fp_linear is not None:
-            identity = ("far_pointer", mk_fp_linear)
+        mk_fp_components = _mk_fp_components(expr)
+        if mk_fp_components is not None:
+            identity = ("far_pointer", mk_fp_components)
     return AliasStorageFacts(domain, identity)
 
 

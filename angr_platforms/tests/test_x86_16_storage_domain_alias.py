@@ -43,6 +43,24 @@ def test_storage_domain_classifier_distinguishes_variable_domains():
     assert mem == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
 
 
+def test_storage_domain_classifier_preserves_far_pointer_segment_and_offset_identity():
+    codegen = _make_codegen()
+    expr = _decompile.structured_c.CFunctionCall(
+        "MK_FP",
+        None,
+        [
+            _decompile.structured_c.CConstant(0x40, _decompile.SimTypeShort(False), codegen=codegen),
+            _decompile.structured_c.CConstant(0x17, _decompile.SimTypeShort(False), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+
+    facts = _decompile.describe_alias_storage(expr)
+
+    assert facts.domain == _StorageDomainSignature("far_pointer", 32, _StorageView(0, 32))
+    assert facts.identity == ("far_pointer", (0x40, 0x17))
+
+
 def test_storage_domain_classifier_distinguishes_subregister_widths():
     assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="al")).view == _StorageView(0, 8)
     assert _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 1, name="ah")).view == _StorageView(8, 8)

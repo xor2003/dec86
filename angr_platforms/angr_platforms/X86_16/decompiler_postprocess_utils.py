@@ -23,8 +23,6 @@ __all__ = [
     "_replace_c_children_8616",
     "_iter_c_nodes_deep_8616",
     "_global_memory_addr_8616",
-    "_global_load_addr_8616",
-    "_match_scaled_high_byte_8616",
     "_make_word_global_8616",
     "_same_c_expression_8616",
     "_is_shifted_high_byte_8616",
@@ -54,10 +52,6 @@ def _segment_reg_name_8616(node, project) -> str | None:
 
 
 def _match_real_mode_linear_expr_8616(node, project) -> tuple[str | None, int | None]:
-    if isinstance(node, CConstant) and isinstance(node.value, int):
-        if 0 <= node.value <= 0xFFFFF:
-            return "ds", node.value
-
     if isinstance(node, CBinaryOp) and node.op == "Mul":
         for maybe_seg, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
             if _c_constant_value_8616(maybe_scale) != 16:
@@ -213,41 +207,6 @@ def _global_memory_addr_8616(node) -> int | None:
         return None
     addr = getattr(variable, "addr", None)
     return addr if isinstance(addr, int) else None
-
-
-def _global_load_addr_8616(node, project) -> int | None:
-    addr = _global_memory_addr_8616(node)
-    if addr is not None:
-        return addr
-    seg_name, linear = _match_segmented_dereference_8616(node, project)
-    if seg_name != "ds":
-        return None
-    return linear
-
-
-def _match_scaled_high_byte_8616(node, project) -> int | None:
-    if not isinstance(node, CBinaryOp):
-        return None
-
-    if node.op == "Mul":
-        pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
-        for maybe_load, maybe_scale in pairs:
-            if _c_constant_value_8616(maybe_scale) != 0x100:
-                continue
-            addr = _global_load_addr_8616(maybe_load, project)
-            if addr is not None:
-                return addr
-
-    if node.op == "Shl":
-        pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
-        for maybe_load, maybe_scale in pairs:
-            if _c_constant_value_8616(maybe_scale) != 8:
-                continue
-            addr = _global_load_addr_8616(maybe_load, project)
-            if addr is not None:
-                return addr
-
-    return None
 
 
 def _make_word_global_8616(codegen, addr: int):

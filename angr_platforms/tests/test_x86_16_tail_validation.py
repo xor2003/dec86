@@ -220,6 +220,45 @@ def test_tail_validation_live_out_mode_ignores_unused_temp_writes():
     assert coarse_diff["delta"]["register_writes"] == {"added": ("reg:cx",), "removed": ()}
 
 
+def test_tail_validation_diff_keeps_global_and_segmented_models_distinct():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+
+    before = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen([CReturn(_global(0x7000, before_codegen), codegen=before_codegen)], before_codegen),
+    )
+    after = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CReturn(
+                    CBinaryOp(
+                        "Or",
+                        _ds_deref(project, 0x7000, after_codegen),
+                        CBinaryOp(
+                            "Mul",
+                            _ds_deref(project, 0x7001, after_codegen),
+                            _const(0x100, after_codegen),
+                            codegen=after_codegen,
+                        ),
+                        codegen=after_codegen,
+                    ),
+                    codegen=after_codegen,
+                )
+            ],
+            after_codegen,
+        ),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is True
+    assert diff["delta"]["returns"]["added"]
+    assert diff["delta"]["returns"]["removed"]
+
+
 def test_tail_validation_live_out_ignores_register_writes_only_used_by_conditions():
     project = _project()
     before_codegen = _DummyCodegen()
@@ -547,7 +586,7 @@ def test_tail_validation_normalizes_ss_stack_dereference_to_stack_write():
     assert before.segmented_writes == ()
 
 
-def test_tail_validation_normalizes_ds_byte_pair_to_word_global_write():
+def test_tail_validation_keeps_ds_byte_pair_distinct_from_word_global_write():
     project = _project()
     before_codegen = _DummyCodegen()
     after_codegen = _DummyCodegen()
@@ -576,12 +615,12 @@ def test_tail_validation_normalizes_ds_byte_pair_to_word_global_write():
 
     diff = compare_x86_16_tail_validation_summaries(before, after)
 
-    assert diff["changed"] is False
-    assert diff["delta"]["global_writes"] == {"added": (), "removed": ()}
-    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+    assert diff["changed"] is True
+    assert diff["delta"]["global_writes"] == {"added": ("global:0x7002",), "removed": ()}
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ("deref:ds:0x7002", "deref:ds:0x7003")}
 
 
-def test_tail_validation_normalizes_ds_word_load_to_global_word_condition():
+def test_tail_validation_keeps_ds_word_load_distinct_from_global_word_condition():
     project = _project()
     before_codegen = _DummyCodegen()
     after_codegen = _DummyCodegen()
@@ -622,9 +661,11 @@ def test_tail_validation_normalizes_ds_word_load_to_global_word_condition():
 
     diff = compare_x86_16_tail_validation_summaries(before, after)
 
-    assert diff["changed"] is False
-    assert diff["delta"]["conditions"] == {"added": (), "removed": ()}
-    assert diff["delta"]["control_flow_effects"] == {"added": (), "removed": ()}
+    assert diff["changed"] is True
+    assert diff["delta"]["conditions"]["added"]
+    assert diff["delta"]["conditions"]["removed"]
+    assert diff["delta"]["control_flow_effects"]["added"]
+    assert diff["delta"]["control_flow_effects"]["removed"]
 
 
 def test_tail_validation_diff_formatter_reports_observable_delta():

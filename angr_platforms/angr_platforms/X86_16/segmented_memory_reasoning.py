@@ -55,19 +55,27 @@ class SegmentAssociation:
 
     segment_reg: SegmentRegister
     associated_space: str  # "code", "data", "stack", "unknown", etc.
+    classification: str = "unknown"
     evidence_count: int = 0
     assignments: Set[SegmentAssignment] = field(default_factory=set)
     stability: float = 0.5  # 0.0-1.0: how stable across functions
+    known_values: Set[int] = field(default_factory=set)
 
     def add_evidence(self, assignment: SegmentAssignment) -> None:
         """Add evidence for this association."""
         self.assignments.add(assignment)
         self.evidence_count += 1
+        if assignment.value is not None:
+            self.known_values.add(assignment.value)
         # Increase stability with more consistent evidence
         self.stability = min(1.0, 0.5 + (self.evidence_count * 0.05))
 
     def __repr__(self) -> str:
-        return f"{self.segment_reg.name}→{self.associated_space} (stability={self.stability:.1%}, evidence={self.evidence_count})"
+        return (
+            f"{self.segment_reg.name}→{self.associated_space}"
+            f" [{self.classification}]"
+            f" (stability={self.stability:.1%}, evidence={self.evidence_count})"
+        )
 
 
 @dataclass
@@ -99,6 +107,22 @@ class FarPointerRecovery:
         return f"FarPtr({self.name}: {self.segment_part}, {len(self.functions)} functions)"
 
 
+@dataclass(frozen=True)
+class SegmentLoweringDecision:
+    """Conservative lowering policy for one segment register."""
+
+    segment_reg: SegmentRegister
+    classification: str
+    associated_space: str
+    confidence: float
+    allow_linear_lowering: bool
+    allow_object_lowering: bool
+    reason: str
+
+    def requires_explicit_segmented_form(self) -> bool:
+        return not self.allow_linear_lowering
+
+
 class SegmentedAddressClassifier:
     """
     Classifies segmented memory accesses.
@@ -126,6 +150,8 @@ class SegmentedAddressClassifier:
         values = {s.value for s in segment_accesses if s.value is not None}
 
         if len(segments) > 1:
+            return "over_associated"
+        elif len(values) > 1:
             return "over_associated"
         elif len(values) == 1 and list(values)[0] is not None:
             return "const"
@@ -185,9 +211,12 @@ class SegmentAssociationAnalyzer:
 
             assoc = self.associations[segment_reg]
             assoc.associated_space = associated_space
+            assoc.classification = classification
 
             for access in accesses:
                 assoc.add_evidence(access)
+
+            assoc.stability = self._classification_stability(classification, assoc.evidence_count)
 
     def detect_far_pointers(self, pointer_expressions: list[SegmentedPointer]) -> dict[str, FarPointerRecovery]:
         """
@@ -218,6 +247,121 @@ class SegmentAssociationAnalyzer:
             return 0.0
         return assoc.stability
 
+    def summarize(self) -> dict[str, object]:
+        stable: dict[str, dict[str, object]] = {}
+        over_associated: dict[str, dict[str, object]] = {}
+        unknown: dict[str, dict[str, object]] = {}
+
+        for segment_reg, assoc in self.associations.items():
+            if assoc.evidence_count == 0:
+                continue
+            entry = {
+                "space": assoc.associated_space,
+                "classification": assoc.classification,
+                "confidence": assoc.stability,
+                "evidence_count": assoc.evidence_count,
+                "known_values": tuple(sorted(assoc.known_values)),
+            }
+            if assoc.classification in {"single", "const"}:
+                stable[segment_reg.name] = entry
+            elif assoc.classification == "over_associated":
+                over_associated[segment_reg.name] = entry
+            else:
+                unknown[segment_reg.name] = entry
+
+        return {
+            "stable": stable,
+            "over_associated": over_associated,
+            "unknown": unknown,
+        }
+
+    def lowering_decision(self, segment_reg: SegmentRegister) -> SegmentLoweringDecision:
+        assoc = self.associations[segment_reg]
+        classification = assoc.classification
+        space = assoc.associated_space
+        confidence = assoc.stability
+
+        if assoc.evidence_count == 0:
+            return SegmentLoweringDecision(
+                segment_reg=segment_reg,
+                classification="unknown",
+                associated_space=space,
+                confidence=0.0,
+                allow_linear_lowering=False,
+                allow_object_lowering=False,
+                reason="no evidence",
+            )
+
+        if classification == "const":
+            return SegmentLoweringDecision(
+                segment_reg=segment_reg,
+                classification=classification,
+                associated_space=space,
+                confidence=confidence,
+                allow_linear_lowering=True,
+                allow_object_lowering=space in {"data", "stack"},
+                reason="constant segment value",
+            )
+
+        if classification == "single":
+            return SegmentLoweringDecision(
+                segment_reg=segment_reg,
+                classification=classification,
+                associated_space=space,
+                confidence=confidence,
+                allow_linear_lowering=False,
+                allow_object_lowering=False,
+                reason="stable segment register but no constant base",
+            )
+
+        if classification == "over_associated":
+            return SegmentLoweringDecision(
+                segment_reg=segment_reg,
+                classification=classification,
+                associated_space=space,
+                confidence=confidence,
+                allow_linear_lowering=False,
+                allow_object_lowering=False,
+                reason="multiple incompatible segment bases",
+            )
+
+        return SegmentLoweringDecision(
+            segment_reg=segment_reg,
+            classification=classification,
+            associated_space=space,
+            confidence=confidence,
+            allow_linear_lowering=False,
+            allow_object_lowering=False,
+            reason="unknown association",
+        )
+
+    def lowering_summary(self) -> dict[str, dict[str, object]]:
+        summary: dict[str, dict[str, object]] = {}
+        for segment_reg, assoc in self.associations.items():
+            if assoc.evidence_count == 0:
+                continue
+            decision = self.lowering_decision(segment_reg)
+            summary[segment_reg.name] = {
+                "classification": decision.classification,
+                "space": decision.associated_space,
+                "confidence": decision.confidence,
+                "allow_linear_lowering": decision.allow_linear_lowering,
+                "allow_object_lowering": decision.allow_object_lowering,
+                "reason": decision.reason,
+            }
+        return summary
+
+    @staticmethod
+    def _classification_stability(classification: str, evidence_count: int) -> float:
+        base = min(1.0, 0.5 + (evidence_count * 0.05))
+        if classification == "const":
+            return min(1.0, base + 0.2)
+        if classification == "single":
+            return min(0.9, base)
+        if classification == "over_associated":
+            return max(0.2, min(0.45, base - 0.25))
+        return max(0.1, min(0.35, base - 0.2))
+
 
 def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
     """
@@ -246,6 +390,29 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
             "associations_built": 0,
             "far_pointers_detected": 0,
         }
+
+        assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+        analyzer = SegmentAssociationAnalyzer()
+        if assignments:
+            analyzer.analyze(assignments)
+            summary = analyzer.summarize()
+            lowering = analyzer.lowering_summary()
+            codegen._inertia_segmented_memory_summary = summary
+            codegen._inertia_segmented_memory_lowering = lowering
+            codegen._inertia_segmented_memory_stats = {
+                "segment_assignments": len(assignments),
+                "associations_built": sum(
+                    len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")
+                ),
+                "far_pointers_detected": 0,
+            }
+        else:
+            codegen._inertia_segmented_memory_summary = {
+                "stable": {},
+                "over_associated": {},
+                "unknown": {},
+            }
+            codegen._inertia_segmented_memory_lowering = {}
 
         logger.debug("Segmented memory association reasoning pass completed")
         return False  # No direct modifications at this stage

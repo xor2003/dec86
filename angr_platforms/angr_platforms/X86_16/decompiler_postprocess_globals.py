@@ -8,16 +8,14 @@ from angr.sim_variable import SimMemoryVariable
 
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
-    _global_load_addr_8616,
     _global_memory_addr_8616,
     _is_shifted_high_byte_8616,
     _iter_c_nodes_deep_8616,
     _make_word_global_8616,
-    _match_scaled_high_byte_8616,
-    _match_segmented_dereference_8616,
     _replace_c_children_8616,
     _same_c_expression_8616,
 )
+from .decompiler_postprocess_loads import _global_load_addr_8616, _match_global_scaled_high_byte_8616
 
 __all__ = [
     "_coalesce_word_global_loads_8616",
@@ -42,19 +40,9 @@ def _word_global_constant_store_candidate_8616(project, stmt, next_stmt) -> Word
 
     base_addr = _global_memory_addr_8616(stmt.lhs)
     if base_addr is None:
-        seg_name, linear = _match_segmented_dereference_8616(stmt.lhs, project)
-        if seg_name != "ds":
-            return None
-        base_addr = linear
-    if base_addr is None:
         return None
 
     next_addr = _global_memory_addr_8616(next_stmt.lhs)
-    if next_addr is None:
-        seg_name, linear = _match_segmented_dereference_8616(next_stmt.lhs, project)
-        if seg_name != "ds":
-            return None
-        next_addr = linear
     if next_addr != base_addr + 1:
         return None
 
@@ -110,10 +98,10 @@ def _coalesce_word_global_loads_8616(project, codegen) -> set[int]:
             return node
 
         for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
-            low_addr = _global_load_addr_8616(low_expr, project)
+            low_addr = _global_load_addr_8616(low_expr)
             if low_addr is None:
                 continue
-            high_addr = _match_scaled_high_byte_8616(high_expr, project)
+            high_addr = _match_global_scaled_high_byte_8616(high_expr)
             if high_addr != low_addr + 1:
                 continue
             changed_addrs.add(low_addr)

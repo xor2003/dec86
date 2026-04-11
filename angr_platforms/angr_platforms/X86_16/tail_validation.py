@@ -275,49 +275,6 @@ def _normalize_zero_flag_comparison_8616(node):
     return CUnaryOp("Not", source_expr, codegen=getattr(node, "codegen", None))
 
 
-def _load_location_addr_for_word_alias_8616(node, project) -> int | None:
-    while isinstance(node, CTypeCast):
-        node = node.expr
-    location = _location_fingerprint(node, project)
-    for prefix in ("global:", "deref:ds:"):
-        addr = _parse_prefixed_hex_location(location, prefix)
-        if addr is not None:
-            return addr
-    return None
-
-
-def _scaled_high_byte_addr_for_word_alias_8616(node, project) -> int | None:
-    while isinstance(node, CTypeCast):
-        node = node.expr
-    if not isinstance(node, CBinaryOp) or node.op != "Mul":
-        return None
-    for maybe_load, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
-        if _c_constant_int_value(maybe_scale) != 256:
-            continue
-        return _load_location_addr_for_word_alias_8616(maybe_load, project)
-    return None
-
-
-def _word_alias_fingerprint_8616(node, project) -> str | None:
-    while isinstance(node, CTypeCast):
-        node = node.expr
-    if isinstance(node, CVariable):
-        variable = getattr(node, "variable", None)
-        if isinstance(variable, SimMemoryVariable) and getattr(variable, "size", None) == 2:
-            addr = getattr(variable, "addr", None)
-            return f"global:{addr:#x}" if isinstance(addr, int) else None
-    if not isinstance(node, CBinaryOp) or node.op not in {"Or", "Add"}:
-        return None
-    for low_expr, high_expr in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
-        low_addr = _load_location_addr_for_word_alias_8616(low_expr, project)
-        if low_addr is None:
-            continue
-        high_addr = _scaled_high_byte_addr_for_word_alias_8616(high_expr, project)
-        if high_addr == low_addr + 1:
-            return f"global:{low_addr:#x}"
-    return None
-
-
 def _expr_fingerprint(node, project) -> str:
     if node is None:
         return "none"
@@ -325,9 +282,6 @@ def _expr_fingerprint(node, project) -> str:
     if bool_projection is not None:
         return bool_projection
     node = _normalize_zero_flag_comparison_8616(node)
-    word_alias = _word_alias_fingerprint_8616(node, project)
-    if word_alias is not None:
-        return word_alias
     if isinstance(node, CConstant):
         return f"const:{node.value!r}"
     if isinstance(node, CVariable):
@@ -1456,54 +1410,8 @@ def compare_x86_16_tail_validation_summaries(
         if added or removed:
             changed = True
         diff["delta"][field_name] = {"added": added, "removed": removed}
-    if _cancel_ds_global_write_alias_delta(diff):
-        changed = any(
-            bool((diff["delta"].get(field_name, {}) or {}).get("added"))
-            or bool((diff["delta"].get(field_name, {}) or {}).get("removed"))
-            for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS
-        )
     diff["changed"] = changed
     return diff
-
-
-def _parse_prefixed_hex_location(value: str, prefix: str) -> int | None:
-    if not isinstance(value, str) or not value.startswith(prefix):
-        return None
-    try:
-        return int(value[len(prefix) :], 16)
-    except ValueError:
-        return None
-
-
-def _cancel_ds_global_write_alias_delta(diff: dict[str, object]) -> bool:
-    delta = diff.get("delta", {})
-    if not isinstance(delta, dict):
-        return False
-    global_delta = delta.get("global_writes", {})
-    segmented_delta = delta.get("segmented_writes", {})
-    if not isinstance(global_delta, dict) or not isinstance(segmented_delta, dict):
-        return False
-
-    changed = False
-    for global_side, segmented_side in (("added", "removed"), ("removed", "added")):
-        globals_set = set(global_delta.get(global_side, ()) or ())
-        segmented_set = set(segmented_delta.get(segmented_side, ()) or ())
-        for global_location in tuple(globals_set):
-            addr = _parse_prefixed_hex_location(global_location, "global:")
-            if addr is None:
-                continue
-            low = f"deref:ds:{addr:#x}"
-            high = f"deref:ds:{addr + 1:#x}"
-            if low not in segmented_set:
-                continue
-            globals_set.remove(global_location)
-            segmented_set.remove(low)
-            segmented_set.discard(high)
-            changed = True
-        global_delta[global_side] = tuple(sorted(globals_set))
-        segmented_delta[segmented_side] = tuple(sorted(segmented_set))
-
-    return changed
 
 
 def format_x86_16_tail_validation_diff(validation: dict[str, object]) -> str:

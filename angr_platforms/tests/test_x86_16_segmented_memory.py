@@ -12,6 +12,7 @@ from angr_platforms.X86_16.segmented_memory_reasoning import (
     SegmentAssociation,
     SegmentedPointer,
     FarPointerRecovery,
+    SegmentLoweringDecision,
     SegmentedAddressClassifier,
     SegmentAssociationAnalyzer,
     apply_x86_16_segmented_memory_reasoning,
@@ -163,6 +164,21 @@ class TestFarPointerRecovery:
         assert recovery.access_count == 3
 
 
+class TestSegmentLoweringDecision:
+    def test_requires_explicit_segmented_form(self):
+        decision = SegmentLoweringDecision(
+            segment_reg=SegmentRegister.DS,
+            classification="single",
+            associated_space="data",
+            confidence=0.7,
+            allow_linear_lowering=False,
+            allow_object_lowering=False,
+            reason="stable segment register but no constant base",
+        )
+
+        assert decision.requires_explicit_segmented_form() is True
+
+
 class TestSegmentedAddressClassifier:
     """Tests for address classification."""
 
@@ -237,6 +253,7 @@ class TestSegmentAssociationAnalyzer:
         # Check associations were built
         assert analyzer.associations[SegmentRegister.CS].evidence_count > 0
         assert analyzer.associations[SegmentRegister.DS].associated_space == "data"
+        assert analyzer.associations[SegmentRegister.DS].classification == "const"
         assert analyzer.associations[SegmentRegister.SS].associated_space == "stack"
 
     def test_detect_far_pointers(self):
@@ -265,6 +282,51 @@ class TestSegmentAssociationAnalyzer:
 
         confidence = analyzer.get_association_confidence(SegmentRegister.DS)
         assert confidence > 0.5  # Should have gained confidence from evidence
+
+    def test_lowering_decision_for_const_segment_allows_linear_lowering(self):
+        analyzer = SegmentAssociationAnalyzer()
+        analyzer.analyze(
+            [
+                SegmentAssignment(SegmentRegister.DS, 0x1000, "literal", "f1", 0.9),
+                SegmentAssignment(SegmentRegister.DS, 0x1000, "literal", "f2", 0.9),
+            ]
+        )
+
+        decision = analyzer.lowering_decision(SegmentRegister.DS)
+
+        assert decision.classification == "const"
+        assert decision.allow_linear_lowering is True
+        assert decision.allow_object_lowering is True
+
+    def test_lowering_decision_for_single_segment_stays_segmented(self):
+        analyzer = SegmentAssociationAnalyzer()
+        analyzer.analyze(
+            [
+                SegmentAssignment(SegmentRegister.ES, None, "register", "f1", 0.7),
+                SegmentAssignment(SegmentRegister.ES, None, "register", "f2", 0.7),
+            ]
+        )
+
+        decision = analyzer.lowering_decision(SegmentRegister.ES)
+
+        assert decision.classification == "single"
+        assert decision.allow_linear_lowering is False
+        assert decision.allow_object_lowering is False
+
+    def test_lowering_decision_for_over_associated_segment_refuses_lowering(self):
+        analyzer = SegmentAssociationAnalyzer()
+        analyzer.analyze(
+            [
+                SegmentAssignment(SegmentRegister.DS, 0x1000, "literal", "f1", 0.9),
+                SegmentAssignment(SegmentRegister.DS, 0x2000, "literal", "f2", 0.9),
+            ]
+        )
+
+        decision = analyzer.lowering_decision(SegmentRegister.DS)
+
+        assert decision.classification == "over_associated"
+        assert decision.allow_linear_lowering is False
+        assert decision.allow_object_lowering is False
 
 
 class TestPhase3Integration:
@@ -323,7 +385,31 @@ class TestPhase3Integration:
 
         # Confidence should be lower due to over-association
         confidence = analyzer.get_association_confidence(SegmentRegister.DS)
-        assert confidence < 1.0  # Not perfectly confident
+        assert confidence < 0.5
+        assert analyzer.associations[SegmentRegister.DS].classification == "over_associated"
+
+    def test_segmented_memory_pass_records_stable_and_over_associated_summary(self):
+        class MockCodegen:
+            cfunc = object()
+            _inertia_segment_assignments = [
+                SegmentAssignment(SegmentRegister.DS, 0x1000, "literal", "f1", 0.9),
+                SegmentAssignment(SegmentRegister.DS, 0x1000, "literal", "f2", 0.9),
+                SegmentAssignment(SegmentRegister.ES, 0x2000, "literal", "f3", 0.9),
+                SegmentAssignment(SegmentRegister.ES, 0x3000, "literal", "f4", 0.9),
+            ]
+
+        codegen = MockCodegen()
+        result = apply_x86_16_segmented_memory_reasoning(codegen)
+
+        assert result is False
+        assert codegen._inertia_segmented_memory_summary["stable"]["DS"]["classification"] == "const"
+        assert (
+            codegen._inertia_segmented_memory_summary["over_associated"]["ES"]["classification"]
+            == "over_associated"
+        )
+        assert codegen._inertia_segmented_memory_lowering["DS"]["allow_linear_lowering"] is True
+        assert codegen._inertia_segmented_memory_lowering["ES"]["allow_linear_lowering"] is False
+        assert codegen._inertia_segmented_memory_stats["segment_assignments"] == 4
 
 
 if __name__ == "__main__":

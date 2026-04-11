@@ -2694,6 +2694,9 @@ def test_attach_ss_stack_variables_preserves_far_pointer_stack_local_width(monke
     class _FarPointerType:
         size = 32
 
+        def with_arch(self, _arch):
+            return self
+
     node.type = _FarPointerType()
     cfunc.statements = structured_c.CStatements([node], addr=0x10010, codegen=codegen)
 
@@ -2711,6 +2714,113 @@ def test_attach_ss_stack_variables_preserves_far_pointer_stack_local_width(monke
     assert promoted_cvar.variable.size == 4
     assert isinstance(cfunc.statements.statements[0], structured_c.CVariable)
     assert cfunc.statements.statements[0] is promoted_cvar
+
+
+def test_attach_ss_stack_variables_does_not_reuse_covering_stack_slot_for_far_pointer(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        variables_in_use={},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    covering_var = SimStackVariable(0, 8, base="bp", name="cover", region=0x10010)
+    covering_cvar = structured_c.CVariable(covering_var, codegen=codegen)
+    cfunc.variables_in_use[covering_var] = covering_cvar
+    cfunc.unified_local_vars[covering_var] = {(covering_cvar, SimTypeShort(False))}
+
+    match_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
+    node = structured_c.CAssignment(
+        covering_cvar,
+        structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    class _FarPointerType:
+        size = 32
+
+        def with_arch(self, _arch):
+            return self
+
+    node.type = _FarPointerType()
+    cfunc.statements = structured_c.CStatements([node], addr=0x10010, codegen=codegen)
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_ss_stack_reference",
+        lambda _node, _project: (match_var, covering_cvar, 2),
+    )
+
+    changed = decompile._attach_ss_stack_variables(project, codegen)
+
+    assert changed is True
+    replacement = cfunc.statements.statements[0]
+    assert isinstance(replacement, structured_c.CVariable)
+    assert replacement is not covering_cvar
+    assert isinstance(replacement.variable, SimStackVariable)
+    assert replacement.variable.offset == 2
+    assert replacement.variable.size == 4
+    assert covering_var.size == 8
+
+
+def test_coalesce_direct_ss_local_word_statements_refuses_region_mismatch(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        variables_in_use={},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    low_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
+    low_cvar = structured_c.CVariable(low_var, codegen=codegen)
+    target_var = SimStackVariable(0, 1, base="bp", name="s_0_other", region=0x20020)
+    target_cvar = structured_c.CVariable(target_var, codegen=codegen)
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                low_cvar,
+                structured_c.CVariable(low_var, codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                structured_c.CVariable(target_var, codegen=codegen),
+                structured_c.CBinaryOp(
+                    "Shr",
+                    structured_c.CVariable(low_var, codegen=codegen),
+                    structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_ss_local_plus_const",
+        lambda node, _project: (target_cvar, 1) if node is root.statements[1].lhs else None,
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_match_shift_right_8_expr",
+        lambda node: low_cvar if node is root.statements[1].rhs else None,
+    )
+
+    changed = decompile._coalesce_direct_ss_local_word_statements(project, codegen)
+
+    assert changed is False
+    assert len(cfunc.statements.statements) == 2
+    assert low_var.size == 1
 
 
 def test_coalesce_far_pointer_stack_expressions_avoids_byte_local_alias_for_far_pointer_store(monkeypatch):

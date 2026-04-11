@@ -264,6 +264,9 @@ def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasS
 def merge_storage_slice_domains(low_expr, high_expr) -> _StorageDomainSignature:
     low_domain = _storage_domain_for_expr(low_expr)
     high_domain = _storage_domain_for_expr(high_expr)
+    proof = prove_adjacent_storage_slices(low_expr, high_expr)
+    if not proof.ok:
+        return _StorageDomainSignature("mixed")
     return _merge_storage_domains(low_domain, high_domain)
 
 

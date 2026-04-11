@@ -49,17 +49,16 @@ def _make_stack_var(name: str, offset: int):
     )
 
 
-def test_widening_model_accepts_adjacent_memory_slices():
+def test_widening_model_rejects_adjacent_memory_slices_without_stable_identity():
     low = _make_var("field_0", 0x2000)
     high = _make_var("field_1", 0x2001)
 
     analysis = analyze_adjacent_storage_slices(low, high)
 
-    assert analysis.ok
-    assert analysis.reason == "ok"
-    assert analysis.merged_domain == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
-    assert can_join_adjacent_storage_slices(low, high)
-    assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("memory", 2, _StorageView(0x2000 * 8, 16))
+    assert not analysis.ok
+    assert analysis.reason == "domain_mismatch"
+    assert not can_join_adjacent_storage_slices(low, high)
+    assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("mixed")
 
 
 def test_widening_model_rejects_non_adjacent_memory_slices():
