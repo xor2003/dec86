@@ -4,7 +4,13 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
+from .helper_family_routing import summarize_x86_16_helper_family_routes
+from .helper_effect_summary import HelperEligibilitySummary, summarize_x86_16_helper_eligibility
+
 __all__ = [
+    "FunctionEffectSummary",
+    "HelperEligibilitySummary",
     "RecoveryAssumption",
     "RecoveryConfidenceSummary",
     "RecoveryEvidence",
@@ -34,6 +40,7 @@ class RecoveryConfidenceSummary:
     assumptions: tuple[RecoveryAssumption, ...] = ()
     diagnostics: tuple[str, ...] = ()
     scan_safe_classification: str = "unknown"
+    helper_summary: HelperEligibilitySummary | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -42,6 +49,7 @@ class RecoveryConfidenceSummary:
             "assumptions": [{"kind": item.kind, "detail": item.detail} for item in self.assumptions],
             "diagnostics": list(self.diagnostics),
             "scan_safe_classification": self.scan_safe_classification,
+            "helper_summary": None if self.helper_summary is None else self.helper_summary.to_dict(),
         }
 
 
@@ -75,6 +83,8 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
     reason = _value(source, "reason", None)
     failure_class = _value(source, "failure_class", None)
     stage_reached = _value(source, "stage_reached", None)
+    effect_summary = summarize_x86_16_function_effects(source)
+    helper_summary = summarize_x86_16_helper_eligibility(source)
 
     evidence: list[RecoveryEvidence] = []
     assumptions: list[RecoveryAssumption] = []
@@ -93,6 +103,21 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
         evidence.append(RecoveryEvidence("structuring_pass", f"last structuring pass: {last_structuring_pass}"))
     if last_postprocess_pass:
         evidence.append(RecoveryEvidence("postprocess_pass", f"last postprocess pass: {last_postprocess_pass}"))
+    if (
+        effect_summary.register_inputs
+        or effect_summary.register_outputs
+        or effect_summary.direct_call_count
+        or effect_summary.indirect_call_count
+        or effect_summary.direct_branch_count
+        or effect_summary.indirect_branch_count
+        or effect_summary.frame_stack_reads
+        or effect_summary.frame_stack_writes
+        or effect_summary.memory_reads
+        or effect_summary.memory_writes
+    ):
+        evidence.append(RecoveryEvidence("function_effect_summary", effect_summary.brief()))
+    if helper_summary.status == "eligible":
+        evidence.append(RecoveryEvidence("helper_eligibility", helper_summary.brief()))
     if (
         ok
         and fallback_kind == "cfg_only"
@@ -120,6 +145,13 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
                 f"{interrupt_wrapper_call_count} wrapper call(s) were observed without a settled helper mapping",
             )
         )
+        if helper_summary.status != "eligible":
+            assumptions.append(
+                RecoveryAssumption(
+                    "helper_shape_refused",
+                    helper_summary.brief(),
+                )
+            )
 
     if has_far_call_reloc and (not ok or fallback_kind not in (None, "none")):
         assumptions.append(
@@ -143,6 +175,20 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
                 "control-flow structuring still needs a stable downstream boundary",
             )
         )
+    if effect_summary.has_indirect_control():
+        assumptions.append(
+            RecoveryAssumption(
+                "indirect_control_flow",
+                "indirect call/branch behavior still needs an explicit effect-summary consumer",
+            )
+        )
+    if helper_summary.status == "refused" and interrupt_unresolved_wrapper_count > 0:
+        assumptions.append(
+            RecoveryAssumption(
+                "helper_shape_refused",
+                helper_summary.brief(),
+            )
+        )
 
     if reason:
         diagnostics.append(str(reason))
@@ -150,6 +196,10 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
         diagnostics.append(f"failure_class={failure_class}")
     if stage_reached:
         diagnostics.append(f"stage_reached={stage_reached}")
+    if effect_summary != summarize_x86_16_function_effects({}):
+        diagnostics.append(f"function_effects={effect_summary.brief()}")
+    if helper_summary.status != "no_signal":
+        diagnostics.append(f"helper_summary={helper_summary.brief()}")
 
     if (
         ok
@@ -193,6 +243,7 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
         assumptions=tuple(assumptions),
         diagnostics=tuple(diagnostics),
         scan_safe_classification=scan_safe_classification,
+        helper_summary=helper_summary,
     )
 
 
@@ -202,12 +253,38 @@ def summarize_recovery_confidence(results: list[Any]) -> dict[str, object]:
     scan_safe_counter = Counter(summary.scan_safe_classification for summary in summaries)
     assumption_counter = Counter(item.kind for summary in summaries for item in summary.assumptions)
     evidence_counter = Counter(item.kind for summary in summaries for item in summary.evidence)
+    helper_status_counter = Counter(
+        summary.helper_summary.status for summary in summaries if summary.helper_summary is not None
+    )
+    helper_candidate_counter = Counter(
+        summary.helper_summary.candidate_kind
+        for summary in summaries
+        if summary.helper_summary is not None and summary.helper_summary.candidate_kind != "none"
+    )
+    helper_refusal_counter = Counter(
+        refusal.kind
+        for summary in summaries
+        if summary.helper_summary is not None
+        for refusal in summary.helper_summary.refusals
+    )
+    helper_family_rows = tuple(
+        item.to_dict()
+        for item in summarize_x86_16_helper_family_routes(
+            summary.helper_summary
+            for summary in summaries
+            if summary.helper_summary is not None
+        )
+    )
 
     return {
         "status_counts": dict(sorted(status_counter.items())),
         "scan_safe_counts": dict(sorted(scan_safe_counter.items())),
         "assumption_counts": dict(sorted(assumption_counter.items())),
         "evidence_counts": dict(sorted(evidence_counter.items())),
+        "helper_status_counts": dict(sorted(helper_status_counter.items())),
+        "helper_candidate_counts": dict(sorted(helper_candidate_counter.items())),
+        "helper_refusal_counts": dict(sorted(helper_refusal_counter.items())),
+        "helper_family_rows": list(helper_family_rows),
     }
 
 

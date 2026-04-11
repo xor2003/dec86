@@ -40,7 +40,7 @@ class RegisterWideningCandidate:
         return cls(domain, view, expr)
 
 
-def _register_pair_name_for_variable(variable) -> str | None:
+def _register_pair_name_for_variable(variable: SimRegisterVariable) -> str | None:
     pair_name = register_pair_name(getattr(variable, "name", None))
     if pair_name is not None:
         return pair_name
@@ -54,7 +54,7 @@ def _register_pair_name_for_variable(variable) -> str | None:
     return None
 
 
-def _register_domain_and_view(variable) -> tuple[DomainKey | None, object | None]:
+def _register_domain_and_view(variable: SimRegisterVariable) -> tuple[DomainKey | None, object | None]:
     pair_name = _register_pair_name_for_variable(variable)
     if pair_name is None:
         return None, None
@@ -137,3 +137,4 @@ __all__ = [
     "can_join_adjacent_register_slices",
     "join_adjacent_register_slices",
 ]
+

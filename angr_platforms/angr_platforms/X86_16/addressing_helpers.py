@@ -306,3 +306,6 @@ def advance_ip16(emu, byte_count: int):
 
 def advance_eip32(emu, byte_count: int):
     return emu.get_gpreg(reg32_t.EIP) + emu.constant(byte_count, Type.int_32)
+
+
+

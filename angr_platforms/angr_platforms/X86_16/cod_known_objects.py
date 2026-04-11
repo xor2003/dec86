@@ -21,7 +21,7 @@ class CODKnownObjectSpec:
     type_name: str
 
 
-def _make_union_regs_type():
+def _make_union_regs_type() -> SimUnion:
     word = SimTypeShort(False)
     byte = SimTypeChar()
 
@@ -57,7 +57,7 @@ def _make_union_regs_type():
     )
 
 
-def _make_sregs_type():
+def _make_sregs_type() -> SimStruct:
     word = SimTypeShort(False)
     return SimStruct(
         OrderedDict(
@@ -73,7 +73,7 @@ def _make_sregs_type():
     )
 
 
-def _make_exe_load_params_type():
+def _make_exe_load_params_type() -> SimStruct:
     word = SimTypeShort(False)
     fields = OrderedDict(
         (
@@ -93,7 +93,7 @@ def _make_exe_load_params_type():
     return SimStruct(fields, name="struct ExeLoadParams", pack=True)
 
 
-def _make_ovl_load_params_type():
+def _make_ovl_load_params_type() -> SimStruct:
     word = SimTypeShort(False)
     return SimStruct(
         OrderedDict((("segment", word), ("reloc", word))),
@@ -102,7 +102,7 @@ def _make_ovl_load_params_type():
     )
 
 
-def _make_ovl_header_type():
+def _make_ovl_header_type() -> SimTypePointer:
     word = SimTypeShort(False)
     header = SimStruct(
         OrderedDict((("code_segment", word), ("slot", word))),
@@ -112,7 +112,7 @@ def _make_ovl_header_type():
     return SimTypePointer(header)
 
 
-def _make_slot_array_type():
+def _make_slot_array_type() -> SimTypePointer:
     return SimTypePointer(SimTypeShort(False))
 
 
@@ -270,3 +270,6 @@ def describe_x86_16_cod_known_objects() -> dict[str, object]:
             for spec in _KNOWN_COD_OBJECT_SPECS.values()
         ),
     }
+
+
+

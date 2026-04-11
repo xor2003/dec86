@@ -185,3 +185,5 @@ def apply_x86_16_typehoon_compatibility() -> None:
 
         _typehoon_lifter.TypeLifter.__init__ = _typelifter_init_16
         _typehoon_lifter.TypeLifter._lift_SimTypePointer = _lift_simtype_pointer_16
+
+

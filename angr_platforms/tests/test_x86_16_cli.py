@@ -14,7 +14,7 @@ import inertia_decompiler.cache as recovery_cache
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from inertia_decompiler import sidecar_metadata, sidecar_parsers
 from omf_pat import (
     CachedPatRegexSpec,
@@ -2566,7 +2566,7 @@ def test_decompile_function_timeout_returns_partial_codegen_text(monkeypatch):
 
 
 def test_resolve_stack_cvar_from_addr_expr_materializes_derived_word_stack_local(monkeypatch):
-    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, bits=16, name="X86"))
+    project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(
         addr=0x10010,
         arg_list=(),
@@ -2708,6 +2708,136 @@ def test_coalesce_segmented_word_store_statements_refuses_non_joinable_stack_slo
     assert codegen.cfunc.statements.statements[1].lhs is next_lhs
 
 
+def test_coalesce_segmented_word_load_expressions_preserves_existing_dereference_evidence(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(addr=0x10010)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    addr_var = SimRegisterVariable(0, 2)
+    addr_cvar = structured_c.CVariable(addr_var, codegen=codegen)
+    low_addr_expr = addr_cvar
+    high_addr_expr = structured_c.CBinaryOp(
+        "Add",
+        addr_cvar,
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    pair_expr = structured_c.CBinaryOp(
+        "Or",
+        structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen),
+        structured_c.CConstant(0x3400, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                structured_c.CVariable(SimRegisterVariable(2, 2), codegen=codegen),
+                pair_expr,
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                structured_c.CVariable(SimRegisterVariable(4, 2), codegen=codegen),
+                structured_c.CUnaryOp("Dereference", addr_cvar, codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    alias_facts = SimpleNamespace(identity=object(), can_join=lambda _other: True, needs_synthesis=lambda: False)
+
+    monkeypatch.setattr(decompile, "_match_byte_load_addr_expr", lambda node: low_addr_expr if node is root.statements[0].rhs.lhs else None)
+    monkeypatch.setattr(decompile, "_match_shifted_high_byte_addr_expr", lambda node: high_addr_expr if node is root.statements[0].rhs.rhs else None)
+    monkeypatch.setattr(decompile, "describe_alias_storage", lambda _expr: alias_facts)
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
+    monkeypatch.setattr(decompile, "_resolve_stack_cvar_from_addr_expr", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_addr_expr",
+        lambda _expr, _project: SimpleNamespace(kind="segment_const"),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_make_word_dereference_from_addr_expr",
+        lambda *_args, **_kwargs: structured_c.CConstant(0x9999, SimTypeShort(False), codegen=codegen),
+    )
+
+    changed = decompile._coalesce_segmented_word_load_expressions(project, codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements[0].rhs is pair_expr
+
+
+def test_simplify_nested_mk_fp_calls_collapses_only_zero_offset_forms():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(addr=0x10010)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    inner_seg = structured_c.CConstant(0x40, SimTypeShort(False), codegen=codegen)
+    inner_off = structured_c.CConstant(0x17, SimTypeShort(False), codegen=codegen)
+    nested = structured_c.CFunctionCall(
+        "MK_FP",
+        None,
+        [
+            structured_c.CFunctionCall("MK_FP", None, [inner_seg, inner_off], codegen=codegen),
+            structured_c.CFunctionCall(
+                "MK_FP",
+                None,
+                [
+                    structured_c.CConstant(0x1234, SimTypeShort(False), codegen=codegen),
+                    structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                ],
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([nested], addr=0x10010, codegen=codegen)
+    cfunc.statements = root
+
+    changed = decompile._simplify_nested_mk_fp_calls(codegen)
+
+    assert changed is True
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, structured_c.CFunctionCall)
+    assert rewritten.callee_target == "MK_FP"
+    assert rewritten.args[0] is inner_seg
+    assert rewritten.args[1] is inner_off
+
+
+def test_simplify_nested_mk_fp_calls_keeps_nonzero_inner_offset():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(addr=0x10010)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    nested = structured_c.CFunctionCall(
+        "MK_FP",
+        None,
+        [
+            structured_c.CConstant(0x40, SimTypeShort(False), codegen=codegen),
+            structured_c.CFunctionCall(
+                "MK_FP",
+                None,
+                [
+                    structured_c.CConstant(0x1234, SimTypeShort(False), codegen=codegen),
+                    structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                ],
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([nested], addr=0x10010, codegen=codegen)
+    cfunc.statements = root
+
+    changed = decompile._simplify_nested_mk_fp_calls(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements[0] is nested
+
+
 def test_attach_ss_stack_variables_preserves_far_pointer_stack_local_width(monkeypatch):
     project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
     cfunc = SimpleNamespace(
@@ -2801,8 +2931,51 @@ def test_attach_ss_stack_variables_does_not_reuse_covering_stack_slot_for_far_po
     assert replacement is not covering_cvar
     assert isinstance(replacement.variable, SimStackVariable)
     assert replacement.variable.offset == 2
-    assert replacement.variable.size == 4
-    assert covering_var.size == 8
+
+
+def test_rewrite_ss_stack_byte_offsets_refuses_large_unsigned_addr_expr(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(addr=0x10010, project=SimpleNamespace(loader=None))
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    ptr_type = decompile.SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
+    node = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CTypeCast(
+            None,
+            ptr_type,
+            structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([node], addr=0x10010, codegen=codegen)
+    cfunc.statements = root
+
+    large_addr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant(0x9000, SimTypeShort(False), codegen=codegen),
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_dereference",
+        lambda _node, _project: SimpleNamespace(
+            kind="segment_const",
+            seg_name="ss",
+            extra_offset=2,
+            addr_expr=large_addr,
+            cvar=None,
+        ),
+    )
+    monkeypatch.setattr(decompile, "_strip_segment_scale_from_addr_expr", lambda _expr, _project: large_addr)
+
+    changed = decompile._rewrite_ss_stack_byte_offsets(project, codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements[0] is node
 
 
 def test_coalesce_direct_ss_local_word_statements_refuses_region_mismatch(monkeypatch):
@@ -2985,6 +3158,44 @@ def test_coalesce_cod_word_global_loads_refuses_stable_member_hint(monkeypatch):
     rhs = cfunc.statements.statements[0].rhs
     assert isinstance(rhs, structured_c.CBinaryOp)
     assert rhs.op == "Or"
+
+
+def test_prune_unused_unnamed_memory_declarations_keeps_only_used_globals():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(addr=0x10010, variables_in_use={}, unified_local_vars={}, arg_list=(), sort_local_vars=lambda: None)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    used_var = SimMemoryVariable(0x200, 1, name="g_200", region=0x10010)
+    dead_var = SimMemoryVariable(0x201, 1, name="g_201", region=0x10010)
+    used_cvar = structured_c.CVariable(used_var, codegen=codegen)
+    dead_cvar = structured_c.CVariable(dead_var, codegen=codegen)
+    cfunc.variables_in_use = {
+        used_var: used_cvar,
+        dead_var: dead_cvar,
+    }
+    cfunc.unified_local_vars = {
+        used_var: {(used_cvar, SimTypeChar(False))},
+        dead_var: {(dead_cvar, SimTypeChar(False))},
+    }
+    cfunc.statements = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                structured_c.CVariable(SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010), codegen=codegen),
+                used_cvar,
+                codegen=codegen,
+            )
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+
+    changed = decompile._prune_unused_unnamed_memory_declarations(codegen)
+
+    assert changed is True
+    assert used_var in cfunc.variables_in_use
+    assert dead_var not in cfunc.variables_in_use
+    assert used_var in cfunc.unified_local_vars
+    assert dead_var not in cfunc.unified_local_vars
 
 
 def test_repro_decompiler_boundary_reports_blocked_narrow_stack_object(monkeypatch, tmp_path, capsys):

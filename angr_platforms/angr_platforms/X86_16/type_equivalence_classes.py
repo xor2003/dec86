@@ -114,7 +114,7 @@ class EquivalenceClassBuilder:
       - memory access patterns
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.next_class_id = 0
         self.expr_to_class: dict[str, int] = {}
         self.classes: dict[int, EquivalenceClass] = {}
@@ -259,3 +259,5 @@ def apply_x86_16_type_equivalence_classes(codegen) -> bool:
         logger.warning("Type equivalence class pass failed: %s", ex)
         codegen._inertia_type_equivalence_error = str(ex)
         return False
+
+

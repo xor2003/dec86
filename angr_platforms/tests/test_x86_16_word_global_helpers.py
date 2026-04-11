@@ -3,6 +3,8 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
 
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"
 
@@ -17,7 +19,7 @@ def _make_codegen():
     return SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1000),
         next_idx=lambda _name: 1,
-        project=SimpleNamespace(arch=_decompile.Arch86_16()),
+        project=SimpleNamespace(arch=Arch86_16()),
     )
 
 

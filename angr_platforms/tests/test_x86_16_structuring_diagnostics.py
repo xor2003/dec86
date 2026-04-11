@@ -165,6 +165,7 @@ class TestStructuringDiagnosticsReport:
         assert report.succeeded is True
         assert report.final_iteration == 250
         assert report.func_name == "main"
+        assert report.cfg_snapshot is None
 
     def test_report_creation_failure(self):
         """Test creating report for failed structuring."""
@@ -281,6 +282,10 @@ class TestStructuringDiagnosticsReport:
         assert d["succeeded"] is False
         assert d["failure_reason"] == "timeout"
         assert len(d["recovery_hints"]) == 1
+        assert d["cfg_snapshot"] is None
+        assert d["cfg_ownership"] is None
+        assert d["cfg_indirect"] is None
+        assert d["cfg_grouping"] is None
 
 
 class TestFailureReasoning:
@@ -416,6 +421,67 @@ class TestIntegration:
         assert result is True
         assert hasattr(codegen.cfunc, "_recovery_metadata")
         assert "structuring_diagnostics" in codegen.cfunc._recovery_metadata
+
+    def test_apply_pass_attaches_cfg_snapshot(self):
+        """Test that pass attaches typed CFG snapshot when clinic graph exists."""
+        import networkx as nx
+
+        class MockStats:
+            iterations = 10
+            max_iterations_reached = False
+            regions_reduced = 1
+            cycles_resolved = 0
+            had_unstructured_gotos = False
+
+        class MockNode:
+            def __init__(self, addr):
+                self.addr = addr
+
+        class MockClinic:
+            def __init__(self):
+                graph = nx.DiGraph()
+                a = MockNode(0x1000)
+                b = MockNode(0x1001)
+                graph.add_nodes_from([a, b])
+                graph.add_edge(a, b)
+                self.graph = graph
+
+        class MockCFunc:
+            addr = 0x1000
+            name = "snap_func"
+            _structuring_stats = MockStats()
+
+        class MockCodegen:
+            cfunc = MockCFunc()
+            _clinic = MockClinic()
+            project = None
+
+        codegen = MockCodegen()
+        result = apply_x86_16_structuring_diagnostics(codegen)
+        assert result is True
+        report = codegen.cfunc._recovery_metadata["structuring_diagnostics"]
+        assert report.cfg_snapshot is not None
+        assert report.cfg_ownership is not None
+        assert report.cfg_indirect is not None
+        assert report.cfg_grouping is not None
+        assert report.cfg_snapshot.entry_region_id == 0x1000
+        assert report.cfg_snapshot.node_count == 2
+        assert any(
+            "cfg_snapshot nodes=2 edges=1 entry=0x1000" in diag.message
+            for diag in report.diagnostics_collector.diagnostics
+        )
+        assert any(
+            "cfg_ownership regions=2 shared=0 entry_fragments=0" in diag.message
+            for diag in report.diagnostics_collector.diagnostics
+        )
+        assert any(
+            "cfg_indirect candidates=0 total=2" in diag.message
+            for diag in report.diagnostics_collector.diagnostics
+        )
+        assert any(
+            "cfg_grouping grouped_candidates=0 entry_fragments=0" in diag.message
+            for diag in report.diagnostics_collector.diagnostics
+        )
 
     def test_apply_pass_with_none_cfunc(self):
         """Test applying pass with None cfunc."""

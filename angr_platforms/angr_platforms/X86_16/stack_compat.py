@@ -15,3 +15,5 @@ def apply_x86_16_stack_compatibility() -> None:
 
     if getattr(LiveDefinitions.stack_offset_to_stack_addr, "__name__", "") != "_stack_offset_to_stack_addr_8616":
         LiveDefinitions.stack_offset_to_stack_addr = _stack_offset_to_stack_addr_8616
+
+

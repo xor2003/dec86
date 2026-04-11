@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from .structuring_cfg_grouping import CFGGroupingArtifact, build_cfg_grouping_artifact
+from .structuring_cfg_indirect import CFGIndirectSiteArtifact
+from .structuring_cfg_ownership import CFGOwnershipArtifact
+from .structuring_cfg_snapshot import CFGSnapshot
+
 __all__ = [
     "StructuringFailureReason",
     "StructuringDiagnostic",
@@ -147,6 +152,10 @@ class StructuringDiagnosticsReport:
     diagnostics_collector: DiagnosticsCollector
     failure_reason: Optional[StructuringFailureReason] = None
     recovery_hints: list[str] = field(default_factory=list)
+    cfg_snapshot: Optional[CFGSnapshot] = None
+    cfg_ownership: Optional[CFGOwnershipArtifact] = None
+    cfg_indirect: Optional[CFGIndirectSiteArtifact] = None
+    cfg_grouping: Optional[CFGGroupingArtifact] = None
 
     def add_recovery_hint(self, hint: str) -> None:
         """Add a recovery hint for debugging."""
@@ -185,6 +194,10 @@ class StructuringDiagnosticsReport:
             "failure_reason": self.last_failure_reason().value if self.last_failure_reason() else None,
             "diagnostics": self.diagnostics_collector.to_dict(),
             "recovery_hints": self.recovery_hints,
+            "cfg_snapshot": self.cfg_snapshot.to_dict() if self.cfg_snapshot else None,
+            "cfg_ownership": self.cfg_ownership.to_dict() if self.cfg_ownership else None,
+            "cfg_indirect": self.cfg_indirect.to_dict() if self.cfg_indirect else None,
+            "cfg_grouping": self.cfg_grouping.to_dict() if self.cfg_grouping else None,
         }
 
 
@@ -312,6 +325,11 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
         if structuring_stats:
             failure_reason = build_failure_reason_from_stats(structuring_stats)
 
+        cfg_grouping = build_cfg_grouping_artifact(codegen)
+        cfg_indirect = cfg_grouping.indirect if cfg_grouping is not None else None
+        cfg_ownership = cfg_indirect.ownership if cfg_indirect is not None else None
+        cfg_snapshot = cfg_ownership.snapshot if cfg_ownership is not None else None
+
         # Build diagnostics report
         report = StructuringDiagnosticsReport(
             func_addr=func_addr,
@@ -321,7 +339,20 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
             max_iterations=1000,
             diagnostics_collector=collector,
             failure_reason=failure_reason,
+            cfg_snapshot=cfg_snapshot,
+            cfg_ownership=cfg_ownership,
+            cfg_indirect=cfg_indirect,
+            cfg_grouping=cfg_grouping,
         )
+
+        if cfg_snapshot is not None:
+            collector.add_progress(cfg_snapshot.summary_line())
+        if cfg_ownership is not None:
+            collector.add_progress(cfg_ownership.summary_line())
+        if cfg_indirect is not None:
+            collector.add_progress(cfg_indirect.summary_line())
+        if cfg_grouping is not None:
+            collector.add_progress(cfg_grouping.summary_line())
 
         # Generate recovery hints
         if not succeeded and structuring_stats:

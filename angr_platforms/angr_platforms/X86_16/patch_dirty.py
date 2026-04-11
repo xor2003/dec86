@@ -29,7 +29,7 @@ def _default_out(state, portno, data, sz):
     return None, []
 
 
-def apply_patch():
+def apply_patch() -> int:
     try:
         import angr as _angr
 
@@ -84,3 +84,5 @@ def apply_patch():
         except Exception:
             continue
     return patched
+
+

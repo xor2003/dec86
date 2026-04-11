@@ -12,6 +12,7 @@ __all__ = [
     "arch_86_16",
     "cod_extract",
     "corpus_scan",
+    "corpus_recovery_artifact",
     "cod_source_rewrites",
     "apply_cod_source_rewrites",
     "lift_86_16",
@@ -61,8 +62,13 @@ __all__ = [
     "describe_x86_16_widening_pipeline",
     "describe_x86_16_object_recovery_focus",
     "describe_x86_16_recovery_layers",
+    "recovery_artifacts",
+    "recovery_artifact_writer",
+    "recovery_artifact_cache",
+    "recovery_artifact_manifest",
     "recovery_confidence",
     "describe_x86_16_recovery_confidence_axes",
+    "summarize_x86_16_function_effects",
     "validation_manifest",
     "readability_set",
     "readability_goals",
@@ -70,6 +76,7 @@ __all__ = [
     "milestone_report",
     "render_x86_16_tail_validation_console_summary",
     "recovery_manifest",
+    "targeted_recovery_artifact",
     "recompilable_subset",
     "calling_convention_compat",
     "decompiler_return_compat",
@@ -117,6 +124,7 @@ from . import (  # noqa: F401  # noqa: F401
     cod_source_rewrites,
     compat,
     corpus_scan,
+    corpus_recovery_artifact,
     correctness_goals,  # noqa: F401
     decompiler_postprocess,
     decompiler_postprocess_flags,
@@ -126,6 +134,7 @@ from . import (  # noqa: F401  # noqa: F401
     decompiler_postprocess_utils,
     decompiler_return_compat,
     decompiler_structuring_stage,
+    function_effect_summary,
     lift_86_16,
     load_dos_mz,
     load_dos_ne,
@@ -134,8 +143,13 @@ from . import (  # noqa: F401  # noqa: F401
     readability_goals,  # noqa: F401
     readability_set,
     recompilable_subset,
+    recovery_artifact_writer,
+    recovery_artifact_cache,
+    recovery_artifact_manifest,
+    recovery_artifacts,
     recovery_confidence,
     recovery_manifest,
+    targeted_recovery_artifact,
     simos_86_16,
     stack_compat,
     tail_validation,
@@ -191,6 +205,7 @@ from .readability_goals import (  # noqa: F401
     summarize_readability_focus,
 )
 from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
+from .function_effect_summary import summarize_x86_16_function_effects  # noqa: F401
 from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers  # noqa: F401
 from .stack_compat import apply_x86_16_stack_compatibility  # noqa: F401
 from .tail_validation import (  # noqa: F401

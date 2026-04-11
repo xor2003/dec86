@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
+from .helper_effect_summary import HelperEligibilitySummary, summarize_x86_16_helper_eligibility
+from .recovery_confidence import RecoveryConfidenceSummary, classify_x86_16_recovery_confidence
+
+__all__ = [
+    "CorpusRecoveryArtifact",
+    "FunctionRecoveryArtifact",
+    "build_x86_16_corpus_recovery_artifact",
+    "build_x86_16_function_recovery_artifact",
+]
+
+
+def _value(source: Any, name: str, default: Any = None) -> Any:
+    if isinstance(source, dict):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionRecoveryArtifact:
+    cod_file: str
+    proc_name: str
+    proc_kind: str
+    ok: bool
+    stage_reached: str
+    failure_class: str | None
+    fallback_kind: str | None
+    semantic_family: str | None
+    effect_summary: FunctionEffectSummary
+    helper_summary: HelperEligibilitySummary
+    confidence: RecoveryConfidenceSummary
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "cod_file": self.cod_file,
+            "proc_name": self.proc_name,
+            "proc_kind": self.proc_kind,
+            "ok": self.ok,
+            "stage_reached": self.stage_reached,
+            "failure_class": self.failure_class,
+            "fallback_kind": self.fallback_kind,
+            "semantic_family": self.semantic_family,
+            "effect_summary": self.effect_summary.to_dict(),
+            "helper_summary": self.helper_summary.to_dict(),
+            "confidence": self.confidence.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CorpusRecoveryArtifact:
+    function_rows: tuple[FunctionRecoveryArtifact, ...]
+    confidence_status_counts: dict[str, int]
+    helper_status_counts: dict[str, int]
+    helper_candidate_counts: dict[str, int]
+    helper_refusal_counts: dict[str, int]
+    helper_family_rows: tuple[dict[str, object], ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "function_rows": [row.to_dict() for row in self.function_rows],
+            "confidence_status_counts": dict(self.confidence_status_counts),
+            "helper_status_counts": dict(self.helper_status_counts),
+            "helper_candidate_counts": dict(self.helper_candidate_counts),
+            "helper_refusal_counts": dict(self.helper_refusal_counts),
+            "helper_family_rows": [dict(row) for row in self.helper_family_rows],
+        }
+
+
+def build_x86_16_function_recovery_artifact(source: Any) -> FunctionRecoveryArtifact:
+    return FunctionRecoveryArtifact(
+        cod_file=str(_value(source, "cod_file", "")),
+        proc_name=str(_value(source, "proc_name", "")),
+        proc_kind=str(_value(source, "proc_kind", "")),
+        ok=bool(_value(source, "ok", False)),
+        stage_reached=str(_value(source, "stage_reached", "unknown")),
+        failure_class=_value(source, "failure_class", None),
+        fallback_kind=_value(source, "fallback_kind", None),
+        semantic_family=_value(source, "semantic_family", None),
+        effect_summary=summarize_x86_16_function_effects(source),
+        helper_summary=summarize_x86_16_helper_eligibility(source),
+        confidence=classify_x86_16_recovery_confidence(source),
+    )
+
+
+def build_x86_16_corpus_recovery_artifact(results: list[Any]) -> CorpusRecoveryArtifact:
+    from .recovery_confidence import summarize_recovery_confidence
+
+    function_rows = tuple(
+        sorted(
+            (build_x86_16_function_recovery_artifact(result) for result in results),
+            key=lambda row: (row.cod_file, row.proc_name, row.proc_kind),
+        )
+    )
+    confidence_summary = summarize_recovery_confidence(results)
+    return CorpusRecoveryArtifact(
+        function_rows=function_rows,
+        confidence_status_counts=dict(confidence_summary.get("status_counts", {}) or {}),
+        helper_status_counts=dict(confidence_summary.get("helper_status_counts", {}) or {}),
+        helper_candidate_counts=dict(confidence_summary.get("helper_candidate_counts", {}) or {}),
+        helper_refusal_counts=dict(confidence_summary.get("helper_refusal_counts", {}) or {}),
+        helper_family_rows=tuple(confidence_summary.get("helper_family_rows", ()) or ()),
+    )

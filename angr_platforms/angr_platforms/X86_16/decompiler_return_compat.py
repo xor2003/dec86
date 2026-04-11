@@ -86,3 +86,6 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
 
     if getattr(ReturnMaker._handle_Return, "__name__", "") != "_handle_Return_8616":
         ReturnMaker._handle_Return = _handle_Return_8616
+
+
+

@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
-from typing import Callable
+from typing import Tuple, Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
 
@@ -42,7 +42,7 @@ class DecompilerStructuringPassSpec:
     needs_project: bool
 
 
-def _build_decompiler_structuring_passes():
+def _build_decompiler_structuring_passes() -> Tuple[DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec]:
     return (
         DecompilerStructuringPassSpec(
             "_region_based_structuring_8616",
@@ -268,3 +268,5 @@ def apply_x86_16_decompiler_structuring() -> None:
     if getattr(Decompiler._decompile, "__name__", "") != "_decompile_structuring_8616":
         _decompile_structuring_8616._orig_decompiler_decompile = Decompiler._decompile
         Decompiler._decompile = _decompile_structuring_8616
+
+

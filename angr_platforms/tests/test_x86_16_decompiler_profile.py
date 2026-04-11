@@ -304,6 +304,29 @@ def test_materialize_missing_register_local_declarations_recovers_unified_locals
     assert len(codegen.cfunc.unified_local_vars[register]) == 1
 
 
+def test_dedupe_codegen_variable_names_prefers_meaningful_name_and_uniquifies():
+    stack_a = SimStackVariable(4, 2, base="bp", name="count", region=0x1000)
+    stack_b = SimStackVariable(6, 2, base="bp", name="count", region=0x1000)
+    cvar_a = SimpleNamespace(name="v1", unified_variable=SimpleNamespace(name="count"))
+    cvar_b = SimpleNamespace(name="v2", unified_variable=SimpleNamespace(name="count"))
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            arg_list=(),
+            unified_local_vars={},
+            variables_in_use={stack_a: cvar_a, stack_b: cvar_b},
+            sort_local_vars=lambda: None,
+        )
+    )
+
+    changed = _decompile._dedupe_codegen_variable_names_8616(codegen)
+
+    assert changed is True
+    assert stack_a.name == "count"
+    assert stack_b.name == "count_2"
+    assert cvar_a.name == "count"
+    assert cvar_b.name == "count_2"
+
+
 def test_apply_annotations_resolves_direct_bp_stack_loads_to_annotated_slots(monkeypatch):
     class _FakeCodegen:
         def __init__(self, project):
