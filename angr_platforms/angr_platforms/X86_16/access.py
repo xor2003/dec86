@@ -1,14 +1,14 @@
-from pyvex.lifting.util.vex_helper import Type
 from pyvex.lifting.util import JumpKind
+from pyvex.lifting.util.vex_helper import Type
 
 ITY_I8 = Type.int_8
 ITY_I16 = Type.int_16
 ITY_I32 = Type.int_32
 
-from .hardware import Hardware
 from .addressing_helpers import linear_address
+from .hardware import Hardware
+from .regs import reg16_t, sgreg_t
 from .stack_helpers import pop16, pop32, push16, push32, push_far_return_frame16
-from .regs import reg16_t, reg32_t, sgreg_t
 
 # Constants for access modes
 MODE_READ = 0

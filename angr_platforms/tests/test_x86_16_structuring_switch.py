@@ -5,6 +5,7 @@ Tests if-cascade pattern detection and switch classification.
 """
 
 import pytest
+
 from angr_platforms.X86_16.structuring_analysis import StructureAnalysis
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType
 

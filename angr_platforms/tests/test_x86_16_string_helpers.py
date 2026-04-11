@@ -1,14 +1,14 @@
 from angr_platforms.X86_16.instruction import NONE, REPZ
 from angr_platforms.X86_16.regs import reg16_t, sgreg_t
 from angr_platforms.X86_16.string_helpers import (
+    repeat_jump,
     repeat_kind,
     repeat_prefix_cond,
-    repeat_jump,
     string_advance_indices,
     string_compare_values,
     string_load,
-    string_store,
     string_source_segment,
+    string_store,
 )
 
 

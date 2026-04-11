@@ -1,19 +1,13 @@
 import sys
 
-from pyvex.lifting.util.vex_helper import Type
-from pyvex.expr import Const, Binop, Unop
-from pyvex import IRConst
-
 from .addressing_helpers import (
     ResolvedMemoryOperand,
+    resolve_linear_operand,
     resolve_modrm16_address,
     resolve_modrm32_address,
-    resolve_linear_operand,
-    signed_displacement,
 )
-from .regs import reg8_t, reg16_t, reg32_t, sgreg_t
-
 from .instruction import X86Instruction
+from .regs import reg8_t, reg16_t, reg32_t, sgreg_t
 
 
 class ExecInstr(X86Instruction):

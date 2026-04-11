@@ -7,7 +7,6 @@ from angr import options as o
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
-
 MATRIX_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 
 

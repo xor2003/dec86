@@ -3,14 +3,12 @@ Test expression simplification patterns:
 1. Identity AND/OR: var & var → var, var | var → var
 """
 
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 
 import archinfo
-import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"

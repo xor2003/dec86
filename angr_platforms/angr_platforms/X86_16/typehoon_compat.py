@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import claripy
 import networkx
-
 from angr.analyses.reaching_definitions import rd_state as _rd_state
 from angr.analyses.typehoon import simple_solver as _typehoon_simple_solver
 from angr.analyses.typehoon import translator as _typehoon_translator
+
 try:
     from angr.analyses.typehoon import lifter as _typehoon_lifter
 except ImportError:
     _typehoon_lifter = None
-from angr.analyses.variable_recovery import variable_recovery_base as _variable_recovery_base
-from angr.sim_type import SimTypeBottom, SimTypePointer
-from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypeLongLong, SimTypeShort
 from angr.analyses.typehoon.simple_solver import BASE_LATTICES, BottomType, Int, Int16, TopType
-from angr.analyses.typehoon.typeconsts import Pointer, Int16 as TCInt16
+from angr.analyses.typehoon.typeconsts import Int16 as TCInt16
+from angr.analyses.typehoon.typeconsts import Pointer
+from angr.analyses.variable_recovery import variable_recovery_base as _variable_recovery_base
+from angr.sim_type import (
+    SimTypeBottom,
+    SimTypePointer,
+)
 
 __all__ = ["apply_x86_16_typehoon_compatibility"]
 

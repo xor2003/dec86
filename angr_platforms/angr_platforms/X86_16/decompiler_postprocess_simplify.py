@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CITE, CTypeCast, CUnaryOp
+from angr.analyses.decompiler.structured_codegen.c import CITE, CBinaryOp, CConstant, CTypeCast, CUnaryOp
 
 from .decompiler_postprocess_flags import _bool_cite_values_8616
 from .decompiler_postprocess_utils import (

@@ -403,5 +403,5 @@ def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
 
         return True
 
-    except Exception as e:
+    except Exception:
         return False

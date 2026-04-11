@@ -32,6 +32,7 @@ def _default_out(state, portno, data, sz):
 def apply_patch():
     try:
         import angr as _angr
+
         from . import simprocs_io as _simprocs_io
 
         _angr.SIM_PROCEDURES = getattr(_angr, "SIM_PROCEDURES", {})

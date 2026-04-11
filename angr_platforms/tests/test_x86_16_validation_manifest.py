@@ -1,9 +1,9 @@
 from angr_platforms.X86_16.validation_manifest import (
     VALIDATION_FAMILIES,
     VALIDATION_LAYERS,
-    describe_x86_16_validation_triage,
     describe_x86_16_validation_families,
     describe_x86_16_validation_layers,
+    describe_x86_16_validation_triage,
 )
 
 

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from pyvex.expr import Get
-from pyvex.stmt import Put
-
 from angr.analyses.calling_convention import calling_convention as _cc_analysis
 from angr.analyses.calling_convention import fact_collector as _cc_fact_collector
 from angr.analyses.calling_convention import utils as _cc_utils
 from angr.errors import SimTranslationError
 from angr.sim_type import SimTypeFunction, SimTypeLong, SimTypeShort
+from pyvex.expr import Get
+from pyvex.stmt import Put
+
 from .simos_86_16 import SimCC8616MSCsmall
 
 __all__ = ["apply_x86_16_calling_convention_compatibility"]

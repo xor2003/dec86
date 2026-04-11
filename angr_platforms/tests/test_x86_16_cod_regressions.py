@@ -8,18 +8,17 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 import decompile
+import pytest
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
+
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.cod_extract import extract_cod_proc_metadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 from angr_platforms.X86_16.decompiler_return_compat import apply_x86_16_decompiler_return_compatibility
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -1376,6 +1375,113 @@ def test_linear_recurrence_preserves_stack_byte_pair_evidence_for_assignments_an
     assert isinstance(rewritten_cond.operand.lhs, structured_c.CBinaryOp)
     assert rewritten_cond.operand.lhs.op == "Or"
     assert rewritten_cond.operand.rhs.value == 1
+
+
+def test_linear_recurrence_assignment_rewrite_refuses_non_dereference_algebraic_shape():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    base_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    temp_var = SimRegisterVariable(10, 2, name="ir_9")
+    base_cvar = structured_c.CVariable(base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    widened_word = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Or",
+            base_cvar,
+            structured_c.CBinaryOp(
+                "Mul",
+                base_cvar,
+                structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements(
+            [structured_c.CAssignment(temp_cvar, widened_word, codegen=codegen)],
+            addr=0x1000,
+            codegen=codegen,
+        ),
+    )
+
+    changed = decompile._coalesce_linear_recurrence_statements(codegen.project, codegen)
+
+    assert changed is False
+    stmt = codegen.cfunc.statements.statements[0]
+    assert isinstance(stmt, structured_c.CAssignment)
+    assert isinstance(stmt.rhs, structured_c.CBinaryOp)
+    assert stmt.rhs.op == "Add"
+    assert isinstance(stmt.rhs.lhs, structured_c.CBinaryOp)
+    assert stmt.rhs.lhs.op == "Or"
+    assert stmt.rhs.rhs.value == 1
+
+
+def test_linear_recurrence_condition_rewrite_refuses_non_dereference_algebraic_shape():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    base_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
+    base_cvar = structured_c.CVariable(base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    widened_word = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Or",
+            base_cvar,
+            structured_c.CBinaryOp(
+                "Mul",
+                base_cvar,
+                structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    while_stmt = structured_c.CWhileLoop(
+        structured_c.CUnaryOp("Not", widened_word, codegen=codegen),
+        structured_c.CStatements([], addr=0x1000, codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements([while_stmt], addr=0x1000, codegen=codegen),
+    )
+
+    changed = decompile._coalesce_linear_recurrence_statements(codegen.project, codegen)
+
+    assert changed is False
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, structured_c.CWhileLoop)
+    assert isinstance(rewritten.condition, structured_c.CUnaryOp)
+    assert rewritten.condition.op == "Not"
+    assert isinstance(rewritten.condition.operand, structured_c.CBinaryOp)
+    assert rewritten.condition.operand.op == "Add"
+    assert isinstance(rewritten.condition.operand.lhs, structured_c.CBinaryOp)
+    assert rewritten.condition.operand.lhs.op == "Or"
+    assert rewritten.condition.operand.rhs.value == 1
 
 
 def test_linear_recurrence_tolerates_self_referential_condition_nodes():

@@ -20,7 +20,6 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 
-
 _ROOT = Path(__file__).resolve().parents[2]
 _COD_DIR = _ROOT / "cod"
 _F14_COD_DIR = _COD_DIR / "f14"

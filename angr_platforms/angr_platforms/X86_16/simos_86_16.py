@@ -1,5 +1,4 @@
 import claripy
-
 from angr import SimProcedure
 from angr.calling_conventions import (
     SimCC,
@@ -11,7 +10,6 @@ from angr.calling_conventions import (
 from angr.simos import SimOS, register_simos
 
 from .arch_86_16 import Arch86_16
-
 
 INTERRUPT_BASE_ADDR = 0xFF000
 INTERRUPT_VECTOR_COUNT = 0x100

@@ -1,12 +1,8 @@
+from pyvex.lifting.util.syntax_wrapper import VexValue
+from pyvex.lifting.util.vex_helper import Type
+
 from .interrupt import Interrupt
 from .processor import Processor
-from pyvex.expr import Const, Binop
-from pyvex.stmt import Store, Put
-from pyvex import IRSB
-from pyvex.expr import Load
-from pyvex.lifting.util.vex_helper import Type
-from pyvex.lifting.util.syntax_wrapper import VexValue
-
 from .stack_helpers import pop16 as stack_pop16
 from .stack_helpers import push16 as stack_push16
 

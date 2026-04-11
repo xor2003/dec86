@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import claripy
 from dataclasses import dataclass
 from pathlib import Path
 
+import claripy
 from angr import SimProcedure
 
 INTERRUPT_CORE_VECTOR_BASE = 0xFF000

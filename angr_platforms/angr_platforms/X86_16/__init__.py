@@ -104,28 +104,60 @@ __all__ = [
     "DecompilerStructuringPassSpec",
 ]
 
-from . import annotations, arch_86_16, bootstrap, calling_convention_compat, cod_extract, cod_source_rewrites, corpus_scan, decompiler_postprocess, decompiler_postprocess_flags, decompiler_postprocess_globals, decompiler_postprocess_simplify, decompiler_postprocess_stage, decompiler_postprocess_utils, decompiler_return_compat, decompiler_structuring_stage, lift_86_16, load_dos_mz, load_dos_ne, recovery_confidence, simos_86_16, tail_validation  # noqa: F401
-from . import alias_domains, alias_model, alias_state, alias_transfer, compat, milestone_report, patch_dirty, readability_set, recovery_manifest, recompilable_subset, stack_compat, typehoon_compat, validation_manifest, widening_alias, widening_model  # noqa: F401
-from . import readability_goals  # noqa: F401
-from . import correctness_goals  # noqa: F401
+from . import (  # noqa: F401  # noqa: F401
+    alias_domains,
+    alias_model,
+    alias_state,
+    alias_transfer,
+    annotations,
+    arch_86_16,
+    bootstrap,
+    calling_convention_compat,
+    cod_extract,
+    cod_source_rewrites,
+    compat,
+    corpus_scan,
+    correctness_goals,  # noqa: F401
+    decompiler_postprocess,
+    decompiler_postprocess_flags,
+    decompiler_postprocess_globals,
+    decompiler_postprocess_simplify,
+    decompiler_postprocess_stage,
+    decompiler_postprocess_utils,
+    decompiler_return_compat,
+    decompiler_structuring_stage,
+    lift_86_16,
+    load_dos_mz,
+    load_dos_ne,
+    milestone_report,
+    patch_dirty,
+    readability_goals,  # noqa: F401
+    readability_set,
+    recompilable_subset,
+    recovery_confidence,
+    recovery_manifest,
+    simos_86_16,
+    stack_compat,
+    tail_validation,
+    typehoon_compat,
+    validation_manifest,
+    widening_alias,
+    widening_model,
+)
+from .addressing_helpers import (
+    describe_x86_16_decode_width_matrix,  # noqa: F401
+    describe_x86_16_mixed_width_extension_surface,  # noqa: F401
+    describe_x86_16_mixed_width_instruction_surface,  # noqa: F401
+)
 from .alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
-from .addressing_helpers import describe_x86_16_decode_width_matrix  # noqa: F401
-from .addressing_helpers import describe_x86_16_mixed_width_extension_surface  # noqa: F401
-from .addressing_helpers import describe_x86_16_mixed_width_instruction_surface  # noqa: F401
-from .analysis_helpers import describe_x86_16_interrupt_api_surface  # noqa: F401
-from .analysis_helpers import describe_x86_16_interrupt_core_surface  # noqa: F401
-from .analysis_helpers import describe_x86_16_interrupt_lowering_boundary  # noqa: F401
-from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
+from .analysis_helpers import (
+    describe_x86_16_interrupt_api_surface,  # noqa: F401
+    describe_x86_16_interrupt_core_surface,  # noqa: F401
+    describe_x86_16_interrupt_lowering_boundary,  # noqa: F401
+)
 from .annotations import apply_x86_16_metadata_annotations  # noqa: F401
-from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers  # noqa: F401
-from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
-from .decompiler_structuring_stage import DecompilerStructuringPassSpec, apply_x86_16_decompiler_structuring, describe_x86_16_decompiler_structuring_stage  # noqa: F401
-from .readability_goals import describe_x86_16_readability_goals, rank_readability_goal_queue, summarize_readability_focus  # noqa: F401
-from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
-from .validation_manifest import describe_x86_16_validation_triage  # noqa: F401
-from .milestone_report import render_x86_16_tail_validation_console_summary  # noqa: F401
-from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
-from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
+from .bootstrap import apply_x86_16_bootstrap  # noqa: F401
+from .calling_convention_compat import apply_x86_16_calling_convention_compatibility  # noqa: F401
 from .cod_known_objects import describe_x86_16_cod_known_objects  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
     COD_SOURCE_REWRITE_REGISTRY,
@@ -138,11 +170,29 @@ from .cod_source_rewrites import (  # noqa: F401
     get_cod_source_rewrite_spec,
     rewrite_cod_source_stage,
 )
-from .bootstrap import apply_x86_16_bootstrap  # noqa: F401
-from .calling_convention_compat import apply_x86_16_calling_convention_compatibility  # noqa: F401
+from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
+from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
+from .decompiler_postprocess_stage import (  # noqa: F401
+    DecompilerPostprocessPassSpec,
+    apply_x86_16_decompiler_postprocess,
+    describe_x86_16_decompiler_postprocess_stage,
+)
 from .decompiler_return_compat import apply_x86_16_decompiler_return_compatibility  # noqa: F401
+from .decompiler_structuring_stage import (  # noqa: F401
+    DecompilerStructuringPassSpec,
+    apply_x86_16_decompiler_structuring,
+    describe_x86_16_decompiler_structuring_stage,
+)
+from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
+from .milestone_report import render_x86_16_tail_validation_console_summary  # noqa: F401
+from .readability_goals import (  # noqa: F401
+    describe_x86_16_readability_goals,
+    rank_readability_goal_queue,
+    summarize_readability_focus,
+)
+from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
+from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers  # noqa: F401
 from .stack_compat import apply_x86_16_stack_compatibility  # noqa: F401
-from .decompiler_postprocess_stage import DecompilerPostprocessPassSpec, apply_x86_16_decompiler_postprocess, describe_x86_16_decompiler_postprocess_stage  # noqa: F401
 from .tail_validation import (  # noqa: F401
     X86_16TailValidationSummary,
     X86_16ValidationCacheDescriptor,
@@ -152,17 +202,19 @@ from .tail_validation import (  # noqa: F401
     build_x86_16_tail_validation_verdict,
     build_x86_16_validation_cache_descriptor,
     check_x86_16_tail_validation_surface_consistency,
-    persist_x86_16_tail_validation_snapshot,
-    extract_x86_16_tail_validation_snapshot,
-    x86_16_tail_validation_snapshot_passed,
-    fingerprint_x86_16_tail_validation_boundary,
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
+    describe_x86_16_tail_validation_scope,
+    extract_x86_16_tail_validation_snapshot,
+    fingerprint_x86_16_tail_validation_boundary,
     format_x86_16_tail_validation_diff,
+    persist_x86_16_tail_validation_snapshot,
     resolve_x86_16_validation_cached_artifact,
     summarize_x86_16_tail_validation_records,
-    describe_x86_16_tail_validation_scope,
+    x86_16_tail_validation_snapshot_passed,
 )
+from .validation_manifest import describe_x86_16_validation_triage  # noqa: F401
+from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 
 try:
     apply_x86_16_bootstrap()

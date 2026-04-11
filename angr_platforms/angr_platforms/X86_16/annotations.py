@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import re
 
-from angr.analyses import CFGFast, Decompiler
 from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
 
 from .analysis_helpers import preferred_known_helper_signature_decl, seed_calling_conventions
 from .cod_known_objects import known_cod_object_spec
-
 
 ANNOTATION_KEY = "x86_16_annotations"
 

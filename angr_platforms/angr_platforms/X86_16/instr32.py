@@ -2,6 +2,7 @@ import struct
 
 from pyvex.lifting.util import Type
 
+from .addressing_helpers import advance_eip32, load_far_pointer
 from .alu_helpers import (
     binary_operation,
     binary_operation_with_carry,
@@ -9,21 +10,21 @@ from .alu_helpers import (
     masked_shift_count,
     unary_operation,
 )
-from .addressing_helpers import load_far_pointer
-from .addressing_helpers import advance_eip32
 from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
+from .regs import reg8_t, reg16_t, reg32_t
 from .stack_helpers import (
+    branch_rel32,
     emit_far_call32,
     emit_far_jump32,
-    branch_rel32,
     emit_near_call32,
     emit_near_jump32,
     far_return_ip32,
-    pop_all32,
+    leave32,
     pop32_register,
+    pop_all32,
     pop_flags32,
     pop_segment32,
     push32_register,
@@ -31,7 +32,6 @@ from .stack_helpers import (
     push_flags32,
     push_immediate32,
     push_segment32,
-    leave32,
     return_near32,
 )
 from .string_helpers import (
@@ -39,11 +39,9 @@ from .string_helpers import (
     repeat_prefix_cond,
     string_advance_indices,
     string_compare_values,
-    string_delta,
     string_load,
     string_source_segment,
 )
-from .regs import reg8_t, reg16_t, reg32_t
 
 
 class Instr32(InstrBase):

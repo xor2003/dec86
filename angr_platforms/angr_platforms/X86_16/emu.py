@@ -2,7 +2,7 @@ from typing import Any, Dict
 
 from .emulator import Emulator
 from .instruction import InstrData, X86Instruction
-from .regs import reg32_t, reg16_t, sgreg_t
+from .regs import sgreg_t
 from .stack_helpers import (
     pop_far_return_frame16,
     pop_far_return_frame32,

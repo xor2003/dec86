@@ -6,11 +6,11 @@ and type constraint collection for improved type inference.
 """
 
 import pytest
+
 from angr_platforms.X86_16.type_equivalence_classes import (
-    ExpressionNormalizer,
-    ExpressionPattern,
     EquivalenceClass,
     EquivalenceClassBuilder,
+    ExpressionNormalizer,
     TypeCollector,
     TypeVariableReplacer,
     apply_x86_16_type_equivalence_classes,

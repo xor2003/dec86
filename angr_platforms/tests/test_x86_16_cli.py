@@ -4,48 +4,47 @@ import contextlib
 import importlib.util
 import subprocess
 import sys
-from pathlib import Path
-from types import SimpleNamespace
 import time
 from concurrent.futures.thread import _threads_queues
-
-import pytest
+from pathlib import Path
+from types import SimpleNamespace
 
 import decompile
 import inertia_decompiler.cache as recovery_cache
-from inertia_decompiler import sidecar_metadata, sidecar_parsers
+import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
-from angr.sim_variable import SimStackVariable
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
-from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
-from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
-from angr_platforms.X86_16.fast_tracer import trace_16bit_seed_candidates
-from angr_platforms.X86_16.load_dos_mz import DOSMZ
-from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
-from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoSymbolClass, parse_tdinfo_exe
+from angr.sim_variable import SimMemoryVariable, SimStackVariable
+from inertia_decompiler import sidecar_metadata, sidecar_parsers
 from omf_pat import (
+    CachedPatRegexSpec,
     PatModule,
     PatPublicName,
-    CachedPatRegexSpec,
     _normalize_pat_backend_choice,
+    ensure_pat_from_omf_input,
     enumerate_microsoft_lib_dictionary_symbols,
     enumerate_omf_lib_dictionary_symbols,
-    ensure_pat_from_omf_input,
     extract_omf_modules_from_lib,
-    generate_pat_from_omf_obj,
     generate_pat_from_omf_lib,
+    generate_pat_from_omf_obj,
     load_cached_pat_regex_specs,
     lookup_microsoft_lib_symbol,
     lookup_omf_lib_symbol,
-    parse_omf_lib,
-    parse_microsoft_lib,
     match_pat_modules,
+    parse_microsoft_lib,
+    parse_omf_lib,
     parse_pat_file,
 )
 from signature_catalog import build_signature_catalog, match_signature_catalog
 
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
+from angr_platforms.X86_16.codeview_nb00 import find_codeview_nb00, parse_codeview_nb00
+from angr_platforms.X86_16.fast_tracer import trace_16bit_seed_candidates
+from angr_platforms.X86_16.flair_extract import list_flair_sig_libraries, match_flair_startup_entry
+from angr_platforms.X86_16.load_dos_mz import DOSMZ
+from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
+from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoSymbolClass, parse_tdinfo_exe
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -2666,7 +2665,47 @@ def test_coalesce_segmented_word_store_statements_prefers_derived_stack_local_wo
     assert isinstance(replacement.lhs.variable, SimStackVariable)
     assert replacement.lhs.variable.offset == 0
     assert replacement.lhs.variable.size == 2
-    assert not isinstance(replacement.lhs, structured_c.CTypeCast)
+
+
+def test_coalesce_segmented_word_store_statements_refuses_non_joinable_stack_slot(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, bits=16, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+
+    base_var = SimStackVariable(-2, 1, base="bp", name="s_2", region=0x10010)
+    base_cvar = structured_c.CVariable(base_var, codegen=codegen)
+    lhs_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x20020)
+    lhs_cvar = structured_c.CVariable(lhs_var, codegen=codegen)
+    next_lhs = object()
+    rhs_low = structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen)
+    rhs_high = structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen)
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(lhs_cvar, rhs_low, codegen=codegen),
+            structured_c.CAssignment(next_lhs, rhs_high, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+    word_rhs = structured_c.CConstant(0x3412, SimTypeShort(False), codegen=codegen)
+
+    monkeypatch.setattr(decompile, "_match_ss_local_plus_const", lambda node, _project: (base_cvar, 1) if node is next_lhs else None)
+    monkeypatch.setattr(decompile, "_match_word_rhs_from_byte_pair", lambda _lo, _hi, _codegen, _project: word_rhs)
+    monkeypatch.setattr(decompile, "_stack_slot_identity_can_join", lambda _lhs, _rhs: False)
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is False
+    assert len(codegen.cfunc.statements.statements) == 2
+    assert codegen.cfunc.statements.statements[0].lhs is lhs_cvar
+    assert codegen.cfunc.statements.statements[1].lhs is next_lhs
 
 
 def test_attach_ss_stack_variables_preserves_far_pointer_stack_local_width(monkeypatch):
@@ -2871,28 +2910,81 @@ def test_coalesce_far_pointer_stack_expressions_avoids_byte_local_alias_for_far_
     )
     cfunc.statements = root
 
-    traits = {
-        decompile._access_trait_variable_key(store_var): SimpleNamespace(member_like=((2, 4, 1),))
+    project._inertia_access_traits = {
+        cfunc.addr: {
+            "base_const": {
+                ("ss", ("stack", "bp", 2), 2, 2, 1): 1,
+            },
+            "base_stride": {},
+            "repeated_offsets": {},
+            "repeated_offset_widths": {},
+            "base_stride_widths": {},
+            "member_evidence": {},
+            "array_evidence": {},
+        }
     }
-    project._inertia_access_traits = {cfunc.addr: traits}
 
     monkeypatch.setattr(
         decompile,
         "describe_alias_storage",
         lambda _expr: SimpleNamespace(identity=object(), can_join=lambda _other: True, needs_synthesis=lambda: False),
     )
-    monkeypatch.setattr(
-        decompile,
-        "_build_access_trait_evidence_profiles",
-        lambda _traits: {decompile._access_trait_variable_key(store_var): SimpleNamespace(member_like=((2, 4, 1),))},
-    )
-
     decompile._coalesce_far_pointer_stack_expressions(project, codegen)
 
     rhs = cfunc.statements.statements[1].rhs
     assert isinstance(rhs, structured_c.CFunctionCall)
     assert rhs.callee_target == "MK_FP"
     assert not any(isinstance(arg, structured_c.CVariable) and arg.variable is store_var for arg in rhs.args)
+
+
+def test_coalesce_cod_word_global_loads_refuses_stable_member_hint(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(addr=0x10010, variables_in_use={}, unified_local_vars={}, arg_list=(), sort_local_vars=lambda: None)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                structured_c.CVariable(SimStackVariable(0, 2, base="bp", name="s_0", region=0x10010), codegen=codegen),
+                structured_c.CBinaryOp(
+                    "Or",
+                    structured_c.CVariable(SimMemoryVariable(0x200, 1, name="g_200"), codegen=codegen),
+                    structured_c.CBinaryOp(
+                        "Mul",
+                        structured_c.CVariable(SimMemoryVariable(0x201, 1, name="g_201"), codegen=codegen),
+                        structured_c.CConstant(0x100, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    project._inertia_access_traits = {
+        cfunc.addr: {
+            "member_evidence": {
+                (("mem", 0x200), 0, 2): 1,
+            },
+            "base_const": {},
+            "base_stride": {},
+            "repeated_offsets": {},
+            "repeated_offset_widths": {},
+            "base_stride_widths": {},
+            "array_evidence": {},
+        }
+    }
+
+    changed = decompile._coalesce_cod_word_global_loads(project, codegen, {0x200: ("table_word", 2)})
+
+    assert changed is False
+    rhs = cfunc.statements.statements[0].rhs
+    assert isinstance(rhs, structured_c.CBinaryOp)
+    assert rhs.op == "Or"
 
 
 def test_repro_decompiler_boundary_reports_blocked_narrow_stack_object(monkeypatch, tmp_path, capsys):

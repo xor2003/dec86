@@ -15,9 +15,8 @@ try:
 except ImportError:
     _unicorn = None
 
-from archinfo.arch import Arch, Endness, Register, register_arch
-
 import pyvex
+from archinfo.arch import Arch, Endness, Register, register_arch
 
 
 class Arch86_16(Arch):

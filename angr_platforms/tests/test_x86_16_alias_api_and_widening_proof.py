@@ -1,8 +1,7 @@
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-import sys
 from types import SimpleNamespace
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"
@@ -13,6 +12,7 @@ _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
+from angr_platforms.X86_16.alias_domains import AX
 from angr_platforms.X86_16.alias_model import (
     can_join_alias_storage,
     compatible_alias_storage_views,
@@ -21,15 +21,14 @@ from angr_platforms.X86_16.alias_model import (
     needs_alias_synthesis,
     same_alias_storage_domain,
 )
-from angr_platforms.X86_16.alias_domains import AX
 from angr_platforms.X86_16.alias_state import AliasState
+from angr_platforms.X86_16.widening_alias import can_join_adjacent_register_slices
 from angr_platforms.X86_16.widening_model import (
     collect_widening_candidates,
     describe_widening_candidates,
     describe_x86_16_widening_pipeline,
     prove_adjacent_storage_slices,
 )
-from angr_platforms.X86_16.widening_alias import can_join_adjacent_register_slices
 
 
 def _make_codegen():

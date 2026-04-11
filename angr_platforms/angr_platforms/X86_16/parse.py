@@ -2,8 +2,8 @@ import logging
 import struct
 from typing import TYPE_CHECKING
 
-from pyvex.lifting.util.vex_helper import Type
 from pyvex.lifting.util import ParseError
+from pyvex.lifting.util.vex_helper import Type
 
 if TYPE_CHECKING:
     from .emulator import Emulator

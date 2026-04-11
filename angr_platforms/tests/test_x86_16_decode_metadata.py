@@ -3,7 +3,15 @@ from __future__ import annotations
 from bitstring import ConstBitStream
 
 from angr_platforms.X86_16.exec import ExecInstr
-from angr_platforms.X86_16.instruction import CHK_IMM8, CHK_IMM16, CHK_MOFFS, CHK_MODRM, CHK_PTR16, InstrData, X86Instruction
+from angr_platforms.X86_16.instruction import (
+    CHK_IMM8,
+    CHK_IMM16,
+    CHK_MODRM,
+    CHK_MOFFS,
+    CHK_PTR16,
+    InstrData,
+    X86Instruction,
+)
 from angr_platforms.X86_16.parse import ParseInstr
 
 

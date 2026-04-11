@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import angr
 import pytest
@@ -17,7 +17,6 @@ from angr_platforms.X86_16.analysis_helpers import (
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
-
 
 MATRIX_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -1,21 +1,22 @@
 from __future__ import annotations
 
-from collections.abc import MutableMapping
-from collections import Counter
-from dataclasses import asdict, dataclass
 import hashlib
 import json
+from collections import Counter
+from collections.abc import MutableMapping
+from dataclasses import asdict, dataclass
 from typing import Callable, Mapping, Sequence, TypeVar
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
     CBreak,
     CConstant,
     CContinue,
-    CITE,
-    CFunctionCall,
+    CDoWhileLoop,
     CForLoop,
+    CFunctionCall,
     CGoto,
     CIfBreak,
     CIfElse,
@@ -25,12 +26,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CUnaryOp,
     CVariable,
     CWhileLoop,
-    CDoWhileLoop,
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .decompiler_postprocess_utils import (
-    _c_constant_value_8616,
     _iter_c_nodes_deep_8616,
     _match_bp_stack_dereference_8616,
     _match_segmented_dereference_8616,

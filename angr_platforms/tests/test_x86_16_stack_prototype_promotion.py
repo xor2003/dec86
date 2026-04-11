@@ -1,14 +1,14 @@
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeBottom, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
+
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"

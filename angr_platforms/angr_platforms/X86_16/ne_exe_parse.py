@@ -155,7 +155,7 @@ def parse_ne_header(data: bytes, ne_offset: int) -> tuple[dict, int]:
         
         return header, ne_offset + header['resident_names_off']
     
-    except (struct.error, IndexError) as e:
+    except (struct.error, IndexError):
         return {}, 0
 
 

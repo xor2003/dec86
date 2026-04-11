@@ -9,23 +9,20 @@ from typing import Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
 
+from . import confidence_and_assumptions as _confidence
 from . import decompiler_postprocess_simplify as _simplify
+from . import segmented_memory_reasoning as _segmented_mem
 from . import structuring_analysis as _structuring
 from . import structuring_codegen as _codegen
-from . import type_equivalence_classes as _type_equiv
-from . import type_array_matching as _array_match
-from . import type_structure_merging as _struct_merge
-from . import segmented_memory_reasoning as _segmented_mem
-from . import confidence_and_assumptions as _confidence
 from . import structuring_diagnostics as _diagnostics
+from . import type_array_matching as _array_match
+from . import type_equivalence_classes as _type_equiv
+from . import type_structure_merging as _struct_merge
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
     collect_x86_16_tail_validation_summary,
-    compare_x86_16_tail_validation_summaries,
-    describe_x86_16_tail_validation_scope,
     fingerprint_x86_16_tail_validation_boundary,
-    format_x86_16_tail_validation_diff,
     persist_x86_16_tail_validation_snapshot,
 )
 

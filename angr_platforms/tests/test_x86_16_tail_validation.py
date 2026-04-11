@@ -3,12 +3,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
     CBreak,
     CConstant,
     CContinue,
-    CITE,
     CFunctionCall,
     CIfElse,
     CReturn,
@@ -20,6 +20,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation import (

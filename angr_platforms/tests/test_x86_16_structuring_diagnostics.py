@@ -6,14 +6,15 @@ and integration with structuring analysis.
 """
 
 import pytest
+
 from angr_platforms.X86_16.structuring_diagnostics import (
-    StructuringFailureReason,
-    StructuringDiagnostic,
     DiagnosticsCollector,
+    StructuringDiagnostic,
     StructuringDiagnosticsReport,
+    StructuringFailureReason,
+    apply_x86_16_structuring_diagnostics,
     build_failure_reason_from_stats,
     suggest_recovery_hints,
-    apply_x86_16_structuring_diagnostics,
 )
 
 

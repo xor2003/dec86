@@ -3,10 +3,9 @@ from __future__ import annotations
 import logging
 
 from angr import ailment
-from angr.calling_conventions import SimComboArg, SimRegArg
 from angr.analyses.decompiler.return_maker import ReturnMaker
+from angr.calling_conventions import SimComboArg, SimRegArg
 from angr.sim_type import SimTypeBottom
-from angr.utils.types import dereference_simtype_by_lib
 
 __all__ = [
     "apply_x86_16_decompiler_return_compatibility",

@@ -1,9 +1,7 @@
 import inspect
 
-from angr_platforms.X86_16 import access
+from angr_platforms.X86_16 import access, instr16, instr32
 from angr_platforms.X86_16 import emu as emu_mod
-from angr_platforms.X86_16 import instr16
-from angr_platforms.X86_16 import instr32
 from angr_platforms.X86_16.instr_base import GROUP2_BYTE_SHIFT_ROTATE_HANDLERS, InstrBase
 
 

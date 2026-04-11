@@ -2,58 +2,39 @@ from __future__ import annotations
 
 import re
 
-import networkx
-import angr.ailment as ailment
-from angr.calling_conventions import default_cc
-from angr.calling_conventions import SimComboArg, SimRegArg
-from angr.analyses.calling_convention import utils as _cc_utils
-from angr.analyses.decompiler.return_maker import ReturnMaker
-from angr.analyses.decompiler.callsite_maker import CallSiteMaker
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
-    CClosingObject,
     CConstant,
-    CExpression,
     CFunctionCall,
-    CITE,
     CReturn,
     CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
 )
+from angr.sim_type import (
+    SimTypeBottom,
+    SimTypeLong,
+    SimTypePointer,
+    SimTypeShort,
+)
 from angr.utils.library import convert_cproto_to_py
-from angr.analyses.reaching_definitions import rd_state as _rd_state
-from angr.analyses.variable_recovery import variable_recovery_base as _variable_recovery_base
-from angr.sim_type import SimTypeBottom, SimTypePointer
-from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypeLongLong, SimTypeShort
-from angr.analyses.typehoon.simple_solver import BASE_LATTICES, BottomType, Int, Int16, TopType
-from angr.analyses.typehoon import simple_solver as _typehoon_simple_solver
-from angr.analyses.typehoon import translator as _typehoon_translator
+
 try:
     from angr.analyses.typehoon import lifter as _typehoon_lifter
 except ImportError:
     _typehoon_lifter = None
-from angr.analyses.decompiler.clinic import Clinic
-from angr.analyses.typehoon.typeconsts import Pointer, Int16 as TCInt16
-from angr.knowledge_plugins.functions.function import Function
-from angr.knowledge_plugins.variables.variable_manager import VariableManagerInternal
-from angr.sim_variable import SimMemoryVariable
-from angr.sim_variable import SimRegisterVariable
-from angr.sim_variable import SimStackVariable
-from .annotations import ANNOTATION_KEY
-from .annotations import annotate_function
-from .analysis_helpers import preferred_known_helper_signature_decl, resolve_direct_call_target_from_block
-from .alias_model import _same_stack_slot_identity, _stack_slot_identity_can_join, _stack_slot_identity_for_variable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+
+from .alias_model import _stack_slot_identity_can_join, _stack_slot_identity_for_variable
+from .analysis_helpers import preferred_known_helper_signature_decl
+from .annotations import ANNOTATION_KEY, annotate_function
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
     _iter_c_nodes_deep_8616,
-    _match_real_mode_linear_expr_8616,
     _match_bp_stack_load_8616,
     _replace_c_children_8616,
-    _same_c_expression_8616,
-    _segment_reg_name_8616,
     _structured_codegen_node_8616,
 )
 

@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 from angr.analyses.decompiler.structured_codegen.c import (
-    CAssignment,
+    CITE,
     CBinaryOp,
     CConstant,
-    CITE,
-    CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
 )
-from angr.sim_variable import SimMemoryVariable
-from angr.sim_variable import SimRegisterVariable
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 __all__ = [
     "_structured_codegen_node_8616",

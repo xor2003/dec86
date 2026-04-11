@@ -4,10 +4,11 @@ Integration tests for structural analysis on real corpus samples.
 This test validates cyclic pattern matching on real COD samples.
 """
 
+
 import pytest
-from pathlib import Path
+
 from angr_platforms.X86_16.structuring_analysis import StructureAnalysis
-from angr_platforms.X86_16.structuring_region import RegionGraph, Region, RegionType
+from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType
 
 
 class TestStructuringIntegration:

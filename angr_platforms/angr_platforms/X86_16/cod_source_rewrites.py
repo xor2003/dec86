@@ -411,7 +411,6 @@ def rewrite_known_cod_object_condition_blocks_from_source(c_text: str, metadata:
     if metadata is None or not metadata.source_lines:
         return c_text
 
-    import re
 
     source_lines = [line.rstrip() for line in metadata.source_lines if line.strip()]
     current_lines = c_text.splitlines()

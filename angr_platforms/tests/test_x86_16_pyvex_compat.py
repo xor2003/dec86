@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import angr_platforms.X86_16  # noqa: F401
 import pyvex.const as pyvex_const
 from pyvex.lifting.util import vex_helper
+
+import angr_platforms.X86_16  # noqa: F401
 
 
 def test_pyvex_runtime_compatibility_is_applied() -> None:

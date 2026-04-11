@@ -6,12 +6,13 @@ and array recovery metadata synthesis.
 """
 
 import pytest
+
 from angr_platforms.X86_16.type_array_matching import (
-    InductionVariable,
     ArrayAccessPattern,
-    ArrayRecoveryInfo,
-    InductionVariableCollector,
     ArrayExpressionMatcher,
+    ArrayRecoveryInfo,
+    InductionVariable,
+    InductionVariableCollector,
     apply_x86_16_array_expression_matching,
 )
 

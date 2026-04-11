@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
     CConstant,
-    CITE,
     CStatements,
-    CTypeCast,
     CUnaryOp,
     CVariable,
 )
@@ -14,7 +13,6 @@ from angr.sim_variable import SimRegisterVariable
 
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
-    _iter_c_nodes_deep_8616,
     _replace_c_children_8616,
     _same_c_expression_8616,
     _structured_codegen_node_8616,

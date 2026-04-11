@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from angr_platforms.X86_16.cod_extract import CODProcMetadata
 from angr_platforms.X86_16.cod_source_rewrites import (
+    COD_SOURCE_REWRITE_REGISTRY,
     COD_SOURCE_REWRITE_SPECS,
     COD_SOURCE_REWRITE_SPECS_BY_NAME,
-    COD_SOURCE_REWRITE_REGISTRY,
     apply_cod_source_rewrites,
     cod_source_rewrite_description,
     cod_source_rewrite_names,

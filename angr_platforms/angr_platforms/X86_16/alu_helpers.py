@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any, Callable
-
 from pyvex.lifting.util.vex_helper import Type
 
 from .addressing_helpers import type_for_bits

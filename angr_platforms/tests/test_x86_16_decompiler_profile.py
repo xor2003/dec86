@@ -1,13 +1,13 @@
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"
@@ -18,16 +18,16 @@ _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
-from angr_platforms.X86_16.decompiler_postprocess_stage import (  # noqa: E402
-    DECOMPILER_POSTPROCESS_PASSES,
-    _decompiler_postprocess_passes_for_function,
-)
-from angr_platforms.X86_16.annotations import _normalize_arg_names as _normalize_annotation_arg_names  # noqa: E402
 from angr_platforms.X86_16 import decompiler_postprocess as postprocess  # noqa: E402
+from angr_platforms.X86_16.annotations import _normalize_arg_names as _normalize_annotation_arg_names  # noqa: E402
 from angr_platforms.X86_16.decompiler_postprocess import (  # noqa: E402
     _apply_annotations_8616,
     _normalize_arg_names_8616,
     _normalize_function_prototype_arg_names_8616,
+)
+from angr_platforms.X86_16.decompiler_postprocess_stage import (  # noqa: E402
+    DECOMPILER_POSTPROCESS_PASSES,
+    _decompiler_postprocess_passes_for_function,
 )
 
 

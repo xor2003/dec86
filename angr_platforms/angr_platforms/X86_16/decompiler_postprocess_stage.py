@@ -20,9 +20,7 @@ from .tail_validation import (
     build_x86_16_tail_validation_verdict,
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
-    describe_x86_16_tail_validation_scope,
     fingerprint_x86_16_tail_validation_boundary,
-    format_x86_16_tail_validation_diff,
     persist_x86_16_tail_validation_snapshot,
 )
 

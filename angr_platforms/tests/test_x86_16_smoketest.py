@@ -3,18 +3,16 @@ from types import SimpleNamespace
 
 import angr
 import keystone as ks
-import pytest
 from angr import options as o
-from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.analyses.decompiler.structured_codegen.c import CVariable
+from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
+from decompile import _resolve_stack_cvar_at_offset
 
-from angr_platforms.X86_16.annotations import decompile_function
-from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations
+from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations, decompile_function
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.simos_86_16 import SimCC8616MSCsmall  # noqa: F401
-from decompile import _resolve_stack_cvar_at_offset
 
 
 def _project_from_bytes(code: bytes):

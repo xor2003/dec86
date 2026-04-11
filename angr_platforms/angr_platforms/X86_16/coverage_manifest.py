@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 # Opcode files whose semantics already have direct upstream-x86 compare coverage in
 # tests/test_x86_16_compare_semantics.py. Skipping them in large MOO sweeps keeps the
 # hardware-backed verifier focused on areas where the 286 corpus adds unique value.

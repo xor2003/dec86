@@ -2,21 +2,16 @@ import logging
 from typing import Any
 
 import bitstring
-import pyvex
 from pyvex.lifting import register
-from pyvex.lifting.util import Instruction, ParseError, GymratLifter, JumpKind
+from pyvex.lifting.util import GymratLifter, Instruction, JumpKind, ParseError
 from pyvex.lifting.util.vex_helper import Type
-from pyvex.expr import Get, Const, Binop, Load, Unop
-from pyvex.stmt import Put, IMark, NoOp, Store, WrTmp
-from pyvex import pvc
-
-from .parse import CHSZ_AD, CHSZ_OP
 
 from .arch_86_16 import Arch86_16
 from .emulator import Emulator
 from .instr16 import Instr16
 from .instr32 import Instr32
 from .instruction import InstrData
+from .parse import CHSZ_AD, CHSZ_OP
 from .regs import reg16_t
 
 logger = logging.getLogger(__name__)

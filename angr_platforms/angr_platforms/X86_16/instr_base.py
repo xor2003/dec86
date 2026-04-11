@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
+from typing import TYPE_CHECKING, Callable, Sequence, cast
 
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
 
-from .emu import EmuInstr
+from .addressing_helpers import load_resolved_operand, store_resolved_operand
 from .alu_helpers import (
     binary_operation,
     binary_operation_with_carry,
@@ -21,12 +21,12 @@ from .alu_helpers import (
     shift_right_operation,
     unary_operation,
 )
-from .addressing_helpers import load_resolved_operand, store_resolved_operand
+from .emu import EmuInstr
 from .exec import ExecInstr
-from .stack_helpers import branch_rel8, return_far16, return_interrupt16
 from .instruction import *
 from .parse import ParseInstr
-from .regs import reg8_t, reg16_t, sgreg_t
+from .regs import reg8_t, reg16_t
+from .stack_helpers import branch_rel8, return_far16, return_interrupt16
 
 if TYPE_CHECKING:
     from .emulator import Emulator

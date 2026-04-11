@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+
 def _silence_scan_loggers() -> None:
     for name in (
         "angr.state_plugins.unicorn_engine",
@@ -24,16 +25,15 @@ _silence_scan_loggers()
 
 import angr
 
-from .arch_86_16 import Arch86_16
 from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed_calling_conventions
-from .recovery_confidence import classify_x86_16_recovery_confidence, summarize_recovery_confidence
-from .readability_goals import classify_readability_cluster
+from .arch_86_16 import Arch86_16
 from .lift_86_16 import Lifter86_16  # noqa: F401
+from .readability_goals import classify_readability_cluster
+from .recovery_confidence import classify_x86_16_recovery_confidence, summarize_recovery_confidence
 from .tail_validation import (
     build_x86_16_tail_validation_aggregate,
     extract_x86_16_tail_validation_snapshot,
 )
-
 
 ENTRY_RE = re.compile(r"\*\*\*\s+([0-9A-Fa-f]+)\s+((?:[0-9A-Fa-f]{2}\s+)+)(.*)$")
 PROC_RE = re.compile(r"^([^\s]+)\tPROC (NEAR|FAR)$")

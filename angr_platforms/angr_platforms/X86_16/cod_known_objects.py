@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from collections import OrderedDict
+from dataclasses import dataclass
 
-from angr.sim_type import SimStruct, SimUnion, SimTypeChar, SimTypePointer, SimTypeShort
+from angr.sim_type import SimStruct, SimTypeChar, SimTypePointer, SimTypeShort, SimUnion
 
 
 @dataclass(frozen=True)

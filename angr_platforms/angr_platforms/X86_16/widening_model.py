@@ -6,10 +6,10 @@ from typing import Iterable
 from .alias_domains import DomainKey, register_pair_name
 from .alias_model import (
     AliasStorageFacts,
-    _StorageDomainSignature,
-    _StorageView,
     _merge_storage_domains,
     _storage_domain_for_expr,
+    _StorageDomainSignature,
+    _StorageView,
     can_join_alias_storage,
     describe_alias_storage,
     same_alias_storage_domain,

@@ -1,33 +1,34 @@
+from pyvex.lifting.util.vex_helper import Type
+
 from angr_platforms.X86_16.addressing_helpers import (
     ResolvedMemoryOperand,
     WidthProfile,
-    address_width_bits,
     address_step,
+    address_width_bits,
     advance_eip32,
     advance_ip16,
-    describe_x86_16_decode_width_matrix,
-    describe_x86_16_mixed_width_extension_surface,
-    decode_width_profile,
     decode_width_case,
     decode_width_case_for_profile,
+    decode_width_profile,
     default_segment_for_modrm16,
     default_segment_for_modrm32,
+    describe_x86_16_decode_width_matrix,
+    describe_x86_16_mixed_width_extension_surface,
     displacement_width_bits,
+    linear_address,
     load_far_pointer,
     load_far_pointer16,
     load_resolved_operand,
     load_word_pair16,
-    linear_address,
     modrm16_effective_offset,
     modrm32_effective_offset,
+    operand_width_bits,
+    resolve_linear_operand,
     resolve_modrm16_address,
     resolve_modrm32_address,
-    resolve_linear_operand,
-    operand_width_bits,
     signed_displacement,
     store_resolved_operand,
 )
-from pyvex.lifting.util.vex_helper import Type
 from angr_platforms.X86_16.regs import reg16_t, reg32_t, sgreg_t
 
 

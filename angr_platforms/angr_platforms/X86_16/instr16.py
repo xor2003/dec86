@@ -1,45 +1,50 @@
 
+from pyvex import IRConst
+from pyvex.expr import Const
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
-from pyvex.stmt import IMark, WrTmp, Put, Store
-from pyvex.expr import Const, Binop
-from pyvex import IRConst
- 
+
+from .addressing_helpers import (
+    load_far_pointer,
+    load_resolved_operand,
+    load_word_pair16,
+    resolve_linear_operand,
+    store_resolved_operand,
+)
 from .alu_helpers import (
     binary_operation,
     binary_operation_with_carry,
     compare_operation,
-    masked_shift_count,
-    rotate_count,
     rotate_through_carry_left_state,
     rotate_through_carry_right_state,
     unary_operation,
 )
-from .addressing_helpers import load_far_pointer, load_resolved_operand, load_word_pair16, resolve_linear_operand, store_resolved_operand
+from .exception import EXP_UD
 from .instr_base import InstrBase
+from .instruction import *
+from .regs import reg8_t, reg16_t, sgreg_t
 from .stack_helpers import (
-    branch_rel16,
     branch_rel8,
+    branch_rel16,
     emit_far_call16,
     emit_far_jump16,
     emit_near_call16,
     emit_near_jump16,
     enter16,
-    leave16,
     far_return_ip16,
+    leave16,
+    loop_rel8,
     near_relative_target16,
-    near_return_ip16,
-    pop_all16,
     pop16,
     pop16_register,
+    pop_all16,
     pop_flags16,
     pop_segment16,
     push16_register,
-    push_flags16,
     push_all16,
+    push_flags16,
     push_immediate16,
     push_segment16,
-    loop_rel8,
     return_near16,
 )
 from .string_helpers import (
@@ -48,12 +53,9 @@ from .string_helpers import (
     string_advance_indices,
     string_compare_values,
     string_load,
-    string_store,
     string_source_segment,
+    string_store,
 )
-from .instruction import *
-from .regs import reg8_t, reg16_t, sgreg_t
-from .exception import EXP_UD
 
 X86_16_OPCODE_HELPERS = (
     (0x40, 0x47, "inc_r16", 0),

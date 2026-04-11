@@ -1,17 +1,16 @@
 from types import SimpleNamespace
 
-import archinfo
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_globals import (
     WordGlobalStoreCandidate,
     _coalesce_word_global_constant_stores_8616,
     _coalesce_word_global_loads_8616,
     describe_word_global_constant_store_candidates_8616,
 )
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
 def _make_codegen(statements):

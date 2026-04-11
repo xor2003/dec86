@@ -1,8 +1,7 @@
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-import sys
 from types import SimpleNamespace
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"
@@ -34,3 +33,16 @@ def test_access_trait_rewrite_policy_is_evidence_driven_not_name_driven():
     }
 
     assert _should_attach_access_trait_names(make_codegen("_UnlistedProc", 0x1000, traits))
+
+
+def test_access_trait_rewrite_policy_requires_stable_object_hint_not_mixed_trait_noise():
+    traits = {
+        "base_const": {
+            ("ss", ("stack", "bp", -4), 4, 2, 1): 1,
+        },
+        "array_evidence": {
+            (("stack", "bp", -4), ("reg", 2), 4, 0, 2): 1,
+        },
+    }
+
+    assert not _should_attach_access_trait_names(make_codegen("_UnlistedProc", 0x1000, traits))

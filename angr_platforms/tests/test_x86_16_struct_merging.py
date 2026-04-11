@@ -6,13 +6,14 @@ and multi-function struct layout merging.
 """
 
 import pytest
+
 from angr_platforms.X86_16.type_structure_merging import (
-    StructField,
-    StructType,
-    FieldAccessPattern,
     FieldAccessCollector,
-    StructureFieldMerger,
+    FieldAccessPattern,
+    StructField,
     StructRecoveryInfo,
+    StructType,
+    StructureFieldMerger,
     apply_x86_16_structure_field_merging,
 )
 

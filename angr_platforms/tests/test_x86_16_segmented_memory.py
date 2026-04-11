@@ -6,15 +6,16 @@ and segment association building across functions.
 """
 
 import pytest
+
 from angr_platforms.X86_16.segmented_memory_reasoning import (
-    SegmentRegister,
+    FarPointerRecovery,
     SegmentAssignment,
     SegmentAssociation,
-    SegmentedPointer,
-    FarPointerRecovery,
-    SegmentLoweringDecision,
-    SegmentedAddressClassifier,
     SegmentAssociationAnalyzer,
+    SegmentedAddressClassifier,
+    SegmentedPointer,
+    SegmentLoweringDecision,
+    SegmentRegister,
     apply_x86_16_segmented_memory_reasoning,
 )
 

@@ -6,16 +6,14 @@ from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable
 
+from .decompiler_postprocess_loads import _global_load_addr_8616, _match_global_scaled_high_byte_8616
 from .decompiler_postprocess_utils import (
-    _c_constant_value_8616,
     _global_memory_addr_8616,
     _is_shifted_high_byte_8616,
     _iter_c_nodes_deep_8616,
     _make_word_global_8616,
     _replace_c_children_8616,
-    _same_c_expression_8616,
 )
-from .decompiler_postprocess_loads import _global_load_addr_8616, _match_global_scaled_high_byte_8616
 
 __all__ = [
     "_coalesce_word_global_loads_8616",

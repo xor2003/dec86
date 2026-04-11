@@ -3,9 +3,7 @@ import re
 
 import angr
 import claripy
-
 import keystone as ks
-
 from archinfo import ArchX86
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16

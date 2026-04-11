@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-import struct
-
 
 _TDINFO_MAGIC = 0x52FB
 _PAGE_SIZE = 512

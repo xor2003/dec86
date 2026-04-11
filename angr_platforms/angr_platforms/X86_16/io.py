@@ -1,9 +1,9 @@
 from typing import Dict, Optional
 
+from pyvex.expr import Const as PyVexConst
 from pyvex.lifting.util.vex_helper import Type
 
 from .dev_io import MemoryIO, PortIO
-from pyvex.expr import Const as PyVexConst
 from .memory import Memory
 
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from angr_platforms.X86_16.arch_86_16 import Arch86_16
-
 import angr
 from angr import options as o
+
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
 
 def _run_one_instruction_local(arch, code: bytes, ax: int = 0x125A, di: int = 0x200):

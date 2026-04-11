@@ -1,45 +1,44 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .alias_model import describe_x86_16_alias_recovery_api
 from .addressing_helpers import (
     describe_x86_16_decode_width_matrix,
     describe_x86_16_mixed_width_extension_surface,
     describe_x86_16_mixed_width_instruction_surface,
 )
+from .alias_model import describe_x86_16_alias_recovery_api
 from .analysis_helpers import (
     describe_x86_16_interrupt_api_surface,
     describe_x86_16_interrupt_core_surface,
     describe_x86_16_interrupt_lowering_boundary,
 )
+from .cod_known_objects import describe_x86_16_cod_known_objects
 from .cod_source_rewrites import (
     describe_x86_16_source_backed_rewrite_debt,
     describe_x86_16_source_backed_rewrite_status,
 )
-from .cod_known_objects import describe_x86_16_cod_known_objects
 from .correctness_goals import describe_x86_16_correctness_goals, summarize_x86_16_correctness_goals
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
-from .recovery_confidence import describe_x86_16_recovery_confidence_axes
 from .instruction import describe_x86_16_instruction_metadata_surface
 from .readability_goals import (
     describe_x86_16_readability_goals,
     summarize_readability_focus,
     summarize_readability_goals,
 )
-from .recovery_manifest import describe_x86_16_object_recovery_focus
-from .recovery_manifest import describe_x86_16_recovery_layers
 from .readability_set import describe_x86_16_golden_readability_set, summarize_x86_16_golden_readability_set
+from .recovery_confidence import describe_x86_16_recovery_confidence_axes
+from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers
+from .tail_validation import build_x86_16_validation_cache_descriptor
 from .validation_manifest import (
-    describe_x86_16_validation_triage,
     describe_x86_16_validation_families,
     describe_x86_16_validation_layers,
+    describe_x86_16_validation_triage,
 )
 from .widening_model import describe_x86_16_widening_pipeline
-from .tail_validation import build_x86_16_validation_cache_descriptor
 
 
 @dataclass(frozen=True)

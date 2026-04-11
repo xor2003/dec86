@@ -1,8 +1,8 @@
-from pyvex.expr import Get, Const, Load, Binop, Unop
-from pyvex.stmt import Put, Store
-from pyvex import IRConst
-from pyvex.lifting.util.vex_helper import Type
+from pyvex.expr import Binop, Const, Get, Load, Unop
 from pyvex.lifting.util.syntax_wrapper import VexValue
+from pyvex.lifting.util.vex_helper import Type
+from pyvex.stmt import Put
+
 from .cr import CR
 from .eflags import Eflags
 from .regs import dtreg_t, reg8_t, reg16_t, reg32_t, sgreg_t

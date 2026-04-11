@@ -5,12 +5,11 @@ import tarfile
 from pathlib import Path
 
 import angr
+import decompile
 import pytest
 
-import decompile
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.load_dos_ne import DOSNE, DOSNEHeader  # noqa: F401
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MZ_EXPLODE_ARCHIVE = REPO_ROOT / "mz-explode" / "test" / "testdata.tar.gz"

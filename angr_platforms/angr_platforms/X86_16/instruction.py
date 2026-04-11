@@ -1,4 +1,3 @@
-from .emulator import Emulator
 from .addressing_helpers import (
     WidthProfile,
     address_width_bits,
@@ -6,6 +5,7 @@ from .addressing_helpers import (
     decode_width_case_for_profile,
     operand_width_bits,
 )
+from .emulator import Emulator
 from .regs import sgreg_t
 
 # Constants for repeat prefixes

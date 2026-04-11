@@ -24,11 +24,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
 from .structuring_region import (
+    DominatorInfo,
     Region,
     RegionGraph,
     RegionType,
     compute_dominators,
-    DominatorInfo,
 )
 
 if TYPE_CHECKING:
@@ -784,7 +784,7 @@ class RegionBasedStructuringPass:
         Returns:
             Tuple of (RegionGraph, entry_region) or (None, None)
         """
-        from .structuring_region import RegionGraph, Region, RegionType
+        from .structuring_region import Region, RegionGraph, RegionType
 
         graph = RegionGraph()
         regions_by_addr = {}

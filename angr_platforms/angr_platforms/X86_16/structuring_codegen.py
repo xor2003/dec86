@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from .structuring_region import Region, RegionType, RegionGraph
+from .structuring_region import Region, RegionGraph, RegionType
 
 if TYPE_CHECKING:
     pass

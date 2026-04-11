@@ -4,7 +4,7 @@ from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
 
 from .alu_helpers import compare_operation
-from .instruction import NONE, REPNZ, REPZ
+from .instruction import REPNZ, REPZ
 from .regs import reg16_t, reg32_t, sgreg_t
 
 

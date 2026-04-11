@@ -6,7 +6,16 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
-from .alias_domains import DomainKey, FULL16, HIGH8, LOW8, register_domain_for_name, register_offset_for_name, register_pair_name, register_view_for_name, register_views_can_join
+from .alias_domains import (
+    FULL16,
+    HIGH8,
+    LOW8,
+    DomainKey,
+    register_domain_for_name,
+    register_offset_for_name,
+    register_pair_name,
+    register_view_for_name,
+)
 
 
 @dataclass(frozen=True)

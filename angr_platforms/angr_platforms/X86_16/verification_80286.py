@@ -14,7 +14,6 @@ from capstone.x86_const import X86_OP_MEM
 
 from .arch_86_16 import Arch86_16
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SUITE_DIR = REPO_ROOT / "80286" / "v1_real_mode"
 DEFAULT_REVOCATION_LIST = REPO_ROOT / "80286" / "revocation_list.txt"

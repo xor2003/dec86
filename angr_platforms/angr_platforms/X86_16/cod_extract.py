@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from .cod_known_objects import canonical_known_cod_object_name

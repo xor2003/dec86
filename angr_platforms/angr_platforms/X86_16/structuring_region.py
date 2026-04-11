@@ -16,7 +16,7 @@ from __future__ import annotations
 import enum
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from angr.analyses.decompiler.structured_codegen.c import CNode
