@@ -587,6 +587,28 @@ def test_tail_validation_normalizes_ss_stack_dereference_to_stack_write():
     assert before.segmented_writes == ()
 
 
+def test_tail_validation_live_out_ignores_negative_stack_local_writes():
+    project = _project()
+    codegen = _DummyCodegen()
+
+    summary = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CAssignment(
+                    _stack(-12, codegen, name="pos"),
+                    _const(7, codegen),
+                    codegen=codegen,
+                ),
+                CReturn(_const(0, codegen), codegen=codegen),
+            ],
+            codegen,
+        ),
+    )
+
+    assert summary.stack_writes == ()
+
+
 def test_tail_validation_keeps_ds_byte_pair_distinct_from_word_global_write():
     project = _project()
     before_codegen = _DummyCodegen()

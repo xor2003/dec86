@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .structuring_grouped_refusal_report import describe_x86_16_structuring_grouped_refusal_report_surface
+from .structuring_grouping_report import describe_x86_16_structuring_grouping_report_surface
+from .validation_helper_report import describe_x86_16_validation_helper_report_surface
+
 
 @dataclass(frozen=True)
 class ValidationLayerSpec:
@@ -216,6 +220,11 @@ def describe_x86_16_validation_triage() -> dict[str, object]:
             "minimal repro snippets",
         ),
         "artifacts": ("disassembly", "decompile text", "semantic notes"),
+        "report_consumers": (
+            describe_x86_16_validation_helper_report_surface(),
+            describe_x86_16_structuring_grouping_report_surface(),
+            describe_x86_16_structuring_grouped_refusal_report_surface(),
+        ),
     }
 
 

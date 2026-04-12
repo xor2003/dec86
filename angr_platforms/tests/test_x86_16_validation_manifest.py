@@ -2,8 +2,15 @@ from angr_platforms.X86_16.validation_manifest import (
     VALIDATION_FAMILIES,
     VALIDATION_LAYERS,
     describe_x86_16_validation_families,
+    describe_x86_16_validation_helper_report_surface,
     describe_x86_16_validation_layers,
     describe_x86_16_validation_triage,
+)
+from angr_platforms.X86_16.structuring_grouping_report import (
+    describe_x86_16_structuring_grouping_report_surface,
+)
+from angr_platforms.X86_16.structuring_grouped_refusal_report import (
+    describe_x86_16_structuring_grouped_refusal_report_surface,
 )
 
 
@@ -90,4 +97,9 @@ def test_x86_16_validation_triage_surface_spells_out_workflow():
         "use_case": "debugging and triage only, not sole truth source",
         "outputs": ("family notes", "opcode notes", "minimal repro snippets"),
         "artifacts": ("disassembly", "decompile text", "semantic notes"),
+        "report_consumers": (
+            describe_x86_16_validation_helper_report_surface(),
+            describe_x86_16_structuring_grouping_report_surface(),
+            describe_x86_16_structuring_grouped_refusal_report_surface(),
+        ),
     }

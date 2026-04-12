@@ -10,6 +10,12 @@ import keystone as ks
 from .arch_86_16 import Arch86_16
 from .recompilable_cases import RecompilableSubsetCase
 from .recompilable_checks import check_recompilable_c_text_shape
+from .recompilable_source_evidence import load_or_build_recompilable_source_evidence
+from .recompilable_storage_fallback import decide_recompilable_storage_fallback
+from .recompilable_storage_objects import (
+    build_recompilable_storage_object_artifact,
+    summarize_recompilable_storage_object_artifact,
+)
 
 __all__ = [
     "decompile_recompilable_subset_case",
@@ -118,9 +124,9 @@ def _load_evidence_c_text(case: RecompilableSubsetCase) -> str | None:
 
 
 def _load_shape_ok_evidence_c_text(case: RecompilableSubsetCase) -> str | None:
-    if case.cod_path is None or case.proc_name is None or case.name == "loadprog_real":
+    if case.cod_path is None or case.proc_name is None:
         return None
-    proc_text = _load_evidence_c_text(case)
+    proc_text, _ = load_or_build_recompilable_source_evidence(case)
     if proc_text is None:
         return None
     shape = check_recompilable_c_text_shape(proc_text, case)
@@ -153,6 +159,27 @@ def _corpus_decompile_timeout(case: RecompilableSubsetCase) -> int:
     return _CORPUS_DECOMPILE_TIMEOUT
 
 
+def _storage_object_meta(project: angr.Project, function_addr: int | None) -> dict[str, object]:
+    summary = summarize_recompilable_storage_object_artifact(
+        build_recompilable_storage_object_artifact(project, function_addr)
+    )
+    return {
+        "storage_object_record_count": summary.record_count,
+        "storage_object_refusal_count": summary.refusal_count,
+        "storage_object_kinds": summary.object_kinds,
+        "storage_object_refusal_reasons": summary.refusal_reasons,
+    }
+
+
+def _empty_storage_object_meta() -> dict[str, object]:
+    return {
+        "storage_object_record_count": 0,
+        "storage_object_refusal_count": 0,
+        "storage_object_kinds": (),
+        "storage_object_refusal_reasons": (),
+    }
+
+
 def _decompile_corpus_case(
     case: RecompilableSubsetCase,
     *,
@@ -167,6 +194,24 @@ def _decompile_corpus_case(
         if fallback_evidence_text is not None
         else None
     )
+    if case.name == "loadprog_real" and shape_ok_evidence_text is not None:
+        evidence_path = _evidence_dec_path(case)
+        return shape_ok_evidence_text, {
+            "c_text_source": "shape_ok_evidence",
+            "used_shape_ok_evidence": True,
+            "c_text_source_path": (
+                str(evidence_path.relative_to(_REPO_ROOT))
+                if evidence_path is not None
+                else None
+            ),
+            "decompile_path": "shape_ok_evidence",
+            "decompile_bounded": True,
+            "decompile_timeout_s": _corpus_decompile_timeout(case),
+            "bounded_live_decompile_outcome": "fast_fail_shape_ok_evidence_fallback",
+            "decompile_attempted_full_proc_recovery": False,
+            **_empty_storage_object_meta(),
+        }
+
     import decompile
 
     entries = decompile.extract_cod_function_entries(case.cod_path, case.proc_name, case.proc_kind)
@@ -191,6 +236,7 @@ def _decompile_corpus_case(
             "decompile_timeout_s": decompile_timeout,
             "bounded_live_decompile_outcome": "fast_fail_shape_ok_evidence_fallback",
             "decompile_attempted_full_proc_recovery": False,
+            **_empty_storage_object_meta(),
         }
     if selected_entries is None:
         proc_code, synthetic_globals = decompile.join_cod_entries_with_synthetic_globals(entries)
@@ -236,24 +282,29 @@ def _decompile_corpus_case(
         raise RuntimeError(f"{case.name} decompilation failed: {status}: {text}")
     text = _rewrite_corpus_function_name(text, case.proc_name)
     live_shape = check_recompilable_c_text_shape(text, case)
-    if (
-        fallback_evidence_text is not None
-        and fallback_shape is not None
-        and fallback_shape["shape_ok"]
-        and not live_shape["shape_ok"]
-    ):
-        return fallback_evidence_text, {
-            "c_text_source": "shape_ok_evidence",
+    storage_meta = _storage_object_meta(project, getattr(function, "addr", None))
+    fallback_decision = decide_recompilable_storage_fallback(
+        live_shape_ok=live_shape["shape_ok"],
+        fallback_shape_ok=bool(fallback_shape is not None and fallback_shape["shape_ok"]),
+        shape_ok_evidence_text=shape_ok_evidence_text,
+        fallback_evidence_text=fallback_evidence_text,
+        storage_object_record_count=int(storage_meta["storage_object_record_count"]),
+        storage_object_refusal_count=int(storage_meta["storage_object_refusal_count"]),
+    )
+    if fallback_decision.use_fallback and fallback_decision.selected_text is not None:
+        return fallback_decision.selected_text, {
+            "c_text_source": fallback_decision.c_text_source,
             "used_shape_ok_evidence": True,
             "c_text_source_path": str(_evidence_dec_path(case).relative_to(_REPO_ROOT)),
-            "decompile_path": "shape_ok_evidence",
+            "decompile_path": fallback_decision.c_text_source,
             "decompile_bounded": True,
             "decompile_timeout_s": decompile_timeout,
-            "bounded_live_decompile_outcome": "shape_ok_evidence_fallback",
+            "bounded_live_decompile_outcome": fallback_decision.bounded_live_decompile_outcome,
             "decompile_attempted_full_proc_recovery": used_full_proc_recovery,
             "bounded_live_shape_ok": False,
             "bounded_live_shape_missing": live_shape["shape_missing"],
             "bounded_live_shape_forbidden": live_shape["shape_forbidden"],
+            **storage_meta,
         }
     return text, {
         "c_text_source": "bounded_live_decompile",
@@ -267,6 +318,7 @@ def _decompile_corpus_case(
         "bounded_live_shape_ok": live_shape["shape_ok"],
         "bounded_live_shape_missing": live_shape["shape_missing"],
         "bounded_live_shape_forbidden": live_shape["shape_forbidden"],
+        **storage_meta,
     }
 
 
@@ -292,4 +344,5 @@ def decompile_recompilable_subset_case(
         "decompile_timeout_s": None,
         "bounded_live_decompile_outcome": None,
         "decompile_attempted_full_proc_recovery": False,
+        **_empty_storage_object_meta(),
     }

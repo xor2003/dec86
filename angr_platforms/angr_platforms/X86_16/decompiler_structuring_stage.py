@@ -12,7 +12,8 @@ from angr.analyses.decompiler.decompiler import Decompiler
 from . import confidence_and_assumptions as _confidence
 from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
-from . import structuring_analysis as _structuring
+from . import structuring_cross_entry as _cross_entry
+from . import structuring_grouped_pass as _grouped_structuring
 from . import structuring_codegen as _codegen
 from . import structuring_diagnostics as _diagnostics
 from . import type_array_matching as _array_match
@@ -45,8 +46,13 @@ class DecompilerStructuringPassSpec:
 def _build_decompiler_structuring_passes() -> Tuple[DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec]:
     return (
         DecompilerStructuringPassSpec(
+            "_cross_entry_cfg_grouping_8616",
+            _cross_entry.apply_x86_16_cross_entry_grouping,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
             "_region_based_structuring_8616",
-            _structuring.apply_region_based_structuring,
+            _grouped_structuring.apply_grouped_region_based_structuring,
             False,
         ),
         DecompilerStructuringPassSpec(
@@ -268,5 +274,3 @@ def apply_x86_16_decompiler_structuring() -> None:
     if getattr(Decompiler._decompile, "__name__", "") != "_decompile_structuring_8616":
         _decompile_structuring_8616._orig_decompiler_decompile = Decompiler._decompile
         Decompiler._decompile = _decompile_structuring_8616
-
-
