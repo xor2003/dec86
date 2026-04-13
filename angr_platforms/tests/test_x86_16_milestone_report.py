@@ -1051,3 +1051,8 @@ def test_x86_16_tail_validation_detail_artifact_uses_cache(tmp_path):
     assert first["cache_hit"] is False
     assert second["cache_hit"] is True
     assert second["artifact"]["top_changed_functions"][0]["proc_name"] == "_step"
+    assert first["path"] != cache_path
+    assert first["path"].name.startswith("tail_validation_surface.")
+    assert first["path"].suffix == ".json"
+    assert second["path"] == first["path"]
+    assert second["alias_path"] == cache_path

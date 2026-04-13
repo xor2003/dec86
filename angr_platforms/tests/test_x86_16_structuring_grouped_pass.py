@@ -53,5 +53,6 @@ def test_grouped_structuring_pass_surface_is_deterministic():
     assert describe_x86_16_grouped_structuring_pass_surface() == {
         "pass_class": "GroupedRegionBasedStructuringPass",
         "graph_builder": "build_grouped_region_graph",
+        "analysis_class": "AbnormalLoopStructureAnalysis",
         "purpose": "Feed grouped region graphs into the real region-based structuring driver.",
     }

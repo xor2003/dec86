@@ -5,6 +5,8 @@ Tests induction variable collection, array pattern detection,
 and array recovery metadata synthesis.
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from angr_platforms.X86_16.type_array_matching import (
@@ -234,6 +236,69 @@ class TestPhase22Integration:
         assert result is False  # No direct modifications
         assert hasattr(codegen, "_inertia_array_matching_applied")
         assert codegen._inertia_array_matching_applied is True
+        assert codegen._inertia_array_matching_stats["recovered_arrays"] == 0
+
+    def test_array_matching_refuses_over_associated_segmented_storage(self):
+        stable_key = ("ss", ("stack", "bp", -4))
+        refused_key = ("ds", ("mem", 0x40))
+        project = SimpleNamespace(
+            _inertia_access_traits={0x4030: {"member_evidence": {}}},
+        )
+        codegen = SimpleNamespace(
+            cfunc=SimpleNamespace(addr=0x4030),
+            project=project,
+            _inertia_segmented_memory_lowering={
+                "SS": {
+                    "classification": "const",
+                    "associated_space": "stack",
+                    "allow_linear_lowering": True,
+                    "allow_object_lowering": True,
+                    "reason": "constant stack segment",
+                },
+                "DS": {
+                    "classification": "over_associated",
+                    "associated_space": "data",
+                    "allow_linear_lowering": False,
+                    "allow_object_lowering": False,
+                    "reason": "segment space is over-associated",
+                },
+            },
+        )
+
+        from inertia_decompiler.cli_access_object_hints import AccessTraitObjectHint
+        from inertia_decompiler.cli_access_profiles import AccessTraitEvidenceProfile
+        from angr_platforms.X86_16 import type_array_matching as array_matching
+
+        bridge_loader = array_matching.load_storage_object_bridge
+        array_matching.load_storage_object_bridge = lambda _project, _addr, *, codegen=None: bridge_loader(
+            _project,
+            _addr,
+            codegen=codegen,
+            build_access_trait_evidence_profiles=lambda _traits: {
+                stable_key: AccessTraitEvidenceProfile(array_like=((0, 2, 3),)),
+                refused_key: AccessTraitEvidenceProfile(array_like=((0, 2, 2),)),
+            },
+            build_stable_access_object_hints=lambda _traits: {
+                stable_key: AccessTraitObjectHint(stable_key, "array", ((0, 2, 3),)),
+                refused_key: AccessTraitObjectHint(refused_key, "array", ((0, 2, 2),)),
+            },
+        )
+        try:
+            result = apply_x86_16_array_expression_matching(codegen)
+        finally:
+            array_matching.load_storage_object_bridge = bridge_loader
+
+        assert result is False
+        assert set(codegen._inertia_array_matching_lowerable_arrays) == {stable_key}
+        assert codegen._inertia_array_matching_refused_arrays == {
+            refused_key: "segment space is over-associated"
+        }
+        assert codegen._inertia_array_matching_stats == {
+            "induction_vars": 0,
+            "array_patterns": 2,
+            "recovered_arrays": 1,
+            "refused_arrays": 1,
+        }
 
     def test_multi_dimensional_array_detection(self):
         """Test detecting multi-dimensional array patterns."""

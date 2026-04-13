@@ -14,6 +14,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional, Set
 
+from .type_storage_object_bridge import load_storage_object_bridge
+
 if TYPE_CHECKING:
     pass
 
@@ -258,15 +260,36 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
         return False
 
     try:
+        project = getattr(codegen, "project", None)
+        function_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+        bridge = None
+        if project is not None:
+            bridge = load_storage_object_bridge(project, function_addr, codegen=codegen)
+
         # Track that struct merging pass ran
         codegen._inertia_struct_merging_applied = True
+        codegen._inertia_struct_merging_bridge = bridge
+        codegen._inertia_struct_merging_struct_facts = {} if bridge is None else bridge.facts_by_base
+        codegen._inertia_struct_merging_member_facts = {} if bridge is None else bridge.member_facts
+        codegen._inertia_struct_merging_array_facts = {} if bridge is None else bridge.array_facts
+        codegen._inertia_struct_merging_refusal_facts = {} if bridge is None else bridge.refusal_facts
+        codegen._inertia_struct_merging_changed = bool(bridge is not None and bridge.facts_by_base)
         codegen._inertia_struct_merging_stats = {
-            "field_accesses": 0,
-            "structs_synthesized": 0,
+            "field_accesses": 0 if bridge is None else sum(len(fact.candidate_offsets) for fact in bridge.facts_by_base.values()),
+            "structs_synthesized": 0 if bridge is None else len(bridge.facts_by_base),
             "structs_merged": 0,
+            "member_facts": 0 if bridge is None else len(bridge.member_facts),
+            "array_facts": 0 if bridge is None else len(bridge.array_facts),
+            "refusal_facts": 0 if bridge is None else len(bridge.refusal_facts),
         }
 
-        logger.debug("Structure field merging pass completed")
+        logger.debug(
+            "Structure field merging pass completed: records=%s members=%s arrays=%s refusals=%s",
+            0 if bridge is None else len(bridge.facts_by_base),
+            0 if bridge is None else len(bridge.member_facts),
+            0 if bridge is None else len(bridge.array_facts),
+            0 if bridge is None else len(bridge.refusal_facts),
+        )
         return False  # No direct modifications at this stage
     except Exception as ex:
         logger.warning("Structure field merging pass failed: %s", ex)

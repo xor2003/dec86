@@ -30,6 +30,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
+from .tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from .tail_validation_fingerprint import (
     TAIL_VALIDATION_FINGERPRINT_VERSION,
     _bool_projection_fingerprint,
@@ -442,10 +443,18 @@ def _tail_validation_stage_status(entry: object) -> str:
     return "changed" if bool(entry.get("changed", False)) else "passed"
 
 
+def _tail_validation_record_proc_name(record: Mapping[str, object]) -> object:
+    proc_name = record.get("proc_name")
+    if proc_name:
+        return proc_name
+    return record.get("function_name")
+
+
 def _tail_validation_function_accounting(records: Sequence[Mapping[str, object]]) -> dict[str, object]:
     rows: list[dict[str, object]] = []
     status_counts: Counter[str] = Counter()
     for record in records:
+        proc_name = _tail_validation_record_proc_name(record)
         stage_statuses = {
             stage: _tail_validation_stage_status(record.get(stage))
             for stage in ("structuring", "postprocess")
@@ -462,7 +471,7 @@ def _tail_validation_function_accounting(records: Sequence[Mapping[str, object]]
         rows.append(
             {
                 "cod_file": record.get("cod_file"),
-                "proc_name": record.get("proc_name"),
+                "proc_name": proc_name,
                 "proc_kind": record.get("proc_kind"),
                 "status": status,
                 "stage_statuses": dict(sorted(stage_statuses.items())),
@@ -512,7 +521,7 @@ def _tail_validation_stage_summary(records: Sequence[Mapping[str, object]], stag
             changed_functions.append(
                 {
                     "cod_file": record.get("cod_file"),
-                    "proc_name": record.get("proc_name"),
+                    "proc_name": _tail_validation_record_proc_name(record),
                     "proc_kind": record.get("proc_kind"),
                     "stage": stage,
                     "verdict": verdict,
@@ -1136,6 +1145,7 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
     if root is None:
         return X86_16TailValidationSummary((), (), (), (), (), (), (), ())
     observed_locations = _collect_observed_locations(root, project, mode)
+    contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
 
     for node in _iter_c_nodes_deep_8616(root):
         if isinstance(node, CFunctionCall):
@@ -1162,28 +1172,33 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
                 segmented_writes.add(location)
         elif isinstance(node, CIfElse):
             for cond, _child in getattr(node, "condition_and_nodes", ()) or ():
-                control_flow_effects.add(f"if:{_expr_fingerprint(cond, project)}")
+                cond_fingerprint = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
+                control_flow_effects.add(f"if:{cond_fingerprint}")
                 if mode == "live_out":
-                    conditions.add(_expr_fingerprint(cond, project))
+                    conditions.add(cond_fingerprint)
             if getattr(node, "else_node", None) is not None:
                 control_flow_effects.add("if:else")
         elif isinstance(node, CIfBreak):
-            cond_fingerprint = _expr_fingerprint(getattr(node, "condition", None), project)
+            cond = getattr(node, "condition", None)
+            cond_fingerprint = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
             control_flow_effects.add(f"ifbreak:{cond_fingerprint}")
             if mode == "live_out":
                 conditions.add(cond_fingerprint)
         elif isinstance(node, CWhileLoop):
-            cond_fingerprint = _expr_fingerprint(getattr(node, "condition", None), project)
+            cond = getattr(node, "condition", None)
+            cond_fingerprint = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
             control_flow_effects.add(f"while:{cond_fingerprint}")
             if mode == "live_out":
                 conditions.add(cond_fingerprint)
         elif isinstance(node, CDoWhileLoop):
-            cond_fingerprint = _expr_fingerprint(getattr(node, "condition", None), project)
+            cond = getattr(node, "condition", None)
+            cond_fingerprint = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
             control_flow_effects.add(f"dowhile:{cond_fingerprint}")
             if mode == "live_out":
                 conditions.add(cond_fingerprint)
         elif isinstance(node, CForLoop):
-            cond_fingerprint = _expr_fingerprint(getattr(node, "condition", None), project)
+            cond = getattr(node, "condition", None)
+            cond_fingerprint = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
             control_flow_effects.add(f"for:{cond_fingerprint}")
             if mode == "live_out":
                 conditions.add(cond_fingerprint)

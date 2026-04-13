@@ -31,6 +31,7 @@ class LoopCodegenInfo:
     body_regions: list[Region]  # Regions in loop body
     exit_label: Optional[str]  # Label for break target (if needed)
     uses_goto: bool  # True if fallback gotos needed
+    structuring_variables: tuple[str, ...]  # Explicit abnormal loop selectors
 
 
 @dataclass
@@ -93,6 +94,9 @@ class StructuringCodegenPass:
 
         if loop_info.uses_goto:
             code += f"\n{loop_info.exit_label}: // loop exit label\n"
+        if loop_info.structuring_variables:
+            joined = ", ".join(loop_info.structuring_variables)
+            code += f"// structuring variables: {joined}\n"
 
         self.stats["loops_rendered"] += 1
         return code
@@ -155,7 +159,12 @@ class StructuringCodegenPass:
             loop_type = "while"
 
         unstructured_exits = region.metadata.get("unstructured_exits", [])
-        uses_goto = len(unstructured_exits) > 0
+        unstructured_entries = region.metadata.get("unstructured_entries", [])
+        abnormal_plan = region.metadata.get("abnormal_loop_plan", {})
+        structuring_variables = tuple(region.metadata.get("structuring_variables", ()))
+        uses_goto = len(unstructured_exits) > 0 or len(unstructured_entries) > 0
+        if abnormal_plan and not exit_label and uses_goto:
+            exit_label = f"__loop_exit_{region.region_id:x}"
 
         # Handle NaturalLoopInfo dataclass
         body_regions = []
@@ -170,6 +179,7 @@ class StructuringCodegenPass:
             body_regions=body_regions,
             exit_label=exit_label,
             uses_goto=uses_goto,
+            structuring_variables=structuring_variables,
         )
 
     def _extract_switch_info(self, region: Region) -> SwitchCodegenInfo:

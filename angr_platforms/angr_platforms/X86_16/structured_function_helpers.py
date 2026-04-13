@@ -134,7 +134,7 @@ def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender
         and _op_reg(window[5], 1) == X86_REG_AX
         and window[6].id == X86_INS_JE
         and window[7].id == X86_INS_XCHG
-        and { _op_reg(window[7], 0), _op_reg(window[7], 1) } == {X86_REG_AX, X86_REG_DX}
+        and {_op_reg(window[7], 0), _op_reg(window[7], 1)} == {X86_REG_AX, X86_REG_DX}
         and _is_mov_reg_reg(window[8], X86_REG_DI, X86_REG_DX)
         and window[9].id == X86_INS_XOR
         and _op_reg(window[9], 0) == X86_REG_AX

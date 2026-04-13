@@ -516,6 +516,44 @@ class TestIntegration:
         assert report.last_failure_reason() == StructuringFailureReason.MAX_ITERATIONS
         assert len(report.recovery_hints) > 0
 
+    def test_apply_pass_uses_ir_readiness_to_add_targeted_hints(self):
+        """Typed IR state should shape recovery hints, not only raw structuring stats."""
+
+        class MockStats:
+            iterations = 1000
+            max_iterations_reached = True
+            regions_reduced = 0
+            cycles_resolved = 0
+            had_unstructured_gotos = False
+
+        class MockCFunc:
+            addr = 0x2100
+            name = "ir_failed_func"
+            _structuring_stats = MockStats()
+
+        class MockCodegen:
+            cfunc = MockCFunc()
+            _inertia_vex_ir_summary = {
+                "block_count": 2,
+                "address_status_counts": {"provisional": 2},
+                "segment_origin_counts": {"defaulted": 2},
+                "condition_counts": {},
+                "phi_node_count": 0,
+            }
+
+        codegen = MockCodegen()
+        result = apply_x86_16_structuring_diagnostics(codegen)
+
+        assert result is True
+        report = codegen.cfunc._recovery_metadata["structuring_diagnostics"]
+        assert report.ir_hints is not None
+        assert report.ir_hints.readiness.level == "typed_address_only"
+        assert any("Typed conditions missing" in hint for hint in report.recovery_hints)
+        assert any("defaulted" in hint for hint in report.recovery_hints)
+        assert any("Segmented addresses remain provisional" in hint for hint in report.recovery_hints)
+        assert any("Cross-block SSA absent" in hint for hint in report.recovery_hints)
+        assert any("ir_readiness level=typed_address_only" in diag.message for diag in report.diagnostics_collector.diagnostics)
+
     def test_apply_pass_success_case(self):
         """Test that pass handles successful structuring."""
         class MockStats:

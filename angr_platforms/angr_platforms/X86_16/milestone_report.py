@@ -51,6 +51,10 @@ def _tail_validation_cache_key(surface: Mapping[str, object]) -> str:
     return build_x86_16_validation_cache_descriptor("tail_validation.console_summary", surface).cache_key
 
 
+def _content_addressed_cache_path(path: Path, cache_key: str) -> Path:
+    return path.with_name(f"{path.stem}.{cache_key[:12]}{path.suffix}")
+
+
 def _render_tail_validation_lines(surface: Mapping[str, object]) -> list[str]:
     headline = str(surface.get("headline", "whole-tail validation summary unavailable"))
     severity = str(surface.get("severity", "uncollected"))
@@ -198,6 +202,7 @@ def cache_x86_16_tail_validation_detail_artifact(
         }
 
     path = Path(cache_path)
+    immutable_path = _content_addressed_cache_path(path, cache_key)
     try:
         cached = json.loads(path.read_text())
         if cached.get("cache_key") == cache_key:
@@ -206,7 +211,8 @@ def cache_x86_16_tail_validation_detail_artifact(
                 "cache_key": cache_key,
                 "cache_hit": True,
                 "artifact": dict(cached_artifact) if isinstance(cached_artifact, Mapping) else artifact,
-                "path": path,
+                "path": immutable_path if immutable_path.exists() else path,
+                "alias_path": path,
             }
     except Exception:
         pass
@@ -216,6 +222,8 @@ def cache_x86_16_tail_validation_detail_artifact(
         "artifact": artifact,
     }
     try:
+        immutable_path.parent.mkdir(parents=True, exist_ok=True)
+        immutable_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     except Exception:
@@ -224,7 +232,8 @@ def cache_x86_16_tail_validation_detail_artifact(
         "cache_key": cache_key,
         "cache_hit": False,
         "artifact": artifact,
-        "path": path,
+        "path": immutable_path,
+        "alias_path": path,
     }
 
 

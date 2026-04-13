@@ -260,6 +260,55 @@ def test_tail_validation_diff_keeps_global_and_segmented_models_distinct():
     assert diff["delta"]["returns"]["removed"]
 
 
+def test_tail_validation_diff_treats_segmented_and_global_DoCRT_write_as_equivalent_when_ds_linear_lowering_is_proven():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    before_codegen._inertia_segmented_memory_lowering = {
+        "DS": {
+            "classification": "const",
+            "associated_space": "data",
+            "allow_linear_lowering": True,
+            "allow_object_lowering": True,
+        }
+    }
+    after_codegen = _DummyCodegen()
+
+    before = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CAssignment(
+                    _ds_deref(project, 0x7000, before_codegen),
+                    _const(1, before_codegen),
+                    codegen=before_codegen,
+                )
+            ],
+            before_codegen,
+        ),
+    )
+    after = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CAssignment(
+                    _global(0x7000, after_codegen),
+                    _const(1, after_codegen),
+                    codegen=after_codegen,
+                )
+            ],
+            after_codegen,
+        ),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert before.global_writes == ("global:0x7000",)
+    assert before.segmented_writes == ()
+    assert diff["changed"] is False
+    assert diff["delta"]["global_writes"] == {"added": (), "removed": ()}
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
 def test_tail_validation_live_out_ignores_register_writes_only_used_by_conditions():
     project = _project()
     before_codegen = _DummyCodegen()
@@ -544,6 +593,68 @@ def test_tail_validation_normalizes_zero_flag_compare_projection_noise():
     assert diff["changed"] is False
     assert before.conditions == ("Sub(reg:ax,const:2)",)
     assert after.conditions == ("Sub(reg:ax,const:2)",)
+
+
+def test_tail_validation_normalizes_adjacent_flag_assignment_guard_pairs():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_word = CBinaryOp(
+        "Or",
+        _reg(project, "si", before_codegen),
+        CBinaryOp("Mul", _reg(project, "di", before_codegen), _const(0x100, before_codegen), codegen=before_codegen),
+        codegen=before_codegen,
+    )
+    after_word = CBinaryOp(
+        "Or",
+        _reg(project, "si", after_codegen),
+        CBinaryOp("Mul", _reg(project, "di", after_codegen), _const(0x100, after_codegen), codegen=after_codegen),
+        codegen=after_codegen,
+    )
+    before_predicate = CBinaryOp("CmpEQ", CBinaryOp("Add", before_word, _const(1, before_codegen), codegen=before_codegen), _const(0, before_codegen), codegen=before_codegen)
+    after_predicate = CBinaryOp("CmpEQ", CBinaryOp("Add", after_word, _const(1, after_codegen), codegen=after_codegen), _const(0, after_codegen), codegen=after_codegen)
+
+    before = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen(
+            [
+                CAssignment(
+                    _reg(project, "flags", before_codegen),
+                    CBinaryOp("Mul", before_predicate, _const(64, before_codegen), codegen=before_codegen),
+                    codegen=before_codegen,
+                ),
+                CIfElse(
+                    [(
+                        CUnaryOp(
+                            "Not",
+                            CBinaryOp(
+                                "CmpEQ",
+                                CBinaryOp("And", _reg(project, "flags", before_codegen), _const(64, before_codegen), codegen=before_codegen),
+                                _const(0, before_codegen),
+                                codegen=before_codegen,
+                            ),
+                            codegen=before_codegen,
+                        ),
+                        CStatements([], codegen=before_codegen),
+                    )],
+                    codegen=before_codegen,
+                ),
+            ],
+            before_codegen,
+        ),
+    )
+    after = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen([CIfElse([(after_predicate, CStatements([], codegen=after_codegen))], codegen=after_codegen)], after_codegen),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert before.conditions == ("CmpEQ(Add(Or(reg:si,Mul(reg:di,const:256)),const:1),const:0)",)
+    assert before.control_flow_effects == ("if:CmpEQ(Add(Or(reg:si,Mul(reg:di,const:256)),const:1),const:0)",)
+    assert after.conditions == before.conditions
+    assert after.control_flow_effects == before.control_flow_effects
 
 
 def test_tail_validation_normalizes_ss_stack_dereference_to_stack_write():
@@ -1090,6 +1201,36 @@ def test_tail_validation_record_summary_marks_uncollected_separately_from_unknow
     assert surface["uncollected_function_count"] == 2
     assert surface["top_uncollected_functions"] == summary["uncollected_functions"]
     assert surface["consistency_issues"] == ()
+
+
+def test_tail_validation_uncollected_records_fall_back_to_function_name_identity():
+    summary = summarize_x86_16_tail_validation_records(
+        [
+            {
+                "cod_file": "LIFE2.EXE",
+                "function_name": "sub_119d3",
+                "tail_validation_uncollected": True,
+                "exit_kind": "timeout",
+                "exit_detail": "Timed out after 5s.",
+            }
+        ]
+    )
+    surface = build_x86_16_tail_validation_surface(summary, scanned=1)
+
+    assert summary["uncollected_functions"] == [
+        {
+            "cod_file": "LIFE2.EXE",
+            "proc_name": "sub_119d3",
+            "proc_kind": None,
+            "status": "uncollected",
+            "stage_statuses": {"postprocess": "uncollected", "structuring": "uncollected"},
+            "exit_kind": "timeout",
+            "exit_detail": "Timed out after 5s.",
+            "tail_validation_uncollected": True,
+        }
+    ]
+    assert surface["top_uncollected_functions"] == summary["uncollected_functions"]
+    assert surface["function_statuses"] == summary["function_statuses"]
 
 
 def test_tail_validation_surface_consistency_checker_reports_counter_drift():

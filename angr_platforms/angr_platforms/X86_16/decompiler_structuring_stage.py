@@ -11,7 +11,11 @@ from angr.analyses.decompiler.decompiler import Decompiler
 
 from . import confidence_and_assumptions as _confidence
 from . import decompiler_postprocess_simplify as _simplify
+from . import ir_confidence_markers as _ir_confidence
+from .ir import vex_import as _vex_ir
 from . import segmented_memory_reasoning as _segmented_mem
+from . import string_instruction_artifact as _string_instruction_artifact
+from . import string_instruction_lowering as _string_instruction_lowering
 from . import structuring_cross_entry as _cross_entry
 from . import structuring_grouped_pass as _grouped_structuring
 from . import structuring_codegen as _codegen
@@ -43,7 +47,7 @@ class DecompilerStructuringPassSpec:
     needs_project: bool
 
 
-def _build_decompiler_structuring_passes() -> Tuple[DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec, DecompilerStructuringPassSpec]:
+def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpec, ...]:
     return (
         DecompilerStructuringPassSpec(
             "_cross_entry_cfg_grouping_8616",
@@ -65,6 +69,27 @@ def _build_decompiler_structuring_passes() -> Tuple[DecompilerStructuringPassSpe
             _codegen.apply_structuring_codegen_8616,
             False,
         ),
+        DecompilerStructuringPassSpec(
+            "_vex_ir_artifact_8616",
+            _vex_ir.apply_x86_16_vex_ir_artifact,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_string_instruction_artifact_8616",
+            _string_instruction_artifact.apply_x86_16_string_instruction_artifact,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_string_instruction_lowering_8616",
+            _string_instruction_lowering.apply_x86_16_string_instruction_lowering,
+            True,
+        ),
+        # Phase 3: Segmented Memory Association Reasoning
+        DecompilerStructuringPassSpec(
+            "_segmented_memory_reasoning_8616",
+            _segmented_mem.apply_x86_16_segmented_memory_reasoning,
+            False,
+        ),
         # Phase 2: Type Inference and Recovery
         DecompilerStructuringPassSpec(
             "_type_equivalence_classes_8616",
@@ -81,21 +106,20 @@ def _build_decompiler_structuring_passes() -> Tuple[DecompilerStructuringPassSpe
             _struct_merge.apply_x86_16_structure_field_merging,
             False,
         ),
-        # Phase 3: Segmented Memory Association Reasoning
-        DecompilerStructuringPassSpec(
-            "_segmented_memory_reasoning_8616",
-            _segmented_mem.apply_x86_16_segmented_memory_reasoning,
-            False,
-        ),
         # Phase 4: Robustness & Diagnostics
-        DecompilerStructuringPassSpec(
-            "_confidence_and_assumptions_8616",
-            _confidence.apply_x86_16_confidence_and_assumptions,
-            False,
-        ),
         DecompilerStructuringPassSpec(
             "_structuring_diagnostics_8616",
             _diagnostics.apply_x86_16_structuring_diagnostics,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_ir_confidence_markers_8616",
+            _ir_confidence.apply_x86_16_ir_confidence_markers,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_confidence_and_assumptions_8616",
+            _confidence.apply_x86_16_confidence_and_assumptions,
             False,
         ),
     )
@@ -199,6 +223,8 @@ def _decompile_structuring_8616(self):
                 structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
                 structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
                 structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
+                structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
+                structuring_info["struct_merging_changed"] = bool(getattr(self.codegen, "_inertia_struct_merging_changed", False))
         setattr(self.codegen, "_inertia_tail_validation_snapshot", None)
         self.project._inertia_decompiler_stage = "structuring_done"
         return
@@ -256,6 +282,8 @@ def _decompile_structuring_8616(self):
             structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
             structuring_info["tail_validation_verdict"] = validation["verdict"]
             structuring_info["tail_validation_cache_hit"] = bool(validation.get("cache_hit", False))
+            structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
+            structuring_info["struct_merging_changed"] = bool(getattr(self.codegen, "_inertia_struct_merging_changed", False))
             persist_x86_16_tail_validation_snapshot(
                 function_info=info,
                 codegen=self.codegen,

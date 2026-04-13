@@ -18,6 +18,12 @@ def test_write_function_recovery_artifact_emits_stable_json(tmp_path):
             "decompiled_count": 1,
             "direct_call_count": 1,
             "return_kind": "scalar",
+            "x86_16_vex_ir_summary": {
+                "block_count": 1,
+                "instruction_count": 4,
+                "aliasable_value_count": 2,
+                "frame_slot_count": 1,
+            },
         },
         path,
     )
@@ -26,6 +32,7 @@ def test_write_function_recovery_artifact_emits_stable_json(tmp_path):
     assert result.artifact_kind == "function_recovery"
     assert result.row_count == 1
     assert payload["proc_name"] == "_dos_alloc"
+    assert payload["ir_summary"]["instruction_count"] == 4
     assert payload["helper_summary"]["status"] == "eligible"
 
 
@@ -42,6 +49,7 @@ def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path):
                 "decompiled_count": 1,
                 "direct_call_count": 1,
                 "return_kind": "scalar",
+                "x86_16_vex_ir_summary": {"block_count": 2, "instruction_count": 7},
             },
             {
                 "cod_file": "A.COD",
@@ -63,3 +71,4 @@ def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path):
         ("A.COD", "_a"),
         ("B.COD", "_b"),
     ]
+    assert payload["function_rows"][1]["ir_summary"]["instruction_count"] == 7

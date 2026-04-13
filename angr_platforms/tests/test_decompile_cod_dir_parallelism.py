@@ -1,8 +1,11 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
+from types import SimpleNamespace
 import json
 import sys
+
+from inertia_decompiler import tail_validation as _tail_validation
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -13,6 +16,13 @@ assert _spec is not None and _spec.loader is not None
 _script = module_from_spec(_spec)
 sys.modules[_spec.name] = _script
 _spec.loader.exec_module(_script)
+
+
+def _tail_validation_metadata_payload(stderr_text: str) -> dict[str, object]:
+    for line in stderr_text.splitlines():
+        if line.startswith(_tail_validation.TAIL_VALIDATION_METADATA_PREFIX):
+            return json.loads(line[len(_tail_validation.TAIL_VALIDATION_METADATA_PREFIX) :].strip())
+    raise AssertionError(f"missing tail-validation metadata line in {stderr_text!r}")
 
 
 def test_choose_parallelism_caps_to_a_small_multi_core_pool(monkeypatch):
@@ -393,7 +403,38 @@ def test_uncollected_tail_validation_record_keeps_proc_identity():
     }
 
 
-def test_empty_tail_validation_metadata_record_becomes_named_uncollected(tmp_path):
+def test_uncollected_tail_validation_record_keeps_proc_identity_for_missing_direct_snapshot():
+    function = SimpleNamespace(
+        addr=0x119D3,
+        name="sub_119d3",
+        project=SimpleNamespace(filename="/tmp/LIFE2.EXE", _inertia_lst_metadata=None),
+    )
+    item = SimpleNamespace(index=1, function=function)
+    result = SimpleNamespace(
+        status="timeout",
+        payload="Timed out after 5s.",
+        debug_output="",
+        function=function,
+        tail_validation=None,
+    )
+
+    records = _tail_validation.collect_tail_validation_records([item], {1: result})
+
+    assert records == [
+        {
+            "cod_file": "LIFE2.EXE",
+            "proc_name": "sub_119d3",
+            "proc_kind": None,
+            "function_addr": 0x119D3,
+            "function_name": "sub_119d3",
+            "tail_validation_uncollected": True,
+            "exit_kind": "timeout",
+            "exit_detail": "Timed out after 5s.",
+        }
+    ]
+
+
+def test_append_tail_validation_records_empty_metadata_becomes_named_uncollected(tmp_path):
     result = _script.CodWorkResult(
         cod_path=tmp_path / "COCKPIT.COD",
         proc_name="_DisplayMaster",
@@ -425,7 +466,7 @@ def test_empty_tail_validation_metadata_record_becomes_named_uncollected(tmp_pat
     ]
 
 
-def test_partial_tail_validation_metadata_adds_named_uncollected_gap(tmp_path):
+def test_append_tail_validation_records_partial_metadata_adds_named_uncollected_gap(tmp_path):
     result = _script.CodWorkResult(
         cod_path=tmp_path / "COCKPIT.COD",
         proc_name="_DoCRT",
@@ -468,6 +509,337 @@ def test_partial_tail_validation_metadata_adds_named_uncollected_gap(tmp_path):
             "exit_detail": "tail validation metadata omitted record details",
         },
     ]
+
+
+def test_append_tail_validation_records_cached_success_gets_proc_identity(tmp_path):
+    result = _script.CodWorkResult(
+        cod_path=tmp_path / "COCKPIT.COD",
+        proc_name="_DisplayMaster",
+        proc_kind="NEAR",
+        proc_index=4,
+        proc_total=9,
+        stdout_path=tmp_path / "out.txt",
+        stderr="",
+        returncode=0,
+        exit_kind="ok",
+        exit_detail="",
+        tail_validation_records=({"postprocess": {"changed": True}},),
+        tail_validation_scanned=1,
+        from_cache=True,
+    )
+    records: list[dict[str, object]] = []
+
+    scanned = _script._append_tail_validation_records_for_result(records, result)
+
+    assert scanned == 1
+    assert records == [
+        {
+            "cod_file": "COCKPIT.COD",
+            "proc_name": "_DisplayMaster",
+            "proc_kind": "NEAR",
+            "postprocess": {"changed": True},
+        }
+    ]
+
+
+def test_scheduler_timeout_flows_into_named_tail_validation_aggregate(tmp_path, monkeypatch):
+    cod_dir = tmp_path / "cod"
+    cod_dir.mkdir()
+    cod_path = cod_dir / "COCKPIT.COD"
+    cod_path.write_bytes(b"PROC")
+    item = _script.CodWorkItem(cod_path, "_DisplayMaster", "NEAR", 1, 1, b"\x90")
+    captured: dict[str, object] = {}
+
+    class FakeFuture:
+        pass
+
+    future = FakeFuture()
+
+    class FakeExecutor:
+        def submit(self, *_args, **_kwargs):  # noqa: ANN001
+            return future
+
+        def shutdown(self, **_kwargs):  # noqa: ANN003
+            return None
+
+    monotonic_values = iter((0.0, 2.0))
+
+    def fake_aggregate(records, *, scanned):  # noqa: ANN001
+        captured["records"] = list(records)
+        captured["scanned"] = scanned
+        return {"summary": {}, "surface": {"severity": "uncollected"}}
+
+    monkeypatch.setattr(sys, "argv", ["decompile_cod_dir.py", str(cod_dir), "--max-workers", "2", "--subprocess-timeout", "1"])
+    monkeypatch.setattr(_script, "_resolve_selected_cod_files", lambda *_args, **_kwargs: [cod_path])
+    monkeypatch.setattr(_script, "_build_work_items", lambda _path: [item])
+    monkeypatch.setattr(_script, "_choose_parallelism", lambda *_args, **_kwargs: 2)
+    monkeypatch.setattr(_script, "_determine_worker_memory_limit_mb", lambda *_args, **_kwargs: 1024)
+    monkeypatch.setattr(_script, "_load_success_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_script, "_make_executor", lambda *_args, **_kwargs: FakeExecutor())
+    monkeypatch.setattr(_script, "wait", lambda pending, timeout, return_when: (set(), pending))
+    monkeypatch.setattr(_script.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(_script, "build_x86_16_tail_validation_aggregate", fake_aggregate)
+    monkeypatch.setattr(_script, "compare_x86_16_tail_validation_baseline", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(_script, "annotate_x86_16_tail_validation_surface_with_baseline", lambda surface, _comparison: surface)
+    monkeypatch.setattr(_script, "emit_tail_validation_surface_summary", lambda **_kwargs: None)
+
+    assert _script.main() == 1
+    assert captured == {
+        "records": [
+            {
+                "cod_file": "COCKPIT.COD",
+                "proc_name": "_DisplayMaster",
+                "proc_kind": "NEAR",
+                "tail_validation_uncollected": True,
+                "exit_kind": "subprocess_timeout",
+                "exit_detail": "worker pool scheduler timeout after 1s",
+            }
+        ],
+        "scanned": 1,
+    }
+
+
+def test_main_emits_changed_tail_validation_detail_summary_to_stderr(tmp_path, monkeypatch, capsys):
+    cod_dir = tmp_path / "cod"
+    cod_dir.mkdir()
+    cod_path = cod_dir / "COCKPIT.COD"
+    cod_path.write_bytes(b"PROC")
+    item = _script.CodWorkItem(cod_path, "_DisplayMaster", "NEAR", 1, 1, b"\x90")
+    stdout_path = tmp_path / "out.txt"
+    stdout_path.write_text("/* == c == */\nvoid _DisplayMaster(void) {}\n", encoding="utf-8")
+    result = _script.CodWorkResult(
+        cod_path=cod_path,
+        proc_name="_DisplayMaster",
+        proc_kind="NEAR",
+        proc_index=1,
+        proc_total=1,
+        stdout_path=stdout_path,
+        stderr="",
+        returncode=0,
+        exit_kind="ok",
+        exit_detail="",
+        tail_validation_records=(
+            {
+                "cod_file": "COCKPIT.COD",
+                "proc_name": "_DisplayMaster",
+                "proc_kind": "NEAR",
+                "postprocess": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                    "summary_text": "helper_calls: +helper_ping",
+                },
+            },
+        ),
+        tail_validation_scanned=1,
+        from_cache=True,
+    )
+
+    monkeypatch.setattr(sys, "argv", ["decompile_cod_dir.py", str(cod_dir)])
+    monkeypatch.setattr(_script, "_resolve_selected_cod_files", lambda *_args, **_kwargs: [cod_path])
+    monkeypatch.setattr(_script, "_build_work_items", lambda _path: [item])
+    monkeypatch.setattr(_script, "_choose_parallelism", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(_script, "_determine_worker_memory_limit_mb", lambda *_args, **_kwargs: 1024)
+    monkeypatch.setattr(_script, "_load_success_cache", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(_script, "_load_tail_validation_baseline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_CONSOLE_CACHE_DIR", tmp_path / ".cache" / "console")
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_DETAIL_DIR", tmp_path / ".cache" / "detail")
+
+    assert _script.main() == 0
+    captured = capsys.readouterr()
+    detail_path = _script._default_tail_validation_detail_path(cod_dir, timeout=20, cod_files=[cod_path], proc_names=None)
+    detail_files = sorted(detail_path.parent.glob("COCKPIT.timeout20.tail_validation_surface.*.json"))
+
+    assert "[tail-validation] whole-tail validation changed in 1 functions" in captured.err
+    assert detail_files
+    assert f"[tail-validation] detail artifact {detail_files[0]}" in captured.err
+    assert "[tail-validation]" not in captured.out
+
+
+def test_main_emits_uncollected_tail_validation_detail_summary_to_stderr(tmp_path, monkeypatch, capsys):
+    cod_dir = tmp_path / "cod"
+    cod_dir.mkdir()
+    cod_path = cod_dir / "COCKPIT.COD"
+    cod_path.write_bytes(b"PROC")
+    item = _script.CodWorkItem(cod_path, "_DisplayMaster", "NEAR", 1, 1, b"\x90")
+    stdout_path = tmp_path / "out.txt"
+    stdout_path.write_text("/* timeout after 20s */\n", encoding="utf-8")
+    result = _script.CodWorkResult(
+        cod_path=cod_path,
+        proc_name="_DisplayMaster",
+        proc_kind="NEAR",
+        proc_index=1,
+        proc_total=1,
+        stdout_path=stdout_path,
+        stderr="",
+        returncode=0,
+        exit_kind="subprocess_timeout",
+        exit_detail="worker pool scheduler timeout after 20s",
+        tail_validation_records=(),
+        tail_validation_scanned=1,
+        from_cache=True,
+    )
+
+    monkeypatch.setattr(sys, "argv", ["decompile_cod_dir.py", str(cod_dir)])
+    monkeypatch.setattr(_script, "_resolve_selected_cod_files", lambda *_args, **_kwargs: [cod_path])
+    monkeypatch.setattr(_script, "_build_work_items", lambda _path: [item])
+    monkeypatch.setattr(_script, "_choose_parallelism", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(_script, "_determine_worker_memory_limit_mb", lambda *_args, **_kwargs: 1024)
+    monkeypatch.setattr(_script, "_load_success_cache", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(_script, "_load_tail_validation_baseline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_CONSOLE_CACHE_DIR", tmp_path / ".cache" / "console")
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_DETAIL_DIR", tmp_path / ".cache" / "detail")
+
+    assert _script.main() == 1
+    captured = capsys.readouterr()
+    detail_path = _script._default_tail_validation_detail_path(cod_dir, timeout=20, cod_files=[cod_path], proc_names=None)
+    detail_files = sorted(detail_path.parent.glob("COCKPIT.timeout20.tail_validation_surface.*.json"))
+
+    assert "[tail-validation] whole-tail validation not collected across 1 functions" in captured.err
+    assert detail_files
+    assert f"[tail-validation] detail artifact {detail_files[0]}" in captured.err
+    assert "[tail-validation]" not in captured.out
+
+
+def test_main_flushes_stdout_before_tail_validation_summary(tmp_path, monkeypatch):
+    cod_dir = tmp_path / "cod"
+    cod_dir.mkdir()
+    cod_path = cod_dir / "COCKPIT.COD"
+    cod_path.write_bytes(b"PROC")
+    item = _script.CodWorkItem(cod_path, "_DisplayMaster", "NEAR", 1, 1, b"\x90")
+    stdout_path = tmp_path / "out.txt"
+    stdout_path.write_text("/* == c == */\nvoid _DisplayMaster(void) {}\n", encoding="utf-8")
+    result = _script.CodWorkResult(
+        cod_path=cod_path,
+        proc_name="_DisplayMaster",
+        proc_kind="NEAR",
+        proc_index=1,
+        proc_total=1,
+        stdout_path=stdout_path,
+        stderr="",
+        returncode=0,
+        exit_kind="ok",
+        exit_detail="",
+        tail_validation_records=(
+            {
+                "cod_file": "COCKPIT.COD",
+                "proc_name": "_DisplayMaster",
+                "proc_kind": "NEAR",
+                "postprocess": {"changed": True},
+            },
+        ),
+        tail_validation_scanned=1,
+        from_cache=True,
+    )
+
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.parts: list[str] = []
+            self.flushed = False
+
+        def write(self, text: str) -> int:
+            self.parts.append(text)
+            return len(text)
+
+        def flush(self) -> None:
+            self.flushed = True
+
+    fake_stdout = FakeStdout()
+    seen: dict[str, bool] = {}
+
+    def fake_emit(**_kwargs):  # noqa: ANN001
+        seen["flushed_before_emit"] = fake_stdout.flushed
+
+    monkeypatch.setattr(sys, "argv", ["decompile_cod_dir.py", str(cod_dir)])
+    monkeypatch.setattr(_script, "_resolve_selected_cod_files", lambda *_args, **_kwargs: [cod_path])
+    monkeypatch.setattr(_script, "_build_work_items", lambda _path: [item])
+    monkeypatch.setattr(_script, "_choose_parallelism", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(_script, "_determine_worker_memory_limit_mb", lambda *_args, **_kwargs: 1024)
+    monkeypatch.setattr(_script, "_load_success_cache", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(_script, "_load_tail_validation_baseline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_script, "emit_tail_validation_surface_summary", fake_emit)
+    monkeypatch.setattr(_script.sys, "stdout", fake_stdout)
+
+    assert _script.main() == 0
+    assert seen == {"flushed_before_emit": True}
+
+
+def test_wrapper_and_direct_tail_validation_detail_cache_path_contract_match(tmp_path, monkeypatch, capsys):
+    cod_dir = tmp_path / "cod"
+    cod_dir.mkdir()
+    cod_path = cod_dir / "COCKPIT.COD"
+    cod_path.write_bytes(b"PROC")
+    snapshot = {
+        "structuring": {
+            "changed": False,
+            "mode": "live_out",
+            "verdict": "structuring stable",
+            "summary_text": "no observable delta",
+        },
+        "postprocess": {
+            "changed": True,
+            "mode": "live_out",
+            "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+            "summary_text": "helper_calls: +helper_ping",
+        },
+    }
+    item = _script.CodWorkItem(cod_path, "_DisplayMaster", "NEAR", 1, 1, b"\x90")
+    stdout_path = tmp_path / "out.txt"
+    stdout_path.write_text("/* == c == */\nvoid _DisplayMaster(void) {}\n", encoding="utf-8")
+    result = _script.CodWorkResult(
+        cod_path=cod_path,
+        proc_name="_DisplayMaster",
+        proc_kind="NEAR",
+        proc_index=1,
+        proc_total=1,
+        stdout_path=stdout_path,
+        stderr="",
+        returncode=0,
+        exit_kind="ok",
+        exit_detail="",
+        tail_validation_records=(
+            {
+                "cod_file": "COCKPIT.COD",
+                "proc_name": "_DisplayMaster",
+                "proc_kind": "NEAR",
+                **snapshot,
+            },
+        ),
+        tail_validation_scanned=1,
+        from_cache=True,
+    )
+
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_CONSOLE_CACHE_DIR", tmp_path / ".cache" / "cod-console")
+    monkeypatch.setattr(_script, "_TAIL_VALIDATION_DETAIL_DIR", tmp_path / ".cache" / "cod-detail")
+    monkeypatch.setattr(_tail_validation, "TAIL_VALIDATION_CONSOLE_CACHE_DIR", tmp_path / ".cache" / "direct-console")
+    monkeypatch.setattr(_tail_validation, "TAIL_VALIDATION_DETAIL_CACHE_DIR", tmp_path / ".cache" / "direct-detail")
+
+    monkeypatch.setattr(sys, "argv", ["decompile_cod_dir.py", str(cod_dir)])
+    monkeypatch.setattr(_script, "_resolve_selected_cod_files", lambda *_args, **_kwargs: [cod_path])
+    monkeypatch.setattr(_script, "_build_work_items", lambda _path: [item])
+    monkeypatch.setattr(_script, "_choose_parallelism", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(_script, "_determine_worker_memory_limit_mb", lambda *_args, **_kwargs: 1024)
+    monkeypatch.setattr(_script, "_load_success_cache", lambda *_args, **_kwargs: result)
+    monkeypatch.setattr(_script, "_load_tail_validation_baseline", lambda *_args, **_kwargs: None)
+
+    assert _script.main() == 0
+    wrapper_metadata = _tail_validation_metadata_payload(capsys.readouterr().err)
+
+    project = SimpleNamespace(_inertia_tail_validation_enabled=True)
+    function = SimpleNamespace(addr=0x10010, name="_DisplayMaster", project=project)
+    direct_item = SimpleNamespace(index=1, function_cfg=SimpleNamespace(), function=function)
+    direct_result = SimpleNamespace(tail_validation=snapshot, function=function)
+
+    _tail_validation.emit_tail_validation_console_summary([direct_item], {1: direct_result}, binary_path=cod_path)
+    direct_metadata = _tail_validation_metadata_payload(capsys.readouterr().err)
+
+    assert wrapper_metadata["surface"]["severity"] == direct_metadata["surface"]["severity"] == "changed"
+    assert wrapper_metadata["surface"]["headline"] == direct_metadata["surface"]["headline"]
+    assert wrapper_metadata["detail_cache_path"] is not None
+    assert direct_metadata["detail_cache_path"] is not None
+    assert wrapper_metadata["console_cache_path"] is not None
+    assert direct_metadata["console_cache_path"] is not None
 
 
 def test_tail_validation_baseline_helpers_round_trip(tmp_path, monkeypatch):

@@ -3600,6 +3600,8 @@ def test_main_uses_cached_exe_catalog_addresses_before_cfg(monkeypatch, tmp_path
             debug_output="",
             function=item.function,
             function_cfg=item.function_cfg,
+            elapsed=1.0,
+            byte_count=8,
         ),
     )
     decompile._store_cache_json(
@@ -3698,6 +3700,8 @@ def test_main_supplements_cached_exe_catalog_before_display_slice(monkeypatch, t
             debug_output="",
             function=item.function,
             function_cfg=item.function_cfg,
+            elapsed=1.0,
+            byte_count=8,
         ),
     )
     decompile._store_cache_json(
@@ -3747,6 +3751,7 @@ def test_main_prefers_fast_exe_catalog_before_cfg(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr(decompile, "_recover_cfg", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("whole CFG should not run")))
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile._AdaptivePerByteTimeoutModel, "observe_success", lambda self, *_args, **_kwargs: None)
     monkeypatch.setattr(
         decompile,
         "_run_function_work_item",
@@ -3757,6 +3762,8 @@ def test_main_prefers_fast_exe_catalog_before_cfg(monkeypatch, tmp_path, capsys)
             debug_output="",
             function=item.function,
             function_cfg=item.function_cfg,
+            elapsed=1.0,
+            byte_count=8,
         ),
     )
 
@@ -4486,6 +4493,8 @@ def test_main_reports_uncapped_seeded_function_count(monkeypatch, tmp_path, caps
             debug_output="",
             function=item.function,
             function_cfg=item.function_cfg,
+            elapsed=1.0,
+            byte_count=8,
         ),
     )
 
@@ -5714,7 +5723,7 @@ def test_main_falls_back_after_fast_exe_catalog_timeout(monkeypatch, tmp_path, c
     assert "/* == function 0x11423 _start == */" in out
 
 
-def test_main_timeout_prints_partial_c_before_asm_fallback(monkeypatch, tmp_path, capsys):
+def test_main_falls_back_to_partial_timeout_before_asm_when_available(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     project = SimpleNamespace(
@@ -5735,9 +5744,10 @@ def test_main_timeout_prints_partial_c_before_asm_fallback(monkeypatch, tmp_path
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: cfg)
     monkeypatch.setattr(decompile, "_interesting_functions", lambda _cfg, limit=None: ([recovered_function], 1))
-    monkeypatch.setattr(decompile, "_recover_seeded_exe_functions", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_recover_seeded_exe_functions", lambda *_args, **_kwargs: ([], []))
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile._AdaptivePerByteTimeoutModel, "observe_success", lambda self, *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_format_asm_range", lambda *_args, **_kwargs: "mov ax, ax")
     monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x11423, 0x11425))
@@ -5753,6 +5763,7 @@ def test_main_timeout_prints_partial_c_before_asm_fallback(monkeypatch, tmp_path
             function=item.function,
             function_cfg=item.function_cfg,
             partial_payload="int partial(void) { return 1; }",
+            tail_validation={},
         ),
     )
 
@@ -5760,6 +5771,7 @@ def test_main_timeout_prints_partial_c_before_asm_fallback(monkeypatch, tmp_path
     out = capsys.readouterr().out
 
     assert rc == 2
+    assert "/* info: function 0x11423 _start attempt=timed_out validation=uncollected */" in out
     assert "/* problem: timeout */" in out
     assert "/* -- c (partial timeout) -- */" in out
     assert out.index("/* -- c (partial timeout) -- */") < out.index("-- asm fallback --")

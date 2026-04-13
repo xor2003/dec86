@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
 from .helper_family_routing import summarize_x86_16_helper_family_routes
 from .helper_effect_summary import HelperEligibilitySummary, summarize_x86_16_helper_eligibility
+from .ir_readiness import summarize_x86_16_ir_readiness
 
 __all__ = [
     "FunctionEffectSummary",
@@ -85,6 +86,7 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
     stage_reached = _value(source, "stage_reached", None)
     effect_summary = summarize_x86_16_function_effects(source)
     helper_summary = summarize_x86_16_helper_eligibility(source)
+    ir_readiness = summarize_x86_16_ir_readiness(source)
 
     evidence: list[RecoveryEvidence] = []
     assumptions: list[RecoveryAssumption] = []
@@ -118,6 +120,19 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
         evidence.append(RecoveryEvidence("function_effect_summary", effect_summary.brief()))
     if helper_summary.status == "eligible":
         evidence.append(RecoveryEvidence("helper_eligibility", helper_summary.brief()))
+    if ir_readiness.level != "missing":
+        evidence.append(
+            RecoveryEvidence(
+                "typed_ir_readiness",
+                (
+                    f"level={ir_readiness.level} "
+                    f"cond={ir_readiness.condition_count} "
+                    f"phi={ir_readiness.phi_node_count} "
+                    f"defaulted={ir_readiness.defaulted_segment_count} "
+                    f"proven={ir_readiness.proven_segment_count}"
+                ),
+            )
+        )
     if (
         ok
         and fallback_kind == "cfg_only"
@@ -189,6 +204,34 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
                 helper_summary.brief(),
             )
         )
+    if ir_readiness.unknown_segment_count > 0:
+        assumptions.append(
+            RecoveryAssumption(
+                "typed_ir_segment_unknown",
+                f"{ir_readiness.unknown_segment_count} typed address(es) still have unknown segment identity",
+            )
+        )
+    elif ir_readiness.defaulted_segment_count > 0 and ir_readiness.proven_segment_count == 0:
+        assumptions.append(
+            RecoveryAssumption(
+                "typed_ir_segment_defaulted",
+                f"{ir_readiness.defaulted_segment_count} typed address(es) still rely on default segment identity",
+            )
+        )
+    if ir_readiness.block_count > 1 and ir_readiness.phi_node_count == 0:
+        assumptions.append(
+            RecoveryAssumption(
+                "typed_ir_cross_block_ssa_missing",
+                "typed IR is still block-local across CFG joins",
+            )
+        )
+    if ir_readiness.condition_count == 0 and ir_readiness.block_count > 0:
+        assumptions.append(
+            RecoveryAssumption(
+                "typed_ir_conditions_missing",
+                "typed IR still lacks lifted branch/loop conditions",
+            )
+        )
 
     if reason:
         diagnostics.append(str(reason))
@@ -200,6 +243,15 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
         diagnostics.append(f"function_effects={effect_summary.brief()}")
     if helper_summary.status != "no_signal":
         diagnostics.append(f"helper_summary={helper_summary.brief()}")
+    if ir_readiness.level != "missing":
+        diagnostics.append(
+            "ir_readiness="
+            f"{ir_readiness.level}"
+            f":cond={ir_readiness.condition_count}"
+            f":phi={ir_readiness.phi_node_count}"
+            f":defaulted={ir_readiness.defaulted_segment_count}"
+            f":unknown={ir_readiness.unknown_segment_count}"
+        )
 
     if (
         ok

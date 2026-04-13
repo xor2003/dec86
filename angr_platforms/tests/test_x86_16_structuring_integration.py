@@ -6,9 +6,12 @@ This test validates cyclic pattern matching on real COD samples.
 
 
 import pytest
+from types import SimpleNamespace
 
 from angr_platforms.X86_16.structuring_analysis import StructureAnalysis
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType
+from angr_platforms.X86_16.type_storage_object_bridge import load_storage_object_bridge
+from angr_platforms.X86_16.type_structure_merging import apply_x86_16_structure_field_merging
 
 
 class TestStructuringIntegration:
@@ -227,6 +230,52 @@ class TestStructuringIntegration:
         # Should complete in reasonable time (< 5 seconds)
         assert elapsed < 5.0, f"Structuring took {elapsed:.2f}s, should be < 5s"
         assert analysis.stats.iterations <= 100, "Should not iterate excessively"
+
+    def test_structure_field_merging_consumes_storage_object_bridge_facts(self):
+        project = SimpleNamespace(
+            _inertia_access_traits={
+                0x4010: {
+                    "member_evidence": {
+                        (("mem", 0x20), 0, 2): 3,
+                        (("mem", 0x60), 0, 2): 1,
+                    },
+                    "array_evidence": {
+                        (("mem", 0x40), ("reg", "bx"), 2, 4, 2): 2,
+                        (("mem", 0x60), ("reg", "si"), 2, 4, 2): 1,
+                    },
+                    "base_const": {},
+                    "base_stride": {},
+                    "base_stride_widths": {},
+                    "induction_evidence": {},
+                    "repeated_offset_widths": {},
+                    "repeated_offsets": {},
+                    "stride_evidence": {},
+                }
+            }
+        )
+        codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010), project=project)
+
+        bridge = load_storage_object_bridge(project, 0x4010)
+        result = apply_x86_16_structure_field_merging(codegen)
+
+        assert bridge is not None
+        assert result is False
+        assert codegen._inertia_struct_merging_applied is True
+        assert codegen._inertia_struct_merging_changed is True
+        assert codegen._inertia_struct_merging_stats == {
+            "field_accesses": 2,
+            "structs_synthesized": 2,
+            "structs_merged": 0,
+            "member_facts": 1,
+            "array_facts": 1,
+            "refusal_facts": 1,
+        }
+        assert codegen._inertia_struct_merging_member_facts == bridge.member_facts
+        assert codegen._inertia_struct_merging_array_facts == bridge.array_facts
+        assert codegen._inertia_struct_merging_refusal_facts == bridge.refusal_facts
+        assert codegen._inertia_struct_merging_struct_facts == bridge.facts_by_base
+        assert codegen._inertia_struct_merging_bridge.artifact.records[("mem", 0x20)].object_kind == "member"
+        assert ("mem", 0x60) in codegen._inertia_struct_merging_bridge.refusal_facts
 
 
 if __name__ == "__main__":

@@ -198,6 +198,25 @@ class TestStructuringCodegen:
         assert code is not None
         assert len(code) > 0, "Should generate non-empty code"
 
+    def test_loop_codegen_mentions_structuring_variables_for_abnormal_loop(self):
+        loop_region = Region(block_addr=0x9000, region_type=RegionType.Loop)
+        loop_region.metadata["abnormal_loop_plan"] = {
+            "can_normalize": True,
+            "exit_variable_name": "__loop_exit_sel_9000",
+        }
+        loop_region.metadata["structuring_variables"] = ["__loop_exit_sel_9000"]
+        loop_region.metadata["unstructured_exits"] = [(0x9000, 0x9001)]
+
+        graph = RegionGraph()
+        graph.entry = loop_region
+        graph.add_node(loop_region)
+
+        codegen = StructuringCodegenPass()
+        code = codegen.apply(graph)
+
+        assert "__loop_exit_sel_9000" in code
+        assert "structuring variables" in code
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

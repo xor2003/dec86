@@ -15,10 +15,44 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Set
 
+from .ir.core import IRAddress
+from .type_storage_object_bridge import load_storage_object_bridge
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _typed_ir_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
+    artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
+    function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
+    if artifact is None or not hasattr(artifact, "blocks"):
+        return {}
+
+    phi_registers = {
+        getattr(phi.target, "name", None)
+        for phi in tuple(getattr(function_ssa, "phi_nodes", ()) or ())
+        if getattr(getattr(phi, "target", None), "name", None) is not None
+    }
+    candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
+    for block in tuple(getattr(artifact, "blocks", ()) or ()):
+        for instr in tuple(getattr(block, "instrs", ()) or ()):
+            for atom in tuple(getattr(instr, "args", ()) or ()):
+                if not isinstance(atom, IRAddress):
+                    continue
+                if len(getattr(atom, "base", ()) or ()) < 2:
+                    continue
+                if not phi_registers.intersection(set(atom.base)):
+                    continue
+                key = (atom.space.value, tuple(atom.base), int(atom.size or 0))
+                candidates[key] = {
+                    "space": atom.space.value,
+                    "base": tuple(atom.base),
+                    "element_size": int(atom.size or 0),
+                    "has_phi_index": True,
+                }
+    return dict(sorted(candidates.items()))
 
 
 @dataclass(frozen=True)
@@ -236,12 +270,41 @@ def apply_x86_16_array_expression_matching(codegen) -> bool:
         return False
 
     try:
+        project = getattr(codegen, "project", None)
+        function_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+        bridge = None
+        if project is not None:
+            bridge = load_storage_object_bridge(project, function_addr, codegen=codegen)
+        lowerable_arrays = (
+            {}
+            if bridge is None
+            else {
+                base_key: fact
+                for base_key, fact in bridge.array_facts.items()
+                if bridge.allows_object_lowering(base_key)
+            }
+        )
+        refused_arrays = (
+            {}
+            if bridge is None
+            else {
+                base_key: bridge.lowering_refusal_reason(base_key)
+                for base_key in bridge.array_facts
+                if not bridge.allows_object_lowering(base_key)
+            }
+        )
+        typed_ir_candidates = _typed_ir_array_candidates(codegen)
         # Track that array matching pass ran
         codegen._inertia_array_matching_applied = True
+        codegen._inertia_array_matching_bridge = bridge
+        codegen._inertia_array_matching_lowerable_arrays = lowerable_arrays
+        codegen._inertia_array_matching_refused_arrays = refused_arrays
+        codegen._inertia_array_matching_typed_ir_candidates = typed_ir_candidates
         codegen._inertia_array_matching_stats = {
-            "induction_vars": 0,
-            "array_patterns": 0,
-            "recovered_arrays": 0,
+            "induction_vars": len(typed_ir_candidates),
+            "array_patterns": 0 if bridge is None else len(bridge.array_facts),
+            "recovered_arrays": len(lowerable_arrays) + len(typed_ir_candidates),
+            "refused_arrays": len(refused_arrays),
         }
 
         logger.debug("Array expression matching pass completed")

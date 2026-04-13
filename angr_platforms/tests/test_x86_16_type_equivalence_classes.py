@@ -7,6 +7,8 @@ and type constraint collection for improved type inference.
 
 import pytest
 
+from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, IRBlock, IRCondition, IRFunctionArtifact, IRInstr, IRValue, MemSpace, SegmentOrigin
+from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact, SSAIncomingValue, SSAPhiNode
 from angr_platforms.X86_16.type_equivalence_classes import (
     EquivalenceClass,
     EquivalenceClassBuilder,
@@ -255,6 +257,11 @@ class TestPhase2Integration:
 
         class MockCodegen:
             cfunc = object()
+            _inertia_vex_ir_summary = {
+                "aliasable_value_count": 3,
+                "frame_slot_count": 1,
+                "space_counts": {"ds": 2, "ss": 1},
+            }
 
         codegen = MockCodegen()
         result = apply_x86_16_type_equivalence_classes(codegen)
@@ -263,6 +270,137 @@ class TestPhase2Integration:
         assert result is False  # No direct modifications at this stage
         assert hasattr(codegen, "_inertia_type_equivalence_applied")
         assert codegen._inertia_type_equivalence_applied is True
+        assert codegen._inertia_type_equivalence_stats["ir_aliasable_values"] == 3
+        assert codegen._inertia_type_equivalence_ir_summary["frame_slot_count"] == 1
+
+    def test_type_equivalence_pass_prefers_typed_ir_artifact_over_flat_summary(self):
+        """Typed IR artifact should feed the bounded consumer directly."""
+
+        class MockCodegen:
+            cfunc = object()
+            _inertia_vex_ir_summary = {
+                "aliasable_value_count": 0,
+                "frame_slot_count": 0,
+                "space_counts": {},
+            }
+            _inertia_vex_ir_artifact = IRFunctionArtifact(
+                function_addr=0x1000,
+                blocks=(
+                    IRBlock(
+                        addr=0x1000,
+                        instrs=(
+                            IRInstr(
+                                "LOAD",
+                                IRValue(MemSpace.TMP, name="t0", size=2),
+                                (
+                                    IRAddress(
+                                        MemSpace.DS,
+                                        base=("bx", "si"),
+                                        offset=2,
+                                        size=2,
+                                        status=AddressStatus.PROVISIONAL,
+                                        segment_origin=SegmentOrigin.DEFAULTED,
+                                    ),
+                                ),
+                                size=2,
+                            ),
+                            IRInstr(
+                                "CJMP",
+                                None,
+                                (
+                                    IRCondition("eq", (IRValue(MemSpace.REG, name="ax", size=2), IRValue(MemSpace.REG, name="bx", size=2))),
+                                    IRValue(MemSpace.CONST, const=0x1010, size=2),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        codegen = MockCodegen()
+        result = apply_x86_16_type_equivalence_classes(codegen)
+
+        assert result is False
+        assert codegen._inertia_type_equivalence_stats["ir_provisional_addresses"] == 1
+        assert codegen._inertia_type_equivalence_stats["ir_multi_base_addresses"] == 1
+        assert codegen._inertia_type_equivalence_ir_summary["segment_origin_counts"]["defaulted"] == 1
+        assert codegen._inertia_type_equivalence_ir_summary["condition_counts"] == {"eq": 1}
+        assert codegen._inertia_type_equivalence_resolved_types["value:memspace.reg:ax"] == "int_t"
+        assert codegen._inertia_type_equivalence_resolved_types["value:memspace.reg:bx"] == "int_t"
+        assert codegen._inertia_type_equivalence_resolved_types["base:ds:bx+si"] == "address_like_t"
+        assert codegen._inertia_type_equivalence_resolved_types["cond:eq"] == "bool_t"
+
+    def test_type_equivalence_pass_promotes_stable_typed_address_to_pointer(self):
+        class MockCodegen:
+            cfunc = object()
+            _inertia_vex_ir_artifact = IRFunctionArtifact(
+                function_addr=0x2000,
+                blocks=(
+                    IRBlock(
+                        addr=0x2000,
+                        instrs=(
+                            IRInstr(
+                                "LOAD",
+                                IRValue(MemSpace.TMP, name="t0", size=2),
+                                (
+                                    IRAddress(
+                                        MemSpace.DS,
+                                        base=("bx",),
+                                        offset=4,
+                                        size=2,
+                                        status=AddressStatus.STABLE,
+                                        segment_origin=SegmentOrigin.PROVEN,
+                                    ),
+                                ),
+                                size=2,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+        codegen = MockCodegen()
+        result = apply_x86_16_type_equivalence_classes(codegen)
+
+        assert result is False
+        assert codegen._inertia_type_equivalence_resolved_types["base:ds:bx"] == "ptr_t"
+        assert codegen._inertia_type_equivalence_stats["resolved_types"] >= 1
+
+    def test_type_equivalence_pass_uses_function_ssa_phi_nodes(self):
+        class MockCodegen:
+            cfunc = object()
+            _inertia_vex_ir_artifact = IRFunctionArtifact(
+                function_addr=0x3000,
+                blocks=(
+                    IRBlock(addr=0x3000, instrs=(IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=1, size=2),), size=2),)),
+                    IRBlock(addr=0x3010, instrs=(IRInstr("MOV", IRValue(MemSpace.REG, name="ax", size=2), (IRValue(MemSpace.CONST, const=2, size=2),), size=2),)),
+                ),
+            )
+            _inertia_vex_ir_function_ssa = SSAFunctionArtifact(
+                function_addr=0x3000,
+                blocks=(),
+                phi_nodes=(
+                    SSAPhiNode(
+                        block_addr=0x3020,
+                        key=("reg", "ax", 0),
+                        target=IRValue(MemSpace.REG, name="ax", size=2, version=1, expr=("phi", "0x3020")),
+                        incoming=(
+                            SSAIncomingValue(0x3000, IRValue(MemSpace.REG, name="ax", size=2, version=0)),
+                            SSAIncomingValue(0x3010, IRValue(MemSpace.REG, name="ax", size=2, version=0)),
+                        ),
+                    ),
+                ),
+                predecessor_map={0x3020: (0x3000, 0x3010)},
+                summary={"phi_node_count": 1},
+            )
+
+        codegen = MockCodegen()
+
+        result = apply_x86_16_type_equivalence_classes(codegen)
+
+        assert result is False
+        assert codegen._inertia_type_equivalence_stats["ir_phi_nodes"] == 1
+        assert codegen._inertia_type_equivalence_resolved_types["value:memspace.reg:ax"] == "int_t"
 
     def test_type_equivalence_pass_handles_no_cfunc(self):
         """Test pass gracefully handles missing cfunc."""

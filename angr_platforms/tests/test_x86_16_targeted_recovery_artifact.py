@@ -27,5 +27,6 @@ def test_targeted_recovery_artifact_writes_bounded_scan_safe_result(tmp_path):
     assert result.fallback_kind == "cfg_only"
     assert result.confidence_status == "bounded_recovery"
     assert payload["proc_name"] == "_helper"
+    assert "ir_summary" in payload
     assert payload["confidence"]["status"] == "bounded_recovery"
     assert payload["semantic_family"] == "stack_control"

@@ -60,3 +60,25 @@ def test_recovery_confidence_summary_accumulates_helper_counts():
             "signal": "call_count_not_single",
         },
     ]
+
+
+def test_recovery_confidence_surfaces_typed_ir_readiness_assumptions():
+    summary = classify_x86_16_recovery_confidence(
+        {
+            "ok": True,
+            "decompiled_count": 1,
+            "x86_16_vex_ir_summary": {
+                "block_count": 2,
+                "address_status_counts": {"provisional": 1},
+                "segment_origin_counts": {"defaulted": 1},
+                "condition_counts": {},
+                "phi_node_count": 0,
+            },
+        }
+    )
+
+    assert any(item.kind == "typed_ir_readiness" for item in summary.evidence)
+    assert any(item.kind == "typed_ir_segment_defaulted" for item in summary.assumptions)
+    assert any(item.kind == "typed_ir_cross_block_ssa_missing" for item in summary.assumptions)
+    assert any(item.kind == "typed_ir_conditions_missing" for item in summary.assumptions)
+    assert any(item.startswith("ir_readiness=") for item in summary.diagnostics)

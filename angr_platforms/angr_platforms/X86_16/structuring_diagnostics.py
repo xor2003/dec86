@@ -24,6 +24,7 @@ from .structuring_cfg_grouping import CFGGroupingArtifact, build_cfg_grouping_ar
 from .structuring_cfg_indirect import CFGIndirectSiteArtifact
 from .structuring_cfg_ownership import CFGOwnershipArtifact
 from .structuring_cfg_snapshot import CFGSnapshot
+from .structuring_ir_hints import StructuringIRHintArtifact, build_structuring_ir_hint_artifact
 
 __all__ = [
     "StructuringFailureReason",
@@ -156,6 +157,7 @@ class StructuringDiagnosticsReport:
     cfg_ownership: Optional[CFGOwnershipArtifact] = None
     cfg_indirect: Optional[CFGIndirectSiteArtifact] = None
     cfg_grouping: Optional[CFGGroupingArtifact] = None
+    ir_hints: Optional[StructuringIRHintArtifact] = None
 
     def add_recovery_hint(self, hint: str) -> None:
         """Add a recovery hint for debugging."""
@@ -198,6 +200,7 @@ class StructuringDiagnosticsReport:
             "cfg_ownership": self.cfg_ownership.to_dict() if self.cfg_ownership else None,
             "cfg_indirect": self.cfg_indirect.to_dict() if self.cfg_indirect else None,
             "cfg_grouping": self.cfg_grouping.to_dict() if self.cfg_grouping else None,
+            "ir_hints": self.ir_hints.to_dict() if self.ir_hints else None,
         }
 
 
@@ -343,6 +346,7 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
             cfg_ownership=cfg_ownership,
             cfg_indirect=cfg_indirect,
             cfg_grouping=cfg_grouping,
+            ir_hints=build_structuring_ir_hint_artifact(codegen, succeeded=succeeded, iterations=final_iteration),
         )
 
         if cfg_snapshot is not None:
@@ -353,11 +357,24 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
             collector.add_progress(cfg_indirect.summary_line())
         if cfg_grouping is not None:
             collector.add_progress(cfg_grouping.summary_line())
+        if report.ir_hints is not None:
+            readiness = report.ir_hints.readiness
+            collector.add_progress(
+                "ir_readiness "
+                f"level={readiness.level} "
+                f"cond={readiness.condition_count} "
+                f"phi={readiness.phi_node_count} "
+                f"defaulted={readiness.defaulted_segment_count} "
+                f"provisional={readiness.provisional_address_count}"
+            )
 
         # Generate recovery hints
         if not succeeded and structuring_stats:
             hints = suggest_recovery_hints(structuring_stats)
             for hint in hints:
+                report.add_recovery_hint(hint)
+        if report.ir_hints is not None:
+            for hint in report.ir_hints.hints:
                 report.add_recovery_hint(hint)
 
         # Attach to function

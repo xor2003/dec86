@@ -32,7 +32,16 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION = 2
+TAIL_VALIDATION_FINGERPRINT_VERSION = 3
+
+
+def _segment_linear_lowering_allowed(node, segment_reg: str) -> bool:
+    codegen = getattr(node, "codegen", None)
+    lowering = getattr(codegen, "_inertia_segmented_memory_lowering", None)
+    if not isinstance(lowering, dict):
+        return False
+    entry = lowering.get(segment_reg.upper())
+    return isinstance(entry, dict) and bool(entry.get("allow_linear_lowering", False))
 
 def _register_name(project, reg_offset: int) -> str:
     name = project.arch.register_names.get(reg_offset)
@@ -245,6 +254,8 @@ def _location_fingerprint(node, project) -> str:
             return f"stack:{stack_disp:+#x}"
         seg_name, linear = _match_segmented_dereference_8616(node, project)
         if seg_name is not None:
+            if isinstance(linear, int) and _segment_linear_lowering_allowed(node, seg_name):
+                return f"global:{linear:#x}"
             return f"deref:{seg_name}:{linear:#x}" if isinstance(linear, int) else f"deref:{seg_name}:unknown"
         return f"deref:{_expr_fingerprint(node.operand, project)}"
 
