@@ -237,6 +237,7 @@ class TestPhase22Integration:
         assert hasattr(codegen, "_inertia_array_matching_applied")
         assert codegen._inertia_array_matching_applied is True
         assert codegen._inertia_array_matching_stats["recovered_arrays"] == 0
+        assert codegen._inertia_array_matching_typed_ir_candidates == {}
 
     def test_array_matching_refuses_over_associated_segmented_storage(self):
         stable_key = ("ss", ("stack", "bp", -4))
@@ -298,6 +299,84 @@ class TestPhase22Integration:
             "array_patterns": 2,
             "recovered_arrays": 1,
             "refused_arrays": 1,
+        }
+
+    def test_array_matching_recovers_typed_ir_candidate_from_phi_index(self):
+        from angr_platforms.X86_16.ir.core import (
+            AddressStatus,
+            IRAddress,
+            IRBlock,
+            IRFunctionArtifact,
+            IRInstr,
+            IRValue,
+            MemSpace,
+            SegmentOrigin,
+        )
+        from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact, SSAIncomingValue, SSAPhiNode
+
+        class MockCodegen:
+            cfunc = SimpleNamespace(addr=0x5000)
+            _inertia_vex_ir_artifact = IRFunctionArtifact(
+                function_addr=0x5000,
+                blocks=(
+                    IRBlock(
+                        addr=0x5000,
+                        instrs=(
+                            IRInstr(
+                                "LOAD",
+                                IRValue(MemSpace.TMP, name="t0", size=2),
+                                (
+                                    IRAddress(
+                                        MemSpace.DS,
+                                        base=("bx", "si"),
+                                        offset=0,
+                                        size=2,
+                                        status=AddressStatus.PROVISIONAL,
+                                        segment_origin=SegmentOrigin.DEFAULTED,
+                                    ),
+                                ),
+                                size=2,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            _inertia_vex_ir_function_ssa = SSAFunctionArtifact(
+                function_addr=0x5000,
+                blocks=(),
+                phi_nodes=(
+                    SSAPhiNode(
+                        block_addr=0x5000,
+                        key=("reg", "si", 0),
+                        target=IRValue(MemSpace.REG, name="si", size=2, version=1, expr=("phi", "0x5000")),
+                        incoming=(
+                            SSAIncomingValue(0x4FF0, IRValue(MemSpace.REG, name="si", size=2, version=0)),
+                            SSAIncomingValue(0x4FF8, IRValue(MemSpace.REG, name="si", size=2, version=0)),
+                        ),
+                    ),
+                ),
+                predecessor_map={0x5000: (0x4FF0, 0x4FF8)},
+                summary={"phi_node_count": 1},
+            )
+
+        codegen = MockCodegen()
+
+        result = apply_x86_16_array_expression_matching(codegen)
+
+        assert result is False
+        assert codegen._inertia_array_matching_typed_ir_candidates == {
+            ("ds", ("bx", "si"), 2): {
+                "space": "ds",
+                "base": ("bx", "si"),
+                "element_size": 2,
+                "has_phi_index": True,
+            }
+        }
+        assert codegen._inertia_array_matching_stats == {
+            "induction_vars": 1,
+            "array_patterns": 0,
+            "recovered_arrays": 1,
+            "refused_arrays": 0,
         }
 
     def test_multi_dimensional_array_detection(self):

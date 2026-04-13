@@ -6,7 +6,10 @@ and multi-function struct layout merging.
 """
 
 import pytest
+from types import SimpleNamespace
 
+from angr_platforms.X86_16.ir.core import IRBlock, IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
+from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.type_structure_merging import (
     FieldAccessCollector,
     FieldAccessPattern,
@@ -318,6 +321,68 @@ class TestPhase23Integration:
         assert result is False  # No direct modifications
         assert hasattr(codegen, "_inertia_struct_merging_applied")
         assert codegen._inertia_struct_merging_applied is True
+
+    def test_struct_merging_uses_typed_ir_phi_backed_offsets(self):
+        """Typed IR + function SSA should synthesize bounded struct-layout evidence."""
+
+        artifact = IRFunctionArtifact(
+            function_addr=0x1000,
+            blocks=(
+                IRBlock(
+                    addr=0x1000,
+                    successor_addrs=(0x1020, 0x1010),
+                    instrs=(
+                        IRInstr("MOV", IRValue(MemSpace.REG, name="si", size=2), (IRValue(MemSpace.CONST, const=0),), size=2),
+                    ),
+                ),
+                IRBlock(
+                    addr=0x1010,
+                    successor_addrs=(0x1020,),
+                    instrs=(
+                        IRInstr("MOV", IRValue(MemSpace.REG, name="si", size=2), (IRValue(MemSpace.CONST, const=2),), size=2),
+                    ),
+                ),
+                IRBlock(
+                    addr=0x1020,
+                    instrs=(
+                        IRInstr(
+                            "LOAD",
+                            IRValue(MemSpace.TMP, name="t0", size=2),
+                            (IRAddress(MemSpace.DS, base=("bx", "si"), offset=0, size=2),),
+                            size=2,
+                        ),
+                        IRInstr(
+                            "LOAD",
+                            IRValue(MemSpace.TMP, name="t1", size=2),
+                            (IRAddress(MemSpace.DS, base=("bx", "si"), offset=2, size=2),),
+                            size=2,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        codegen = SimpleNamespace(
+            cfunc=SimpleNamespace(addr=0x1000),
+            project=SimpleNamespace(_inertia_access_traits={}),
+            _inertia_vex_ir_artifact=artifact,
+            _inertia_vex_ir_function_ssa=build_x86_16_function_ssa(artifact),
+        )
+
+        result = apply_x86_16_structure_field_merging(codegen)
+
+        assert result is False
+        assert codegen._inertia_struct_merging_changed is True
+        assert codegen._inertia_struct_merging_typed_ir_facts == {
+            ("ds", ("bx", "si")): {
+                "space": "ds",
+                "base": ("bx", "si"),
+                "candidate_offsets": (0, 2),
+                "candidate_widths": (2,),
+                "has_phi_evidence": True,
+            }
+        }
+        assert codegen._inertia_struct_merging_stats["structs_synthesized"] == 1
 
 
 if __name__ == "__main__":

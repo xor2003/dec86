@@ -60,6 +60,10 @@ def sequence_merge_is_safe(
         return False
     if succ == region:
         return False
+    if bool(getattr(succ, "metadata", {}).get("typed_ir_has_condition", False)):
+        return False
+    if bool(getattr(succ, "metadata", {}).get("typed_ir_has_phi", False)):
+        return False
     if len(graph.predecessors(succ)) != 1:
         return False
     if succ not in region.successors:

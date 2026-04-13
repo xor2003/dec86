@@ -15,6 +15,8 @@ from .core import (
     MemSpace,
     SegmentOrigin,
 )
+from .vex_addressing import block_segment_hints, expr_to_address
+from .vex_condition_lifting import build_condition_from_binop, expr_to_condition
 from .regs import register_name_from_offset
 from .ssa import build_x86_16_block_local_ssa
 from .ssa_function import build_x86_16_function_ssa
@@ -41,52 +43,6 @@ def _int_size(expr, default: int = 2) -> int:
         return int(size or default)
     except Exception:  # noqa: BLE001
         return default
-
-
-def _infer_address_space(base: tuple[str, ...]) -> tuple[MemSpace, AddressStatus, SegmentOrigin]:
-    if not base:
-        return MemSpace.UNKNOWN, AddressStatus.UNKNOWN, SegmentOrigin.UNKNOWN
-    if any(name in {"bp", "sp"} for name in base):
-        return MemSpace.SS, AddressStatus.PROVISIONAL, SegmentOrigin.DEFAULTED
-    return MemSpace.DS, AddressStatus.PROVISIONAL, SegmentOrigin.DEFAULTED
-
-
-def _address_from_parts(base: tuple[str, ...], offset: int = 0, *, size: int = 0, expr: tuple[str, ...] | None = None) -> IRAddress:
-    space, status, segment_origin = _infer_address_space(base)
-    return IRAddress(
-        space=space,
-        base=base,
-        offset=offset,
-        size=size,
-        status=status,
-        segment_origin=segment_origin,
-        expr=expr,
-    )
-
-
-def _cmp_condition(op: str, left: IRValue, right: IRValue) -> IRCondition | None:
-    mapping = {
-        "cmpeq": "eq",
-        "cmpne": "ne",
-        "cmplt": "lt",
-        "cmple": "le",
-        "cmpgt": "gt",
-        "cmpge": "ge",
-        "cascmp": "eq",
-    }
-    folded = op.lower()
-    for needle, cond_op in mapping.items():
-        if needle in folded:
-            return IRCondition(op=cond_op, args=(left, right), expr=(op,))
-    return None
-
-
-def _nonzero_condition(value: IRValue, *, source: str) -> IRCondition:
-    return IRCondition(op="nonzero", args=(value,), expr=(source,))
-
-
-def _masked_nonzero_condition(left: IRValue, right: IRValue, *, source: str) -> IRCondition:
-    return IRCondition(op="masked_nonzero", args=(left, right), expr=(source,))
 
 
 def _expr_to_value(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondition]) -> IRValue:
@@ -123,7 +79,7 @@ def _expr_to_value(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
             return IRValue(MemSpace.TMP, name=f"expr:{op}", expr=(op,))
         left = _expr_to_value(args[0], tmps, conditions)
         right = _expr_to_value(args[1], tmps, conditions)
-        cond = _cmp_condition(op, left, right)
+        cond = build_condition_from_binop(op, left, right)
         if cond is not None:
             return IRValue(MemSpace.TMP, name=f"cond:{cond.op}", size=1, expr=(op,))
         if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None:
@@ -136,104 +92,17 @@ def _expr_to_value(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
             return IRValue(MemSpace.TMP, name=f"mask:{left.name or 'lhs'}", size=max(left.size, right.size), expr=(op,))
         return IRValue(MemSpace.TMP, name=f"expr:{op}", size=max(left.size, right.size), expr=(op,))
     if tag == "Iex_Load":
-        addr = _expr_to_address(getattr(expr, "addr", None), tmps, conditions, size=_int_size(expr))
+        addr = expr_to_address(
+            getattr(expr, "addr", None),
+            tmps,
+            conditions,
+            expr_to_value=_expr_to_value,
+            size=_int_size(expr),
+        )
         return IRValue(MemSpace.TMP, name="load", size=addr.size or _int_size(expr), expr=("load",))
     return IRValue(MemSpace.UNKNOWN, name=tag or "expr")
 
-
-def _expr_to_address(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondition], *, size: int = 0) -> IRAddress:
-    tag = getattr(expr, "tag", "")
-    if tag == "Iex_RdTmp":
-        tmp_id = int(getattr(expr, "tmp"))
-        tmp_value = tmps.get(tmp_id)
-        if tmp_value is None:
-            return IRAddress(
-                MemSpace.UNKNOWN,
-                size=size,
-                status=AddressStatus.UNKNOWN,
-                segment_origin=SegmentOrigin.UNKNOWN,
-                expr=("rdtmp", f"t{tmp_id}"),
-            )
-        if tmp_value.space == MemSpace.REG and tmp_value.name is not None:
-            return _address_from_parts((tmp_value.name,), tmp_value.offset, size=size, expr=("register_base", tmp_value.name))
-        if tmp_value.expr and tmp_value.expr[:1] == ("Iop_Add16",) and len(tmp_value.expr) == 3:
-            return _address_from_parts((tmp_value.expr[1], tmp_value.expr[2]), 0, size=size, expr=tmp_value.expr)
-        return IRAddress(
-            MemSpace.UNKNOWN,
-            size=size,
-            status=AddressStatus.UNKNOWN,
-            segment_origin=SegmentOrigin.UNKNOWN,
-            expr=("tmp_expr", tmp_value.name or "tmp"),
-        )
-    if tag == "Iex_Get":
-        value = _expr_to_value(expr, tmps, conditions)
-        return _address_from_parts(() if value.name is None else (value.name,), value.offset, size=size, expr=("register_get", value.name or ""))
-    if tag == "Iex_Const":
-        return IRAddress(
-            MemSpace.UNKNOWN,
-            offset=int(_const(expr) or 0),
-            size=size,
-            status=AddressStatus.UNKNOWN,
-            segment_origin=SegmentOrigin.UNKNOWN,
-            expr=("absolute_const",),
-        )
-    if tag == "Iex_Binop":
-        op = str(getattr(expr, "op", ""))
-        args = tuple(getattr(expr, "args", ()) or ())
-        if len(args) != 2:
-            return IRAddress(
-                MemSpace.UNKNOWN,
-                size=size,
-                status=AddressStatus.UNKNOWN,
-                segment_origin=SegmentOrigin.UNKNOWN,
-                expr=(op,),
-            )
-        left = _expr_to_value(args[0], tmps, conditions)
-        right = _expr_to_value(args[1], tmps, conditions)
-        if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None and left.name:
-            return _address_from_parts((left.name,), left.offset + int(right.const), size=size, expr=(op, left.name))
-        if "Sub" in op and left.space == MemSpace.REG and right.space == MemSpace.CONST and right.const is not None and left.name:
-            return _address_from_parts((left.name,), left.offset - int(right.const), size=size, expr=(op, left.name))
-        if "Add" in op and left.space == MemSpace.REG and right.space == MemSpace.REG and left.name and right.name:
-            return _address_from_parts(tuple(sorted((left.name, right.name))), 0, size=size, expr=(op, left.name, right.name))
-        return IRAddress(
-            MemSpace.UNKNOWN,
-            size=size,
-            status=AddressStatus.UNKNOWN,
-            segment_origin=SegmentOrigin.UNKNOWN,
-            expr=(op,),
-        )
-    return IRAddress(
-        MemSpace.UNKNOWN,
-        size=size,
-        status=AddressStatus.UNKNOWN,
-        segment_origin=SegmentOrigin.UNKNOWN,
-        expr=(tag or "addr_expr",),
-    )
-
-
-def _expr_to_condition(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondition]) -> IRCondition:
-    tag = getattr(expr, "tag", "")
-    if tag == "Iex_RdTmp":
-        tmp_id = int(getattr(expr, "tmp"))
-        if tmp_id in conditions:
-            return conditions[tmp_id]
-        return _nonzero_condition(_expr_to_value(expr, tmps, conditions), source=f"rdtmp:{tmp_id}")
-    if tag == "Iex_Binop":
-        op = str(getattr(expr, "op", ""))
-        args = tuple(getattr(expr, "args", ()) or ())
-        if len(args) == 2:
-            left = _expr_to_value(args[0], tmps, conditions)
-            right = _expr_to_value(args[1], tmps, conditions)
-            cond = _cmp_condition(op, left, right)
-            if cond is not None:
-                return cond
-            if "And" in op:
-                return _masked_nonzero_condition(left, right, source=op)
-    return _nonzero_condition(_expr_to_value(expr, tmps, conditions), source=tag or "expr")
-
-
-def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions: dict[int, IRCondition]) -> IRInstr | None:
+def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions, *, segment_hints) -> IRInstr | None:
     tag = getattr(stmt, "tag", "")
     if tag == "Ist_WrTmp":
         data = getattr(stmt, "data", None)
@@ -241,7 +110,14 @@ def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
         data_tag = getattr(data, "tag", "")
         dst = IRValue(MemSpace.TMP, name=f"t{tmp_id}", size=_int_size(data))
         if data_tag == "Iex_Load":
-            addr = _expr_to_address(getattr(data, "addr", None), tmps, conditions, size=_int_size(data))
+            addr = expr_to_address(
+                getattr(data, "addr", None),
+                tmps,
+                conditions,
+                expr_to_value=_expr_to_value,
+                size=_int_size(data),
+                segment_hints=segment_hints,
+            )
             tmps[tmp_id] = IRValue(MemSpace.TMP, name=f"load_t{tmp_id}", size=_int_size(data), expr=("load",))
             return IRInstr(op="LOAD", dst=dst, args=(addr,), size=_int_size(data))
         if data_tag == "Iex_Binop":
@@ -250,11 +126,11 @@ def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
             if len(args) == 2:
                 left = _expr_to_value(args[0], tmps, conditions)
                 right = _expr_to_value(args[1], tmps, conditions)
-                cond = _cmp_condition(op, left, right)
+                cond = build_condition_from_binop(op, left, right)
                 if cond is not None:
                     conditions[tmp_id] = cond
                 elif "And" in op:
-                    conditions[tmp_id] = _masked_nonzero_condition(left, right, source=op)
+                    conditions[tmp_id] = expr_to_condition(data, tmps, conditions, expr_to_value=_expr_to_value)
                 tmps[tmp_id] = _expr_to_value(data, tmps, conditions)
                 return IRInstr(op=op, dst=dst, args=(left, right), size=max(left.size, right.size))
         value = _expr_to_value(data, tmps, conditions)
@@ -266,11 +142,18 @@ def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
         src = _expr_to_value(getattr(stmt, "data", None), tmps, conditions)
         return IRInstr(op="MOV", dst=dst, args=(src,), size=dst.size)
     if tag == "Ist_Store":
-        addr = _expr_to_address(getattr(stmt, "addr", None), tmps, conditions, size=_int_size(getattr(stmt, "data", None)))
+        addr = expr_to_address(
+            getattr(stmt, "addr", None),
+            tmps,
+            conditions,
+            expr_to_value=_expr_to_value,
+            size=_int_size(getattr(stmt, "data", None)),
+            segment_hints=segment_hints,
+        )
         data = _expr_to_value(getattr(stmt, "data", None), tmps, conditions)
         return IRInstr(op="STORE", dst=None, args=(addr, data), size=data.size)
     if tag == "Ist_Exit":
-        cond = _expr_to_condition(getattr(stmt, "guard", None), tmps, conditions)
+        cond = expr_to_condition(getattr(stmt, "guard", None), tmps, conditions, expr_to_value=_expr_to_value)
         target = _expr_to_value(getattr(stmt, "dst", None), tmps, conditions)
         return IRInstr(op="CJMP", dst=None, args=(cond, target), size=0)
     return None
@@ -282,11 +165,12 @@ def _block_to_ir(block) -> IRBlock:
     if vex is None:
         return IRBlock(addr=addr, refusals=(IRRefusal("missing_vex", "block has no vex IR", addr),))
     tmps: dict[int, IRValue] = {}
-    conditions: dict[int, IRCondition] = {}
+    conditions = {}
     instrs: list[IRInstr] = []
     refusals: list[IRRefusal] = []
+    segment_hints = block_segment_hints(block)
     for stmt in tuple(getattr(vex, "statements", ()) or ()):
-        instr = _stmt_to_instr(stmt, tmps, conditions)
+        instr = _stmt_to_instr(stmt, tmps, conditions, segment_hints=segment_hints)
         if instr is None:
             tag = getattr(stmt, "tag", "")
             if tag:

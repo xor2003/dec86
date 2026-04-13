@@ -14,12 +14,51 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional, Set
 
+from .ir.core import IRAddress
 from .type_storage_object_bridge import load_storage_object_bridge
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _typed_ir_struct_candidates(codegen) -> dict[tuple[str, tuple[str, ...]], dict[str, object]]:
+    artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
+    function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
+    if artifact is None or not hasattr(artifact, "blocks"):
+        return {}
+
+    phi_registers = {
+        getattr(phi.target, "name", None)
+        for phi in tuple(getattr(function_ssa, "phi_nodes", ()) or ())
+        if getattr(getattr(phi, "target", None), "name", None) is not None
+    }
+    offsets_by_key: dict[tuple[str, tuple[str, ...]], set[int]] = {}
+    widths_by_key: dict[tuple[str, tuple[str, ...]], set[int]] = {}
+    for block in tuple(getattr(artifact, "blocks", ()) or ()):
+        for instr in tuple(getattr(block, "instrs", ()) or ()):
+            for atom in tuple(getattr(instr, "args", ()) or ()):
+                if not isinstance(atom, IRAddress) or not atom.base:
+                    continue
+                if not phi_registers.intersection(set(atom.base)):
+                    continue
+                key = (atom.space.value, tuple(atom.base))
+                offsets_by_key.setdefault(key, set()).add(int(atom.offset))
+                widths_by_key.setdefault(key, set()).add(int(atom.size or 0))
+
+    candidates: dict[tuple[str, tuple[str, ...]], dict[str, object]] = {}
+    for key, offsets in sorted(offsets_by_key.items()):
+        if len(offsets) < 2:
+            continue
+        candidates[key] = {
+            "space": key[0],
+            "base": key[1],
+            "candidate_offsets": tuple(sorted(offsets)),
+            "candidate_widths": tuple(sorted(widths_by_key.get(key, {0}))),
+            "has_phi_evidence": True,
+        }
+    return candidates
 
 
 @dataclass
@@ -265,6 +304,7 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
         bridge = None
         if project is not None:
             bridge = load_storage_object_bridge(project, function_addr, codegen=codegen)
+        typed_ir_facts = _typed_ir_struct_candidates(codegen)
 
         # Track that struct merging pass ran
         codegen._inertia_struct_merging_applied = True
@@ -273,10 +313,11 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
         codegen._inertia_struct_merging_member_facts = {} if bridge is None else bridge.member_facts
         codegen._inertia_struct_merging_array_facts = {} if bridge is None else bridge.array_facts
         codegen._inertia_struct_merging_refusal_facts = {} if bridge is None else bridge.refusal_facts
-        codegen._inertia_struct_merging_changed = bool(bridge is not None and bridge.facts_by_base)
+        codegen._inertia_struct_merging_typed_ir_facts = typed_ir_facts
+        codegen._inertia_struct_merging_changed = bool((bridge is not None and bridge.facts_by_base) or typed_ir_facts)
         codegen._inertia_struct_merging_stats = {
             "field_accesses": 0 if bridge is None else sum(len(fact.candidate_offsets) for fact in bridge.facts_by_base.values()),
-            "structs_synthesized": 0 if bridge is None else len(bridge.facts_by_base),
+            "structs_synthesized": (0 if bridge is None else len(bridge.facts_by_base)) + len(typed_ir_facts),
             "structs_merged": 0,
             "member_facts": 0 if bridge is None else len(bridge.member_facts),
             "array_facts": 0 if bridge is None else len(bridge.array_facts),
@@ -284,11 +325,12 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
         }
 
         logger.debug(
-            "Structure field merging pass completed: records=%s members=%s arrays=%s refusals=%s",
+            "Structure field merging pass completed: records=%s members=%s arrays=%s refusals=%s typed_ir=%s",
             0 if bridge is None else len(bridge.facts_by_base),
             0 if bridge is None else len(bridge.member_facts),
             0 if bridge is None else len(bridge.array_facts),
             0 if bridge is None else len(bridge.refusal_facts),
+            len(typed_ir_facts),
         )
         return False  # No direct modifications at this stage
     except Exception as ex:

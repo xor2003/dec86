@@ -39,3 +39,21 @@ def test_sequence_merge_is_safe_for_plain_linear_chain():
     dominators = compute_dominators(graph)
 
     assert sequence_merge_is_safe(graph, dominators, a, b) is True
+
+
+def test_sequence_merge_is_unsafe_when_successor_has_typed_ir_condition():
+    entry = Region(block_addr=0x3000, region_type=RegionType.Linear)
+    a = Region(block_addr=0x3001, region_type=RegionType.Linear)
+    b = Region(block_addr=0x3002, region_type=RegionType.Linear, metadata={"typed_ir_has_condition": True})
+
+    graph = RegionGraph()
+    graph.entry = entry
+    for region in (entry, a, b):
+        graph.add_node(region)
+
+    graph.add_edge(entry, a)
+    graph.add_edge(a, b)
+
+    dominators = compute_dominators(graph)
+
+    assert sequence_merge_is_safe(graph, dominators, a, b) is False

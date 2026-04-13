@@ -19,6 +19,9 @@ For x86-16, the ownership boundary stays:
 That means future quality work should prefer:
 
 - richer Inertia-owned `Value` / `Address` / `Condition` objects
+- an explicit distinction between:
+  - block-local typed IR
+  - CFG-level typed IR with merge/phi nodes
 - alias and widening on typed storage
 - explicit segmented-memory state
 - explicit condition/flag meaning
@@ -27,6 +30,7 @@ And should avoid:
 
 - leaning on AIL as the long-term reasoning substrate
 - leaving segmented memory or conditions as hidden VEX-temp trivia
+- blurring block-local typed IR and CFG-level merged IR into one vague layer
 
 For the narrower whole-corpus operational plan focused on:
 

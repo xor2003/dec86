@@ -46,7 +46,7 @@ class AbnormalLoopNormalizationPlan:
 
     @property
     def can_normalize(self) -> bool:
-        return self.needs_entry_variable or self.needs_exit_variable
+        return bool(self.entry_variable_name or self.exit_variable_name)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -110,8 +110,17 @@ def build_abnormal_loop_normalization_plan(
 
     header_id = header.region_id
     body_ids = tuple(region.region_id for region in _sorted_regions(body_regions))
-    entry_var = f"__loop_entry_sel_{header_id:x}" if external_entry_edges and isinstance(header_id, int) else None
-    exit_var = f"__loop_exit_sel_{header_id:x}" if abnormal_exit_edges and isinstance(header_id, int) else None
+    typed_ir_allow = header.metadata.get("typed_ir_allow_abnormal_loop_normalization", True)
+    entry_var = (
+        f"__loop_entry_sel_{header_id:x}"
+        if external_entry_edges and isinstance(header_id, int) and typed_ir_allow
+        else None
+    )
+    exit_var = (
+        f"__loop_exit_sel_{header_id:x}"
+        if abnormal_exit_edges and isinstance(header_id, int) and typed_ir_allow
+        else None
+    )
 
     return AbnormalLoopNormalizationPlan(
         header_region_id=header_id,
