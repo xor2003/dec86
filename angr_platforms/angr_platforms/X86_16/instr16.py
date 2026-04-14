@@ -1241,25 +1241,41 @@ class Instr16(InstrBase):
         self.emu.update_eflags_ror(a, masked)
 
     def rcl(self, a, b):
-        result, carry, overflow = rotate_through_carry_left_state(self.emu, a, b, 16, self._ite_value)
+        masked = self._shift_count(b)
+        count_value = self.emu._const_u8_value(masked)
+        result, carry, overflow = rotate_through_carry_left_state(self.emu, a, masked, 16, self._ite_value)
         if carry is None:
             self.set_rm16(a)
             return
         self.set_rm16(result)
         self._set_rotate_cf(carry)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
-        flags = self.emu.set_overflow(flags, self._ite_value(b == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)))
+        if count_value == 1:
+            flags = self.emu.set_overflow(flags, overflow)
+        else:
+            flags = self.emu.set_overflow(
+                flags,
+                self._ite_value(masked == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)),
+            )
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def rcr(self, a, b):
-        result, carry, overflow = rotate_through_carry_right_state(self.emu, a, b, 16, self._ite_value)
+        masked = self._shift_count(b)
+        count_value = self.emu._const_u8_value(masked)
+        result, carry, overflow = rotate_through_carry_right_state(self.emu, a, masked, 16, self._ite_value)
         if carry is None:
             self.set_rm16(a)
             return
         self.set_rm16(result)
         self._set_rotate_cf(carry)
         flags = self.emu.get_gpreg(reg16_t.FLAGS)
-        flags = self.emu.set_overflow(flags, self._ite_value(b == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)))
+        if count_value == 1:
+            flags = self.emu.set_overflow(flags, overflow)
+        else:
+            flags = self.emu.set_overflow(
+                flags,
+                self._ite_value(masked == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11)),
+            )
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def shr_rm16_cl(self):

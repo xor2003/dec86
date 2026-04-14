@@ -5986,6 +5986,71 @@ def test_main_streaming_timeout_reports_nonoptimized_skip_before_string_fallback
     assert "int fallback(void) { return 7; }" in out
 
 
+def test_main_streaming_timeout_reports_nonoptimized_failure_detail_before_string_fallback(
+    monkeypatch, tmp_path, capsys
+):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace(functions={})
+    recovered_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: True)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: cfg)
+    monkeypatch.setattr(decompile, "_interesting_functions", lambda _cfg, limit=None: ([recovered_function], 1))
+    monkeypatch.setattr(decompile, "_recover_seeded_exe_functions", lambda *_args, **_kwargs: ([], []))
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile._AdaptivePerByteTimeoutModel, "observe_success", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="timeout",
+            payload="Timed out after 2s.",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+            partial_payload=None,
+            tail_validation={},
+            skip_heavy_fallbacks=False,
+        ),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_non_optimized_slice",
+        lambda *_args, **_kwargs: decompile.NonOptimizedSliceOutcome(
+            rendered=None,
+            status="error",
+            payload="slice lift broke",
+            failure_detail="shared-project slice lean: error: slice lift broke",
+            attempt_failures=("shared-project slice lean: error: slice lift broke",),
+        ),
+    )
+    monkeypatch.setattr(decompile, "_try_emit_string_intrinsic_c", lambda *_args, **_kwargs: "int fallback(void) { return 7; }")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    out = capsys.readouterr().out
+
+    assert rc == 2
+    assert "shared-project slice lean: error: slice lift broke" in out
+    assert out.index("non-optimized fallback unavailable") < out.index("/* -- c (string intrinsic fallback) -- */")
+    assert "int fallback(void) { return 7; }" in out
+
+
 def test_main_falls_back_to_partial_timeout_before_asm_when_available(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -6949,10 +7014,10 @@ def test_try_decompile_non_optimized_slice_uses_fork_lane_on_main_thread(monkeyp
     )
 
     assert outcome.rendered == "void sub_114cd(void) {}"
-    assert seen["timeout"] == 20
+    assert seen["timeout"] == 7
 
 
-def test_try_decompile_non_optimized_slice_adds_setup_slack_to_runner_timeout(monkeypatch):
+def test_try_decompile_non_optimized_slice_uses_bounded_attempt_timeout_in_daemon_mode(monkeypatch):
     project = SimpleNamespace(
         loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x55\x8b\xec\xc3")),
     )
@@ -6992,7 +7057,62 @@ def test_try_decompile_non_optimized_slice_adds_setup_slack_to_runner_timeout(mo
     )
 
     assert outcome.rendered == "int partial(void) { return 1; }"
-    assert seen["timeout"] == 20
+    assert seen["timeout"] == 7
+
+
+def test_try_decompile_non_optimized_slice_retries_after_bounded_lean_timeout(monkeypatch):
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x55\x8b\xec\xc3")),
+    )
+    function = SimpleNamespace(name="main", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),))
+    calls: list[tuple[str, bool]] = []
+    daemon_calls = {"count": 0}
+
+    monkeypatch.setattr(decompile.os, "name", "nt")
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1004))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
+
+    def _fake_pick_function_lean(*_args, **_kwargs):
+        calls.append(("lean", False))
+        return SimpleNamespace(), function
+
+    def _fake_pick_function(_slice_project, _start, *, data_references, **_kwargs):
+        calls.append(("full", data_references))
+        if data_references:
+            raise AssertionError("full-with-refs should not run after full-no-refs succeeds")
+        return SimpleNamespace(), function
+
+    def _fake_daemon_timeout(fn, *, timeout, **_kwargs):
+        daemon_calls["count"] += 1
+        if daemon_calls["count"] == 1:
+            raise TimeoutError(f"Timed out after {timeout}s.")
+        return fn()
+
+    monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick_function_lean)
+    monkeypatch.setattr(decompile, "_pick_function", _fake_pick_function)
+    monkeypatch.setattr(decompile, "_inherit_tail_validation_runtime_policy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_daemon_timeout)
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("ok", "int recovered(void) { return 2; }", None, 1, 3, 0.01),
+    )
+
+    outcome = decompile._try_decompile_non_optimized_slice(
+        project,
+        0x1000,
+        "main",
+        timeout=5,
+        api_style="modern",
+        binary_path=None,
+        lst_metadata=None,
+        allow_fresh_project_retry=False,
+    )
+
+    assert outcome.rendered == "int recovered(void) { return 2; }"
+    assert calls == [("full", False)]
+    assert daemon_calls["count"] == 2
 
 
 def test_main_defers_exe_limit_until_after_seed_ranking(monkeypatch, tmp_path, capsys):
@@ -7999,10 +8119,48 @@ def test_build_signature_catalog_skips_duplicate_modules(tmp_path):
     assert [module.module_name for module in modules] == ["demo_func"]
 
 
+def test_build_signature_catalog_merges_exact_patterns_with_normalized_names(tmp_path):
+    left = tmp_path / "left.pat"
+    right = tmp_path / "right.pat"
+    pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
+    left.write_text(f"{pattern} 00 0000 000C :0000 __DEMO123__\n---\n")
+    right.write_text(f"{pattern} 00 0000 000C :0000 demo123\n---\n")
+    output = tmp_path / "catalog.pat"
+
+    result = build_signature_catalog([left, right], output, recursive=False, cache_dir=tmp_path / "cache")
+
+    assert result.input_count == 2
+    assert result.imported_module_count == 2
+    assert result.unique_module_count == 1
+    assert result.duplicate_module_count == 1
+    modules = parse_pat_file(output)
+    assert [module.module_name for module in modules] == ["__DEMO123__"]
+
+
+def test_build_signature_catalog_merges_exact_patterns_with_internal_underscores(tmp_path):
+    left = tmp_path / "left.pat"
+    right = tmp_path / "right.pat"
+    pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
+    left.write_text(f"{pattern} 00 0000 000C :0000 __DEMO_FUNC_123__\n---\n")
+    right.write_text(f"{pattern} 00 0000 000C :0000 demo_func_123\n---\n")
+    output = tmp_path / "catalog.pat"
+
+    result = build_signature_catalog([left, right], output, recursive=False, cache_dir=tmp_path / "cache")
+
+    assert result.input_count == 2
+    assert result.imported_module_count == 2
+    assert result.unique_module_count == 1
+    assert result.duplicate_module_count == 1
+    modules = parse_pat_file(output)
+    assert [module.module_name for module in modules] == ["__DEMO_FUNC_123__"]
+
+
 def test_match_signature_catalog_matches_prebuilt_catalog(tmp_path):
     pattern = "FBFC52505355565706511E8BEC" + (".." * 19)
     catalog = tmp_path / "catalog.pat"
-    catalog.write_text(f"{pattern} 00 0000 000C :0000 demo_func\n---\n")
+    catalog.write_text(
+        f"{pattern} 00 0000 000C :0000 demo_func ; mod=demo_func | compiler=Microsoft C v5.1\n---\n"
+    )
     image = bytes.fromhex(
         "90 90 90 FB FC 52 50 53 55 56 57 06 51 1E 8B EC 36 89 2E DE 00 C5 76 12 AD 89 76 12 8C D7 8E DF 8A CC 98 C3 90"
     )
@@ -8018,6 +8176,7 @@ def test_match_signature_catalog_matches_prebuilt_catalog(tmp_path):
     assert result.code_labels == {0x1003: "demo_func"}
     assert result.code_ranges == {0x1003: (0x1003, 0x100F)}
     assert result.source_formats == ("signature_catalog",)
+    assert result.matched_compiler_names == ("Microsoft C v5.1",)
 
 
 def test_detect_flair_metadata_merges_local_pat_matches(monkeypatch):

@@ -1120,30 +1120,88 @@ def test_tail_validation_surface_groups_changed_observables_into_families():
                 },
             },
             {
-                "cod_file": "COCKPIT.COD",
-                "proc_name": "_DisplayMaster",
+                "cod_file": "CARR.COD",
+                "proc_name": "_SetGear",
                 "proc_kind": "NEAR",
-                "postprocess": {
+                "structuring": {
                     "changed": True,
                     "mode": "live_out",
-                    "verdict": "postprocess whole-tail validation [live_out] changed: conditions: +cmp; control_flow_effects: +if:cmp",
+                    "verdict": "structuring whole-tail validation [live_out] changed: conditions: +cmp; control_flow_effects: +if:cmp",
                     "delta": {
                         "conditions": {"added": ("cmp",), "removed": ()},
                         "control_flow_effects": {"added": ("if:cmp",), "removed": ()},
                     },
                 },
             },
+            {
+                "cod_file": "EGAME11.COD",
+                "proc_name": "_strcpyFromDot",
+                "proc_kind": "NEAR",
+                "structuring": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "structuring whole-tail validation [live_out] changed: conditions: +cmp",
+                    "delta": {
+                        "conditions": {"added": ("cmp",), "removed": ()},
+                    },
+                },
+            },
+            {
+                "cod_file": "OUTPUT.COD",
+                "proc_name": "_hexdump",
+                "proc_kind": "NEAR",
+                "structuring": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "structuring whole-tail validation [live_out] changed: control_flow_effects: +if:cmp",
+                    "delta": {
+                        "control_flow_effects": {"added": ("if:cmp",), "removed": ()},
+                    },
+                },
+            },
+            {
+                "cod_file": "PLANES3.COD",
+                "proc_name": "_CheckIfCanIntercept",
+                "proc_kind": "NEAR",
+                "structuring": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "structuring whole-tail validation [live_out] changed: conditions: +cmp",
+                    "delta": {
+                        "conditions": {"added": ("cmp",), "removed": ()},
+                    },
+                },
+            },
+            {
+                "cod_file": "START1.COD",
+                "proc_name": "_waitMdaCgaStatus",
+                "proc_kind": "NEAR",
+                "structuring": {
+                    "changed": True,
+                    "mode": "live_out",
+                    "verdict": "structuring whole-tail validation [live_out] changed: conditions: +cmp",
+                    "delta": {
+                        "conditions": {"added": ("cmp",), "removed": ()},
+                    },
+                },
+            },
         ]
     )
-    surface = build_x86_16_tail_validation_surface(summary, scanned=2)
+    surface = build_x86_16_tail_validation_surface(summary, scanned=6)
 
     assert summary["changed_families"] == [
         {
             "family": "control-flow/guard delta",
-            "count": 1,
-            "function_count": 1,
-            "stages": ("postprocess",),
-            "examples": ({"cod_file": "COCKPIT.COD", "proc_name": "_DisplayMaster", "proc_kind": "NEAR"},),
+            "count": 5,
+            "function_count": 5,
+            "stages": ("structuring",),
+            "examples": (
+                {"cod_file": "CARR.COD", "proc_name": "_SetGear", "proc_kind": "NEAR"},
+                {"cod_file": "EGAME11.COD", "proc_name": "_strcpyFromDot", "proc_kind": "NEAR"},
+                {"cod_file": "OUTPUT.COD", "proc_name": "_hexdump", "proc_kind": "NEAR"},
+                {"cod_file": "PLANES3.COD", "proc_name": "_CheckIfCanIntercept", "proc_kind": "NEAR"},
+                {"cod_file": "START1.COD", "proc_name": "_waitMdaCgaStatus", "proc_kind": "NEAR"},
+            ),
         },
         {
             "family": "segmented/global write delta",

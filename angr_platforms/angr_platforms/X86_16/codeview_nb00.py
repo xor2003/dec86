@@ -60,9 +60,23 @@ class CodeViewNB00Info:
     subsection_directory_offset: int
     modules: tuple[CodeViewNB00Module, ...]
     publics: tuple[CodeViewNB00PublicSymbol, ...]
+    type_definitions: tuple["CodeViewNB00TypeDefinition", ...] = ()
     code_labels: dict[int, str] = field(default_factory=dict)
     data_labels: dict[int, str] = field(default_factory=dict)
     code_ranges: dict[int, tuple[int, int]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CodeViewNB00TypeLeaf:
+    kind: str
+    value: object
+
+
+@dataclass(frozen=True)
+class CodeViewNB00TypeDefinition:
+    index: int
+    linkage: int
+    leaves: tuple[CodeViewNB00TypeLeaf, ...]
 
 
 def find_codeview_nb00(data: bytes) -> tuple[str, int, int] | None:
@@ -93,6 +107,7 @@ def parse_codeview_nb00_bytes(data: bytes, *, load_base_linear: int = 0) -> Code
 
     modules: dict[int, CodeViewNB00Module] = {}
     publics: list[CodeViewNB00PublicSymbol] = []
+    type_definitions: list[CodeViewNB00TypeDefinition] = []
     for entry in directory_entries:
         blob = data[debug_base + entry.data_offset : debug_base + entry.data_offset + entry.data_size]
         if entry.subsection_type == CodeViewSubsectionType.MODULES:
@@ -100,6 +115,8 @@ def parse_codeview_nb00_bytes(data: bytes, *, load_base_linear: int = 0) -> Code
             modules[module.module_index] = module
         elif entry.subsection_type == CodeViewSubsectionType.PUBLICS:
             publics.extend(_parse_publics_subsection(entry.module_index, blob))
+        elif entry.subsection_type == CodeViewSubsectionType.TYPE:
+            type_definitions.extend(_parse_type_subsection(blob))
 
     code_ranges = _synthesize_code_ranges(tuple(modules.values()), tuple(publics), load_base_linear=load_base_linear)
     code_labels: dict[int, str] = {}
@@ -122,6 +139,7 @@ def parse_codeview_nb00_bytes(data: bytes, *, load_base_linear: int = 0) -> Code
         subsection_directory_offset=subsection_directory_offset,
         modules=tuple(sorted(modules.values(), key=lambda item: item.module_index)),
         publics=tuple(publics),
+        type_definitions=tuple(type_definitions),
         code_labels=code_labels,
         data_labels=data_labels,
         code_ranges=code_ranges,
@@ -187,6 +205,63 @@ def _parse_publics_subsection(module_index: int, blob: bytes) -> tuple[CodeViewN
             )
         )
     return tuple(publics)
+
+
+def _parse_type_subsection(blob: bytes) -> tuple[CodeViewNB00TypeDefinition, ...]:
+    definitions: list[CodeViewNB00TypeDefinition] = []
+    offset = 0
+    type_index = 0x200
+    while offset + 3 <= len(blob):
+        linkage = blob[offset]
+        record_length = struct.unpack_from("<H", blob, offset + 1)[0]
+        offset += 3
+        record = blob[offset : offset + record_length]
+        if len(record) < record_length:
+            break
+        offset += record_length
+        definitions.append(
+            CodeViewNB00TypeDefinition(
+                index=type_index,
+                linkage=linkage,
+                leaves=tuple(_parse_type_record(record)),
+            )
+        )
+        type_index += 1
+    return tuple(definitions)
+
+
+def _parse_type_record(record: bytes) -> tuple[CodeViewNB00TypeLeaf, ...]:
+    leaves: list[CodeViewNB00TypeLeaf] = []
+    offset = 0
+    while offset < len(record):
+        leaf, consumed = _read_leaf(record, offset)
+        if consumed <= 0:
+            break
+        leaves.append(leaf)
+        offset += consumed
+    return tuple(leaves)
+
+
+def _read_leaf(record: bytes, offset: int) -> tuple[CodeViewNB00TypeLeaf, int]:
+    if offset >= len(record):
+        return CodeViewNB00TypeLeaf("invalid", None), 0
+    tag = record[offset]
+    if tag <= 0x7F:
+        return CodeViewNB00TypeLeaf("int8", tag), 1
+    if tag == 0x89 and offset + 3 <= len(record):
+        return CodeViewNB00TypeLeaf("uint16", struct.unpack_from("<H", record, offset + 1)[0]), 3
+    if tag == 0x8A and offset + 5 <= len(record):
+        return CodeViewNB00TypeLeaf("uint32", struct.unpack_from("<I", record, offset + 1)[0]), 5
+    if tag == 0x8D and offset + 2 <= len(record):
+        strlen = record[offset + 1]
+        end = offset + 2 + strlen
+        if end <= len(record):
+            return CodeViewNB00TypeLeaf("string", record[offset + 2 : end].decode("ascii", errors="ignore")), 2 + strlen
+    if tag == 0x83 and offset + 3 <= len(record):
+        return CodeViewNB00TypeLeaf("index", struct.unpack_from("<H", record, offset + 1)[0]), 3
+    if tag in {0x8B, 0x8C, 0x8E, 0x8F, 0x92, 0x94}:
+        return CodeViewNB00TypeLeaf(f"leaf_{tag:02x}", None), 1
+    return CodeViewNB00TypeLeaf(f"unknown_{tag:02x}", None), 1
 
 
 def _public_is_code_symbol(

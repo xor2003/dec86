@@ -57,3 +57,26 @@ def test_sequence_merge_is_unsafe_when_successor_has_typed_ir_condition():
     dominators = compute_dominators(graph)
 
     assert sequence_merge_is_safe(graph, dominators, a, b) is False
+
+
+def test_sequence_merge_is_unsafe_for_guard_region_with_single_successor():
+    entry = Region(block_addr=0x4000, region_type=RegionType.Linear)
+    guard = Region(
+        block_addr=0x4001,
+        region_type=RegionType.Condition,
+        condition_expr=object(),
+        metadata={"typed_ir_has_condition": True},
+    )
+    body = Region(block_addr=0x4002, region_type=RegionType.Linear)
+
+    graph = RegionGraph()
+    graph.entry = entry
+    for region in (entry, guard, body):
+        graph.add_node(region)
+
+    graph.add_edge(entry, guard)
+    graph.add_edge(guard, body)
+
+    dominators = compute_dominators(graph)
+
+    assert sequence_merge_is_safe(graph, dominators, guard, body) is False

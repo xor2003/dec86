@@ -51,6 +51,8 @@ class TDInfoEXEInfo:
     debug_info_offset: int
     symbols: tuple[TDInfoSymbolRecord, ...]
     names: tuple[str, ...]
+    symbols_by_class: dict[TDInfoSymbolClass, tuple[TDInfoSymbolRecord, ...]] = field(default_factory=dict)
+    type_names: tuple[str, ...] = ()
     code_labels: dict[int, str] = field(default_factory=dict)
     data_labels: dict[int, str] = field(default_factory=dict)
 
@@ -108,8 +110,10 @@ def parse_tdinfo_exe_bytes(data: bytes, *, load_base_linear: int = 0) -> TDInfoE
     names = _parse_tdinfo_name_pool(data[names_pool_offset:], expected_count=names_count)
 
     symbols: list[TDInfoSymbolRecord] = []
+    symbols_by_class: dict[TDInfoSymbolClass, list[TDInfoSymbolRecord]] = {klass: [] for klass in TDInfoSymbolClass}
     code_labels: dict[int, str] = {}
     data_labels: dict[int, str] = {}
+    type_names: list[str] = []
     for index in range(symbols_count):
         entry_offset = symbol_records_offset + index * 9
         name_index, type_index, offset, segment, bitfield = struct.unpack_from("<HHHHB", data, entry_offset)
@@ -122,6 +126,14 @@ def parse_tdinfo_exe_bytes(data: bytes, *, load_base_linear: int = 0) -> TDInfoE
             symbol_class=symbol_class,
         )
         symbols.append(symbol)
+        symbols_by_class.setdefault(symbol_class, []).append(symbol)
+        if 1 <= symbol.index <= len(names) and symbol_class in {
+            TDInfoSymbolClass.TYPEDEF,
+            TDInfoSymbolClass.STRUCT_UNION_OR_ENUM,
+        }:
+            name = names[symbol.index - 1]
+            if name and name != "?":
+                type_names.append(name)
         if symbol.symbol_class is not TDInfoSymbolClass.STATIC:
             continue
         if not (1 <= symbol.index <= len(names)):
@@ -140,6 +152,8 @@ def parse_tdinfo_exe_bytes(data: bytes, *, load_base_linear: int = 0) -> TDInfoE
         debug_info_offset=debug_info_offset,
         symbols=tuple(symbols),
         names=names,
+        symbols_by_class={klass: tuple(items) for klass, items in symbols_by_class.items() if items},
+        type_names=tuple(dict.fromkeys(type_names)),
         code_labels=code_labels,
         data_labels=data_labels,
     )

@@ -58,7 +58,13 @@ def sequence_merge_is_safe(
 
     if succ.region_type in (RegionType.Loop, RegionType.IncSwitch):
         return False
+    if region.region_type == RegionType.Condition:
+        return False
     if succ == region:
+        return False
+    if region.condition_expr is not None:
+        return False
+    if bool(getattr(region, "metadata", {}).get("typed_ir_has_condition", False)):
         return False
     if bool(getattr(succ, "metadata", {}).get("typed_ir_has_condition", False)):
         return False

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from inertia_decompiler.signature_matching_policy import signature_matching_disabled
+
 
 @dataclass(frozen=True)
 class FlairStartupPattern:
@@ -34,6 +36,8 @@ def match_flair_startup_entry(
     *,
     limit: int = 8,
 ) -> tuple[FlairStartupPattern, ...]:
+    if signature_matching_disabled():
+        return ()
     matches: list[FlairStartupPattern] = []
     for pat_path in sorted((flair_root / "startup").rglob("*.pat")):
         try:
@@ -60,6 +64,8 @@ def match_flair_startup_entry(
 
 
 def list_flair_sig_libraries(flair_root: Path) -> tuple[FlairSigLibrary, ...]:
+    if signature_matching_disabled():
+        return ()
     return _list_flair_sig_libraries_cached(str(flair_root))
 
 

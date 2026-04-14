@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from archinfo import arch_from_id
 from cle.backends import Blob, register_backend
+from angr_platforms.X86_16.ne_resources import NEResourceTable, parse_ne_resources_bytes
 
 
 def _read_mz_new_header_offset(stream) -> int | None:
@@ -89,6 +90,8 @@ class DOSNE(Blob):
 
         stream = args[1]
         header = DOSNEHeader.from_stream(stream)
+        stream.seek(0)
+        raw_data = stream.read()
         load_base = kwargs.pop("base_addr", self.DEFAULT_LOAD_BASE)
         arch = arch_from_id("86_16")
         arch.bits = max(arch.bits, 32)
@@ -126,6 +129,7 @@ class DOSNE(Blob):
         self.ne_header = header
         self.ne_segment_mappings = tuple(segment_mappings)
         self.ne_segment_selectors = selector_by_segment
+        self.ne_resources: NEResourceTable | None = parse_ne_resources_bytes(raw_data)
         self.initial_register_values = {
             "cs": selector_by_segment.get(header.entry_segment, load_base >> 4),
             "ip": header.entry_ip,

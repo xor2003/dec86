@@ -72,6 +72,8 @@ def test_dos_ne_backend_loads_progman_fixture_and_maps_segments(tmp_path):
     assert len(obj.ne_segment_mappings) == 8
     assert obj.ne_segment_mappings[0].file_offset == 0x0E20
     assert obj.ne_segment_mappings[0].length == 0x02F9
+    assert obj.ne_resources is not None
+    assert obj.ne_resources.kind in {"win16", "os2"}
 
 
 def test_dos_ne_entry_block_lifts_under_x86_16(tmp_path):

@@ -413,7 +413,14 @@ class Processor(Eflags, CR):
 
     def update_gpreg(self, n, value):
         result = self.get_gpreg(n)
-        result = Binop('Iop_Add16', result, value) if isinstance(n, reg16_t) else Binop('Iop_Add32', result, value)
+        if self.lifter_instruction is not None:
+            if isinstance(value, int):
+                value = self.constant(value, TYPES[type(n)])
+            elif not isinstance(value, VexValue):
+                value = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
+            result = result + value
+        else:
+            result = result + value
         self.set_gpreg(n, result)
         return result
 
