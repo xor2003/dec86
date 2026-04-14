@@ -25,6 +25,7 @@ from .structuring_cfg_indirect import CFGIndirectSiteArtifact
 from .structuring_cfg_ownership import CFGOwnershipArtifact
 from .structuring_cfg_snapshot import CFGSnapshot
 from .structuring_ir_hints import StructuringIRHintArtifact, build_structuring_ir_hint_artifact
+from .codegen_metadata import get_codegen_side_metadata
 
 __all__ = [
     "StructuringFailureReason",
@@ -378,10 +379,16 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
                 report.add_recovery_hint(hint)
 
         # Attach to function
-        if not hasattr(cfunc, "_recovery_metadata"):
-            cfunc._recovery_metadata = {}
-
-        cfunc._recovery_metadata["structuring_diagnostics"] = report
+        metadata = get_codegen_side_metadata(codegen)
+        metadata["structuring_diagnostics"] = report
+        try:
+            cfunc_metadata = getattr(cfunc, "_recovery_metadata", None)
+            if not isinstance(cfunc_metadata, dict):
+                cfunc_metadata = {}
+                cfunc._recovery_metadata = cfunc_metadata
+            cfunc_metadata["structuring_diagnostics"] = report
+        except Exception:
+            pass
 
         return True
 

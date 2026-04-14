@@ -4,14 +4,22 @@ __all__ = ["REG16_OFFSET_MAP", "register_name_from_offset", "segment_space_for_b
 
 
 REG16_OFFSET_MAP = {
-    8: "ax",
-    10: "cx",
-    12: "dx",
-    14: "bx",
-    16: "sp",
-    18: "bp",
-    20: "si",
-    22: "di",
+    0: "ax",
+    2: "cx",
+    4: "dx",
+    6: "bx",
+    8: "sp",
+    10: "bp",
+    12: "si",
+    14: "di",
+    16: "ip",
+    18: "flags",
+    20: "cs",
+    22: "ds",
+    24: "es",
+    26: "fs",
+    28: "gs",
+    30: "ss",
 }
 
 

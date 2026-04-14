@@ -77,8 +77,51 @@ def _single_record_family(record: StringInstructionRecord) -> str | None:
     return None
 
 
+def _mixed_movs_family(records: tuple[StringInstructionRecord, ...]) -> StringIntrinsicRecord | None:
+    if not records:
+        return None
+    if not all(record.family == "movs" for record in records):
+        return None
+    direction_modes = {record.direction_mode for record in records}
+    if "backward" not in direction_modes or "forward" not in direction_modes:
+        return None
+    if not any(record.repeat_kind != "none" for record in records):
+        return None
+    widths = tuple(sorted({record.width for record in records if record.width > 0}))
+    repeat_kind = "mixed" if len({record.repeat_kind for record in records}) > 1 else records[0].repeat_kind
+    return StringIntrinsicRecord(
+        index=0,
+        family="memmove_overlap_class",
+        record_indexes=tuple(record.index for record in records),
+        width=max(widths, default=0),
+        direction_mode="mixed",
+        repeat_kind=repeat_kind,
+    )
+
+
+def _scan_tail_family(records: tuple[StringInstructionRecord, ...]) -> StringIntrinsicRecord | None:
+    if len(records) != 2:
+        return None
+    first, second = records
+    if first.family != "scas" or second.family != "scas":
+        return None
+    if first.repeat_kind != "repnz" or second.repeat_kind != "none":
+        return None
+    if first.width != second.width or first.width <= 0:
+        return None
+    return StringIntrinsicRecord(
+        index=0,
+        family="scan_tail_class",
+        record_indexes=(first.index, second.index),
+        width=first.width,
+        direction_mode=first.direction_mode,
+        repeat_kind="repnz+tail",
+    )
+
+
 def build_x86_16_string_intrinsic_artifact(artifact: StringInstructionArtifact) -> StringIntrinsicArtifact:
-    if artifact.refusals:
+    mixed_movs = _mixed_movs_family(artifact.records)
+    if artifact.refusals and mixed_movs is None:
         return StringIntrinsicArtifact(
             refusals=tuple(
                 StringIntrinsicRefusal(item.kind, item.detail) for item in artifact.refusals
@@ -110,6 +153,17 @@ def build_x86_16_string_intrinsic_artifact(artifact: StringInstructionArtifact) 
                     ),
                 )
             )
+        scan_tail = _scan_tail_family(records)
+        if scan_tail is not None:
+            return StringIntrinsicArtifact(records=(scan_tail,))
+
+    if mixed_movs is not None:
+        residual_refusals = tuple(
+            StringIntrinsicRefusal(item.kind, item.detail)
+            for item in artifact.refusals
+            if item.kind != "mixed_direction_signal"
+        )
+        return StringIntrinsicArtifact(records=(mixed_movs,), refusals=residual_refusals)
 
     lowered_records: list[StringIntrinsicRecord] = []
     refusals: list[StringIntrinsicRefusal] = []
@@ -154,6 +208,8 @@ def _render_header() -> str:
         "void __x86_16_stos(__x86_16_string_state *state, unsigned short width);\n"
         "unsigned short __x86_16_scas_zterm_len(__x86_16_string_state *state, unsigned short width);\n"
         "int __x86_16_cmps(__x86_16_string_state *state, unsigned short width);\n\n"
+        "void __x86_16_movs_overlap_select(__x86_16_string_state *state);\n\n"
+        "unsigned short __x86_16_scan_tail(__x86_16_string_state *state, unsigned short width);\n\n"
     )
 
 
@@ -168,6 +224,10 @@ def render_x86_16_string_intrinsic_c(name: str, artifact: StringIntrinsicArtifac
         if rec.family in {"memcpy_class", "memmove_class"}:
             lines.append(f"    /* {rec.family}, width={rec.width}, direction={rec.direction_mode} */")
             lines.append(f"    __x86_16_movs(&__x86_16_state, {rec.width});")
+            continue
+        if rec.family == "memmove_overlap_class":
+            lines.append("    /* memmove_overlap_class: mixed forward/backward movs evidence */")
+            lines.append("    __x86_16_movs_overlap_select(&__x86_16_state);")
             continue
         if rec.family == "memset_class":
             lines.append(f"    /* memset_class, width={rec.width}, direction={rec.direction_mode} */")
@@ -195,6 +255,13 @@ def render_x86_16_string_intrinsic_c(name: str, artifact: StringIntrinsicArtifac
             lines.append("    __x86_16_length = __x86_16_scas_zterm_len(&__x86_16_state, 1);")
             lines.append("    __x86_16_state.cx = (unsigned short)(__x86_16_length + 1);")
             lines.append("    __x86_16_movs(&__x86_16_state, 1);")
+            continue
+        if rec.family == "scan_tail_class":
+            if not declared_length:
+                lines.append("    unsigned short __x86_16_length;")
+                declared_length = True
+            lines.append("    /* scan_tail_class */")
+            lines.append(f"    __x86_16_length = __x86_16_scan_tail(&__x86_16_state, {rec.width});")
             continue
     lines.append("}")
     return "\n".join(lines) + "\n"

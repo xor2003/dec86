@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .codegen_metadata import append_codegen_sequence_attr
 from .ir_readiness import IRReadinessSummary, summarize_x86_16_ir_readiness
 
 __all__ = ["IRConfidenceMarkerArtifact", "apply_x86_16_ir_confidence_markers"]
@@ -58,13 +59,6 @@ def apply_x86_16_ir_confidence_markers(codegen) -> bool:
 
     artifact = _build_ir_confidence_marker_artifact(codegen)
     setattr(codegen, "_inertia_ir_confidence_markers", artifact)
-
-    assumptions = list(getattr(cfunc, "_assumptions", ()) or ())
-    critical_unknowns = list(getattr(cfunc, "_critical_unknowns", ()) or ())
-    for item in artifact.assumptions:
-        _append_unique(assumptions, item)
-    for item in artifact.critical_unknowns:
-        _append_unique(critical_unknowns, item)
-    cfunc._assumptions = tuple(assumptions)
-    cfunc._critical_unknowns = tuple(critical_unknowns)
+    append_codegen_sequence_attr(codegen, cfunc, "_assumptions", artifact.assumptions)
+    append_codegen_sequence_attr(codegen, cfunc, "_critical_unknowns", artifact.critical_unknowns)
     return False

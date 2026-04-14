@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .corpus_scan import extract_cod_functions, scan_function
+from .recovery_artifacts import build_x86_16_corpus_recovery_artifact
 from .recovery_artifact_writer import RecoveryArtifactWriteResult, write_x86_16_corpus_recovery_artifact
 
 __all__ = [
@@ -19,6 +20,8 @@ class CorpusCodRecoveryArtifactResult:
     write_result: RecoveryArtifactWriteResult
     confidence_status_counts: dict[str, int]
     helper_status_counts: dict[str, int]
+    low_memory_read_region_counts: dict[str, int]
+    low_memory_write_region_counts: dict[str, int]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -27,6 +30,8 @@ class CorpusCodRecoveryArtifactResult:
             "write_result": self.write_result.to_dict(),
             "confidence_status_counts": dict(self.confidence_status_counts),
             "helper_status_counts": dict(self.helper_status_counts),
+            "low_memory_read_region_counts": dict(self.low_memory_read_region_counts),
+            "low_memory_write_region_counts": dict(self.low_memory_write_region_counts),
         }
 
 
@@ -64,32 +69,14 @@ def write_x86_16_cod_corpus_recovery_artifact(
         )
         for proc_name, proc_kind, code in entries
     ]
+    artifact = build_x86_16_corpus_recovery_artifact(results)
     write_result = write_x86_16_corpus_recovery_artifact(results, output_path)
-    payload = write_result
-    artifact = write_x86_16_corpus_recovery_artifact(results, output_path)
-    del payload  # keep intent explicit: writer is the artifact boundary
     return CorpusCodRecoveryArtifactResult(
         cod_path=source_path,
         proc_count=len(results),
-        write_result=artifact,
-        confidence_status_counts={
-            str(key): sum(1 for result in results if getattr(result, "confidence_status", None) == key)
-            for key in sorted({getattr(result, "confidence_status", None) for result in results if getattr(result, "confidence_status", None) is not None})
-        },
-        helper_status_counts={
-            str(key): sum(
-                1
-                for result in results
-                if "helper_summary=status=" in " ".join(getattr(result, "confidence_diagnostics", ()) or ())
-                and f"status={key}" in " ".join(getattr(result, "confidence_diagnostics", ()) or ())
-            )
-            for key in sorted(
-                {
-                    diag.split("status=", 1)[1].split(" ", 1)[0]
-                    for result in results
-                    for diag in (getattr(result, "confidence_diagnostics", ()) or ())
-                    if diag.startswith("helper_summary=status=")
-                }
-            )
-        },
+        write_result=write_result,
+        confidence_status_counts=dict(artifact.confidence_status_counts),
+        helper_status_counts=dict(artifact.helper_status_counts),
+        low_memory_read_region_counts=dict(artifact.low_memory_read_region_counts),
+        low_memory_write_region_counts=dict(artifact.low_memory_write_region_counts),
     )

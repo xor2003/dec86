@@ -949,7 +949,7 @@ def test_try_decompile_non_optimized_slice_uses_raw_slice(monkeypatch):
         lambda *_args, **_kwargs: ("ok", "int main(void)\n{\n    return 0;\n}\n", 1, 3, 0.01),
     )
 
-    rendered = decompile._try_decompile_non_optimized_slice(
+    outcome = decompile._try_decompile_non_optimized_slice(
         project,
         0x1000,
         "main",
@@ -959,7 +959,7 @@ def test_try_decompile_non_optimized_slice_uses_raw_slice(monkeypatch):
         lst_metadata=None,
     )
 
-    assert "int main" in rendered
+    assert "int main" in outcome.rendered
 
 
 def test_try_decompile_non_optimized_slice_returns_partial_timeout_payload(monkeypatch):
@@ -982,7 +982,7 @@ def test_try_decompile_non_optimized_slice_returns_partial_timeout_payload(monke
     )
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
 
-    rendered = decompile._try_decompile_non_optimized_slice(
+    outcome = decompile._try_decompile_non_optimized_slice(
         project,
         0x1000,
         "main",
@@ -992,7 +992,128 @@ def test_try_decompile_non_optimized_slice_returns_partial_timeout_payload(monke
         lst_metadata=None,
     )
 
-    assert rendered == "int partial(void) { return 1; }"
+    assert outcome.rendered == "int partial(void) { return 1; }"
+    assert outcome.partial_payload == "int partial(void) { return 1; }"
+    assert outcome.failure_detail == "shared-project slice lean: timeout: Timed out after 1s."
+
+
+def test_try_decompile_non_optimized_slice_reports_failure_detail(monkeypatch):
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\x90\xc3")),
+    )
+    function = SimpleNamespace(name="main", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),))
+
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1003))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (SimpleNamespace(), function),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("error", "slice lift broke", None, 1, 3, 0.01),
+    )
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+
+    outcome = decompile._try_decompile_non_optimized_slice(
+        project,
+        0x1000,
+        "main",
+        timeout=1,
+        api_style="modern",
+        binary_path=None,
+        lst_metadata=None,
+        allow_fresh_project_retry=False,
+    )
+
+    assert outcome.rendered is None
+    assert outcome.failure_detail is not None
+    assert outcome.failure_detail.startswith("shared-project slice lean: error: slice lift broke")
+    assert outcome.attempt_failures[0] == "shared-project slice lean: error: slice lift broke"
+
+
+def test_try_decompile_non_optimized_slice_retries_full_recovery_after_lean_miss(monkeypatch):
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\x90\xc3")),
+    )
+    function = SimpleNamespace(name="main", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),))
+    calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1003))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
+
+    def _fake_pick_function_lean(*_args, **_kwargs):
+        calls.append(("lean", False))
+        raise KeyError("lean miss")
+
+    def _fake_pick_function(_slice_project, _start, *, data_references, **_kwargs):
+        calls.append(("full", data_references))
+        if data_references:
+            raise AssertionError("full-with-refs should not run after full-no-refs succeeds")
+        return SimpleNamespace(), function
+
+    monkeypatch.setattr(decompile, "_pick_function_lean", _fake_pick_function_lean)
+    monkeypatch.setattr(decompile, "_pick_function", _fake_pick_function)
+    monkeypatch.setattr(decompile, "_inherit_tail_validation_runtime_policy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("ok", "int recovered(void) { return 2; }", None, 1, 3, 0.01),
+    )
+
+    outcome = decompile._try_decompile_non_optimized_slice(
+        project,
+        0x1000,
+        "main",
+        timeout=3,
+        api_style="modern",
+        binary_path=None,
+        lst_metadata=None,
+        allow_fresh_project_retry=False,
+    )
+
+    assert outcome.rendered == "int recovered(void) { return 2; }"
+    assert calls == [("lean", False), ("full", False)]
+
+
+def test_try_decompile_non_optimized_slice_allows_short_cod_budget(monkeypatch):
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\x90\xc3")),
+    )
+    function = SimpleNamespace(name="main", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),))
+
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1003))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (SimpleNamespace(), function),
+    )
+    monkeypatch.setattr(decompile, "_inherit_tail_validation_runtime_policy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("ok", "int main(void)\n{\n    return 0;\n}\n", None, 1, 3, 0.01),
+    )
+
+    outcome = decompile._try_decompile_non_optimized_slice(
+        project,
+        0x1000,
+        "main",
+        timeout=3,
+        api_style="modern",
+        binary_path=None,
+        lst_metadata=None,
+        cod_metadata=SimpleNamespace(proc_name="_main"),
+    )
+
+    assert "int main" in outcome.rendered
 
 
 def test_recover_lst_function_prefers_lean_cfgfast_for_labeled_x86_16(monkeypatch):
@@ -2242,7 +2363,7 @@ def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatc
 
     monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
 
-    rendered = decompile._try_decompile_non_optimized_slice(
+    outcome = decompile._try_decompile_non_optimized_slice(
         shared_project,
         0x11593,
         "sub_11593",
@@ -2253,7 +2374,7 @@ def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatc
     )
 
     assert calls["decompile"] == 2
-    assert rendered == "int sub_11593(void) { return 0; }"
+    assert outcome.rendered == "int sub_11593(void) { return 0; }"
 
 
 def test_try_decompile_non_optimized_slice_prepares_direct_callee_context_before_retry(monkeypatch, tmp_path):
@@ -2335,7 +2456,7 @@ def test_try_decompile_non_optimized_slice_prepares_direct_callee_context_before
 
     monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
 
-    rendered = decompile._try_decompile_non_optimized_slice(
+    outcome = decompile._try_decompile_non_optimized_slice(
         shared_project,
         0x11593,
         "sub_11593",
@@ -2348,7 +2469,7 @@ def test_try_decompile_non_optimized_slice_prepares_direct_callee_context_before
     assert calls["decompile"] == 2
     assert func.normalized is True
     assert slice_project.kb.functions.created == [0x1140D]
-    assert rendered == "int sub_11593(void) { return 0; }"
+    assert outcome.rendered == "int sub_11593(void) { return 0; }"
 
 
 def test_try_decompile_non_optimized_slice_retries_with_blob_project_for_cod_inputs(monkeypatch):
@@ -2395,7 +2516,7 @@ def test_try_decompile_non_optimized_slice_retries_with_blob_project_for_cod_inp
 
     monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
 
-    rendered = decompile._try_decompile_non_optimized_slice(
+    outcome = decompile._try_decompile_non_optimized_slice(
         shared_project,
         0x11593,
         "sub_11593",
@@ -2407,7 +2528,7 @@ def test_try_decompile_non_optimized_slice_retries_with_blob_project_for_cod_inp
 
     assert calls["build"] == [(LIFE_COD, True, 0x1000, 0x1000)]
     assert calls["decompile"] == 2
-    assert rendered == "int sub_11593(void) { return 0; }"
+    assert outcome.rendered == "int sub_11593(void) { return 0; }"
 
 
 def test_try_decompile_non_optimized_slice_never_caches_results(monkeypatch, tmp_path):
@@ -2462,7 +2583,7 @@ def test_try_decompile_non_optimized_slice_never_caches_results(monkeypatch, tmp
 
     monkeypatch.setattr(decompile, "_store_cache_json", _unexpected_cache_write)
 
-    rendered = decompile._try_decompile_non_optimized_slice(
+    outcome = decompile._try_decompile_non_optimized_slice(
         project,
         0x114cd,
         "sub_114cd",
@@ -2472,7 +2593,7 @@ def test_try_decompile_non_optimized_slice_never_caches_results(monkeypatch, tmp
         lst_metadata=None,
     )
 
-    assert rendered == "void sub_114cd(void) {}"
+    assert outcome.rendered == "void sub_114cd(void) {}"
 
 
 def test_decompile_function_empty_reports_angr_error_detail(monkeypatch):
@@ -3933,6 +4054,46 @@ def test_main_emits_uncollected_tail_validation_for_direct_nonoptimized_fallback
     assert '"detail_cache_path": null' not in captured.err
 
 
+def test_main_renders_direct_nonoptimized_outcome_payload_instead_of_repr(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+
+    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+        if kwargs.get("thread_name_prefix") == "recovery":
+            raise decompile._AnalysisTimeout()
+        return fn()
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_non_optimized_slice",
+        lambda *_args, **_kwargs: decompile.NonOptimizedSliceOutcome(
+            rendered="int fallback(void) { return 7; }",
+            status="timeout",
+            payload="Timed out after 2s.",
+        ),
+    )
+
+    rc = decompile.main([str(binary), "--addr", "0x11423", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* == c (non-optimized fallback) == */" in captured.out
+    assert "int fallback(void) { return 7; }" in captured.out
+    assert "NonOptimizedSliceOutcome(" not in captured.out
+
+
 def test_main_emits_current_run_tail_validation_for_direct_nonoptimized_fallback(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -4275,6 +4436,55 @@ def test_main_direct_decompile_outer_timeout_reaches_nonoptimized_fallback(monke
     assert "/* Falling back to non-optimized slice decompilation. */" in captured.out
     assert "int fallback(void) { return 7; }" in captured.out
     assert "[tail-validation]" in captured.err
+
+
+def test_main_direct_timeout_reports_nonoptimized_failure_before_string_fallback(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace()
+    func = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+
+    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+        if kwargs.get("thread_name_prefix") == "recovery":
+            raise decompile._AnalysisTimeout()
+        return fn()
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_timeout)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda *_args, **_kwargs: (_ for _ in ()).throw(decompile.FuturesTimeoutError()))
+    monkeypatch.setattr(decompile, "_recover_direct_addr_function", lambda *_args, **_kwargs: (cfg, func))
+    monkeypatch.setattr(
+        decompile,
+        "_try_decompile_non_optimized_slice",
+        lambda *_args, **_kwargs: decompile.NonOptimizedSliceOutcome(
+            rendered=None,
+            status="error",
+            payload="slice lift broke",
+            failure_detail="shared-project slice: error: slice lift broke",
+            attempt_failures=("shared-project slice: error: slice lift broke",),
+        ),
+    )
+    monkeypatch.setattr(decompile, "_try_emit_string_intrinsic_c", lambda *_args, **_kwargs: "char fallback(void) { return 7; }")
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x10010, 0x10020))
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--addr", "0x10010", "--timeout", "2"])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "/* non-optimized fallback unavailable: shared-project slice: error: slice lift broke */" in captured.out
+    assert captured.out.index("non-optimized fallback unavailable") < captured.out.index("/* == c (string intrinsic fallback) == */")
+    assert "char fallback(void) { return 7; }" in captured.out
 
 
 def test_main_aggregate_partial_timeout_uses_result_tail_validation(monkeypatch, tmp_path, capsys):
@@ -5723,6 +5933,59 @@ def test_main_falls_back_after_fast_exe_catalog_timeout(monkeypatch, tmp_path, c
     assert "/* == function 0x11423 _start == */" in out
 
 
+def test_main_streaming_timeout_reports_nonoptimized_skip_before_string_fallback(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    cfg = SimpleNamespace(functions={})
+    recovered_function = SimpleNamespace(addr=0x11423, name="_start", project=project)
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_recover_partial_cfg", lambda *_args, **_kwargs: cfg)
+    monkeypatch.setattr(decompile, "_interesting_functions", lambda _cfg, limit=None: ([recovered_function], 1))
+    monkeypatch.setattr(decompile, "_recover_seeded_exe_functions", lambda *_args, **_kwargs: ([], []))
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile._AdaptivePerByteTimeoutModel, "observe_success", lambda self, *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        decompile,
+        "_run_function_work_item",
+        lambda item, **_kwargs: decompile.FunctionWorkResult(
+            index=item.index,
+            status="timeout",
+            payload="Timed out after 2s.",
+            debug_output="",
+            function=item.function,
+            function_cfg=item.function_cfg,
+            partial_payload=None,
+            tail_validation={},
+            skip_heavy_fallbacks=True,
+        ),
+    )
+    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_slice", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("non-opt lane should stay closed")))
+    monkeypatch.setattr(decompile, "_try_emit_string_intrinsic_c", lambda *_args, **_kwargs: "int fallback(void) { return 7; }")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    out = capsys.readouterr().out
+
+    assert rc == 2
+    assert "heavy fallback lane disabled for sweep mode" in out
+    assert out.index("non-optimized fallback unavailable") < out.index("/* -- c (string intrinsic fallback) -- */")
+    assert "int fallback(void) { return 7; }" in out
+
+
 def test_main_falls_back_to_partial_timeout_before_asm_when_available(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -6675,7 +6938,7 @@ def test_try_decompile_non_optimized_slice_uses_fork_lane_on_main_thread(monkeyp
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("daemon thread fallback should not run")),
     )
 
-    rendered = decompile._try_decompile_non_optimized_slice(
+    outcome = decompile._try_decompile_non_optimized_slice(
         project,
         0x114cd,
         "sub_114cd",
@@ -6685,8 +6948,51 @@ def test_try_decompile_non_optimized_slice_uses_fork_lane_on_main_thread(monkeyp
         lst_metadata=None,
     )
 
-    assert rendered == "void sub_114cd(void) {}"
-    assert seen["timeout"] == 6
+    assert outcome.rendered == "void sub_114cd(void) {}"
+    assert seen["timeout"] == 20
+
+
+def test_try_decompile_non_optimized_slice_adds_setup_slack_to_runner_timeout(monkeypatch):
+    project = SimpleNamespace(
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x55\x8b\xec\xc3")),
+    )
+    function = SimpleNamespace(name="main", addr=0x1000, normalized=True, blocks=(SimpleNamespace(size=0x10),))
+    seen: dict[str, int] = {}
+
+    monkeypatch.setattr(decompile.os, "name", "nt")
+    monkeypatch.setattr(decompile, "_lst_code_region", lambda *_args, **_kwargs: (0x1000, 0x1004))
+    monkeypatch.setattr(decompile, "_build_project_from_bytes", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        decompile,
+        "_pick_function_lean",
+        lambda *_args, **_kwargs: (SimpleNamespace(), function),
+    )
+    monkeypatch.setattr(decompile, "_inherit_tail_validation_runtime_policy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
+
+    def _fake_daemon_timeout(fn, *, timeout, **_kwargs):
+        seen["timeout"] = timeout
+        return fn()
+
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", _fake_daemon_timeout)
+    monkeypatch.setattr(
+        decompile,
+        "_decompile_function_with_stats",
+        lambda *_args, **_kwargs: ("timeout", "Timed out after 4s.", "int partial(void) { return 1; }", 1, 4, 4.0),
+    )
+
+    outcome = decompile._try_decompile_non_optimized_slice(
+        project,
+        0x1000,
+        "main",
+        timeout=5,
+        api_style="modern",
+        binary_path=None,
+        lst_metadata=None,
+    )
+
+    assert outcome.rendered == "int partial(void) { return 1; }"
+    assert seen["timeout"] == 20
 
 
 def test_main_defers_exe_limit_until_after_seed_ranking(monkeypatch, tmp_path, capsys):

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from angr_platforms.X86_16.ir import IRAddress, IRStringEffectArtifact, IRStringEffectRecord
+from angr_platforms.X86_16.ir.core import AddressStatus, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.type_array_matching import (
     ArrayAccessPattern,
     ArrayExpressionMatcher,
@@ -238,6 +240,68 @@ class TestPhase22Integration:
         assert codegen._inertia_array_matching_applied is True
         assert codegen._inertia_array_matching_stats["recovered_arrays"] == 0
         assert codegen._inertia_array_matching_typed_ir_candidates == {}
+        assert codegen._inertia_array_matching_string_candidates == {}
+
+    def test_array_matching_uses_typed_string_effect_candidates(self):
+        codegen = SimpleNamespace(
+            cfunc=SimpleNamespace(addr=0x5000),
+            project=None,
+            _inertia_string_effect_artifact=IRStringEffectArtifact(
+                records=(
+                    IRStringEffectRecord(
+                        index=0,
+                        family="movs",
+                        repeat_kind="rep",
+                        width=2,
+                        direction_mode="forward",
+                        source=IRAddress(
+                            space=MemSpace.DS,
+                            base=("si",),
+                            size=2,
+                            status=AddressStatus.STABLE,
+                            segment_origin=SegmentOrigin.PROVEN,
+                        ),
+                        destination=IRAddress(
+                            space=MemSpace.ES,
+                            base=("di",),
+                            size=2,
+                            status=AddressStatus.STABLE,
+                            segment_origin=SegmentOrigin.PROVEN,
+                        ),
+                        zf_sensitive=False,
+                        zero_seeded_accumulator=None,
+                    ),
+                )
+            ),
+        )
+
+        result = apply_x86_16_array_expression_matching(codegen)
+
+        assert result is False
+        assert codegen._inertia_array_matching_string_candidates == {
+            ("ds", ("si",), 2): {
+                "space": "ds",
+                "base": ("si",),
+                "element_size": 2,
+                "has_string_effect": True,
+                "segment_origin": "proven",
+                "string_family": "movs",
+                "repeat_kind": "rep",
+                "role": "source",
+            },
+            ("es", ("di",), 2): {
+                "space": "es",
+                "base": ("di",),
+                "element_size": 2,
+                "has_string_effect": True,
+                "segment_origin": "proven",
+                "string_family": "movs",
+                "repeat_kind": "rep",
+                "role": "destination",
+            },
+        }
+        assert codegen._inertia_array_matching_stats["string_arrays"] == 2
+        assert codegen._inertia_array_matching_stats["recovered_arrays"] == 2
 
     def test_array_matching_refuses_over_associated_segmented_storage(self):
         stable_key = ("ss", ("stack", "bp", -4))
@@ -299,6 +363,7 @@ class TestPhase22Integration:
             "array_patterns": 2,
             "recovered_arrays": 1,
             "refused_arrays": 1,
+            "string_arrays": 0,
         }
 
     def test_array_matching_recovers_typed_ir_candidate_from_phi_index(self):
@@ -377,6 +442,7 @@ class TestPhase22Integration:
             "array_patterns": 0,
             "recovered_arrays": 1,
             "refused_arrays": 0,
+            "string_arrays": 0,
         }
 
     def test_multi_dimensional_array_detection(self):

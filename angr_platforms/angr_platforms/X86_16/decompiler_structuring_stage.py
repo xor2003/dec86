@@ -11,10 +11,14 @@ from angr.analyses.decompiler.decompiler import Decompiler
 
 from . import confidence_and_assumptions as _confidence
 from . import decompiler_postprocess_simplify as _simplify
+from . import function_interface_surface as _interface_surface
 from . import ir_confidence_markers as _ir_confidence
 from .ir import vex_import as _vex_ir
+from .ir import segment_state as _segment_state
+from .ir import string_effects as _string_effects
 from . import segmented_memory_reasoning as _segmented_mem
 from . import string_instruction_artifact as _string_instruction_artifact
+from . import string_codegen_override as _string_codegen_override
 from . import string_instruction_lowering as _string_instruction_lowering
 from . import structuring_cross_entry as _cross_entry
 from . import structuring_grouped_pass as _grouped_structuring
@@ -75,13 +79,28 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
             True,
         ),
         DecompilerStructuringPassSpec(
+            "_segment_state_artifact_8616",
+            _segment_state.apply_x86_16_segment_state_artifact,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
             "_string_instruction_artifact_8616",
             _string_instruction_artifact.apply_x86_16_string_instruction_artifact,
             True,
         ),
         DecompilerStructuringPassSpec(
+            "_typed_string_effect_artifact_8616",
+            _string_effects.apply_x86_16_typed_string_effect_artifact,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
             "_string_instruction_lowering_8616",
             _string_instruction_lowering.apply_x86_16_string_instruction_lowering,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_string_codegen_override_8616",
+            _string_codegen_override.apply_x86_16_string_codegen_override,
             True,
         ),
         # Phase 3: Segmented Memory Association Reasoning
@@ -121,6 +140,11 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
             "_confidence_and_assumptions_8616",
             _confidence.apply_x86_16_confidence_and_assumptions,
             False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_function_interface_surface_8616",
+            _interface_surface.apply_x86_16_function_interface_surface,
+            True,
         ),
     )
 

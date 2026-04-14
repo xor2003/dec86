@@ -55,6 +55,34 @@ def _typed_ir_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int]
     return dict(sorted(candidates.items()))
 
 
+def _typed_string_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
+    artifact = getattr(codegen, "_inertia_string_effect_artifact", None)
+    if artifact is None or not hasattr(artifact, "records"):
+        return {}
+
+    candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
+    for record in tuple(getattr(artifact, "records", ()) or ()):
+        for role, address in (("source", record.source), ("destination", record.destination)):
+            if not isinstance(address, IRAddress):
+                continue
+            if not address.base:
+                continue
+            if address.status.value != "stable":
+                continue
+            key = (address.space.value, tuple(address.base), int(address.size or 0))
+            candidates[key] = {
+                "space": address.space.value,
+                "base": tuple(address.base),
+                "element_size": int(address.size or 0),
+                "has_string_effect": True,
+                "segment_origin": address.segment_origin.value,
+                "string_family": record.family,
+                "repeat_kind": record.repeat_kind,
+                "role": role,
+            }
+    return dict(sorted(candidates.items()))
+
+
 @dataclass(frozen=True)
 class InductionVariable:
     """Represents a loop-carried induction variable with stride."""
@@ -294,17 +322,20 @@ def apply_x86_16_array_expression_matching(codegen) -> bool:
             }
         )
         typed_ir_candidates = _typed_ir_array_candidates(codegen)
+        typed_string_candidates = _typed_string_array_candidates(codegen)
         # Track that array matching pass ran
         codegen._inertia_array_matching_applied = True
         codegen._inertia_array_matching_bridge = bridge
         codegen._inertia_array_matching_lowerable_arrays = lowerable_arrays
         codegen._inertia_array_matching_refused_arrays = refused_arrays
         codegen._inertia_array_matching_typed_ir_candidates = typed_ir_candidates
+        codegen._inertia_array_matching_string_candidates = typed_string_candidates
         codegen._inertia_array_matching_stats = {
             "induction_vars": len(typed_ir_candidates),
             "array_patterns": 0 if bridge is None else len(bridge.array_facts),
-            "recovered_arrays": len(lowerable_arrays) + len(typed_ir_candidates),
+            "recovered_arrays": len(lowerable_arrays) + len(typed_ir_candidates) + len(typed_string_candidates),
             "refused_arrays": len(refused_arrays),
+            "string_arrays": len(typed_string_candidates),
         }
 
         logger.debug("Array expression matching pass completed")

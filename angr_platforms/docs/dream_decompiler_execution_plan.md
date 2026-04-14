@@ -25,11 +25,15 @@ That means future quality work should prefer:
 - alias and widening on typed storage
 - explicit segmented-memory state
 - explicit condition/flag meaning
+- explicit string-instruction memory effects and repeat semantics in typed IR when they affect readable C recovery
+- obfuscation-tolerant semantic recovery from typed effects and CFG facts rather than compiler-pattern assumptions
 
 And should avoid:
 
 - leaning on AIL as the long-term reasoning substrate
 - leaving segmented memory or conditions as hidden VEX-temp trivia
+- leaving string-instruction semantics as timeout-only fallback debt when they can be expressed in typed IR
+- depending on compiler-shaped idioms when the same behavior can be recovered from typed semantics for hand-written or obfuscated code
 - blurring block-local typed IR and CFG-level merged IR into one vague layer
 
 For the narrower whole-corpus operational plan focused on:

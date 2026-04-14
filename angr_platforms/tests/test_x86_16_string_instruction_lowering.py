@@ -79,3 +79,36 @@ def test_string_instruction_lowering_preserves_explicit_refusal_state():
 
     assert lowered.records == ()
     assert tuple(item.kind for item in lowered.refusals) == ("mixed_direction_signal",)
+
+
+def test_string_instruction_lowering_accepts_mixed_direction_movs_as_overlap_copy_class():
+    artifact = StringInstructionArtifact(
+        records=(
+            _record(index=0, family="movs", repeat_kind="rep", width=1, direction_mode="backward"),
+            _record(index=1, family="movs", repeat_kind="none", width=1, direction_mode="forward"),
+            _record(index=2, family="movs", repeat_kind="rep", width=2, direction_mode="forward"),
+        ),
+        refusals=(StringInstructionRefusal("mixed_direction_signal", "both directions observed"),),
+    )
+
+    lowered = build_x86_16_string_intrinsic_artifact(artifact)
+    rendered = render_x86_16_string_intrinsic_c("memcpy_like", lowered)
+
+    assert tuple(item.family for item in lowered.records) == ("memmove_overlap_class",)
+    assert lowered.refusals == ()
+    assert "__x86_16_movs_overlap_select(&__x86_16_state);" in rendered
+
+
+def test_string_instruction_lowering_accepts_repnz_scas_plus_tail_as_scan_tail_class():
+    artifact = StringInstructionArtifact(
+        records=(
+            _record(index=0, family="scas", repeat_kind="repnz", width=1, zero_seeded_accumulator=False),
+            _record(index=1, family="scas", repeat_kind="none", width=1, zero_seeded_accumulator=False),
+        )
+    )
+
+    lowered = build_x86_16_string_intrinsic_artifact(artifact)
+    rendered = render_x86_16_string_intrinsic_c("scan_like", lowered)
+
+    assert tuple(item.family for item in lowered.records) == ("scan_tail_class",)
+    assert "__x86_16_scan_tail(&__x86_16_state, 1);" in rendered

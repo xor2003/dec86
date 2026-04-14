@@ -24,6 +24,8 @@ def test_write_function_recovery_artifact_emits_stable_json(tmp_path):
                 "aliasable_value_count": 2,
                 "frame_slot_count": 1,
             },
+            "memory_reads": ("0x40:0x17/1",),
+            "memory_writes": ("0x402/2",),
         },
         path,
     )
@@ -33,7 +35,9 @@ def test_write_function_recovery_artifact_emits_stable_json(tmp_path):
     assert result.row_count == 1
     assert payload["proc_name"] == "_dos_alloc"
     assert payload["ir_summary"]["instruction_count"] == 4
-    assert payload["helper_summary"]["status"] == "eligible"
+    assert payload["state_summary"]["low_memory_reads"][0]["label"] == "bda.keyboard_flags0"
+    assert payload["state_summary"]["low_memory_writes"][0]["label"] == "bda.com2_port"
+    assert payload["helper_summary"]["status"] == "refused"
 
 
 def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path):
@@ -48,6 +52,7 @@ def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path):
                 "stage_reached": "decompile",
                 "decompiled_count": 1,
                 "direct_call_count": 1,
+                "memory_reads": ("0xb800:0x12",),
                 "return_kind": "scalar",
                 "x86_16_vex_ir_summary": {"block_count": 2, "instruction_count": 7},
             },
@@ -58,6 +63,8 @@ def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path):
                 "ok": True,
                 "stage_reached": "decompile",
                 "direct_call_count": 2,
+                "memory_reads": ("0x40:0x17/1",),
+                "memory_writes": ("0x402/2",),
                 "return_kind": "scalar",
             },
         ],
@@ -72,3 +79,5 @@ def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path):
         ("B.COD", "_b"),
     ]
     assert payload["function_rows"][1]["ir_summary"]["instruction_count"] == 7
+    assert payload["low_memory_read_region_counts"] == {"bda": 1, "video_ram": 1}
+    assert payload["low_memory_write_region_counts"] == {"bda": 1}

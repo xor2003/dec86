@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
+from .codegen_metadata import get_codegen_sequence_attr, get_codegen_side_metadata
+
 __all__ = [
     "ConfidenceLevel",
     "ConfidenceMarker",
@@ -266,7 +268,7 @@ class ScanConfidenceSummary:
 
 
 def build_function_with_confidence_markers(
-    cfunc, confidence_report: FunctionConfidenceReport
+    cfunc, confidence_report: FunctionConfidenceReport, *, codegen=None
 ) -> bool:
     """
     Attach confidence markers to decompiled function.
@@ -282,10 +284,17 @@ def build_function_with_confidence_markers(
         return False
 
     # Attach confidence data as metadata
-    if not hasattr(cfunc, "_recovery_metadata"):
-        cfunc._recovery_metadata = {}
-
-    cfunc._recovery_metadata["confidence_report"] = confidence_report
+    if codegen is not None:
+        metadata = get_codegen_side_metadata(codegen)
+        metadata["confidence_report"] = confidence_report
+    try:
+        cfunc_metadata = getattr(cfunc, "_recovery_metadata", None)
+        if not isinstance(cfunc_metadata, dict):
+            cfunc_metadata = {}
+            cfunc._recovery_metadata = cfunc_metadata
+        cfunc_metadata["confidence_report"] = confidence_report
+    except Exception:
+        pass
 
     # Prepend comment header to function
     if hasattr(cfunc, "decompile"):
@@ -389,17 +398,15 @@ def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
             )
 
             # Add assumptions from analysis
-            if hasattr(cfunc, "_assumptions"):
-                for assumption in cfunc._assumptions:
-                    report.add_assumption(assumption)
+            for assumption in get_codegen_sequence_attr(codegen, cfunc, "_assumptions"):
+                report.add_assumption(assumption)
 
             # Add critical unknowns
-            if hasattr(cfunc, "_critical_unknowns"):
-                for unknown in cfunc._critical_unknowns:
-                    report.add_critical_unknown(unknown)
+            for unknown in get_codegen_sequence_attr(codegen, cfunc, "_critical_unknowns"):
+                report.add_critical_unknown(unknown)
 
             # Attach to function
-            build_function_with_confidence_markers(cfunc, report)
+            build_function_with_confidence_markers(cfunc, report, codegen=codegen)
 
         return True
 

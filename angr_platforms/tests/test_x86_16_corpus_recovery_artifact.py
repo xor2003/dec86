@@ -47,3 +47,45 @@ def test_corpus_recovery_artifact_writes_bounded_cod_batch(tmp_path):
             "signal": "no_effect_signal",
         }
     ]
+
+
+def test_corpus_recovery_artifact_returns_low_memory_summary_from_corpus_artifact(tmp_path, monkeypatch):
+    cod_path = tmp_path / "LOWMEM.COD"
+    cod_path.write_text("_stub\tPROC NEAR\n\t*** 000000\tc3 \t\tret\n_stub\tENDP\n", encoding="utf-8")
+    output_path = tmp_path / "lowmem.recovery.json"
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.corpus_recovery_artifact.extract_cod_functions",
+        lambda _path: [("_read", "NEAR", "read"), ("_write", "NEAR", "write")],
+    )
+
+    def _fake_scan(_path, proc_name, proc_kind, _code, **_kwargs):
+        if proc_name == "_read":
+            return {
+                "cod_file": "LOWMEM.COD",
+                "proc_name": proc_name,
+                "proc_kind": proc_kind,
+                "ok": True,
+                "stage_reached": "decompile",
+                "return_kind": "scalar",
+                "memory_reads": ("0x40:0x17/1",),
+            }
+        return {
+            "cod_file": "LOWMEM.COD",
+            "proc_name": proc_name,
+            "proc_kind": proc_kind,
+            "ok": True,
+            "stage_reached": "decompile",
+            "return_kind": "scalar",
+            "memory_writes": ("0xb800:0x12",),
+        }
+
+    monkeypatch.setattr("angr_platforms.X86_16.corpus_recovery_artifact.scan_function", _fake_scan)
+
+    result = write_x86_16_cod_corpus_recovery_artifact(cod_path, output_path)
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert result.low_memory_read_region_counts == {"bda": 1}
+    assert result.low_memory_write_region_counts == {"video_ram": 1}
+    assert payload["low_memory_read_region_counts"] == {"bda": 1}
+    assert payload["low_memory_write_region_counts"] == {"video_ram": 1}

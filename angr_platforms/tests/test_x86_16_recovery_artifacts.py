@@ -14,6 +14,8 @@ def test_function_recovery_artifact_embeds_effect_helper_and_confidence():
             "stage_reached": "decompile",
             "decompiled_count": 1,
             "direct_call_count": 1,
+            "register_inputs": ("ax", "ds", "zf"),
+            "register_outputs": ("bx", "es", "cf"),
             "return_kind": "scalar",
             "x86_16_vex_ir_summary": {
                 "block_count": 1,
@@ -25,6 +27,13 @@ def test_function_recovery_artifact_embeds_effect_helper_and_confidence():
                 "condition_counts": {"eq": 1},
                 "phi_node_count": 1,
             },
+            "runtime_trace": {
+                "segment_registers": {"ds": 0x1234},
+                "memory_reads": ("ds:0x20",),
+                "memory_writes": ("es:0x10",),
+            },
+            "memory_reads": ("0x40:0x17/1", "ds:0x20"),
+            "memory_writes": ("0x402/2", "es:0x10"),
         }
     )
 
@@ -38,7 +47,16 @@ def test_function_recovery_artifact_embeds_effect_helper_and_confidence():
     assert artifact.to_dict()["ir_readiness"]["condition_count"] == 1
     assert artifact.to_dict()["ir_readiness"]["phi_node_count"] == 1
     assert artifact.effect_summary.direct_call_count == 1
-    assert artifact.helper_summary.status == "eligible"
+    assert artifact.state_summary.segment_register_inputs == ("ds",)
+    assert artifact.state_summary.segment_register_outputs == ("es",)
+    assert artifact.state_summary.flag_inputs == ("zf",)
+    assert artifact.state_summary.flag_outputs == ("cf",)
+    assert [item.label for item in artifact.state_summary.low_memory_reads] == ["bda.keyboard_flags0"]
+    assert [item.label for item in artifact.state_summary.low_memory_writes] == ["bda.com2_port"]
+    assert artifact.to_dict()["state_summary"]["low_memory_reads"][0]["access_kind"] == "read"
+    assert artifact.helper_summary.status == "refused"
+    assert artifact.trace_refinement.provenance == "runtime_trace"
+    assert artifact.trace_refinement.refined_unknown_segment_count == 0
     assert artifact.confidence.status == "target_recovered_strong"
 
 
@@ -52,6 +70,7 @@ def test_corpus_recovery_artifact_keeps_helper_family_rows_deterministic():
                 "ok": True,
                 "stage_reached": "decompile",
                 "direct_call_count": 1,
+                "memory_reads": ("0xb800:0x12",),
                 "return_kind": "scalar",
             },
             {
@@ -61,6 +80,8 @@ def test_corpus_recovery_artifact_keeps_helper_family_rows_deterministic():
                 "ok": True,
                 "stage_reached": "decompile",
                 "direct_call_count": 2,
+                "memory_reads": ("0x40:0x17/1",),
+                "memory_writes": ("0x402/2",),
                 "return_kind": "scalar",
             },
         ]
@@ -71,14 +92,16 @@ def test_corpus_recovery_artifact_keeps_helper_family_rows_deterministic():
         ("B.COD", "_b"),
     ]
     assert artifact.ir_readiness_level_counts == {"missing": 2}
-    assert artifact.helper_status_counts == {"eligible": 1, "refused": 1}
+    assert artifact.low_memory_read_region_counts == {"bda": 1, "video_ram": 1}
+    assert artifact.low_memory_write_region_counts == {"bda": 1}
+    assert artifact.helper_status_counts == {"refused": 2}
     assert artifact.helper_family_rows == (
         {
-            "family": "helper_wrapper_candidate",
-            "count": 1,
-            "likely_layer": "helper_modeling",
-            "next_root_cause_file": "angr_platforms/angr_platforms/X86_16/helper_effect_summary.py",
-            "signal": "eligible",
+            "family": "helper_wrapper_nonlocal_memory",
+            "count": 2,
+            "likely_layer": "alias_model",
+            "next_root_cause_file": "angr_platforms/angr_platforms/X86_16/alias_model.py",
+            "signal": "nonlocal_memory_effects",
         },
         {
             "family": "helper_wrapper_signature_shape",

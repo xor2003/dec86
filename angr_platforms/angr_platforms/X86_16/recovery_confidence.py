@@ -5,12 +5,14 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
+from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
 from .helper_family_routing import summarize_x86_16_helper_family_routes
 from .helper_effect_summary import HelperEligibilitySummary, summarize_x86_16_helper_eligibility
 from .ir_readiness import summarize_x86_16_ir_readiness
 
 __all__ = [
     "FunctionEffectSummary",
+    "FunctionStateSummary",
     "HelperEligibilitySummary",
     "RecoveryAssumption",
     "RecoveryConfidenceSummary",
@@ -85,6 +87,7 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
     failure_class = _value(source, "failure_class", None)
     stage_reached = _value(source, "stage_reached", None)
     effect_summary = summarize_x86_16_function_effects(source)
+    state_summary = summarize_x86_16_function_state(source)
     helper_summary = summarize_x86_16_helper_eligibility(source)
     ir_readiness = summarize_x86_16_ir_readiness(source)
 
@@ -118,6 +121,15 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
         or effect_summary.memory_writes
     ):
         evidence.append(RecoveryEvidence("function_effect_summary", effect_summary.brief()))
+    if (
+        state_summary.gp_register_inputs
+        or state_summary.gp_register_outputs
+        or state_summary.segment_register_inputs
+        or state_summary.segment_register_outputs
+        or state_summary.flag_inputs
+        or state_summary.flag_outputs
+    ):
+        evidence.append(RecoveryEvidence("function_state_summary", state_summary.brief()))
     if helper_summary.status == "eligible":
         evidence.append(RecoveryEvidence("helper_eligibility", helper_summary.brief()))
     if ir_readiness.level != "missing":
@@ -204,6 +216,20 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
                 helper_summary.brief(),
             )
         )
+    if state_summary.touches_segments():
+        assumptions.append(
+            RecoveryAssumption(
+                "segment_state_needs_tracking",
+                "segment-register dataflow should stay explicit across CFG and call boundaries",
+            )
+        )
+    if state_summary.touches_flags() and ir_readiness.condition_count == 0:
+        assumptions.append(
+            RecoveryAssumption(
+                "live_flags_need_typed_conditions",
+                "live flag dependencies still need typed condition recovery at branch and loop boundaries",
+            )
+        )
     if ir_readiness.unknown_segment_count > 0:
         assumptions.append(
             RecoveryAssumption(
@@ -241,6 +267,8 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
         diagnostics.append(f"stage_reached={stage_reached}")
     if effect_summary != summarize_x86_16_function_effects({}):
         diagnostics.append(f"function_effects={effect_summary.brief()}")
+    if state_summary != summarize_x86_16_function_state({}):
+        diagnostics.append(f"function_state={state_summary.brief()}")
     if helper_summary.status != "no_signal":
         diagnostics.append(f"helper_summary={helper_summary.brief()}")
     if ir_readiness.level != "missing":
