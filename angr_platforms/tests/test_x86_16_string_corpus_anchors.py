@@ -44,7 +44,7 @@ def test_monoprin_fimemset_emits_string_intrinsic_fallback_anchor():
         section = rendered[section_start:section_end if section_end != -1 else None]
         assert "/* == c (string intrinsic fallback) == */" not in section
         assert "/* -- c (string intrinsic fallback) -- */" not in section
-        assert "__x86_16_stos(&__x86_16_state, 2);" in rendered
+        assert "__x86_16_stos(2);" in rendered
     finally:
         if previous is None:
             if MONOPRIN_DEC.exists():

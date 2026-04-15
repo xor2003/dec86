@@ -51,6 +51,7 @@ def test_string_instruction_lowering_accepts_repne_scas_zero_seed_as_strlen_clas
 
     assert tuple(item.family for item in lowered.records) == ("strlen_class",)
     assert "__x86_16_scas_zterm_len" in render_x86_16_string_intrinsic_c("strlen_like", lowered)
+    assert "__x86_16_string_state" not in render_x86_16_string_intrinsic_c("strlen_like", lowered)
 
 
 def test_string_instruction_lowering_combines_strlen_then_movs_into_strlen_copy_class():
@@ -96,7 +97,8 @@ def test_string_instruction_lowering_accepts_mixed_direction_movs_as_overlap_cop
 
     assert tuple(item.family for item in lowered.records) == ("memmove_overlap_class",)
     assert lowered.refusals == ()
-    assert "__x86_16_movs_overlap_select(&__x86_16_state);" in rendered
+    assert "__x86_16_movs_overlap_select();" in rendered
+    assert "__x86_16_string_state" not in rendered
 
 
 def test_string_instruction_lowering_accepts_repnz_scas_plus_tail_as_scan_tail_class():
@@ -111,4 +113,17 @@ def test_string_instruction_lowering_accepts_repnz_scas_plus_tail_as_scan_tail_c
     rendered = render_x86_16_string_intrinsic_c("scan_like", lowered)
 
     assert tuple(item.family for item in lowered.records) == ("scan_tail_class",)
-    assert "__x86_16_scan_tail(&__x86_16_state, 1);" in rendered
+    assert "__x86_16_scan_tail(1);" in rendered
+    assert "__x86_16_string_state" not in rendered
+
+
+def test_string_instruction_lowering_renders_compact_memset_intrinsic() -> None:
+    artifact = StringInstructionArtifact(records=(_record(index=0, family="stos", repeat_kind="rep", width=1),))
+
+    lowered = build_x86_16_string_intrinsic_artifact(artifact)
+    rendered = render_x86_16_string_intrinsic_c("clear_mat", lowered)
+
+    assert tuple(item.family for item in lowered.records) == ("memset_class",)
+    assert "void __x86_16_stos(unsigned short width);" in rendered
+    assert "__x86_16_stos(1);" in rendered
+    assert "__x86_16_string_state" not in rendered

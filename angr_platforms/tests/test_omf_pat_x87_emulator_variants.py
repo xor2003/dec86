@@ -17,8 +17,8 @@ def test_x87_emulator_variant_rewrites_known_microsoft_pairs() -> None:
         0xDD,
         0x7E,
         0xFE,
-        0x9B,
         0x90,
+        0x9B,
         0xC3,
     ]
 

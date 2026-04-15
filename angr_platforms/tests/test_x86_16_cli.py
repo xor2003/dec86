@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import decompile
 import inertia_decompiler.cache as recovery_cache
+import inertia_decompiler.non_optimized_fallback as non_optimized_fallback
+import inertia_decompiler.sidecar_cache as sidecar_cache
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
@@ -174,9 +176,32 @@ def test_asm_fallback_pattern_note_names_string_instruction_evidence():
 
 
 def test_default_recovery_timeout_uses_wider_default_gate():
-    assert decompile._default_recovery_timeout(20, explicit_timeout=False) == 5
-    assert decompile._default_recovery_timeout(20, explicit_timeout=True) == 5
+    assert decompile._default_recovery_timeout(20, explicit_timeout=False) == 20
+    assert decompile._default_recovery_timeout(20, explicit_timeout=True) == 20
     assert decompile._default_recovery_timeout(3, explicit_timeout=True) == 3
+
+
+def test_heavy_fallback_lane_policy_stays_closed_for_sweep_runs():
+    assert not non_optimized_fallback.allows_heavy_fallbacks_for_run(
+        interactive_stdout=False,
+        max_functions=8,
+        addr_requested=False,
+    )
+    assert non_optimized_fallback.allows_heavy_fallbacks_for_run(
+        interactive_stdout=True,
+        max_functions=8,
+        addr_requested=False,
+    )
+    assert non_optimized_fallback.allows_heavy_fallbacks_for_run(
+        interactive_stdout=False,
+        max_functions=0,
+        addr_requested=False,
+    )
+    assert non_optimized_fallback.allows_heavy_fallbacks_for_run(
+        interactive_stdout=False,
+        max_functions=8,
+        addr_requested=True,
+    )
 
 
 def test_adaptive_per_byte_timeout_model_scales_from_successes():
@@ -187,9 +212,9 @@ def test_adaptive_per_byte_timeout_model_scales_from_successes():
     model.observe_success(0x40, 2.2)
     model.observe_success(0x80, 4.6)
 
-    assert model.timeout_for_byte_count(0x80) > model.timeout_for_byte_count(0x20)
-    assert model.timeout_for_byte_count(0x100) >= model.timeout_for_byte_count(0x80)
-    assert model.timeout_for_byte_count(0x20) <= baseline
+    assert model.timeout_for_byte_count(0x20) == baseline
+    assert model.timeout_for_byte_count(0x80) == baseline
+    assert model.timeout_for_byte_count(0x100) == baseline
 
 
 
@@ -4747,6 +4772,8 @@ def test_main_reports_uncapped_cached_function_count(monkeypatch, tmp_path, caps
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -4801,6 +4828,8 @@ def test_main_decompiles_all_functions_by_default_without_sidecar(monkeypatch, t
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -4853,6 +4882,8 @@ def test_main_does_not_auto_cap_noninteractive_stdout_without_sidecar(monkeypatc
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -4976,6 +5007,8 @@ def test_main_uses_ranked_binary_placeholders_when_upfront_catalog_is_empty(monk
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -5033,6 +5066,8 @@ def test_main_prefers_quickly_recoverable_ranked_binary_preview_items(monkeypatc
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -5090,6 +5125,8 @@ def test_main_selected_count_reflects_supplemented_hidden_sidecar_display(monkey
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -5977,11 +6014,15 @@ def test_main_streaming_timeout_reports_nonoptimized_skip_before_string_fallback
     monkeypatch.setattr(decompile, "_try_emit_string_intrinsic_c", lambda *_args, **_kwargs: "int fallback(void) { return 7; }")
     monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
 
-    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "8"])
     out = capsys.readouterr().out
 
     assert rc == 2
-    assert "heavy fallback lane disabled for sweep mode" in out
+    assert (
+        "heavy fallback lane disabled for sweep mode "
+        "(interactive_stdout=False, max_functions=8, addr=unset)"
+        in out
+    )
     assert out.index("non-optimized fallback unavailable") < out.index("/* -- c (string intrinsic fallback) -- */")
     assert "int fallback(void) { return 7; }" in out
 
@@ -7341,6 +7382,8 @@ def test_main_defers_exe_limit_until_after_seed_ranking_with_recovery_only_sidec
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -7383,6 +7426,8 @@ def test_main_helper_free_small_cap_exe_uses_serial_workers_with_hidden_seed_met
                         status="ok",
                         payload=f"int {item.function.name}(void) {{ return 0; }}",
                         debug_output="",
+                        byte_count=1,
+                        elapsed=0.01,
                         function=item.function,
                         function_cfg=item.function_cfg,
                     )
@@ -7417,6 +7462,8 @@ def test_main_helper_free_small_cap_exe_uses_serial_workers_with_hidden_seed_met
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -7426,9 +7473,50 @@ def test_main_helper_free_small_cap_exe_uses_serial_workers_with_hidden_seed_met
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert max_workers_seen == [1]
+    assert max_workers_seen == []
     assert "/* == function 0x11423 _start == */" in out
     assert "/* == function 0x10010 sub_10010 == */" in out
+
+
+def test_main_uses_default_signature_catalog_when_not_explicit(monkeypatch, tmp_path, capsys):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace(
+        entry=0x11423,
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
+        ),
+    )
+    default_catalog = tmp_path / "repo_signature_catalog.pat"
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
+    monkeypatch.setattr(decompile, "default_signature_catalog_path", lambda *_args, **_kwargs: default_catalog)
+
+    def _fake_load_lst_metadata(_binary, _project, *, pat_backend=None, signature_catalog=None, **_kwargs):
+        seen["signature_catalog"] = signature_catalog
+        return None
+
+    monkeypatch.setattr(decompile, "_load_lst_metadata", _fake_load_lst_metadata)
+    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(
+        decompile,
+        "_run_with_timeout_in_daemon_thread",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FuturesTimeoutError()),
+    )
+    monkeypatch.setattr(decompile, "_recover_fast_seed_functions", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(decompile, "_format_first_block_asm", lambda *_args, **_kwargs: "entry asm")
+    monkeypatch.setattr(decompile, "_probe_lift_break", lambda *_args, **_kwargs: "lift probe")
+    monkeypatch.setattr(decompile, "_infer_linear_disassembly_window", lambda *_args, **_kwargs: (0x11423, 0x11440))
+    monkeypatch.setattr(decompile, "_format_asm_range", lambda *_args, **_kwargs: "asm range")
+
+    rc = decompile.main([str(binary), "--timeout", "1"])
+    _out = capsys.readouterr().out
+
+    assert rc == 5
+    assert seen["signature_catalog"] == default_catalog
 
 
 def test_main_hidden_seed_metadata_gives_seed_catalog_more_time(monkeypatch, tmp_path, capsys):
@@ -7474,6 +7562,8 @@ def test_main_hidden_seed_metadata_gives_seed_catalog_more_time(monkeypatch, tmp
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
             debug_output="",
+            byte_count=1,
+            elapsed=0.01,
             function=item.function,
             function_cfg=item.function_cfg,
         ),
@@ -8008,6 +8098,7 @@ def test_match_pat_modules_labels_unique_generated_function_match():
     )
     module = PatModule(
         source_path="<memory>",
+        compiler_name="",
         module_name="demo_func",
         pattern_bytes=tuple([0xFB, 0xFC, 0x52, 0x50, 0x53, 0x55, 0x56, 0x57, 0x06, 0x51, 0x1E, 0x8B] + [None] * 20),
         module_length=0x0C,
@@ -8016,10 +8107,11 @@ def test_match_pat_modules_labels_unique_generated_function_match():
         tail_bytes=(),
     )
 
-    code_labels, code_ranges = match_pat_modules(image, 0x1000, [module])
+    code_labels, code_ranges, matched_compiler_names = match_pat_modules(image, 0x1000, [module])
 
     assert code_labels == {0x1003: "demo_func"}
     assert code_ranges == {0x1003: (0x1003, 0x100F)}
+    assert matched_compiler_names == ()
 
 
 def test_load_cached_pat_regex_specs_creates_reusable_disk_cache(tmp_path):
@@ -8043,10 +8135,11 @@ def test_match_pat_modules_accepts_cached_regex_specs(tmp_path):
         "90 90 90 FB FC 52 50 53 55 56 57 06 51 1E 8B EC 36 89 2E DE 00 C5 76 12 AD 89 76 12 8C D7 8E DF 8A CC 98 C3 90"
     )
 
-    code_labels, code_ranges = match_pat_modules(image, 0x1000, specs)
+    code_labels, code_ranges, matched_compiler_names = match_pat_modules(image, 0x1000, specs)
 
     assert code_labels == {0x1003: "demo_func"}
     assert code_ranges == {0x1003: (0x1003, 0x100F)}
+    assert matched_compiler_names == ()
 
 
 def test_match_pat_modules_supports_both_explicit_backends(tmp_path):
@@ -8058,13 +8151,14 @@ def test_match_pat_modules_supports_both_explicit_backends(tmp_path):
         "90 90 90 FB FC 52 50 53 55 56 57 06 51 1E 8B EC 36 89 2E DE 00 C5 76 12 AD 89 76 12 8C D7 8E DF 8A CC 98 C3 90"
     )
 
-    py_labels, py_ranges = match_pat_modules(image, 0x1000, specs, backend="python_regex")
-    hs_labels, hs_ranges = match_pat_modules(image, 0x1000, specs, backend="hyperscan")
+    py_labels, py_ranges, py_compilers = match_pat_modules(image, 0x1000, specs, backend="python_regex")
+    hs_labels, hs_ranges, hs_compilers = match_pat_modules(image, 0x1000, specs, backend="hyperscan")
 
     assert py_labels == {0x1003: "demo_func"}
     assert py_ranges == {0x1003: (0x1003, 0x100F)}
     assert hs_labels == py_labels
     assert hs_ranges == py_ranges
+    assert py_compilers == hs_compilers == ()
 
 
 def test_normalize_pat_backend_choice_rejects_unknown_backend():
@@ -8713,7 +8807,7 @@ def test_life2_without_peer_exe_metadata_has_no_sidecars_but_life_does():
     assert sidecar_metadata._visible_code_labels(life_metadata)
     assert life2_metadata is not None
     assert sidecar_metadata._visible_code_labels(life2_metadata) == {}
-    assert life2_metadata.source_format == "flair_pat+flair_sig"
+    assert life2_metadata.source_format == "flair_pat"
 
 
 def test_life2_default_metadata_stays_independent_from_life_peer_catalog():
@@ -8787,17 +8881,17 @@ def test_load_lst_metadata_reuses_cached_flair_metadata(monkeypatch, tmp_path):
     seen = {"calls": 0}
 
     monkeypatch.setattr(sidecar_metadata, "_probe_ida_base_linear", lambda _binary, _linked_base=0: 0x1000)
-    monkeypatch.setattr(sidecar_metadata, "_load_cache_json", lambda namespace, key: cache_store.get((namespace, repr(key))))
-    monkeypatch.setattr(sidecar_metadata, "_store_cache_json", lambda namespace, key, value: cache_store.__setitem__((namespace, repr(key)), value))
+    monkeypatch.setattr(sidecar_cache, "_load_cache_json", lambda namespace, key: cache_store.get((namespace, repr(key))))
+    monkeypatch.setattr(sidecar_cache, "_store_cache_json", lambda namespace, key, value: cache_store.__setitem__((namespace, repr(key)), value))
 
     def fake_detect_flair_metadata(_binary, _project, *, pat_backend=None, signature_catalog=None):
         assert pat_backend == "python"
         assert signature_catalog is None
         seen["calls"] += 1
-        setattr(_project, "_inertia_flair_sig_titles", ("Demo Sig",))
         setattr(_project, "_inertia_flair_startup_matches", ("startup/demo.pat",))
         setattr(_project, "_inertia_flair_local_pat_sources", ("local_omf_pat",))
-        return {0x1010: "sig_func"}, {0x1010: (0x1010, 0x1020)}, ("flair_pat", "flair_sig")
+        setattr(_project, "_inertia_signature_compiler_names", ("Microsoft C v5.1",))
+        return {0x1010: "sig_func"}, {0x1010: (0x1010, 0x1020)}, ("flair_pat",)
 
     monkeypatch.setattr(sidecar_metadata, "_detect_flair_metadata", fake_detect_flair_metadata)
 
@@ -8816,9 +8910,9 @@ def test_load_lst_metadata_reuses_cached_flair_metadata(monkeypatch, tmp_path):
     assert second is not None
     assert second.code_labels[0x1010] == "sig_func"
     assert seen["calls"] == 1
-    assert getattr(second_project, "_inertia_flair_sig_titles", ()) == ("Demo Sig",)
     assert getattr(second_project, "_inertia_flair_startup_matches", ()) == ("startup/demo.pat",)
     assert getattr(second_project, "_inertia_flair_local_pat_sources", ()) == ("local_omf_pat",)
+    assert getattr(second_project, "_inertia_signature_compiler_names", ()) == ("Microsoft C v5.1",)
 
 
 def test_life2_peer_catalog_oracle_requires_explicit_helper_call():

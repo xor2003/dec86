@@ -29,4 +29,5 @@ def test_string_codegen_override_replaces_render_text_with_normal_path_c():
     assert changed is True
     rendered = codegen.render_text(codegen.cfunc)
     assert "void memset_like(void)" in rendered
-    assert "__x86_16_stos(&__x86_16_state, 2);" in rendered
+    assert "__x86_16_stos(2);" in rendered
+    assert "__x86_16_string_state" not in rendered

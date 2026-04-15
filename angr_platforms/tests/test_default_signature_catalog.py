@@ -5,7 +5,8 @@ from pathlib import Path
 from inertia_decompiler import default_signature_catalog
 
 
-def test_default_signature_catalog_rebuilds_when_new_source_appears(monkeypatch, tmp_path):
+def test_default_signature_catalog_reuses_existing_catalog_without_rescan(monkeypatch, tmp_path):
+    default_signature_catalog.default_signature_catalog_path.cache_clear()
     repo_root = tmp_path / "repo"
     catalog_root = repo_root / "signature_catalogs"
     catalog_root.mkdir(parents=True)
@@ -28,4 +29,4 @@ def test_default_signature_catalog_rebuilds_when_new_source_appears(monkeypatch,
     assert first is not None
     assert second == first
     assert third == first
-    assert len(build_calls) == 2
+    assert len(build_calls) == 1

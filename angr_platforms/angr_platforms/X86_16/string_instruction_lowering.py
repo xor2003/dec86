@@ -213,9 +213,77 @@ def _render_header() -> str:
     )
 
 
+def _render_compact_intrinsic_c(name: str, artifact: StringIntrinsicArtifact) -> str | None:
+    prototype_map = {
+        "memcpy_class": "void __x86_16_movs(unsigned short width);",
+        "memmove_class": "void __x86_16_movs(unsigned short width);",
+        "memmove_overlap_class": "void __x86_16_movs_overlap_select(void);",
+        "memset_class": "void __x86_16_stos(unsigned short width);",
+        "strlen_class": "unsigned short __x86_16_scas_zterm_len(unsigned short width);",
+        "memcmp_class": "int __x86_16_cmps(unsigned short width);",
+        "scan_tail_class": "unsigned short __x86_16_scan_tail(unsigned short width);",
+    }
+    if not artifact.records:
+        return None
+    families = {rec.family for rec in artifact.records}
+    if "strlen_copy_class" in families:
+        return None
+    if any(family not in prototype_map for family in families):
+        return None
+
+    prototype_lines: list[str] = []
+    declared_prototypes: set[str] = set()
+    lines = [f"void {name}(void)\n{{"]
+    declared_length = False
+    declared_compare = False
+    for rec in artifact.records:
+        prototype = prototype_map[rec.family]
+        if prototype not in declared_prototypes:
+            prototype_lines.append(prototype)
+            declared_prototypes.add(prototype)
+        if rec.family in {"memcpy_class", "memmove_class"}:
+            lines.append(f"    /* {rec.family}, width={rec.width}, direction={rec.direction_mode} */")
+            lines.append(f"    __x86_16_movs({rec.width});")
+            continue
+        if rec.family == "memmove_overlap_class":
+            lines.append("    /* memmove_overlap_class: mixed forward/backward movs evidence */")
+            lines.append("    __x86_16_movs_overlap_select();")
+            continue
+        if rec.family == "memset_class":
+            lines.append(f"    /* memset_class, width={rec.width}, direction={rec.direction_mode} */")
+            lines.append(f"    __x86_16_stos({rec.width});")
+            continue
+        if rec.family == "strlen_class":
+            if not declared_length:
+                lines.append("    unsigned short __x86_16_length;")
+                declared_length = True
+            lines.append("    /* strlen_class */")
+            lines.append(f"    __x86_16_length = __x86_16_scas_zterm_len({rec.width});")
+            continue
+        if rec.family == "memcmp_class":
+            if not declared_compare:
+                lines.append("    int __x86_16_compare;")
+                declared_compare = True
+            lines.append(f"    /* memcmp_class, width={rec.width} */")
+            lines.append(f"    __x86_16_compare = __x86_16_cmps({rec.width});")
+            continue
+        if rec.family == "scan_tail_class":
+            if not declared_length:
+                lines.append("    unsigned short __x86_16_length;")
+                declared_length = True
+            lines.append("    /* scan_tail_class */")
+            lines.append(f"    __x86_16_length = __x86_16_scan_tail({rec.width});")
+            continue
+    lines.append("}")
+    return "\n".join(prototype_lines + [""] + lines) + "\n"
+
+
 def render_x86_16_string_intrinsic_c(name: str, artifact: StringIntrinsicArtifact) -> str | None:
     if not artifact.records:
         return None
+    compact = _render_compact_intrinsic_c(name, artifact)
+    if compact is not None:
+        return compact
 
     lines = [_render_header(), f"void {name}(void)\n{{", "    __x86_16_string_state __x86_16_state;"]
     declared_length = False
