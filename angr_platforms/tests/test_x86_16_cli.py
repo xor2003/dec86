@@ -1019,7 +1019,9 @@ def test_try_decompile_non_optimized_slice_returns_partial_timeout_payload(monke
 
     assert outcome.rendered == "int partial(void) { return 1; }"
     assert outcome.partial_payload == "int partial(void) { return 1; }"
-    assert outcome.failure_detail == "shared-project slice lean: timeout: Timed out after 1s."
+    assert outcome.failure_detail is not None
+    assert outcome.failure_detail.startswith("shared-project slice lean: timeout: Timed out after 1s.")
+    assert "stop_family=partial-timeout" in outcome.failure_detail
 
 
 def test_try_decompile_non_optimized_slice_reports_failure_detail(monkeypatch):
@@ -1056,7 +1058,7 @@ def test_try_decompile_non_optimized_slice_reports_failure_detail(monkeypatch):
     assert outcome.rendered is None
     assert outcome.failure_detail is not None
     assert outcome.failure_detail.startswith("shared-project slice lean: error: slice lift broke")
-    assert outcome.attempt_failures[0] == "shared-project slice lean: error: slice lift broke"
+    assert outcome.attempt_failures[0].startswith("shared-project slice lean: error: slice lift broke")
 
 
 def test_try_decompile_non_optimized_slice_retries_full_recovery_after_lean_miss(monkeypatch):
@@ -3614,6 +3616,34 @@ def test_register_direct_call_target_function_stubs_falls_back_to_capstone_direc
 
     assert count == 2
     assert set(created) == {(0x140D, True), (0x1140D, True)}
+
+
+def test_register_direct_call_target_function_stubs_uses_cod_call_names_for_unlabeled_targets():
+    created = {}
+
+    class FakeFunctionManager:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            stub = created.setdefault(addr, SimpleNamespace(addr=addr, name=f"sub_{addr:x}"))
+            return stub
+
+    function = SimpleNamespace(
+        get_call_sites=lambda: [0x10016, 0x10020],
+        get_call_target=lambda site: 0x1446 if site == 0x10016 else 0x183a,
+    )
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x10000, max_addr=0x4000)),
+        kb=SimpleNamespace(functions=FakeFunctionManager()),
+    )
+    cod_metadata = SimpleNamespace(call_names=("clock", "aNchkstk"))
+
+    count = decompile._register_direct_call_target_function_stubs(project, function, cod_metadata=cod_metadata)
+
+    assert count == 4
+    assert created[0x1446].name == "clock"
+    assert created[0x183A].name == "aNchkstk"
+    assert created[0x11446].name == "clock"
+    assert created[0x1183A].name == "aNchkstk"
 
 
 def test_rank_exe_function_seeds_uses_persistent_cache(monkeypatch, tmp_path):
