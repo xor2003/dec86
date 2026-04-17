@@ -18,6 +18,7 @@ from angr_platforms.X86_16.type_array_matching import (
     InductionVariable,
     InductionVariableCollector,
     apply_x86_16_array_expression_matching,
+    _cached_access_trait_profiles_8616,
 )
 
 
@@ -302,6 +303,78 @@ class TestPhase22Integration:
         }
         assert codegen._inertia_array_matching_stats["string_arrays"] == 2
         assert codegen._inertia_array_matching_stats["recovered_arrays"] == 2
+
+    def test_array_matching_caps_typed_candidate_sets(self):
+        records = []
+        for index in range(70):
+            records.append(
+                IRStringEffectRecord(
+                    index=index,
+                    family="movs",
+                    repeat_kind="rep",
+                    width=2,
+                    direction_mode="forward",
+                    source=IRAddress(
+                        space=MemSpace.DS,
+                        base=(f"si{index}",),
+                        size=2,
+                        status=AddressStatus.STABLE,
+                        segment_origin=SegmentOrigin.PROVEN,
+                    ),
+                    destination=IRAddress(
+                        space=MemSpace.ES,
+                        base=(f"di{index}",),
+                        size=2,
+                        status=AddressStatus.STABLE,
+                        segment_origin=SegmentOrigin.PROVEN,
+                    ),
+                    zf_sensitive=False,
+                    zero_seeded_accumulator=None,
+                )
+            )
+
+        codegen = SimpleNamespace(
+            cfunc=SimpleNamespace(addr=0x5000),
+            project=None,
+            _inertia_string_effect_artifact=IRStringEffectArtifact(records=tuple(records)),
+        )
+
+        result = apply_x86_16_array_expression_matching(codegen)
+
+        assert result is False
+        assert len(codegen._inertia_array_matching_string_candidates) == 64
+        assert codegen._inertia_array_matching_stats["string_arrays"] == 64
+
+    def test_array_matching_reuses_access_trait_profile_cache(self):
+        project = SimpleNamespace(
+            _inertia_access_traits={
+                0x4010: {
+                    "member_evidence": {
+                        ("member", ("reg", "si"), 2): 3,
+                    }
+                }
+            }
+        )
+
+        call_count = {"count": 0}
+
+        def _build_access_trait_evidence_profiles(traits):
+            call_count["count"] += 1
+            return {("reg", "si"): object()}
+
+        from angr_platforms.X86_16 import type_array_matching as array_matching
+
+        original = array_matching.build_access_trait_evidence_profiles
+        array_matching.build_access_trait_evidence_profiles = _build_access_trait_evidence_profiles
+        try:
+            first = _cached_access_trait_profiles_8616(project, 0x4010)
+            second = _cached_access_trait_profiles_8616(project, 0x4010)
+        finally:
+            array_matching.build_access_trait_evidence_profiles = original
+
+        assert first is second
+        assert call_count["count"] == 1
+        assert project._inertia_access_trait_profiles_cache[(0x4010, id(project._inertia_access_traits[0x4010]))] is first
 
     def test_array_matching_refuses_over_associated_segmented_storage(self):
         stable_key = ("ss", ("stack", "bp", -4))

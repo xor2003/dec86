@@ -23,6 +23,22 @@ def test_recovery_confidence_attaches_helper_summary_and_refusal_assumption():
     assert any(item.startswith("helper_summary=") for item in summary.diagnostics)
 
 
+def test_recovery_confidence_refuses_helper_eligibility_for_segment_clobbers():
+    summary = classify_x86_16_recovery_confidence(
+        {
+            "ok": True,
+            "decompiled_count": 1,
+            "direct_call_count": 1,
+            "register_clobbers": ("ds",),
+            "return_kind": "scalar",
+        }
+    )
+
+    assert summary.helper_summary is not None
+    assert summary.helper_summary.status == "refused"
+    assert any(item.kind == "helper_shape_refused" for item in summary.assumptions) is False
+
+
 def test_recovery_confidence_summary_accumulates_helper_counts():
     counts = summarize_recovery_confidence(
         [

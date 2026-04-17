@@ -196,6 +196,66 @@ def test_rewrite_flag_condition_pairs_refuses_incomplete_signed_mask_recovery():
     assert _c_expr_uses_var_8616(after_condition, flags_var) is True
 
 
+def test_rewrite_flag_condition_pairs_recovers_nested_flag_mask_inside_logical_and():
+    project = _project()
+    codegen = _codegen([])
+    flags_var = _reg(project, "flags", codegen, var_name="flags_tmp")
+    sf_predicate = CBinaryOp("CmpLT", _reg(project, "ax", codegen), _reg(project, "bx", codegen), codegen=codegen)
+    of_predicate = CBinaryOp("CmpLT", _reg(project, "cx", codegen), _reg(project, "dx", codegen), codegen=codegen)
+    other_guard = CUnaryOp(
+        "Not",
+        CBinaryOp("CmpLE", _reg(project, "si", codegen), _reg(project, "di", codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                flags_var,
+                CBinaryOp(
+                    "Or",
+                    CBinaryOp("Mul", sf_predicate, _const(0x80, codegen), codegen=codegen),
+                    CBinaryOp("Mul", of_predicate, _const(0x800, codegen), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            CIfElse(
+                [(
+                    CBinaryOp(
+                        "LogicalAnd",
+                        CBinaryOp(
+                            "CmpEQ",
+                            CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+                            CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                            codegen=codegen,
+                        ),
+                        other_guard,
+                        codegen=codegen,
+                    ),
+                    _empty_body(codegen),
+                )],
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _rewrite_flag_condition_pairs_8616(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    after_condition = codegen.cfunc.statements.statements[0].condition_and_nodes[0][0]
+    assert isinstance(after_condition, CBinaryOp)
+    assert after_condition.op == "LogicalAnd"
+    assert _c_expr_uses_var_8616(after_condition, flags_var) is False
+    assert isinstance(after_condition.lhs, CUnaryOp)
+    assert after_condition.lhs.op == "Not"
+    assert isinstance(after_condition.rhs, CUnaryOp)
+    assert after_condition.rhs.op == "Not"
+
+
 def test_fix_interval_guard_conditions_rewrites_impossible_bool_cite_interval():
     codegen = _codegen([])
     project = _project()

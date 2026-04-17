@@ -29,6 +29,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _typed_ir_address_spaces_8616(codegen) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
+    summary = getattr(artifact, "summary", None)
+    if not isinstance(summary, dict):
+        return (), ()
+    address_counts = summary.get("address_space_counts", {})
+    stable_counts = summary.get("stable_address_space_counts", {})
+    if not isinstance(address_counts, dict):
+        address_counts = {}
+    if not isinstance(stable_counts, dict):
+        stable_counts = {}
+    return tuple(sorted(str(key) for key in address_counts)), tuple(sorted(str(key) for key in stable_counts))
+
+
 class SegmentRegister(Enum):
     """x86-16 segment registers."""
 
@@ -372,9 +386,19 @@ class SegmentAssociationAnalyzer:
 def _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer: SegmentAssociationAnalyzer | None) -> bool:
     assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
     if not assignments or analyzer is None:
+        typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
+        if stable_spaces and "ss" not in stable_spaces:
+            return False
+        codegen._inertia_typed_ir_address_spaces = typed_spaces
+        codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
         return True
 
     decision = analyzer.lowering_decision(SegmentRegister.SS)
+    typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
+    codegen._inertia_typed_ir_address_spaces = typed_spaces
+    codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
+    if stable_spaces and "ss" not in stable_spaces:
+        return False
     return decision.associated_space == "stack" and decision.classification in {"single", "const"}
 
 

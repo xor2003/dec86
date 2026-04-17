@@ -14,6 +14,8 @@ def normalize_callee_name_8616(name: str | None) -> str | None:
     normalized = name.strip()
     if not normalized:
         return None
+    if normalized.endswith("()"):
+        normalized = normalized[:-2].rstrip()
     match = _CALLEE_NAMESPACE_RE_8616.fullmatch(normalized)
     if match is not None:
         return match.group("name")

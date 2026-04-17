@@ -13,6 +13,7 @@ def test_function_summary_collects_callsite_and_typed_ir_kinds(monkeypatch):
         info={
             "x86_16_vex_ir_summary": {
                 "condition_counts": {"compare": 2, "masked_nonzero": 1},
+                "register_clobbers": {"ds": 1, "cf": 1},
                 "address_space_counts": {"ss": 3, "ds": 1, "reg": 0},
                 "stable_address_space_counts": {"ss": 2, "ds": 0},
                 "frame_slot_count": 3,
@@ -43,6 +44,7 @@ def test_function_summary_collects_callsite_and_typed_ir_kinds(monkeypatch):
         direct_call_count=2,
         callsite_kinds=("direct_far", "direct_near"),
         typed_ir_condition_kinds=("compare", "masked_nonzero"),
+        typed_ir_register_clobbers=("cf", "ds"),
         typed_ir_address_spaces=("ds", "ss"),
         typed_ir_stable_address_spaces=("ss",),
         frame_slot_count=3,

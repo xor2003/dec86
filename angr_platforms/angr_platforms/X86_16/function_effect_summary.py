@@ -13,6 +13,7 @@ __all__ = [
 class FunctionEffectSummary:
     register_inputs: tuple[str, ...] = ()
     register_outputs: tuple[str, ...] = ()
+    register_clobbers: tuple[str, ...] = ()
     frame_stack_reads: tuple[int, ...] = ()
     frame_stack_writes: tuple[int, ...] = ()
     memory_reads: tuple[str, ...] = ()
@@ -35,6 +36,7 @@ class FunctionEffectSummary:
         return (
             f"regs_in={len(self.register_inputs)} "
             f"regs_out={len(self.register_outputs)} "
+            f"regs_clobber={len(self.register_clobbers)} "
             f"frame_reads={len(self.frame_stack_reads)} "
             f"frame_writes={len(self.frame_stack_writes)} "
             f"direct_calls={self.direct_call_count} "
@@ -48,6 +50,7 @@ class FunctionEffectSummary:
         return {
             "register_inputs": list(self.register_inputs),
             "register_outputs": list(self.register_outputs),
+            "register_clobbers": list(self.register_clobbers),
             "frame_stack_reads": list(self.frame_stack_reads),
             "frame_stack_writes": list(self.frame_stack_writes),
             "memory_reads": list(self.memory_reads),
@@ -91,6 +94,7 @@ def summarize_x86_16_function_effects(source: Any) -> FunctionEffectSummary:
     return FunctionEffectSummary(
         register_inputs=_sorted_str_tuple(_value(source, "register_inputs", ())),
         register_outputs=_sorted_str_tuple(_value(source, "register_outputs", ())),
+        register_clobbers=_sorted_str_tuple(_value(source, "register_clobbers", ())),
         frame_stack_reads=_sorted_int_tuple(_value(source, "frame_stack_reads", ())),
         frame_stack_writes=_sorted_int_tuple(_value(source, "frame_stack_writes", ())),
         memory_reads=_sorted_str_tuple(_value(source, "memory_reads", ())),

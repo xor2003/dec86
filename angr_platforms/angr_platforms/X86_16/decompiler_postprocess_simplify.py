@@ -54,6 +54,7 @@ __all__ = [
     "_simplify_structured_expressions_8616",
     "_simplify_boolean_cites_8616",
     "_eliminate_single_use_temporaries_8616",
+    "_maybe_eliminate_single_use_temporaries_8616",
     "describe_x86_16_projection_cleanup_rules",
 ]
 
@@ -497,3 +498,9 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
     root = codegen.cfunc.statements
     visit(root)
     return changed
+
+
+def _maybe_eliminate_single_use_temporaries_8616(project, codegen) -> bool:
+    if not getattr(project, "_inertia_postprocess_single_use_temporaries_enabled", False):
+        return False
+    return _eliminate_single_use_temporaries_8616(codegen)

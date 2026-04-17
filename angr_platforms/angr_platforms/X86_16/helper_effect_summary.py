@@ -82,6 +82,14 @@ def summarize_x86_16_helper_eligibility(source: Any) -> HelperEligibilitySummary
                 "non-frame memory effects block single-wrapper helper eligibility",
             )
         )
+    clobbers = set(effect_summary.register_clobbers)
+    if clobbers.intersection({"ss", "ds", "es", "cs", "flags", "cf", "zf", "sf", "of"}):
+        refusals.append(
+            HelperEligibilityRefusal(
+                "register_clobber_side_effects",
+                "segment or flag clobbers block single-wrapper helper eligibility",
+            )
+        )
     if effect_summary.return_kind == "unknown":
         refusals.append(
             HelperEligibilityRefusal(

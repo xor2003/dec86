@@ -38,6 +38,13 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+MAX_TYPED_ARRAY_CANDIDATES = 64
+
+
+def _limit_sorted_mapping_8616(mapping: dict, limit: int) -> dict:
+    if limit <= 0 or len(mapping) <= limit:
+        return mapping
+    return dict(list(mapping.items())[:limit])
 
 
 def _typed_ir_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
@@ -97,6 +104,27 @@ def _typed_string_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], 
                 "role": role,
             }
     return dict(sorted(candidates.items()))
+
+
+def _cached_access_trait_profiles_8616(project, func_addr: int):
+    traits_cache = getattr(project, "_inertia_access_traits", None)
+    if not isinstance(traits_cache, dict) or func_addr not in traits_cache:
+        return None
+    traits = traits_cache.get(func_addr)
+    if not isinstance(traits, dict):
+        return None
+
+    profile_cache = getattr(project, "_inertia_access_trait_profiles_cache", None)
+    if not isinstance(profile_cache, dict):
+        profile_cache = {}
+        setattr(project, "_inertia_access_trait_profiles_cache", profile_cache)
+
+    cache_key = (func_addr, id(traits))
+    profiles = profile_cache.get(cache_key)
+    if profiles is None:
+        profiles = build_access_trait_evidence_profiles(traits)
+        profile_cache[cache_key] = profiles
+    return profiles
 
 
 @dataclass(frozen=True)
@@ -350,25 +378,23 @@ def _cond_uses_var_8616(node, target) -> bool:
     return False
 
 
-def _profile_induction_match_8616(codegen, loop_var) -> bool:
+def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None:
     project = getattr(codegen, "project", None)
     cfunc = getattr(codegen, "cfunc", None)
-    traits_cache = getattr(project, "_inertia_access_traits", None)
     func_addr = getattr(cfunc, "addr", None)
-    if not isinstance(traits_cache, dict) or func_addr not in traits_cache:
-        return True
+    if not isinstance(func_addr, int):
+        return None
 
-    traits = traits_cache.get(func_addr)
-    if not isinstance(traits, dict):
-        return True
-    profiles = build_access_trait_evidence_profiles(traits)
+    profiles = _cached_access_trait_profiles_8616(project, func_addr)
+    if profiles is None:
+        return None
     variable = getattr(loop_var, "variable", None)
     if not isinstance(variable, SimRegisterVariable):
-        return True
+        return None
     profile = profiles.get(("reg", getattr(variable, "reg", None)))
     if profile is None:
-        return True
-    return infer_induction_variable(profile) is not None
+        return None
+    return infer_induction_variable(profile)
 
 
 def _rewrite_induction_loops_8616(codegen) -> bool:
@@ -406,7 +432,10 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
         loop_var, _delta = update
         if not _cond_uses_var_8616(guard, loop_var):
             return node
-        if not _profile_induction_match_8616(codegen, loop_var):
+        induction_info = _profile_induction_match_8616(codegen, loop_var)
+        if induction_info is None:
+            return node
+        if abs(int(_delta)) != int(getattr(induction_info, "stride", 0) or 0):
             return node
 
         node.condition = CBinaryOp(
@@ -476,6 +505,8 @@ def apply_x86_16_array_expression_matching(codegen) -> bool:
         )
         typed_ir_candidates = _typed_ir_array_candidates(codegen)
         typed_string_candidates = _typed_string_array_candidates(codegen)
+        typed_ir_candidates = _limit_sorted_mapping_8616(typed_ir_candidates, MAX_TYPED_ARRAY_CANDIDATES)
+        typed_string_candidates = _limit_sorted_mapping_8616(typed_string_candidates, MAX_TYPED_ARRAY_CANDIDATES)
         # Track that array matching pass ran
         codegen._inertia_array_matching_applied = True
         codegen._inertia_array_matching_bridge = bridge

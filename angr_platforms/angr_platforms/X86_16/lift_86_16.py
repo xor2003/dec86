@@ -1,3 +1,4 @@
+import contextlib
 import logging
 from typing import Any
 
@@ -7,6 +8,7 @@ from pyvex.lifting.util import GymratLifter, Instruction, JumpKind, ParseError
 from pyvex.lifting.util.vex_helper import Type
 
 from .arch_86_16 import Arch86_16
+from .ir.core import IRCondition, IRValue, MemSpace
 from .emulator import Emulator
 from .instr16 import Instr16
 from .instr32 import Instr32
@@ -23,6 +25,86 @@ def _bitstream_is_empty(bitstrm: bitstring.ConstBitStream) -> bool:
         return False
     except bitstring.ReadError:
         return True
+
+
+def _condition_value_from_ir_value_8616(instruction: Instruction, value: IRValue):
+    if value.space == MemSpace.CONST:
+        bits = max(1, int(value.size or 0) * 8 or 16)
+        if bits <= 8:
+            ty = Type.int_8
+        elif bits <= 16:
+            ty = Type.int_16
+        else:
+            ty = Type.int_32
+        return instruction.constant(0 if value.const is None else int(value.const), ty)
+    if value.space == MemSpace.REG and isinstance(value.name, str) and value.name:
+        reg_name = value.name.lower()
+        bits = int(value.size or 0) * 8
+        if bits <= 8:
+            return instruction.get(reg_name, Type.int_8)
+        return instruction.get(reg_name, Type.int_16)
+    if value.space == MemSpace.TMP and isinstance(value.name, str) and value.name:
+        bits = int(value.size or 0) * 8
+        if bits <= 8:
+            ty = Type.int_8
+        elif bits <= 16:
+            ty = Type.int_16
+        else:
+            ty = Type.int_32
+        return instruction.get(value.name, ty)
+    return None
+
+
+def _direct_jcc_condition_from_last_condition_8616(instruction: Instruction, kind: str, condition: IRCondition):
+    args = tuple(getattr(condition, "args", ()) or ())
+    op = str(getattr(condition, "op", ""))
+    if op in {"compare", "masked_nonzero"}:
+        if len(args) != 2:
+            return None
+        lhs = _condition_value_from_ir_value_8616(instruction, args[0])
+        rhs = _condition_value_from_ir_value_8616(instruction, args[1])
+        if lhs is None or rhs is None:
+            return None
+        if op == "masked_nonzero":
+            masked = lhs & rhs
+            if kind in {"je", "jz"}:
+                return masked == instruction.constant(0, Type.int_16)
+            if kind in {"jne", "jnz"}:
+                return masked != instruction.constant(0, Type.int_16)
+            return None
+
+        if kind in {"je", "jz"}:
+            return lhs == rhs
+        if kind in {"jne", "jnz"}:
+            return lhs != rhs
+        if kind == "jle":
+            return lhs.signed <= rhs.signed
+        if kind == "jg":
+            return lhs.signed > rhs.signed
+        if kind == "jl":
+            return lhs.signed < rhs.signed
+        if kind == "jge":
+            return lhs.signed >= rhs.signed
+        if kind in {"jb", "jc"}:
+            return lhs < rhs
+        if kind in {"jae", "jnb", "jnc"}:
+            return lhs >= rhs
+        if kind == "jbe":
+            return lhs <= rhs
+        if kind == "ja":
+            return lhs > rhs
+        return None
+
+    if op in {"zero", "nonzero"} and len(args) == 1:
+        value = _condition_value_from_ir_value_8616(instruction, args[0])
+        if value is None:
+            return None
+        zero = instruction.constant(0, Type.int_16)
+        if op == "zero":
+            return value == zero if kind in {"je", "jz"} else value != zero if kind in {"jne", "jnz"} else None
+        return value != zero if kind in {"je", "jz"} else value == zero if kind in {"jne", "jnz"} else None
+
+    return None
 
 
 class _LifterInstructionFacade:
@@ -514,6 +596,19 @@ class Instruction_ANY(Instruction):
         if not getattr(self, "_past_instructions", None):
             return None
         prev = self._past_instructions[-1]
+        prev_emu = getattr(prev, "emu", None)
+        last_condition = getattr(prev_emu, "get_last_condition", lambda: None)()
+
+        def _finish(result):
+            if isinstance(last_condition, IRCondition) and prev_emu is not None:
+                with contextlib.suppress(Exception):
+                    prev_emu.clear_last_condition()
+            return result
+
+        if isinstance(last_condition, IRCondition):
+            branch_cond = _direct_jcc_condition_from_last_condition_8616(self, kind, last_condition)
+            if branch_cond is not None:
+                return _finish(branch_cond)
         prev_semantics = getattr(prev, "simple_semantics", None)
         if prev_semantics is None:
             return None
@@ -523,25 +618,25 @@ class Instruction_ANY(Instruction):
         lhs, rhs = operands
 
         if kind in {"je", "jz"}:
-            return lhs == rhs
+            return _finish(lhs == rhs)
         if kind in {"jne", "jnz"}:
-            return lhs != rhs
+            return _finish(lhs != rhs)
         if kind == "jle":
-            return lhs.signed <= rhs.signed
+            return _finish(lhs.signed <= rhs.signed)
         if kind == "jg":
-            return lhs.signed > rhs.signed
+            return _finish(lhs.signed > rhs.signed)
         if kind == "jl":
-            return lhs.signed < rhs.signed
+            return _finish(lhs.signed < rhs.signed)
         if kind == "jge":
-            return lhs.signed >= rhs.signed
+            return _finish(lhs.signed >= rhs.signed)
         if kind in {"jb", "jc"}:
-            return lhs < rhs
+            return _finish(lhs < rhs)
         if kind in {"jae", "jnb", "jnc"}:
-            return lhs >= rhs
+            return _finish(lhs >= rhs)
         if kind == "jbe":
-            return lhs <= rhs
+            return _finish(lhs <= rhs)
         if kind == "ja":
-            return lhs > rhs
+            return _finish(lhs > rhs)
         return None
 
     def _emit_simple_jcc(self, taken_cond, target):

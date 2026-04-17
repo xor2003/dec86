@@ -53,6 +53,20 @@ def test_normalize_call_target_names_rewrites_namespaced_callee_target():
     assert call.callee_target == "InitBars"
 
 
+def test_normalize_call_target_names_strips_wrapper_suffix_parens():
+    project = _project()
+    codegen = _empty_codegen(project)
+    call = CFunctionCall("::0x1544::InitBars()", None, [], codegen=codegen)
+    codegen.cfunc.statements = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _normalize_call_target_names_8616(codegen)
+
+    call = codegen.cfunc.statements.statements[0]
+    assert changed is True
+    assert call.callee_target == "InitBars"
+
+
 def test_normalize_call_target_names_rewrites_namespaced_callee_func_name():
     project = _project()
     codegen = _empty_codegen(project)

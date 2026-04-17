@@ -10,6 +10,7 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_simplify import (
     _eliminate_single_use_temporaries_8616,
+    _maybe_eliminate_single_use_temporaries_8616,
     _simplify_structured_expressions_8616,
 )
 class _DummyCodegen:
@@ -132,3 +133,26 @@ def test_eliminate_single_use_temporaries_refuses_multi_use_temporary():
 
     assert changed is False
     assert len(codegen.cfunc.statements.statements) == 2
+
+
+def test_maybe_eliminate_single_use_temporaries_respects_feature_flag():
+    project = _project()
+    codegen = _codegen([])
+    temp = CVariable(SimRegisterVariable(4, 2, name="tmp_1"), codegen=codegen)
+    expr = CBinaryOp("Add", _reg(project, "ax", codegen), _const(1, codegen), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(temp, expr, codegen=codegen),
+            CReturn(temp, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    assert _maybe_eliminate_single_use_temporaries_8616(project, codegen) is False
+    assert len(codegen.cfunc.statements.statements) == 2
+
+    project._inertia_postprocess_single_use_temporaries_enabled = True
+    assert _maybe_eliminate_single_use_temporaries_8616(project, codegen) is True
+    assert len(codegen.cfunc.statements.statements) == 1

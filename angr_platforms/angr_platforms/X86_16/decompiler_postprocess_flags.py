@@ -24,6 +24,7 @@ __all__ = [
     "_recover_ordering_condition_from_flag_mask_8616",
     "_recover_signed_condition_8616",
     "_recover_unsigned_condition_8616",
+    "_rewrite_flag_condition_expr_8616",
     "_c_expr_uses_var_8616",
     "_rewrite_flag_condition_pairs_8616",
     "_bool_cite_values_8616",
@@ -181,6 +182,26 @@ def _recover_ordering_condition_from_flag_mask_8616(expr, flag_test_info, codege
     return predicate
 
 
+def _rewrite_flag_condition_expr_8616(node, flag_var, flag_expr, codegen):
+    changed = False
+
+    def transform(expr):
+        nonlocal changed
+        info = _extract_flag_test_info_8616(expr)
+        if info is None or not _same_c_expression_8616(info[0], flag_var):
+            return expr
+        rewritten = _recover_ordering_condition_from_flag_mask_8616(flag_expr, info, codegen)
+        if rewritten is None:
+            return expr
+        changed = True
+        return rewritten
+
+    new_node = transform(node)
+    if _replace_c_children_8616(new_node, transform):
+        changed = True
+    return new_node, changed
+
+
 def _c_expr_uses_var_8616(node, target) -> bool:
     if node is None:
         return False
@@ -252,27 +273,28 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
             ):
                 cond_nodes = getattr(next_stmt, "condition_and_nodes", None)
                 if isinstance(cond_nodes, list) and cond_nodes:
-                    cond, _body = cond_nodes[0]
-                    info = _extract_flag_test_info_8616(cond)
-                    if info is not None:
-                        flag_var = info[0]
-                        if _same_c_expression_8616(assign_stmt.lhs, flag_var):
-                            new_cond = _recover_ordering_condition_from_flag_mask_8616(
-                                assign_stmt.rhs,
-                                info,
-                                codegen,
-                            )
-                            if new_cond is not None:
-                                cond_nodes[0] = (new_cond, cond_nodes[0][1])
-                                changed = True
-                                later_uses = any(
-                                    _c_expr_uses_var_8616(rest, assign_stmt.lhs) for rest in statements[i + 2 :]
-                                )
-                                if not later_uses:
-                                    if assign_container is None:
-                                        matched = True
-                                    else:
-                                        assign_container.statements = assign_container.statements[:-1]
+                    pair_changed = False
+                    new_pairs = []
+                    for cond, body in cond_nodes:
+                        new_cond, cond_changed = _rewrite_flag_condition_expr_8616(
+                            cond,
+                            assign_stmt.lhs,
+                            assign_stmt.rhs,
+                            codegen,
+                        )
+                        pair_changed = pair_changed or cond_changed
+                        new_pairs.append((new_cond, body))
+                    if pair_changed:
+                        next_stmt.condition_and_nodes = new_pairs
+                        changed = True
+                        later_uses = _c_expr_uses_var_8616(next_stmt, assign_stmt.lhs) or any(
+                            _c_expr_uses_var_8616(rest, assign_stmt.lhs) for rest in statements[i + 2 :]
+                        )
+                        if not later_uses:
+                            if assign_container is None:
+                                matched = True
+                            else:
+                                assign_container.statements = assign_container.statements[:-1]
 
             if not matched:
                 new_statements.append(stmt)

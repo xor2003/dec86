@@ -70,6 +70,11 @@ def _build_decompiler_postprocess_passes():
             False,
         ),
         DecompilerPostprocessPassSpec(
+            "_maybe_eliminate_single_use_temporaries_8616",
+            _simplify._maybe_eliminate_single_use_temporaries_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_normalize_function_prototype_arg_names_8616",
             _post._normalize_function_prototype_arg_names_8616,
             True,
@@ -125,7 +130,7 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
 
     profile = info.get("x86_16_decompilation_profile", {})
     if isinstance(profile, dict) and profile.get("wrapper_like"):
-        return DECOMPILER_POSTPROCESS_PASSES[:10]
+        return DECOMPILER_POSTPROCESS_PASSES[:11]
 
     return DECOMPILER_POSTPROCESS_PASSES
 

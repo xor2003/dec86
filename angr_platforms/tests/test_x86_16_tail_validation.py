@@ -43,6 +43,7 @@ from angr_platforms.X86_16.tail_validation import (
     persist_x86_16_tail_validation_snapshot,
     resolve_x86_16_validation_cached_artifact,
     summarize_x86_16_tail_validation_records,
+    x86_16_tail_validation_snapshot_passed,
 )
 
 
@@ -829,6 +830,7 @@ def test_tail_validation_diff_formatter_reports_observable_delta():
 def test_tail_validation_verdict_builder_includes_stage_mode_and_status():
     validation = {
         "changed": True,
+        "status": "changed",
         "mode": "live_out",
         "summary_text": "helper_calls: +helper_ping",
     }
@@ -838,12 +840,26 @@ def test_tail_validation_verdict_builder_includes_stage_mode_and_status():
     assert verdict == "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping"
 
 
+def test_tail_validation_verdict_builder_preserves_non_success_status():
+    verdict = build_x86_16_tail_validation_verdict(
+        "postprocess",
+        {
+            "status": "unknown",
+            "mode": "live_out",
+            "summary_text": "validation metadata was not collected",
+        },
+    )
+
+    assert verdict == "postprocess whole-tail validation [live_out] unknown: validation metadata was not collected"
+
+
 def test_tail_validation_snapshot_extracts_known_stage_fields():
     snapshot = extract_x86_16_tail_validation_snapshot(
         {
             "x86_16_tail_validation": {
                 "structuring": {
                     "changed": False,
+                    "status": "stable",
                     "mode": "live_out",
                     "verdict": "structuring whole-tail validation [live_out] stable: no observable whole-tail changes",
                     "summary_text": "no observable whole-tail changes",
@@ -856,6 +872,7 @@ def test_tail_validation_snapshot_extracts_known_stage_fields():
     assert snapshot == {
         "structuring": {
             "changed": False,
+            "status": "stable",
             "mode": "live_out",
             "verdict": "structuring whole-tail validation [live_out] stable: no observable whole-tail changes",
             "summary_text": "no observable whole-tail changes",
@@ -898,6 +915,7 @@ def test_tail_validation_snapshot_can_be_persisted_on_codegen_without_function_i
 
     assert persisted == {
         "changed": True,
+        "status": "changed",
         "mode": "live_out",
         "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
         "summary_text": "helper_calls: +helper_ping",
@@ -905,6 +923,7 @@ def test_tail_validation_snapshot_can_be_persisted_on_codegen_without_function_i
     assert codegen._inertia_tail_validation_snapshot == {
         "postprocess": {
             "changed": True,
+            "status": "changed",
             "mode": "live_out",
             "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
             "summary_text": "helper_calls: +helper_ping",
@@ -917,6 +936,7 @@ def test_tail_validation_snapshot_persists_changed_postprocess_verdict_for_later
     codegen = _DummyCodegen()
     validation = {
         "changed": True,
+        "status": "changed",
         "mode": "live_out",
         "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
         "summary_text": "helper_calls: +helper_ping",
@@ -932,6 +952,14 @@ def test_tail_validation_snapshot_persists_changed_postprocess_verdict_for_later
     assert persisted == validation
     assert extract_x86_16_tail_validation_snapshot(function_info) == {"postprocess": validation}
     assert codegen._inertia_tail_validation_snapshot == {"postprocess": validation}
+
+
+def test_tail_validation_snapshot_passed_rejects_non_stable_statuses():
+    snapshot = {"postprocess": {"status": "stable"}}
+    assert x86_16_tail_validation_snapshot_passed(snapshot, expected_stages=("postprocess",)) is True
+    assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "changed"}}, expected_stages=("postprocess",)) is False
+    assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "unknown"}}, expected_stages=("postprocess",)) is False
+    assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "uncollected"}}, expected_stages=("postprocess",)) is False
 
 
 def test_tail_validation_record_summary_aggregates_stage_status():

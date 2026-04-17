@@ -647,8 +647,10 @@ def extract_x86_16_tail_validation_snapshot(function_info: Mapping[str, object] 
         entry = validation_info.get(stage)
         if not isinstance(entry, Mapping):
             continue
+        status = entry.get("status")
         stages[stage] = {
             "changed": bool(entry.get("changed", False)),
+            "status": status if isinstance(status, str) and status else ("changed" if bool(entry.get("changed", False)) else "stable"),
             "mode": entry.get("mode"),
             "verdict": entry.get("verdict"),
             "summary_text": entry.get("summary_text"),
@@ -673,6 +675,11 @@ def x86_16_tail_validation_snapshot_passed(
         entry = snapshot.get(stage)
         if not isinstance(entry, Mapping):
             return False
+        status = entry.get("status")
+        if isinstance(status, str) and status:
+            if status != "stable":
+                return False
+            continue
         if bool(entry.get("changed", False)):
             return False
     return True
@@ -685,8 +692,12 @@ def persist_x86_16_tail_validation_snapshot(
     stage: str,
     validation: Mapping[str, object],
 ) -> dict[str, object]:
+    status = validation.get("status")
+    if not isinstance(status, str) or not status:
+        status = "changed" if bool(validation.get("changed", False)) else "stable"
     snapshot_entry = {
         "changed": bool(validation.get("changed", False)),
+        "status": status,
         "mode": validation.get("mode"),
         "verdict": validation.get("verdict"),
         "summary_text": validation.get("summary_text"),
@@ -1344,6 +1355,7 @@ def compare_x86_16_tail_validation_summaries(
             changed = True
         diff["delta"][field_name] = {"added": added, "removed": removed}
     diff["changed"] = changed
+    diff["status"] = "changed" if changed else "stable"
     return diff
 
 
@@ -1396,7 +1408,9 @@ def build_x86_16_tail_validation_verdict(stage: str, validation: dict[str, objec
     summary_text = validation.get("summary_text")
     if not isinstance(summary_text, str) or not summary_text:
         summary_text = format_x86_16_tail_validation_diff(validation)
-    status = "changed" if validation.get("changed", False) else "stable"
+    status = validation.get("status")
+    if not isinstance(status, str) or not status:
+        status = "changed" if validation.get("changed", False) else "stable"
     return f"{stage} whole-tail validation [{mode}] {status}: {summary_text}{_format_x86_16_tail_validation_timing_suffix(validation)}"
 
 
@@ -1452,6 +1466,8 @@ def build_x86_16_tail_validation_cached_result(
         store_value=dict,
     )
     result = dict(cached["value"])
+    if "status" not in result or not isinstance(result.get("status"), str) or not result.get("status"):
+        result["status"] = "changed" if bool(result.get("changed", False)) else "stable"
     if "summary_text" not in result:
         result["summary_text"] = format_x86_16_tail_validation_diff(result)
     if "scope" not in result:

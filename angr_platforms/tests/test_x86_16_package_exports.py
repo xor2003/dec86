@@ -154,6 +154,7 @@ def test_x86_16_decompiler_postprocess_registry_order():
         "_prune_overwritten_flag_assignments_8616",
         "_fix_interval_guard_conditions_8616",
         "_simplify_boolean_cites_8616",
+        "_maybe_eliminate_single_use_temporaries_8616",
         "_normalize_function_prototype_arg_names_8616",
         "_attach_callsite_summaries_8616",
         "_materialize_callsite_prototypes_8616",
@@ -208,6 +209,7 @@ def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
         "_prune_overwritten_flag_assignments_8616",
         "_fix_interval_guard_conditions_8616",
         "_simplify_boolean_cites_8616",
+        "_maybe_eliminate_single_use_temporaries_8616",
     )
 
 
