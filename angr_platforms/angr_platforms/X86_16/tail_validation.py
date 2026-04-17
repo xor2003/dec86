@@ -166,6 +166,67 @@ def _json_fingerprint(payload: object) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+_INVERTED_COMPARISON_OPS_8616 = {
+    "CmpEQ": "CmpNE",
+    "CmpNE": "CmpEQ",
+    "CmpLT": "CmpGE",
+    "CmpLE": "CmpGT",
+    "CmpGT": "CmpLE",
+    "CmpGE": "CmpLT",
+}
+
+
+def _invert_condition_fingerprint_8616(node, project, contextual_condition_fingerprints: Mapping[int, str]) -> str | None:
+    if isinstance(node, CBinaryOp):
+        inverted_op = _INVERTED_COMPARISON_OPS_8616.get(node.op)
+        if inverted_op is not None:
+            lhs = _expr_fingerprint(node.lhs, project)
+            rhs = _expr_fingerprint(node.rhs, project)
+            return f"{inverted_op}({lhs},{rhs})"
+    if isinstance(node, CUnaryOp) and node.op == "Not":
+        return contextual_condition_fingerprints.get(id(node.operand), _expr_fingerprint(node.operand, project))
+    fingerprint = contextual_condition_fingerprints.get(id(node), _expr_fingerprint(node, project))
+    return _wrap_not_fingerprint(fingerprint)
+
+
+def _extract_loop_break_guard_normalization_8616(
+    loop, project, contextual_condition_fingerprints: Mapping[int, str]
+) -> tuple[str, set[int]] | None:
+    condition = getattr(loop, "condition", None)
+    if _c_constant_int_value(condition) != 1:
+        return None
+
+    body = getattr(loop, "body", None)
+    statements = tuple(getattr(body, "statements", ()) or ())
+    if not statements:
+        return None
+
+    first_stmt = statements[0]
+    break_cond = None
+    suppressed_node_ids = {id(first_stmt)}
+
+    if isinstance(first_stmt, CIfBreak):
+        break_cond = getattr(first_stmt, "condition", None)
+    elif isinstance(first_stmt, CIfElse):
+        branches = tuple(getattr(first_stmt, "condition_and_nodes", ()) or ())
+        if len(branches) != 1 or getattr(first_stmt, "else_node", None) is not None:
+            return None
+        break_cond, branch_node = branches[0]
+        branch_statements = tuple(getattr(branch_node, "statements", ()) or ())
+        if len(branch_statements) != 1 or not isinstance(branch_statements[0], CBreak):
+            return None
+        suppressed_node_ids.add(id(branch_statements[0]))
+    else:
+        return None
+
+    if break_cond is None:
+        return None
+    normalized = _invert_condition_fingerprint_8616(break_cond, project, contextual_condition_fingerprints)
+    if normalized is None:
+        return None
+    return normalized, suppressed_node_ids
+
+
 def _node_boundary_fingerprint(node, project):
     if node is None:
         return None
@@ -1146,8 +1207,20 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
         return X86_16TailValidationSummary((), (), (), (), (), (), (), ())
     observed_locations = _collect_observed_locations(root, project, mode)
     contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
+    normalized_loop_conditions: dict[int, str] = {}
+    suppressed_control_flow_nodes: set[int] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CWhileLoop):
+            continue
+        normalized = _extract_loop_break_guard_normalization_8616(node, project, contextual_condition_fingerprints)
+        if normalized is None:
+            continue
+        normalized_loop_conditions[id(node)] = normalized[0]
+        suppressed_control_flow_nodes.update(normalized[1])
 
     for node in _iter_c_nodes_deep_8616(root):
+        if id(node) in suppressed_control_flow_nodes:
+            continue
         if isinstance(node, CFunctionCall):
             helper_calls.add(_call_target_name(node))
         elif isinstance(node, CReturn):
@@ -1186,7 +1259,10 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
                 conditions.add(cond_fingerprint)
         elif isinstance(node, CWhileLoop):
             cond = getattr(node, "condition", None)
-            cond_fingerprint = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
+            cond_fingerprint = normalized_loop_conditions.get(
+                id(node),
+                contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project)),
+            )
             control_flow_effects.add(f"while:{cond_fingerprint}")
             if mode == "live_out":
                 conditions.add(cond_fingerprint)

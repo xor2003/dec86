@@ -21,6 +21,9 @@ from .decompiler_postprocess_utils import (
 __all__ = [
     "_extract_flag_test_info_8616",
     "_extract_flag_predicate_from_expr_8616",
+    "_recover_ordering_condition_from_flag_mask_8616",
+    "_recover_signed_condition_8616",
+    "_recover_unsigned_condition_8616",
     "_c_expr_uses_var_8616",
     "_rewrite_flag_condition_pairs_8616",
     "_bool_cite_values_8616",
@@ -35,6 +38,11 @@ __all__ = [
     "_stmt_reads_reg_before_write_8616",
     "_prune_overwritten_flag_assignments_8616",
 ]
+
+_CF_MASK_8616 = 0x1
+_ZF_MASK_8616 = 0x40
+_SF_MASK_8616 = 0x80
+_OF_MASK_8616 = 0x800
 
 
 def _extract_flag_test_info_8616(node):
@@ -60,6 +68,8 @@ def _extract_flag_test_info_8616(node):
 
     lhs = node.lhs
     rhs = node.rhs
+
+    # Pattern 1: (flags & bit) == 0  or 0 == (flags & bit)
     zero = None
     masked = None
     if isinstance(lhs, CBinaryOp) and lhs.op == "And" and isinstance(rhs, CConstant) and rhs.value == 0:
@@ -68,24 +78,45 @@ def _extract_flag_test_info_8616(node):
     elif isinstance(rhs, CBinaryOp) and rhs.op == "And" and isinstance(lhs, CConstant) and lhs.value == 0:
         masked = rhs
         zero = lhs
-    if masked is None or zero is None:
-        return None
 
-    mask_lhs = masked.lhs
-    mask_rhs = masked.rhs
-    if isinstance(mask_lhs, CConstant) and isinstance(mask_lhs.value, int) and isinstance(mask_rhs, CVariable):
-        bit = mask_lhs.value
-        var = mask_rhs
-    elif isinstance(mask_rhs, CConstant) and isinstance(mask_rhs.value, int) and isinstance(mask_lhs, CVariable):
-        bit = mask_rhs.value
-        var = mask_lhs
-    else:
-        return None
+    if masked is not None and zero is not None:
+        mask_lhs = masked.lhs
+        mask_rhs = masked.rhs
+        if isinstance(mask_lhs, CConstant) and isinstance(mask_lhs.value, int) and isinstance(mask_rhs, CVariable):
+            bit = mask_lhs.value
+            var = mask_rhs
+        elif isinstance(mask_rhs, CConstant) and isinstance(mask_rhs.value, int) and isinstance(mask_lhs, CVariable):
+            bit = mask_rhs.value
+            var = mask_lhs
+        else:
+            return None
+        predicate_negated = invert
+        if node.op == "CmpEQ":
+            predicate_negated = not predicate_negated
+        return var, bit, predicate_negated
 
-    predicate_negated = invert
-    if node.op == "CmpEQ":
-        predicate_negated = not predicate_negated
-    return var, bit, predicate_negated
+    # Pattern 2: (flags & bit1) == (flags & bit2)  (or !=)
+    # Both sides must be And with same variable
+    if isinstance(lhs, CBinaryOp) and lhs.op == "And" and isinstance(rhs, CBinaryOp) and rhs.op == "And":
+        # Extract variable and bits from each side
+        def extract_bit_and_var(expr):
+            if isinstance(expr.lhs, CConstant) and isinstance(expr.lhs.value, int) and isinstance(expr.rhs, CVariable):
+                return expr.lhs.value, expr.rhs
+            if isinstance(expr.rhs, CConstant) and isinstance(expr.rhs.value, int) and isinstance(expr.lhs, CVariable):
+                return expr.rhs.value, expr.lhs
+            return None, None
+        bit1, var1 = extract_bit_and_var(lhs)
+        bit2, var2 = extract_bit_and_var(rhs)
+        if bit1 is not None and bit2 is not None and var1 is not None and var2 is not None:
+            if _same_c_expression_8616(var1, var2):
+                predicate_negated = invert
+                if node.op == "CmpEQ":
+                    predicate_negated = not predicate_negated
+                # Return var, bit1, bit2, predicate_negated
+                # We'll pack as a 4-tuple; caller must adapt
+                return var1, bit1, bit2, predicate_negated
+
+    return None
 
 
 def _extract_flag_predicate_from_expr_8616(node, bit: int):
@@ -103,6 +134,51 @@ def _extract_flag_predicate_from_expr_8616(node, bit: int):
             if rhs is not None:
                 return rhs
     return None
+
+
+def _recover_unsigned_condition_8616(expr, bit: int, codegen):
+    if bit not in {_CF_MASK_8616, _ZF_MASK_8616}:
+        return None
+    return _extract_flag_predicate_from_expr_8616(expr, bit)
+
+
+def _recover_signed_condition_8616(expr, bit1: int, bit2: int, codegen):
+    if {bit1, bit2} != {_SF_MASK_8616, _OF_MASK_8616}:
+        return None
+
+    sf_predicate = _extract_flag_predicate_from_expr_8616(expr, _SF_MASK_8616)
+    of_predicate = _extract_flag_predicate_from_expr_8616(expr, _OF_MASK_8616)
+    if sf_predicate is None or of_predicate is None:
+        return None
+
+    return CBinaryOp(
+        "CmpNE",
+        sf_predicate,
+        of_predicate,
+        codegen=codegen,
+    )
+
+
+def _recover_ordering_condition_from_flag_mask_8616(expr, flag_test_info, codegen):
+    if flag_test_info is None:
+        return None
+
+    if len(flag_test_info) == 3:
+        _flag_var, bit, negate_predicate = flag_test_info
+        predicate = _recover_unsigned_condition_8616(expr, bit, codegen)
+        if predicate is None:
+            predicate = _extract_flag_predicate_from_expr_8616(expr, bit)
+    elif len(flag_test_info) == 4:
+        _flag_var, bit1, bit2, negate_predicate = flag_test_info
+        predicate = _recover_signed_condition_8616(expr, bit1, bit2, codegen)
+    else:
+        return None
+
+    if predicate is None:
+        return None
+    if negate_predicate:
+        return CUnaryOp("Not", predicate, codegen=codegen)
+    return predicate
 
 
 def _c_expr_uses_var_8616(node, target) -> bool:
@@ -179,15 +255,14 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
                     cond, _body = cond_nodes[0]
                     info = _extract_flag_test_info_8616(cond)
                     if info is not None:
-                        flag_var, bit, negate_predicate = info
+                        flag_var = info[0]
                         if _same_c_expression_8616(assign_stmt.lhs, flag_var):
-                            predicate = _extract_flag_predicate_from_expr_8616(assign_stmt.rhs, bit)
-                            if predicate is not None:
-                                new_cond = (
-                                    CUnaryOp("Not", predicate, codegen=codegen)
-                                    if negate_predicate
-                                    else predicate
-                                )
+                            new_cond = _recover_ordering_condition_from_flag_mask_8616(
+                                assign_stmt.rhs,
+                                info,
+                                codegen,
+                            )
+                            if new_cond is not None:
                                 cond_nodes[0] = (new_cond, cond_nodes[0][1])
                                 changed = True
                                 later_uses = any(

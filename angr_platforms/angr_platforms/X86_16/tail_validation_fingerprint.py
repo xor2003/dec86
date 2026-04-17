@@ -11,6 +11,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
+from .callee_name_normalization import normalize_callee_name_8616
 from .decompiler_postprocess_utils import (
     _match_bp_stack_dereference_8616,
     _match_segmented_dereference_8616,
@@ -32,7 +33,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION = 3
+TAIL_VALIDATION_FINGERPRINT_VERSION = 4
 
 
 def _segment_linear_lowering_allowed(node, segment_reg: str) -> bool:
@@ -224,11 +225,12 @@ def _expr_fingerprint(node, project) -> str:
 
 def _call_target_name(node: CFunctionCall) -> str:
     callee = getattr(node, "callee_target", None)
-    if isinstance(callee, str) and callee:
-        return callee
+    normalized_callee = normalize_callee_name_8616(callee)
+    if isinstance(normalized_callee, str):
+        return normalized_callee
     callee_func = getattr(node, "callee_func", None)
-    name = getattr(callee_func, "name", None)
-    if isinstance(name, str) and name:
+    name = normalize_callee_name_8616(getattr(callee_func, "name", None))
+    if isinstance(name, str):
         return name
     return "<indirect>"
 

@@ -308,6 +308,30 @@ def _stack_slot_identity_for_variable(variable) -> _StackSlotIdentity | None:
     return _StackSlotIdentity(base, offset, width, region=region)
 
 
+def _stack_storage_facts_for_segmented_address_8616(
+    segment_name: str | None,
+    offset: int | None,
+    width: int | None,
+    *,
+    region: int | None = None,
+) -> AliasStorageFacts | None:
+    if not isinstance(segment_name, str) or segment_name.lower() != "ss":
+        return None
+    if not isinstance(offset, int):
+        return None
+
+    stack_width = width if isinstance(width, int) and width > 0 else None
+    bit_width = stack_width * 8 if stack_width is not None else None
+    stack_slot = _StackSlotIdentity("bp", offset, stack_width, region=region)
+    domain = _StorageDomainSignature(
+        "stack",
+        stack_width,
+        _StorageView(offset * 8, bit_width),
+        stack_slot=stack_slot,
+    )
+    return AliasStorageFacts(domain=domain, identity=("stack", stack_slot))
+
+
 def _same_stack_slot_identity(lhs, rhs) -> bool:
     if not isinstance(lhs, SimStackVariable) or not isinstance(rhs, SimStackVariable):
         return False
@@ -448,6 +472,7 @@ __all__ = [
     "_CopyAliasState",
     "_StackPointerAliasState",
     "_stack_slot_identity_for_variable",
+    "_stack_storage_facts_for_segmented_address_8616",
     "_same_stack_slot_identity",
     "_stack_slot_identity_can_join",
     "_storage_view_for_variable",

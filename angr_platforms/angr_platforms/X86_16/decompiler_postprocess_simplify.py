@@ -1,7 +1,19 @@
 from __future__ import annotations
 
-from angr.analyses.decompiler.structured_codegen.c import CITE, CBinaryOp, CConstant, CTypeCast, CUnaryOp
+from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CStatements,
+    CTypeCast,
+    CUnaryOp,
+    CVariable,
+)
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
+from .alias_model import _storage_domain_for_expr
 from .decompiler_postprocess_flags import _bool_cite_values_8616
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
@@ -41,6 +53,7 @@ PROJECTION_CLEANUP_RULES = (
 __all__ = [
     "_simplify_structured_expressions_8616",
     "_simplify_boolean_cites_8616",
+    "_eliminate_single_use_temporaries_8616",
     "describe_x86_16_projection_cleanup_rules",
 ]
 
@@ -145,6 +158,62 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
         return None
 
+    def _shifted_high_byte_source_8616(expr):
+        if not isinstance(expr, CBinaryOp):
+            return None
+        if expr.op == "Shl" and _is_c_constant_int_8616(expr.rhs, 8):
+            return expr.lhs
+        if expr.op == "Mul" and _is_c_constant_int_8616(expr.rhs, 0x100):
+            return expr.lhs
+        if expr.op == "Mul" and _is_c_constant_int_8616(expr.lhs, 0x100):
+            return expr.rhs
+        return None
+
+    def _materialize_joined_word_expr_8616(low_expr, high_expr):
+        low_domain = _storage_domain_for_expr(low_expr)
+        high_domain = _storage_domain_for_expr(high_expr)
+        joined = low_domain.join(high_domain)
+        if joined is None or joined.width != 2:
+            return None
+        if not isinstance(low_expr, CVariable) or not isinstance(high_expr, CVariable):
+            return None
+
+        region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+        vartype = getattr(low_expr, "variable_type", None) or getattr(high_expr, "variable_type", None) or SimTypeShort(False)
+
+        if joined.space == "stack" and joined.stack_slot is not None:
+            stack_slot = joined.stack_slot
+            variable = SimStackVariable(
+                stack_slot.offset,
+                2,
+                base=stack_slot.base,
+                name=f"s_{stack_slot.offset & 0xFFFF:x}",
+                region=stack_slot.region if stack_slot.region is not None else region,
+            )
+            return CVariable(variable, variable_type=vartype, codegen=codegen)
+
+        if joined.space == "memory":
+            low_var = getattr(low_expr, "variable", None)
+            high_var = getattr(high_expr, "variable", None)
+            low_addr = getattr(low_var, "addr", None)
+            high_addr = getattr(high_var, "addr", None)
+            if isinstance(low_addr, int) and isinstance(high_addr, int):
+                addr = min(low_addr, high_addr)
+                variable = SimMemoryVariable(addr, 2, name=f"g_{addr:x}", region=region)
+                return CVariable(variable, variable_type=vartype, codegen=codegen)
+
+        if joined.space == "register":
+            low_var = getattr(low_expr, "variable", None)
+            high_var = getattr(high_expr, "variable", None)
+            low_reg = getattr(low_var, "reg", None)
+            high_reg = getattr(high_var, "reg", None)
+            if isinstance(low_reg, int) and isinstance(high_reg, int):
+                reg = min(low_reg, high_reg)
+                variable = SimRegisterVariable(reg, 2, name=getattr(low_var, "name", None) or getattr(high_var, "name", None))
+                return CVariable(variable, variable_type=vartype, codegen=codegen)
+
+        return None
+
     def _simplify_zero_flag_comparison_8616(expr):
         if not isinstance(expr, CBinaryOp) or expr.op not in {"CmpEQ", "CmpNE"}:
             return expr
@@ -191,6 +260,16 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     return CConstant(0, type_, codegen=codegen)
 
         if isinstance(node, CBinaryOp) and node.op == "Or":
+            folded = None
+            shifted_rhs = _shifted_high_byte_source_8616(node.rhs)
+            if shifted_rhs is not None:
+                folded = _materialize_joined_word_expr_8616(node.lhs, shifted_rhs)
+            if folded is None:
+                shifted_lhs = _shifted_high_byte_source_8616(node.lhs)
+                if shifted_lhs is not None:
+                    folded = _materialize_joined_word_expr_8616(node.rhs, shifted_lhs)
+            if folded is not None:
+                return folded
             if _is_c_constant_int_8616(node.lhs, 0):
                 return node.rhs
             if _is_c_constant_int_8616(node.rhs, 0):
@@ -263,4 +342,158 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         if not _replace_c_children_8616(root, transform):
             break
         changed = True
+    return changed
+
+
+def _eliminate_single_use_temporaries_8616(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    def _safe_inline_expr(expr) -> bool:
+        if isinstance(expr, (CConstant, CVariable)):
+            return True
+        if isinstance(expr, CTypeCast):
+            return _safe_inline_expr(expr.expr)
+        if isinstance(expr, CUnaryOp):
+            if expr.op == "Dereference":
+                return False
+            return _safe_inline_expr(expr.operand)
+        if isinstance(expr, CBinaryOp):
+            return _safe_inline_expr(expr.lhs) and _safe_inline_expr(expr.rhs)
+        if isinstance(expr, CITE):
+            return (
+                _safe_inline_expr(expr.cond)
+                and _safe_inline_expr(expr.iftrue)
+                and _safe_inline_expr(expr.iffalse)
+            )
+        return False
+
+    def _count_var_uses(node, target, *, assignment_lhs: bool = False) -> int:
+        if node is None:
+            return 0
+        if isinstance(node, CVariable):
+            return 0 if assignment_lhs else int(_same_c_expression_8616(node, target))
+
+        total = 0
+        for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
+            child = getattr(node, attr, None)
+            if _structured_codegen_node_8616(child):
+                total += _count_var_uses(
+                    child,
+                    target,
+                    assignment_lhs=assignment_lhs and attr == "lhs" and isinstance(node, CAssignment),
+                )
+        for attr in ("statements", "operands", "args"):
+            seq = getattr(node, attr, None)
+            if not seq:
+                continue
+            for item in seq:
+                if _structured_codegen_node_8616(item):
+                    total += _count_var_uses(item, target)
+                elif isinstance(item, tuple):
+                    for subitem in item:
+                        if _structured_codegen_node_8616(subitem):
+                            total += _count_var_uses(subitem, target)
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            for cond, body in pairs:
+                if _structured_codegen_node_8616(cond):
+                    total += _count_var_uses(cond, target)
+                if _structured_codegen_node_8616(body):
+                    total += _count_var_uses(body, target)
+        return total
+
+    def _replace_var_use(node, target, replacement, *, assignment_lhs: bool = False):
+        if isinstance(node, CVariable):
+            if not assignment_lhs and _same_c_expression_8616(node, target):
+                return replacement, True
+            return node, False
+
+        changed_local = False
+        for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval", "else_node"):
+            child = getattr(node, attr, None)
+            if not _structured_codegen_node_8616(child):
+                continue
+            new_child, child_changed = _replace_var_use(
+                child,
+                target,
+                replacement,
+                assignment_lhs=assignment_lhs and attr == "lhs" and isinstance(node, CAssignment),
+            )
+            if child_changed:
+                setattr(node, attr, new_child)
+                changed_local = True
+        for attr in ("statements", "operands", "args"):
+            seq = getattr(node, attr, None)
+            if not seq:
+                continue
+            new_seq = []
+            seq_changed = False
+            for item in seq:
+                if _structured_codegen_node_8616(item):
+                    new_item, item_changed = _replace_var_use(item, target, replacement)
+                    new_seq.append(new_item)
+                    seq_changed |= item_changed
+                else:
+                    new_seq.append(item)
+            if seq_changed:
+                setattr(node, attr, new_seq)
+                changed_local = True
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            new_pairs = []
+            pair_changed = False
+            for cond, body in pairs:
+                new_cond, cond_changed = (
+                    _replace_var_use(cond, target, replacement) if _structured_codegen_node_8616(cond) else (cond, False)
+                )
+                new_body, body_changed = (
+                    _replace_var_use(body, target, replacement) if _structured_codegen_node_8616(body) else (body, False)
+                )
+                new_pairs.append((new_cond, new_body))
+                pair_changed |= cond_changed or body_changed
+            if pair_changed:
+                setattr(node, "condition_and_nodes", new_pairs)
+                changed_local = True
+        return node, changed_local
+
+    changed = False
+
+    def visit(node):
+        nonlocal changed
+        if not isinstance(node, CStatements):
+            return
+
+        new_statements = []
+        statements = list(node.statements)
+        idx = 0
+        while idx < len(statements):
+            stmt = statements[idx]
+            next_stmt = statements[idx + 1] if idx + 1 < len(statements) else None
+            removed = False
+
+            if (
+                isinstance(stmt, CAssignment)
+                and isinstance(stmt.lhs, CVariable)
+                and _safe_inline_expr(stmt.rhs)
+                and next_stmt is not None
+            ):
+                immediate_uses = _count_var_uses(next_stmt, stmt.lhs)
+                later_uses = sum(_count_var_uses(rest, stmt.lhs) for rest in statements[idx + 2 :])
+                if immediate_uses == 1 and later_uses == 0:
+                    _, replaced = _replace_var_use(next_stmt, stmt.lhs, stmt.rhs)
+                    if replaced:
+                        changed = True
+                        removed = True
+
+            if not removed:
+                new_statements.append(stmt)
+                visit(stmt)
+            idx += 1
+
+        if len(new_statements) != len(node.statements):
+            node.statements = new_statements
+
+    root = codegen.cfunc.statements
+    visit(root)
     return changed

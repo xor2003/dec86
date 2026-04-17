@@ -40,3 +40,10 @@ def test_normalize_unresolved_c_text_strips_false_noreturn_comment() -> None:
     normalized = normalize_unresolved_c_text(rendered)
     assert "do not return" not in normalized
     assert "sub_1234();" in normalized
+
+
+def test_normalize_unresolved_c_text_strips_callee_namespace_prefixes() -> None:
+    rendered = "ax = ::0x1e22::sprintf();\nSleep();\n"
+    normalized = normalize_unresolved_c_text(rendered)
+    assert "::0x1e22::" not in normalized
+    assert "sprintf();" in normalized

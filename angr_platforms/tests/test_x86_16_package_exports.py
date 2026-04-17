@@ -101,10 +101,13 @@ def test_x86_16_package_exports_source_backends():
     assert "summarize_x86_16_tail_validation_records" in x8616.__all__
     assert "describe_x86_16_tail_validation_scope" in x8616.__all__
     assert "decompiler_postprocess" in x8616.__all__
+    assert "decompiler_postprocess_calls" in x8616.__all__
     assert "decompiler_postprocess_globals" in x8616.__all__
     assert "decompiler_postprocess_utils" in x8616.__all__
     assert "decompiler_postprocess_simplify" in x8616.__all__
     assert "decompiler_postprocess_flags" in x8616.__all__
+    assert "callsite_summary" in x8616.__all__
+    assert "function_summary" in x8616.__all__
     assert "apply_x86_16_decompiler_return_compatibility" in x8616.__all__
     assert "apply_x86_16_calling_convention_compatibility" in x8616.__all__
     assert "decompiler_postprocess_stage" in x8616.__all__
@@ -146,15 +149,18 @@ def test_x86_16_decompiler_postprocess_registry_order():
         "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
-        "_simplify_boolean_cites_8616",
-        "_normalize_function_prototype_arg_names_8616",
-        "_classify_return_shape_8616",
-        "_prune_void_function_return_values_8616",
-        "_dedupe_codegen_variable_names_8616",
         "_rewrite_flag_condition_pairs_8616",
         "_prune_unused_flag_assignments_8616",
         "_prune_overwritten_flag_assignments_8616",
         "_fix_interval_guard_conditions_8616",
+        "_simplify_boolean_cites_8616",
+        "_normalize_function_prototype_arg_names_8616",
+        "_attach_callsite_summaries_8616",
+        "_materialize_callsite_prototypes_8616",
+        "_normalize_call_target_names_8616",
+        "_classify_return_shape_8616",
+        "_prune_void_function_return_values_8616",
+        "_dedupe_codegen_variable_names_8616",
     ]
 
 
@@ -197,11 +203,11 @@ def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
         "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
+        "_rewrite_flag_condition_pairs_8616",
+        "_prune_unused_flag_assignments_8616",
+        "_prune_overwritten_flag_assignments_8616",
+        "_fix_interval_guard_conditions_8616",
         "_simplify_boolean_cites_8616",
-        "_normalize_function_prototype_arg_names_8616",
-        "_classify_return_shape_8616",
-        "_prune_void_function_return_values_8616",
-        "_dedupe_codegen_variable_names_8616",
     )
 
 

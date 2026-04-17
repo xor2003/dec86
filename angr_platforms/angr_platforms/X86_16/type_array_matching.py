@@ -15,8 +15,24 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Set
 
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CBreak,
+    CConstant,
+    CStatements,
+    CVariable,
+    CWhileLoop,
+)
+from angr.sim_variable import SimRegisterVariable
+from inertia_decompiler.cli_access_profiles import (
+    build_access_trait_evidence_profiles,
+    infer_induction_variable,
+)
+
 from .ir.core import IRAddress
 from .type_storage_object_bridge import load_storage_object_bridge
+from .decompiler_postprocess_utils import _replace_c_children_8616, _same_c_expression_8616
 
 if TYPE_CHECKING:
     pass
@@ -278,6 +294,143 @@ class ArrayExpressionMatcher:
         return arrays
 
 
+def _invert_cmp_op_8616(op: str) -> str | None:
+    return {
+        "CmpGT": "CmpLE",
+        "CmpGE": "CmpLT",
+        "CmpLT": "CmpGE",
+        "CmpLE": "CmpGT",
+        "CmpEQ": "CmpNE",
+        "CmpNE": "CmpEQ",
+    }.get(op)
+
+
+def _literal_true_8616(node) -> bool:
+    return isinstance(node, CConstant) and isinstance(node.value, int) and node.value != 0
+
+
+def _extract_break_guard_8616(stmt):
+    if type(stmt).__name__ not in {"CIfElse", "CIfBreak"}:
+        return None
+    cond_nodes = getattr(stmt, "condition_and_nodes", None) or ()
+    if len(cond_nodes) != 1:
+        return None
+    cond, body = cond_nodes[0]
+    if not isinstance(body, CStatements) or len(getattr(body, "statements", ()) or ()) != 1:
+        return None
+    if not isinstance(body.statements[0], CBreak):
+        return None
+    else_node = getattr(stmt, "else_node", None)
+    if else_node is not None and not (isinstance(else_node, CStatements) and not else_node.statements):
+        return None
+    return cond
+
+
+def _extract_monotonic_update_8616(stmt):
+    if not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
+        return None
+    rhs = stmt.rhs
+    if not isinstance(rhs, CBinaryOp) or rhs.op not in {"Add", "Sub"}:
+        return None
+    if _same_c_expression_8616(rhs.lhs, stmt.lhs) and isinstance(rhs.rhs, CConstant) and isinstance(rhs.rhs.value, int):
+        delta = rhs.rhs.value if rhs.op == "Add" else -rhs.rhs.value
+        return stmt.lhs, delta
+    if rhs.op == "Add" and _same_c_expression_8616(rhs.rhs, stmt.lhs) and isinstance(rhs.lhs, CConstant) and isinstance(rhs.lhs.value, int):
+        return stmt.lhs, rhs.lhs.value
+    return None
+
+
+def _cond_uses_var_8616(node, target) -> bool:
+    if isinstance(node, CVariable):
+        return _same_c_expression_8616(node, target)
+    for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval"):
+        child = getattr(node, attr, None)
+        if child is not None and _cond_uses_var_8616(child, target):
+            return True
+    return False
+
+
+def _profile_induction_match_8616(codegen, loop_var) -> bool:
+    project = getattr(codegen, "project", None)
+    cfunc = getattr(codegen, "cfunc", None)
+    traits_cache = getattr(project, "_inertia_access_traits", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(traits_cache, dict) or func_addr not in traits_cache:
+        return True
+
+    traits = traits_cache.get(func_addr)
+    if not isinstance(traits, dict):
+        return True
+    profiles = build_access_trait_evidence_profiles(traits)
+    variable = getattr(loop_var, "variable", None)
+    if not isinstance(variable, SimRegisterVariable):
+        return True
+    profile = profiles.get(("reg", getattr(variable, "reg", None)))
+    if profile is None:
+        return True
+    return infer_induction_variable(profile) is not None
+
+
+def _rewrite_induction_loops_8616(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+
+    def transform(node):
+        nonlocal changed
+        if not isinstance(node, CWhileLoop):
+            return node
+        if not _literal_true_8616(getattr(node, "condition", None)):
+            return node
+        body = getattr(node, "body", None)
+        if not isinstance(body, CStatements):
+            return node
+        statements = list(getattr(body, "statements", ()) or ())
+        if len(statements) < 2:
+            return node
+        guard = _extract_break_guard_8616(statements[0])
+        if not isinstance(guard, CBinaryOp):
+            return node
+        inverted = _invert_cmp_op_8616(guard.op)
+        if inverted is None:
+            return node
+
+        update = None
+        for stmt in reversed(statements[1:]):
+            update = _extract_monotonic_update_8616(stmt)
+            if update is not None:
+                break
+        if update is None:
+            return node
+        loop_var, _delta = update
+        if not _cond_uses_var_8616(guard, loop_var):
+            return node
+        if not _profile_induction_match_8616(codegen, loop_var):
+            return node
+
+        node.condition = CBinaryOp(
+            inverted,
+            guard.lhs,
+            guard.rhs,
+            codegen=codegen,
+            tags=getattr(guard, "tags", None),
+        )
+        body.statements = statements[1:]
+        changed = True
+        return node
+
+    root = codegen.cfunc.statements
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        if hasattr(codegen.cfunc, "body"):
+            codegen.cfunc.body = new_root
+    if _replace_c_children_8616(codegen.cfunc.statements, transform):
+        changed = True
+    return changed
+
+
 def apply_x86_16_array_expression_matching(codegen) -> bool:
     """
     Apply array expression matching pass to codegen.
@@ -338,8 +491,9 @@ def apply_x86_16_array_expression_matching(codegen) -> bool:
             "string_arrays": len(typed_string_candidates),
         }
 
+        changed = _rewrite_induction_loops_8616(codegen)
         logger.debug("Array expression matching pass completed")
-        return False  # No direct modifications at this stage
+        return changed
     except Exception as ex:
         logger.warning("Array expression matching pass failed: %s", ex)
         codegen._inertia_array_matching_error = str(ex)

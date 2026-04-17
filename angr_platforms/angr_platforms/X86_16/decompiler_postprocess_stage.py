@@ -11,6 +11,7 @@ from typing import Callable
 from angr.analyses.decompiler.decompiler import Decompiler
 
 from . import decompiler_postprocess as _post
+from . import decompiler_postprocess_calls as _calls
 from . import decompiler_postprocess_flags as _flags
 from . import decompiler_postprocess_globals as _globals
 from . import decompiler_postprocess_simplify as _simplify
@@ -59,6 +60,10 @@ def _build_decompiler_postprocess_passes():
             _globals._prune_unused_unnamed_memory_declarations_8616,
             False,
         ),
+        DecompilerPostprocessPassSpec("_rewrite_flag_condition_pairs_8616", _flags._rewrite_flag_condition_pairs_8616, False),
+        DecompilerPostprocessPassSpec("_prune_unused_flag_assignments_8616", _flags._prune_unused_flag_assignments_8616, True),
+        DecompilerPostprocessPassSpec("_prune_overwritten_flag_assignments_8616", _flags._prune_overwritten_flag_assignments_8616, True),
+        DecompilerPostprocessPassSpec("_fix_interval_guard_conditions_8616", _flags._fix_interval_guard_conditions_8616, False),
         DecompilerPostprocessPassSpec(
             "_simplify_boolean_cites_8616",
             _simplify._simplify_boolean_cites_8616,
@@ -68,6 +73,21 @@ def _build_decompiler_postprocess_passes():
             "_normalize_function_prototype_arg_names_8616",
             _post._normalize_function_prototype_arg_names_8616,
             True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_attach_callsite_summaries_8616",
+            _calls._attach_callsite_summaries_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_callsite_prototypes_8616",
+            _calls._materialize_callsite_prototypes_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_normalize_call_target_names_8616",
+            _calls._normalize_call_target_names_8616,
+            False,
         ),
         DecompilerPostprocessPassSpec(
             "_classify_return_shape_8616",
@@ -84,10 +104,6 @@ def _build_decompiler_postprocess_passes():
             _post._dedupe_codegen_variable_names_8616,
             False,
         ),
-        DecompilerPostprocessPassSpec("_rewrite_flag_condition_pairs_8616", _flags._rewrite_flag_condition_pairs_8616, False),
-        DecompilerPostprocessPassSpec("_prune_unused_flag_assignments_8616", _flags._prune_unused_flag_assignments_8616, True),
-        DecompilerPostprocessPassSpec("_prune_overwritten_flag_assignments_8616", _flags._prune_overwritten_flag_assignments_8616, True),
-        DecompilerPostprocessPassSpec("_fix_interval_guard_conditions_8616", _flags._fix_interval_guard_conditions_8616, False),
     )
 
 

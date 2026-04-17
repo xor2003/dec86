@@ -220,6 +220,8 @@ def build_x86_16_ir_function_artifact(project, function) -> IRFunctionArtifact:
 
 def build_x86_16_ir_function_artifact_summary(artifact: IRFunctionArtifact) -> dict[str, object]:
     space_counts = {space.value: 0 for space in MemSpace}
+    address_space_counts = {space.value: 0 for space in MemSpace}
+    stable_address_space_counts = {space.value: 0 for space in MemSpace}
     address_status_counts = {status.value: 0 for status in AddressStatus}
     segment_origin_counts = {origin.value: 0 for origin in SegmentOrigin}
     condition_counts: dict[str, int] = {}
@@ -239,6 +241,9 @@ def build_x86_16_ir_function_artifact_summary(artifact: IRFunctionArtifact) -> d
                     continue
                 space_counts[atom.space.value] = space_counts.get(atom.space.value, 0) + 1
                 if isinstance(atom, IRAddress):
+                    address_space_counts[atom.space.value] = address_space_counts.get(atom.space.value, 0) + 1
+                    if atom.status == AddressStatus.STABLE:
+                        stable_address_space_counts[atom.space.value] = stable_address_space_counts.get(atom.space.value, 0) + 1
                     address_status_counts[atom.status.value] = address_status_counts.get(atom.status.value, 0) + 1
                     segment_origin_counts[atom.segment_origin.value] = segment_origin_counts.get(atom.segment_origin.value, 0) + 1
                 if storage_of(atom) is not None:
@@ -249,6 +254,8 @@ def build_x86_16_ir_function_artifact_summary(artifact: IRFunctionArtifact) -> d
         "instruction_count": sum(len(block.instrs) for block in artifact.blocks),
         "refusal_count": len(artifact.refusals),
         "space_counts": dict(sorted(space_counts.items())),
+        "address_space_counts": dict(sorted(address_space_counts.items())),
+        "stable_address_space_counts": dict(sorted(stable_address_space_counts.items())),
         "address_status_counts": dict(sorted(address_status_counts.items())),
         "segment_origin_counts": dict(sorted(segment_origin_counts.items())),
         "condition_counts": dict(sorted(condition_counts.items())),

@@ -100,6 +100,19 @@ class TestStructuringCodegen:
         # While loop should appear in simplest case
         assert "while" in code or "do" in code or "for" in code, "Loop should render as C control flow"
 
+    def test_loop_codegen_uses_typed_ir_condition_hint_when_no_explicit_condition(self):
+        loop_region = Region(block_addr=0x3100, region_type=RegionType.Loop)
+        loop_region.metadata["typed_ir_condition_hint"] = "ax == 0"
+
+        graph = RegionGraph()
+        graph.entry = loop_region
+        graph.add_node(loop_region)
+
+        codegen = StructuringCodegenPass()
+        code = codegen.apply(graph)
+
+        assert "while (ax == 0)" in code
+
     def test_switch_render_contains_switch(self):
         """
         Test that rendered switch code contains 'switch' keyword.

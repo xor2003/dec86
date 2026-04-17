@@ -1,6 +1,7 @@
 from angr_platforms.X86_16.alu_helpers import (
     binary_operation,
     binary_operation_with_carry,
+    build_compare_condition_8616,
     compare_operation,
     masked_shift_count,
     rotate_count,
@@ -10,17 +11,28 @@ from angr_platforms.X86_16.alu_helpers import (
     shift_right_arithmetic_operation,
     shift_right_operation,
 )
+from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
 
 
 class _AluEmu:
     def __init__(self, carry=False):
         self.carry = carry
+        self.last_condition = None
 
     def constant(self, value, _ty):
         return value
 
     def is_carry(self):
         return self.carry
+
+    def update_eflags_sub(self, lhs, rhs):
+        self.last_flags = ("sub", lhs, rhs)
+
+    def update_eflags_and(self, lhs, rhs):
+        self.last_flags = ("and", lhs, rhs)
+
+    def set_last_condition(self, condition):
+        self.last_condition = condition
 
 
 def test_binary_operation_updates_result_and_flags():
@@ -82,6 +94,51 @@ def test_compare_operation_only_updates_flags():
     compare_operation(lambda: 4, lambda: 2, lambda lhs, rhs: state.update({"flags": (lhs, rhs)}))
 
     assert state["flags"] == (4, 2)
+
+
+def test_build_compare_condition_recovers_compare_family():
+    condition = build_compare_condition_8616(4, 2, _AluEmu().update_eflags_sub)
+
+    assert condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sub",),
+    )
+
+
+def test_compare_operation_sets_last_condition_on_emulator():
+    emu = _AluEmu()
+
+    compare_operation(lambda: 4, lambda: 2, emu.update_eflags_sub)
+
+    assert emu.last_flags == ("sub", 4, 2)
+    assert emu.last_condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sub",),
+    )
+
+
+def test_compare_operation_captures_masked_nonzero_test_condition():
+    emu = _AluEmu()
+
+    compare_operation(lambda: 0x80, lambda: 0x08, emu.update_eflags_and)
+
+    assert emu.last_flags == ("and", 0x80, 0x08)
+    assert emu.last_condition == IRCondition(
+        op="masked_nonzero",
+        args=(
+            IRValue(MemSpace.CONST, const=0x80, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=0x08, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_and",),
+    )
 
 
 def test_shift_helpers_mask_and_rotate_counts():

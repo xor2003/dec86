@@ -159,6 +159,7 @@ class Processor(Eflags, CR):
         super().__init__()
         self.lifter_instruction = None
         self.vex_offsets = None
+        self._last_condition = None
         self.flags = 0
         self.eip = 0  # X86Instruction pointer
         self.gpregs = [GPRegister() for _ in range(reg32_t.GPREGS_COUNT.value)]  # General-purpose registers
@@ -186,6 +187,15 @@ class Processor(Eflags, CR):
         self.dtregs[dtreg_t.GDTR.value].limit = 0xFFFF
         self.dtregs[dtreg_t.LDTR.value].base = 0
         self.dtregs[dtreg_t.LDTR.value].limit = 0xFFFF
+
+    def set_last_condition(self, condition) -> None:
+        self._last_condition = condition
+
+    def get_last_condition(self):
+        return self._last_condition
+
+    def clear_last_condition(self) -> None:
+        self._last_condition = None
 
     def dump_regs(self):
         gpreg_name = ["EAX", "ECX", "EDX", "EBX", "ESP", "EBP", "ESI", "EDI"]

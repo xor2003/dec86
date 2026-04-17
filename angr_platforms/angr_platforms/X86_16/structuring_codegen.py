@@ -173,7 +173,9 @@ class StructuringCodegenPass:
 
         return LoopCodegenInfo(
             loop_type=loop_type,
-            condition_expr=region.metadata.get("condition", "cond"),
+            condition_expr=region.metadata.get("condition")
+            or region.metadata.get("typed_ir_condition_hint")
+            or "cond",
             init_stmt=region.metadata.get("init"),
             increment_stmt=region.metadata.get("increment"),
             body_regions=body_regions,
@@ -199,7 +201,9 @@ class StructuringCodegenPass:
         uses_goto = region.metadata.get("uses_goto", False)
 
         return SwitchCodegenInfo(
-            switch_expr=region.metadata.get("switch_expr", "value"),
+            switch_expr=region.metadata.get("switch_expr")
+            or region.metadata.get("typed_ir_condition_hint")
+            or "value",
             case_targets=case_targets,
             default_target=None,
             uses_fallthrough=region.metadata.get("uses_fallthrough", False),

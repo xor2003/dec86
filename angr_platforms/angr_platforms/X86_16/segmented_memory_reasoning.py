@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Optional, Set
 
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_variable import SimStackVariable
+
+from .alias_model import _stack_storage_facts_for_segmented_address_8616
+from .decompiler_postprocess_utils import _match_bp_stack_dereference_8616, _replace_c_children_8616
+
 if TYPE_CHECKING:
     pass
 
@@ -363,6 +369,70 @@ class SegmentAssociationAnalyzer:
         return max(0.1, min(0.35, base - 0.2))
 
 
+def _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer: SegmentAssociationAnalyzer | None) -> bool:
+    assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+    if not assignments or analyzer is None:
+        return True
+
+    decision = analyzer.lowering_decision(SegmentRegister.SS)
+    return decision.associated_space == "stack" and decision.classification in {"single", "const"}
+
+
+def _existing_stack_cvar_for_offset_8616(codegen, offset: int):
+    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+    if not isinstance(variables_in_use, dict):
+        return None
+
+    region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    for variable, cvar in variables_in_use.items():
+        if not isinstance(variable, SimStackVariable):
+            continue
+        if getattr(variable, "offset", None) != offset:
+            continue
+        variable_region = getattr(variable, "region", None)
+        if isinstance(region, int) and isinstance(variable_region, int) and variable_region != region:
+            continue
+        return cvar
+    return None
+
+
+def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
+    project = getattr(getattr(codegen, "project", None), "arch", None)
+    if project is None:
+        return None
+
+    displacement = _match_bp_stack_dereference_8616(node, codegen.project)
+    if displacement is None:
+        return None
+
+    width_bits = getattr(getattr(node, "type", None), "size", None)
+    width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
+    region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    facts = _stack_storage_facts_for_segmented_address_8616("ss", displacement, width, region=region)
+    if facts is None or facts.identity is None:
+        return None
+
+    existing = _existing_stack_cvar_for_offset_8616(codegen, displacement)
+    if existing is not None:
+        return existing
+
+    name = f"s_{displacement & 0xFFFF:x}"
+    stack_var = SimStackVariable(displacement, width or 1, base="bp", name=name, region=region)
+    cvar = structured_c.CVariable(stack_var, variable_type=getattr(node, "type", None), codegen=codegen)
+
+    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        variables_in_use[stack_var] = cvar
+
+    unified_locals = getattr(getattr(codegen, "cfunc", None), "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        unified_locals[stack_var] = {
+            (cvar, getattr(cvar, "variable_type", None) or getattr(node, "type", None))
+        }
+
+    return cvar
+
+
 def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
     """
     Apply segmented memory association reasoning pass to codegen.
@@ -414,8 +484,30 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
             }
             codegen._inertia_segmented_memory_lowering = {}
 
+        changed = False
+        if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):
+            def transform(node):
+                nonlocal changed
+                if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+                    return node
+                replacement = _recover_stack_slot_from_segmented_operand_8616(node, codegen)
+                if replacement is not None:
+                    changed = True
+                    return replacement
+                return node
+
+            root = getattr(codegen.cfunc, "statements", None)
+            if root is not None:
+                new_root = transform(root)
+                if new_root is not root:
+                    codegen.cfunc.statements = new_root
+                    if hasattr(codegen.cfunc, "body"):
+                        codegen.cfunc.body = new_root
+                if _replace_c_children_8616(codegen.cfunc.statements, transform):
+                    changed = True
+
         logger.debug("Segmented memory association reasoning pass completed")
-        return False  # No direct modifications at this stage
+        return changed
     except Exception as ex:
         logger.warning("Segmented memory reasoning pass failed: %s", ex)
         codegen._inertia_segmented_memory_error = str(ex)

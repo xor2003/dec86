@@ -2,7 +2,62 @@ from __future__ import annotations
 
 from pyvex.lifting.util.vex_helper import Type
 
+from .ir.core import IRCondition, IRValue, MemSpace
 from .addressing_helpers import type_for_bits
+
+
+def _size_bytes_from_operand(value) -> int:
+    width = getattr(value, "width", None)
+    if isinstance(width, int) and width > 0:
+        return max(1, (width + 7) // 8)
+    ty = getattr(value, "ty", None)
+    ty_name = getattr(ty, "name", str(ty or ""))
+    if ty_name.startswith("Ity_I"):
+        try:
+            bits = int(ty_name[5:])
+        except ValueError:
+            bits = 0
+        if bits > 0:
+            return max(1, bits // 8)
+    return 0
+
+
+def _condition_value_from_operand(value) -> IRValue:
+    if isinstance(value, bool):
+        return IRValue(MemSpace.CONST, const=int(value), size=1, expr=("bool",))
+    if isinstance(value, int):
+        size = 1
+        if not -(1 << 7) <= value < (1 << 8):
+            size = 2
+        if not -(1 << 15) <= value < (1 << 16):
+            size = 4
+        return IRValue(MemSpace.CONST, const=value, size=size, expr=("int",))
+    value_const = getattr(value, "value", None)
+    if isinstance(value_const, int):
+        return IRValue(MemSpace.CONST, const=value_const, size=_size_bytes_from_operand(value), expr=("vex_const",))
+    return IRValue(
+        MemSpace.TMP,
+        name=type(value).__name__,
+        size=_size_bytes_from_operand(value),
+        expr=(str(getattr(getattr(value, "ty", None), "name", getattr(value, "ty", None) or type(value).__name__)),),
+    )
+
+
+def build_compare_condition_8616(lhs, rhs, update_flags) -> IRCondition | None:
+    name = getattr(update_flags, "__name__", "")
+    if name == "update_eflags_sub":
+        return IRCondition(
+            op="compare",
+            args=(_condition_value_from_operand(lhs), _condition_value_from_operand(rhs)),
+            expr=(name,),
+        )
+    if name == "update_eflags_and":
+        return IRCondition(
+            op="masked_nonzero",
+            args=(_condition_value_from_operand(lhs), _condition_value_from_operand(rhs)),
+            expr=(name,),
+        )
+    return None
 
 
 def binary_operation(emu, get_lhs, get_rhs, set_result, update_flags, operator):
@@ -33,7 +88,14 @@ def binary_operation_with_carry(
 
 
 def compare_operation(get_lhs, get_rhs, update_flags):
-    update_flags(get_lhs(), get_rhs())
+    lhs = get_lhs()
+    rhs = get_rhs()
+    update_flags(lhs, rhs)
+    owner = getattr(update_flags, "__self__", None)
+    if owner is None or not hasattr(owner, "set_last_condition"):
+        return
+    condition = build_compare_condition_8616(lhs, rhs, update_flags)
+    owner.set_last_condition(condition)
 
 
 def unary_operation(get_value, set_result, update_flags, operator):
