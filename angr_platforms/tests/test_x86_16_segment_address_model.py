@@ -8,6 +8,10 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.address_ir import build_address_ir_8616, resolved_operand_to_address_ir_8616
+from angr_platforms.X86_16.addressing_helpers import ResolvedMemoryOperand
+from angr_platforms.X86_16.ir.core import MemSpace
+from angr_platforms.X86_16.regs import sgreg_t
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
 
 
@@ -108,3 +112,23 @@ def test_segmented_memory_reasoning_allows_ss_lowering_with_stable_ss_evidence()
     lhs = after_codegen.cfunc.statements.statements[0].lhs
     assert isinstance(lhs, CVariable)
     assert isinstance(lhs.variable, SimStackVariable)
+
+
+def test_address_ir_facade_preserves_segmented_spaces():
+    stack = build_address_ir_8616(
+        MemSpace.SS,
+        ("bp",),
+        offset=-4,
+        size=2,
+    )
+    assert stack.to_ir_address().space.value == "ss"
+
+    resolved = ResolvedMemoryOperand(
+        sgreg_t.DS,
+        8,
+        0x1008,
+        16,
+        16,
+    )
+    typed = resolved_operand_to_address_ir_8616(resolved)
+    assert typed.space.value == "ds"

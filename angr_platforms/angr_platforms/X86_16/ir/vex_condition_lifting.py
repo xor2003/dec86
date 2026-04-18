@@ -37,12 +37,11 @@ def build_condition_from_binop(op: str, left: IRValue, right: IRValue) -> IRCond
         zero_fold = _zero_fold(cond_op, left, right)
         if zero_fold is not None:
             return zero_fold
-        suffix = ""
         if folded.endswith("s"):
-            suffix = "_s"
-        elif folded.endswith("u"):
-            suffix = "_u"
-        return IRCondition(op=f"{cond_op}{suffix}", args=(left, right), expr=(op,))
+            return IRCondition(op=f"s{cond_op}", args=(left, right), expr=(op,))
+        if folded.endswith("u"):
+            return IRCondition(op=f"u{cond_op}", args=(left, right), expr=(op,))
+        return IRCondition(op=cond_op, args=(left, right), expr=(op,))
     return None
 
 

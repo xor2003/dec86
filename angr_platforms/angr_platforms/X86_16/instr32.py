@@ -14,7 +14,7 @@ from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
-from .regs import reg8_t, reg16_t, reg32_t
+from .regs import coerce_reg32_t, reg8_t, reg16_t, reg32_t
 from .stack_helpers import (
     branch_rel32,
     emit_far_call32,
@@ -383,7 +383,7 @@ class Instr32(InstrBase):
 
     def mov_r32_imm32(self):
         reg = self.instr.opcode & ((1 << 3) - 1)
-        self.emu.set_gpreg(reg32_t(reg), self.instr.imm32)
+        self.emu.set_gpreg(coerce_reg32_t(reg), self.instr.imm32)
 
     def ret(self):
         return_near32(self.emu)

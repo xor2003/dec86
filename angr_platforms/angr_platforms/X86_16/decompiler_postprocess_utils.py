@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CITE,
     CBinaryOp,
     CConstant,
@@ -48,6 +49,14 @@ def _segment_reg_name_8616(node, project) -> str | None:
 
 
 def _match_real_mode_linear_expr_8616(node, project) -> tuple[str | None, int | None]:
+    if isinstance(node, CBinaryOp) and node.op == "Shl":
+        for maybe_seg, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+            if _c_constant_value_8616(maybe_scale) != 4:
+                continue
+            seg_name = _segment_reg_name_8616(maybe_seg, project)
+            if seg_name is not None:
+                return seg_name, 0
+
     if isinstance(node, CBinaryOp) and node.op == "Mul":
         for maybe_seg, maybe_scale in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
             if _c_constant_value_8616(maybe_scale) != 16:
@@ -260,7 +269,55 @@ def _is_shifted_high_byte_8616(high_expr, low_expr) -> bool:
     return _same_c_expression_8616(high_expr.lhs, low_expr)
 
 
-def _stack_bp_displacement_8616(node, project=None) -> int | None:
+def _single_assignment_expr_for_variable_8616(codegen, target):
+    cfunc = getattr(codegen, "cfunc", None)
+    statements = getattr(getattr(cfunc, "statements", None), "statements", None)
+    if not statements:
+        return None
+
+    matches = []
+    for stmt in statements:
+        if not isinstance(stmt, CAssignment):
+            continue
+        lhs = getattr(stmt, "lhs", None)
+        if not isinstance(lhs, CVariable):
+            continue
+        if not _same_c_expression_8616(lhs, target):
+            continue
+        matches.append(getattr(stmt, "rhs", None))
+        if len(matches) > 1:
+            return None
+    return matches[0] if len(matches) == 1 else None
+
+
+def _resolve_stack_bp_term_8616(node, project=None, codegen=None, seen: set[int] | None = None):
+    if seen is None:
+        seen = set()
+    if id(node) in seen:
+        return node
+    seen.add(id(node))
+
+    if isinstance(node, CTypeCast):
+        resolved = _resolve_stack_bp_term_8616(node.expr, project, codegen, seen)
+        return resolved if resolved is not node.expr else node
+
+    if not isinstance(node, CVariable) or codegen is None:
+        return node
+
+    variable = getattr(node, "variable", None)
+    if variable is None:
+        return node
+    name = getattr(variable, "name", None)
+    if not (isinstance(name, str) and (name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_"))):
+        return node
+
+    replacement = _single_assignment_expr_for_variable_8616(codegen, node)
+    if replacement is None:
+        return node
+    return _resolve_stack_bp_term_8616(replacement, project, codegen, seen)
+
+
+def _stack_bp_displacement_8616(node, project=None, codegen=None) -> int | None:
     total = 0
     stack_offsets: list[int] = []
     found_stack_ref = False
@@ -268,6 +325,8 @@ def _stack_bp_displacement_8616(node, project=None) -> int | None:
     def collect(term) -> None:
         nonlocal total
         nonlocal found_stack_ref
+
+        term = _resolve_stack_bp_term_8616(term, project, codegen)
 
         if isinstance(term, CTypeCast):
             collect(term.expr)
@@ -294,6 +353,14 @@ def _stack_bp_displacement_8616(node, project=None) -> int | None:
             collect(term.rhs)
             return
 
+        if isinstance(term, CBinaryOp) and term.op == "Sub":
+            collect(term.lhs)
+            rhs_const = _c_constant_value_8616(term.rhs)
+            if rhs_const is not None:
+                total -= rhs_const
+                return
+            return
+
         if isinstance(term, CBinaryOp) and term.op in {"Mul", "Shl"}:
             # Segment-scale terms and byte-widening terms are not part of the bp displacement itself.
             if project is not None:
@@ -312,7 +379,7 @@ def _stack_bp_displacement_8616(node, project=None) -> int | None:
     return stack_offsets[0] + total
 
 
-def _match_bp_stack_dereference_8616(node, project) -> int | None:
+def _match_bp_stack_dereference_8616(node, project, codegen=None) -> int | None:
     if not isinstance(node, CUnaryOp) or node.op != "Dereference":
         return None
 
@@ -324,6 +391,15 @@ def _match_bp_stack_dereference_8616(node, project) -> int | None:
         if isinstance(add_node, CTypeCast):
             return extract(add_node.expr)
 
+        if isinstance(add_node, CBinaryOp) and add_node.op == "Sub":
+            rhs_const = _c_constant_value_8616(add_node.rhs)
+            if rhs_const is None:
+                return None
+            base_disp = extract(add_node.lhs)
+            if base_disp is None:
+                return None
+            return base_disp - rhs_const
+
         if not isinstance(add_node, CBinaryOp) or add_node.op != "Add":
             return None
 
@@ -331,7 +407,7 @@ def _match_bp_stack_dereference_8616(node, project) -> int | None:
             seg_name, _linear = _match_real_mode_linear_expr_8616(maybe_seg, project)
             if seg_name != "ss":
                 continue
-            disp = _stack_bp_displacement_8616(maybe_addr, project)
+            disp = _stack_bp_displacement_8616(maybe_addr, project, codegen)
             if disp is not None:
                 return disp
 

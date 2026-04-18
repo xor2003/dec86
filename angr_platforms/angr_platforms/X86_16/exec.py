@@ -7,7 +7,7 @@ from .addressing_helpers import (
     resolve_modrm32_address,
 )
 from .instruction import X86Instruction
-from .regs import reg8_t, reg16_t, reg32_t, sgreg_t
+from .regs import coerce_reg8_t, coerce_reg16_t, coerce_reg32_t, coerce_sgreg_t, reg8_t, reg16_t, reg32_t, sgreg_t
 
 
 class ExecInstr(X86Instruction):
@@ -30,7 +30,7 @@ class ExecInstr(X86Instruction):
 
     def set_rm32(self, value):
         if self.instr.modrm.mod == 3:
-            self.emu.set_gpreg(reg32_t(self.instr.modrm.rm), value)
+            self.emu.set_gpreg(coerce_reg32_t(self.instr.modrm.rm), value)
             return
         operand = self._resolved_rm_operand(32)
         self.emu.put_data32(operand.segment, operand.offset, value)
@@ -38,15 +38,15 @@ class ExecInstr(X86Instruction):
 
     def get_rm32(self):
         if self.instr.modrm.mod == 3:
-            return self.emu.get_gpreg(reg32_t(self.instr.modrm.rm))
+            return self.emu.get_gpreg(coerce_reg32_t(self.instr.modrm.rm))
         operand = self._resolved_rm_operand(32)
         return self.emu.get_data32(operand.segment, operand.offset)
 
     def set_r32(self, value):
-        self.emu.set_gpreg(reg32_t(self.instr.modrm.reg), value)
+        self.emu.set_gpreg(coerce_reg32_t(self.instr.modrm.reg), value)
 
     def get_r32(self):
-        return self.emu.get_gpreg(reg32_t(self.instr.modrm.reg))
+        return self.emu.get_gpreg(coerce_reg32_t(self.instr.modrm.reg))
 
     def set_moffs32(self, value):
         operand = self._resolved_moffs_operand(32)
@@ -58,22 +58,22 @@ class ExecInstr(X86Instruction):
 
     def set_rm16(self, value):
         if self.instr.modrm.mod == 3:
-            self.emu.set_gpreg(reg16_t(self.instr.modrm.rm), value)
+            self.emu.set_gpreg(coerce_reg16_t(self.instr.modrm.rm), value)
             return
         operand = self._resolved_rm_operand(16)
         self.emu.put_data16(operand.segment, operand.offset, value)
 
     def get_rm16(self):
         if self.instr.modrm.mod == 3:
-            return self.emu.get_gpreg(reg16_t(self.instr.modrm.rm))
+            return self.emu.get_gpreg(coerce_reg16_t(self.instr.modrm.rm))
         operand = self._resolved_rm_operand(16)
         return self.emu.get_data16(operand.segment, operand.offset)
 
     def set_r16(self, value):
-        self.emu.set_gpreg(reg16_t(self.instr.modrm.reg), value)
+        self.emu.set_gpreg(coerce_reg16_t(self.instr.modrm.reg), value)
 
     def get_r16(self):
-        return self.emu.get_gpreg(reg16_t(self.instr.modrm.reg))
+        return self.emu.get_gpreg(coerce_reg16_t(self.instr.modrm.reg))
 
     def set_moffs16(self, value):
         operand = self._resolved_moffs_operand(16)
@@ -85,22 +85,22 @@ class ExecInstr(X86Instruction):
 
     def set_rm8(self, value):
         if self.instr.modrm.mod == 3:
-            self.emu.set_gpreg(reg8_t(self.instr.modrm.rm), value)
+            self.emu.set_gpreg(coerce_reg8_t(self.instr.modrm.rm), value)
             return
         operand = self._resolved_rm_operand(8)
         self.emu.put_data8(operand.segment, operand.offset, value)
 
     def get_rm8(self):
         if self.instr.modrm.mod == 3:
-            return self.emu.get_gpreg(reg8_t(self.instr.modrm.rm))
+            return self.emu.get_gpreg(coerce_reg8_t(self.instr.modrm.rm))
         operand = self._resolved_rm_operand(8)
         return self.emu.get_data8(operand.segment, operand.offset)
 
     def set_r8(self, value):
-        self.emu.set_gpreg(reg8_t(self.instr.modrm.reg), value)
+        self.emu.set_gpreg(coerce_reg8_t(self.instr.modrm.reg), value)
 
     def get_r8(self):
-        return self.emu.get_gpreg(reg8_t(self.instr.modrm.reg))
+        return self.emu.get_gpreg(coerce_reg8_t(self.instr.modrm.reg))
 
     def set_moffs8(self, value):
         operand = self._resolved_moffs_operand(8)
@@ -141,10 +141,10 @@ class ExecInstr(X86Instruction):
         )
 
     def set_sreg(self, value):
-        self.emu.set_segment(sgreg_t(self.instr.modrm.reg), value)
+        self.emu.set_segment(coerce_sgreg_t(self.instr.modrm.reg), value)
 
     def get_sreg(self):
-        return self.emu.get_segment(sgreg_t(self.instr.modrm.reg))
+        return self.emu.get_segment(coerce_sgreg_t(self.instr.modrm.reg))
 
     def set_crn(self, value):
         print(f"set CR{self.instr.modrm.reg} = {value:x}")

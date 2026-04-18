@@ -425,7 +425,7 @@ def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
     if project is None:
         return None
 
-    displacement = _match_bp_stack_dereference_8616(node, codegen.project)
+    displacement = _match_bp_stack_dereference_8616(node, codegen.project, codegen)
     if displacement is None:
         return None
 
@@ -536,3 +536,7 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
         logger.warning("Segmented memory reasoning pass failed: %s", ex)
         codegen._inertia_segmented_memory_error = str(ex)
         return False
+
+
+def _lower_stable_ss_stack_accesses_8616(codegen) -> bool:
+    return apply_x86_16_segmented_memory_reasoning(codegen)

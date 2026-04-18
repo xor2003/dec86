@@ -15,6 +15,7 @@ from . import decompiler_postprocess_calls as _calls
 from . import decompiler_postprocess_flags as _flags
 from . import decompiler_postprocess_globals as _globals
 from . import decompiler_postprocess_simplify as _simplify
+from . import segmented_memory_reasoning as _segmented_mem
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
@@ -73,6 +74,11 @@ def _build_decompiler_postprocess_passes():
             "_maybe_eliminate_single_use_temporaries_8616",
             _simplify._maybe_eliminate_single_use_temporaries_8616,
             True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_lower_stable_ss_stack_accesses_8616",
+            _segmented_mem._lower_stable_ss_stack_accesses_8616,
+            False,
         ),
         DecompilerPostprocessPassSpec(
             "_normalize_function_prototype_arg_names_8616",

@@ -5,7 +5,7 @@ from pyvex.stmt import Put
 
 from .cr import CR
 from .eflags import Eflags
-from .regs import dtreg_t, reg8_t, reg16_t, reg32_t, sgreg_t
+from .regs import dtreg_t, reg8_t, reg16_t, reg32_t, register_name_8616, sgreg_t
 
 # Constants for general-purpose registers
 
@@ -246,7 +246,11 @@ class Processor(Eflags, CR):
         return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_16))
 
     def get_gpreg(self, n):
-        name = n.name.lower()
+        if isinstance(n, VexValue):
+            if self.lifter_instruction is not None:
+                return n
+            raise ValueError("Cannot get gpreg from a non-constant VexValue without an active lifter instruction")
+        name = register_name_8616(n)
         if isinstance(n, reg8_t):
             base = self.get_gpreg(self._reg8_base(n))
             if self._reg8_is_high(n):
@@ -282,7 +286,11 @@ class Processor(Eflags, CR):
         return n
 
     def get_sgreg(self, n):
-        name = n.name.lower()
+        if isinstance(n, VexValue):
+            if self.lifter_instruction is not None:
+                return n
+            raise ValueError("Cannot get sgreg from a non-constant VexValue without an active lifter instruction")
+        name = register_name_8616(n)
         if self.lifter_instruction is not None:
             if self.vex_offsets is None:
                 raise ValueError("vex_offsets not initialized for lifting mode")
@@ -332,7 +340,7 @@ class Processor(Eflags, CR):
         self.set_gpreg(reg16_t.IP, value)
 
     def set_gpreg(self, n, value):
-        name = n.name.lower()
+        name = register_name_8616(n)
         if isinstance(n, reg8_t):
             if isinstance(value, int):
                 value = self.constant(value, Type.int_8) if self.lifter_instruction is not None else value & 0xFF
@@ -391,7 +399,7 @@ class Processor(Eflags, CR):
         raise TypeError(f"Cannot set {n} from non-concrete value of type {type(value)} in concrete mode")
 
     def set_sgreg(self, n, reg):
-        name = n.name.lower()
+        name = register_name_8616(n)
         if self.lifter_instruction is not None:
             if self.vex_offsets is None:
                 raise ValueError("vex_offsets not initialized for lifting mode")

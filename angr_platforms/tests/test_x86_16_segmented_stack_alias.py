@@ -14,6 +14,7 @@ from angr_platforms.X86_16.segmented_memory_reasoning import (
     SegmentRegister,
     apply_x86_16_segmented_memory_reasoning,
 )
+from angr_platforms.X86_16.decompiler_postprocess_utils import _match_bp_stack_dereference_8616
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -179,3 +180,121 @@ def test_segmented_memory_reasoning_refuses_over_associated_ss_lowering():
     lhs = codegen.cfunc.statements.statements[0].lhs
     assert isinstance(lhs, CUnaryOp)
     assert lhs.op == "Dereference"
+
+
+def test_match_bp_stack_dereference_resolves_single_assignment_vvar_chain():
+    project, codegen = _codegen([])
+    temp = _reg(project, "ax", codegen)
+    temp.variable.name = "vvar_20"
+    stack_ref = CUnaryOp("Reference", _stack(-10, codegen, name="s_a"), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                temp,
+                CBinaryOp("Add", stack_ref, _const(2, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+            CAssignment(
+                _ss_stack_deref(project, -10, 2, codegen),
+                _const(7, codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", _reg(project, "ss", codegen), _const(16, codegen), codegen=codegen),
+            CBinaryOp("Add", temp, _const(-2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
+
+    assert displacement == -10
+
+
+def test_segmented_memory_reasoning_lowers_ss_dereference_backed_by_vvar_chain():
+    project, codegen = _codegen([])
+    temp = _reg(project, "ax", codegen)
+    temp.variable.name = "vvar_20"
+    stack_ref = CUnaryOp("Reference", _stack(-10, codegen, name="s_a"), codegen=codegen)
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", _reg(project, "ss", codegen), _const(16, codegen), codegen=codegen),
+            CBinaryOp("Add", temp, _const(-2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                temp,
+                CBinaryOp("Add", stack_ref, _const(2, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+            CAssignment(deref, _const(7, codegen), codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = apply_x86_16_segmented_memory_reasoning(codegen)
+
+    assert changed is True
+    lhs = codegen.cfunc.statements.statements[1].lhs
+    assert isinstance(lhs, CVariable)
+    assert isinstance(lhs.variable, SimStackVariable)
+    assert lhs.variable.offset == -10
+
+
+def test_match_bp_stack_dereference_handles_sub_form_for_vvar_chain():
+    project, codegen = _codegen([])
+    temp = _reg(project, "ax", codegen)
+    temp.variable.name = "vvar_20"
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                temp,
+                CBinaryOp(
+                    "Add",
+                    CUnaryOp("Reference", _stack(-10, codegen, name="s_a"), codegen=codegen),
+                    _const(2, codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Sub",
+            CBinaryOp(
+                "Add",
+                CBinaryOp("Mul", _reg(project, "ss", codegen), _const(16, codegen), codegen=codegen),
+                temp,
+                codegen=codegen,
+            ),
+            _const(2, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
+
+    assert displacement == -10

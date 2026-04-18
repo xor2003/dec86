@@ -44,6 +44,8 @@ def _condition_value_from_ir_value_8616(instruction: Instruction, value: IRValue
             return instruction.get(reg_name, Type.int_8)
         return instruction.get(reg_name, Type.int_16)
     if value.space == MemSpace.TMP and isinstance(value.name, str) and value.name:
+        if value.name == "VexValue":
+            return None
         bits = int(value.size or 0) * 8
         if bits <= 8:
             ty = Type.int_8
@@ -51,28 +53,45 @@ def _condition_value_from_ir_value_8616(instruction: Instruction, value: IRValue
             ty = Type.int_16
         else:
             ty = Type.int_32
-        return instruction.get(value.name, ty)
+        with contextlib.suppress(Exception):
+            return instruction.get(value.name, ty)
+        return None
     return None
 
 
 def _direct_jcc_condition_from_last_condition_8616(instruction: Instruction, kind: str, condition: IRCondition):
     args = tuple(getattr(condition, "args", ()) or ())
     op = str(getattr(condition, "op", ""))
-    if op in {"compare", "masked_nonzero"}:
-        if len(args) != 2:
+    if op in {"compare", "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge", "masked_zero", "zero", "masked_nonzero", "nonzero"}:
+        if len(args) not in {1, 2}:
             return None
-        lhs = _condition_value_from_ir_value_8616(instruction, args[0])
-        rhs = _condition_value_from_ir_value_8616(instruction, args[1])
-        if lhs is None or rhs is None:
+        if op in {"masked_zero", "zero"}:
+            lhs = _condition_value_from_ir_value_8616(instruction, args[0])
+            rhs = _condition_value_from_ir_value_8616(instruction, args[1]) if len(args) == 2 else None
+            if lhs is None:
+                return None
+            masked = lhs if rhs is None else lhs & rhs
+            if kind in {"je", "jz"}:
+                return masked == instruction.constant(0, Type.int_16)
+            if kind in {"jne", "jnz"}:
+                return masked != instruction.constant(0, Type.int_16)
             return None
-        if op == "masked_nonzero":
-            masked = lhs & rhs
+        if op in {"masked_nonzero", "nonzero"}:
+            lhs = _condition_value_from_ir_value_8616(instruction, args[0])
+            rhs = _condition_value_from_ir_value_8616(instruction, args[1]) if len(args) == 2 else None
+            if lhs is None:
+                return None
+            masked = lhs if rhs is None else lhs & rhs
             if kind in {"je", "jz"}:
                 return masked == instruction.constant(0, Type.int_16)
             if kind in {"jne", "jnz"}:
                 return masked != instruction.constant(0, Type.int_16)
             return None
 
+        lhs = _condition_value_from_ir_value_8616(instruction, args[0])
+        rhs = _condition_value_from_ir_value_8616(instruction, args[1])
+        if lhs is None or rhs is None:
+            return None
         if kind in {"je", "jz"}:
             return lhs == rhs
         if kind in {"jne", "jnz"}:

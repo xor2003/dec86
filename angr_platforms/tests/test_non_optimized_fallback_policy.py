@@ -28,6 +28,31 @@ def test_sidecar_verdict_closes_non_optimized_lane_for_repeated_recover_timeout(
     assert sidecar_verdict_closes_non_optimized_lane(verdict) is True
 
 
+def test_sidecar_verdict_does_not_close_lane_for_build_or_recover_errors() -> None:
+    assert (
+        sidecar_verdict_closes_non_optimized_lane(
+            BoundedSliceVerdict(
+                stage="build",
+                stop_family="error",
+                can_widen_locally=False,
+                can_retry_with_fresh_project=True,
+            )
+        )
+        is False
+    )
+    assert (
+        sidecar_verdict_closes_non_optimized_lane(
+            BoundedSliceVerdict(
+                stage="recover",
+                stop_family="error",
+                can_widen_locally=False,
+                can_retry_with_fresh_project=True,
+            )
+        )
+        is False
+    )
+
+
 def test_rebase_stale_absolute_cod_metadata_to_linked_base() -> None:
     metadata = LSTMetadata(
         data_labels={0x200: "data"},

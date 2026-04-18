@@ -106,6 +106,7 @@ def test_x86_16_package_exports_source_backends():
     assert "decompiler_postprocess_utils" in x8616.__all__
     assert "decompiler_postprocess_simplify" in x8616.__all__
     assert "decompiler_postprocess_flags" in x8616.__all__
+    assert "address_ir" in x8616.__all__
     assert "callsite_summary" in x8616.__all__
     assert "function_summary" in x8616.__all__
     assert "apply_x86_16_decompiler_return_compatibility" in x8616.__all__
@@ -155,6 +156,7 @@ def test_x86_16_decompiler_postprocess_registry_order():
         "_fix_interval_guard_conditions_8616",
         "_simplify_boolean_cites_8616",
         "_maybe_eliminate_single_use_temporaries_8616",
+        "_lower_stable_ss_stack_accesses_8616",
         "_normalize_function_prototype_arg_names_8616",
         "_attach_callsite_summaries_8616",
         "_materialize_callsite_prototypes_8616",

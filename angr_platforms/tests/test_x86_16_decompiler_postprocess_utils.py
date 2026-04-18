@@ -77,6 +77,15 @@ def test_postprocess_utils_match_explicit_segment_times_16_plus_offset():
     assert _match_real_mode_linear_expr_8616(_segmented_linear(project, "ss", 0x18, codegen), project) == ("ss", 0x18)
 
 
+def test_postprocess_utils_match_ss_shift_by_four_as_linear_segment_form():
+    project = _project()
+    codegen = _DummyCodegen()
+    ss = _reg(project, "ss", codegen)
+    expr = CBinaryOp("Shl", ss, _const(4, codegen), codegen=codegen)
+
+    assert _match_real_mode_linear_expr_8616(expr, project) == ("ss", 0)
+
+
 def test_postprocess_utils_keep_ds_dereference_loads_explicit():
     project = _project()
     codegen = _DummyCodegen()

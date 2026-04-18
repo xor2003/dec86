@@ -55,3 +55,57 @@ class dtreg_t(Enum):
     LDTR = 2
     TR = 3
     DTREGS_COUNT = 4
+
+
+def _coerce_enum(enum_cls, value):
+    if isinstance(value, enum_cls):
+        return value
+    try:
+        raw_value = getattr(value, "value", value)
+    except Exception:
+        raw_value = None
+    if isinstance(raw_value, enum_cls):
+        return raw_value
+    if isinstance(raw_value, int):
+        try:
+            return enum_cls(raw_value)
+        except Exception:
+            pass
+    raise ValueError(f"Register {value!r} does not exist")
+
+
+def coerce_reg32_t(value) -> reg32_t:
+    return _coerce_enum(reg32_t, value)
+
+
+def coerce_reg16_t(value) -> reg16_t:
+    return _coerce_enum(reg16_t, value)
+
+
+def coerce_reg8_t(value) -> reg8_t:
+    return _coerce_enum(reg8_t, value)
+
+
+def coerce_sgreg_t(value) -> sgreg_t:
+    return _coerce_enum(sgreg_t, value)
+
+
+def register_name_8616(value) -> str:
+    if hasattr(value, "name") and isinstance(getattr(value, "name"), str):
+        return value.name.lower()
+    try:
+        coerced = _coerce_enum(reg32_t, value)
+        return coerced.name.lower()
+    except Exception:
+        pass
+    try:
+        coerced = _coerce_enum(reg16_t, value)
+        return coerced.name.lower()
+    except Exception:
+        pass
+    try:
+        coerced = _coerce_enum(reg8_t, value)
+        return coerced.name.lower()
+    except Exception:
+        pass
+    raise ValueError(f"Register {value!r} does not exist")

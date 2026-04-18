@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pyvex.lifting.util.vex_helper import Type
 
+from .condition_ir import build_condition_ir_8616, normalize_condition_op_8616
 from .ir.core import IRCondition, IRValue, MemSpace
 from .addressing_helpers import type_for_bits
 
@@ -32,7 +33,10 @@ def _condition_value_from_operand(value) -> IRValue:
         if not -(1 << 15) <= value < (1 << 16):
             size = 4
         return IRValue(MemSpace.CONST, const=value, size=size, expr=("int",))
-    value_const = getattr(value, "value", None)
+    try:
+        value_const = getattr(value, "value", None)
+    except Exception:
+        value_const = None
     if isinstance(value_const, int):
         return IRValue(MemSpace.CONST, const=value_const, size=_size_bytes_from_operand(value), expr=("vex_const",))
     return IRValue(
@@ -43,21 +47,58 @@ def _condition_value_from_operand(value) -> IRValue:
     )
 
 
+def _same_condition_operand_8616(lhs, rhs) -> bool:
+    if lhs is rhs:
+        return True
+    try:
+        return lhs == rhs
+    except Exception:
+        return False
+
+
 def build_compare_condition_8616(lhs, rhs, update_flags) -> IRCondition | None:
     name = getattr(update_flags, "__name__", "")
     if name == "update_eflags_sub":
-        return IRCondition(
-            op="compare",
-            args=(_condition_value_from_operand(lhs), _condition_value_from_operand(rhs)),
+        lhs_value = _condition_value_from_operand(lhs)
+        rhs_value = _condition_value_from_operand(rhs)
+        if _same_condition_operand_8616(lhs, rhs):
+            return build_condition_ir_8616(
+                normalize_condition_op_8616("eq"),
+                lhs_value,
+                rhs_value,
+                expr=(name, "same_operand"),
+            )
+        return build_condition_ir_8616(
+            normalize_condition_op_8616("compare"),
+            lhs_value,
+            rhs_value,
             expr=(name,),
         )
     if name == "update_eflags_and":
-        return IRCondition(
-            op="masked_nonzero",
-            args=(_condition_value_from_operand(lhs), _condition_value_from_operand(rhs)),
+        lhs_value = _condition_value_from_operand(lhs)
+        rhs_value = _condition_value_from_operand(rhs)
+        if _same_condition_operand_8616(lhs, rhs):
+            return build_condition_ir_8616(
+                normalize_condition_op_8616("nonzero"),
+                lhs_value,
+                expr=(name, "same_operand"),
+            )
+        return build_condition_ir_8616(
+            normalize_condition_op_8616("nonzero"),
+            lhs_value,
+            rhs_value,
             expr=(name,),
         )
     return None
+
+
+def _record_last_condition_from_update_flags(emu, lhs, rhs, update_flags) -> None:
+    owner = getattr(update_flags, "__self__", None)
+    if owner is None or not hasattr(owner, "set_last_condition"):
+        return
+    condition = build_compare_condition_8616(lhs, rhs, update_flags)
+    if condition is not None:
+        owner.set_last_condition(condition)
 
 
 def binary_operation(emu, get_lhs, get_rhs, set_result, update_flags, operator):
@@ -65,6 +106,7 @@ def binary_operation(emu, get_lhs, get_rhs, set_result, update_flags, operator):
     rhs = get_rhs()
     set_result(operator(lhs, rhs))
     update_flags(lhs, rhs)
+    _record_last_condition_from_update_flags(emu, lhs, rhs, update_flags)
 
 
 def binary_operation_with_carry(
@@ -91,11 +133,7 @@ def compare_operation(get_lhs, get_rhs, update_flags):
     lhs = get_lhs()
     rhs = get_rhs()
     update_flags(lhs, rhs)
-    owner = getattr(update_flags, "__self__", None)
-    if owner is None or not hasattr(owner, "set_last_condition"):
-        return
-    condition = build_compare_condition_8616(lhs, rhs, update_flags)
-    owner.set_last_condition(condition)
+    _record_last_condition_from_update_flags(None, lhs, rhs, update_flags)
 
 
 def unary_operation(get_value, set_result, update_flags, operator):
@@ -103,6 +141,7 @@ def unary_operation(get_value, set_result, update_flags, operator):
     set_result(operator(value))
     if update_flags is not None:
         update_flags(value)
+        _record_last_condition_from_update_flags(None, value, 0, update_flags)
 
 
 def masked_shift_count(emu, count, width_bits: int, mask: int = 0x1F):

@@ -5,6 +5,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CIfElse,
     CStatements,
     CUnaryOp,
     CVariable,
@@ -182,11 +183,249 @@ def _recover_ordering_condition_from_flag_mask_8616(expr, flag_test_info, codege
     return predicate
 
 
+def _canonical_compare_guard_8616(node):
+    if isinstance(node, CUnaryOp) and node.op == "Not" and isinstance(node.operand, CBinaryOp):
+        operand = node.operand
+        inverted = {
+            "CmpLE": "CmpGT",
+            "CmpLT": "CmpGE",
+            "CmpGE": "CmpLT",
+            "CmpGT": "CmpLE",
+        }.get(operand.op)
+        if inverted is not None:
+            return inverted, operand.lhs, operand.rhs
+    if isinstance(node, CBinaryOp) and node.op in {"CmpGT", "CmpGE", "CmpLT", "CmpLE"}:
+        return node.op, node.lhs, node.rhs
+    return None
+
+
+def _compare_matches_or_swapped_8616(compare_info, other_info) -> bool:
+    if compare_info is None or other_info is None:
+        return False
+    op, lhs, rhs = compare_info
+    other_op, other_lhs, other_rhs = other_info
+    if op == other_op and _same_c_expression_8616(lhs, other_lhs) and _same_c_expression_8616(rhs, other_rhs):
+        return True
+    swapped = {
+        "CmpGT": "CmpLT",
+        "CmpGE": "CmpLE",
+        "CmpLT": "CmpGT",
+        "CmpLE": "CmpGE",
+    }.get(op)
+    return (
+        swapped == other_op
+        and _same_c_expression_8616(lhs, other_rhs)
+        and _same_c_expression_8616(rhs, other_lhs)
+    )
+
+
+def _maybe_strip_redundant_signed_flag_pair_guard_8616(node, flag_var, flag_expr):
+    if not isinstance(node, CBinaryOp) or node.op != "LogicalAnd":
+        return None
+
+    def _strip(flag_guard, other_guard):
+        info = _extract_flag_test_info_8616(flag_guard)
+        if info is None or len(info) != 4 or not _same_c_expression_8616(info[0], flag_var):
+            return None
+        if {info[1], info[2]} != {_SF_MASK_8616, _OF_MASK_8616}:
+            return None
+        sf_predicate = _extract_flag_predicate_from_expr_8616(flag_expr, _SF_MASK_8616)
+        if sf_predicate is None:
+            return None
+        sf_compare = _canonical_compare_guard_8616(sf_predicate)
+        other_compare = _canonical_compare_guard_8616(other_guard)
+        if not _compare_matches_or_swapped_8616(sf_compare, other_compare):
+            return None
+        pair_is_equal = bool(info[3])
+        other_kind = other_compare[0]
+        if pair_is_equal and other_kind == "CmpGT":
+            return other_guard
+        if not pair_is_equal and other_kind == "CmpLT":
+            return other_guard
+        return None
+
+    simplified = _strip(node.lhs, node.rhs)
+    if simplified is not None:
+        return simplified
+    return _strip(node.rhs, node.lhs)
+
+
+def _maybe_strip_standalone_signed_flag_pair_guard_8616(node):
+    if not isinstance(node, CBinaryOp) or node.op != "LogicalAnd":
+        return None
+
+    def _strip(flag_guard, other_guard):
+        info = _extract_flag_test_info_8616(flag_guard)
+        if info is None or len(info) != 4:
+            return None
+        if {info[1], info[2]} != {_SF_MASK_8616, _OF_MASK_8616}:
+            return None
+        other_compare = _canonical_compare_guard_8616(other_guard)
+        if other_compare is None:
+            return None
+        # If branch meaning is already carried by a strict signed compare, the raw
+        # SF/OF pair is duplicate flag syntax and not additional branch meaning.
+        if other_compare[0] in {"CmpGT", "CmpLT"}:
+            return other_guard
+        return None
+
+    simplified = _strip(node.lhs, node.rhs)
+    if simplified is not None:
+        return simplified
+    return _strip(node.rhs, node.lhs)
+
+
+def _extract_nested_flag_bit_predicate_8616(node):
+    while isinstance(node, CUnaryOp) and node.op == "Not":
+        node = node.operand
+    while isinstance(node, CITE):
+        values = _bool_cite_values_8616(node)
+        if values == (1, 0):
+            node = node.cond
+            continue
+        if values == (0, 1):
+            node = node.cond
+            continue
+        break
+    if not isinstance(node, CBinaryOp) or node.op not in {"CmpEQ", "CmpNE"}:
+        return None
+    zero = None
+    masked = None
+    if isinstance(node.lhs, CBinaryOp) and node.lhs.op == "And" and isinstance(node.rhs, CConstant) and node.rhs.value == 0:
+        masked = node.lhs
+        zero = node.rhs
+    elif isinstance(node.rhs, CBinaryOp) and node.rhs.op == "And" and isinstance(node.lhs, CConstant) and node.lhs.value == 0:
+        masked = node.rhs
+        zero = node.lhs
+    if masked is None or zero is None:
+        return None
+    if isinstance(masked.lhs, CVariable) and isinstance(masked.rhs, CConstant):
+        return masked.lhs, masked.rhs.value
+    if isinstance(masked.rhs, CVariable) and isinstance(masked.lhs, CConstant):
+        return masked.rhs, masked.lhs.value
+    return None
+
+
+def _extract_flag_pair_compare_info_8616(node):
+    invert = False
+    while True:
+        if isinstance(node, CUnaryOp) and node.op == "Not":
+            invert = not invert
+            node = node.operand
+            continue
+        if isinstance(node, CITE):
+            values = _bool_cite_values_8616(node)
+            if values == (1, 0):
+                node = node.cond
+                continue
+            if values == (0, 1):
+                invert = not invert
+                node = node.cond
+                continue
+        break
+    if not isinstance(node, CBinaryOp) or node.op not in {"CmpEQ", "CmpNE"}:
+        return None
+    lhs_info = _extract_nested_flag_bit_predicate_8616(node.lhs)
+    rhs_info = _extract_nested_flag_bit_predicate_8616(node.rhs)
+    if lhs_info is None or rhs_info is None:
+        return None
+    lhs_var, lhs_bit = lhs_info
+    rhs_var, rhs_bit = rhs_info
+    if not _same_c_expression_8616(lhs_var, rhs_var):
+        return None
+    equality = node.op == "CmpEQ"
+    if invert:
+        equality = not equality
+    return lhs_var, lhs_bit, rhs_bit, equality
+
+
+def _normalize_bool_compare_guard_8616(node, codegen):
+    info = _extract_bool_compare_term_8616(node)
+    if info is None:
+        if isinstance(node, CBinaryOp) and node.op in {"CmpGT", "CmpGE", "CmpLT", "CmpLE"}:
+            return node
+        if isinstance(node, CUnaryOp) and node.op == "Not" and isinstance(node.operand, CBinaryOp):
+            inverted = _invert_cmp_op_8616(node.operand.op)
+            if inverted is not None:
+                return CBinaryOp(
+                    inverted,
+                    node.operand.lhs,
+                    node.operand.rhs,
+                    codegen=codegen,
+                    tags=getattr(node.operand, "tags", None),
+                )
+        return None
+    compare, negated, _template = info
+    return _make_bool_expr_from_compare_8616(compare, negated, codegen)
+
+
+def _same_compare_direction_family_8616(lhs: CBinaryOp, rhs: CBinaryOp) -> bool:
+    if lhs.op in {"CmpGT", "CmpGE"} and rhs.op in {"CmpGT", "CmpGE"}:
+        return True
+    if lhs.op in {"CmpLT", "CmpLE"} and rhs.op in {"CmpLT", "CmpLE"}:
+        return True
+    return False
+
+
+def _split_ordering_if_chain_replacement_condition_8616(prev_cond, curr_cond, codegen):
+    prev_compare = _normalize_bool_compare_guard_8616(prev_cond, codegen)
+    if not isinstance(prev_compare, CBinaryOp) or prev_compare.op not in {"CmpGT", "CmpLT"}:
+        return None
+    if not isinstance(curr_cond, CBinaryOp) or curr_cond.op != "LogicalAnd":
+        return None
+
+    def _strip(flag_guard, low_guard):
+        pair_info = _extract_flag_pair_compare_info_8616(flag_guard)
+        if pair_info is None:
+            return None
+        if {pair_info[1], pair_info[2]} != {_SF_MASK_8616, _OF_MASK_8616}:
+            return None
+        if not pair_info[3]:
+            return None
+        low_compare = _normalize_bool_compare_guard_8616(low_guard, codegen)
+        if not isinstance(low_compare, CBinaryOp) or low_compare.op not in {"CmpGT", "CmpLT"}:
+            return None
+        if not _same_compare_direction_family_8616(prev_compare, low_compare):
+            return None
+        if _same_c_expression_8616(prev_compare.lhs, low_compare.lhs) and _same_c_expression_8616(prev_compare.rhs, low_compare.rhs):
+            return None
+        return low_guard
+
+    replacement = _strip(curr_cond.lhs, curr_cond.rhs)
+    if replacement is not None:
+        return replacement
+    return _strip(curr_cond.rhs, curr_cond.lhs)
+
+
+def _simplify_split_ordering_if_chain_8616(node: CIfElse, codegen) -> bool:
+    pairs = list(getattr(node, "condition_and_nodes", ()) or ())
+    if len(pairs) < 2:
+        return False
+
+    changed = False
+    for idx in range(1, len(pairs)):
+        prev_cond, _prev_body = pairs[idx - 1]
+        curr_cond, curr_body = pairs[idx]
+        replacement = _split_ordering_if_chain_replacement_condition_8616(prev_cond, curr_cond, codegen)
+        if replacement is None:
+            continue
+        pairs[idx] = (replacement, curr_body)
+        changed = True
+
+    if changed:
+        node.condition_and_nodes = pairs
+    return changed
+
+
 def _rewrite_flag_condition_expr_8616(node, flag_var, flag_expr, codegen):
     changed = False
 
     def transform(expr):
         nonlocal changed
+        simplified = _maybe_strip_redundant_signed_flag_pair_guard_8616(expr, flag_var, flag_expr)
+        if simplified is not None:
+            changed = True
+            return simplified
         info = _extract_flag_test_info_8616(expr)
         if info is None or not _same_c_expression_8616(info[0], flag_var):
             return expr
@@ -242,6 +481,10 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
         return False
 
     changed = False
+    flags_offset = None
+    with_context_arch = getattr(getattr(codegen, "project", None), "arch", None)
+    if with_context_arch is not None:
+        flags_offset = with_context_arch.registers.get("flags", (None, None))[0]
 
     def _last_assignment_in_stmt(stmt):
         if isinstance(stmt, CAssignment):
@@ -252,17 +495,67 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
                 return last, stmt
         return None, None
 
-    def transform(node):
+    def _is_flags_assignment(stmt) -> bool:
+        if flags_offset is None or not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
+            return False
+        variable = getattr(stmt.lhs, "variable", None)
+        return isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) == flags_offset
+
+    def _rewrite_condition_with_assignments(cond, assignments: list[tuple[CAssignment, CStatements | None]]):
+        nonlocal changed
+        if not isinstance(cond, (CBinaryOp, CUnaryOp, CITE, CVariable, CConstant)):
+            return cond
+        for assign_stmt, _assign_container in reversed(assignments):
+            if not _is_flags_assignment(assign_stmt):
+                continue
+            new_cond, cond_changed = _rewrite_flag_condition_expr_8616(
+                cond,
+                assign_stmt.lhs,
+                assign_stmt.rhs,
+                codegen,
+            )
+            if cond_changed:
+                changed = True
+                return new_cond
+        return cond
+
+    def transform(node, prior_assignments: list[tuple[CAssignment, CStatements | None]] | None = None):
         nonlocal changed
         if not isinstance(node, CStatements):
             return node
 
+        scope_assignments = list(prior_assignments or [])
         new_statements = []
         statements = list(node.statements)
         i = 0
         while i < len(statements):
             stmt = statements[i]
             next_stmt = statements[i + 1] if i + 1 < len(statements) else None
+
+            if isinstance(stmt, CStatements):
+                new_stmt = transform(stmt, scope_assignments)
+                if new_stmt is not stmt:
+                    changed = True
+                new_statements.append(new_stmt)
+                i += 1
+                continue
+
+            if isinstance(stmt, CIfElse) and isinstance(getattr(stmt, "condition_and_nodes", None), list):
+                new_pairs = []
+                pair_changed = False
+                for cond, body in stmt.condition_and_nodes:
+                    new_cond = _rewrite_condition_with_assignments(cond, scope_assignments)
+                    new_body = body
+                    if isinstance(body, CStatements):
+                        new_body = transform(body, scope_assignments)
+                    pair_changed = pair_changed or (new_cond is not cond) or (new_body is not body)
+                    new_pairs.append((new_cond, new_body))
+                if pair_changed:
+                    stmt.condition_and_nodes = new_pairs
+                    changed = True
+                new_statements.append(stmt)
+                i += 1
+                continue
 
             matched = False
             assign_stmt, assign_container = _last_assignment_in_stmt(stmt)
@@ -298,6 +591,9 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
 
             if not matched:
                 new_statements.append(stmt)
+
+            if isinstance(assign_stmt, CAssignment) and isinstance(assign_stmt.lhs, CVariable):
+                scope_assignments.append((assign_stmt, assign_container))
             i += 1
 
         if len(new_statements) != len(node.statements):
@@ -306,8 +602,6 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
 
     root = codegen.cfunc.statements
     transform(root)
-    if _replace_c_children_8616(root, transform):
-        changed = True
     return changed
 
 
@@ -386,6 +680,9 @@ def _make_bool_expr_from_compare_8616(compare: CBinaryOp, negated: bool, codegen
 
 
 def _fix_impossible_interval_guard_expr_8616(node, codegen):
+    simplified_signed = _maybe_strip_standalone_signed_flag_pair_guard_8616(node)
+    if simplified_signed is not None:
+        return simplified_signed
     if not isinstance(node, CBinaryOp) or node.op != "LogicalAnd":
         return node
     left_info = _extract_bool_compare_term_8616(node.lhs)
@@ -424,10 +721,16 @@ def _fix_impossible_interval_guard_expr_8616(node, codegen):
 def _fix_interval_guard_conditions_8616(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
+    changed = False
 
     def transform(node):
+        nonlocal changed
+        if isinstance(node, CIfElse) and _simplify_split_ordering_if_chain_8616(node, codegen):
+            changed = True
+            return node
         fixed = _fix_impossible_interval_guard_expr_8616(node, codegen)
         if fixed is not node:
+            changed = True
             return fixed
         return node
 
@@ -436,9 +739,6 @@ def _fix_interval_guard_conditions_8616(codegen) -> bool:
     if new_root is not root:
         codegen.cfunc.statements = new_root
         root = new_root
-        changed = True
-    else:
-        changed = False
 
     if _replace_c_children_8616(root, transform):
         changed = True

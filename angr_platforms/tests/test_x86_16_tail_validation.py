@@ -22,7 +22,9 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
+import angr_platforms.X86_16.tail_validation as tail_validation_module
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.tail_validation_fingerprint import build_x86_16_contextual_call_fingerprints
 from angr_platforms.X86_16.tail_validation import (
     X86_16ValidationCacheDescriptor,
     annotate_x86_16_tail_validation_surface_with_baseline,
@@ -147,6 +149,130 @@ def test_tail_validation_summary_collects_observable_effects():
     assert summary.helper_calls == ("print_dos_string",)
     assert summary.returns == ("call:print_dos_string(const:128)",)
     assert summary.control_flow_effects == ("return",)
+
+
+def test_tail_validation_negative_memory_addr_is_not_counted_as_global():
+    project = _project()
+    codegen_stub = _DummyCodegen()
+    codegen = _codegen(
+        [
+            CAssignment(_global(-8, codegen_stub, name="g_-8"), _const(3, codegen_stub), codegen=codegen_stub),
+            CReturn(None, codegen=codegen_stub),
+        ],
+        codegen_stub,
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="coarse")
+
+    assert summary.global_writes == ()
+    assert summary.stack_writes == ("stack:-0x8",)
+
+
+def test_tail_validation_uses_callsite_summary_target_for_unknown_direct_call(monkeypatch):
+    project = _project()
+    function = SimpleNamespace(get_call_sites=lambda: (0x4012,))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: function if addr == 0x4010 else None
+        )
+    )
+    codegen_stub = _DummyCodegen()
+    codegen = _codegen(
+        [
+            CFunctionCall(None, None, [], codegen=codegen_stub),
+            CReturn(None, codegen=codegen_stub),
+        ],
+        codegen_stub,
+    )
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: SimpleNamespace(target_addr=0x104D),
+    )
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls in {("callsite:0x4012",), ("addr:0x104d",)}
+
+
+def test_tail_validation_uses_direct_capstone_callsite_fingerprint_when_cfg_callsites_missing(monkeypatch):
+    project = _project()
+    function = SimpleNamespace(get_call_sites=lambda: (), block_addrs_set={0x4010}, project=project)
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: function if addr == 0x4010 else None
+        )
+    )
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0: SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=(SimpleNamespace(address=0x4012, mnemonic="call"),),
+            )
+        )
+    )
+    codegen_stub = _DummyCodegen()
+    codegen = _codegen(
+        [
+            CFunctionCall(None, None, [], codegen=codegen_stub),
+            CReturn(None, codegen=codegen_stub),
+        ],
+        codegen_stub,
+    )
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: None,
+    )
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ("callsite:0x4012",)
+
+
+def test_contextual_call_fingerprints_descend_through_expr_wrappers():
+    project = _project()
+    codegen = _DummyCodegen()
+    wrapped_call = SimpleNamespace(expr=CFunctionCall("InitBars", None, [], codegen=codegen))
+    root = CStatements([wrapped_call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root, get_call_sites=lambda: (0x4012,))
+
+    fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
+
+    inner_call = wrapped_call.expr
+    assert fingerprints == {id(inner_call): "callsite:0x4012"}
+
+
+def test_tail_validation_uses_cod_call_name_fingerprint_when_cfg_and_direct_targets_missing(monkeypatch):
+    project = _project()
+    codegen_stub = _DummyCodegen()
+    known_call = CFunctionCall("InitBars", None, [], codegen=codegen_stub)
+    unknown_call = CFunctionCall(None, None, [], codegen=codegen_stub)
+    codegen = _codegen(
+        [
+            known_call,
+            unknown_call,
+            CReturn(None, codegen=codegen_stub),
+        ],
+        codegen_stub,
+    )
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "_function_for_call_context_8616",
+        lambda _root, _project: None,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.tail_validation_fingerprint._function_for_call_context_8616",
+        lambda _root, _project: None,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.tail_validation_fingerprint._cod_metadata_for_function_8616",
+        lambda _project, _addr: SimpleNamespace(call_names=("InitBars", "InitMenu")),
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ("codcall:InitBars", "codcall:InitMenu")
 
 
 def test_tail_validation_diff_ignores_variable_name_churn():

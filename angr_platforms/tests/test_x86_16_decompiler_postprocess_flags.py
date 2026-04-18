@@ -256,6 +256,56 @@ def test_rewrite_flag_condition_pairs_recovers_nested_flag_mask_inside_logical_a
     assert after_condition.rhs.op == "Not"
 
 
+def test_rewrite_flag_condition_pairs_rewrites_when_flags_assignment_is_not_immediately_before_if():
+    project = _project()
+    codegen = _codegen([])
+    flags_var = _reg(project, "flags", codegen, var_name="flags_tmp")
+    scratch = _reg(project, "ax", codegen, var_name="scratch")
+    sf_predicate = CBinaryOp("CmpLT", _reg(project, "ax", codegen), _reg(project, "bx", codegen), codegen=codegen)
+    of_predicate = CBinaryOp("CmpLT", _reg(project, "cx", codegen), _reg(project, "dx", codegen), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                flags_var,
+                CBinaryOp(
+                    "Or",
+                    CBinaryOp("Mul", sf_predicate, _const(0x80, codegen), codegen=codegen),
+                    CBinaryOp("Mul", of_predicate, _const(0x800, codegen), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            CAssignment(scratch, _const(1, codegen), codegen=codegen),
+            CIfElse(
+                [(
+                    CBinaryOp(
+                        "CmpNE",
+                        CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+                        CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    _empty_body(codegen),
+                )],
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _rewrite_flag_condition_pairs_8616(codegen)
+
+    assert changed is True
+    after_if = next(
+        stmt for stmt in codegen.cfunc.statements.statements if type(stmt).__name__ == "CIfElse"
+    )
+    after_condition = after_if.condition_and_nodes[0][0]
+    assert isinstance(after_condition, CBinaryOp)
+    assert after_condition.op == "CmpNE"
+    assert _c_expr_uses_var_8616(after_condition, flags_var) is False
+
+
 def test_fix_interval_guard_conditions_rewrites_impossible_bool_cite_interval():
     codegen = _codegen([])
     project = _project()
@@ -289,3 +339,165 @@ def test_fix_interval_guard_conditions_rewrites_impossible_bool_cite_interval():
     after_condition = codegen.cfunc.statements.statements[0].condition_and_nodes[0][0]
     assert isinstance(after_condition, CBinaryOp)
     assert after_condition.op == "LogicalAnd"
+
+
+def test_rewrite_flag_condition_pairs_strips_redundant_signed_flag_pair_when_explicit_gt_exists():
+    project = _project()
+    codegen = _codegen([])
+    flags_var = _reg(project, "flags", codegen, var_name="flags_tmp")
+    lhs = _reg(project, "ax", codegen)
+    rhs = _reg(project, "bx", codegen)
+    sf_predicate = CBinaryOp("CmpGT", lhs, rhs, codegen=codegen)
+    of_predicate = CBinaryOp("CmpEQ", _reg(project, "cx", codegen), _reg(project, "dx", codegen), codegen=codegen)
+    explicit_guard = CUnaryOp(
+        "Not",
+        CBinaryOp("CmpLE", lhs, rhs, codegen=codegen),
+        codegen=codegen,
+    )
+    raw_flag_guard = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+        CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                flags_var,
+                CBinaryOp(
+                    "Or",
+                    CBinaryOp("Mul", sf_predicate, _const(0x80, codegen), codegen=codegen),
+                    CBinaryOp("Mul", of_predicate, _const(0x800, codegen), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            CIfElse(
+                [(
+                    CBinaryOp("LogicalAnd", raw_flag_guard, explicit_guard, codegen=codegen),
+                    _empty_body(codegen),
+                )],
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _rewrite_flag_condition_pairs_8616(codegen)
+
+    assert changed is True
+    after_condition = codegen.cfunc.statements.statements[0].condition_and_nodes[0][0]
+    assert isinstance(after_condition, CUnaryOp)
+    assert after_condition.op == "Not"
+    assert _c_expr_uses_var_8616(after_condition, flags_var) is False
+
+
+def test_fix_interval_guard_conditions_strips_standalone_signed_flag_pair_when_strict_compare_exists():
+    project = _project()
+    codegen = _codegen([])
+    flags_var = _reg(project, "flags", codegen, var_name="flags_tmp")
+    strict_compare = CUnaryOp(
+        "Not",
+        CBinaryOp("CmpLE", _reg(project, "ax", codegen), _reg(project, "bx", codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    raw_flag_guard = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags_var, _const(0x80, codegen), codegen=codegen),
+        CBinaryOp("And", flags_var, _const(0x800, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CIfElse(
+                [(
+                    CBinaryOp("LogicalAnd", raw_flag_guard, strict_compare, codegen=codegen),
+                    _empty_body(codegen),
+                )],
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _fix_interval_guard_conditions_8616(codegen)
+
+    assert changed is True
+    after_condition = codegen.cfunc.statements.statements[0].condition_and_nodes[0][0]
+    assert isinstance(after_condition, CUnaryOp)
+    assert after_condition.op == "Not"
+    assert _c_expr_uses_var_8616(after_condition, flags_var) is False
+
+
+def test_fix_interval_guard_conditions_simplifies_split_ordering_if_chain_with_nested_flag_pair():
+    project = _project()
+    before_codegen = _codegen([])
+    flags_var = _reg(project, "flags", before_codegen, var_name="flags_tmp")
+    high_guard = CITE(
+        CBinaryOp("CmpLE", _reg(project, "dx", before_codegen), _reg(project, "cx", before_codegen), codegen=before_codegen),
+        _const(0, before_codegen),
+        _const(1, before_codegen),
+        codegen=before_codegen,
+    )
+    nested_flag_pair = CUnaryOp(
+        "Not",
+        CITE(
+            CBinaryOp(
+                "CmpEQ",
+                CBinaryOp(
+                    "CmpNE",
+                    CBinaryOp("And", flags_var, _const(0x80, before_codegen), codegen=before_codegen),
+                    _const(0, before_codegen),
+                    codegen=before_codegen,
+                ),
+                CBinaryOp(
+                    "CmpNE",
+                    CBinaryOp("And", flags_var, _const(0x800, before_codegen), codegen=before_codegen),
+                    _const(0, before_codegen),
+                    codegen=before_codegen,
+                ),
+                codegen=before_codegen,
+            ),
+            _const(0, before_codegen),
+            _const(1, before_codegen),
+            codegen=before_codegen,
+        ),
+        codegen=before_codegen,
+    )
+    low_guard = CITE(
+        CBinaryOp("CmpLE", _reg(project, "ax", before_codegen), _reg(project, "bx", before_codegen), codegen=before_codegen),
+        _const(0, before_codegen),
+        _const(1, before_codegen),
+        codegen=before_codegen,
+    )
+    before_codegen.cfunc.statements = CStatements(
+        [
+            CIfElse(
+                [
+                    (high_guard, _empty_body(before_codegen)),
+                    (CBinaryOp("LogicalAnd", nested_flag_pair, low_guard, codegen=before_codegen), _empty_body(before_codegen)),
+                ],
+                codegen=before_codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=before_codegen,
+    )
+    before_codegen.cfunc.body = before_codegen.cfunc.statements
+    after_codegen = deepcopy(before_codegen)
+
+    changed = _fix_interval_guard_conditions_8616(after_codegen)
+
+    assert changed is True
+    after_condition = after_codegen.cfunc.statements.statements[0].condition_and_nodes[1][0]
+    assert isinstance(after_condition, CITE)
+    assert _c_expr_uses_var_8616(after_condition, flags_var) is False
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before_codegen),
+        collect_x86_16_tail_validation_summary(project, after_codegen),
+    )
+    assert diff["changed"] is False

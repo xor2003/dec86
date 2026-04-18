@@ -5,6 +5,7 @@ import json
 from collections import Counter
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
+import re
 from typing import Callable, Mapping, Sequence, TypeVar
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -21,6 +22,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CIfBreak,
     CIfElse,
     CReturn,
+    CStatements,
     CSwitchCase,
     CTypeCast,
     CUnaryOp,
@@ -30,6 +32,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
+from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_condition_8616
 from .tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from .tail_validation_fingerprint import (
     TAIL_VALIDATION_FINGERPRINT_VERSION,
@@ -39,11 +42,15 @@ from .tail_validation_fingerprint import (
     _call_target_name,
     _extract_same_zero_compare_expr_8616,
     _extract_zero_flag_source_expr_8616,
+    _function_for_call_context_8616,
+    _lookup_function_for_call_context_8616,
     _location_fingerprint,
     _normalize_zero_flag_comparison_8616,
     _register_name,
     _wrap_not_fingerprint,
+    build_x86_16_contextual_call_fingerprints,
 )
+from .callsite_summary import summarize_x86_16_callsite
 from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
 from .tail_validation_routing import build_tail_validation_family_routing
 
@@ -227,7 +234,36 @@ def _extract_loop_break_guard_normalization_8616(
     return normalized, suppressed_node_ids
 
 
-def _node_boundary_fingerprint(node, project):
+def _normalized_if_chain_condition_8616(pairs, idx: int, codegen):
+    if idx <= 0 or idx >= len(pairs):
+        return None
+    prev_cond, _prev_body = pairs[idx - 1]
+    curr_cond, _curr_body = pairs[idx]
+    return _split_ordering_if_chain_replacement_condition_8616(prev_cond, curr_cond, codegen)
+
+
+def _normalized_call_target_addr_8616(project, target_addr: int | None) -> int | None:
+    if not isinstance(target_addr, int):
+        return None
+    main_object = getattr(getattr(project, "loader", None), "main_object", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    image_end = linked_base + max_addr + 1 if isinstance(linked_base, int) and isinstance(max_addr, int) else None
+    return _normalize_direct_call_target_8616(target_addr, linked_base, image_end)
+
+
+def _call_summary_target_addr_8616(project, summary) -> int | None:
+    if isinstance(summary, Mapping):
+        return _normalized_call_target_addr_8616(project, summary.get("target_addr"))
+    return _normalized_call_target_addr_8616(project, getattr(summary, "target_addr", None))
+
+
+def _node_boundary_fingerprint(
+    node,
+    project,
+    contextual_call_fingerprints: Mapping[int, str] | None = None,
+    contextual_call_summaries: Mapping[int, object] | None = None,
+):
     if node is None:
         return None
     if isinstance(node, CConstant):
@@ -235,54 +271,187 @@ def _node_boundary_fingerprint(node, project):
     if isinstance(node, CVariable):
         return ("var", _location_fingerprint(node, project))
     if isinstance(node, CTypeCast):
-        return ("cast", _node_boundary_fingerprint(node.expr, project))
+        return (
+            "cast",
+            _node_boundary_fingerprint(
+                node.expr,
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+        )
     if isinstance(node, CUnaryOp):
-        return ("unary", node.op, _node_boundary_fingerprint(node.operand, project))
+        return (
+            "unary",
+            node.op,
+            _node_boundary_fingerprint(
+                node.operand,
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+        )
     if isinstance(node, CBinaryOp):
-        return ("binary", node.op, _node_boundary_fingerprint(node.lhs, project), _node_boundary_fingerprint(node.rhs, project))
+        return (
+            "binary",
+            node.op,
+            _node_boundary_fingerprint(
+                node.lhs,
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+            _node_boundary_fingerprint(
+                node.rhs,
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+        )
     if isinstance(node, CFunctionCall):
+        call_fingerprint = None
+        if isinstance(contextual_call_fingerprints, Mapping):
+            call_fingerprint = contextual_call_fingerprints.get(id(node))
+        if call_fingerprint is None and isinstance(contextual_call_summaries, Mapping):
+            summary = contextual_call_summaries.get(id(node))
+            target_addr = _call_summary_target_addr_8616(project, summary)
+            if isinstance(target_addr, int):
+                call_fingerprint = f"addr:{target_addr:#x}"
         return (
             "call",
-            _call_target_name(node),
-            tuple(_node_boundary_fingerprint(arg, project) for arg in (getattr(node, "args", ()) or ())),
+            call_fingerprint or _call_target_name(node, project),
+            tuple(
+                _node_boundary_fingerprint(
+                    arg,
+                    project,
+                    contextual_call_fingerprints,
+                    contextual_call_summaries,
+                )
+                for arg in (getattr(node, "args", ()) or ())
+            ),
         )
     if isinstance(node, CAssignment):
-        return ("assign", _node_boundary_fingerprint(node.lhs, project), _node_boundary_fingerprint(node.rhs, project))
+        return (
+            "assign",
+            _node_boundary_fingerprint(
+                node.lhs,
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+            _node_boundary_fingerprint(
+                node.rhs,
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+        )
     if isinstance(node, CReturn):
-        return ("return", _node_boundary_fingerprint(getattr(node, "retval", None), project))
+        return (
+            "return",
+            _node_boundary_fingerprint(
+                getattr(node, "retval", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+        )
     if isinstance(node, CIfElse):
         return (
             "ifelse",
             tuple(
                 (
-                    _node_boundary_fingerprint(cond, project),
-                    _node_boundary_fingerprint(body, project),
+                    _node_boundary_fingerprint(
+                        cond,
+                        project,
+                        contextual_call_fingerprints,
+                        contextual_call_summaries,
+                    ),
+                    _node_boundary_fingerprint(
+                        body,
+                        project,
+                        contextual_call_fingerprints,
+                        contextual_call_summaries,
+                    ),
                 )
                 for cond, body in (getattr(node, "condition_and_nodes", ()) or ())
             ),
-            _node_boundary_fingerprint(getattr(node, "else_node", None), project),
+            _node_boundary_fingerprint(
+                getattr(node, "else_node", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
         )
     if isinstance(node, CIfBreak):
-        return ("ifbreak", _node_boundary_fingerprint(getattr(node, "condition", None), project))
+        return (
+            "ifbreak",
+            _node_boundary_fingerprint(
+                getattr(node, "condition", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+        )
     if isinstance(node, CWhileLoop):
         return (
             "while",
-            _node_boundary_fingerprint(getattr(node, "condition", None), project),
-            _node_boundary_fingerprint(getattr(node, "body", None), project),
+            _node_boundary_fingerprint(
+                getattr(node, "condition", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+            _node_boundary_fingerprint(
+                getattr(node, "body", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
         )
     if isinstance(node, CDoWhileLoop):
         return (
             "dowhile",
-            _node_boundary_fingerprint(getattr(node, "condition", None), project),
-            _node_boundary_fingerprint(getattr(node, "body", None), project),
+            _node_boundary_fingerprint(
+                getattr(node, "condition", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+            _node_boundary_fingerprint(
+                getattr(node, "body", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
         )
     if isinstance(node, CForLoop):
         return (
             "for",
-            _node_boundary_fingerprint(getattr(node, "initializer", None), project),
-            _node_boundary_fingerprint(getattr(node, "condition", None), project),
-            _node_boundary_fingerprint(getattr(node, "iterator", None), project),
-            _node_boundary_fingerprint(getattr(node, "body", None), project),
+            _node_boundary_fingerprint(
+                getattr(node, "initializer", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+            _node_boundary_fingerprint(
+                getattr(node, "condition", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+            _node_boundary_fingerprint(
+                getattr(node, "iterator", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+            _node_boundary_fingerprint(
+                getattr(node, "body", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
         )
     if isinstance(node, CSwitchCase):
         cases = getattr(node, "cases", None)
@@ -297,9 +466,19 @@ def _node_boundary_fingerprint(node, project):
             )
         return (
             "switch",
-            _node_boundary_fingerprint(getattr(node, "switch", None), project),
+            _node_boundary_fingerprint(
+                getattr(node, "switch", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
             case_items,
-            _node_boundary_fingerprint(getattr(node, "default", None), project),
+            _node_boundary_fingerprint(
+                getattr(node, "default", None),
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
         )
     if isinstance(node, CGoto):
         return ("goto", getattr(node, "target", None), getattr(node, "target_idx", None))
@@ -310,7 +489,15 @@ def _node_boundary_fingerprint(node, project):
     if type(node).__name__ == "CStatements":
         return (
             "statements",
-            tuple(_node_boundary_fingerprint(stmt, project) for stmt in (getattr(node, "statements", ()) or ())),
+            tuple(
+                _node_boundary_fingerprint(
+                    stmt,
+                    project,
+                    contextual_call_fingerprints,
+                    contextual_call_summaries,
+                )
+                for stmt in (getattr(node, "statements", ()) or ())
+            ),
         )
 
     fields = []
@@ -627,11 +814,18 @@ def fingerprint_x86_16_tail_validation_boundary(project, codegen, *, mode: str =
     if mode not in _TAIL_VALIDATION_MODES:
         raise ValueError(f"Unsupported x86-16 tail validation mode: {mode}")
     root = _codegen_root(codegen)
+    contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
+    contextual_call_summaries = _build_contextual_call_summary_map(root, project)
     payload = {
         "arch": getattr(getattr(project, "arch", None), "name", None),
         "mode": mode,
         "fingerprint_version": TAIL_VALIDATION_FINGERPRINT_VERSION,
-        "root": _node_boundary_fingerprint(root, project),
+        "root": _node_boundary_fingerprint(
+            root,
+            project,
+            contextual_call_fingerprints,
+            contextual_call_summaries,
+        ),
     }
     return build_x86_16_validation_cache_descriptor("tail_validation.boundary", payload).fingerprint
 
@@ -1191,6 +1385,140 @@ def _collect_observed_locations(root, project, mode: str) -> set[str]:
     return observed_locations
 
 
+def _iter_observable_call_nodes_for_validation_8616(node):
+    if node is None:
+        return
+    if isinstance(node, CStatements):
+        for stmt in getattr(node, "statements", ()) or ():
+            yield from _iter_observable_call_nodes_for_validation_8616(stmt)
+        return
+    if isinstance(node, CFunctionCall):
+        yield node
+        return
+    if isinstance(node, CAssignment):
+        rhs = getattr(node, "rhs", None)
+        if isinstance(rhs, CFunctionCall):
+            yield rhs
+        return
+    for attr in ("retval", "condition", "cond", "expr"):
+        child = getattr(node, attr, None)
+        if isinstance(child, CFunctionCall):
+            yield child
+        elif child is not None:
+            yield from _iter_observable_call_nodes_for_validation_8616(child)
+    if hasattr(node, "condition_and_nodes"):
+        for cond, body in getattr(node, "condition_and_nodes", ()) or ():
+            if isinstance(cond, CFunctionCall):
+                yield cond
+            elif cond is not None:
+                yield from _iter_observable_call_nodes_for_validation_8616(cond)
+            yield from _iter_observable_call_nodes_for_validation_8616(body)
+    else_node = getattr(node, "else_node", None)
+    if else_node is not None:
+        yield from _iter_observable_call_nodes_for_validation_8616(else_node)
+    for attr in ("body", "initializer", "iterator"):
+        child = getattr(node, attr, None)
+        if child is not None:
+            yield from _iter_observable_call_nodes_for_validation_8616(child)
+
+
+def _build_contextual_call_summary_map(root, project) -> dict[int, object]:
+    if root is None:
+        return {}
+    function = _function_for_call_context_8616(root, project)
+    if function is None:
+        return {}
+    callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
+    if not callsite_addrs:
+        return {}
+    call_nodes = list(_iter_observable_call_nodes_for_validation_8616(root))
+    if not call_nodes:
+        return {}
+    summary_map: dict[int, object] = {}
+    for node, callsite_addr in zip(call_nodes, callsite_addrs):
+        summary = summarize_x86_16_callsite(function, callsite_addr)
+        target_addr = _call_summary_target_addr_8616(project, summary)
+        if summary is not None and target_addr is not None:
+            if isinstance(summary, Mapping):
+                summary_map[id(node)] = {**summary, "target_addr": target_addr}
+            else:
+                summary_map[id(node)] = {"target_addr": target_addr, "summary": summary}
+    if summary_map:
+        return summary_map
+    direct_targets = _collect_direct_capstone_call_targets_for_function(function)
+    for node, target_addr in zip(call_nodes, direct_targets):
+        normalized_target = _normalized_call_target_addr_8616(project, target_addr)
+        if isinstance(normalized_target, int):
+            summary_map[id(node)] = {"target_addr": normalized_target}
+    return summary_map
+
+
+def _collect_direct_capstone_call_targets_for_function(function) -> tuple[int, ...]:
+    project = getattr(function, "project", None)
+    if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
+        return ()
+    main_object = getattr(getattr(project, "loader", None), "main_object", None)
+    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    image_end = linked_base + max_addr + 1 if isinstance(linked_base, int) and isinstance(max_addr, int) else None
+    factory = getattr(project, "factory", None)
+    if factory is None:
+        return ()
+    targets: list[int] = []
+    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
+        try:
+            block = factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ():
+            if str(getattr(insn, "mnemonic", "") or "").lower() != "call":
+                continue
+            target = _direct_capstone_call_target_8616(insn)
+            if not isinstance(target, int):
+                continue
+            resolved = _normalize_direct_call_target_8616(target, linked_base, image_end)
+            if isinstance(resolved, int):
+                targets.append(resolved)
+    return tuple(targets)
+
+
+def _direct_capstone_call_target_8616(insn) -> int | None:
+    capstone_insn = getattr(insn, "insn", None)
+    operands = getattr(capstone_insn, "operands", None)
+    if operands:
+        operand = operands[0]
+        if getattr(operand, "type", None) == 2 and isinstance(getattr(operand, "imm", None), int):
+            return int(operand.imm)
+    op_str = str(getattr(insn, "op_str", "") or "").strip().lower()
+    if not op_str or "[" in op_str or any(ch.isalpha() for ch in op_str if ch not in "xabcdef"):
+        return None
+    for token in re.split(r"[\s,:]+", op_str):
+        if not token:
+            continue
+        try:
+            return int(token, 0)
+        except ValueError:
+            continue
+    return None
+
+
+def _normalize_direct_call_target_8616(target: int, linked_base: int | None, image_end: int | None) -> int | None:
+    if not isinstance(target, int):
+        return None
+    if isinstance(linked_base, int):
+        if target < linked_base:
+            linked_target = linked_base + target
+            if image_end is None or linked_target < image_end:
+                return linked_target
+        elif image_end is None or target < image_end:
+            return target
+        unbased_target = target - linked_base
+        if 0 <= unbased_target < 0x10000:
+            return unbased_target
+        return None
+    return target
+
+
 def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "live_out") -> X86_16TailValidationSummary:
     if mode not in _TAIL_VALIDATION_MODES:
         raise ValueError(f"Unsupported x86-16 tail validation mode: {mode}")
@@ -1217,6 +1545,8 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
     if root is None:
         return X86_16TailValidationSummary((), (), (), (), (), (), (), ())
     observed_locations = _collect_observed_locations(root, project, mode)
+    contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
+    contextual_call_summaries = _build_contextual_call_summary_map(root, project)
     contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
     normalized_loop_conditions: dict[int, str] = {}
     suppressed_control_flow_nodes: set[int] = set()
@@ -1233,7 +1563,13 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
         if id(node) in suppressed_control_flow_nodes:
             continue
         if isinstance(node, CFunctionCall):
-            helper_calls.add(_call_target_name(node))
+            call_fingerprint = contextual_call_fingerprints.get(id(node))
+            if call_fingerprint is None:
+                summary = contextual_call_summaries.get(id(node))
+                target_addr = _call_summary_target_addr_8616(project, summary)
+                if isinstance(target_addr, int):
+                    call_fingerprint = f"addr:{target_addr:#x}"
+            helper_calls.add(call_fingerprint or _call_target_name(node, project))
         elif isinstance(node, CReturn):
             returns.add(_expr_fingerprint(getattr(node, "retval", None), project))
             control_flow_effects.add("return")
@@ -1255,7 +1591,11 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
             elif location.startswith("deref:"):
                 segmented_writes.add(location)
         elif isinstance(node, CIfElse):
-            for cond, _child in getattr(node, "condition_and_nodes", ()) or ():
+            pairs = tuple(getattr(node, "condition_and_nodes", ()) or ())
+            for idx, (cond, _child) in enumerate(pairs):
+                normalized_cond = _normalized_if_chain_condition_8616(pairs, idx, getattr(node, "codegen", None))
+                if normalized_cond is not None:
+                    cond = normalized_cond
                 cond_fingerprint = contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
                 control_flow_effects.add(f"if:{cond_fingerprint}")
                 if mode == "live_out":

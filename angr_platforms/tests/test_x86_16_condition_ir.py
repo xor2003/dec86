@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from angr_platforms.X86_16.condition_ir import build_condition_ir_8616, normalize_condition_op_8616
+from angr_platforms.X86_16.ir.vex_condition_lifting import build_condition_from_binop
+from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
+
+
+def test_condition_ir_builder_keeps_typed_ops_and_args():
+    condition = build_condition_ir_8616(
+        "eq",
+        IRValue(MemSpace.REG, name="ax", size=2, expr=("reg",)),
+        IRValue(MemSpace.CONST, const=0, size=2, expr=("int",)),
+        expr=("cmp",),
+    )
+
+    assert condition == IRCondition(
+        op="eq",
+        args=(
+            IRValue(MemSpace.REG, name="ax", size=2, expr=("reg",)),
+            IRValue(MemSpace.CONST, const=0, size=2, expr=("int",)),
+        ),
+        expr=("cmp",),
+    )
+
+
+def test_condition_ir_normalizes_legacy_nonzero_aliases():
+    assert normalize_condition_op_8616("masked_nonzero") == "nonzero"
+    assert normalize_condition_op_8616("zero") == "zero"
+    assert normalize_condition_op_8616("lt") == "slt"
+    assert normalize_condition_op_8616("lt_u") == "ult"
+    assert normalize_condition_op_8616("bogus") == "compare"
+
+
+def test_vex_condition_lifting_uses_typed_condition_ops():
+    left = IRValue(MemSpace.REG, name="ax", size=2, expr=("reg",))
+    right = IRValue(MemSpace.REG, name="bx", size=2, expr=("reg",))
+
+    assert build_condition_from_binop("Iop_CmpEQ16", left, right).op == "eq"
+    assert build_condition_from_binop("Iop_CmpLT16S", left, right).op == "slt"
+    assert build_condition_from_binop("Iop_CmpLT16U", left, right).op == "ult"
+    assert build_condition_from_binop("Iop_CmpNE16", left, IRValue(MemSpace.CONST, const=0, size=2, expr=("int",))).op == "nonzero"

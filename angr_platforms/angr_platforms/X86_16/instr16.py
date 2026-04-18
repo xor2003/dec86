@@ -22,7 +22,7 @@ from .alu_helpers import (
 from .exception import EXP_UD
 from .instr_base import InstrBase
 from .instruction import *
-from .regs import reg8_t, reg16_t, sgreg_t
+from .regs import coerce_reg8_t, coerce_reg16_t, reg8_t, reg16_t, sgreg_t
 from .stack_helpers import (
     branch_rel8,
     branch_rel16,
@@ -538,9 +538,9 @@ class Instr16(InstrBase):
 
     def xchg_r16_ax(self):
         reg = self.instr.opcode & 0b111
-        r16 = self.emu.get_gpreg(reg16_t(reg))
+        r16 = self.emu.get_gpreg(coerce_reg16_t(reg))
         ax = self.emu.get_gpreg(reg16_t.AX)
-        self.emu.set_gpreg(reg16_t(reg), ax)
+        self.emu.set_gpreg(coerce_reg16_t(reg), ax)
         self.emu.set_gpreg(reg16_t.AX, r16)
 
     def cbw(self):
@@ -748,7 +748,7 @@ class Instr16(InstrBase):
 
     def mov_r16_imm16(self):
         reg = self.instr.opcode & 0b111
-        self.emu.set_gpreg(reg16_t(reg), Const(IRConst.U16(self.instr.imm16)))
+        self.emu.set_gpreg(coerce_reg16_t(reg), Const(IRConst.U16(self.instr.imm16)))
 
     def ret(self):
         return_near16(self.emu)

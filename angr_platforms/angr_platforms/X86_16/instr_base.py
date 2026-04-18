@@ -25,7 +25,7 @@ from .emu import EmuInstr
 from .exec import ExecInstr
 from .instruction import *
 from .parse import ParseInstr
-from .regs import reg8_t, reg16_t
+from .regs import coerce_reg8_t, reg8_t, reg16_t
 from .stack_helpers import branch_rel8, return_far16, return_interrupt16
 
 if TYPE_CHECKING:
@@ -507,7 +507,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
 
     def mov_r8_imm8(self) -> None:
         reg = self.instr.opcode & 0b111
-        self.emu.set_gpreg(reg8_t(reg), self.instr.imm8)
+        self.emu.set_gpreg(coerce_reg8_t(reg), self.instr.imm8)
 
     def mov_rm8_imm8(self) -> None:
         self.set_rm8(self.emu.lifter_instruction.constant(self.instr.imm8, Type.int_8))

@@ -61,9 +61,23 @@ def test_direct_jcc_condition_consumes_compare_artifact():
     assert repr(result) == "(ax == 7)"
 
 
-def test_direct_jcc_condition_consumes_masked_nonzero_test_artifact():
+def test_direct_jcc_condition_consumes_typed_unsigned_compare_artifact():
     condition = IRCondition(
-        op="masked_nonzero",
+        op="ult",
+        args=(
+            IRValue(MemSpace.REG, name="ax", size=2),
+            IRValue(MemSpace.REG, name="bx", size=2),
+        ),
+    )
+
+    result = _direct_jcc_condition_from_last_condition_8616(_FakeInstruction(), "jb", condition)
+
+    assert repr(result) == "(ax < bx)"
+
+
+def test_direct_jcc_condition_consumes_nonzero_test_artifact():
+    condition = IRCondition(
+        op="nonzero",
         args=(
             IRValue(MemSpace.REG, name="ax", size=2),
             IRValue(MemSpace.CONST, const=0x80, size=2),
@@ -75,9 +89,22 @@ def test_direct_jcc_condition_consumes_masked_nonzero_test_artifact():
     assert repr(result) == "((ax & 128) != 0)"
 
 
-def test_direct_jcc_condition_refuses_unsupported_branch_from_masked_nonzero():
+def test_direct_jcc_condition_consumes_zero_test_artifact():
     condition = IRCondition(
-        op="masked_nonzero",
+        op="zero",
+        args=(
+            IRValue(MemSpace.REG, name="ax", size=2),
+        ),
+    )
+
+    result = _direct_jcc_condition_from_last_condition_8616(_FakeInstruction(), "jz", condition)
+
+    assert repr(result) == "(ax == 0)"
+
+
+def test_direct_jcc_condition_refuses_unsupported_branch_from_nonzero():
+    condition = IRCondition(
+        op="nonzero",
         args=(
             IRValue(MemSpace.REG, name="ax", size=2),
             IRValue(MemSpace.CONST, const=0x80, size=2),
@@ -85,5 +112,19 @@ def test_direct_jcc_condition_refuses_unsupported_branch_from_masked_nonzero():
     )
 
     result = _direct_jcc_condition_from_last_condition_8616(_FakeInstruction(), "ja", condition)
+
+    assert result is None
+
+
+def test_direct_jcc_condition_refuses_vexvalue_named_tmp_operand():
+    condition = IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.TMP, name="VexValue", size=2),
+            IRValue(MemSpace.CONST, const=7, size=2),
+        ),
+    )
+
+    result = _direct_jcc_condition_from_last_condition_8616(_FakeInstruction(), "jz", condition)
 
     assert result is None

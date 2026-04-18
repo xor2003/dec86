@@ -5,6 +5,7 @@ from typing import Any
 
 from pyvex.lifting.util.vex_helper import Type
 
+from .ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from .regs import reg16_t, reg32_t, sgreg_t
 
 
@@ -163,6 +164,35 @@ class ResolvedMemoryOperand:
     width_bits: int
     address_bits: int
 
+    def typed_address(self, *, expr: tuple[str, ...] | None = None) -> IRAddress:
+        space_map = {
+            sgreg_t.SS: MemSpace.SS,
+            sgreg_t.DS: MemSpace.DS,
+            sgreg_t.ES: MemSpace.ES,
+            sgreg_t.CS: MemSpace.UNKNOWN,
+            MemSpace.SS: MemSpace.SS,
+            MemSpace.DS: MemSpace.DS,
+            MemSpace.ES: MemSpace.ES,
+            MemSpace.UNKNOWN: MemSpace.UNKNOWN,
+        }
+        space = space_map.get(self.segment, MemSpace.UNKNOWN)
+        stable = space in {MemSpace.SS, MemSpace.ES}
+        if isinstance(self.segment, sgreg_t):
+            base = (self.segment.name.lower(),)
+        elif isinstance(self.segment, MemSpace) and self.segment != MemSpace.UNKNOWN:
+            base = (self.segment.value,)
+        else:
+            base = ()
+        return IRAddress(
+            space=space,
+            base=base,
+            offset=self.offset if isinstance(self.offset, int) else 0,
+            size=max(1, self.width_bits // 8) if isinstance(self.width_bits, int) and self.width_bits > 0 else 0,
+            status=AddressStatus.STABLE if stable else AddressStatus.PROVISIONAL,
+            segment_origin=SegmentOrigin.PROVEN if stable else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN),
+            expr=expr,
+        )
+
 
 def default_segment_for_modrm16(mod: int, rm: int) -> sgreg_t:
     if rm in (2, 3):
@@ -306,6 +336,3 @@ def advance_ip16(emu, byte_count: int):
 
 def advance_eip32(emu, byte_count: int):
     return emu.get_gpreg(reg32_t.EIP) + emu.constant(byte_count, Type.int_32)
-
-
-

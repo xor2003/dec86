@@ -96,6 +96,30 @@ def test_compare_operation_only_updates_flags():
     assert state["flags"] == (4, 2)
 
 
+def test_binary_operation_records_typed_condition_for_subtraction():
+    emu = _AluEmu()
+    state = {}
+
+    binary_operation(
+        emu,
+        lambda: 4,
+        lambda: 2,
+        lambda value: state.setdefault("result", value),
+        emu.update_eflags_sub,
+        lambda lhs, rhs: lhs - rhs,
+    )
+
+    assert state["result"] == 2
+    assert emu.last_condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sub",),
+    )
+
+
 def test_build_compare_condition_recovers_compare_family():
     condition = build_compare_condition_8616(4, 2, _AluEmu().update_eflags_sub)
 
@@ -106,6 +130,19 @@ def test_build_compare_condition_recovers_compare_family():
             IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
         ),
         expr=("update_eflags_sub",),
+    )
+
+
+def test_build_compare_condition_recovers_equality_for_same_operand_sub():
+    condition = build_compare_condition_8616(4, 4, _AluEmu().update_eflags_sub)
+
+    assert condition == IRCondition(
+        op="eq",
+        args=(
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sub", "same_operand"),
     )
 
 
@@ -125,19 +162,68 @@ def test_compare_operation_sets_last_condition_on_emulator():
     )
 
 
-def test_compare_operation_captures_masked_nonzero_test_condition():
+def test_compare_operation_sets_equality_condition_for_same_operand_sub():
+    emu = _AluEmu()
+
+    compare_operation(lambda: 4, lambda: 4, emu.update_eflags_sub)
+
+    assert emu.last_flags == ("sub", 4, 4)
+    assert emu.last_condition == IRCondition(
+        op="eq",
+        args=(
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sub", "same_operand"),
+    )
+
+
+def test_compare_operation_captures_nonzero_test_condition():
     emu = _AluEmu()
 
     compare_operation(lambda: 0x80, lambda: 0x08, emu.update_eflags_and)
 
     assert emu.last_flags == ("and", 0x80, 0x08)
     assert emu.last_condition == IRCondition(
-        op="masked_nonzero",
+        op="nonzero",
         args=(
             IRValue(MemSpace.CONST, const=0x80, size=1, expr=("int",)),
             IRValue(MemSpace.CONST, const=0x08, size=1, expr=("int",)),
         ),
         expr=("update_eflags_and",),
+    )
+
+
+def test_compare_operation_captures_unary_nonzero_for_same_operand_test():
+    emu = _AluEmu()
+
+    compare_operation(lambda: 0x80, lambda: 0x80, emu.update_eflags_and)
+
+    assert emu.last_flags == ("and", 0x80, 0x80)
+    assert emu.last_condition == IRCondition(
+        op="nonzero",
+        args=(
+            IRValue(MemSpace.CONST, const=0x80, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_and", "same_operand"),
+    )
+
+
+def test_build_compare_condition_refuses_non_constant_vexvalue_value_property():
+    class _BadValue:
+        @property
+        def value(self):
+            raise ValueError("Non-constant VexValue has no value property")
+
+    condition = build_compare_condition_8616(_BadValue(), 2, _AluEmu().update_eflags_sub)
+
+    assert condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.TMP, name="_BadValue", size=0, expr=("_BadValue",)),
+            IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sub",),
     )
 
 

@@ -57,6 +57,80 @@ def _make_segmented_expr(stack_vars, *, seg_name="es", offset=0):
     return expr
 
 
+def _make_segmented_expr_shl(stack_vars, *, seg_name="es", offset=0):
+    codegen = _make_codegen()
+    seg_reg = _decompile.structured_c.CVariable(
+        _decompile.SimRegisterVariable(
+            codegen.project.arch.registers[seg_name][0],
+            2,
+            name=seg_name,
+        ),
+        codegen=codegen,
+    )
+    seg_part = _decompile.structured_c.CBinaryOp(
+        "Shl",
+        seg_reg,
+        _decompile.structured_c.CConstant(4, _decompile.SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    expr = seg_part
+    for stack_var in stack_vars:
+        expr = _decompile.structured_c.CBinaryOp(
+            "Add",
+            expr,
+            _decompile.structured_c.CVariable(stack_var, codegen=codegen),
+            codegen=codegen,
+        )
+    if offset:
+        expr = _decompile.structured_c.CBinaryOp(
+            "Add",
+            expr,
+            _decompile.structured_c.CConstant(offset, _decompile.SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+    return expr
+
+
+def _make_segmented_expr_from_reg_shl(reg_name: str, *, seg_name="ds", offset=0):
+    codegen = _make_codegen()
+    project = codegen.project
+    seg_reg = _decompile.structured_c.CVariable(
+        _decompile.SimRegisterVariable(
+            project.arch.registers[seg_name][0],
+            2,
+            name=seg_name,
+        ),
+        codegen=codegen,
+    )
+    base_reg = _decompile.structured_c.CVariable(
+        _decompile.SimRegisterVariable(
+            project.arch.registers[reg_name][0],
+            2,
+            name=reg_name,
+        ),
+        codegen=codegen,
+    )
+    expr = _decompile.structured_c.CBinaryOp(
+        "Add",
+        _decompile.structured_c.CBinaryOp(
+            "Shl",
+            seg_reg,
+            _decompile.structured_c.CConstant(4, _decompile.SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        base_reg,
+        codegen=codegen,
+    )
+    if offset:
+        expr = _decompile.structured_c.CBinaryOp(
+            "Add",
+            expr,
+            _decompile.structured_c.CConstant(offset, _decompile.SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+    return project, codegen, expr
+
+
 def _make_segmented_expr_from_reg(reg_name: str, *, seg_name="ds", offset=0):
     codegen = _make_codegen()
     project = codegen.project
@@ -224,6 +298,19 @@ def test_ds_constant_segment_offset_stays_segment_const_not_global():
     assert classified.linear == 0x234
 
 
+def test_ds_constant_segment_offset_shl_form_stays_segment_const_not_global():
+    codegen = _make_codegen()
+    project = codegen.project
+    expr = _make_segmented_expr_shl([], seg_name="ds", offset=0x234)
+
+    classified = _decompile._classify_segmented_addr_expr(expr, project)
+
+    assert classified is not None
+    assert classified.seg_name == "ds"
+    assert classified.kind == "segment_const"
+    assert classified.linear == 0x234
+
+
 def test_match_real_mode_linear_expr_keeps_ds_identity_visible():
     codegen = _make_codegen()
     project = codegen.project
@@ -351,6 +438,27 @@ def test_attach_pointer_member_names_ignores_segment_stride_without_proven_base(
 
 def test_strip_segment_scale_from_addr_expr_keeps_register_plus_offset():
     project, _codegen, expr = _make_segmented_expr_from_reg("bx", seg_name="ds", offset=4)
+
+    stripped = _decompile._strip_segment_scale_from_addr_expr(expr, project)
+
+    assert stripped is not None
+    terms = _decompile._flatten_c_add_terms(stripped)
+    names = sorted(
+        getattr(getattr(term, "variable", None), "name", None)
+        for term in terms
+        if isinstance(term, _decompile.structured_c.CVariable)
+    )
+    constants = sorted(
+        term.value
+        for term in terms
+        if isinstance(term, _decompile.structured_c.CConstant)
+    )
+    assert names == ["bx"]
+    assert constants == [4]
+
+
+def test_strip_segment_scale_from_addr_expr_keeps_register_plus_offset_for_shl_form():
+    project, _codegen, expr = _make_segmented_expr_from_reg_shl("bx", seg_name="ds", offset=4)
 
     stripped = _decompile._strip_segment_scale_from_addr_expr(expr, project)
 
