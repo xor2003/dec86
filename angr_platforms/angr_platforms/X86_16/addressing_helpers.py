@@ -176,7 +176,8 @@ class ResolvedMemoryOperand:
             MemSpace.UNKNOWN: MemSpace.UNKNOWN,
         }
         space = space_map.get(self.segment, MemSpace.UNKNOWN)
-        stable = space in {MemSpace.SS, MemSpace.ES}
+        explicit_segment = isinstance(self.segment, (sgreg_t, MemSpace)) and space != MemSpace.UNKNOWN
+        stable = explicit_segment and space in {MemSpace.SS, MemSpace.DS, MemSpace.ES}
         if isinstance(self.segment, sgreg_t):
             base = (self.segment.name.lower(),)
         elif isinstance(self.segment, MemSpace) and self.segment != MemSpace.UNKNOWN:
@@ -189,7 +190,7 @@ class ResolvedMemoryOperand:
             offset=self.offset if isinstance(self.offset, int) else 0,
             size=max(1, self.width_bits // 8) if isinstance(self.width_bits, int) and self.width_bits > 0 else 0,
             status=AddressStatus.STABLE if stable else AddressStatus.PROVISIONAL,
-            segment_origin=SegmentOrigin.PROVEN if stable else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN),
+            segment_origin=SegmentOrigin.PROVEN if explicit_segment else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN),
             expr=expr,
         )
 

@@ -259,7 +259,7 @@ def test_vex_import_lifts_unsigned_compare_condition():
     cond = artifact.blocks[0].instrs[-1].args[0]
 
     assert isinstance(cond, IRCondition)
-    assert cond.op == "lt_u"
+    assert cond.op == "ult"
     assert [value.name for value in cond.args] == ["ax", "bx"]
 
 

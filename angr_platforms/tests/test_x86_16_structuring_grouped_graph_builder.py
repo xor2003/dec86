@@ -110,6 +110,63 @@ def test_grouped_region_graph_builder_materializes_typed_ir_condition_metadata_w
     assert "cross_entry_grouping_kind" not in by_id[0x1000].metadata
 
 
+def test_grouped_region_graph_builder_formats_signed_and_unsigned_condition_hints():
+    graph = nx.DiGraph()
+    a = _Node(0x1200)
+    b = _Node(0x1201)
+    graph.add_nodes_from([a, b])
+    graph.add_edge(a, b)
+    artifact = IRFunctionArtifact(
+        function_addr=0x1200,
+        blocks=(
+            IRBlock(
+                addr=0x1200,
+                instrs=(
+                    IRInstr(
+                        "CJMP",
+                        None,
+                        (
+                            IRCondition(
+                                op="slt",
+                                args=(
+                                    IRValue(MemSpace.REG, name="ax", size=2),
+                                    IRValue(MemSpace.REG, name="bx", size=2),
+                                ),
+                                expr=("cmp",),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            IRBlock(
+                addr=0x1201,
+                instrs=(
+                    IRInstr(
+                        "CJMP",
+                        None,
+                        (
+                            IRCondition(
+                                op="uge",
+                                args=(
+                                    IRValue(MemSpace.REG, name="cx", size=2),
+                                    IRValue(MemSpace.CONST, const=4, size=2),
+                                ),
+                                expr=("cmp",),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    result = build_grouped_region_graph(_Codegen(0x1200, _Clinic(graph), artifact=artifact))
+
+    by_id = {region.region_id: region for region in result.graph_result.graph.nodes}
+    assert by_id[0x1200].metadata["typed_ir_condition_hint"] == "ax < bx"
+    assert by_id[0x1201].metadata["typed_ir_condition_hint"] == "cx >= 4"
+
+
 def test_grouped_region_graph_builder_materializes_typed_ir_address_metadata():
     graph = nx.DiGraph()
     a = _Node(0x1100)

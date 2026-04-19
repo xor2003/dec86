@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pyvex.lifting.util.vex_helper import Type
 
-from .condition_ir import build_condition_ir_8616, normalize_condition_op_8616
+from .condition_ir import build_condition_ir_8616
 from .ir.core import IRCondition, IRValue, MemSpace
 from .addressing_helpers import type_for_bits
 
@@ -58,33 +58,37 @@ def _same_condition_operand_8616(lhs, rhs) -> bool:
 
 def build_compare_condition_8616(lhs, rhs, update_flags) -> IRCondition | None:
     name = getattr(update_flags, "__name__", "")
+    lhs_value = _condition_value_from_operand(lhs)
+    rhs_value = _condition_value_from_operand(rhs)
     if name == "update_eflags_sub":
-        lhs_value = _condition_value_from_operand(lhs)
-        rhs_value = _condition_value_from_operand(rhs)
         if _same_condition_operand_8616(lhs, rhs):
             return build_condition_ir_8616(
-                normalize_condition_op_8616("eq"),
+                "eq",
                 lhs_value,
                 rhs_value,
                 expr=(name, "same_operand"),
             )
+        if rhs_value.space == MemSpace.CONST and rhs_value.const == 0:
+            return build_condition_ir_8616(
+                "nonzero",
+                lhs_value,
+                expr=(name, "rhs_zero"),
+            )
         return build_condition_ir_8616(
-            normalize_condition_op_8616("compare"),
+            "compare",
             lhs_value,
             rhs_value,
             expr=(name,),
         )
-    if name == "update_eflags_and":
-        lhs_value = _condition_value_from_operand(lhs)
-        rhs_value = _condition_value_from_operand(rhs)
+    if name in {"update_eflags_and", "update_eflags_or", "update_eflags_xor"}:
         if _same_condition_operand_8616(lhs, rhs):
             return build_condition_ir_8616(
-                normalize_condition_op_8616("nonzero"),
+                "nonzero",
                 lhs_value,
                 expr=(name, "same_operand"),
             )
         return build_condition_ir_8616(
-            normalize_condition_op_8616("nonzero"),
+            "nonzero",
             lhs_value,
             rhs_value,
             expr=(name,),

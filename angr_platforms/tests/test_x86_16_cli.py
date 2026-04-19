@@ -542,7 +542,7 @@ def test_install_angr_peephole_expr_bitwidth_guard_skips_mismatched_replacements
     assert walker.any_update is False
 
 
-def test_install_angr_variable_recovery_binop_sub_size_guard_uses_top_on_size_mismatch():
+def test_install_angr_variable_recovery_binop_sub_size_guard_computes_in_wider_domain_then_narrows():
     class FakeBV:
         def __init__(self, bits, *, concrete=False, concrete_value=0):
             self._bits = bits
@@ -551,6 +551,16 @@ def test_install_angr_variable_recovery_binop_sub_size_guard_uses_top_on_size_mi
 
         def size(self):
             return self._bits
+
+        def zero_extend(self, nbits):
+            return FakeBV(self._bits + nbits, concrete=self.concrete, concrete_value=self.concrete_value)
+
+        def __getitem__(self, item):
+            hi, lo = item.start, item.stop
+            return FakeBV(hi - lo + 1, concrete=self.concrete, concrete_value=self.concrete_value)
+
+        def __sub__(self, other):
+            return FakeBV(max(self._bits, other._bits))
 
     class FakeRichR:
         def __init__(self, data, typevar=None, type_constraints=None):
@@ -604,7 +614,8 @@ def test_install_angr_variable_recovery_binop_sub_size_guard_uses_top_on_size_mi
     finally:
         FakeEngine._handle_binop_Sub = original
 
-    assert result.data == ("top", 16)
+    assert isinstance(result.data, FakeBV)
+    assert result.data.size() == 16
 
 
 def test_recover_direct_addr_function_prefers_candidate_recovery_for_x86_16(monkeypatch):

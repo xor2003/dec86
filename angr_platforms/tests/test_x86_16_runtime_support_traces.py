@@ -93,21 +93,40 @@ def test_peephole_bitwidth_guard_keeps_generic_mismatch_as_log_only(capsys) -> N
 
 
 class _FakeBV:
-    def __init__(self, bits: int) -> None:
+    def __init__(self, bits: int, concrete_value: int | None = None) -> None:
         self._bits = bits
+        self.concrete_value = concrete_value
+        self.concrete = concrete_value is not None
 
     def size(self) -> int:
         return self._bits
 
     def zero_extend(self, nbits: int) -> _FakeBV:
-        return _FakeBV(self._bits + nbits)
+        return _FakeBV(self._bits + nbits, self.concrete_value)
+
+    def sign_extend(self, nbits: int) -> _FakeBV:
+        if self.concrete_value is None:
+            return _FakeBV(self._bits + nbits)
+        sign_bit = 1 << (self._bits - 1)
+        value = self.concrete_value
+        if value & sign_bit:
+            value |= ((1 << nbits) - 1) << self._bits
+        return _FakeBV(self._bits + nbits, value)
 
     def __getitem__(self, item) -> _FakeBV:  # noqa: ANN001
         hi, lo = item.start, item.stop
-        return _FakeBV(hi - lo + 1)
+        width = hi - lo + 1
+        if self.concrete_value is None:
+            return _FakeBV(width)
+        mask = (1 << width) - 1
+        return _FakeBV(width, (self.concrete_value >> lo) & mask)
 
     def __sub__(self, other: _FakeBV) -> _FakeBV:
-        return _FakeBV(max(self._bits, other._bits))
+        width = max(self._bits, other._bits)
+        if self.concrete_value is None or other.concrete_value is None:
+            return _FakeBV(width)
+        mask = (1 << width) - 1
+        return _FakeBV(width, (self.concrete_value - other.concrete_value) & mask)
 
 
 class _FakeRichR:
@@ -174,3 +193,27 @@ def test_variable_recovery_guard_logs_size_mismatch(capsys) -> None:
     assert result.data.size() == 16
     assert "clinic:variable-recovery-size-mismatch" in captured.err
     assert "lhs_bits=16 rhs_bits=32 expr_bits=16" in captured.err
+
+
+class _SignedOffsetEngine(_Engine):
+    def _expr_pair(self, arg0, arg1):  # noqa: ANN001
+        lhs = _FakeRichR(_FakeBV(32, 0x00010020), typevar=None)
+        rhs = _FakeRichR(_FakeBV(16, 0xFFEC), typevar=None)
+        return lhs, rhs
+
+
+def test_variable_recovery_guard_sign_extends_negative_16bit_sub_operand() -> None:
+    original = install_angr_variable_recovery_binop_sub_size_guard(
+        _SignedOffsetEngine,
+        richr_cls=_FakeRichR,
+        typevars_module=_FakeTypevars,
+    )
+    try:
+        engine = _SignedOffsetEngine()
+        result = engine._handle_binop_Sub(_FakeExpr())
+    finally:
+        _SignedOffsetEngine._handle_binop_Sub = original
+
+    assert isinstance(result, _FakeRichR)
+    assert result.data.size() == 16
+    assert result.data.concrete_value == 0x0034

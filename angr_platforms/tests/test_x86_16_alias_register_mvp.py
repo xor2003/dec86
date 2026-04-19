@@ -188,6 +188,17 @@ def test_register_pair_cleanup_helper_rejects_missing_version_proof():
     assert widening_alias.join_adjacent_register_slices(low, high, codegen, alias_state=codegen._inertia_alias_state, proof=proof) is None
 
 
+def test_register_pair_cleanup_helper_rejects_zero_version_proof():
+    codegen = _make_codegen()
+    codegen._inertia_alias_state = AliasState()
+    low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)
+    high = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(1, 1, name="ah"), codegen=codegen)
+    proof = _make_register_proof(register_pair="ax", left_version=0, right_version=0)
+
+    assert not widening_alias.can_join_adjacent_register_slices(low, high, alias_state=codegen._inertia_alias_state, proof=proof)
+    assert widening_alias.join_adjacent_register_slices(low, high, codegen, alias_state=codegen._inertia_alias_state, proof=proof) is None
+
+
 def test_register_pair_cleanup_helper_rejects_pair_mismatch_proof():
     codegen = _make_codegen()
     codegen._inertia_alias_state = AliasState()

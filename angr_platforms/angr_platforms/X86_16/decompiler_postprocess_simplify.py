@@ -14,6 +14,8 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .alias_model import _storage_domain_for_expr
+from .widening_alias import join_adjacent_register_slices
+from .widening_model import prove_adjacent_storage_slices
 from .decompiler_postprocess_flags import _bool_cite_values_8616
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
@@ -173,7 +175,27 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     def _materialize_joined_word_expr_8616(low_expr, high_expr):
         low_domain = _storage_domain_for_expr(low_expr)
         high_domain = _storage_domain_for_expr(high_expr)
-        joined = low_domain.join(high_domain)
+        alias_state = getattr(codegen, "_inertia_alias_state", None)
+        if alias_state is None:
+            alias_state = getattr(getattr(codegen, "cfunc", None), "_inertia_alias_state", None)
+        proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+        if isinstance(low_expr, CVariable) and isinstance(high_expr, CVariable):
+            widened_register = join_adjacent_register_slices(
+                low_expr,
+                high_expr,
+                codegen,
+                alias_state=alias_state,
+                proof=proof,
+            )
+            if widened_register is not None:
+                return widened_register
+            if isinstance(getattr(low_expr, "variable", None), SimRegisterVariable) or isinstance(
+                getattr(high_expr, "variable", None), SimRegisterVariable
+            ):
+                return None
+        joined = proof.merged_domain if proof.ok else None
+        if joined is None and alias_state is None:
+            joined = low_domain.join(high_domain)
         if joined is None or joined.width != 2:
             return None
         if not isinstance(low_expr, CVariable) or not isinstance(high_expr, CVariable):

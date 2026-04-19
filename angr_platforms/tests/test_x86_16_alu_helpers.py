@@ -31,6 +31,12 @@ class _AluEmu:
     def update_eflags_and(self, lhs, rhs):
         self.last_flags = ("and", lhs, rhs)
 
+    def update_eflags_or(self, lhs, rhs):
+        self.last_flags = ("or", lhs, rhs)
+
+    def update_eflags_xor(self, lhs, rhs):
+        self.last_flags = ("xor", lhs, rhs)
+
     def set_last_condition(self, condition):
         self.last_condition = condition
 
@@ -206,6 +212,42 @@ def test_compare_operation_captures_unary_nonzero_for_same_operand_test():
             IRValue(MemSpace.CONST, const=0x80, size=1, expr=("int",)),
         ),
         expr=("update_eflags_and", "same_operand"),
+    )
+
+
+def test_compare_operation_captures_nonzero_for_or_and_xor():
+    emu = _AluEmu()
+
+    compare_operation(lambda: 0x10, lambda: 0x02, emu.update_eflags_or)
+    assert emu.last_condition == IRCondition(
+        op="nonzero",
+        args=(
+            IRValue(MemSpace.CONST, const=0x10, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=0x02, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_or",),
+    )
+
+    compare_operation(lambda: 0x10, lambda: 0x02, emu.update_eflags_xor)
+    assert emu.last_condition == IRCondition(
+        op="nonzero",
+        args=(
+            IRValue(MemSpace.CONST, const=0x10, size=1, expr=("int",)),
+            IRValue(MemSpace.CONST, const=0x02, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_xor",),
+    )
+
+
+def test_build_compare_condition_zero_rhs_sub_becomes_unary_nonzero():
+    condition = build_compare_condition_8616(4, 0, _AluEmu().update_eflags_sub)
+
+    assert condition == IRCondition(
+        op="nonzero",
+        args=(
+            IRValue(MemSpace.CONST, const=4, size=1, expr=("int",)),
+        ),
+        expr=("update_eflags_sub", "rhs_zero"),
     )
 
 

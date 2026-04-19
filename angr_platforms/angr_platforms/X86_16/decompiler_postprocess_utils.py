@@ -102,6 +102,8 @@ def _replace_c_children_8616(node, transform) -> bool:
         "operand",
         "condition",
         "cond",
+        "initializer",
+        "iterator",
         "body",
         "iffalse",
         "iftrue",

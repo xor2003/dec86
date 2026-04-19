@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .condition_ir import condition_compare_symbol_8616
 from .ir.core import IRAddress, IRCondition, IRValue, MemSpace, AddressStatus, SegmentOrigin
 from .structuring_graph_builder import RegionGraphBuildResult, build_region_graph
 from .structuring_grouped_units import (
@@ -61,32 +62,13 @@ def _format_ir_condition_hint_8616(condition: IRCondition) -> str | None:
         if left is None or right is None:
             return None
         return f"({left} & {right}) != 0"
-    cmp_ops = {
-        "eq": "==",
-        "ne": "!=",
-        "lt": "<",
-        "le": "<=",
-        "gt": ">",
-        "ge": ">=",
-        "eq_s": "==",
-        "ne_s": "!=",
-        "lt_s": "<",
-        "le_s": "<=",
-        "gt_s": ">",
-        "ge_s": ">=",
-        "eq_u": "==",
-        "ne_u": "!=",
-        "lt_u": "<",
-        "le_u": "<=",
-        "gt_u": ">",
-        "ge_u": ">=",
-    }
-    if op in cmp_ops and len(args) == 2:
+    cmp_symbol = condition_compare_symbol_8616(op)
+    if cmp_symbol is not None and len(args) == 2:
         left = _format_ir_value_8616(args[0])
         right = _format_ir_value_8616(args[1])
         if left is None or right is None:
             return None
-        return f"{left} {cmp_ops[op]} {right}"
+        return f"{left} {cmp_symbol} {right}"
     return None
 
 

@@ -115,7 +115,7 @@ def test_sortdemo_acceptance_scorecards_capture_main_sleep_and_percolateup_state
     )
 
     assert main_scorecard.source_present is True
-    assert main_scorecard.raw_ss_linear_count >= 1
+    assert main_scorecard.raw_ss_linear_count == 0
     assert main_scorecard.anonymous_sub_count == 0
     assert main_scorecard.validation_verdict == "stable"
     assert sleep_scorecard.source_present is True

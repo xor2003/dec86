@@ -896,6 +896,62 @@ def test_simplify_x86_16_stack_byte_pointers_rewrites_byte_walk_loop():
         "    while (*s++)\n"
         "    {\n"
         "        n += 1;\n"
+        "    }\n\n"
+    )
+
+
+def test_simplify_x86_16_stack_byte_pointers_rewrites_ss_stack_alias_chains():
+    c_text = (
+        "    vvar_20 = (int)&(&s_a)[2];\n"
+        "    *((unsigned short *)((ss << 4) + vvar_20 - 2)) = 0;\n"
+        "    vvar_24 = vvar_20 - 2 + -2;\n"
+        "    *((char *)((ss << 4) + vvar_24)) = cs;\n"
+        "    *((char *)(vvar_24 + 1)) = cs >> 8;\n"
+    )
+
+    assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
+        "    vvar_20 = (int)&(&s_a)[2];\n"
+        "    *((unsigned short *)&s_a) = 0;\n"
+        "    vvar_24 = vvar_20 - 2 + -2;\n"
+        "    *((char *)(&s_a - 2)) = cs;\n"
+        "    *((char *)(&s_a - 1)) = cs >> 8;\n"
+    )
+
+
+def test_simplify_x86_16_stack_byte_pointers_rewrites_segmented_byte_pair_loads():
+    c_text = (
+        "    x = (*((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8) - 1;\n"
+        "    y = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) + 1;\n"
+    )
+
+    assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
+        "    x = *((unsigned short far *)MK_FP(ds, 2978)) - 1;\n"
+        "    y = *((unsigned short *)&s_4) + 1;\n"
+    )
+
+
+def test_simplify_x86_16_stack_byte_pointers_rewrites_direct_ss_local_stores():
+    c_text = (
+        "    *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8;\n"
+        "    *((unsigned short *)((ss << 4) + (unsigned int)&s_4 - 2)) = 0;\n"
+    )
+
+    assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
+        "    *((char *)(&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8;\n"
+        "    *((unsigned short *)(&s_4 - 2)) = 0;\n"
+    )
+
+
+def test_simplify_x86_16_stack_byte_pointers_rewrites_direct_ss_local_exprs_inside_for_header():
+    c_text = (
+        "    for (; ; *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8)\n"
+        "    {\n"
+        "    }\n"
+    )
+
+    assert decompile._simplify_x86_16_stack_byte_pointers(c_text) == (
+        "    for (; ; *((char *)(&s_4 + 1)) = *((unsigned short *)&s_4) + 1 >> 8)\n"
+        "    {\n"
         "    }\n"
     )
 

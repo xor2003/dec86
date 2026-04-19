@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from ..condition_ir import build_condition_ir_8616, normalize_condition_op_8616
 from .core import IRCondition, IRValue
 
 __all__ = [
@@ -14,9 +15,9 @@ def _zero_fold(cond_op: str, left: IRValue, right: IRValue) -> IRCondition | Non
     if cond_op not in {"eq", "ne"}:
         return None
     if right.const == 0:
-        return IRCondition(op="zero" if cond_op == "eq" else "nonzero", args=(left,), expr=("zero_fold",))
+        return build_condition_ir_8616("zero" if cond_op == "eq" else "nonzero", left, expr=("zero_fold",))
     if left.const == 0:
-        return IRCondition(op="zero" if cond_op == "eq" else "nonzero", args=(right,), expr=("zero_fold",))
+        return build_condition_ir_8616("zero" if cond_op == "eq" else "nonzero", right, expr=("zero_fold",))
     return None
 
 
@@ -38,15 +39,15 @@ def build_condition_from_binop(op: str, left: IRValue, right: IRValue) -> IRCond
         if zero_fold is not None:
             return zero_fold
         if folded.endswith("s"):
-            return IRCondition(op=f"s{cond_op}", args=(left, right), expr=(op,))
+            return build_condition_ir_8616(normalize_condition_op_8616(f"s{cond_op}"), left, right, expr=(op,))
         if folded.endswith("u"):
-            return IRCondition(op=f"u{cond_op}", args=(left, right), expr=(op,))
-        return IRCondition(op=cond_op, args=(left, right), expr=(op,))
+            return build_condition_ir_8616(normalize_condition_op_8616(f"u{cond_op}"), left, right, expr=(op,))
+        return build_condition_ir_8616(normalize_condition_op_8616(cond_op), left, right, expr=(op,))
     return None
 
 
 def _nonzero_condition(value: IRValue, *, source: str) -> IRCondition:
-    return IRCondition(op="nonzero", args=(value,), expr=(source,))
+    return build_condition_ir_8616("nonzero", value, expr=(source,))
 
 
 def _masked_nonzero_condition(left: IRValue, right: IRValue, *, source: str) -> IRCondition:

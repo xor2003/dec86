@@ -88,6 +88,8 @@ def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, 
         return False
     if proof.left_version is None or proof.right_version is None:
         return False
+    if proof.left_version <= 0 or proof.right_version <= 0:
+        return False
     if proof.left_version != proof.right_version:
         return False
     try:
@@ -137,4 +139,3 @@ __all__ = [
     "can_join_adjacent_register_slices",
     "join_adjacent_register_slices",
 ]
-

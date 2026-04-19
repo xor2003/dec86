@@ -5,7 +5,7 @@ ITY_I8 = Type.int_8
 ITY_I16 = Type.int_16
 ITY_I32 = Type.int_32
 
-from .addressing_helpers import linear_address
+from .addressing_helpers import ResolvedMemoryOperand, linear_address
 from .hardware import Hardware
 from .regs import reg16_t, sgreg_t
 from .stack_helpers import pop16, pop32, push16, push32, push_far_return_frame16
@@ -20,6 +20,8 @@ class DataAccess(Hardware):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.tlb = []  # Translation Lookaside Buffer
+        self._inertia_last_resolved_operand = None
+        self._inertia_resolved_operands = []
 
     def set_segment(self, reg, sel):
         self.set_gpreg(reg, sel)
@@ -55,6 +57,22 @@ class DataAccess(Hardware):
         sg = sg.cast_to(ITY_I32)
         return sg, vaddr
 
+    def _record_resolved_operand(self, operand: ResolvedMemoryOperand, mode: int) -> ResolvedMemoryOperand:
+        self._inertia_last_resolved_operand = operand
+        history = getattr(self, "_inertia_resolved_operands", None)
+        if not isinstance(history, list):
+            history = []
+            self._inertia_resolved_operands = history
+        history.append((mode, operand))
+        return operand
+
+    def _resolved_segment_operand(self, seg, addr, width_bits: int) -> ResolvedMemoryOperand:
+        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
+            linear = self.convert_ss_vaddr(addr)
+        else:
+            linear = self.v2p(seg, addr)
+        return ResolvedMemoryOperand(seg, addr, linear, width_bits, 16)
+
     def search_tlb(self, vpn):
         if vpn + 1 > len(self.tlb) or self.tlb[vpn] is None:
             return None
@@ -78,6 +96,7 @@ class DataAccess(Hardware):
         return pop16(self)
 
     def read_mem32_seg(self, seg, addr):
+        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 32), MODE_READ)
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
             return self.read_mem32(paddr)
@@ -85,6 +104,7 @@ class DataAccess(Hardware):
         return self.read_mem32(paddr)
 
     def read_mem16_seg(self, seg, addr):
+        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 16), MODE_READ)
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
             return self.read_mem16(paddr)
@@ -92,6 +112,7 @@ class DataAccess(Hardware):
         return self.read_mem16(paddr)
 
     def read_mem8_seg(self, seg, addr):
+        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 8), MODE_READ)
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
             return self.read_mem8(paddr)
@@ -99,6 +120,7 @@ class DataAccess(Hardware):
         return self.read_mem8(paddr)
 
     def write_mem32_seg(self, seg, addr, value):
+        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 32), MODE_WRITE)
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
             return self.write_mem32(paddr, value)
@@ -106,6 +128,7 @@ class DataAccess(Hardware):
         self.write_mem32(paddr, value)
 
     def write_mem16_seg(self, seg, addr, value):
+        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 16), MODE_WRITE)
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
             return self.write_mem16(paddr, value)
@@ -113,6 +136,7 @@ class DataAccess(Hardware):
         self.write_mem16(paddr, value)
 
     def write_mem8_seg(self, seg, addr, value):
+        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 8), MODE_WRITE)
         if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
             paddr = self.convert_ss_vaddr(addr)
             return self.write_mem8(paddr, value)
