@@ -1616,6 +1616,75 @@ def test_canonicalize_stack_cvar_expr_prefers_annotated_slot():
     assert decompile._canonicalize_stack_cvar_expr(alias_cvar, codegen).variable is arg_var
 
 
+def test_canonicalize_stack_cvar_expr_rewrites_indexed_stack_reference_to_exact_slot():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    base_var = SimStackVariable(-6, 1, base="bp", name="s_6", region=0x1000)
+    target_var = SimStackVariable(2, 2, base="bp", name="wait_hi", region=0x1000)
+    base_cvar = structured_c.CVariable(base_var, variable_type=SimTypeChar(False), codegen=codegen)
+    target_cvar = structured_c.CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        variables_in_use={
+            base_var: base_cvar,
+            target_var: target_cvar,
+        },
+    )
+
+    expr = structured_c.CUnaryOp(
+        "Reference",
+        structured_c.CIndexedVariable(
+            structured_c.CUnaryOp("Reference", base_cvar, codegen=codegen),
+            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    canonical = decompile._canonicalize_stack_cvar_expr(expr, codegen)
+
+    assert isinstance(canonical, structured_c.CUnaryOp)
+    assert canonical.op == "Reference"
+    assert isinstance(canonical.operand, structured_c.CVariable)
+    assert canonical.operand.variable is target_var
+
+
+def test_canonicalize_stack_cvar_expr_collapses_deref_of_reference_to_slot():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    slot_var = SimStackVariable(0, 2, base="bp", name="goal", region=0x1000)
+    slot_cvar = structured_c.CVariable(slot_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(arg_list=[], variables_in_use={slot_var: slot_cvar})
+
+    expr = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CUnaryOp("Reference", slot_cvar, codegen=codegen),
+        codegen=codegen,
+    )
+
+    canonical = decompile._canonicalize_stack_cvar_expr(expr, codegen)
+
+    assert canonical is slot_cvar
+
+
 def test_materialize_missing_stack_local_declarations_adds_live_stack_slots():
     class _FakeCodegen:
         def __init__(self):

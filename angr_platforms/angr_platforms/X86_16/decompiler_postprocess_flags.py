@@ -22,6 +22,7 @@ from .decompiler_postprocess_utils import (
 __all__ = [
     "_extract_flag_test_info_8616",
     "_extract_flag_predicate_from_expr_8616",
+    "_rewrite_flag_bit_value_uses_8616",
     "_recover_ordering_condition_from_flag_mask_8616",
     "_recover_signed_condition_8616",
     "_recover_unsigned_condition_8616",
@@ -47,6 +48,16 @@ _SF_MASK_8616 = 0x80
 _OF_MASK_8616 = 0x800
 
 
+def _c_variable_register_offset_8616(node) -> int | None:
+    if not isinstance(node, CVariable):
+        return None
+    for attr in ("variable", "unified_variable"):
+        variable = getattr(node, attr, None)
+        if isinstance(variable, SimRegisterVariable) and isinstance(getattr(variable, "reg", None), int):
+            return variable.reg
+    return None
+
+
 def _extract_flag_test_info_8616(node):
     invert = False
     while True:
@@ -64,6 +75,12 @@ def _extract_flag_test_info_8616(node):
                 node = node.cond
                 continue
         break
+
+    if isinstance(node, CBinaryOp) and node.op == "And":
+        if isinstance(node.lhs, CVariable) and isinstance(node.rhs, CConstant) and isinstance(node.rhs.value, int):
+            return node.lhs, node.rhs.value, invert
+        if isinstance(node.rhs, CVariable) and isinstance(node.lhs, CConstant) and isinstance(node.lhs.value, int):
+            return node.rhs, node.lhs.value, invert
 
     if not isinstance(node, CBinaryOp) or node.op not in {"CmpEQ", "CmpNE"}:
         return None
@@ -138,6 +155,145 @@ def _extract_flag_predicate_from_expr_8616(node, bit: int):
     return None
 
 
+def _unwrap_c_casts_8616(node):
+    while type(node).__name__ == "CTypeCast":
+        expr = getattr(node, "expr", None)
+        if expr is None:
+            break
+        node = expr
+    return node
+
+
+def _extract_flag_bit_value_info_8616(node):
+    node = _unwrap_c_casts_8616(node)
+    if not isinstance(node, CBinaryOp) or node.op != "And":
+        return None
+
+    def _extract_shifted_flag_value(expr):
+        expr = _unwrap_c_casts_8616(expr)
+        if isinstance(expr, CVariable):
+            return expr, 0
+        if not isinstance(expr, CBinaryOp) or expr.op not in {"Shr", "Sar"}:
+            return None
+        lhs = _unwrap_c_casts_8616(expr.lhs)
+        rhs = _unwrap_c_casts_8616(expr.rhs)
+        if not isinstance(lhs, CVariable):
+            return None
+        shift = _c_constant_value_8616(rhs)
+        if shift is None or shift < 0:
+            return None
+        return lhs, shift
+
+    for masked, mask in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        if _c_constant_value_8616(_unwrap_c_casts_8616(mask)) != 1:
+            continue
+        shifted = _extract_shifted_flag_value(masked)
+        if shifted is None:
+            continue
+        flag_var, shift = shifted
+        bit = 1 << shift
+        return flag_var, bit
+    return None
+
+
+def _rewrite_flag_bit_value_expr_8616(node, assignments, codegen):
+    changed = False
+
+    def transform(expr):
+        nonlocal changed
+        info = _extract_flag_bit_value_info_8616(expr)
+        if info is None:
+            return expr
+        flag_var, bit = info
+        for assign_stmt, _assign_container in reversed(assignments):
+            if not isinstance(assign_stmt, CAssignment):
+                continue
+            if not _same_c_expression_8616(assign_stmt.lhs, flag_var):
+                continue
+            predicate = _extract_flag_predicate_from_expr_8616(assign_stmt.rhs, bit)
+            if predicate is None:
+                return expr
+            changed = True
+            return predicate
+        return expr
+
+    new_node = transform(node)
+    if _replace_c_children_8616(new_node, transform):
+        changed = True
+    return new_node, changed
+
+
+def _rewrite_flag_bit_value_uses_8616(codegen) -> bool:
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+
+    changed = False
+    flags_offset = None
+    project_arch = getattr(getattr(codegen, "project", None), "arch", None)
+    if project_arch is not None:
+        flags_offset = project_arch.registers.get("flags", (None, None))[0]
+
+    def _last_assignment_in_stmt(stmt):
+        if isinstance(stmt, CAssignment):
+            return stmt, None
+        if isinstance(stmt, CStatements) and stmt.statements:
+            last = stmt.statements[-1]
+            if isinstance(last, CAssignment):
+                return last, stmt
+        return None, None
+
+    def _is_flags_assignment(stmt) -> bool:
+        if flags_offset is None or not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
+            return False
+        return _c_variable_register_offset_8616(stmt.lhs) == flags_offset
+
+    def _rewrite_expr(node, assignments):
+        nonlocal changed
+        rewritten, expr_changed = _rewrite_flag_bit_value_expr_8616(node, assignments, codegen)
+        changed = changed or expr_changed
+        return rewritten
+
+    def visit_stmt(stmt, assignments):
+        if isinstance(stmt, CStatements):
+            visit_block(stmt, assignments)
+            return
+        if isinstance(stmt, CIfElse):
+            new_pairs = []
+            pair_changed = False
+            for cond, body in getattr(stmt, "condition_and_nodes", ()) or ():
+                new_cond = _rewrite_expr(cond, assignments)
+                if isinstance(body, CStatements):
+                    visit_block(body, list(assignments))
+                new_pairs.append((new_cond, body))
+                pair_changed = pair_changed or (new_cond is not cond)
+            if pair_changed:
+                stmt.condition_and_nodes = new_pairs
+            else_node = getattr(stmt, "else_node", None)
+            if isinstance(else_node, CStatements):
+                visit_block(else_node, list(assignments))
+            return
+        condition = getattr(stmt, "condition", None)
+        if condition is not None and type(condition).__name__.startswith("C"):
+            new_condition = _rewrite_expr(condition, assignments)
+            if new_condition is not condition:
+                stmt.condition = new_condition
+        body = getattr(stmt, "body", None)
+        if isinstance(body, CStatements):
+            visit_block(body, list(assignments))
+        _rewrite_expr(stmt, assignments)
+
+    def visit_block(node, incoming_assignments):
+        local_assignments = list(incoming_assignments)
+        for stmt in list(node.statements):
+            visit_stmt(stmt, local_assignments)
+            assign_stmt, assign_container = _last_assignment_in_stmt(stmt)
+            if _is_flags_assignment(assign_stmt):
+                local_assignments.append((assign_stmt, assign_container))
+
+    visit_block(codegen.cfunc.statements, [])
+    return changed
+
+
 def _recover_unsigned_condition_8616(expr, bit: int, codegen):
     if bit not in {_CF_MASK_8616, _ZF_MASK_8616}:
         return None
@@ -168,8 +324,6 @@ def _recover_ordering_condition_from_flag_mask_8616(expr, flag_test_info, codege
     if len(flag_test_info) == 3:
         _flag_var, bit, negate_predicate = flag_test_info
         predicate = _recover_unsigned_condition_8616(expr, bit, codegen)
-        if predicate is None:
-            predicate = _extract_flag_predicate_from_expr_8616(expr, bit)
     elif len(flag_test_info) == 4:
         _flag_var, bit1, bit2, negate_predicate = flag_test_info
         predicate = _recover_signed_condition_8616(expr, bit1, bit2, codegen)
@@ -181,6 +335,93 @@ def _recover_ordering_condition_from_flag_mask_8616(expr, flag_test_info, codege
     if negate_predicate:
         return CUnaryOp("Not", predicate, codegen=codegen)
     return predicate
+
+
+def _invert_compare_op_8616(op: str) -> str | None:
+    return {
+        "CmpEQ": "CmpNE",
+        "CmpNE": "CmpEQ",
+        "CmpLT": "CmpGE",
+        "CmpLE": "CmpGT",
+        "CmpGT": "CmpLE",
+        "CmpGE": "CmpLT",
+    }.get(op)
+
+
+def _normalize_effective_compare_8616(node):
+    if isinstance(node, CBinaryOp) and node.op in {"CmpEQ", "CmpNE", "CmpLT", "CmpLE", "CmpGT", "CmpGE"}:
+        return node.op, node.lhs, node.rhs
+    if isinstance(node, CUnaryOp) and node.op == "Not" and isinstance(node.operand, CBinaryOp):
+        inverted = _invert_compare_op_8616(node.operand.op)
+        if inverted is not None:
+            return inverted, node.operand.lhs, node.operand.rhs
+    return None
+
+
+def _flag_component_compare_kind_8616(node, flag_var, flag_expr, codegen):
+    info = _extract_flag_test_info_8616(node)
+    if info is None or not _same_c_expression_8616(info[0], flag_var):
+        return None
+    if len(info) == 3:
+        bit = info[1]
+        if bit != _ZF_MASK_8616:
+            return None
+        predicate = _recover_ordering_condition_from_flag_mask_8616(flag_expr, info, codegen)
+        normalized = _normalize_effective_compare_8616(predicate)
+        if normalized is None:
+            return None
+        op, lhs, rhs = normalized
+        if op not in {"CmpEQ", "CmpNE"}:
+            return None
+        return op, lhs, rhs
+    if len(info) == 4 and {info[1], info[2]} == {_SF_MASK_8616, _OF_MASK_8616}:
+        zf_predicate = _recover_unsigned_condition_8616(flag_expr, _ZF_MASK_8616, codegen)
+        normalized = _normalize_effective_compare_8616(zf_predicate)
+        if normalized is None:
+            return None
+        _zf_op, lhs, rhs = normalized
+        return ("CmpGE" if info[3] else "CmpLT"), lhs, rhs
+    return None
+
+
+def _recover_combined_signed_flag_condition_8616(node, flag_var, flag_expr, codegen):
+    if not isinstance(node, CBinaryOp) or node.op not in {"And", "LogicalAnd", "Or", "LogicalOr"}:
+        return None
+
+    lhs_info = _flag_component_compare_kind_8616(node.lhs, flag_var, flag_expr, codegen)
+    rhs_info = _flag_component_compare_kind_8616(node.rhs, flag_var, flag_expr, codegen)
+    if lhs_info is None or rhs_info is None:
+        return None
+    lhs_op, lhs_cmp_lhs, lhs_cmp_rhs = lhs_info
+    rhs_op, rhs_cmp_lhs, rhs_cmp_rhs = rhs_info
+    if not _same_c_expression_8616(lhs_cmp_lhs, rhs_cmp_lhs) or not _same_c_expression_8616(lhs_cmp_rhs, rhs_cmp_rhs):
+        return None
+
+    ordered_ops = {lhs_op, rhs_op}
+    replacement_op = None
+    if node.op in {"And", "LogicalAnd"}:
+        if ordered_ops == {"CmpEQ", "CmpGE"}:
+            replacement_op = "CmpEQ"
+        elif ordered_ops == {"CmpNE", "CmpGE"}:
+            replacement_op = "CmpGT"
+        elif ordered_ops == {"CmpNE", "CmpLT"}:
+            replacement_op = "CmpLT"
+    else:
+        if ordered_ops == {"CmpEQ", "CmpLT"}:
+            replacement_op = "CmpLE"
+        elif ordered_ops == {"CmpEQ", "CmpGE"}:
+            replacement_op = "CmpGE"
+        elif ordered_ops == {"CmpNE", "CmpLT"}:
+            replacement_op = "CmpNE"
+    if replacement_op is None:
+        return None
+    return CBinaryOp(
+        replacement_op,
+        lhs_cmp_lhs,
+        lhs_cmp_rhs,
+        codegen=codegen,
+        tags=getattr(node, "tags", None),
+    )
 
 
 def _canonical_compare_guard_8616(node):
@@ -422,6 +663,10 @@ def _rewrite_flag_condition_expr_8616(node, flag_var, flag_expr, codegen):
 
     def transform(expr):
         nonlocal changed
+        combined = _recover_combined_signed_flag_condition_8616(expr, flag_var, flag_expr, codegen)
+        if combined is not None:
+            changed = True
+            return combined
         simplified = _maybe_strip_redundant_signed_flag_pair_guard_8616(expr, flag_var, flag_expr)
         if simplified is not None:
             changed = True
@@ -498,8 +743,7 @@ def _rewrite_flag_condition_pairs_8616(codegen) -> bool:
     def _is_flags_assignment(stmt) -> bool:
         if flags_offset is None or not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
             return False
-        variable = getattr(stmt.lhs, "variable", None)
-        return isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) == flags_offset
+        return _c_variable_register_offset_8616(stmt.lhs) == flags_offset
 
     def _rewrite_condition_with_assignments(cond, assignments: list[tuple[CAssignment, CStatements | None]]):
         nonlocal changed
@@ -810,11 +1054,15 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
                 visit(stmt)
                 if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
                     variable = getattr(stmt.lhs, "variable", None)
+                    unified = getattr(stmt.lhs, "unified_variable", None)
                     if (
-                        isinstance(variable, SimRegisterVariable)
-                        and getattr(variable, "reg", None) == flags_offset
-                        and id(variable) not in used_variables
-                        and getattr(variable, "reg", None) not in used_registers
+                        _c_variable_register_offset_8616(stmt.lhs) == flags_offset
+                        and all(
+                            id(candidate) not in used_variables
+                            for candidate in (variable, unified)
+                            if candidate is not None
+                        )
+                        and flags_offset not in used_registers
                     ):
                         changed = True
                         continue
@@ -840,8 +1088,7 @@ def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
     if not _structured_codegen_node_8616(node):
         return False
     if isinstance(node, CVariable):
-        variable = getattr(node, "variable", None)
-        return isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) == reg_offset
+        return _c_variable_register_offset_8616(node) == reg_offset
 
     for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iftrue", "iffalse", "callee_target", "else_node", "retval"):
         child = getattr(node, attr, None)
@@ -877,11 +1124,7 @@ def _stmt_reads_reg_before_write_8616(stmt, reg_offset: int) -> tuple[bool, bool
 
     if isinstance(stmt, CAssignment):
         lhs = stmt.lhs
-        writes = (
-            isinstance(lhs, CVariable)
-            and isinstance(getattr(lhs, "variable", None), SimRegisterVariable)
-            and getattr(lhs.variable, "reg", None) == reg_offset
-        )
+        writes = isinstance(lhs, CVariable) and _c_variable_register_offset_8616(lhs) == reg_offset
         reads = _c_expr_uses_register_8616(stmt.rhs, reg_offset)
         return reads, writes
 
@@ -939,8 +1182,7 @@ def _prune_overwritten_flag_assignments_8616(project, codegen) -> bool:
             for idx, stmt in enumerate(statements):
                 remove = False
                 if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
-                    variable = getattr(stmt.lhs, "variable", None)
-                    if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) == flags_offset:
+                    if _c_variable_register_offset_8616(stmt.lhs) == flags_offset:
                         remainder = CStatements(statements[idx + 1 :], codegen=codegen)
                         reads, _writes = _stmt_reads_reg_before_write_8616(remainder, flags_offset)
                         if not reads:

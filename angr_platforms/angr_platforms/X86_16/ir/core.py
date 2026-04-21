@@ -90,14 +90,14 @@ class IRAddress:
 @dataclass(frozen=True, slots=True)
 class IRCondition:
     op: str
-    args: tuple[IRValue, ...]
+    args: tuple["IRAtom", ...]
     expr: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "kind": "condition",
             "op": self.op,
-            "args": [arg.to_dict() for arg in self.args],
+            "args": [_atom_to_dict(arg) for arg in self.args],
             "expr": self.expr,
         }
 

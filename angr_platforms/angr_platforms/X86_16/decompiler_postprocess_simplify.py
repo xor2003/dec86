@@ -97,6 +97,16 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
+    def _invert_cmp_op_8616(op: str) -> str | None:
+        return {
+            "CmpGT": "CmpLE",
+            "CmpGE": "CmpLT",
+            "CmpLT": "CmpGE",
+            "CmpLE": "CmpGT",
+            "CmpEQ": "CmpNE",
+            "CmpNE": "CmpEQ",
+        }.get(op)
+
     def _is_c_constant_int_8616(expr, value: int) -> bool:
         return isinstance(expr, CConstant) and isinstance(expr.value, int) and expr.value == value
 
@@ -308,6 +318,16 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             operand = getattr(node, "operand", None)
             if isinstance(operand, CUnaryOp) and operand.op == "Not":
                 return operand.operand
+            if isinstance(operand, CBinaryOp):
+                inverted = _invert_cmp_op_8616(operand.op)
+                if inverted is not None:
+                    return CBinaryOp(
+                        inverted,
+                        operand.lhs,
+                        operand.rhs,
+                        codegen=codegen,
+                        tags=getattr(node, "tags", None) or getattr(operand, "tags", None),
+                    )
 
         simplified = _simplify_zero_flag_comparison_8616(node)
         if simplified is not node:

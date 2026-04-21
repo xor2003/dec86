@@ -14,6 +14,7 @@ from . import decompiler_postprocess as _post
 from . import decompiler_postprocess_calls as _calls
 from . import decompiler_postprocess_flags as _flags
 from . import decompiler_postprocess_globals as _globals
+from . import decompiler_postprocess_jcc as _jcc
 from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
@@ -61,13 +62,20 @@ def _build_decompiler_postprocess_passes():
             _globals._prune_unused_unnamed_memory_declarations_8616,
             False,
         ),
+        DecompilerPostprocessPassSpec("_rewrite_decoded_jcc_conditions_8616", _jcc._rewrite_decoded_jcc_conditions_8616, True),
         DecompilerPostprocessPassSpec("_rewrite_flag_condition_pairs_8616", _flags._rewrite_flag_condition_pairs_8616, False),
+        DecompilerPostprocessPassSpec("_rewrite_flag_bit_value_uses_8616", _flags._rewrite_flag_bit_value_uses_8616, False),
         DecompilerPostprocessPassSpec("_prune_unused_flag_assignments_8616", _flags._prune_unused_flag_assignments_8616, True),
         DecompilerPostprocessPassSpec("_prune_overwritten_flag_assignments_8616", _flags._prune_overwritten_flag_assignments_8616, True),
         DecompilerPostprocessPassSpec("_fix_interval_guard_conditions_8616", _flags._fix_interval_guard_conditions_8616, False),
         DecompilerPostprocessPassSpec(
             "_simplify_boolean_cites_8616",
             _simplify._simplify_boolean_cites_8616,
+            False,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_simplify_structured_expressions_8616",
+            _simplify._simplify_structured_expressions_8616,
             False,
         ),
         DecompilerPostprocessPassSpec(

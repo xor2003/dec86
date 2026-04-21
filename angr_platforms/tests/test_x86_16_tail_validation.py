@@ -26,6 +26,7 @@ import angr_platforms.X86_16.tail_validation as tail_validation_module
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation_fingerprint import build_x86_16_contextual_call_fingerprints
 from angr_platforms.X86_16.tail_validation import (
+    X86_16TailValidationSummary,
     X86_16ValidationCacheDescriptor,
     annotate_x86_16_tail_validation_surface_with_baseline,
     build_x86_16_tail_validation_aggregate,
@@ -1751,3 +1752,31 @@ def test_postprocess_codegen_keeps_accepted_changes_when_live_out_stays_stable(m
     assert codegen._inertia_postprocess_validation_failed is False
     assert codegen._inertia_postprocess_validation_failure_pass is None
     assert codegen._inertia_last_postprocess_pass == "_second_pass"
+
+
+def test_tail_validation_compare_summaries_treats_negated_compare_and_inverted_compare_as_stable():
+    before = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=("Not(CmpLE(reg:ax,stack:+0x6))",),
+        control_flow_effects=("if:Not(CmpLE(reg:ax,stack:+0x6))",),
+    )
+    after = X86_16TailValidationSummary(
+        helper_calls=(),
+        register_writes=(),
+        stack_writes=(),
+        global_writes=(),
+        segmented_writes=(),
+        returns=(),
+        conditions=("CmpGT(reg:ax,stack:+0x6)",),
+        control_flow_effects=("if:CmpGT(reg:ax,stack:+0x6)",),
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert diff["changed"] is False
+    assert diff["status"] == "stable"

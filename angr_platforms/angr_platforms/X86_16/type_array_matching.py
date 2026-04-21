@@ -20,11 +20,15 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CBreak,
     CConstant,
+    CForLoop,
+    CIndexedVariable,
     CStatements,
+    CTypeCast,
+    CUnaryOp,
     CVariable,
     CWhileLoop,
 )
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from inertia_decompiler.cli_access_profiles import (
     build_access_trait_evidence_profiles,
     infer_induction_variable,
@@ -371,6 +375,9 @@ def _extract_monotonic_update_8616(stmt):
 def _cond_uses_var_8616(node, target) -> bool:
     if isinstance(node, CVariable):
         return _same_c_expression_8616(node, target)
+    target_key = _expr_index_key_8616(target)
+    if target_key is not None and _expr_index_key_8616(node) == target_key:
+        return True
     for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval"):
         child = getattr(node, attr, None)
         if child is not None and _cond_uses_var_8616(child, target):
@@ -378,7 +385,119 @@ def _cond_uses_var_8616(node, target) -> bool:
     return False
 
 
+def _loop_index_key_8616(loop_var) -> tuple[object, ...] | None:
+    variable = getattr(loop_var, "variable", None)
+    if isinstance(variable, SimRegisterVariable):
+        return ("reg", getattr(variable, "reg", None))
+    if isinstance(variable, SimStackVariable):
+        base = getattr(variable, "base", None)
+        offset = getattr(variable, "offset", None)
+        region = getattr(variable, "region", None)
+        if base is None or offset is None:
+            return None
+        return ("stack", base, offset, region)
+    if isinstance(variable, SimMemoryVariable):
+        addr = getattr(variable, "addr", None)
+        if addr is None:
+            return None
+        return ("mem", addr)
+    return None
+
+
+def _expr_index_key_8616(expr) -> tuple[object, ...] | None:
+    if isinstance(expr, CVariable):
+        return _loop_index_key_8616(expr)
+    if isinstance(expr, CTypeCast):
+        return _expr_index_key_8616(expr.expr)
+    if isinstance(expr, CUnaryOp) and expr.op in {"Dereference", "Reference"}:
+        return _expr_index_key_8616(expr.operand)
+    if isinstance(expr, CIndexedVariable):
+        base_expr = getattr(expr, "variable", None)
+        if isinstance(base_expr, CUnaryOp) and base_expr.op == "Reference":
+            base_expr = base_expr.operand
+        index_expr = getattr(expr, "index", None)
+        if not isinstance(base_expr, CVariable) or not isinstance(index_expr, CConstant) or not isinstance(index_expr.value, int):
+            return None
+        variable = getattr(base_expr, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            return None
+        base = getattr(variable, "base", None)
+        offset = getattr(variable, "offset", None)
+        region = getattr(variable, "region", None)
+        if base is None or not isinstance(offset, int):
+            return None
+        return ("stack", base, offset + int(index_expr.value), region)
+    return None
+
+
+def _unwrap_double_negation_8616(node):
+    if isinstance(node, CUnaryOp) and node.op == "Not" and isinstance(node.operand, CUnaryOp) and node.operand.op == "Not":
+        return node.operand.operand
+    return None
+
+
+def _condition_index_key_8616(node) -> tuple[object, ...] | None:
+    if isinstance(node, CBinaryOp):
+        lhs_key = _expr_index_key_8616(node.lhs)
+        if lhs_key is not None:
+            return lhs_key
+        rhs_key = _expr_index_key_8616(node.rhs)
+        if rhs_key is not None:
+            return rhs_key
+    return None
+
+
+def _has_induction_evidence_for_key_8616(codegen, index_key: tuple[object, ...]) -> bool:
+    summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
+    if any(getattr(summary, "index_key", None) == index_key for summary in summaries):
+        return True
+    project = getattr(codegen, "project", None)
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if project is None or not isinstance(func_addr, int):
+        return False
+    profiles = _cached_access_trait_profiles_8616(project, func_addr)
+    if profiles is None:
+        return False
+    direct_profile = profiles.get(index_key)
+    if direct_profile is not None and infer_induction_variable(direct_profile) is not None:
+        return True
+    for profile in profiles.values():
+        candidate = infer_induction_variable(profile)
+        if candidate is not None and candidate.index_key == index_key:
+            return True
+    return False
+
+
 def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None:
+    variable = getattr(loop_var, "variable", None)
+    index_key = _loop_index_key_8616(loop_var)
+    if variable is None or index_key is None:
+        return None
+
+    summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
+    best_summary = None
+    best_summary_score: tuple[int, int, int] | None = None
+    for summary in summaries:
+        if getattr(summary, "index_key", None) != index_key:
+            continue
+        score = (
+            int(getattr(summary, "count", 0) or 0),
+            abs(int(getattr(summary, "stride", 0) or 0)),
+            int(getattr(summary, "width", 0) or 0),
+        )
+        if best_summary_score is None or score > best_summary_score:
+            best_summary = summary
+            best_summary_score = score
+    if best_summary is not None:
+        return InductionVariable(
+            var_name=getattr(variable, "name", None) or f"reg_{getattr(variable, 'reg', 'unknown')}",
+            stride=int(getattr(best_summary, "stride", 0) or 0),
+            base_value=int(getattr(best_summary, "offset", 0) or 0),
+            loop_bound=int(getattr(best_summary, "bound_candidate", 0)) if getattr(best_summary, "bound_candidate", None) is not None else None,
+            element_width=int(getattr(best_summary, "width", 0) or 0),
+        )
+
     project = getattr(codegen, "project", None)
     cfunc = getattr(codegen, "cfunc", None)
     func_addr = getattr(cfunc, "addr", None)
@@ -388,13 +507,28 @@ def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None
     profiles = _cached_access_trait_profiles_8616(project, func_addr)
     if profiles is None:
         return None
-    variable = getattr(loop_var, "variable", None)
-    if not isinstance(variable, SimRegisterVariable):
-        return None
-    profile = profiles.get(("reg", getattr(variable, "reg", None)))
-    if profile is None:
-        return None
-    return infer_induction_variable(profile)
+    direct_profile = profiles.get(index_key)
+    if direct_profile is not None:
+        direct_match = infer_induction_variable(direct_profile)
+        if direct_match is not None and direct_match.index_key == index_key:
+            return direct_match
+
+    best_match: InductionVariable | None = None
+    best_score: tuple[int, int, int, int] | None = None
+    for profile_key, profile in profiles.items():
+        candidate = infer_induction_variable(profile)
+        if candidate is None or candidate.index_key != index_key:
+            continue
+        score = (
+            int(candidate.count),
+            abs(int(candidate.stride)),
+            int(candidate.width),
+            1 if profile_key == index_key else 0,
+        )
+        if best_score is None or score > best_score:
+            best_match = candidate
+            best_score = score
+    return best_match
 
 
 def _rewrite_induction_loops_8616(codegen) -> bool:
@@ -405,6 +539,15 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
 
     def transform(node):
         nonlocal changed
+        if isinstance(node, CForLoop):
+            simplified = _unwrap_double_negation_8616(getattr(node, "condition", None))
+            if simplified is not None:
+                index_key = _condition_index_key_8616(simplified)
+                if index_key is not None:
+                    if _has_induction_evidence_for_key_8616(codegen, index_key):
+                        node.condition = simplified
+                        changed = True
+            return node
         if not isinstance(node, CWhileLoop):
             return node
         if not _literal_true_8616(getattr(node, "condition", None)):

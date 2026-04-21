@@ -150,11 +150,13 @@ def test_x86_16_decompiler_postprocess_registry_order():
         "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
+        "_rewrite_decoded_jcc_conditions_8616",
         "_rewrite_flag_condition_pairs_8616",
         "_prune_unused_flag_assignments_8616",
         "_prune_overwritten_flag_assignments_8616",
         "_fix_interval_guard_conditions_8616",
         "_simplify_boolean_cites_8616",
+        "_simplify_structured_expressions_8616",
         "_maybe_eliminate_single_use_temporaries_8616",
         "_lower_stable_ss_stack_accesses_8616",
         "_normalize_function_prototype_arg_names_8616",
@@ -206,12 +208,12 @@ def test_x86_16_decompiler_postprocess_keeps_wrapper_arg_normalization():
         "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
+        "_rewrite_decoded_jcc_conditions_8616",
         "_rewrite_flag_condition_pairs_8616",
         "_prune_unused_flag_assignments_8616",
         "_prune_overwritten_flag_assignments_8616",
         "_fix_interval_guard_conditions_8616",
         "_simplify_boolean_cites_8616",
-        "_maybe_eliminate_single_use_temporaries_8616",
     )
 
 

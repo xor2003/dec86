@@ -22,6 +22,7 @@ from .alu_helpers import (
 from .exception import EXP_UD
 from .instr_base import InstrBase
 from .instruction import *
+from .jcc_condition import _consume_last_condition_branch_8616
 from .regs import coerce_reg8_t, coerce_reg16_t, reg8_t, reg16_t, sgreg_t
 from .stack_helpers import (
     branch_rel8,
@@ -797,22 +798,22 @@ class Instr16(InstrBase):
         branch_rel16(self.emu, not self.emu.is_overflow(), self.instr.imm16, self.instr.size)
 
     def jb_rel16(self):
-        branch_rel16(self.emu, self.emu.is_carry(), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jb", self.emu.is_carry()), self.instr.imm16, self.instr.size)
 
     def jnb_rel16(self):  # jae, jnc
-        branch_rel16(self.emu, not self.emu.is_carry(), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jnb", not self.emu.is_carry()), self.instr.imm16, self.instr.size)
 
     def jz_rel16(self):
-        branch_rel16(self.emu, self.emu.is_zero(), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jz", self.emu.is_zero()), self.instr.imm16, self.instr.size)
 
     def jnz_rel16(self):
-        branch_rel16(self.emu, not self.emu.is_zero(), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jnz", not self.emu.is_zero()), self.instr.imm16, self.instr.size)
 
     def jbe_rel16(self):
-        branch_rel16(self.emu, self.emu.is_carry() or self.emu.is_zero(), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jbe", self.emu.is_carry() or self.emu.is_zero()), self.instr.imm16, self.instr.size)
 
     def ja_rel16(self):
-        branch_rel16(self.emu, not (self.emu.is_carry() or self.emu.is_zero()), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("ja", not (self.emu.is_carry() or self.emu.is_zero())), self.instr.imm16, self.instr.size)
 
     def js_rel16(self):
         branch_rel16(self.emu, self.emu.is_sign(), self.instr.imm16, self.instr.size)
@@ -827,16 +828,16 @@ class Instr16(InstrBase):
         branch_rel16(self.emu, not self.emu.is_parity(), self.instr.imm16, self.instr.size)
 
     def jl_rel16(self):
-        branch_rel16(self.emu, self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jl", self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm16, self.instr.size)
 
     def jnl_rel16(self):  # jge
-        branch_rel16(self.emu, self.emu.is_sign() == self.emu.is_overflow(), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jge", self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm16, self.instr.size)
 
     def jle_rel16(self):
-        branch_rel16(self.emu, self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jle", self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())), self.instr.imm16, self.instr.size)
 
     def jnle_rel16(self):
-        branch_rel16(self.emu, not (self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())), self.instr.imm16, self.instr.size)
+        branch_rel16(self.emu, self._branch_cond_8616("jg", not (self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()))), self.instr.imm16, self.instr.size)
 
     def imul_r16_rm16(self):
         r16_s = self.get_r16()
@@ -1402,3 +1403,6 @@ class Instr16(InstrBase):
         level = self.instr.imm8
         level &= 0x1f
         enter16(self.emu, bytes_, level)
+    def _branch_cond_8616(self, kind: str, fallback):
+        direct = _consume_last_condition_branch_8616(self.emu.lifter_instruction, self.emu, kind)
+        return fallback if direct is None else direct

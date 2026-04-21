@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Tuple, Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
+from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles, infer_induction_summary
 
 from . import confidence_and_assumptions as _confidence
 from . import decompiler_postprocess_simplify as _simplify
@@ -66,6 +67,11 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
         DecompilerStructuringPassSpec(
             "_simplify_structured_expressions_8616",
             _simplify._simplify_structured_expressions_8616,
+            False,
+        ),
+        DecompilerStructuringPassSpec(
+            "_induction_summary_artifact_8616",
+            _induction_summary_artifact_8616,
             False,
         ),
         DecompilerStructuringPassSpec(
@@ -149,7 +155,70 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
     )
 
 
+def _induction_summary_artifact_8616(codegen) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    project = getattr(codegen, "project", None)
+    if cfunc is None or project is None:
+        return False
+    traits_cache = getattr(project, "_inertia_access_traits", None)
+    if not isinstance(traits_cache, dict):
+        codegen._inertia_induction_summaries = ()
+        return False
+    traits = traits_cache.get(getattr(cfunc, "addr", None))
+    if not isinstance(traits, dict):
+        codegen._inertia_induction_summaries = ()
+        return False
+
+    summaries = []
+    for _base_key, profile in sorted(build_access_trait_evidence_profiles(traits).items(), key=lambda item: repr(item[0])):
+        summary = infer_induction_summary(profile)
+        if summary is not None:
+            summaries.append(summary)
+    codegen._inertia_induction_summaries = tuple(summaries)
+    return False
+
+
 DECOMPILER_STRUCTURING_PASSES = _build_decompiler_structuring_passes()
+
+
+def _semantic_validation_pass_names_8616() -> tuple[str, ...]:
+    return (
+        "_segmented_memory_reasoning_8616",
+        "_array_expression_matching_8616",
+        "_structuring_codegen_8616",
+    )
+
+
+def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
+    if not bool(getattr(project, "_inertia_tail_validation_enabled", True)):
+        return None
+    if spec_name not in _semantic_validation_pass_names_8616():
+        return None
+
+    mode = "live_out"
+    before_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode)
+    before_summary = collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+
+    def finalize():
+        after_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode)
+        after_summary = collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+        validation = build_x86_16_tail_validation_cached_result(
+            owner=None,
+            stage=f"structuring:{spec_name}",
+            mode=mode,
+            before_fingerprint=before_fingerprint,
+            after_fingerprint=after_fingerprint,
+            before_summary=before_summary,
+            after_summary=after_summary,
+        )
+        validation["verdict"] = build_x86_16_tail_validation_verdict(f"structuring:{spec_name}", validation)
+        existing = getattr(codegen, "_inertia_structuring_pass_validation", None)
+        if not isinstance(existing, dict):
+            existing = {}
+            setattr(codegen, "_inertia_structuring_pass_validation", existing)
+        existing[spec_name] = validation
+
+    return finalize
 
 
 def _decompiler_structuring_passes_for_function(project, codegen):
@@ -197,10 +266,13 @@ def _structuring_codegen_8616(project, codegen) -> bool:
     for spec in pass_specs:
         try:
             project._inertia_decompiler_stage = f"structuring:{spec.name}"
+            finalize_validation = _maybe_validate_structuring_pass_8616(project, codegen, spec.name)
             if spec.needs_project:
                 spec_changed = spec.func(project, codegen)
             else:
                 spec_changed = spec.func(codegen)
+            if finalize_validation is not None:
+                finalize_validation()
         except Exception as ex:  # noqa: BLE001
             codegen._inertia_structuring_failed = True
             codegen._inertia_structuring_failure_pass = spec.name

@@ -68,3 +68,27 @@ def test_match_stack_cvar_and_offset_resolves_dirty_virtual_assignment_chain():
     base, offset = matched
     assert base is stack_cvar
     assert offset == 0
+
+
+def test_match_stack_cvar_and_offset_resolves_indexed_stack_reference():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = SimpleNamespace(
+        project=project,
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 0,
+    )
+    stack_var = SimStackVariable(-6, 1, base="bp", name="s_6", region=0x10010)
+    stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False).with_arch(project.arch), codegen=codegen)
+
+    expr = structured_c.CIndexedVariable(
+        structured_c.CUnaryOp("Reference", stack_cvar, codegen=codegen),
+        structured_c.CConstant(8, SimTypeShort(False).with_arch(project.arch), codegen=codegen),
+        codegen=codegen,
+    )
+
+    matched = decompile._match_stack_cvar_and_offset(expr)
+
+    assert matched is not None
+    base, offset = matched
+    assert base is stack_cvar
+    assert offset == 8

@@ -76,3 +76,15 @@ def test_expr_fingerprint_normalizes_stack_word_pair():
     fingerprint = _expr_fingerprint(expr, project)
 
     assert fingerprint == "stack:+0x2"
+
+
+def test_expr_fingerprint_canonicalizes_negated_compare_to_inverted_compare():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    lhs = _reg(project, "ax", codegen)
+    rhs = _reg(project, "bx", codegen)
+
+    negated = CUnaryOp("Not", CBinaryOp("CmpLE", lhs, rhs, codegen=codegen), codegen=codegen)
+    direct = CBinaryOp("CmpGT", lhs, rhs, codegen=codegen)
+
+    assert _expr_fingerprint(negated, project) == _expr_fingerprint(direct, project)

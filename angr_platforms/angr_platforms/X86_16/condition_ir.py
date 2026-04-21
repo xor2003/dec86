@@ -5,9 +5,12 @@ from typing import Literal
 from .ir.core import IRCondition, IRValue
 
 ConditionOp = Literal[
+    "and",
     "compare",
     "eq",
     "ne",
+    "not",
+    "or",
     "slt",
     "sle",
     "sgt",
@@ -39,6 +42,8 @@ def build_condition_ir_8616(op: ConditionOp, *args: IRValue, expr: tuple[str, ..
 
 
 def normalize_condition_op_8616(op: str) -> ConditionOp:
+    if op in {"and", "or", "not"}:
+        return op  # type: ignore[return-value]
     if op in {"masked_nonzero", "nonzero"}:
         return "nonzero"
     if op in {"masked_zero", "zero"}:
@@ -53,7 +58,7 @@ def normalize_condition_op_8616(op: str) -> ConditionOp:
 
 
 def is_condition_truth_test_8616(op: str) -> bool:
-    return normalize_condition_op_8616(op) in {"zero", "nonzero"}
+    return normalize_condition_op_8616(op) in {"zero", "nonzero", "and", "or", "not"}
 
 
 def is_condition_compare_family_8616(op: str) -> bool:

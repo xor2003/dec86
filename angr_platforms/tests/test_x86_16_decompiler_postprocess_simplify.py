@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CReturn, CStatements, CVariable
+from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CReturn, CStatements, CUnaryOp, CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
@@ -88,6 +88,25 @@ def test_simplify_structured_expressions_refuses_mixed_byte_pair_sources():
 
     assert changed is False
     assert isinstance(codegen.cfunc.statements, CBinaryOp)
+
+
+def test_simplify_structured_expressions_inverts_negated_compare():
+    project = _project()
+    codegen = _codegen([])
+    expr = CUnaryOp(
+        "Not",
+        CBinaryOp("CmpLE", _reg(project, "ax", codegen), _reg(project, "bx", codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CBinaryOp)
+    assert result.op == "CmpGT"
 
 
 def test_eliminate_single_use_temporaries_inlines_immediate_use():

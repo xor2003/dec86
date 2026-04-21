@@ -14,10 +14,11 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from inertia_decompiler.cli_access_profiles import (
     AccessTraitEvidenceProfile,
     AccessTraitInductionVar,
+    InductionSummary,
     AccessTraitStrideEvidence,
     infer_induction_variable,
 )
@@ -59,6 +60,10 @@ def _const(value: int, codegen):
 def _reg(project, name: str, codegen):
     reg_offset, reg_size = project.arch.registers[name]
     return CVariable(SimRegisterVariable(reg_offset, reg_size, name=name), codegen=codegen)
+
+
+def _stack(offset: int, codegen, *, name: str = "i"):
+    return CVariable(SimStackVariable(offset, 2, base="bp", name=name, region=0x4010), codegen=codegen)
 
 
 def _break_if(cond, codegen):
@@ -225,6 +230,31 @@ def test_array_matching_rewrites_simple_increment_loop_without_tail_delta(monkey
     assert diff["changed"] is False
 
 
+def test_array_matching_uses_structuring_induction_summary_artifact_without_monkeypatch():
+    project = _project()
+    codegen = _increment_loop_fixture(project, _codegen(project, []), reg_name="si", bound=10, stride=1)
+    codegen._inertia_induction_summaries = (
+        InductionSummary(
+            base_key=("stack", "bp", -4),
+            index_key=("reg", project.arch.registers["si"][0]),
+            stride=1,
+            direction="increment",
+            bound_candidate=10,
+            width=2,
+            offset=0,
+            count=3,
+        ),
+    )
+
+    changed = _rewrite_induction_loops_8616(codegen)
+
+    assert changed is True
+    loop = codegen.cfunc.statements.statements[0]
+    assert isinstance(loop, CWhileLoop)
+    assert isinstance(loop.condition, CBinaryOp)
+    assert loop.condition.op == "CmpLT"
+
+
 def test_array_matching_rewrites_decrement_loop(monkeypatch):
     project = _project(_induction_traits(_project().arch.registers["cx"][0], 2))
     codegen = _codegen(project, [])
@@ -266,6 +296,49 @@ def test_array_matching_rewrites_decrement_loop(monkeypatch):
     assert loop.condition.op == "CmpGT"
     update = loop.body.statements[0]
     assert isinstance(update, CAssignment)
+
+
+def test_array_matching_rewrites_stack_local_induction_loop_from_summary_artifact():
+    project = _project()
+    codegen = _codegen(project, [])
+    i = _stack(-2, codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CWhileLoop(
+                _const(1, codegen),
+                CStatements(
+                    [
+                        _break_if(CBinaryOp("CmpGE", i, _const(10, codegen), codegen=codegen), codegen),
+                        CAssignment(i, CBinaryOp("Add", i, _const(2, codegen), codegen=codegen), codegen=codegen),
+                    ],
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_induction_summaries = (
+        InductionSummary(
+            base_key=("stack", "bp", -4),
+            index_key=("stack", "bp", -2, 0x4010),
+            stride=2,
+            direction="increment",
+            bound_candidate=10,
+            width=2,
+            offset=0,
+            count=3,
+        ),
+    )
+
+    changed = _rewrite_induction_loops_8616(codegen)
+
+    assert changed is True
+    loop = codegen.cfunc.statements.statements[0]
+    assert isinstance(loop.condition, CBinaryOp)
+    assert loop.condition.op == "CmpLT"
 
 
 def test_array_matching_rewrites_stride_non_unit_loop(monkeypatch):

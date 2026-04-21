@@ -71,6 +71,17 @@ def _wrap_not_fingerprint(fingerprint: str) -> str:
     return f"Not({fingerprint})"
 
 
+def _invert_cmp_op_8616(op: str) -> str | None:
+    return {
+        "CmpGT": "CmpLE",
+        "CmpGE": "CmpLT",
+        "CmpLT": "CmpGE",
+        "CmpLE": "CmpGT",
+        "CmpEQ": "CmpNE",
+        "CmpNE": "CmpEQ",
+    }.get(op)
+
+
 def _stack_word_pair_fingerprint(node, project) -> str | None:
     if not isinstance(node, CBinaryOp) or node.op != "Or":
         return None
@@ -221,6 +232,13 @@ def _expr_fingerprint(node, project) -> str:
     if isinstance(node, CTypeCast):
         return f"cast:{_expr_fingerprint(node.expr, project)}"
     if isinstance(node, CUnaryOp):
+        operand = getattr(node, "operand", None)
+        if node.op == "Not" and isinstance(operand, CBinaryOp):
+            inverted = _invert_cmp_op_8616(operand.op)
+            if inverted is not None:
+                lhs = _expr_fingerprint(operand.lhs, project)
+                rhs = _expr_fingerprint(operand.rhs, project)
+                return f"{inverted}({lhs},{rhs})"
         return f"{node.op}({_expr_fingerprint(node.operand, project)})"
     if isinstance(node, CBinaryOp):
         lhs = _expr_fingerprint(node.lhs, project)

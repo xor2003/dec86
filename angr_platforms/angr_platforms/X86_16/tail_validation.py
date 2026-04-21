@@ -182,6 +182,53 @@ _INVERTED_COMPARISON_OPS_8616 = {
     "CmpGE": "CmpLT",
 }
 
+_TAIL_VALIDATION_CONTROL_FLOW_PREFIXES_8616 = (
+    "if:",
+    "ifbreak:",
+    "while:",
+    "dowhile:",
+    "for:",
+    "switch:",
+)
+
+
+def _split_fingerprint_call_8616(value: str) -> tuple[str, str] | None:
+    if not isinstance(value, str) or not value.endswith(")"):
+        return None
+    open_idx = value.find("(")
+    if open_idx <= 0:
+        return None
+    return value[:open_idx], value[open_idx + 1 : -1]
+
+
+def _canonicalize_condition_fingerprint_string_8616(value: str) -> str:
+    if not isinstance(value, str) or not value:
+        return value
+
+    for prefix in _TAIL_VALIDATION_CONTROL_FLOW_PREFIXES_8616:
+        if value.startswith(prefix):
+            return prefix + _canonicalize_condition_fingerprint_string_8616(value[len(prefix) :])
+
+    call = _split_fingerprint_call_8616(value)
+    if call is None:
+        return value
+    op, inner = call
+    if op == "Not":
+        inner_call = _split_fingerprint_call_8616(inner)
+        if inner_call is None:
+            return value
+        inner_op, inner_args = inner_call
+        inverted = _INVERTED_COMPARISON_OPS_8616.get(inner_op)
+        if inverted is not None:
+            return f"{inverted}({inner_args})"
+    return value
+
+
+def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -> set[str]:
+    if field_name not in {"conditions", "control_flow_effects"}:
+        return values
+    return {_canonicalize_condition_fingerprint_string_8616(value) for value in values}
+
 
 def _invert_condition_fingerprint_8616(node, project, contextual_condition_fingerprints: Mapping[int, str]) -> str | None:
     if isinstance(node, CBinaryOp):
@@ -1687,8 +1734,8 @@ def compare_x86_16_tail_validation_summaries(
     changed = False
     diff: dict[str, object] = {"changed": False, "before": before.as_dict(), "after": after.as_dict(), "delta": {}}
     for field_name in _TAIL_VALIDATION_OBSERVABLE_FIELDS:
-        before_values = set(getattr(before, field_name))
-        after_values = set(getattr(after, field_name))
+        before_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(before, field_name)))
+        after_values = _canonicalize_summary_field_values_8616(field_name, set(getattr(after, field_name)))
         added = tuple(sorted(after_values - before_values))
         removed = tuple(sorted(before_values - after_values))
         if added or removed:

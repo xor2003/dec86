@@ -14,6 +14,7 @@ from .debug import ERROR, INFO
 from .exception import EXCEPTION, EXP_DE
 from .instr_base import InstrBase
 from .instruction import *
+from .jcc_condition import _consume_last_condition_branch_8616
 from .regs import coerce_reg32_t, reg8_t, reg16_t, reg32_t
 from .stack_helpers import (
     branch_rel32,
@@ -428,22 +429,22 @@ class Instr32(InstrBase):
         branch_rel32(self.emu, ~self.emu.is_overflow(), self.instr.imm32)
 
     def jb_rel32(self):
-        branch_rel32(self.emu, self.emu.is_carry(), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jb", self.emu.is_carry()), self.instr.imm32)
 
     def jnb_rel32(self):
-        branch_rel32(self.emu, ~self.emu.is_carry(), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jnb", ~self.emu.is_carry()), self.instr.imm32)
 
     def jz_rel32(self):
-        branch_rel32(self.emu, self.emu.is_zero(), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jz", self.emu.is_zero()), self.instr.imm32)
 
     def jnz_rel32(self):
-        branch_rel32(self.emu, ~self.emu.is_zero(), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jnz", ~self.emu.is_zero()), self.instr.imm32)
 
     def jbe_rel32(self):
-        branch_rel32(self.emu, self.emu.is_carry() or self.emu.is_zero(), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jbe", self.emu.is_carry() or self.emu.is_zero()), self.instr.imm32)
 
     def ja_rel32(self):
-        branch_rel32(self.emu, not (self.emu.is_carry() or self.emu.is_zero()), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("ja", not (self.emu.is_carry() or self.emu.is_zero())), self.instr.imm32)
 
     def js_rel32(self):
         branch_rel32(self.emu, self.emu.is_sign(), self.instr.imm32)
@@ -458,16 +459,16 @@ class Instr32(InstrBase):
         branch_rel32(self.emu, ~self.emu.is_parity(), self.instr.imm32)
 
     def jl_rel32(self):
-        branch_rel32(self.emu, self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jl", self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm32)
 
     def jnl_rel32(self):
-        branch_rel32(self.emu, self.emu.is_sign() == self.emu.is_overflow(), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jge", self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm32)
 
     def jle_rel32(self):
-        branch_rel32(self.emu, self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jle", self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow())), self.instr.imm32)
 
     def jnle_rel32(self):
-        branch_rel32(self.emu, not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm32)
+        branch_rel32(self.emu, self._branch_cond_8616("jg", not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow())), self.instr.imm32)
 
     def imul_r32_rm32(self):
         r32_s = self.get_r32()
@@ -806,3 +807,6 @@ class Instr32(InstrBase):
     def push_rm32(self):
         rm32 = self.get_rm32()
         push_immediate32(self.emu, rm32)
+    def _branch_cond_8616(self, kind: str, fallback):
+        direct = _consume_last_condition_branch_8616(self.emu.lifter_instruction, self.emu, kind)
+        return fallback if direct is None else direct

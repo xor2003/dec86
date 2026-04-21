@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
-from angr_platforms.X86_16.lift_86_16 import _direct_jcc_condition_from_last_condition_8616
+from angr_platforms.X86_16.jcc_condition import (
+    _consume_last_condition_branch_8616,
+    _direct_jcc_condition_from_last_condition_8616,
+)
 
 
 class _SymExpr:
@@ -45,6 +48,17 @@ class _FakeInstruction:
 
     def get(self, name, _ty):
         return _SymExpr(name)
+
+
+class _FakeEmu:
+    def __init__(self, condition):
+        self._last_condition = condition
+
+    def get_last_condition(self):
+        return self._last_condition
+
+    def clear_last_condition(self):
+        self._last_condition = None
 
 
 def test_direct_jcc_condition_consumes_compare_artifact():
@@ -128,3 +142,19 @@ def test_direct_jcc_condition_refuses_vexvalue_named_tmp_operand():
     result = _direct_jcc_condition_from_last_condition_8616(_FakeInstruction(), "jz", condition)
 
     assert result is None
+
+
+def test_consume_last_condition_branch_clears_consumed_condition():
+    condition = IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.REG, name="ax", size=2),
+            IRValue(MemSpace.CONST, const=7, size=2),
+        ),
+    )
+    emu = _FakeEmu(condition)
+
+    result = _consume_last_condition_branch_8616(_FakeInstruction(), emu, "jg")
+
+    assert repr(result) == "(ax > 7)"
+    assert emu.get_last_condition() is None

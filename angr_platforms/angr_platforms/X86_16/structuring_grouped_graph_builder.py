@@ -51,6 +51,18 @@ def _format_ir_address_hint_8616(address: IRAddress) -> str | None:
 def _format_ir_condition_hint_8616(condition: IRCondition) -> str | None:
     args = tuple(getattr(condition, "args", ()) or ())
     op = str(getattr(condition, "op", ""))
+    if op == "not" and len(args) == 1 and isinstance(args[0], IRCondition):
+        inner = _format_ir_condition_hint_8616(args[0])
+        if inner is None:
+            return None
+        return f"!({inner})"
+    if op in {"and", "or"} and len(args) == 2 and isinstance(args[0], IRCondition) and isinstance(args[1], IRCondition):
+        left = _format_ir_condition_hint_8616(args[0])
+        right = _format_ir_condition_hint_8616(args[1])
+        if left is None or right is None:
+            return None
+        join = " && " if op == "and" else " || "
+        return f"({left}){join}({right})"
     if op in {"zero", "nonzero"} and len(args) == 1:
         value = _format_ir_value_8616(args[0])
         if value is None:
