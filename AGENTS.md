@@ -2,7 +2,7 @@
 
 ## Mission
 
-Inertia is an angr-based decompiler for 16/32-bit x86 real-mode binaries.
+Inertia is an angr-based decompiler for x86 16/32-bit real-mode and 16-bit protected mode binaries.
 
 The goal is:
 
@@ -526,20 +526,28 @@ Token-efficiency defaults:
 - prefer compact prompts
 - prefer short continuation prompts on `codex resume`
 - use `gpt-5.4-mini` by default for planner/checker/worker/reviewer unless a stronger model is justified
+- keep visible assistant output in lean "caveman" style by default: short sentences, little filler, result first
+- prefer concise structured artifacts over free-form prose when the user does not need narrative explanation
 
 Token-efficiency discipline:
 
 - compress visible output, not the reasoning substrate
 - prefer typed artifacts, task packets, and machine-readable state over replaying full chat history
 - prefer external persisted state and small deltas over resending prior turns
+- prefer summarization or compact state snapshots over replaying long intermediate logs
 - load only the smallest relevant code, log, artifact, or tool slice needed for the current decision
 - prefer semantic retrieval, exact symbol lookup, and focused file windows over broad repository tours
+- prefer lazy loading of tool schemas, context, and reference material; do not dump large definitions up front
 - prefer one stable artifact path or summary row over repeating the same evidence in prose
 - trim tool and CLI output before feeding it back to a model; keep only the signal
+- prefer cleaned text or markdown over noisy HTML or verbose raw tool payloads
 - prefer compact structured output or short bullet rows over verbose explanatory prose
+- prefer compact machine-readable formats and stable schemas; avoid bloated serialization when a smaller exact form works
 - do not repeat the same prompt preamble, file dump, test output, or evidence excerpt when a prior artifact already proves the point
 - do not re-run the same expensive command without a concrete code change, hypothesis change, or missing measurement
 - when a backend supports prompt caching, previous-response chaining, or equivalent prefix reuse, prefer it for stable instructions and tool schemas
+- prefer semantic or exact-match caching of repeated retrieval work when correctness is unchanged
+- use cheap preprocessing or summarization steps before the main reasoning model when that reduces large raw inputs without hiding signal
 - use small/cheap models for routing, pruning, summarization, or classification, and reserve stronger models for the reasoning step that actually needs them
 - if a token-saving trick would hide evidence, remove semantic detail, or weaken attribution, do not use it
 
