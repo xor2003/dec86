@@ -58,7 +58,10 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "inertia_decompiler" / "slice_recovery.py",
     _ROOT / "inertia_decompiler" / "tail_validation.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "analysis_helpers.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "condition_ir.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_flags.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_stage.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_simplify.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_structuring_stage.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lift_86_16.py",
@@ -67,6 +70,10 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "tail_validation.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "tail_validation_fingerprint.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "tail_validation_routing.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "type_array_matching.py",
+    _ROOT / "inertia_decompiler" / "cli_access_object_hints.py",
+    _ROOT / "inertia_decompiler" / "cli_access_profiles.py",
+    _ROOT / "inertia_decompiler" / "cli_access_traits.py",
 )
 
 

@@ -3304,6 +3304,12 @@ def _decompile_function(
             wrapper_like=bool(profile.get("wrapper_like")),
             tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
         )
+        expr_collapse_depth = _preferred_expr_collapse_depth(
+            block_count,
+            byte_count,
+            wrapper_like=bool(profile.get("wrapper_like")),
+            tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
+        )
     def _analysis_log_messages(dec_obj) -> list[str]:
         messages: list[str] = []
         for entry in getattr(dec_obj, "errors", ()) or ():
@@ -3434,9 +3440,18 @@ def _decompile_function(
                     with _guard_angr_clinic_stage_markers(project):
                         with _analysis_timeout(_remaining_timeout()):
                             if decompiler_options is None:
-                                dec = project.analyses.Decompiler(function, cfg=cfg)
+                                dec = project.analyses.Decompiler(
+                                    function,
+                                    cfg=cfg,
+                                    expr_collapse_depth=expr_collapse_depth,
+                                )
                             else:
-                                dec = project.analyses.Decompiler(function, cfg=cfg, options=decompiler_options)
+                                dec = project.analyses.Decompiler(
+                                    function,
+                                    cfg=cfg,
+                                    options=decompiler_options,
+                                    expr_collapse_depth=expr_collapse_depth,
+                                )
                             if dec.codegen is None:
                                 fallback_options = None if decompiler_options is not None else [("structurer_cls", "Phoenix")]
                                 logging.getLogger(__name__).debug(
@@ -3445,9 +3460,18 @@ def _decompile_function(
                                     "SAILR" if decompiler_options is not None else "Phoenix",
                                 )
                                 if fallback_options is None:
-                                    dec = project.analyses.Decompiler(function, cfg=cfg)
+                                    dec = project.analyses.Decompiler(
+                                        function,
+                                        cfg=cfg,
+                                        expr_collapse_depth=expr_collapse_depth,
+                                    )
                                 else:
-                                    dec = project.analyses.Decompiler(function, cfg=cfg, options=fallback_options)
+                                    dec = project.analyses.Decompiler(
+                                        function,
+                                        cfg=cfg,
+                                        options=fallback_options,
+                                        expr_collapse_depth=expr_collapse_depth,
+                                    )
                             print(f"[dbg] Decompiler returned for {hex(function.addr)}")
                             sys.stdout.flush()
     except _AnalysisTimeout:
@@ -4024,6 +4048,22 @@ def _preferred_decompiler_options(
     if wrapper_like or tiny_single_call_helper:
         return [("structurer_cls", "Phoenix")]
     return None
+
+
+def _preferred_expr_collapse_depth(
+    block_count: int,
+    byte_count: int,
+    *,
+    wrapper_like: bool = False,
+    tiny_single_call_helper: bool = False,
+) -> int:
+    if wrapper_like or tiny_single_call_helper:
+        return 16
+    if block_count <= 24 and byte_count <= 256:
+        return 32
+    if block_count <= 64 and byte_count <= 1024:
+        return 24
+    return 16
 
 
 def _function_recovery_detail(stage: str | None) -> str | None:
@@ -6798,6 +6838,14 @@ def _match_stack_cvar_and_offset(node, _seen: set[int] | None = None):
         if isinstance(variable, SimStackVariable) and _stack_slot_identity_for_variable(variable) is not None:
             return node, 0
         return None
+
+    if isinstance(node, structured_c.CIndexedVariable):
+        base = _match_stack_cvar_and_offset(node.variable, _seen)
+        index = _c_constant_value(_unwrap_c_casts(node.index))
+        if base is None or index is None:
+            return None
+        base_cvar, offset = base
+        return base_cvar, _normalize_16bit_signed_offset(offset + index)
 
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
         operand = _unwrap_c_casts(node.operand)
@@ -9991,19 +10039,9 @@ def _simplify_negated_condition(expr: str) -> str:
 
     inner = expr[2:-1].strip()
     if inner.startswith("!(") and inner.endswith(")"):
-        return inner[2:-1].strip()
-
-    for op in ("&", "|", "^"):
-        parts = _split_top_level_binary(inner, op)
-        if parts is not None:
-            lhs, rhs = parts
-            return f"({lhs} {op} {rhs}) == 0"
-
-    for op, replacement in (("!=", "=="), ("==", "!="), (">=", "<"), ("<=", ">"), (">", "<="), ("<", ">=")):
-        parts = _split_top_level_binary(inner, op)
-        if parts is not None:
-            lhs, rhs = parts
-            return f"{lhs} {replacement} {rhs}"
+        collapsed = inner[2:-1].strip()
+        if re.fullmatch(r"[A-Za-z_][\w$?@]*(?:\s*\[[^\]]+\])?", collapsed):
+            return collapsed
 
     return expr
 
@@ -11625,7 +11663,6 @@ def _format_known_helper_calls(
         c_text = "\n".join(declarations) + "\n\n" + c_text
     c_text = _rewrite_known_helper_signature_text(c_text, function)
     c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
-    c_text = _simplify_x86_16_conditions(c_text)
     return _repair_missing_fallthrough_returns(c_text)
 
 

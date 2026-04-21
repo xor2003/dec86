@@ -30,6 +30,18 @@ class AccessTraitInductionVar:
 
 
 @dataclass(frozen=True)
+class InductionSummary:
+    base_key: tuple[object, ...] | None
+    index_key: tuple[object, ...] | None
+    stride: int
+    direction: str
+    bound_candidate: int | None
+    width: int
+    offset: int
+    count: int
+
+
+@dataclass(frozen=True)
 class AccessTraitEvidenceProfile:
     member_like: tuple[NamingCandidate, ...] = ()
     array_like: tuple[NamingCandidate, ...] = ()
@@ -109,6 +121,20 @@ class AccessTraitEvidenceProfile:
 
 
 def infer_induction_variable(profile: AccessTraitEvidenceProfile) -> AccessTraitInductionVar | None:
+    summary = infer_induction_summary(profile)
+    if summary is None:
+        return None
+    return AccessTraitInductionVar(
+        base_key=summary.base_key,
+        index_key=summary.index_key,
+        stride=summary.stride,
+        width=summary.width,
+        offset=summary.offset,
+        count=summary.count,
+    )
+
+
+def infer_induction_summary(profile: AccessTraitEvidenceProfile) -> InductionSummary | None:
     candidates = tuple(
         evidence
         for evidence in profile.induction_evidence + profile.stride_evidence
@@ -121,17 +147,18 @@ def infer_induction_variable(profile: AccessTraitEvidenceProfile) -> AccessTrait
     index_keys = {evidence.index_key for evidence in candidates}
     base_keys = {evidence.base_key for evidence in candidates}
     widths = {int(evidence.width) for evidence in candidates}
-    offsets = {int(evidence.offset) for evidence in candidates}
-    if len(stride_set) != 1 or len(index_keys) != 1 or len(base_keys) != 1 or len(widths) != 1 or len(offsets) != 1:
+    if len(stride_set) != 1 or len(index_keys) != 1 or len(base_keys) != 1 or len(widths) != 1:
         return None
 
     best = max(candidates, key=lambda evidence: (int(evidence.count), int(evidence.width), -abs(int(evidence.offset))))
     if int(best.count) < 2:
         return None
-    return AccessTraitInductionVar(
+    return InductionSummary(
         base_key=best.base_key,
         index_key=best.index_key,
         stride=int(best.stride),
+        direction="decrement" if int(best.stride) < 0 else "increment",
+        bound_candidate=int(best.offset) if int(best.offset) != 0 else None,
         width=int(best.width),
         offset=int(best.offset),
         count=int(best.count),

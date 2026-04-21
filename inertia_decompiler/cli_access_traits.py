@@ -3,6 +3,9 @@ from __future__ import annotations
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
+from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles, infer_induction_variable
+from inertia_decompiler.cli_induction_rewrite import rewrite_for_loop_conditions_from_access_traits
+
 
 def _collect_access_traits(
     project,
@@ -84,10 +87,39 @@ def _collect_access_traits(
             return ("mem", getattr(variable, "addr", None))
         return None
 
+    def expr_index_key(expr) -> tuple[object, ...] | None:
+        expr = unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CVariable):
+            return access_trait_variable_key(getattr(expr, "variable", None))
+        if isinstance(expr, structured_c.CUnaryOp) and expr.op == "Dereference":
+            operand = unwrap_c_casts(getattr(expr, "operand", None))
+            if isinstance(operand, structured_c.CUnaryOp) and operand.op == "Reference":
+                expr = unwrap_c_casts(getattr(operand, "operand", None))
+            else:
+                return None
+        if isinstance(expr, structured_c.CIndexedVariable):
+            base_expr = unwrap_c_casts(getattr(expr, "variable", None))
+            if isinstance(base_expr, structured_c.CUnaryOp) and base_expr.op == "Reference":
+                base_expr = unwrap_c_casts(getattr(base_expr, "operand", None))
+            index = c_constant_value(unwrap_c_casts(getattr(expr, "index", None)))
+            if not isinstance(index, int) or not isinstance(base_expr, structured_c.CVariable):
+                return None
+            base_var = getattr(base_expr, "variable", None)
+            if not isinstance(base_var, SimStackVariable):
+                return None
+            identity = stack_slot_identity_for_variable(base_var)
+            if identity is None:
+                return None
+            base_offset = getattr(base_var, "offset", None)
+            if not isinstance(base_offset, int):
+                return None
+            return ("stack", identity.base, base_offset + index, getattr(base_var, "region", None))
+        return None
+
     def summarize_address(addr_expr):
         from_terms: list[object] = []
         offset = 0
-        stride_terms: list[tuple[object, int]] = []
+        stride_terms: list[tuple[tuple[object, ...], int]] = []
 
         for term in _flatten_c_add_terms(addr_expr):
             inner = unwrap_c_casts(term)
@@ -96,17 +128,27 @@ def _collect_access_traits(
                 offset += const_value
                 continue
 
-            if isinstance(inner, structured_c.CBinaryOp) and inner.op == "Mul":
+            if isinstance(inner, structured_c.CBinaryOp) and inner.op in {"Mul", "Shl"}:
                 for maybe_index, maybe_stride in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
-                    stride = c_constant_value(unwrap_c_casts(maybe_stride))
+                    stride_value = c_constant_value(unwrap_c_casts(maybe_stride))
+                    if inner.op == "Shl" and isinstance(stride_value, int):
+                        stride = 1 << stride_value
+                    else:
+                        stride = stride_value
                     if stride is None:
                         continue
                     index = unwrap_c_casts(maybe_index)
-                    if isinstance(index, structured_c.CVariable):
-                        stride_terms.append((index, stride))
+                    index_key = expr_index_key(index)
+                    if index_key is not None:
+                        stride_terms.append((index_key, stride))
                         break
                 else:
                     from_terms.append(inner)
+                continue
+
+            index_key = expr_index_key(inner)
+            if index_key is not None:
+                stride_terms.append((index_key, 1))
                 continue
 
             if isinstance(inner, structured_c.CVariable):
@@ -133,6 +175,18 @@ def _collect_access_traits(
         bits = getattr(type_, "size", None)
         access_size = max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
 
+        direct_index_key = expr_index_key(node)
+        if direct_index_key is not None and access_size >= 2:
+            record_stride_evidence(
+                kind="induction_like",
+                seg_name="expr",
+                base_key=None,
+                index_key=direct_index_key,
+                stride=1,
+                offset=0,
+                access_size=access_size,
+            )
+
         plain_base_terms, plain_offset, plain_stride_terms = summarize_address(getattr(node, "operand", None))
         if len(plain_base_terms) == 1 and isinstance(plain_base_terms[0], structured_c.CVariable):
             plain_base_var = getattr(plain_base_terms[0], "variable", None)
@@ -142,9 +196,7 @@ def _collect_access_traits(
                     continue
                 if plain_offset != 0:
                     record("member_evidence", (plain_base_key, plain_offset, access_size))
-                for index_expr, stride in plain_stride_terms:
-                    index_var = getattr(index_expr, "variable", None)
-                    index_key = access_trait_variable_key(index_var)
+                for index_key, stride in plain_stride_terms:
                     if index_key is None or stride not in {2, 4, 8}:
                         continue
                     record("array_evidence", (plain_base_key, index_key, stride, plain_offset, access_size))
@@ -163,14 +215,12 @@ def _collect_access_traits(
                 record("repeated_offsets", (classified.seg_name, base_key, offset))
                 record("repeated_offset_widths", (classified.seg_name, base_key, offset, access_size))
                 record("repeated_offset_widths", (classified.seg_name, base_key, offset, access_size))
-        for index_expr, stride in stride_terms:
-            index_var = getattr(index_expr, "variable", None)
-            index_key = access_trait_variable_key(index_var)
+        for index_key, stride in stride_terms:
             if index_key is None or base_key is None:
                 continue
             record("base_stride", (classified.seg_name, index_key, stride, offset, access_size))
             record("base_stride_widths", (classified.seg_name, index_key, stride, offset, access_size))
-            if index_key[0] == "reg":
+            if index_key[0] in {"reg", "stack"}:
                 record_stride_evidence(
                     kind="induction_like",
                     seg_name=classified.seg_name,
@@ -208,4 +258,10 @@ def _collect_access_traits(
         cache = {}
         setattr(project, "_inertia_access_traits", cache)
     cache[getattr(codegen.cfunc, "addr", 0)] = traits
-    return False
+    return rewrite_for_loop_conditions_from_access_traits(
+        project,
+        codegen,
+        build_access_trait_evidence_profiles=build_access_trait_evidence_profiles,
+        infer_induction_variable=infer_induction_variable,
+        iter_c_nodes_deep=iter_c_nodes_deep,
+    )

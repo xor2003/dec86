@@ -1,0 +1,3421 @@
+;	Static Name Aliases
+;
+	TITLE   SORTDEMO.c
+	.8087
+INCLUDELIB	SLIBC7
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME DS: DGROUP, SS: DGROUP
+PUBLIC  _clPause
+PUBLIC  _aszMenu
+PUBLIC  _cszMenu
+EXTRN	__acrtused:ABS
+EXTRN	_sprintf:NEAR
+EXTRN	__setbkcolor:FAR
+EXTRN	_rand:NEAR
+EXTRN	__settextrows:FAR
+EXTRN	_srand:NEAR
+EXTRN	_getch:NEAR
+EXTRN	__outtext:FAR
+EXTRN	_clock:NEAR
+EXTRN	_inp:NEAR
+EXTRN	__displaycursor:FAR
+EXTRN	_memset:NEAR
+EXTRN	_outp:NEAR
+EXTRN	_toupper:NEAR
+EXTRN	__settextposition:FAR
+EXTRN	__settextcolor:FAR
+EXTRN	_time:NEAR
+EXTRN	_strcpy:NEAR
+EXTRN	__aNchkstk:NEAR
+EXTRN	__aNldiv:NEAR
+EXTRN	__setvideomode:FAR
+EXTRN	__getvideoconfig:FAR
+EXTRN	__clearscreen:FAR
+_BSS      SEGMENT
+COMM NEAR	_clStart:	BYTE:	 4
+COMM NEAR	_clFinish:	BYTE:	 4
+COMM NEAR	_fSound:	BYTE:	 2
+COMM NEAR	_iCurChoice:	BYTE:	 2
+COMM NEAR	_iSwaps:	BYTE:	 2
+COMM NEAR	_iCompares:	BYTE:	 2
+COMM NEAR	_cRow:	BYTE:	 2
+COMM NEAR	_abarWork:	 2:	 43
+COMM NEAR	_abarPerm:	 2:	 43
+_BSS      ENDS
+_DATA      SEGMENT
+$SG531	DB	00H
+$SG532	DB	'       C Sorting Demo',  00H
+$SG533	DB	00H
+$SG534	DB	'              Time  Swap  Comp',  00H
+$SG535	DB	00H
+$SG536	DB	'Insertion',  00H
+$SG537	DB	'Bubble',  00H
+$SG538	DB	'Heap',  00H
+$SG539	DB	'Exchange',  00H
+$SG540	DB	'Shell',  00H
+$SG541	DB	'Quick',  00H
+$SG542	DB	00H
+$SG543	DB	'Toggle Sound: ',  00H
+$SG544	DB	00H
+$SG545	DB	'Pause Factor: ',  00H
+$SG546	DB	'<   (Slower)',  00H
+$SG547	DB	'>   (Faster)',  00H
+$SG548	DB	00H
+$SG549	DB	'Type first character of',  00H
+$SG550	DB	'choice ( I B H E S Q T < > )',  00H
+$SG551	DB	'or ESC key to end program: ',  00H
+	ORG	$+49
+$SG561	DB	'ON ',  00H
+$SG563	DB	'OFF',  00H
+$SG564	DB	'%3.3u',  00H
+$SG565	DB	'            ',  00H
+$SG604	DB	'%7.i  %4.i  %4.i',  00H
+	ORG	$-92
+_clPause	DD	01eH
+_aszMenu	DW	DGROUP:$SG531
+	DW	DGROUP:$SG532
+	DW	DGROUP:$SG533
+	DW	DGROUP:$SG534
+	DW	DGROUP:$SG535
+	DW	DGROUP:$SG536
+	DW	DGROUP:$SG537
+	DW	DGROUP:$SG538
+	DW	DGROUP:$SG539
+	DW	DGROUP:$SG540
+	DW	DGROUP:$SG541
+	DW	DGROUP:$SG542
+	DW	DGROUP:$SG543
+	DW	DGROUP:$SG544
+	DW	DGROUP:$SG545
+	DW	DGROUP:$SG546
+	DW	DGROUP:$SG547
+	DW	DGROUP:$SG548
+	DW	DGROUP:$SG549
+	DW	DGROUP:$SG550
+	DW	DGROUP:$SG551
+_cszMenu	DW	015H
+_DATA      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /* SORTDEMO -This program graphically demonstrates six common sorting
+; Line 1
+;|***  * algorithms. It prints 25 or 43 horizontal bars of different lengths
+;|***  * in random order, then sorts the bars from shortest to longest.
+;|***  * The program can beep to generate different pitches, depending on the
+;|***  * length and position of the bar.
+;|***  *
+;|***  * The program can be created for DOS or OS/2. To create for OS/2, define
+;|***  * the symbol OS2. Command lines for DOS and OS/2 are shown below:
+;|***  *
+;|***  * DOS:
+;|***  *    cl /Lr sortdemo.c graphics.lib
+;|***  *
+;|***  * OS/2:
+;|***  *    cl /Lp /DOS2 sortdemo.c grtextp.lib
+;|***  */
+;|*** 
+;|*** #include <graph.h>          // _outtext, _settextcolor, _settextposition
+; Line 17
+;|*** #include <string.h>         // strlen
+; Line 18
+;|*** #include <stdio.h>          // sprintf
+; Line 19
+;|*** #include <conio.h>          // getch
+; Line 20
+;|*** #include <stdlib.h>         // srand, rand, toupper
+; Line 21
+;|*** #include <malloc.h>         // malloc, free
+; Line 22
+;|*** #include <time.h>           // time, clock
+; Line 23
+;|*** 
+;|*** enum BOOL { FALSE, TRUE };
+;|*** 
+;|*** /* Structure type for colored bars */
+;|*** typedef struct _BAR
+;|*** {
+;|***     char len;
+;|***     char clr;
+;|*** } BAR;
+;|*** 
+;|*** /* Structure type for screen cells */
+;|*** typedef struct _CELL
+;|*** {
+;|***     char chChar;
+;|***     char chAttr;
+;|*** } CELL;
+;|*** 
+;|*** /* Function prototypes */
+;|*** void main( void  );
+;|*** void Cls( void  );
+;|*** void InitMenu( void  );             // Menu Functions
+;|*** void DrawFrame( int iTop, int Left, int Width, int Height );
+;|*** void RunMenu( void  );
+;|*** void DrawTime( int iCurrentRow );
+;|*** void InitBars( void  );             // Bar functions
+;|*** void ReInitBars( void  );
+;|*** void DrawBar( int iRow );
+;|*** void SwapBars( int iRow1, int iRow2 );
+;|*** void Swaps( BAR *one, BAR *two );
+;|*** void InsertionSort( void  );        // Sort functions
+;|*** void BubbleSort( void  );
+;|*** void HeapSort( void  );
+;|*** void PercolateUp( int iMaxLevel );
+;|*** void PercolateDown( int iMaxLevel );
+;|*** void ExchangeSort( void  );
+;|*** void ShellSort( void  );
+;|*** void QuickSort( int iLow, int iHigh );
+;|*** void Beep( int frequency, int duration );
+;|*** void Sleep( clock_t wait );
+;|*** 
+;|*** /* Macro */
+;|*** #define GetRandom( min, max ) ((rand() % (int)(((max) + 1) - (min))) + (min))
+;|*** #define _outtextxy( ach, x, y )   { _settextposition( y, x ); \
+;|***                                     _outtext( ach ); }
+;|*** 
+;|*** /* Constants */
+;|*** #define ESC        27
+;|*** #define BLANK      32
+;|*** #define BLOCK      223
+;|*** #define TOP        1
+;|*** #define FIRSTMENU  (TOP + 6)
+;|*** #define LEFTCOLUMN 48
+;|*** #define PROMPTPOS  27
+;|*** #define WIDTH      (80 - LEFTCOLUMN)
+;|*** #define HEIGHT     (cszMenu + 2)
+;|*** #define MENUCOLOR  15
+;|*** #define BLANKCOLOR 7
+;|*** #define BACKCOLOR  0L
+;|*** #define PAUSELIMIT 900
+;|*** 
+;|*** /* Global variables */
+;|*** clock_t clStart, clFinish, clPause = 30L;
+;|*** int fSound, iCurChoice, iSwaps, iCompares, cRow;
+;|*** 
+;|*** BAR abarWork[43], abarPerm[43]; // Temporary and permanent sort arrays
+;|*** 
+;|*** char *aszMenu[] =
+;|*** {
+;|***     "",
+;|***     "       C Sorting Demo",
+;|***     "",
+;|***     "              Time  Swap  Comp",
+;|***     "",
+;|***     "Insertion",
+;|***     "Bubble",
+;|***     "Heap",
+;|***     "Exchange",
+;|***     "Shell",
+;|***     "Quick",
+;|***     "",
+;|***     "Toggle Sound: ",
+;|***     "",
+;|***     "Pause Factor: ",
+;|***     "<   (Slower)",
+;|***     ">   (Faster)",
+;|***     "",
+;|***     "Type first character of",
+;|***     "choice ( I B H E S Q T < > )",
+;|***     "or ESC key to end program: "
+;|***     "",
+;|*** };
+;|*** int cszMenu = sizeof( aszMenu ) / sizeof( aszMenu[0] );
+;|*** 
+;|*** void main()
+;|*** {
+; Line 118
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	b8 00 00 		mov	ax,0
+	*** 000006	e8 00 00 		call	__aNchkstk
+	*** 000009	57 			push	di
+	*** 00000a	56 			push	si
+;|***     cRow = _settextrows( 43 );
+; Line 119
+	*** 00000b	b8 2b 00 		mov	ax,43
+	*** 00000e	50 			push	ax
+	*** 00000f	9a 00 00 00 00 		call	FAR PTR __settextrows
+	*** 000014	83 c4 02 		add	sp,2
+	*** 000017	a3 00 00 		mov	WORD PTR _cRow,ax
+;|***     _clearscreen( _GCLEARSCREEN );
+; Line 120
+	*** 00001a	b8 00 00 		mov	ax,0
+	*** 00001d	50 			push	ax
+	*** 00001e	9a 00 00 00 00 		call	FAR PTR __clearscreen
+	*** 000023	83 c4 02 		add	sp,2
+;|***     _displaycursor( _GCURSOROFF );
+; Line 121
+	*** 000026	b8 00 00 		mov	ax,0
+	*** 000029	50 			push	ax
+	*** 00002a	9a 00 00 00 00 		call	FAR PTR __displaycursor
+	*** 00002f	83 c4 02 		add	sp,2
+;|***     InitBars();
+; Line 122
+	*** 000032	e8 00 00 		call	_InitBars
+;|***     InitMenu();
+; Line 123
+	*** 000035	e8 00 00 		call	_InitMenu
+;|***     RunMenu();                     // Respond to menu until quit
+; Line 124
+	*** 000038	e8 00 00 		call	_RunMenu
+;|***     _setvideomode( _DEFAULTMODE );
+; Line 125
+	*** 00003b	b8 ff ff 		mov	ax,-1
+	*** 00003e	50 			push	ax
+	*** 00003f	9a 00 00 00 00 		call	FAR PTR __setvideomode
+	*** 000044	83 c4 02 		add	sp,2
+;|*** }
+; Line 126
+					$EX553:
+	*** 000047	5e 			pop	si
+	*** 000048	5f 			pop	di
+	*** 000049	8b e5 			mov	sp,bp
+	*** 00004b	5d 			pop	bp
+	*** 00004c	c3 			ret	
+
+_main	ENDP
+;|*** 
+;|*** 
+;|*** /* InitMenu - Calls the DrawFrame procedure to draw the frame around the
+;|***  * sort menu, then prints the different options stored in the menu array.
+;|***  */
+;|*** void InitMenu()
+;|*** {
+; Line 133
+	*** 00004d	90 			nop	
+	*** 00004e	90 			nop	
+	*** 00004f	90 			nop	
+	PUBLIC	_InitMenu
+_InitMenu	PROC NEAR
+	*** 000050	55 			push	bp
+	*** 000051	8b ec 			mov	bp,sp
+	*** 000053	b8 12 00 		mov	ax,18
+	*** 000056	e8 00 00 		call	__aNchkstk
+	*** 000059	57 			push	di
+	*** 00005a	56 			push	si
+;	i = -2
+;	ach = -18
+;|***     int  i;
+;|***     char ach[15];
+;|*** 
+;|***     _settextcolor( MENUCOLOR );
+; Line 137
+	*** 00005b	b8 0f 00 		mov	ax,15
+	*** 00005e	50 			push	ax
+	*** 00005f	9a 00 00 00 00 		call	FAR PTR __settextcolor
+	*** 000064	83 c4 02 		add	sp,2
+;|***     _setbkcolor( BACKCOLOR );
+; Line 138
+	*** 000067	2b c0 			sub	ax,ax
+	*** 000069	50 			push	ax
+	*** 00006a	50 			push	ax
+	*** 00006b	9a 00 00 00 00 		call	FAR PTR __setbkcolor
+	*** 000070	83 c4 04 		add	sp,4
+;|***     DrawFrame( TOP, LEFTCOLUMN - 3, WIDTH + 3, HEIGHT );
+; Line 139
+	*** 000073	a1 1e 01 		mov	ax,WORD PTR _cszMenu
+	*** 000076	05 02 00 		add	ax,2
+	*** 000079	50 			push	ax
+	*** 00007a	b8 23 00 		mov	ax,35
+	*** 00007d	50 			push	ax
+	*** 00007e	b8 2d 00 		mov	ax,45
+	*** 000081	50 			push	ax
+	*** 000082	b8 01 00 		mov	ax,1
+	*** 000085	50 			push	ax
+	*** 000086	e8 00 00 		call	_DrawFrame
+	*** 000089	83 c4 08 		add	sp,8
+;|***     for( i = 0; i < cszMenu; i++ )
+; Line 140
+	*** 00008c	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;i
+	*** 000091	e9 03 00 		jmp	$F557
+					$FC558:
+	*** 000094	ff 46 fe 		inc	WORD PTR [bp-2]	;i
+					$F557:
+	*** 000097	a1 1e 01 		mov	ax,WORD PTR _cszMenu
+	*** 00009a	39 46 fe 		cmp	WORD PTR [bp-2],ax	;i
+	*** 00009d	7c 03 			jl	$JCC157
+	*** 00009f	e9 28 00 		jmp	$FB559
+					$JCC157:
+;|***         _outtextxy( aszMenu[i], LEFTCOLUMN, TOP + i + 1 );
+; Line 141
+	*** 0000a2	b8 30 00 		mov	ax,48
+	*** 0000a5	50 			push	ax
+	*** 0000a6	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;i
+	*** 0000a9	05 02 00 		add	ax,2
+	*** 0000ac	50 			push	ax
+	*** 0000ad	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 0000b2	83 c4 04 		add	sp,4
+	*** 0000b5	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;i
+	*** 0000b8	d1 e3 			shl	bx,1
+	*** 0000ba	1e 			push	ds
+	*** 0000bb	ff b7 f4 00 		push	WORD PTR _aszMenu[bx]
+	*** 0000bf	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 0000c4	83 c4 04 		add	sp,4
+	*** 0000c7	e9 ca ff 		jmp	$FC558
+					$FB559:
+;|*** 
+;|***     /* Print the current value for Sound. */
+;|***     if( fSound )
+; Line 144
+	*** 0000ca	83 3e 00 00 00 		cmp	WORD PTR _fSound,0
+	*** 0000cf	75 03 			jne	$JCC207
+	*** 0000d1	e9 11 00 		jmp	$I560
+					$JCC207:
+;|***         strcpy( ach, "ON " );
+; Line 145
+	*** 0000d4	b8 20 01 		mov	ax,OFFSET DGROUP:$SG561
+	*** 0000d7	50 			push	ax
+	*** 0000d8	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 0000db	50 			push	ax
+	*** 0000dc	e8 00 00 		call	_strcpy
+	*** 0000df	83 c4 04 		add	sp,4
+;|***     else
+; Line 146
+	*** 0000e2	e9 0e 00 		jmp	$I562
+					$I560:
+;|***         strcpy( ach, "OFF" );
+; Line 147
+	*** 0000e5	b8 24 01 		mov	ax,OFFSET DGROUP:$SG563
+	*** 0000e8	50 			push	ax
+	*** 0000e9	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 0000ec	50 			push	ax
+	*** 0000ed	e8 00 00 		call	_strcpy
+	*** 0000f0	83 c4 04 		add	sp,4
+					$I562:
+;|*** 
+;|***     _outtextxy( ach, LEFTCOLUMN + 14, cszMenu - 7 );
+; Line 149
+	*** 0000f3	b8 3e 00 		mov	ax,62
+	*** 0000f6	50 			push	ax
+	*** 0000f7	a1 1e 01 		mov	ax,WORD PTR _cszMenu
+	*** 0000fa	2d 07 00 		sub	ax,7
+	*** 0000fd	50 			push	ax
+	*** 0000fe	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 000103	83 c4 04 		add	sp,4
+	*** 000106	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 000109	16 			push	ss
+	*** 00010a	50 			push	ax
+	*** 00010b	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 000110	83 c4 04 		add	sp,4
+;|***     sprintf( ach, "%3.3u", clPause / 30 );
+; Line 150
+	*** 000113	b8 1e 00 		mov	ax,30
+	*** 000116	ba 00 00 		mov	dx,0
+	*** 000119	52 			push	dx
+	*** 00011a	50 			push	ax
+	*** 00011b	ff 36 f2 00 		push	WORD PTR _clPause+2
+	*** 00011f	ff 36 f0 00 		push	WORD PTR _clPause
+	*** 000123	e8 00 00 		call	__aNldiv
+	*** 000126	52 			push	dx
+	*** 000127	50 			push	ax
+	*** 000128	b8 28 01 		mov	ax,OFFSET DGROUP:$SG564
+	*** 00012b	50 			push	ax
+	*** 00012c	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 00012f	50 			push	ax
+	*** 000130	e8 00 00 		call	_sprintf
+	*** 000133	83 c4 08 		add	sp,8
+;|***     _outtextxy( ach, LEFTCOLUMN + 14, cszMenu - 5 );
+; Line 151
+	*** 000136	b8 3e 00 		mov	ax,62
+	*** 000139	50 			push	ax
+	*** 00013a	a1 1e 01 		mov	ax,WORD PTR _cszMenu
+	*** 00013d	2d 05 00 		sub	ax,5
+	*** 000140	50 			push	ax
+	*** 000141	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 000146	83 c4 04 		add	sp,4
+	*** 000149	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 00014c	16 			push	ss
+	*** 00014d	50 			push	ax
+	*** 00014e	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 000153	83 c4 04 		add	sp,4
+;|*** 
+;|***     /* Erase the speed option if the length of the pause is at a limit. */
+;|***     strcpy( ach, "            " );
+; Line 154
+	*** 000156	b8 2e 01 		mov	ax,OFFSET DGROUP:$SG565
+	*** 000159	50 			push	ax
+	*** 00015a	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 00015d	50 			push	ax
+	*** 00015e	e8 00 00 		call	_strcpy
+	*** 000161	83 c4 04 		add	sp,4
+;|***     if( clPause == PAUSELIMIT )
+; Line 155
+	*** 000164	81 3e f0 00 84 03 	cmp	WORD PTR _clPause,900
+	*** 00016a	74 03 			je	$JCC362
+	*** 00016c	e9 2a 00 		jmp	$I566
+					$JCC362:
+	*** 00016f	83 3e f2 00 00 		cmp	WORD PTR _clPause+2,0
+	*** 000174	74 03 			je	$JCC372
+	*** 000176	e9 20 00 		jmp	$I566
+					$JCC372:
+;|***         _outtextxy( ach, LEFTCOLUMN, cszMenu - 4 );
+; Line 156
+	*** 000179	b8 30 00 		mov	ax,48
+	*** 00017c	50 			push	ax
+	*** 00017d	a1 1e 01 		mov	ax,WORD PTR _cszMenu
+	*** 000180	2d 04 00 		sub	ax,4
+	*** 000183	50 			push	ax
+	*** 000184	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 000189	83 c4 04 		add	sp,4
+	*** 00018c	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 00018f	16 			push	ss
+	*** 000190	50 			push	ax
+	*** 000191	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 000196	83 c4 04 		add	sp,4
+					$I566:
+;|***     if( clPause == 0L )
+; Line 157
+	*** 000199	a1 f2 00 		mov	ax,WORD PTR _clPause+2
+	*** 00019c	0b 06 f0 00 		or	ax,WORD PTR _clPause
+	*** 0001a0	74 03 			je	$JCC416
+	*** 0001a2	e9 20 00 		jmp	$I567
+					$JCC416:
+;|***         _outtextxy( ach, LEFTCOLUMN, cszMenu - 3 );
+; Line 158
+	*** 0001a5	b8 30 00 		mov	ax,48
+	*** 0001a8	50 			push	ax
+	*** 0001a9	a1 1e 01 		mov	ax,WORD PTR _cszMenu
+	*** 0001ac	2d 03 00 		sub	ax,3
+	*** 0001af	50 			push	ax
+	*** 0001b0	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 0001b5	83 c4 04 		add	sp,4
+	*** 0001b8	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;ach
+	*** 0001bb	16 			push	ss
+	*** 0001bc	50 			push	ax
+	*** 0001bd	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 0001c2	83 c4 04 		add	sp,4
+					$I567:
+;|*** }
+; Line 159
+					$EX554:
+	*** 0001c5	5e 			pop	si
+	*** 0001c6	5f 			pop	di
+	*** 0001c7	8b e5 			mov	sp,bp
+	*** 0001c9	5d 			pop	bp
+	*** 0001ca	c3 			ret	
+
+_InitMenu	ENDP
+;|*** 
+;|*** 
+;|*** /* DrawFrame - Draws a rectangular frame using the double-line box
+;|***  * characters. The parameters iTop, iLeft, iWidth, and iHeight are
+;|***  * the row and column arguments for the upper-left and lower-right
+;|***  * corners of the frame.
+;|***  */
+;|*** void DrawFrame( int iTop, int iLeft, int iWidth, int iHeight )
+;|*** {
+; Line 168
+	*** 0001cb	90 			nop	
+	*** 0001cc	90 			nop	
+	*** 0001cd	90 			nop	
+	*** 0001ce	90 			nop	
+	*** 0001cf	90 			nop	
+	*** 0001d0	90 			nop	
+	*** 0001d1	90 			nop	
+	*** 0001d2	90 			nop	
+	*** 0001d3	90 			nop	
+	*** 0001d4	90 			nop	
+	*** 0001d5	90 			nop	
+	*** 0001d6	90 			nop	
+	*** 0001d7	90 			nop	
+	*** 0001d8	90 			nop	
+	*** 0001d9	90 			nop	
+	*** 0001da	90 			nop	
+	*** 0001db	90 			nop	
+	*** 0001dc	90 			nop	
+	*** 0001dd	90 			nop	
+	*** 0001de	90 			nop	
+	*** 0001df	90 			nop	
+	PUBLIC	_DrawFrame
+_DrawFrame	PROC NEAR
+	*** 0001e0	55 			push	bp
+	*** 0001e1	8b ec 			mov	bp,sp
+	*** 0001e3	b8 52 00 		mov	ax,82
+	*** 0001e6	e8 00 00 		call	__aNchkstk
+	*** 0001e9	57 			push	di
+	*** 0001ea	56 			push	si
+;	iRow = -2
+;	achTmp = -82
+;	iHeight = 10
+;	iWidth = 8
+;	iLeft = 6
+;	iTop = 4
+;|***     enum { ULEFT = 201, URIGHT = 187,
+;|***            LLEFT = 200, LRIGHT = 188, VERTICAL = 186, HORIZONTAL = 205
+;|***          };
+;|***     int iRow;
+;|***     char achTmp[80];
+;|*** 
+;|***     memset( achTmp, HORIZONTAL, iWidth );
+; Line 175
+	*** 0001eb	ff 76 08 		push	WORD PTR [bp+8]	;iWidth
+	*** 0001ee	b8 cd 00 		mov	ax,205
+	*** 0001f1	50 			push	ax
+	*** 0001f2	8d 46 ae 		lea	ax,WORD PTR [bp-82]	;achTmp
+	*** 0001f5	50 			push	ax
+	*** 0001f6	e8 00 00 		call	_memset
+	*** 0001f9	83 c4 06 		add	sp,6
+;|***     achTmp[0] = ULEFT;
+; Line 176
+	*** 0001fc	c6 46 ae c9 		mov	BYTE PTR [bp-82],201	;achTmp
+;|***     achTmp[iWidth - 1] = URIGHT;
+; Line 177
+	*** 000200	8b 76 08 		mov	si,WORD PTR [bp+8]	;iWidth
+	*** 000203	c6 42 ad bb 		mov	BYTE PTR [bp-83][si],187
+;|***     achTmp[iWidth] = '\0';
+; Line 178
+	*** 000207	8b 76 08 		mov	si,WORD PTR [bp+8]	;iWidth
+	*** 00020a	c6 42 ae 00 		mov	BYTE PTR [bp-82][si],0
+;|***     _outtextxy( achTmp, iLeft, iTop );
+; Line 179
+	*** 00020e	ff 76 06 		push	WORD PTR [bp+6]	;iLeft
+	*** 000211	ff 76 04 		push	WORD PTR [bp+4]	;iTop
+	*** 000214	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 000219	83 c4 04 		add	sp,4
+	*** 00021c	8d 46 ae 		lea	ax,WORD PTR [bp-82]	;achTmp
+	*** 00021f	16 			push	ss
+	*** 000220	50 			push	ax
+	*** 000221	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 000226	83 c4 04 		add	sp,4
+;|*** 
+;|***     memset( achTmp, BLANK, iWidth );
+; Line 181
+	*** 000229	ff 76 08 		push	WORD PTR [bp+8]	;iWidth
+	*** 00022c	b8 20 00 		mov	ax,32
+	*** 00022f	50 			push	ax
+	*** 000230	8d 46 ae 		lea	ax,WORD PTR [bp-82]	;achTmp
+	*** 000233	50 			push	ax
+	*** 000234	e8 00 00 		call	_memset
+	*** 000237	83 c4 06 		add	sp,6
+;|***     achTmp[0] = VERTICAL;
+; Line 182
+	*** 00023a	c6 46 ae ba 		mov	BYTE PTR [bp-82],186	;achTmp
+;|***     achTmp[iWidth - 1] = VERTICAL;
+; Line 183
+	*** 00023e	8b 76 08 		mov	si,WORD PTR [bp+8]	;iWidth
+	*** 000241	c6 42 ad ba 		mov	BYTE PTR [bp-83][si],186
+;|***     for(  iRow = iTop + 1; iRow <= iHeight; iRow++ )
+; Line 184
+	*** 000245	8b 46 04 		mov	ax,WORD PTR [bp+4]	;iTop
+	*** 000248	40 			inc	ax
+	*** 000249	89 46 fe 		mov	WORD PTR [bp-2],ax	;iRow
+	*** 00024c	e9 03 00 		jmp	$F576
+					$FC577:
+	*** 00024f	ff 46 fe 		inc	WORD PTR [bp-2]	;iRow
+					$F576:
+	*** 000252	8b 46 0a 		mov	ax,WORD PTR [bp+10]	;iHeight
+	*** 000255	39 46 fe 		cmp	WORD PTR [bp-2],ax	;iRow
+	*** 000258	7e 03 			jle	$JCC600
+	*** 00025a	e9 1e 00 		jmp	$FB578
+					$JCC600:
+;|***         _outtextxy( achTmp, iLeft, iRow );
+; Line 185
+	*** 00025d	ff 76 06 		push	WORD PTR [bp+6]	;iLeft
+	*** 000260	ff 76 fe 		push	WORD PTR [bp-2]	;iRow
+	*** 000263	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 000268	83 c4 04 		add	sp,4
+	*** 00026b	8d 46 ae 		lea	ax,WORD PTR [bp-82]	;achTmp
+	*** 00026e	16 			push	ss
+	*** 00026f	50 			push	ax
+	*** 000270	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 000275	83 c4 04 		add	sp,4
+	*** 000278	e9 d4 ff 		jmp	$FC577
+					$FB578:
+;|*** 
+;|***     memset( achTmp, HORIZONTAL, iWidth );
+; Line 187
+	*** 00027b	ff 76 08 		push	WORD PTR [bp+8]	;iWidth
+	*** 00027e	b8 cd 00 		mov	ax,205
+	*** 000281	50 			push	ax
+	*** 000282	8d 46 ae 		lea	ax,WORD PTR [bp-82]	;achTmp
+	*** 000285	50 			push	ax
+	*** 000286	e8 00 00 		call	_memset
+	*** 000289	83 c4 06 		add	sp,6
+;|***     achTmp[0] = LLEFT;
+; Line 188
+	*** 00028c	c6 46 ae c8 		mov	BYTE PTR [bp-82],200	;achTmp
+;|***     achTmp[iWidth - 1] = LRIGHT;
+; Line 189
+	*** 000290	8b 76 08 		mov	si,WORD PTR [bp+8]	;iWidth
+	*** 000293	c6 42 ad bc 		mov	BYTE PTR [bp-83][si],188
+;|***     _outtextxy( achTmp, iLeft, iTop + iHeight );
+; Line 190
+	*** 000297	ff 76 06 		push	WORD PTR [bp+6]	;iLeft
+	*** 00029a	8b 46 0a 		mov	ax,WORD PTR [bp+10]	;iHeight
+	*** 00029d	03 46 04 		add	ax,WORD PTR [bp+4]	;iTop
+	*** 0002a0	50 			push	ax
+	*** 0002a1	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 0002a6	83 c4 04 		add	sp,4
+	*** 0002a9	8d 46 ae 		lea	ax,WORD PTR [bp-82]	;achTmp
+	*** 0002ac	16 			push	ss
+	*** 0002ad	50 			push	ax
+	*** 0002ae	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 0002b3	83 c4 04 		add	sp,4
+;|*** }
+; Line 191
+					$EX572:
+	*** 0002b6	5e 			pop	si
+	*** 0002b7	5f 			pop	di
+	*** 0002b8	8b e5 			mov	sp,bp
+	*** 0002ba	5d 			pop	bp
+	*** 0002bb	c3 			ret	
+
+_DrawFrame	ENDP
+;|*** 
+;|*** 
+;|*** /* RunMenu - The RunMenu procedure first calls the ReInitBars
+;|***  * procedure to make sure the abarWork is in its unsorted form, then
+;|***  * prompts the user to make one of the following choices:
+;|***  *
+;|***  *  - Run one of the sorting algorithms
+;|***  *  - Toggle sound on or off
+;|***  *  - Increase or decrease speed
+;|***  *  - End the program
+;|***  */
+;|*** void RunMenu()
+;|*** {
+; Line 204
+	*** 0002bc	90 			nop	
+	*** 0002bd	90 			nop	
+	*** 0002be	90 			nop	
+	*** 0002bf	90 			nop	
+	*** 0002c0	90 			nop	
+	*** 0002c1	90 			nop	
+	*** 0002c2	90 			nop	
+	*** 0002c3	90 			nop	
+	*** 0002c4	90 			nop	
+	*** 0002c5	90 			nop	
+	*** 0002c6	90 			nop	
+	*** 0002c7	90 			nop	
+	*** 0002c8	90 			nop	
+	*** 0002c9	90 			nop	
+	*** 0002ca	90 			nop	
+	*** 0002cb	90 			nop	
+	*** 0002cc	90 			nop	
+	*** 0002cd	90 			nop	
+	*** 0002ce	90 			nop	
+	*** 0002cf	90 			nop	
+	PUBLIC	_RunMenu
+_RunMenu	PROC NEAR
+	*** 0002d0	55 			push	bp
+	*** 0002d1	8b ec 			mov	bp,sp
+	*** 0002d3	b8 02 00 		mov	ax,2
+	*** 0002d6	e8 00 00 		call	__aNchkstk
+	*** 0002d9	57 			push	di
+	*** 0002da	56 			push	si
+;	ch = -2
+;|***     char    ch;
+;|*** 
+;|***     while( TRUE )
+; Line 207
+					$FC582:
+;|***     {
+; Line 208
+;|***         iSwaps = iCompares = 0;
+; Line 209
+	*** 0002db	b8 00 00 		mov	ax,0
+	*** 0002de	a3 00 00 		mov	WORD PTR _iCompares,ax
+	*** 0002e1	a3 00 00 		mov	WORD PTR _iSwaps,ax
+;|***         _settextposition( TOP + cszMenu, LEFTCOLUMN + PROMPTPOS );
+; Line 210
+	*** 0002e4	b8 4b 00 		mov	ax,75
+	*** 0002e7	50 			push	ax
+	*** 0002e8	a1 1e 01 		mov	ax,WORD PTR _cszMenu
+	*** 0002eb	40 			inc	ax
+	*** 0002ec	50 			push	ax
+	*** 0002ed	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 0002f2	83 c4 04 		add	sp,4
+;|***         _displaycursor( _GCURSORON );
+; Line 211
+	*** 0002f5	b8 01 00 		mov	ax,1
+	*** 0002f8	50 			push	ax
+	*** 0002f9	9a 00 00 00 00 		call	FAR PTR __displaycursor
+	*** 0002fe	83 c4 02 		add	sp,2
+;|***         ch = getch();
+; Line 212
+	*** 000301	e8 00 00 		call	_getch
+	*** 000304	88 46 fe 		mov	BYTE PTR [bp-2],al	;ch
+;|***         _displaycursor( _GCURSOROFF );
+; Line 213
+	*** 000307	b8 00 00 		mov	ax,0
+	*** 00030a	50 			push	ax
+	*** 00030b	9a 00 00 00 00 		call	FAR PTR __displaycursor
+	*** 000310	83 c4 02 		add	sp,2
+;|*** 
+;|***         /* Branch to the appropriate procedure depending on the key. */
+;|***         switch( toupper( ch ) )
+; Line 216
+	*** 000313	8a 46 fe 		mov	al,BYTE PTR [bp-2]	;ch
+	*** 000316	98 			cbw	
+	*** 000317	50 			push	ax
+	*** 000318	e8 00 00 		call	_toupper
+	*** 00031b	83 c4 02 		add	sp,2
+	*** 00031e	e9 02 01 		jmp	$S584
+;|***         {
+; Line 217
+;|***             case 'I':
+; Line 218
+					$SC588:
+;|***                 iCurChoice = 0;
+; Line 219
+	*** 000321	c7 06 00 00 00 00 	mov	WORD PTR _iCurChoice,0
+;|***                 ReInitBars();
+; Line 220
+	*** 000327	e8 00 00 		call	_ReInitBars
+;|***                 InsertionSort();
+; Line 221
+	*** 00032a	e8 00 00 		call	_InsertionSort
+;|***                 DrawTime( 0 );   // Print final time
+; Line 222
+	*** 00032d	b8 00 00 		mov	ax,0
+	*** 000330	50 			push	ax
+	*** 000331	e8 00 00 		call	_DrawTime
+	*** 000334	83 c4 02 		add	sp,2
+;|***                 break;
+; Line 223
+	*** 000337	e9 3e 01 		jmp	$SB585
+;|***             case 'B':
+; Line 224
+					$SC589:
+;|***                 iCurChoice = 1;
+; Line 225
+	*** 00033a	c7 06 00 00 01 00 	mov	WORD PTR _iCurChoice,1
+;|***                 ReInitBars();
+; Line 226
+	*** 000340	e8 00 00 		call	_ReInitBars
+;|***                 BubbleSort();
+; Line 227
+	*** 000343	e8 00 00 		call	_BubbleSort
+;|***                 DrawTime( 0 );
+; Line 228
+	*** 000346	b8 00 00 		mov	ax,0
+	*** 000349	50 			push	ax
+	*** 00034a	e8 00 00 		call	_DrawTime
+	*** 00034d	83 c4 02 		add	sp,2
+;|***                 break;
+; Line 229
+	*** 000350	e9 25 01 		jmp	$SB585
+;|*** 
+;|***             case 'H':
+; Line 231
+					$SC590:
+;|***                 iCurChoice = 2;
+; Line 232
+	*** 000353	c7 06 00 00 02 00 	mov	WORD PTR _iCurChoice,2
+;|***                 ReInitBars();
+; Line 233
+	*** 000359	e8 00 00 		call	_ReInitBars
+;|***                 HeapSort();
+; Line 234
+	*** 00035c	e8 00 00 		call	_HeapSort
+;|***                 DrawTime( 0 );
+; Line 235
+	*** 00035f	b8 00 00 		mov	ax,0
+	*** 000362	50 			push	ax
+	*** 000363	e8 00 00 		call	_DrawTime
+	*** 000366	83 c4 02 		add	sp,2
+;|***                 break;
+; Line 236
+	*** 000369	e9 0c 01 		jmp	$SB585
+;|*** 
+;|***             case 'E':
+; Line 238
+					$SC591:
+;|***                 iCurChoice = 3;
+; Line 239
+	*** 00036c	c7 06 00 00 03 00 	mov	WORD PTR _iCurChoice,3
+;|***                 ReInitBars();
+; Line 240
+	*** 000372	e8 00 00 		call	_ReInitBars
+;|***                 ExchangeSort();
+; Line 241
+	*** 000375	e8 00 00 		call	_ExchangeSort
+;|***                 DrawTime( 0 );
+; Line 242
+	*** 000378	b8 00 00 		mov	ax,0
+	*** 00037b	50 			push	ax
+	*** 00037c	e8 00 00 		call	_DrawTime
+	*** 00037f	83 c4 02 		add	sp,2
+;|***                 break;
+; Line 243
+	*** 000382	e9 f3 00 		jmp	$SB585
+;|*** 
+;|***             case 'S':
+; Line 245
+					$SC592:
+;|***                 iCurChoice = 4;
+; Line 246
+	*** 000385	c7 06 00 00 04 00 	mov	WORD PTR _iCurChoice,4
+;|***                 ReInitBars();
+; Line 247
+	*** 00038b	e8 00 00 		call	_ReInitBars
+;|***                 ShellSort();
+; Line 248
+	*** 00038e	e8 00 00 		call	_ShellSort
+;|***                 DrawTime( 0 );
+; Line 249
+	*** 000391	b8 00 00 		mov	ax,0
+	*** 000394	50 			push	ax
+	*** 000395	e8 00 00 		call	_DrawTime
+	*** 000398	83 c4 02 		add	sp,2
+;|***                 break;
+; Line 250
+	*** 00039b	e9 da 00 		jmp	$SB585
+;|*** 
+;|***             case 'Q':
+; Line 252
+					$SC593:
+;|***                 iCurChoice = 5;
+; Line 253
+	*** 00039e	c7 06 00 00 05 00 	mov	WORD PTR _iCurChoice,5
+;|***                 ReInitBars();
+; Line 254
+	*** 0003a4	e8 00 00 		call	_ReInitBars
+;|***                 QuickSort( 0, cRow );
+; Line 255
+	*** 0003a7	ff 36 00 00 		push	WORD PTR _cRow
+	*** 0003ab	b8 00 00 		mov	ax,0
+	*** 0003ae	50 			push	ax
+	*** 0003af	e8 00 00 		call	_QuickSort
+	*** 0003b2	83 c4 04 		add	sp,4
+;|***                 DrawTime( 0 );
+; Line 256
+	*** 0003b5	b8 00 00 		mov	ax,0
+	*** 0003b8	50 			push	ax
+	*** 0003b9	e8 00 00 		call	_DrawTime
+	*** 0003bc	83 c4 02 		add	sp,2
+;|***                 break;
+; Line 257
+	*** 0003bf	e9 b6 00 		jmp	$SB585
+;|*** 
+;|***             case '>':
+; Line 259
+					$SC594:
+;|***                 /* Decrease pause length to speed up sorting time, then
+;|***                  * redraw the menu to clear any timing results (since
+;|***                  * they won't compare with future results).
+;|***                  */
+;|***                 if( clPause )
+; Line 264
+	*** 0003c2	a1 f2 00 		mov	ax,WORD PTR _clPause+2
+	*** 0003c5	0b 06 f0 00 		or	ax,WORD PTR _clPause
+	*** 0003c9	75 03 			jne	$JCC969
+	*** 0003cb	e9 0a 00 		jmp	$I595
+					$JCC969:
+;|***                     clPause -= 30L;
+; Line 265
+	*** 0003ce	83 2e f0 00 1e 		sub	WORD PTR _clPause,30
+	*** 0003d3	83 1e f2 00 00 		sbb	WORD PTR _clPause+2,0
+;|***                 InitMenu();
+; Line 266
+					$I595:
+	*** 0003d8	e8 72 fc 		call	_InitMenu
+;|***                 break;
+; Line 267
+	*** 0003db	e9 9a 00 		jmp	$SB585
+;|*** 
+;|***             case '<':
+; Line 269
+					$SC596:
+;|***                 /* Increase pause length to slow down sorting time. */
+;|***                 if( clPause <= 900L )
+; Line 271
+	*** 0003de	83 3e f2 00 00 		cmp	WORD PTR _clPause+2,0
+	*** 0003e3	7e 03 			jle	$JCC995
+	*** 0003e5	e9 1a 00 		jmp	$I597
+					$JCC995:
+	*** 0003e8	7d 03 			jge	$JCC1000
+	*** 0003ea	e9 0b 00 		jmp	$L20002
+					$JCC1000:
+	*** 0003ed	81 3e f0 00 84 03 	cmp	WORD PTR _clPause,900
+	*** 0003f3	76 03 			jbe	$JCC1011
+	*** 0003f5	e9 0a 00 		jmp	$I597
+					$JCC1011:
+					$L20002:
+;|***                     clPause += 30L;
+; Line 272
+	*** 0003f8	83 06 f0 00 1e 		add	WORD PTR _clPause,30
+	*** 0003fd	83 16 f2 00 00 		adc	WORD PTR _clPause+2,0
+;|***                 InitMenu();
+; Line 273
+					$I597:
+	*** 000402	e8 48 fc 		call	_InitMenu
+;|***                 break;
+; Line 274
+	*** 000405	e9 70 00 		jmp	$SB585
+;|*** 
+;|***             case 'T':
+; Line 276
+					$SC598:
+;|***                 fSound = !fSound;
+; Line 277
+	*** 000408	83 3e 00 00 01 		cmp	WORD PTR _fSound,1
+	*** 00040d	1b c0 			sbb	ax,ax
+	*** 00040f	f7 d8 			neg	ax
+	*** 000411	a3 00 00 		mov	WORD PTR _fSound,ax
+;|***                 InitMenu();
+; Line 278
+	*** 000414	e8 36 fc 		call	_InitMenu
+;|***                 break;
+; Line 279
+	*** 000417	e9 5e 00 		jmp	$SB585
+;|*** 
+;|***             case ESC:
+; Line 281
+					$SC599:
+;|***                 return;
+; Line 282
+	*** 00041a	e9 5e 00 		jmp	$EX579
+;|*** 
+;|***             default:        // Unknown key ignored
+; Line 284
+					$SD600:
+;|***                 break;
+; Line 285
+	*** 00041d	e9 58 00 		jmp	$SB585
+;|***         }
+; Line 286
+	*** 000420	e9 55 00 		jmp	$SB585
+					$S584:
+	*** 000423	3d 45 00 		cmp	ax,69
+	*** 000426	75 03 			jne	$JCC1062
+	*** 000428	e9 41 ff 		jmp	$SC591
+					$JCC1062:
+	*** 00042b	7e 03 			jle	$JCC1067
+	*** 00042d	e9 22 00 		jmp	$L20005
+					$JCC1067:
+	*** 000430	2d 1b 00 		sub	ax,27
+	*** 000433	75 03 			jne	$JCC1075
+	*** 000435	e9 e2 ff 		jmp	$SC599
+					$JCC1075:
+	*** 000438	2d 21 00 		sub	ax,33
+	*** 00043b	75 03 			jne	$JCC1083
+	*** 00043d	e9 9e ff 		jmp	$SC596
+					$JCC1083:
+	*** 000440	48 			dec	ax
+	*** 000441	48 			dec	ax
+	*** 000442	75 03 			jne	$JCC1090
+	*** 000444	e9 7b ff 		jmp	$SC594
+					$JCC1090:
+	*** 000447	2d 04 00 		sub	ax,4
+	*** 00044a	75 03 			jne	$JCC1098
+	*** 00044c	e9 eb fe 		jmp	$SC589
+					$JCC1098:
+	*** 00044f	e9 cb ff 		jmp	$SD600
+					$L20005:
+	*** 000452	2d 48 00 		sub	ax,72
+	*** 000455	75 03 			jne	$JCC1109
+	*** 000457	e9 f9 fe 		jmp	$SC590
+					$JCC1109:
+	*** 00045a	48 			dec	ax
+	*** 00045b	75 03 			jne	$JCC1115
+	*** 00045d	e9 c1 fe 		jmp	$SC588
+					$JCC1115:
+	*** 000460	2d 08 00 		sub	ax,8
+	*** 000463	75 03 			jne	$JCC1123
+	*** 000465	e9 36 ff 		jmp	$SC593
+					$JCC1123:
+	*** 000468	48 			dec	ax
+	*** 000469	48 			dec	ax
+	*** 00046a	75 03 			jne	$JCC1130
+	*** 00046c	e9 16 ff 		jmp	$SC592
+					$JCC1130:
+	*** 00046f	48 			dec	ax
+	*** 000470	75 03 			jne	$JCC1136
+	*** 000472	e9 93 ff 		jmp	$SC598
+					$JCC1136:
+	*** 000475	e9 a5 ff 		jmp	$SD600
+					$SB585:
+;|***     }
+; Line 287
+	*** 000478	e9 60 fe 		jmp	$FC582
+					$FB583:
+;|*** }
+; Line 288
+					$EX579:
+	*** 00047b	5e 			pop	si
+	*** 00047c	5f 			pop	di
+	*** 00047d	8b e5 			mov	sp,bp
+	*** 00047f	5d 			pop	bp
+	*** 000480	c3 			ret	
+
+_RunMenu	ENDP
+;|*** 
+;|*** 
+;|*** /* DrawTime - Prints seconds elapsed since the given sorting routine
+;|***  * started. Note that this time includes both the time it takes to redraw
+;|***  * the bars plus the pause while Beep plays a note, and thus is not an
+;|***  * accurate indication of sorting speed.
+;|***  */
+;|*** void DrawTime( int iCurrentRow )
+;|*** {
+; Line 297
+	*** 000481	90 			nop	
+	*** 000482	90 			nop	
+	*** 000483	90 			nop	
+	*** 000484	90 			nop	
+	*** 000485	90 			nop	
+	*** 000486	90 			nop	
+	*** 000487	90 			nop	
+	PUBLIC	_DrawTime
+_DrawTime	PROC NEAR
+	*** 000488	55 			push	bp
+	*** 000489	8b ec 			mov	bp,sp
+	*** 00048b	b8 50 00 		mov	ax,80
+	*** 00048e	e8 00 00 		call	__aNchkstk
+	*** 000491	57 			push	di
+	*** 000492	56 			push	si
+;	achTiming = -80
+;	iCurrentRow = 4
+;|***     char achTiming[80];
+;|*** 
+;|***     _settextcolor( MENUCOLOR );
+; Line 300
+	*** 000493	b8 0f 00 		mov	ax,15
+	*** 000496	50 			push	ax
+	*** 000497	9a 00 00 00 00 		call	FAR PTR __settextcolor
+	*** 00049c	83 c4 02 		add	sp,2
+;|***     clFinish = clock();
+; Line 301
+	*** 00049f	e8 00 00 		call	_clock
+	*** 0004a2	a3 00 00 		mov	WORD PTR _clFinish,ax
+	*** 0004a5	89 16 02 00 		mov	WORD PTR _clFinish+2,dx
+;|*** 
+;|***     sprintf( achTiming, "%7.i  %4.i  %4.i",
+;|***              /*(float)*/(clFinish - clStart) / CLOCKS_PER_SEC,
+;|***              iSwaps, iCompares );
+; Line 305
+	*** 0004a9	ff 36 00 00 		push	WORD PTR _iCompares
+	*** 0004ad	ff 36 00 00 		push	WORD PTR _iSwaps
+	*** 0004b1	b8 e8 03 		mov	ax,1000
+	*** 0004b4	ba 00 00 		mov	dx,0
+	*** 0004b7	52 			push	dx
+	*** 0004b8	50 			push	ax
+	*** 0004b9	a1 00 00 		mov	ax,WORD PTR _clFinish
+	*** 0004bc	8b 16 02 00 		mov	dx,WORD PTR _clFinish+2
+	*** 0004c0	2b 06 00 00 		sub	ax,WORD PTR _clStart
+	*** 0004c4	1b 16 02 00 		sbb	dx,WORD PTR _clStart+2
+	*** 0004c8	52 			push	dx
+	*** 0004c9	50 			push	ax
+	*** 0004ca	e8 00 00 		call	__aNldiv
+	*** 0004cd	52 			push	dx
+	*** 0004ce	50 			push	ax
+	*** 0004cf	b8 3b 01 		mov	ax,OFFSET DGROUP:$SG604
+	*** 0004d2	50 			push	ax
+	*** 0004d3	8d 46 b0 		lea	ax,WORD PTR [bp-80]	;achTiming
+	*** 0004d6	50 			push	ax
+	*** 0004d7	e8 00 00 		call	_sprintf
+	*** 0004da	83 c4 0c 		add	sp,12
+;|*** 
+;|***     /* Print the number of seconds elapsed */
+;|***     _outtextxy( achTiming, LEFTCOLUMN + 11, FIRSTMENU + iCurChoice );
+; Line 308
+	*** 0004dd	b8 3b 00 		mov	ax,59
+	*** 0004e0	50 			push	ax
+	*** 0004e1	a1 00 00 		mov	ax,WORD PTR _iCurChoice
+	*** 0004e4	05 07 00 		add	ax,7
+	*** 0004e7	50 			push	ax
+	*** 0004e8	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 0004ed	83 c4 04 		add	sp,4
+	*** 0004f0	8d 46 b0 		lea	ax,WORD PTR [bp-80]	;achTiming
+	*** 0004f3	16 			push	ss
+	*** 0004f4	50 			push	ax
+	*** 0004f5	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 0004fa	83 c4 04 		add	sp,4
+;|***     if( fSound )
+; Line 309
+	*** 0004fd	83 3e 00 00 00 		cmp	WORD PTR _fSound,0
+	*** 000502	75 03 			jne	$JCC1282
+	*** 000504	e9 29 00 		jmp	$I605
+					$JCC1282:
+;|***     {
+; Line 310
+;|***         Beep( 60 * iCurrentRow, 75 );   // Play note
+; Line 311
+	*** 000507	b8 4b 00 		mov	ax,75
+	*** 00050a	50 			push	ax
+	*** 00050b	b8 3c 00 		mov	ax,60
+	*** 00050e	f7 6e 04 		imul	WORD PTR [bp+4]	;iCurrentRow
+	*** 000511	50 			push	ax
+	*** 000512	e8 00 00 		call	_Beep
+	*** 000515	83 c4 04 		add	sp,4
+;|***         Sleep( clPause - 75L );         // Pause adjusted for note duration
+; Line 312
+	*** 000518	a1 f0 00 		mov	ax,WORD PTR _clPause
+	*** 00051b	8b 16 f2 00 		mov	dx,WORD PTR _clPause+2
+	*** 00051f	2d 4b 00 		sub	ax,75
+	*** 000522	83 da 00 		sbb	dx,0
+	*** 000525	52 			push	dx
+	*** 000526	50 			push	ax
+	*** 000527	e8 00 00 		call	_Sleep
+	*** 00052a	83 c4 04 		add	sp,4
+;|***     }
+; Line 313
+;|***     else
+; Line 314
+	*** 00052d	e9 0e 00 		jmp	$I606
+					$I605:
+;|***         Sleep( clPause );               // Pause
+; Line 315
+	*** 000530	ff 36 f2 00 		push	WORD PTR _clPause+2
+	*** 000534	ff 36 f0 00 		push	WORD PTR _clPause
+	*** 000538	e8 00 00 		call	_Sleep
+	*** 00053b	83 c4 04 		add	sp,4
+					$I606:
+;|*** }
+; Line 316
+					$EX602:
+	*** 00053e	5e 			pop	si
+	*** 00053f	5f 			pop	di
+	*** 000540	8b e5 			mov	sp,bp
+	*** 000542	5d 			pop	bp
+	*** 000543	c3 			ret	
+
+_DrawTime	ENDP
+;|*** 
+;|*** 
+;|*** /* InitBars - Initializes the bar arrays and the menu box.
+;|***  */
+;|*** void InitBars()
+;|*** {
+; Line 322
+	*** 000544	90 			nop	
+	*** 000545	90 			nop	
+	*** 000546	90 			nop	
+	*** 000547	90 			nop	
+	*** 000548	90 			nop	
+	*** 000549	90 			nop	
+	*** 00054a	90 			nop	
+	*** 00054b	90 			nop	
+	*** 00054c	90 			nop	
+	*** 00054d	90 			nop	
+	*** 00054e	90 			nop	
+	*** 00054f	90 			nop	
+	PUBLIC	_InitBars
+_InitBars	PROC NEAR
+	*** 000550	55 			push	bp
+	*** 000551	8b ec 			mov	bp,sp
+	*** 000553	b8 76 00 		mov	ax,118
+	*** 000556	e8 00 00 		call	__aNchkstk
+	*** 000559	57 			push	di
+	*** 00055a	56 			push	si
+;	vc = -112
+;	aTemp = -90
+;	iRow = -2
+;	iRowMax = -4
+;	iRand = -118
+;	iColorMax = -116
+;	iLength = -114
+;|***     struct videoconfig vc;
+;|***     int aTemp[43], iRow, iRowMax, iRand, iColorMax, iLength;
+;|*** 
+;|***     /* Seed the random-number generator. */
+;|***     srand( (unsigned)time( NULL ) );
+; Line 327
+	*** 00055b	b8 00 00 		mov	ax,0
+	*** 00055e	50 			push	ax
+	*** 00055f	e8 00 00 		call	_time
+	*** 000562	83 c4 02 		add	sp,2
+	*** 000565	50 			push	ax
+	*** 000566	e8 00 00 		call	_srand
+	*** 000569	83 c4 02 		add	sp,2
+;|***     fSound = TRUE;
+; Line 328
+	*** 00056c	c7 06 00 00 01 00 	mov	WORD PTR _fSound,1
+;|***     clPause = 30L;
+; Line 329
+	*** 000572	c7 06 f0 00 1e 00 	mov	WORD PTR _clPause,30
+	*** 000578	c7 06 f2 00 00 00 	mov	WORD PTR _clPause+2,0
+;|*** 
+;|***     /* If monochrome or color burst disabled, use one color */
+;|***     _getvideoconfig( &vc );
+; Line 332
+	*** 00057e	8d 46 90 		lea	ax,WORD PTR [bp-112]	;vc
+	*** 000581	16 			push	ss
+	*** 000582	50 			push	ax
+	*** 000583	9a 00 00 00 00 		call	FAR PTR __getvideoconfig
+	*** 000588	83 c4 04 		add	sp,4
+;|***     if( (vc.monitor == _MONO) || (vc.mode == _TEXTBW80) ||
+;|***                                  (vc.mode == _TEXTBW40) )
+; Line 334
+	*** 00058b	83 7e a2 01 		cmp	WORD PTR [bp-94],1
+	*** 00058f	75 03 			jne	$JCC1423
+	*** 000591	e9 12 00 		jmp	$I616
+					$JCC1423:
+	*** 000594	83 7e 9e 02 		cmp	WORD PTR [bp-98],2
+	*** 000598	75 03 			jne	$JCC1432
+	*** 00059a	e9 09 00 		jmp	$I616
+					$JCC1432:
+	*** 00059d	83 7e 9e 00 		cmp	WORD PTR [bp-98],0
+	*** 0005a1	74 03 			je	$JCC1441
+	*** 0005a3	e9 08 00 		jmp	$I615
+					$JCC1441:
+					$I616:
+;|***         iColorMax = 1;
+; Line 335
+	*** 0005a6	c7 46 8c 01 00 		mov	WORD PTR [bp-116],1	;iColorMax
+;|***     else
+; Line 336
+	*** 0005ab	e9 05 00 		jmp	$I617
+					$I615:
+;|***         iColorMax = 15;
+; Line 337
+	*** 0005ae	c7 46 8c 0f 00 		mov	WORD PTR [bp-116],15	;iColorMax
+					$I617:
+;|*** 
+;|***     /* Randomize an array of rows. */
+;|***     for( iRow = 0; iRow < cRow; iRow++ )
+; Line 340
+	*** 0005b3	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;iRow
+	*** 0005b8	e9 03 00 		jmp	$F618
+					$FC619:
+	*** 0005bb	ff 46 fe 		inc	WORD PTR [bp-2]	;iRow
+					$F618:
+	*** 0005be	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 0005c1	39 06 00 00 		cmp	WORD PTR _cRow,ax
+	*** 0005c5	7f 03 			jg	$JCC1477
+	*** 0005c7	e9 0f 00 		jmp	$FB620
+					$JCC1477:
+;|***         aTemp[iRow] = iRow + 1;
+; Line 341
+	*** 0005ca	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 0005cd	40 			inc	ax
+	*** 0005ce	8b 76 fe 		mov	si,WORD PTR [bp-2]	;iRow
+	*** 0005d1	d1 e6 			shl	si,1
+	*** 0005d3	89 42 a6 		mov	WORD PTR [bp-90][si],ax
+	*** 0005d6	e9 e2 ff 		jmp	$FC619
+					$FB620:
+;|***     iRowMax = cRow - 1;
+; Line 342
+	*** 0005d9	a1 00 00 		mov	ax,WORD PTR _cRow
+	*** 0005dc	48 			dec	ax
+	*** 0005dd	89 46 fc 		mov	WORD PTR [bp-4],ax	;iRowMax
+;|***     for( iRow = 0; iRow < cRow; iRow++ )
+; Line 343
+	*** 0005e0	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;iRow
+	*** 0005e5	e9 03 00 		jmp	$F621
+					$FC622:
+	*** 0005e8	ff 46 fe 		inc	WORD PTR [bp-2]	;iRow
+					$F621:
+	*** 0005eb	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 0005ee	39 06 00 00 		cmp	WORD PTR _cRow,ax
+	*** 0005f2	7f 03 			jg	$JCC1522
+	*** 0005f4	e9 62 00 		jmp	$FB623
+					$JCC1522:
+;|***     {
+; Line 344
+;|***         /* Find a random element in aTemp between 0 and iRowMax,
+;|***          * then assign the value in that element to iLength.
+;|***          */
+;|***         iRand = GetRandom( 0, iRowMax );
+; Line 348
+	*** 0005f7	e8 00 00 		call	_rand
+	*** 0005fa	8b 4e fc 		mov	cx,WORD PTR [bp-4]	;iRowMax
+	*** 0005fd	41 			inc	cx
+	*** 0005fe	99 			cwd	
+	*** 0005ff	f7 f9 			idiv	cx
+	*** 000601	89 56 8a 		mov	WORD PTR [bp-118],dx	;iRand
+;|***         iLength = aTemp[iRand];
+; Line 349
+	*** 000604	8b 76 8a 		mov	si,WORD PTR [bp-118]	;iRand
+	*** 000607	d1 e6 			shl	si,1
+	*** 000609	8b 42 a6 		mov	ax,WORD PTR [bp-90][si]
+	*** 00060c	89 46 8e 		mov	WORD PTR [bp-114],ax	;iLength
+;|*** 
+;|***         /* Overwrite the value in aTemp[iRand] with the value in
+;|***          * aTemp[iRowMax] so the value in aTemp[iRand] is
+;|***          * chosen only once.
+;|***          */
+;|***         aTemp[iRand] = aTemp[iRowMax];
+; Line 355
+	*** 00060f	8b 76 fc 		mov	si,WORD PTR [bp-4]	;iRowMax
+	*** 000612	d1 e6 			shl	si,1
+	*** 000614	8b 42 a6 		mov	ax,WORD PTR [bp-90][si]
+	*** 000617	8b 76 8a 		mov	si,WORD PTR [bp-118]	;iRand
+	*** 00061a	d1 e6 			shl	si,1
+	*** 00061c	89 42 a6 		mov	WORD PTR [bp-90][si],ax
+;|*** 
+;|***         /* Decrease the value of iRowMax so that aTemp[iRowMax] can't
+;|***          * be chosen on the next pass through the loop.
+;|***          */
+;|***         --iRowMax;
+; Line 360
+	*** 00061f	ff 4e fc 		dec	WORD PTR [bp-4]	;iRowMax
+;|***         abarPerm[iRow].len = iLength;
+; Line 361
+	*** 000622	8a 46 8e 		mov	al,BYTE PTR [bp-114]	;iLength
+	*** 000625	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRow
+	*** 000628	d1 e3 			shl	bx,1
+	*** 00062a	88 87 00 00 		mov	BYTE PTR _abarPerm[bx],al
+;|***         if( iColorMax == 1 )
+; Line 362
+	*** 00062e	83 7e 8c 01 		cmp	WORD PTR [bp-116],1	;iColorMax
+	*** 000632	74 03 			je	$JCC1586
+	*** 000634	e9 0d 00 		jmp	$I624
+					$JCC1586:
+;|***             abarPerm[iRow].clr = BLANKCOLOR;
+; Line 363
+	*** 000637	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRow
+	*** 00063a	d1 e3 			shl	bx,1
+	*** 00063c	c6 87 01 00 07 		mov	BYTE PTR _abarPerm[bx+1],7
+;|***         else
+; Line 364
+	*** 000641	e9 12 00 		jmp	$I625
+					$I624:
+;|***             abarPerm[iRow].clr = iLength % iColorMax + 1;
+; Line 365
+	*** 000644	8b 46 8e 		mov	ax,WORD PTR [bp-114]	;iLength
+	*** 000647	99 			cwd	
+	*** 000648	f7 7e 8c 		idiv	WORD PTR [bp-116]	;iColorMax
+	*** 00064b	fe c2 			inc	dl
+	*** 00064d	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRow
+	*** 000650	d1 e3 			shl	bx,1
+	*** 000652	88 97 01 00 		mov	BYTE PTR _abarPerm[bx+1],dl
+					$I625:
+;|***     }
+; Line 366
+	*** 000656	e9 8f ff 		jmp	$FC622
+					$FB623:
+;|*** 
+;|***     /* Assign permanent sort values to temporary and draw unsorted bars. */
+;|***     ReInitBars();
+; Line 369
+	*** 000659	e8 00 00 		call	_ReInitBars
+;|*** }
+; Line 370
+					$EX607:
+	*** 00065c	5e 			pop	si
+	*** 00065d	5f 			pop	di
+	*** 00065e	8b e5 			mov	sp,bp
+	*** 000660	5d 			pop	bp
+	*** 000661	c3 			ret	
+
+_InitBars	ENDP
+;|*** 
+;|*** 
+;|*** /* ReInitBars - Restores the array abarWork to its original unsorted
+;|***  * state and draws the unsorted bars.
+;|***  */
+;|*** void ReInitBars()
+;|*** {
+; Line 377
+	*** 000662	90 			nop	
+	*** 000663	90 			nop	
+	*** 000664	90 			nop	
+	*** 000665	90 			nop	
+	*** 000666	90 			nop	
+	*** 000667	90 			nop	
+	PUBLIC	_ReInitBars
+_ReInitBars	PROC NEAR
+	*** 000668	55 			push	bp
+	*** 000669	8b ec 			mov	bp,sp
+	*** 00066b	b8 02 00 		mov	ax,2
+	*** 00066e	e8 00 00 		call	__aNchkstk
+	*** 000671	57 			push	di
+	*** 000672	56 			push	si
+;	iRow = -2
+;|***     int iRow;
+;|*** 
+;|***     clStart = clock();
+; Line 380
+	*** 000673	e8 00 00 		call	_clock
+	*** 000676	a3 00 00 		mov	WORD PTR _clStart,ax
+	*** 000679	89 16 02 00 		mov	WORD PTR _clStart+2,dx
+;|***     for( iRow = 0; iRow < cRow; iRow++ )
+; Line 381
+	*** 00067d	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;iRow
+	*** 000682	e9 03 00 		jmp	$F628
+					$FC629:
+	*** 000685	ff 46 fe 		inc	WORD PTR [bp-2]	;iRow
+					$F628:
+	*** 000688	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 00068b	39 06 00 00 		cmp	WORD PTR _cRow,ax
+	*** 00068f	7f 03 			jg	$JCC1679
+	*** 000691	e9 1e 00 		jmp	$FB630
+					$JCC1679:
+;|***     {
+; Line 382
+;|***         abarWork[iRow] = abarPerm[iRow];
+; Line 383
+	*** 000694	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRow
+	*** 000697	d1 e3 			shl	bx,1
+	*** 000699	8b 87 00 00 		mov	ax,WORD PTR _abarPerm[bx]
+	*** 00069d	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRow
+	*** 0006a0	d1 e3 			shl	bx,1
+	*** 0006a2	89 87 00 00 		mov	WORD PTR _abarWork[bx],ax
+;|***         DrawBar( iRow );
+; Line 384
+	*** 0006a6	ff 76 fe 		push	WORD PTR [bp-2]	;iRow
+	*** 0006a9	e8 00 00 		call	_DrawBar
+	*** 0006ac	83 c4 02 		add	sp,2
+;|***     }
+; Line 385
+	*** 0006af	e9 d3 ff 		jmp	$FC629
+					$FB630:
+;|*** }
+; Line 386
+					$EX626:
+	*** 0006b2	5e 			pop	si
+	*** 0006b3	5f 			pop	di
+	*** 0006b4	8b e5 			mov	sp,bp
+	*** 0006b6	5d 			pop	bp
+	*** 0006b7	c3 			ret	
+
+_ReInitBars	ENDP
+;|*** 
+;|*** 
+;|*** /* DrawBar - Prints a bar at a specified row by first blanking the
+;|***  * old bar, then drawing a new bar having the length and color given in
+;|***  * the work array.
+;|***  */
+;|*** void DrawBar( int iRow )
+;|*** {
+; Line 394
+	PUBLIC	_DrawBar
+_DrawBar	PROC NEAR
+	*** 0006b8	55 			push	bp
+	*** 0006b9	8b ec 			mov	bp,sp
+	*** 0006bb	b8 2e 00 		mov	ax,46
+	*** 0006be	e8 00 00 		call	__aNchkstk
+	*** 0006c1	57 			push	di
+	*** 0006c2	56 			push	si
+;	cSpace = -46
+;	achT = -44
+;	iRow = 4
+;|***     int  cSpace;
+;|***     char achT[43];
+;|*** 
+;|***     memset( achT, BLOCK, abarWork[iRow].len );
+; Line 398
+	*** 0006c3	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;iRow
+	*** 0006c6	d1 e3 			shl	bx,1
+	*** 0006c8	8a 87 00 00 		mov	al,BYTE PTR _abarWork[bx]
+	*** 0006cc	98 			cbw	
+	*** 0006cd	50 			push	ax
+	*** 0006ce	b8 df 00 		mov	ax,223
+	*** 0006d1	50 			push	ax
+	*** 0006d2	8d 46 d4 		lea	ax,WORD PTR [bp-44]	;achT
+	*** 0006d5	50 			push	ax
+	*** 0006d6	e8 00 00 		call	_memset
+	*** 0006d9	83 c4 06 		add	sp,6
+;|***     cSpace = cRow - abarWork[iRow].len;
+; Line 399
+	*** 0006dc	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;iRow
+	*** 0006df	d1 e3 			shl	bx,1
+	*** 0006e1	8a 87 00 00 		mov	al,BYTE PTR _abarWork[bx]
+	*** 0006e5	98 			cbw	
+	*** 0006e6	2b 06 00 00 		sub	ax,WORD PTR _cRow
+	*** 0006ea	f7 d8 			neg	ax
+	*** 0006ec	89 46 d2 		mov	WORD PTR [bp-46],ax	;cSpace
+;|***     memset( achT + abarWork[iRow].len, ' ', cSpace );
+; Line 400
+	*** 0006ef	ff 76 d2 		push	WORD PTR [bp-46]	;cSpace
+	*** 0006f2	b8 20 00 		mov	ax,32
+	*** 0006f5	50 			push	ax
+	*** 0006f6	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;iRow
+	*** 0006f9	d1 e3 			shl	bx,1
+	*** 0006fb	8a 87 00 00 		mov	al,BYTE PTR _abarWork[bx]
+	*** 0006ff	98 			cbw	
+	*** 000700	8b f0 			mov	si,ax
+	*** 000702	8d 42 d4 		lea	ax,WORD PTR [bp-44][si]
+	*** 000705	50 			push	ax
+	*** 000706	e8 00 00 		call	_memset
+	*** 000709	83 c4 06 		add	sp,6
+;|***     achT[cRow] = '\0';
+; Line 401
+	*** 00070c	8b 36 00 00 		mov	si,WORD PTR _cRow
+	*** 000710	c6 42 d4 00 		mov	BYTE PTR [bp-44][si],0
+;|***     _settextcolor( abarWork[iRow].clr );
+; Line 402
+	*** 000714	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;iRow
+	*** 000717	d1 e3 			shl	bx,1
+	*** 000719	8a 87 01 00 		mov	al,BYTE PTR _abarWork[bx+1]
+	*** 00071d	98 			cbw	
+	*** 00071e	50 			push	ax
+	*** 00071f	9a 00 00 00 00 		call	FAR PTR __settextcolor
+	*** 000724	83 c4 02 		add	sp,2
+;|***     _outtextxy( achT, 0, iRow + 1 );
+; Line 403
+	*** 000727	b8 00 00 		mov	ax,0
+	*** 00072a	50 			push	ax
+	*** 00072b	8b 46 04 		mov	ax,WORD PTR [bp+4]	;iRow
+	*** 00072e	40 			inc	ax
+	*** 00072f	50 			push	ax
+	*** 000730	9a 00 00 00 00 		call	FAR PTR __settextposition
+	*** 000735	83 c4 04 		add	sp,4
+	*** 000738	8d 46 d4 		lea	ax,WORD PTR [bp-44]	;achT
+	*** 00073b	16 			push	ss
+	*** 00073c	50 			push	ax
+	*** 00073d	9a 00 00 00 00 		call	FAR PTR __outtext
+	*** 000742	83 c4 04 		add	sp,4
+;|*** }
+; Line 404
+					$EX632:
+	*** 000745	5e 			pop	si
+	*** 000746	5f 			pop	di
+	*** 000747	8b e5 			mov	sp,bp
+	*** 000749	5d 			pop	bp
+	*** 00074a	c3 			ret	
+
+_DrawBar	ENDP
+;|*** 
+;|*** 
+;|*** /* SwapBars - Calls DrawBar twice to switch the two bars in iRow1 and
+;|***  * iRow2, then calls DrawTime to update the time.
+;|***  */
+;|*** void SwapBars( int iRow1, int iRow2 )
+;|*** {
+; Line 411
+	*** 00074b	90 			nop	
+	*** 00074c	90 			nop	
+	*** 00074d	90 			nop	
+	*** 00074e	90 			nop	
+	*** 00074f	90 			nop	
+	*** 000750	90 			nop	
+	*** 000751	90 			nop	
+	*** 000752	90 			nop	
+	*** 000753	90 			nop	
+	*** 000754	90 			nop	
+	*** 000755	90 			nop	
+	*** 000756	90 			nop	
+	*** 000757	90 			nop	
+	PUBLIC	_SwapBars
+_SwapBars	PROC NEAR
+	*** 000758	55 			push	bp
+	*** 000759	8b ec 			mov	bp,sp
+	*** 00075b	b8 00 00 		mov	ax,0
+	*** 00075e	e8 00 00 		call	__aNchkstk
+	*** 000761	57 			push	di
+	*** 000762	56 			push	si
+;	iRow2 = 6
+;	iRow1 = 4
+;|***     DrawBar( iRow1 );
+; Line 412
+	*** 000763	ff 76 04 		push	WORD PTR [bp+4]	;iRow1
+	*** 000766	e8 4f ff 		call	_DrawBar
+	*** 000769	83 c4 02 		add	sp,2
+;|***     DrawBar( iRow2 );
+; Line 413
+	*** 00076c	ff 76 06 		push	WORD PTR [bp+6]	;iRow2
+	*** 00076f	e8 46 ff 		call	_DrawBar
+	*** 000772	83 c4 02 		add	sp,2
+;|***     DrawTime( iRow1 );
+; Line 414
+	*** 000775	ff 76 04 		push	WORD PTR [bp+4]	;iRow1
+	*** 000778	e8 06 fd 		call	_DrawTime
+	*** 00077b	83 c4 02 		add	sp,2
+;|*** }
+; Line 415
+					$EX637:
+	*** 00077e	5e 			pop	si
+	*** 00077f	5f 			pop	di
+	*** 000780	8b e5 			mov	sp,bp
+	*** 000782	5d 			pop	bp
+	*** 000783	c3 			ret	
+
+_SwapBars	ENDP
+;|*** 
+;|*** 
+;|*** /* Swaps - Exchanges two bar structures.
+;|***  */
+;|*** void Swaps( BAR *bar1, BAR *bar2 )
+;|*** {
+; Line 421
+	*** 000784	90 			nop	
+	*** 000785	90 			nop	
+	*** 000786	90 			nop	
+	*** 000787	90 			nop	
+	*** 000788	90 			nop	
+	*** 000789	90 			nop	
+	*** 00078a	90 			nop	
+	*** 00078b	90 			nop	
+	*** 00078c	90 			nop	
+	*** 00078d	90 			nop	
+	*** 00078e	90 			nop	
+	*** 00078f	90 			nop	
+	*** 000790	90 			nop	
+	*** 000791	90 			nop	
+	*** 000792	90 			nop	
+	*** 000793	90 			nop	
+	*** 000794	90 			nop	
+	*** 000795	90 			nop	
+	*** 000796	90 			nop	
+	*** 000797	90 			nop	
+	*** 000798	90 			nop	
+	*** 000799	90 			nop	
+	*** 00079a	90 			nop	
+	*** 00079b	90 			nop	
+	*** 00079c	90 			nop	
+	*** 00079d	90 			nop	
+	*** 00079e	90 			nop	
+	*** 00079f	90 			nop	
+	*** 0007a0	90 			nop	
+	*** 0007a1	90 			nop	
+	*** 0007a2	90 			nop	
+	*** 0007a3	90 			nop	
+	*** 0007a4	90 			nop	
+	*** 0007a5	90 			nop	
+	*** 0007a6	90 			nop	
+	*** 0007a7	90 			nop	
+	PUBLIC	_Swaps
+_Swaps	PROC NEAR
+	*** 0007a8	55 			push	bp
+	*** 0007a9	8b ec 			mov	bp,sp
+	*** 0007ab	b8 02 00 		mov	ax,2
+	*** 0007ae	e8 00 00 		call	__aNchkstk
+	*** 0007b1	57 			push	di
+	*** 0007b2	56 			push	si
+;	barTmp = -2
+;	bar2 = 6
+;	bar1 = 4
+;|***     BAR barTmp;
+;|*** 
+;|***     ++iSwaps;
+; Line 424
+	*** 0007b3	ff 06 00 00 		inc	WORD PTR _iSwaps
+;|***     barTmp = *bar1;
+; Line 425
+	*** 0007b7	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;bar1
+	*** 0007ba	8b 07 			mov	ax,WORD PTR [bx]
+	*** 0007bc	89 46 fe 		mov	WORD PTR [bp-2],ax	;barTmp
+;|***     *bar1  = *bar2;
+; Line 426
+	*** 0007bf	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;bar2
+	*** 0007c2	8b 07 			mov	ax,WORD PTR [bx]
+	*** 0007c4	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;bar1
+	*** 0007c7	89 07 			mov	WORD PTR [bx],ax
+;|***     *bar2  = barTmp;
+; Line 427
+	*** 0007c9	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;barTmp
+	*** 0007cc	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;bar2
+	*** 0007cf	89 07 			mov	WORD PTR [bx],ax
+;|*** }
+; Line 428
+					$EX640:
+	*** 0007d1	5e 			pop	si
+	*** 0007d2	5f 			pop	di
+	*** 0007d3	8b e5 			mov	sp,bp
+	*** 0007d5	5d 			pop	bp
+	*** 0007d6	c3 			ret	
+
+_Swaps	ENDP
+;|*** 
+;|*** 
+;|*** /* InsertionSort - InsertionSort compares the length of each element
+;|***  * with the lengths of all the preceding elements. When the appropriate
+;|***  * place for the new element is found, the element is inserted and
+;|***  * all the other elements are moved down one place.
+;|***  */
+;|*** void InsertionSort()
+;|*** {
+; Line 437
+	*** 0007d7	90 			nop	
+	*** 0007d8	90 			nop	
+	*** 0007d9	90 			nop	
+	*** 0007da	90 			nop	
+	*** 0007db	90 			nop	
+	*** 0007dc	90 			nop	
+	*** 0007dd	90 			nop	
+	*** 0007de	90 			nop	
+	*** 0007df	90 			nop	
+	*** 0007e0	90 			nop	
+	*** 0007e1	90 			nop	
+	*** 0007e2	90 			nop	
+	*** 0007e3	90 			nop	
+	*** 0007e4	90 			nop	
+	*** 0007e5	90 			nop	
+	*** 0007e6	90 			nop	
+	*** 0007e7	90 			nop	
+	*** 0007e8	90 			nop	
+	*** 0007e9	90 			nop	
+	*** 0007ea	90 			nop	
+	*** 0007eb	90 			nop	
+	*** 0007ec	90 			nop	
+	*** 0007ed	90 			nop	
+	*** 0007ee	90 			nop	
+	*** 0007ef	90 			nop	
+	*** 0007f0	90 			nop	
+	*** 0007f1	90 			nop	
+	*** 0007f2	90 			nop	
+	*** 0007f3	90 			nop	
+	*** 0007f4	90 			nop	
+	*** 0007f5	90 			nop	
+	*** 0007f6	90 			nop	
+	*** 0007f7	90 			nop	
+	PUBLIC	_InsertionSort
+_InsertionSort	PROC NEAR
+	*** 0007f8	55 			push	bp
+	*** 0007f9	8b ec 			mov	bp,sp
+	*** 0007fb	b8 08 00 		mov	ax,8
+	*** 0007fe	e8 00 00 		call	__aNchkstk
+	*** 000801	57 			push	di
+	*** 000802	56 			push	si
+;	barTemp = -8
+;	iRow = -2
+;	iRowTmp = -4
+;	iLength = -6
+;|***     BAR barTemp;
+;|***     int iRow, iRowTmp, iLength;
+;|*** 
+;|***     /* Start at the top. */
+;|***     for( iRow = 0; iRow < cRow; iRow++ )
+; Line 442
+	*** 000803	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;iRow
+	*** 000808	e9 03 00 		jmp	$F647
+					$FC648:
+	*** 00080b	ff 46 fe 		inc	WORD PTR [bp-2]	;iRow
+					$F647:
+	*** 00080e	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 000811	39 06 00 00 		cmp	WORD PTR _cRow,ax
+	*** 000815	7f 03 			jg	$JCC2069
+	*** 000817	e9 90 00 		jmp	$FB649
+					$JCC2069:
+;|***     {
+; Line 443
+;|***         barTemp = abarWork[iRow];
+; Line 444
+	*** 00081a	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRow
+	*** 00081d	d1 e3 			shl	bx,1
+	*** 00081f	8b 87 00 00 		mov	ax,WORD PTR _abarWork[bx]
+	*** 000823	89 46 f8 		mov	WORD PTR [bp-8],ax	;barTemp
+;|***         iLength = barTemp.len;
+; Line 445
+	*** 000826	8a 46 f8 		mov	al,BYTE PTR [bp-8]	;barTemp
+	*** 000829	98 			cbw	
+	*** 00082a	89 46 fa 		mov	WORD PTR [bp-6],ax	;iLength
+;|*** 
+;|***         /* As long as the length of the temporary element is greater than
+;|***          * the length of the original, keep shifting the elements down.
+;|***          */
+;|***         for( iRowTmp = iRow; iRowTmp; iRowTmp-- )
+; Line 450
+	*** 00082d	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 000830	89 46 fc 		mov	WORD PTR [bp-4],ax	;iRowTmp
+	*** 000833	e9 03 00 		jmp	$F650
+					$FC651:
+	*** 000836	ff 4e fc 		dec	WORD PTR [bp-4]	;iRowTmp
+					$F650:
+	*** 000839	83 7e fc 00 		cmp	WORD PTR [bp-4],0	;iRowTmp
+	*** 00083d	75 03 			jne	$JCC2109
+	*** 00083f	e9 47 00 		jmp	$FB652
+					$JCC2109:
+;|***         {
+; Line 451
+;|***             iCompares++;
+; Line 452
+	*** 000842	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***             if( abarWork[iRowTmp - 1].len > iLength )
+; Line 453
+	*** 000846	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;iRowTmp
+	*** 000849	d1 e3 			shl	bx,1
+	*** 00084b	8a 87 fe ff 		mov	al,BYTE PTR _abarWork[bx-2]
+	*** 00084f	98 			cbw	
+	*** 000850	3b 46 fa 		cmp	ax,WORD PTR [bp-6]	;iLength
+	*** 000853	7f 03 			jg	$JCC2131
+	*** 000855	e9 2b 00 		jmp	$I653
+					$JCC2131:
+;|***             {
+; Line 454
+;|***                 ++iSwaps;
+; Line 455
+	*** 000858	ff 06 00 00 		inc	WORD PTR _iSwaps
+;|***                 abarWork[iRowTmp] = abarWork[iRowTmp - 1];
+; Line 456
+	*** 00085c	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;iRowTmp
+	*** 00085f	d1 e3 			shl	bx,1
+	*** 000861	8b 87 fe ff 		mov	ax,WORD PTR _abarWork[bx-2]
+	*** 000865	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;iRowTmp
+	*** 000868	d1 e3 			shl	bx,1
+	*** 00086a	89 87 00 00 		mov	WORD PTR _abarWork[bx],ax
+;|***                 DrawBar( iRowTmp );         // Print the new bar
+; Line 457
+	*** 00086e	ff 76 fc 		push	WORD PTR [bp-4]	;iRowTmp
+	*** 000871	e8 44 fe 		call	_DrawBar
+	*** 000874	83 c4 02 		add	sp,2
+;|***                 DrawTime( iRowTmp );        // Print the elapsed time
+; Line 458
+	*** 000877	ff 76 fc 		push	WORD PTR [bp-4]	;iRowTmp
+	*** 00087a	e8 04 fc 		call	_DrawTime
+	*** 00087d	83 c4 02 		add	sp,2
+;|*** 
+;|***             }
+; Line 460
+;|***             else                            // Otherwise, exit
+; Line 461
+	*** 000880	e9 03 00 		jmp	$I654
+					$I653:
+;|***                 break;
+; Line 462
+	*** 000883	e9 03 00 		jmp	$FB652
+					$I654:
+;|***         }
+; Line 463
+	*** 000886	e9 ad ff 		jmp	$FC651
+					$FB652:
+;|*** 
+;|***         /* Insert the original bar in the temporary position. */
+;|***         abarWork[iRowTmp] = barTemp;
+; Line 466
+	*** 000889	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;barTemp
+	*** 00088c	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;iRowTmp
+	*** 00088f	d1 e3 			shl	bx,1
+	*** 000891	89 87 00 00 		mov	WORD PTR _abarWork[bx],ax
+;|***         DrawBar( iRowTmp );
+; Line 467
+	*** 000895	ff 76 fc 		push	WORD PTR [bp-4]	;iRowTmp
+	*** 000898	e8 1d fe 		call	_DrawBar
+	*** 00089b	83 c4 02 		add	sp,2
+;|***         DrawTime( iRowTmp );
+; Line 468
+	*** 00089e	ff 76 fc 		push	WORD PTR [bp-4]	;iRowTmp
+	*** 0008a1	e8 dd fb 		call	_DrawTime
+	*** 0008a4	83 c4 02 		add	sp,2
+;|***     }
+; Line 469
+	*** 0008a7	e9 61 ff 		jmp	$FC648
+					$FB649:
+;|*** }
+; Line 470
+					$EX642:
+	*** 0008aa	5e 			pop	si
+	*** 0008ab	5f 			pop	di
+	*** 0008ac	8b e5 			mov	sp,bp
+	*** 0008ae	5d 			pop	bp
+	*** 0008af	c3 			ret	
+
+_InsertionSort	ENDP
+;|*** 
+;|*** 
+;|*** /* BubbleSort - BubbleSort cycles through the elements, comparing
+;|***  * adjacent elements and swapping pairs that are out of order. It
+;|***  * continues to do this until no out-of-order pairs are found.
+;|***  */
+;|*** void BubbleSort()
+;|*** {
+; Line 478
+	*** 0008b0	90 			nop	
+	*** 0008b1	90 			nop	
+	*** 0008b2	90 			nop	
+	*** 0008b3	90 			nop	
+	*** 0008b4	90 			nop	
+	*** 0008b5	90 			nop	
+	*** 0008b6	90 			nop	
+	*** 0008b7	90 			nop	
+	*** 0008b8	90 			nop	
+	*** 0008b9	90 			nop	
+	*** 0008ba	90 			nop	
+	*** 0008bb	90 			nop	
+	*** 0008bc	90 			nop	
+	*** 0008bd	90 			nop	
+	*** 0008be	90 			nop	
+	*** 0008bf	90 			nop	
+	PUBLIC	_BubbleSort
+_BubbleSort	PROC NEAR
+	*** 0008c0	55 			push	bp
+	*** 0008c1	8b ec 			mov	bp,sp
+	*** 0008c3	b8 06 00 		mov	ax,6
+	*** 0008c6	e8 00 00 		call	__aNchkstk
+	*** 0008c9	57 			push	di
+	*** 0008ca	56 			push	si
+;	iRow = -2
+;	iSwitch = -6
+;	iLimit = -4
+;|***     int iRow, iSwitch, iLimit = cRow;
+; Line 479
+	*** 0008cb	a1 00 00 		mov	ax,WORD PTR _cRow
+	*** 0008ce	89 46 fc 		mov	WORD PTR [bp-4],ax	;iLimit
+;|*** 
+;|***     /* Move the longest bar down to the bottom until all are in order. */
+;|***     do
+; Line 482
+					$D659:
+;|***     {
+; Line 483
+;|***         iSwitch = 0;
+; Line 484
+	*** 0008d1	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;iSwitch
+;|***         for( iRow = 0; iRow < iLimit; iRow++ )
+; Line 485
+	*** 0008d6	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;iRow
+	*** 0008db	e9 03 00 		jmp	$F662
+					$FC663:
+	*** 0008de	ff 46 fe 		inc	WORD PTR [bp-2]	;iRow
+					$F662:
+	*** 0008e1	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 0008e4	39 46 fc 		cmp	WORD PTR [bp-4],ax	;iLimit
+	*** 0008e7	7f 03 			jg	$JCC2279
+	*** 0008e9	e9 4a 00 		jmp	$FB664
+					$JCC2279:
+;|***         {
+; Line 486
+;|***             /* If two adjacent elements are out of order, swap their values
+;|***              * and redraw those two bars.
+;|***              */
+;|***             iCompares++;
+; Line 490
+	*** 0008ec	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***             if( abarWork[iRow].len > abarWork[iRow + 1].len )
+; Line 491
+	*** 0008f0	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRow
+	*** 0008f3	d1 e3 			shl	bx,1
+	*** 0008f5	8b 76 fe 		mov	si,WORD PTR [bp-2]	;iRow
+	*** 0008f8	d1 e6 			shl	si,1
+	*** 0008fa	8a 84 00 00 		mov	al,BYTE PTR _abarWork[si]
+	*** 0008fe	38 87 02 00 		cmp	BYTE PTR _abarWork[bx+2],al
+	*** 000902	7c 03 			jl	$JCC2306
+	*** 000904	e9 2c 00 		jmp	$I665
+					$JCC2306:
+;|***             {
+; Line 492
+;|***                 Swaps( &abarWork[iRow], &abarWork[iRow + 1] );
+; Line 493
+	*** 000907	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 00090a	d1 e0 			shl	ax,1
+	*** 00090c	05 02 00 		add	ax,OFFSET DGROUP:_abarWork+2
+	*** 00090f	50 			push	ax
+	*** 000910	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 000913	d1 e0 			shl	ax,1
+	*** 000915	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000918	50 			push	ax
+	*** 000919	e8 68 fe 		call	_Swaps
+	*** 00091c	83 c4 04 		add	sp,4
+;|***                 SwapBars( iRow, iRow + 1 );
+; Line 494
+	*** 00091f	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 000922	40 			inc	ax
+	*** 000923	50 			push	ax
+	*** 000924	ff 76 fe 		push	WORD PTR [bp-2]	;iRow
+	*** 000927	e8 21 fe 		call	_SwapBars
+	*** 00092a	83 c4 04 		add	sp,4
+;|***                 iSwitch = iRow;
+; Line 495
+	*** 00092d	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRow
+	*** 000930	89 46 fa 		mov	WORD PTR [bp-6],ax	;iSwitch
+;|***             }
+; Line 496
+;|***         }
+; Line 497
+					$I665:
+	*** 000933	e9 a8 ff 		jmp	$FC663
+					$FB664:
+;|*** 
+;|***         /* Sort on next pass only to where the last switch was made. */
+;|***         iLimit = iSwitch;
+; Line 500
+	*** 000936	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iSwitch
+	*** 000939	89 46 fc 		mov	WORD PTR [bp-4],ax	;iLimit
+;|***     } while( iSwitch );
+; Line 501
+					$DC660:
+	*** 00093c	83 7e fa 00 		cmp	WORD PTR [bp-6],0	;iSwitch
+	*** 000940	74 03 			je	$JCC2368
+	*** 000942	e9 8c ff 		jmp	$D659
+					$JCC2368:
+					$DB661:
+;|*** }
+; Line 502
+					$EX655:
+	*** 000945	5e 			pop	si
+	*** 000946	5f 			pop	di
+	*** 000947	8b e5 			mov	sp,bp
+	*** 000949	5d 			pop	bp
+	*** 00094a	c3 			ret	
+
+_BubbleSort	ENDP
+;|*** 
+;|*** 
+;|*** /* HeapSort - HeapSort (also called TreeSort) works by calling
+;|***  * PercolateUp and PercolateDown. PercolateUp organizes the elements
+;|***  * into a "heap" or "tree," which has the properties shown below:
+;|***  *
+;|***  *                             element[1]
+;|***  *                           /            \
+;|***  *                element[2]                element[3]
+;|***  *               /          \              /          \
+;|***  *         element[4]     element[5]   element[6]    element[7]
+;|***  *         /        \     /        \   /        \    /        \
+;|***  *        ...      ...   ...      ... ...      ...  ...      ...
+;|***  *
+;|***  *
+;|***  * Each "parent node" is greater than each of its "child nodes"; for
+;|***  * example, element[1] is greater than element[2] or element[3];
+;|***  * element[4] is greater than element[5] or element[6], and so forth.
+;|***  * Therefore, once the first loop in HeapSort is finished, the
+;|***  * largest element is in element[1].
+;|***  *
+;|***  * The second loop rebuilds the heap (with PercolateDown), but starts
+;|***  * at the top and works down, moving the largest elements to the bottom.
+;|***  * This has the effect of moving the smallest elements to the top and
+;|***  * sorting the heap.
+;|***  */
+;|*** void HeapSort()
+;|*** {
+; Line 530
+	*** 00094b	90 			nop	
+	*** 00094c	90 			nop	
+	*** 00094d	90 			nop	
+	*** 00094e	90 			nop	
+	*** 00094f	90 			nop	
+	*** 000950	90 			nop	
+	*** 000951	90 			nop	
+	*** 000952	90 			nop	
+	*** 000953	90 			nop	
+	*** 000954	90 			nop	
+	*** 000955	90 			nop	
+	*** 000956	90 			nop	
+	*** 000957	90 			nop	
+	*** 000958	90 			nop	
+	*** 000959	90 			nop	
+	*** 00095a	90 			nop	
+	*** 00095b	90 			nop	
+	*** 00095c	90 			nop	
+	*** 00095d	90 			nop	
+	*** 00095e	90 			nop	
+	*** 00095f	90 			nop	
+	PUBLIC	_HeapSort
+_HeapSort	PROC NEAR
+	*** 000960	55 			push	bp
+	*** 000961	8b ec 			mov	bp,sp
+	*** 000963	b8 02 00 		mov	ax,2
+	*** 000966	e8 00 00 		call	__aNchkstk
+	*** 000969	57 			push	di
+	*** 00096a	56 			push	si
+;	i = -2
+;|***     int i;
+;|*** 
+;|***     for( i = 1; i < cRow; i++ )
+; Line 533
+	*** 00096b	c7 46 fe 01 00 		mov	WORD PTR [bp-2],1	;i
+	*** 000970	e9 03 00 		jmp	$F668
+					$FC669:
+	*** 000973	ff 46 fe 		inc	WORD PTR [bp-2]	;i
+					$F668:
+	*** 000976	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;i
+	*** 000979	39 06 00 00 		cmp	WORD PTR _cRow,ax
+	*** 00097d	7f 03 			jg	$JCC2429
+	*** 00097f	e9 0c 00 		jmp	$FB670
+					$JCC2429:
+;|***         PercolateUp( i );
+; Line 534
+	*** 000982	ff 76 fe 		push	WORD PTR [bp-2]	;i
+	*** 000985	e8 00 00 		call	_PercolateUp
+	*** 000988	83 c4 02 		add	sp,2
+	*** 00098b	e9 e5 ff 		jmp	$FC669
+					$FB670:
+;|*** 
+;|***     for( i = cRow - 1; i > 0; i-- )
+; Line 536
+	*** 00098e	a1 00 00 		mov	ax,WORD PTR _cRow
+	*** 000991	48 			dec	ax
+	*** 000992	89 46 fe 		mov	WORD PTR [bp-2],ax	;i
+	*** 000995	e9 03 00 		jmp	$F671
+					$FC672:
+	*** 000998	ff 4e fe 		dec	WORD PTR [bp-2]	;i
+					$F671:
+	*** 00099b	83 7e fe 00 		cmp	WORD PTR [bp-2],0	;i
+	*** 00099f	7f 03 			jg	$JCC2463
+	*** 0009a1	e9 2e 00 		jmp	$FB673
+					$JCC2463:
+;|***     {
+; Line 537
+;|***         Swaps( &abarWork[0], &abarWork[i] );
+; Line 538
+	*** 0009a4	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;i
+	*** 0009a7	d1 e0 			shl	ax,1
+	*** 0009a9	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 0009ac	50 			push	ax
+	*** 0009ad	b8 00 00 		mov	ax,OFFSET DGROUP:_abarWork
+	*** 0009b0	50 			push	ax
+	*** 0009b1	e8 d0 fd 		call	_Swaps
+	*** 0009b4	83 c4 04 		add	sp,4
+;|***         SwapBars( 0, i );
+; Line 539
+	*** 0009b7	ff 76 fe 		push	WORD PTR [bp-2]	;i
+	*** 0009ba	b8 00 00 		mov	ax,0
+	*** 0009bd	50 			push	ax
+	*** 0009be	e8 8a fd 		call	_SwapBars
+	*** 0009c1	83 c4 04 		add	sp,4
+;|***         PercolateDown( i - 1 );
+; Line 540
+	*** 0009c4	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;i
+	*** 0009c7	48 			dec	ax
+	*** 0009c8	50 			push	ax
+	*** 0009c9	e8 00 00 		call	_PercolateDown
+	*** 0009cc	83 c4 02 		add	sp,2
+;|***     }
+; Line 541
+	*** 0009cf	e9 c6 ff 		jmp	$FC672
+					$FB673:
+;|*** }
+; Line 542
+					$EX666:
+	*** 0009d2	5e 			pop	si
+	*** 0009d3	5f 			pop	di
+	*** 0009d4	8b e5 			mov	sp,bp
+	*** 0009d6	5d 			pop	bp
+	*** 0009d7	c3 			ret	
+
+_HeapSort	ENDP
+;|*** 
+;|*** 
+;|*** /* PercolateUp - Converts elements into a "heap" with the largest
+;|***  * element at the top (see the diagram above).
+;|***  */
+;|*** void PercolateUp( int iMaxLevel )
+;|*** {
+; Line 549
+	PUBLIC	_PercolateUp
+_PercolateUp	PROC NEAR
+	*** 0009d8	55 			push	bp
+	*** 0009d9	8b ec 			mov	bp,sp
+	*** 0009db	b8 04 00 		mov	ax,4
+	*** 0009de	e8 00 00 		call	__aNchkstk
+	*** 0009e1	57 			push	di
+	*** 0009e2	56 			push	si
+;	i = -4
+;	iParent = -2
+;	iMaxLevel = 4
+;|***     int i = iMaxLevel, iParent;
+; Line 550
+	*** 0009e3	8b 46 04 		mov	ax,WORD PTR [bp+4]	;iMaxLevel
+	*** 0009e6	89 46 fc 		mov	WORD PTR [bp-4],ax	;i
+;|*** 
+;|***     /* Move the value in abarWork[iMaxLevel] up the heap until it has
+;|***      * reached its proper node (that is, until it is greater than either
+;|***      * of its child nodes, or until it has reached 1, the top of the heap).
+;|***      */
+;|***     while( i )
+; Line 556
+					$FC679:
+	*** 0009e9	83 7e fc 00 		cmp	WORD PTR [bp-4],0	;i
+	*** 0009ed	75 03 			jne	$JCC2541
+	*** 0009ef	e9 59 00 		jmp	$FB680
+					$JCC2541:
+;|***     {
+; Line 557
+;|***         iParent = i / 2;    // Get the subscript for the parent node
+; Line 558
+	*** 0009f2	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 0009f5	99 			cwd	
+	*** 0009f6	2b c2 			sub	ax,dx
+	*** 0009f8	d1 f8 			sar	ax,1
+	*** 0009fa	89 46 fe 		mov	WORD PTR [bp-2],ax	;iParent
+;|*** 
+;|***         iCompares++;
+; Line 560
+	*** 0009fd	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***         if( abarWork[i].len > abarWork[iParent].len )
+; Line 561
+	*** 000a01	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;i
+	*** 000a04	d1 e3 			shl	bx,1
+	*** 000a06	8b 76 fe 		mov	si,WORD PTR [bp-2]	;iParent
+	*** 000a09	d1 e6 			shl	si,1
+	*** 000a0b	8a 84 00 00 		mov	al,BYTE PTR _abarWork[si]
+	*** 000a0f	38 87 00 00 		cmp	BYTE PTR _abarWork[bx],al
+	*** 000a13	7f 03 			jg	$JCC2579
+	*** 000a15	e9 2d 00 		jmp	$I681
+					$JCC2579:
+;|***         {
+; Line 562
+;|***             /* The value at the current node is bigger than the value at
+;|***              * its parent node, so swap these two array elements.
+;|***              */
+;|***             Swaps( &abarWork[iParent], &abarWork[i] );
+; Line 566
+	*** 000a18	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;i
+	*** 000a1b	d1 e0 			shl	ax,1
+	*** 000a1d	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000a20	50 			push	ax
+	*** 000a21	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iParent
+	*** 000a24	d1 e0 			shl	ax,1
+	*** 000a26	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000a29	50 			push	ax
+	*** 000a2a	e8 57 fd 		call	_Swaps
+	*** 000a2d	83 c4 04 		add	sp,4
+;|***             SwapBars( iParent, i );
+; Line 567
+	*** 000a30	ff 76 fc 		push	WORD PTR [bp-4]	;i
+	*** 000a33	ff 76 fe 		push	WORD PTR [bp-2]	;iParent
+	*** 000a36	e8 12 fd 		call	_SwapBars
+	*** 000a39	83 c4 04 		add	sp,4
+;|***             i = iParent;
+; Line 568
+	*** 000a3c	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iParent
+	*** 000a3f	89 46 fc 		mov	WORD PTR [bp-4],ax	;i
+;|***         }
+; Line 569
+;|***         else
+; Line 570
+	*** 000a42	e9 03 00 		jmp	$I682
+					$I681:
+;|***             /* Otherwise, the element has reached its proper place in the
+;|***              * heap, so exit this procedure.
+;|***              */
+;|***             break;
+; Line 574
+	*** 000a45	e9 03 00 		jmp	$FB680
+					$I682:
+;|***     }
+; Line 575
+	*** 000a48	e9 9e ff 		jmp	$FC679
+					$FB680:
+;|*** }
+; Line 576
+					$EX675:
+	*** 000a4b	5e 			pop	si
+	*** 000a4c	5f 			pop	di
+	*** 000a4d	8b e5 			mov	sp,bp
+	*** 000a4f	5d 			pop	bp
+	*** 000a50	c3 			ret	
+
+_PercolateUp	ENDP
+;|*** 
+;|*** 
+;|*** /* PercolateDown - Converts elements to a "heap" with the largest elements
+;|***  * at the bottom. When this is done to a reversed heap (largest elements
+;|***  * at top), it has the effect of sorting the elements.
+;|***  */
+;|*** void PercolateDown( int iMaxLevel )
+;|*** {
+; Line 584
+	*** 000a51	90 			nop	
+	*** 000a52	90 			nop	
+	*** 000a53	90 			nop	
+	*** 000a54	90 			nop	
+	*** 000a55	90 			nop	
+	*** 000a56	90 			nop	
+	*** 000a57	90 			nop	
+	*** 000a58	90 			nop	
+	*** 000a59	90 			nop	
+	*** 000a5a	90 			nop	
+	*** 000a5b	90 			nop	
+	*** 000a5c	90 			nop	
+	*** 000a5d	90 			nop	
+	*** 000a5e	90 			nop	
+	*** 000a5f	90 			nop	
+	*** 000a60	90 			nop	
+	*** 000a61	90 			nop	
+	*** 000a62	90 			nop	
+	*** 000a63	90 			nop	
+	*** 000a64	90 			nop	
+	*** 000a65	90 			nop	
+	*** 000a66	90 			nop	
+	*** 000a67	90 			nop	
+	*** 000a68	90 			nop	
+	*** 000a69	90 			nop	
+	*** 000a6a	90 			nop	
+	*** 000a6b	90 			nop	
+	*** 000a6c	90 			nop	
+	*** 000a6d	90 			nop	
+	*** 000a6e	90 			nop	
+	*** 000a6f	90 			nop	
+	*** 000a70	90 			nop	
+	*** 000a71	90 			nop	
+	*** 000a72	90 			nop	
+	*** 000a73	90 			nop	
+	*** 000a74	90 			nop	
+	*** 000a75	90 			nop	
+	*** 000a76	90 			nop	
+	*** 000a77	90 			nop	
+	PUBLIC	_PercolateDown
+_PercolateDown	PROC NEAR
+	*** 000a78	55 			push	bp
+	*** 000a79	8b ec 			mov	bp,sp
+	*** 000a7b	b8 04 00 		mov	ax,4
+	*** 000a7e	e8 00 00 		call	__aNchkstk
+	*** 000a81	57 			push	di
+	*** 000a82	56 			push	si
+;	iChild = -4
+;	i = -2
+;	iMaxLevel = 4
+;|***     int iChild, i = 0;
+; Line 585
+	*** 000a83	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0	;i
+;|*** 
+;|***     /* Move the value in abarWork[0] down the heap until it has reached
+;|***      * its proper node (that is, until it is less than its parent node
+;|***      * or until it has reached iMaxLevel, the bottom of the current heap).
+;|***      */
+;|***     while( TRUE )
+; Line 591
+					$FC688:
+;|***     {
+; Line 592
+;|***         /* Get the subscript for the child node. */
+;|***         iChild = 2 * i;
+; Line 594
+	*** 000a88	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;i
+	*** 000a8b	d1 e0 			shl	ax,1
+	*** 000a8d	89 46 fc 		mov	WORD PTR [bp-4],ax	;iChild
+;|*** 
+;|***         /* Reached the bottom of the heap, so exit this procedure. */
+;|***         if( iChild > iMaxLevel )
+; Line 597
+	*** 000a90	8b 46 04 		mov	ax,WORD PTR [bp+4]	;iMaxLevel
+	*** 000a93	39 46 fc 		cmp	WORD PTR [bp-4],ax	;iChild
+	*** 000a96	7f 03 			jg	$JCC2710
+	*** 000a98	e9 03 00 		jmp	$I690
+					$JCC2710:
+;|***             break;
+; Line 598
+	*** 000a9b	e9 78 00 		jmp	$FB689
+;|*** 
+;|***         /* If there are two child nodes, find out which one is bigger. */
+;|***         if( iChild + 1 <= iMaxLevel )
+; Line 601
+					$I690:
+	*** 000a9e	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iChild
+	*** 000aa1	40 			inc	ax
+	*** 000aa2	3b 46 04 		cmp	ax,WORD PTR [bp+4]	;iMaxLevel
+	*** 000aa5	7e 03 			jle	$JCC2725
+	*** 000aa7	e9 1e 00 		jmp	$I691
+					$JCC2725:
+;|***         {
+; Line 602
+;|***             iCompares++;
+; Line 603
+	*** 000aaa	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***             if( abarWork[iChild + 1].len > abarWork[iChild].len )
+; Line 604
+	*** 000aae	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;iChild
+	*** 000ab1	d1 e3 			shl	bx,1
+	*** 000ab3	8b 76 fc 		mov	si,WORD PTR [bp-4]	;iChild
+	*** 000ab6	d1 e6 			shl	si,1
+	*** 000ab8	8a 84 00 00 		mov	al,BYTE PTR _abarWork[si]
+	*** 000abc	38 87 02 00 		cmp	BYTE PTR _abarWork[bx+2],al
+	*** 000ac0	7f 03 			jg	$JCC2752
+	*** 000ac2	e9 03 00 		jmp	$I692
+					$JCC2752:
+;|***                 iChild++;
+; Line 605
+	*** 000ac5	ff 46 fc 		inc	WORD PTR [bp-4]	;iChild
+;|***         }
+; Line 606
+					$I692:
+;|*** 
+;|***         iCompares++;
+; Line 608
+					$I691:
+	*** 000ac8	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***         if( abarWork[i].len < abarWork[iChild].len )
+; Line 609
+	*** 000acc	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;i
+	*** 000acf	d1 e3 			shl	bx,1
+	*** 000ad1	8b 76 fc 		mov	si,WORD PTR [bp-4]	;iChild
+	*** 000ad4	d1 e6 			shl	si,1
+	*** 000ad6	8a 84 00 00 		mov	al,BYTE PTR _abarWork[si]
+	*** 000ada	38 87 00 00 		cmp	BYTE PTR _abarWork[bx],al
+	*** 000ade	7c 03 			jl	$JCC2782
+	*** 000ae0	e9 2d 00 		jmp	$I693
+					$JCC2782:
+;|***         {
+; Line 610
+;|***             /* Move the value down since it is still not bigger than
+;|***              * either one of its children.
+;|***              */
+;|***             Swaps( &abarWork[i], &abarWork[iChild] );
+; Line 614
+	*** 000ae3	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iChild
+	*** 000ae6	d1 e0 			shl	ax,1
+	*** 000ae8	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000aeb	50 			push	ax
+	*** 000aec	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;i
+	*** 000aef	d1 e0 			shl	ax,1
+	*** 000af1	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000af4	50 			push	ax
+	*** 000af5	e8 8c fc 		call	_Swaps
+	*** 000af8	83 c4 04 		add	sp,4
+;|***             SwapBars( i, iChild );
+; Line 615
+	*** 000afb	ff 76 fc 		push	WORD PTR [bp-4]	;iChild
+	*** 000afe	ff 76 fe 		push	WORD PTR [bp-2]	;i
+	*** 000b01	e8 47 fc 		call	_SwapBars
+	*** 000b04	83 c4 04 		add	sp,4
+;|***             i = iChild;
+; Line 616
+	*** 000b07	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iChild
+	*** 000b0a	89 46 fe 		mov	WORD PTR [bp-2],ax	;i
+;|***         }
+; Line 617
+;|***         else
+; Line 618
+	*** 000b0d	e9 03 00 		jmp	$I694
+					$I693:
+;|***             /* Otherwise, abarWork has been restored to a heap from 1 to
+;|***              * iMaxLevel, so exit.
+;|***              */
+;|***             break;
+; Line 622
+	*** 000b10	e9 03 00 		jmp	$FB689
+					$I694:
+;|***     }
+; Line 623
+	*** 000b13	e9 72 ff 		jmp	$FC688
+					$FB689:
+;|*** }
+; Line 624
+					$EX684:
+	*** 000b16	5e 			pop	si
+	*** 000b17	5f 			pop	di
+	*** 000b18	8b e5 			mov	sp,bp
+	*** 000b1a	5d 			pop	bp
+	*** 000b1b	c3 			ret	
+
+_PercolateDown	ENDP
+;|*** 
+;|*** 
+;|*** /* ExchangeSort - The ExchangeSort compares each element--starting with
+;|***  * the first--with every following element. If any of the following
+;|***  * elements is smaller than the current element, it is exchanged with
+;|***  * the current element and the process is repeated for the next element.
+;|***  */
+;|*** void ExchangeSort()
+;|*** {
+; Line 633
+	*** 000b1c	90 			nop	
+	*** 000b1d	90 			nop	
+	*** 000b1e	90 			nop	
+	*** 000b1f	90 			nop	
+	*** 000b20	90 			nop	
+	*** 000b21	90 			nop	
+	*** 000b22	90 			nop	
+	*** 000b23	90 			nop	
+	*** 000b24	90 			nop	
+	*** 000b25	90 			nop	
+	*** 000b26	90 			nop	
+	*** 000b27	90 			nop	
+	*** 000b28	90 			nop	
+	*** 000b29	90 			nop	
+	*** 000b2a	90 			nop	
+	*** 000b2b	90 			nop	
+	*** 000b2c	90 			nop	
+	*** 000b2d	90 			nop	
+	*** 000b2e	90 			nop	
+	*** 000b2f	90 			nop	
+	*** 000b30	90 			nop	
+	*** 000b31	90 			nop	
+	*** 000b32	90 			nop	
+	*** 000b33	90 			nop	
+	*** 000b34	90 			nop	
+	*** 000b35	90 			nop	
+	*** 000b36	90 			nop	
+	*** 000b37	90 			nop	
+	*** 000b38	90 			nop	
+	*** 000b39	90 			nop	
+	*** 000b3a	90 			nop	
+	*** 000b3b	90 			nop	
+	*** 000b3c	90 			nop	
+	*** 000b3d	90 			nop	
+	*** 000b3e	90 			nop	
+	*** 000b3f	90 			nop	
+	PUBLIC	_ExchangeSort
+_ExchangeSort	PROC NEAR
+	*** 000b40	55 			push	bp
+	*** 000b41	8b ec 			mov	bp,sp
+	*** 000b43	b8 06 00 		mov	ax,6
+	*** 000b46	e8 00 00 		call	__aNchkstk
+	*** 000b49	57 			push	di
+	*** 000b4a	56 			push	si
+;	iRowCur = -6
+;	iRowMin = -4
+;	iRowNext = -2
+;|***     int iRowCur, iRowMin, iRowNext;
+;|*** 
+;|***     for( iRowCur = 0; iRowCur < cRow; iRowCur++ )
+; Line 636
+	*** 000b4b	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;iRowCur
+	*** 000b50	e9 03 00 		jmp	$F699
+					$FC700:
+	*** 000b53	ff 46 fa 		inc	WORD PTR [bp-6]	;iRowCur
+					$F699:
+	*** 000b56	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iRowCur
+	*** 000b59	39 06 00 00 		cmp	WORD PTR _cRow,ax
+	*** 000b5d	7f 03 			jg	$JCC2909
+	*** 000b5f	e9 7c 00 		jmp	$FB701
+					$JCC2909:
+;|***     {
+; Line 637
+;|***         iRowMin = iRowCur;
+; Line 638
+	*** 000b62	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iRowCur
+	*** 000b65	89 46 fc 		mov	WORD PTR [bp-4],ax	;iRowMin
+;|***         for( iRowNext = iRowCur; iRowNext < cRow; iRowNext++ )
+; Line 639
+	*** 000b68	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iRowCur
+	*** 000b6b	89 46 fe 		mov	WORD PTR [bp-2],ax	;iRowNext
+	*** 000b6e	e9 03 00 		jmp	$F702
+					$FC703:
+	*** 000b71	ff 46 fe 		inc	WORD PTR [bp-2]	;iRowNext
+					$F702:
+	*** 000b74	a1 00 00 		mov	ax,WORD PTR _cRow
+	*** 000b77	39 46 fe 		cmp	WORD PTR [bp-2],ax	;iRowNext
+	*** 000b7a	7c 03 			jl	$JCC2938
+	*** 000b7c	e9 2d 00 		jmp	$FB704
+					$JCC2938:
+;|***         {
+; Line 640
+;|***             iCompares++;
+; Line 641
+	*** 000b7f	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***             if( abarWork[iRowNext].len < abarWork[iRowMin].len )
+; Line 642
+	*** 000b83	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iRowNext
+	*** 000b86	d1 e3 			shl	bx,1
+	*** 000b88	8b 76 fc 		mov	si,WORD PTR [bp-4]	;iRowMin
+	*** 000b8b	d1 e6 			shl	si,1
+	*** 000b8d	8a 84 00 00 		mov	al,BYTE PTR _abarWork[si]
+	*** 000b91	38 87 00 00 		cmp	BYTE PTR _abarWork[bx],al
+	*** 000b95	7c 03 			jl	$JCC2965
+	*** 000b97	e9 0f 00 		jmp	$I705
+					$JCC2965:
+;|***             {
+; Line 643
+;|***                 iRowMin = iRowNext;
+; Line 644
+	*** 000b9a	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iRowNext
+	*** 000b9d	89 46 fc 		mov	WORD PTR [bp-4],ax	;iRowMin
+;|***                 DrawTime( iRowNext );
+; Line 645
+	*** 000ba0	ff 76 fe 		push	WORD PTR [bp-2]	;iRowNext
+	*** 000ba3	e8 db f8 		call	_DrawTime
+	*** 000ba6	83 c4 02 		add	sp,2
+;|***             }
+; Line 646
+;|***         }
+; Line 647
+					$I705:
+	*** 000ba9	e9 c5 ff 		jmp	$FC703
+					$FB704:
+;|*** 
+;|***         /* If a row is shorter than the current row, swap those two
+;|***          * array elements.
+;|***          */
+;|***         if( iRowMin > iRowCur )
+; Line 652
+	*** 000bac	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iRowCur
+	*** 000baf	39 46 fc 		cmp	WORD PTR [bp-4],ax	;iRowMin
+	*** 000bb2	7f 03 			jg	$JCC2994
+	*** 000bb4	e9 24 00 		jmp	$I706
+					$JCC2994:
+;|***         {
+; Line 653
+;|***             Swaps( &abarWork[iRowCur], &abarWork[iRowMin] );
+; Line 654
+	*** 000bb7	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iRowMin
+	*** 000bba	d1 e0 			shl	ax,1
+	*** 000bbc	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000bbf	50 			push	ax
+	*** 000bc0	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iRowCur
+	*** 000bc3	d1 e0 			shl	ax,1
+	*** 000bc5	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000bc8	50 			push	ax
+	*** 000bc9	e8 b8 fb 		call	_Swaps
+	*** 000bcc	83 c4 04 		add	sp,4
+;|***             SwapBars( iRowCur, iRowMin );
+; Line 655
+	*** 000bcf	ff 76 fc 		push	WORD PTR [bp-4]	;iRowMin
+	*** 000bd2	ff 76 fa 		push	WORD PTR [bp-6]	;iRowCur
+	*** 000bd5	e8 73 fb 		call	_SwapBars
+	*** 000bd8	83 c4 04 		add	sp,4
+;|***         }
+; Line 656
+;|***     }
+; Line 657
+					$I706:
+	*** 000bdb	e9 75 ff 		jmp	$FC700
+					$FB701:
+;|*** }
+; Line 658
+					$EX695:
+	*** 000bde	5e 			pop	si
+	*** 000bdf	5f 			pop	di
+	*** 000be0	8b e5 			mov	sp,bp
+	*** 000be2	5d 			pop	bp
+	*** 000be3	c3 			ret	
+
+_ExchangeSort	ENDP
+;|*** 
+;|*** 
+;|*** /* ShellSort - ShellSort is similar to the BubbleSort. However, it
+;|***  * begins by comparing elements that are far apart (separated by the
+;|***  * value of the iOffset variable, which is initially half the distance
+;|***  * between the first and last element), then comparing elements that
+;|***  * are closer together. When iOffset is one, the last iteration of
+;|***  * is merely a bubble sort.
+;|***  */
+;|*** void ShellSort()
+;|*** {
+; Line 669
+	*** 000be4	90 			nop	
+	*** 000be5	90 			nop	
+	*** 000be6	90 			nop	
+	*** 000be7	90 			nop	
+	*** 000be8	90 			nop	
+	*** 000be9	90 			nop	
+	*** 000bea	90 			nop	
+	*** 000beb	90 			nop	
+	*** 000bec	90 			nop	
+	*** 000bed	90 			nop	
+	*** 000bee	90 			nop	
+	*** 000bef	90 			nop	
+	*** 000bf0	90 			nop	
+	*** 000bf1	90 			nop	
+	*** 000bf2	90 			nop	
+	*** 000bf3	90 			nop	
+	*** 000bf4	90 			nop	
+	*** 000bf5	90 			nop	
+	*** 000bf6	90 			nop	
+	*** 000bf7	90 			nop	
+	*** 000bf8	90 			nop	
+	*** 000bf9	90 			nop	
+	*** 000bfa	90 			nop	
+	*** 000bfb	90 			nop	
+	*** 000bfc	90 			nop	
+	*** 000bfd	90 			nop	
+	*** 000bfe	90 			nop	
+	*** 000bff	90 			nop	
+	*** 000c00	90 			nop	
+	*** 000c01	90 			nop	
+	*** 000c02	90 			nop	
+	*** 000c03	90 			nop	
+	*** 000c04	90 			nop	
+	*** 000c05	90 			nop	
+	*** 000c06	90 			nop	
+	*** 000c07	90 			nop	
+	PUBLIC	_ShellSort
+_ShellSort	PROC NEAR
+	*** 000c08	55 			push	bp
+	*** 000c09	8b ec 			mov	bp,sp
+	*** 000c0b	b8 08 00 		mov	ax,8
+	*** 000c0e	e8 00 00 		call	__aNchkstk
+	*** 000c11	57 			push	di
+	*** 000c12	56 			push	si
+;	iOffset = -2
+;	iSwitch = -8
+;	iLimit = -6
+;	iRow = -4
+;|***     int iOffset, iSwitch, iLimit, iRow;
+;|*** 
+;|***     /* Set comparison offset to half the number of bars. */
+;|***     iOffset = cRow / 2;
+; Line 673
+	*** 000c13	a1 00 00 		mov	ax,WORD PTR _cRow
+	*** 000c16	99 			cwd	
+	*** 000c17	2b c2 			sub	ax,dx
+	*** 000c19	d1 f8 			sar	ax,1
+	*** 000c1b	89 46 fe 		mov	WORD PTR [bp-2],ax	;iOffset
+;|*** 
+;|***     while( iOffset )
+; Line 675
+					$FC713:
+	*** 000c1e	83 7e fe 00 		cmp	WORD PTR [bp-2],0	;iOffset
+	*** 000c22	75 03 			jne	$JCC3106
+	*** 000c24	e9 97 00 		jmp	$FB714
+					$JCC3106:
+;|***     {
+; Line 676
+;|***         /* Loop until offset gets to zero. */
+;|***         iLimit = cRow - iOffset;
+; Line 678
+	*** 000c27	a1 00 00 		mov	ax,WORD PTR _cRow
+	*** 000c2a	2b 46 fe 		sub	ax,WORD PTR [bp-2]	;iOffset
+	*** 000c2d	89 46 fa 		mov	WORD PTR [bp-6],ax	;iLimit
+;|***         do
+; Line 679
+					$D715:
+;|***         {
+; Line 680
+;|***             iSwitch = FALSE;     // Assume no switches at this offset.
+; Line 681
+	*** 000c30	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;iSwitch
+;|*** 
+;|***             /* Compare elements and switch ones out of order. */
+;|***             for( iRow = 0; iRow <= iLimit; iRow++ )
+; Line 684
+	*** 000c35	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;iRow
+	*** 000c3a	e9 03 00 		jmp	$F718
+					$FC719:
+	*** 000c3d	ff 46 fc 		inc	WORD PTR [bp-4]	;iRow
+					$F718:
+	*** 000c40	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iLimit
+	*** 000c43	39 46 fc 		cmp	WORD PTR [bp-4],ax	;iRow
+	*** 000c46	7e 03 			jle	$JCC3142
+	*** 000c48	e9 52 00 		jmp	$FB720
+					$JCC3142:
+;|***             {
+; Line 685
+;|***                 iCompares++;
+; Line 686
+	*** 000c4b	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***                 if( abarWork[iRow].len > abarWork[iRow + iOffset].len )
+; Line 687
+	*** 000c4f	8b 5e fc 		mov	bx,WORD PTR [bp-4]	;iRow
+	*** 000c52	03 5e fe 		add	bx,WORD PTR [bp-2]	;iOffset
+	*** 000c55	d1 e3 			shl	bx,1
+	*** 000c57	8b 76 fc 		mov	si,WORD PTR [bp-4]	;iRow
+	*** 000c5a	d1 e6 			shl	si,1
+	*** 000c5c	8a 84 00 00 		mov	al,BYTE PTR _abarWork[si]
+	*** 000c60	38 87 00 00 		cmp	BYTE PTR _abarWork[bx],al
+	*** 000c64	7c 03 			jl	$JCC3172
+	*** 000c66	e9 31 00 		jmp	$I721
+					$JCC3172:
+;|***                 {
+; Line 688
+;|***                     Swaps( &abarWork[iRow], &abarWork[iRow + iOffset] );
+; Line 689
+	*** 000c69	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iRow
+	*** 000c6c	03 46 fe 		add	ax,WORD PTR [bp-2]	;iOffset
+	*** 000c6f	d1 e0 			shl	ax,1
+	*** 000c71	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000c74	50 			push	ax
+	*** 000c75	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iRow
+	*** 000c78	d1 e0 			shl	ax,1
+	*** 000c7a	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000c7d	50 			push	ax
+	*** 000c7e	e8 03 fb 		call	_Swaps
+	*** 000c81	83 c4 04 		add	sp,4
+;|***                     SwapBars( iRow, iRow + iOffset );
+; Line 690
+	*** 000c84	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iRow
+	*** 000c87	03 46 fe 		add	ax,WORD PTR [bp-2]	;iOffset
+	*** 000c8a	50 			push	ax
+	*** 000c8b	ff 76 fc 		push	WORD PTR [bp-4]	;iRow
+	*** 000c8e	e8 ba fa 		call	_SwapBars
+	*** 000c91	83 c4 04 		add	sp,4
+;|***                     iSwitch = iRow;
+; Line 691
+	*** 000c94	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;iRow
+	*** 000c97	89 46 f8 		mov	WORD PTR [bp-8],ax	;iSwitch
+;|***                 }
+; Line 692
+;|***             }
+; Line 693
+					$I721:
+	*** 000c9a	e9 a0 ff 		jmp	$FC719
+					$FB720:
+;|*** 
+;|***             /* Sort on next pass only to where last switch was made. */
+;|***             iLimit = iSwitch - iOffset;
+; Line 696
+	*** 000c9d	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;iSwitch
+	*** 000ca0	2b 46 fe 		sub	ax,WORD PTR [bp-2]	;iOffset
+	*** 000ca3	89 46 fa 		mov	WORD PTR [bp-6],ax	;iLimit
+;|***         } while( iSwitch );
+; Line 697
+					$DC716:
+	*** 000ca6	83 7e f8 00 		cmp	WORD PTR [bp-8],0	;iSwitch
+	*** 000caa	74 03 			je	$JCC3242
+	*** 000cac	e9 81 ff 		jmp	$D715
+					$JCC3242:
+					$DB717:
+;|*** 
+;|***         /* No switches at last offset, try one half as big. */
+;|***         iOffset = iOffset / 2;
+; Line 700
+	*** 000caf	b9 02 00 		mov	cx,2
+	*** 000cb2	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iOffset
+	*** 000cb5	99 			cwd	
+	*** 000cb6	f7 f9 			idiv	cx
+	*** 000cb8	89 46 fe 		mov	WORD PTR [bp-2],ax	;iOffset
+;|***     }
+; Line 701
+	*** 000cbb	e9 60 ff 		jmp	$FC713
+					$FB714:
+;|*** }
+; Line 702
+					$EX707:
+	*** 000cbe	5e 			pop	si
+	*** 000cbf	5f 			pop	di
+	*** 000cc0	8b e5 			mov	sp,bp
+	*** 000cc2	5d 			pop	bp
+	*** 000cc3	c3 			ret	
+
+_ShellSort	ENDP
+;|*** 
+;|*** 
+;|*** /* QuickSort - QuickSort works by picking a random "pivot" element,
+;|***  * then moving every element that is bigger to one side of the pivot,
+;|***  * and every element that is smaller to the other side. QuickSort is
+;|***  * then called recursively with the two subdivisions created by the pivot.
+;|***  * Once the number of elements in a subdivision reaches two, the recursive
+;|***  * calls end and the array is sorted.
+;|***  */
+;|*** void QuickSort( int iLow, int iHigh )
+;|*** {
+; Line 713
+	*** 000cc4	90 			nop	
+	*** 000cc5	90 			nop	
+	*** 000cc6	90 			nop	
+	*** 000cc7	90 			nop	
+	*** 000cc8	90 			nop	
+	*** 000cc9	90 			nop	
+	*** 000cca	90 			nop	
+	*** 000ccb	90 			nop	
+	*** 000ccc	90 			nop	
+	*** 000ccd	90 			nop	
+	*** 000cce	90 			nop	
+	*** 000ccf	90 			nop	
+	PUBLIC	_QuickSort
+_QuickSort	PROC NEAR
+	*** 000cd0	55 			push	bp
+	*** 000cd1	8b ec 			mov	bp,sp
+	*** 000cd3	b8 06 00 		mov	ax,6
+	*** 000cd6	e8 00 00 		call	__aNchkstk
+	*** 000cd9	57 			push	di
+	*** 000cda	56 			push	si
+;	iUp = -6
+;	iDown = -2
+;	iBreak = -4
+;	iHigh = 6
+;	iLow = 4
+;|***     int iUp, iDown, iBreak;
+;|*** 
+;|***     if( iLow < iHigh )
+; Line 716
+	*** 000cdb	8b 46 06 		mov	ax,WORD PTR [bp+6]	;iHigh
+	*** 000cde	39 46 04 		cmp	WORD PTR [bp+4],ax	;iLow
+	*** 000ce1	7c 03 			jl	$JCC3297
+	*** 000ce3	e9 61 01 		jmp	$I728
+					$JCC3297:
+;|***     {
+; Line 717
+;|***         /* Only two elements in this subdivision; swap them if they are
+;|***          * out of order, then end recursive calls.
+;|***          */
+;|***         if( (iHigh - iLow) == 1 )
+; Line 721
+	*** 000ce6	8b 46 06 		mov	ax,WORD PTR [bp+6]	;iHigh
+	*** 000ce9	2b 46 04 		sub	ax,WORD PTR [bp+4]	;iLow
+	*** 000cec	48 			dec	ax
+	*** 000ced	74 03 			je	$JCC3309
+	*** 000cef	e9 42 00 		jmp	$I729
+					$JCC3309:
+;|***         {
+; Line 722
+;|***             iCompares++;
+; Line 723
+	*** 000cf2	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***             if( abarWork[iLow].len > abarWork[iHigh].len )
+; Line 724
+	*** 000cf6	8b 5e 04 		mov	bx,WORD PTR [bp+4]	;iLow
+	*** 000cf9	d1 e3 			shl	bx,1
+	*** 000cfb	8b 76 06 		mov	si,WORD PTR [bp+6]	;iHigh
+	*** 000cfe	d1 e6 			shl	si,1
+	*** 000d00	8a 84 00 00 		mov	al,BYTE PTR _abarWork[si]
+	*** 000d04	38 87 00 00 		cmp	BYTE PTR _abarWork[bx],al
+	*** 000d08	7f 03 			jg	$JCC3336
+	*** 000d0a	e9 24 00 		jmp	$I730
+					$JCC3336:
+;|***             {
+; Line 725
+;|***                 Swaps( &abarWork[iLow], &abarWork[iHigh] );
+; Line 726
+	*** 000d0d	8b 46 06 		mov	ax,WORD PTR [bp+6]	;iHigh
+	*** 000d10	d1 e0 			shl	ax,1
+	*** 000d12	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000d15	50 			push	ax
+	*** 000d16	8b 46 04 		mov	ax,WORD PTR [bp+4]	;iLow
+	*** 000d19	d1 e0 			shl	ax,1
+	*** 000d1b	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000d1e	50 			push	ax
+	*** 000d1f	e8 62 fa 		call	_Swaps
+	*** 000d22	83 c4 04 		add	sp,4
+;|***                 SwapBars( iLow, iHigh );
+; Line 727
+	*** 000d25	ff 76 06 		push	WORD PTR [bp+6]	;iHigh
+	*** 000d28	ff 76 04 		push	WORD PTR [bp+4]	;iLow
+	*** 000d2b	e8 1d fa 		call	_SwapBars
+	*** 000d2e	83 c4 04 		add	sp,4
+;|***             }
+; Line 728
+;|***         }
+; Line 729
+					$I730:
+;|***         else
+; Line 730
+	*** 000d31	e9 13 01 		jmp	$I731
+					$I729:
+;|***         {
+; Line 731
+;|***             iBreak = abarWork[iHigh].len;
+; Line 732
+	*** 000d34	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;iHigh
+	*** 000d37	d1 e3 			shl	bx,1
+	*** 000d39	8a 87 00 00 		mov	al,BYTE PTR _abarWork[bx]
+	*** 000d3d	98 			cbw	
+	*** 000d3e	89 46 fc 		mov	WORD PTR [bp-4],ax	;iBreak
+;|***             do
+; Line 733
+					$D732:
+;|***             {
+; Line 734
+;|***                 /* Move in from both sides towards the pivot element. */
+;|***                 iUp = iLow;
+; Line 736
+	*** 000d41	8b 46 04 		mov	ax,WORD PTR [bp+4]	;iLow
+	*** 000d44	89 46 fa 		mov	WORD PTR [bp-6],ax	;iUp
+;|***                 iDown = iHigh;
+; Line 737
+	*** 000d47	8b 46 06 		mov	ax,WORD PTR [bp+6]	;iHigh
+	*** 000d4a	89 46 fe 		mov	WORD PTR [bp-2],ax	;iDown
+;|***                 iCompares++;
+; Line 738
+	*** 000d4d	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***                 while( (iUp < iDown) && (abarWork[iUp].len <= iBreak) )
+; Line 739
+					$FC736:
+	*** 000d51	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000d54	39 46 fe 		cmp	WORD PTR [bp-2],ax	;iDown
+	*** 000d57	7f 03 			jg	$JCC3415
+	*** 000d59	e9 18 00 		jmp	$FB737
+					$JCC3415:
+	*** 000d5c	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;iUp
+	*** 000d5f	d1 e3 			shl	bx,1
+	*** 000d61	8a 87 00 00 		mov	al,BYTE PTR _abarWork[bx]
+	*** 000d65	98 			cbw	
+	*** 000d66	3b 46 fc 		cmp	ax,WORD PTR [bp-4]	;iBreak
+	*** 000d69	7e 03 			jle	$JCC3433
+	*** 000d6b	e9 06 00 		jmp	$FB737
+					$JCC3433:
+;|***                     iUp++;
+; Line 740
+	*** 000d6e	ff 46 fa 		inc	WORD PTR [bp-6]	;iUp
+	*** 000d71	e9 dd ff 		jmp	$FC736
+					$FB737:
+;|***                 iCompares++;
+; Line 741
+	*** 000d74	ff 06 00 00 		inc	WORD PTR _iCompares
+;|***                 while( (iDown > iUp) && (abarWork[iDown].len >= iBreak) )
+; Line 742
+					$FC739:
+	*** 000d78	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000d7b	39 46 fe 		cmp	WORD PTR [bp-2],ax	;iDown
+	*** 000d7e	7f 03 			jg	$JCC3454
+	*** 000d80	e9 18 00 		jmp	$FB740
+					$JCC3454:
+	*** 000d83	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;iDown
+	*** 000d86	d1 e3 			shl	bx,1
+	*** 000d88	8a 87 00 00 		mov	al,BYTE PTR _abarWork[bx]
+	*** 000d8c	98 			cbw	
+	*** 000d8d	3b 46 fc 		cmp	ax,WORD PTR [bp-4]	;iBreak
+	*** 000d90	7d 03 			jge	$JCC3472
+	*** 000d92	e9 06 00 		jmp	$FB740
+					$JCC3472:
+;|***                     iDown--;
+; Line 743
+	*** 000d95	ff 4e fe 		dec	WORD PTR [bp-2]	;iDown
+	*** 000d98	e9 dd ff 		jmp	$FC739
+					$FB740:
+;|***                 /* If we haven't reached the pivot, it means that two
+;|***                  * elements on either side are out of order, so swap them.
+;|***                  */
+;|***                 if( iUp < iDown )
+; Line 747
+	*** 000d9b	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000d9e	39 46 fe 		cmp	WORD PTR [bp-2],ax	;iDown
+	*** 000da1	7f 03 			jg	$JCC3489
+	*** 000da3	e9 24 00 		jmp	$I741
+					$JCC3489:
+;|***                 {
+; Line 748
+;|***                     Swaps( &abarWork[iUp], &abarWork[iDown] );
+; Line 749
+	*** 000da6	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;iDown
+	*** 000da9	d1 e0 			shl	ax,1
+	*** 000dab	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000dae	50 			push	ax
+	*** 000daf	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000db2	d1 e0 			shl	ax,1
+	*** 000db4	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000db7	50 			push	ax
+	*** 000db8	e8 c9 f9 		call	_Swaps
+	*** 000dbb	83 c4 04 		add	sp,4
+;|***                     SwapBars( iUp, iDown );
+; Line 750
+	*** 000dbe	ff 76 fe 		push	WORD PTR [bp-2]	;iDown
+	*** 000dc1	ff 76 fa 		push	WORD PTR [bp-6]	;iUp
+	*** 000dc4	e8 84 f9 		call	_SwapBars
+	*** 000dc7	83 c4 04 		add	sp,4
+;|***                 }
+; Line 751
+;|***             } while ( iUp < iDown );
+; Line 752
+					$I741:
+					$DC733:
+	*** 000dca	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000dcd	39 46 fe 		cmp	WORD PTR [bp-2],ax	;iDown
+	*** 000dd0	7e 03 			jle	$JCC3536
+	*** 000dd2	e9 6c ff 		jmp	$D732
+					$JCC3536:
+					$DB734:
+;|*** 
+;|***             /* Move pivot element back to its proper place in the array. */
+;|***             Swaps( &abarWork[iUp], &abarWork[iHigh] );
+; Line 755
+	*** 000dd5	8b 46 06 		mov	ax,WORD PTR [bp+6]	;iHigh
+	*** 000dd8	d1 e0 			shl	ax,1
+	*** 000dda	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000ddd	50 			push	ax
+	*** 000dde	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000de1	d1 e0 			shl	ax,1
+	*** 000de3	05 00 00 		add	ax,OFFSET DGROUP:_abarWork
+	*** 000de6	50 			push	ax
+	*** 000de7	e8 9a f9 		call	_Swaps
+	*** 000dea	83 c4 04 		add	sp,4
+;|***             SwapBars( iUp, iHigh );
+; Line 756
+	*** 000ded	ff 76 06 		push	WORD PTR [bp+6]	;iHigh
+	*** 000df0	ff 76 fa 		push	WORD PTR [bp-6]	;iUp
+	*** 000df3	e8 55 f9 		call	_SwapBars
+	*** 000df6	83 c4 04 		add	sp,4
+;|*** 
+;|***             /* Recursively call the QuickSort procedure (pass the smaller
+;|***              * subdivision first to use less stack space).
+;|***              */
+;|***             if( (iUp - iLow) < (iHigh - iUp) )
+; Line 761
+	*** 000df9	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000dfc	2b 46 04 		sub	ax,WORD PTR [bp+4]	;iLow
+	*** 000dff	8b 4e 06 		mov	cx,WORD PTR [bp+6]	;iHigh
+	*** 000e02	2b 4e fa 		sub	cx,WORD PTR [bp-6]	;iUp
+	*** 000e05	3b c1 			cmp	ax,cx
+	*** 000e07	7c 03 			jl	$JCC3591
+	*** 000e09	e9 1f 00 		jmp	$I742
+					$JCC3591:
+;|***             {
+; Line 762
+;|***                 QuickSort( iLow, iUp - 1 );
+; Line 763
+	*** 000e0c	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000e0f	48 			dec	ax
+	*** 000e10	50 			push	ax
+	*** 000e11	ff 76 04 		push	WORD PTR [bp+4]	;iLow
+	*** 000e14	e8 ad fe 		call	_QuickSort
+	*** 000e17	83 c4 04 		add	sp,4
+;|***                 QuickSort( iUp + 1, iHigh );
+; Line 764
+	*** 000e1a	ff 76 06 		push	WORD PTR [bp+6]	;iHigh
+	*** 000e1d	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000e20	40 			inc	ax
+	*** 000e21	50 			push	ax
+	*** 000e22	e8 9f fe 		call	_QuickSort
+	*** 000e25	83 c4 04 		add	sp,4
+;|***             }
+; Line 765
+;|***             else
+; Line 766
+	*** 000e28	e9 1c 00 		jmp	$I743
+					$I742:
+;|***             {
+; Line 767
+;|***                 QuickSort( iUp + 1, iHigh );
+; Line 768
+	*** 000e2b	ff 76 06 		push	WORD PTR [bp+6]	;iHigh
+	*** 000e2e	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000e31	40 			inc	ax
+	*** 000e32	50 			push	ax
+	*** 000e33	e8 8e fe 		call	_QuickSort
+	*** 000e36	83 c4 04 		add	sp,4
+;|***                 QuickSort( iLow, iUp - 1 );
+; Line 769
+	*** 000e39	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;iUp
+	*** 000e3c	48 			dec	ax
+	*** 000e3d	50 			push	ax
+	*** 000e3e	ff 76 04 		push	WORD PTR [bp+4]	;iLow
+	*** 000e41	e8 80 fe 		call	_QuickSort
+	*** 000e44	83 c4 04 		add	sp,4
+;|***             }
+; Line 770
+					$I743:
+;|***         }
+; Line 771
+					$I731:
+;|***     }
+; Line 772
+;|*** }
+; Line 773
+					$I728:
+					$EX724:
+	*** 000e47	5e 			pop	si
+	*** 000e48	5f 			pop	di
+	*** 000e49	8b e5 			mov	sp,bp
+	*** 000e4b	5d 			pop	bp
+	*** 000e4c	c3 			ret	
+
+_QuickSort	ENDP
+;|*** 
+;|*** /* Beep - Sounds the speaker for a time specified in microseconds by
+;|***  * duration at a pitch specified in hertz by frequency.
+;|***  */
+;|*** void Beep( int frequency, int duration )
+;|*** {
+; Line 779
+	*** 000e4d	90 			nop	
+	*** 000e4e	90 			nop	
+	*** 000e4f	90 			nop	
+	*** 000e50	90 			nop	
+	*** 000e51	90 			nop	
+	*** 000e52	90 			nop	
+	*** 000e53	90 			nop	
+	*** 000e54	90 			nop	
+	*** 000e55	90 			nop	
+	*** 000e56	90 			nop	
+	*** 000e57	90 			nop	
+	*** 000e58	90 			nop	
+	*** 000e59	90 			nop	
+	*** 000e5a	90 			nop	
+	*** 000e5b	90 			nop	
+	*** 000e5c	90 			nop	
+	*** 000e5d	90 			nop	
+	*** 000e5e	90 			nop	
+	*** 000e5f	90 			nop	
+	PUBLIC	_Beep
+_Beep	PROC NEAR
+	*** 000e60	55 			push	bp
+	*** 000e61	8b ec 			mov	bp,sp
+	*** 000e63	b8 02 00 		mov	ax,2
+	*** 000e66	e8 00 00 		call	__aNchkstk
+	*** 000e69	57 			push	di
+	*** 000e6a	56 			push	si
+;	control = -2
+;	duration = 6
+;	frequency = 4
+;|*** /* Use system call for OS/2 */
+;|*** #if defined( OS2 )
+;|*** #define INCL_NOCOMMON
+;|*** #define INCL_NOPM
+;|*** #define INCL_DOSPROCESS
+;|*** #include <os2.h>
+;|***     DosBeep( frequency, duration );
+;|*** #else
+;|*** /* Define procedure for DOS */
+;|***     int control;
+;|*** 
+;|***     /* If frequency is 0, Beep doesn't try to make a sound. It
+;|***      * just sleeps for the duration.
+;|***      */
+;|***     if( frequency )
+; Line 794
+	*** 000e6b	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;frequency
+	*** 000e6f	75 03 			jne	$JCC3695
+	*** 000e71	e9 6c 00 		jmp	$I748
+					$JCC3695:
+;|***     {
+; Line 795
+;|***         /* 75 is about the shortest reliable duration of a sound. */
+;|***         if( duration < 75 )
+; Line 797
+	*** 000e74	83 7e 06 4b 		cmp	WORD PTR [bp+6],75	;duration
+	*** 000e78	7c 03 			jl	$JCC3704
+	*** 000e7a	e9 05 00 		jmp	$I749
+					$JCC3704:
+;|***             duration = 75;
+; Line 798
+	*** 000e7d	c7 46 06 4b 00 		mov	WORD PTR [bp+6],75	;duration
+;|*** 
+;|***         /* Prepare timer by sending 10111100 to port 43. */
+;|***         outp( 0x43, 0xb6 );
+; Line 801
+					$I749:
+	*** 000e82	b8 b6 00 		mov	ax,182
+	*** 000e85	50 			push	ax
+	*** 000e86	b8 43 00 		mov	ax,67
+	*** 000e89	50 			push	ax
+	*** 000e8a	e8 00 00 		call	_outp
+	*** 000e8d	83 c4 04 		add	sp,4
+;|*** 
+;|***         /* Divide input frequency by timer ticks per second and
+;|***          * write (byte by byte) to timer.
+;|***          */
+;|***         frequency = (unsigned)(1193180L / frequency);
+; Line 806
+	*** 000e90	8b 46 04 		mov	ax,WORD PTR [bp+4]	;frequency
+	*** 000e93	99 			cwd	
+	*** 000e94	52 			push	dx
+	*** 000e95	50 			push	ax
+	*** 000e96	b8 dc 34 		mov	ax,13532
+	*** 000e99	ba 12 00 		mov	dx,18
+	*** 000e9c	52 			push	dx
+	*** 000e9d	50 			push	ax
+	*** 000e9e	e8 00 00 		call	__aNldiv
+	*** 000ea1	89 46 04 		mov	WORD PTR [bp+4],ax	;frequency
+;|***         outp( 0x42, (char)frequency );
+; Line 807
+	*** 000ea4	8a 46 04 		mov	al,BYTE PTR [bp+4]	;frequency
+	*** 000ea7	98 			cbw	
+	*** 000ea8	50 			push	ax
+	*** 000ea9	b8 42 00 		mov	ax,66
+	*** 000eac	50 			push	ax
+	*** 000ead	e8 00 00 		call	_outp
+	*** 000eb0	83 c4 04 		add	sp,4
+;|***         outp( 0x42, (char)(frequency >> 8) );
+; Line 808
+	*** 000eb3	8a 46 05 		mov	al,BYTE PTR [bp+5]
+	*** 000eb6	98 			cbw	
+	*** 000eb7	50 			push	ax
+	*** 000eb8	b8 42 00 		mov	ax,66
+	*** 000ebb	50 			push	ax
+	*** 000ebc	e8 00 00 		call	_outp
+	*** 000ebf	83 c4 04 		add	sp,4
+;|*** 
+;|***         /* Save speaker control byte. */
+;|***         control = inp( 0x61 );
+; Line 811
+	*** 000ec2	b8 61 00 		mov	ax,97
+	*** 000ec5	50 			push	ax
+	*** 000ec6	e8 00 00 		call	_inp
+	*** 000ec9	83 c4 02 		add	sp,2
+	*** 000ecc	89 46 fe 		mov	WORD PTR [bp-2],ax	;control
+;|*** 
+;|***         /* Turn on the speaker (with bits 0 and 1). */
+;|***         outp( 0x61, control | 0x3 );
+; Line 814
+	*** 000ecf	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;control
+	*** 000ed2	0d 03 00 		or	ax,3
+	*** 000ed5	50 			push	ax
+	*** 000ed6	b8 61 00 		mov	ax,97
+	*** 000ed9	50 			push	ax
+	*** 000eda	e8 00 00 		call	_outp
+	*** 000edd	83 c4 04 		add	sp,4
+;|***     }
+; Line 815
+;|*** 
+;|***     Sleep( (clock_t)duration );
+; Line 817
+					$I748:
+	*** 000ee0	8b 46 06 		mov	ax,WORD PTR [bp+6]	;duration
+	*** 000ee3	99 			cwd	
+	*** 000ee4	52 			push	dx
+	*** 000ee5	50 			push	ax
+	*** 000ee6	e8 00 00 		call	_Sleep
+	*** 000ee9	83 c4 04 		add	sp,4
+;|*** 
+;|***     /* Turn speaker back on if necessary. */
+;|***     if( frequency )
+; Line 820
+	*** 000eec	83 7e 04 00 		cmp	WORD PTR [bp+4],0	;frequency
+	*** 000ef0	75 03 			jne	$JCC3824
+	*** 000ef2	e9 0d 00 		jmp	$I750
+					$JCC3824:
+;|***         outp( 0x61, control );
+; Line 821
+	*** 000ef5	ff 76 fe 		push	WORD PTR [bp-2]	;control
+	*** 000ef8	b8 61 00 		mov	ax,97
+	*** 000efb	50 			push	ax
+	*** 000efc	e8 00 00 		call	_outp
+	*** 000eff	83 c4 04 		add	sp,4
+;|*** 
+;|*** #endif              /* DOS version */
+;|*** }
+; Line 824
+					$I750:
+					$EX746:
+	*** 000f02	5e 			pop	si
+	*** 000f03	5f 			pop	di
+	*** 000f04	8b e5 			mov	sp,bp
+	*** 000f06	5d 			pop	bp
+	*** 000f07	c3 			ret	
+
+_Beep	ENDP
+;|*** 
+;|*** /* Pauses for a specified number of microseconds. */
+;|*** void Sleep( clock_t wait )
+;|*** {
+; Line 828
+	*** 000f08	90 			nop	
+	*** 000f09	90 			nop	
+	*** 000f0a	90 			nop	
+	*** 000f0b	90 			nop	
+	*** 000f0c	90 			nop	
+	*** 000f0d	90 			nop	
+	*** 000f0e	90 			nop	
+	*** 000f0f	90 			nop	
+	*** 000f10	90 			nop	
+	*** 000f11	90 			nop	
+	*** 000f12	90 			nop	
+	*** 000f13	90 			nop	
+	*** 000f14	90 			nop	
+	*** 000f15	90 			nop	
+	*** 000f16	90 			nop	
+	*** 000f17	90 			nop	
+	*** 000f18	90 			nop	
+	*** 000f19	90 			nop	
+	*** 000f1a	90 			nop	
+	*** 000f1b	90 			nop	
+	*** 000f1c	90 			nop	
+	*** 000f1d	90 			nop	
+	*** 000f1e	90 			nop	
+	*** 000f1f	90 			nop	
+	*** 000f20	90 			nop	
+	*** 000f21	90 			nop	
+	*** 000f22	90 			nop	
+	*** 000f23	90 			nop	
+	*** 000f24	90 			nop	
+	*** 000f25	90 			nop	
+	*** 000f26	90 			nop	
+	*** 000f27	90 			nop	
+	PUBLIC	_Sleep
+_Sleep	PROC NEAR
+	*** 000f28	55 			push	bp
+	*** 000f29	8b ec 			mov	bp,sp
+	*** 000f2b	b8 04 00 		mov	ax,4
+	*** 000f2e	e8 00 00 		call	__aNchkstk
+	*** 000f31	57 			push	di
+	*** 000f32	56 			push	si
+;	goal = -4
+;	wait = 4
+;|***     clock_t goal;
+;|*** 
+;|***     goal = wait + clock();
+; Line 831
+	*** 000f33	e8 00 00 		call	_clock
+	*** 000f36	03 46 04 		add	ax,WORD PTR [bp+4]	;wait
+	*** 000f39	13 56 06 		adc	dx,WORD PTR [bp+6]
+	*** 000f3c	89 46 fc 		mov	WORD PTR [bp-4],ax	;goal
+	*** 000f3f	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|***     while( goal >= clock() )
+; Line 832
+					$FC755:
+	*** 000f42	e8 00 00 		call	_clock
+	*** 000f45	3b 56 fe 		cmp	dx,WORD PTR [bp-2]
+	*** 000f48	7e 03 			jle	$JCC3912
+	*** 000f4a	e9 10 00 		jmp	$FB756
+					$JCC3912:
+	*** 000f4d	7d 03 			jge	$JCC3917
+	*** 000f4f	e9 08 00 		jmp	$L20006
+					$JCC3917:
+	*** 000f52	3b 46 fc 		cmp	ax,WORD PTR [bp-4]	;goal
+	*** 000f55	76 03 			jbe	$JCC3925
+	*** 000f57	e9 03 00 		jmp	$FB756
+					$JCC3925:
+					$L20006:
+;|***         ;
+; Line 833
+	*** 000f5a	e9 e5 ff 		jmp	$FC755
+					$FB756:
+;|*** }
+; Line 834
+					$EX752:
+	*** 000f5d	5e 			pop	si
+	*** 000f5e	5f 			pop	di
+	*** 000f5f	8b e5 			mov	sp,bp
+	*** 000f61	5d 			pop	bp
+	*** 000f62	c3 			ret	
+
+_Sleep	ENDP
+_TEXT	ENDS
+END

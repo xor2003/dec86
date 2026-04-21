@@ -179,6 +179,43 @@ def _canonicalize_stack_cvar_expr(
                     return structured_c.CVariable(resolved_variable, variable_type=variable_type, codegen=codegen)
         active_expr_ids.discard(expr_id)
         return expr
+    if isinstance(expr, structured_c.CIndexedVariable):
+        base_expr = _canonicalize_stack_cvar_expr(
+            expr.variable,
+            codegen,
+            unwrap_c_casts=unwrap_c_casts,
+            resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
+            active_expr_ids=active_expr_ids,
+        )
+        index_expr = _canonicalize_stack_cvar_expr(
+            expr.index,
+            codegen,
+            unwrap_c_casts=unwrap_c_casts,
+            resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
+            active_expr_ids=active_expr_ids,
+        )
+        base_ref = unwrap_c_casts(base_expr)
+        if isinstance(base_ref, structured_c.CUnaryOp) and base_ref.op == "Reference":
+            base_var_expr = unwrap_c_casts(base_ref.operand)
+            base_var = getattr(base_var_expr, "variable", None)
+            index_value = getattr(index_expr, "value", None)
+            if isinstance(base_var_expr, structured_c.CVariable) and isinstance(base_var, SimStackVariable) and isinstance(index_value, int):
+                target_offset = getattr(base_var, "offset", None)
+                if isinstance(target_offset, int):
+                    resolved = resolve_stack_cvar_at_offset(codegen, target_offset + index_value)
+                    resolved_var = getattr(resolved, "variable", None)
+                    if (
+                        isinstance(resolved, structured_c.CVariable)
+                        and isinstance(resolved_var, SimStackVariable)
+                        and getattr(resolved_var, "offset", None) == target_offset + index_value
+                    ):
+                        active_expr_ids.discard(expr_id)
+                        return resolved
+        if base_expr is not expr.variable or index_expr is not expr.index:
+            active_expr_ids.discard(expr_id)
+            return structured_c.CIndexedVariable(base_expr, index_expr, codegen=getattr(expr, "codegen", None))
+        active_expr_ids.discard(expr_id)
+        return expr
     if isinstance(expr, structured_c.CUnaryOp):
         operand = _canonicalize_stack_cvar_expr(
             expr.operand,
@@ -187,6 +224,16 @@ def _canonicalize_stack_cvar_expr(
             resolve_stack_cvar_at_offset=resolve_stack_cvar_at_offset,
             active_expr_ids=active_expr_ids,
         )
+        deref_operand = unwrap_c_casts(operand)
+        if (
+            expr.op == "Dereference"
+            and isinstance(deref_operand, structured_c.CUnaryOp)
+            and deref_operand.op == "Reference"
+        ):
+            referenced = unwrap_c_casts(deref_operand.operand)
+            if isinstance(referenced, structured_c.CVariable):
+                active_expr_ids.discard(expr_id)
+                return referenced
         if operand is not expr.operand:
             active_expr_ids.discard(expr_id)
             return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
@@ -237,8 +284,6 @@ def _canonicalize_stack_cvars(codegen, *, replace_c_children, canonicalize_stack
 
     def transform(node):
         nonlocal changed
-        if not isinstance(node, structured_c.CVariable):
-            return node
         canonical = canonicalize_stack_cvar_expr(node, codegen)
         if canonical is not node:
             changed = True
