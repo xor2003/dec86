@@ -1,14 +1,14 @@
-[15:43:13] /* loading: /home/xor/vextest/SORTDEMO.EXE */
-[15:43:13] [dbg] build_project: path=/home/xor/vextest/SORTDEMO.EXE suffix=.exe force_blob=False
-[15:43:13] [dbg] dos_mz load base=0x10000
-[15:43:13] [dbg] project built: arch=86_16 entry=0x10f9a
+[17:29:13] /* loading: SORTDEMO.EXE */
+[17:29:13] [dbg] build_project: path=SORTDEMO.EXE suffix=.exe force_blob=False
+[17:29:13] [dbg] dos_mz load base=0x10000
+[17:29:13] [dbg] project built: arch=86_16 entry=0x10f9a
 [dbg] loaded sidecar metadata: format=cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan code_labels=87 data_labels=0 structs=0
 [dbg] signature-matched compiler versions: Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
-[15:43:13] /* info: recovery evidence: sidecar-assisted recovery (cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan) */
-[15:43:13] /* discovering likely functions... */
-[15:43:13] /* sidecar label ranking prepared 20 entries in 3.4ms (cache hit). */
-[15:43:13] /* skipping 67 signature-matched function(s) by default. */
-[15:43:13] /* == known function catalog (sidecar-backed) == */
+[17:29:13] /* info: recovery evidence: sidecar-assisted recovery (cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan) */
+[17:29:13] /* discovering likely functions... */
+[17:29:13] /* sidecar label ranking prepared 20 entries in 1.2ms (cache hit). */
+[17:29:13] /* skipping 67 signature-matched function(s) by default. */
+[17:29:13] /* == known function catalog (sidecar-backed) == */
 0x10010 main size=0x4d range=[0x10010, 0x1005d)
 0x10060 InitMenu size=0x17b range=[0x10060, 0x101db)
 0x101f0 DrawFrame size=0xdc range=[0x101f0, 0x102cc)
@@ -29,20 +29,20 @@
 0x10ce0 QuickSort size=0x17d range=[0x10ce0, 0x10e5d)
 0x10e70 Beep size=0xa8 range=[0x10e70, 0x10f18)
 0x10f38 Sleep size=0x3b range=[0x10f38, 0x10f73)
-[15:43:13] /* binary: /home/xor/vextest/SORTDEMO.EXE */
-[15:43:13] /* arch: 86_16 */
-[15:43:13] /* entry: 0x10f9a */
-[15:43:13] /* functions queued for decompilation: 20 */
-[15:43:13] /* info: selected 20 function(s) for decompilation */
-[15:43:13] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
-[15:43:13] [dbg] recovery worker: start 0x10010 main mode=lst recovery_timeout=120s
-[15:43:13] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
-[15:43:13] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
-[15:43:13] [dbg] isolated function worker: start 0x1000 main requested_timeout=120s hard_timeout=122s
-[15:43:13] [dbg] cache hit for 0x1000 main validation=disabled
-[15:43:13] /* == function 0x10010 main == */
-[15:43:13] /* info: function 0x10010 main attempt=decompiled validation=disabled */
-[15:43:13] /* -- source c -- */
+[17:29:13] /* binary: SORTDEMO.EXE */
+[17:29:13] /* arch: 86_16 */
+[17:29:13] /* entry: 0x10f9a */
+[17:29:13] /* functions queued for decompilation: 20 */
+[17:29:13] /* info: selected 20 function(s) for decompilation */
+[17:29:13] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
+[17:29:13] [dbg] recovery worker: start 0x10010 main mode=lst recovery_timeout=120s
+[17:29:13] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
+[17:29:13] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
+[17:29:13] [dbg] isolated function worker: start 0x1000 main requested_timeout=120s hard_timeout=122s
+[17:29:13] [dbg] cache hit for 0x1000 main validation=uncollected
+[17:29:13] /* == function 0x10010 main == */
+[17:29:13] /* info: function 0x10010 main attempt=decompiled validation=uncollected */
+[17:29:13] /* -- source c -- */
 void main()
 {
     cRow = _settextrows( 43 );
@@ -53,7 +53,7 @@ void main()
     RunMenu();                     // Respond to menu until quit
     _setvideomode( _DEFAULTMODE );
 }
-[15:43:13] /* -- c -- */
+[17:29:13] /* -- c -- */
 /* COD annotations:
  * globals = cRow
  * calls = aNchkstk, settextrows, clearscreen, displaycursor, InitBars, InitMenu, RunMenu, setvideomode
@@ -100,14 +100,14 @@ short main(void)
     *(vvar_44 + 1) = cs >> 8;
     setvideomode();
 }
-[15:43:13] [dbg] recovery worker: start 0x10f38 Sleep mode=lst recovery_timeout=120s
-[15:43:13] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
-[15:43:14] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
-[15:43:14] [dbg] isolated function worker: start 0x1000 Sleep requested_timeout=120s hard_timeout=122s
-[15:43:14] [dbg] cache hit for 0x1000 Sleep validation=disabled
-[15:43:14] /* == function 0x10f38 Sleep == */
-[15:43:14] /* info: function 0x10f38 Sleep attempt=decompiled validation=disabled */
-[15:43:14] /* -- source c -- */
+[17:29:13] [dbg] recovery worker: start 0x10f38 Sleep mode=lst recovery_timeout=120s
+[17:29:13] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
+[17:29:14] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
+[17:29:14] [dbg] isolated function worker: start 0x1000 Sleep requested_timeout=120s hard_timeout=122s
+[17:29:14] [dbg] cache hit for 0x1000 Sleep validation=uncollected
+[17:29:14] /* == function 0x10f38 Sleep == */
+[17:29:14] /* info: function 0x10f38 Sleep attempt=decompiled validation=uncollected */
+[17:29:14] /* -- source c -- */
 /* Pauses for a specified number of microseconds. */
 void Sleep( clock_t wait )
 {
@@ -117,7 +117,7 @@ void Sleep( clock_t wait )
     while( goal >= clock() )
         ;
 }
-[15:43:14] /* -- c -- */
+[17:29:14] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = wait
  * [bp-0x4] = goal
@@ -160,14 +160,14 @@ void Sleep(clock_t wait)
 
     return;
 }
-[15:43:14] [dbg] recovery worker: start 0x109e8 PercolateUp mode=lst recovery_timeout=120s
-[15:43:14] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
-[15:43:14] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
-[15:43:14] [dbg] isolated function worker: start 0x1000 PercolateUp requested_timeout=120s hard_timeout=122s
-[15:43:14] [dbg] cache hit for 0x1000 PercolateUp validation=disabled
-[15:43:14] /* == function 0x109e8 PercolateUp == */
-[15:43:14] /* info: function 0x109e8 PercolateUp attempt=decompiled validation=disabled */
-[15:43:14] /* -- source c -- */
+[17:29:14] [dbg] recovery worker: start 0x109e8 PercolateUp mode=lst recovery_timeout=120s
+[17:29:14] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
+[17:29:14] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
+[17:29:14] [dbg] isolated function worker: start 0x1000 PercolateUp requested_timeout=120s hard_timeout=122s
+[17:29:14] [dbg] cache hit for 0x1000 PercolateUp validation=uncollected
+[17:29:14] /* == function 0x109e8 PercolateUp == */
+[17:29:14] /* info: function 0x109e8 PercolateUp attempt=decompiled validation=uncollected */
+[17:29:14] /* -- source c -- */
 /* PercolateUp - Converts elements into a "heap" with the largest
  * element at the top (see the diagram above).
  */
@@ -200,7 +200,7 @@ void PercolateUp( int iMaxLevel )
             break;
     }
 }
-[15:43:14] /* -- c -- */
+[17:29:14] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iMaxLevel
  * [bp-0x4] = i
@@ -273,14 +273,14 @@ short PercolateUp(int iMaxLevel)
 
     return ax_8;
 }
-[15:43:14] [dbg] recovery worker: start 0x10970 HeapSort mode=lst recovery_timeout=120s
-[15:43:14] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
-[15:43:14] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
-[15:43:15] [dbg] isolated function worker: start 0x1000 HeapSort requested_timeout=120s hard_timeout=122s
-[15:43:15] [dbg] cache hit for 0x1000 HeapSort validation=disabled
-[15:43:15] /* == function 0x10970 HeapSort == */
-[15:43:15] /* info: function 0x10970 HeapSort attempt=decompiled validation=disabled */
-[15:43:15] /* -- source c -- */
+[17:29:14] [dbg] recovery worker: start 0x10970 HeapSort mode=lst recovery_timeout=120s
+[17:29:14] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
+[17:29:14] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
+[17:29:14] [dbg] isolated function worker: start 0x1000 HeapSort requested_timeout=120s hard_timeout=122s
+[17:29:14] [dbg] cache hit for 0x1000 HeapSort validation=uncollected
+[17:29:14] /* == function 0x10970 HeapSort == */
+[17:29:14] /* info: function 0x10970 HeapSort attempt=decompiled validation=uncollected */
+[17:29:14] /* -- source c -- */
 /* HeapSort - HeapSort (also called TreeSort) works by calling
  * PercolateUp and PercolateDown. PercolateUp organizes the elements
  * into a "heap" or "tree," which has the properties shown below:
@@ -319,7 +319,7 @@ void HeapSort()
         PercolateDown( i - 1 );
     }
 }
-[15:43:15] /* -- c -- */
+[17:29:14] /* -- c -- */
 /* COD annotations:
  * [bp-0x2] = i
  * globals = cRow, abarWork
@@ -363,14 +363,14 @@ short HeapSort(void)
         s_4 = g_-4 - 1;
     }
 }
-[15:43:15] [dbg] recovery worker: start 0x107b8 Swaps mode=lst recovery_timeout=120s
-[15:43:15] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
-[15:43:15] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
-[15:43:15] [dbg] isolated function worker: start 0x1000 Swaps requested_timeout=120s hard_timeout=122s
-[15:43:15] [dbg] cache hit for 0x1000 Swaps validation=disabled
-[15:43:15] /* == function 0x107b8 Swaps == */
-[15:43:15] /* info: function 0x107b8 Swaps attempt=decompiled validation=disabled */
-[15:43:15] /* -- source c -- */
+[17:29:14] [dbg] recovery worker: start 0x107b8 Swaps mode=lst recovery_timeout=120s
+[17:29:14] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
+[17:29:14] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
+[17:29:14] [dbg] isolated function worker: start 0x1000 Swaps requested_timeout=120s hard_timeout=122s
+[17:29:14] [dbg] cache hit for 0x1000 Swaps validation=uncollected
+[17:29:14] /* == function 0x107b8 Swaps == */
+[17:29:14] /* info: function 0x107b8 Swaps attempt=decompiled validation=uncollected */
+[17:29:14] /* -- source c -- */
 /* Swaps - Exchanges two bar structures.
  */
 void Swaps( BAR *bar1, BAR *bar2 )
@@ -382,7 +382,7 @@ void Swaps( BAR *bar1, BAR *bar2 )
     *bar1  = *bar2;
     *bar2  = barTmp;
 }
-[15:43:15] /* -- c -- */
+[17:29:14] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = bar1
  * [bp+0x6] = bar2
@@ -421,14 +421,14 @@ short Swaps(BAR *bar1, BAR *bar2)
 
     return ax_2;
 }
-[15:43:15] [dbg] recovery worker: start 0x10768 SwapBars mode=lst recovery_timeout=120s
-[15:43:15] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
-[15:43:15] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
-[15:43:15] [dbg] isolated function worker: start 0x1000 SwapBars requested_timeout=120s hard_timeout=122s
-[15:43:15] [dbg] cache hit for 0x1000 SwapBars validation=disabled
-[15:43:15] /* == function 0x10768 SwapBars == */
-[15:43:15] /* info: function 0x10768 SwapBars attempt=decompiled validation=disabled */
-[15:43:15] /* -- source c -- */
+[17:29:14] [dbg] recovery worker: start 0x10768 SwapBars mode=lst recovery_timeout=120s
+[17:29:14] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
+[17:29:14] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
+[17:29:14] [dbg] isolated function worker: start 0x1000 SwapBars requested_timeout=120s hard_timeout=122s
+[17:29:14] [dbg] cache hit for 0x1000 SwapBars validation=uncollected
+[17:29:14] /* == function 0x10768 SwapBars == */
+[17:29:14] /* info: function 0x10768 SwapBars attempt=decompiled validation=uncollected */
+[17:29:14] /* -- source c -- */
 /* SwapBars - Calls DrawBar twice to switch the two bars in iRow1 and
  * iRow2, then calls DrawTime to update the time.
  */
@@ -438,7 +438,7 @@ void SwapBars( int iRow1, int iRow2 )
     DrawBar( iRow2 );
     DrawTime( iRow1 );
 }
-[15:43:15] /* -- c -- */
+[17:29:14] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iRow1
  * [bp+0x6] = iRow2
@@ -464,14 +464,14 @@ void SwapBars(int iRow1, int iRow2)
     DrawBar();
     return;
 }
-[15:43:15] [dbg] recovery worker: start 0x10678 ReInitBars mode=lst recovery_timeout=120s
-[15:43:15] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
-[15:43:15] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
-[15:43:15] [dbg] isolated function worker: start 0x1000 ReInitBars requested_timeout=120s hard_timeout=122s
-[15:43:15] [dbg] cache hit for 0x1000 ReInitBars validation=disabled
-[15:43:15] /* == function 0x10678 ReInitBars == */
-[15:43:15] /* info: function 0x10678 ReInitBars attempt=decompiled validation=disabled */
-[15:43:15] /* -- source c -- */
+[17:29:14] [dbg] recovery worker: start 0x10678 ReInitBars mode=lst recovery_timeout=120s
+[17:29:14] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
+[17:29:14] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
+[17:29:14] [dbg] isolated function worker: start 0x1000 ReInitBars requested_timeout=120s hard_timeout=122s
+[17:29:14] [dbg] cache hit for 0x1000 ReInitBars validation=uncollected
+[17:29:14] /* == function 0x10678 ReInitBars == */
+[17:29:14] /* info: function 0x10678 ReInitBars attempt=decompiled validation=uncollected */
+[17:29:14] /* -- source c -- */
 /* ReInitBars - Restores the array abarWork to its original unsorted
  * state and draws the unsorted bars.
  */
@@ -486,7 +486,7 @@ void ReInitBars()
         DrawBar( iRow );
     }
 }
-[15:43:15] /* -- c -- */
+[17:29:14] /* -- c -- */
 /* COD annotations:
  * [bp-0x2] = iRow
  * globals = clStart, cRow, abarPerm, abarWork
@@ -527,14 +527,14 @@ short ReInitBars(void)
 
     return ax;
 }
-[15:43:15] [dbg] recovery worker: start 0x10e70 Beep mode=lst recovery_timeout=120s
-[15:43:16] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
-[15:43:16] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
-[15:43:16] [dbg] isolated function worker: start 0x1000 Beep requested_timeout=120s hard_timeout=122s
-[15:43:16] [dbg] cache hit for 0x1000 Beep validation=disabled
-[15:43:16] /* == function 0x10e70 Beep == */
-[15:43:16] /* info: function 0x10e70 Beep attempt=decompiled validation=disabled */
-[15:43:16] /* -- source c -- */
+[17:29:14] [dbg] recovery worker: start 0x10e70 Beep mode=lst recovery_timeout=120s
+[17:29:14] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
+[17:29:15] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
+[17:29:15] [dbg] isolated function worker: start 0x1000 Beep requested_timeout=120s hard_timeout=122s
+[17:29:15] [dbg] cache hit for 0x1000 Beep validation=uncollected
+[17:29:15] /* == function 0x10e70 Beep == */
+[17:29:15] /* info: function 0x10e70 Beep attempt=decompiled validation=uncollected */
+[17:29:15] /* -- source c -- */
 /* Beep - Sounds the speaker for a time specified in microseconds by
  * duration at a pitch specified in hertz by frequency.
  */
@@ -585,7 +585,7 @@ void Beep( int frequency, int duration )
 
 #endif              /* DOS version */
 }
-[15:43:16] /* -- c -- */
+[17:29:15] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = frequency
  * [bp+0x6] = duration
@@ -677,20 +677,14 @@ short Beep(int frequency, int duration)
 
     return ax_2;
 }
-[15:43:16] [dbg] recovery worker: start 0x10ce0 QuickSort mode=lst recovery_timeout=120s
-[15:43:17] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
-[15:43:17] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
-[15:43:17] [dbg] isolated function worker: start 0x1000 QuickSort requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-22 15:43:25,013 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on QuickSort
-[15:43:17] [dbg] function complexity for 0x10ce0 QuickSort: blocks=42, bytes=438
-[15:43:17] [dbg] decompile_function: addr=0x10ce0 (slice=0x1000) name=QuickSort
-[15:43:17] [dbg] function 0x1000 not normalized, normalizing...
-[15:43:18] [dbg] registered 8 direct callee stub(s) for 0x1000
-[15:43:39] [dbg] Decompiler returned for 0x1000
-[15:43:45] [dbg] decompilation time for 0x10ce0 QuickSort: 27.19s
-[15:43:45] /* == function 0x10ce0 QuickSort == */
-[15:43:45] /* info: function 0x10ce0 QuickSort attempt=decompiled validation=disabled */
-[15:43:45] /* -- source c -- */
+[17:29:15] [dbg] recovery worker: start 0x10ce0 QuickSort mode=lst recovery_timeout=120s
+[17:29:15] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
+[17:29:15] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
+[17:29:15] [dbg] isolated function worker: start 0x1000 QuickSort requested_timeout=120s hard_timeout=122s
+[17:29:15] [dbg] cache hit for 0x1000 QuickSort validation=uncollected
+[17:29:15] /* == function 0x10ce0 QuickSort == */
+[17:29:15] /* info: function 0x10ce0 QuickSort attempt=decompiled validation=uncollected */
+[17:29:15] /* -- source c -- */
 /* QuickSort - QuickSort works by picking a random "pivot" element,
  * then moving every element that is bigger to one side of the pivot,
  * and every element that is smaller to the other side. QuickSort is
@@ -760,7 +754,7 @@ void QuickSort( int iLow, int iHigh )
         }
     }
 }
-[15:43:45] /* -- c -- */
+[17:29:15] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iLow
  * [bp+0x6] = iHigh
@@ -902,19 +896,14 @@ short QuickSort(int iLow, int iHigh)
 
     return ax_4;
 }
-[15:43:45] [dbg] recovery worker: start 0x10c18 ShellSort mode=lst recovery_timeout=120s
-[15:43:45] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
-[15:43:45] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
-[15:43:45] [dbg] isolated function worker: start 0x1000 ShellSort requested_timeout=120s hard_timeout=122s
-[15:43:45] [dbg] function complexity for 0x10c18 ShellSort: blocks=19, bytes=218
-[15:43:45] [dbg] decompile_function: addr=0x10c18 (slice=0x1000) name=ShellSort
-[15:43:45] [dbg] function 0x1000 not normalized, normalizing...
-[15:43:45] [dbg] registered 6 direct callee stub(s) for 0x1000
-[15:43:52] [dbg] Decompiler returned for 0x1000
-[15:43:54] [dbg] decompilation time for 0x10c18 ShellSort: 8.76s
-[15:43:54] /* == function 0x10c18 ShellSort == */
-[15:43:54] /* info: function 0x10c18 ShellSort attempt=decompiled validation=disabled */
-[15:43:54] /* -- source c -- */
+[17:29:15] [dbg] recovery worker: start 0x10c18 ShellSort mode=lst recovery_timeout=120s
+[17:29:15] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
+[17:29:15] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
+[17:29:16] [dbg] isolated function worker: start 0x1000 ShellSort requested_timeout=120s hard_timeout=122s
+[17:29:16] [dbg] cache hit for 0x1000 ShellSort validation=uncollected
+[17:29:16] /* == function 0x10c18 ShellSort == */
+[17:29:16] /* info: function 0x10c18 ShellSort attempt=decompiled validation=uncollected */
+[17:29:16] /* -- source c -- */
 /* ShellSort - ShellSort is similar to the BubbleSort. However, it
  * begins by comparing elements that are far apart (separated by the
  * value of the iOffset variable, which is initially half the distance
@@ -957,7 +946,7 @@ void ShellSort()
         iOffset = iOffset / 2;
     }
 }
-[15:43:54] /* -- c -- */
+[17:29:16] /* -- c -- */
 /* COD annotations:
  * [bp-0x8] = iSwitch
  * [bp-0x6] = iLimit
@@ -1085,19 +1074,14 @@ short ShellSort(void)
 
     return ax_9;
 }
-[15:43:54] [dbg] recovery worker: start 0x10b50 ExchangeSort mode=lst recovery_timeout=120s
-[15:43:54] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
-[15:43:55] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
-[15:43:55] [dbg] isolated function worker: start 0x1000 ExchangeSort requested_timeout=120s hard_timeout=122s
-[15:43:55] [dbg] function complexity for 0x10b50 ExchangeSort: blocks=21, bytes=187
-[15:43:55] [dbg] decompile_function: addr=0x10b50 (slice=0x1000) name=ExchangeSort
-[15:43:55] [dbg] function 0x1000 not normalized, normalizing...
-[15:43:55] [dbg] registered 8 direct callee stub(s) for 0x1000
-[15:43:59] [dbg] Decompiler returned for 0x1000
-[15:44:01] [dbg] decompilation time for 0x10b50 ExchangeSort: 6.68s
-[15:44:01] /* == function 0x10b50 ExchangeSort == */
-[15:44:01] /* info: function 0x10b50 ExchangeSort attempt=decompiled validation=disabled */
-[15:44:01] /* -- source c -- */
+[17:29:16] [dbg] recovery worker: start 0x10b50 ExchangeSort mode=lst recovery_timeout=120s
+[17:29:16] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
+[17:29:16] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
+[17:29:16] [dbg] isolated function worker: start 0x1000 ExchangeSort requested_timeout=120s hard_timeout=122s
+[17:29:16] [dbg] cache hit for 0x1000 ExchangeSort validation=uncollected
+[17:29:16] /* == function 0x10b50 ExchangeSort == */
+[17:29:16] /* info: function 0x10b50 ExchangeSort attempt=decompiled validation=uncollected */
+[17:29:16] /* -- source c -- */
 /* ExchangeSort - The ExchangeSort compares each element--starting with
  * the first--with every following element. If any of the following
  * elements is smaller than the current element, it is exchanged with
@@ -1130,7 +1114,7 @@ void ExchangeSort()
         }
     }
 }
-[15:44:01] /* -- c -- */
+[17:29:16] /* -- c -- */
 /* COD annotations:
  * [bp-0x6] = iRowCur
  * [bp-0x4] = iRowMin
@@ -1234,19 +1218,14 @@ short ExchangeSort(void)
 
     return ax_6;
 }
-[15:44:01] [dbg] recovery worker: start 0x10a88 PercolateDown mode=lst recovery_timeout=120s
-[15:44:02] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
-[15:44:02] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
-[15:44:02] [dbg] isolated function worker: start 0x1000 PercolateDown requested_timeout=120s hard_timeout=122s
-[15:44:02] [dbg] function complexity for 0x10a88 PercolateDown: blocks=18, bytes=204
-[15:44:02] [dbg] decompile_function: addr=0x10a88 (slice=0x1000) name=PercolateDown
-[15:44:02] [dbg] function 0x1000 not normalized, normalizing...
-[15:44:02] [dbg] registered 6 direct callee stub(s) for 0x1000
-[15:44:09] [dbg] Decompiler returned for 0x1000
-[15:44:11] [dbg] decompilation time for 0x10a88 PercolateDown: 8.48s
-[15:44:11] /* == function 0x10a88 PercolateDown == */
-[15:44:11] /* info: function 0x10a88 PercolateDown attempt=decompiled validation=disabled */
-[15:44:11] /* -- source c -- */
+[17:29:16] [dbg] recovery worker: start 0x10a88 PercolateDown mode=lst recovery_timeout=120s
+[17:29:16] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
+[17:29:16] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
+[17:29:16] [dbg] isolated function worker: start 0x1000 PercolateDown requested_timeout=120s hard_timeout=122s
+[17:29:16] [dbg] cache hit for 0x1000 PercolateDown validation=uncollected
+[17:29:16] /* == function 0x10a88 PercolateDown == */
+[17:29:16] /* info: function 0x10a88 PercolateDown attempt=decompiled validation=uncollected */
+[17:29:16] /* -- source c -- */
 /* PercolateDown - Converts elements to a "heap" with the largest elements
  * at the bottom. When this is done to a reversed heap (largest elements
  * at top), it has the effect of sorting the elements.
@@ -1293,7 +1272,7 @@ void PercolateDown( int iMaxLevel )
             break;
     }
 }
-[15:44:11] /* -- c -- */
+[17:29:16] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iMaxLevel
  * [bp-0x4] = iChild
@@ -1391,19 +1370,14 @@ short PercolateDown(int iMaxLevel)
 
     return ax_3;
 }
-[15:44:11] [dbg] recovery worker: start 0x108d0 BubbleSort mode=lst recovery_timeout=120s
-[15:44:11] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
-[15:44:11] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
-[15:44:11] [dbg] isolated function worker: start 0x1000 BubbleSort requested_timeout=120s hard_timeout=122s
-[15:44:11] [dbg] function complexity for 0x108d0 BubbleSort: blocks=15, bytes=163
-[15:44:11] [dbg] decompile_function: addr=0x108d0 (slice=0x1000) name=BubbleSort
-[15:44:11] [dbg] function 0x1000 not normalized, normalizing...
-[15:44:11] [dbg] registered 6 direct callee stub(s) for 0x1000
-[15:44:16] [dbg] Decompiler returned for 0x1000
-[15:44:18] [dbg] decompilation time for 0x108d0 BubbleSort: 6.54s
-[15:44:18] /* == function 0x108d0 BubbleSort == */
-[15:44:18] /* info: function 0x108d0 BubbleSort attempt=decompiled validation=disabled */
-[15:44:18] /* -- source c -- */
+[17:29:16] [dbg] recovery worker: start 0x108d0 BubbleSort mode=lst recovery_timeout=120s
+[17:29:16] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
+[17:29:17] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
+[17:29:17] [dbg] isolated function worker: start 0x1000 BubbleSort requested_timeout=120s hard_timeout=122s
+[17:29:17] [dbg] cache hit for 0x1000 BubbleSort validation=uncollected
+[17:29:17] /* == function 0x108d0 BubbleSort == */
+[17:29:17] /* info: function 0x108d0 BubbleSort attempt=decompiled validation=uncollected */
+[17:29:17] /* -- source c -- */
 /* BubbleSort - BubbleSort cycles through the elements, comparing
  * adjacent elements and swapping pairs that are out of order. It
  * continues to do this until no out-of-order pairs are found.
@@ -1434,7 +1408,7 @@ void BubbleSort()
         iLimit = iSwitch;
     } while( iSwitch );
 }
-[15:44:18] /* -- c -- */
+[17:29:17] /* -- c -- */
 /* COD annotations:
  * [bp-0x6] = iSwitch
  * [bp-0x4] = iLimit
@@ -1524,20 +1498,14 @@ short BubbleSort(void)
 
     return ax_7;
 }
-[15:44:18] [dbg] recovery worker: start 0x10808 InsertionSort mode=lst recovery_timeout=120s
-[15:44:18] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
-[15:44:18] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
-[15:44:19] [dbg] isolated function worker: start 0x1000 InsertionSort requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-22 15:44:22,028 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on InsertionSort
-[15:44:19] [dbg] function complexity for 0x10808 InsertionSort: blocks=20, bytes=199
-[15:44:19] [dbg] decompile_function: addr=0x10808 (slice=0x1000) name=InsertionSort
-[15:44:19] [dbg] function 0x1000 not normalized, normalizing...
-[15:44:19] [dbg] registered 6 direct callee stub(s) for 0x1000
-[15:44:27] [dbg] Decompiler returned for 0x1000
-[15:44:29] [dbg] decompilation time for 0x10808 InsertionSort: 10.33s
-[15:44:29] /* == function 0x10808 InsertionSort == */
-[15:44:29] /* info: function 0x10808 InsertionSort attempt=decompiled validation=disabled */
-[15:44:29] /* -- source c -- */
+[17:29:17] [dbg] recovery worker: start 0x10808 InsertionSort mode=lst recovery_timeout=120s
+[17:29:17] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
+[17:29:17] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
+[17:29:17] [dbg] isolated function worker: start 0x1000 InsertionSort requested_timeout=120s hard_timeout=122s
+[17:29:17] [dbg] cache hit for 0x1000 InsertionSort validation=uncollected
+[17:29:17] /* == function 0x10808 InsertionSort == */
+[17:29:17] /* info: function 0x10808 InsertionSort attempt=decompiled validation=uncollected */
+[17:29:17] /* -- source c -- */
 /* InsertionSort - InsertionSort compares the length of each element
  * with the lengths of all the preceding elements. When the appropriate
  * place for the new element is found, the element is inserted and
@@ -1578,7 +1546,7 @@ void InsertionSort()
         DrawTime( iRowTmp );
     }
 }
-[15:44:29] /* -- c -- */
+[17:29:17] /* -- c -- */
 /* COD annotations:
  * [bp-0x8] = barTemp
  * [bp-0x6] = iLength
@@ -1675,19 +1643,14 @@ short InsertionSort(void)
 
     return ax_4;
 }
-[15:44:29] [dbg] recovery worker: start 0x106c8 DrawBar mode=lst recovery_timeout=120s
-[15:44:29] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
-[15:44:29] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
-[15:44:29] [dbg] isolated function worker: start 0x1000 DrawBar requested_timeout=120s hard_timeout=122s
-[15:44:29] [dbg] function complexity for 0x106c8 DrawBar: blocks=7, bytes=147
-[15:44:29] [dbg] decompile_function: addr=0x106c8 (slice=0x1000) name=DrawBar
-[15:44:29] [dbg] function 0x1000 not normalized, normalizing...
-[15:44:29] [dbg] registered 7 direct callee stub(s) for 0x1000
-[15:44:32] [dbg] Decompiler returned for 0x1000
-[15:44:34] [dbg] decompilation time for 0x106c8 DrawBar: 4.64s
-[15:44:34] /* == function 0x106c8 DrawBar == */
-[15:44:34] /* info: function 0x106c8 DrawBar attempt=decompiled validation=disabled */
-[15:44:34] /* -- source c -- */
+[17:29:17] [dbg] recovery worker: start 0x106c8 DrawBar mode=lst recovery_timeout=120s
+[17:29:17] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
+[17:29:17] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
+[17:29:17] [dbg] isolated function worker: start 0x1000 DrawBar requested_timeout=120s hard_timeout=122s
+[17:29:17] [dbg] cache hit for 0x1000 DrawBar validation=uncollected
+[17:29:17] /* == function 0x106c8 DrawBar == */
+[17:29:17] /* info: function 0x106c8 DrawBar attempt=decompiled validation=uncollected */
+[17:29:17] /* -- source c -- */
 /* DrawBar - Prints a bar at a specified row by first blanking the
  * old bar, then drawing a new bar having the length and color given in
  * the work array.
@@ -1704,7 +1667,7 @@ void DrawBar( int iRow )
     _settextcolor( abarWork[iRow].clr );
     _outtextxy( achT, 0, iRow + 1 );
 }
-[15:44:34] /* -- c -- */
+[17:29:17] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iRow
  * [bp-0x2e] = cSpace
@@ -1770,20 +1733,14 @@ short DrawBar(int iRow)
     *(vvar_79 + 1) = cs >> 8;
     settextcolor();
 }
-[15:44:34] [dbg] recovery worker: start 0x10560 InitBars mode=lst recovery_timeout=120s
-[15:44:34] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
-[15:44:35] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
-[15:44:35] [dbg] isolated function worker: start 0x1000 InitBars requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-22 15:44:40,924 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on InitBars
-[15:44:35] [dbg] function complexity for 0x10560 InitBars: blocks=29, bytes=303
-[15:44:35] [dbg] decompile_function: addr=0x10560 (slice=0x1000) name=InitBars
-[15:44:35] [dbg] function 0x1000 not normalized, normalizing...
-[15:44:35] [dbg] registered 10 direct callee stub(s) for 0x1000
-[15:44:52] [dbg] Decompiler returned for 0x1000
-[15:44:57] [dbg] decompilation time for 0x10560 InitBars: 22.27s
-[15:44:57] /* == function 0x10560 InitBars == */
-[15:44:57] /* info: function 0x10560 InitBars attempt=decompiled validation=disabled */
-[15:44:57] /* -- source c -- */
+[17:29:17] [dbg] recovery worker: start 0x10560 InitBars mode=lst recovery_timeout=120s
+[17:29:18] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
+[17:29:18] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
+[17:29:18] [dbg] isolated function worker: start 0x1000 InitBars requested_timeout=120s hard_timeout=122s
+[17:29:18] [dbg] cache hit for 0x1000 InitBars validation=uncollected
+[17:29:18] /* == function 0x10560 InitBars == */
+[17:29:18] /* info: function 0x10560 InitBars attempt=decompiled validation=uncollected */
+[17:29:18] /* -- source c -- */
 /* InitBars - Initializes the bar arrays and the menu box.
  */
 void InitBars()
@@ -1836,7 +1793,7 @@ void InitBars()
     /* Assign permanent sort values to temporary and draw unsorted bars. */
     ReInitBars();
 }
-[15:44:57] /* -- c -- */
+[17:29:18] /* -- c -- */
 /* COD annotations:
  * [bp-0x76] = iRand
  * [bp-0x74] = iColorMax
@@ -1989,19 +1946,14 @@ LABEL_1056_2:
 
     return ax_7;
 }
-[15:44:57] [dbg] recovery worker: start 0x10498 DrawTime mode=lst recovery_timeout=120s
-[15:44:57] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
-[15:44:58] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
-[15:44:58] [dbg] isolated function worker: start 0x1000 DrawTime requested_timeout=120s hard_timeout=122s
-[15:44:58] [dbg] function complexity for 0x10498 DrawTime: blocks=15, bytes=194
-[15:44:58] [dbg] decompile_function: addr=0x10498 (slice=0x1000) name=DrawTime
-[15:44:58] [dbg] function 0x1000 not normalized, normalizing...
-[15:44:58] [dbg] registered 15 direct callee stub(s) for 0x1000
-[15:45:03] [dbg] Decompiler returned for 0x1000
-[15:45:14] [dbg] decompilation time for 0x10498 DrawTime: 16.40s
-[15:45:14] /* == function 0x10498 DrawTime == */
-[15:45:14] /* info: function 0x10498 DrawTime attempt=decompiled validation=disabled */
-[15:45:14] /* -- source c -- */
+[17:29:18] [dbg] recovery worker: start 0x10498 DrawTime mode=lst recovery_timeout=120s
+[17:29:18] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
+[17:29:18] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
+[17:29:19] [dbg] isolated function worker: start 0x1000 DrawTime requested_timeout=120s hard_timeout=122s
+[17:29:19] [dbg] cache hit for 0x1000 DrawTime validation=uncollected
+[17:29:19] /* == function 0x10498 DrawTime == */
+[17:29:19] /* info: function 0x10498 DrawTime attempt=decompiled validation=uncollected */
+[17:29:19] /* -- source c -- */
 /* DrawTime - Prints seconds elapsed since the given sorting routine
  * started. Note that this time includes both the time it takes to redraw
  * the bars plus the pause while Beep plays a note, and thus is not an
@@ -2028,7 +1980,7 @@ void DrawTime( int iCurrentRow )
     else
         Sleep( clPause );               // Pause
 }
-[15:45:14] /* -- c -- */
+[17:29:19] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iCurrentRow
  * [bp-0x50] = achTiming
@@ -2188,20 +2140,14 @@ short DrawTime(int iCurrentRow)
 
     return ax_5;
 }
-[15:45:14] [dbg] recovery worker: start 0x102e0 RunMenu mode=lst recovery_timeout=120s
-[15:45:15] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
-[15:45:15] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
-[15:45:15] [dbg] isolated function worker: start 0x1000 RunMenu requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-22 15:45:29,558 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on RunMenu
-[15:45:15] [dbg] function complexity for 0x102e0 RunMenu: blocks=76, bytes=459
-[15:45:15] [dbg] decompile_function: addr=0x102e0 (slice=0x1000) name=RunMenu
-[15:45:15] [dbg] function 0x1000 not normalized, normalizing...
-[15:45:16] [dbg] registered 25 direct callee stub(s) for 0x1000
-[15:45:57] [dbg] Decompiler returned for 0x1000
-[15:46:10] [dbg] decompilation time for 0x102e0 RunMenu: 54.22s
-[15:46:10] /* == function 0x102e0 RunMenu == */
-[15:46:10] /* info: function 0x102e0 RunMenu attempt=decompiled validation=disabled */
-[15:46:10] /* -- source c -- */
+[17:29:19] [dbg] recovery worker: start 0x102e0 RunMenu mode=lst recovery_timeout=120s
+[17:29:19] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
+[17:29:19] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
+[17:29:20] [dbg] isolated function worker: start 0x1000 RunMenu requested_timeout=120s hard_timeout=122s
+[17:29:20] [dbg] cache hit for 0x1000 RunMenu validation=uncollected
+[17:29:20] /* == function 0x102e0 RunMenu == */
+[17:29:20] /* info: function 0x102e0 RunMenu attempt=decompiled validation=uncollected */
+[17:29:20] /* -- source c -- */
 /* RunMenu - The RunMenu procedure first calls the ReInitBars
  * procedure to make sure the abarWork is in its unsorted form, then
  * prompts the user to make one of the following choices:
@@ -2297,7 +2243,7 @@ void RunMenu()
         }
     }
 }
-[15:46:10] /* -- c -- */
+[17:29:20] /* -- c -- */
 /* COD annotations:
  * [bp-0x2] = ch
  * globals = iCompares, iSwaps, cszMenu, iCurChoice, cRow, clPause, fSound
@@ -2567,19 +2513,14 @@ LABEL_11ab:
 
     return ax_9;
 }
-[15:46:10] [dbg] recovery worker: start 0x101f0 DrawFrame mode=lst recovery_timeout=120s
-[15:46:10] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
-[15:46:10] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
-[15:46:11] [dbg] isolated function worker: start 0x1000 DrawFrame requested_timeout=120s hard_timeout=122s
-[15:46:11] [dbg] function complexity for 0x101f0 DrawFrame: blocks=16, bytes=228
-[15:46:11] [dbg] decompile_function: addr=0x101f0 (slice=0x1000) name=DrawFrame
-[15:46:11] [dbg] function 0x1000 not normalized, normalizing...
-[15:46:11] [dbg] registered 4 direct callee stub(s) for 0x1000
-[15:46:15] [dbg] Decompiler returned for 0x1000
-[15:46:22] [dbg] decompilation time for 0x101f0 DrawFrame: 10.93s
-[15:46:22] /* == function 0x101f0 DrawFrame == */
-[15:46:22] /* info: function 0x101f0 DrawFrame attempt=decompiled validation=disabled */
-[15:46:22] /* -- source c -- */
+[17:29:20] [dbg] recovery worker: start 0x101f0 DrawFrame mode=lst recovery_timeout=120s
+[17:29:20] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
+[17:29:20] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
+[17:29:20] [dbg] isolated function worker: start 0x1000 DrawFrame requested_timeout=120s hard_timeout=122s
+[17:29:20] [dbg] cache hit for 0x1000 DrawFrame validation=uncollected
+[17:29:20] /* == function 0x101f0 DrawFrame == */
+[17:29:20] /* info: function 0x101f0 DrawFrame attempt=decompiled validation=uncollected */
+[17:29:20] /* -- source c -- */
 /* DrawFrame - Draws a rectangular frame using the double-line box
  * characters. The parameters iTop, iLeft, iWidth, and iHeight are
  * the row and column arguments for the upper-left and lower-right
@@ -2610,7 +2551,7 @@ void DrawFrame( int iTop, int iLeft, int iWidth, int iHeight )
     achTmp[iWidth - 1] = LRIGHT;
     _outtextxy( achTmp, iLeft, iTop + iHeight );
 }
-[15:46:22] /* -- c -- */
+[17:29:20] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iTop
  * [bp+0x6] = iLeft
@@ -2731,19 +2672,14 @@ short DrawFrame(int iTop, int iLeft, int iWidth, int iHeight)
     *(vvar_81 + 1) = cs >> 8;
     settextposition();
 }
-[15:46:22] [dbg] recovery worker: start 0x10060 InitMenu mode=lst recovery_timeout=120s
-[15:46:22] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
-[15:46:23] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
-[15:46:23] [dbg] isolated function worker: start 0x1000 InitMenu requested_timeout=120s hard_timeout=122s
-[15:46:23] [dbg] function complexity for 0x10060 InitMenu: blocks=37, bytes=418
-[15:46:23] [dbg] decompile_function: addr=0x10060 (slice=0x1000) name=InitMenu
-[15:46:23] [dbg] function 0x1000 not normalized, normalizing...
-[15:46:23] [dbg] registered 9 direct callee stub(s) for 0x1000
-[15:46:37] [dbg] Decompiler returned for 0x1000
-[15:47:27] [dbg] decompilation time for 0x10060 InitMenu: 64.27s
-[15:47:27] /* == function 0x10060 InitMenu == */
-[15:47:27] /* info: function 0x10060 InitMenu attempt=decompiled validation=disabled */
-[15:47:27] /* -- source c -- */
+[17:29:20] [dbg] recovery worker: start 0x10060 InitMenu mode=lst recovery_timeout=120s
+[17:29:21] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
+[17:29:21] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
+[17:29:21] [dbg] isolated function worker: start 0x1000 InitMenu requested_timeout=120s hard_timeout=122s
+[17:29:21] [dbg] cache hit for 0x1000 InitMenu validation=uncollected
+[17:29:21] /* == function 0x10060 InitMenu == */
+[17:29:21] /* info: function 0x10060 InitMenu attempt=decompiled validation=uncollected */
+[17:29:21] /* -- source c -- */
 /* InitMenu - Calls the DrawFrame procedure to draw the frame around the
  * sort menu, then prints the different options stored in the menu array.
  */
@@ -2775,7 +2711,7 @@ void InitMenu()
     if( clPause == 0L )
         _outtextxy( ach, LEFTCOLUMN, cszMenu - 3 );
 }
-[15:47:27] /* -- c -- */
+[17:29:21] /* -- c -- */
 /* COD annotations:
  * [bp-0x12] = ach
  * [bp-0x2] = i
@@ -3055,17 +2991,11 @@ short InitMenu(void)
 
     return ax_7;
 }
-[15:47:27] /* info: decompilation attempted for 20/20 selected function(s) */
+[17:29:21] /* info: decompilation attempted for 20/20 selected function(s) */
 
-[15:47:27] summary: decompiled 20/20 selected functions
+[17:29:21] summary: decompiled 20/20 selected functions
 summary: probable compiler versions: Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
 summary: probable library/signature sources: local_omf_pat, pat_backend:hyperscan
 summary: signature-matched library functions: 67
 summary: hidden signature-matched labels: 67
 summary: shown=20 decompiled=20 asm_or_detail_fallback=0
-[15:47:27] summary: slowest function attempt(s), top 5:
-[15:47:27] summary:   0x10060 InitMenu: 64.27s status=decompiled
-[15:47:27] summary:   0x102e0 RunMenu: 54.22s status=decompiled
-[15:47:27] summary:   0x10ce0 QuickSort: 27.19s status=decompiled
-[15:47:27] summary:   0x10560 InitBars: 22.27s status=decompiled
-[15:47:27] summary:   0x10498 DrawTime: 16.40s status=decompiled

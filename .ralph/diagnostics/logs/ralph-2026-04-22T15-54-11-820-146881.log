@@ -1,0 +1,4 @@
+2026-04-22T13:54:11.820888Z  INFO ralph: Spawning subprocess for TUI mode child_args=["-c", "ralph.yml", "run", "--rpc", "-p", "complete PLAN.md under AGENTS.md rules."]
+2026-04-22T13:54:11.821040Z  INFO ralph: TUI subprocess stderr redirected to log file log_file=/home/xor/vextest/.ralph/diagnostics/logs/ralph-2026-04-22T15-54-11-821-146881.log
+2026-04-22T13:54:11.821337Z  INFO ralph: TUI running in subprocess RPC mode
+2026-04-22T16:01:25.690021Z  INFO ralph_tui::app: Ctrl+C detected, signaling abort
