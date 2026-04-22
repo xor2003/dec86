@@ -1,0 +1,16 @@
+// StoreMock
+// Return size: 0
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// r0:Stack -0004
+// return address size: ?
+define StoreMock
+StoreMock_entry:
+	// succ:  l1
+l1:
+	r0 = Mem0[0x20000000<32>:word32]
+	Mem0[0x20000000<32>:word32] = r0
+	return
+	// succ:  StoreMock_exit
+StoreMock_exit:

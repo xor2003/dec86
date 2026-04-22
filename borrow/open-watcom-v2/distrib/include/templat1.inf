@@ -1,0 +1,904 @@
+# UTF-8 encoding, ¥
+name=Modify
+static_text=
+dynamic_text=AutoText,""
+static_text=
+static_text=\
+    //0"@ can:"\
+    //1"@ は:"\
+    //-1
+radio_button=ModNow,1,\
+    //0"&Make all the modifications for you"\
+    //1"すべての修正を行います (&M)"\
+    //-1
+radio_button=ModLater,0,\
+    //0"&Let you make the modifications later"\
+    //1"後でユーザー自身で修正します (&L)"\
+    //-1
+static_text=
+push_button=+"&OK"
+push_button=^\
+    //0"&Cancel"\
+    //1"キャンセル(&C)"\
+    //-1
+
+[Dialog]
+name=ModifyEnvironment
+static_text=
+static_text=\
+    //0"@ needs to modify environment variables in the registry."\
+    //1"@ はレジストリに環境変数を設定する必要があります。"\
+    //-1
+static_text=
+static_text=\
+    //0"@ can:"\
+    //1"@ は:"\
+    //-1
+radio_button=ModUser,0,\
+    //0"Modify current &user environment variables"\
+    //1"カレント・ユーザ環境変数として更新(&U)"\
+    //-1
+radio_button=ModMachine,1,\
+    //0"Modify local &machine environment variables"\
+    //1"ローカル・マシン環境変数として更新(&M)"\
+    //-1
+radio_button=ModLater,0,\
+    //0"&Let you make the modifications later"\
+    //1"後でユーザー自身で修正します (&L)"\
+    //-1
+static_text=
+push_button=+"&OK"
+push_button=?\
+    //0"&Help"\
+    //1"ヘルプ(&H)"\
+    //-1
+push_button=^\
+    //0"&Cancel"\
+    //1"キャンセル(&C)"\
+    //-1
+
+[Dialog]
+name=Help_ModifyEnvironment
+static_text=
+static_text=\
+    //0"Components of this application can be run as an NT service. \
+        If you wish to run this application as a service, or you are not \
+        sure, choose the 'modify local machine' option."\
+    //1"このアプリケーションのコンポーネントは NT サービスとして動作することがで\
+        きます。サービスとしてこのアプリケーションを動作させるか、または、そうで\
+        なければ 'ローカル・マシンの更新' オプションを選択して下さい。"\
+    //-1
+static_text=
+push_button=+"&OK"
+
+[Dialog]
+name=ModifyAssociations
+static_text=
+static_text=\
+    //0"@ can modify associations so that files will automatically"\
+    //1"@ can modify associations so that files will automatically"\
+    //-1
+static_text=\
+    //0"open with the Open Watcom tools."\
+    //1"open with the Open Watcom tools."\
+    //-1
+radio_button=ModEnv,1,"&Modify associations"
+radio_button=NoModEnv,0,"&Don't modify associations"
+static_text=
+push_button=+"&OK"
+push_button=?"&Help"
+push_button=^"&Cancel"
+
+[Dialog]
+name=Help_ModifyAssociations
+static_text=
+static_text="Modifying associations will cause C/C++ and FORTRAN source files"
+static_text="to automatically open with the Open Watcom tools. If you use other"
+static_text="tools to edit source code, then you may wish to keep your current"
+static_text="configuration as is."
+static_text=
+push_button=+"&OK"
+
+[Dialog]
+name=DLLInstall
+static_text=\
+    //0"@ attempted to install the file:"\
+    //1"@ は以下のファイルをインストールしようとしました。"\
+    //-1
+dynamic_text=FileDesc,\
+    //0"    "\
+    //1"    "\
+    //-1
+static_text=\
+    //0"in this directory:"\
+    //1"ディレクトリ:"\
+    //-1
+dynamic_text=DLLDir,\
+    //0"    "\
+    //1"    "\
+    //-1
+static_text=\
+    //0"but, it currently exists in"\
+    //1"同じファイルが以下のディレクトリにあります"\
+    //-1
+dynamic_text=OtherDLLDir,\
+    //0"    "\
+    //1"    "\
+    //-1
+static_text=
+radio_button=DLL_Delete_Old,,\
+    //0"Install the new file and &delete the existing file"\
+    //1"新しいファイルをインストールし、既存ファイルを削除します (&D)"\
+    //-1
+radio_button=DLL_Keep_Both,,\
+    //0"Install the new file and &keep the existing file"\
+    //1"新しいファイルをインストールし、既存ファイルを残します (&K)"\
+    //-1
+radio_button=DLL_Replace_Old,,\
+    //0"&Replace the existing file with the new file"\
+    //1"既存ファイルを新しいファイルで置き換えます (&R)"\
+    //-1
+radio_button=DLL_Dont_Install,,\
+    //0"Do &not install the new file"\
+    //1"新しいファイルをインストールしません (&N)"\
+    //-1
+static_text=
+check_box=DLL_Skip_Dialog,0,\
+    //0"&Use the current choice for all subsequent DLLs"\
+    //1"以降の全てのDLLに対して、今回と同じ選択をします (&U)"\
+    //-1
+static_text=
+push_button=+"&OK"
+push_button=^\
+    //0"&Cancel"\
+    //1"キャンセル(&C)"\
+    //-1
+
+[Dialog]
+name=ReadOnlyFile
+static_text=\
+    //0"@ attempted to install the file:"\
+    //1"@ は以下のファイルをインストールしようとしました。"\
+    //-1
+dynamic_text=FileDesc,\
+    //0"    "\
+    //1"    "\
+    //-1
+static_text=\
+    //0"but found it marked read-only"\
+    //1"しかし、そのファイルは書き込み禁止になっています"\
+    //-1
+static_text=
+radio_button=RO_Replace_Old,,\
+    //0"&Install the file anyway"\
+    //1"このファイルをインストールします (&I)"\
+    //-1
+radio_button=RO_Dont_Install,,\
+    //0"&Do not install this file"\
+    //1"このファイルをインストールしません (&D)"\
+    //-1
+static_text=
+check_box=RO_Skip_Dialog,0,\
+    //0"&Use the current choice for all read-only files"\
+    //1"全ての書き込み禁しファイルに対して、今回と同じ選択をします (&U)"\
+    //-1
+static_text=
+push_button=+"&OK"
+push_button=^\
+    //0"&Cancel"\
+    //1"キャンセル(&C)"\
+    //-1
+
+[Dialog]
+name=DeleteReadOnlyFile
+static_text=\
+    //0"@ attempted to remove the file:"\
+    //1"@ は、以下のファイルを削除します。"\
+    //-1
+dynamic_text=FileDesc,\
+    //0"    "\
+    //1"    "\
+    //-1
+static_text=\
+    //0"but found it marked read-only"\
+    //1"しかし、そのファイルは書き込み禁止になっています"\
+    //-1
+static_text=
+radio_button=RO_Remove_Old,,\
+    //0"&Remove the file anyway"\
+    //1"強制的にファイルを削除(&R)"\
+    //-1
+radio_button=RO_Dont_Remove,,\
+    //0"&Do not remove this file"\
+    //1"このファイルを削除しない(&D)"\
+    //-1
+static_text=
+check_box=RO_Skip_Remove,0,\
+    //0"&Use the current choice for all read-only files"\
+    //1"全ての書き込み禁止ファイルに対して、今回と同じ選択をします (&U)"\
+    //-1
+static_text=
+push_button=+"&OK"
+push_button=^\
+    //0"&Cancel"\
+    //1"キャンセル(&C)"\
+    //-1
+
+[Dialog]
+name=CantOpen
+static_text=
+dynamic_text=OpenError,\
+    //0"                                                                 "\
+    //1"                                                                 "\
+    //-1
+static_text=
+static_text=\
+    //0"@ will now stop."\
+    //1"@ は今停止します。"\
+    //-1
+push_button=*"&OK"
+
+
+[Dialog]
+name=NewerFile
+static_text=\
+    //0"@ attempted to install the file:"\
+    //1"@ は以下のファイルをインストールしようとしました。"\
+    //-1
+dynamic_text=FileDesc,\
+    //0"    "\
+    //1"    "\
+    //-1
+static_text=\
+    //0"but found a newer version already existed"\
+    //1"しかし、新しいバージョンが既にあることがわかりました"\
+    //-1
+static_text=
+radio_button=Newer_Replace_Old,,\
+    //0"&Install the file anyway"\
+    //1"このファイルをインストールする (&I)"\
+    //-1
+radio_button=Newer_Dont_Install,,\
+    //0"&Do not install this file"\
+    //1"このファイルをインストールしない (&D)"\
+    //-1
+static_text=
+check_box=Newer_Skip_Dialog,0,\
+    //0"&Use the current choice for all newer files"\
+    //1"以降のファイルに対して、同様な選択をします (&U)"\
+    //-1
+static_text=
+push_button=+"&OK"
+push_button=^\
+    //0"&Cancel"\
+    //1"キャンセル(&C)"\
+    //-1
+
+[Dialog]
+name=LocCfg
+static_text=\
+    //0"@ Can not find the following file:"\
+    //1"@は、以下のファイルが見つけられません。"\
+    //-1
+dynamic_text=FileToFind,""
+static_text=
+check_box=CfgFileCreate,1,\
+    //0"&Create the file"\
+    //1"&ファイルを作成します"\
+    //-1
+static_text=
+static_text=\
+    //0"Otherwise, specify a new drive:"\
+    //1"もしくは新しいドライブ名を指定:"\
+    //-1
+edit_control=CfgDir,,\
+    //0"Drive Letter:"\
+    //1"ドライブ名:"\
+    //-1
+static_text=
+push_button=+"&OK"
+push_button=^\
+    //0"&Cancel"\
+    //1"キャンセル(&C)"\
+    //-1
+
+[ErrorMessage]
+IDS_ERROR=\
+    //0"%s"\
+    //1"%s"\
+    //-1
+IDS_NODISKFOROPTION=\
+    //0"This medium or file does not contain the requested option."\
+    //1"このメディアまたはファイルには要求されたオプションが含まれていません。"\
+    //-1
+IDS_BADCRC=\
+    //0"Internal error unpacking: '%s' - bad CRC."\
+    //1"内部エラー アンパッキング: '%s' - CRCの不一致"\
+    //-1
+IDS_NOMEMORY=\
+    //0"Insufficient memory to run @.&\n Close an application and try again."\
+    //1"メモリ不足が発生しました @.&\n アプリケーションを終了して、再度、起動してください。"\
+    //-1
+IDS_NOSETUPINFOFILE=\
+    //0"The %s file cannot be found.\nPlease verify the distribution medium or file."\
+    //1"%s ファイルが見つかりません。\n配布メディアまたはファイルを確認してください。"\
+    //-1
+IDS_NODISKSPACE=\
+    //0"Drive %s: contains %lld %s of free disk space.\n@ requires a minimum of %lld %s.&\n\nThe installation may fail. Do you want to proceed anyway?"\
+    //1"ドライブ %s: には %lld %s のフリーなディスクスペースがあります。\n@ は最低 %lld %s 必要です。&\n\nインストールは失敗するかもしれませんが、続けますか?"\
+    //-1
+IDS_NODISKSPACE_UNC=\
+    //0"'%s' contains %lld %s of free disk space.\n@ requires a minimum of %lld %s.&\n\nThe installation may fail. Do you want to proceed anyway?"\
+    //1"'%s' には  %lld %s のフリーなディスクスペースがあります。\n@ は最低 %lld %s 必要です。&\n\nインストールは失敗するかもしれませんが、続けますか?"\
+    //-1
+IDS_UNCPATH_NOTEXIST=\
+    //0"Error: Drive '%s' does not exist.\nTry another drive."\
+    //1"エラー: ドライブ '%s' がありません。\n他のドライブを指定してください。"\
+    //-1
+IDS_UNCPATH_NOTWRITABLE=\
+    //0"Error: Drive '%s' is not writable.\nTry another drive."\
+    //1"エラー: ドライブ '%s' には書き込めません。\n他のドライブを指定してください。"\
+    //-1
+IDS_ASSUME_ENOUGHSPACE=\
+    //0"Cannot determine how much free disk space is on '%s'.\nAssume there is enough space and continue?"\
+    //1"'%s' にフリーなディスクスペースがどれぐらいあるかわかりません。\n十分なスペースがあるものとして続けますか?"\
+    //-1
+IDS_CANTMAKEDIR=\
+    //0"The %s directory cannot be created.&\nEnter another directory or try another drive."\
+    //1"ディレクトリ %s を作成することができません。&\n他のディレクトリまたはドライブを指定してください。"\
+    //-1
+IDS_QUERYABORT=\
+    //0"@ has not completed installing the software.\nAre you sure you want to stop installation?"\
+    //1"@ はソフトウェアのインストールを完了していません。\n本当にインストールを中止しますか?"\
+    //-1
+IDS_SETUPNOGOOD=\
+    //0"The software has not been successfully installed!\nYou must run @ again before using the software."\
+    //1"ソフトウェアのインストールは成功しませんでした!\nソフトウェアを使用する前に、再度 @ を実行しなければなりません。"\
+    //-1
+IDS_UNSETUPNOGOOD=\
+    //0"The software has not been successfully uninstalled!\nYou must run @ again to completely remove the software."\
+    //1"ソフトウェアは、正しく削除されていません。\nもう一度 @ を実行してソフトウェアを完全に削除してください。"\
+    //-1
+IDS_PMADDNOGOOD=\
+    //0"@ could not add the application(s) to the Program Manager.&\nDo you wish to ignore this problem and continue?"\
+    //1"@ はプログラム・マネージャへアプリケーションを追加できません。&\nこの問題を無視して続けますか?"\
+    //-1
+IDS_PMREMNOGOOD=\
+    //0"@ could not remove application(s) from the Program Manager.&\nDo you wish to ignore this problem and continue?"\
+    //1"@ はプログラム・マネージャからアプリケーションを削除できません。&\nこの問題を無視して続けますか?"\
+    //-1
+IDS_UNSETUPCOMPLETE=\
+    //0"@ has completed successfully."\
+    //1"@ はソフトウェアのインストールを完了しました。"\
+    //-1
+IDS_COMPLETE=\
+    //0"@ has completed successfully."\
+    //1"@ はソフトウェアのインストールを完了しました。"\
+    //-1
+IDS_NOMEMORYCOPY=\
+    //0"Insufficient memory to copy file.&\nTry again or cancel @."\
+    //1"メモリ不足でコピーが失敗しました。&\n再度、実行するかキャンセルしてください @"\
+    //-1
+IDS_CANTOPENDST=\
+    //0"Cannot create destination file:\n %s.&\nTry again or cancel @."\
+    //1"次のファイルが作成できません。:\n %s.&\n再度、実行するかキャンセルしてください @"\
+    //-1
+IDS_CANTOPENDST_NONAME=\
+    //0"Cannot create destination file.&\nTry again or cancel @."\
+    //1"送信先ファイルが作成できません。&\n再度、実行するかキャンセルしてください @"\
+    //-1
+IDS_CANTFINDAUTOEXEC=\
+    //0"@ cannot find the original AUTOEXEC.BAT file"\
+    //1"@ は元の AUTOEXEC.BAT を見つけられません"\
+    //-1
+IDS_CANTFINDCONFIGSYS=\
+    //0"@ cannot find the original CONFIG.SYS file"\
+    //1"@ は元の CONFIG.SYS を見つけられません"\
+    //-1
+IDS_COPYAUTOEXEC=\
+    //0"@ will place the contents of your original\nAUTOEXEC.BAT and CONFIG.SYS files\n in the following backup files:\n\n    %s\n    %s"\
+    //1"@ はAUTOEXEC.BAT と\n CONFIG.SYS の元の内容\nを以下のバックアップ・ファイルに入れます。\n\n    %s\n    %s"\
+    //-1
+IDS_COPYCONFIGSYS=\
+    //0"@ will place the contents of your original CONFIG.SYS file in the following backup file: \n\n    %s\n"\
+    //1"@ は元の CONFIG.SYS の内容を以下のバックアップ・ファイルに入れます。 \n\n    %s\n"\
+    //-1
+IDS_NEWAUTOEXEC=\
+    //0"@ will save the changes it would make to\nyour AUTOEXEC.BAT and CONFIG.SYS files\nin the following backup files:\n\n    %s\n    %s"\
+    //1"@ が以下のファイル\nAUTOEXEC.BAT と CONFIG.SYS files\nに行おうとした変更を以下のバックアップ・ファイルに保存します。\n\n    %s\n    %s"\
+    //-1
+IDS_NEWCONFIGSYS=\
+    //0"@ will save the changes it would make to your CONFIG.SYS file in the following backup file:\n\n    %s\n"\
+    //1"@ が CONFIG.SYS に行おうとした変更を、以下のバックアップ・ファイルに保存します。\n\n    %s\n"\
+    //-1
+IDS_ERRORBACKAUTO=\
+    //0"An error occurred trying to create the backup\ncopy of your AUTOEXEC.BAT file"\
+    //1"元の AUTOEXEC.BAT のバックアップを作成するときに\nエラーが起きました"\
+    //-1
+IDS_ERRORBACKCONFIG=\
+    //0"An error occurred trying to create the backup\ncopy of your CONFIG.SYS file"\
+    //1"元の CONFIG.SYS のバックアップを作成するときに\nエラーが起きました"\
+    //-1
+IDS_CHANGES=\
+    //0"@ will save the changes it would make to\nyour Environment in the following file:\n\n    %s"\
+    //1"@ が環境に対して行おうとした変更を\n以下のファイルに保存します。\n\n    %s"\
+    //-1
+IDS_OS2CONFIGSYS=\
+    //0"The changes to the CONFIG.SYS file are required to run the software.  Please shutdown your system and restart to allow the changes to take effect.\n"\
+    //1"CONFIG.SYS への変更はソフトウェアの実行に必要です。システムをシャットダウンし、再起動して変更を有効にしてください。\n"\
+    //-1
+IDS_NT_REBOOT=\
+    //0"@ has completed installing the software.&\n\nYou should reboot your computer so\nthat the changes to your system setup\nwill take effect."\
+    //1"@ : インストールを完了しました。&\n\n変更した設定を有効にするには、\nコンピュータを再起動する必要\nがあります。"\
+    //-1
+IDS_OS2_REBOOT=\
+    //0"@ has completed installing the software.&\n\nYou should reboot your computer so\nthat the changes to your CONFIG.SYS\nwill take effect."\
+    //1"@ : インストールを完了しました。&\n\nCONFIG.SYSの設定の変更を有効にする\nには、コンピュータを再起動する必要\nがあります。"\
+    //-1
+IDS_WINDOWS_REBOOT=\
+    //0"@ has completed installing the software.&\n\nYou should reboot your computer so\nthat the changes to your AUTOEXEC.BAT,\nCONFIG.SYS and Windows .INI files will take effect."\
+    //1"@ : インストールを完了しました。&\n\nAUTOEXEC.BAT、CONFIG.SYS と\nWindows.INI の設定の変更を有効にする\nには、コンピュータを再起動する必要があります。"\
+    //-1
+IDS_DOS_REBOOT=\
+    //0"@ has completed installing the software.&\n\nYou should reboot your computer so\nthat the changes to your AUTOEXEC.BAT\nand CONFIG.SYS will take effect."\
+    //1"@ : インストールを完了しました。&\n\nAUTOEXEC.BAT と CONFIG.SYS の設定\nの変更を有効にするには、コンピュータ\nを再起動する必要があります。"\
+    //-1
+IDS_ERROR_WRITING=\
+    //0"An I/O error occurred while writing to the file '%s'"\
+    //1"書き込み中に I/O エラー発生、ファイル '%s'"\
+    //-1
+IDS_ERROR_OPENING=\
+    //0"An I/O error occurred while opening the file '%s'"\
+    //1"オープン中に I/O エラー発生、ファイル '%s'"\
+    //-1
+IDS_ERROR_CLOSING=\
+    //0"An I/O error occurred while closing the file '%s'"\
+    //1"クローズ中に I/O エラー発生、ファイル '%s'"\
+    //-1
+IDS_FIRST=\
+    //0"%s"\
+    //1"%s"\
+    //-1
+IDS_UNKNOWNERROR=\
+    //0"Unknown error"\
+    //1"未知のエラー"\
+    //-1
+IDS_CANTCREATEFILE=\
+    //0"Cannot create file %s."\
+    //1"ファイル %s を作成できません。"\
+    //-1
+IDS_CANTDELETEFILE=\
+    //0"Cannot delete file %s."\
+    //1"ファイル %s を削除できません。"\
+    //-1
+IDS_CANTOPENSRC=\
+    //0"Cannot open source file:\n%s."\
+    //1"ソースファイル %s オープンできません。"\
+    //-1
+IDS_ENV_CHANGES=\
+    //0"Required changes to environment:"\
+    //1"環境の変更を要求しました。"\
+    //-1
+IDS_ADD_TO_VAR=\
+    //0"add the following to the '%s' variable"\
+    //1"'%s'変数に以下を追加 "\
+    //-1
+IDS_SET_VAR_TO=\
+    //0"set variable '%s' to"\
+    //1"'%s'変数の設定"\
+    //-1
+IDS_DRIVE_SPEC=\
+    //0"Drive %s: "\
+    //1"ドライブ %s:"\
+    //-1
+IDS_DRIVE_SPEC_UNC=\
+    //0"Drive '%s' "\
+    //1"ドライブ '%s' "\
+    //-1
+IDS_DRIVE_FREED=\
+    //0" will be freed."\
+    //1"開放されます。"\
+    //-1
+IDS_DRIVE_REQUIRED=\
+    //0" required,  "\
+    //1"要求しました"\
+    //-1
+IDS_DRIVE_AVAILABLE=\
+    //0" available."\
+    //1"使用可能です。"\
+    //-1
+IDS_MODIFY_AUTOEXEC=\
+    //0"@ needs to modify AUTOEXEC.BAT and CONFIG.SYS."\
+    //1"@ AUTOEXEC.BAT と CONFIG.SYS を更新する必要があります。"\
+    //-1
+IDS_MODIFY_CONFIG=\
+    //0"@ needs to modify CONFIG.SYS."\
+    //1"@ CONFIG.SYS を更新する必要があります。"\
+    //-1
+IDS_MODIFY_ENVIRONMENT=\
+    //0"@ needs to modify environment variables in the registry."\
+    //1"@ はレジストリの環境変数を更新する必要があります。"\
+    //-1
+IDS_INCONSISTENT=\
+    //0"@ has determined that you are installing over a previous version of the software, or have manually added or removed files.  Do you wish to install all missing files?"\
+    //1"@ は、ユーザーがインストーラを使わずにファイルを削除したか、手動でサブセットをインストールしたと判断しました。すべての不足しているファイルをインストールしますか?"\
+    //-1
+IDS_REMOVE_ODBC=\
+    //0"@ has determined that after this uninstall, the ODBC core components will no longer be used. Should these files be deleted?"\
+    //1"@ は、この削除後には、ODBC のコア・コンポーネントは使用されないことを決定しています。これらのファイルを削除しますか?"\
+    //-1
+IDS_REMOVE_DLL=\
+    //0"@ has determined that after this uninstall, the file %s will no longer be used. Should this file be deleted?"\
+    //1"@ は、この削除後には、ファイル %s は使用されないことを決定しています。このファイルを削除しますか?"\
+    //-1
+
+IDS_CANTREPLACE=\
+    //0"Cannot replace the file %s.&\nContinue with the install?"\
+    //1"ファイル %s を置き換えることができません。&\nインストールを続けますか?"\
+    //-1
+IDS_NOSPACE_AFTER_DELETING=\
+    //0"The package will require about %lld %s of space in the path '%s', yet even after the current contents of this path are deleted, only %lld %s will be free.\nYou need %lld %s more space.\nDo you wish to proceed and create a package even though this may fail?"\
+    //1"このパッケージは、パス '%s' において約 %lld %s のスペースを必要としています。このパスが削除された後の現在の内容は、 %lld %s だけフリーになります。\nあと %lld %s バイト 必要となります。失敗するかもしれないしれませんが、続けてパッケージを作成しますか?"\
+    //-1
+IDS_NOTENOUGHSPACE=\
+    //0"The package will require about %lld %s of space in the path '%s', yet %lld %s is free.\nYou need %lld %s more space.\nDo you wish to proceed and create a package even though this may fail?"\
+    //1"このパッケージは、パス '%s' において約 %lld %s のスペースを必要としています。 \nまだ %lld %s フリーです。あと %lld %s 必要となります。失敗するかもしれないしれませんが、続けてパッケージを作成しますか?"\
+    //-1
+IDS_BAD_PATH=\
+    //0"The path: '%s' that you entered is either inaccessible, not valid, or cannot be made.\nCheck the path and run this program again."\
+    //1"入力したパス '%s' は、アクセスできないか、不当か、または作成できません。\nパスを確認し、このプログラムをサイド実行してください。"\
+    //-1
+IDS_EMPTY_DIR=\
+    //0"WARNING: Before copying files, this program will attempt to delete the contents of the existing directory: '%s'.\nAre you sure you wish to proceed?\n"\
+    //1"警告:ファイルをコピーする前に、このプログラムは、存在するディレクトリ '%s' の内容を削除しようとします。\n続けて実行しますか?\n"\
+    //-1
+IDS_FAILED_COPYING=\
+    //0"Error: The package could not be successfully copied to the directory: '%s'."\
+    //1"エラー: パッケージは、ディレクトリ '%s' へのコピーに成功しませんでした。"\
+    //-1
+IDS_PDF_FAILED=\
+    //0"Error: Failed to create the .pdf file for this package successfully."\
+    //1"エラー: このパッケージのための .pdf ファイルを作成するのに失敗しました。"\
+    //-1
+IDS_NO_LICENSEINFO=\
+    //0"Could not apply the license because a user name and company were not found in c:\sms.ini."\
+    //1"c:\sms.ini にユーザ名と会社がなかったため、ライセンスの適用ができませんでした。"\
+    //-1
+IDS_PACKAGE_CREATED=\
+    //0"A package for Microsoft BackOffice has been successfully created in the directory: '%s'.\nThe package definition file: '%s' can also be found in the same directory."\
+    //1"Microsoft BackOffice のパッケージの作成が、ディレクトリ '%s' に成功しました。\nパッケージ定義ファイル '%s' は、同一のディレクトリにあります。"\
+    //-1
+IDS_CANTOPENFILE=\
+    //0"Cannot open file '%s'."\
+    //1"ファイル '%s' をオープンできません。"\
+    //-1
+IDS_CANTALLOCATEMEMORY=\
+    //0"Could not allocate memory."\
+    //1"メモリを割り当てできません。"\
+    //-1
+IDS_ERROREDITING=\
+    //0"Error editing the file '%s'."\
+    //1"ファイル '%s' を変更できません。"\
+    //-1
+IDS_REGERROR=\
+    //0"An error occurred while attempting to modify the registry."\
+    //1"レジストリを変更中にエラーが発生しました。"\
+    //-1
+IDS_REG_ODBC_ERROR=\
+    //0"Information about ODBC was expected in the registry, but not found."\
+    //1"レジストリから ODBC の情報を取得しようとしましたが、みつかりませんでした。"\
+    //-1
+IDS_FAILED_MODIFYING_FILE=\
+    //0"Could not modify the configuration file:\n%s&\nDo you wish to continue?"\
+    //1"設定ファイル '%s' を更新できません。\n処理を続けますか?\
+    //-1
+IDS_HELP_BUTTON=\
+    //0"?&Help"\
+    //1"?ヘルプ(&H)"\
+    //-1
+IDS_CANCEL_BUTTON=\
+    //0"^&Cancel"\
+    //1"^キャンセル(&C)"\
+    //-1
+IDS_OK_BUTTON=\
+    //0".+&OK"\
+    //1".+&OK"\
+    //-1
+IDS_FAILEDBACKUP=\
+    //0"The file '%s' could not be copied to '%s'.&\n\nDo you wish to continue without a backup?"\
+    //1"ファイル '%s' を '%s' へコピーできません。&\n\nバックアップせずに続けますか?"\
+    //-1
+IDS_INVALID_DIR=\
+    //0"'%s' is not a valid directory."\
+    //1"'%s' は有効なディレクトリではありません。"\
+    //-1
+IDS_NODIR=\
+    //0"The directory '%s' does not exist.&  Do you want to create it?\n\n(Choose YES to create the directory, or NO to enter a different directory.)"\
+    //1"ディレクトリ '%s' がありません。&  作成しますか?\n\n作成しない場合は他のディレクトリを入力してください。"\
+    //-1
+IDS_ALIAS_EXISTS=\
+    //0"The alias '%s' exists already.&  Do you wish to enter a different alias?\n\n(Choose YES to go back and enter a different alias, or NO to overwrite the the existing alias.)"\
+    //1"エイリアス '%s' はすでに存在してます。&  新しいエイリアスを入力しますか?\n\n入力しない場合は置き換えます。"\
+    //-1
+IDS_NODESTINFO=\
+    //0"Disk space information from the destination path: '%s' could not be found.  An estimate is that about %lld %s of space is needed.&\n\nDo you wish to continue anyway?"\
+    //1"送信先パスからのディスク・スペース情報 : '%s' はありません。 estimate には約 %lld %s のスペースが必要です。&\n\このまま続けますか?"\
+    //-1
+IDS_NOSRCINFO=\
+    //0"Disk space information for the source path: '%s' could not be found.&\n\nDo you wish to continue anyway?"\
+    //1"ソースパスからのディスク・スペース情報 : '%s' はありません。&\n\n続けますか?"\
+    //-1
+IDS_NOFREESPACEINFO=\
+    //0"The amount of free space on '%s' cannot be determined.  About %lld %s free space is needed.&\n\nDo you wish to continue anyway?"\
+    //1"'%s' のフリーなディスクスペースのサイズがわかりません。約 %lld %s のフリーなスペースが必要です。&\n\n続けますか?"\
+    //-1
+IDS_NSCONFIG_1=\
+    //0"Netscape Server was found in:"\
+    //1"Netscape Server がありません:"\
+    //-1
+IDS_NSCONFIG_2=\
+    //0"This dialog lets you choose how to configure Netscape Server for NetImpact Dynamo."\
+    //1"ここではどのように NetImpact Dynamo に対する Netscape Server の設定をするか選んでください。"\
+    //-1
+IDS_NSCONFIG_3=\
+    //0"Select where to place the NetImpact Dynamo NSAPI DLLs for use by Netscape Server:"\
+    //1"Netscape サーバによって使用する NetImpact Dynamo NSAPI DLLをどこに置くか選択してください:"\
+    //-1
+IDS_NSCONFIG_4=\
+    //0"Use the path: %s (&recommended)"\
+    //1"パス %s を使用することをおすすめします(&R)"\
+    //-1
+IDS_NSCONFIG_5=\
+    //0"Use the &path: %s"\
+    //1"パス %s を使用(&P)"\
+    //-1
+IDS_NSCONFIG_6=\
+    //0"&Enter a path."\
+    //1"パスの入力(&E)"\
+    //-1
+IDS_NSCONFIG_7=\
+    //0"NSAPI DLL path:"\
+    //1"NSAPI DLL パス:"\
+    //-1
+IDS_NSCONFIG_8=\
+    //0"@ can modify the '%s' file for each Web server under this install of Netscape Server that you want to work with NetImpact Dynamo."\
+    //1"@ はこのインストール下の各 Web サーバを NetImpact Dynamoで動かしたい Netscape Server に対して '%s' ファイルを修正することができるます。"\
+    //-1
+IDS_NSCONFIG_9=\
+    //0"&List selected file(s)..."\
+    //1"選択されたファイル・リスト(&L)"\
+    //-1
+IDS_NSCONFIG_10=\
+    //0"Modify the '%s' file(s)."\
+    //1"ファイル '%s' を更新します。"\
+    //-1
+IDS_NSCONFIG_11=\
+    //0"Below is a list of the %s file(s) for Netscape Web Servers found under this install of Netscape Server.  Select the %s file(s) you want @ to configure for NetImpact Dynamo:"\
+    //1"このインストール下でみつかった Netscape Server の Netscape Web Servers に対する %s ファイルのリストです。NetImpact Dynamo に対して設定するために @ したい %s ファイルを選択してください:"\
+    //-1
+IDS_NSCONFIG_12=\
+    //0"Before modifying the %s file(s) do you want to copy the original to a backup with the extension %s in the same directory?"\
+    //1"ファイル %s を更新する前にオリジナルを同じディレクトリの拡張子 %s でバックアップのためにコピーしますか?"\
+    //-1
+IDS_NSCONFIG_13=\
+    //0"Yes, backup the %s file(s)."\
+    //1"はい、ファイル %s をバックアップする。"\
+    //-1
+IDS_IISCONFIG_1=\
+    //0"'%s' was found on this machine."\
+    //1"'%s' がこのマシンには見つかりません。"\
+    //-1
+IDS_IISCONFIG_2=\
+    //0"Location: %s"\
+    //1"ロケーション: %s"\
+    //-1
+IDS_IISCONFIG_3=\
+    //0"This dialog lets you choose how to configure the Web server for NetImpact Dynamo."\
+    //1"ここでは NetImpact Dynamo の Web サーバをどのように設定するかを選ぶことができます。."\
+    //-1
+IDS_IISCONFIG_4=\
+    //0"Select where to place the NetImpact Dynamo ISAPI DLLs for use by the Web server:"\
+    //1"Web サーバによって使用する NetImpact Dynamo ISAPI DLLをどこに置くか選択してください:"\
+    //-1
+IDS_IISCONFIG_5=\
+    //0"Use the path: %s (&recommended)"\
+    //1"パス %s を使用することをおすすめします(&R)"\
+    //-1
+IDS_IISCONFIG_6=\
+    //0"Use the &path: %s"\
+    //1"パス %s を使用(&P)"\
+    //-1
+IDS_IISCONFIG_7=\
+    //0"&Enter a path."\
+    //1"パスの入力(&E)"\
+    //-1
+IDS_IISCONFIG_8=\
+    //0"ISAPI DLL path:"\
+    //1"ISAPI DLL パス:"\
+    //-1
+IDS_IISCONFIG_9=\
+    //0"You must enter a virtual alias for this path (e.g. '/Sybase' )."\
+    //1"このパスに対する仮想エイリアスを入力してください ( 例 '\\Sybase' )."\
+    //-1
+IDS_IISCONFIG_10=\
+    //0"Virtual alias:"\
+    //1"仮想エイリアス:"\
+    //-1
+IDS_NID_NS=\
+    //0"Netscape Server"\
+    //1"Netscape サーバ"\
+    //-1
+IDS_NID_IIS=\
+    //0"Microsoft Web servers"\
+    //1"Microsoft Web サーバ"\
+    //-1
+IDS_NID_CGI=\
+    //0"CGI"\
+    //1"CGI"\
+    //-1
+IDS_NID_WINCGI=\
+    //0"Win-CGI"\
+    //1"Win-CGI"\
+    //-1
+IDS_NID_IS_CGI_PRESENT=\
+    //0"Do you have a CGI / Win-CGI Web Server on this machine?"\
+    //1"このマシンには CGI / Win-CGI Web Server がありますか?"\
+    //-1
+IDS_NID_LOOKFORSERVERS=\
+    //0"@ will attempt to detect Microsoft and/or Netscape Web servers on this machine.\n\nIf a Web server is found, @ will offer to do some of the configuration needed for the Web server work with NetImpact Dynamo.\n\nNote that NetImpact Dynamo must already be installed, and your Web server(s) should not be currently running for this to work."\
+    //1"@ はこのマシンに Microsoft または Netscape Web サーバの検出を行います。Web サーバがあった場合、@ は NetImpact Dynamo が動作するするために必要な設定を行います。\n\nこれが動作するためには、NetImpact Dynamo はすでにインストールされていなければならないことに注意してください。"\
+    //-1
+IDS_NID_QUERY_LOOKFORSERVERS=\
+    //0"Do you want @ to attempt to detect Microsoft and/or Netscape Web servers on this machine?\n\n(If a Web server is found, @ will offer to do some of the configuration needed for the Web Server to work with NetImpact Dynamo.  Note that your Web server(s) should not be currently running for this to work.)"\
+    //1"@ はこのマシン上の Microsoft または Netscape Web サーバの検出を行います（ Web サーバが見つかった場合、@ は Web Server が NetImpact Dynamo で動作するために必要な設定を変更します)。"\
+    //-1
+IDS_NID_NOSERVERSFOUND=\
+    //0"@ could not detect Microsoft or Netscape Web servers on this machine.  If a web server is installed but was not detected, consult the NetImpact Dynamo documentation to set up your web server manually."\
+    //1"@ は このマシン上に Microsoft または Netscape Web サーバを検出しませんでした。サーバがインストールされて、検出されなかった場合、NetImpact Dynamo ドキュメントの web サーバの手動セットアップを参照してください。"\
+    //-1
+IDS_NID_CANTSETUPSERVERS=\
+    //0"Note: @ will not try to detect %s on your machine because one or more of the following NetImpact Dynamo files used by this Web server was not found:\n\n%s&\nReinstall NetImpact Dynamo if you want to detect and configure this Web server."\
+    //1"注意: @ は複数の以下の NetImpact Dynamo ファイルはみつからなかったこの Web サーバによって使われているので、このマシン上に %s を検出しないでしょう。:\n\n%s&\n検出とこの Web server の設定をする場合、NetImpact Dynamo を再インストールしてください。"\
+    //-1
+IDS_NID_CANTSETUPCGI=\
+    //0"Note: One or more of the following files that make up the NetImpact Dynamo Application Server for %s Web servers was not found:\n\n%s\nReinstall NetImpact Dynamo if you want to use these files."\
+    //1"注意: %s Web サーバに対する NetImpact Dynamo Application サーバがメイクアップした以下のファイルがみつかりません:\n\n%s\nこれらのファイルを使用する場合、 NetImpact Dynamo を再インストールしてください。"\
+    //-1
+IDS_NID_OPTIMAFILESMISSING=\
+    //0"@ cannot set up the Web server(s) on this machine because one or more of the following NetImpact Dynamo files was not found in '%s' as expected:\n\n%s&\nTry reinstalling NetImpact Dynamo."\
+    //1"@ は 以下の NetImpact Dynamo ファイルが '%s' にみつからないので、このマシン上の Web サーバをセットアップできません。:\n\n%s&\nNetImpact Dynamo を再インストールしてください。"\
+    //-1
+IDS_NID_SUCCESS=\
+    //0"Web server configuration completed successfully."\
+    //1"Web サーバの設定が正常に完了しました。"\
+    //-1
+IDS_NID_FAILED=\
+    //0"Web server configuration was aborted or did not complete successfully."\
+    //1"Web サーバの設定が失敗または正常に終了しませんでした。"\
+    //-1
+IDS_NID_ACCESSDENIED=\
+    //0"The destination file '%s' exists already and cannot be written to.\nThe file is probably being used by another application right now.\nMake sure that no applications that could use this file are running (like your Web server), and try this program again."\
+    //1"送信先ファイル '%s' は、すでに存在し、書込むことができません。\nこのファイルは、別のアプリケーションが使用しています。このファイルを使用しているアプリケーション( Web Server など )を終了して、再度このプログラムを実行してください。"\
+    //-1
+
+[SetupErrorMessage]
+IDS_WRITEERROR=\
+    //0"Error writing to destination file"\
+    //1"コピー先ファイルへの書き込みエラー"\
+    //-1
+IDS_READERROR=\
+    //0"Error reading from source file"\
+    //1"ソースファイルからの読み取りエラー"\
+    //-1
+IDS_NULLSTRING=\
+    //0"NULL String"\
+    //1"空(NULL)の文字列"\
+    //-1
+IDS_HEAPOK=\
+    //0"Heap OK"\
+    //1"ヒープ OK"\
+    //-1
+IDS_HEAPEND=\
+    //0"End of Heap"\
+    //1"ヒープの終端"\
+    //-1
+IDS_HEAPEMPTY=\
+    //0"Heap is Empty"\
+    //1"ヒープは空です"\
+    //-1
+IDS_HEAPDAMAGE=\
+    //0"Head is Damaged"\
+    //1"ヒープは壊れています"\
+    //-1
+IDS_CONTROLERROR=\
+    //0"Error creating control"\
+    //1"コントロール作成エラー"\
+    //-1
+IDS_CONTROLCLASSERROR=\
+    //0"Invalid control class"\
+    //1"不正なコントロールクラス"\
+    //-1
+IDS_QUERYFSERROR=\
+    //0"DosQueryFSInfo error: return code = %ld"\
+    //1"DosQueryFSInfo エラー: 戻り値 = %ld"\
+    //-1
+
+[StatusLineMessage]
+IDS_CHECKING=\
+    //0"Checking directory for existing components ..."\
+    //1"既存コンポーネントのためのディレクトリ・チェック..."\
+    //-1
+IDS_CREATEPROGRAMFOLDER=\
+    //0"Creating Program Folder"\
+    //1"プログラム・フォルダの作成"\
+    //-1
+IDS_CREATEDIRECTORY=\
+    //0"Creating Directories..."\
+    //1"ディレクトリ作成..."\
+    //-1
+IDS_RELOCATING=\
+    //0"Relocating Files..."\
+    //1"ファイルの再配置..."\
+    //-1
+IDS_COPYFILE=\
+    //0"Installing Files..."\
+    //1"ファイルのインストール..."\
+    //-1
+IDS_COPYINGFILE=\
+    //0"Copying Files..."\
+    //1"ファイルのコピー..."\
+    //-1
+IDS_REMOVING=\
+    //0"Removing Files..."\
+    //1"ファイルの削除..."\
+    //-1
+IDS_CREATEFILE=\
+    //0"Copying New File"\
+    //1"新しいファイルのコピー"\
+    //-1
+IDS_DELETEFILE=\
+    //0"Deleting File"\
+    //1"ファイルの削除(delete)"\
+    //-1
+IDS_CREATESERVICE=\
+    //0"Creating Windows NT Service..."\
+    //1"Windows NT サービスの作成"\
+    //-1
+IDS_CREATING_FILE=\
+    //0"Creating File..."\
+    //1"ファイルの作成"\
+    //-1
+IDS_DELETEFILES=\
+    //0"Deleting Files..."\
+    //1"ファイルの削除"\
+    //-1
+IDS_CHECKINGPATH=\
+    //0"Checking destination path..."\
+    //1"パスをチェックしてます"\
+    //-1
+IDS_EMBEDDED=\
+    //0"Renaming files for embedded application..."\
+    //1"組込まれたアプリケーションのファイルのリネーム"\
+    //-1
+
+[LicenseMessage]
+IDS_LICENSEMESSAGE=\
+    //0"Name and Company name must be filled in"\
+    //1"名前と会社/組織名は入力しなければなりません"\
+    //-1
+IDS_APPLYLICENSE=\
+    //0"Applying License..."\
+    //1"ライセンスの適用..."\
+    //-1
+
+[Application]
+DLL_Delete_Old=0
+DLL_Keep_Both=1
+DLL_Replace_Old=0
+DLL_Dont_Install=0
+RO_Replace_Old=0
+RO_Dont_Install=1
+RO_Remove_Old=0
+RO_Dont_Remove=1
+Newer_Replace_Old=0
+Newer_Dont_Install=1

@@ -1,0 +1,58 @@
+proj_name = wtouch
+
+wtouch_autodepends = .AUTODEPEND
+
+wtouch_ntverrc = ../h
+
+wtouch_wreslib_cli = text
+
+wtouch_qnx_usage = 1
+
+additional_clean = *.gh *.grh *.grc
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+#
+# cflags
+#
+.c: ../c;$(watcom_dir)/c
+
+inc_dirs = -I. -I"../h" -I"$(clib_dir)/h"
+
+#
+# lflags
+#
+extra_l_flags_dos = opt stack=4k
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+exetarg_prebuild_objs = usage.gh msg.grh
+exetarg_objs          = touch.obj dtparse.obj wtmsg.obj
+exetarg_res           = $(proj_name).res
+!include exetarg.mif
+
+#
+# rc and others
+#
+$(proj_name).res : ../h/wtouch.rc ../h/wtouch.msg usage.gh msg.grh $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+msg.grh : ../h/wtouch.msg $(__MAKEFILES__)
+    @%make echo_awk
+    $(noecho)*awk -v base=MSG_RC_BASE -f $(build_dir)/makemsg.awk -v OUTFILE=$^. $[@
+
+optencod_targets = $(host_os)
+!ifeq debug 2
+optencod_targets += dbg
+!endif
+
+usage.gh $(qnx_usage) : ../h/options.gml $(__MAKEFILES__)
+    @%make echo_optencod
+    $(optencod) -rc=MSG_USAGE_BASE -utf8 $(optencod_opt_$(host_os)) $[@ . . $@ . $(optencod_targets)

@@ -1,0 +1,35 @@
+@moxy
+@attribute required string Accumulator
+@attribute required int Size
+@moxy
+
+namespace {{ moxy.Class.Namespace }};
+
+using Spice86.Core.Emulator.CPU.CfgCpu.Ast.Builder;
+using Spice86.Core.Emulator.CPU.CfgCpu.Ast.Instruction;
+using Spice86.Core.Emulator.CPU.CfgCpu.InstructionExecutor;
+using Spice86.Core.Emulator.CPU.CfgCpu.ParsedInstruction.Instructions.CommonGrammar;
+using Spice86.Core.Emulator.CPU.CfgCpu.ParsedInstruction.Prefix;
+using Spice86.Shared.Emulator.Memory;
+
+public partial class {{ moxy.Class.Name }} : InstructionWithSegmentRegisterIndexAndOffsetField<ushort> {
+    public {{ moxy.Class.Name }}(SegmentedAddress address, InstructionField<ushort> opcodeField, List<InstructionPrefix> prefixes,
+        int segmentRegisterIndex, int defaultSegmentRegisterIndex, InstructionField<ushort> offsetField) :
+         base(address, opcodeField, prefixes, segmentRegisterIndex, defaultSegmentRegisterIndex, offsetField, 1) {
+    }
+    
+    public override void Execute(InstructionExecutionHelper helper) {
+        helper.State.{{Accumulator}} = helper.Memory.UInt{{Size}}[helper.GetSegmentedAddress(this)];
+        helper.MoveIpToEndOfInstruction(this);
+    }
+
+    public override InstructionNode ToInstructionAst(AstBuilder builder) {
+        return new InstructionNode(InstructionOperation.MOV,
+            builder.Register.Accumulator(builder.UType({{Size}})),
+            builder.Pointer.ToSegmentedPointer(
+                builder.UType({{Size}}), 
+                SegmentRegisterIndex, DefaultSegmentRegisterIndex, 
+                builder.InstructionField.ToNode(OffsetField))
+            );
+    }
+}

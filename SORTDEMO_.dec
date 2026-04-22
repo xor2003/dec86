@@ -1,0 +1,2539 @@
+[19:25:26] /* loading: SORTDEMO.EXE */
+[19:25:26] [dbg] build_project: path=SORTDEMO.EXE suffix=.exe force_blob=False
+[19:25:26] [dbg] dos_mz load base=0x10000
+[19:25:26] [dbg] project built: arch=86_16 entry=0x10f9a
+[dbg] loaded sidecar metadata: format=cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan code_labels=90 data_labels=0 structs=0
+[dbg] signature-matched compiler versions: Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
+[19:25:26] /* info: recovery evidence: sidecar-assisted recovery (cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan) */
+[19:25:26] /* discovering likely functions... */
+[19:25:26] /* sidecar label ranking prepared 20 entries in 6.8ms. */
+[19:25:26] /* skipping 70 signature-matched function(s) by default. */
+[19:25:26] /* == known function catalog (sidecar-backed) == */
+0x10010 main size=0x4d range=[0x10010, 0x1005d)
+0x10060 InitMenu size=0x17b range=[0x10060, 0x101db)
+0x101f0 DrawFrame size=0xdc range=[0x101f0, 0x102cc)
+0x102e0 RunMenu size=0x1b1 range=[0x102e0, 0x10491)
+0x10498 DrawTime size=0xbc range=[0x10498, 0x10554)
+0x10560 InitBars size=0x112 range=[0x10560, 0x10672)
+0x10678 ReInitBars size=0x50 range=[0x10678, 0x106c8)
+0x106c8 DrawBar size=0x93 range=[0x106c8, 0x1075b)
+0x10768 SwapBars size=0x2c range=[0x10768, 0x10794)
+0x107b8 Swaps size=0x2f range=[0x107b8, 0x107e7)
+0x10808 InsertionSort size=0xb8 range=[0x10808, 0x108c0)
+0x108d0 BubbleSort size=0x8b range=[0x108d0, 0x1095b)
+0x10970 HeapSort size=0x78 range=[0x10970, 0x109e8)
+0x109e8 PercolateUp size=0x79 range=[0x109e8, 0x10a61)
+0x10a88 PercolateDown size=0xa4 range=[0x10a88, 0x10b2c)
+0x10b50 ExchangeSort size=0xa4 range=[0x10b50, 0x10bf4)
+0x10c18 ShellSort size=0xbc range=[0x10c18, 0x10cd4)
+0x10ce0 QuickSort size=0x17d range=[0x10ce0, 0x10e5d)
+0x10e70 Beep size=0xa8 range=[0x10e70, 0x10f18)
+0x10f38 Sleep size=0x3b range=[0x10f38, 0x10f73)
+[19:25:26] /* binary: SORTDEMO.EXE */
+[19:25:26] /* arch: 86_16 */
+[19:25:26] /* entry: 0x10f9a */
+[19:25:26] /* functions queued for decompilation: 20 */
+[19:25:26] /* info: selected 20 function(s) for decompilation */
+[19:25:26] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
+[19:25:26] [dbg] recovery worker: start 0x10010 main mode=lst recovery_timeout=120s
+[19:25:26] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
+[19:25:26] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
+[19:25:26] [dbg] isolated function worker: start 0x1000 main requested_timeout=120s hard_timeout=122s
+[19:25:26] [dbg] function complexity for 0x10010 main: blocks=9, bytes=77
+[19:25:26] [dbg] decompile_function: addr=0x10010 (slice=0x1000) name=main
+[19:25:26] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:26] [dbg] registered 10 direct callee stub(s) for 0x1000
+[19:25:27] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10010 slice=0x1000 name=main
+[19:25:27] [dbg] Decompiler returned for 0x1000
+[19:25:27] [dbg] decompilation time for 0x10010 main: 1.20s
+[19:25:27] /* == function 0x10010 main == */
+[19:25:27] /* info: function 0x10010 main attempt=decompiled validation=disabled */
+[19:25:27] /* -- c -- */
+/* COD annotations:
+ * globals = cRow
+ * calls = aNchkstk, settextrows, clearscreen, displaycursor, InitBars, InitMenu, RunMenu, setvideomode
+ */
+
+
+short main(void)
+{
+    unsigned short vvar_2;
+    unsigned short vvar_20;
+    unsigned short vvar_24;
+    unsigned short vvar_27;
+    unsigned short vvar_31;
+    unsigned short vvar_40;
+    unsigned short vvar_44;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short cs;  // cs
+    unsigned int ax;  // ax
+    unsigned short ds;  // ds
+    char s_a;  // [bp-0xa]
+    char s_8;  // [bp-0x8]
+    char s_6;  // [bp-0x6]
+    char s_4;  // [bp-0x4]
+    char s_2;  // [bp-0x2]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_2 + 2))) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_2;
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_6 + 2))) = 43;
+    *((char *)((ss << 4) + (unsigned int)&s_8)) = cs;
+    *((char *)((ss << 4) + (unsigned int)&s_8 + 1)) = cs >> 8;
+    ax = settextrows();
+    vvar_20 = (int)&(&s_a)[2];
+    *((char *)((ds << 4) + 2978)) = ax;
+    *((char *)((ds << 4) + 2978 + 1)) = ax >> 8;
+    *((unsigned short *)((ss << 4) + vvar_20 - 2)) = 0;
+    vvar_24 = vvar_20 - 2 + -2;
+    *((char *)((ss << 4) + vvar_24)) = cs;
+    *((char *)((ss << 4) + vvar_24 + 1)) = cs >> 8;
+    clearscreen();
+    vvar_27 = vvar_24 - 2 + 2;
+    *((unsigned short *)((ss << 4) + vvar_27 - 2)) = 0;
+    vvar_31 = vvar_27 - 2 + -2;
+    *((char *)((ss << 4) + vvar_31)) = cs;
+    *((char *)((ss << 4) + vvar_31 + 1)) = cs >> 8;
+    displaycursor();
+    InitBars();
+    sub_104d();
+    vvar_40 = vvar_31 - 2 + 2 - 2 - 2 - 2;
+    RunMenu();
+    *((unsigned short *)((ss << 4) + vvar_40 - 2)) = 65535;
+    vvar_44 = vvar_40 - 2 + -2;
+    *((char *)((ss << 4) + vvar_44)) = cs;
+    *((char *)((ss << 4) + vvar_44 + 1)) = cs >> 8;
+    setvideomode();
+}
+[19:25:27] [dbg] recovery worker: start 0x10f38 Sleep mode=lst recovery_timeout=120s
+[19:25:27] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
+[19:25:28] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
+[19:25:28] [dbg] isolated function worker: start 0x1000 Sleep requested_timeout=120s hard_timeout=122s
+[19:25:28] [dbg] function complexity for 0x10f38 Sleep: blocks=12, bytes=62
+[19:25:28] [dbg] decompile_function: addr=0x10f38 (slice=0x1000) name=Sleep
+[19:25:28] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:28] [dbg] registered 4 direct callee stub(s) for 0x1000
+[19:25:29] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10f38 slice=0x1000 name=Sleep
+[19:25:28] [dbg] Decompiler returned for 0x1000
+[19:25:29] [dbg] decompilation time for 0x10f38 Sleep: 1.34s
+[19:25:29] /* == function 0x10f38 Sleep == */
+[19:25:29] /* info: function 0x10f38 Sleep attempt=decompiled validation=disabled */
+[19:25:29] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = wait
+ * [bp-0x4] = goal
+ * calls = aNchkstk, clock
+ */
+
+void Sleep(clock_t wait)
+{
+    unsigned short vvar_5;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short dx_2;  // dx
+    unsigned short flags_3;  // flags
+    unsigned int t;  // ax
+    unsigned int t_2;  // ax
+    char ir_3_2; // 4112
+    char ir_4_2; // 4114
+    unsigned short flags;  // flags
+    unsigned short flags_2;  // flags
+    char ir_7_2; // 4192
+    char ir_8_2; // 4194
+    unsigned short dx;  // dx
+    char s_6;  // [bp-0x6]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_6 + 2))) = di;
+    *((int *)((ss << 4) + (unsigned int)&s_6)) = vvar_5;
+    t_2 = clock();
+    ir_3_2 = *((char *)((ss << 4) + (unsigned int)(&s_6 + 8)));
+    ir_4_2 = *((char *)((ss << 4) + (unsigned int)(&s_6 + 8) + 1));
+    flags_2 = ...;
+    ir_7_2 = *((char *)((ss << 4) + (unsigned int)(&s_6 + 10)));
+    ir_8_2 = *((char *)((ss << 4) + (unsigned int)(&s_6 + 10) + 1));
+    dx_2 = dx + (ir_7_2 | ir_8_2 << 8) + (char)(1 & flags_2 >> 0);
+    *((unsigned short *)&(&s_6)[8]) = t_2 + (ir_3_2 | ir_4_2 << 8);
+    *((unsigned short *)&(&s_6)[6]) = dx_2;
+    while (true)
+    {
+        t = clock();
+        if (dx_2 > *(&(&s_6)[6]))
+        {
+            return;
+        }
+        else if ((flags_3 & 128) == (flags_3 & 0x800))) && !(t <= *(&(&s_6)[8])
+        {
+            return;
+        }
+    }
+
+    return;
+}
+[19:25:29] [dbg] recovery worker: start 0x109e8 PercolateUp mode=lst recovery_timeout=120s
+[19:25:29] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
+[19:25:29] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
+[19:25:29] [dbg] isolated function worker: start 0x1000 PercolateUp requested_timeout=120s hard_timeout=122s
+[19:25:29] [dbg] function complexity for 0x109e8 PercolateUp: blocks=12, bytes=127
+[19:25:29] [dbg] decompile_function: addr=0x109e8 (slice=0x1000) name=PercolateUp
+[19:25:29] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:29] [dbg] registered 6 direct callee stub(s) for 0x1000
+[19:25:32] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x109e8 slice=0x1000 name=PercolateUp
+[19:25:31] [dbg] Decompiler returned for 0x1000
+[19:25:32] [dbg] decompilation time for 0x109e8 PercolateUp: 2.68s
+[19:25:32] /* == function 0x109e8 PercolateUp == */
+[19:25:32] /* info: function 0x109e8 PercolateUp attempt=decompiled validation=disabled */
+[19:25:32] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = iMaxLevel
+ * [bp-0x4] = i
+ * [bp-0x2] = iParent
+ * globals = iCompares, abarWork
+ * calls = aNchkstk, Swaps, SwapBars
+ */
+
+short PercolateUp(int iMaxLevel)
+{
+    unsigned short vvar_35;
+    unsigned short vvar_24;
+    unsigned short vvar_65;
+    unsigned short vvar_11;
+    unsigned short vvar_72;
+    unsigned short vvar_74;
+    unsigned short vvar_76;
+    unsigned short vvar_78;
+    unsigned short vvar_80;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    char ir_10_2; // 4221
+    unsigned short si;  // si
+    unsigned short ax_4;  // ax
+    unsigned short flags;  // flags
+    unsigned short ax_5;  // ax
+    unsigned short ax_6;  // ax
+    unsigned short ax_7;  // ax
+    unsigned short ax_8;  // ax
+    unsigned short ax;  // ax
+    unsigned short dx;  // dx
+    unsigned short ax_2;  // ax
+    unsigned short ax_3;  // ax
+    unsigned short ds;  // ds
+    char ir_9_2; // 4219
+    int stack_bp_m6_b1;  // [bp-0x6]
+    int s_6;  // [bp-0x6]
+
+    *((short **)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m6_b1 + 1))) = &stack_bp_m6_b1 + 3;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)&stack_bp_m6_b1)) = di;
+    vvar_35 = (int)(short *)((char *)&stack_bp_m6_b1 + 1);
+    *((int *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m6_b1 + 1))) = vvar_24;
+    for ((&stack_bp_m6_b1)[4] = stack_bp_m6_b1; !((short)(&s_6)[8]); *((short *)&(&s_6)[8]) = (short)(&s_6)[6])
+    {
+        ax = (short)(&s_6)[8];
+        dx = 0 - (1 & ax >> 15);
+        ax_2 = ax - dx;
+        ax_3 = ax_2 >> 1;
+        *((unsigned short *)&(&s_6)[6]) = ax_3;
+        ir_9_2 = *((char *)((ds << 4) + 2986));
+        ir_10_2 = *((char *)((ds << 4) + 2986 + 1));
+        *((char *)((ds << 4) + 2986)) = (ir_9_2 | ir_10_2 << 8) + 1;
+        *((char *)((ds << 4) + 2986 + 1)) = (ir_9_2 | ir_10_2 << 8) + 1 >> 8;
+        si = (short)(&s_6)[6];
+        ax_4 = ax_3 & 0xff00 | *((char *)((ds << 4) + 2892 + (si << 1)));
+        if (flags & 64) & (flags & 128) == (flags & 0x800)
+        ax_5 = (&s_6)[8];
+        ax_6 = ax_5 << 1;
+        vvar_65 = vvar_11 - 2;
+        *((unsigned short *)((ss << 4) + vvar_11 - 2)) = ax_6 + 2892;
+        ax_7 = (&s_6)[6];
+        ax_8 = ax_7 << 1;
+        *((unsigned short *)((ss << 4) + vvar_65 - 2)) = ax_8 + 2892;
+        vvar_72 = vvar_65 - 2 - 2;
+        Swaps();
+        vvar_74 = vvar_72 + 4;
+        vvar_76 = vvar_74 - 2;
+        *((short *)((ss << 4) + vvar_74 - 2)) = (short)(&s_6)[8];
+        *((short *)((ss << 4) + vvar_76 - 2)) = (short)(&s_6)[6];
+        vvar_78 = vvar_76 - 2 - 2;
+        SwapBars();
+        vvar_80 = vvar_78 + 4;
+    }
+
+    return ax_8;
+}
+[19:25:32] [dbg] recovery worker: start 0x10970 HeapSort mode=lst recovery_timeout=120s
+[19:25:32] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
+[19:25:32] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
+[19:25:32] [dbg] isolated function worker: start 0x1000 HeapSort requested_timeout=120s hard_timeout=122s
+[19:25:32] [dbg] function complexity for 0x10970 HeapSort: blocks=16, bytes=135
+[19:25:35] [dbg] decompile_function: addr=0x10970 (slice=0x1000) name=HeapSort
+[19:25:35] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:35] [dbg] registered 9 direct callee stub(s) for 0x1000
+[19:25:39] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10970 slice=0x1000 name=HeapSort
+[19:25:36] [dbg] Decompiler returned for 0x1000
+[19:25:39] [dbg] decompilation time for 0x10970 HeapSort: 6.71s
+[19:25:39] /* == function 0x10970 HeapSort == */
+[19:25:39] /* info: function 0x10970 HeapSort attempt=decompiled validation=disabled */
+[19:25:39] /* -- c -- */
+/* COD annotations:
+ * [bp-0x2] = i
+ * globals = cRow, abarWork
+ * calls = aNchkstk, PercolateUp, Swaps, SwapBars, PercolateDown
+ */
+
+short HeapSort(void)
+{
+    unsigned short vvar_23;
+    unsigned short vvar_12;
+    unsigned short vvar_5;
+    unsigned short vvar_31;
+    unsigned short vvar_47;
+    unsigned short vvar_8;
+    unsigned short vvar_52;
+    unsigned short vvar_54;
+    unsigned short vvar_59;
+    unsigned short vvar_67;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ds;  // ds
+    char s_4;  // [bp-0x4]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)&s_4)) = di;
+    vvar_23 = (int)(&s_4 + 2);
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_12;
+    for (*((unsigned short *)&(&s_4)[4]) = 1; !(!(*(ds * 16 + 2978) > *(&(&s_4)[4]))); *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) + 1 >> 8)
+    {
+        *((short *)((ss << 4) + vvar_5 - 2)) = *((short *)&(&s_4)[4]);
+        sub_1078();
+        vvar_31 = vvar_5 - 2 - 2 + 2;
+        *((char *)((ss << 4) + (unsigned int)&s_4)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) + 1;
+    }
+    for (*((unsigned short *)&(&s_4)[4]) = (*((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8) - 1; !(!(*(&(&s_4)[4]) > 0)); *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) - 1 >> 8)
+    {
+        vvar_47 = vvar_8 - 2;
+        *((unsigned short *)((ss << 4) + vvar_8 - 2)) = (*((short *)&(&s_4)[4]) << 1) + 2892;
+        *((unsigned short *)((ss << 4) + vvar_47 - 2)) = 2892;
+        Swaps();
+        vvar_52 = vvar_47 - 2 - 2 + 4;
+        vvar_54 = vvar_52 - 2;
+        *((short *)((ss << 4) + vvar_52 - 2)) = *((short *)&(&s_4)[4]);
+        *((unsigned short *)((ss << 4) + vvar_54 - 2)) = 0;
+        SwapBars();
+        vvar_59 = vvar_54 - 2 - 2 + 4;
+        *((unsigned short *)((ss << 4) + vvar_59 - 2)) = *((short *)&(&s_4)[4]) - 1;
+        SwapBars();
+        vvar_67 = vvar_59 - 2 - 2 + 2;
+        *((char *)((ss << 4) + (unsigned int)&s_4)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) - 1;
+    }
+}
+[19:25:39] [dbg] recovery worker: start 0x107b8 Swaps mode=lst recovery_timeout=120s
+[19:25:39] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
+[19:25:39] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
+[19:25:39] [dbg] isolated function worker: start 0x1000 Swaps requested_timeout=120s hard_timeout=122s
+[19:25:39] [dbg] function complexity for 0x107b8 Swaps: blocks=2, bytes=47
+[19:25:39] [dbg] decompile_function: addr=0x107b8 (slice=0x1000) name=Swaps
+[19:25:39] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:39] [dbg] registered 2 direct callee stub(s) for 0x1000
+[19:25:40] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x107b8 slice=0x1000 name=Swaps
+[19:25:40] [dbg] Decompiler returned for 0x1000
+[19:25:40] [dbg] decompilation time for 0x107b8 Swaps: 0.86s
+[19:25:40] /* == function 0x107b8 Swaps == */
+[19:25:40] /* info: function 0x107b8 Swaps attempt=decompiled validation=disabled */
+[19:25:40] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = bar1
+ * [bp+0x6] = bar2
+ * [bp-0x2] = barTmp
+ * globals = iSwaps
+ * calls = aNchkstk
+ */
+
+short Swaps(BAR *bar1, BAR *bar2)
+{
+    unsigned short vvar_2;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ds;  // ds
+    unsigned short ax;  // ax
+    unsigned short bx;  // bx
+    unsigned short ax_2;  // ax
+    unsigned short bx_2;  // bx
+    char s_4;  // [bp-0x4]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_4 + 2))) = &s_4 + 4;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)&s_4)) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_2;
+    *((char *)((ds << 4) + 2980)) = (*((char *)((ds << 4) + 2980)) | *((char *)((ds << 4) + 2980 + 1)) << 8) + 1;
+    *((char *)((ds << 4) + 2980 + 1)) = (*((char *)((ds << 4) + 2980)) | *((char *)((ds << 4) + 2980 + 1)) << 8) + 1 >> 8;
+    *((unsigned short *)&(&s_4)[4]) = *((char *)((ds << 4) + *((short *)&(&s_4)[2]))) | *((char *)((ds << 4) + *((short *)&(&s_4)[2]) + 1)) << 8;
+    ax = *((char *)((ds << 4) + *((short *)&(&s_4)[4]))) | *((char *)((ds << 4) + *((short *)&(&s_4)[4]) + 1)) << 8;
+    bx = *((short *)&(&s_4)[2]);
+    *((char *)((ds << 4) + bx)) = ax;
+    *((char *)((ds << 4) + bx + 1)) = ax >> 8;
+    ax_2 = *((short *)&(&s_4)[4]);
+    bx_2 = *((short *)&(&s_4)[4]);
+    *((char *)((ds << 4) + bx_2)) = ax_2;
+    *((char *)((ds << 4) + bx_2 + 1)) = ax_2 >> 8;
+
+    return ax_2;
+}
+[19:25:40] [dbg] recovery worker: start 0x10768 SwapBars mode=lst recovery_timeout=120s
+[19:25:40] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
+[19:25:40] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
+[19:25:40] [dbg] isolated function worker: start 0x1000 SwapBars requested_timeout=120s hard_timeout=122s
+[19:25:40] [dbg] function complexity for 0x10768 SwapBars: blocks=5, bytes=44
+[19:25:40] [dbg] decompile_function: addr=0x10768 (slice=0x1000) name=SwapBars
+[19:25:40] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:40] [dbg] registered 6 direct callee stub(s) for 0x1000
+[19:25:41] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10768 slice=0x1000 name=SwapBars
+[19:25:41] [dbg] Decompiler returned for 0x1000
+[19:25:41] [dbg] decompilation time for 0x10768 SwapBars: 0.75s
+[19:25:41] /* == function 0x10768 SwapBars == */
+[19:25:41] /* info: function 0x10768 SwapBars attempt=decompiled validation=disabled */
+[19:25:41] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = iRow1
+ * [bp+0x6] = iRow2
+ * calls = aNchkstk, DrawBar, DrawTime
+ */
+
+void SwapBars(int iRow1, int iRow2)
+{
+    unsigned short vvar_2;
+    unsigned short vvar_16;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    char s_8;  // [bp-0x8]
+    char s_6;  // [bp-0x6]
+    char s_4;  // [bp-0x4]
+    char s_2;  // [bp-0x2]
+
+    *((char **)((ss << 4) + (unsigned int)&s_2)) = &s_2 + 2;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_2 + 2))) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_2;
+    *((short *)((ss << 4) + (unsigned int)(&s_6 + 2))) = *((short *)&(&s_2)[4]);
+    DrawBar();
+    vvar_16 = (int)&(&s_8)[2];
+    *((short *)((ss << 4) + vvar_16 - 2)) = *((short *)&(&s_2)[6]);
+    DrawBar();
+    *((short *)((ss << 4) + vvar_16 - 2 - 2 + 2 - 2)) = *((short *)&(&s_2)[4]);
+    DrawBar();
+    return;
+}
+[19:25:41] [dbg] recovery worker: start 0x10678 ReInitBars mode=lst recovery_timeout=120s
+[19:25:41] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
+[19:25:41] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
+[19:25:41] [dbg] isolated function worker: start 0x1000 ReInitBars requested_timeout=120s hard_timeout=122s
+[19:25:41] [dbg] function complexity for 0x10678 ReInitBars: blocks=9, bytes=89
+[19:25:41] [dbg] decompile_function: addr=0x10678 (slice=0x1000) name=ReInitBars
+[19:25:41] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:41] [dbg] registered 5 direct callee stub(s) for 0x1000
+[19:25:43] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10678 slice=0x1000 name=ReInitBars
+[19:25:42] [dbg] Decompiler returned for 0x1000
+[19:25:43] [dbg] decompilation time for 0x10678 ReInitBars: 1.29s
+[19:25:43] /* == function 0x10678 ReInitBars == */
+[19:25:43] /* info: function 0x10678 ReInitBars attempt=decompiled validation=disabled */
+[19:25:43] /* -- c -- */
+/* COD annotations:
+ * [bp-0x2] = iRow
+ * globals = clStart, cRow, abarPerm, abarWork
+ * calls = aNchkstk, clock, DrawBar
+ */
+
+
+short ReInitBars(void)
+{
+    unsigned short vvar_11;
+    unsigned short vvar_23;
+    unsigned short vvar_4;
+    unsigned short vvar_44;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned int t;  // ax
+    unsigned short ds;  // ds
+    unsigned short dx;  // dx
+    unsigned short ax;  // ax
+    unsigned short bx;  // bx
+    char s_6;  // [bp-0x6]
+    char s_4;  // [bp-0x4]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)&s_4)) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_11;
+    vvar_23 = (int)(&s_6 + 2);
+    t = clock();
+    *((char *)((ds << 4) + 2982)) = t;
+    *((char *)((ds << 4) + 2982 + 1)) = t >> 8;
+    *((char *)((ds << 4) + 2984)) = dx;
+    *((char *)((ds << 4) + 2984 + 1)) = dx >> 8;
+    for (*((unsigned short *)&(&s_4)[4]) = 0; !(!(*(ds * 16 + 2978) > *(&(&s_4)[4]))); *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) + 1 >> 8)
+    {
+        ax = *((char *)((ds << 4) + 2288 + (*((short *)&(&s_4)[4]) << 1))) | *((char *)((ds << 4) + 2288 + (*((short *)&(&s_4)[4]) << 1) + 1)) << 8;
+        bx = *((short *)&(&s_4)[4]) << 1;
+        *((char *)((ds << 4) + 2892 + bx)) = ax;
+        *((char *)((ds << 4) + 2892 + bx + 1)) = ax >> 8;
+        *((short *)((ss << 4) + vvar_4 - 2)) = *((short *)&(&s_4)[4]);
+        sub_1050();
+        vvar_44 = vvar_4 - 2 - 2 + 2;
+        *((char *)((ss << 4) + (unsigned int)&s_4)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) + 1;
+    }
+
+    return ax;
+}
+[19:25:43] [dbg] recovery worker: start 0x10e70 Beep mode=lst recovery_timeout=120s
+[19:25:43] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
+[19:25:43] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
+[19:25:43] [dbg] isolated function worker: start 0x1000 Beep requested_timeout=120s hard_timeout=122s
+[19:25:43] [dbg] function complexity for 0x10e70 Beep: blocks=19, bytes=194
+[19:25:43] [dbg] decompile_function: addr=0x10e70 (slice=0x1000) name=Beep
+[19:25:43] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:43] [dbg] registered 9 direct callee stub(s) for 0x1000
+[19:25:45] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10e70 slice=0x1000 name=Beep
+[19:25:44] [dbg] Decompiler returned for 0x1000
+[19:25:45] [dbg] decompilation time for 0x10e70 Beep: 2.10s
+[19:25:45] /* == function 0x10e70 Beep == */
+[19:25:45] /* info: function 0x10e70 Beep attempt=decompiled validation=disabled */
+[19:25:45] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = frequency
+ * [bp+0x6] = duration
+ * [bp-0x2] = control
+ * calls = aNchkstk, outp, aNldiv, inp, Sleep
+ */
+
+unsigned char inp(unsigned short port);
+
+short Beep(int frequency, int duration)
+{
+    unsigned short vvar_26;
+    unsigned short vvar_16;
+    unsigned short vvar_33;
+    unsigned short vvar_37;
+    unsigned short vvar_38;
+    unsigned short vvar_41;
+    unsigned short vvar_43;
+    unsigned short vvar_47;
+    unsigned short vvar_52;
+    unsigned short vvar_56;
+    unsigned short vvar_61;
+    unsigned short vvar_67;
+    unsigned short a0;
+    unsigned short vvar_72;
+    unsigned short vvar_77;
+    unsigned short vvar_81;
+    unsigned short vvar_10;
+    unsigned short a8;
+    unsigned short vvar_85;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ax;  // ax
+    unsigned int ax_3;  // ax
+    unsigned int ax_4;  // ax
+    unsigned short ax_2;  // ax
+    char s_a;  // [bp-0xa]
+    char s_8;  // [bp-0x8]
+    char s_6;  // [bp-0x6]
+    int stack_bp_m4_b1;  // [bp-0x4]
+    int s_4;  // [bp-0x4]
+
+    *((short **)((ss << 4) + (unsigned int)&stack_bp_m4_b1)) = &stack_bp_m4_b1 + 2;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m4_b1 + 1))) = di;
+    vvar_26 = (int)(&stack_bp_m4_b1 + 1);
+    *((int *)((ss << 4) + (unsigned int)(&stack_bp_m4_b1 + 1))) = vvar_16;
+    if (!((&stack_bp_m4_b1)[1]))
+    {
+        if ((&stack_bp_m4_b1)[2] >= 75)
+            (&stack_bp_m4_b1)[2] = 75;
+        *((unsigned short *)((ss << 4) + (unsigned int)(&s_6 + 2))) = 182;
+        *((unsigned short *)((ss << 4) + (unsigned int)(&s_8 + 2))) = 67;
+        outp();
+        vvar_33 = (int)&(&s_a)[4];
+        ax = (short)(&s_4)[2];
+        vvar_37 = vvar_33 - 2;
+        *((unsigned short *)((ss << 4) + vvar_33 - 2)) = 0 - (1 & ax >> 15);
+        vvar_38 = vvar_37 - 2;
+        *((unsigned short *)((ss << 4) + vvar_37 - 2)) = ax;
+        vvar_41 = vvar_38 - 2;
+        *((unsigned short *)((ss << 4) + vvar_38 - 2)) = 18;
+        *((unsigned short *)((ss << 4) + vvar_41 - 2)) = 13532;
+        vvar_43 = vvar_41 - 2 - 2;
+        ax_3 = aNldiv();
+        *((unsigned short *)&(&s_4)[2]) = ax_3;
+        vvar_47 = vvar_43 - 2;
+        *((short *)((ss << 4) + vvar_43 - 2)) = (char)(ax_3 & 0xff00 | *((char *)((ss << 4) + (unsigned int)(4 + &stack_bp_m4_b1 + -2))));
+        *((unsigned short *)((ss << 4) + vvar_47 - 2)) = 66;
+        ax_4 = outp();
+        vvar_52 = vvar_47 - 2 - 2 + 4;
+        vvar_56 = vvar_52 - 2;
+        *((short *)((ss << 4) + vvar_52 - 2)) = (char)(ax_4 & 0xff00 | *((char *)((ss << 4) + (unsigned int)(5 + &stack_bp_m4_b1 + -2))));
+        *((unsigned short *)((ss << 4) + vvar_56 - 2)) = 66;
+        outp();
+        vvar_61 = vvar_56 - 2 - 2 + 4;
+        *((unsigned short *)((ss << 4) + vvar_61 - 2)) = 97;
+        vvar_67 = vvar_61 - 2 - 2 + 2;
+        *((unsigned short *)&(&s_4)[4]) = inp();
+        vvar_72 = vvar_67 - 2;
+        *((unsigned short *)((ss << 4) + vvar_67 - 2)) = (short)(&s_4)[4] | 3;
+        *((unsigned short *)((ss << 4) + vvar_72 - 2)) = 97;
+        outp();
+        vvar_77 = vvar_72 - 2 - 2 + 4;
+    }
+    ax_2 = (short)(&s_4)[4];
+    vvar_81 = vvar_10 - 2;
+    *((unsigned short *)((ss << 4) + vvar_10 - 2)) = 0 - (1 & ax_2 >> 15);
+    *((unsigned short *)((ss << 4) + vvar_81 - 2)) = ax_2;
+    sub_10a8();
+    vvar_85 = vvar_81 - 2 - 2 + 4;
+    if (!((short)(&s_4)[2]))
+    *((short *)((ss << 4) + vvar_85 - 2)) = (short)(&s_4)[4];
+    *((unsigned short *)((ss << 4) + vvar_85 - 2 - 2)) = 97;
+    outp();
+
+    return ax_2;
+}
+[19:25:45] [dbg] recovery worker: start 0x10ce0 QuickSort mode=lst recovery_timeout=120s
+[19:25:45] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
+[19:25:46] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
+[19:25:46] [dbg] isolated function worker: start 0x1000 QuickSort requested_timeout=120s hard_timeout=122s
+[19:25:46] [dbg] function complexity for 0x10ce0 QuickSort: blocks=42, bytes=438
+[19:25:46] [dbg] decompile_function: addr=0x10ce0 (slice=0x1000) name=QuickSort
+[19:25:46] [dbg] function 0x1000 not normalized, normalizing...
+[19:25:46] [dbg] registered 8 direct callee stub(s) for 0x1000
+[19:26:02] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10ce0 slice=0x1000 name=QuickSort
+[19:26:00] [dbg] Decompiler returned for 0x1000
+[19:26:02] [dbg] decompilation time for 0x10ce0 QuickSort: 15.94s
+[19:26:02] /* == function 0x10ce0 QuickSort == */
+[19:26:02] /* info: function 0x10ce0 QuickSort attempt=decompiled validation=disabled */
+[19:26:02] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = iLow
+ * [bp+0x6] = iHigh
+ * [bp-0x6] = iUp
+ * [bp-0x4] = iBreak
+ * [bp-0x2] = iDown
+ * globals = iCompares, abarWork
+ * calls = aNchkstk, Swaps, SwapBars, QuickSort
+ */
+
+short QuickSort(int iLow, int iHigh)
+{
+    unsigned short vvar_61;
+    unsigned short vvar_50;
+    unsigned short vvar_96;
+    unsigned short vvar_135;
+    unsigned short vvar_30;
+    unsigned short vvar_144;
+    unsigned short vvar_146;
+    unsigned short vvar_150;
+    unsigned short vvar_158;
+    unsigned short vvar_46;
+    unsigned short vvar_167;
+    unsigned short vvar_169;
+    unsigned short vvar_173;
+    unsigned short vvar_181;
+    unsigned short vvar_188;
+    unsigned short vvar_202;
+    unsigned short vvar_206;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    char ir_10_2; // 4107
+    char ir_11_2; // 4109
+    unsigned short si;  // si
+    unsigned short ax_4;  // ax
+    unsigned short flags_2;  // flags
+    unsigned short ds_2;  // ds
+    unsigned short ax;  // ax
+    char ir_3_2; // 4115
+    char ir_4_2; // 4117
+    unsigned short ax_3;  // ax
+    unsigned short flags;  // flags
+    unsigned short ds;  // ds
+    short local_14;  // [bp-0x14]
+    short local_13;  // [bp-0x13]
+    unsigned short s_a;  // [bp-0xa]
+    int stack_bp_m8_b1;  // [bp-0x8]
+    int s_8;  // [bp-0x8]
+
+    *((short **)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1))) = &stack_bp_m8_b1 + 4;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m8_b1 + 1))) = di;
+    vvar_61 = (int)&stack_bp_m8_b1;
+    *((int *)((ss << 4) + (unsigned int)&stack_bp_m8_b1)) = vvar_50;
+    if (((&stack_bp_m8_b1)[1] < stack_bp_m8_b1) == 0)
+    ax = stack_bp_m8_b1;
+    ir_3_2 = *((char *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m8_b1)[3] + 1)));
+    ir_4_2 = *((char *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m8_b1)[3] + 1) + 1));
+    ax_3 = ax - (ir_3_2 | ir_4_2 << 8) - 1;
+    if ((flags & 64))
+    {
+        ir_10_2 = *((char *)((ds << 4) + 2986));
+        ir_11_2 = *((char *)((ds << 4) + 2986 + 1));
+        *((char *)((ds << 4) + 2986)) = (ir_10_2 | ir_11_2 << 8) + 1;
+        *((char *)((ds << 4) + 2986 + 1)) = (ir_10_2 | ir_11_2 << 8) + 1 >> 8;
+        si = stack_bp_m8_b1;
+        ax_4 = ax_3 & 0xff00 | *((char *)((ds << 4) + 2892 + (si << 1)));
+        if (flags_2 & 64) & (flags_2 & 128) == (flags_2 & 0x800)
+        *((unsigned short *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m8_b1 + 1))) = (stack_bp_m8_b1 << 1) + 2892;
+        *((unsigned short *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1))) = ((&stack_bp_m8_b1)[1] << 1) + 2892;
+        Swaps();
+        vvar_96 = (int)&(&s_a)[4];
+        *((short *)((ss << 4) + vvar_96 - 2)) = stack_bp_m8_b1;
+        *((short *)((ss << 4) + vvar_96 - 2 - 2)) = (&stack_bp_m8_b1)[1];
+        SwapBars();
+    }
+    else
+    {
+        (&stack_bp_m8_b1)[5] = (char)(ax_3 & 0xff00 | *((char *)((ds_2 << 4) + 2892 + (stack_bp_m8_b1 << 1))));
+        do
+        {
+            *((short *)&(&s_8)[12]) = (short)(&s_8)[2];
+            *((short *)&(&s_8)[8]) = (short)stack_bp_m8_b1;
+            *((char *)((ds_2 << 4) + 2986)) = (*((char *)((ds_2 << 4) + 2986)) | *((char *)((ds_2 << 4) + 2986 + 1)) << 8) + 1;
+            for (*((char *)((ds_2 << 4) + 0 + 2986 + 1)) = (*((char *)((ds_2 << 4) + 0 + 2986)) | *((char *)((ds_2 << 4) + 0 + 2986 + 1)) << 8) + 1 >> 8; !((short)(&s_8)[8] > (short)(&s_8)[12]); *((char *)((ss << 4) + (unsigned int)(0 - 6 + &s_8 + -6) + 1)) = (*((char *)((ss << 4) + (unsigned int)(0 - 6 + &s_8 + -6))) | *((char *)((ss << 4) + (unsigned int)(0 - 6 + &s_8 + -6) + 1)) << 8) + 1 >> 8)
+            {
+                if (*(ds_2 * 16 + 2892 + (&s_8)[12] * 2) > (&s_8)[10])
+                    break;
+                *((char *)((ss << 4) + (unsigned int)(0 - 6 + &stack_bp_m8_b1 + -6))) = (*((char *)((ss << 4) + (unsigned int)(0 - 6 + &stack_bp_m8_b1 + -6))) | *((char *)((ss << 4) + (unsigned int)(0 - 6 + &stack_bp_m8_b1 + -6) + 1)) << 8) + 1;
+            }
+            *((char *)((ds_2 << 4) + 2986)) = (*((char *)((ds_2 << 4) + 2986)) | *((char *)((ds_2 << 4) + 2986 + 1)) << 8) + 1;
+            for (*((char *)((ds_2 << 4) + 0 + 2986 + 1)) = (*((char *)((ds_2 << 4) + 0 + 2986)) | *((char *)((ds_2 << 4) + 0 + 2986 + 1)) << 8) + 1 >> 8; !((short)(&s_8)[8] > (short)(&s_8)[12]); *((char *)((ss << 4) + (unsigned int)(0 - 2 + &s_8 + -6) + 1)) = (*((char *)((ss << 4) + (unsigned int)(0 - 2 + &s_8 + -6))) | *((char *)((ss << 4) + (unsigned int)(0 - 2 + &s_8 + -6) + 1)) << 8) - 1 >> 8)
+            {
+                if (*(ds_2 * 16 + 2892 + (&s_8)[8] * 2) < (&s_8)[10])
+                    break;
+                *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_m8_b1 + -6))) = (*((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_m8_b1 + -6))) | *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_m8_b1 + -6) + 1)) << 8) - 1;
+            }
+            if ((short)(&s_8)[8] <= (short)(&s_8)[12])
+            {
+                vvar_135 = vvar_30 - 2;
+                *((unsigned short *)((ss << 4) + vvar_30 - 2)) = ((short)(&s_8)[8] << 1) + 2892;
+                *((unsigned short *)((ss << 4) + vvar_135 - 2)) = ((short)(&s_8)[12] << 1) + 2892;
+                Swaps();
+                vvar_144 = vvar_135 - 2 - 2 + 4;
+                vvar_146 = vvar_144 - 2;
+                *((short *)((ss << 4) + vvar_144 - 2)) = (short)(&s_8)[8];
+                *((short *)((ss << 4) + vvar_146 - 2)) = (short)(&s_8)[12];
+                SwapBars();
+                vvar_150 = vvar_146 - 2 - 2 + 4;
+            }
+        } while (!((short)(&s_8)[8] <= (short)(&s_8)[12]));
+        vvar_158 = vvar_46 - 2;
+        *((unsigned short *)((ss << 4) + vvar_30 - 2)) = ((short)stack_bp_m8_b1 << 1) + 2892;
+        *((unsigned short *)((ss << 4) + vvar_158 - 2)) = ((short)(&s_8)[12] << 1) + 2892;
+        Swaps();
+        vvar_167 = vvar_158 - 2 - 2 + 4;
+        vvar_169 = vvar_167 - 2;
+        *((short *)((ss << 4) + vvar_167 - 2)) = (short)stack_bp_m8_b1;
+        *((short *)((ss << 4) + vvar_169 - 2)) = (short)(&s_8)[12];
+        SwapBars();
+        vvar_173 = vvar_169 - 2 - 2 + 4;
+        if (((&s_8)[12] - (s_a | s_a * 0x100) < stack_bp_m8_b1 - (local_14 | local_13 * 0x100)) == 0)
+        {
+            vvar_181 = vvar_173 - 2;
+            *((short *)((ss << 4) + vvar_173 - 2)) = (short)stack_bp_m8_b1;
+            *((unsigned short *)((ss << 4) + vvar_181 - 2)) = (short)(&s_8)[12] + 1;
+            sub_ff4();
+            vvar_188 = vvar_181 - 2 - 2 + 4;
+            *((unsigned short *)((ss << 4) + vvar_188 - 2)) = (short)(&s_8)[12] - 1;
+            *((short *)((ss << 4) + vvar_188 - 2 - 2)) = (short)(&s_8)[2];
+            sub_ff4();
+        }
+        vvar_202 = vvar_173 - 2;
+        *((unsigned short *)((ss << 4) + vvar_173 - 2)) = (short)(&s_8)[12] - 1;
+        *((short *)((ss << 4) + vvar_202 - 2)) = (short)(&s_8)[2];
+        sub_ff4();
+        vvar_206 = vvar_202 - 2 - 2 + 4;
+        *((short *)((ss << 4) + vvar_206 - 2)) = (short)stack_bp_m8_b1;
+        *((unsigned short *)((ss << 4) + vvar_206 - 2 - 2)) = (short)(&s_8)[12] + 1;
+        sub_ff4();
+    }
+
+    return ax_4;
+}
+[19:26:02] [dbg] recovery worker: start 0x10c18 ShellSort mode=lst recovery_timeout=120s
+[19:26:02] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
+[19:26:02] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
+[19:26:02] [dbg] isolated function worker: start 0x1000 ShellSort requested_timeout=120s hard_timeout=122s
+[19:26:02] [dbg] function complexity for 0x10c18 ShellSort: blocks=19, bytes=218
+[19:26:02] [dbg] decompile_function: addr=0x10c18 (slice=0x1000) name=ShellSort
+[19:26:02] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:02] [dbg] registered 6 direct callee stub(s) for 0x1000
+[19:26:08] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10c18 slice=0x1000 name=ShellSort
+[19:26:07] [dbg] Decompiler returned for 0x1000
+[19:26:08] [dbg] decompilation time for 0x10c18 ShellSort: 5.39s
+[19:26:08] /* == function 0x10c18 ShellSort == */
+[19:26:08] /* info: function 0x10c18 ShellSort attempt=decompiled validation=disabled */
+[19:26:08] /* -- c -- */
+/* COD annotations:
+ * [bp-0x8] = iSwitch
+ * [bp-0x6] = iLimit
+ * [bp-0x4] = iRow
+ * [bp-0x2] = iOffset
+ * globals = cRow, iCompares, abarWork
+ * calls = aNchkstk, Swaps, SwapBars
+ */
+
+short ShellSort(void)
+{
+    unsigned short vvar_51;
+    unsigned short vvar_40;
+    unsigned short vvar_96;
+    unsigned short vvar_33;
+    unsigned short vvar_19;
+    unsigned short vvar_103;
+    unsigned short vvar_105;
+    unsigned short vvar_110;
+    unsigned short vvar_112;
+    unsigned short vvar_114;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    char ir_10_2; // 4129
+    unsigned short ax_4;  // ax
+    char ir_12_2; // 4107
+    char ir_13_2; // 4109
+    unsigned short bx;  // bx
+    char ir_15_2; // 4189
+    char ir_16_2; // 4191
+    unsigned short bx_2;  // bx
+    unsigned short si;  // si
+    unsigned short ax_5;  // ax
+    unsigned short ds;  // ds
+    unsigned short flags;  // flags
+    unsigned short ax_7;  // ax
+    unsigned short ax_8;  // ax
+    unsigned short ax_9;  // ax
+    unsigned short ax_10;  // ax
+    unsigned short ax_11;  // ax
+    unsigned short ax;  // ax
+    char ir_30_2; // 4174
+    char ir_31_2; // 4176
+    char ir_32_2; // 4111
+    char ir_33_2; // 4113
+    unsigned short ax_12;  // ax
+    char ir_35_2; // 4115
+    char ir_36_2; // 4117
+    unsigned short dx;  // dx
+    unsigned short ax_2;  // ax
+    unsigned short ax_3;  // ax
+    char ir_9_2; // 4127
+    int stack_bp_ma_b1;  // [bp-0xa]
+    int s_a_2;  // [bp-0xa]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&stack_bp_ma_b1 + 1))) = di;
+    vvar_51 = (int)(short *)((char *)&stack_bp_ma_b1 + 1);
+    *((int *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_ma_b1 + 1))) = vvar_40;
+    ax = *((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8;
+    dx = 0 - (1 & ax >> 15);
+    ax_2 = ax - dx;
+    for ((&stack_bp_ma_b1)[5] = ax_2 >> 1; !((short)(&s_a_2)[10]); *((unsigned short *)&(&s_a_2)[10]) = (0 - (1 & (short)(&s_a_2)[10] >> 15) << 16 | (short)(&s_a_2)[10]) / 2)
+    {
+        ax_3 = *((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8;
+        ir_9_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8)));
+        ir_10_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8) + 1));
+        *((unsigned short *)&(&s_a_2)[14]) = ax_3 - (ir_9_2 | ir_10_2 << 8);
+        do
+        {
+            *((unsigned short *)&(&s_a_2)[16]) = 0;
+            *((unsigned short *)&(&s_a_2)[12]) = 0;
+            while (true)
+            {
+                ax_4 = (short)(&s_a_2)[14];
+                if ((short)(&s_a_2)[12] > ax_4)
+                    break;
+                ir_12_2 = *((char *)((ds << 4) + 2986));
+                ir_13_2 = *((char *)((ds << 4) + 2986 + 1));
+                *((char *)((ds << 4) + 2986)) = (ir_12_2 | ir_13_2 << 8) + 1;
+                *((char *)((ds << 4) + 2986 + 1)) = (ir_12_2 | ir_13_2 << 8) + 1 >> 8;
+                bx = (short)(&s_a_2)[12];
+                ir_15_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8)));
+                ir_16_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8) + 1));
+                bx_2 = bx + (ir_15_2 | ir_16_2 << 8);
+                si = (short)(&s_a_2)[12];
+                ax_5 = ax_4 & 0xff00 | *((char *)((ds << 4) + 2892 + (si << 1)));
+                if ((flags & 128) == (flags & 0x800))
+                {
+                    ax_7 = (&s_a_2)[12] + (*((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8))) | *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8) + 1)) << 8);
+                    ax_8 = ax_7 << 1;
+                    vvar_96 = vvar_33 - 2;
+                    *((unsigned short *)((ss << 4) + vvar_19 - 2)) = ax_8 + 2892;
+                    ax_9 = (&s_a_2)[12];
+                    ax_10 = ax_9 << 1;
+                    *((unsigned short *)((ss << 4) + vvar_96 - 2)) = ax_10 + 2892;
+                    vvar_103 = vvar_96 - 2 - 2;
+                    Swaps();
+                    vvar_105 = vvar_103 + 4;
+                    ax_11 = (&s_a_2)[12];
+                    ir_30_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8)));
+                    ir_31_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8) + 1));
+                    vvar_110 = vvar_105 - 2;
+                    *((unsigned short *)((ss << 4) + vvar_105 - 2)) = ax_11 + (ir_30_2 | ir_31_2 << 8);
+                    *((short *)((ss << 4) + vvar_110 - 2)) = (short)(&s_a_2)[12];
+                    vvar_112 = vvar_110 - 2 - 2;
+                    SwapBars();
+                    vvar_114 = vvar_112 + 4;
+                    *((short *)&(&s_a_2)[16]) = (short)(&s_a_2)[12];
+                }
+                ir_32_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_ma_b1 + -8)));
+                ir_33_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_ma_b1 + -8) + 1));
+                *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_ma_b1 + -8))) = (ir_32_2 | ir_33_2 << 8) + 1;
+                *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_ma_b1 + -8) + 1)) = (ir_32_2 | ir_33_2 << 8) + 1 >> 8;
+            }
+            ax_12 = (&s_a_2)[16];
+            ir_35_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8)));
+            ir_36_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8) + 1));
+            *((unsigned short *)&(&s_a_2)[14]) = ax_12 - (ir_35_2 | ir_36_2 << 8);
+        } while (!(!(short)(&s_a_2)[16]));
+    }
+
+    return ax_9;
+}
+[19:26:08] [dbg] recovery worker: start 0x10b50 ExchangeSort mode=lst recovery_timeout=120s
+[19:26:08] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
+[19:26:08] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
+[19:26:08] [dbg] isolated function worker: start 0x1000 ExchangeSort requested_timeout=120s hard_timeout=122s
+[19:26:08] [dbg] function complexity for 0x10b50 ExchangeSort: blocks=21, bytes=187
+[19:26:08] [dbg] decompile_function: addr=0x10b50 (slice=0x1000) name=ExchangeSort
+[19:26:08] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:08] [dbg] registered 8 direct callee stub(s) for 0x1000
+[19:26:12] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10b50 slice=0x1000 name=ExchangeSort
+[19:26:11] [dbg] Decompiler returned for 0x1000
+[19:26:12] [dbg] decompilation time for 0x10b50 ExchangeSort: 3.70s
+[19:26:12] /* == function 0x10b50 ExchangeSort == */
+[19:26:12] /* info: function 0x10b50 ExchangeSort attempt=decompiled validation=disabled */
+[19:26:12] /* -- c -- */
+/* COD annotations:
+ * [bp-0x6] = iRowCur
+ * [bp-0x4] = iRowMin
+ * [bp-0x2] = iRowNext
+ * globals = cRow, iCompares, abarWork
+ * calls = aNchkstk, DrawTime, Swaps, SwapBars
+ */
+
+short ExchangeSort(void)
+{
+    unsigned short vvar_37;
+    unsigned short vvar_26;
+    unsigned short vvar_12;
+    unsigned short vvar_85;
+    unsigned short vvar_20;
+    unsigned short vvar_87;
+    unsigned short vvar_56;
+    unsigned short vvar_63;
+    unsigned short vvar_65;
+    unsigned short vvar_67;
+    unsigned short vvar_69;
+    unsigned short vvar_71;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ax_2;  // ax
+    unsigned short flags;  // flags
+    char ir_13_2; // 4111
+    char ir_14_2; // 4113
+    unsigned short ax_3;  // ax
+    unsigned short ax_4;  // ax
+    unsigned short ax_5;  // ax
+    unsigned short ax_6;  // ax
+    char ir_19_2; // 4111
+    char ir_20_2; // 4113
+    unsigned short i;  // flags
+    unsigned short ds;  // ds
+    unsigned short ax;  // ax
+    char ir_6_2; // 4107
+    char ir_7_2; // 4109
+    unsigned short si;  // si
+    int stack_bp_m8_b1;  // [bp-0x8]
+    unsigned long long s_8;  // [bp-0x8]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m8_b1 + 1))) = di;
+    vvar_37 = (int)&stack_bp_m8_b1;
+    *((int *)((ss << 4) + (unsigned int)&stack_bp_m8_b1)) = vvar_26;
+    for ((&stack_bp_m8_b1)[6] = 0; !(*(ds * 16 + 2978) > (&s_8)[3]); i = ...)
+    {
+        *((short *)((char *)&(&s_8)[2] + 2)) = (&s_8)[3];
+        *((short *)&(&s_8)[2]) = (&s_8)[3];
+        while (true)
+        {
+            ax = *((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8;
+            if ((short)(&s_8)[2] >= ax)
+                break;
+            ir_6_2 = *((char *)((ds << 4) + 2986));
+            ir_7_2 = *((char *)((ds << 4) + 2986 + 1));
+            *((char *)((ds << 4) + 2986)) = (ir_6_2 | ir_7_2 << 8) + 1;
+            *((char *)((ds << 4) + 2986 + 1)) = (ir_6_2 | ir_7_2 << 8) + 1 >> 8;
+            si = *((short *)((char *)&(&s_8)[2] + 2));
+            ax_2 = ax & 0xff00 | *((char *)((ds << 4) + 2892 + (si << 1)));
+            if ((flags & 128) == (flags & 0x800))
+            {
+                *((short *)((char *)&(&s_8)[2] + 2)) = (&s_8)[2];
+                *((short *)((ss << 4) + vvar_12 - 2)) = (&s_8)[2];
+                vvar_85 = vvar_20 - 2 - 2;
+                DrawTime();
+                vvar_87 = vvar_85 + 2;
+            }
+            ir_13_2 = *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1)));
+            ir_14_2 = *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1) + 1));
+            *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1))) = (ir_13_2 | ir_14_2 << 8) + 1;
+            *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1) + 1)) = (ir_13_2 | ir_14_2 << 8) + 1 >> 8;
+        }
+        if (*(&(&s_8)[2] + 2) <= (&s_8)[3])
+        {
+            ax_3 = *((short *)((char *)&(&s_8)[2] + 2));
+            ax_4 = ax_3 << 1;
+            vvar_56 = vvar_20 - 2;
+            *((unsigned short *)((ss << 4) + vvar_12 - 2)) = ax_4 + 2892;
+            ax_5 = (&s_8)[3];
+            ax_6 = ax_5 << 1;
+            *((unsigned short *)((ss << 4) + vvar_56 - 2)) = ax_6 + 2892;
+            vvar_63 = vvar_56 - 2 - 2;
+            Swaps();
+            vvar_65 = vvar_63 + 4;
+            vvar_67 = vvar_65 - 2;
+            *((short *)((ss << 4) + vvar_65 - 2)) = *((short *)((char *)&(&s_8)[2] + 2));
+            *((short *)((ss << 4) + vvar_67 - 2)) = (&s_8)[3];
+            vvar_69 = vvar_67 - 2 - 2;
+            SwapBars();
+            vvar_71 = vvar_69 + 4;
+        }
+        ir_19_2 = *((char *)((ss << 4) + (unsigned int)&(&s_8)[1 + 1]));
+        ir_20_2 = *((char *)((ss << 4) + (unsigned int)&(&s_8)[1 + 1] + 1));
+        *((char *)((ss << 4) + (unsigned int)&(&s_8)[1 + 1])) = (ir_19_2 | ir_20_2 << 8) + 1;
+        *((char *)((ss << 4) + (unsigned int)&(&s_8)[1 + 1] + 1)) = (ir_19_2 | ir_20_2 << 8) + 1 >> 8;
+    }
+
+    return ax_6;
+}
+[19:26:12] [dbg] recovery worker: start 0x10a88 PercolateDown mode=lst recovery_timeout=120s
+[19:26:12] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
+[19:26:12] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
+[19:26:12] [dbg] isolated function worker: start 0x1000 PercolateDown requested_timeout=120s hard_timeout=122s
+[19:26:12] [dbg] function complexity for 0x10a88 PercolateDown: blocks=18, bytes=204
+[19:26:12] [dbg] decompile_function: addr=0x10a88 (slice=0x1000) name=PercolateDown
+[19:26:12] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:12] [dbg] registered 6 direct callee stub(s) for 0x1000
+[19:26:17] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10a88 slice=0x1000 name=PercolateDown
+[19:26:16] [dbg] Decompiler returned for 0x1000
+[19:26:17] [dbg] decompilation time for 0x10a88 PercolateDown: 4.25s
+[19:26:17] /* == function 0x10a88 PercolateDown == */
+[19:26:17] /* info: function 0x10a88 PercolateDown attempt=decompiled validation=disabled */
+[19:26:17] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = iMaxLevel
+ * [bp-0x4] = iChild
+ * [bp-0x2] = i
+ * globals = iCompares, abarWork
+ * calls = aNchkstk, Swaps, SwapBars
+ */
+
+short PercolateDown(int iMaxLevel)
+{
+    unsigned short vvar_37;
+    unsigned short vvar_26;
+    unsigned short vvar_77;
+    unsigned short vvar_12;
+    unsigned short vvar_84;
+    unsigned short vvar_86;
+    unsigned short vvar_88;
+    unsigned short vvar_90;
+    unsigned short vvar_92;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    char ir_10_2; // 4109
+    unsigned short si;  // si
+    char ir_14_2; // 4111
+    char ir_15_2; // 4113
+    char ir_16_2; // 4107
+    char ir_17_2; // 4109
+    unsigned short si_2;  // si
+    unsigned short ax_4;  // ax
+    unsigned short flags_2;  // flags
+    unsigned short ax_5;  // ax
+    unsigned short ax_6;  // ax
+    unsigned short ax_7;  // ax
+    unsigned short ax_8;  // ax
+    unsigned short ax;  // ax
+    unsigned short ax_3;  // ax
+    unsigned short flags;  // flags
+    unsigned short ds;  // ds
+    char ir_9_2; // 4107
+    int stack_bp_m6_b1;  // [bp-0x6]
+    int s_6;  // [bp-0x6]
+
+    *((short **)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m6_b1 + 1))) = &stack_bp_m6_b1 + 3;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)&stack_bp_m6_b1)) = di;
+    vvar_37 = (int)(short *)((char *)&stack_bp_m6_b1 + 1);
+    *((int *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m6_b1 + 1))) = vvar_26;
+    (&stack_bp_m6_b1)[3] = 0;
+    while (true)
+    {
+        ax = (short)(&s_6)[6];
+        *((unsigned short *)&(&s_6)[8]) = ax << 1;
+        if (((short)(&s_6)[8] > (short)stack_bp_m6_b1) == 0)
+        {
+            ax_3 = (&s_6)[8] + 1;
+            if ((ax_3 <= (short)stack_bp_m6_b1) == 0)
+            {
+                ir_9_2 = *((char *)((ds << 4) + 2986));
+                ir_10_2 = *((char *)((ds << 4) + 2986 + 1));
+                *((char *)((ds << 4) + 2986)) = (ir_9_2 | ir_10_2 << 8) + 1;
+                *((char *)((ds << 4) + 2986 + 1)) = (ir_9_2 | ir_10_2 << 8) + 1 >> 8;
+                si = (short)(&s_6)[8];
+                ax_3 = ax_3 & 0xff00 | *((char *)((ds << 4) + 2892 + (si << 1)));
+                if (flags & 64) & (flags & 128) == (flags & 0x800)
+                {
+                    ir_14_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m6_b1 + -4)));
+                    ir_15_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m6_b1 + -4) + 1));
+                    *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m6_b1 + -4))) = (ir_14_2 | ir_15_2 << 8) + 1;
+                    *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m6_b1 + -4) + 1)) = (ir_14_2 | ir_15_2 << 8) + 1 >> 8;
+                }
+            }
+            ir_16_2 = *((char *)((ds << 4) + 2986));
+            ir_17_2 = *((char *)((ds << 4) + 2986 + 1));
+            *((char *)((ds << 4) + 2986)) = (ir_16_2 | ir_17_2 << 8) + 1;
+            *((char *)((ds << 4) + 2986 + 1)) = (ir_16_2 | ir_17_2 << 8) + 1 >> 8;
+            si_2 = (short)(&s_6)[8];
+            ax_4 = ax_3 & 0xff00 | *((char *)((ds << 4) + 2892 + (si_2 << 1)));
+            if ((flags_2 & 128) == (flags_2 & 0x800))
+            ax_5 = (&s_6)[8];
+            ax_6 = ax_5 << 1;
+            vvar_77 = vvar_12 - 2;
+            *((unsigned short *)((ss << 4) + vvar_12 - 2)) = ax_6 + 2892;
+            ax_7 = (&s_6)[6];
+            ax_8 = ax_7 << 1;
+            *((unsigned short *)((ss << 4) + vvar_77 - 2)) = ax_8 + 2892;
+            vvar_84 = vvar_77 - 2 - 2;
+            Swaps();
+            vvar_86 = vvar_84 + 4;
+            vvar_88 = vvar_86 - 2;
+            *((short *)((ss << 4) + vvar_86 - 2)) = (short)(&s_6)[8];
+            *((short *)((ss << 4) + vvar_88 - 2)) = (short)(&s_6)[6];
+            vvar_90 = vvar_88 - 2 - 2;
+            SwapBars();
+            vvar_92 = vvar_90 + 4;
+            *((short *)&(&s_6)[6]) = (short)(&s_6)[8];
+        }
+        else
+        {
+        }
+    }
+
+    return ax_3;
+}
+[19:26:17] [dbg] recovery worker: start 0x108d0 BubbleSort mode=lst recovery_timeout=120s
+[19:26:17] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
+[19:26:17] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
+[19:26:17] [dbg] isolated function worker: start 0x1000 BubbleSort requested_timeout=120s hard_timeout=122s
+[19:26:17] [dbg] function complexity for 0x108d0 BubbleSort: blocks=15, bytes=163
+[19:26:17] [dbg] decompile_function: addr=0x108d0 (slice=0x1000) name=BubbleSort
+[19:26:17] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:17] [dbg] registered 6 direct callee stub(s) for 0x1000
+[19:26:20] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x108d0 slice=0x1000 name=BubbleSort
+[19:26:20] [dbg] Decompiler returned for 0x1000
+[19:26:20] [dbg] decompilation time for 0x108d0 BubbleSort: 3.21s
+[19:26:20] /* == function 0x108d0 BubbleSort == */
+[19:26:20] /* info: function 0x108d0 BubbleSort attempt=decompiled validation=disabled */
+[19:26:20] /* -- c -- */
+/* COD annotations:
+ * [bp-0x6] = iSwitch
+ * [bp-0x4] = iLimit
+ * [bp-0x2] = iRow
+ * globals = cRow, iCompares, abarWork
+ * calls = aNchkstk, Swaps, SwapBars
+ */
+
+short BubbleSort(void)
+{
+    unsigned short vvar_39;
+    unsigned short vvar_28;
+    unsigned short vvar_65;
+    unsigned short vvar_21;
+    unsigned short vvar_13;
+    unsigned short vvar_72;
+    unsigned short vvar_74;
+    unsigned short vvar_79;
+    unsigned short vvar_81;
+    unsigned short vvar_83;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ax_2;  // ax
+    unsigned short flags;  // flags
+    unsigned short ax_3;  // ax
+    unsigned short ax_4;  // ax
+    unsigned short ax_5;  // ax
+    unsigned short ax_6;  // ax
+    unsigned short ax_7;  // ax
+    char ir_18_2; // 4111
+    char ir_19_2; // 4113
+    unsigned short ds;  // ds
+    unsigned short ax;  // ax
+    char ir_6_2; // 4107
+    char ir_7_2; // 4109
+    unsigned short si;  // si
+    int stack_bp_m8_b1;  // [bp-0x8]
+    unsigned long long s_8;  // [bp-0x8]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_m8_b1 + 1))) = di;
+    vvar_39 = (int)&stack_bp_m8_b1;
+    *((int *)((ss << 4) + (unsigned int)&stack_bp_m8_b1)) = vvar_28;
+    (&stack_bp_m8_b1)[5] = *((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8;
+    do
+    {
+        *((unsigned short *)&(&s_8)[3]) = 0;
+        *((unsigned short *)&(&s_8)[2]) = 0;
+        while (true)
+        {
+            ax = (&s_8)[2];
+            if (*(&(&s_8)[2] + 2) <= ax)
+                break;
+            ir_6_2 = *((char *)((ds << 4) + 2986));
+            ir_7_2 = *((char *)((ds << 4) + 2986 + 1));
+            *((char *)((ds << 4) + 2986)) = (ir_6_2 | ir_7_2 << 8) + 1;
+            *((char *)((ds << 4) + 2986 + 1)) = (ir_6_2 | ir_7_2 << 8) + 1 >> 8;
+            si = (&s_8)[2];
+            ax_2 = ax & 0xff00 | *((char *)((ds << 4) + 2892 + (si << 1)));
+            if ((flags & 128) == (flags & 0x800))
+            {
+                ax_3 = (&s_8)[2];
+                ax_4 = ax_3 << 1;
+                vvar_65 = vvar_21 - 2;
+                *((unsigned short *)((ss << 4) + vvar_13 - 2)) = ax_4 + 2894;
+                ax_5 = (&s_8)[2];
+                ax_6 = ax_5 << 1;
+                *((unsigned short *)((ss << 4) + vvar_65 - 2)) = ax_6 + 2892;
+                vvar_72 = vvar_65 - 2 - 2;
+                Swaps();
+                vvar_74 = vvar_72 + 4;
+                ax_7 = (&s_8)[2];
+                vvar_79 = vvar_74 - 2;
+                *((unsigned short *)((ss << 4) + vvar_74 - 2)) = ax_7 + 1;
+                *((short *)((ss << 4) + vvar_79 - 2)) = (&s_8)[2];
+                vvar_81 = vvar_79 - 2 - 2;
+                SwapBars();
+                vvar_83 = vvar_81 + 4;
+                *((short *)&(&s_8)[3]) = (&s_8)[2];
+            }
+            ir_18_2 = *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1)));
+            ir_19_2 = *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1) + 1));
+            *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1))) = (ir_18_2 | ir_19_2 << 8) + 1;
+            *((char *)((ss << 4) + (unsigned int)(&stack_bp_m8_b1 + 1) + 1)) = (ir_18_2 | ir_19_2 << 8) + 1 >> 8;
+        }
+        *((short *)((char *)&(&s_8)[2] + 2)) = (&s_8)[3];
+    } while (!(!(short)(&s_8)[3]));
+
+    return ax_7;
+}
+[19:26:20] [dbg] recovery worker: start 0x10808 InsertionSort mode=lst recovery_timeout=120s
+[19:26:20] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
+[19:26:21] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
+[19:26:21] [dbg] isolated function worker: start 0x1000 InsertionSort requested_timeout=120s hard_timeout=122s
+[19:26:21] [dbg] function complexity for 0x10808 InsertionSort: blocks=20, bytes=199
+[19:26:21] [dbg] decompile_function: addr=0x10808 (slice=0x1000) name=InsertionSort
+[19:26:21] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:21] [dbg] registered 6 direct callee stub(s) for 0x1000
+[19:26:27] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10808 slice=0x1000 name=InsertionSort
+[19:26:26] [dbg] Decompiler returned for 0x1000
+[19:26:27] [dbg] decompilation time for 0x10808 InsertionSort: 6.38s
+[19:26:27] /* == function 0x10808 InsertionSort == */
+[19:26:27] /* info: function 0x10808 InsertionSort attempt=decompiled validation=disabled */
+[19:26:27] /* -- c -- */
+/* COD annotations:
+ * [bp-0x8] = barTemp
+ * [bp-0x6] = iLength
+ * [bp-0x4] = iRowTmp
+ * [bp-0x2] = iRow
+ * globals = cRow, abarWork, iCompares, iSwaps
+ * calls = aNchkstk, DrawBar, DrawTime
+ */
+
+short InsertionSort(void)
+{
+    unsigned short vvar_33;
+    unsigned short vvar_22;
+    unsigned short vvar_14;
+    unsigned short vvar_82;
+    unsigned short vvar_87;
+    unsigned short vvar_63;
+    unsigned short vvar_68;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ax_3;  // ax
+    unsigned short bx;  // bx
+    char ir_12_2; // 4111
+    char ir_13_2; // 4113
+    unsigned short ax_4;  // ax
+    unsigned short bx_2;  // bx
+    char ir_16_2; // 4111
+    char ir_17_2; // 4113
+    unsigned short ds;  // ds
+    unsigned short ax;  // ax
+    unsigned short ax_2;  // ax
+    unsigned int ax_5;  // ax
+    char ir_6_2; // 4107
+    char ir_7_2; // 4109
+    char ir_8_2; // 4107
+    char ir_9_2; // 4109
+    int stack_bp_ma_b1;  // [bp-0xa]
+    int s_a;  // [bp-0xa]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&stack_bp_ma_b1 + 1))) = di;
+    vvar_33 = (int)(short *)((char *)&stack_bp_ma_b1 + 1);
+    *((int *)((ss << 4) + (unsigned int)(short *)((char *)&stack_bp_ma_b1 + 1))) = vvar_22;
+    for ((&stack_bp_ma_b1)[5] = 0; !(!(*(ds * 16 + 2978) > (&s_a)[10])); *((char *)((ss << 4) + (unsigned int)(0 - 2 + &s_a + -8) + 1)) = (ir_16_2 | ir_17_2 << 8) + 1 >> 8)
+    {
+        ax = *((char *)((ds << 4) + 2892 + ((short)(&s_a)[10] << 1))) | *((char *)((ds << 4) + 2892 + ((short)(&s_a)[10] << 1) + 1)) << 8;
+        *((unsigned short *)&(&s_a)[16]) = ax;
+        ax_2 = (char)(ax & 0xff00 | *((char *)((ss << 4) + (unsigned int)(0 - 8 + &stack_bp_ma_b1 + -8))));
+        *((unsigned short *)&(&s_a)[14]) = ax_2;
+        ax_5 = _INSERT(ax_2 << 16, 0, (short)(&s_a)[10]);
+        for (*((unsigned short *)&(&s_a)[12]) = ax_5; !(!((short)(&s_a)[12])); *((char *)((ss << 4) + (unsigned int)(0 - 4 + &s_a + -8) + 1)) = (ir_12_2 | ir_13_2 << 8) - 1 >> 8)
+        {
+            ir_6_2 = *((char *)((ds << 4) + 2986));
+            ir_7_2 = *((char *)((ds << 4) + 2986 + 1));
+            *((char *)((ds << 4) + 2986)) = (ir_6_2 | ir_7_2 << 8) + 1;
+            *((char *)((ds << 4) + 2986 + 1)) = (ir_6_2 | ir_7_2 << 8) + 1 >> 8;
+            if (*(ds * 16 + 2890 + (&s_a)[12] * 2) <= (&s_a)[14])
+                break;
+            ir_8_2 = *((char *)((ds << 4) + 2980));
+            ir_9_2 = *((char *)((ds << 4) + 2980 + 1));
+            *((char *)((ds << 4) + 2980)) = (ir_8_2 | ir_9_2 << 8) + 1;
+            *((char *)((ds << 4) + 2980 + 1)) = (ir_8_2 | ir_9_2 << 8) + 1 >> 8;
+            ax_3 = *((char *)((ds << 4) + 2890 + ((short)(&s_a)[12] << 1))) | *((char *)((ds << 4) + 2890 + ((short)(&s_a)[12] << 1) + 1)) << 8;
+            bx = (short)(&s_a)[12] << 1;
+            *((char *)((ds << 4) + 2892 + bx)) = ax_3;
+            *((char *)((ds << 4) + 2892 + bx + 1)) = ax_3 >> 8;
+            *((short *)((ss << 4) + vvar_14 - 2)) = (short)(&s_a)[12];
+            DrawBar();
+            vvar_82 = vvar_14 - 2 - 2 + 2;
+            *((short *)((ss << 4) + vvar_82 - 2)) = (short)(&s_a)[12];
+            ax_5 = DrawBar();
+            vvar_87 = vvar_82 - 2 - 2 + 2;
+            ir_12_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_ma_b1 + -8)));
+            ir_13_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_ma_b1 + -8) + 1));
+            *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_ma_b1 + -8))) = (ir_12_2 | ir_13_2 << 8) - 1;
+        }
+        ax_4 = (short)(&s_a)[16];
+        bx_2 = (short)(&s_a)[12] << 1;
+        *((char *)((ds << 4) + 2892 + bx_2)) = ax_4;
+        *((char *)((ds << 4) + 2892 + bx_2 + 1)) = ax_4 >> 8;
+        *((short *)((ss << 4) + vvar_14 - 2)) = (short)(&s_a)[12];
+        DrawBar();
+        vvar_63 = vvar_14 - 2 - 2 + 2;
+        *((short *)((ss << 4) + vvar_63 - 2)) = (short)(&s_a)[12];
+        DrawBar();
+        vvar_68 = vvar_63 - 2 - 2 + 2;
+        ir_16_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8)));
+        ir_17_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8) + 1));
+        *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_ma_b1 + -8))) = (ir_16_2 | ir_17_2 << 8) + 1;
+    }
+
+    return ax_4;
+}
+[19:26:27] [dbg] recovery worker: start 0x106c8 DrawBar mode=lst recovery_timeout=120s
+[19:26:27] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
+[19:26:27] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
+[19:26:28] [dbg] isolated function worker: start 0x1000 DrawBar requested_timeout=120s hard_timeout=122s
+[19:26:28] [dbg] function complexity for 0x106c8 DrawBar: blocks=7, bytes=147
+[19:26:28] [dbg] decompile_function: addr=0x106c8 (slice=0x1000) name=DrawBar
+[19:26:28] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:28] [dbg] registered 7 direct callee stub(s) for 0x1000
+[19:26:30] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x106c8 slice=0x1000 name=DrawBar
+[19:26:29] [dbg] Decompiler returned for 0x1000
+[19:26:30] [dbg] decompilation time for 0x106c8 DrawBar: 2.34s
+[19:26:30] /* == function 0x106c8 DrawBar == */
+[19:26:30] /* info: function 0x106c8 DrawBar attempt=decompiled validation=disabled */
+[19:26:30] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = iRow
+ * [bp-0x2e] = cSpace
+ * [bp-0x2c] = achT
+ * globals = abarWork, cRow
+ * calls = aNchkstk, memset, settextcolor, settextposition, outtext
+ */
+
+short DrawBar(int iRow)
+{
+    unsigned short vvar_2;
+    unsigned short vvar_27;
+    unsigned short vvar_38;
+    unsigned short vvar_40;
+    unsigned short vvar_51;
+    unsigned short vvar_60;
+    unsigned short vvar_63;
+    unsigned short vvar_66;
+    unsigned short vvar_71;
+    unsigned short vvar_77;
+    unsigned short vvar_79;
+    unsigned short ss;  // ss
+    unsigned int ax;  // ax
+    unsigned short di;  // di
+    unsigned short ds;  // ds
+    unsigned int dst;  // ax
+    unsigned int dst_2;  // ax
+    unsigned short cs;  // cs
+    char s_30;  // [bp-0x30]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_30 + 46))) = &s_30 + 48;
+    ax = aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_30 + 44))) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_30 + 42))) = vvar_2;
+    *((short *)((ss << 4) + (unsigned int)(&s_30 + 40))) = (char)(ax & 0xff00 | *((char *)((ds << 4) + 2892 + (*((short *)&(&s_30)[42]) << 1))));
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_30 + 38))) = 223;
+    *((char **)((ss << 4) + (unsigned int)(&s_30 + 36))) = &s_30 + 2;
+    dst = memset();
+    vvar_27 = (int)&(&s_30)[36 + 6];
+    *((unsigned short *)&(&s_30)[92]) = ((char)(dst & 0xff00 | *((char *)((ds << 4) + 2892 + (*((short *)&(&s_30)[42]) << 1)))) - (*((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8)) * -1;
+    vvar_38 = vvar_27 - 2;
+    *((short *)((ss << 4) + vvar_27 - 2)) = *((short *)&(&s_30)[92]);
+    vvar_40 = vvar_38 - 2;
+    *((unsigned short *)((ss << 4) + vvar_38 - 2)) = 32;
+    *((char **)((ss << 4) + vvar_40 - 2)) = &(&s_30)[2 + (char)(32 & 0xff00 | *((char *)((ds << 4) + 0 + 2892 + (*((short *)&(&s_30)[42]) << 1))))];
+    dst_2 = memset();
+    vvar_51 = vvar_40 - 2 - 2 + 6;
+    *((char *)((ss << 4) + (unsigned int)&(&s_30)[2 + (*((char *)((ds << 4) + 0 + 2978)) | *((char *)((ds << 4) + 0 + 2978 + 1)) << 8)])) = 0;
+    *((short *)((ss << 4) + vvar_51 - 2)) = (char)(dst_2 & 0xff00 | *((char *)((ds << 4) + 2893 + (*((short *)&(&s_30)[42]) << 1))));
+    vvar_60 = vvar_51 - 2 + -2;
+    *((char *)((ss << 4) + vvar_60)) = cs;
+    *((char *)((ss << 4) + vvar_60 + 1)) = cs >> 8;
+    settextcolor();
+    vvar_63 = vvar_60 - 2 + 2;
+    vvar_66 = vvar_63 - 2;
+    *((unsigned short *)((ss << 4) + vvar_63 - 2)) = 0;
+    *((unsigned short *)((ss << 4) + vvar_66 - 2)) = *((short *)&(&s_30)[42]) + 1;
+    vvar_71 = vvar_66 - 2 + -2;
+    *((char *)((ss << 4) + vvar_71)) = cs;
+    *((char *)((ss << 4) + vvar_71 + 1)) = cs >> 8;
+    memset();
+    vvar_77 = vvar_71 - 2 + 4 + -2;
+    *((char *)((ss << 4) + vvar_77)) = ss;
+    *((char *)((ss << 4) + vvar_77 + 1)) = ss >> 8;
+    *((char **)((ss << 4) + vvar_77 - 2)) = &s_30 + 2;
+    vvar_79 = vvar_77 - 2 + -2;
+    *((char *)((ss << 4) + vvar_79)) = cs;
+    *((char *)((ss << 4) + vvar_79 + 1)) = cs >> 8;
+    settextcolor();
+}
+[19:26:30] [dbg] recovery worker: start 0x10560 InitBars mode=lst recovery_timeout=120s
+[19:26:30] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
+[19:26:30] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
+[19:26:30] [dbg] isolated function worker: start 0x1000 InitBars requested_timeout=120s hard_timeout=122s
+[19:26:30] [dbg] function complexity for 0x10560 InitBars: blocks=29, bytes=303
+[19:26:30] [dbg] decompile_function: addr=0x10560 (slice=0x1000) name=InitBars
+[19:26:30] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:30] [dbg] registered 10 direct callee stub(s) for 0x1000
+[19:26:43] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10560 slice=0x1000 name=InitBars
+[19:26:41] [dbg] Decompiler returned for 0x1000
+[19:26:43] [dbg] decompilation time for 0x10560 InitBars: 12.89s
+[19:26:43] /* == function 0x10560 InitBars == */
+[19:26:43] /* info: function 0x10560 InitBars attempt=decompiled validation=disabled */
+[19:26:43] /* -- c -- */
+/* COD annotations:
+ * [bp-0x76] = iRand
+ * [bp-0x74] = iColorMax
+ * [bp-0x72] = iLength
+ * [bp-0x70] = vc
+ * [bp-0x5a] = aTemp
+ * [bp-0x4] = iRowMax
+ * [bp-0x2] = iRow
+ * globals = fSound, clPause, cRow, abarPerm
+ * calls = aNchkstk, time, srand, getvideoconfig, rand, ReInitBars
+ */
+
+short InitBars(void)
+{
+    unsigned short vvar_26;
+    unsigned short vvar_43;
+    unsigned short vvar_46;
+    unsigned short vvar_51;
+    unsigned short vvar_53;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    char ir_10_2; // 4111
+    char ir_11_2; // 4113
+    unsigned short ax_3;  // ax
+    unsigned short j;  // flags
+    unsigned int ax_5;  // ax
+    unsigned short cx;  // cx
+    unsigned int ax_6;  // ax
+    unsigned short si_3;  // si
+    unsigned short si_4;  // si
+    unsigned short ax_4;  // ax
+    unsigned short ds;  // ds
+    unsigned short si_5;  // si
+    unsigned short si_6;  // si
+    char ir_22_2; // 4410
+    char ir_23_2; // 4412
+    unsigned short bx;  // bx
+    unsigned short bx_2;  // bx
+    unsigned short flags;  // flags
+    unsigned short dx;  // dx
+    unsigned short bx_3;  // bx
+    unsigned short cs;  // cs
+    char ir_30_2; // 4111
+    char ir_31_2; // 4113
+    unsigned short i;  // flags
+    unsigned short ax;  // ax
+    unsigned short ax_2;  // ax
+    unsigned short si;  // si
+    unsigned short si_2;  // si
+    int stack_bp_m78_b1;  // [bp-0x78]
+    int s_78;  // [bp-0x78]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m78_b1)[28] + 1))) = di;
+    *((int *)((ss << 4) + (unsigned int)(&stack_bp_m78_b1 + 28))) = vvar_26;
+    *((unsigned short *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m78_b1)[27] + 1))) = 0;
+    vvar_43 = (int)(short *)(56 + (char *)&stack_bp_m78_b1 + 2);
+    *((unsigned short *)((ss << 4) + vvar_43 - 2)) = time();
+    vvar_46 = vvar_43 - 2 - 2;
+    time();
+    *((char *)((ds << 4) + 2886)) = 1;
+    *((char *)((ds << 4) + 2886 + 1)) = 1 >> 8;
+    *((char *)((ds << 4) + 306)) = 30;
+    *((char *)((ds << 4) + 306 + 1)) = 30 >> 8;
+    *((char *)((ds << 4) + 308)) = 0;
+    *((char *)((ds << 4) + 308 + 1)) = 0 >> 8;
+    vvar_51 = vvar_46 + 2 + -2;
+    *((char *)((ss << 4) + vvar_51)) = ss;
+    *((char *)((ss << 4) + vvar_51 + 1)) = ss >> 8;
+    *((short **)((ss << 4) + vvar_51 - 2)) = (char *)&(&stack_bp_m78_b1)[26] + 1;
+    vvar_53 = vvar_51 - 2 + -2;
+    *((char *)((ss << 4) + vvar_53)) = cs;
+    *((char *)((ss << 4) + vvar_53 + 1)) = cs >> 8;
+    srand();
+    if ((&stack_bp_m78_b1)[106] != 1)
+    {
+        if ((&stack_bp_m78_b1)[108] == 2)
+            goto LABEL_1056;
+        if (!(&stack_bp_m78_b1)[108])
+            goto LABEL_1056_2;
+        (&stack_bp_m78_b1)[117] = 15;
+    }
+    else
+    {
+LABEL_1056_2:
+        (&stack_bp_m78_b1)[117] = 1;
+    }
+    for ((&stack_bp_m78_b1)[60] = 0; !(!(*(ds * 16 + 2978) > (&stack_bp_m78_b1)[60])); i = ...)
+    {
+        ax = (&stack_bp_m78_b1)[60];
+        ax_2 = ax + 8;
+        si = (&stack_bp_m78_b1)[60];
+        si_2 = si << 1;
+        *((char *)((ss << 4) + (unsigned int)(short *)(1 + (char *)&(&stack_bp_m78_b1)[15] + si_2))) = ax_2;
+        *((char *)((ss << 4) + (unsigned int)(short *)(1 + (char *)&(&stack_bp_m78_b1)[15] + si_2) + 1)) = ax_2 >> 8;
+        ir_10_2 = *((char *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m78_b1)[28] + 1)));
+        ir_11_2 = *((char *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m78_b1)[28] + 1) + 1));
+        *((char *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m78_b1)[28] + 1))) = (ir_10_2 | ir_11_2 << 8) + 1;
+        *((char *)((ss << 4) + (unsigned int)(short *)((char *)&(&stack_bp_m78_b1)[28] + 1) + 1)) = (ir_10_2 | ir_11_2 << 8) + 1 >> 8;
+    }
+    ax_3 = *((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8;
+    (&stack_bp_m78_b1)[61] = ax_3 - 1;
+    for ((&stack_bp_m78_b1)[60] = 0; !(!(*(ds * 16 + 2978) > (&s_78)[120])); j = ...)
+    {
+        ax_5 = getvideoconfig();
+        cx = (short)(&s_78)[122];
+        ax_6 = _INSERT(ax_5, 2, cx + 1);
+        *((unsigned short *)&(&s_78)[236]) = (0 - (1 & ax_6 >> 15) << 16 | ax_6) % *((unsigned short *)((void*)&ax_6 + 2));
+        si_3 = (short)(&s_78)[236];
+        *((unsigned short *)&(&s_78)[232]) = *((char *)((ss << 4) + (unsigned int)(0 - 90 + &stack_bp_m78_b1 + -118 + (si_3 << 1)))) | *((char *)((ss << 4) + (unsigned int)(0 - 90 + &stack_bp_m78_b1 + -118 + (si_3 << 1)) + 1)) << 8;
+        si_4 = (short)(&s_78)[122];
+        ax_4 = *((char *)((ss << 4) + (unsigned int)(0 - 90 + &stack_bp_m78_b1 + -118 + (si_4 << 1)))) | *((char *)((ss << 4) + (unsigned int)(0 - 90 + &stack_bp_m78_b1 + -118 + (si_4 << 1)) + 1)) << 8;
+        si_5 = (short)(&s_78)[236];
+        si_6 = si_5 << 1;
+        *((char *)((ss << 4) + (unsigned int)(0 - 90 + &stack_bp_m78_b1 + -118 + si_6))) = ax_4;
+        *((char *)((ss << 4) + (unsigned int)(0 - 90 + &stack_bp_m78_b1 + -118 + si_6) + 1)) = ax_4 >> 8;
+        ir_22_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m78_b1 + -118)));
+        ir_23_2 = *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m78_b1 + -118) + 1));
+        *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m78_b1 + -118))) = (ir_22_2 | ir_23_2 << 8) - 1;
+        *((char *)((ss << 4) + (unsigned int)(0 - 4 + &stack_bp_m78_b1 + -118) + 1)) = (ir_22_2 | ir_23_2 << 8) - 1 >> 8;
+        bx = (short)(&s_78)[120];
+        *((char *)((ds << 4) + 2288 + (bx << 1))) = ax_4 & 0xff00 | *((char *)((ss << 4) + (unsigned int)(0 - 114 + &stack_bp_m78_b1 + -118)));
+        if ((short)(&s_78)[234] == 1)
+        {
+            bx_2 = (short)(&s_78)[120];
+            *((char *)((ds << 4) + 2289 + (bx_2 << 1))) = 7;
+        }
+        else
+        {
+            dx = (0 - (1 & (short)(&s_78)[232] >> 15) << 16 | (short)(&s_78)[232]) % (*((char *)((ss << 4) + (unsigned int)(0 - 116 + &stack_bp_m78_b1 + -118))) | *((char *)((ss << 4) + (unsigned int)(0 - 116 + &stack_bp_m78_b1 + -118) + 1)) << 8);
+            bx_3 = (short)(&s_78)[120];
+            *((char *)((ds << 4) + 2289 + (bx_3 << 1))) = dx & 0xff00 | (char)dx + 1;
+        }
+        ir_30_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_m78_b1 + -118)));
+        ir_31_2 = *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_m78_b1 + -118) + 1));
+        *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_m78_b1 + -118))) = (ir_30_2 | ir_31_2 << 8) + 1;
+        *((char *)((ss << 4) + (unsigned int)(0 - 2 + &stack_bp_m78_b1 + -118) + 1)) = (ir_30_2 | ir_31_2 << 8) + 1 >> 8;
+    }
+    sub_1112();
+
+    return ax_4;
+}
+[19:26:43] [dbg] recovery worker: start 0x10498 DrawTime mode=lst recovery_timeout=120s
+[19:26:43] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
+[19:26:44] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
+[19:26:44] [dbg] isolated function worker: start 0x1000 DrawTime requested_timeout=120s hard_timeout=122s
+[19:26:44] [dbg] function complexity for 0x10498 DrawTime: blocks=15, bytes=194
+[19:26:44] [dbg] decompile_function: addr=0x10498 (slice=0x1000) name=DrawTime
+[19:26:44] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:44] [dbg] registered 15 direct callee stub(s) for 0x1000
+[19:26:49] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10498 slice=0x1000 name=DrawTime
+[19:26:47] [dbg] Decompiler returned for 0x1000
+[19:26:49] [dbg] decompilation time for 0x10498 DrawTime: 5.17s
+[19:26:49] /* == function 0x10498 DrawTime == */
+[19:26:49] /* info: function 0x10498 DrawTime attempt=decompiled validation=disabled */
+[19:26:49] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = iCurrentRow
+ * [bp-0x50] = achTiming
+ * globals = clFinish, iCompares, iSwaps, clStart, SG604, iCurChoice, fSound, clPause
+ * calls = aNchkstk, settextcolor, clock, aNldiv, sprintf, settextposition, outtext, Beep, Sleep
+ */
+
+
+short DrawTime(int iCurrentRow)
+{
+    unsigned short vvar_17;
+    unsigned short vvar_39;
+    unsigned short vvar_40;
+    unsigned short vvar_43;
+    unsigned short vvar_44;
+    unsigned short vvar_51;
+    unsigned short vvar_53;
+    unsigned short vvar_55;
+    unsigned short vvar_56;
+    unsigned short vvar_58;
+    unsigned short vvar_61;
+    unsigned short vvar_63;
+    unsigned short vvar_66;
+    unsigned short vvar_71;
+    unsigned short vvar_72;
+    unsigned short vvar_77;
+    unsigned short vvar_79;
+    unsigned short vvar_80;
+    unsigned short vvar_82;
+    unsigned short vvar_84;
+    unsigned short vvar_85;
+    unsigned short a80;
+    unsigned short vvar_91;
+    unsigned short vvar_102;
+    unsigned short vvar_104;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short flags;  // flags
+    unsigned short flags_2;  // flags
+    char ir_12_2; // 4322
+    char ir_13_2; // 4324
+    unsigned short dx_3;  // dx
+    unsigned int ax_7;  // ax
+    unsigned short ax_2;  // ax
+    unsigned short ax_3;  // ax
+    char ir_19_2; // 4111
+    unsigned short cs;  // cs
+    char ir_20_2; // 4113
+    unsigned short ax_4;  // ax
+    unsigned short flags_3;  // flags
+    char ir_23_2; // 4111
+    char ir_24_2; // 4113
+    unsigned short ax_5;  // ax
+    unsigned int ax_6;  // ax
+    unsigned short ds;  // ds
+    unsigned short dx;  // dx
+    unsigned short ax;  // ax
+    unsigned short dx_2;  // dx
+    char ir_8_2; // 4250
+    char ir_9_2; // 4252
+    char s_a;  // [bp-0xa]
+    char s_8;  // [bp-0x8]
+    char s_6;  // [bp-0x6]
+    char s_4;  // [bp-0x4]
+    char s_2;  // [bp-0x2]
+    char s_0;  // [bp+0x0]
+    char arg_2;  // [bp+0x2]
+    char arg_3;  // [bp+0x3]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_2 + 2))) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_17;
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_6 + 2))) = 15;
+    *((char *)((ss << 4) + (unsigned int)&s_8)) = cs;
+    *((char *)((ss << 4) + (unsigned int)&s_8 + 1)) = cs >> 8;
+    settextcolor();
+    ax_6 = settextcolor();
+    *((char *)((ds << 4) + 2888)) = ax_6;
+    *((char *)((ds << 4) + 2888 + 1)) = ax_6 >> 8;
+    *((char *)((ds << 4) + 2890)) = dx;
+    *((char *)((ds << 4) + 2890 + 1)) = dx >> 8;
+    vvar_39 = (int)&(&s_a)[2 + 2 + 2];
+    *((char *)((ss << 4) + vvar_39)) = *((char *)((ds << 4) + 2986)) | *((char *)((ds << 4) + 2986 + 1)) << 8;
+    *((char *)((ss << 4) + vvar_39 + 1)) = (*((char *)((ds << 4) + 2986)) | *((char *)((ds << 4) + 2986 + 1)) << 8) >> 8;
+    vvar_40 = vvar_39 + -2;
+    *((char *)((ss << 4) + vvar_40)) = *((char *)((ds << 4) + 2980)) | *((char *)((ds << 4) + 2980 + 1)) << 8;
+    *((char *)((ss << 4) + vvar_40 + 1)) = (*((char *)((ds << 4) + 2980)) | *((char *)((ds << 4) + 2980 + 1)) << 8) >> 8;
+    vvar_43 = vvar_40 - 2;
+    *((unsigned short *)((ss << 4) + vvar_40 - 2)) = 0;
+    vvar_44 = vvar_43 - 2;
+    *((unsigned short *)((ss << 4) + vvar_43 - 2)) = 1000;
+    ax = *((char *)((ds << 4) + 2888)) | *((char *)((ds << 4) + 2888 + 1)) << 8;
+    dx_2 = *((char *)((ds << 4) + 2890)) | *((char *)((ds << 4) + 2890 + 1)) << 8;
+    ir_8_2 = *((char *)((ds << 4) + 2982));
+    ir_9_2 = *((char *)((ds << 4) + 2982 + 1));
+    flags_2 = ...;
+    ir_12_2 = *((char *)((ds << 4) + 2984));
+    ir_13_2 = *((char *)((ds << 4) + 2984 + 1));
+    dx_3 = dx_2 - (ir_12_2 | ir_13_2 << 8) - (char)(1 & flags_2 >> 0);
+    vvar_51 = vvar_44 - 2;
+    *((unsigned short *)((ss << 4) + vvar_44 - 2)) = dx_3;
+    *((unsigned short *)((ss << 4) + vvar_51 - 2)) = ax - (ir_8_2 | ir_9_2 << 8);
+    vvar_53 = vvar_51 - 2 - 2;
+    ax_7 = aNldiv();
+    vvar_55 = vvar_53 - 2;
+    *((unsigned short *)((ss << 4) + vvar_53 - 2)) = dx_3;
+    vvar_56 = vvar_55 - 2;
+    *((unsigned short *)((ss << 4) + vvar_55 - 2)) = ax_7;
+    vvar_58 = vvar_56 - 2;
+    *((unsigned short *)((ss << 4) + vvar_56 - 2)) = 381;
+    *((char **)((ss << 4) + vvar_58 - 2)) = &s_2 + 80;
+    vvar_61 = vvar_58 - 2 - 2;
+    clock();
+    vvar_63 = vvar_61 + 12;
+    vvar_66 = vvar_63 - 2;
+    *((unsigned short *)((ss << 4) + vvar_63 - 2)) = 59;
+    ax_2 = *((char *)((ds << 4) + 2988)) | *((char *)((ds << 4) + 2988 + 1)) << 8;
+    *((unsigned short *)((ss << 4) + vvar_66 - 2)) = ax_2 + 7;
+    vvar_71 = vvar_66 - 2 + -2;
+    *((char *)((ss << 4) + vvar_71)) = cs;
+    *((char *)((ss << 4) + vvar_71 + 1)) = cs >> 8;
+    vvar_72 = vvar_71 - 2;
+    aNldiv();
+    vvar_77 = vvar_72 + 4 + -2;
+    *((char *)((ss << 4) + vvar_77)) = ss;
+    *((char *)((ss << 4) + vvar_77 + 1)) = ss >> 8;
+    *((char **)((ss << 4) + vvar_77 - 2)) = &s_2 + 80;
+    vvar_79 = vvar_77 - 2 + -2;
+    *((char *)((ss << 4) + vvar_79)) = cs;
+    *((char *)((ss << 4) + vvar_79 + 1)) = cs >> 8;
+    vvar_80 = vvar_79 - 2;
+    sprintf();
+    vvar_82 = vvar_80 + 4;
+    if (!(*(ds * 16 + 2886)))
+    {
+        vvar_84 = vvar_82 + -2;
+        *((char *)((ss << 4) + vvar_84)) = *((char *)((ds << 4) + 308)) | *((char *)((ds << 4) + 308 + 1)) << 8;
+        *((char *)((ss << 4) + vvar_84 + 1)) = (*((char *)((ds << 4) + 308)) | *((char *)((ds << 4) + 308 + 1)) << 8) >> 8;
+        vvar_85 = vvar_84 + -2;
+        *((char *)((ss << 4) + vvar_85)) = *((char *)((ds << 4) + 306)) | *((char *)((ds << 4) + 306 + 1)) << 8;
+        *((char *)((ss << 4) + vvar_85 + 1)) = (*((char *)((ds << 4) + 306)) | *((char *)((ds << 4) + 306 + 1)) << 8) >> 8;
+        Sleep();
+    }
+    vvar_91 = vvar_82 - 2;
+    *((unsigned short *)((ss << 4) + vvar_82 - 2)) = 75;
+    ax_3 = 60 * (*((char *)((ss << 4) + (unsigned int)(&s_2 + 4))) | *((char *)((ss << 4) + (unsigned int)(&s_2 + 4) + 1)) << 8);
+    if (1 & 60 * (arg_2 | arg_3 * 0x100) >> 15)
+    {
+        ir_19_2 = *((char *)((ss << 4) + (unsigned int)(&s_2 + 4)));
+        ir_20_2 = *((char *)((ss << 4) + (unsigned int)(&s_2 + 4) + 1));
+        ax_4 = ax_3 * (ir_19_2 | ir_20_2 << 8);
+    }
+    else
+    {
+        ir_23_2 = *((char *)((ss << 4) + (unsigned int)(&s_2 + 4)));
+        ir_24_2 = *((char *)((ss << 4) + (unsigned int)(&s_2 + 4) + 1));
+        ax_4 = ax_3 * (ir_23_2 | ir_24_2 << 8);
+    }
+    *((unsigned short *)((ss << 4) + vvar_91 - 2)) = ax_4;
+    vvar_102 = vvar_91 - 2 - 2;
+    Beep();
+    vvar_104 = vvar_102 + 4;
+    ax_5 = *((char *)((ds << 4) + 306)) | *((char *)((ds << 4) + 306 + 1)) << 8;
+    *((unsigned short *)((ss << 4) + vvar_104 - 2)) = ...;
+    *((unsigned short *)((ss << 4) + vvar_104 - 2 - 2)) = ax_5 - 75;
+    Sleep();
+
+    return ax_4;
+}
+[19:26:49] [dbg] recovery worker: start 0x102e0 RunMenu mode=lst recovery_timeout=120s
+[19:26:49] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
+[19:26:50] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
+[19:26:50] [dbg] isolated function worker: start 0x1000 RunMenu requested_timeout=120s hard_timeout=122s
+[19:26:50] [dbg] function complexity for 0x102e0 RunMenu: blocks=76, bytes=459
+[19:26:50] [dbg] decompile_function: addr=0x102e0 (slice=0x1000) name=RunMenu
+[19:26:50] [dbg] function 0x1000 not normalized, normalizing...
+[19:26:50] [dbg] registered 25 direct callee stub(s) for 0x1000
+[19:27:20] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x102e0 slice=0x1000 name=RunMenu
+[19:27:18] [dbg] Decompiler returned for 0x1000
+[19:27:20] [dbg] decompilation time for 0x102e0 RunMenu: 30.21s
+[19:27:20] /* == function 0x102e0 RunMenu == */
+[19:27:20] /* info: function 0x102e0 RunMenu attempt=decompiled validation=disabled */
+[19:27:20] /* -- c -- */
+/* COD annotations:
+ * [bp-0x2] = ch
+ * globals = iCompares, iSwaps, cszMenu, iCurChoice, cRow, clPause, fSound
+ * calls = aNchkstk, settextposition, displaycursor, getch, toupper, ReInitBars, InsertionSort, DrawTime, BubbleSort, HeapSort, ExchangeSort, ShellSort, QuickSort, InitMenu
+ */
+
+
+short RunMenu(void)
+{
+    unsigned short vvar_32;
+    unsigned short vvar_20;
+    unsigned short vvar_35;
+    unsigned short vvar_13;
+    unsigned short vvar_9;
+    unsigned short vvar_40;
+    unsigned short vvar_41;
+    unsigned short vvar_43;
+    unsigned short vvar_47;
+    unsigned short vvar_48;
+    unsigned short vvar_52;
+    unsigned short vvar_56;
+    unsigned short vvar_57;
+    unsigned short vvar_59;
+    unsigned short vvar_64;
+    unsigned short vvar_66;
+    unsigned short vvar_184;
+    unsigned short vvar_188;
+    unsigned short vvar_190;
+    unsigned short a8;
+    unsigned short vvar_135;
+    unsigned short vvar_139;
+    unsigned short vvar_141;
+    unsigned short vvar_125;
+    unsigned short vvar_129;
+    unsigned short vvar_131;
+    unsigned short vvar_110;
+    unsigned short vvar_113;
+    unsigned short vvar_115;
+    unsigned short vvar_119;
+    unsigned short vvar_121;
+    unsigned short vvar_100;
+    unsigned short vvar_104;
+    unsigned short vvar_106;
+    unsigned short vvar_96;
+    unsigned short vvar_176;
+    unsigned short vvar_163;
+    unsigned short vvar_167;
+    unsigned short vvar_169;
+    unsigned short vvar_180;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ax_10;  // ax
+    unsigned short flags_8;  // flags
+    unsigned short ax_11;  // ax
+    char ir_13_2; // 4107
+    char ir_14_2; // 4109
+    unsigned short flags_11;  // flags
+    char ir_16_2; // 4198
+    char ir_17_2; // 4200
+    unsigned short ax_12;  // ax
+    unsigned short flags_9;  // flags
+    unsigned short ax_13;  // ax
+    char ir_23_2; // 4107
+    char ir_24_2; // 4109
+    unsigned short flags_10;  // flags
+    char ir_26_2; // 4194
+    char ir_27_2; // 4196
+    unsigned short ax_2;  // ax
+    unsigned short flags_3;  // flags
+    unsigned short flags;  // flags
+    unsigned short ax_3;  // ax
+    unsigned short flags_4;  // flags
+    unsigned short ax_4;  // ax
+    unsigned short flags_5;  // flags
+    unsigned short ax_6;  // ax
+    unsigned short flags_6;  // flags
+    unsigned short ax_7;  // ax
+    unsigned short flags_7;  // flags
+    unsigned short ds;  // ds
+    unsigned short ax_8;  // ax
+    unsigned short ax_9;  // ax
+    unsigned short ax;  // ax
+    unsigned short cs;  // cs
+    unsigned int ch_2; // ax
+    unsigned int ax_14;  // ax
+    unsigned short flags_2;  // flags
+    char s_4;  // [bp-0x4]
+    char ch;  // [bp-0x2] ch
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)(&ch + 2))) = di;
+    vvar_32 = (int)(&s_4 + 2);
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_20;
+    while (true)
+    {
+        *((char *)((ds << 4) + 2986)) = 0;
+        *((char *)((ds << 4) + 2986 + 1)) = 0 >> 8;
+        *((char *)((ds << 4) + 2980)) = 0;
+        *((char *)((ds << 4) + 2980 + 1)) = 0 >> 8;
+        vvar_35 = vvar_13 - 2;
+        *((unsigned short *)((ss << 4) + vvar_9 - 2)) = 75;
+        ax = *((char *)((ds << 4) + 352)) | *((char *)((ds << 4) + 352 + 1)) << 8;
+        *((unsigned short *)((ss << 4) + vvar_35 - 2)) = ax + 1;
+        vvar_40 = vvar_35 - 2 + -2;
+        *((char *)((ss << 4) + vvar_40)) = cs;
+        *((char *)((ss << 4) + vvar_40 + 1)) = cs >> 8;
+        vvar_41 = vvar_40 - 2;
+        settextposition();
+        vvar_43 = vvar_41 + 4;
+        *((unsigned short *)((ss << 4) + vvar_43 - 2)) = 1;
+        vvar_47 = vvar_43 - 2 + -2;
+        *((char *)((ss << 4) + vvar_47)) = cs;
+        *((char *)((ss << 4) + vvar_47 + 1)) = cs >> 8;
+        vvar_48 = vvar_47 - 2;
+        getch();
+        vvar_52 = vvar_48 + 2 - 2;
+        *((char *)((ss << 4) + (unsigned int)(&ch + 2))) = toupper();
+        *((unsigned short *)((ss << 4) + vvar_52 - 2)) = 0;
+        vvar_56 = vvar_52 - 2 + -2;
+        *((char *)((ss << 4) + vvar_56)) = cs;
+        *((char *)((ss << 4) + vvar_56 + 1)) = cs >> 8;
+        vvar_57 = vvar_56 - 2;
+        ch = getch();
+        vvar_59 = vvar_57 + 2;
+        *((short *)((ss << 4) + vvar_59 - 2)) = (char)(ch & 0xff00 | *((char *)((ss << 4) + (unsigned int)(&ch + 2))));
+        vvar_64 = vvar_59 - 2 - 2;
+        ax_14 = InsertionSort();
+        vvar_66 = vvar_64 + 2;
+        if (ax_14 == 69)
+        {
+            *((char *)((ds << 4) + 2988)) = 3;
+            *((char *)((ds << 4) + 2988 + 1)) = 3 >> 8;
+            DrawTime();
+            vvar_184 = vvar_66 - 2 - 2;
+            sub_184c();
+            *((unsigned short *)((ss << 4) + vvar_184 - 2)) = 0;
+            vvar_188 = vvar_184 - 2 - 2;
+            sub_11b1();
+            vvar_190 = vvar_188 + 2;
+            goto LABEL_11a8;
+        }
+        if ((flags_2 & 64) | (flags_2 & 128) != (flags_2 & 0x800))
+            break;
+        ax_2 = ax_14 - 72;
+        if (flags_3 & 64)
+        {
+            *((char *)((ds << 4) + 2988)) = 2;
+            *((char *)((ds << 4) + 2988 + 1)) = 2 >> 8;
+            DrawTime();
+            vvar_135 = vvar_66 - 2 - 2;
+            sub_167b();
+            *((unsigned short *)((ss << 4) + vvar_135 - 2)) = 0;
+            vvar_139 = vvar_135 - 2 - 2;
+            sub_11b1();
+            vvar_141 = vvar_139 + 2;
+            goto LABEL_11a8_2;
+        }
+        ax_3 = ax_2 - 1;
+        if (flags_4 & 64)
+        {
+            *((char *)((ds << 4) + 2988)) = 0;
+            *((char *)((ds << 4) + 2988 + 1)) = 0 >> 8;
+            DrawTime();
+            vvar_125 = vvar_66 - 2 - 2;
+            BubbleSort();
+            *((unsigned short *)((ss << 4) + vvar_125 - 2)) = 0;
+            vvar_129 = vvar_125 - 2 - 2;
+            sub_11b1();
+            vvar_131 = vvar_129 + 2;
+            goto LABEL_11a8_3;
+        }
+        ax_4 = ax_3 - 8;
+        if (flags_5 & 64)
+        {
+            *((char *)((ds << 4) + 2988)) = 5;
+            *((char *)((ds << 4) + 2988 + 1)) = 5 >> 8;
+            DrawTime();
+            vvar_110 = vvar_66 - 2 + -2;
+            *((char *)((ss << 4) + vvar_110)) = *((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8;
+            *((char *)((ss << 4) + vvar_110 + 1)) = (*((char *)((ds << 4) + 2978)) | *((char *)((ds << 4) + 2978 + 1)) << 8) >> 8;
+            *((unsigned short *)((ss << 4) + vvar_110 - 2)) = 0;
+            vvar_113 = vvar_110 - 2 - 2;
+            sub_19f4();
+            vvar_115 = vvar_113 + 4;
+            *((unsigned short *)((ss << 4) + vvar_115 - 2)) = 0;
+            vvar_119 = vvar_115 - 2 - 2;
+            sub_11b1();
+            vvar_121 = vvar_119 + 2;
+            goto LABEL_11a8_4;
+        }
+        ax_6 = ax_4 - 2;
+        if (flags_6 & 64)
+        {
+            *((char *)((ds << 4) + 2988)) = 4;
+            *((char *)((ds << 4) + 2988 + 1)) = 4 >> 8;
+            DrawTime();
+            vvar_100 = vvar_66 - 2 - 2;
+            sub_1914();
+            *((unsigned short *)((ss << 4) + vvar_100 - 2)) = 0;
+            vvar_104 = vvar_100 - 2 - 2;
+            sub_11b1();
+            vvar_106 = vvar_104 + 2;
+            goto LABEL_11a8_5;
+        }
+        ax_7 = ax_6 - 1;
+        if (flags & 64)
+        {
+            if (*(ds * 16 + 2886) < 1)
+            {
+            }
+            else
+            {
+            }
+            ax_8 = 0 - (1 & flags_7 >> 0);
+            ax_9 = ax_8 * -1;
+            *((char *)((ds << 4) + 2886)) = ax_9;
+            *((char *)((ds << 4) + 2886 + 1)) = ax_9 >> 8;
+            vvar_96 = vvar_66 - 2;
+            sub_d7d();
+            goto LABEL_11a8_6;
+        }
+LABEL_11a8_6:
+    }
+    ax_10 = ax_14 - 27;
+    if (flags_8 & 64)
+        goto LABEL_11ab;
+    ax_11 = ax_10 - 33;
+    if (flags & 64)
+    {
+        ax_12 = ax_11 - 1;
+        if (flags_9 & 64)
+        {
+            ax_13 = *((char *)((ds << 4) + 308)) | *((char *)((ds << 4) + 308 + 1)) << 8;
+            if (flags & 64)
+            {
+                ir_23_2 = *((char *)((ds << 4) + 306));
+                ir_24_2 = *((char *)((ds << 4) + 306 + 1));
+                *((char *)((ds << 4) + 306)) = (ir_23_2 | ir_24_2 << 8) - 30;
+                *((char *)((ds << 4) + 306 + 1)) = (ir_23_2 | ir_24_2 << 8) - 30 >> 8;
+                flags_10 = ...;
+                ir_26_2 = *((char *)((ds << 4) + 308));
+                ir_27_2 = *((char *)((ds << 4) + 308 + 1));
+                *((char *)((ds << 4) + 308)) = (ir_26_2 | ir_27_2 << 8) - (char)(1 & flags_10 >> 0);
+                *((char *)((ds << 4) + 308 + 1)) = (ir_26_2 | ir_27_2 << 8) - (char)(1 & flags_10 >> 0) >> 8;
+            }
+            vvar_176 = vvar_66 - 2;
+            sub_d7d();
+            goto LABEL_11a8_7;
+        }
+        else
+        {
+            if (flags & 64)
+            {
+                *((char *)((ds << 4) + 2988)) = 1;
+                *((char *)((ds << 4) + 2988 + 1)) = 1 >> 8;
+                DrawTime();
+                vvar_163 = vvar_66 - 2 - 2;
+                ShellSort();
+                *((unsigned short *)((ss << 4) + vvar_163 - 2)) = 0;
+                vvar_167 = vvar_163 - 2 - 2;
+                sub_11b1();
+                vvar_169 = vvar_167 + 2;
+                goto LABEL_11a8_8;
+            }
+        }
+    }
+    if (*(ds * 16 + 308) <= 0)
+    {
+        if (((flags & 128) == (flags & 0x800)) & & !(*(ds * 16 + 306) <= 900) == 0)
+            goto LABEL_1132;
+        ir_13_2 = *((char *)((ds << 4) + 306));
+        ir_14_2 = *((char *)((ds << 4) + 306 + 1));
+        *((char *)((ds << 4) + 306)) = (ir_13_2 | ir_14_2 << 8) + 30;
+        *((char *)((ds << 4) + 306 + 1)) = (ir_13_2 | ir_14_2 << 8) + 30 >> 8;
+        flags_11 = ...;
+        ir_16_2 = *((char *)((ds << 4) + 308));
+        ir_17_2 = *((char *)((ds << 4) + 308 + 1));
+        *((char *)((ds << 4) + 308)) = (ir_16_2 | ir_17_2 << 8) + (char)(1 & flags_11 >> 0);
+        *((char *)((ds << 4) + 308 + 1)) = (ir_16_2 | ir_17_2 << 8) + (char)(1 & flags_11 >> 0) >> 8;
+    }
+LABEL_1132:
+    vvar_180 = vvar_66 - 2;
+    sub_d7d();
+    goto LABEL_11a8_9;
+LABEL_11ab:
+
+    return ax_9;
+}
+[19:27:20] [dbg] recovery worker: start 0x101f0 DrawFrame mode=lst recovery_timeout=120s
+[19:27:20] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
+[19:27:20] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
+[19:27:21] [dbg] isolated function worker: start 0x1000 DrawFrame requested_timeout=120s hard_timeout=122s
+[19:27:21] [dbg] function complexity for 0x101f0 DrawFrame: blocks=16, bytes=228
+[19:27:21] [dbg] decompile_function: addr=0x101f0 (slice=0x1000) name=DrawFrame
+[19:27:21] [dbg] function 0x1000 not normalized, normalizing...
+[19:27:21] [dbg] registered 4 direct callee stub(s) for 0x1000
+[19:27:24] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x101f0 slice=0x1000 name=DrawFrame
+[19:27:23] [dbg] Decompiler returned for 0x1000
+[19:27:24] [dbg] decompilation time for 0x101f0 DrawFrame: 3.28s
+[19:27:24] /* == function 0x101f0 DrawFrame == */
+[19:27:24] /* info: function 0x101f0 DrawFrame attempt=decompiled validation=disabled */
+[19:27:24] /* -- c -- */
+/* COD annotations:
+ * [bp+0x4] = iTop
+ * [bp+0x6] = iLeft
+ * [bp+0x8] = iWidth
+ * [bp+0xa] = iHeight
+ * [bp-0x52] = achTmp
+ * [bp-0x2] = iRow
+ * calls = aNchkstk, memset, settextposition, outtext
+ */
+
+short DrawFrame(int iTop, int iLeft, int iWidth, int iHeight)
+{
+    unsigned short vvar_6;
+    unsigned short vvar_25;
+    unsigned short vvar_29;
+    unsigned short vvar_31;
+    unsigned short vvar_37;
+    unsigned short vvar_39;
+    unsigned short vvar_42;
+    unsigned short vvar_44;
+    unsigned short vvar_46;
+    unsigned short vvar_51;
+    unsigned short vvar_94;
+    unsigned short vvar_2;
+    unsigned short vvar_96;
+    unsigned short vvar_102;
+    unsigned short vvar_104;
+    unsigned short vvar_107;
+    unsigned short vvar_58;
+    unsigned short vvar_60;
+    unsigned short vvar_65;
+    unsigned short vvar_68;
+    unsigned short vvar_73;
+    unsigned short vvar_79;
+    unsigned short vvar_81;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short cs;  // cs
+    char s_c;  // [bp-0xc]
+    char s_a;  // [bp-0xa]
+    char s_8;  // [bp-0x8]
+    char s_6;  // [bp-0x6]
+    char s_4;  // [bp-0x4]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_4 + 2))) = &s_4 + 4;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)&s_4)) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_6;
+    *((short *)((ss << 4) + (unsigned int)(&s_6 + 2))) = *((short *)&(&s_4)[6]);
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_8 + 2))) = 205;
+    *((char **)((ss << 4) + (unsigned int)(&s_a + 2))) = &s_4 + 80;
+    memset();
+    vvar_25 = (int)&(&s_c)[6];
+    *((char *)((ss << 4) + (unsigned int)(&s_4 + 80))) = -55;
+    *((char *)((ss << 4) + (unsigned int)&(&s_4)[81 + *((short *)&(&s_4)[6])])) = -69;
+    *((char *)((ss << 4) + (unsigned int)&(&s_4)[80 + *((short *)&(&s_4)[6])])) = 0;
+    vvar_29 = vvar_25 - 2;
+    *((short *)((ss << 4) + vvar_25 - 2)) = *((short *)&(&s_4)[4]);
+    *((short *)((ss << 4) + vvar_29 - 2)) = *((short *)&(&s_4)[2]);
+    vvar_31 = vvar_29 - 2 + -2;
+    *((char *)((ss << 4) + vvar_31)) = cs;
+    *((char *)((ss << 4) + vvar_31 + 1)) = cs >> 8;
+    memset();
+    vvar_37 = vvar_31 - 2 + 4 + -2;
+    *((char *)((ss << 4) + vvar_37)) = ss;
+    *((char *)((ss << 4) + vvar_37 + 1)) = ss >> 8;
+    *((char **)((ss << 4) + vvar_37 - 2)) = &s_4 + 80;
+    vvar_39 = vvar_37 - 2 + -2;
+    *((char *)((ss << 4) + vvar_39)) = cs;
+    *((char *)((ss << 4) + vvar_39 + 1)) = cs >> 8;
+    settextposition();
+    vvar_42 = vvar_39 - 2 + 4;
+    vvar_44 = vvar_42 - 2;
+    *((short *)((ss << 4) + vvar_42 - 2)) = *((short *)&(&s_4)[6]);
+    vvar_46 = vvar_44 - 2;
+    *((unsigned short *)((ss << 4) + vvar_44 - 2)) = 32;
+    *((char **)((ss << 4) + vvar_46 - 2)) = &s_4 + 80;
+    memset();
+    vvar_51 = vvar_46 - 2 - 2 + 6;
+    *((char *)((ss << 4) + (unsigned int)(&s_4 + 80))) = -70;
+    *((char *)((ss << 4) + (unsigned int)&(&s_4)[81 + *((short *)&(&s_4)[6])])) = -70;
+    for (*((unsigned short *)&(&s_4)[4]) = *((short *)&(&s_4)[2]) + 1; !(!(*(&(&s_4)[4]) <= *(&(&s_4)[8]))); *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) + 1 >> 8)
+    {
+        vvar_94 = vvar_2 - 2;
+        *((short *)((ss << 4) + vvar_2 - 2)) = *((short *)&(&s_4)[4]);
+        *((short *)((ss << 4) + vvar_94 - 2)) = *((short *)&(&s_4)[4]);
+        vvar_96 = vvar_94 - 2 + -2;
+        *((char *)((ss << 4) + vvar_96)) = cs;
+        *((char *)((ss << 4) + vvar_96 + 1)) = cs >> 8;
+        memset();
+        vvar_102 = vvar_96 - 2 + 4 + -2;
+        *((char *)((ss << 4) + vvar_102)) = ss;
+        *((char *)((ss << 4) + vvar_102 + 1)) = ss >> 8;
+        *((char **)((ss << 4) + vvar_102 - 2)) = &s_4 + 80;
+        vvar_104 = vvar_102 - 2 + -2;
+        *((char *)((ss << 4) + vvar_104)) = cs;
+        *((char *)((ss << 4) + vvar_104 + 1)) = cs >> 8;
+        settextposition();
+        vvar_107 = vvar_104 - 2 + 4;
+        *((char *)((ss << 4) + (unsigned int)&s_4)) = (*((char *)((ss << 4) + (unsigned int)&s_4)) | *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) << 8) + 1;
+    }
+    vvar_58 = vvar_2 - 2;
+    *((short *)((ss << 4) + vvar_2 - 2)) = *((short *)&(&s_4)[6]);
+    vvar_60 = vvar_58 - 2;
+    *((unsigned short *)((ss << 4) + vvar_58 - 2)) = 205;
+    *((char **)((ss << 4) + vvar_60 - 2)) = &s_4 + 80;
+    memset();
+    vvar_65 = vvar_60 - 2 - 2 + 6;
+    *((char *)((ss << 4) + (unsigned int)(&s_4 + 80))) = -56;
+    *((char *)((ss << 4) + (unsigned int)&(&s_4)[81 + *((short *)&(&s_4)[6])])) = -68;
+    vvar_68 = vvar_65 - 2;
+    *((short *)((ss << 4) + vvar_65 - 2)) = *((short *)&(&s_4)[4]);
+    *((unsigned short *)((ss << 4) + vvar_68 - 2)) = *((short *)&(&s_4)[8]) + (*((char *)((ss << 4) + (unsigned int)(&s_4 + 6))) | *((char *)((ss << 4) + (unsigned int)(&s_4 + 6) + 1)) << 8);
+    vvar_73 = vvar_68 - 2 + -2;
+    *((char *)((ss << 4) + vvar_73)) = cs;
+    *((char *)((ss << 4) + vvar_73 + 1)) = cs >> 8;
+    memset();
+    vvar_79 = vvar_73 - 2 + 4 + -2;
+    *((char *)((ss << 4) + vvar_79)) = ss;
+    *((char *)((ss << 4) + vvar_79 + 1)) = ss >> 8;
+    *((char **)((ss << 4) + vvar_79 - 2)) = &s_4 + 80;
+    vvar_81 = vvar_79 - 2 + -2;
+    *((char *)((ss << 4) + vvar_81)) = cs;
+    *((char *)((ss << 4) + vvar_81 + 1)) = cs >> 8;
+    settextposition();
+}
+[19:27:24] [dbg] recovery worker: start 0x10060 InitMenu mode=lst recovery_timeout=120s
+[19:27:24] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
+[19:27:25] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
+[19:27:25] [dbg] isolated function worker: start 0x1000 InitMenu requested_timeout=120s hard_timeout=122s
+[19:27:25] [dbg] function complexity for 0x10060 InitMenu: blocks=37, bytes=418
+[19:27:25] [dbg] decompile_function: addr=0x10060 (slice=0x1000) name=InitMenu
+[19:27:25] [dbg] function 0x1000 not normalized, normalizing...
+[19:27:25] [dbg] registered 9 direct callee stub(s) for 0x1000
+[19:27:35] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16 addr=0x10060 slice=0x1000 name=InitMenu
+[19:27:31] [dbg] Decompiler returned for 0x1000
+[19:27:35] [dbg] decompilation time for 0x10060 InitMenu: 9.93s
+[19:27:35] /* == function 0x10060 InitMenu == */
+[19:27:35] /* info: function 0x10060 InitMenu attempt=decompiled validation=disabled */
+[19:27:35] /* -- c -- */
+/* COD annotations:
+ * [bp-0x12] = ach
+ * [bp-0x2] = i
+ * globals = cszMenu, aszMenu, fSound, SG561, SG563, clPause, SG564, SG565
+ * calls = aNchkstk, settextcolor, setbkcolor, DrawFrame, settextposition, outtext, strcpy, aNldiv, sprintf
+ */
+
+short InitMenu(void)
+{
+    unsigned short vvar_26;
+    unsigned short vvar_44;
+    unsigned short vvar_48;
+    unsigned short vvar_50;
+    unsigned short vvar_51;
+    unsigned short vvar_53;
+    unsigned short vvar_58;
+    unsigned short vvar_60;
+    unsigned short vvar_62;
+    unsigned short vvar_65;
+    unsigned short vvar_67;
+    unsigned short vvar_200;
+    unsigned short vvar_12;
+    unsigned short vvar_205;
+    unsigned short vvar_206;
+    unsigned short vvar_213;
+    unsigned short vvar_214;
+    unsigned short vvar_215;
+    unsigned short vvar_216;
+    unsigned short vvar_218;
+    unsigned short vvar_79;
+    unsigned short vvar_82;
+    unsigned short vvar_84;
+    unsigned short vvar_71;
+    unsigned short vvar_74;
+    unsigned short vvar_76;
+    unsigned short vvar_87;
+    unsigned short vvar_21;
+    unsigned short vvar_92;
+    unsigned short vvar_93;
+    unsigned short vvar_98;
+    unsigned short vvar_100;
+    unsigned short vvar_101;
+    unsigned short vvar_103;
+    unsigned short vvar_107;
+    unsigned short vvar_109;
+    unsigned short vvar_110;
+    unsigned short vvar_111;
+    unsigned short vvar_113;
+    unsigned short vvar_114;
+    unsigned short vvar_116;
+    unsigned short vvar_119;
+    unsigned short vvar_121;
+    unsigned short vvar_124;
+    unsigned short vvar_129;
+    unsigned short vvar_130;
+    unsigned short vvar_135;
+    unsigned short vvar_137;
+    unsigned short vvar_138;
+    unsigned short vvar_140;
+    unsigned short vvar_143;
+    unsigned short vvar_146;
+    unsigned short vvar_148;
+    unsigned short vvar_151;
+    unsigned short vvar_16;
+    unsigned short vvar_156;
+    unsigned short vvar_157;
+    unsigned short vvar_162;
+    unsigned short vvar_164;
+    unsigned short vvar_165;
+    unsigned short vvar_167;
+    unsigned short vvar_173;
+    unsigned short vvar_178;
+    unsigned short vvar_184;
+    unsigned short vvar_186;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short bx;  // bx
+    unsigned short bx_2;  // bx
+    char ir_12_2; // 4111
+    char ir_13_2; // 4113
+    unsigned short ax_4;  // ax
+    unsigned int ax_9;  // ax
+    unsigned short ax_5;  // ax
+    unsigned short flags;  // flags
+    unsigned short ax_6;  // ax
+    unsigned short cs;  // cs
+    unsigned short ax_7;  // ax
+    char ir_22_2; // 4125
+    unsigned int ax_8;  // ax
+    unsigned short ax;  // ax
+    unsigned short ds;  // ds
+    unsigned short ax_2;  // ax
+    unsigned short i;  // flags
+    unsigned short ax_3;  // ax
+    char s_a;  // [bp-0xa]
+    char s_8;  // [bp-0x8]
+    char s_6;  // [bp-0x6]
+    char s_4;  // [bp-0x4]
+    char s_0;  // [bp+0x0]
+
+    *((char **)((ss << 4) + (unsigned int)(&s_0 + 2))) = &s_0;
+    aNchkstk();
+    *((unsigned short *)((ss << 4) + (unsigned int)&s_4)) = di;
+    *((int *)((ss << 4) + (unsigned int)(&s_4 + 2))) = vvar_26;
+    *((unsigned short *)((ss << 4) + (unsigned int)(&s_6 + 2))) = 15;
+    *((char *)((ss << 4) + (unsigned int)&s_8)) = cs;
+    *((char *)((ss << 4) + (unsigned int)&s_8 + 1)) = cs >> 8;
+    ax_8 = settextcolor();
+    vvar_44 = (int)&(&s_a)[2];
+    ax = 0;
+    vvar_48 = vvar_44 - 2;
+    *((unsigned short *)((ss << 4) + vvar_44 - 2)) = ax;
+    *((unsigned short *)((ss << 4) + vvar_48 - 2)) = ax;
+    vvar_50 = vvar_48 - 2 + -2;
+    *((char *)((ss << 4) + vvar_50)) = cs;
+    *((char *)((ss << 4) + vvar_50 + 1)) = cs >> 8;
+    vvar_51 = vvar_50 - 2;
+    settextcolor();
+    vvar_53 = vvar_51 + 4;
+    ax_2 = *((char *)((ds << 4) + 352)) | *((char *)((ds << 4) + 352 + 1)) << 8;
+    vvar_58 = vvar_53 - 2;
+    *((unsigned short *)((ss << 4) + vvar_53 - 2)) = ax_2 + 2;
+    vvar_60 = vvar_58 - 2;
+    *((unsigned short *)((ss << 4) + vvar_58 - 2)) = 35;
+    vvar_62 = vvar_60 - 2;
+    *((unsigned short *)((ss << 4) + vvar_60 - 2)) = 45;
+    *((unsigned short *)((ss << 4) + vvar_62 - 2)) = 1;
+    vvar_65 = vvar_62 - 2 - 2;
+    sub_117b();
+    vvar_67 = vvar_65 + 8;
+    for (*((unsigned short *)&(&s_4)[4]) = 0; !(!(*(&(&s_4)[4]) < (*(ds * 16 + 352) | *(ds * 16 + 353) * 0x100))); i = ...)
+    {
+        vvar_200 = vvar_12 - 2;
+        *((unsigned short *)((ss << 4) + vvar_12 - 2)) = 48;
+        ax_3 = *((short *)&(&s_4)[4]);
+        *((unsigned short *)((ss << 4) + vvar_200 - 2)) = ax_3 + 2;
+        vvar_205 = vvar_200 - 2 + -2;
+        *((char *)((ss << 4) + vvar_205)) = cs;
+        *((char *)((ss << 4) + vvar_205 + 1)) = cs >> 8;
+        vvar_206 = vvar_205 - 2;
+        DrawFrame();
+        bx = *((short *)&(&s_4)[4]);
+        bx_2 = bx << 1;
+        vvar_213 = vvar_206 + 4 + -2;
+        *((char *)((ss << 4) + vvar_213)) = ds;
+        *((char *)((ss << 4) + vvar_213 + 1)) = ds >> 8;
+        vvar_214 = vvar_213 + -2;
+        *((char *)((ss << 4) + vvar_214)) = *((char *)((ds << 4) + 310 + bx_2)) | *((char *)((ds << 4) + 310 + bx_2 + 1)) << 8;
+        *((char *)((ss << 4) + vvar_214 + 1)) = (*((char *)((ds << 4) + 310 + bx_2)) | *((char *)((ds << 4) + 310 + bx_2 + 1)) << 8) >> 8;
+        vvar_215 = vvar_214 + -2;
+        *((char *)((ss << 4) + vvar_215)) = cs;
+        *((char *)((ss << 4) + vvar_215 + 1)) = cs >> 8;
+        vvar_216 = vvar_215 - 2;
+        settextposition();
+        vvar_218 = vvar_216 + 4;
+        ir_12_2 = *((char *)((ss << 4) + (unsigned int)&s_4));
+        ir_13_2 = *((char *)((ss << 4) + (unsigned int)&s_4 + 1));
+        *((char *)((ss << 4) + (unsigned int)&s_4)) = (ir_12_2 | ir_13_2 << 8) + 1;
+        *((char *)((ss << 4) + (unsigned int)&s_4 + 1)) = (ir_12_2 | ir_13_2 << 8) + 1 >> 8;
+    }
+    if (*(ds * 16 + 2886))
+    {
+        vvar_79 = vvar_12 - 2;
+        *((unsigned short *)((ss << 4) + vvar_12 - 2)) = 354;
+        *((char **)((ss << 4) + vvar_79 - 2)) = &s_4 + 16;
+        vvar_82 = vvar_79 - 2 - 2;
+        strcpy();
+        vvar_84 = vvar_82 + 4;
+    }
+    else
+    {
+        vvar_71 = vvar_12 - 2;
+        *((unsigned short *)((ss << 4) + vvar_12 - 2)) = 358;
+        *((char **)((ss << 4) + vvar_71 - 2)) = &s_4 + 16;
+        vvar_74 = vvar_71 - 2 - 2;
+        strcpy();
+        vvar_76 = vvar_74 + 4;
+    }
+    vvar_87 = vvar_21 - 2;
+    *((unsigned short *)((ss << 4) + vvar_21 - 2)) = 62;
+    ax_4 = *((char *)((ds << 4) + 352)) | *((char *)((ds << 4) + 352 + 1)) << 8;
+    *((unsigned short *)((ss << 4) + vvar_87 - 2)) = ax_4 - 7;
+    vvar_92 = vvar_87 - 2 + -2;
+    *((char *)((ss << 4) + vvar_92)) = cs;
+    *((char *)((ss << 4) + vvar_92 + 1)) = cs >> 8;
+    vvar_93 = vvar_92 - 2;
+    DrawFrame();
+    vvar_98 = vvar_93 + 4 + -2;
+    *((char *)((ss << 4) + vvar_98)) = ss;
+    *((char *)((ss << 4) + vvar_98 + 1)) = ss >> 8;
+    *((char **)((ss << 4) + vvar_98 - 2)) = &s_4 + 16;
+    vvar_100 = vvar_98 - 2 + -2;
+    *((char *)((ss << 4) + vvar_100)) = cs;
+    *((char *)((ss << 4) + vvar_100 + 1)) = cs >> 8;
+    vvar_101 = vvar_100 - 2;
+    settextposition();
+    vvar_103 = vvar_101 + 4;
+    vvar_107 = vvar_103 - 2;
+    *((unsigned short *)((ss << 4) + vvar_103 - 2)) = 0;
+    *((unsigned short *)((ss << 4) + vvar_107 - 2)) = 30;
+    vvar_109 = vvar_107 - 2 + -2;
+    *((char *)((ss << 4) + vvar_109)) = *((char *)((ds << 4) + 308)) | *((char *)((ds << 4) + 308 + 1)) << 8;
+    *((char *)((ss << 4) + vvar_109 + 1)) = (*((char *)((ds << 4) + 308)) | *((char *)((ds << 4) + 308 + 1)) << 8) >> 8;
+    vvar_110 = vvar_109 + -2;
+    *((char *)((ss << 4) + vvar_110)) = *((char *)((ds << 4) + 306)) | *((char *)((ds << 4) + 306 + 1)) << 8;
+    *((char *)((ss << 4) + vvar_110 + 1)) = (*((char *)((ds << 4) + 306)) | *((char *)((ds << 4) + 306 + 1)) << 8) >> 8;
+    vvar_111 = vvar_110 - 2;
+    ax_9 = aNldiv();
+    vvar_113 = vvar_111 - 2;
+    *((unsigned short *)((ss << 4) + vvar_111 - 2)) = 0;
+    vvar_114 = vvar_113 - 2;
+    *((unsigned short *)((ss << 4) + vvar_113 - 2)) = ax_9;
+    vvar_116 = vvar_114 - 2;
+    *((unsigned short *)((ss << 4) + vvar_114 - 2)) = 362;
+    *((char **)((ss << 4) + vvar_116 - 2)) = &s_4 + 16;
+    vvar_119 = vvar_116 - 2 - 2;
+    sprintf();
+    vvar_121 = vvar_119 + 8;
+    vvar_124 = vvar_121 - 2;
+    *((unsigned short *)((ss << 4) + vvar_121 - 2)) = 62;
+    ax_5 = *((char *)((ds << 4) + 352)) | *((char *)((ds << 4) + 352 + 1)) << 8;
+    *((unsigned short *)((ss << 4) + vvar_124 - 2)) = ax_5 - 5;
+    vvar_129 = vvar_124 - 2 + -2;
+    *((char *)((ss << 4) + vvar_129)) = cs;
+    *((char *)((ss << 4) + vvar_129 + 1)) = cs >> 8;
+    vvar_130 = vvar_129 - 2;
+    DrawFrame();
+    vvar_135 = vvar_130 + 4 + -2;
+    *((char *)((ss << 4) + vvar_135)) = ss;
+    *((char *)((ss << 4) + vvar_135 + 1)) = ss >> 8;
+    *((char **)((ss << 4) + vvar_135 - 2)) = &s_4 + 16;
+    vvar_137 = vvar_135 - 2 + -2;
+    *((char *)((ss << 4) + vvar_137)) = cs;
+    *((char *)((ss << 4) + vvar_137 + 1)) = cs >> 8;
+    vvar_138 = vvar_137 - 2;
+    settextposition();
+    vvar_140 = vvar_138 + 4;
+    vvar_143 = vvar_140 - 2;
+    *((unsigned short *)((ss << 4) + vvar_140 - 2)) = 368;
+    *((char **)((ss << 4) + vvar_143 - 2)) = &s_4 + 16;
+    vvar_146 = vvar_143 - 2 - 2;
+    strcpy();
+    vvar_148 = vvar_146 + 4;
+    if (*(ds * 16 + 306) == 900)) && !(!(!*(ds * 16 + 308))
+    {
+        vvar_151 = vvar_148 - 2;
+        *((unsigned short *)((ss << 4) + vvar_16 - 2)) = 48;
+        ax_6 = *((char *)((ds << 4) + 352)) | *((char *)((ds << 4) + 352 + 1)) << 8;
+        *((unsigned short *)((ss << 4) + vvar_151 - 2)) = ax_6 - 4;
+        vvar_156 = vvar_151 - 2 + -2;
+        *((char *)((ss << 4) + vvar_156)) = cs;
+        *((char *)((ss << 4) + vvar_156 + 1)) = cs >> 8;
+        vvar_157 = vvar_156 - 2;
+        DrawFrame();
+        vvar_162 = vvar_157 + 4 + -2;
+        *((char *)((ss << 4) + vvar_162)) = ss;
+        *((char *)((ss << 4) + vvar_162 + 1)) = ss >> 8;
+        *((char **)((ss << 4) + vvar_162 - 2)) = &s_4 + 16;
+        vvar_164 = vvar_162 - 2 + -2;
+        *((char *)((ss << 4) + vvar_164)) = cs;
+        *((char *)((ss << 4) + vvar_164 + 1)) = cs >> 8;
+        vvar_165 = vvar_164 - 2;
+        settextposition();
+        vvar_167 = vvar_165 + 4;
+    }
+    ax_7 = *((char *)((ds << 4) + 308)) | *((char *)((ds << 4) + 308 + 1)) << 8;
+    ir_22_2 = *((char *)((ds << 4) + 306 + 1));
+    if (!(((((flags & -2 & -5 | ~((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4 ^ ((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4) >> 2 ^ ((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4 ^ ((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4) >> 2) >> 1) * 4) & -17 & -65 | (!(*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8) && !*((ds << 4) + 306) && !ir_22_2 * 0x100) * 64) & -129 | (1 & (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306) | ir_22_2 * 0x100) >> 15) * 128) & -2049 & 64)))
+    vvar_173 = vvar_16 - 2;
+    *((unsigned short *)((ss << 4) + vvar_16 - 2)) = 48;
+    *((unsigned short *)((ss << 4) + vvar_173 - 2)) = (*((char *)((ds << 4) + 352)) | *((char *)((ds << 4) + 352 + 1)) << 8) - 3;
+    vvar_178 = vvar_173 - 2 + -2;
+    *((char *)((ss << 4) + vvar_178)) = cs;
+    *((char *)((ss << 4) + vvar_178 + 1)) = cs >> 8;
+    DrawFrame();
+    vvar_184 = vvar_178 - 2 + 4 + -2;
+    *((char *)((ss << 4) + vvar_184)) = ss;
+    *((char *)((ss << 4) + vvar_184 + 1)) = ss >> 8;
+    *((char **)((ss << 4) + vvar_184 - 2)) = &s_4 + 16;
+    vvar_186 = vvar_184 - 2 + -2;
+    *((char *)((ss << 4) + vvar_186)) = cs;
+    *((char *)((ss << 4) + vvar_186 + 1)) = cs >> 8;
+    settextposition();
+
+    return ax_7;
+}
+[19:27:35] /* info: decompilation attempted for 20/20 selected function(s) */
+
+[19:27:35] summary: decompiled 20/20 selected functions
+summary: probable compiler versions: Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
+summary: probable library/signature sources: local_omf_pat, pat_backend:hyperscan
+summary: signature-matched library functions: 70
+summary: hidden signature-matched labels: 70
+summary: shown=20 decompiled=20 asm_or_detail_fallback=0
+[19:27:35] summary: slowest function attempt(s), top 5:
+[19:27:35] summary:   0x102e0 RunMenu: 30.21s status=decompiled
+[19:27:35] summary:   0x10ce0 QuickSort: 15.94s status=decompiled
+[19:27:35] summary:   0x10560 InitBars: 12.89s status=decompiled
+[19:27:35] summary:   0x10060 InitMenu: 9.93s status=decompiled
+[19:27:35] summary:   0x10970 HeapSort: 6.71s status=decompiled
+[19:27:35] /* exiting cli */

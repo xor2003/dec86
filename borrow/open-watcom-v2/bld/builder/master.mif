@@ -1,0 +1,66 @@
+proj_name = builder
+
+builder_autodepends = .AUTODEPEND
+
+builder_trmem = 1
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+!include exerule.mif
+
+full_commands = sweep.exe wsplice.exe comstrip.exe genverrc.exe crlf.exe diff.exe builder.exe wgrep.exe cdsay.exe
+all_commands_dos = diff.exe
+all_commands_nt  = diff.exe
+all_commands_os2 = diff.exe
+all_commands    = sweep.exe wsplice.exe comstrip.exe genverrc.exe crlf.exe $(all_commands_$(host_os))
+!ifndef bootstrap
+all_commands    += builder.exe
+!endif
+#all_commands    += wgrep.exe
+
+inc_dirs = -I"../h" -I"$(pmake_dir)"
+
+.c : ../c;$(pmake_dir);$(watcom_dir)/c;$(trmem_dir)
+
+builder_sys_objs_dos  = sysdos.obj
+builder_sys_objs_nt   = sysnt.obj
+builder_sys_objs_os2  = sysos2.obj
+!ifdef builder_sys_objs_$(host_os)
+builder_sys_objs = $(builder_sys_objs_$(host_os))
+!else
+builder_sys_objs = sysposix.obj
+!endif
+
+builder_objs = builder.obj utils.obj $(builder_sys_objs) runit.obj pmake.obj $(bld_cl_extra_objs_gen) $(trmem_objs)
+sweep_objs   = sweep.obj $(bld_cl_extra_objs_gen)
+wsplice_objs = wsplice.obj $(bld_cl_extra_objs_gen)
+diff_objs    = diff.obj $(bld_cl_extra_objs_gen)
+cdsay_objs   = cdsay.obj
+wgrep_objs   = wgrep.obj $(bld_cl_extra_objs_gen)
+
+extra_cpp_flags_x64 = -DBLDX64
+extra_cpp_flags_a64 = -DBLDA64
+
+extra_cpp_flags_f_genverrc = -D_VERSION=$(bld_ver)
+
+!ifeq trmem 1
+! ifdef __WATCOM_TOOLS__
+!  if $(__WATCOM_TOOLS__) < 1300
+extra_c_flags_f_utils = -of+
+!  endif
+! endif
+!endif
+
+all : $(all_commands) .SYMBOLIC
+full : $(full_commands) .SYMBOLIC
+
+sweep.exe :   $(sweep_objs)
+wsplice.exe : $(wsplice_objs)
+diff.exe :    $(diff_objs)
+cdsay.exe :   $(cdsay_objs)
+wgrep.exe :   $(wgrep_objs)
+
+exetarg_objs = $(builder_objs)
+exetarg_name = builder
+!include exetarg.mif

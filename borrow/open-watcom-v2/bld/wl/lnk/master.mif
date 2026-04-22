@@ -1,0 +1,12 @@
+tree_depth = 4
+
+proj_name = wlink_lnk
+
+!include cproj.mif
+
+wlink.lnk : ../wlink.sp ../specs.sp
+    @%make echo_wsplice
+    $(noecho)*wsplice -u -k Pwlsystem -k $(host_os) -k $(host_cpu) $< $@
+
+clean : .SYMBOLIC
+    rm -f *.lnk

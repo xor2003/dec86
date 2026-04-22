@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://schemata.jklnet.org/Reko/v5">
+  <input>
+    <asmDir />
+    <user>
+      <address>1000:0000</address>
+      <procedure name="foo">
+        <signature>
+          <return>
+            <reg>eax</reg>
+          </return>
+          <arg>
+            <prim domain="SignedInt" size="4" />
+            <stack />
+          </arg>
+          <arg>
+            <prim domain="SignedInt" size="4" />
+            <stack />
+          </arg>
+        </signature>
+      </procedure>
+      <indirectJump instrAdress="1000:0220" tableAddress="1000:0228" />
+      <jumpTable tableAddress="1000:0228">
+        <dst>1000:0230</dst>
+        <dst>1000:0244</dst>
+        <dst>1000:033F</dst>
+      </jumpTable>
+    </user>
+  </input>
+</project>

@@ -1,0 +1,93 @@
+#region License
+/* 
+ * Copyright (C) 1999-2026 John Källén.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; see the file COPYING.  If not, write to
+ * the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+#endregion
+
+using Reko.Evaluation;
+using Reko.Core;
+using Reko.Core.Expressions;
+using Reko.Core.Types;
+using NUnit.Framework;
+using System;
+using Moq;
+
+namespace Reko.UnitTests.Decompiler.Evaluation
+{
+	[TestFixture]
+	public class SliceMem_RuleTest
+	{
+        private Mock<EvaluationContext> ctx;
+        private ExpressionEmitter m;
+
+        [SetUp]
+        public void Setup()
+        {
+            this.ctx = new Mock<EvaluationContext>();
+            this.ctx.Setup(c => c.MemoryGranularity).Returns(8);
+            this.m = new ExpressionEmitter();
+        }
+
+		[Test]
+		public void SliceMem()
+		{
+			var s = m.Slice(
+				m.Mem(
+                    MemoryStorage.GlobalMemory,
+                    PrimitiveType.Word32,
+                    new Identifier("ptr", PrimitiveType.Word32, null)),
+                PrimitiveType.Byte,
+                16);
+			var r = new SliceMem_Rule();
+			var e = r.Match(s, ctx.Object, m);
+            Assert.IsNotNull(e);
+			Assert.AreEqual("Mem0[ptr + 2<32>:byte]", e.ToString());
+		}
+
+		[Test]
+		public void SliceMem0()
+		{
+			var s = m.Slice(
+				m.Mem(
+                    MemoryStorage.GlobalMemory,
+                    PrimitiveType.Word32,
+                    new Identifier("ptr", PrimitiveType.Word32, null)),
+                PrimitiveType.Word16);
+			var r = new SliceMem_Rule();
+			var e = r.Match(s, ctx.Object, m);
+            Assert.IsNotNull(e);
+			Assert.AreEqual("Mem0[ptr + 0<32>:word16]", e.ToString());
+		}
+
+        [Test]
+        public void SliceMem_SegmentedAccess()
+        {
+            var s = m.Slice(
+                m.Mem(
+                    MemoryStorage.GlobalMemory,
+                    PrimitiveType.Word16,
+                    SegmentedPointer.Create(
+                        new Identifier("seg", PrimitiveType.Word16, null),
+                        new Identifier("ptr", PrimitiveType.Word16, null))),
+                PrimitiveType.Byte);
+            var r = new SliceMem_Rule();
+            var e = r.Match(s, ctx.Object, m);
+            Assert.IsNotNull(e);
+            Assert.AreEqual("Mem0[seg:ptr + 0<16>:byte]", e.ToString());
+        }
+	}
+}

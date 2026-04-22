@@ -1,0 +1,39 @@
+proj_name = rcsdll_batch
+
+ext_objs_win = bat
+ext_objs_nt  = bat
+ext_objs_os2 = cmd
+ext_objs_dos = bat
+
+!include cproj.mif
+
+.EXTENSIONS: .bat .cmd .sp
+
+.sp : ..
+
+ext_objs = $(ext_objs_$(host_os))
+
+objs = &
+    gen_co.$(ext_objs) &
+    gen_ci.$(ext_objs) &
+    mks_co.$(ext_objs) &
+    mks_ci.$(ext_objs) &
+    p4_co.$(ext_objs) &
+    p4_ci.$(ext_objs) &
+    git_co.$(ext_objs) &
+    git_ci.$(ext_objs) &
+    pvcs_co.$(ext_objs) &
+    pvcs_ci.$(ext_objs)
+
+all: $(objs) .SYMBOLIC
+
+.sp.bat :
+    @%make echo_wsplice
+    $(noecho)*wsplice -u0 -k $(host_os) -k $(host_cpu) $[@ $@
+
+.sp.cmd :
+    @%make echo_wsplice
+    $(noecho)*wsplice -u -k $(host_os) -k $(host_cpu) $[@ $@
+
+clean: .SYMBOLIC
+    rm -f *.bat *.cmd

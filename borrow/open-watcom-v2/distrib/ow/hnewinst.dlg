@@ -1,0 +1,16 @@
+# UTF-8 encoding, ¥
+name=Help_NewInstall
+dynamic_text=hnewinst_1,\
+        //0"A new version of %AppName% will be installed."\
+        //1"新バージョンの %AppName% は %DstDir% にインストールされます."\
+        //-1
+static_text=
+static_text=\
+        //0"You may choose the following options:"\
+        //1"以下のオプションを選択できます:"\
+        //-1
+static_text=
+include=hfull.dlg
+include=hsel.dlg
+static_text=
+include=ok.dlg

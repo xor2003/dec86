@@ -1,0 +1,127 @@
+fp:fp
+sp_2: orig: sp
+Top_3: orig: Top
+sp_4: orig: sp
+bp:bp
+ss:ss
+Mem7: orig: Mem0
+bp_8: orig: bp
+ax_9: orig: ax
+ax_10: orig: ax
+SZO_11: orig: SZO
+Z_12: orig: Z
+ax_13: orig: ax
+    def:  ax_13 = 1<16>
+    uses: ax_36 = PHI((ax_26, l0C00_0018), (ax_13, l0C00_0026))
+sp_14: orig: sp
+Mem15: orig: Mem0
+sp_16: orig: sp
+ax_17: orig: ax
+    def:  ax_17 = fn0C00_000F(wArg02 - 1<16>)
+    uses: dx_ax_24 = wArg02 *s32 ax_17
+dx_18: orig: dx
+Top_19: orig: Top
+SCZO_20: orig: SCZO
+sp_21: orig: sp
+sp_22: orig: sp
+dx_23: orig: dx
+dx_ax_24: orig: dx_ax
+    def:  dx_ax_24 = wArg02 *s32 ax_17
+    uses: ax_26 = SLICE(dx_ax_24, word16, 0) (alias)
+dx_25: orig: dx
+ax_26: orig: ax
+    def:  ax_26 = SLICE(dx_ax_24, word16, 0) (alias)
+    uses: ax_36 = PHI((ax_26, l0C00_0018), (ax_13, l0C00_0026))
+SCZO_27: orig: SCZO
+wLoc02_33: orig: wLoc02
+sp_29: orig: sp
+Mem30: orig: Mem0
+bp_31: orig: bp
+sp_32: orig: sp
+wArg02:Stack +0002
+    def:  def wArg02
+    uses: branch wArg02 == 1<16> l0C00_0026
+          dx_ax_24 = wArg02 *s32 ax_17
+          ax_17 = fn0C00_000F(wArg02 - 1<16>)
+wLoc04_35: orig: wLoc04
+ax_36: orig: ax
+    def:  ax_36 = PHI((ax_26, l0C00_0018), (ax_13, l0C00_0026))
+    uses: return ax_36
+C_37: orig: C
+C_38: orig: C
+C:C
+dx_40: orig: dx
+dx:dx
+O_42: orig: O
+O_43: orig: O
+O_44: orig: O
+S_45: orig: S
+S_46: orig: S
+S_47: orig: S
+Top_48: orig: Top
+Z_49: orig: Z
+Z_50: orig: Z
+Top_51: orig: Top
+sp_53: orig: sp
+// fn0C00_000F
+// Return size: 0
+word16 fn0C00_000F(word16 wArg02)
+fn0C00_000F_entry:
+	def wArg02
+	// succ:  l0C00_000F
+l0C00_000F:
+	branch wArg02 == 1<16> l0C00_0026
+	// succ:  l0C00_0018 l0C00_0026
+l0C00_0018:
+	ax_17 = fn0C00_000F(wArg02 - 1<16>)
+	dx_ax_24 = wArg02 *s32 ax_17
+	ax_26 = SLICE(dx_ax_24, word16, 0) (alias)
+	goto l0C00_0029
+	// succ:  l0C00_0029
+l0C00_0026:
+	ax_13 = 1<16>
+	// succ:  l0C00_0029
+l0C00_0029:
+	ax_36 = PHI((ax_26, l0C00_0018), (ax_13, l0C00_0026))
+	return ax_36
+	// succ:  fn0C00_000F_exit
+fn0C00_000F_exit:
+fp:fp
+sp_2: orig: sp
+Top_3: orig: Top
+cx_4: orig: cx
+sp_5: orig: sp
+ss:ss
+Mem7: orig: Mem0
+ax_8: orig: ax
+    def:  ax_8 = fn0C00_000F(0x64<16>)
+    uses: Mem17[ds:0x64<16>:word16] = ax_8
+dx_9: orig: dx
+S_10: orig: S
+C_11: orig: C
+Z_12: orig: Z
+O_13: orig: O
+sp_14: orig: sp
+SCZO_15: orig: SCZO
+ds:ds
+    def:  def ds
+    uses: Mem17[ds:0x64<16>:word16] = ax_8
+Mem17: orig: Mem0
+    def:  Mem17[ds:0x64<16>:word16] = ax_8
+wLoc02_18: orig: wLoc02
+C_19: orig: C
+O_20: orig: O
+S_21: orig: S
+Z_22: orig: Z
+// fn0C00_0000
+// Return size: 0
+void fn0C00_0000(selector ds)
+fn0C00_0000_entry:
+	def ds
+	// succ:  l0C00_0000
+l0C00_0000:
+	ax_8 = fn0C00_000F(0x64<16>)
+	Mem17[ds:0x64<16>:word16] = ax_8
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:

@@ -1,0 +1,135 @@
+void main(Register selector ds)
+// MayUse:  ds:[0..15]
+// DataTypes: 
+//   ds: (ptr16 (segment 0306))
+// LiveOut:
+// Trashed: ax sp Top
+// Preserved:
+// main
+// Return size: 0
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// sp:sp
+// ax:ax
+// ds:ds
+// Top:Top
+// return address size: 2
+void main(selector ds)
+main_entry:
+	def ds
+	// succ:  l0C00_0000
+l0C00_0000:
+	ax_7 = memfoo()
+	Mem9[ds:0x302<16>:word16] = ax_7
+	ax_10 = Mem9[ds:0x300<16>:word16]
+	ax_11 = membar(ax_10)
+	Mem13[ds:0x304<16>:word16] = ax_11
+	return
+	// succ:  main_exit
+main_exit:
+Register word16 memfoo()
+// MayUse:  ax:[0..15] bx:[0..15] cx:[0..15] ds:[0..15]
+// DataTypes: 
+//   ax: word16
+//   bx: word16
+//   cx: word16
+//   ds: (ptr16 (segment 0406))
+// LiveOut: ax:[0..15]-memfoo
+// Trashed: ax
+// Preserved:
+// memfoo
+// Return size: 2
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// sp:sp
+// ds:ds
+// ax:ax
+// bx:bx
+// cx:cx
+// cl:cl
+// SCZO:SCZO
+// Top:Top
+// S:S
+// C:C
+// Z:Z
+// O:O
+// return address size: 2
+word16 memfoo()
+memfoo_entry:
+	def fp
+	def ax
+	def ds
+	def bx
+	def cx
+	sp_2 = fp
+	Top_3 = 0<i8>
+	// succ:  l0C00_0017
+l0C00_0017:
+	Mem6[ds:0x400<16>:word16] = ax
+	Mem8[ds:0x402<16>:word16] = bx
+	Mem10[ds:0x404<16>:word16] = cx
+	bx_11 = Mem10[ds:0x100<16>:word16]
+	cl_12 = Mem10[ds:bx_11 + 66<i16>:byte]
+	ax_13 = Mem10[ds:bx_11 + 64<i16>:word16]
+	ax_14 = ax_13 << cl_12
+	SCZO_15 = cond(ax_14)
+	C_20 = SCZO_15 & 2<32> (alias)
+	O_21 = SCZO_15 & 0x10<32> (alias)
+	S_22 = SCZO_15 & 1<32> (alias)
+	Z_23 = SCZO_15 & 4<32> (alias)
+	Mem16[ds:0x102<16>:word16] = ax_14
+	ax_17 = Mem16[ds:0x400<16>:word16]
+	bx_18 = Mem16[ds:0x402<16>:word16]
+	cx_19 = Mem16[ds:0x404<16>:word16]
+	return ax_17
+	// succ:  memfoo_exit
+memfoo_exit:
+Register word16 membar(Register word16 ax)
+// MayUse:  ax:[0..15] ds:[0..15]
+// DataTypes: 
+//   ax: word16
+//   ds: (ptr16 (segment 1002))
+// LiveOut: ax:[0..15]-membar
+// Trashed: ax
+// Preserved:
+// membar
+// Return size: 2
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// sp:sp
+// ds:ds
+// ax:ax
+// bx:bx
+// SCZO:SCZO
+// Top:Top
+// S:S
+// C:C
+// Z:Z
+// O:O
+// return address size: 2
+word16 membar(word16 ax)
+membar_entry:
+	def fp
+	def ax
+	def ds
+	sp_2 = fp
+	Top_3 = 0<i8>
+	// succ:  l0C00_0040
+l0C00_0040:
+	Mem7[ds:0x500<16>:word16] = ax
+	bx_8 = Mem7[ds:0x1000<16>:word16]
+	ax_9 = Mem7[ds:bx_8:word16]
+	ax_10 = ax_9 + Mem7[ds:bx_8 + 2<i16>:word16]
+	SCZO_11 = cond(ax_10)
+	C_14 = SCZO_11 & 2<32> (alias)
+	O_15 = SCZO_11 & 0x10<32> (alias)
+	S_16 = SCZO_11 & 1<32> (alias)
+	Z_17 = SCZO_11 & 4<32> (alias)
+	Mem12[ds:bx_8 + 4<i16>:word16] = ax_10
+	ax_13 = Mem12[ds:0x500<16>:word16]
+	return ax_13
+	// succ:  membar_exit
+membar_exit:

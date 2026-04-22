@@ -1,0 +1,2053 @@
+;	Static Name Aliases
+;
+	TITLE   life.C
+	NAME    life
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+PUBLIC  _more_rounds
+EXTRN	__acrtused:ABS
+EXTRN	_clear_mat:NEAR
+EXTRN	_printf:NEAR
+EXTRN	_atol:NEAR
+EXTRN	_get_key:NEAR
+EXTRN	_time:NEAR
+EXTRN	_srand:NEAR
+EXTRN	_set_cursor:NEAR
+EXTRN	__chkstk:NEAR
+EXTRN	_rand:NEAR
+EXTRN	__ftol:NEAR
+EXTRN	__aNNalmul:NEAR
+EXTRN	_int86:NEAR
+EXTRN	_edit:NEAR
+EXTRN	_refresh:NEAR
+_BSS      SEGMENT
+COMM NEAR	_pause:	BYTE:	 2
+COMM NEAR	_repeat:	BYTE:	 4
+COMM NEAR	_density:	BYTE:	 4
+COMM NEAR	_scrnbuf:	BYTE:	 3680
+COMM NEAR	_mat1:	BYTE:	 1638
+COMM NEAR	_mat2:	BYTE:	 1638
+COMM NEAR	_speed:	BYTE:	 2
+COMM NEAR	_cell:	BYTE:	 2
+COMM NEAR	_attrib:	BYTE:	 2
+COMM NEAR	_videomem:	BYTE:	 4
+COMM NEAR	_adapter:	BYTE:	 2
+COMM NEAR	_forever:	BYTE:	 2
+EXTRN	__fltused:NEAR
+_BSS      ENDS
+_DATA      SEGMENT
+	ORG	$+2
+$SG319	DB	'Press key to control execution:  ',  00H
+$SG320	DB	'F=faster  S=slower  P=pause(restart, quit) ',  00H
+$SG423	DB	'PAUSE screen controls:  C=continue  Q=quit',  00H
+$SG424	DB	'  S=step  R=restart                 ',  00H
+	ORG	$-160
+_more_rounds	DW	00H
+_DATA      ENDS
+CONST      SEGMENT
+$T20001	DQ	04059000000000000r    ;	100.0000000000000
+CONST      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** /* life.c 
+;|***  *
+;|***  * Game of LIFE demonstration program.
+;|***  *
+;|***  * This program runs a version of the game LIFE that requires little
+;|***  * interaction. Yet user is able to stop the game if desired, and edit
+;|***  * the cells on the game grid.
+;|***  */
+;|*** #include <stdio.h>
+;|*** #include <dos.h>
+;|*** 
+;|*** #define ROWS 21			/* Dimensions of population matrix */
+;|*** #define COLS 78
+;|*** #define SCRNSIZE ((ROWS+2)*(COLS+2)*2)
+;|*** 
+;|*** char	mat1[ROWS][COLS];	/* Matrix 1: stores current population */
+;|*** char	mat2[ROWS][COLS];	/* Matrix 2: stores crowding-numbers */
+;|*** int	speed;			/* Timing factor (1-10) */
+;|*** int	cell;			/* Cell character */
+;|*** int	attrib;			/* Video attribute of each location */
+;|*** char    far	*videomem;	/* Address of video memory
+;|*** 				     monochrome = b0000, cga = b8000 */
+;|*** int	adapter;		/* Graphic adapter? cga, ega, mono */
+;|*** int	more_rounds = 0;	/* Boolean: Continue LIFE? */
+;|*** int	forever;		/* Boolean: unlimited no. of generations? */
+;|*** int     pause;                  /* Boolean: pause execution? */
+;|*** long	repeat; 		/* Maximum number of generations to do */
+;|*** float	density;		/* Density of random distribution (0.0-100.0) */
+;|*** char	scrnbuf[SCRNSIZE];   /* Screen Buffer area */
+;|*** 
+;|*** #define BUFLIMIT (scrnbuf + SCRNSIZE)
+;|*** 
+;|*** #define MONO  1                         /* Constant values for adapter */
+;|*** #define CGA   2                         /*   variable */
+;|*** #define EGA   3
+;|*** 
+;|*** /* Main function.
+;|***  *
+;|***  * Determine if command-line argument (an integer) is present.
+;|***  * If so, run the number of generations given on the command line.
+;|***  * Otherwise, run generations indefinitely.
+;|***  */
+;|*** main(argc, argv)
+;|*** int	argc;
+; Line 44
+	PUBLIC	_main
+_main	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	33 c0 			xor	ax,ax
+	*** 000005	e8 00 00 		call	__chkstk
+;|*** char	**argv;
+;|*** {
+; Line 46
+;	argc = 4
+;	argv = 6
+;|*** 	long	atol();     /* Alpha string to long int conversion */
+;|*** 
+;|*** 	if (argc == 1)                   /* No command-line argument */
+; Line 49
+	*** 000008	83 7e 04 01 		cmp	WORD PTR [bp+4],1	;argc
+	*** 00000c	75 08 			jne	$I265
+;|*** 		forever = 1;             /* So run forever */
+; Line 50
+	*** 00000e	c7 06 00 00 01 00 	mov	WORD PTR _forever,1
+;|*** 	else
+; Line 51
+	*** 000014	eb 13 			jmp	SHORT $I266
+					$I265:
+;|*** 		repeat = atol(argv[1]);  /* Else, run given number */
+; Line 52
+	*** 000016	8b 5e 06 		mov	bx,WORD PTR [bp+6]	;argv
+	*** 000019	ff 77 02 		push	WORD PTR [bx+2]
+	*** 00001c	e8 00 00 		call	_atol
+	*** 00001f	83 c4 02 		add	sp,2
+	*** 000022	a3 00 00 		mov	WORD PTR _repeat,ax
+	*** 000025	89 16 02 00 		mov	WORD PTR _repeat+2,dx
+					$I266:
+;|*** 	init_life();
+; Line 53
+	*** 000029	e8 00 00 		call	_init_life
+;|*** 	do {
+; Line 54
+					$D268:
+;|*** 		more_rounds = 0;
+; Line 55
+	*** 00002c	c7 06 00 00 00 00 	mov	WORD PTR _more_rounds,0
+;|*** 		init_buf();
+; Line 56
+	*** 000032	e8 00 00 		call	_init_buf
+;|*** 		draw_box(attrib);
+; Line 57
+	*** 000035	ff 36 00 00 		push	WORD PTR _attrib
+	*** 000039	e8 00 00 		call	_draw_box
+	*** 00003c	83 c4 02 		add	sp,2
+;|*** 		init_mats();
+; Line 58
+	*** 00003f	e8 00 00 		call	_init_mats
+;|*** 		rand_dist(density/100.0);
+; Line 59
+	*** 000042	9b d9 06 00 00 		fld	DWORD PTR _density
+	*** 000047	9b dc 36 00 00 		fdiv	QWORD PTR $T20001
+	*** 00004c	83 ec 08 		sub	sp,8
+	*** 00004f	8b dc 			mov	bx,sp
+	*** 000051	9b dd 1f 		fstp	QWORD PTR [bx]
+	*** 000054	90 9b 			fwait	
+	*** 000056	e8 00 00 		call	_rand_dist
+	*** 000059	83 c4 08 		add	sp,8
+;|*** 		pause = 0;
+; Line 60
+	*** 00005c	c7 06 00 00 00 00 	mov	WORD PTR _pause,0
+;|*** 		while (forever || repeat--) {
+; Line 61
+					$FC276:
+	*** 000062	83 3e 00 00 00 		cmp	WORD PTR _forever,0
+	*** 000067	75 15 			jne	$FB278
+	*** 000069	a1 00 00 		mov	ax,WORD PTR _repeat
+	*** 00006c	8b 16 02 00 		mov	dx,WORD PTR _repeat+2
+	*** 000070	83 2e 00 00 01 		sub	WORD PTR _repeat,1
+	*** 000075	83 1e 02 00 00 		sbb	WORD PTR _repeat+2,0
+	*** 00007a	0b d0 			or	dx,ax
+	*** 00007c	74 21 			je	$FB277
+					$FB278:
+;|*** 			proc_key();
+; Line 62
+	*** 00007e	e8 00 00 		call	_proc_key
+;|*** 			if (!pause) {
+; Line 63
+	*** 000081	83 3e 00 00 00 		cmp	WORD PTR _pause,0
+	*** 000086	75 10 			jne	$I280
+;|*** 				if (speed < 10)
+; Line 64
+	*** 000088	83 3e 00 00 0a 		cmp	WORD PTR _speed,10
+	*** 00008d	7d 03 			jge	$I281
+;|*** 					timer();
+; Line 65
+	*** 00008f	e8 00 00 		call	_timer
+;|*** 				generation();
+; Line 66
+					$I281:
+	*** 000092	e8 00 00 		call	_generation
+;|*** 			} else
+; Line 67
+	*** 000095	eb cb 			jmp	SHORT $FC276
+	*** 000097	90 			nop	
+					$I280:
+;|*** 				if (pause_screen())
+; Line 68
+	*** 000098	e8 00 00 		call	_pause_screen
+	*** 00009b	0b c0 			or	ax,ax
+	*** 00009d	74 c3 			je	$FC276
+;|*** 					break;
+; Line 69
+					$FB277:
+;|*** 		}
+;|*** 	} while(more_rounds);
+; Line 71
+	*** 00009f	83 3e 00 00 00 		cmp	WORD PTR _more_rounds,0
+	*** 0000a4	75 86 			jne	$D268
+;|*** 	set_cursor(24,0);
+; Line 72
+	*** 0000a6	2b c0 			sub	ax,ax
+	*** 0000a8	50 			push	ax
+	*** 0000a9	b8 18 00 		mov	ax,24
+	*** 0000ac	50 			push	ax
+	*** 0000ad	e8 00 00 		call	_set_cursor
+	*** 0000b0	83 c4 04 		add	sp,4
+;|*** }
+; Line 73
+	*** 0000b3	5d 			pop	bp
+	*** 0000b4	c3 			ret	
+	*** 0000b5	90 			nop	
+
+_main	ENDP
+;|*** 
+;|*** 
+;|*** /* Initialize LIFE.
+;|***  * 
+;|***  * Initialize parameters (static variables) used in the game, including
+;|***  * background, cell type, population density, and location of video memory.
+;|***  */
+;|*** init_life()
+;|*** {
+; Line 82
+_TEXT      ENDS
+CONST      SEGMENT
+$T20002	DD	042200000r   ;	40.000000
+CONST      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+	PUBLIC	_init_life
+_init_life	PROC NEAR
+	*** 0000b6	33 c0 			xor	ax,ax
+	*** 0000b8	e8 00 00 		call	__chkstk
+;|*** 	init_adapter();
+; Line 83
+	*** 0000bb	e8 00 00 		call	_init_adapter
+;|*** 	switch (adapter) {
+; Line 84
+	*** 0000be	a1 00 00 		mov	ax,WORD PTR _adapter
+	*** 0000c1	3d 01 00 		cmp	ax,1
+	*** 0000c4	74 0c 			je	$SC294
+	*** 0000c6	3d 02 00 		cmp	ax,2
+	*** 0000c9	74 1b 			je	$SC295
+	*** 0000cb	3d 03 00 		cmp	ax,3
+	*** 0000ce	74 2a 			je	$SC296
+	*** 0000d0	eb 36 			jmp	SHORT $SB291
+					$SC294:
+	*** 0000d2	c7 06 00 00 00 00 	mov	WORD PTR _videomem,0
+	*** 0000d8	c7 06 02 00 00 b0 	mov	WORD PTR _videomem+2,-20480
+;|*** 	case MONO:  videomem = (char far *) 0xb0000000;
+;|*** 		    speed = 5;
+; Line 86
+					$L20010:
+	*** 0000de	c7 06 00 00 05 00 	mov	WORD PTR _speed,5
+;|*** 		    break;
+; Line 87
+	*** 0000e4	eb 22 			jmp	SHORT $SB291
+					$SC295:
+	*** 0000e6	c7 06 00 00 00 00 	mov	WORD PTR _videomem,0
+	*** 0000ec	c7 06 02 00 00 b8 	mov	WORD PTR _videomem+2,-18432
+;|*** 	case CGA:   videomem = (char far *) 0xb8000000;
+;|*** 		    speed = 10;
+; Line 89
+	*** 0000f2	c7 06 00 00 0a 00 	mov	WORD PTR _speed,10
+;|*** 		    break;
+; Line 90
+	*** 0000f8	eb 0e 			jmp	SHORT $SB291
+					$SC296:
+	*** 0000fa	c7 06 00 00 00 00 	mov	WORD PTR _videomem,0
+	*** 000100	c7 06 02 00 00 b8 	mov	WORD PTR _videomem+2,-18432
+	*** 000106	eb d6 			jmp	SHORT $L20010
+					$SB291:
+;|*** 	case EGA:   videomem = (char far *) 0xb8000000;
+;|*** 		    speed = 5;
+;|*** 		    break;
+;|*** 	}
+;|*** 	cell = 254;
+; Line 95
+	*** 000108	c7 06 00 00 fe 00 	mov	WORD PTR _cell,254
+;|*** 	attrib = 11;
+; Line 96
+	*** 00010e	c7 06 00 00 0b 00 	mov	WORD PTR _attrib,11
+;|*** 	density = 40.0;
+; Line 97
+	*** 000114	9b d9 06 08 00 		fld	DWORD PTR $T20002
+	*** 000119	9b d9 1e 00 00 		fstp	DWORD PTR _density
+	*** 00011e	90 9b 			fwait	
+;|*** }
+; Line 98
+	*** 000120	c3 			ret	
+	*** 000121	90 			nop	
+
+_init_life	ENDP
+;|*** 
+;|*** /* Initialize buffer.
+;|***  *
+;|***  * Initialize the screen buffer array with spaces and the attribute
+;|***  * inidicated in the variable attrib.
+;|***  */
+;|*** init_buf()
+;|*** {
+; Line 106
+	PUBLIC	_init_buf
+_init_buf	PROC NEAR
+	*** 000122	55 			push	bp
+	*** 000123	8b ec 			mov	bp,sp
+	*** 000125	b8 02 00 		mov	ax,2
+	*** 000128	e8 00 00 		call	__chkstk
+	*** 00012b	56 			push	si
+;	register si = p
+;|*** 	register char *p = scrnbuf;
+; Line 107
+	*** 00012c	be 00 00 		mov	si,OFFSET DGROUP:_scrnbuf
+;|*** 
+;|*** 	while (p < BUFLIMIT) {	
+; Line 109
+	*** 00012f	eb 0b 			jmp	SHORT $L20011
+	*** 000131	90 			nop	
+					$FC300:
+;|*** 		*p++ = ' ';
+; Line 110
+	*** 000132	c6 04 20 		mov	BYTE PTR [si],32
+	*** 000135	46 			inc	si
+;|*** 		*p++ = attrib;
+; Line 111
+	*** 000136	a0 00 00 		mov	al,BYTE PTR _attrib
+	*** 000139	88 04 			mov	BYTE PTR [si],al
+	*** 00013b	46 			inc	si
+;|*** 	}
+; Line 112
+					$L20011:
+	*** 00013c	81 fe 60 0e 		cmp	si,OFFSET DGROUP:_scrnbuf+3680
+	*** 000140	72 f0 			jb	$FC300
+;|*** }
+; Line 113
+	*** 000142	5e 			pop	si
+	*** 000143	8b e5 			mov	sp,bp
+	*** 000145	5d 			pop	bp
+	*** 000146	c3 			ret	
+	*** 000147	90 			nop	
+
+_init_buf	ENDP
+;|*** 		
+;|*** 
+;|*** /* Draw box.
+;|***  *
+;|***  * Clear screen, and then use extended-ascii line characters to
+;|***  * draw the frame (box) for the game of life.
+;|***  */
+;|*** draw_box(attrib_val)
+;|*** int	attrib_val;	/* Foreground/background attribute of box */
+; Line 122
+	PUBLIC	_draw_box
+_draw_box	PROC NEAR
+	*** 000148	55 			push	bp
+	*** 000149	8b ec 			mov	bp,sp
+	*** 00014b	b8 06 00 		mov	ax,6
+	*** 00014e	e8 00 00 		call	__chkstk
+	*** 000151	56 			push	si
+;|*** {
+; Line 123
+;	attrib_val = 4
+;	p = -2
+;	i = -4
+;	incr = -6
+;|*** 	char	*p;		/* pointer into screen buffer */
+;|*** 	int	i, incr;
+;|*** 
+;|*** 	set_cursor(26,0);
+; Line 127
+	*** 000152	2b c0 			sub	ax,ax
+	*** 000154	50 			push	ax
+	*** 000155	b8 1a 00 		mov	ax,26
+	*** 000158	50 			push	ax
+	*** 000159	e8 00 00 		call	_set_cursor
+	*** 00015c	83 c4 04 		add	sp,4
+;|*** 	p = scrnbuf;
+; Line 128
+	*** 00015f	c7 46 fe 00 00 		mov	WORD PTR [bp-2],OFFSET DGROUP:_scrnbuf	;p
+;|*** 
+;|*** /* Draw top of box. */
+;|*** 
+;|*** 	*p = 218;
+; Line 132
+	*** 000164	c6 06 00 00 da 		mov	BYTE PTR _scrnbuf,218
+;|*** 	p += 2;
+; Line 133
+	*** 000169	83 46 fe 02 		add	WORD PTR [bp-2],2	;p
+;|*** 	for (i = 0; i < COLS; p += 2, i++)
+; Line 134
+	*** 00016d	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+					$FC308:
+;|*** 		*p = 196;
+; Line 135
+	*** 000172	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 000175	c6 07 c4 		mov	BYTE PTR [bx],196
+	*** 000178	83 46 fe 02 		add	WORD PTR [bp-2],2	;p
+	*** 00017c	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+	*** 00017f	83 7e fc 4e 		cmp	WORD PTR [bp-4],78	;i
+	*** 000183	7c ed 			jl	$FC308
+;|*** 	*p = 191;
+; Line 136
+	*** 000185	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 000188	c6 07 bf 		mov	BYTE PTR [bx],191
+;|*** 	p += 2;
+; Line 137
+	*** 00018b	83 46 fe 02 		add	WORD PTR [bp-2],2	;p
+;|*** 
+;|*** /* Draw side of box. */
+;|*** 
+;|*** 	for (i = 0; i < ROWS; p += 160, i++) {
+; Line 141
+	*** 00018f	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+					$FC311:
+;|*** 		incr = (COLS + 1) * 2;
+; Line 142
+	*** 000194	c7 46 fa 9e 00 		mov	WORD PTR [bp-6],158	;incr
+;|*** 		*p = 179;
+; Line 143
+	*** 000199	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 00019c	c6 07 b3 		mov	BYTE PTR [bx],179
+;|*** 		*(p + incr) = 179;
+; Line 144
+	*** 00019f	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;incr
+	*** 0001a2	8b 76 fe 		mov	si,WORD PTR [bp-2]	;p
+	*** 0001a5	c6 00 b3 		mov	BYTE PTR [bx][si],179
+;|*** 	}
+; Line 145
+	*** 0001a8	81 46 fe a0 00 		add	WORD PTR [bp-2],160	;p
+	*** 0001ad	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+	*** 0001b0	83 7e fc 15 		cmp	WORD PTR [bp-4],21	;i
+	*** 0001b4	7c de 			jl	$FC311
+;|*** 
+;|*** /* Draw bottom of box. */
+;|*** 
+;|*** 	*p = 192;
+; Line 149
+	*** 0001b6	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 0001b9	c6 07 c0 		mov	BYTE PTR [bx],192
+;|*** 	p += 2;
+; Line 150
+	*** 0001bc	83 46 fe 02 		add	WORD PTR [bp-2],2	;p
+;|*** 	for (i = 0; i < COLS; p += 2, i++)
+; Line 151
+	*** 0001c0	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+					$FC314:
+;|*** 		*p = 196;
+; Line 152
+	*** 0001c5	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 0001c8	c6 07 c4 		mov	BYTE PTR [bx],196
+	*** 0001cb	83 46 fe 02 		add	WORD PTR [bp-2],2	;p
+	*** 0001cf	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+	*** 0001d2	83 7e fc 4e 		cmp	WORD PTR [bp-4],78	;i
+	*** 0001d6	7c ed 			jl	$FC314
+;|*** 	*p = 217;
+; Line 153
+	*** 0001d8	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 0001db	c6 07 d9 		mov	BYTE PTR [bx],217
+;|*** 	p += 2;
+; Line 154
+	*** 0001de	83 46 fe 02 		add	WORD PTR [bp-2],2	;p
+;|*** 
+;|*** 	refresh(scrnbuf, videomem);  /* Copy scrnbuf to video memory */
+; Line 156
+	*** 0001e2	ff 36 02 00 		push	WORD PTR _videomem+2
+	*** 0001e6	ff 36 00 00 		push	WORD PTR _videomem
+	*** 0001ea	b8 00 00 		mov	ax,OFFSET DGROUP:_scrnbuf
+	*** 0001ed	50 			push	ax
+	*** 0001ee	e8 00 00 		call	_refresh
+	*** 0001f1	83 c4 06 		add	sp,6
+;|*** 	draw_prompt_box();
+; Line 157
+	*** 0001f4	e8 00 00 		call	_draw_prompt_box
+;|*** }
+; Line 158
+	*** 0001f7	5e 			pop	si
+	*** 0001f8	8b e5 			mov	sp,bp
+	*** 0001fa	5d 			pop	bp
+	*** 0001fb	c3 			ret	
+
+_draw_box	ENDP
+;|*** 
+;|*** /* Draw Prompt Box.
+;|***  *
+;|***  * Put main prompt sequence at bottom of the screen.
+;|***  */
+;|*** draw_prompt_box()
+;|*** {
+; Line 165
+	PUBLIC	_draw_prompt_box
+_draw_prompt_box	PROC NEAR
+	*** 0001fc	33 c0 			xor	ax,ax
+	*** 0001fe	e8 00 00 		call	__chkstk
+;|*** 	set_cursor(23,0);
+; Line 166
+	*** 000201	2b c0 			sub	ax,ax
+	*** 000203	50 			push	ax
+	*** 000204	b8 17 00 		mov	ax,23
+	*** 000207	50 			push	ax
+	*** 000208	e8 00 00 		call	_set_cursor
+	*** 00020b	83 c4 04 		add	sp,4
+;|*** 	printf( "Press key to control execution:  ");
+; Line 167
+	*** 00020e	b8 02 00 		mov	ax,OFFSET DGROUP:$SG319
+	*** 000211	50 			push	ax
+	*** 000212	e8 00 00 		call	_printf
+	*** 000215	83 c4 02 		add	sp,2
+;|*** 	printf( "F=faster  S=slower  P=pause(restart, quit) ");
+; Line 168
+	*** 000218	b8 24 00 		mov	ax,OFFSET DGROUP:$SG320
+	*** 00021b	50 			push	ax
+	*** 00021c	e8 00 00 		call	_printf
+	*** 00021f	83 c4 02 		add	sp,2
+;|*** 	set_cursor(26,0);
+; Line 169
+	*** 000222	2b c0 			sub	ax,ax
+	*** 000224	50 			push	ax
+	*** 000225	b8 1a 00 		mov	ax,26
+	*** 000228	50 			push	ax
+	*** 000229	e8 00 00 		call	_set_cursor
+	*** 00022c	83 c4 04 		add	sp,4
+;|*** }
+; Line 170
+	*** 00022f	c3 			ret	
+
+_draw_prompt_box	ENDP
+;|*** 
+;|*** /* Initialize Matrixes.
+;|***  *
+;|***  * Clear Matrix 1 and Matrix 2, then initialize all the zones
+;|***  * (1-9) of Matrix 1.
+;|***  *
+;|***  * The "zones" are used by the LIFE algorithm to determine method of
+;|***  * calculating neighbors. Zones are pertinent to edges and corners:
+;|***  *
+;|***  *    +-+--------------+-+
+;|***  *    |6|      2       |7|
+;|***  *    +-+--------------+-+
+;|***  *    | |              | |
+;|***  *    |4|      1       |5|
+;|***  *    | |              | |
+;|***  *    +-+--------------+-+
+;|***  *    |8|      3       |9|
+;|***  *    +-+--------------+-+
+;|***  *
+;|***  * Zones are recorded in Matrix 1 for ease of computation. If a cell
+;|***  * lives, then we add 100 to mark cell's existence.
+;|***  */
+;|*** init_mats()
+;|*** {
+; Line 194
+	PUBLIC	_init_mats
+_init_mats	PROC NEAR
+	*** 000230	55 			push	bp
+	*** 000231	8b ec 			mov	bp,sp
+	*** 000233	b8 06 00 		mov	ax,6
+	*** 000236	e8 00 00 		call	__chkstk
+;	i = -4
+;	j = -6
+;	p = -2
+;|*** 	int i, j;              	    /* Loop counters. */
+;|*** 	char *p = (char *) mat1;    /* Pointer into Matrix 1. */
+; Line 196
+	*** 000239	c7 46 fe 00 00 		mov	WORD PTR [bp-2],OFFSET DGROUP:_mat1	;p
+;|*** 
+;|*** /* Initialize zones in Matrix 1 */
+;|*** 
+;|*** 	clear_mat(mat1, ROWS * COLS);  /* Initialize matrix to all 0's */
+; Line 200
+	*** 00023e	b8 66 06 		mov	ax,1638
+	*** 000241	50 			push	ax
+	*** 000242	b8 00 00 		mov	ax,OFFSET DGROUP:_mat1
+	*** 000245	50 			push	ax
+	*** 000246	e8 00 00 		call	_clear_mat
+	*** 000249	83 c4 04 		add	sp,4
+;|*** 	clear_mat(mat2, ROWS * COLS);
+; Line 201
+	*** 00024c	b8 66 06 		mov	ax,1638
+	*** 00024f	50 			push	ax
+	*** 000250	b8 00 00 		mov	ax,OFFSET DGROUP:_mat2
+	*** 000253	50 			push	ax
+	*** 000254	e8 00 00 		call	_clear_mat
+	*** 000257	83 c4 04 		add	sp,4
+;|*** 
+;|*** 	*p++ = 6;                           /* Initilialize row 1 */
+; Line 203
+	*** 00025a	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 00025d	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 000260	c6 07 06 		mov	BYTE PTR [bx],6
+;|*** 	for (i = 0; i < COLS-2; i++)       
+; Line 204
+	*** 000263	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+					$FC327:
+;|*** 		*p++ = 2;
+; Line 205
+	*** 000268	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 00026b	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 00026e	c6 07 02 		mov	BYTE PTR [bx],2
+	*** 000271	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+	*** 000274	83 7e fc 4c 		cmp	WORD PTR [bp-4],76	;i
+	*** 000278	7c ee 			jl	$FC327
+;|*** 	*p++ = 7;
+; Line 206
+	*** 00027a	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 00027d	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 000280	c6 07 07 		mov	BYTE PTR [bx],7
+;|*** 
+;|*** 	for (j = 0; j < ROWS-2; j++) {     /* Initialize center rows */
+; Line 208
+	*** 000283	c7 46 fa 00 00 		mov	WORD PTR [bp-6],0	;j
+					$FC330:
+;|*** 		*p++ = 4;
+; Line 209
+	*** 000288	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 00028b	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 00028e	c6 07 04 		mov	BYTE PTR [bx],4
+;|*** 		for (i = 0; i < COLS-2; i++)
+; Line 210
+	*** 000291	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+					$FC333:
+;|*** 			*p++ = 1;
+; Line 211
+	*** 000296	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 000299	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 00029c	c6 07 01 		mov	BYTE PTR [bx],1
+	*** 00029f	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+	*** 0002a2	83 7e fc 4c 		cmp	WORD PTR [bp-4],76	;i
+	*** 0002a6	7c ee 			jl	$FC333
+;|*** 		*p++ = 5;
+; Line 212
+	*** 0002a8	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 0002ab	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 0002ae	c6 07 05 		mov	BYTE PTR [bx],5
+;|*** 	}
+; Line 213
+	*** 0002b1	ff 46 fa 		inc	WORD PTR [bp-6]	;j
+	*** 0002b4	83 7e fa 13 		cmp	WORD PTR [bp-6],19	;j
+	*** 0002b8	7c ce 			jl	$FC330
+;|*** 
+;|*** 	*p++ = 8;                           /* Initialize bottom row */
+; Line 215
+	*** 0002ba	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 0002bd	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 0002c0	c6 07 08 		mov	BYTE PTR [bx],8
+;|*** 	for (i = 0; i < COLS-2; i++)
+; Line 216
+	*** 0002c3	c7 46 fc 00 00 		mov	WORD PTR [bp-4],0	;i
+					$FC336:
+;|*** 		*p++ = 3;
+; Line 217
+	*** 0002c8	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 0002cb	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 0002ce	c6 07 03 		mov	BYTE PTR [bx],3
+	*** 0002d1	ff 46 fc 		inc	WORD PTR [bp-4]	;i
+	*** 0002d4	83 7e fc 4c 		cmp	WORD PTR [bp-4],76	;i
+	*** 0002d8	7c ee 			jl	$FC336
+;|*** 	*p++ = 9;
+; Line 218
+	*** 0002da	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 0002dd	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 0002e0	c6 07 09 		mov	BYTE PTR [bx],9
+;|*** 
+;|*** }
+; Line 220
+	*** 0002e3	8b e5 			mov	sp,bp
+	*** 0002e5	5d 			pop	bp
+	*** 0002e6	c3 			ret	
+	*** 0002e7	90 			nop	
+
+_init_mats	ENDP
+;|*** 
+;|*** 
+;|*** /* Random Distribution.
+;|***  *
+;|***  * Put a random distribution into Matrix 1.
+;|***  * Add 100 to each cell that is alive, according to the distribution.
+;|***  */
+;|*** rand_dist(chance)
+;|*** float	chance;
+; Line 229
+_TEXT      ENDS
+CONST      SEGMENT
+$T20003	DQ	040e0000000000000r    ;	32768.00000000000
+CONST      ENDS
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+	PUBLIC	_rand_dist
+_rand_dist	PROC NEAR
+	*** 0002e8	55 			push	bp
+	*** 0002e9	8b ec 			mov	bp,sp
+	*** 0002eb	b8 0c 00 		mov	ax,12
+	*** 0002ee	e8 00 00 		call	__chkstk
+;|*** {
+; Line 230
+;	chance = 4
+;	p = -2
+;	bp = -6
+;	rnd = -8
+;	amt = -4
+;	i = -10
+;	j = -12
+;|*** 	char	*p;
+;|*** 	char	*bp = (char *) scrnbuf;
+; Line 232
+	*** 0002f1	c7 46 fa 00 00 		mov	WORD PTR [bp-6],OFFSET DGROUP:_scrnbuf	;bp
+;|*** 	int	rnd;             /* output from rand() */
+;|*** 	int	amt;		 /* Amount to exceed for a cell to live */
+;|*** 	int	i, j;            /* Loop counters */
+;|*** 	long	time();		 /* Grab time for seed of random sequence */
+;|*** 
+;|*** 	p = (char *) mat1;
+; Line 238
+	*** 0002f6	c7 46 fe 00 00 		mov	WORD PTR [bp-2],OFFSET DGROUP:_mat1	;p
+;|*** 	amt = chance * 32768;
+; Line 239
+	*** 0002fb	9b dd 46 04 		fld	QWORD PTR [bp+4]	;chance
+	*** 0002ff	9b dc 0e 0c 00 		fmul	QWORD PTR $T20003
+	*** 000304	e8 00 00 		call	__ftol
+	*** 000307	89 46 fc 		mov	WORD PTR [bp-4],ax	;amt
+;|*** 	srand((unsigned) time(0));
+; Line 240
+	*** 00030a	2b c0 			sub	ax,ax
+	*** 00030c	50 			push	ax
+	*** 00030d	e8 00 00 		call	_time
+	*** 000310	83 c4 02 		add	sp,2
+	*** 000313	50 			push	ax
+	*** 000314	e8 00 00 		call	_srand
+	*** 000317	83 c4 02 		add	sp,2
+;|*** 	bp += 162;
+; Line 241
+	*** 00031a	81 46 fa a2 00 		add	WORD PTR [bp-6],162	;bp
+;|*** 	for (i = 0; i < ROWS; i++, bp += 4)
+; Line 242
+	*** 00031f	c7 46 f6 00 00 		mov	WORD PTR [bp-10],0	;i
+	*** 000324	eb 41 			jmp	SHORT $F348
+					$FC352:
+	*** 000326	ff 46 f4 		inc	WORD PTR [bp-12]	;j
+	*** 000329	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;p
+	*** 00032c	ff 46 fe 		inc	WORD PTR [bp-2]	;p
+	*** 00032f	83 46 fa 02 		add	WORD PTR [bp-6],2	;bp
+					$F351:
+	*** 000333	83 7e f4 4e 		cmp	WORD PTR [bp-12],78	;j
+	*** 000337	7d 27 			jge	$FC349
+;|*** 		for (j = 0; j < COLS; j++, p++, bp += 2) {
+;|*** 			rnd = rand();
+; Line 244
+	*** 000339	e8 00 00 		call	_rand
+	*** 00033c	89 46 f8 		mov	WORD PTR [bp-8],ax	;rnd
+;|*** 			if (rnd < amt) {
+; Line 245
+	*** 00033f	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;amt
+	*** 000342	39 46 f8 		cmp	WORD PTR [bp-8],ax	;rnd
+	*** 000345	7d df 			jge	$FC352
+;|*** 				*p += 100;
+; Line 246
+	*** 000347	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;p
+	*** 00034a	80 07 64 		add	BYTE PTR [bx],100
+;|*** 				*bp = cell;
+; Line 247
+	*** 00034d	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;bp
+	*** 000350	a0 00 00 		mov	al,BYTE PTR _cell
+	*** 000353	88 07 			mov	BYTE PTR [bx],al
+;|*** 				*(bp+1) = attrib;
+; Line 248
+	*** 000355	8b 5e fa 		mov	bx,WORD PTR [bp-6]	;bp
+	*** 000358	a0 00 00 		mov	al,BYTE PTR _attrib
+	*** 00035b	88 47 01 		mov	BYTE PTR [bx+1],al
+;|*** 			}
+; Line 249
+;|*** 		}
+; Line 250
+	*** 00035e	eb c6 			jmp	SHORT $FC352
+					$FC349:
+	*** 000360	ff 46 f6 		inc	WORD PTR [bp-10]	;i
+	*** 000363	83 46 fa 04 		add	WORD PTR [bp-6],4	;bp
+					$F348:
+	*** 000367	83 7e f6 15 		cmp	WORD PTR [bp-10],21	;i
+	*** 00036b	7d 07 			jge	$FB350
+;|*** 		for (j = 0; j < COLS; j++, p++, bp += 2) {
+; Line 243
+	*** 00036d	c7 46 f4 00 00 		mov	WORD PTR [bp-12],0	;j
+	*** 000372	eb bf 			jmp	SHORT $F351
+					$FB350:
+;|*** 			rnd = rand();
+;|*** 			if (rnd < amt) {
+;|*** 				*p += 100;
+;|*** 				*bp = cell;
+;|*** 				*(bp+1) = attrib;
+;|*** 			}
+;|*** 		}
+;|*** 		
+;|*** 	refresh(scrnbuf, videomem);  /* Put results to the screen */
+; Line 252
+	*** 000374	ff 36 02 00 		push	WORD PTR _videomem+2
+	*** 000378	ff 36 00 00 		push	WORD PTR _videomem
+	*** 00037c	b8 00 00 		mov	ax,OFFSET DGROUP:_scrnbuf
+	*** 00037f	50 			push	ax
+	*** 000380	e8 00 00 		call	_refresh
+;|*** }
+; Line 253
+	*** 000383	8b e5 			mov	sp,bp
+	*** 000385	5d 			pop	bp
+	*** 000386	c3 			ret	
+	*** 000387	90 			nop	
+
+_rand_dist	ENDP
+;|*** 
+;|*** /* Timing mechanism.
+;|***  *
+;|***  * Use the variable "speed" to determine how long to delay before
+;|***  * the next generation of life.
+;|***  */
+;|*** timer()
+;|*** {
+; Line 261
+	PUBLIC	_timer
+_timer	PROC NEAR
+	*** 000388	55 			push	bp
+	*** 000389	8b ec 			mov	bp,sp
+	*** 00038b	b8 0c 00 		mov	ax,12
+	*** 00038e	e8 00 00 		call	__chkstk
+;	period = -4
+;	i = -8
+;	j = -12
+;|*** 	long	period;     /* Count to this number */
+;|*** 	long	i;          /* Loop variable */
+;|*** 	long    j;          /* Dummy variable, to slow down loop */
+;|*** 
+;|*** 	period = (10 - speed);
+; Line 266
+	*** 000391	b8 0a 00 		mov	ax,10
+	*** 000394	2b 06 00 00 		sub	ax,WORD PTR _speed
+	*** 000398	99 			cwd	
+	*** 000399	89 46 fc 		mov	WORD PTR [bp-4],ax	;period
+	*** 00039c	89 56 fe 		mov	WORD PTR [bp-2],dx
+;|*** 	period *= period;
+; Line 267
+	*** 00039f	52 			push	dx
+	*** 0003a0	50 			push	ax
+	*** 0003a1	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;period
+	*** 0003a4	50 			push	ax
+	*** 0003a5	e8 00 00 		call	__aNNalmul
+;|*** 	period *= 700;
+; Line 268
+	*** 0003a8	b8 bc 02 		mov	ax,700
+	*** 0003ab	99 			cwd	
+	*** 0003ac	52 			push	dx
+	*** 0003ad	50 			push	ax
+	*** 0003ae	8d 46 fc 		lea	ax,WORD PTR [bp-4]	;period
+	*** 0003b1	50 			push	ax
+	*** 0003b2	e8 00 00 		call	__aNNalmul
+;|*** 	for (i = 0; i < period; i++)
+; Line 269
+	*** 0003b5	2b c0 			sub	ax,ax
+	*** 0003b7	89 46 fa 		mov	WORD PTR [bp-6],ax
+	*** 0003ba	89 46 f8 		mov	WORD PTR [bp-8],ax	;i
+	*** 0003bd	eb 09 			jmp	SHORT $F360
+	*** 0003bf	90 			nop	
+					$FC361:
+	*** 0003c0	83 46 f8 01 		add	WORD PTR [bp-8],1	;i
+	*** 0003c4	83 56 fa 00 		adc	WORD PTR [bp-6],0
+					$F360:
+	*** 0003c8	8b 46 fc 		mov	ax,WORD PTR [bp-4]	;period
+	*** 0003cb	8b 56 fe 		mov	dx,WORD PTR [bp-2]
+	*** 0003ce	39 56 fa 		cmp	WORD PTR [bp-6],dx
+	*** 0003d1	7f 19 			jg	$FB362
+	*** 0003d3	7c 05 			jl	$L20006
+	*** 0003d5	39 46 f8 		cmp	WORD PTR [bp-8],ax	;i
+	*** 0003d8	73 12 			jae	$FB362
+					$L20006:
+;|*** 		j = i * 2;
+; Line 270
+	*** 0003da	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;i
+	*** 0003dd	8b 56 fa 		mov	dx,WORD PTR [bp-6]
+	*** 0003e0	d1 e0 			shl	ax,1
+	*** 0003e2	d1 d2 			rcl	dx,1
+	*** 0003e4	89 46 f4 		mov	WORD PTR [bp-12],ax	;j
+	*** 0003e7	89 56 f6 		mov	WORD PTR [bp-10],dx
+	*** 0003ea	eb d4 			jmp	SHORT $FC361
+					$FB362:
+;|*** }
+; Line 271
+	*** 0003ec	8b e5 			mov	sp,bp
+	*** 0003ee	5d 			pop	bp
+	*** 0003ef	c3 			ret	
+
+_timer	ENDP
+;|*** 
+;|*** 
+;|*** #define NW  (-1-COLS)            /* Directional constants, within    */
+;|*** #define N   (-COLS)              /*  Matrix 2. For example, NW refers */
+;|*** #define NE  (1-COLS)             /*  to the upper, left-hand neighbor */
+;|*** #define E   (1)
+;|*** #define SE  (1+COLS)
+;|*** #define S   (COLS)
+;|*** #define SW  (-1+COLS)
+;|*** #define W   (-1)
+;|*** #define LIMIT ((char *)mat1+ROWS*COLS)
+;|*** 
+;|*** /* Do one generation of life.
+;|***  *
+;|***  * The algorithm used here first clears all of Matrix 2, calling
+;|***  * an assembly routine for maximum speed. Then, Matrix 1 is scanned.
+;|***  * Wherever a living cell is found, the CORRESPONDING NEIGHBOR CELLS
+;|***  * IN MATRIX 2 are incremented by 1, and the corresponding cell itself
+;|***  * is incremented by 100. If no living cell is found, do nothing.
+;|***  * This gives us a fast method for determining neighbor count, which is
+;|***  * kept track of in Matrix 2.
+;|***  *
+;|***  * The "zone" of each cell is checked, and used as a guide for determining
+;|***  * neighbors. Nothern neighbors of northernmost row are found in the
+;|***  * southernmost row, so that the game has a "boundless" effect...formations
+;|***  * that move off one side automatically circle around to the other side.
+;|***  *
+;|***  * Pass 2 is called to determine what actually lives or dies, based on
+;|***  * the neighbor-count of each cell.
+;|***  */
+;|*** generation()
+;|*** {
+; Line 303
+	PUBLIC	_generation
+_generation	PROC NEAR
+	*** 0003f0	55 			push	bp
+	*** 0003f1	8b ec 			mov	bp,sp
+	*** 0003f3	b8 08 00 		mov	ax,8
+	*** 0003f6	e8 00 00 		call	__chkstk
+	*** 0003f9	57 			push	di
+	*** 0003fa	56 			push	si
+;	register si = p1
+;	register di = p2
+;	diff = -6
+;	zone = -8
+;|*** 	register  char *p1;    /* Pointers into mat1, mat2 */
+;|*** 	register  char *p2;
+;|*** 	int	diff;          /* No. of bytes between mat1 & mat2 */
+;|*** 	int	zone;	       /* Which "zone" does cell lie in? */
+;|*** 
+;|*** 	clear_mat(mat2, ROWS * COLS);
+; Line 309
+	*** 0003fb	b8 66 06 		mov	ax,1638
+	*** 0003fe	50 			push	ax
+	*** 0003ff	b8 00 00 		mov	ax,OFFSET DGROUP:_mat2
+	*** 000402	50 			push	ax
+	*** 000403	e8 00 00 		call	_clear_mat
+	*** 000406	83 c4 04 		add	sp,4
+;|*** 	diff = (char *) mat2 - (char *) mat1;
+; Line 310
+	*** 000409	b8 00 00 		mov	ax,OFFSET DGROUP:_mat2
+	*** 00040c	2d 00 00 		sub	ax,OFFSET DGROUP:_mat1
+	*** 00040f	89 46 fa 		mov	WORD PTR [bp-6],ax	;diff
+;|*** 	for (p1 = (char *) mat1; p1 < LIMIT; p1++) {
+; Line 311
+	*** 000412	be 00 00 		mov	si,OFFSET DGROUP:_mat1
+	*** 000415	e9 cf 00 		jmp	$F368
+					$SC376:
+	*** 000418	fe 45 b1 		inc	BYTE PTR [di-79]
+;|*** 		if (*p1 > 100) {                      /* Is cell alive? */
+;|*** 		    p2 = p1 + diff;            /* P2 is corresponding cell */
+;|*** 		    *p2 += 100;
+;|*** 		    zone = (*p1 - 100);        /* Zone is residue of 100 */
+;|*** 		    switch (zone) {            /* Take action based on zone */
+;|*** 		    case 1:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+; Line 318
+	*** 00041b	fe 45 b2 		inc	BYTE PTR [di-78]
+;|*** 				++*(p2 + NE);
+; Line 319
+	*** 00041e	fe 45 b3 		inc	BYTE PTR [di-77]
+;|*** 				++*(p2 + E);
+; Line 320
+					$L20026:
+	*** 000421	fe 45 01 		inc	BYTE PTR [di+1]
+;|*** 				++*(p2 + SE);
+; Line 321
+	*** 000424	fe 45 4f 		inc	BYTE PTR [di+79]
+;|*** 				++*(p2 + S);
+; Line 322
+					$L20028:
+	*** 000427	fe 45 4e 		inc	BYTE PTR [di+78]
+;|*** 				++*(p2 + SW);
+; Line 323
+	*** 00042a	fe 45 4d 		inc	BYTE PTR [di+77]
+;|*** 				++*(p2 + W);
+; Line 324
+					$L20019:
+	*** 00042d	fe 45 ff 		inc	BYTE PTR [di-1]
+;|*** 				break;
+; Line 325
+	*** 000430	e9 b3 00 		jmp	$SB373
+	*** 000433	90 			nop	
+					$SC377:
+	*** 000434	fe 85 17 06 		inc	BYTE PTR [di+1559]
+;|*** 		    case 2:	++*(p2 + (NW + ROWS * COLS));
+;|*** 				++*(p2 + (N + ROWS * COLS));
+; Line 327
+	*** 000438	fe 85 18 06 		inc	BYTE PTR [di+1560]
+;|*** 				++*(p2 + (NE + ROWS * COLS));
+; Line 328
+	*** 00043c	fe 85 19 06 		inc	BYTE PTR [di+1561]
+	*** 000440	eb df 			jmp	SHORT $L20026
+					$SC378:
+	*** 000442	fe 45 b1 		inc	BYTE PTR [di-79]
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + SE);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 3:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+; Line 336
+	*** 000445	fe 45 b2 		inc	BYTE PTR [di-78]
+;|*** 				++*(p2 + NE);
+; Line 337
+	*** 000448	fe 45 b3 		inc	BYTE PTR [di-77]
+;|*** 				++*(p2 + E);
+; Line 338
+	*** 00044b	fe 45 01 		inc	BYTE PTR [di+1]
+;|*** 				++*(p2 + (SE - ROWS * COLS));
+; Line 339
+	*** 00044e	fe 85 e9 f9 		inc	BYTE PTR [di-1559]
+;|*** 				++*(p2 + (S - ROWS * COLS));
+; Line 340
+					$L20027:
+	*** 000452	fe 85 e8 f9 		inc	BYTE PTR [di-1560]
+;|*** 				++*(p2 + (SW - ROWS * COLS));
+; Line 341
+	*** 000456	fe 85 e7 f9 		inc	BYTE PTR [di-1561]
+	*** 00045a	eb d1 			jmp	SHORT $L20019
+					$SC379:
+	*** 00045c	fe 45 ff 		inc	BYTE PTR [di-1]
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 4:	++*(p2 + (NW + COLS));
+;|*** 				++*(p2 + N);
+; Line 345
+	*** 00045f	fe 45 b2 		inc	BYTE PTR [di-78]
+;|*** 				++*(p2 + NE);
+; Line 346
+	*** 000462	fe 45 b3 		inc	BYTE PTR [di-77]
+;|*** 				++*(p2 + E);
+; Line 347
+					$L20029:
+	*** 000465	fe 45 01 		inc	BYTE PTR [di+1]
+;|*** 				++*(p2 + SE);
+; Line 348
+	*** 000468	fe 45 4f 		inc	BYTE PTR [di+79]
+;|*** 				++*(p2 + S);
+; Line 349
+	*** 00046b	fe 45 4e 		inc	BYTE PTR [di+78]
+;|*** 				++*(p2 + (SW + COLS));
+; Line 350
+	*** 00046e	fe 85 9b 00 		inc	BYTE PTR [di+155]
+;|*** 				++*(p2 + (W + COLS));
+; Line 351
+					$L20024:
+	*** 000472	fe 45 4d 		inc	BYTE PTR [di+77]
+;|*** 				break;
+; Line 352
+	*** 000475	eb 6f 			jmp	SHORT $SB373
+	*** 000477	90 			nop	
+					$SC380:
+	*** 000478	fe 45 b1 		inc	BYTE PTR [di-79]
+;|*** 		    case 5:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+; Line 354
+	*** 00047b	fe 45 b2 		inc	BYTE PTR [di-78]
+;|*** 				++*(p2 + (NE - COLS));
+; Line 355
+	*** 00047e	fe 85 65 ff 		inc	BYTE PTR [di-155]
+;|*** 				++*(p2 + (E - COLS));
+; Line 356
+					$L20031:
+	*** 000482	fe 45 b3 		inc	BYTE PTR [di-77]
+;|*** 				++*(p2 + (SE - COLS));
+; Line 357
+	*** 000485	fe 45 01 		inc	BYTE PTR [di+1]
+	*** 000488	eb 9d 			jmp	SHORT $L20028
+					$SC381:
+	*** 00048a	fe 85 65 06 		inc	BYTE PTR [di+1637]
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 6:	++*(p2 + NW + ROWS * COLS + COLS);
+;|*** 				++*(p2 + N + ROWS * COLS);
+; Line 363
+	*** 00048e	fe 85 18 06 		inc	BYTE PTR [di+1560]
+;|*** 				++*(p2 + NE + ROWS * COLS);
+; Line 364
+	*** 000492	fe 85 19 06 		inc	BYTE PTR [di+1561]
+	*** 000496	eb cd 			jmp	SHORT $L20029
+					$SC382:
+	*** 000498	fe 85 17 06 		inc	BYTE PTR [di+1559]
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + SE);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW + COLS);
+;|*** 				++*(p2 + W + COLS);
+;|*** 				break;
+;|*** 		    case 7:	++*(p2 + NW + ROWS * COLS);
+;|*** 				++*(p2 + N + ROWS * COLS);
+; Line 372
+	*** 00049c	fe 85 18 06 		inc	BYTE PTR [di+1560]
+;|*** 				++*(p2 + NE + ROWS * COLS - COLS);
+; Line 373
+	*** 0004a0	fe 85 cb 05 		inc	BYTE PTR [di+1483]
+	*** 0004a4	eb dc 			jmp	SHORT $L20031
+					$SC383:
+	*** 0004a6	fe 45 ff 		inc	BYTE PTR [di-1]
+;|*** 				++*(p2 + E - COLS);
+;|*** 				++*(p2 + SE - COLS);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 8:	++*(p2 + NW + COLS);
+;|*** 				++*(p2 + N);
+; Line 381
+	*** 0004a9	fe 45 b2 		inc	BYTE PTR [di-78]
+;|*** 				++*(p2 + NE);
+; Line 382
+	*** 0004ac	fe 45 b3 		inc	BYTE PTR [di-77]
+;|*** 				++*(p2 + E);
+; Line 383
+	*** 0004af	fe 45 01 		inc	BYTE PTR [di+1]
+;|*** 				++*(p2 + SE - ROWS * COLS);
+; Line 384
+	*** 0004b2	fe 85 e9 f9 		inc	BYTE PTR [di-1559]
+;|*** 				++*(p2 + S - ROWS * COLS);
+; Line 385
+	*** 0004b6	fe 85 e8 f9 		inc	BYTE PTR [di-1560]
+;|*** 				++*(p2 + SW + COLS - ROWS * COLS);
+; Line 386
+	*** 0004ba	fe 85 35 fa 		inc	BYTE PTR [di-1483]
+	*** 0004be	eb b2 			jmp	SHORT $L20024
+					$SC384:
+	*** 0004c0	fe 45 b1 		inc	BYTE PTR [di-79]
+;|*** 				++*(p2 + W + COLS);
+;|*** 				break;
+;|*** 		    case 9:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+; Line 390
+	*** 0004c3	fe 45 b2 		inc	BYTE PTR [di-78]
+;|*** 				++*(p2 + NE - COLS);
+; Line 391
+	*** 0004c6	fe 85 65 ff 		inc	BYTE PTR [di-155]
+;|*** 				++*(p2 + E - COLS);
+; Line 392
+	*** 0004ca	fe 45 b3 		inc	BYTE PTR [di-77]
+;|*** 				++*(p2 + SE - ROWS * COLS - COLS);
+; Line 393
+	*** 0004cd	fe 85 9b f9 		inc	BYTE PTR [di-1637]
+	*** 0004d1	e9 7e ff 		jmp	$L20027
+					$L20007:
+	*** 0004d4	18 04 				DW	$SC376
+	*** 0004d6	34 04 				DW	$SC377
+	*** 0004d8	42 04 				DW	$SC378
+	*** 0004da	5c 04 				DW	$SC379
+	*** 0004dc	78 04 				DW	$SC380
+	*** 0004de	8a 04 				DW	$SC381
+	*** 0004e0	98 04 				DW	$SC382
+	*** 0004e2	a6 04 				DW	$SC383
+	*** 0004e4	c0 04 				DW	$SC384
+					$SB373:
+;|*** 				++*(p2 + S - ROWS * COLS);
+;|*** 				++*(p2 + SW - ROWS * COLS);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    default:    break;
+;|*** 		    }
+;|*** 		} /* End if. */
+; Line 400
+;|*** 	} /* End for. */
+; Line 401
+	*** 0004e6	46 			inc	si
+					$F368:
+	*** 0004e7	81 fe 66 06 		cmp	si,OFFSET DGROUP:_mat1+1638
+	*** 0004eb	73 27 			jae	$FB370
+;|*** 		if (*p1 > 100) {                      /* Is cell alive? */
+; Line 312
+	*** 0004ed	80 3c 64 		cmp	BYTE PTR [si],100
+	*** 0004f0	7e f4 			jle	$SB373
+;|*** 		    p2 = p1 + diff;            /* P2 is corresponding cell */
+; Line 313
+	*** 0004f2	8b 7e fa 		mov	di,WORD PTR [bp-6]	;diff
+	*** 0004f5	03 fe 			add	di,si
+;|*** 		    *p2 += 100;
+; Line 314
+	*** 0004f7	80 05 64 		add	BYTE PTR [di],100
+;|*** 		    zone = (*p1 - 100);        /* Zone is residue of 100 */
+; Line 315
+	*** 0004fa	8a 04 			mov	al,BYTE PTR [si]
+	*** 0004fc	98 			cbw	
+	*** 0004fd	2d 64 00 		sub	ax,100
+	*** 000500	89 46 f8 		mov	WORD PTR [bp-8],ax	;zone
+;|*** 		    switch (zone) {            /* Take action based on zone */
+; Line 316
+	*** 000503	2d 01 00 		sub	ax,1
+	*** 000506	3d 08 00 		cmp	ax,8
+	*** 000509	77 db 			ja	$SB373
+	*** 00050b	03 c0 			add	ax,ax
+	*** 00050d	93 			xchg	ax,bx
+	*** 00050e	2e ff a7 d4 04 		jmp	WORD PTR cs:$L20007[bx]
+	*** 000513	90 			nop	
+					$FB370:
+;|*** 		    case 1:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+;|*** 				++*(p2 + NE);
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + SE);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 2:	++*(p2 + (NW + ROWS * COLS));
+;|*** 				++*(p2 + (N + ROWS * COLS));
+;|*** 				++*(p2 + (NE + ROWS * COLS));
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + SE);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 3:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+;|*** 				++*(p2 + NE);
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + (SE - ROWS * COLS));
+;|*** 				++*(p2 + (S - ROWS * COLS));
+;|*** 				++*(p2 + (SW - ROWS * COLS));
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 4:	++*(p2 + (NW + COLS));
+;|*** 				++*(p2 + N);
+;|*** 				++*(p2 + NE);
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + SE);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + (SW + COLS));
+;|*** 				++*(p2 + (W + COLS));
+;|*** 				break;
+;|*** 		    case 5:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+;|*** 				++*(p2 + (NE - COLS));
+;|*** 				++*(p2 + (E - COLS));
+;|*** 				++*(p2 + (SE - COLS));
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 6:	++*(p2 + NW + ROWS * COLS + COLS);
+;|*** 				++*(p2 + N + ROWS * COLS);
+;|*** 				++*(p2 + NE + ROWS * COLS);
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + SE);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW + COLS);
+;|*** 				++*(p2 + W + COLS);
+;|*** 				break;
+;|*** 		    case 7:	++*(p2 + NW + ROWS * COLS);
+;|*** 				++*(p2 + N + ROWS * COLS);
+;|*** 				++*(p2 + NE + ROWS * COLS - COLS);
+;|*** 				++*(p2 + E - COLS);
+;|*** 				++*(p2 + SE - COLS);
+;|*** 				++*(p2 + S);
+;|*** 				++*(p2 + SW);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    case 8:	++*(p2 + NW + COLS);
+;|*** 				++*(p2 + N);
+;|*** 				++*(p2 + NE);
+;|*** 				++*(p2 + E);
+;|*** 				++*(p2 + SE - ROWS * COLS);
+;|*** 				++*(p2 + S - ROWS * COLS);
+;|*** 				++*(p2 + SW + COLS - ROWS * COLS);
+;|*** 				++*(p2 + W + COLS);
+;|*** 				break;
+;|*** 		    case 9:	++*(p2 + NW);
+;|*** 				++*(p2 + N);
+;|*** 				++*(p2 + NE - COLS);
+;|*** 				++*(p2 + E - COLS);
+;|*** 				++*(p2 + SE - ROWS * COLS - COLS);
+;|*** 				++*(p2 + S - ROWS * COLS);
+;|*** 				++*(p2 + SW - ROWS * COLS);
+;|*** 				++*(p2 + W);
+;|*** 				break;
+;|*** 		    default:    break;
+;|*** 		    }
+;|*** 		} /* End if. */
+;|*** 	} /* End for. */
+;|*** 	pass2();                     /* Call pass2, for birth & death */
+; Line 402
+	*** 000514	e8 00 00 		call	_pass2
+;|*** 	refresh(scrnbuf, videomem);  /* Write final results to screen */
+; Line 403
+	*** 000517	ff 36 02 00 		push	WORD PTR _videomem+2
+	*** 00051b	ff 36 00 00 		push	WORD PTR _videomem
+	*** 00051f	b8 00 00 		mov	ax,OFFSET DGROUP:_scrnbuf
+	*** 000522	50 			push	ax
+	*** 000523	e8 00 00 		call	_refresh
+	*** 000526	83 c4 06 		add	sp,6
+;|*** }
+; Line 404
+	*** 000529	5e 			pop	si
+	*** 00052a	5f 			pop	di
+	*** 00052b	8b e5 			mov	sp,bp
+	*** 00052d	5d 			pop	bp
+	*** 00052e	c3 			ret	
+	*** 00052f	90 			nop	
+
+_generation	ENDP
+;|*** 
+;|*** /* Do scan of Matrix 2 (pass 2).
+;|***  *
+;|***  * Scan Matrix 2: a value of 3 indicates a blank cell which should
+;|***  * undergo a "birth." A value > 100 (cell was alive) but NOT equal
+;|***  * to 102 or 103 means that there is a living cell that must die.
+;|***  * Adjust screen buffer and Matrix 1 accordingly.
+;|***  */
+;|*** pass2()
+;|*** {
+; Line 414
+	PUBLIC	_pass2
+_pass2	PROC NEAR
+	*** 000530	55 			push	bp
+	*** 000531	8b ec 			mov	bp,sp
+	*** 000533	b8 0c 00 		mov	ax,12
+	*** 000536	e8 00 00 		call	__chkstk
+	*** 000539	57 			push	di
+	*** 00053a	56 			push	si
+;	i = -8
+;	register si = p2
+;	register di = j
+;	bp = -2
+;	top_left = -12
+;	diff = -6
+;|*** 	int 	 i;                  /* Loop variable */
+;|*** 	register char *p2;           /* Pointer into Matrix 2 */
+;|*** 	register int j;              /* Inner-loop variable */
+;|*** 	char	 *bp;                /* Pointer into screen buffer */
+;|*** 	char	 *top_left;         /* Location of top-right cell within
+;|***                                         video buffer */
+;|*** 	int	 diff;               /* Distance between Matrixes 1 & 2 */
+;|*** 
+;|*** 	top_left = scrnbuf + 162;
+; Line 423
+	*** 00053b	c7 46 f4 a2 00 		mov	WORD PTR [bp-12],OFFSET DGROUP:_scrnbuf+162	;top_left
+;|*** 	p2 = (char *) mat2;
+; Line 424
+	*** 000540	be 00 00 		mov	si,OFFSET DGROUP:_mat2
+;|*** 	diff = (char *) mat2 - (char *) mat1;
+; Line 425
+	*** 000543	8b c6 			mov	ax,si
+	*** 000545	2d 00 00 		sub	ax,OFFSET DGROUP:_mat1
+	*** 000548	89 46 fa 		mov	WORD PTR [bp-6],ax	;diff
+;|*** 	for (i = 0; i < ROWS * 160; i += 160)
+; Line 426
+	*** 00054b	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;i
+	*** 000550	eb 65 			jmp	SHORT $F394
+					$I400:
+;|*** 	    for (j = 0; j < COLS; j++, p2++) {
+;|*** 		if (*p2 < 100) {
+;|*** 			if (*p2 == 3) {
+;|*** 				*(p2 - diff) += 100;
+;|*** 				bp = top_left + i + (j * 2);
+;|*** 				*bp = cell;
+;|*** 				*(bp + 1) = attrib;
+;|*** 			}
+;|*** 		} else
+;|*** 			if (*p2 < 102  ||  *p2 > 103) {
+; Line 436
+	*** 000552	80 3c 66 		cmp	BYTE PTR [si],102
+	*** 000555	7c 05 			jl	$I404
+	*** 000557	80 3c 67 		cmp	BYTE PTR [si],103
+	*** 00055a	7e 25 			jle	$I403
+					$I404:
+;|*** 				*(p2 - diff) -= 100;
+; Line 437
+	*** 00055c	8b de 			mov	bx,si
+	*** 00055e	2b 5e fa 		sub	bx,WORD PTR [bp-6]	;diff
+	*** 000561	80 2f 64 		sub	BYTE PTR [bx],100
+;|*** 				bp = top_left + i + (j * 2);
+; Line 438
+	*** 000564	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;i
+	*** 000567	03 46 f4 		add	ax,WORD PTR [bp-12]	;top_left
+	*** 00056a	8b cf 			mov	cx,di
+	*** 00056c	d1 e1 			shl	cx,1
+	*** 00056e	03 c1 			add	ax,cx
+	*** 000570	89 46 fe 		mov	WORD PTR [bp-2],ax	;bp
+;|*** 				*bp = ' ';
+; Line 439
+	*** 000573	8b d8 			mov	bx,ax
+	*** 000575	c6 07 20 		mov	BYTE PTR [bx],32
+;|*** 				*(bp + 1) = attrib;
+; Line 440
+					$L20032:
+	*** 000578	8b 5e fe 		mov	bx,WORD PTR [bp-2]	;bp
+	*** 00057b	a0 00 00 		mov	al,BYTE PTR _attrib
+	*** 00057e	88 47 01 		mov	BYTE PTR [bx+1],al
+;|*** 			}
+; Line 441
+;|*** 	    }
+; Line 442
+					$I403:
+	*** 000581	47 			inc	di
+	*** 000582	46 			inc	si
+					$F397:
+	*** 000583	83 ff 4e 		cmp	di,78
+	*** 000586	7d 2a 			jge	$FC395
+;|*** 		if (*p2 < 100) {
+; Line 428
+	*** 000588	80 3c 64 		cmp	BYTE PTR [si],100
+	*** 00058b	7d c5 			jge	$I400
+;|*** 			if (*p2 == 3) {
+; Line 429
+	*** 00058d	80 3c 03 		cmp	BYTE PTR [si],3
+	*** 000590	75 ef 			jne	$I403
+;|*** 				*(p2 - diff) += 100;
+; Line 430
+	*** 000592	8b de 			mov	bx,si
+	*** 000594	2b 5e fa 		sub	bx,WORD PTR [bp-6]	;diff
+	*** 000597	80 07 64 		add	BYTE PTR [bx],100
+;|*** 				bp = top_left + i + (j * 2);
+; Line 431
+	*** 00059a	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;i
+	*** 00059d	03 46 f4 		add	ax,WORD PTR [bp-12]	;top_left
+	*** 0005a0	8b cf 			mov	cx,di
+	*** 0005a2	d1 e1 			shl	cx,1
+	*** 0005a4	03 c1 			add	ax,cx
+	*** 0005a6	89 46 fe 		mov	WORD PTR [bp-2],ax	;bp
+;|*** 				*bp = cell;
+; Line 432
+	*** 0005a9	8b d8 			mov	bx,ax
+	*** 0005ab	a0 00 00 		mov	al,BYTE PTR _cell
+	*** 0005ae	88 07 			mov	BYTE PTR [bx],al
+	*** 0005b0	eb c6 			jmp	SHORT $L20032
+					$FC395:
+	*** 0005b2	81 46 f8 a0 00 		add	WORD PTR [bp-8],160	;i
+					$F394:
+	*** 0005b7	81 7e f8 20 0d 		cmp	WORD PTR [bp-8],3360	;i
+	*** 0005bc	7d 04 			jge	$FB396
+;|*** 	    for (j = 0; j < COLS; j++, p2++) {
+; Line 427
+	*** 0005be	2b ff 			sub	di,di
+	*** 0005c0	eb c1 			jmp	SHORT $F397
+					$FB396:
+;|*** 		if (*p2 < 100) {
+;|*** 			if (*p2 == 3) {
+;|*** 				*(p2 - diff) += 100;
+;|*** 				bp = top_left + i + (j * 2);
+;|*** 				*bp = cell;
+;|*** 				*(bp + 1) = attrib;
+;|*** 			}
+;|*** 		} else
+;|*** 			if (*p2 < 102  ||  *p2 > 103) {
+;|*** 				*(p2 - diff) -= 100;
+;|*** 				bp = top_left + i + (j * 2);
+;|*** 				*bp = ' ';
+;|*** 				*(bp + 1) = attrib;
+;|*** 			}
+;|*** 	    }
+;|*** }
+; Line 443
+	*** 0005c2	5e 			pop	si
+	*** 0005c3	5f 			pop	di
+	*** 0005c4	8b e5 			mov	sp,bp
+	*** 0005c6	5d 			pop	bp
+	*** 0005c7	c3 			ret	
+
+_pass2	ENDP
+;|*** 
+;|*** /* Process keystroke.
+;|***  *
+;|***  * Check keyboard buffer and take action if a keystroke is waiting
+;|***  * there in the buffer.
+;|***  */
+;|*** proc_key()
+;|*** {
+; Line 451
+	PUBLIC	_proc_key
+_proc_key	PROC NEAR
+	*** 0005c8	55 			push	bp
+	*** 0005c9	8b ec 			mov	bp,sp
+	*** 0005cb	b8 02 00 		mov	ax,2
+	*** 0005ce	e8 00 00 		call	__chkstk
+;	key = -2
+;|*** 	int	key;      /* value of keystroke */
+;|*** 
+;|*** 	while (get_key(&key)) {
+; Line 454
+	*** 0005d1	eb 46 			jmp	SHORT $L20033
+	*** 0005d3	90 			nop	
+					$FC409:
+;|*** 		switch (key) {
+; Line 455
+	*** 0005d4	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;key
+	*** 0005d7	3d 46 00 		cmp	ax,70
+	*** 0005da	74 32 			je	$SC418
+	*** 0005dc	3d 50 00 		cmp	ax,80
+	*** 0005df	74 17 			je	$SC415
+	*** 0005e1	3d 53 00 		cmp	ax,83
+	*** 0005e4	74 1a 			je	$SC416
+	*** 0005e6	3d 66 00 		cmp	ax,102
+	*** 0005e9	74 23 			je	$SC418
+	*** 0005eb	3d 70 00 		cmp	ax,112
+	*** 0005ee	74 08 			je	$SC415
+	*** 0005f0	3d 73 00 		cmp	ax,115
+	*** 0005f3	74 0b 			je	$SC416
+	*** 0005f5	eb 22 			jmp	SHORT $L20033
+	*** 0005f7	90 			nop	
+					$SC415:
+;|*** 		    case('p'):
+;|*** 		    case('P'): pause = 1;
+; Line 457
+	*** 0005f8	c7 06 00 00 01 00 	mov	WORD PTR _pause,1
+;|*** 			       break;
+;|*** 		    case('s'):
+;|*** 		    case('S'): if (speed > 1)
+;|*** 				   --speed;
+;|*** 			       break;
+;|*** 		    case('f'):
+;|*** 		    case('F'): if (speed < 10)
+;|*** 				   ++speed;
+;|*** 			       break;
+;|*** 		    default:   break;
+;|*** 		}
+;|*** 	}
+; Line 469
+	*** 0005fe	eb 19 			jmp	SHORT $L20033
+					$SC416:
+;|*** 		    case('S'): if (speed > 1)
+; Line 460
+	*** 000600	83 3e 00 00 01 		cmp	WORD PTR _speed,1
+	*** 000605	7e 12 			jle	$L20033
+;|*** 				   --speed;
+; Line 461
+	*** 000607	ff 0e 00 00 		dec	WORD PTR _speed
+;|*** 			       break;
+; Line 462
+	*** 00060b	eb 0c 			jmp	SHORT $L20033
+	*** 00060d	90 			nop	
+					$SC418:
+;|*** 		    case('f'):
+;|*** 		    case('F'): if (speed < 10)
+; Line 464
+	*** 00060e	83 3e 00 00 0a 		cmp	WORD PTR _speed,10
+	*** 000613	7d 04 			jge	$L20033
+;|*** 				   ++speed;
+; Line 465
+	*** 000615	ff 06 00 00 		inc	WORD PTR _speed
+;|*** 			       break;
+; Line 466
+					$L20033:
+	*** 000619	8d 46 fe 		lea	ax,WORD PTR [bp-2]	;key
+	*** 00061c	50 			push	ax
+	*** 00061d	e8 00 00 		call	_get_key
+	*** 000620	83 c4 02 		add	sp,2
+	*** 000623	0b c0 			or	ax,ax
+	*** 000625	75 ad 			jne	$FC409
+;|*** 		    default:   break;
+;|*** 		}
+;|*** 	}
+;|*** }
+; Line 470
+	*** 000627	8b e5 			mov	sp,bp
+	*** 000629	5d 			pop	bp
+	*** 00062a	c3 			ret	
+	*** 00062b	90 			nop	
+
+_proc_key	ENDP
+;|*** 
+;|*** /* Pause screen.
+;|***  *
+;|***  * Print "pause condition" prompt and wait for a meaningful
+;|***  * keystroke. Then take action based on this keystroke.
+;|***  */
+;|*** pause_screen()
+;|*** {
+; Line 478
+	PUBLIC	_pause_screen
+_pause_screen	PROC NEAR
+	*** 00062c	55 			push	bp
+	*** 00062d	8b ec 			mov	bp,sp
+	*** 00062f	b8 02 00 		mov	ax,2
+	*** 000632	e8 00 00 		call	__chkstk
+;	key = -2
+;|*** 	int	key;      /* value of keystroke */
+;|*** 
+;|*** 	set_cursor(23,0);
+; Line 481
+	*** 000635	2b c0 			sub	ax,ax
+	*** 000637	50 			push	ax
+	*** 000638	b8 17 00 		mov	ax,23
+	*** 00063b	50 			push	ax
+	*** 00063c	e8 00 00 		call	_set_cursor
+	*** 00063f	83 c4 04 		add	sp,4
+;|***         printf("PAUSE screen controls:  C=continue  Q=quit");
+; Line 482
+	*** 000642	b8 50 00 		mov	ax,OFFSET DGROUP:$SG423
+	*** 000645	50 			push	ax
+	*** 000646	e8 00 00 		call	_printf
+	*** 000649	83 c4 02 		add	sp,2
+;|*** 	printf("  S=step  R=restart                 ");
+; Line 483
+	*** 00064c	b8 7b 00 		mov	ax,OFFSET DGROUP:$SG424
+	*** 00064f	50 			push	ax
+	*** 000650	e8 00 00 		call	_printf
+	*** 000653	83 c4 02 		add	sp,2
+;|*** 	set_cursor(26,0);
+; Line 484
+	*** 000656	2b c0 			sub	ax,ax
+	*** 000658	50 			push	ax
+	*** 000659	b8 1a 00 		mov	ax,26
+	*** 00065c	50 			push	ax
+	*** 00065d	e8 00 00 		call	_set_cursor
+	*** 000660	83 c4 04 		add	sp,4
+;|*** 
+;|*** 	do {
+; Line 486
+					$D425:
+;|*** 		while (!get_key(&key))
+; Line 487
+	*** 000663	8d 46 fe 		lea	ax,WORD PTR [bp-2]	;key
+	*** 000666	50 			push	ax
+	*** 000667	e8 00 00 		call	_get_key
+	*** 00066a	83 c4 02 		add	sp,2
+	*** 00066d	0b c0 			or	ax,ax
+	*** 00066f	74 f2 			je	$D425
+;|*** 			;      
+;|*** 	} while (key!='c' && key!='C' && key!='Q' && key!= 'q' &&
+; Line 489
+;|***                key!='S' && key!='s' && key!='R' && key!='r');
+; Line 490
+	*** 000671	83 7e fe 63 		cmp	WORD PTR [bp-2],99	;key
+	*** 000675	74 2a 			je	$D431
+	*** 000677	83 7e fe 43 		cmp	WORD PTR [bp-2],67	;key
+	*** 00067b	74 24 			je	$D431
+	*** 00067d	83 7e fe 51 		cmp	WORD PTR [bp-2],81	;key
+	*** 000681	74 1e 			je	$D431
+	*** 000683	83 7e fe 71 		cmp	WORD PTR [bp-2],113	;key
+	*** 000687	74 18 			je	$D431
+	*** 000689	83 7e fe 53 		cmp	WORD PTR [bp-2],83	;key
+	*** 00068d	74 12 			je	$D431
+	*** 00068f	83 7e fe 73 		cmp	WORD PTR [bp-2],115	;key
+	*** 000693	74 0c 			je	$D431
+	*** 000695	83 7e fe 52 		cmp	WORD PTR [bp-2],82	;key
+	*** 000699	74 06 			je	$D431
+	*** 00069b	83 7e fe 72 		cmp	WORD PTR [bp-2],114	;key
+	*** 00069f	75 c2 			jne	$D425
+					$D431:
+;|*** 	switch(key) {
+; Line 491
+	*** 0006a1	8b 46 fe 		mov	ax,WORD PTR [bp-2]	;key
+	*** 0006a4	3d 53 00 		cmp	ax,83
+	*** 0006a7	74 37 			je	$SC438
+	*** 0006a9	7f 53 			jg	$L20008
+	*** 0006ab	3d 43 00 		cmp	ax,67
+	*** 0006ae	74 12 			je	$SC436
+	*** 0006b0	3d 45 00 		cmp	ax,69
+	*** 0006b3	74 3b 			je	$SC439
+	*** 0006b5	3d 51 00 		cmp	ax,81
+	*** 0006b8	74 18 			je	$SC437
+	*** 0006ba	3d 52 00 		cmp	ax,82
+	*** 0006bd	74 37 			je	$SC441
+	*** 0006bf	eb 0a 			jmp	SHORT $SB433
+	*** 0006c1	90 			nop	
+					$SC436:
+;|*** 	case('C'):
+;|*** 	case('c'):
+;|*** 		draw_prompt_box();
+; Line 494
+	*** 0006c2	e8 37 fb 		call	_draw_prompt_box
+;|*** 		pause = 0;
+; Line 495
+	*** 0006c5	c7 06 00 00 00 00 	mov	WORD PTR _pause,0
+;|*** 		break;
+; Line 496
+					$SB433:
+;|*** 	case('Q'):
+;|*** 	case('q'):
+;|*** 		more_rounds = 0;
+;|*** 		return(1);
+;|*** 		break;
+;|*** 	case('S'):
+;|*** 	case('s'):
+;|*** 		generation();
+;|*** 		repeat--;
+;|*** 		break;
+;|*** 	case('E'):
+;|*** 	case('e'):
+;|*** 		edit();
+;|*** 		break;
+;|*** 	case('R'):
+;|*** 	case('r'):
+;|*** 		more_rounds = 1;
+;|*** 		return(1);
+;|*** 	default:
+;|*** 		break;
+;|*** 	}
+;|*** 	return(0);
+; Line 518
+	*** 0006cb	2b c0 			sub	ax,ax
+	*** 0006cd	8b e5 			mov	sp,bp
+	*** 0006cf	5d 			pop	bp
+	*** 0006d0	c3 			ret	
+	*** 0006d1	90 			nop	
+					$SC437:
+;|*** 		more_rounds = 0;
+; Line 499
+	*** 0006d2	c7 06 00 00 00 00 	mov	WORD PTR _more_rounds,0
+;|*** 		return(1);
+; Line 500
+					$L20034:
+	*** 0006d8	b8 01 00 		mov	ax,1
+	*** 0006db	8b e5 			mov	sp,bp
+	*** 0006dd	5d 			pop	bp
+	*** 0006de	c3 			ret	
+	*** 0006df	90 			nop	
+					$SC438:
+;|*** 		break;
+;|*** 	case('S'):
+;|*** 	case('s'):
+;|*** 		generation();
+; Line 504
+	*** 0006e0	e8 0d fd 		call	_generation
+;|*** 		repeat--;
+; Line 505
+	*** 0006e3	83 2e 00 00 01 		sub	WORD PTR _repeat,1
+	*** 0006e8	83 1e 02 00 00 		sbb	WORD PTR _repeat+2,0
+;|*** 		break;
+; Line 506
+	*** 0006ed	eb dc 			jmp	SHORT $SB433
+	*** 0006ef	90 			nop	
+					$SC439:
+;|*** 	case('E'):
+;|*** 	case('e'):
+;|*** 		edit();
+; Line 509
+	*** 0006f0	e8 00 00 		call	_edit
+;|*** 		break;
+; Line 510
+	*** 0006f3	eb d6 			jmp	SHORT $SB433
+	*** 0006f5	90 			nop	
+					$SC441:
+;|*** 	case('R'):
+;|*** 	case('r'):
+;|*** 		more_rounds = 1;
+; Line 513
+	*** 0006f6	c7 06 00 00 01 00 	mov	WORD PTR _more_rounds,1
+	*** 0006fc	eb da 			jmp	SHORT $L20034
+					$L20008:
+	*** 0006fe	3d 63 00 		cmp	ax,99
+	*** 000701	74 bf 			je	$SC436
+	*** 000703	3d 65 00 		cmp	ax,101
+	*** 000706	74 e8 			je	$SC439
+	*** 000708	3d 71 00 		cmp	ax,113
+	*** 00070b	74 c5 			je	$SC437
+	*** 00070d	3d 72 00 		cmp	ax,114
+	*** 000710	74 e4 			je	$SC441
+	*** 000712	3d 73 00 		cmp	ax,115
+	*** 000715	74 c9 			je	$SC438
+;|*** 		return(1);
+;|*** 	default:
+;|*** 		break;
+; Line 516
+	*** 000717	eb b2 			jmp	SHORT $SB433
+	*** 000719	90 			nop	
+
+_pause_screen	ENDP
+;|*** 	}
+;|*** 	return(0);
+;|*** }
+;|*** 
+;|*** /* Initialize video adapter indicator.
+;|***  *
+;|***  * Determine whether adapter is monochrome, ega, or cga.
+;|***  * Issue set mode BIOS command, using standard mode for color,
+;|***  * B&W, or monochrome.
+;|***  */
+;|*** init_adapter()
+;|*** {
+; Line 528
+	PUBLIC	_init_adapter
+_init_adapter	PROC NEAR
+	*** 00071a	55 			push	bp
+	*** 00071b	8b ec 			mov	bp,sp
+	*** 00071d	b8 10 00 		mov	ax,16
+	*** 000720	e8 00 00 		call	__chkstk
+;	mode = -16
+;	regs = -14
+;|*** 	int mode;                 /* Value returned by BIOS call */
+;|*** 	union REGS regs;
+;|*** 
+;|*** 	regs.h.ah = 0xF;
+; Line 532
+	*** 000723	c6 46 f3 0f 		mov	BYTE PTR [bp-13],15
+;|*** 	int86(0x10, &regs, &regs);   /* Get video mode, place in AL */
+; Line 533
+	*** 000727	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;regs
+	*** 00072a	50 			push	ax
+	*** 00072b	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;regs
+	*** 00072e	50 			push	ax
+	*** 00072f	b8 10 00 		mov	ax,16
+	*** 000732	50 			push	ax
+	*** 000733	e8 00 00 		call	_int86
+	*** 000736	83 c4 06 		add	sp,6
+;|*** 	mode = regs.h.al;
+; Line 534
+	*** 000739	8a 46 f2 		mov	al,BYTE PTR [bp-14]	;regs
+	*** 00073c	2a e4 			sub	ah,ah
+	*** 00073e	89 46 f0 		mov	WORD PTR [bp-16],ax	;mode
+;|*** 	if (mode == 7)               /* 7 and 15 are MONO modes */
+; Line 535
+	*** 000741	3d 07 00 		cmp	ax,7
+	*** 000744	75 0a 			jne	$I446
+;|*** 		adapter = MONO;
+; Line 536
+	*** 000746	c7 06 00 00 01 00 	mov	WORD PTR _adapter,1
+;|*** 	else if (mode == 15) {
+; Line 537
+	*** 00074c	8b e5 			mov	sp,bp
+	*** 00074e	5d 			pop	bp
+	*** 00074f	c3 			ret	
+					$I446:
+	*** 000750	83 7e f0 0f 		cmp	WORD PTR [bp-16],15	;mode
+	*** 000754	75 14 			jne	$I448
+;|*** 		adapter = MONO;
+; Line 538
+	*** 000756	c7 06 00 00 01 00 	mov	WORD PTR _adapter,1
+;|*** 		set_mode(7);         /* Set to 7, standard MONO mode */
+; Line 539
+	*** 00075c	b8 07 00 		mov	ax,7
+					$L20036:
+	*** 00075f	50 			push	ax
+	*** 000760	e8 00 00 		call	_set_mode
+	*** 000763	83 c4 02 		add	sp,2
+;|*** 	} else {
+; Line 540
+	*** 000766	8b e5 			mov	sp,bp
+	*** 000768	5d 			pop	bp
+	*** 000769	c3 			ret	
+					$I448:
+;|*** 		adapter = is_ega();         /* Test for CGA vs. EGA */
+; Line 541
+	*** 00076a	e8 00 00 		call	_is_ega
+	*** 00076d	a3 00 00 		mov	WORD PTR _adapter,ax
+;|*** 		if (mode >= 8 && mode <=14)
+; Line 542
+	*** 000770	83 7e f0 08 		cmp	WORD PTR [bp-16],8	;mode
+	*** 000774	7c 0c 			jl	$I452
+	*** 000776	83 7e f0 0e 		cmp	WORD PTR [bp-16],14	;mode
+	*** 00077a	7f 06 			jg	$I452
+;|*** 			set_mode(3);
+; Line 543
+					$L20038:
+	*** 00077c	b8 03 00 		mov	ax,3
+	*** 00077f	eb de 			jmp	SHORT $L20036
+	*** 000781	90 			nop	
+					$I452:
+;|*** 		else switch (mode) {
+; Line 544
+	*** 000782	8b 46 f0 		mov	ax,WORD PTR [bp-16]	;mode
+	*** 000785	3d 06 00 		cmp	ax,6
+	*** 000788	77 1e 			ja	$SB455
+	*** 00078a	03 c0 			add	ax,ax
+	*** 00078c	93 			xchg	ax,bx
+	*** 00078d	2e ff a7 9a 07 		jmp	WORD PTR cs:$L20009[bx]
+	*** 000792	eb e8 			jmp	SHORT $L20038
+					$SC459:
+;|*** 		case 1:			    /* Color */
+;|*** 		case 3:
+;|*** 		case 4:	set_mode(3);	    /* 3 is standard color mode */
+;|*** 			break;
+;|*** 		case 0:			    /* B & W */
+;|*** 		case 2:
+;|*** 		case 5:
+;|*** 		case 6:	set_mode(2);        /* 2 is standard B & W mode */
+; Line 552
+	*** 000794	b8 02 00 		mov	ax,2
+	*** 000797	eb c6 			jmp	SHORT $L20036
+	*** 000799	90 			nop	
+					$L20009:
+	*** 00079a	94 07 				DW	$SC459
+	*** 00079c	7c 07 				DW	$L20038
+	*** 00079e	94 07 				DW	$SC459
+	*** 0007a0	7c 07 				DW	$L20038
+	*** 0007a2	7c 07 				DW	$L20038
+	*** 0007a4	94 07 				DW	$SC459
+	*** 0007a6	94 07 				DW	$SC459
+					$SB455:
+;|*** 			break;
+;|*** 		} /* end switch */
+;|*** 	} /* end else */
+; Line 555
+;|*** }
+; Line 556
+	*** 0007a8	8b e5 			mov	sp,bp
+	*** 0007aa	5d 			pop	bp
+	*** 0007ab	c3 			ret	
+
+_init_adapter	ENDP
+;|*** 
+;|*** 
+;|*** is_ega()
+;|*** {
+; Line 560
+	PUBLIC	_is_ega
+_is_ega	PROC NEAR
+	*** 0007ac	55 			push	bp
+	*** 0007ad	8b ec 			mov	bp,sp
+	*** 0007af	b8 14 00 		mov	ax,20
+	*** 0007b2	e8 00 00 		call	__chkstk
+;	regs = -18
+;	ega_byte = -4
+;	ega_inactive = -20
+;|*** 	union REGS regs;
+;|*** 	char far *ega_byte = (char far *) 0x487;
+; Line 562
+	*** 0007b5	c7 46 fc 87 04 		mov	WORD PTR [bp-4],1159	;ega_byte
+	*** 0007ba	c7 46 fe 00 00 		mov	WORD PTR [bp-2],0
+;|*** 	int  ega_inactive;
+;|*** 
+;|*** 	regs.h.ah = 0x12;
+; Line 565
+	*** 0007bf	c6 46 ef 12 		mov	BYTE PTR [bp-17],18
+;|*** 	regs.x.cx = 0;
+; Line 566
+	*** 0007c3	c7 46 f2 00 00 		mov	WORD PTR [bp-14],0
+;|*** 	regs.h.bl = 0x10;
+; Line 567
+	*** 0007c8	c6 46 f0 10 		mov	BYTE PTR [bp-16],16
+;|*** 	int86(0x10, &regs, &regs);
+; Line 568
+	*** 0007cc	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;regs
+	*** 0007cf	50 			push	ax
+	*** 0007d0	8d 46 ee 		lea	ax,WORD PTR [bp-18]	;regs
+	*** 0007d3	50 			push	ax
+	*** 0007d4	b8 10 00 		mov	ax,16
+	*** 0007d7	50 			push	ax
+	*** 0007d8	e8 00 00 		call	_int86
+	*** 0007db	83 c4 06 		add	sp,6
+;|*** 	if (regs.x.cx == 0)
+; Line 569
+	*** 0007de	83 7e f2 00 		cmp	WORD PTR [bp-14],0
+	*** 0007e2	75 08 			jne	$I464
+;|*** 		return (CGA);
+; Line 570
+					$L20039:
+	*** 0007e4	b8 02 00 		mov	ax,2
+	*** 0007e7	8b e5 			mov	sp,bp
+	*** 0007e9	5d 			pop	bp
+	*** 0007ea	c3 			ret	
+	*** 0007eb	90 			nop	
+					$I464:
+	*** 0007ec	c4 5e fc 		les	bx,DWORD PTR [bp-4]	;ega_byte
+	*** 0007ef	26 8a 07 		mov	al,BYTE PTR es:[bx]
+	*** 0007f2	25 08 00 		and	ax,8
+	*** 0007f5	89 46 ec 		mov	WORD PTR [bp-20],ax	;ega_inactive
+;|*** 	ega_inactive = *ega_byte & 0x8;
+;|*** 	if (ega_inactive)
+; Line 572
+	*** 0007f8	0b c0 			or	ax,ax
+	*** 0007fa	75 e8 			jne	$L20039
+	*** 0007fc	b8 03 00 		mov	ax,3
+	*** 0007ff	8b e5 			mov	sp,bp
+	*** 000801	5d 			pop	bp
+	*** 000802	c3 			ret	
+	*** 000803	90 			nop	
+
+_is_ega	ENDP
+;|*** 		return (CGA);
+;|*** 	return (EGA);
+;|*** }
+;|*** 
+;|*** set_mode(mode)
+;|*** int	mode;
+; Line 578
+	PUBLIC	_set_mode
+_set_mode	PROC NEAR
+	*** 000804	55 			push	bp
+	*** 000805	8b ec 			mov	bp,sp
+	*** 000807	b8 0e 00 		mov	ax,14
+	*** 00080a	e8 00 00 		call	__chkstk
+;|*** {
+; Line 579
+;	mode = 4
+;	regs = -14
+;|*** 	union REGS regs;
+;|*** 	
+;|*** 	regs.h.al = (char) mode;
+; Line 582
+	*** 00080d	8a 46 04 		mov	al,BYTE PTR [bp+4]	;mode
+	*** 000810	88 46 f2 		mov	BYTE PTR [bp-14],al	;regs
+;|*** 	regs.h.ah = 0;
+; Line 583
+	*** 000813	c6 46 f3 00 		mov	BYTE PTR [bp-13],0
+;|*** 	int86(0x10, &regs, &regs);
+; Line 584
+	*** 000817	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;regs
+	*** 00081a	50 			push	ax
+	*** 00081b	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;regs
+	*** 00081e	50 			push	ax
+	*** 00081f	b8 10 00 		mov	ax,16
+	*** 000822	50 			push	ax
+	*** 000823	e8 00 00 		call	_int86
+	*** 000826	83 c4 06 		add	sp,6
+;|*** 	regs.h.al = 0;
+; Line 585
+	*** 000829	c6 46 f2 00 		mov	BYTE PTR [bp-14],0	;regs
+;|*** 	regs.h.ah = 5;
+; Line 586
+	*** 00082d	c6 46 f3 05 		mov	BYTE PTR [bp-13],5
+;|*** 	int86(0x10, &regs, &regs);
+; Line 587
+	*** 000831	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;regs
+	*** 000834	50 			push	ax
+	*** 000835	8d 46 f2 		lea	ax,WORD PTR [bp-14]	;regs
+	*** 000838	50 			push	ax
+	*** 000839	b8 10 00 		mov	ax,16
+	*** 00083c	50 			push	ax
+	*** 00083d	e8 00 00 		call	_int86
+;|*** }
+; Line 588
+	*** 000840	8b e5 			mov	sp,bp
+	*** 000842	5d 			pop	bp
+	*** 000843	c3 			ret	
+
+_set_mode	ENDP
+_TEXT	ENDS
+END

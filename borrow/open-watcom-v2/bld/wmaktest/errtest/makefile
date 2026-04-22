@@ -1,0 +1,149 @@
+# *************************************************************
+# A few notes: when running some of these tests, wmake may
+# exit before the command line is fully processed. Hence the
+# -l switch may not work and we should use stdout/stderr
+# redirection to capture output. This is a sensible thing to
+# do anyway because that way we know processing of the -l
+# switch will not interfere with the tests in any way.
+# Also note that -l only logs errors (stderr), not normal
+# output (stdout). If a test needs to capture both, it has to
+# use redirection.
+# *************************************************************
+
+work_tests = &
+ t05 &
+ t07 &
+ t10 &
+ t11 &
+ t12 &
+ t15 &
+ t16 &
+ t18 &
+ t19 &
+ t20 &
+ t21 &
+ t22 &
+ t23 &
+ t24 &
+ t25 &
+ t26 &
+ t28 &
+ t29a &
+ t29b &
+ t29c &
+ t30 &
+ t31a &
+ t31b &
+ t31c &
+ t31d &
+ t31e &
+ t31f &
+ t32 &
+ t33 &
+ t34a &
+ t34b &
+ t37a &
+ t37b &
+ t38 &
+ t41 &
+ t42 &
+ t43 &
+ t44a &
+ t44b &
+ t44c
+
+debug_tests = &
+ t27 &
+ t35
+
+tests = &
+ t17 &
+ $(work_tests) &
+ $(debug_tests)
+
+all: $(tests) clean .SYMBOLIC
+
+t17: .SYMBOLIC
+    @set TT=$@
+    @set ERRORS=0
+    @head -n 3 $@
+    @-$(test_wmake) -h -f $@a >  $@.lst 2>&1
+    @-$(test_wmake) -h -f $@b >> $@.lst 2>&1
+    @-$(test_wmake) -h -f $@c >> $@.lst 2>&1
+    @-$(test_wmake) -h -f $@d >> $@.lst 2>&1
+    @-$(test_wmake) -h -f $@e >> $@.lst 2>&1
+    @-$(test_wmake) -h -f $@f >> $@.lst 2>&1
+    @-diff -i $@.chk $@.lst
+    @%make result
+
+t36: .SYMBOLIC
+    @set TT=$@
+    @set ERRORS=0
+    @head -n 3 $@
+    @-$(test_wmake) -h -f $@ .c.obj > $@.lst 2>&1
+    @-diff -i $@.chk $@.lst
+    @%make result
+
+t39: .SYMBOLIC
+    @set TT=$@
+    @set ERRORS=0
+    @head -n 3 $@
+    @%create ditty.c
+    @-$(test_wmake) -h -f $@ ditty.obj > $@.lst 2>&1
+    @-diff -i $@.chk $@.lst
+    @%make result
+
+t40: .SYMBOLIC
+    @set TT=$@
+    @set ERRORS=0
+    @rm -f ditty.*
+    @head -n 3 $@
+    @%create $@.tst
+    @chmod -w $@.tst >$@.lst
+    @-$(test_wmake) -h -f $@ -a -t >> $@.lst 2>&1
+    @chmod +w $@.tst
+    @rm -f $@.tst
+    @-diff -i $@.chk $@.lst
+    @%make result
+
+$(work_tests): .SYMBOLIC
+    @set TT=$@
+    @set ERRORS=0
+    @head -n 3 $@
+    @-$(test_wmake) -h -f $@ > $@.lst 2>&1
+    @-diff -i $@.chk $@.lst
+    @%make result
+
+t27: .SYMBOLIC
+    @set TT=$@
+    @set ERRORS=0
+    @head -n 3 $@
+    @-$(test_wmake) -h -f $@ -d > $@.tmp 2>&1
+    @-egrep W27 $@.tmp > $@.lst
+    @-diff -i $@.chk $@.lst
+    @%make result
+
+t35: .SYMBOLIC
+    @set TT=$@
+    @set ERRORS=0
+    @head -n 3 $@
+    @-$(test_wmake) -h -f $@ -d > $@.tmp 2>&1
+    @-egrep W35 $@.tmp > $@.lst
+    @-diff -i $@.chk $@.lst
+    @%make result
+
+!include ../common.mif
+
+.BEFORE
+    @set TITLE=Error Tests (errtest)
+    @echo $# ==================================
+!ifdef __UNIX__
+    @echo "$# $(%TITLE)"
+!else
+    @echo $# $(%TITLE)
+!endif
+    @echo $# ==================================
+
+clean: .SYMBOLIC
+    @rm -f *.obj
+    @if $(%CLEANUP) == 1 @rm -f *.lst *.tmp

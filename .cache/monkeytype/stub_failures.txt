@@ -1,0 +1,301 @@
+angr_platforms.X86_16.decompiler_postprocess_utils: ERROR    | 2026-04-11 09:31:03,310 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/__main__.py", line 8, in <module>
+    entry_point_main()
+    ~~~~~~~~~~~~~~~~^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 473, in entry_point_main
+    sys.exit(main(sys.argv[1:], sys.stdout, sys.stderr))
+             ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 458, in main
+    handler(args, stdout, stderr)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 258, in print_stub_handler
+    stub = get_stub(args, stdout, stderr)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 134, in get_stub
+    stubs = build_module_stubs_from_traces(
+        traces,
+    ...<2 lines>...
+        rewriter=rewriter,
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 892, in build_module_stubs_from_traces
+    defn = get_updated_definition(
+        func, traces, max_typed_dict_size, rewriter, existing_annotation_strategy
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 828, in get_updated_definition
+    arg_types, return_type, yield_type = shrink_traced_types(
+                                         ~~~~~~~~~~~~~~~~~~~^
+        traces, max_typed_dict_size
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 243, in shrink_traced_types
+    yield_type = shrink_types(yield_types, max_typed_dict_size) if yield_types else None
+                 ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 157, in shrink_types
+    all_dict_types = tuple(
+                     ^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 158, in <genexpr>
+    RewriteAnonymousTypedDictToDict().rewrite(typ) for typ in types
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 337, in rewrite_Union
+    return self._rewrite_container(Union, union)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in _rewrite_container
+    self.rewrite(elem) for elem in container.__args__
+                                   ^^^^^^^^^^^^^^^^^^
+TypeError: 'member_descriptor' object is not iterable
+
+angr_platforms.X86_16.segmented_memory_reasoning: ERROR    | 2026-04-11 09:31:24,205 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+2 traces failed to decode; use -v for details
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/__main__.py", line 8, in <module>
+    entry_point_main()
+    ~~~~~~~~~~~~~~~~^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 473, in entry_point_main
+    sys.exit(main(sys.argv[1:], sys.stdout, sys.stderr))
+             ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 458, in main
+    handler(args, stdout, stderr)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 258, in print_stub_handler
+    stub = get_stub(args, stdout, stderr)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 134, in get_stub
+    stubs = build_module_stubs_from_traces(
+        traces,
+    ...<2 lines>...
+        rewriter=rewriter,
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 892, in build_module_stubs_from_traces
+    defn = get_updated_definition(
+        func, traces, max_typed_dict_size, rewriter, existing_annotation_strategy
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 833, in get_updated_definition
+    return_type = rewriter.rewrite(return_type)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 483, in rewrite
+    typ = rw.rewrite(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 298, in rewrite_Dict
+    return self._rewrite_container(Dict, dct)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 292, in _rewrite_container
+    elems = self.make_builtin_tuple(
+        self.rewrite(elem) for elem in container.__args__
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 382, in make_builtin_tuple
+    return tuple(elements)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in <genexpr>
+    self.rewrite(elem) for elem in container.__args__
+    ~~~~~~~~~~~~^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 298, in rewrite_Dict
+    return self._rewrite_container(Dict, dct)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 292, in _rewrite_container
+    elems = self.make_builtin_tuple(
+        self.rewrite(elem) for elem in container.__args__
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 382, in make_builtin_tuple
+    return tuple(elements)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in <genexpr>
+    self.rewrite(elem) for elem in container.__args__
+    ~~~~~~~~~~~~^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 405, in rewrite_Union
+    elems = tuple(self.rewrite(e) for e in union.__args__ if not self._is_empty(e))
+                                           ^^^^^^^^^^^^^^
+TypeError: 'member_descriptor' object is not iterable
+
+angr_platforms.X86_16.tail_validation: ERROR    | 2026-04-11 09:31:35,738 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+4 traces failed to decode; use -v for details
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/__main__.py", line 8, in <module>
+    entry_point_main()
+    ~~~~~~~~~~~~~~~~^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 473, in entry_point_main
+    sys.exit(main(sys.argv[1:], sys.stdout, sys.stderr))
+             ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 458, in main
+    handler(args, stdout, stderr)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 258, in print_stub_handler
+    stub = get_stub(args, stdout, stderr)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 134, in get_stub
+    stubs = build_module_stubs_from_traces(
+        traces,
+    ...<2 lines>...
+        rewriter=rewriter,
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 892, in build_module_stubs_from_traces
+    defn = get_updated_definition(
+        func, traces, max_typed_dict_size, rewriter, existing_annotation_strategy
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 828, in get_updated_definition
+    arg_types, return_type, yield_type = shrink_traced_types(
+                                         ~~~~~~~~~~~~~~~~~~~^
+        traces, max_typed_dict_size
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 241, in shrink_traced_types
+    shrink_types(return_types, max_typed_dict_size) if return_types else None
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 157, in shrink_types
+    all_dict_types = tuple(
+                     ^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 158, in <genexpr>
+    RewriteAnonymousTypedDictToDict().rewrite(typ) for typ in types
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 298, in rewrite_Dict
+    return self._rewrite_container(Dict, dct)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 292, in _rewrite_container
+    elems = self.make_builtin_tuple(
+        self.rewrite(elem) for elem in container.__args__
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 382, in make_builtin_tuple
+    return tuple(elements)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in <genexpr>
+    self.rewrite(elem) for elem in container.__args__
+    ~~~~~~~~~~~~^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 337, in rewrite_Union
+    return self._rewrite_container(Union, union)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in _rewrite_container
+    self.rewrite(elem) for elem in container.__args__
+                                   ^^^^^^^^^^^^^^^^^^
+TypeError: 'member_descriptor' object is not iterable
+
+inertia_decompiler.cli: ERROR    | 2026-04-11 09:32:04,705 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+6 traces failed to decode; use -v for details
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/__main__.py", line 8, in <module>
+    entry_point_main()
+    ~~~~~~~~~~~~~~~~^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 473, in entry_point_main
+    sys.exit(main(sys.argv[1:], sys.stdout, sys.stderr))
+             ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 458, in main
+    handler(args, stdout, stderr)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 258, in print_stub_handler
+    stub = get_stub(args, stdout, stderr)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 134, in get_stub
+    stubs = build_module_stubs_from_traces(
+        traces,
+    ...<2 lines>...
+        rewriter=rewriter,
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 892, in build_module_stubs_from_traces
+    defn = get_updated_definition(
+        func, traces, max_typed_dict_size, rewriter, existing_annotation_strategy
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 831, in get_updated_definition
+    arg_types = {name: rewriter.rewrite(typ) for name, typ in arg_types.items()}
+                       ~~~~~~~~~~~~~~~~^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 483, in rewrite
+    typ = rw.rewrite(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 298, in rewrite_Dict
+    return self._rewrite_container(Dict, dct)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 292, in _rewrite_container
+    elems = self.make_builtin_tuple(
+        self.rewrite(elem) for elem in container.__args__
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 382, in make_builtin_tuple
+    return tuple(elements)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in <genexpr>
+    self.rewrite(elem) for elem in container.__args__
+    ~~~~~~~~~~~~^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 405, in rewrite_Union
+    elems = tuple(self.rewrite(e) for e in union.__args__ if not self._is_empty(e))
+                                           ^^^^^^^^^^^^^^
+TypeError: 'member_descriptor' object is not iterable
+[09:32:06] /* exiting cli */
+
+inertia_decompiler.cli_access_object_hints: ERROR    | 2026-04-11 09:32:09,820 | angr.state_plugins.unicorn_engine | failed loading "unicornlib.so", unicorn support disabled ('NoneType' object has no attribute 'unicorn_py3')
+3 traces failed to decode; use -v for details
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/__main__.py", line 8, in <module>
+    entry_point_main()
+    ~~~~~~~~~~~~~~~~^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 473, in entry_point_main
+    sys.exit(main(sys.argv[1:], sys.stdout, sys.stderr))
+             ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 458, in main
+    handler(args, stdout, stderr)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 258, in print_stub_handler
+    stub = get_stub(args, stdout, stderr)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/cli.py", line 134, in get_stub
+    stubs = build_module_stubs_from_traces(
+        traces,
+    ...<2 lines>...
+        rewriter=rewriter,
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 892, in build_module_stubs_from_traces
+    defn = get_updated_definition(
+        func, traces, max_typed_dict_size, rewriter, existing_annotation_strategy
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 828, in get_updated_definition
+    arg_types, return_type, yield_type = shrink_traced_types(
+                                         ~~~~~~~~~~~~~~~~~~~^
+        traces, max_typed_dict_size
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/stubs.py", line 238, in shrink_traced_types
+    name: shrink_types(ts, max_typed_dict_size) for name, ts in arg_types.items()
+          ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 157, in shrink_types
+    all_dict_types = tuple(
+                     ^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 158, in <genexpr>
+    RewriteAnonymousTypedDictToDict().rewrite(typ) for typ in types
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 298, in rewrite_Dict
+    return self._rewrite_container(Dict, dct)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 292, in _rewrite_container
+    elems = self.make_builtin_tuple(
+        self.rewrite(elem) for elem in container.__args__
+    )
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 382, in make_builtin_tuple
+    return tuple(elements)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in <genexpr>
+    self.rewrite(elem) for elem in container.__args__
+    ~~~~~~~~~~~~^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 352, in rewrite
+    return rewriter(typ)
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 337, in rewrite_Union
+    return self._rewrite_container(Union, union)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/xor/vextest/.venv/lib/python3.14/site-packages/monkeytype/typing.py", line 293, in _rewrite_container
+    self.rewrite(elem) for elem in container.__args__
+                                   ^^^^^^^^^^^^^^^^^^
+TypeError: 'member_descriptor' object is not iterable
+[09:32:11] /* exiting cli */

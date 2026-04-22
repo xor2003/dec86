@@ -1,0 +1,13 @@
+void hello()
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed:
+// Preserved:
+hello_entry:
+l000D0000:
+	puts(0x10<32>)
+	return
+hello_exit:
+
+

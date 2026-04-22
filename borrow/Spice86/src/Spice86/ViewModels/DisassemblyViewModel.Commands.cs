@@ -1,0 +1,219 @@
+namespace Spice86.ViewModels;
+
+using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
+
+using Serilog.Events;
+
+using Spice86.Core.Emulator.CPU.CfgCpu.Ast.Parser;
+using Spice86.Core.Emulator.Debugger;
+using Spice86.ViewModels.Messages;
+using Spice86.ViewModels.ValueViewModels.Debugging;
+using Spice86.Shared.Emulator.Memory;
+using Spice86.Shared.Emulator.VM.Breakpoint;
+
+public partial class DisassemblyViewModel {
+    private DebuggerLineViewModel? _pendingBreakpointDebuggerLine;
+
+    [RelayCommand(CanExecute = nameof(CanCloseTab))]
+    private void CloseTab() {
+        _messenger.Send(new RemoveViewModelMessage<DisassemblyViewModel>(this));
+    }
+
+    [RelayCommand(CanExecute = nameof(IsPaused))]
+    private void StepOver() {
+        SegmentedAddress currentAddress = State.IpSegmentedAddress;
+        DebuggerLineViewModel debuggerLine = EnsureAddressIsLoaded(currentAddress);
+
+        if (!debuggerLine.CanBeSteppedOver) {
+            if (_logger.IsEnabled(LogEventLevel.Debug)) {
+                _logger.Debug("Setting single-instruction cycle breakpoint for step over");
+            }
+
+            StepOneInstruction(
+                "Step over breakpoint was reached",
+                "Step over breakpoint reached. Previous address: {CurrentAddress:X8}, New address: {StateIpPhysicalAddress:X8}",
+                currentAddress);
+
+            if (_logger.IsEnabled(LogEventLevel.Debug)) {
+                _logger.Debug("Resuming execution for step over");
+            }
+            _pauseHandler.Resume();
+
+            return;
+        }
+
+        uint nextInstructionAddress = debuggerLine.NextAddress;
+
+        DebuggerStepHelper.SetupStepOverBreakpoint(_emulatorBreakpointsManager, nextInstructionAddress, () => {
+            Pause("Step over execution breakpoint was reached");
+            if (_logger.IsEnabled(LogEventLevel.Debug)) {
+                _logger.Debug("Step over breakpoint reached. Previous address: {CurrentAddress}, New address: {StateCsIp}", currentAddress, State.IpSegmentedAddress);
+            }
+        });
+
+        if (_logger.IsEnabled(LogEventLevel.Debug)) {
+            _logger.Debug("Resuming execution for step over");
+        }
+        _pauseHandler.Resume();
+    }
+
+    [RelayCommand(CanExecute = nameof(IsPaused))]
+    private void StepInto() {
+        SegmentedAddress currentAddress = State.IpSegmentedAddress;
+
+        StepOneInstruction(
+            "Step into breakpoint was reached",
+            "Step into breakpoint reached. Previous address: {CurrentAddress}, New address: {StateCsIp}",
+            currentAddress);
+
+        _pauseHandler.Resume();
+    }
+
+    private void StepOneInstruction(string pauseReason, string debugMessageTemplate, SegmentedAddress currentAddress) {
+        DebuggerStepHelper.SetupStepIntoBreakpoint(_emulatorBreakpointsManager, State, () => {
+            Pause(pauseReason);
+
+            if (_logger.IsEnabled(LogEventLevel.Debug)) {
+                _logger.Debug(debugMessageTemplate, currentAddress, State.IpSegmentedAddress);
+            }
+        });
+    }
+
+    [RelayCommand]
+    private void ToggleBreakpoint(DebuggerLineViewModel debuggerLine) {
+        if (debuggerLine.Breakpoint != null) {
+            debuggerLine.Breakpoint.Toggle();
+        } else {
+            string message = $"Execution breakpoint was reached at address {debuggerLine.SegmentedAddress}.";
+            _breakpointsViewModel.AddAddressBreakpoint(debuggerLine.Address, BreakPointType.CPU_EXECUTION_ADDRESS, false, () => {
+                Pause(message);
+            }, null, message, null);
+        }
+    }
+
+    [RelayCommand]
+    private void NewDisassemblyView() {
+        DisassemblyViewModel disassemblyViewModel = new(
+            _emulatorBreakpointsManager, _memory, State, _functionsInformation, _breakpointsViewModel, _pauseHandler, _uiDispatcher, _messenger, _textClipboard, _logger, true) {
+            IsPaused = IsPaused
+        };
+        _messenger.Send(new AddViewModelMessage<DisassemblyViewModel>(disassemblyViewModel));
+    }
+
+    [RelayCommand]
+    private void MoveCsIpHere() {
+        if (SelectedDebuggerLine is null) {
+            return;
+        }
+
+        State.CS = SelectedDebuggerLine.SegmentedAddress.Segment;
+        State.IP = SelectedDebuggerLine.SegmentedAddress.Offset;
+
+        _pauseHandler.Resume();
+    }
+
+    [RelayCommand]
+    private void GoToFunction(FunctionInfo? functionInfo) {
+        if (functionInfo is null) {
+            return;
+        }
+        if (_logger.IsEnabled(LogEventLevel.Debug)) {
+            _logger.Debug("Go to function: {FunctionName} at address {FunctionAddress:X8}", functionInfo.Name, functionInfo.Address.Linear);
+        }
+        GoToAddress(functionInfo.Address);
+    }
+
+    [RelayCommand]
+    private void GoToCsIp() {
+        GoToAddress(State.IpSegmentedAddress);
+    }
+
+    [RelayCommand]
+    public void GoToAddress(SegmentedAddress? address) {
+        if (_logger.IsEnabled(LogEventLevel.Debug)) {
+            _logger.Debug("Go to address: {Address}", address);
+        }
+        if (address == null) {
+            return;
+        }
+        DebuggerLineViewModel debuggerLine = EnsureAddressIsLoaded(address.Value);
+        ScrollToAddress(debuggerLine.SegmentedAddress);
+        SelectedDebuggerLine = debuggerLine;
+    }
+
+    private void ScrollToAddress(SegmentedAddress address) {
+        CurrentInstructionAddress = address;
+        OnPropertyChanged(nameof(CurrentInstructionAddress));
+    }
+
+    [RelayCommand]
+    private void CreateExecutionBreakpointHere(DebuggerLineViewModel debuggerLine) {
+        if (debuggerLine.Breakpoint == null) {
+            string message = $"Execution breakpoint was reached at address {debuggerLine.SegmentedAddress}.";
+            _breakpointsViewModel.AddAddressBreakpoint(debuggerLine.Address, BreakPointType.CPU_EXECUTION_ADDRESS, false, () => {
+                Pause(message);
+            }, null, message, null);
+        }
+    }
+
+    [RelayCommand]
+    private void CreateExecutionBreakpointWithDialog(DebuggerLineViewModel debuggerLine) {
+        if (debuggerLine.Breakpoint == null) {
+            _pendingBreakpointDebuggerLine = debuggerLine;
+            BreakpointAddress = debuggerLine.SegmentedAddress.ToString();
+            BreakpointCondition = null;
+            IsCreatingBreakpoint = true;
+        }
+    }
+
+    [RelayCommand]
+    private void ConfirmBreakpointCreation() {
+        if (_pendingBreakpointDebuggerLine == null) {
+            IsCreatingBreakpoint = false;
+            return;
+        }
+
+        // If editing an existing breakpoint, remove it first
+        if (_pendingBreakpointDebuggerLine.Breakpoint != null) {
+            _breakpointsViewModel.RemoveBreakpointInternal(_pendingBreakpointDebuggerLine.Breakpoint);
+        }
+
+        CreateExecutionBreakpointWithCondition(_pendingBreakpointDebuggerLine, BreakpointCondition);
+        _pendingBreakpointDebuggerLine = null;
+        IsCreatingBreakpoint = false;
+    }
+
+    [RelayCommand]
+    private void CancelBreakpointCreation() {
+        _pendingBreakpointDebuggerLine = null;
+        IsCreatingBreakpoint = false;
+    }
+
+    [RelayCommand]
+    private void EditExecutionBreakpoint(DebuggerLineViewModel debuggerLine) {
+        if (debuggerLine.Breakpoint != null) {
+            _pendingBreakpointDebuggerLine = debuggerLine;
+            BreakpointAddress = debuggerLine.SegmentedAddress.ToString();
+            BreakpointCondition = debuggerLine.Breakpoint.ConditionExpression;
+            IsCreatingBreakpoint = true;
+        }
+    }
+
+    [RelayCommand]
+    private void RemoveExecutionBreakpointHere(DebuggerLineViewModel debuggerLine) {
+        if (debuggerLine.Breakpoint != null) {
+            _breakpointsViewModel.RemoveBreakpointInternal(debuggerLine.Breakpoint);
+        }
+    }
+
+    [RelayCommand]
+    private void DisableBreakpoint(BreakpointViewModel breakpoint) {
+        breakpoint.Disable();
+    }
+
+    [RelayCommand]
+    private void EnableBreakpoint(BreakpointViewModel breakpoint) {
+        breakpoint.Enable();
+    }
+}

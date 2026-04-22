@@ -1,0 +1,19 @@
+// _fini
+// Return size: 0
+define _fini
+_fini_entry:
+	r11 = fp
+	// succ:  l4000000000137EA0
+l4000000000137EA0:
+	r34 = ar.pfs
+	r32 = r12 + 0<64>
+	r33 = b1
+	r12 = r12 + 0xFFFFFFFFFFFFFFF0<64>
+	r12 = r32 + 0<64>
+	ar.pfs = r34
+	b0 = r33
+	return
+	// succ:  _fini_exit
+_fini_exit:
+
+

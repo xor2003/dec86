@@ -1,0 +1,87 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:Reko.UserInterfaces.AvaloniaUI.Views.Tools"
+             xmlns:ctrl="clr-namespace:Reko.UserInterfaces.AvaloniaUI.Controls"
+             xmlns:gui="using:Reko.Gui"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="Reko.UserInterfaces.AvaloniaUI.Views.Tools.VisualizerView">
+  <Border Padding="0,0,0,16">
+	  
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="3*" MinWidth="0" MaxWidth="256" />
+      <ColumnDefinition Width="*" MinWidth="0" />
+    </Grid.ColumnDefinitions>
+    <Grid.RowDefinitions>
+		<RowDefinition Height="*"/>
+		<RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- Heatmap view with scrolling -->
+    <ScrollViewer Grid.Column="0" 
+                  Name="HeatmapScrollViewer"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto">
+      <ctrl:VisualizerControl
+        Name="HeatmapView"
+        Bytes="{Binding Bytes}"
+        Program="{Binding Program}"
+        Visualizer="{Binding SelectedVisualizer.Value}">
+      </ctrl:VisualizerControl>
+    </ScrollViewer>
+
+    <!-- Gutter with labels -->
+    <Border Grid.Column="1" 
+            Name="GutterBorder"
+            Background="{DynamicResource SystemControlBackgroundAltHighBrush}"
+            Margin="8,0,0,0"
+            MinWidth="0"
+            ClipToBounds="True"
+            IsVisible="False">
+      <ScrollViewer Name="GutterScrollViewer"
+                    VerticalScrollBarVisibility="Auto">
+        <ListBox Name="GutterListBox"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 SelectionMode="Single"
+                 Padding="0">
+          <ListBox.Styles>
+            <Style Selector="ListBoxItem">
+              <Setter Property="Padding" Value="2,1"/>
+              <Setter Property="MinHeight" Value="0"/>
+            </Style>
+          </ListBox.Styles>
+          <ListBox.ItemTemplate>
+            <DataTemplate DataType="local:GutterLabel">
+              <TextBlock Text="{Binding Label}" 
+                         Foreground="{DynamicResource SystemControlForegroundBaseHighBrush}"
+                         FontSize="11"
+                         Padding="0"/>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </ScrollViewer>
+    </Border>
+    <StackPanel Orientation="Horizontal"
+                Grid.Row="1"
+                Grid.RowSpan="2">
+      <Label>Visualizer</Label>
+      <ComboBox
+          Name="ddlVisualizers"
+		  Grid.Row="2"
+          Padding="3,0,0,0"
+          SelectedValue="{Binding SelectedVisualizer}"
+          ItemsSource="{Binding Visualizers}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate DataType="gui:ListOption">
+            <TextBlock Text="{Binding Text}" Tag="{Binding Value}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+    </StackPanel>
+  </Grid>
+  </Border>
+  
+</UserControl>

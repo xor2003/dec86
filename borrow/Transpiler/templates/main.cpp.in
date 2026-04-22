@@ -1,0 +1,20 @@
+#include "generated_game.h"
+#include "generated_runtime.h"
+
+#include <stdio.h>
+
+int main(void) {
+    remove("mz2cpp_last_termination.txt");
+    generated_runtime_init(&g_generated_runtime_state);
+    generated_entry(&g_generated_runtime_state);
+    generated_host_poll(&g_generated_runtime_state);
+    if (g_generated_runtime_state.terminated != 0u || g_generated_runtime_state.last_unsupported_name[0] != '\0') {
+        generated_dump_termination_state(&g_generated_runtime_state, stderr);
+        FILE* termination_file = fopen("mz2cpp_last_termination.txt", "w");
+        if (termination_file != NULL) {
+            generated_dump_termination_state(&g_generated_runtime_state, termination_file);
+            fclose(termination_file);
+        }
+    }
+    return g_generated_runtime_state.terminated ? (int)g_generated_runtime_state.exit_code : 0;
+}

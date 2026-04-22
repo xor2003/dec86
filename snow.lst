@@ -1,0 +1,147 @@
+Microsoft (R) Macro Assembler Version 6.14.8444		    07/05/20 02:36:24
+C:\inertia_player\examples\snow.asm			     Page 1 - 1
+
+
+				; masm dos com #
+				.model tiny
+ 0000				my segment
+				;.code
+				.386
+				;org 100h
+ = 1388				maxpix  equ 5000
+ = 0140				WIDTH_SCREEN    equ 320
+ = 00C8				HEIGHT_SCREEN   equ 200
+ = FA00				SCREENSIZE  equ WIDTH_SCREEN*HEIGHT_SCREEN
+ = 03DA				IMPUT_STATUS_0  equ 3DAh    ;регистр статуса ввода 0
+ = A000				VGA_SEGMENT equ 0A000h
+ = dword ptr [bp-4]		ftmp    equ dword ptr [bp-4]
+ = word ptr [bp-6]		tmp equ word ptr [bp-6]
+ = byte ptr [bp-6-maxpix]	c_  equ byte ptr [bp-6-maxpix]
+ = word ptr [bp-6-3*maxpix]	s   equ word ptr [bp-6-3*maxpix]
+				 
+ 0000				start proc
+ 0000  C8 3A9E 00		    enter   6+3*maxpix,0
+ 0004  B8 0013			    mov ax,13h
+ 0007  CD 10			    int 10h     ; - VIDEO - SET VIDEO MODE
+ 0009  8C C8			    mov ax,cs
+ 000B  05 1000			    add ax,1000h
+ 000E  8E E8			    mov gs,ax
+ 0010  9B DB E3			    finit
+				; Инициализация снега
+ 0013  BE 1388			    mov si,maxpix
+ 0016  33 C0			    xor ax,ax
+ 0018  33 C3			@@: xor ax,bx          ;Random by Alexander Matchugovsky (2:5020/996.21)
+ 001A  03 C0			    add ax,ax
+ 001C  83 D3 00			    adc bx,0
+ 001F  33 D8			    xor bx,ax
+ 0021  89 82 C562		    mov s[si],ax
+ 0025  C0 E8 04			    shr al,4
+ 0028  40			    inc ax
+ 0029  88 82 EC72		    mov c_[si],al
+ 002D  4E			    dec si
+ 002E  75 E8			    jnz @B
+ 0030  D9 EE			    fldz    ;stf=0
+ 0032  0F A8			mainloop:push gs
+ 0034  07			    pop es;es=gs
+ 0035  33 FF			    xor di,di
+ 0037  66| 33 C0		    xor eax,eax
+ 003A  B9 3E80			    mov cx,SCREENSIZE/4
+ 003D  F3/ 66| AB		    rep stosd
+ 0040  BE 1388			    mov si,maxpix
+ 0043  D9 C0			@@: fld st; fld stf
+ 0045  D9 FE			    fsin
+ 0047  66| 0F B6 82 EC72	    movzx eax,byte ptr c_[si];ftmp=c[SI]*5;
+ 004D  66| 6B C0 05		    imul eax,5
+ 0051  66| 89 46 FC		    mov ftmp,eax
+ 0055  D8 4E FC			    fmul ftmp
+ 0058  DF 5E FA			    fistp tmp
+ 005B  8B 82 C562		    mov ax, s[si]
+ 005F  01 46 FA			    add tmp, ax      ;tmp+=s[SI];DI=tmp;
+ 0062  8B 7E FA			    mov di, tmp
+ 0065  8A 82 EC72		    mov al, c_[si]
+ 0069  04 0F			    add al,15        ;AL=c[SI]+15;
+ 006B  AA			    stosb  ;GS:[DI]=AL;
+ 006C  33 C0			    xor ax,ax
+ 006E  8A 82 EC72		    mov al,c_[si]
+ 0072  83 C0 10			    add ax,16
+ 0075  C1 E8 03			    shr ax,3
+ 0078  69 C0 0140		    imul ax,WIDTH_SCREEN
+ 007C  01 82 C562		    add s[si], ax   ;s[SI]+=((c[SI]+16)/8)*320;
+ 0080  83 EE 02			    sub si,2
+ 0083  75 BE			    jnz @B
+ 0085  2E: D8 06 00B8 R		    fadd const005  ;stf+=0.05
+ 008A  BA 03DA			    mov dx,IMPUT_STATUS_0; тормозим вывод на экран до следующего кадра
+ 008D  EC			WaitVerticalSync:in al,dx
+ 008E  A8 08			    test al,8
+ 0090  74 FB			    jz WaitVerticalSync
+ 0092  EC			WaitNotVerticalSync:in al,dx
+ 0093  A8 08			    test al,8
+ 0095  75 FB			    jnz WaitNotVerticalSync
+ 0097  68 A000			    push VGA_SEGMENT
+ 009A  07			    pop es
+ 009B  33 FF			    xor di,di
+ 009D  B9 3E80			    mov cx,SCREENSIZE/4
+ 00A0  F3/ 66| 65: A5		    rep movs dword ptr es:[di],gs:[si]
+ 00A4  8E C1			    mov es,cx
+ 00A6  26: A1 041A		    mov ax,es:[41Ah]
+ 00AA  26: 2B 06 041C		    sub ax,es:[41Ch]; было ли нажатие на клавиатуру?
+ 00AF  74 81			    jz mainloop
+ 00B1  B8 0003			    mov ax,3;восстанавливаем текстовый режим
+ 00B4  CD 10			    int 10h
+ 00B6  CD 20			    int 20h; выход из программы
+ 00B8				start endp
+ 00B8 3D4CCCCD			const005    dd 0.05
+				end start
+Microsoft (R) Macro Assembler Version 6.14.8444		    07/05/20 02:36:24
+C:\inertia_player\examples\snow.asm			     Symbols 2 - 1
+
+
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+DGROUP . . . . . . . . . . . . .	GROUP
+_TEXT  . . . . . . . . . . . . .	16 Bit	 0000	  Word	  Public  'CODE'	
+_DATA  . . . . . . . . . . . . .	16 Bit	 0000	  Word	  Public  'DATA'	
+my . . . . . . . . . . . . . . .	16 Bit	 00BC	  Para	  Private 
+
+
+Procedures,  parameters and locals:
+
+                N a m e                 Type     Value    Attr
+
+start  . . . . . . . . . . . . .	P Near	 0000	  my	Length= 00B8 Public
+  mainloop . . . . . . . . . . .	L Near	 0032	  my	
+  WaitVerticalSync . . . . . . .	L Near	 008D	  my	
+  WaitNotVerticalSync  . . . . .	L Near	 0092	  my	
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+@CodeSize  . . . . . . . . . . .	Number	 0000h	 
+@DataSize  . . . . . . . . . . .	Number	 0000h	 
+@Interface . . . . . . . . . . .	Number	 0000h	 
+@Model . . . . . . . . . . . . .	Number	 0001h	 
+@code  . . . . . . . . . . . . .	Text   	 DGROUP
+@data  . . . . . . . . . . . . .	Text   	 DGROUP
+@fardata?  . . . . . . . . . . .	Text   	 FAR_BSS
+@fardata . . . . . . . . . . . .	Text   	 FAR_DATA
+@stack . . . . . . . . . . . . .	Text   	 DGROUP
+HEIGHT_SCREEN  . . . . . . . . .	Number	 00C8h	 
+IMPUT_STATUS_0 . . . . . . . . .	Number	 03DAh	 
+SCREENSIZE . . . . . . . . . . .	Number	 FA00h	 
+VGA_SEGMENT  . . . . . . . . . .	Number	 A000h	 
+WIDTH_SCREEN . . . . . . . . . .	Number	 0140h	 
+c_ . . . . . . . . . . . . . . .	Text   	 byte ptr [bp-6-maxpix]
+const005 . . . . . . . . . . . .	DWord	 00B8	  my	
+ftmp . . . . . . . . . . . . . .	Text   	 dword ptr [bp-4]
+maxpix . . . . . . . . . . . . .	Number	 1388h	 
+s  . . . . . . . . . . . . . . .	Text   	 word ptr [bp-6-3*maxpix]
+tmp  . . . . . . . . . . . . . .	Text   	 word ptr [bp-6]
+
+	   0 Warnings
+	   0 Errors

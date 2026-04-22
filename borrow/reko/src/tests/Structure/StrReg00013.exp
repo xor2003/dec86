@@ -1,0 +1,775 @@
+// fn0C00_0000
+// Return size: 0
+void fn0C00_0000(selector ds)
+fn0C00_0000_entry:
+	Mem10[0C00:0001:word16] = 0x800<16>
+	Mem11[0800:5422:word16] = ds
+	Mem17[0800:0066:word16] = Mem11[0800:5420:word16]
+	es_20 = Mem17[0800:5422:selector]
+	msdos_resize_memory_block(es_20, 0xFFFF<16>, out bx_21)
+	Mem26[0800:53CD:word16] = Mem17[0800:5422:word16] + bx_21
+	msdos_resize_memory_block(es_20, bx_21, out bx_28)
+	Mem30[0800:0400:word16] = 0x1758<16>
+	fn0C00_028B()
+	msdos_set_interrupt_vector(0x24<8>, SEQ(cs, 0x298<16>))
+	fn0C00_0262()
+	fn0C00_0260()
+	branch Mem42[0800:541E:word16] == 0<16> l0C00_0062
+	goto l0C00_005F
+	// succ:  l0C00_005F l0C00_0062
+l0C00_0000:
+l0C00_005F:
+	fn0C00_0291()
+	// succ:  l0C00_0062
+l0C00_0062:
+	fn0C00_0281()
+	fn0C00_0292(0x53F4<16>, 0x800<16>)
+	Mem49[0800:53FE:word16] = 1<16>
+	fn0C00_0261()
+	Mem50[0800:53C2:word16] = 0x4AF3<16>
+	fn0C00_0286(0x5447<16>, 0x800<16>)
+	sp_53 = <invalid>
+	branch fn0C00_0274(0x800<16>) l0C00_008D
+	// succ:  l0C00_0086 l0C00_008D
+l0C00_0086:
+	sp_53 = <invalid>
+	branch fn0C00_026A(0x800<16>) l0C00_0251
+	// succ:  l0C00_008D l0C00_0251
+l0C00_008D:
+	branch Mem50[0800:81B0:word16] == 0<16> l0C00_009B
+	// succ:  l0C00_0094 l0C00_009B
+l0C00_0094:
+	branch Mem50[0800:5404:word16] < 0x20<16> l0C00_008D
+	// succ:  l0C00_009B l0C00_008D
+l0C00_009B:
+	fn0C00_0286(0x5450<16>, 0x800<16>)
+	Mem72[0800:5404:word16] = 0<16>
+	fn0C00_0259()
+	branch Mem72[0800:53B8:word16] < 4<16> l0C00_0251
+	// succ:  l0C00_00B4 l0C00_0251
+l0C00_00B4:
+	bx_77 = Mem72[0800:53B8:word16]
+	Mem79[0800:53BE:word16] = bx_77 - 1<16>
+	Mem82[0800:53C0:word16] = bx_77 - 2<16>
+	fn0C00_025A(Mem82[0800:53C0:word16], 0x800<16>)
+	es_84 = Mem82[0800:53C2:selector]
+	sp_88 = sp_53 - 2<i16>
+	Mem92[ss:sp_88:word16] = 0x6C34<16>
+	memcpy(es_84:0<16>, Mem92[ss:sp_88:selector]:0<16>, 0x10000<u32>)
+	Mem105[ss:sp_88:word16] = 0x800<16>
+	ds_106 = Mem105[ss:sp_88:selector]
+	fn0C00_025A(Mem105[ds_106:0x53BE<16>:word16], ds_106)
+	es_109 = Mem105[ds_106:0x53C2<16>:selector]
+	Mem112[ss:sp_88:word16] = 0x5D02<16>
+	memcpy(es_109:0<16>, Mem112[ss:sp_88:selector]:0<16>, 0x10000<u32>)
+	Mem122[ss:sp_88:word16] = 0x800<16>
+	ds_123 = Mem122[ss:sp_88:selector]
+	Mem126[ds_123:0x7E52<16>:word16] = Mem122[ds_123:0x53BE<16>:word16]
+	ax_127 = Mem126[ds_123:0x53C2<16>:word16]
+	Mem128[ds_123:0x7E50<16>:word16] = ax_127
+	Mem129[ds_123:0x5380<16>:word16] = ax_127
+	Mem133[ds_123:0x53BC<16>:word16] = Mem129[ds_123:0x53B8<16>:word16] - 2<16>
+	fn0C00_025F()
+	fn0C00_0285()
+	branch Mem133[ds_123:0x54A6<16>:word16] == 0<16> l0C00_0144
+	// succ:  l0C00_0128 l0C00_0144
+l0C00_0128:
+	fn0C00_0280()
+	Mem146[ds_123:0x6FF0<16>:ui64] = Mem141[ds_123:0x6FF0<16>:ui64] - CONVERT(Mem133[ds_123:0x5418<16>:word16], word16, int32) *s64 0xF000<32>
+	// succ:  l0C00_0144
+l0C00_0144:
+	fn0C00_0268()
+	// succ:  l0C00_0147
+l0C00_0147:
+	branch Mem244[ds_123:0x81B0<16>:word16] == 0<16> l0C00_0155
+	// succ:  l0C00_014E l0C00_0155
+l0C00_014E:
+	branch Mem244[ds_123:0x5404<16>:word16] < 0x46<16> l0C00_0147
+	// succ:  l0C00_0155 l0C00_0147
+l0C00_0155:
+	fn0C00_0292(0x53E7<16>, ds_123)
+	fn0C00_028E()
+	fn0C00_0282()
+	fn0C00_0283()
+	fn0C00_027E()
+	fn0C00_0269()
+	// succ:  l0C00_016A
+l0C00_016A:
+	branch (Mem157[ds_123:0x919E<16>:word16] & 0x1FF<16>) == 0<16> l0C00_01B7
+	// succ:  l0C00_0172 l0C00_01B7
+l0C00_0172:
+	fn0C00_028C()
+	branch Mem157[ds_123:0x480<16>:word16] == 0<16> l0C00_0182
+	// succ:  l0C00_017C l0C00_0182
+l0C00_017C:
+	fn0C00_0290()
+	goto l0C00_0188
+	// succ:  l0C00_0188
+l0C00_0182:
+	Mem164[ds_123:0xC3CF<16>:word16] = 0<16>
+	// succ:  l0C00_0188
+l0C00_0188:
+	branch Mem166[ds_123:0x542C<16>:word16] != 0<16> l0C00_0198
+	// succ:  l0C00_018F l0C00_0198
+l0C00_018F:
+	fn0C00_0257()
+	fn0C00_0267()
+	goto l0C00_01A4
+	// succ:  l0C00_01A4
+l0C00_0198:
+	Mem169[ds_123:0x540C<16>:word32] = 0<32>
+	fn0C00_0267()
+	// succ:  l0C00_01A4
+l0C00_01A4:
+	branch Mem171[ds_123:0xC3CF<16>:word16] == 0<16> l0C00_01B1
+	// succ:  l0C00_01AB l0C00_01B1
+l0C00_01AB:
+	Mem174[ds_123:0x412<16>:word16] = 0<16>
+	// succ:  l0C00_01B1
+l0C00_01B1:
+	Mem176[ds_123:0x5376<16>:word16] = 0<16>
+	// succ:  l0C00_01B7
+l0C00_01B7:
+	fn0C00_027F()
+	ax_177 = fn0C00_0263()
+	v33_181 = Mem180[ds_123:0x5404<16>:word16]
+	Mem182[ds_123:0x5404<16>:word16] = 0<16>
+	dx_184 = Mem182[ds_123:0x541A<16>:word16]
+	Mem185[ds_123:0x541A<16>:word16] = ax_177
+	bx_ax_251 = SEQ(v33_181, ax_177) - CONVERT(dx_184, uint16, uint32)
+	Mem198[ds_123:0x5408<16>:word16] = SLICE(SLICE(bx_ax_251, word16, 8) *u32 0x3865<16>, word16, 16)
+	branch Mem198[ds_123:Mem198[ds_123:0x5A02<16>:word16] + 0x94<16>:word16] != 0<16> l0C00_01FA
+	// succ:  l0C00_01EC l0C00_01FA
+l0C00_01EC:
+	branch Mem198[ds_123:Mem198[ds_123:0x5BD8<16>:word16] + 0x94<16>:word16] == 0<16> l0C00_0200
+	// succ:  l0C00_01FA l0C00_0200
+l0C00_01FA:
+	Mem212[ds_123:0x5408<16>:word16] = 0<16>
+	// succ:  l0C00_0200
+l0C00_0200:
+	branch (Mem214[ds_123:0x919E<16>:word16] & 0x2FF<16>) != 0<16> l0C00_020E
+	// succ:  l0C00_0208 l0C00_020E
+l0C00_0208:
+	Mem219[ds_123:0x5408<16>:word16] = 0x44<16>
+	// succ:  l0C00_020E
+l0C00_020E:
+	branch (Mem221[ds_123:0x919E<16>:word16] & 0x5FF<16>) == 0x400<16> l0C00_016A
+	// succ:  l0C00_021C l0C00_016A
+l0C00_021C:
+	branch Mem221[ds_123:0x632E<16>:word16] != 0<16> l0C00_022D
+	// succ:  l0C00_0223 l0C00_022D
+l0C00_0223:
+	branch Mem221[ds_123:0xD10E<16>:word16] == 0<16> l0C00_022D
+	// succ:  l0C00_022A l0C00_022D
+l0C00_022A:
+	fn0C00_028F()
+	// succ:  l0C00_022D
+l0C00_022D:
+	fn0C00_0284()
+	branch (Mem221[ds_123:0x6FCA<16>:byte] & 0x10<8>) == 0<8> l0C00_023D
+	// succ:  l0C00_0237 l0C00_023D
+l0C00_0237:
+	Mem236[ds_123:0x5376<16>:word16] = 1<16>
+	// succ:  l0C00_023D
+l0C00_023D:
+	fn0C00_028D()
+	branch Mem238[ds_123:0x412<16>:word16] == 0<16> l0C00_024B
+	// succ:  l0C00_0248 l0C00_024B
+l0C00_0248:
+	fn0C00_0258()
+	// succ:  l0C00_024B
+l0C00_024B:
+	fn0C00_0297()
+	goto l0C00_016A
+	// succ:  l0C00_016A
+l0C00_0251:
+	msdos_terminate(1<8>)
+fn0C00_0000_exit:
+
+void fn0C00_0000(selector ds)
+{
+	Mem10[0C00:0001:word16] = 0x800<16>;
+	Mem11[0800:5422:word16] = ds;
+	Mem17[0800:0066:word16] = Mem11[0800:5420:word16];
+	selector es_20 = Mem17[0800:5422:selector];
+	word16 bx_21;
+	msdos_resize_memory_block(es_20, 0xFFFF<16>, out bx_21);
+	Mem26[0800:53CD:word16] = Mem17[0800:5422:word16] + bx_21;
+	word16 bx_28;
+	msdos_resize_memory_block(es_20, bx_21, out bx_28);
+	Mem30[0800:0400:word16] = 0x1758<16>;
+	fn0C00_028B();
+	selector cs;
+	msdos_set_interrupt_vector(0x24<8>, SEQ(cs, 0x298<16>));
+	fn0C00_0262();
+	fn0C00_0260();
+	if (Mem42[0800:541E:word16] != 0<16>)
+		fn0C00_0291();
+	fn0C00_0281();
+	fn0C00_0292(0x53F4<16>, 0x800<16>);
+	Mem49[0800:53FE:word16] = 1<16>;
+	fn0C00_0261();
+	Mem50[0800:53C2:word16] = 0x4AF3<16>;
+	fn0C00_0286(0x5447<16>, 0x800<16>);
+	word16 sp_53 = <invalid>;
+	if (!fn0C00_0274(0x800<16>))
+	{
+		sp_53 = <invalid>;
+		if (fn0C00_026A(0x800<16>))
+			goto l0C00_0251;
+	}
+	while (Mem50[0800:81B0:word16] != 0<16> && Mem50[0800:5404:word16] < 0x20<16>)
+		;
+	fn0C00_0286(0x5450<16>, 0x800<16>);
+	Mem72[0800:5404:word16] = 0<16>;
+	fn0C00_0259();
+	if (Mem72[0800:53B8:word16] >= 4<16>)
+	{
+		word16 bx_77 = Mem72[0800:53B8:word16];
+		Mem79[0800:53BE:word16] = bx_77 - 1<16>;
+		Mem82[0800:53C0:word16] = bx_77 - 2<16>;
+		fn0C00_025A(Mem82[0800:53C0:word16], 0x800<16>);
+		selector es_84 = Mem82[0800:53C2:selector];
+		word16 sp_88 = sp_53 - 2<i16>;
+		selector ss;
+		Mem92[ss:sp_88:word16] = 0x6C34<16>;
+		memcpy(es_84:0<16>, Mem92[ss:sp_88:selector]:0<16>, 0x10000<u32>);
+		Mem105[ss:sp_88:word16] = 0x800<16>;
+		selector ds_106 = Mem105[ss:sp_88:selector];
+		fn0C00_025A(Mem105[ds_106:0x53BE<16>:word16], ds_106);
+		selector es_109 = Mem105[ds_106:0x53C2<16>:selector];
+		Mem112[ss:sp_88:word16] = 0x5D02<16>;
+		memcpy(es_109:0<16>, Mem112[ss:sp_88:selector]:0<16>, 0x10000<u32>);
+		Mem122[ss:sp_88:word16] = 0x800<16>;
+		selector ds_123 = Mem122[ss:sp_88:selector];
+		Mem126[ds_123:0x7E52<16>:word16] = Mem122[ds_123:0x53BE<16>:word16];
+		word16 ax_127 = Mem126[ds_123:0x53C2<16>:word16];
+		Mem128[ds_123:0x7E50<16>:word16] = ax_127;
+		Mem129[ds_123:0x5380<16>:word16] = ax_127;
+		Mem133[ds_123:0x53BC<16>:word16] = Mem129[ds_123:0x53B8<16>:word16] - 2<16>;
+		fn0C00_025F();
+		fn0C00_0285();
+		if (Mem133[ds_123:0x54A6<16>:word16] != 0<16>)
+		{
+			fn0C00_0280();
+			Mem146[ds_123:0x6FF0<16>:ui64] = Mem141[ds_123:0x6FF0<16>:ui64] - CONVERT(Mem133[ds_123:0x5418<16>:word16], word16, int32) *s64 0xF000<32>;
+		}
+		fn0C00_0268();
+		while (Mem244[ds_123:0x81B0<16>:word16] != 0<16> && Mem244[ds_123:0x5404<16>:word16] < 0x46<16>)
+			;
+		fn0C00_0292(0x53E7<16>, ds_123);
+		fn0C00_028E();
+		fn0C00_0282();
+		fn0C00_0283();
+		fn0C00_027E();
+		fn0C00_0269();
+		while (true)
+		{
+			if ((Mem157[ds_123:0x919E<16>:word16] & 0x1FF<16>) != 0<16>)
+			{
+				fn0C00_028C();
+				if (Mem157[ds_123:0x480<16>:word16] != 0<16>)
+					fn0C00_0290();
+				else
+					Mem164[ds_123:0xC3CF<16>:word16] = 0<16>;
+				if (Mem166[ds_123:0x542C<16>:word16] == 0<16>)
+				{
+					fn0C00_0257();
+					fn0C00_0267();
+				}
+				else
+				{
+					Mem169[ds_123:0x540C<16>:word32] = 0<32>;
+					fn0C00_0267();
+				}
+				if (Mem171[ds_123:0xC3CF<16>:word16] != 0<16>)
+					Mem174[ds_123:0x412<16>:word16] = 0<16>;
+				Mem176[ds_123:0x5376<16>:word16] = 0<16>;
+			}
+			fn0C00_027F();
+			word16 ax_177 = fn0C00_0263();
+			word16 v33_181 = Mem180[ds_123:0x5404<16>:word16];
+			Mem182[ds_123:0x5404<16>:word16] = 0<16>;
+			word16 dx_184 = Mem182[ds_123:0x541A<16>:word16];
+			Mem185[ds_123:0x541A<16>:word16] = ax_177;
+			ui32 bx_ax_251 = SEQ(v33_181, ax_177) - CONVERT(dx_184, uint16, uint32);
+			Mem198[ds_123:0x5408<16>:word16] = SLICE(SLICE(bx_ax_251, word16, 8) *u32 0x3865<16>, word16, 16);
+			if (Mem198[ds_123:Mem198[ds_123:0x5A02<16>:word16] + 0x94<16>:word16] != 0<16> || Mem198[ds_123:Mem198[ds_123:0x5BD8<16>:word16] + 0x94<16>:word16] != 0<16>)
+				Mem212[ds_123:0x5408<16>:word16] = 0<16>;
+			if ((Mem214[ds_123:0x919E<16>:word16] & 0x2FF<16>) == 0<16>)
+				Mem219[ds_123:0x5408<16>:word16] = 0x44<16>;
+			if ((Mem221[ds_123:0x919E<16>:word16] & 0x5FF<16>) != 0x400<16>)
+			{
+				if (Mem221[ds_123:0x632E<16>:word16] == 0<16> && Mem221[ds_123:0xD10E<16>:word16] != 0<16>)
+					fn0C00_028F();
+				fn0C00_0284();
+				if ((Mem221[ds_123:0x6FCA<16>:byte] & 0x10<8>) != 0<8>)
+					Mem236[ds_123:0x5376<16>:word16] = 1<16>;
+				fn0C00_028D();
+				if (Mem238[ds_123:0x412<16>:word16] != 0<16>)
+					fn0C00_0258();
+				fn0C00_0297();
+			}
+		}
+	}
+l0C00_0251:
+	msdos_terminate(1<8>);
+}
+===========================
+// fn0C00_0257
+// Return size: 0
+void fn0C00_0257()
+fn0C00_0257_entry:
+	// succ:  l0C00_0257
+l0C00_0257:
+	return
+	// succ:  fn0C00_0257_exit
+fn0C00_0257_exit:
+
+void fn0C00_0257()
+{
+}
+===========================
+// fn0C00_0258
+// Return size: 0
+void fn0C00_0258()
+fn0C00_0258_entry:
+	// succ:  l0C00_0258
+l0C00_0258:
+	return
+	// succ:  fn0C00_0258_exit
+fn0C00_0258_exit:
+
+void fn0C00_0258()
+{
+}
+===========================
+// fn0C00_0259
+// Return size: 0
+void fn0C00_0259()
+fn0C00_0259_entry:
+	// succ:  l0C00_0259
+l0C00_0259:
+	return
+	// succ:  fn0C00_0259_exit
+fn0C00_0259_exit:
+
+void fn0C00_0259()
+{
+}
+===========================
+// fn0C00_025A
+// Return size: 0
+void fn0C00_025A(word16 bx, selector ds)
+fn0C00_025A_entry:
+	// succ:  l0C00_025A
+l0C00_025A:
+	Mem6[ds:0x540<16>:word16] = bx
+	return
+	// succ:  fn0C00_025A_exit
+fn0C00_025A_exit:
+
+void fn0C00_025A(word16 bx, selector ds)
+{
+	Mem6[ds:0x540<16>:word16] = bx;
+}
+===========================
+// fn0C00_025F
+// Return size: 0
+void fn0C00_025F()
+fn0C00_025F_entry:
+	// succ:  l0C00_025F
+l0C00_025F:
+	return
+	// succ:  fn0C00_025F_exit
+fn0C00_025F_exit:
+
+void fn0C00_025F()
+{
+}
+===========================
+// fn0C00_0260
+// Return size: 0
+void fn0C00_0260()
+fn0C00_0260_entry:
+	// succ:  l0C00_0260
+l0C00_0260:
+	return
+	// succ:  fn0C00_0260_exit
+fn0C00_0260_exit:
+
+void fn0C00_0260()
+{
+}
+===========================
+// fn0C00_0261
+// Return size: 0
+void fn0C00_0261()
+fn0C00_0261_entry:
+	// succ:  l0C00_0261
+l0C00_0261:
+	return
+	// succ:  fn0C00_0261_exit
+fn0C00_0261_exit:
+
+void fn0C00_0261()
+{
+}
+===========================
+// fn0C00_0262
+// Return size: 0
+void fn0C00_0262()
+fn0C00_0262_entry:
+	// succ:  l0C00_0262
+l0C00_0262:
+	return
+	// succ:  fn0C00_0262_exit
+fn0C00_0262_exit:
+
+void fn0C00_0262()
+{
+}
+===========================
+// fn0C00_0263
+// Return size: 0
+word16 fn0C00_0263()
+fn0C00_0263_entry:
+	// succ:  l0C00_0263
+l0C00_0263:
+	return 0x42<16>
+	// succ:  fn0C00_0263_exit
+fn0C00_0263_exit:
+
+word16 fn0C00_0263()
+{
+	return 0x42<16>;
+}
+===========================
+// fn0C00_0267
+// Return size: 0
+void fn0C00_0267()
+fn0C00_0267_entry:
+	// succ:  l0C00_0267
+l0C00_0267:
+	return
+	// succ:  fn0C00_0267_exit
+fn0C00_0267_exit:
+
+void fn0C00_0267()
+{
+}
+===========================
+// fn0C00_0268
+// Return size: 0
+void fn0C00_0268()
+fn0C00_0268_entry:
+	// succ:  l0C00_0268
+l0C00_0268:
+	return
+	// succ:  fn0C00_0268_exit
+fn0C00_0268_exit:
+
+void fn0C00_0268()
+{
+}
+===========================
+// fn0C00_0269
+// Return size: 0
+void fn0C00_0269()
+fn0C00_0269_entry:
+	// succ:  l0C00_0269
+l0C00_0269:
+	return
+	// succ:  fn0C00_0269_exit
+fn0C00_0269_exit:
+
+void fn0C00_0269()
+{
+}
+===========================
+// fn0C00_026A
+// Return size: 0
+bool fn0C00_026A(selector ds)
+fn0C00_026A_entry:
+	// succ:  l0C00_026A
+l0C00_026A:
+	return (cond(Mem7[ds:0x1234<16>:word16] - Mem7[ds:0x1236<16>:word16]) & 2<32>) != 0<32>
+	// succ:  fn0C00_026A_exit
+fn0C00_026A_exit:
+
+bool fn0C00_026A(selector ds)
+{
+	return (cond(Mem7[ds:0x1234<16>:word16] - Mem7[ds:0x1236<16>:word16]) & 2<32>) != 0<32>;
+}
+===========================
+// fn0C00_0274
+// Return size: 0
+bool fn0C00_0274(selector ds)
+fn0C00_0274_entry:
+	// succ:  l0C00_0274
+l0C00_0274:
+	return (cond(Mem7[ds:0x1234<16>:word16] - Mem7[ds:0x1236<16>:word16]) & 2<32>) != 0<32>
+	// succ:  fn0C00_0274_exit
+fn0C00_0274_exit:
+
+bool fn0C00_0274(selector ds)
+{
+	return (cond(Mem7[ds:0x1234<16>:word16] - Mem7[ds:0x1236<16>:word16]) & 2<32>) != 0<32>;
+}
+===========================
+// fn0C00_027E
+// Return size: 0
+void fn0C00_027E()
+fn0C00_027E_entry:
+	// succ:  l0C00_027E
+l0C00_027E:
+	return
+	// succ:  fn0C00_027E_exit
+fn0C00_027E_exit:
+
+void fn0C00_027E()
+{
+}
+===========================
+// fn0C00_027F
+// Return size: 0
+void fn0C00_027F()
+fn0C00_027F_entry:
+	// succ:  l0C00_027F
+l0C00_027F:
+	return
+	// succ:  fn0C00_027F_exit
+fn0C00_027F_exit:
+
+void fn0C00_027F()
+{
+}
+===========================
+// fn0C00_0280
+// Return size: 0
+void fn0C00_0280()
+fn0C00_0280_entry:
+	// succ:  l0C00_0280
+l0C00_0280:
+	return
+	// succ:  fn0C00_0280_exit
+fn0C00_0280_exit:
+
+void fn0C00_0280()
+{
+}
+===========================
+// fn0C00_0281
+// Return size: 0
+void fn0C00_0281()
+fn0C00_0281_entry:
+	// succ:  l0C00_0281
+l0C00_0281:
+	return
+	// succ:  fn0C00_0281_exit
+fn0C00_0281_exit:
+
+void fn0C00_0281()
+{
+}
+===========================
+// fn0C00_0282
+// Return size: 0
+void fn0C00_0282()
+fn0C00_0282_entry:
+	// succ:  l0C00_0282
+l0C00_0282:
+	return
+	// succ:  fn0C00_0282_exit
+fn0C00_0282_exit:
+
+void fn0C00_0282()
+{
+}
+===========================
+// fn0C00_0283
+// Return size: 0
+void fn0C00_0283()
+fn0C00_0283_entry:
+	// succ:  l0C00_0283
+l0C00_0283:
+	return
+	// succ:  fn0C00_0283_exit
+fn0C00_0283_exit:
+
+void fn0C00_0283()
+{
+}
+===========================
+// fn0C00_0284
+// Return size: 0
+void fn0C00_0284()
+fn0C00_0284_entry:
+	// succ:  l0C00_0284
+l0C00_0284:
+	return
+	// succ:  fn0C00_0284_exit
+fn0C00_0284_exit:
+
+void fn0C00_0284()
+{
+}
+===========================
+// fn0C00_0285
+// Return size: 0
+void fn0C00_0285()
+fn0C00_0285_entry:
+	// succ:  l0C00_0285
+l0C00_0285:
+	return
+	// succ:  fn0C00_0285_exit
+fn0C00_0285_exit:
+
+void fn0C00_0285()
+{
+}
+===========================
+// fn0C00_0286
+// Return size: 0
+void fn0C00_0286(word16 si, selector ds)
+fn0C00_0286_entry:
+	// succ:  l0C00_0286
+l0C00_0286:
+	Mem6[ds:0x4AFB<16>:word16] = si
+	return
+	// succ:  fn0C00_0286_exit
+fn0C00_0286_exit:
+
+void fn0C00_0286(word16 si, selector ds)
+{
+	Mem6[ds:0x4AFB<16>:word16] = si;
+}
+===========================
+// fn0C00_028B
+// Return size: 0
+void fn0C00_028B()
+fn0C00_028B_entry:
+	// succ:  l0C00_028B
+l0C00_028B:
+	return
+	// succ:  fn0C00_028B_exit
+fn0C00_028B_exit:
+
+void fn0C00_028B()
+{
+}
+===========================
+// fn0C00_028C
+// Return size: 0
+void fn0C00_028C()
+fn0C00_028C_entry:
+	// succ:  l0C00_028C
+l0C00_028C:
+	return
+	// succ:  fn0C00_028C_exit
+fn0C00_028C_exit:
+
+void fn0C00_028C()
+{
+}
+===========================
+// fn0C00_028D
+// Return size: 0
+void fn0C00_028D()
+fn0C00_028D_entry:
+	// succ:  l0C00_028D
+l0C00_028D:
+	return
+	// succ:  fn0C00_028D_exit
+fn0C00_028D_exit:
+
+void fn0C00_028D()
+{
+}
+===========================
+// fn0C00_028E
+// Return size: 0
+void fn0C00_028E()
+fn0C00_028E_entry:
+	// succ:  l0C00_028E
+l0C00_028E:
+	return
+	// succ:  fn0C00_028E_exit
+fn0C00_028E_exit:
+
+void fn0C00_028E()
+{
+}
+===========================
+// fn0C00_028F
+// Return size: 0
+void fn0C00_028F()
+fn0C00_028F_entry:
+	// succ:  l0C00_028F
+l0C00_028F:
+	return
+	// succ:  fn0C00_028F_exit
+fn0C00_028F_exit:
+
+void fn0C00_028F()
+{
+}
+===========================
+// fn0C00_0290
+// Return size: 0
+void fn0C00_0290()
+fn0C00_0290_entry:
+	// succ:  l0C00_0290
+l0C00_0290:
+	return
+	// succ:  fn0C00_0290_exit
+fn0C00_0290_exit:
+
+void fn0C00_0290()
+{
+}
+===========================
+// fn0C00_0291
+// Return size: 0
+void fn0C00_0291()
+fn0C00_0291_entry:
+	// succ:  l0C00_0291
+l0C00_0291:
+	return
+	// succ:  fn0C00_0291_exit
+fn0C00_0291_exit:
+
+void fn0C00_0291()
+{
+}
+===========================
+// fn0C00_0292
+// Return size: 0
+void fn0C00_0292(word16 dx, selector ds)
+fn0C00_0292_entry:
+	// succ:  l0C00_0292
+l0C00_0292:
+	Mem6[ds:0xC54C<16>:word16] = dx
+	return
+	// succ:  fn0C00_0292_exit
+fn0C00_0292_exit:
+
+void fn0C00_0292(word16 dx, selector ds)
+{
+	Mem6[ds:0xC54C<16>:word16] = dx;
+}
+===========================
+// fn0C00_0297
+// Return size: 0
+void fn0C00_0297()
+fn0C00_0297_entry:
+	// succ:  l0C00_0297
+l0C00_0297:
+	return
+	// succ:  fn0C00_0297_exit
+fn0C00_0297_exit:
+
+void fn0C00_0297()
+{
+}
+===========================

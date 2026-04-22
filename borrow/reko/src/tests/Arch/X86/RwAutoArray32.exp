@@ -1,0 +1,56 @@
+// fn10000000
+// Return size: 4
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// esp:esp
+// SCZO:SCZO
+// eax:eax
+// SZ:SZ
+// O:O
+// C:C
+// ecx:ecx
+// SZO:SZO
+// edi:edi
+// Top:Top
+// return address size: 4
+define fn10000000
+fn10000000_entry:
+	esp = fp
+	Top = 0<i8>
+	// succ:  l10000000
+l10000000:
+	esp = esp - 0xC<32>
+	SCZO = cond(esp)
+	eax = eax ^ eax
+	SZ = cond(eax)
+	O = 0<32>
+	C = 0<32>
+	ecx = ecx ^ ecx
+	SZ = cond(ecx)
+	O = 0<32>
+	C = 0<32>
+	Mem0[esp:word32] = 1<32>
+	Mem0[esp + 4<i32>:word32] = 2<32>
+	Mem0[esp + 8<i32>:word32] = 3<32>
+	goto l10000027
+	// succ:  l10000027
+l10000023:
+	eax = eax + Mem0[esp + ecx * 4<32>:word32]
+	SCZO = cond(eax)
+	ecx = ecx + 1<32>
+	SZO = cond(ecx)
+	// succ:  l10000027
+l10000027:
+	SCZO = cond(ecx - 3<32>)
+	branch Test(LE,SZO) l10000023
+	// succ:  l1000002C l10000023
+l1000002C:
+	edi = Mem0[esp + 16<i32>:word32]
+	Mem0[edi:word32] = eax
+	esp = esp + 0xC<32>
+	SCZO = cond(esp)
+	return
+	// succ:  fn10000000_exit
+fn10000000_exit:
+

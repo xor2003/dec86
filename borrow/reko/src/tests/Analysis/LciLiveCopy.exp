@@ -1,0 +1,20 @@
+// LiveCopyMock
+// Return size: 0
+define LiveCopyMock
+LiveCopyMock_entry:
+	def reg
+	goto l1
+	// succ:  l1
+even:
+	reg_4 = PHI((reg_4, l1), (reg_3, l2))
+	return reg_4 - reg
+	// succ:  LiveCopyMock_exit
+l1:
+	reg_4 = reg
+	branch (reg & 1<32>) == 0<32> even
+	// succ:  l2 even
+l2:
+	reg_3 = reg + 2<32>
+	goto even
+	// succ:  even
+LiveCopyMock_exit:

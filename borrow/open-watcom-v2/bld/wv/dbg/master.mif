@@ -1,0 +1,46 @@
+proj_name = wddbg
+
+!include cproj.mif
+
+objs = &
+    addsrc.dbg &
+    ads.dbg &
+    animate.dbg &
+    bcnt.dbg &
+    bif.dbg &
+    bp.dbg &
+    cntbrks.dbg &
+    colour.dbg &
+    cvkeys.dbg &
+    default.dbg &
+    fill.dbg &
+    fox.dbg &
+    mono.dbg &
+    nwvkeys.dbg &
+    owvkeys.dbg &
+    resize.dbg &
+    restart.dbg &
+    return.dbg &
+    save.dbg &
+    setup.dbg &
+    slow.dbg &
+    tdemu.dbg &
+    tdkeys.dbg &
+    vc.dbg &
+    vikeys.dbg &
+    vr.dbg &
+    wd.dbg &
+    wdkeys.dbg
+
+.extensions : .dbg .sp
+
+.sp : ..
+
+all: $(objs) .SYMBOLIC
+
+.sp.dbg:
+    @%make echo_wsplice
+    $(noecho)*wsplice -u $< $@
+
+clean : .SYMBOLIC
+    rm -f *.dbg

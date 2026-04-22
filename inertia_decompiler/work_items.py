@@ -135,7 +135,7 @@ def print_function_attempt_status(
 ) -> None:
     project = getattr(function, "project", None)
     validation_status = (
-        "disabled"
+        "uncollected"
         if project is not None and not tail_validation_runtime_enabled(project)
         else tail_validation_display_status(validation_snapshot)
     )

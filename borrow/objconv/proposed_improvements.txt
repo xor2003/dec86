@@ -1,0 +1,15 @@
+Proposed improvements for objconv
+=================================
+
+* Use container classes as intermediate format:
+-----------------------------------------------
+The conversion between different object file formats would be simpler 
+and easier to maintain if all sections, symbols, and relocations were
+first stored in containers in the same way as is done for conversion
+to assembly. The containers would be something like 
+CSList<SASection> Sections;
+CSList<SARelocation> Relocations;
+CSList<SASymbol> SymbolList;
+
+However, I don't have the time for doing such a radical restructuring 
+of the code, and the need for conversion of object files is now quite low.

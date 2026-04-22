@@ -1,0 +1,45 @@
+// void fn0C00_0000(Register selector ds)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  ds:[0..15]
+// LiveOut:
+// Trashed: SCZO al Top
+// Preserved: sp
+// fn0C00_0000
+// Return size: 0
+void fn0C00_0000(selector ds)
+fn0C00_0000_entry:
+	// succ:  l0C00_0000
+l0C00_0000:
+	branch fn0C00_000C(0x20<8>, ds) l0C00_000B
+	// succ:  l0C00_0007 l0C00_000B
+l0C00_0007:
+	Mem10[ds:0x300<16>:byte] = 0x20<8>
+	// succ:  l0C00_000B
+l0C00_000B:
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:
+
+// FlagGroup bool fn0C00_000C(Register byte al, Register selector ds)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  al:[0..7] ds:[0..15]
+// LiveOut: C-fn0C00_0000
+// Trashed: SCZO Top
+// Preserved: sp
+// fn0C00_000C
+// Return size: 0
+bool fn0C00_000C(byte al, selector ds)
+fn0C00_000C_entry:
+	// succ:  l0C00_000C
+l0C00_000C:
+	SCZO_5 = cond(al - 0x20<8>)
+	branch al <u 0x20<8> l0C00_0014
+	// succ:  l0C00_0010 l0C00_0014
+l0C00_0010:
+	Mem10[ds:0x201<16>:word16] = Mem0[ds:0x201<16>:word16] + 1<16>
+	// succ:  l0C00_0014
+l0C00_0014:
+	return (SCZO_5 & 2<32>) != 0<32>
+	// succ:  fn0C00_000C_exit
+fn0C00_000C_exit:
+

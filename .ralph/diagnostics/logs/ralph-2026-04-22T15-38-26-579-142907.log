@@ -1,0 +1,38 @@
+[2m2026-04-22T13:38:26.592403Z[0m [33m WARN[0m [2mralph::loop_runner[0m[2m:[0m Interactive mode requested but stdout is not a TTY, falling back to autonomous
+[2m2026-04-22T13:38:26.592800Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Memory injection check: enabled=true, inject=Auto, workspace_root="/home/xor/vextest"
+[2m2026-04-22T13:38:26.592810Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Looking for memories at: "/home/xor/vextest/.ralph/agent/memories.md" (exists: true)
+[2m2026-04-22T13:38:26.593597Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Successfully loaded 7 memories from store
+[2m2026-04-22T13:38:26.593608Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting 7 memories (2259 chars) into prompt
+[2m2026-04-22T13:39:45.037168Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Memory injection check: enabled=true, inject=Auto, workspace_root="/home/xor/vextest"
+[2m2026-04-22T13:39:45.037198Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Looking for memories at: "/home/xor/vextest/.ralph/agent/memories.md" (exists: true)
+[2m2026-04-22T13:39:45.037332Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Successfully loaded 7 memories from store
+[2m2026-04-22T13:39:45.037355Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting 7 memories (2259 chars) into prompt
+[2m2026-04-22T13:39:45.037409Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting scratchpad (375 chars) into prompt
+[2m2026-04-22T13:41:01.133940Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Memory injection check: enabled=true, inject=Auto, workspace_root="/home/xor/vextest"
+[2m2026-04-22T13:41:01.133984Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Looking for memories at: "/home/xor/vextest/.ralph/agent/memories.md" (exists: true)
+[2m2026-04-22T13:41:01.134180Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Successfully loaded 7 memories from store
+[2m2026-04-22T13:41:01.134213Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting 7 memories (2259 chars) into prompt
+[2m2026-04-22T13:41:01.134270Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting scratchpad (811 chars) into prompt
+[2m2026-04-22T13:42:30.514165Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Memory injection check: enabled=true, inject=Auto, workspace_root="/home/xor/vextest"
+[2m2026-04-22T13:42:30.514191Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Looking for memories at: "/home/xor/vextest/.ralph/agent/memories.md" (exists: true)
+[2m2026-04-22T13:42:30.514294Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Successfully loaded 7 memories from store
+[2m2026-04-22T13:42:30.514311Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting 7 memories (2259 chars) into prompt
+[2m2026-04-22T13:42:30.514344Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting scratchpad (1360 chars) into prompt
+[2m2026-04-22T13:47:48.819627Z[0m [33m WARN[0m [2mralph::loop_runner[0m[2m:[0m Output indicated `ralph emit`, but no event became readable before fallback logic [3mhat[0m[2m=[0mralph
+[2m2026-04-22T13:47:48.819780Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Memory injection check: enabled=true, inject=Auto, workspace_root="/home/xor/vextest"
+[2m2026-04-22T13:47:48.819798Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Looking for memories at: "/home/xor/vextest/.ralph/agent/memories.md" (exists: true)
+[2m2026-04-22T13:47:48.819894Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Successfully loaded 7 memories from store
+[2m2026-04-22T13:47:48.819909Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting 7 memories (2259 chars) into prompt
+[2m2026-04-22T13:47:48.819943Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting scratchpad (1360 chars) into prompt
+[2m2026-04-22T13:50:46.347193Z[0m [32m INFO[0m [2mralph::loop_runner[0m[2m:[0m Wrote guidance events to events.jsonl [3mcount[0m[2m=[0m2
+[2m2026-04-22T13:50:46.347291Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Memory injection check: enabled=true, inject=Auto, workspace_root="/home/xor/vextest"
+[2m2026-04-22T13:50:46.347301Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Looking for memories at: "/home/xor/vextest/.ralph/agent/memories.md" (exists: true)
+[2m2026-04-22T13:50:46.347407Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Successfully loaded 7 memories from store
+[2m2026-04-22T13:50:46.347424Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting 7 memories (2259 chars) into prompt
+[2m2026-04-22T13:50:46.347454Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Injecting scratchpad (1360 chars) into prompt
+[2m2026-04-22T13:52:07.472308Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Completion event detected in JSONL [3mtopic[0m[2m=[0mLOOP_COMPLETE
+[2m2026-04-22T13:52:07.472422Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Completion event detected - terminating
+[2m2026-04-22T13:52:07.472434Z[0m [32m INFO[0m [2mralph::loop_runner[0m[2m:[0m Completion event LOOP_COMPLETE detected.
+[2m2026-04-22T13:52:07.472455Z[0m [32m INFO[0m [2mralph_core::event_loop[0m[2m:[0m Wrapping up: completed. 6 iterations in 13m 40s. [3mreason[0m[2m=[0mcompleted [3miterations[0m[2m=[0m6 [3mduration[0m[2m=[0m13m 40s
+[2m2026-04-22T13:52:07.474645Z[0m [32m INFO[0m [2mralph_core::landing[0m[2m:[0m Beginning landing sequence [3mloop_id[0m[2m=[0mprimary
+[2m2026-04-22T13:52:07.474695Z[0m [33m WARN[0m [2mralph_core::landing[0m[2m:[0m Landing with 2 open tasks [3mloop_id[0m[2m=[0mprimary [3mopen_tasks[0m[2m=[0m["task-0001", "task-1776859260-46ae"]

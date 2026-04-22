@@ -1,0 +1,42 @@
+tree_depth = 4
+
+proj_name = wresdmp
+
+wresdmp_autodepeds = .AUTODEPEND
+
+wresdmp_trmemcvr = 1
+wresdmp_trmem    = 1
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+!include wres.mif
+
+#
+# cflags
+#
+.c: ../c;$(trmem_dir);$(watcom_dir)/c
+
+inc_dirs = -I"../h" $(cli_wres_inc_dirs)
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+exetarg_objs = &
+    dmpcont.obj &
+    dmpcurgr.obj &
+    dmpdiag.obj &
+    dmpfile.obj &
+    dmpicogr.obj &
+    dmpmenu.obj &
+    dmpstr.obj &
+    fatal.obj &
+    flag.obj &
+    global.obj &
+    layer0.obj &
+    param.obj &
+    wresdmp.obj $(trmem_objs)
+!include exetarg.mif

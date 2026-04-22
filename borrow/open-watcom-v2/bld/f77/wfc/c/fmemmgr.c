@@ -1,0 +1,252 @@
+/****************************************************************************
+*
+*                            Open Watcom Project
+*
+* Copyright (c) 2002-2026 The Open Watcom Contributors. All Rights Reserved.
+*    Portions Copyright (c) 1983-2002 Sybase, Inc. All Rights Reserved.
+*
+*  ========================================================================
+*
+*    This file contains Original Code and/or Modifications of Original
+*    Code as defined in and that are subject to the Sybase Open Watcom
+*    Public License version 1.0 (the 'License'). You may not use this file
+*    except in compliance with the License. BY USING THIS FILE YOU AGREE TO
+*    ALL TERMS AND CONDITIONS OF THE LICENSE. A copy of the License is
+*    provided with the Original Code and Modifications, and is also
+*    available at www.sybase.com/developer/opensource.
+*
+*    The Original Code and all software distributed under the License are
+*    distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+*    EXPRESS OR IMPLIED, AND SYBASE AND ALL CONTRIBUTORS HEREBY DISCLAIM
+*    ALL SUCH WARRANTIES, INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF
+*    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR
+*    NON-INFRINGEMENT. Please see the License for the specific language
+*    governing rights and limitations under the License.
+*
+*  ========================================================================
+*
+* Description:  FORTRAN compiler memory manager
+*
+****************************************************************************/
+
+
+#include "ftnstd.h"
+#include "errcod.h"
+#include "stmtsw.h"
+#include "global.h"
+#include "fmemmgr.h"
+#include "ferror.h"
+#include "frl.h"
+#include "inout.h"
+#include "cle.h"
+#include "fmeminit.h"
+#include "utility.h"
+#include "memfuncs.h"
+#ifdef TRMEM
+    #include "trmem.h"
+#endif
+
+#include "clibext.h"
+#include "cspawn.h"
+
+
+#if defined( TRMEM ) && defined( _M_IX86 ) && ( __WATCOMC__ > 1290 )
+#define _XSTR(s)    # s
+#define TRMEMAPI(x) _Pragma(_XSTR(aux x __frame))
+#else
+#define TRMEMAPI(x)
+#endif
+
+#ifdef TRMEM
+
+static _trmem_hdl   TrHdl = _TRMEM_HDL_NONE;
+static FILE         *TrFile;       /* file handle we'll write() to */
+
+static void memPrintLine( void *file, const char *buf, size_t len )
+{
+    /* unused parameters */ (void)file; (void)len;
+
+    fprintf( stderr, "***%s\n", buf );
+    if( TrFile != NULL ) {
+        fprintf( TrFile, "%s\n", buf );
+    }
+}
+
+#endif  /* TRMEM */
+
+void    FMemInit( void ) {
+//========================
+
+    UnFreeMem = 0;
+#if defined( TRMEM )
+    TrFile = fopen( "mem.trk", "w" );
+    TrHdl = _trmem_open( malloc, free, _TRMEM_NO_REALLOC, strdup,
+                            NULL, memPrintLine, _TRMEM_DEF );
+    if( TrHdl == _TRMEM_HDL_NONE ) {
+        exit( EXIT_FAILURE );
+    }
+#else
+    SysMemInit();
+#endif
+}
+
+void    FMemErrors( void ) {
+//========================
+
+    ProgSw &= ~PS_ERROR; // we always want to report memory problems
+    if( UnFreeMem > 0 ) {
+        CompErr( CP_MEMORY_NOT_FREED );
+    } else if( UnFreeMem < 0 ) {
+        CompErr( CP_FREEING_UNOWNED_MEMORY );
+    }
+}
+
+
+void    FMemFini( void )
+//======================
+{
+#if defined( TRMEM )
+    if( TrHdl != _TRMEM_HDL_NONE ) {
+        _trmem_prt_list_ex( TrHdl, 100 );
+        _trmem_close( TrHdl );
+        if( TrFile != NULL ) {
+            fclose( TrFile );
+            TrFile = NULL;
+        }
+        TrHdl = _TRMEM_HDL_NONE;
+    }
+#else
+    FMemErrors();
+    SysMemFini();
+#endif
+}
+
+static void *check_nomem( void *ptr )
+{
+    if( ptr == NULL ) {
+        if( (ProgSw & PS_STMT_TOO_BIG) == 0
+          && (StmtSw & SS_SCANNING) && (ITHead != NULL) ) {
+            FreeITNodes( ITHead );
+            ITHead = NULL;
+            Error( MO_LIST_TOO_BIG );
+            ProgSw |= PS_STMT_TOO_BIG;
+        } else {
+            ProgSw |= PS_FATAL_ERROR;
+            PurgeAll(); // free up memory so we can process the error
+            Error( MO_DYNAMIC_OUT );
+            CSuicide();
+        }
+    }
+    return( ptr );
+}
+
+#if defined( TRMEM )
+static void *doAlloc( size_t size, _trmem_who who )
+#else
+static void *doAlloc( size_t size )
+#endif
+//=================================================
+{
+    void        *p;
+
+#if defined( TRMEM )
+    p = _trmem_alloc( size, who, TrHdl );
+#else
+    p = malloc( size );
+#endif
+    if( p == NULL ) {
+        FrlFini( &ITPool );
+#if defined( TRMEM )
+        p = _trmem_alloc( size, who, TrHdl );
+#else
+        p = malloc( size );
+#endif
+    }
+    return( p );
+}
+
+#if defined( TRMEM )
+static char *doStrdup( const char *str, _trmem_who who )
+#else
+static char *doStrdup( const char *str )
+#endif
+//======================================================
+{
+    void        *p;
+
+#if defined( TRMEM )
+    p = _trmem_strdup( str, who, TrHdl );
+#else
+    p = strdup( str );
+#endif
+    if( p == NULL ) {
+        FrlFini( &ITPool );
+#if defined( TRMEM )
+        p = _trmem_strdup( str, who, TrHdl );
+#else
+        p = strdup( str );
+#endif
+    }
+    return( p );
+}
+
+TRMEMAPI( MemAlloc )
+void    *MemAlloc( size_t size )
+//==============================
+{
+    void        *p;
+
+#if defined( TRMEM )
+    p = doAlloc( size, _TRMEM_WHO( 1 ) );
+#else
+    p = doAlloc( size );
+#endif
+    if( p != NULL ) {
+        UnFreeMem++;
+    }
+    return( p );
+}
+
+TRMEMAPI( MemAllocSafe )
+void    *MemAllocSafe( size_t size )
+//==================================
+{
+    void        *p;
+
+#if defined( TRMEM )
+    p = check_nomem( doAlloc( size, _TRMEM_WHO( 2 ) ) );
+#else
+    p = check_nomem( doAlloc( size ) );
+#endif
+    UnFreeMem++;
+    return( p );
+}
+
+TRMEMAPI( MemStrdupSafe )
+char    *MemStrdupSafe( const char *str )
+//=======================================
+{
+    void        *p;
+
+#if defined( TRMEM )
+    p = check_nomem( doStrdup( str, _TRMEM_WHO( 3 ) ) );
+#else
+    p = check_nomem( doStrdup( str ) );
+#endif
+    UnFreeMem++;
+    return( p );
+}
+
+TRMEMAPI( MemFree )
+void    MemFree( void *p )
+//========================
+{
+    if( p != NULL ) {
+#ifdef TRMEM
+        _trmem_free( p, _TRMEM_WHO( 4 ), TrHdl );
+#else
+        free( p );
+#endif
+        UnFreeMem--;
+    }
+}

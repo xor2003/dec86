@@ -1,0 +1,341 @@
+namespace Spice86.Core.Emulator.Devices.Video;
+
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+using Spice86.Core.Emulator.Devices.Video.Registers;
+using Spice86.Core.Emulator.Devices.Video.Registers.Graphics;
+using Spice86.Shared.Interfaces;
+
+/// <summary>
+///     A wrapper class for the video card that implements the IMemoryDevice interface.
+/// </summary>
+public class VideoMemory : IVideoMemory {
+    private readonly byte[] _latches;
+    private readonly IVideoState _state;
+    private readonly ILoggerService _logger;
+    // 0 = not changed, 1 = changed. Use int so we can use Interlocked/Volatile APIs.
+    private int _hasChanged;
+
+    /// <summary>
+    ///     Create a new instance of the video memory.
+    /// </summary>
+    /// <param name="state">The interface that represents the state of the video card.</param>
+    /// <param name="logger">The logger service implementation.</param>
+    public VideoMemory(IVideoState state, ILoggerService logger) {
+        _state = state;
+        Size = 128 * 1024; // This covers the 128kb of video memory address space from 0xA0000 to 0xBFFFF
+        VRam = new byte[4 * 64 * 1024];
+        Planes = new PlaneAccessor(VRam);
+        _latches = new byte[4];
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public uint Size { get; }
+
+    /// <inheritdoc />
+    public byte Read(uint address) {
+        if (IsOutsideCurrentlyMappedRange(address)) {
+            _logger.Debug("VGA read outside mapping! Returning 0x00 for address 0x{Address:X}", address);
+
+            return 0;
+        }
+        (byte plane, uint offset) = DecodeReadAddress(address);
+        // Load all 4 plane latches from the interleaved buffer.
+        int baseIdx = (int)offset * 4;
+        _latches[0] = VRam[baseIdx];
+        _latches[1] = VRam[baseIdx + 1];
+        _latches[2] = VRam[baseIdx + 2];
+        _latches[3] = VRam[baseIdx + 3];
+        byte result = 0;
+        switch (_state.GraphicsControllerRegisters.GraphicsModeRegister.ReadMode) {
+            case ReadMode.ReadMode0:
+                // result = (byte)(_latch >> (plane << 3));
+                result = _latches[plane];
+
+                break;
+            case ReadMode.ReadMode1: {
+                // Read mode 1 reads 8 pixels from the planes and compares each to a colorCompare register
+                // If the color matches, the corresponding bit in the result is set
+                // The colorDontCare bits indicate which bits in the colorCompare register to ignore.
+
+                // We take the inverse of the colorDontCare register and OR both the colorCompare and
+                // the extracted bits with them. This makes sure that the colorDontCare bits are always
+                // considered a match.
+                int colorDontCare = ~_state.GraphicsControllerRegisters.ColorDontCare;
+                int colorCompare = _state.GraphicsControllerRegisters.ColorCompare | colorDontCare;
+                // We loop through the 8 pixels in the latches, as well as the 8 bits in the result.
+                for (int i = 0; i < 8; i++) {
+                    // A pixel consists of 4 bits, one from each plane. We extract the bits from the
+                    // latches and OR them together to get the pixel.
+                    byte pixel = 0;
+                    for (int j = 0; j < 4; j++) {
+                        int bit = (_latches[j] >> i) & 1;
+                        pixel |= (byte)(bit << j);
+                    }
+                    // Then we compare the pixel to the colorCompare register, and set the corresponding
+                    // bit in the result if they match.
+                    if ((pixel | colorDontCare) == colorCompare) {
+                        result |= (byte)(1 << i);
+                    }
+                }
+
+                break;
+            }
+            default:
+                throw new InvalidOperationException($"Unknown readMode {_state.GraphicsControllerRegisters.GraphicsModeRegister.ReadMode}");
+        }
+
+        return result;
+    }
+
+    private bool IsOutsideCurrentlyMappedRange(uint address) {
+        return address >= _state.GraphicsControllerRegisters.MiscellaneousGraphicsRegister.BaseAddress +
+            _state.GraphicsControllerRegisters.MiscellaneousGraphicsRegister.MemorySize ||
+            address < _state.GraphicsControllerRegisters.MiscellaneousGraphicsRegister.BaseAddress;
+    }
+
+    /// <inheritdoc />
+    public void Write(uint address, byte value) {
+        if (IsOutsideCurrentlyMappedRange(address)) {
+            // TODO: this is most likely writing to a secondary monochrome monitor we have not implemented yet.
+            if (value != 0x00) { // don't log initial memory clearing
+                _logger.Debug("VGA write outside mapping! Wrote 0x{Value:X2} '{C}' to 0x{Address:X}", value, (char)value, address);
+            }
+
+            return;
+        }
+        (byte planes, uint offset) = DecodeWriteAddress(address);
+        Span<bool> writePlaneBuffer = stackalloc bool[4];
+        for (int plane = 0; plane < 4; plane++) {
+            writePlaneBuffer[plane] = (planes & (1 << plane)) != 0;
+        }
+        ReadOnlySpan<bool> writePlane = writePlaneBuffer;
+        Register8 planeEnable = _state.SequencerRegisters.PlaneMaskRegister;
+        Register8 setReset = _state.GraphicsControllerRegisters.SetReset;
+        Register8 setResetEnable = _state.GraphicsControllerRegisters.EnableSetReset;
+        switch (_state.GraphicsControllerRegisters.GraphicsModeRegister.WriteMode) {
+            case WriteMode.WriteMode0:
+                HandleWriteMode0(value, planeEnable, writePlane, setResetEnable, setReset, offset);
+
+                break;
+            case WriteMode.WriteMode1:
+                HandleWriteMode1(planeEnable, writePlane, offset);
+
+                break;
+            case WriteMode.WriteMode2:
+                HandleWriteMode2(value, planeEnable, writePlane, offset);
+
+                break;
+            case WriteMode.WriteMode3:
+                HandleWriteMode3(value, planeEnable, writePlane, setReset, offset);
+
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown writeMode {_state.GraphicsControllerRegisters.GraphicsModeRegister.WriteMode}");
+        }
+    }
+
+    /// <inheritdoc />
+    public IList<byte> GetSlice(int address, int length) {
+        throw new NotSupportedException();
+    }
+
+    /// <inheritdoc />
+    public byte[] VRam { get; }
+
+    /// <inheritdoc />
+    public PlaneAccessor Planes { get; }
+
+    /// <inheritdoc />
+    public ReadOnlySpan<byte> GetLinearSpan(int linearByteOffset, int length) {
+        return VRam.AsSpan(linearByteOffset, length);
+    }
+
+    /// <summary>
+    ///     Whether any plane byte has been modified since the last call to <see cref="ResetChanged"/>.
+    /// </summary>
+    public bool HasChanged => Volatile.Read(ref _hasChanged) != 0;
+
+    /// <summary>
+    ///     Resets the <see cref="HasChanged"/> flag to <c>false</c>.
+    /// </summary>
+    public void ResetChanged() => System.Threading.Interlocked.Exchange(ref _hasChanged, 0);
+
+    private void HandleWriteMode3(byte value, Register8 planeEnable, ReadOnlySpan<bool> writePlane, Register8 setReset, uint offset) {
+        value.Ror(_state.GraphicsControllerRegisters.DataRotateRegister.RotateCount);
+        byte bitMask = (byte)(value & _state.GraphicsControllerRegisters.BitMask);
+        for (int plane = 0; plane < 4; plane++) {
+            if (!planeEnable[plane] || !writePlane[plane]) {
+                continue;
+            }
+            // Apply set/reset logic.
+            byte tempValue = (byte)(setReset[plane] ? 0xFF : 0x00);
+
+            // Apply bitmask. (0 = use latch, 1 = use value)
+            tempValue &= bitMask;
+            tempValue |= (byte)(_latches[plane] & ~bitMask);
+            // write the data
+            WriteValue(plane, offset, tempValue);
+        }
+    }
+
+    private void HandleWriteMode2(byte value, Register8 planeEnable, ReadOnlySpan<bool> writePlane, uint offset) {
+        Span<bool> unpackedBuffer = stackalloc bool[4];
+        for (int plane = 0; plane < 4; plane++) {
+            unpackedBuffer[plane] = (value & (1 << plane)) != 0;
+        }
+        ReadOnlySpan<bool> unpacked = unpackedBuffer;
+        for (int plane = 0; plane < 4; plane++) {
+            // Skip if plane is disabled or we're not writing to it.
+            if (!planeEnable[plane] || !writePlane[plane]) {
+                continue;
+            }
+            // Apply set/reset logic.
+            byte tempValue = (byte)(unpacked[plane] ? 0xFF : 0x00);
+            tempValue = ApplyAluFunction(tempValue, plane);
+            // Apply bitmask. (0 = use latch, 1 = use value)
+            tempValue &= _state.GraphicsControllerRegisters.BitMask;
+            tempValue |= (byte)(_latches[plane] & ~_state.GraphicsControllerRegisters.BitMask);
+            // write the data
+            WriteValue(plane, offset, tempValue);
+        }
+    }
+
+    private void HandleWriteMode1(Register8 planeEnable, ReadOnlySpan<bool> writePlane, uint offset) {
+        // Foreach plane
+        for (int plane = 0; plane < 4; plane++) {
+            if (planeEnable[plane] && writePlane[plane]) {
+                byte tempValue = _latches[plane];
+                WriteValue(plane, offset, tempValue);
+            }
+        }
+    }
+
+    private void HandleWriteMode0(byte value, Register8 planeEnable, ReadOnlySpan<bool> writePlane, Register8 setResetEnable,
+        Register8 setReset, uint offset) {
+        if (_state.GraphicsControllerRegisters.DataRotateRegister.RotateCount != 0) {
+            value.Ror(_state.GraphicsControllerRegisters.DataRotateRegister.RotateCount);
+        }
+        // Foreach plane
+        for (int plane = 0; plane < 4; plane++) {
+            // Skip if plane is disabled or we're not writing to it.
+            if (!planeEnable[plane] || !writePlane[plane]) {
+                continue;
+            }
+            byte tempValue = value;
+
+            // Apply set/reset logic.
+            if (setResetEnable[plane]) {
+                tempValue = (byte)(setReset[plane] ? 0xFF : 0x00);
+            }
+            tempValue = ApplyAluFunction(tempValue, plane);
+            // Apply bitmask. (0 = use latch, 1 = use value)
+            tempValue &= _state.GraphicsControllerRegisters.BitMask;
+            tempValue |= (byte)(_latches[plane] & ~_state.GraphicsControllerRegisters.BitMask);
+            // write the data
+            WriteValue(plane, offset, tempValue);
+        }
+    }
+
+    private byte ApplyAluFunction(byte tempValue, int plane) {
+        // Apply ALU function
+        switch (_state.GraphicsControllerRegisters.DataRotateRegister.FunctionSelect) {
+            case FunctionSelect.None:
+                break;
+            case FunctionSelect.And:
+                tempValue &= _latches[plane];
+
+                break;
+            case FunctionSelect.Or:
+                tempValue |= _latches[plane];
+
+                break;
+            case FunctionSelect.Xor:
+                tempValue ^= _latches[plane];
+
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown functionSelect {_state.GraphicsControllerRegisters.DataRotateRegister.FunctionSelect}");
+        }
+
+        return tempValue;
+    }
+
+    private void WriteValue(int plane, uint offset, byte value) {
+        int idx = (int)offset * 4 + plane;
+        if (VRam[idx] != value) {
+            VRam[idx] = value;
+            // Publish the change after the VRAM write so readers observing the flag
+            // will also see the updated VRAM contents. Volatile.Write provides release semantics.
+            Volatile.Write(ref _hasChanged, 1);
+        }
+    }
+
+    private (byte plane, uint offset) DecodeReadAddress(uint address) {
+        byte plane;
+        uint offset = address - _state.GraphicsControllerRegisters.MiscellaneousGraphicsRegister.BaseAddress;
+        // read chain 4 memory
+        if (_state.SequencerRegisters.MemoryModeRegister.Chain4Mode) {
+            plane = (byte)(offset & 3);
+            offset &= ~3u;
+        }
+        // read odd/even memory
+        else if (_state.SequencerRegisters.MemoryModeRegister.OddEvenMode) {
+            plane = (byte)(offset & 1);
+            if (_state.GraphicsControllerRegisters.MiscellaneousGraphicsRegister.ChainOddMapsToEven) {
+                int highOrderBitShift = _state.SequencerRegisters.MemoryModeRegister.ExtendedMemory ? 16 : 14;
+                uint mask = (1u << highOrderBitShift) - 2u;
+                uint highOrderBit = offset >> highOrderBitShift & 1u;
+                offset &= mask + highOrderBit;
+            } else if (_state.GeneralRegisters.MiscellaneousOutput.EvenPageSelect) {
+                offset &= 0xFFFE;
+            } else {
+                offset |= 1;
+            }
+        }
+        // read planar memory
+        else {
+            plane = _state.GraphicsControllerRegisters.ReadMapSelectRegister.PlaneSelect;
+        }
+
+        return (plane, offset);
+    }
+
+    private (byte planes, uint offset) DecodeWriteAddress(uint address) {
+        byte planes;
+        uint offset = address - _state.GraphicsControllerRegisters.MiscellaneousGraphicsRegister.BaseAddress;
+        // chain 4 memory
+        if (_state.SequencerRegisters.MemoryModeRegister.Chain4Mode) {
+            // write to which plane?
+            planes = (byte)(1 << (int)(offset & 3));
+            offset &= ~3u;
+        }
+        // odd/even memory
+        else if (_state.SequencerRegisters.MemoryModeRegister.OddEvenMode) {
+            // Select odd or even planes
+            planes = (byte)((offset & 1) == 0 ? 0b0101 : 0b1010);
+            if (_state.GraphicsControllerRegisters.MiscellaneousGraphicsRegister.ChainOddMapsToEven) {
+                int highOrderBitShift = _state.SequencerRegisters.MemoryModeRegister.ExtendedMemory ? 16 : 14;
+                uint mask = (1u << highOrderBitShift) - 2u;
+                uint highOrderBit = offset >> highOrderBitShift & 1u;
+                offset &= mask + highOrderBit;
+            } else if (_state.GeneralRegisters.MiscellaneousOutput.EvenPageSelect) {
+                offset &= 0xFFFE;
+            } else {
+                offset |= 1;
+            }
+        }
+        // planar memory
+        else {
+            // write to all planes
+            planes = 0b1111;
+        }
+
+        return (planes, offset);
+    }
+}

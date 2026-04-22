@@ -1,0 +1,4 @@
+/home/xor/vextest/signature_catalogs/global.pat|4538426|1776191251418007598
+/home/xor/vextest/signature_catalogs/imported_patterns.pat|14318709|1776197082031273352
+/home/xor/vextest/signature_catalogs/microsoft_c_compilers.pat|4509851|1775414046619420962
+/home/xor/vextest/signature_catalogs/microsoft_c_reimported.pat|14004838|1776214037364178324

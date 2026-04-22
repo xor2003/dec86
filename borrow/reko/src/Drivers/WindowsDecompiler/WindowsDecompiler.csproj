@@ -1,0 +1,38 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$(ProjectDir)..\Common.items" />
+  <PropertyGroup>
+    <!-- dotnet restore goes into this project; doesn't seem to be a way to stop it. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- <RuntimeIdentifiers>win7-x86;win7-x64;unix</RuntimeIdentifiers> -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <RootNamespace>Reko.WindowsDecompiler</RootNamespace>
+    <AssemblyName>WindowsDecompiler</AssemblyName>
+    <ApplicationIcon>App.ico</ApplicationIcon>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <StartupObject>Reko.WindowsDecompiler.Driver</StartupObject>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <Configurations>Debug;Release</Configurations>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(SolutionDir)Gui\Gui.csproj" />
+    <ProjectReference Include="$(SolutionDir)UserInterfaces\WindowsForms\WindowsForms.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Motorola.Design\Motorola.Design.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\MicrochipPIC.Design\MicrochipPIC.Design.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\PowerPC.Design\PowerPC.Design.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\X86.Design\X86.Design.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\AmigaOS.Design\AmigaOS.Design.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Msdos.Design\Msdos.Design.csproj" />
+
+    <Architectures Include="$(SolutionDir)Arch\Motorola.Design\bin\$(Configuration)\Reko.Arch.Motorola.Design.*" />
+    <Architectures Include="$(SolutionDir)Arch\Microchip.Design\bin\$(Configuration)\Reko.Arch.MicrochipPIC.Design.*" />
+    <Architectures Include="$(SolutionDir)Arch\PowerPC.Design\bin\$(StandardOutputDir)\Reko.Arch.PowerPC.Design.*" />
+    <Architectures Include="$(SolutionDir)Arch\X86.Design\bin\$(Configuration)\Reko.Arch.X86.Design.*" />
+    <Environments Include="$(SolutionDir)Environments\AmigaOS.Design\bin\$(Configuration)\Reko.Environments.AmigaOS.Design.*" />
+    <Environments Include="$(SolutionDir)Environments\Msdos.Design\bin\$(Configuration)\Reko.Environments.Msdos.Design.*" />
+  </ItemGroup>
+
+  <Import Project="$(ProjectDir)..\PreBuild.targets" />
+</Project>

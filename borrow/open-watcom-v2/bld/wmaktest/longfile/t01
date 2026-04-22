@@ -1,0 +1,13 @@
+# ----------------------------------------------------
+# Test 01:
+# ----------------------------------------------------
+
+#!include <"hello tmp.xyz">
+#!include <hello tmp.xyz>
+#!include "hello tmp.xyz"
+#!include hello tmp.xyz
+
+"hello tmp.xyz": hello.h
+      echo hello
+      @echo cat "hello tmp.xyz"
+      @cat "hello tmp.xyz"

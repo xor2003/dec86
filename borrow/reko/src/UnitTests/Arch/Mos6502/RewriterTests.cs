@@ -1,0 +1,200 @@
+#region License
+/* 
+ * Copyright (C) 1999-2026 John Källén.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; see the file COPYING.  If not, write to
+ * the Free Software Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+#endregion
+
+using Reko.Arch.Mos6502;
+using Reko.Core.Machine;
+using Reko.Core.Rtl;
+using Reko.Core;
+using NUnit.Framework;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.ComponentModel.Design;
+using Reko.Core.Memory;
+
+namespace Reko.UnitTests.Arch.Mos6502
+{
+    [TestFixture]
+    public class RewriterTests : RewriterTestBase
+    {
+        private readonly Mos6502Architecture arch = new Mos6502Architecture(CreateServiceContainer(), "mos6502", new Dictionary<string, object>());
+        private readonly Address addrBase = Address.Ptr16(0x0200);
+
+        public override IProcessorArchitecture Architecture => arch;
+        public override Address LoadAddress => addrBase;
+
+        [Test]
+        public void Rw6502_tax()
+        {
+            Given_Bytes(0xAA);
+            AssertCode(
+                "0|L--|0200(1): 2 instructions",
+                "1|L--|x = a",
+                "2|L--|NZ = cond(x)");
+        }
+
+        [Test]
+        public void Rw6502_sbc()
+        {
+            Given_Bytes(0xF1, 0xE0);
+            AssertCode(
+                "0|L--|0200(2): 2 instructions",
+                "1|L--|a = a - Mem0[Mem0[0x00E0<p16>:ptr16] + CONVERT(y, byte, uint16):byte] - !C",   //$LIT
+                "2|L--|NVZC = cond(a)");
+        }
+
+        [Test]
+        public void Rw6502_dec_A()
+        {
+            Given_Bytes(0xCE, 0x34, 0x12);
+            AssertCode(
+                "0|L--|0200(3): 3 instructions",
+                "1|L--|v3 = Mem0[0x1234<p16>:byte] - 1<8>",
+                "2|L--|Mem0[0x1234<p16>:byte] = v3",
+                "3|L--|NZ = cond(v3)");
+        }
+
+        [Test]
+        public void Rw6502_rts()
+        {
+            Given_Bytes(0x60);
+            AssertCode(
+                "0|R--|0200(1): 1 instructions",
+                "1|R--|return (2,0)");
+        }
+
+        [Test]
+        public void Rw6502_pha()
+        {
+            Given_Bytes(0x48);
+            AssertCode(
+                "0|L--|0200(1): 2 instructions",
+                "1|L--|s = s - 1<i8>",
+                "2|L--|Mem0[s:byte] = a");
+        }
+
+        [Test]
+        public void Rw6502_pla()
+        {
+            Given_Bytes(0x68);
+            AssertCode(
+                "0|L--|0200(1): 3 instructions",
+                "1|L--|a = Mem0[s:byte]",
+                "2|L--|s = s + 1<i8>",
+                "3|L--|NZ = cond(a)");
+        }
+        [Test]
+        public void Rw6502_asl_zx()
+        {
+            Given_Bytes(0x16, 0x64);
+            AssertCode(
+                "0|L--|0200(2): 3 instructions",
+                "1|L--|v4 = Mem0[0x0064<p16> + x:byte] << 1<8>",
+                "2|L--|Mem0[0x0064<p16> + x:byte] = v4",
+                "3|L--|NZC = cond(v4)");
+        }
+
+        [Test]
+        public void Rw6502_beq()
+        {
+            Given_Bytes(0xF0, 0x64);
+            AssertCode(
+                "0|T--|0200(2): 1 instructions",
+                "1|T--|if (Test(EQ,Z)) branch 0266");
+        }
+
+        [Test]
+        public void Rw6502_cmp_iX()
+        {
+            Given_Bytes(0xC1, 0x38);
+            AssertCode(
+                "0|L--|0200(2): 1 instructions",
+                "1|L--|NZC = cond(a - Mem0[Mem0[0x0038<p16> + CONVERT(x, byte, uint16):ptr16]:byte])");
+        }
+
+        [Test]
+        public void Rw6502_ldy_x()
+        {
+            Given_Bytes(0xBC, 0x34, 0x12);
+            AssertCode(
+                "0|L--|0200(3): 2 instructions",
+                "1|L--|y = Mem0[0x1234<p16> + x:byte]",
+                "2|L--|NZ = cond(y)");
+        }
+
+        [Test]
+        public void Rw6502_asl()
+        {
+            Given_Bytes(0x0A);
+            AssertCode(
+                "0|L--|0200(1): 3 instructions",
+                "1|L--|v4 = a << 1<8>",
+                "2|L--|a = v4",
+                "3|L--|NZC = cond(v4)");
+        }
+
+        [Test]
+        public void Rw6502_jsr()
+        {
+            Given_Bytes(0x20, 0x13, 0xEA);
+            AssertCode(
+                "0|T--|0200(3): 1 instructions",
+                "1|T--|call EA13 (2)");
+        }
+
+        [Test]
+        public void Rw6502_sta()
+        {
+            Given_Bytes(0x85, 0xD0);
+            AssertCode(
+                "0|L--|0200(2): 1 instructions",
+                "1|L--|Mem0[0x00D0<p16>:byte] = a");
+        }
+
+        [Test]
+        public void Rw6502_jmp_indirect()
+        {
+            Given_Bytes(0x6C, 0x34, 0x12);
+            AssertCode(
+                "0|T--|0200(3): 1 instructions",
+                "1|T--|goto Mem0[0x1234<p16>:word16]");
+        }
+
+        [Test]
+        public void Rw6502_plp()
+        {
+            Given_Bytes(0x28);	// plp
+            AssertCode(
+                "0|L--|0200(1): 2 instructions",
+                "1|L--|NVIDZC = Mem0[s:byte]",
+                "2|L--|s = s + 1<i8>");
+        }
+
+        [Test]
+        public void Rw6502_sta_y()
+        {
+            Given_Bytes(0x99, 0xF8, 0x00); // sta $00F8,y
+            AssertCode(
+                "0|L--|0200(3): 1 instructions",
+                "1|L--|Mem0[0x00F8<p16> + y:byte] = a");
+        }
+    }
+}

@@ -1,0 +1,38 @@
+tree_depth = 4
+
+proj_name = rcstest
+
+rcstest_autodepends = .AUTODEPEND
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+!include $(rcsdll_dir)/client.mif
+
+#
+# cflags
+#
+.c : ..
+
+inc_dirs = -I.. $(cli_rcsdll_inc_dirs)
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+exetarg_objs = rcstest.obj
+exetarg_libs = $(cli_rcsdll_libs)
+exetarg_res = $(proj_name).res
+!include exetarg.mif
+
+#
+# rc and others
+#
+rc_inc_dirs = -I..
+
+$(proj_name).res: ../rcstest.rc $(__MAKEFILES__) .AUTODEPEND
+    @%make echo_rc
+    $(rcj) $(ppflags_common) $(rc_cppflags) -ad $(rc_flags) $(rc_inc_path) $[@ -fo=$@

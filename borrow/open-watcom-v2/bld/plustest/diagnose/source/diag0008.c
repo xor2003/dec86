@@ -1,0 +1,15 @@
+/*
+  impossible enum
+*/
+
+enum a {
+    A1 = -0x7FFFFFFFFFFFFFFF,
+    A2 = 0xFFFFFFFFFFFFFFFF,
+    A3 = -0x7FFFFFFFFFFFFFFF
+} A;
+
+enum b {
+    B1 = 0xFFFFFFFFFFFFFFFF,
+    B2 = -0x7FFFFFFFFFFFFFFF,
+    B3 = 0xFFFFFFFFFFFFFFFF
+} B;

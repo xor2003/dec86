@@ -1,0 +1,363 @@
+﻿typedef struct _iob FILE;
+typedef struct _io_iob _IO_FILE;
+typedef void (*sighandler_t)(int);
+typedef __int64 off64_t;
+typedef int wint_t;
+typedef int int32_t;
+typedef int mode_t;
+typedef unsigned int uint32_t;
+
+typedef struct in_addr {
+    uint32_t       s_addr;
+} in_addr_t;
+
+struct timespec
+{
+	long	tv_sec;
+	long	tv_nsec;
+};
+typedef int clockid_t;
+typedef long time_t;
+typedef void * va_list;	
+typedef int mode_t;
+typedef int uid_t;
+typedef int gid_t;
+struct passwd {
+    char   *pw_name;
+    char   *pw_passwd;
+    uid_t   pw_uid;   
+    gid_t   pw_gid;   
+    char   *pw_gecos; 
+    char   *pw_dir;   
+    char   *pw_shell; 
+};
+struct stat
+{
+};
+typedef int pid_t;
+typedef int socklen_t;
+typedef int acl_entry_t;
+typedef void * DIR;
+typedef int acl_t;
+typedef int acl_tag_t;
+typedef void * mbstate_t;			// incorrect?
+typedef int nl_item;
+typedef struct _DIR DIR;
+struct sigaction
+{
+};
+typedef struct sigset_t sigset_t;
+typedef struct jmp_buf {
+    size_t reg0;    // This needs to be supported for N archs. Oh myy.
+} *jmp_buf;
+typedef struct _acl * acl_t;
+typedef unsigned int acl_tag_t;
+struct acl_entry 
+{
+	acl_tag_t		ae_tag;
+};
+typedef struct acl_entry acl_entry_t;
+typedef int acl_permset_t;
+
+typedef char *security_context_t;
+
+struct addrinfo
+{
+    int              ai_flags;
+    int              ai_family;
+    int              ai_socktype;
+    int              ai_protocol;
+    socklen_t        ai_addrlen;
+    struct sockaddr *ai_addr;
+    char            *ai_canonname;
+    struct addrinfo *ai_next;
+};
+
+
+
+
+
+
+void __assert_fail(const char * assertion, const char * file, unsigned int line, const char * function);
+const unsigned short * * __ctype_b_loc (void);
+size_t __ctype_get_mb_cur_max(void);
+int32_t * * __ctype_tolower_loc(void);
+int32_t * * __ctype_toupper_loc(void);
+int __cxa_atexit(void (*func) (void *), void * arg, void * dso_handle);
+void __cxa_finalize(void * d);
+int __isoc99_scanf(char * format, ...);
+int __libc_start_main(int (*main) (int, char **, char **), int argc, char ** ubp_av, void (*init) (void), void (*fini) (void), void (*rtld_fini) (void), void (* stack_end));
+int __printf_chk(int flag, const char * format, ...);
+int __fprintf_chk(FILE *, int flag, const char * format, ...);
+int __fxstat (int vers, int fd, struct stat *buf);
+void _exit(int status);
+int _setjmp(jmp_buf env); 
+int __sprintf_chk(char * str, int flag, size_t strlen, const char * format, ...);
+int __snprintf_chk(char * str, size_t maxlen, int flag, size_t strlen, const char * format, ...);
+int __asprintf_chk (char **result_ptr, int flags, const char *format, ...);
+int * __errno_location();
+void __assert_fail(const char * assertion, const char * file, unsigned int line, const char * function);
+void * __deregister_frame_info(void *);
+size_t __fpending(FILE *stream);
+int __freading(FILE *stream);
+void __gmon_start();
+int __lxstat(int version, char * __path, struct stat * __statbuf);
+void * memchr(const void *s, int c, size_t n);
+void * __memcpy_chk(void * dest, const void * src, size_t len, size_t destlen);
+void * __mempcpy_chk(void * dest, const void * src, size_t len, size_t destlen);
+void * memrchr(const void *s, int c, size_t n);
+int __overflow(FILE *, int c);
+void * __rawmemchr(const void * s, int c);
+void __register_frame_info(const void *begin, void * ob);
+void __stack_chk_fail(void);
+unsigned long int __strtoul_internal(const char * __nptr, char * * __endptr, int __base, int __group);
+int __uflow(FILE *f);
+int __vfprintf_chk(FILE * fp, int flag, const char * format, va_list ap);
+void _exit(int );
+int _IO_getc(FILE * fp);
+int _IO_getc(FILE * fp);
+int _IO_putc(int __c, _IO_FILE * __fp);
+int _obstack_begin(struct obstack *, int, int, void *(*) (long), void (*) (void *));
+void _obstack_newchunk(struct obstack *, int);
+
+int asprintf(char **strp, const char *fmt, ...); 
+int atoi(const char *);
+long atol(const char *);
+void bzero(void *s, size_t n);
+void * calloc(size_t num, size_t size);
+int fclose(FILE * fp);
+FILE* fdopen(int fd, char * mode);
+int feof(FILE * fp);
+int ferror(FILE *);
+int fflush(FILE * fp);
+int fflush_unlocked(FILE *stream);
+int fgetc(FILE *);
+char * fgets(char *, int, FILE *);
+wchar_t *fgetws(wchar_t * ws, int n, FILE *restrict stream);
+int fileno(FILE*);
+int fnmatch(const char *pattern, const char *string, int flags);
+FILE * fopen(const char * file, const char * mode);
+FILE * fopen64(char * filename, char * mode);
+pid_t fork();
+int fprintf(FILE * fp, char * format,...);
+int fputc(int char, FILE * stream);
+int fputs(const char * s, FILE * stream);
+int fputs_unlocked(const char *s, FILE *stream);
+int fputws(const wchar_t *restrict ws, FILE *restrict stream);
+size_t fread ( void * ptr, size_t size, size_t count, FILE * stream );
+void free(void * p);
+void freecon(security_context_t con); 
+FILE * freopen(const char * filename, const char * mode, FILE * stream);
+int fscanf(FILE * stream, const char * format, ... );
+int fseek(FILE * stream, long int offset, int origin);
+int fseeko(FILE *stream, off_t offset, int whence);
+long ftell(FILE * stream);
+size_t fwrite (void * ptr, size_t size, size_t count, FILE * stream );
+size_t fwrite_unlocked(const void *ptr, size_t size, size_t n, FILE *stream);
+int getc(FILE *);
+char * getenv(char *);
+void * malloc(size_t size);
+size_t mbrtowc(wchar_t* pwc, const char* s, size_t n, mbstate_t* ps );
+size_t mbstowcs(wchar_t *dest, const char *src, size_t n);
+int mbtowc (wchar_t* pwc, const char* pmb, size_t max);
+int memcmp(void *, void *, size_t);
+void * memmove(void *, void *src, size_t cb);
+void * memcpy(void *, void *, size_t);
+void * memset(void *, int value, size_t num);
+int memcmp(void *, void *, size_t);
+void *mempcpy(void *dest, const void *src, size_t n);
+int posix_memalign(void **memptr, size_t alignment, size_t size);
+int printf(char * format, ...);
+int putc(int c, FILE * stream);
+int putchar(int c);
+int puts(const char * s);
+int rand(void);
+void * realloc(void *, size_t);
+int scanf(char * format, ...);
+int setvbuf(FILE * fp, char * buf, int mode, size_t size);
+int snprintf ( char * s, size_t n, const char * format, ... );
+int sprintf(char * buffer, char * format, ...);
+double sqrt(double);
+float sqrtf(float);
+void srand(unsigned);
+char *stpcpy(char *dest, const char *src);
+char *stpncpy(char *dest, const char *src, size_t n);
+int strcasecmp(char *, char *);
+char * strcat(char *, char *);
+char * strchr(char *, char);
+int strcmp(char *,char *);
+int strcoll ( const char * str1, const char * str2 );
+char * strcpy(char * dst, char * src);
+size_t strcspn ( const char * str1, const char * str2 );
+char * strdup(const char *);
+char * __strdup(const char *);
+char *strndup( const char *str, size_t size );
+size_t strlen(char *);
+int strncasecmp(char *, char *, int n);
+char * strncat(char * destination, const char * source, size_t num );
+int strncmp(char * dst, char * src, int n);
+int strncpy(char *, char *, int n);
+char * strpbrk(char *, char *);
+char * strrchr(char *, char);
+char * strsep(char ** restrict stringp, const char *restrict delim);
+size_t strspn( const char * str1, const char * str2 );
+char * strstr(char *, char *);
+char * strtok(char * str, const char * delimiters);
+double strtod(const char * str, char ** endptr);
+float strtof(const char * str, char ** endptr);
+int strtol(char * s);
+unsigned long int strtoul(const char *nptr, char **endptr, int base);
+int tgetent(char * bp, const char * name);
+int tgetflag(const char * id);
+int tgetnum(const char * id);
+char * tgetstr(const char * id, char ** sbuf);
+char * tgoto(const char * cap, int col, int row);
+int tputs(const char * str, int affcnt, int (* putc)(int));
+int ungetc(int c, FILE *stream);
+int vfprintf ( FILE * stream, const char * format, va_list arg );
+int vsnprintf(char * restrict s, size_t n, const char * restrict format, va_list ap);
+size_t wcslen(const wchar_t * dest);
+size_t wcstombs(char *dest, const wchar_t *src, size_t n);
+int wcswidth(const wchar_t *s, size_t n);
+int wcwidth(wchar_t c);
+int __xstat(int ver, const char * path, struct stat * stat_buf);
+
+
+int clock_gettime(clockid_t, struct timespec *);
+long sysconf(int name);
+char * strerror ( int errnum );
+void error(int status, int errnum, const char *format, ...);
+void atexit(void(*func)(void));
+int iswcntrl(wint_t ch);
+int iswprint( wint_t ch );
+struct lconv* localeconv (void);
+int mbsinit(const mbstate_t *ps);
+time_t mktime(struct tm *tm);
+char *nl_langinfo(nl_item item);
+void perror(const char *msg);
+int raise(int sig);
+char *setlocale(int category, const char *locale);
+size_t strftime(char *s, size_t max, const char *format, const struct tm *tm);
+char * textdomain (const char * domainname);
+
+
+void abort();
+int accept(int socket, struct sockaddr * address, socklen_t * address_len);
+int access(const char *pathname, int mode);
+int acl_extended_file(const char *path_p);
+int acl_free(void *obj_p);
+
+int acl_get_entry(acl_t acl, int entry_id, struct acl_entry_t *entry_p);
+int acl_get_permset(acl_entry_t entry_d, acl_permset_t *permset_p);
+int acl_get_tag_type(acl_entry_t entry_d, acl_tag_t *tag_type_p);
+
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+char * bindtextdomain (const char * domainname, const char * dirname);
+int chmod(const char *pathname, mode_t mode);
+int close(int);
+
+int closedir(DIR *dirp);
+int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+int creat(const char *pathname, mode_t mode);
+char * dcgettext(char *, char *, int);
+int dirfd(DIR *dirp);
+void *dlopen(const char *filename, int flag);
+char *dlerror(void);
+void *dlsym(void *handle, const char *symbol);
+int dlclose(void *handle);
+int dup(int oldfd);
+[[noreturn]] void err(int eval, const char *fmt, ...);
+[[noreturn]] void errx(int eval, const char *fmt, ...);
+int execv(const char *path, char *const argv[]);
+int execvp(const char *file, char *const argv[]);
+void exit(int);
+int fcntl(int fd, int cmd);
+
+void freeaddrinfo(struct addrinfo *res);
+int fstat(int fd, struct stat * buf);
+int ftruncate(int fd, off_t length);
+int fgetfilecon(int fd, security_context_t *con); 
+int getfilecon(const char *path, security_context_t *con);
+struct group *getgrgid(gid_t gid);
+struct group *getgrnam(const char *name);
+int getpagesize(void);
+struct passwd *getpwnam(const char *name);
+char *getcwd(char *buf, size_t size);
+gid_t getgid();
+int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res);
+int gethostname(char *name, size_t size);
+int getnameinfo(const struct sockaddr *addr, socklen_t addrlen, char *host, socklen_t hostlen, char *serv, socklen_t servlen, int flags);
+int getopt(int argc, char * const argv[],  char *optstring);
+int getopt_long(int argc, char * const argv[], const char *optstring, const struct option *longopts, int *longindex);
+pid_t getpid();
+struct passwd *getpwuid(uid_t uid);
+int gettimeofday(struct timeval *tv, struct timezone *tz);
+uid_t getuid(void);
+uid_t geteuid(void);
+void herror(const char *string);
+in_addr_t inet_addr(const char *cp);
+const char *inet_ntop(int af, const void *src, char *dst, socklen_t size);
+int inet_pton(int af, const char *src, void *dst);
+char *inet_ntoa(struct in_addr in);
+int ioctl(int fd, unsigned long request, ...);
+int isatty(int fd);
+int kill(pid_t pid, int sig);
+int lgetfilecon(const char *path, security_context_t *con);
+int link(const char *oldpath, const char *newpath);
+ssize_t listxattr(const char *path, char * list, size_t size);
+off_t lseek(int fd, off_t offset, int whence);
+struct tm  * localtime(time_t t);
+void longjmp(jmp_buf env, int val);
+char *mktemp(char *template);
+int mkdir(char *path,int);
+int mlock(const void *addr, size_t len);
+int mlock2(const void *addr, size_t len, int flags);
+int mlockall(int flags);
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+void *mmap2(void *addr, size_t length, int prot, int flags, int fd, off_t pgoffset);
+void *mmap64(void *addr, size_t len, int prot, int flags, int fildes, off64_t off);
+int mprotect(void *addr, size_t len, int prot);
+int munlock(const void *addr, size_t len);
+int munlockall(void);
+int munmap(void *addr, size_t length);
+int open(char * filename, int oflag);
+int open64(char * filename, int oflag);
+DIR *opendir(const char *name);
+void openlog(const char *ident, int logopt, int facility);
+int pipe(int pipefd[2]);
+ssize_t read(int fd, void * buf, size_t count);
+struct dirent *readdir(DIR *dirp);
+ssize_t readlink(const char *path, char *buf, size_t bufsiz);
+int recv(int sockfd, void*buf, size_t size, int flags);
+int rename(const char *oldpath, const char *newpath);
+ssize_t send(int sockfd, const void * buf, size_t size, int flags);
+int setenv(const char *name, const char *value, int overwrite);
+int setjmp(jmp_buf env);
+int _setjmp(jmp_buf env); 
+int sigaction(int signum, const struct sigaction *act, struct sigaction *oldact);
+int sigaddset(sigset_t *set, int signum);
+int sigemptyset(sigset_t *set); 
+int sigismember(const sigset_t *set, int signum); 
+sighandler_t signal(int signal, sighandler_t handler);
+int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
+unsigned int sleep(unsigned int seconds);
+int socket(int dom, int type, int proto);
+int sscanf(const char * str, char * format, ...);
+int stat(const char *path, struct stat *buf);
+void strmode(mode_t mode, char *bp); 
+void syslog(int priority, const char *format, ...);
+int syslog_r(int priority, struct syslog_data * sysLogData, const char * Format, ...);
+int system(const char *cmd);
+pid_t tcgetpgrp(int fd);
+int tcsetattr(int fd, int optional_actions, struct termios *termios_p);
+int tcsetpgrp(int fd, pid_t pgrp);
+time_t time (time_t *result);
+int unlink(char * path);
+int utime(const char *filename,  struct utimbuf *times);
+pid_t vfork();
+pid_t wait(int * wstatus);
+ssize_t write(int fd, const void* buf, size_t count);
+void warn(const char *fmt, ...);
+void warnx(const char *fmt, ...);
+
+int __isoc99_sscanf (const char *s, const char *format, ...);

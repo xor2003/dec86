@@ -1,0 +1,44 @@
+tree_depth = 4
+
+!ifndef clib_ctags
+proj_name = ctags
+ctags_autodepends = .AUTODEPEND
+!else
+proj_name = clibtags
+clibtags_autodepends = .AUTODEPEND
+!endif
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+!include ../../mif/vihost.mif
+
+.c : ..;../../c;$(posix_dir)/misc
+!ifeq vi_host_os unix
+.c : ../../unix
+!endif
+
+inc_dirs = -I.. -I"../../h" -I"$(posix_dir)/h"
+
+extra_cpp_flags = -D__ENABLE_FNAME_PROCESSING__ $(extra_cppflags)
+
+extra_l_flags_dos = op stack=20k
+
+exetarg_objs = &
+    ctags.obj &
+    file.obj &
+    globals.obj &
+    myio.obj &
+    scanasm.obj &
+    scanc.obj &
+    scanfor.obj &
+    taglist.obj &
+    argvenv.obj &
+    argvstr.obj
+
+!ifeq vi_host_os unix
+exetarg_objs += stat2.obj
+!endif
+
+!include exetarg.mif

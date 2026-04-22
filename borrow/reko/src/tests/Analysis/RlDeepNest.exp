@@ -1,0 +1,48 @@
+// fn0C00_0000 /////////////////////
+	LiveOut:  
+	BitsUsed:  ds:[0..15]
+	Trashed:   ax si Top
+	Preserved: ds sp
+// fn0C00_0000
+define fn0C00_0000
+fn0C00_0000_entry:
+	def ds
+l0C00_0000:
+	ds_si_6 = SEQ(ds, 0x1234<16>) (alias)
+	call fn0C00_000B (retsize: 2;)
+		uses: Sequence ds:si:ds_si_6
+		defs: ax:ax_7
+	Mem8[ds:0x5431<16>:word16] = ax_7
+	return
+fn0C00_0000_exit:
+// fn0C00_000B /////////////////////
+	LiveOut:   ax:[0..15]-fn0C00_0000
+	BitsUsed:  Sequence ds:si:[0..31]
+	Trashed:   ax Top
+	Preserved: ds si sp
+// fn0C00_000B
+define fn0C00_000B
+fn0C00_000B_entry:
+	def ds_si
+l0C00_000B:
+	call fn0C00_0011 (retsize: 2;)
+		uses: Sequence ds:si:ds_si
+		defs: ax:ax_10
+	return
+fn0C00_000B_exit:
+	use ax_10
+// fn0C00_0011 /////////////////////
+	LiveOut:   ax:[0..15]-fn0C00_000B
+	BitsUsed:  Sequence ds:si:[0..31]
+	Trashed:   ax Top
+	Preserved: sp
+// fn0C00_0011
+define fn0C00_0011
+fn0C00_0011_entry:
+	def ds_si
+	def Mem0
+l0C00_0011:
+	ax_7 = Mem0[ds_si + 4<i32>:word16]
+	return
+fn0C00_0011_exit:
+	use ax_7

@@ -1,0 +1,22 @@
+# UTF-8 encoding, ¥
+static_text=\
+        //0"Select other options:"\
+        //1"その他のオプションを選択してください:"\
+        //-1
+static_text=
+check_box=cplusplus,,\
+        //0"&Include C++ compiler components"\
+        //1"C++コンパイラ・コンポーネントを含みます (&I)"\
+        //-1,IsFortranInstall !
+check_box=samples,,\
+        //0"Sample &programs"\
+        //1"サンプル・プログラム (&p)"\
+        //-1
+static_text=
+other_button=\
+        //0"&Helpfiles..."\
+        //1"&Helpfiles..."\
+        //-1,Helpfile,\
+        //0"Helpfiles to Install:"\
+        //1"Helpfiles to Install:"\
+        //-1

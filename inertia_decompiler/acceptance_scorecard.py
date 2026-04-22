@@ -78,7 +78,7 @@ def _validation_verdict_from_output(output: str) -> str:
         return "unknown"
     if "[tail-validation] whole-tail validation uncollected" in lowered:
         return "uncollected"
-    return "disabled"
+    return "uncollected"
 
 
 def build_acceptance_scorecard(

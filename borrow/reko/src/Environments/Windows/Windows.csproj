@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$(ProjectDir)../../Drivers/CommonBuildProperties.items" />
+  <PropertyGroup>
+    <ProjectGuid>{4A298321-9855-43DE-AA9C-79E4EFA0AE56}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>Reko.Environments.Windows</RootNamespace>
+    <AssemblyName>Reko.Environments.Windows</AssemblyName>
+    <TargetFramework>net8.0</TargetFramework>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Configurations>Debug;Release</Configurations>
+    <Platforms>AnyCPU;x86;x64</Platforms>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Arch\Arm\Arm.csproj" />
+    <ProjectReference Include="..\..\Arch\PowerPC\PowerPC.csproj" />
+    <ProjectReference Include="..\..\Arch\X86\X86.csproj" />
+    <ProjectReference Include="..\..\Core\Core.csproj" />
+    <ProjectReference Include="..\..\Libraries\Libc\Libc.csproj" />
+  </ItemGroup>
+  
+  <Target Name="RunC2Xml" AfterTargets="Compile">
+    <MSBuild Projects="$(ProjectDir)..\..\BuildTargets\BuildTargets.csproj" Properties="Configuration=$(Configuration);Platform=$(Platform)" Targets="gen_c2xml_windows" />
+  </Target>
+</Project>

@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<menu-definitions xmlns="urn:Decompiler.Schemata.MenuDefinitions">
+	<cmdSet id="Reko">6D65B38B-4275-4892-BD3C-05AC0645373F</cmdSet>
+
+	<!-- Menus and Toolbars ========================================================== -->
+
+  <!-- Menus -->
+	<menu type="MainMenu" id="MainMenu" cmdSet="GuidCmdSet"/>
+	<menu id="FileMenu" cmdSet="Reko" container="GrpMain">_File</menu>
+  <menu id="EditMenu" cmdSet="Reko" container="GrpMain">_Edit</menu>
+	<menu id="ViewMenu" cmdSet="Reko" container="GrpMain">_View</menu>
+  <menu id="ActionMenu" cmdSet="Reko" container="GrpMain">_Actions</menu>
+  <menu id="ToolsMenu" cmdSet="Reko" container="GrpMain">_Tools</menu>
+  <menu id="WindowsMenu" cmdSet="Reko" container="GrpMain">_Windows</menu>
+	<menu id="HelpMenu" cmdSet="Reko" container="GrpMain">_Help</menu>
+  
+  <menu id="TextEncodingMenu" cmdSet="Reko" container="GrpLowLevel">_Text Encoding</menu>
+  
+  <menu type="ContextMenu" id="CtxMemoryControl" cmdSet="Reko"/>
+  <menu type="ContextMenu" id="CtxDisassembler" cmdSet="Reko"/>
+  <menu type="ContextMenu" id="CtxBrowser" cmdSet="Reko"/>
+  <menu type="ContextMenu" id="CtxProcedureList" cmdSet="Reko"/>
+  <menu type="ContextMenu" id="CtxProcedure" cmdSet="Reko"/>
+  <menu type="ContextMenu" id="CtxAddressSearch" cmdSet="Reko"/>
+  <menu type="ContextMenu" id="CtxCodeView" cmdSet="Reko"/>
+
+  <!-- Toolbars -->
+  <menu type="ToolStrip" id="MainToolbar" cmdSet="GuidCmdSet"/>
+  <menu type="ToolStrip" id="ProjectBrowserToolbar" cmdSet="GuidCmdSet"/>
+
+	<!-- Groups ========================================================== -->
+
+  <!-- Menu groups -->
+	<group id="GrpMain" cmdSet="Reko" container="MainMenu"/>
+
+	<group id="GrpFile" cmdSet="Reko" container="FileMenu" priority="0"/>
+	<group id="GrpFileMru" cmdSet="Reko" container="FileMenu" priority="0"/>
+	<group id="GrpFileEnd" cmdSet="Reko" container="FileMenu" priority="1000"/>
+
+  <group id="GrpEdit" cmdSet="Reko" container="EditMenu" />
+
+  <group id="GrpView" cmdSet="Reko" container="ViewMenu" />
+  <group id="GrpLowLevel" cmdSet="Reko" container="ViewMenu" />
+	<group id="GrpViewScanned" cmdSet="Reko" container="ViewMenu"/>
+
+  <group id="GrpTextEncoding" cmdSet="Reko" container="TextEncodingMenu" />
+
+	<group id="GrpActions" cmdSet="Reko" container="ActionMenu"/>
+	<group id="GrpActionsScanned" cmdSet="Reko" container="ActionMenu"/>
+  <group id="GrpActionsRewritten" cmdSet="Reko" container="ActionMenu"/>
+
+  <group id="GrpTools" cmdSet="Reko" container="ToolsMenu"/>
+
+  <group id="GrpWindows" cmdSet="Reko" container="WindowsMenu"/>
+
+	<group id="GrpHelp" cmdSet="Reko" container="HelpMenu" />
+
+	<group id="GrpMemoryControl" cmdSet="Reko" container="CtxMemoryControl"/>
+  <group id="GrpDisassemblerNav" cmdSet="Reko" container="CtxDisassembler" />
+  <group id="GrpDisassemblerShow" cmdSet="Reko" container="CtxDisassembler" />
+  <group id="GrpDisassemblerEdit" cmdSet="Reko" container="CtxDisassembler" />
+  <group id="GrpCodeView" cmdSet="Reko" container="CtxCodeView" />
+  <group id="GrpCodeViewMode" cmdSet="Reko" container="CtxCodeView" />
+  <group id="GrpBrowser" cmdSet="Reko" container="CtxBrowser"/>
+  <group id="GrpBrowserProc" cmdSet="Reko" container="GrpBrowserProc"/>  <!-- commands used for procedures in lists -->
+
+  <group id="GrpToolbarFileOps" cmdSet="Reko" container="MainToolbar" />
+  <group id="GrpToolbarActions" cmdSet="Reko" container="MainToolbar" />
+
+  <group id="GrpBrowserToolbar" cmdSet="Reko" container="ProjectBrowserToolbar"/>
+
+  <group id="GrpProcedure" cmdSet="Reko" container="CtxProcedure "/>
+  <group id="GrpProcedureListDebug" cmdSet="Reko" container="CtxProcedureList "/>
+
+  <group id="GrpAddressSearchView" cmdSet="Reko" container="CtxAddressSearch" />
+  <group id="GrpAddressSearch" cmdSet="Reko" container="CtxAddressSearch" />
+
+  <!-- Commands ========================================================== -->
+
+	<cmd id="FileOpen" cmdSet="Reko" container="FileOpen" image="0">_Open...</cmd>
+  <cmd id="FileOpenAs" cmdSet="Reko" container="FileOpenAs">Op_en As...</cmd>
+	<cmd id="FileSave" cmdSet="Reko" container="FileSave" image="1">_Save</cmd>
+  <cmd id="FileNewScript" cmdSet="Reko" container="FileNewScript">New script file...</cmd>
+  <cmd id="FileAddBinary" cmdSet="Reko" container="FileAddBinary">Add _binary file...</cmd>
+  <cmd id="FileAddMetadata" cmdSet="Reko" container="FileAddMetadata">Add _metadata file...</cmd>
+  <cmd id="FileAddScript" cmdSet="Reko" container="FileAddScript">Add _script file...</cmd>
+  <cmd id="FileAssemble" cmdSet="Reko" container="FileAssemble">Add asse_mbler file...</cmd>
+  <cmd id="FileCloseProject" cmdSet="Reko" container="FileCloseProject">Close projec_t</cmd>
+	<cmd id="FileMru"  cmdSet="Reko" container="GrpFileMru" dynamic-item-id="2200"/>
+	<cmd id="FileExit" cmdSet="Reko" container="GrpFileEnd">E_xit</cmd>
+
+  <cmd id="EditFind" cmdSet="Reko" container="GrpEdit">_Find...</cmd>
+  <cmd id="EditCopy" cmdSet="Reko" container="EditCopy">_Copy</cmd>
+  <cmd id="EditCopyAll" cmdSet="Reko" container="EditCopyAll">_Copy All</cmd>
+  <cmd id="EditRename" cmdSet="Reko" container="GrpEdit">_Rename</cmd>
+  <cmd id="EditRegisterValues" cmdSet="Reko" container="GrpEdit">Re_gister Values</cmd>
+  <cmd id="EditAnnotation" cmdSet="Reko" container="GrpEdit">Co_mment</cmd>
+
+  <cmd id="EditSelectAll" cmdSet="Reko" container="GrpEdit">Select _all</cmd>
+
+  <cmd id="EditProperties" cmdSet="Reko" container="EditProperties">P_roperties</cmd>
+
+  <cmd id="ViewProjectBrowser" cmdSet="Reko" container="GrpView">Project _browser</cmd>
+  <cmd id="ViewProcedureList" cmdSet="Reko" container="GrpView">_Procedure list</cmd>
+
+  <cmd id="ViewMemory" cmdSet="Reko" container="GrpLowLevel">_Memory</cmd>
+  <cmd id="ViewDisassembly" cmdSet="Reko" container="GrpLowLevel">_Disassembly</cmd>
+  <cmd id="TextEncodingChoose" cmdSet="Reko" container="GrpTextEncoding">_Choose...</cmd>
+  <cmd id="ViewCallGraph" cmdSet="Reko" container="GrpLowLevel">_Call graph</cmd>
+  
+  <cmd id="OpenLink" cmdSet="Reko" container="OpenLink">_Open</cmd>
+  <cmd id="OpenLinkInNewWindow" cmdSet="Reko" container="OpenLinkInNewWindow">Open in ne_w window</cmd>
+
+  <cmd id="ViewGoToAddress" cmdSet="Reko" container="GrpViewScanned">_Go to Address...</cmd>
+  <cmd id="ViewFindAllProcedures" cmdSet="Reko" container="GrpViewScanned">Find all _procedures</cmd>
+	<cmd id="ViewShowAllFragments" cmdSet="Reko" container="GrpViewScanned">Show _all fragments</cmd>
+	<cmd id="ViewShowUnscanned" cmdSet="Reko" container="GrpViewScanned">Show _unscanned fragments</cmd>
+  <cmd id="ViewFindPattern" cmdSet="Reko" container="GrpViewScanned">Find selected _pattern...</cmd>
+  <cmd id="ViewFindStrings" cmdSet="Reko" container="GrpViewScanned">Find _strings...</cmd>
+  <cmd id="ViewFindWhatPointsHere" cmdSet="Reko" container="GrpViewScanned">Find _what points here</cmd>
+  <cmd id="ViewAsCode" cmdSet="Reko" container="GrpAddressSearchView">View as _code</cmd>
+  <cmd id="ViewAsStrings" cmdSet="Reko" container="GrpAddressSearchView">View as _strings</cmd>
+  <cmd id="ViewAsData" cmdSet="Reko" container="GrpAddressSearchView">View as _data</cmd>
+  <cmd id="ViewCfgCode" cmdSet="Reko" container="GrpCodeViewMode" priority="1">View _code</cmd>
+  <cmd id="ViewCfgGraph" cmdSet="Reko" container="GrpCodeViewMode" priority="2">View control _graph</cmd>
+  <cmd id="ViewPcRelative" cmdSet="Reko" container="GrpLowLevel">Show _PC relative addresses</cmd>
+  <cmd id="ViewBaseInstructions" cmdSet="Reko" container="GrpLowLevel">Show _base instructions</cmd>
+  <cmd id="OpenInNewTab" cmdSet="Reko" container="GrpCodeView" priority="0">Open in new tab</cmd>
+  <cmd id="EditDeclaration" cmdSet="Reko" container="GrpCodeView" priority="1">Edit declaration</cmd>
+  <cmd id="EditComment" cmdSet="Reko" container="GrpCodeView" priority="2">Edit comment</cmd>
+  <cmd id="EditLabel" cmdSet="Reko" container="GrpCodeView" priority="2">Edit label</cmd>
+
+  <cmd id="ActionNextSearchHit" cmdSet="Reko" key1="F8" />
+  <cmd id="ActionPrevSearchHit" cmdSet="Reko" key1="F8" alt1="Shift" />
+
+  <cmd id="ActionRestartDecompilation" cmdSet="Reko" container="GrpActions" image="2">_Restart</cmd>
+  <cmd id="ActionNextPhase" cmdSet="Reko" container="GrpActions" image="3">_Next Phase</cmd>
+  <cmd id="ActionFinishDecompilation" cmdSet="Reko" container="GrpActions" image="4">Finish _Decompilation</cmd>
+
+  <cmd id="ActionMarkProcedure" cmdSet="Reko" container="ActionMarkProcedure">Mark _Procedure Entry</cmd>
+  <cmd id="ActionCallTerminates" cmdSet="Reko" container="GrpDisassemblerEdit">Mark call as _terminating</cmd>
+  <cmd id="ActionScanHeuristically" cmdSet="Reko" container="ActionScanHeuristically">Scan _heuristically</cmd>
+  <cmd id="ActionEditSignature" cmdSet="Reko" container="ActionEditSignature">Edit _Signature...</cmd>
+  <cmd id="ActionMarkType" cmdSet="Reko" container="ActionMarkType">Mark _Type</cmd>
+  <cmd id="ActionMarkStrings" cmdSet="Reko" container="ActionMarkStrings">Mark selection as _strings</cmd>
+  <cmd id="ActionAssumeRegisterValues" cmdSet="Reko" container="ActionAssumeRegisterValues">_Register values...</cmd>
+
+  <cmd id="ToolsHexDisassembler" cmdSet="Reko" container="GrpTools">_Hex disassembler</cmd>
+  <cmd id="ToolsOptions" cmdSet="Reko" container="GrpTools">_Options...</cmd>
+  <cmd id="ToolsKeyBindings" cmdSet="Reko" container="GrpTools">_Key bindings...</cmd>
+  
+  <cmd id="WindowsCascade" cmdSet="Reko" container="GrpWindows">_Cascade</cmd>
+  <cmd id="WindowsTileVertical" cmdSet="Reko" container="GrpWindows">Tile _Vertically</cmd>
+  <cmd id="WindowsTileHorizontal" cmdSet="Reko" container="GrpWindows">Tile _Horizontally</cmd>
+  <cmd id="WindowsCloseAll" cmdSet="Reko" container="GrpWindows">C_lose All Windows</cmd>
+  
+  <cmd id="HelpAbout" cmdSet="Reko" container="GrpHelp">_About Decompiler...</cmd>
+
+  <cmd id="ShowProcedureCallHierarchy" cmdSet="Reko" container="GrpProcedure">Show Call _Hierarchy</cmd>
+  <cmd id="ProcedureDebugTrace" cmdSet="Reko" container="GrpProcedureListDebug">_Debug procedure decompilation</cmd>
+
+  <cmd id="CollapseAllNodes" cmdSet="Reko" container="GrpBrowserToolbar" imageKey="Collapse.ico" tip="Collapse All"></cmd>
+  <cmd id="CreateUserSegment" cmdSet="Reko" container="GrpBrowserToolbar" imageKey="CreateSegment.ico" tip="Create Segment"></cmd>
+  
+  <cmd id="LoadSymbols" cmdSet="Reko" container="GrpBrowser">Load Symbols...</cmd>
+  
+	<!-- Placements ======================================================= -->
+
+  <placement item="FileOpen" container="GrpFile" />
+  <placement item="FileOpenAs" container="GrpFile" />
+  <placement item="FileSave" container="GrpFile" />
+  <placement item="FileCloseProject" container="GrpFile" />
+  <placement item="FileNewScript" container="GrpFile"/>
+  <placement item="FileAddBinary" container="GrpFile"/>
+  <placement item="FileAddMetadata" container="GrpFile"/>
+  <placement item="FileAddScript" container="GrpFile"/>
+  <placement item="FileAssemble" container="GrpFile"/>
+
+  <placement item="GrpBrowserProc" container="CtxBrowser" />
+  <placement item="GrpBrowserProc" container="CtxProcedureList" />
+<!--  <placement item="GrpProcedureListDebug" container="CtxProcedureList" /> -->
+
+  <placement item="FileOpen" container="GrpToolbarFileOps"/>
+  <placement item="FileSave" container="GrpToolbarFileOps"/>
+
+  <placement item="EditCopy" container="GrpEdit" />
+  <placement item="EditProperties" container="GrpEdit" />
+
+  <placement item="ActionRestartDecompilation" container="GrpToolbarActions"/>
+  <placement item="ActionNextPhase" container="GrpToolbarActions"/>
+  <placement item="ActionFinishDecompilation" container="GrpToolbarActions"/>
+
+  <placement item="ActionMarkProcedure" container="GrpActionsScanned"/>
+  <placement item="ActionScanHeuristically" container="GrpActionsScanned"/>
+  <placement item="ActionMarkType" container="GrpActionsScanned"/>
+
+  <placement item="EditCopy" container="GrpMemoryControl"/>
+  <placement item="EditCopy" container="GrpCodeView" priority="2"/>
+  <placement item="ViewGoToAddress" container="GrpMemoryControl"/>
+	<placement item="ActionMarkProcedure" container="GrpMemoryControl"/>
+  <placement item="ActionMarkType" container="GrpMemoryControl"/>
+  <placement item="ViewFindPattern" container="GrpMemoryControl"/>
+  <placement item="ViewFindWhatPointsHere" container="GrpMemoryControl"/>
+
+  <placement item="OpenLink" container="GrpDisassemblerNav" />
+  <placement item="OpenLinkInNewWindow" container="GrpDisassemblerNav" />
+  <placement item="ViewPcRelative" container="GrpDisassemblerShow" />
+  <placement item="EditCopy" container="GrpDisassemblerEdit" />
+  <placement item="EditRename" container="GrpDisassemblerEdit" />
+  <placement item="EditRegisterValues" container="GrpDisassemblerEdit"/>
+  <placement item="EditAnnotation" container="GrpDisassemblerEdit"/>
+             
+  <placement item="ActionEditSignature" container="GrpProcedure"/>
+  <placement item="ViewGoToAddress" container="GrpProcedure"/>
+  <placement item="ActionEditSignature" container="GrpActionsRewritten" />
+
+  <placement item="EditProperties" container="GrpBrowser" />
+  <placement item="ViewGoToAddress" container="GrpBrowserProc"/>
+  <placement item="ViewFindWhatPointsHere" container="GrpBrowserProc" />
+  <placement item="ShowProcedureCallHierarchy" container="GrpBrowserProc" />
+  <placement item="ActionEditSignature" container="GrpBrowserProc"/>
+  <placement item="ActionAssumeRegisterValues" container="GrpBrowserProc" />
+  
+  <placement item="ViewFindWhatPointsHere" container="GrpAddressSearch" />
+  <placement item="ActionMarkProcedure" container="GrpAddressSearch"/>
+  <placement item="ActionMarkType" container="GrpAddressSearch"/>
+  <placement item="ActionMarkStrings" container="GrpAddressSearch"/>
+  <placement item="ActionScanHeuristically" container="GrpAddressSearch"/>
+
+  <!-- Accelerators ================================================== -->
+
+  <keybinding id="ActionMarkType" cmdSet="Reko" key1="T" alt1="Control" />
+  <keybinding id="EditDeclaration" cmdSet="Reko" editor="Reko.Gui.Windows.CombinedCodeViewInteractor"  key1="D" alt1="Control" />
+  <keybinding id="EditComment" cmdSet="Reko" editor="Reko.Gui.Windows.CombinedCodeViewInteractor"  key1="OemSemicolon" />
+  <keybinding id="ActionNextSearchHit" cmdSet="Reko" editor="" key1="F8" />
+  <keybinding id="ActionPrevSearchHit" cmdSet="Reko" editor="" key1="F8" alt1="Shift" />
+  <keybinding id="EditCopy" cmdSet="Reko" editor="" key1="C" alt1="Control" />
+  <keybinding id="EditCopyAll" cmdSet="Reko" editor="Reko.Gui.Windows.CodeViewerPane" key1="C" alt1="Control" />
+
+  <keybinding id="EditSelectAll" cmdSet="Reko" editor="" key1="A" alt1="Control" />
+
+</menu-definitions>
+ 

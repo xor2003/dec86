@@ -1,0 +1,22 @@
+# UTF-8 encoding, ¥
+static_text=\
+        //0"Select other options you want to install. They are:"\
+        //1"インストールしたいその他のオプションを選択してください:"\
+        //-1
+static_text=
+static_text=\
+        //0"C++ compiler components"\
+        //1"C++ コンパイラ・コンポーネント"\
+        //-1
+static_text=\
+        //0"	- choose whether you want to program in C++ in addition to C"\
+        //1"	- C ではなく､ C++でプログラムするかどうかを選択してください"\
+        //-1
+static_text=\
+        //0"Sample Programs"\
+        //1"サンプル・プログラム"\
+        //-1
+static_text=\
+        //0"	- example programs for various operating systems"\
+        //1"	- 各OS用のサンプルプログラム"\
+        //-1

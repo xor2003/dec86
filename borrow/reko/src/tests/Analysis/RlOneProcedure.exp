@@ -1,0 +1,11 @@
+// fn0C00_0000 /////////////////////
+	LiveOut:  
+	BitsUsed: 
+	Trashed:   SCZO ax si Top
+	Preserved: bp sp
+// fn0C00_0000
+define fn0C00_0000
+fn0C00_0000_entry:
+l0C00_0000:
+	return
+fn0C00_0000_exit:

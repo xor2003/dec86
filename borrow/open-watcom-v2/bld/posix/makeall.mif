@@ -1,0 +1,109 @@
+#
+#   define macro for OS's which need POSIX utilities
+#
+
+!ifndef bootstrap
+build_posix=1
+!else ifndef __UNIX__
+build_posix=1
+!endif
+
+!ifdef build_posix
+
+proj_name = posix_all
+
+posix_all_autodepends = .AUTODEPEND
+
+!include ../memmodel.mif
+
+model_switch_i86=
+model_switch_386=
+
+!include cproj.mif
+!include defrule.mif
+
+!include ../common.mif
+
+defrule_key = stdlib
+subdir_stdlib = $(stdlibdir)
+extra_cpp_stdlib_i86_flags = -m$(model)
+extra_cpp_stdlib_386_flags = -m$(model)
+extra_cpp_stdlib_flags = $(extra_cpp_stdlib_$(host_cpu)_flags)
+!include defrule.mif
+!ifdef alt_posixlib
+defrule_key = altlib
+subdir_altlib = $(altlibdir)
+extra_cpp_altlib_i86s_flags = -mc
+extra_cpp_altlib_i86c_flags = -ms
+extra_cpp_altlib_flags = $(extra_cpp_altlib_$(host_cpu)$(model)_flags)
+!include defrule.mif
+!endif
+!include deftarg.mif
+
+!include ../commands.mif
+
+inc_dirs += -I"../h"
+
+.c: ../misc
+
+libs = $(stdlibdir)/posix.lib
+!ifdef alt_posixlib
+libs += $(altlibdir)/posix.lib
+!endif
+
+libdirs = $(stdlibdir)
+!ifdef alt_posixlib
+libdirs += $(altlibdir)
+!endif
+
+all : $(libdirs) $(libs) $(commands) .SYMBOLIC
+    @%null
+
+!ifdef alt_posixlib
+_subdir_ = $(altlibdir)/
+libtarg_objs = $(posixlib_objs)
+libtarg_name = $(_subdir_)posix
+!include libtarg.mif
+!endif
+
+_subdir_ = $(stdlibdir)/
+libtarg_objs = $(posixlib_objs)
+libtarg_name = $(_subdir_)posix
+!include libtarg.mif
+
+wmake_opts = host_os=$(host_os) host_cpu=$(host_cpu)
+!ifdef bootstrap
+wmake_opts += bootstrap=$(bootstrap)
+!endif
+!ifdef debug
+wmake_opts += debug=$(debug)
+!endif
+
+$(commands) : .SYMBOLIC $(__MAKEFILES__)
+    $(noecho)!$(nested_wmake) -h $(wmake_opts) -f "../src/$@/makefile"
+
+curr_dir=$+$(%__CWD__)$-
+
+clean_subdirs: .PROCEDURE .EXPLICIT
+    cd $(stdlibdir)
+    @%make killobjs
+    @%make killnonobjs
+    cd "$(curr_dir)"
+!ifdef alt_posixlib
+    cd $(altlibdir)
+    @%make killobjs
+    @%make killnonobjs
+    cd "$(curr_dir)"
+!endif
+
+!ifdef additional_remove_subdirs
+$(additional_remove_subdirs) :
+    mkdir $@
+!endif
+
+!else
+
+clean : .SYMBOLIC
+    @%null
+
+!endif

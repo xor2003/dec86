@@ -1,0 +1,21 @@
+{"ts":"2026-04-22T12:17:56.447406970+00:00","iteration":0,"hat":"loop","topic":"work.start","triggered":"planner","payload":"complete PLAN.md under AGENTS.md rules."}
+{"payload":"bounded sweep complete: exit=0 shown=8 decompiled=8 fallback=0 validation=disabled","topic":"sweep.done","ts":"2026-04-22T12:19:02.448550967+00:00"}
+{"payload":"check.latest.md updated from bounded sweep: top families=validation uncollected + stack/segment + condition debt; one-function repro commands included","topic":"checker.done","ts":"2026-04-22T12:20:07.764820294+00:00"}
+{"payload":"PLAN.md updated from checker.done: prioritize validation-uncollected gate, stack/segment lowering, condition debt with focused one-function anchors","topic":"plan.ready","ts":"2026-04-22T12:21:59.599662023+00:00"}
+{"payload":"PLAN item 1 advanced: strict non-stable tail-validation gating wired in structuring/postprocess; unknown/uncollected no longer collapses; focused tests pass + 0x10f38 anchor verified","topic":"implementation.done","ts":"2026-04-22T12:27:54.334356747+00:00"}
+{"payload":"PLAN item 1 verified and pruned; strict non-pass tail-validation gating confirmed by code + 55 tests + focused 0x10f38 evidence","topic":"review.approved","ts":"2026-04-22T12:31:16.549533365+00:00"}
+{"payload":"Finalizer complete: review.approved evidence recorded in .ralph/agent/final.latest.md (PLAN item 1 pruned; strict tail-validation gate verified with 55 tests + 0x10f38 anchor).","topic":"LOOP_COMPLETE","ts":"2026-04-22T12:32:46.148720159+00:00"}
+{"payload":"resume lane: collect fresh focused evidence for PLAN.md under AGENTS.md","topic":"work.start","ts":"2026-04-22T12:33:21.961975991+00:00"}
+{"payload":"bounded SORTDEMO sweep complete: shown=8 decompiled=8 fallback=0; validation disabled/uncollected; evidence logged","topic":"sweep.done","ts":"2026-04-22T12:34:30.888767628+00:00"}
+{"payload":"check.latest ready: failure families + focused anchors + one-function repro commands","topic":"checker.done","ts":"2026-04-22T12:35:35.722504801+00:00"}
+{"payload":"PLAN.md reordered from checker.done: attribution-first + focused anchors + deterministic DoD","topic":"plan.ready","ts":"2026-04-22T12:37:50.979654491+00:00"}
+{"payload":"item-2 atomic change accepted; focused pytest+addr probes revalidated; PLAN unchanged (no full DoD closure yet)","topic":"review.approved","ts":"2026-04-22T12:44:50.614968973+00:00"}
+{"payload":"finalizer: review.approved item-2 recorded in final.latest; primary umbrella task still in_progress; evidence captured","topic":"LOOP_COMPLETE","ts":"2026-04-22T12:45:31.609897764+00:00"}
+{"payload":"task.resume recovery handled; dispatching sweep lane","topic":"work.start","ts":"2026-04-22T12:46:25.773444863+00:00"}
+{"payload":"bounded sweep complete: shown=8 decompiled=8 asm_or_detail_fallback=0, validation=disabled/uncollected, evidence=.codex_automation/evidence.log","topic":"sweep.done","ts":"2026-04-22T12:47:14.101200785+00:00"}
+{"payload":"task.resume recovery handled; dispatching sweep lane","topic":"work.start","ts":"2026-04-22T12:53:47.233255027+00:00"}
+{"payload":"bounded sweep complete: shown=8, decompiled=8, asm_or_detail_fallback=0, validation=disabled/uncollected","topic":"sweep.done","ts":"2026-04-22T12:55:14.797142702+00:00"}
+{"payload":"check.latest updated from sweep evidence: families=validation-uncollected+stack-segment+condition-quality; anchors and one-function repro commands refreshed","topic":"checker.done","ts":"2026-04-22T12:56:41.968204987+00:00"}
+{"payload":"PLAN.md refreshed from checker.done: tightened item #1 attribution DoD on all anchors; added 0x10678/0x10e70 stack-segment non-regression sentinels in item #3; no unfinished strategic items removed.","topic":"plan.ready","ts":"2026-04-22T12:58:00.726129380+00:00"}
+{"payload":"PLAN#1 advanced: ran 7 one-function anchors, wrote deterministic per-anchor attribution matrix (uncollected/unknown) into check.latest+sweep.latest with no dropped anchors","topic":"implementation.done","ts":"2026-04-22T13:04:35.359072007+00:00"}
+{"ts":"2026-04-22T13:05:13.305273292+00:00","iteration":26,"hat":"loop","topic":"loop.terminate","payload":"## Reason\nconsecutive_failures\n\n## Status\nToo many consecutive failures.\n\n## Summary\n- Iterations: 26\n- Duration: 43m 1s\n- Exit code: 1"}

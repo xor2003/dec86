@@ -1,0 +1,11 @@
+proj_name = clppc
+
+target_cpu = ppc
+
+!ifndef clppc_autodepends
+clppc_autodepends = .AUTODEPEND
+!endif
+
+clppc_ntverrc = ..
+
+!include ../../cl.mif

@@ -1,0 +1,9 @@
+reko.exe decompile --heuristic shingle  BENCHFN
+reko.exe decompile --heuristic shingle  BENCHLNG
+reko.exe decompile --heuristic shingle  BENCHMUL
+reko.exe decompile --heuristic shingle  BYTEOPS
+reko.exe decompile --heuristic shingle  FIBO
+reko.exe decompile --heuristic shingle  MATRIXMU
+reko.exe decompile --heuristic shingle  MAX
+reko.exe decompile --heuristic shingle  STRLEN
+reko.exe decompile --heuristic shingle  TESTLONG

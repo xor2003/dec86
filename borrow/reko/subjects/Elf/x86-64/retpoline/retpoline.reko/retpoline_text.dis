@@ -1,0 +1,226 @@
+void _start(word64 rdx, word32 dwArg00, char * ptrArg08)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  rdx:[0..63] Stack +0000:[0..31] Stack +0008:[0..63]
+// LiveOut:
+// Trashed:
+// Preserved:
+// Terminates process
+_start_entry:
+l0000000000400480:
+	__align_stack<word64>(&ptrArg08)
+	__libc_start_main(0x400660<64>, SLICE(qwArg00, int32, 0), &ptrArg08, 0x400710<64>, 0x400780<64>, rdx, fp)
+	__halt()
+_start_exit:
+
+
+void deregister_tm_clones()
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      __do_global_dtors_aux
+// MayUse: 
+// LiveOut:
+// Trashed: SCZOP rax rdi Top
+// Preserved: rbp rsp
+deregister_tm_clones_entry:
+l00000000004004B0:
+	branch true l00000000004004D8
+l00000000004004C1:
+	branch true l00000000004004D8
+l00000000004004CB:
+	call 0<u64> (retsize: 0;)
+		uses: Mem:Mem6,rdi:0x601040<u64>
+	return
+l00000000004004D8:
+	return
+deregister_tm_clones_exit:
+
+
+void register_tm_clones()
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      frame_dummy
+// MayUse: 
+// LiveOut:
+// Trashed: SCZOP rax rdi rsi Top
+// Preserved: rbp rsp
+register_tm_clones_entry:
+l00000000004004E0:
+	branch true l0000000000400518
+l0000000000400503:
+	branch true l0000000000400518
+l000000000040050D:
+	call 0<u64> (retsize: 0;)
+		uses: Mem:Mem8,rdi:0x601040<u64>
+	return
+l0000000000400518:
+	return
+register_tm_clones_exit:
+
+
+void __do_global_dtors_aux()
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed: SCZO rax rdi Top
+// Preserved: P rbp rsp
+__do_global_dtors_aux_entry:
+l0000000000400520:
+	branch Mem0[0x0000000000601040<p64>:byte] != 0<8> l0000000000400540
+l0000000000400529:
+	deregister_tm_clones()
+	Mem18[0x0000000000601040<p64>:byte] = 1<8>
+	return
+l0000000000400540:
+	return
+__do_global_dtors_aux_exit:
+
+
+void frame_dummy()
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed: SCZOP rax rdi rsi Top
+// Preserved: rbp rsp
+frame_dummy_entry:
+l0000000000400550:
+l0000000000400555_thunk_register_tm_clones:
+	register_tm_clones()
+	return
+frame_dummy_exit:
+
+
+word64 my1(word32 edi, word32 esi)
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      branches
+// MayUse:  edi:[0..31] esi:[0..31]
+// LiveOut: rax:[0..63]-branches
+// Trashed: SCZO rax rdi rsi Top
+// Preserved: rbp rsp
+my1_entry:
+l0000000000400560:
+	return calloc(CONVERT(edi, word32, int64), CONVERT(esi, word32, int64))
+my1_exit:
+
+
+void my2(word64 rdi, byte sil)
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  rdi:[0..63] sil:[0..7]
+// LiveOut:
+// Trashed: rax rsi Top
+// Preserved: rbp rdi rsp
+my2_entry:
+l0000000000400590:
+	Mem17[rdi:byte] = sil
+	return
+my2_exit:
+
+
+void branches(word32 edi, word32 esi)
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  esi:[0..31] rdi:[0..31]
+// LiveOut:
+// Trashed: SCZO edx rax rcx rdi rsi Top
+// Preserved: rbp rsp
+branches_entry:
+	edi = SLICE(rdi, word32, 0)
+l00000000004005B0:
+	branch edi >= esi l000000000040064F
+l00000000004005CA:
+	branch edi << 1<32> >= esi << 1<32> l000000000040064F
+l00000000004005DE:
+	branch edi *s 3<32> >= esi *s 3<32> l000000000040064F
+l00000000004005EE:
+	branch edi << 2<32> >= esi << 2<32> l000000000040064F
+l0000000000400602:
+	branch CONVERT(edi, int32, int64) /32 2<32> >= CONVERT(esi, int32, int64) /32 2<32> l000000000040064F
+l000000000040062B:
+	free(my1(edi, esi))
+	goto l0000000000400656
+l000000000040064F:
+l0000000000400656:
+	return
+branches_exit:
+
+
+void main()
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed:
+// Preserved:
+// Terminates process
+main_entry:
+l0000000000400660:
+	__llvm_retpoline_r11()
+main_exit:
+
+
+void __llvm_retpoline_r11()
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      main
+// MayUse: 
+// LiveOut:
+// Trashed:
+// Preserved:
+// Terminates process
+__llvm_retpoline_r11_entry:
+l00000000004006F0:
+	fn0000000000400700()
+l00000000004006F5:
+	__pause()
+	goto l00000000004006F5
+__llvm_retpoline_r11_exit:
+
+
+void fn0000000000400700()
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      __llvm_retpoline_r11
+// MayUse: 
+// LiveOut:
+// Trashed: Top
+// Preserved: rsp
+fn0000000000400700_entry:
+l0000000000400700:
+	return
+fn0000000000400700_exit:
+
+
+void __libc_csu_init(word32 edi, word64 rsi, word64 rdx)
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  rdi:[0..31] rdx:[0..63] rsi:[0..63]
+// LiveOut:
+// Trashed: SCZOP rax rdi rdx rsi Top
+// Preserved: r12 r13 r14 r15 rbp rbx rsp
+__libc_csu_init_entry:
+	edi = SLICE(rdi, word32, 0)
+l0000000000400710:
+	_init()
+	rbp_31 = 0x0000000000600E18<p64> - 0x0000000000600E10<p64>
+	branch rbp_31 >> 3<64> == 0<64> l0000000000400766
+l0000000000400746:
+	rbx_46 = 0<u64>
+l0000000000400750:
+	call Mem26[0x0000000000600E10<p64> + rbx_46 * 8<64>:word64] (retsize: 8;)
+		uses: Mem:Mem26,rdi:CONVERT(edi, word32, uint64),rdx:rdx,rsi:rsi
+	rbx_46 = rbx_46 + 1<64>
+	branch rbp_31 >> 3<64> != rbx_46 l0000000000400750
+l0000000000400766:
+	return
+__libc_csu_init_exit:
+
+
+void __libc_csu_fini()
+// stackDelta: 8; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed: Top
+// Preserved: rsp
+__libc_csu_fini_entry:
+l0000000000400780:
+	return
+__libc_csu_fini_exit:
+
+

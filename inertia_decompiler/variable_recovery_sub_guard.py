@@ -104,8 +104,8 @@ def build_guarded_handle_binop_sub_8616(*, richr_cls, typevars_module, project, 
     def _guarded_handle_binop_sub(self, expr):
         arg0, arg1 = expr.operands
         r0, r1 = self._expr_pair(arg0, arg1)
-        if r0.data.size() != r1.data.size():
-            _log_size_mismatch_once_8616(self, expr, r0, r1, project, context_suffix)
+        mismatch_bits = r0.data.size() != r1.data.size()
+        unresolved_mismatch = False
 
         if r0.data.size() == r1.data.size() == expr.bits:
             compute = r0.data - r1.data
@@ -117,7 +117,10 @@ def build_guarded_handle_binop_sub_8616(*, richr_cls, typevars_module, project, 
                 wide = lhs - rhs
                 compute = _narrow_bv_width_8616(wide, expr.bits, self.state)
             else:
+                unresolved_mismatch = True
                 compute = self.state.top(expr.bits)
+        if mismatch_bits and unresolved_mismatch:
+            _log_size_mismatch_once_8616(self, expr, r0, r1, project, context_suffix)
 
         type_constraints = set()
         if r0.typevar is not None and r1.data.concrete and isinstance(r0.typevar, typevars_module.TypeVariable):

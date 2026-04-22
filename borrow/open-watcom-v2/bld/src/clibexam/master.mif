@@ -1,0 +1,639 @@
+# MASTER.MIF include file for CLIBEXAM -- macros for all files in directory.
+ 
+# Non-working samples
+#FN_BAD =.exec.exe
+ 
+# Win32, QNX, OS/2
+!inject wait.exe     FN_WQO
+!inject allocmem.exe FN_WQO
+!inject freemem.exe  FN_WQO
+# DOS, Pharlap-16
+!inject setblock.exe FN_DP
+!inject intr.exe     FN_DP
+!inject setvect.exe  FN_DP
+!inject getvect.exe  FN_DP
+!inject allocmem.exe FN_DP
+!inject freemem.exe  FN_DP
+!inject fp_off.exe   FN_DP
+!inject fp_seg.exe   FN_DP
+# Win16 only
+!inject setvect.exe  FN_WIN16
+!inject getvect.exe  FN_WIN16
+!inject chainint.exe FN_WIN16
+# Default Windowing
+!inject _dwdelcl.exe FN_DEFWIN
+!inject _dwshutd.exe FN_DEFWIN
+!inject _dwstabo.exe FN_DEFWIN
+!inject _dwstapt.exe FN_DEFWIN
+!inject _dwstcnt.exe FN_DEFWIN
+!inject _dwyield.exe FN_DEFWIN
+# BIOS commands (DOS, Win, Win386)
+!inject b_disk.exe   FN_BIOS
+!inject b_equip.exe  FN_BIOS
+!inject b_keybrd.exe FN_BIOS
+!inject b_memsiz.exe FN_BIOS
+!inject b_print.exe  FN_BIOS
+!inject b_serial.exe FN_BIOS
+!inject b_time.exe   FN_BIOS
+!inject breakoff.exe FN_BIOS
+!inject intr.exe     FN_BIOS
+!inject nosound.exe  FN_BIOS
+!inject delay.exe    FN_BIOS
+!inject sound.exe    FN_BIOS
+# DOSCALL commands (DOS, Win, Win386, Win32, OS/2, Pharlap-16)
+!inject creatnew.exe FN_DOSCALL
+!inject btowc.exe    FN_DOSCALL
+!inject d_close.exe  FN_DOSCALL
+!inject d_creat.exe  FN_DOSCALL
+!inject d_open.exe   FN_DOSCALL
+!inject d_read.exe   FN_DOSCALL
+!inject d_write.exe  FN_DOSCALL
+!inject findfirs.exe FN_DOSCALL
+!inject setdate.exe  FN_DOSCALL
+!inject setdrive.exe FN_DOSCALL
+!inject setfattr.exe FN_DOSCALL
+!inject setftime.exe FN_DOSCALL
+!inject settime.exe  FN_DOSCALL
+!inject dosfind.exe  FN_DOSCALL
+!inject findclos.exe FN_DOSCALL
+!inject findnext.exe FN_DOSCALL
+!inject getdcwd.exe  FN_DOSCALL
+!inject getmbcp.exe  FN_DOSCALL
+!inject ismbbaln.exe FN_DOSCALL
+!inject ismbbalp.exe FN_DOSCALL
+!inject ismbbgra.exe FN_DOSCALL
+!inject ismbbkal.exe FN_DOSCALL
+!inject ismbbkan.exe FN_DOSCALL
+!inject ismbbkap.exe FN_DOSCALL
+!inject ismbbkpr.exe FN_DOSCALL
+!inject ismbbkpu.exe FN_DOSCALL
+!inject ismbblea.exe FN_DOSCALL
+!inject ismbbpri.exe FN_DOSCALL
+!inject ismbbpun.exe FN_DOSCALL
+!inject ismbbtra.exe FN_DOSCALL
+!inject ismbcaln.exe FN_DOSCALL
+!inject ismbcalp.exe FN_DOSCALL
+!inject ismbccnt.exe FN_DOSCALL
+!inject ismbcdig.exe FN_DOSCALL
+!inject ismbcgra.exe FN_DOSCALL
+!inject ismbchir.exe FN_DOSCALL
+!inject ismbckat.exe FN_DOSCALL
+!inject ismbcl0.exe  FN_DOSCALL
+!inject ismbcl1.exe  FN_DOSCALL
+!inject ismbcl2.exe  FN_DOSCALL
+!inject ismbcleg.exe FN_DOSCALL
+!inject ismbclow.exe FN_DOSCALL
+!inject ismbcpri.exe FN_DOSCALL
+!inject ismbcpun.exe FN_DOSCALL
+!inject ismbcspa.exe FN_DOSCALL
+!inject ismbcsym.exe FN_DOSCALL
+!inject ismbcupp.exe FN_DOSCALL
+!inject ismbcxdi.exe FN_DOSCALL
+!inject mbbtombc.exe FN_DOSCALL
+!inject mbbtype.exe  FN_DOSCALL
+!inject mbccmp.exe   FN_DOSCALL
+!inject mbccpy.exe   FN_DOSCALL
+!inject mbcicmp.exe  FN_DOSCALL
+!inject mbctolow.exe FN_DOSCALL
+!inject mbctombb.exe FN_DOSCALL
+!inject mbctoupp.exe FN_DOSCALL
+!inject mbgetcod.exe FN_DOSCALL
+!inject mblen.exe    FN_DOSCALL
+!inject mbputcha.exe FN_DOSCALL
+!inject mbrlen.exe   FN_DOSCALL
+!inject mbrtowc.exe  FN_DOSCALL
+!inject mbsbtype.exe FN_DOSCALL
+!inject mbsinit.exe  FN_DOSCALL
+!inject mbsnbcat.exe FN_DOSCALL
+!inject mbsnbcmp.exe FN_DOSCALL
+!inject mbsnbcnt.exe FN_DOSCALL
+!inject mbsnbcpy.exe FN_DOSCALL
+!inject mbsnbicm.exe FN_DOSCALL
+!inject mbsnbset.exe FN_DOSCALL
+!inject mbsnccnt.exe FN_DOSCALL
+!inject mbsnextc.exe FN_DOSCALL
+!inject mbsrtowc.exe FN_DOSCALL
+!inject mbterm.exe   FN_DOSCALL
+!inject mbvtop.exe   FN_DOSCALL
+!inject rewinddi.exe FN_DOSCALL
+!inject setmbcp.exe  FN_DOSCALL
+!inject sisinit.exe  FN_DOSCALL
+!inject strdec.exe   FN_DOSCALL
+!inject stricoll.exe FN_DOSCALL
+!inject strinc.exe   FN_DOSCALL
+!inject strspnp.exe  FN_DOSCALL
+!inject tempnam.exe  FN_DOSCALL
+!inject wcrtomb.exe  FN_DOSCALL
+!inject wcrtom_s.exe FN_DOSCALL
+!inject wcsrtomb.exe FN_DOSCALL
+!inject wcsrto_s.exe FN_DOSCALL
+!inject wctob.exe    FN_DOSCALL
+!inject dgetdriv.exe FN_DOSCALL
+!inject dgetdskf.exe FN_DOSCALL
+!inject doscommi.exe FN_DOSCALL
+# 16-bit functions (DOS/16, Win16, OS/2 1.x, QNX/16)
+# NOTE: intdos and intdosx don't work under QNX/16.
+!inject halloc.exe   FN_16BIT
+!inject hfree.exe    FN_16BIT
+!inject _bfreese.exe FN_16BIT
+!inject _bheapse.exe FN_16BIT
+# 32-bit functions (DOS/32 Win386, Win32, OS/2-32, QNX/32)
+!inject outpd.exe    FN_32BIT
+!inject inpd.exe     FN_32BIT
+# DOS16, Win, Win386, Pharlap-16
+!inject bdos.exe     FN_DOSWIN
+!inject dosexter.exe FN_DOSWIN
+!inject int86.exe    FN_DOSWIN
+!inject int86x.exe   FN_DOSWIN
+!inject intdos.exe   FN_DOSWIN
+!inject intdosx.exe  FN_DOSWIN
+ 
+# DOS16 and DOS32
+FN_DOS = _harderr.exe &
+chainint.exe &
+bdos.exe &
+keep.exe &
+ 
+# Thread functions - Win32, QNX, OS/2, Netware
+FN_THREAD = _ethread.exe &
+_bthread.exe
+ 
+# DOS/32, QNX/32, Netware
+FN_DQN32 = int386.exe &
+int386x.exe &
+intr.exe
+ 
+# MMX required
+FN_MMX = mempty.exe &
+mfromint.exe &
+mpaddb.exe &
+mpaddd.exe &
+mpaddsb.exe &
+mpaddsw.exe &
+mpaddusb.exe &
+mpaddusw.exe &
+mpaddw.exe &
+mpand.exe &
+mpandn.exe &
+mpckssdw.exe &
+mpcksswb.exe &
+mpckuswb.exe &
+mpcmpeqb.exe &
+mpcmpeqd.exe &
+mpcmpeqw.exe &
+mpcmpgtb.exe &
+mpcmpgtd.exe &
+mpcmpgtw.exe &
+mpmaddwd.exe &
+mpmulhw.exe &
+mpmullw.exe &
+mpor.exe &
+mpslld.exe &
+mpslldi.exe &
+mpsllq.exe &
+mpsllqi.exe &
+mpsllw.exe &
+mpsllwi.exe &
+mpsrad.exe &
+mpsradi.exe &
+mpsraw.exe &
+mpsrawi.exe &
+mpsrld.exe &
+mpsrldi.exe &
+mpsrlq.exe &
+mpsrlqi.exe &
+mpsrlw.exe &
+mpsrlwi.exe &
+mpsubb.exe &
+mpsubd.exe &
+mpsubsb.exe &
+mpsubsw.exe &
+mpsubusb.exe &
+mpsubusw.exe &
+mpsubw.exe &
+mpxor.exe &
+mtoint.exe &
+mupckhbw.exe &
+mupckhdq.exe &
+mupckhwd.exe &
+mupcklbw.exe &
+mupckldq.exe &
+mupcklwd.exe
+ 
+#Win32, OS2-16, OS2-32
+FN_OS2WIN32 = cwait.exe &
+_pclose.exe &
+_pipe.exe &
+_popen.exe
+ 
+#_expand.exe & removed from FN_ALL *******
+ 
+#Available on ALL platforms (does not include Netware and Pharlap/16).
+FN_ALL = _bprintf.exe &
+_freect.exe &
+_heapchk.exe &
+_heapgrw.exe &
+_heapmin.exe &
+_heapset.exe &
+_heapshr.exe &
+_heapwal.exe &
+_memavl.exe &
+_memmax.exe &
+_searche.exe &
+_splitp2.exe &
+chdrive.exe &
+ftime.exe &
+getdiskf.exe &
+getdrive.exe &
+getfattr.exe &
+getftime.exe &
+getdate.exe &
+getopt.exe &
+getpid.exe &
+gettime.exe &
+locking.exe &
+putenv.exe &
+sbrk.exe &
+setenv.exe &
+_heapena.exe &
+iswctype.exe &
+mbcjisto.exe &
+mbcjmsto.exe &
+mbctohir.exe &
+mbctokat.exe &
+rewinddi.exe &
+snprintf.exe &
+strdate.exe &
+stricoll.exe &
+strspnp.exe &
+strtime.exe &
+towctrns.exe &
+vsnprint.exe &
+vsprintf.exe &
+wctype.exe &
+wctrans.exe
+ 
+# Macros (available everywhere!)
+FN_MACRO = alloca.exe &
+assert.exe &
+fpclassf.exe &
+isfinite.exe &
+isinf.exe &
+isnan.exe &
+isnormal.exe &
+mk_fp.exe &
+offsetof.exe &
+setjmp.exe &
+va_arg.exe &
+va_end.exe &
+va_start.exe &
+mbsnbcnt.exe &
+mbsnbcnt.exe &
+signbit.exe &
+strdec.exe &
+strdec.exe &
+strinc.exe &
+strinc.exe
+ 
+# Math functions (available everywhere)
+FN_MATH = _clear87.exe &
+_disable.exe &
+_enable.exe &
+_setmath.exe &
+_status8.exe &
+abs.exe &
+acos.exe &
+acosh.exe &
+asin.exe &
+asinh.exe &
+atan.exe &
+atan2.exe &
+atanh.exe &
+atof.exe &
+atoi.exe &
+atol.exe &
+atoll.exe &
+cabs.exe &
+bessel.exe &
+ceil.exe &
+cos.exe &
+cosh.exe &
+difftime.exe &
+div.exe &
+ecvt.exe &
+exp.exe &
+fabs.exe &
+fcvt.exe &
+floor.exe &
+fmod.exe &
+frexp.exe &
+gcvt.exe &
+hypot.exe &
+itoa.exe &
+imaxabs.exe &
+imaxdiv.exe &
+labs.exe &
+ldexp.exe &
+ldiv.exe &
+llabs.exe &
+lldiv.exe &
+lltoa.exe &
+log.exe &
+log10.exe &
+log2.exe &
+ltoa.exe &
+matherr.exe &
+max.exe &
+min.exe &
+modf.exe &
+pow.exe &
+raise.exe &
+rand.exe &
+sin.exe &
+sinh.exe &
+sqrt.exe &
+srand.exe &
+tan.exe &
+tanh.exe &
+ulltoa.exe &
+ultoa.exe
+ 
+#File functions (all platforms & NetWare)
+FN_FILE = dup.exe &
+dup2.exe &
+eof.exe &
+fclose.exe &
+fcloseal.exe &
+fdopen.exe &
+feof.exe &
+ferror.exe &
+fflush.exe &
+fgetc.exe &
+fgetchar.exe &
+fgetpos.exe &
+fgets.exe &
+fileleng.exe &
+fileno.exe &
+flushall.exe &
+fopen.exe &
+fopen_s.exe &
+fprintf.exe &
+fputc.exe &
+fputchar.exe &
+fputs.exe &
+fread.exe &
+free.exe &
+freopen.exe &
+freop_s.exe &
+fscanf.exe &
+fscanf_s.exe &
+fseek.exe &
+fsetpos.exe &
+fstat.exe &
+ftell.exe &
+fwide.exe &
+fwrite.exe &
+getc.exe &
+getch.exe &
+getchar.exe &
+getche.exe &
+getcwd.exe &
+gets.exe &
+open.exe &
+opendir.exe &
+mkdir.exe &
+mkstemp.exe &
+mktemp.exe &
+printf.exe &
+putc.exe &
+putch.exe &
+putchar.exe &
+puts.exe &
+read.exe &
+readdir.exe &
+remove.exe &
+rename.exe &
+rewind.exe &
+rmdir.exe &
+scanf.exe &
+scanf_s.exe &
+sopen.exe &
+sprintf.exe &
+sscanf.exe &
+sscanf_s.exe &
+stat.exe &
+tell.exe &
+tmpfile.exe &
+tmpfl_s.exe &
+tmpnam.exe &
+tmpnm_s.exe &
+umask.exe &
+ungetc.exe &
+ungetch.exe &
+unlink.exe &
+unlock.exe &
+vcprintf.exe &
+vcscanf.exe &
+vfprintf.exe &
+vfscanf.exe &
+vfscnf_s.exe &
+vprintf.exe &
+vscanf.exe &
+vscanf_s.exe &
+vsscnf_s.exe &
+write.exe
+ 
+# String Functions (all + NetWare)
+FN_STRING = &
+strcase.exe &
+strcat.exe &
+strcat_s.exe &
+stncat_s.exe &
+strchr.exe &
+strcmp.exe &
+strcmpi.exe &
+strcoll.exe &
+strcpy.exe &
+strcpy_s.exe &
+stncpy_s.exe &
+strcspn.exe &
+strdup.exe &
+strerror.exe &
+strerr_s.exe &
+streln_s.exe &
+strftime.exe &
+stricmp.exe &
+strlcat.exe &
+strlcpy.exe &
+strlen.exe &
+strnln_s.exe &
+strlwr.exe &
+strncase.exe &
+strncat.exe &
+strncmp.exe &
+strncpy.exe &
+strnicmp.exe &
+strnset.exe &
+strpbrk.exe &
+strrchr.exe &
+strrev.exe &
+strset.exe &
+strspn.exe &
+strstr.exe &
+strtoimx.exe &
+strtoumx.exe &
+strtod.exe &
+strtok.exe &
+strtok_s.exe &
+strtol.exe &
+strtoll.exe &
+strtoul.exe &
+strtoull.exe &
+strupr.exe &
+strxfrm.exe
+ 
+# Available on ALL platforms and Netware
+# NOTE: mbstowcs, getosfha, oshandle not available under QNX.
+FN_ALLN = _fsopen.exe &
+_exit.exe &
+_fullpat.exe &
+_grow_ha.exe &
+_lrotl.exe &
+_lrotr.exe &
+_rotl.exe &
+_rotr.exe &
+_makepat.exe &
+_msize.exe &
+_splitpa.exe &
+_vbprint.exe &
+abort.exe &
+abrt_hnd.exe &
+access.exe &
+asctime.exe &
+asctim_s.exe &
+atexit.exe &
+basename.exe &
+bsearch.exe &
+bsrch_s.exe &
+calloc.exe &
+cgets.exe &
+chdir.exe &
+chmod.exe &
+chsize.exe &
+clearenv.exe &
+clearerr.exe &
+clock.exe &
+close.exe &
+closedir.exe &
+cprintf.exe &
+cputs.exe &
+creat.exe &
+cscanf.exe &
+ctime.exe &
+ctime_s.exe &
+dirname.exe &
+exit.exe &
+ffs.exe &
+fnmatch.exe &
+getcmd.exe &
+getenv.exe &
+getenv_s.exe &
+getosfha.exe &
+gmtime.exe &
+gmtime_s.exe &
+ign_hnd.exe &
+isalnum.exe &
+isalpha.exe &
+isascii.exe &
+isatty.exe &
+isblank.exe &
+iscntrl.exe &
+isdigit.exe &
+isgraph.exe &
+islower.exe &
+isprint.exe &
+ispunct.exe &
+isspace.exe &
+isupper.exe &
+isxdigit.exe &
+inp.exe &
+inpw.exe &
+kbhit.exe &
+lfind.exe &
+localeco.exe &
+localtim.exe &
+lcltim_s.exe &
+lock.exe &
+longjmp.exe &
+lsearch.exe &
+memccpy.exe &
+memchr.exe &
+memcmp.exe &
+memcpy.exe &
+memcpy_s.exe &
+memicmp.exe &
+memmove.exe &
+memmov_s.exe &
+memset.exe &
+main.exe &
+malloc.exe &
+mblen.exe &
+mbstowcs.exe &
+mbtowc.exe &
+mktime.exe &
+movedata.exe &
+onexit.exe &
+oshandle.exe &
+outp.exe &
+outpw.exe &
+perror.exe &
+qsort.exe &
+qsort_s.exe &
+realloc.exe &
+segread.exe &
+set_chnd.exe &
+setbuf.exe &
+setlocal.exe &
+setmode.exe &
+setvbuf.exe &
+signal.exe &
+sleep.exe &
+stackava.exe &
+swab.exe &
+system.exe &
+time.exe &
+tolower.exe &
+toupper.exe &
+tzset.exe &
+utime.exe &
+utoa.exe &
+wcstombs.exe &
+wcstom_s.exe &
+wctomb.exe &
+wctomb_s.exe &
+_atouni.exe &
+_bgetcmd.exe &
+_cmdname.exe &
+_hdopen.exe &
+bcmp.exe &
+bcopy.exe &
+bzero.exe &
+control8.exe &
+controlf.exe &
+fsync.exe &
+getw.exe &
+mblen.exe &
+openosfh.exe &
+putw.exe &
+snprintf.exe &
+stricoll.exe &
+strspnp.exe &
+vsnprint.exe
+ 
+# Available on ALL platforms except 16-bit Windows
+FN_SPAWN = spawn.exe
+
+
+clean: .SYMBOLIC .EXPLICIT
+    rm *.obj *.err *.exe
+

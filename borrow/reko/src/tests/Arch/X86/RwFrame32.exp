@@ -1,0 +1,103 @@
+// fn10000000
+// Return size: 4
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// esp:esp
+// eax:eax
+// SCZO:SCZO
+// ax:ax
+// Top:Top
+// return address size: 4
+define fn10000000
+fn10000000_entry:
+	esp = fp
+	Top = 0<i8>
+	// succ:  l10000000
+l10000000:
+	eax = Mem0[0x10003420<p32>:word32]
+	esp = esp - 4<i32>
+	Mem0[esp:word32] = eax
+	call fn10000017 (retsize: 4;)
+	esp = esp + 4<32>
+	SCZO = cond(esp)
+	Mem0[0x10003428<p32>:word16] = ax
+	return
+	// succ:  fn10000000_exit
+fn10000000_exit:
+
+// fn10000017
+// Return size: 4
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// esp:esp
+// ebp:ebp
+// ecx:ecx
+// SCZO:SCZO
+// Z:Z
+// ax:ax
+// SZ:SZ
+// O:O
+// C:C
+// eax:eax
+// edx:edx
+// SZP:SZP
+// SO:SO
+// cx:cx
+// Top:Top
+// return address size: 4
+define fn10000017
+fn10000017_entry:
+	esp = fp
+	Top = 0<i8>
+	// succ:  l10000017
+l10000017:
+	esp = esp - 4<i32>
+	Mem0[esp:word32] = ebp
+	ebp = esp
+	esp = esp - 4<i32>
+	Mem0[esp:word32] = ecx
+	Mem0[ebp - 4<i32>:word16] = 0<16>
+	SCZO = cond(Mem0[ebp + 8<i32>:word32] - 0<32>)
+	branch Test(NE,Z) l1000002F
+	// succ:  l10000027 l1000002F
+l10000027:
+	ax = ax ^ ax
+	SZ = cond(ax)
+	O = 0<32>
+	C = 0<32>
+	goto l1000005E
+	// succ:  l1000005E
+l1000002F:
+	eax = CONVERT(Mem0[ebp - 4<i32>:word16], word16, int32)
+	ecx = Mem0[ebp + 8<i32>:word32]
+	edx = CONVERT(Mem0[ecx + eax:byte], byte, int32)
+	SZP = cond(edx & edx)
+	O = 0<32>
+	C = 0<32>
+	branch Test(EQ,Z) l1000005A
+	// succ:  l1000003E l1000005A
+l1000003E:
+	eax = CONVERT(Mem0[ebp - 4<i32>:word16], word16, int32)
+	SCZO = cond(eax - 0x7FFF<32>)
+	branch Test(GE,SO) l1000005A
+	// succ:  l10000049 l1000005A
+l10000049:
+	cx = Mem0[ebp - 4<i32>:word16]
+	cx = cx + 1<16>
+	SCZO = cond(cx)
+	Mem0[ebp - 4<i32>:word16] = cx
+	goto l1000002F
+	// succ:  l1000002F
+l1000005A:
+	ax = Mem0[ebp - 4<i32>:word16]
+	// succ:  l1000005E
+l1000005E:
+	esp = ebp
+	ebp = Mem0[esp:word32]
+	esp = esp + 4<i32>
+	return
+	// succ:  fn10000017_exit
+fn10000017_exit:
+

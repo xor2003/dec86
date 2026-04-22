@@ -1,0 +1,115 @@
+/****************************************************************************
+*
+*                            Open Watcom Project
+*
+* Copyright (c) 2002-2026 The Open Watcom Contributors. All Rights Reserved.
+*    Portions Copyright (c) 1983-2002 Sybase, Inc. All Rights Reserved.
+*
+*  ========================================================================
+*
+*    This file contains Original Code and/or Modifications of Original
+*    Code as defined in and that are subject to the Sybase Open Watcom
+*    Public License version 1.0 (the 'License'). You may not use this file
+*    except in compliance with the License. BY USING THIS FILE YOU AGREE TO
+*    ALL TERMS AND CONDITIONS OF THE LICENSE. A copy of the License is
+*    provided with the Original Code and Modifications, and is also
+*    available at www.sybase.com/developer/opensource.
+*
+*    The Original Code and all software distributed under the License are
+*    distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+*    EXPRESS OR IMPLIED, AND SYBASE AND ALL CONTRIBUTORS HEREBY DISCLAIM
+*    ALL SUCH WARRANTIES, INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF
+*    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR
+*    NON-INFRINGEMENT. Please see the License for the specific language
+*    governing rights and limitations under the License.
+*
+*  ========================================================================
+*
+* Description:  WHEN YOU FIGURE OUT WHAT THIS FILE DOES, PLEASE
+*               DESCRIBE IT HERE!
+*
+****************************************************************************/
+
+
+#include "guiwind.h"
+#include "guixedit.h"
+#include "guixdlg.h"
+#include "guilistb.h"
+#include "guicontr.h"
+#include "guixutil.h"
+#include "guiutil.h"
+
+
+static char *makeEditCopy( an_edit_control *edit )
+{
+    char        *copy;
+
+    if( edit->buffer == NULL || edit->length == 0 )
+        return( NULL );
+    copy = MemAlloc( edit->length + 1 );
+    if( copy != NULL ) {
+        strncpy( copy, edit->buffer, edit->length );
+        copy[edit->length] = '\0';
+    }
+    return( copy );
+}
+
+static char *GetText( gui_window *wnd, gui_ctl_id id, int choice, bool get_curr )
+{
+    VFIELD              *field;
+    a_list              *list;
+    char                *text;
+
+    field = GUIGetField( wnd, id );
+    if( field != NULL ) {
+        switch( field->typ ) {
+        case FLD_CHECK:
+            text = field->u.check->str;
+            if( text != NULL )
+                text = MemStrdup( text );
+            return( text );
+        case FLD_RADIO:
+            text = field->u.radio->str;
+            if( text != NULL )
+                text = MemStrdup( text );
+            return( text );
+        case FLD_HOT:
+            text = field->u.hs->str;
+            if( text != NULL )
+                text = MemStrdup( text );
+            return( text );
+        case FLD_TEXT:
+            text = field->u.str;
+            if( text != NULL )
+                text = MemStrdup( text );
+            return( text );
+        case FLD_EDIT:
+        case FLD_INVISIBLE_EDIT:
+            return( makeEditCopy( field->u.edit ) );
+        case FLD_COMBOBOX:
+            if( get_curr ) {
+                return( makeEditCopy( &field->u.combo->edit ) );
+            }
+            /* fall through */
+        case FLD_PULLDOWN:
+        case FLD_LISTBOX:
+        case FLD_EDIT_MLE:
+            list = GUIGetList( field );
+            if( list != NULL ) {
+                return( GUIGetListBoxText( list, choice, get_curr ) );
+            }
+            break;
+        }
+    }
+    return( NULL );
+}
+
+char * GUIAPI GUIGetText( gui_window *wnd, gui_ctl_id id )
+{
+    return( GetText( wnd, id, 0, true ) );
+}
+
+char * GUIAPI GUIGetListItem( gui_window *wnd, gui_ctl_id id, int choice )
+{
+    return( GetText( wnd, id, choice, false ) );
+}

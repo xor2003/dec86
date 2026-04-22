@@ -69,6 +69,21 @@ def _addr_exprs_are_byte_pair(
     split_expr_const_offset,
     same_expression_list,
 ):
+    def _strip_zero_segment_scale_terms(terms):
+        if project is None:
+            return terms
+        kept = []
+        for term in terms:
+            classified = classify_segmented_addr_expr(term, project)
+            if (
+                classified is not None
+                and classified.kind in {"segment_const", "extra"}
+                and classified.linear == 0
+            ):
+                continue
+            kept.append(term)
+        return kept
+
     if project is not None:
         low_class = classify_segmented_addr_expr(low_addr_expr, project)
         high_class = classify_segmented_addr_expr(high_addr_expr, project)
@@ -83,4 +98,6 @@ def _addr_exprs_are_byte_pair(
 
     low_terms, low_const = split_expr_const_offset(low_addr_expr)
     high_terms, high_const = split_expr_const_offset(high_addr_expr)
+    low_terms = _strip_zero_segment_scale_terms(low_terms)
+    high_terms = _strip_zero_segment_scale_terms(high_terms)
     return same_expression_list(low_terms, high_terms) and high_const == low_const + 1

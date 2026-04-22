@@ -1,0 +1,34 @@
+void __cxa_finalize()
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      __do_global_dtors_aux
+// MayUse: 
+// LiveOut:
+// Trashed: r1 r14
+// Preserved: r15
+__cxa_finalize_entry:
+l00000000000005C0:
+	r1_7 = Mem0[0x0000000000002018<p64>:word64]
+	call r1_7 (retsize: 0;)
+		uses: Mem:Mem0,r1:r1_7
+	return
+__cxa_finalize_exit:
+
+
+void __libc_start_main()
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      _start
+// MayUse: 
+// LiveOut:
+// Trashed: r1 r14
+// Preserved: r15
+__libc_start_main_entry:
+l00000000000005E0:
+	r1_7 = Mem0[0x0000000000002020<p64>:word64]
+	call r1_7 (retsize: 0;)
+		uses: Mem:Mem0,r1:r1_7
+	return
+__libc_start_main_exit:
+
+

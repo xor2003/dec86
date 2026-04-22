@@ -1,0 +1,17 @@
+#
+# Exports DIP makefile
+#
+
+dip_format = export
+
+imp_objs = &
+        expmisc.obj &
+        expld.obj &
+        expmod.obj &
+        exptype.obj &
+        expsym.obj &
+        expcue.obj
+
+extra_cppflags = -DDIP_PRIORITY=DIP_PRIOR_EXPORTS
+
+!include ../../master.mif

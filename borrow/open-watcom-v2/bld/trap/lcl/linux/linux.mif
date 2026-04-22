@@ -1,0 +1,15 @@
+linux_trap_objs_x86 = x86cpu.obj
+linux_trap_objs = &
+    lnx$(target_cpu).obj &
+    $(linux_trap_objs_$(target_cpu)) &
+    lnxacc.obj &
+    lnxmap.obj &
+    lnxcomm.obj &
+    lnxfile.obj &
+    lnxpath.obj &
+    lnxutl.obj &
+    supp.obj &
+    core.obj
+
+extra_incs += -I"$(trap_dir)/lcl/linux/h"
+extra_srcs +=;$(trap_dir)/lcl/linux/c

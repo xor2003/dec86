@@ -1,0 +1,104 @@
+tree_depth = 4
+
+proj_name = wimgedit
+
+!ifndef wimgedit_autodepends
+wimgedit_autodepends = .AUTODEPEND
+!endif
+
+wimgedit_ntmanif = ../res
+wimgedit_ntverrc = ../res
+
+wimgedit_wreslib_cli = gui
+wimgedit_wreslib_incl = 1
+
+sys_windowed = 1
+
+memory_model_i86 = l
+
+additional_clean = *.gh *.grh *.grc
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+!include $(commonui_dir)/client.mif
+!include $(wpi_dir)/client.mif
+!include $(wr_dir)/client.mif
+
+.JUST_ENOUGH
+
+#
+# cflags
+#
+.c : c;../c
+
+inc_dirs  = -I. -Ih -I"../h" $(cli_wres_inc_dirs) $(cli_wr_inc_dirs) &
+    -I"$(wre_dir)/h" $(cli_commonui_inc_dirs) $(cli_wpi_inc_dirs) &
+    -I"$(trmem_dir)"
+
+extra_cpp_flags     = -DGUI_IS_GUI
+!ifdef wpitest
+extra_cpp_flags    += -D_WPI_TEST_
+!endif
+extra_cpp_flags_os2 = -D__OS2_PM__
+
+extra_c_flags = -fh
+
+extra_c_flags_win = -zc
+
+#
+# lflags
+#
+extra_l_flags_win = option rwr, stack=16k, heapsize=2k lib ddeml.lib
+extra_l_flags_os2 = option stack=12k, heapsize=2k
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+exetarg_prebuild_objs = rcstr.grh
+exetarg_objs_extras_win = wincreat.obj splash.obj winutils.obj
+exetarg_objs_os2 = pmcreate.obj pmutils.obj pmicon.obj wbitmap.obj
+exetarg_objs_win = icon.obj snap.obj modclrs.obj pickbmp.obj iebmpdat.obj iedde.obj iectl3d.obj $(exetarg_objs_extras_win)
+exetarg_objs_nt  = icon.obj snap.obj modclrs.obj pickbmp.obj iebmpdat.obj iedde.obj iectl3d.obj $(exetarg_objs_extras_win)
+exetarg_objs = &
+    imgedit.obj ieproc.obj ieglob.obj ieclrpal.obj ienew.obj &
+    iedraw.obj ieviewin.obj ieutil.obj iesave.obj iestatus.obj &
+    iefonts.obj ieopen.obj ieprofil.obj ietoolbr.obj xorand.obj &
+    freehand.obj clip.obj drawproc.obj undo.obj colors.obj &
+    iconinfo.obj fill.obj clrcntls.obj curclr.obj funcbar.obj &
+    bkcolor.obj imgdata.obj getdata.obj chgsize.obj settings.obj &
+    trnsform.obj hinttext.obj iemem.obj closeall.obj bits.obj &
+    errors.obj imgutil.obj &
+    $(exetarg_objs_$(host_os))
+exetarg_libs_nt       = $(cli_wr_libs)
+exetarg_libs_win      = $(cli_wr_libs)
+exetarg_libs          = $(cli_wpi_libs) $(cli_commonui_libs) $(exetarg_libs_$(host_os))
+exetarg_res           = $(proj_name).res
+!include exetarg.mif
+
+#
+# rc and others
+#
+rc_inc_dirs = -I"../res" $(cli_commonui_rc_inc_dirs) -Ih
+
+!ifeq host_os os2
+$(proj_name).res : ../res/os2/wimgedit.rc rcstr.grh $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -ad $(rc_flags) -I"../res/os2" $(cppflags) $(rc_inc_path) $[@ -fo=$@
+!else
+$(proj_name).res : ../res/wimgedit.rc rcstr.grh $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -ad $(rc_flags) $(cppflags) $(rc_inc_path) $[@ -fo=$@
+!endif
+
+rcstrmsg.gh : ../res/wimgedit.msg $(__MAKEFILES__)
+    @%make echo_cpp
+    $(cppu8) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -o$@ $[@
+
+rcstr.grh : rcstrmsg.gh $(__MAKEFILES__)
+    @%make echo_awk
+    $(noecho)*awk -f $(build_dir)/msgtoh.awk -v OUTFILE=$^. $[@

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$(ProjectDir)../../Drivers/CommonBuildProperties.items" />
+  <PropertyGroup>
+    <ProjectGuid>{D0D1798C-08F7-4DE6-94E9-CC382E1FBEC8}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Reko.Environments.MacOS</RootNamespace>
+    <AssemblyName>Reko.Environments.MacOS</AssemblyName>
+    <TargetFramework>net8.0</TargetFramework>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Configurations>Debug;Release</Configurations>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Arch\Motorola\Motorola.csproj" />
+    <ProjectReference Include="..\..\Arch\PowerPC\PowerPC.csproj" />
+    <ProjectReference Include="..\..\Core\Core.csproj" />
+    <ProjectReference Include="..\..\Libraries\MacsBug\MacsBug.csproj" />
+  </ItemGroup>
+</Project>

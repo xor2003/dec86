@@ -1,0 +1,37 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:Reko.UserInterfaces.AvaloniaUI.Views.Documents"
+             xmlns:ctrl="clr-namespace:Reko.UserInterfaces.AvaloniaUI.Controls"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="40"
+             x:Class="Reko.UserInterfaces.AvaloniaUI.Views.Documents.ImageMapView"
+             x:DataType="local:ImageMapView">
+    <Grid ColumnDefinitions="Auto,*,Auto">
+        <!-- Left scroll button -->
+        <Button Grid.Column="0" x:Name="LeftScrollButton" 
+                Width="16" Height="{Binding $parent[local:ImageMapView].Bounds.Height}"
+                Padding="0" VerticalAlignment="Center">
+            <TextBlock Text="◀" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+        </Button>
+
+        <!-- ImageMapControl in the middle -->
+        <ctrl:ImageMapControl Grid.Column="1" 
+            x:Name="ImageMapControl"
+            Background="White"
+            SegmentMap="{Binding SegmentMap}"
+            ImageMap="{Binding ImageMap}"
+            Zoom="{Binding Zoom}"
+            Offset="{Binding Offset}"
+            SelectedAddress="{Binding SelectedAddress}"
+            LogarithmicView="{Binding LogarithmicView}"
+            FontSize="{Binding LabelFontSize}"/>
+
+        <!-- Right scroll button -->
+        <Button Grid.Column="2" x:Name="RightScrollButton"
+                Width="16" Height="{Binding $parent[local:ImageMapView].Bounds.Height}"
+                Padding="0" VerticalAlignment="Center">
+            <TextBlock Text="▶" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+        </Button>
+    </Grid>
+</UserControl>

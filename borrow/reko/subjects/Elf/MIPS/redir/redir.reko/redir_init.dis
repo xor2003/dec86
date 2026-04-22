@@ -1,0 +1,16 @@
+void _init()
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed: r25 r28
+// Preserved: ra sp
+_init_entry:
+l004001BC:
+	call 0x0040072C<p32> (retsize: 0;)
+		uses: Mem:Mem11,r25:0x0040072C<p32>,Stack +0010:0x10008860<32>,Stack +0018:0x10008860<32>
+	call 0x00409C10<p32> (retsize: 0;)
+		uses: Mem:Mem11,r25:0x00409C10<p32>
+	return
+_init_exit:
+
+

@@ -1,0 +1,128 @@
+# Set default behaviour, in case users don't have core.autocrlf set.
+* text=auto
+
+# Explicitly declare text files we want to always be normalized and converted 
+# to native line endings on checkout.
+*.asm text
+*.awk text
+*.c   text
+*.chk text
+*.cmd text
+*.cmp text
+*.cpp text
+*.ctl text
+*.dat text
+*.dbg text
+*.def text
+*.dlg text
+*.dos text
+*.emp text
+*.eng text
+*.eps text
+*.esm text
+*.fap text
+*.fi  text
+*.fon text
+*.for text
+*.gml text
+*.h   text
+*.hpp text
+*.htm text
+*.html text
+*.imp text
+*.inc text
+*.inf text
+*.ini text
+*.ipf text
+*.lnk text
+*.mh  text
+*.mif text
+*.msg text
+*.pcd text
+*.ps  text
+*.rb  text
+*.rc  text
+*.re  text
+*.rh  text
+*.rtf text
+*.sed text
+*.sh  text
+*.sp  text
+*.ssl text
+*.tix text
+*.txt text
+*.ucm text
+*.vbs text
+*.vi  text
+*.xml text
+*.xsl text
+*.y   text
+*.yml text
+
+.gitattributes text
+.gitignore text
+binmake text
+makefile text
+
+# Declare files that will always have LF line endings on checkout.
+
+# Declare files that will always have CRLF line endings on checkout.
+
+*.bat text eol=crlf
+
+# Denote all files that are truly binary and should not be modified.
+*.7z  binary
+*.bmp binary
+*.bz2 binary
+*.chi binary
+*.chm binary
+*.cnv binary
+*.com binary
+*.cop binary
+*.cur binary
+*.cw  binary
+*.dll binary
+*.exe binary
+*.gif binary
+*.ico binary
+*.jpg binary
+*.lib binary
+*.obj binary
+*.ovl binary
+*.pch binary
+*.pdf binary
+*.png binary
+*.res binary
+*.rez binary
+*.sdl binary
+*.sex binary
+*.sym binary
+*.sys binary
+*.uni binary
+*.wbr binary
+*.wri binary
+*.zip binary
+unicode*.* binary
+
+/bld/ctest/regress/positive/source/pp15.c binary
+/bld/plustest/regress/positive/source/pp15.c binary
+
+/bld/wmake/nmake text
+/bld/wmake/posmake text
+/bld/wmake/wmake text
+
+/bld/wmaktest/errtest/error.bat binary
+/bld/wmaktest/errtest/error.cmd binary
+
+# text files in exact encoding
+/bld/wipfc/helper/enti*.txt binary
+/bld/wipfc/helper/*.nls binary
+/bld/wipfc/configure text
+
+/build/makeinit text
+
+/contrib/libzip/configure text
+
+/contrib/zlib/configure text
+
+/docs/doc/fl/items.dat binary

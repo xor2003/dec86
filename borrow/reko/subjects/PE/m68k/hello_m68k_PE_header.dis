@@ -1,0 +1,12 @@
+void Win32CrtStartup()
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed:
+// Preserved: a7
+// Terminates process
+Win32CrtStartup_entry:
+l00001004:
+Win32CrtStartup_exit:
+
+

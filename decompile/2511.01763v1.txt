@@ -1,0 +1,1544 @@
+Context-Guided Decompilation: A Step Towards Re-executability
+Xiaohan Wang
+
+Yuxin Hu
+
+Kevin Leach
+
+Vanderbilt University
+Nashville, Tennessee, USA
+
+Vanderbilt University
+Nashville, Tennessee, USA
+
+Vanderbilt University
+Nashville, Tennessee, USA
+kevin.leach@vanderbilt.edu
+
+arXiv:2511.01763v1 [cs.SE] 3 Nov 2025
+
+Abstract
+Binary decompilation plays an important role in software security
+analysis, reverse engineering, and malware understanding when
+source code is unavailable. However, existing decompilation techniques often fail to produce source code that can be successfully
+recompiled and re-executed, particularly for optimized binaries.
+Recent advances in large language models (LLMs) have enabled
+neural approaches to decompilation, but the generated code is
+typically only semantically plausible rather than truly executable,
+limiting their practical reliability. These shortcomings arise from
+compiler optimizations and the loss of semantic cues in compiled
+code, which LLMs struggle to recover without contextual guidance.
+To address this challenge, we propose ICL4Decomp, a hybrid decompilation framework that leverages in-context learning (ICL)
+to guide LLMs toward generating re-executable source code. We
+evaluate ICL4Decomp across multiple datasets, optimization levels, and compilers, demonstrating around 40% improvement in
+re-executability over state-of-the-art decompilation methods while
+maintaining robustness.
+
+CCS Concepts
+• Software and its engineering → Source code generation; •
+Information systems → Retrieval tasks and goals.
+
+Keywords
+Binary decompilation, Reverse engineering, In-context learning,
+Large Language Models, Compiler optimization
+
+1
+
+Introduction
+
+Binary decompilation aims to transform low-level binaries back
+into high-level source code and is a core problem in the areas of
+program analysis and software engineering [11]. It is critical for
+security auditing, vulnerability assessment, and malware reverse
+engineering [12, 57], especially when the original source code is
+unavailable. However, compilation is a lossy process [55]; it discards
+variable types [9], type annotations [58], control-flow constructs,
+and other semantic information that are crucial for comprehension
+and maintenance of the software. This loss of semantics leads to
+challenges when manually or automatically decompiling binaries,
+creating variable names like v1 and function names containing
+addresses like 0xdeadbeef.
+Traditional decompilers (e.g., Hex-Rays [3], Ghidra [4]) rely on
+heuristic rules and control-flow analysis to identify source structures like branches and loops. Setting aside the loss of symbols and
+other semantics, these decompilation tools can often generate reasonably accurate source code when the input binary is unoptimized.
+However, when optimizations have been applied to the input binary,
+
+decompilers frequently generate source code that cannot be compiled, that misunderstands the original developer’s intent, or that
+fundamentally changes the semantics of the decompiled program.
+For example, optimizations like loop unrolling or register reuse may
+destroy structural characteristics, leading to poor decompilation
+output. These tools are fundamentally limited in their attempt to
+simultaneously solve syntax recovery and semantic reasoning with
+fixed rules. Recently, neural network and LLM-based approaches
+(e.g., Dire [33], DeGPT [25], LLM4Decompile [49]) learn syntactic
+patterns through pre-training and generate readable code. However, these techniques rely on statistical correlations (i.e., between
+ground truth human-written source and the generated decompiled
+source), and typically do not consider preserving semantics of the
+original program, instead focusing on optimizing for metrics like
+semantic matching BLEU [42] or ROUGE [37]. Moreover, these
+tools do not explicitly consider optimization semantics, leading to
+deviations in types, boundary conditions, and control correctness.
+Thus, there is a need to address current shortcomings in decompilation techniques, especially with respect to optimized binaries and
+the ability to re-compile and re-execute decompiled source.
+Given the limitations of existing work, decompilation faces two
+critical ongoing challenges: Challenge 1: Recovering Lost Semantics. Because binaries are often stripped of symbols (especially in malware analysis or reverse engineering contexts), rich
+semantic information like control flow, variable names, and function names are lost. Existing decompilation techniques rely on a
+combination of (a) machine learning (including LLMs), which is
+prone to overfitting, data quality, and statistical imbalance, and (b)
+formal methods, which do not scale well and create many false
+positives or overly-constrained typing judgments. In this paper, we
+consider augmenting LLM capabilities with well-grounded understanding of decompilation and optimization rules to improve the
+quality of decompiled source. Challenge 2: Recompilability and
+Re-executability are second-class. Even when decompilation is
+successful and accurately reflects the original program semantics,
+existing tools almost never produce decompiled source that can be
+re-compiled to a binary, let alone execute successfully. Although decompilation is often considered a one-way process at the moment,
+there are many applications where a user may want to re-compile
+the decompiled source to binary, including hot-patching [1, 31]
+and hardening medical device firmware [2, 5]. In this paper, we
+augment LLM-based decompilation tools in two key ways to improve the likelihood that decompiled source can be (a) re-compiled
+into a native binary, and (b) correctly execute and match outputs
+with the original program using a held-out test suite. By addressing these challenges, our approach advances the state-of-the-art
+method in providing comprehensible decompiled source obtained
+from compiled software.
+
+Wang et al.
+
+To address the above challenges, we consider a mechanism for
+integrating descriptions of rules of transformations applied during
+compilation to facilitate working backwards — that is, leveraging
+the insight that compilers strictly adhere to semantics-preserving
+transformations, we integrate knowledge of these rules into LLMbased decompilation techniques using In-Context Learning (ICL) [15,
+54]. ICL is a learning paradigm that enables LLMs to perform new
+tasks by conditioning on a few examples or instructions provided
+within the same input. Formally, the context refers to the augmented
+input supplied to the model during inference, which implicitly
+guides its predictions without additional parameter updates. In
+this domain, ICL enables conditioning decompilation on concrete
+demonstrations that exhibit desired semantic-syntactic correspondence. This technique achieves generation of the decompiled source
+that is more likely to re-execute and maintaining logical and structural integrity with respect to the original input binary.
+Building upon the ICL paradigm, we propose ICL4Decomp, an
+in-context learning framework for decompilation. Our approach
+leverages two complementary knowledge sources to guide the
+decompilation process. First, context examples consisting of (binary, source) pairs provide structural and semantic knowledge that
+demonstrate correct decompilation patterns. Second, optimizationaware rules encode constraints consistent with semantics-preserving
+compiler transformations during optimization, helping the model
+recognize and reverse common optimization patterns. The decompilation process operates end-to-end: given a target binary function, we construct an informative context by selecting relevant
+examples or applicable rules, then condition the language model
+on this context to generate the corresponding source code. Our
+design combines the flexibility of ICL (which adapts to arbitrary
+binary input samples without retraining) with the interpretability
+of well-defined compilation transformation and optimization rules,
+ultimately providing a grounded decompilation framework that
+increases comprehensibility, re-compilability, and re-executability
+of decompiled binaries.
+We present an evaluation of our approach across multiple datasets
+under various optimization levels (O0 to O3) and compilers (GCC
+and Clang), evaluating decompilation quality through re-executability
+rate, which (heuristically) measures whether the generated source
+code compiles and produces semantically-equivalent behavior to
+the original binary using a held-out test suite. Our results demonstrate substantial improvements over state-of-the-art baselines,
+achieving an average increase of approximately 40% in re-executability
+rate. The gains are particularly pronounced at higher optimization
+levels, where compiler transformations introduce greater semantic ambiguity and structural complexity. Notably, ICL4Decomp
+maintains robust performance across all optimization levels, indicating that our framework effectively handles diverse compilation
+transformations. These findings validate that integrating context
+examples with optimization-aware knowledge enables more reliable semantic reasoning and syntax recovery, bridging the gap
+between binary analysis and executable code generation in practical decompilation scenarios. Together, these results highlight the
+potential of in-context learning as a general mechanism for reverseengineering tasks, demonstrating that decompilation can benefit
+from contextual, example-driven adaptation.
+Our main contributions are as follows.
+
+• We present ICL4Decomp, a novel in-context learning framework for decompilation.
+• We demonstrate substantial performance improvements
+across multiple benchmarks, optimization levels, and compiler configurations, achieving approximately 40% higher
+re-executability rates than state-of-the-art baselines, with
+particularly dramatic gains at higher optimization levels.
+• We validate the robustness of our approach and conduct
+ablation studies to demonstrate its viability.
+
+2
+
+Background
+
+In this work, we formalize in-context decompilation as the task of
+recovering high-level source code from assembly functions under
+contextual guidance. In this section, we introduce define the decompilation objective and notation, then describe the formal setting of
+in-context learning used in our framework.
+
+2.1
+
+Problem Definition
+
+Given a compiled assembly function 𝐴 ∈ A, the goal of decompilation is to recover a corresponding high-level source implementation 𝑆ˆ𝑡 ∈ S that reproduces the same program behavior
+when recompiled. Formally, the recovered source must satisfy:
+ˆ ⇒ 𝑆ˆ ≈ 𝑆 orig,, where 𝑆 orig denotes the original
+Decompiler(𝐴)
+source code, and ≈ represents semantic equivalence of observable behavior. Our objective is to decompile source code that is
+re-executable, which entails reconstruction of syntactically valid
+and behaviorally identical source code.
+
+2.2
+
+In Context learning for Decompilation
+
+Notation. We summarize the key symbols used throughout this
+paper. Let A and S denote the sets of assembly functions and
+source implementations, respectively. A decompilation corpus D =
+(𝐴𝑖 , 𝑆𝑖 )𝑛𝑖=0 provides paired supervision between the two domains.
+Each assembly function 𝐴𝑖 is encoded into a dense vector h(𝐴𝑖 ) ∈
+R𝑑 via a pretrained encoder h(·). The decompilation model 𝑓𝜃 refers
+to a LLMs with frozen parameters 𝜃 , which generates source code
+conditioned on the input assembly and optional context C: 𝑆ˆ =
+𝑓𝜃 (𝐴, C).
+Formal Setting. The in-context decompilation problem is defined
+as generating 𝑆ˆ given a target assembly 𝐴 and auxiliary contextual
+information C: 𝑆ˆ = 𝑓𝜃 (𝐴, C), where C ∈ {Cret, Copt }. Here Cret
+denotes retrieved exemplars from a corpus, while Copt encodes
+compiler optimization hints. No model retraining is performed,
+adaptation occurs purely through prompt conditioning at inference
+time. This formulation treats in-context examples and rule-based
+guidance as complementary knowledge sources of decompilation.
+
+3
+
+Approach
+
+We present ICL4Decomp, an approach to improving re-executability
+of decompiled source, which consists of two variants:
+• ICL4D-R: Retrieved-Exemplar In-Context Decompilation leverages semantically similar (𝐴𝑖 , 𝑆𝑖 ) pairs retrieved
+from a large corpus to expose the model to concrete assemblyto-source mappings.
+
+Context-Guided Decompilation: A Step Towards Re-executability
+
+ICL4D-R
+Corpus
+
+Context Design
+
+embeddings
+
+Example 1 [ASM,SRC]
+Example Retrieval
+
+Example 2 [ASM,SRC]
+
+ICL4D-O
+Optimization Flags
+Selection
+-fomit-frame-pointer
+-ftree-ter
+
+Context Design
+Flag
+Description
+Example
+
+Example k [ASM,SRC]
+
+-ftree-coalesce-vars
+
+Binary Search Analysis
+
+Hint
+
+End-to-End Decompilation
+Input
+
+General LLMs
+
+Output
+
+Context
+ICL4D-R
+
+ICL4D-O
+
+This is the assembly code:
+
+[ASM]
+
+What is the source code?
+
+Figure 1: System overview for in-context decompilation.
+• ICL4D-O: Optimization Rule-based In-Context Decompilation augments the prompt with natural-language
+descriptions of compiler optimization rules, enabling the
+model to reason about non-local transformations that affect
+data flow and structure.
+Together, these two mechanisms represent our empirical investigations of two complementary forms of in-context learning, forming
+the foundation of our in-context decompilation paradigm, as shown
+in Figure 1. We discuss each in the following subsections.
+
+3.1
+
+ICL4D-R: Retrieved-Exemplar
+
+The first variant of in-context learning, termed ICL4D-R, constructs prompts using retrieved exemplars—semantically similar
+assembly–source pairs (𝐴𝑖 , 𝑆𝑖 ) drawn from a pre-built corpus D,
+as shown in Figure 1. The central idea is to expose the language
+model to examples that explicitly showing the mapping between
+source code and assembly code. Given a target assembly function
+𝐴𝑡 , we retrieve a small exemplar set Cret = {(𝐴𝑖 , 𝑆𝑖 )}𝑘𝑖=1 from D
+and condition the model on these examples to generate the decompiled source 𝑆ˆ𝑡 = 𝑓𝜃 (𝐴𝑡 , Cret ), where 𝑓𝜃 denotes the pretrained
+LLM with frozen parameters. Each exemplar serves as a contextual
+demonstration of how similar instruction sequences translate into
+compilable source code.
+3.1.1 Retrieval Infrastructure. To support retrieval-based in-context
+learning, we build a retrieval infrastructure that encodes assembly
+functions into a dense embedding space and enables efficient, semantically aware exemplar search. In this subsection, we aim to
+present how exemplars are represented and retrieved efficiently.
+Corpus Construction and Embedding. To enable effective in-context
+learning of binary decompilation, we first need a corpus that provides diverse and representative function pairs for retrieval-based
+prompting. We construct the corpus from two widely adopted
+sources: Mostly Basic Programming Problems (MBPP) benchmark [7], commonly used for evaluating code generation models,
+and ExeBench [6], frequently used in training large code models. This design ensures both popularity and diversity, combining
+algorithmic-level codes from MBPP with system-level codes from
+
+ExeBench. Together, these sources yield approximately 105 unique
+(𝐴𝑖 , 𝑆𝑖 ) pairs spanning a broad range of programming patterns and
+compiler behaviors.
+To ensure consistency across compilers and architectures, all
+assembly functions are normalized by removing comments and register prefixes (%), inserting uniform whitespace around punctuation,
+converting hexadecimal constants to decimal form, and replacing
+instruction addresses with symbolic placeholders (e.g., [INST-1]),
+following the preprocessing used by a foundation model [27]. Corresponding C source codes are stripped of header inclusions and
+reformatted into canonical style. Each pair is further annotated with
+a functional category (algorithm, string, io, system, or math) inferred from library headers and API calls, along with auxiliary
+attributes such as lines of code and cyclomatic complexity. Exact
+duplicates are removed via content hashing.
+Each assembly function 𝐴𝑖 is encoded into a vector h(𝐴𝑖 ) ∈ R𝑑
+using the encoder component of the pretrained generative foundation model Nova [27], which is specifically designed for assembly
+code understanding. Nova is well-suited to our objective due to
+two key learning strategies: (i) Functionality Contrastive Learning,
+which encourages embeddings of functionally equivalent assembly snippets— e.g., variants compiled from the same source—to be
+encoded closer in latent space; and (ii) Optimization Contrastive
+Learning, which enforces an orderly embedding geometry across
+compiler optimization levels (O0–O3), such that heavily optimized
+binaries are positioned progressively farther from their unoptimized
+counterparts. Together, these mechanisms enable this encoder to
+prioritize functional semantics over surface syntax, which ensures
+that exemplars retrieved for decompilation reflect true functional
+similarity, thereby improving the executability of the decompiled
+source code. We use the mean of all [INST] token embeddings
+as the final representation h(𝐴𝑖 ) for each assembly function. All
+embeddings are precomputed and indexed using FAISS, enabling
+millisecond-scale retrieval during in-context exemplar search.
+Similarity-Based Retrieval with Category-Aware Re-ranking. Given
+this embedded corpus, we retrieve exemplars for each target function through similarity-based search with category-aware adjustments. For a target assembly function 𝐴𝑡 with embedding h(𝐴𝑡 ),
+we compute its similarity to each candidate 𝐴𝑖 in the corpus using
+Cross-domain Similarity Local Scaling (CSLS) between h(𝐴𝑡 ), and
+h(𝐴𝑖 ), which mitigates the hubness problem, where certain points
+become nearest neighbors to disproportionately many queries, common in high-dimensional embedding spaces. To promote semantic
+relevance beyond purely structural similarity, we apply a categoryaware re-ranking that multiplies the similarity score by a penalty
+factor 𝛼 when the functional categories of 𝐴𝑡 and 𝐴𝑖 do not match,
+yielding an adjusted score 𝑠 ′ (𝐴𝑡 , 𝐴𝑖 ). This design balances exploiting known functional similarity with exploring structurally related
+but categorically distinct examples. The top-𝑘 pairs (𝐴𝑖 , 𝑆𝑖 ) with
+highest adjusted scores are then selected from the indexed corpus to
+form the in-context exemplar set: Cret = TopK (𝐴𝑖 ,𝑆𝑖 ) ∈ D 𝑠 ′ (𝐴𝑡 , 𝐴𝑖 ).
+3.1.2 Prompt Construction and Inference. The retrieved exemplars
+are organized into a structured prompt that alternates between
+assembly and source segments, followed by the target assembly
+and an explicit translation instruction:
+
+Wang et al.
+
+Table 1: Functional tagging scheme and distribution.
+Tag
+
+Criteria
+
+Representative Features
+
+algorithm
+
+Assigned when the code employs STL or common algorithmic utilities.
+
+std::vector,
+sort(),
+accumulate, pow(), sqrt()
+
+Count
+
+Distribution
+
+2,874
+
+27%
+
+string
+
+String manipulation or usage of stringprocessing libraries.
+
+string.h, strlen, strcmp, regex, substr
+
+2,518
+
+24%
+
+io
+system
+
+Input/output operations.
+
+stdio.h, printf, fgets, fwrite, cout
+
+5,115
+
+48%
+
+System interfaces, syscalls, or memory operations.
+
+unistd.h, open, read, mmap, memcpy
+
+366
+
+3.4%
+
+math
+
+Mathematical libraries or functions.
+
+math.h, sin, cos, pow, sqrt, log, exp
+
+1,199
+
+11%
+
+Example Prompt
+
+[Example 1]
+Assembly: <A_1>
+Source: <S_1>
+[Example 2] . . . <A_2, S_2>
+[This is the assembly:] <A_t>
+What is the source code?
+
+Examples are ordered by decreasing 𝑠 ′ (𝐴𝑡 , 𝐴𝑖 ). This structured
+formatting allows the LLM to observe concrete correspondence between instructions and abstractions before attempting generation.
+The final prompt P (𝐴𝑡 , Cret ) is passed to the LLM under deterministic decoding settings (temperature = 0.1, top-𝑝 = 0.9). The
+model outputs a candidate 𝑆ˆ𝑡 = 𝑓𝜃 (P (𝐴𝑡 , Cret )), which is evaluated
+directly for recompilation and correctness. Although no parameter
+updates are performed, the retrieved exemplars act as few-shot
+supervision signals, enabling implicit adaptation to the compiler
+style and optimization level of the target.
+
+Algorithm 1 Retrieved-Exemplar In-Context Decompilation
+Require: Target assembly 𝐴𝑡 , encoder h(·), corpus D, exemplar count 𝑘
+1: Encode target: h𝑡 ← h(𝐴𝑡 )
+2: for all (𝐴𝑖 , 𝑆𝑖 ) in D do
+3:
+Compute similarity 𝑠𝑖 ← CSLS(h𝑡 , h(𝐴𝑖 ) )
+4: end for
+5: Apply category-aware penalty
+6: Select top-𝑘 exemplars Cret ← TopK(𝑠 ′ )
+7: Construct structured prompt P (𝐴𝑡 , Cret )
+8: Generate 𝑆ˆ𝑡 ← 𝑓𝜃 (𝐴𝑡 , Cret )
+9: return Decompiled source 𝑆ˆ𝑡
+
+This retrieved-exemplar mechanism serves as the foundation of
+our broader in-context decompilation framework. The next section
+extends the paradigm by incorporating another contextual form.
+
+3.2
+
+ICLD-O: Optimization Rule-based ICL
+
+While retrieved exemplars effectively expose the model to compilerstyle mappings, they assume that instruction–source alignments
+remain locally consistent. However, specific compiler optimization
+flags often introduce systematic yet non-trivial transformations,
+e.g., eliminating stack frames, unrolling loops, or fusing arithmetic
+operations, that break these correspondences. These transformations often alter the variable–register mapping so aggressively that
+
+push_back(),
+
+qsort(),
+
+the LLM fails to infer correct data flow, leading to syntactically
+valid but semantically incorrect decompilation outputs.
+To address this limitation, we introduce ICL4D-O, a rule-based
+variant of in-context decompilation that explicitly contextualizes
+the model with compiler optimization semantics. Rather than relying solely on retrieval, ICL4D-O augments the prompt with naturallanguage descriptions of the optimization rule(s) applied to the
+target binary, helping the LLM reconstruct high-level code consistent with the compiler’s intent.
+3.2.1 Optimization Flag Selection. Modern compilers expose hundreds of fine-grained optimization flags (e.g., -ftree-dominator-opts,
+-fmerge-constants, -fomit-frame-pointer, -funswitch-loops,
+etc.), many of which are interdependent and architecture-specific. It
+is therefore impractical—and conceptually noisy—to design prompts
+for all available flags. To ensure that our rule-based study focuses
+on the most impactful transformations, we empirically identified
+which optimization flags are actually active in our corpus.
+Specifically, we performed a simple but systematic binary search
+analysis over compiler options. Given a random subset of functions
+from the corpus, we maintained a candidate list of optimization
+flags F extracted from GCC/Clang documentation. For each flag
+𝑓 𝑗 ∈ F , we compiled the same source twice—once with 𝑓 𝑗 enabled
+and once with it disabled—while keeping all other conditions fixed.
+We then compared the resulting assembly outputs token-wise. A
+flag is considered active if the two assembly versions differ in
+instruction sequence, register allocation, or control-flow structure.
+By iteratively bisecting the flag list—grouping related options
+and testing subsets—we efficiently determined which flags have a
+measurable effect on real compilation outputs within our dataset.
+The empirical frequency of activation across sampled corpus functions yielded a ranked list of influential optimizations.
+From this analysis, we selected the top five most frequently active
+flags: -fomit-frame-pointer, -ftree-ter, fipa-pure-count,
+-fcrossjumping, and -ftree-coalesce-vars. These options consistently altered the emitted assembly structure and therefore represent diverse and meaningful compiler transformations for LLMbased decompilation analysis.
+This data-driven selection ensures that the rule-based prompts
+in ICL4D-O target real, observable compiler behaviors rather than
+theoretical or rarely-triggered optimizations, providing a grounded
+and practically relevant evaluation.
+3.2.2 Rule-based Prompt Design. Each compiler optimization flag is
+associated with a rule descriptor 𝑟 𝑗 = (flag, description, example, hint),
+
+Context-Guided Decompilation: A Step Towards Re-executability
+
+which provides three kinds of information: (1) what the optimization does, (2) what assembly patterns it produces, and (3) how to
+reason about them during decompilation.
+The prompt is then expanded with a short Optimization Context
+section that encodes this rule in plain text. Below is an example
+-ftree-coalesce-vars (Tree SSA Variable Coalescing):
+
+Experiments were run on a workstation equipped with dual
+NVIDIA RTX A6000 GPUs. Unless otherwise specified, generation
+used deterministic decoding settings (temperature = 0.1), exemplar count 𝑘 = 5, and category penalty 𝛼 = 0.9. The maximum
+token length was capped at 10,000 to accommodate multi-example
+prompts with long assembly sequences. The random seed was fixed
+to 42 for all experiments to ensure reproducibility.
+
+Example Prompt for -ftree-coalesce-vars
+
+Optimize options instructions
+The binary you are decompiling may have been compiled with the GCC/Clang option -ftree-coalesce-vars (Tree SSA Variable Coalescing).
+– This optimization merges multiple variables into a single register or
+memory location. It identifies variables that are copies of each other
+(e.g., int b = a;) or whose lifetimes do not overlap.
+– The goal is to eliminate redundant mov instructions and reduce register
+pressure, resulting in smaller and faster code.
+– As a result, intermediate variables from the source code may be completely absent in the final assembly; the logic is performed directly on
+the coalesced register.
+Illustrative Source:
+int coalesce_example(int x, int y) {
+int a = x + 5;
+int c = y - 2;
+int b = a;
+int d = b;
+int e = c;
+return d + e;
+}
+Decompilation Hint:
+Trace data flow from inputs to the return expression; do not create redundant temporary variables for copies (b, d, e) since they have been
+optimized away.
+[This is the assembly:] <A_t>
+What is the source code?
+
+This additional context informs the LLM that missing temporaries are intentional results of compiler coalescing, not lost semantic information. In practice, the model learns to reconstruct
+higher-level expressions that directly operate on canonical variables, yielding cleaner and more faithful decompilation.
+
+4
+
+Datasets
+
+ExeBench. ExeBench is the first machine-learning-scale dataset
+of executable C functions collected from GitHub [6]. Its diversity
+and size make it representative of real-world C code used in opensource projects. We use the test-real subset, which contains functions with concrete auxiliary definitions that can be compiled and
+executed successfully. Each function performs non-trivial operations beyond constant or identity returns, making the subset well
+suited for tasks such as I/O-driven synthesis and decompilation.
+All functions were compiled with GCC under optimization levels
+O0–O3. Assembly code was generated in compile-only mode (-S),
+and individual function slices were extracted from emitted .s files
+based on symbol boundaries, with function names unified to func0.
+In total, this subset contains 1,135 samples.
+HumanEval-Decompile. HumanEval-Decompile is adapted from
+the HumanEval benchmark [10], a widely used standard for assessing code generation models. The original dataset includes Python
+programming problems, each with an implementation and unit tests.
+LLM4Decompile [49] translated all reference implementations and
+assertions into C/C++, ensuring that each function compiles with
+GCC/Clang using only standard C libraries and passes all converted
+test cases. This yields 1,312 executable C functions covering a wide
+range of algorithmic patterns, forming the HumanEval-Decompile
+Dataset. The dataset represents pure algorithmic tasks and complements the system-level nature of ExeBench.
+
+Experimental Setup
+
+This section describes the experimental infrastructure to evaluate
+our in-context decompilation framework. We first detail the implementation and model configurations, then introduce the datasets
+and characteristics, and specify the evaluation protocol and metrics.
+
+4.1
+
+4.2
+
+We evaluate our methods on two datasets covering both systemlevel and algorithmic domains: ExeBench and HumanEval-Decompile.
+Both datasets consist of paired assembly–source examples (𝐴𝑖 , 𝑆𝑖 )
+compiled under optimization levels O0–O3, and all samples were
+normalized following the procedure described in §3.2.
+
+Distribution and Consistency. Both datasets cover all optimization levels (O0–O3) and share the same normalization pipeline. All
+samples were validated by SHA-256 hash comparison to guarantee
+disjointness between the retrieval corpus and evaluation datasets
+that no function appears in more than one set.
+
+Implementation
+
+Experiments were conducted using pretrained large language models accessed through API endpoints. The primary model used for
+generation was DeepSeek-V3.2, while LLM4Decompile [49] served
+as a competitive learning-based baseline. The embedding encoder
+h(·) was from the Nova-1.3b [27], producing 1024-dimensional representations for normalized assembly sequences. All retrieval and
+inference routines were implemented in Python 3.10 with FAISS
+for vector search and PyTorch for model interfacing.
+
+Dataset Characteristics. Table 2 summarizes structural statistics
+including average lines of code (LOC), cyclomatic complexity, and
+basic blocks. ExeBench contains long, complex system-level functions, while HumanEval-Decompile focuses on shorter algorithmic functions with moderate complexity. This diversity supports
+robust evaluation across varying code structures and semantic difficulty. All datasets and preprocessing scripts are available in the
+accompanying GitHub repository to facilitate full reproducibility.
+
+Wang et al.
+
+Table 2: Evaluation dataset statistics (mean / std) per function.
+Evaluation Dataset
+
+#N LOC Cycl. Blocks
+
+13.6
+3.4
+±16.1 ±15.3
+13.3
+4.9
+HumanEval-Decompile 1312
+±8.4 ±3.1
+ExeBench
+
+4.3
+
+1135
+
+3.5
+±15.3
+5.1
+±3.0
+
+Evaluation Protocol
+
+We evaluate all models under identical compilation and testing
+conditions to ensure fair comparison. Each predicted source function 𝑆ˆ𝑡 is compiled with same compiler in -O0 mode and executed
+using the same I/O-based test harness applied to its ground-truth
+counterpart 𝑆𝑡 . A test instance is considered successful only if the
+compiled binary executes without runtime errors and produces
+output identical to 𝑆𝑡 . All experiments adopt a timeout of 5 s per
+sample for both compilation and execution.
+Baselines. We compare two in-context decompilation variants:
+ICL4D-R (retrieval-augmented) and ICL4D-O (rule-guided) against
+two learning-based baselines: DeepSeek-V3.2, a general-purpose
+large code model evaluated without contextual augmentation, and
+LLM4Decompile-End-1.3B [49], a supervised sequence-to-sequence
+model trained on large-scale binary–source pairs, as the benchmark
+work in learning-based decompilation. Traditional rule-based decompilers such as Ghidra are not included, as their pseudo-code
+outputs cannot be consistently recompiled or evaluated under the
+same executable test protocol.
+Metrics. We report the Executable Success Rate (ESR), defined
+as the proportion of functions that compile successfully and pass all
+functional tests. This metric jointly captures syntactic correctness
+(compilability) and semantic equivalence (functional behavior).
+
+5
+
+Results
+
+We present our experimental results to address the following research questions:
+• RQ1: Can we leverage in-context learning to improve the
+re-executable rate of decompiled binaries compared to traditional decompilation approaches?
+• RQ2: Can in-context learning mitigate specific categories
+of decompilation errors?
+• RQ3: How robust is in-context guided decompilation across
+functions of varying program complexity?
+We organize results as follows: Section 5.1 discusses effectiveness
+of in-context learning for re-executability, Section 5.2 examines
+error mitigation, and Section 5.3 analyzes robustness.
+
+5.1
+
+RQ1: Executability
+
+We begin by evaluating whether in-context guided decompilation
+improves the executability of recovered source code. We compare two variants of our approach: ICL4D-R, which leverages
+retrieval-based exemplars, and ICL4D-O, which integrates compiler optimization rules into prompts. Both are evaluated against the
+strongest available baselines, DeepSeek-V3.2 and LLM4Decompile.
+
+Table 3: Error taxonomy for stderr diagnostics.
+Category
+
+Example cause / message
+
+Assert
+Syntax
+Return
+Type
+Declaration
+Runtime/Link
+Other
+
+Assertion failure or output mismatch (assertion failed)
+Token or structure error (expected ’;’, unterminated string)
+Invalid return or argument count (void value not ignored)
+Incompatible or invalid type (invalid conversion)
+Missing or conflicting symbol (undefined reference)
+Crash or linking error (segmentation fault)
+Uncategorized message
+
+ICL4D-R. As shown in Table 4, ICL4D-R consistently achieves
+the highest re-executability rate across all compiler optimization
+levels (O0–O3) and both datasets. On HumanEval-Decompile, it
+reaches 54.3% at O0, outperforming DeepSeek-V3.2 (46.7%) and
+LLM4Decompile (26.8%). A similar pattern holds on ExeBench, where
+ICL4D-R achieves up to 20% absolute improvement. The consistent advantage across optimization levels indicates that retrievalbased contextual examples help the model generalize to diverse
+compiler transformations, yielding both syntactically valid and
+semantically faithful reconstructions.
+ICL4D-O. The rule-based variant, ICL4D-O, explicitly incorporates compiler optimization flags into the prompt. Since decompilers
+tend to fail more frequently under higher optimization levels, we
+apply ICL4D-O specifically to these first-round failures from O1–O3
+assemblies. Because LLM-based decompilation exhibits inherent
+stochasticity—where the same assembly may succeed or fail across
+different runs, we adopt a controlled baseline that re-feeds previously failed samples for a second decompilation attempt. As shown
+in Table 5, this targeted setting yields selective gains—for instance,
+-ftree-coalesce-vars at O2 improves executability to 17.35% on
+HumanEval—though overall stability remains limited due to the
+rigidity of rule-based prompting.
+Despite this, manual inspection reveals that ICL4D-O’s failures
+are typically localized and easier to diagnose, rather than causing
+widespread semantic corruption. We further analyze this in Section 5.2, where we show that even when executability is comparable,
+ICL4D-O tends to generate code that is easier to fix.
+Answer to RQ1. In-context learning improves the executability of decompiled code. ICL4D-R achieves the most consistent
+and significant gains across datasets and optimization levels.
+ICL4D-O is less stable but introduces more structured, repairable errors, a property further examined in RQ2.
+
+5.2
+
+RQ2: Error Mitigation
+
+To answer the question of whether in-context learning can mitigate
+specific categories of decompilation errors, we performed a finegrained analysis of both compilation and runtime failures across
+datasets and optimization levels. While overall re-executability
+captures the aggregate success rate, it does not reveal which kinds
+of reasoning errors are corrected by the model. By decomposing
+failures into interpretable categories, we can assess how in-context
+learning improves structural reconstruction, semantic consistency,
+and runtime correctness.
+Specifically, we analyzed the stderr output of all failed compilations and executions and mapped each message to error categories
+based on compiler diagnostic patterns. This taxonomy enables us to
+
+Context-Guided Decompilation: A Step Towards Re-executability
+
+Table 4: Re-executability rate (%) comparison on HumanEval and ExeBench datasets.
+HumanEval-Decompile
+
+Model
+DeepSeek-V3.2
+LLM4Decompile
+ICL4D-R
+
+O0
+
+O1
+
+O2
+
+O3
+
+O0
+
+O1
+
+O2
+
+O3
+
+46.65
+26.78
+54.27
+
+32.32
+11.53
+42.38
+
+33.23
+13.22
+40.24
+
+35.06
+11.53
+42.07
+
+26.17
+15.10
+34.39
+
+19.26
+12.83
+35.68
+
+19.79
+13.22
+36.16
+
+16.13
+11.53
+33.74
+
+Table 5: Re-executability rate (%) after applying rule-based
+prompts (ICL4D-O) for different optimization options across
+two datasets. Values in parentheses indicate baseline performance.
+O1 Option
+-fomit-frame-pointer
+-ftree-ter
+-ftree-coalesce-vars
+-fipa-pure-count
+O2 Option
+-fomit-frame-pointer
+-ftree-ter
+-ftree-coalesce-vars
+-fipa-pure-count
+-fcrossjumping
+O3 Option
+-fomit-frame-pointer
+-ftree-ter
+-ftree-coalesce-vars
+-fipa-pure-count
+-fcrossjumping
+
+ExeBench
+
+ExeBench (11.18)
+
+HumanEval (14.86)
+
+9.34
+8.17
+11.67
+8.95
+
+15.32
+15.77
+12.61
+11.26
+
+ExeBench (7.48)
+
+HumanEval (15.98)
+
+9.52
+7.87
+10.63
+6.72
+7.91
+
+12.41
+16.89
+17.35
+10.50
+5.05
+
+ExeBench (3.18)
+
+HumanEval (15.02)
+
+8.18
+5.48
+10.96
+6.40
+5.45
+
+14.08
+15.49
+11.27
+7.51
+12.21
+
+attribute each failure to a specific phase of the compilation pipeline,
+thus revealing which aspects of reasoning are most affected by
+in-context learning. The taxonomy is shared across all datasets
+(ExeBench and HumanEval-Decompile) and methods (ICL4D-O and
+ICL4D-R) to ensure consistency and comparability. Each stderr
+message was matched against category-specific regular-expression
+patterns, resulting in dominant error labels per sample.
+Error Taxonomy. The taxonomy includes seven categories derived from compiler diagnostics, as shown in Table 3. For each
+dataset, method, and optimization level, we aggregated the frequency of each error category among all failed cases. This produced
+a normalized distribution of compilation and runtime errors, allowing us to compare the baseline model and its in-context learning
+variants under a unified framework. Unlike overall success rates,
+this breakdown enables us to identify which categories of reasoning
+benefit most from contextual guidance.
+Quantitative error breakdown. First, to further understand how incontext learning alters the distribution of failures, we visualize the
+transitions between error categories from baseline models (General
+LLMs) to ICL4D-R, as shown in Figure 2. Each band represents the
+proportion of samples transitioning between categories, where the
+width encodes the relative frequency of each transition. This view
+reveals which types of failures are mitigated or corrected through
+contextual guidance, as well as which remain persistent.
+
+For HumanEval-Decompile dataset (Figure 2a), we observe substantial reductions in syntax, runtime/link and declaration errors,
+many of which transition into the success category. This indicates
+that similar exemplars helps the decompiler better reconstruct
+syntactic structure and resolve undefined symbols. For ExeBench
+dataset (Figure 2b), the improvements are concentrated in type and
+syntax categories, reflecting stronger gains in semantic reasoning.
+The proportion of successful cases increases markedly, while most
+residual failures are related to subtle . Compared to HumanEval,
+ExeBench functions exhibit higher structural complexity, and ICL
+provides more stable benefits across such challenging cases. Overall, the Sankey diagrams reveal that in-context learning not only
+improves aggregate executability but also reshapes the error distribution. This shift indicates that contextual exemplars primarily
+enhance structural and symbolic reasoning, bringing the model
+closer to executable correctness.
+
+(a) HumanEval dataset.
+
+(b) ExeBench dataset.
+
+Figure 2: Distribution shift of error categories before and
+after applying in-context learning.
+HumanEval Results (ICL4D-O). Table 6 reports the relative
+frequency (%) of each error category for the baseline (Method A) and
+the optimization-aware ICL variant (ICL4D-O, Method B) across
+optimization levels O1–O3. Percentages are computed among all
+failed cases per optimization level. Arrows (↓/↑) indicate decrease
+or increase compared with the baseline; ≈ denotes a change within
+±0.5%. As shown in Table 6, ICL4D-O reduces declaration and type
+errors while increasing syntax-level issues, indicating that most
+failures become localized within statements rather than propagating
+through program structure—thus producing more repairable error
+patterns.
+Qualitative example. We present a qualitative example from the
+ExeBench dataset (-O1), comparing the ground-truth implementation with the decompiled outputs produced by three methods,
+
+Wang et al.
+
+Table 6: HumanEval (ICL4D-O) rule-wise error distribution
+(%), aggregated over O1–O3. Baseline is averaged across O1–
+O3. Arrows (↓/↑/≈) indicate change relative to baseline.
+
+Category
+
+baseline
+
+Syntax
+Declaration
+Type
+Return
+Assert
+Other
+
+15.3
+27.3
+6.0
+0.7
+41.5
+9.1
+
+ftre
+
+e
+esc
+
+oal
+
+e-c
+
+nst
+
+-co
+
+afip
+
+e
+pur
+
+17.2 (↑)
+12.3 (↓)
+4.6 (↓)
+1.1 (≈)
+49.6 (↑)
+15.3 (↑)
+
+ftre
+
+15.4 (≈)
+30.9 (↑)
+8.8 (↑)
+0.2 (↓)
+40.3 (↓)
+4.4 (↓)
+
+er
+
+e-t
+
+i
+fom
+
+19.8 (↑)
+23.3 (↓)
+8.1 (↑)
+1.6 (↑)
+39.0 (↓)
+8.1 (↓)
+
+e
+am
+
+int
+
+-po
+
+er
+
+t-fr
+
+16.0 (↑)
+23.9 (↓)
+5.6 (≈)
+0.7 (≈)
+42.9 (↑)
+10.8 (↑)
+
+ing
+
+mp
+
+ju
+oss
+fcr
+
+25.8 (↑)
+16.4 (↓)
+8.3 (↑)
+0.5 (≈)
+33.3 (↓)
+15.6 (↑)
+
+Source Code
+
+DeepSeek-V3.2
+
+unsigned int func0(char * string, unsign\
+ed int * addr) {
+unsigned int pos = 0;
+*addr = 0;
+
+void func0(const char * str, int * resul\
+t)
+{
+*result = 0;
+char c = *str;
+if (c >= '0' && c <= '9') {
+*result = 1;
+}
+}
+
+while (((string[pos] >= '0' && strin\
+g[pos] <= '9')) && pos < 9) {
+*addr = (*addr * 10) + (string[p\
+os++] - '0');
+}
+}
+
+RQ3: Robustness
+
+return pos;
+
+ICL4Decomp-R
+
+LLM4Decompile-End-1.3B
+
+unsigned int func0(const char * s, unsig\
+ned int * u)
+{
+unsigned int pos = 0;
+unsigned int result = 0;
+unsigned int c;
+
+int func0(char * s, int * pi) {
+unsigned char c;
+c = *s - '0';
+if (c > 9)
+return get(&s);
+else {
+unsigned char x = 0;
+unsigned char c0;
+x = 1;
+c0 = c;
+c &= ~0xff;
+c0 <<= 6;
+c ^= c0;
+*pi = c;
+return x;
+}
+}
+
+*u = 0; // Initialize output to 0
+while ((c = (unsigned int)(s[pos] - \
+'0')) < 10) {
+result = result * 10 + c;
+pos++;
+}
+
+}
+
+5.3
+
+To assess robustness across program complexity, we stratify functions by cyclomatic complexity and lines of code, as shown in
+Figure 4. Our ICL4D-R method consistently outperforms the baseline (a general LLM without contextual guidance) across all bins on
+both HumanEval-Decompile (top) and ExeBench (bottom) datasets.
+Although performance declines as complexity and code length
+increase, the degradation is notably slower for our approach, indicating stronger generalization to structurally and semantically
+intricate functions. In particular, the advantage is most pronounced
+in the mid-complexity and mid-size ranges (e.g., 5–10 branches or
+15–30 lines), suggesting that in-context guidance helps the model
+preserve control-flow and data-flow coherence even as program
+structure grows more elaborate. We do not evaluate ICL4D-O for
+RQ3, as for rule-based prompts, higher program complexity does
+not necessarily imply greater difficulty—performance instead depends on whether the provided optimization rule is relevant to the
+optimization flags present in the target assembly.
+
+*u = result;
+return pos;
+
+Figure 3: Qualitative example: Ground-truth vs. decompilations from three methods.
+
+as shown in Figure 3. The original source code correctly parses
+up to nine digit characters from a string, converts them into a
+decimal integer stored in *addr, and returns the number of characters processed. The ICL4D-R successfully reconstructs this control
+flow and arithmetic structure, including initialization, loop bounds,
+and incremental parsing logic. By contrast, DeepSeek-V3.2 degenerates into a single-character digit check and returns a constant
+Boolean value, omitting the numeric accumulation and loop entirely. LLM4Decompile-End-1.3B introduces spurious control
+flow and bitwise operations (e.g., get(&s), c &= ~0xff), producing
+code that is syntactically valid but semantically unrelated to the
+intended decimal conversion. Overall, the figure illustrates that
+retrieval-augmented prompting (ICL4D-R) better preserves program semantics, while purely generative models often suffer from
+control-flow collapse or semantic hallucination.
+Answer to RQ2. In-context learning mitigates structural errors in decompilation. ICL4D-R effectively reduces syntax and
+declaration failures, improving structural and symbolic consistency, while ICL4D-O produces more localized and repairable
+errors.
+
+Figure 4: Re-execution success rate across functions of varying cyclomatic complexity and lines of code for HumanEvalDecompile (top) and ExeBench (bottom).
+
+Answer to RQ3. ICL4D-R demonstrates strong robustness
+across program complexity, consistently outperforming the
+baseline and maintaining higher re-execution success rates
+even as cyclomatic complexity and code length increase.
+
+5.4
+
+Ablation Studies
+
+To verify that the performance improvement originates from semantically relevant retrieval rather than merely increased context
+length, we introduce a random retrieval control condition. In this
+variant, the retrieved in-context examples are replaced with randomly sampled functions from the same corpus, while keeping the
+total context length identical to that of the retrieval-augmented
+setting. All other components remain unchanged.
+Table 7 reports the re-executability rates across the baseline,
+retrieval, and random-retrieval conditions. We expect that random
+retrieval will significantly reduce re-execution rates and shift the
+error distribution toward syntax and other categories, demonstrating that semantically aligned retrieval contexts provide meaningful
+guidance for structure reconstruction and variable recovery.
+
+Context-Guided Decompilation: A Step Towards Re-executability
+
+Table 7: Ablation on random retrieval control. The randomretrieval variant replaces semantically similar examples with
+random samples while preserving context length.
+HumanEval-Decompile
+Model
+DeepSeek-V3.2
+ICL4D-R
+ICL4D-R (Ablation)
+
+O0
+
+O1
+
+O2
+
+O3
+
+46.65
+54.27
+42.25
+
+32.32
+42.38
+40.49
+
+33.23
+40.24
+41.34
+
+35.06
+42.07
+0.35
+
+O2
+19.79
+36.16
+19.45
+
+O3
+16.13
+33.74
+15.72
+
+ExeBench
+Model
+DeepSeek-V3.2
+ICL4D-R
+ICL4D-R (Ablation)
+
+O0
+26.17
+34.39
+25.50
+
+O1
+19.26
+35.68
+21.62
+
+6 Discussion
+6.1 Applicability and Cost of ICL4Decomp
+Applicability. ICL4Decomp is designed to be model-agnostic as
+ICL can be readily adapted to many existing LLM architecture,
+including open-source models such as DeepSeek, Qwen, and CodeLlama, as well as commercial models like GPT-4 and Claude. For scenarios involving privacy or code security concerns, ICL4Decomp
+can be deployed locally with open-source models to enable offline
+decompilation. The framework is fully decoupled at the API layer,
+making it facilitating integration into existing analysis platforms
+like IDA or Ghidra through plugin interfaces. Because ICL4Decomp
+operates entirely at inference time and does not require any model
+retraining, it is particularly suitable for environments with limited
+resources or cases where the original source code is unavailable. In
+practice, our framework can be applied to several binary analysis
+tasks, including security auditing, patch analysis, and reverse engineering, while maintaining consistent performance across different
+compiler optimization levels.
+Cost Analysis. The primary cost of ICL4Decomp arises from APIbased LLM invocations, which include: (a) the assembly code and
+retrieved exemplars used to construct the in-context prompt, and
+(b) the generated source code output. Since individual functions
+are relatively short (typically under 300 tokens), the per-sample
+inference cost remains significantly lower than in general-purpose
+code generation tasks. For example, when using DeepSeek V3.2 on
+the HumanEval-Decompile dataset, the total cost for decompiling
+the entire benchmark is approximately $3.
+In terms of runtime, ICL4Decomp achieves high throughput
+through a multi-worker parallel execution mechanism. By distributing decompilation requests across multiple workers on a single
+multi-core workstation, decompiling 1,000 functions requires only
+about 15 minutes. This near-linear scalability with respect to the
+number of workers makes the framework suitable for large-scale
+binary analysis in real-world settings. Overall, ICL4Decomp demonstrates strong portability across models and deployment environments, and its inference cost scales linearly with workload size,
+supporting practical use in security and engineering applications.
+
+6.2
+
+Threats to Validity
+
+Internal Validity. LLM inference inherently involves randomness (e.g., due to sampling temperature), which may affect reexecutability. To mitigate this, we fix the random seed to 42 and set
+the sampling temperature to 0.1, minimizing stochastic variation
+across runs. Although our experiments cover optimization levels
+from O0 to O3, the dataset is limited to single-function compilation;
+thus, certain global optimization patterns (e.g., link-time optimization) are not included, and the results may be conservative for more
+aggressive optimization scenarios.
+Our current implementation of ICL4D-O uses a predefined pool
+of optimization rules to construct contextual prompts. We intentionally avoid dynamically inferring the active optimization set from
+each assembly function, since identifying which compiler flags
+were applied is inherently ambiguous and nontrivial—many flags
+interact or produce overlapping instruction-level effects. However,
+enabling adaptive rule selection based on automatically detected
+optimization patterns could further improve contextual relevance,
+and represents an interesting avenue for future exploration.
+External Validity. Our evaluation is conducted at the function
+level, emphasizing syntactic and semantic re-executability of decompiled binaries obtained from single functions. We select two
+representative benchmarks (ExeBench and HumanEval-Decompile)
+used in other works [16, 17, 22, 49] with distinct characteristics
+and report stratified results by structural complexity, including
+lines of code, cyclomatic complexity, and basic block count (cf. section 4). While system-level and multi-function programs are not
+the primary focus of this study, our framework does not rely on
+dataset-specific features; extending it to broader codebases primarily requires adjusting the contextual composition strategy. Nonetheless, our evaluation follows best practices in rigorously evaluating
+LLM-based decompilation techniques.
+
+7 Related Work
+7.1 Neural Decompilation and Binary-to-Source
+Translation
+Traditional rule-based decompilers (e.g., Hex-Rays [3], Ghidra [4])
+rely on pattern heuristics that often fail under compiler optimizations and aggressive inlining. Neural approaches instead learn correspondences between binary instructions and high-level abstractions
+to generate source code that is both functionally equivalent and
+compilable to the original binary behavior.
+Most neural methods follow the Neural Machine Translation
+(NMT) paradigm [48], adapting a sequence-to-sequence model to
+map low-level binaries to high-level source code. Early work employs Recurrent Neural Networks (RNNs) [29] to translate binary
+code directly into C source code. TraFix [30] combines NMT with
+program analysis for better usability. DIRE [33] tokenizes assembly–source pairs but suffers from limited context and sparse vocabularies. Coda [20] targets semantic correctness through an end-toend neural framework but degrades on complex ISAs. More recent
+work, including LLM4Decompile [49, 50] and DecompileBench [21],
+leverages pretrained LLMs achieving improved fluency but reveals
+reliability issues due to uncontrolled generalization.
+
+Wang et al.
+
+Despite notable progress, current neural decompilers still struggle with cross-compiler generalization and semantic consistency [9,
+32]. Many models generate syntactically valid code that fails to
+recompile or execute equivalently. Reconstruction of high-level
+structures, such as loops, branches, and call hierarchies, remains
+limited in purely neural approaches, reflecting persistent difficulties in maintaining readability and structural coherence [13, 44, 52].
+These limitations motivate the integration of retrieval-based and
+compiler-aware contextualization strategies to enhance robustness
+and interpretability.
+
+7.2
+
+Large Language Models for Code
+Intelligence
+
+LLMs have redefined the landscape of code understanding and
+generation [10, 14, 26, 51]. Early transformer-based encoders such
+as CodeBERT [18], GraphCodeBERT [23], UniXCoder [24], and
+CodeT5 [53] capture bidirectional code semantics and effectively
+align program syntax with natural language descriptions. Generative models such as Codex [10], AlphaCode [36], and CodeLlama [43] extend these capabilities through large-scale instruction
+tuning, enabling complex synthesis, refactoring, and reasoning
+tasks. Execution-aware frameworks including CodeRL [34], SelfRefine [40], and Reflexion [46] further incorporate runtime feedback
+to improve the functional correctness of generated code.
+General-purpose LLMs such as GPT-4 can assist in reasoning
+over disassembly and decompiled code [28]. Concurrent research on
+transformer-based binary embeddings enhances control-flow representations and structural understanding [59]. Frameworks such
+as ReSym [56] demonstrated the feasibility of combining symbolic
+reasoning with pretrained code models. In parallel, source-code
+foundation models have been explored as transferable knowledge
+bases for binary analysis, showing that code-pretrained LLMs capture low-level semantics applicable to disassembled programs [47].
+Empirical evaluations on binary-analysis tasks show that LLM
+performance varies substantially across compilers, optimization
+levels, and task types [28, 45]. Studies of code-oriented LLMs further document frequent hallucinations that can lead to functional
+errors [38]. For stripped binaries, the lack of explicit compiler semantics and symbol information degrades type and variable recovery unless augmented with program-analysis signals [56]. Hybrid
+pipelines that pair LLMs with binary encoders or code-foundation
+models provide external grounding and improve recovery quality [47]. These findings motivate retrieval-augmented and structureaware prompting to stabilize low-level reasoning and improve reproducibility in binary-to-source workflows [45, 47].
+
+7.3
+
+In-Context Learning for Program Synthesis
+
+In-context learning (ICL) enables LLMs to adapt to new programming tasks without parameter updates by conditioning generation
+on exemplar demonstrations [8], showing strong generalization in
+few-shot code synthesis and repair [10]. In program synthesis, ICL
+facilitates rapid adaptation to unseen codebases, problem styles, or
+programming languages using a small number of exemplars [41].
+Models such as GPT-3, Codex, and StarCoder demonstrate robust
+few-shot capabilities for code generation and completion when
+supplied with representative in-context examples [10, 35].
+
+Frameworks such as Self-Edit and InCoder use few-shot exemplars to preserve syntactic correctness and logical consistency during code modification [19, 40]. Recent retrieval-augmented methods
+employ semantically similar exemplars drawn from large code corpora to improve synthesis reliability and domain transfer [39]. In
+binary-to-source translation, ICL provides a natural way to incorporate compiler- and optimization-specific context by retrieving
+representative (assembly, source) exemplars [28, 47].
+Empirical analyses show that exemplar similarity—measured via
+code embeddings, opcode overlap, or control-flow distance—strongly
+affects output fidelity [39, 41]. Integrating retrieval with in-context
+prompting thus provides a robust paradigm for cross-optimization
+decompilation, combining explicit structural grounding with the
+generalization power of pretrained LLMs [45].
+
+8
+
+Conclusion
+
+This paper presents ICL4Decomp, a unified in-context learning
+framework for executable decompilation that jointly addresses syntactic recovery and semantic reasoning. It introduces two complementary mechanisms: ICL4D-R, which retrieves assembly–source
+exemplars to provide structural priors, and ICL4D-O, which injects optimization semantics through rule-based natural-language
+prompts. Together, they enable bidirectional alignment between
+syntax and semantics during inference.
+Across ExeBench and HumanEval-Decompile, ICL4Decomp improves the re-executability rate by approximately 40% on average,
+with particularly strong gains under higher optimization levels
+(O1–O3). It effectively reduces syntax and declaration errors, while
+maintaining robustness to function complexity and context length.
+These results demonstrate that in-context learning offers a practical
+and reproducible way to achieve executable consistency without
+model retraining.
+Future work will explore hybrid context composition between
+retrieval and rule-based prompting, automatic inference of compiler
+optimization patterns, and broader generalization across compilers and architectures. Overall, ICL4Decomp reveals the potential
+of in-context learning to advance decompilation from syntactic
+readability toward semantic executability.
+
+Acknowledgments
+References
+[1] [n. d.]. AMP: Assured Micropatching | DARPA. https://www.darpa.mil/research/
+programs/assured-micropatching
+[2] 2023. DIGIHEALS | ARPA-H. https://arpa-h.gov/explore-funding/programs/
+digiheals
+[3] [n. d.]. IDA Pro: Powerful Disassembler, Decompiler & Debugger. https://hexrays.com/ida-pro
+[4] National Security Agency 2025. NationalSecurityAgency/Ghidra. National Security Agency. https://github.com/NationalSecurityAgency/ghidra
+[5] 2024. UPGRADE | ARPA-H. https://arpa-h.gov/explore-funding/programs/
+upgrade
+[6] Jordi Armengol-Estapé, Jackson Woodruff, Alexander Brauckmann, José Wesley
+De Souza Magalhães, and Michael F. P. O’Boyle. 2022. ExeBench: An ML-Scale
+Dataset of Executable C Functions. In Proceedings of the 6th ACM SIGPLAN
+International Symposium on Machine Programming. ACM, San Diego CA USA,
+50–59. doi:10.1145/3520312.3534867
+[7] Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk
+Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le,
+et al. 2021. Program synthesis with large language models. arXiv preprint
+arXiv:2108.07732 (2021).
+
+Context-Guided Decompilation: A Step Towards Re-executability
+
+[8] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D. Kaplan,
+Prafulla Dhariwal, Arvind Neelakantan, et al. 2020. Language Models are FewShot Learners. Advances in Neural Information Processing Systems (NeurIPS)
+(2020).
+[9] Kevin Cao and Kevin Leach. 2023. Revisiting deep learning for variable type
+recovery. In 2023 IEEE/ACM 31st International Conference on Program Comprehension (ICPC). IEEE, 275–279.
+[10] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de
+Oliveira Pinto, Jared Kaplan, Harri Edwards, et al. 2021. Evaluating Large Language Models Trained on Code. arXiv preprint arXiv:2107.03374 (2021).
+[11] Cristina Cifuentes and K John Gough. 1995. Decompilation of binary programs.
+Software: Practice and Experience 25, 7 (1995), 811–829.
+[12] Cristina Cifuentes, Trent Waddington, and Mike Van Emmerik. 2001. Computer
+security analysis through decompilation and high-level debugging. In Proceedings
+Eighth Working Conference on Reverse Engineering. IEEE, 375–380.
+[13] Carlos Eduardo C. Dantas, Adriano M. Rocha, and Marcelo A. Maia. 2023. How
+do Developers Improve Code Readability? An Empirical Study of Pull Requests.
+In 2023 IEEE International Conference on Software Maintenance and Evolution
+(ICSME). 110–122. doi:10.1109/ICSME58846.2023.00022
+[14] Benedetta Donato, Leonardo Mariani, Daniela Micucci, and Oliviero Riganelli.
+2025. Studying how configurations impact code generation in llms: The case of
+ChatGPT. arXiv preprint arXiv:2502.17450 (2025).
+[15] Qingxiu Dong, Lei Li, Damai Dai, Ce Zheng, Jingyuan Ma, Rui Li, Heming
+Xia, Jingjing Xu, Zhiyong Wu, Tianyu Liu, Baobao Chang, Xu Sun, Lei Li, and
+Zhifang Sui. 2024. A Survey on In-Context Learning. arXiv:2301.00234 [cs]
+doi:10.48550/arXiv.2301.00234
+[16] Luke Dramko, Claire Le Goues, and Edward J. Schwartz. 2025. Idioms: Neural Decompilation With Joint Code and Type Definition Prediction. arXiv:2502.04536 [cs]
+doi:10.48550/arXiv.2502.04536
+[17] Yunlong Feng, Bohan Li, Xiaoming Shi, Qingfu Zhu, and Wanxiang Che.
+2025. ReF Decompile: Relabeling and Function Call Enhanced Decompile.
+arXiv:2502.12221 [cs] doi:10.48550/arXiv.2502.12221
+[18] Zhangyin Feng, Daya Guo, Duyu Tang, Nan Duan, Xiaocheng Feng, Ming Gong,
+Linjun Shou, Bing Qin, Ting Liu, Daxin Jiang, and Ming Zhou. 2020. CodeBERT:
+A Pre-Trained Model for Programming and Natural Languages. arXiv preprint
+arXiv:2002.08155 (2020).
+[19] Daniel Fried, Kevin Ellis, Maxwell Nye, Edward Chen, and et al. 2023. InCoder: A
+Generative Model for Code Infilling and Synthesis. Transactions of the Association
+for Computational Linguistics (TACL) (2023).
+[20] Cheng Fu, Huili Chen, Haolan Liu, Xinyun Chen, Yuandong Tian, Farinaz
+Koushanfar, and Jishen Zhao. 2019. Coda: An End-to-End Neural Program
+Decompiler. In Advances in Neural Information Processing Systems (2019), Vol. 32.
+Curran Associates, Inc. https://proceedings.neurips.cc/paper_files/paper/2019/
+hash/093b60fd0557804c8ba0cbf1453da22f-Abstract.html
+[21] Zeyu Gao, Yuxin Cui, Hao Wang, Siliang Qin, Yuanda Wang, Bolun Zhang, and
+Chao Zhang. 2025. DecompileBench: A Comprehensive Benchmark for Evaluating
+Decompilers in Real-World Scenarios. arXiv:2505.11340 [cs] doi:10.48550/arXiv.
+2505.11340
+[22] Dejan Grubisic, Chris Cummins, Volker Seeker, and Hugh Leather. 2024. Compiler
+generated feedback for large language models. arXiv preprint arXiv:2403.14714
+(2024).
+[23] Daya Guo, Shuo Ren, Shuai Lu, Zhangyin Feng, Duyu Tang, Nan Duan, and
+Ming Zhou. 2021. GraphCodeBERT: Pre-training Code Representations with
+Data Flow. arXiv preprint arXiv:2009.08366 (2021).
+[24] Daya Guo, Duyu Tang, Nan Duan, and Ming Zhou. 2022. UniXCoder: Unified
+Cross-Modal Pre-training for Code Representation. Proceedings of the 60th Annual
+Meeting of the Association for Computational Linguistics (ACL) (2022).
+[25] Peiwei Hu, Ruigang Liang, and Kai Chen. 2024. DeGPT: Optimizing Decompiler
+Output with LLM. In Proceedings 2024 Network and Distributed System Security
+Symposium (San Diego, CA, USA, 2024). Internet Society. doi:10.14722/ndss.2024.
+24401
+[26] Tao Huang, Zhihong Sun, Zhi Jin, Ge Li, and Chen Lyu. 2024. Knowledge-aware
+code generation with large language models. In Proceedings of the 32nd IEEE/ACM
+International Conference on Program Comprehension. 52–63.
+[27] Nan Jiang, Chengxiao Wang, Kevin Liu, Xiangzhe Xu, Lin Tan, and Xiangyu
+Zhang. 2023. Nova: Generative language models for assembly code with hierarchical attention and contrastive learning. arXiv preprint arXiv:2311.13721
+(2023).
+[28] Xin Jin, Jonathan Larson, Weiwei Yang, and Zhiqiang Lin. 2023. Binary Code Summarization: Benchmarking ChatGPT/GPT-4 and Other Large Language Models.
+arXiv preprint arXiv:2312.09601 (2023).
+[29] Deborah S. Katz, Jason Ruchti, and Eric Schulte. 2018. Using Recurrent Neural Networks for Decompilation. In 2018 IEEE 25th International Conference
+on Software Analysis, Evolution and Reengineering (SANER) (2018-03). 346–356.
+doi:10.1109/SANER.2018.8330222
+[30] Omer Katz, Yuval Olshaker, Yoav Goldberg, and Eran Yahav. 2019. Towards
+Neural Decompilation. arXiv:1905.08325 [cs] doi:10.48550/arXiv.1905.08325
+
+[31] Hyungsub Kim, Muslum Ozgur Ozmen, Z Berkay Celik, Antonio Bianchi, and
+Dongyan Xu. 2022. Pgpatch: Policy-guided logic bug patching for robotic vehicles.
+In 2022 IEEE Symposium on Security and Privacy (SP). IEEE, 1826–1844.
+[32] Jason Kim, Daniel Genkin, and Kevin Leach. 2023. Revisiting lightweight compiler
+provenance recovery on ARM binaries. In 2023 IEEE/ACM 31st International
+Conference on Program Comprehension (ICPC). IEEE, 292–303.
+[33] Jeremy Lacomis, Pengcheng Yin, Edward Schwartz, Miltiadis Allamanis, Claire
+Le Goues, Graham Neubig, and Bogdan Vasilescu. 2019. DIRE: A Neural Approach
+to Decompiled Identifier Naming. In 2019 34th IEEE/ACM International Conference
+on Automated Software Engineering (ASE) (San Diego, CA, USA, 2019-11). IEEE,
+628–639. doi:10.1109/ASE.2019.00064
+[34] Hung Le, Yue Wang, Akhilesh Deepak Gotmare Nguyen, Shafiq Joty, and
+Steven CH Hoi. 2022. CodeRL: Mastering Code Generation through Pre-trained
+Models and Deep Reinforcement Learning. In Proceedings of the 36th Conference
+on Neural Information Processing Systems (NeurIPS).
+[35] Raymond Li, Loubna Ben Allal, Loubna Ben Allal, Niklas Muennighoff, and et al.
+2023. StarCoder: May the Source Be with You! Transactions on Machine Learning
+Research (TMLR) (2023).
+[36] Yujia Li, David Choi, Junyoung Chung, Chris Cushman, Misha Denil, Tejas D.
+Han, Nick Jackson, et al. 2022. Competition-Level Code Generation with AlphaCode. Science 378, 6624 (2022), 1092–1097.
+[37] Chin-Yew Lin. 2004. Rouge: A package for automatic evaluation of summaries.
+In Text summarization branches out. 74–81.
+[38] Fan Liu et al. 2024. Exploring and Evaluating Hallucinations in LLM-Powered
+Code Generation. arXiv preprint arXiv:2404.00971 (2024).
+[39] Shihan Lu, Yue Wang, Shiqing Li, and Steven C.H. Hoi. 2024. RetrievalAugmented Code Generation: Leveraging In-Context Examples for Improved
+Code Synthesis. arXiv preprint arXiv:2402.06714 (2024).
+[40] Aman Madaan, Niket Tandon, Amir Yazdanbakhsh, and Peter Clark. 2023. SelfRefine: Iterative Refinement with Self-Feedback. arXiv preprint arXiv:2303.17651
+(2023).
+[41] Erik Nijkamp, Bo Pang, Hiroaki Hayashi, Caiming Xiong, Silvio Savarese, Yingbo
+Zhou, et al. 2023. CodeGen2: Lessons for Training LLMs on Programming and
+Natural Languages. arXiv preprint arXiv:2305.02309 (2023).
+[42] Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu. 2002. Bleu: a
+method for automatic evaluation of machine translation. In Proceedings of the
+40th annual meeting of the Association for Computational Linguistics. 311–318.
+[43] Baptiste Roziere, Loubna Ben Allal, Raymond Li, and et al. 2023. Code Llama:
+Open Foundation Models for Code. arXiv preprint arXiv:2308.12950 (2023).
+[44] Agnia Sergeyuk, Olga Lvova, Sergey Titov, Anastasiia Serova, Farid Bagirov,
+Evgeniia Kirillova, and Timofey Bryksin. 2024. Reassessing java code readability
+models with a human-centered approach. In Proceedings of the 32nd IEEE/ACM
+International Conference on Program Comprehension. 225–235.
+[45] Xiuwei Shang, Guoqiang Chen, Shaoyin Cheng, Benlong Wu, Li Hu, Gangyang
+Li, Weiming Zhang, and Nenghai Yu. 2025. BinMetric: A Comprehensive Binary
+Analysis Benchmark for Large Language Models. arXiv preprint arXiv:2505.07360
+(2025).
+[46] Noah Shinn, Fares Labash, Shreya Gopinath, Aman Madaan, and Niket Tandon.
+2023. Reflexion: Language Agents with Verbal Reinforcement Learning. arXiv
+preprint arXiv:2303.11366 (2023).
+[47] Zian Su, Xiangzhe Xu, Ziyang Huang, Kaiyuan Zhang, and Xiangyu Zhang. 2024.
+Source Code Foundation Models are Transferable Binary Analysis Knowledge
+Bases. arXiv preprint arXiv:2405.19581 (2024).
+[48] Ilya Sutskever, Oriol Vinyals, and Quoc V Le. 2014. Sequence to sequence learning
+with neural networks. Advances in neural information processing systems 27
+(2014).
+[49] Hanzhuo Tan, Qi Luo, Jing Li, and Yuqun Zhang. 2024. LLM4Decompile: Decompiling Binary Code with Large Language Models. arXiv:2403.05286 [cs]
+doi:10.48550/arXiv.2403.05286
+[50] Hanzhuo Tan, Xiaolong Tian, Hanrui Qi, Jiaming Liu, Zuchen Gao, Siyi Wang,
+Qi Luo, Jing Li, and Yuqun Zhang. 2025. Decompile-Bench: Million-Scale BinarySource Function Pairs for Real-World Binary Decompilation. arXiv:2505.12668 [cs]
+doi:10.48550/arXiv.2505.12668
+[51] Jacob Trentini, Victor Liu, Yiming Peng, and Ziliang Zong. 2025. Advancing
+Large Language Models in Code Generation: Usaco Benchmark and Bug Mitigation Insights. In 2025 IEEE/ACM 33rd International Conference on Program
+Comprehension (ICPC). IEEE, 01–12.
+[52] Antonio Vitale, Emanuela Guglielmi, Rocco Oliveto, and Simone Scalabrino. 2025.
+Personalized Code Readability Assessment: Are We There Yet? arXiv preprint
+arXiv:2503.07870 (2025).
+[53] Yue Wang, Weishi Wang, Shafiq Joty, and Steven CH Hoi. 2021. CodeT5: Identifieraware Unified Pre-trained Encoder-Decoder Models for Code Understanding and
+Generation. Proceedings of the 2021 Conference on Empirical Methods in Natural
+Language Processing (EMNLP) (2021).
+[54] Noam Wies, Yoav Levine, and Amnon Shashua. 2023. The learnability of incontext learning. Advances in Neural Information Processing Systems 36 (2023),
+36637–36651.
+
+Wang et al.
+
+[55] Reinhard Wilhelm, Helmut Seidl, and Sebastian Hack. 2013. Compiler design:
+syntactic and semantic analysis. Springer Science & Business Media.
+[56] Danning Xie, Zhuo Zhang, Nan Jiang, Xiangzhe Xu, Lin Tan, and Xiangyu Zhang.
+2024. ReSym: Harnessing LLMs to Recover Variable and Data Structure Symbols
+from Stripped Binaries. In Proceedings of the 2024 ACM SIGSAC Conference on
+Computer and Communications Security (CCS ’24). –. doi:10.1145/3658644.3670340
+[57] Khaled Yakdan, Sergej Dechand, Elmar Gerhards-Padilla, and Matthew Smith.
+2016. Helping johnny to analyze malware: A usability-optimized decompiler and
+malware analysis user study. In 2016 IEEE Symposium on Security and Privacy
+
+(SP). IEEE, 158–177.
+[58] Yuwei Yang, Skyler Grandel, Jeremy Lacomis, Edward Schwartz, Bogdan
+Vasilescu, Claire Le Goues, and Kevin Leach. 2025. A Human Study of Automatically Generated Decompiler Annotations. In 2025 55th Annual IEEE/IFIP
+International Conference on Dependable Systems and Networks (DSN). IEEE, 129–
+142.
+[59] W. Zhu. 2023. Binary Code Embedding: A Survey of Representation Learning
+for Binary Code. arXiv preprint arXiv:2308.12659 (2023).
+
+

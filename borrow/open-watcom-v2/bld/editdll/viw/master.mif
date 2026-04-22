@@ -1,0 +1,55 @@
+tree_depth = 4
+
+proj_name = weditviw
+
+weditviw_autodepends = .AUTODEPEND
+
+weditviw_ntverrc = ..
+
+weditviw_distrib_lib = 1
+
+additional_clean = *.grc
+
+ntverrc_dll = weditviw
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+#
+# cflags
+#
+.c: ..
+
+inc_dirs = -I.. -I"../.."
+
+extra_cpp_flags = -DWEDITDLL
+
+extra_c_flags_win = -zc -zw -zu
+
+#
+# lflags
+#
+extra_l_flags_dll = op elim, heapsize=8k &
+    option description 'Open Watcom Editor DLL for VIW'
+extra_l_flags_dll_win = initinstance memory op stack=20k, rwr export WEP RESIDENT lib ddeml
+extra_l_flags_dll_nt = initinstance terminstance
+
+# explicit rules
+#################
+
+all: weditviw.dll wedit.dll .SYMBOLIC
+
+#
+# DLL's
+#
+dlltarg_objs    = weditviw.obj
+!include dlltarg.mif
+
+dlltarg_opts    = opt implib
+dlltarg_name    = wedit
+!include dlltarg.mif
+
+#
+# rc and others
+#

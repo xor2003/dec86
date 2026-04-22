@@ -1,0 +1,47 @@
+#
+#       This is the common makefile for each individual command.  It
+#       is designed to be activated standalone, or as part of a makeall.
+
+#
+#       The following macros must be defined:
+#
+#       name            the name of the command to be built
+#
+
+proj_name = posix
+
+posix_autodepends = .AUTODEPEND
+
+!include ../memmodel.mif
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+!include ../common.mif
+
+!include tools.mif
+
+#
+# cflags
+#
+.c: ../src/$(name)
+
+inc_dirs = -I"../src/$(name)" -I"../h" $(extra_inc_dirs)
+
+#
+# lflags
+#
+extra_l_flags = debug all option quiet,map
+extra_l_flags_os2i86 = option heapsize=17k, newfiles, stack=8k
+
+#
+#       define the main target
+#
+exetarg_objs = $(objs)
+exetarg_libs = $(stdlibdir)/posix.lib
+!ifdef extra_link
+exetarg_opts = $(extra_link)
+!endif
+exetarg_name = $(name)
+!include exetarg.mif

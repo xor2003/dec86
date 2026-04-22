@@ -1,0 +1,82 @@
+#
+#   COMMON:     common definitions of compiler and linker
+#
+
+#
+#   Macros used by this file:
+#
+#   cflags      If defined, these options to the compiler override the
+#               defaults selected by this file.
+#
+#   make_lib    If this is defined then wmake was invoked to make posixlib.
+#
+#   if make_lib isn't defined, then the following must be defined:
+#
+#   name        The name of the command which is being built.  The
+#               directory posix/src/$(name) must exist, and
+#               contain the source for the command.
+
+#
+# definitions for POSIX library build
+#
+
+std_subdir_i86 = m$(model)
+std_subdir_386 = m$(model)
+std_subdir_x64 = _s
+std_subdir_axp = _s
+std_subdir_mps = _s
+std_subdir_ppc = _s
+
+alt_subdir_dosi86s = mc
+alt_subdir_os2i86s = mc
+alt_subdir_dosi86c = ms
+alt_subdir_os2i86c = ms
+
+!ifeq proj_name posix_all
+!ifdef alt_subdir_$(host)$(model)
+alt_posixlib = 1
+!endif
+!endif
+
+posixlib_objs = &
+    $(_subdir_)alloc.obj &
+    $(_subdir_)argvenv.obj &
+    $(_subdir_)argvstr.obj &
+    $(_subdir_)argvrx.obj &
+    $(_subdir_)console.obj &
+    $(_subdir_)die.obj &
+    $(_subdir_)filerx.obj &
+    $(_subdir_)fnlower.obj &
+    $(_subdir_)fncomp.obj &
+    $(_subdir_)getclsz.obj &
+    $(_subdir_)getopt.obj &
+    $(_subdir_)isdotdot.obj &
+    $(_subdir_)lineprt.obj &
+    $(_subdir_)quit.obj &
+    $(_subdir_)owregexp.obj
+
+!ifdef bootstrap
+stdlibdir=$(std_subdir_$(host_cpu))
+! ifdef alt_posixlib
+altlibdir=$(alt_subdir_$(host)$(model))
+additional_remove_subdirs = $(stdlibdir) $(altlibdir)
+! else
+additional_remove_subdirs = $(stdlibdir)
+! endif
+!else
+additional_clean_subdirs = 1
+
+stdlibdir=../misc/$(host)/$(std_subdir_$(host_cpu))
+! ifdef alt_posixlib
+altlibdir=../misc/$(host)/$(alt_subdir_$(host)$(model))
+! endif
+!endif
+
+#
+#       compiler options
+#
+
+extra_cppflags_ntaxp = -DWIN32
+extra_cpp_flags      = -DSTANDALONE_RX $(extra_cppflags_$(host)) $(extra_cppflags)
+
+extra_c_flags_i86 = -zt=10000

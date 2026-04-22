@@ -1,0 +1,80 @@
+# Makefile to link DLL
+#
+# input macros:
+#
+# dlltarg_name                  name of executable, default is $(proj_name)
+# dlltarg_ext                   extension of executable, default is .dll
+# dlltarg_prebuild_objs         files which must be available, but not directly added to DLL
+# dlltarg_objs                  object files which are linked to DLL
+# dlltarg_libs                  libraries which are linked to DLL
+# dlltarg_opts                  extra OW wlink directive or options used to link DLL
+# dlltarg_export                list of files containing symbols to export from DLL
+# dlltarg_res                   native resource file added to DLL
+#
+# All resource macros are include in dependant list
+#
+!ifndef dlltarg_name
+dlltarg_name = $(proj_name)
+!endif
+!ifndef dlltarg_ext
+dlltarg_ext = .dll
+!endif
+$(dlltarg_name)$(dlltarg_ext) : $+$(dlltarg_prebuild_objs) $(dlltarg_objs) $(dlltarg_libs) &
+  $(cli_wres_libs) $(dlltarg_res) $(ntverrc_dll_res) $(dlltarg_export)$- $(__MAKEFILES__)
+    @%make echo_cl
+!ifndef __WATCOM_TOOLS__
+    $(cl) $(clflags_dll) $+$(dlltarg_objs) $(dlltarg_libs) $(cli_wres_libs)$- $(ldflags_dll)
+!else
+    $(noecho)%write $^&.lnd $(lflags_dll) $+$(dlltarg_opts)$-
+    @for %f in ($+$(dlltarg_objs)$-) do @%append $^&.lnd file %f
+    @for %l in ($+$(watcom_extra_libs_dll) $(dlltarg_libs) $(cli_wres_libs)$-) do $(noecho)%append $^&.lnd library %l
+    @for %e in ($+$(dlltarg_export)$-) do $(noecho)%append $^&.lnd export { @%e }
+    $(linker) name $@ @$^&.lnd
+!endif
+############################################
+# add resources to DLL
+############################################
+# get list of OS native resources
+# for wrc
+###########################
+!undef dlltarg_res_wrc
+!ifdef dlltarg_res
+! ifeq wreslib_cli 1
+!  ifdef ntverrc_dll_res
+dlltarg_res_wrc = $(ntverrc_dll_res)
+!  else
+#dlltarg_res_wrc =
+!  endif
+! else
+!  ifdef ntverrc_dll_res
+dlltarg_res_wrc = $(dlltarg_res) -fr=$(ntverrc_dll_res)
+!  else
+dlltarg_res_wrc = $(dlltarg_res)
+!  endif
+! endif
+!else ifdef ntverrc_dll_res
+dlltarg_res_wrc = $(ntverrc_dll_res)
+!else
+#dlltarg_res_wrc =
+!endif
+############################################
+# add OS native resources to DLL by wrc
+############################################
+!ifdef dlltarg_res_wrc
+! ifeq verbose 0
+    @echo bind res $@ appl
+! endif
+    $(rcbind) $+$(dlltarg_res_wrc)$- $@
+!endif
+############################################
+# add resources for wres library by wstrip
+# Windows 3.x resources format
+############################################
+!ifdef dlltarg_res
+! ifeq wreslib_cli 1
+!  ifeq verbose 0
+    @echo bind res $@ wreslib
+!  endif
+    $(wstrip) -q -a -r $@ . $+$(dlltarg_res)$-
+! endif
+!endif

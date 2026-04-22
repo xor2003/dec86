@@ -1,0 +1,152 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "generated_data.h"
+
+#if defined(_MSC_VER)
+#define GENERATED_NOINLINE __declspec(noinline)
+#else
+#define GENERATED_NOINLINE
+#endif
+
+enum {
+    GENERATED_FLAG_CF = 0x0001u,
+    GENERATED_FLAG_PF = 0x0004u,
+    GENERATED_FLAG_AF = 0x0010u,
+    GENERATED_FLAG_ZF = 0x0040u,
+    GENERATED_FLAG_SF = 0x0080u,
+    GENERATED_FLAG_IF = 0x0200u,
+    GENERATED_FLAG_DF = 0x0400u,
+    GENERATED_FLAG_OF = 0x0800u
+};
+
+struct GeneratedRuntimeState {
+    unsigned char memory[1u << 20u];
+    uint16_t ax;
+    uint16_t bx;
+    uint16_t cx;
+    uint16_t dx;
+    uint16_t si;
+    uint16_t di;
+    uint16_t bp;
+    uint16_t sp;
+    uint16_t cs;
+    uint16_t ds;
+    uint16_t es;
+    uint16_t ss;
+    uint16_t ip;
+    uint16_t flags;
+    uint16_t interrupt_offset[256];
+    uint16_t interrupt_segment[256];
+    FILE* dos_files[32];
+    uint16_t video_mode;
+    unsigned int video_dirty;
+    unsigned int host_video_write_count;
+    unsigned int terminated;
+    unsigned int exit_code;
+    unsigned int poll_counter;
+    unsigned int generated_io_log_count;
+    uint8_t keyboard_shift_flags;
+    uint16_t keyboard_peek_ax;
+    unsigned int keyboard_peek_valid;
+    char last_unsupported_name[96];
+    char last_runtime_name[96];
+    uint16_t last_dynamic_src_cs;
+    uint16_t last_dynamic_src_ip;
+    uint16_t last_dynamic_target_cs;
+    uint16_t last_dynamic_target_ip;
+    char last_dynamic_note[32];
+};
+
+extern GeneratedRuntimeState g_generated_runtime_state;
+extern GeneratedRuntimeState g_generated_standalone_runtime_state;
+
+void generated_reset_runtime_state(GeneratedRuntimeState* state);
+uint32_t generated_phys(uint16_t segment, uint16_t offset);
+const GeneratedNamedStaticSymbol* generated_find_named_static_symbol_covering_phys(uint32_t physical, size_t* byte_offset);
+const GeneratedNamedStaticSymbol* generated_find_named_static_symbol_covering(uint16_t segment,
+                                                                              uint16_t offset,
+                                                                              size_t* byte_offset);
+const GeneratedMemoryRegion* generated_find_code_region_covering_phys(uint32_t physical, size_t* byte_offset);
+const GeneratedMemoryRegion* generated_find_residual_region_covering_phys(uint32_t physical, size_t* byte_offset);
+unsigned generated_is_in_named_static_region(uint16_t segment, uint16_t offset);
+unsigned generated_is_named_static_readonly(uint16_t segment, uint16_t offset);
+unsigned char generated_read_static_u8_phys(const GeneratedRuntimeState* state, uint32_t physical);
+uint16_t generated_read_static_u16_phys(const GeneratedRuntimeState* state, uint32_t physical);
+void generated_write_static_u8_phys(GeneratedRuntimeState* state, uint32_t physical, unsigned char value);
+void generated_write_static_u16_phys(GeneratedRuntimeState* state, uint32_t physical, uint16_t value);
+unsigned char generated_read_u8(const GeneratedRuntimeState* state, uint16_t segment, uint16_t offset);
+uint16_t generated_read_u16(const GeneratedRuntimeState* state, uint16_t segment, uint16_t offset);
+void generated_write_u8(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, unsigned char value);
+void generated_write_u16(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, uint16_t value);
+GENERATED_NOINLINE unsigned char generated_get_reg8(const GeneratedRuntimeState* state, unsigned index);
+GENERATED_NOINLINE void generated_set_reg8(GeneratedRuntimeState* state, unsigned index, unsigned char value);
+void generated_set_flag(GeneratedRuntimeState* state, uint16_t mask, unsigned value);
+unsigned generated_get_flag(const GeneratedRuntimeState* state, uint16_t mask);
+unsigned generated_parity_u8(unsigned char value);
+unsigned char generated_logic_u8(GeneratedRuntimeState* state, unsigned char value);
+uint16_t generated_logic_u16(GeneratedRuntimeState* state, uint16_t value);
+unsigned char generated_add_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right);
+uint16_t generated_add_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right);
+unsigned char generated_sub_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right);
+uint16_t generated_sub_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right);
+unsigned char generated_inc_u8(GeneratedRuntimeState* state, unsigned char value);
+unsigned char generated_dec_u8(GeneratedRuntimeState* state, unsigned char value);
+uint16_t generated_inc_u16(GeneratedRuntimeState* state, uint16_t value);
+uint16_t generated_dec_u16(GeneratedRuntimeState* state, uint16_t value);
+unsigned char generated_neg_u8(GeneratedRuntimeState* state, unsigned char value);
+uint16_t generated_neg_u16(GeneratedRuntimeState* state, uint16_t value);
+unsigned char generated_adc_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right);
+uint16_t generated_adc_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right);
+unsigned char generated_sbb_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right);
+uint16_t generated_sbb_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right);
+void generated_finish_shift_u8(GeneratedRuntimeState* state, unsigned char value, unsigned of);
+void generated_finish_shift_u16(GeneratedRuntimeState* state, uint16_t value, unsigned of);
+unsigned char generated_shift_rotate_u8(GeneratedRuntimeState* state, unsigned reg_field, unsigned char value, unsigned steps);
+uint16_t generated_shift_rotate_u16(GeneratedRuntimeState* state, unsigned reg_field, uint16_t value, unsigned steps);
+void generated_mul_u8(GeneratedRuntimeState* state, unsigned char multiplier);
+void generated_imul_u8(GeneratedRuntimeState* state, unsigned char multiplier);
+void generated_mul_u16(GeneratedRuntimeState* state, uint16_t multiplier);
+void generated_cmp_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right);
+void generated_cmp_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right);
+void generated_test_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right);
+void generated_test_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right);
+void generated_and_u8_direct(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, unsigned char imm);
+void generated_push_u16(GeneratedRuntimeState* state, uint16_t value);
+uint16_t generated_pop_u16(GeneratedRuntimeState* state);
+void generated_push_regs_ax_bx_cx_dx_bp_si_di_es_ds(GeneratedRuntimeState* state);
+void generated_pop_regs_ds_es_di_si_bp_dx_cx_bx_ax(GeneratedRuntimeState* state);
+void generated_movsb_once(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_movsw_once(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_cmpsb_once(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_stosb_once(GeneratedRuntimeState* state);
+void generated_stosw_once(GeneratedRuntimeState* state);
+void generated_lodsb_once(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_lodsw_once(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_rep_movsb(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_rep_movsw(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_rep_stosb(GeneratedRuntimeState* state);
+void generated_rep_stosw(GeneratedRuntimeState* state);
+void generated_rep_lodsb(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_rep_lodsw(GeneratedRuntimeState* state, uint16_t source_segment);
+void generated_rep_cmpsb(GeneratedRuntimeState* state, uint16_t source_segment, unsigned repeat_while_equal);
+void generated_iret(GeneratedRuntimeState* state);
+void generated_jump_far(GeneratedRuntimeState* state, uint16_t target_cs, uint16_t target_ip);
+unsigned char generated_port_in_u8(GeneratedRuntimeState* state, uint16_t port);
+void generated_port_out_u8(GeneratedRuntimeState* state, uint16_t port, unsigned char value);
+void generated_port_out_u16(GeneratedRuntimeState* state, uint16_t port, uint16_t value);
+void generated_interrupt(GeneratedRuntimeState* state, unsigned char vector);
+unsigned generated_check_condition(const GeneratedRuntimeState* state, unsigned opcode);
+void generated_runtime_init(GeneratedRuntimeState* state);
+void generated_runtime_note_call(GeneratedRuntimeState* state, const char* name);
+void generated_note_dynamic_target(GeneratedRuntimeState* state,
+                                   uint16_t src_cs,
+                                   uint16_t src_ip,
+                                   uint16_t target_cs,
+                                   uint16_t target_ip,
+                                   const char* note);
+void generated_dump_termination_state(const GeneratedRuntimeState* state, FILE* file);
+void generated_host_poll(GeneratedRuntimeState* state);

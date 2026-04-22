@@ -1,0 +1,78 @@
+// Before ///////
+// proc1
+// Return size: 0
+void proc1(word32 eax, word32 ecx)
+proc1_entry:
+	// succ:  l1
+l1:
+	Mem7[0x10000<32>:word32] = CONVERT(Mem0[ecx + (eax * 2<32> + 0x64<32>):int16], int16, int32)
+proc1_exit:
+
+// After ///////
+// proc1
+// Return size: 0
+void proc1(ui32 eax, struct Eq_3 * ecx)
+proc1_entry:
+	// succ:  l1
+l1:
+	g_dw10000 = (int32) ecx->a0064[eax]
+proc1_exit:
+
+// Equivalence classes ////////////
+Eq_1: (struct "Globals" (10000 int32 dw10000))
+	globals_t (in globals : (ptr32 (struct "Globals")))
+Eq_3: (struct "Eq_3" (64 (arr int16) a0064))
+	T_3 (in ecx : (ptr32 Eq_3))
+// Type Variables ////////////
+globals_t: (in globals : (ptr32 (struct "Globals")))
+  Class: Eq_1
+  DataType: (ptr32 Eq_1)
+  OrigDataType: (ptr32 (struct "Globals"))
+T_2: (in eax : ui32)
+  Class: Eq_2
+  DataType: ui32
+  OrigDataType: ui32
+T_3: (in ecx : (ptr32 Eq_3))
+  Class: Eq_3
+  DataType: (ptr32 Eq_3)
+  OrigDataType: (ptr32 (struct (64 T_13 t0064)))
+T_4: (in 0x64<32> : word32)
+  Class: Eq_4
+  DataType: int32
+  OrigDataType: int32
+T_5: (in ecx + 0x64<32> : ptr32)
+  Class: Eq_5
+  DataType: (ptr32 (arr int16))
+  OrigDataType: (ptr32 T_13)
+T_6: (in 2<32> : word32)
+  Class: Eq_6
+  DataType: ui32
+  OrigDataType: ui32
+T_7: (in eax * 2<32> : word32)
+  Class: Eq_7
+  DataType: ui32
+  OrigDataType: ui32
+T_8: (in (ecx + 0x64<32>)[eax * 2<32>] : int16)
+  Class: Eq_8
+  DataType: int16
+  OrigDataType: int16
+T_9: (in CONVERT((ecx + 0x64<32>)[eax * 2<32>], int16, int32) : int32)
+  Class: Eq_9
+  DataType: int32
+  OrigDataType: int32
+T_10: (in 0x10000<32> : word32)
+  Class: Eq_10
+  DataType: (ptr32 int32)
+  OrigDataType: (ptr32 (struct (0 T_11 t0000)))
+T_11: (in Mem7[0x10000<32>:word32] : word32)
+  Class: Eq_9
+  DataType: int32
+  OrigDataType: word32
+T_12:
+  Class: Eq_12
+  DataType: int16
+  OrigDataType: (struct 0002 (0 T_8 t0000))
+T_13:
+  Class: Eq_13
+  DataType: (arr int16)
+  OrigDataType: (arr T_12)

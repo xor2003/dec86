@@ -1,0 +1,60 @@
+name: documentation-build
+description: 'Process OW single documentation type build'
+inputs:
+  target:
+    description: 'documentation type to process'
+    required: false
+    default: ''
+    type: string
+  gitpath:
+    description: 'git subdirectory'
+    required: true
+    type: string
+  owtarget:
+    description: 'OW builder additional cmd line arguments'
+    required: false
+    default: ''
+    type: string
+  suffix:
+    description: 'artifact name suffix'
+    required: true
+    type: string
+  doc_suffix:
+    description: 'documentation artifact name suffix'
+    required: true
+    type: string
+  args:
+    description: 'build command arguments'
+    required: false
+    default: ''
+    type: string
+  owtools:
+    description: 'OW build compiler toolchain'
+    required: false
+    default: ''
+    type: string
+runs:
+  using: composite
+  steps:
+  - uses: ./.github/actions/artfload
+    with:
+      gitpath:      'build binbuild'
+      artifact:     build ${{inputs.suffix}}
+  - name: Documentation Build
+    run: |
+      if not '${{env.OWTESTMODE}}' == '1' (
+        ci\buildx.cmd ${{inputs.args}}
+      )
+    env:
+      OWBUILD_STAGE: ${{inputs.target == 'readme' && 'readme' || 'docs'}}
+      OWDOCTARGET:   ${{inputs.target}} ${{inputs.owtarget}}
+      OWTOOLS:       ${{inputs.owtools}}
+      OWROOT:        ${{github.workspace}}
+      OWDOSBOX:      'dosbox.exe'
+      OWDOSBOXPATH:  ${{github.workspace}}\ci\nt386
+      OWVERBOSE:     1
+    shell: cmd
+  - uses: ./.github/actions/artfsave
+    with:
+      gitpath:       ${{inputs.gitpath}}
+      artifact:      rel ${{inputs.doc_suffix}}

@@ -1,0 +1,15 @@
+/* UTF-8 encoding, ¥ */
+
+#include <os2.h>
+#include "wdpmhelp.rh"
+
+MENU    ID_WINDOW PRELOAD
+BEGIN
+  MENUITEM "~Switch", ID_SWITCH, MIS_TEXT
+END
+
+ACCELTABLE ID_WINDOW PRELOAD
+BEGIN
+  "S",   ID_SWITCH, CHAR, CONTROL
+  "s",   ID_SWITCH, CHAR, CONTROL
+END

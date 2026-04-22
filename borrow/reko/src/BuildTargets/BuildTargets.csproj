@@ -1,0 +1,104 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Configurations>Debug;Release</Configurations>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CMakeFlags Include="-DIS_MSYS=FALSE" />
+    <CMakeFlags Include="-DCMAKE_BUILD_TYPE=$(Configuration)" />
+    <CMakeFlags Include="-DREKO_PLATFORM=$(Platform)" />
+    <CMakeFlags Include="-DREKO_SRC=$(ProjectDir)../" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- this is needed to have a consistent and normalized path (or it will not work on Unix) -->
+    <RekoCMake>$([System.IO.Path]::Combine($(ProjectDir), ..\reko.cmake))</RekoCMake>
+    <CMakeVS>$([System.IO.Path]::Combine($(VSAPPIDDIR), CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe))</CMakeVS>
+    <CMake>cmake</CMake>
+    <!-- build the arguments string by joining <CMakeFlags> items by space -->
+    <CMakeArguments>@(CMakeFlags -> '%(Identity)', ' ')</CMakeArguments>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="Exists('$(CMakeVS)')">
+    <CMake>"$(CMakeVS)"</CMake>
+  </PropertyGroup>
+
+  <!-- Builds the whole Reko solution (the ~/src/Reko-decompiler.sln) -->
+  <Target Name="build_solution">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=build_solution -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Updates the NuSpec file to contain all the build outputs. This must be done after the build_solution build
+       or no files will be found. -->
+  <Target Name="update_runtime_nuspec"
+          Inputs="$(ProjectDir)../Installers/NuGetPackage/reko-files.xml"
+          Outputs="$(ProjectDir)../Installers/Runtime/bin/Runtime-$(Platform)-($Configuration).nuspec">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=update_runtime_nuspec -P $(RekoCMake)" />
+  </Target>
+
+  <!-- This actually build the nupkg, requiring the `update_runtime_nuspec` step above. -->
+  <Target Name="create_runtime_nupkg"
+          DependsOnTargets="update_runtime_nuspec">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=create_runtime_nupkg -P $(RekoCMake)" />
+  </Target>
+
+  <!-- This build the MSI installer (Windows only) -->
+  <Target Name="create_msi_wix">
+    <Exec Condition="'$(OS)'=='Windows_NT'"
+          Command="$(CMake) $(CMakeArguments) -DTARGET=create_msi_wix -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Builds and runs the Reko unit test. This may build Reko twice. -->
+  <Target Name="run_unit_tests">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=run_unit_tests -P $(RekoCMake)" />
+  </Target>
+
+  <!-- This runs the regressionTests tool to execute reko on all the binaries in the 
+    ~/subjects directory. 
+  -->
+  <Target Name="run_regressions">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=run_regressions -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Preprocesses the C header files to XML -->
+  <Target Name="gen_c2xml_os2">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=gen_c2xml_os2 -P $(RekoCMake)" />
+  </Target>
+
+  <Target Name="gen_c2xml_sysv">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=gen_c2xml_sysv -P $(RekoCMake)" />
+  </Target>
+
+  <Target Name="gen_c2xml_windows">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=gen_c2xml_windows -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Runs the hdrgen tool to generate the C interop file 'reko.h'from the C# types that have been 
+   marked with [NativeInteropAttribute]
+  -->
+
+  <Target Name="run_hdrgen">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=run_hdrgen -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Deletes any cmake and build process junk in the native directory. -->
+  <Target Name="nativeproxy_clean">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=nativeproxy_clean -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Builds the native code components of Reko -->
+  <Target Name="nativeproxy_build">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=nativeproxy_build -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Deploys ZIP files containing all the build outputs (including executables, metadata files, and nupkg)-->
+  <Target Name="create_release">
+    <Exec Command="$(CMake) $(CMakeArguments) -DTARGET=create_release -P $(RekoCMake)" />
+  </Target>
+
+  <!-- Convenience target that performs all the above steps in the correct order -->
+  <Target Name="reko_all"
+    DependsOnTargets="build_solution;run_unit_tests;run_regressions;create_runtime_nupkg;create_msi_wix;create_release">
+  </Target>
+</Project>

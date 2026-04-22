@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<characteristics xmlns="http://schemata.jklnet.org/Decompiler">
+  <entry name="abort">
+    <characteristics>
+      <terminates>true</terminates>
+    </characteristics>
+  </entry>
+  <entry name="err">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="errx">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="exit">
+    <characteristics>
+      <terminates>true</terminates>
+    </characteristics>
+  </entry>
+  <entry name="_exit">
+    <characteristics>
+      <terminates>true</terminates>
+    </characteristics>
+  </entry>
+  <entry name="__assert_fail">
+    <characteristics>
+      <terminates>true</terminates>
+    </characteristics>
+  </entry>
+  <entry name="printf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="fprintf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="sprintf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="__stack_chk_fail">
+    <characteristics>
+      <terminates>true</terminates>
+    </characteristics>
+  </entry>
+  <entry name="__fprintf_chk">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="__printf_chk">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="__sprintf_chk">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="snprintf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="__snprintf_chk">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+    <entry name="syslog">
+        <characteristics>
+            <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+        </characteristics>
+    </entry>
+  <entry name="warn">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="warnx">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="__asprintf_chk">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.PrintfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  
+  <entry name="scanf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.ScanfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="fscanf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.ScanfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="sscanf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.ScanfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+  <entry name="__isoc99_scanf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.ScanfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+
+  <entry name="malloc">
+    <characteristics>
+      <allocator>true</allocator>
+    </characteristics>
+  </entry>
+  <entry name="calloc">
+    <characteristics>
+      <allocator>true</allocator>
+    </characteristics>
+  </entry>
+  <entry name="__isoc99_sscanf">
+    <characteristics>
+      <varargs>Reko.Libraries.Libc.ScanfFormatParser,Reko.Libraries.Libc</varargs>
+    </characteristics>
+  </entry>
+</characteristics>

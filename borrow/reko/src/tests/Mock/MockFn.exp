@@ -1,0 +1,18 @@
+// FnMock
+// Return size: 0
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// r1:Stack -0004
+// r2:Stack -0008
+// return address size: ?
+define FnMock
+FnMock_entry:
+	// succ:  l1
+l1:
+	r1 = foo()
+	r1 = bar(r1)
+	baz(r1, r2)
+	return
+	// succ:  FnMock_exit
+FnMock_exit:
