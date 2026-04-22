@@ -1,0 +1,1688 @@
+arXiv:2411.02278v1 [cs.SE] 4 Nov 2024
+
+Is This the Same Code? A Comprehensive Study of Decompilation
+Techniques for WebAssembly Binaries
+Wei-Cheng Wu
+
+Yutian Yan
+
+Hallgrimur David Egilsson
+
+wei-cheng.wu.gr@darmouth.edu
+Dartmouth College
+Hanover, NH, USA
+
+yutianya@usc.edu
+University of Southern California
+Los Angeles, CA, USA
+
+egilsson@usc.edu
+University of Southern California
+Los Angeles, CA, USA
+
+David Park
+
+Steven Chan
+
+Christophe Hauser
+
+dpark946@usc.edu
+University of Southern California
+Los Angeles, CA, USA
+
+sychan@usc.edu
+University of Southern California
+Los Angeles, CA, USA
+
+christophe.hauser@dartmouth.edu
+Dartmouth College
+Hanover, NH, USA
+
+Weihang Wang
+weihangw@usc.edu
+University of Southern California
+Los Angeles, CA, USA
+
+ABSTRACT
+WebAssembly (abbreviated WASM) is a low-level bytecode language
+designed for client-side execution in web browsers. As WASM continues to gain widespread adoption and its security concerns, the
+need for decompilation techniques that recover high-level source
+code from WASM binaries has grown. However, little research has
+been done to assess the quality of decompiled code from WASM.
+This paper aims to fill this gap by conducting a comprehensive
+comparative analysis between decompiled C code from WASM binaries and state-of-the-art native binary decompilers. To achieve
+this goal, we presented a novel framework for empirically evaluating C-based decompilers from various aspects, thus assessing
+the proficiency of WASM decompilers in generating readable and
+correct code when compared to native binary decompilers. Specifically, we evaluated the decompiled code’s correctness, readability,
+and structural similarity with the original code from current WASM
+decompilers. We validated the proposed metrics’ practicality in
+decompiler assessment and provided insightful observations regarding the characteristics and constraints of existing decompiled
+code. By encouraging improvements in these tools, we seek to enhance their use in critical tasks such as auditing and sandboxing
+third-party libraries. This, in turn, contributes to bolstering the
+security and reliability of software systems that rely on WASM and
+native binaries.
+
+CCS CONCEPTS
+• Security and privacy → Software reverse engineering.
+
+KEYWORDS
+WebAssembly, WASM, Decompiler, Reverse Engineering
+
+1
+
+INTRODUCTION
+
+WebAssembly (WASM) is a portable, low-level language designed
+for near-native execution on the web [45]. Since it was first introduced by Haas et al. in 2017 [18] and initially developed for
+web browsers [50], its application has extended to diverse areas,
+
+including Internet of Things [17, 27], mobile devices [42], smart
+contracts [31], and its dedicated runtime environments [1, 16]. Notably, WASM is commonly used as a compilation target for popular
+high-level languages like C, C++, and Rust [20].
+Despite its reputation for safety, WASM binaries still exhibit
+security vulnerabilities. Around 65% of WASM binaries suffer from
+classic stack-based exploits commonly found in native binaries [20],
+such as stack-based buffer overflows [7, 33] and stack overflows [20].
+The absence of standard memory protections, like stack canaries
+or guard pages, renders these vulnerabilities effective.
+Given the growing adoption of WASM, inspecting third-party
+binaries for potential security vulnerabilities has become imperative. However, the low-level nature of WASM bytecode makes it
+challenging to audit compared to high-level code, such as C. Additionally, 28.8% of WASM binaries are minified [20], obfuscating
+variable/function names and making manual inspection cumbersome. To address these challenges, security experts can leverage
+decompilers to analyze high-level code instead of grappling with
+thousands of lines of minified low-level WASM code.
+However, WASM decompilers have received less attention than
+decompilers designed for native binaries. Over the years, significant progress has been made in developing powerful native binary
+decompilers that can accurately generate decompiled code for C
+and C++ programs. Recent studies have also focused on enhancing
+the readability of decompiled code [9, 46].
+To this end, we perform a comprehensive study to assess the
+effectiveness of state-of-the-art WASM decompilers.
+We will be approaching from two directions, as there are two
+different types of decompilers for WASM: decompilers tailored for
+readability, and decompilers focus on correctness, i.e., the decompiled code adheres to the behavior of the original WASM program.
+Their performance is compared with off-the-shelf native binary
+decompilers [24, 40]. To evaluate these decompilers, we utilize various widely-used complexity metrics for source code and adopt
+methodologies presented in previous studies [28, 47, 53]. Our study
+focuses on the following three aspects:
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+W. Wu et al.
+
+• Correctness of the decompiled code (Section 3.1);
+• Readability of the decompiled code (Section 3.2);
+• Structural similarity between the decompiled code and the
+original code (Section 3.3).
+
+7 vulnerable ( "aaaaaaaaaaaaaaaaaa\04" ) ;
+8}
+
+With our research, we aim to draw attention to the capabilities
+of WASM decompilers and the performance of native binary decompilers. By encouraging improvements in these tools, we seek to
+enhance their use in essential tasks such as auditing and sandboxing third-party libraries [37]. This, in turn, contributes to bolstering
+the security and reliability of software systems that rely on WASM
+and native binaries.
+In summary, this paper makes the following contributions:
+
+1 (func $f1 (type 14) (param i32) ;; function vulnerable
+2
+( local i32 )
+3
+global . get 0
+;; stack header
+4
+i32 . const 16
+5
+i32 . sub
+6
+local . tee 1
+7
+global . set 0
+8
+local . get 1
+9
+i32 . const 8
+10
+i32 . add
+;; parameter buf
+11
+local . get 0
+;; parameter bar
+12
+call $f2 ;; call function f2 (stpcpy)
+13
+;; 4 lines omitted
+14
+)
+15 (func $f2 (type 21) (param i32 i32 )
+16
+( local i32 )
+17
+block
+18
+block
+19
+local . get 0
+20
+;; 93 lines omitted
+21
+br_if 0 (; @2;)
+22
+end
+23
+end)
+
+• First attempt to evaluate WebAssembly decompilers: As
+far as we know, we are the first ones to investigate the correctness, readability, and structural similarity of decompilers for
+WebAssembly. We have created quantifiable and comprehensive
+metrics, which can be used as useful tools to evaluate the quality of decompiled code. The decompilers are tested on popular
+benchmarks, synthesized programs, and real-life scenarios to
+assess their adaptability to various inputs.
+• Inconsistencies of decompiling WASM vs. native binaries:
+Our investigation delved into the underlying reasons for inconsistencies arising when decompiling WASM vs. native binaries.
+These observations highlighted several critical issues, including
+aggressive compiler optimization, WASM language features, and
+platform-specific concerns.
+• First analysis framework for decompiled C code: We propose the first comprehensive analysis framework to empirically
+measure the quality of decompiled C code. We will open-source
+our benchmark and analysis framework, which can be used for
+future studies and further advancements in decompilers and
+WASM analysis.
+The rest of the paper is structured as follows: In Section 2, we
+present examples of the decompiled code from current WASM
+decompilers. In Section 3 and Section 4, we describe the metrics
+and mechanisms we used to evaluate the decompilers. The results
+of our evaluation are presented in Section 5. In Section 6, we discuss
+the limitations of our study and future work. Finally, we discuss
+related work in Section 7 and conclude the paper in Section 8.
+
+2
+
+Listing 2: Wasm program in WAT (simplified)
+
+Listing 3: Decompiled code (simplified) by wasm-decompile
+1 function f1 (a : int ) {
+2 var b: int = g_a − 16;
+3 g_a = b;
+4 f2 (b + 8, a) ;
+5 g_a = b + 16;
+6}
+7
+8 function f2 (a : int , b: int ) {
+9 var c : int ;
+10 if (( a ^ b) & 3) goto B_b;
+11 // 27 lines omitted
+12 }
+
+Listing 4: C program performing summation
+1 int sum(int n) {
+2 int sum = 0;
+3 for ( int i = 1; i <= n; i++)
+4
+sum += i ;
+5 return sum;
+6}
+
+MOTIVATION
+
+The main goal of this paper is to assess the effectiveness of current
+decompilers for the WebAssembly (WASM) language and determine
+their limitations, particularly in their ability to reconstruct source
+code from WASM precisely.
+We present a motivating example to demonstrate how code readability is enhanced by introducing a decompiler. The example is
+taken from the paper [26] and showcases a stack overflow vulnerability in both C and WASM.
+Listing 1: C program performing stack overflow (simplified)
+1 void vulnerable (char ∗bar) {
+2 char buf [8];
+3 strcpy (buf , bar) ; // no bounds checking
+4}
+5
+6 int main() {
+
+Listing 5: Decompiled code (simplified) by wasm-decompile
+1 int f2 ( int n) {
+2
+if (n <= 0) { return 0; }
+3 return n − 1 ∗ n − 2 >> 1 + n << 1 − 1}
+
+The C source code in Listing 1 contains the vulnerable function, which utilizes the unsafe strcpy function. This is dangerous
+because strcpy lacks an input size check and can trigger the buffer
+overflow if bar is larger than buf, which is exactly what Listing 1
+does.
+The C source code is compiled into WASM code using Emscripten [11]. WASM code is binary and not human-readable, so
+it is converted into WAT (WebAssembly Text) format. The WAT
+code is shown in Listing 2. The $f1 function (corresponding to the
+vulnerable function in the source code, function name striped)
+
+Is This the Same Code? A Comprehensive Study of Decompilation Techniques for WebAssembly Binaries
+
+calls the $f2 (stpcpy as aforesaid) function. $f2 implements the
+similar functionality as the strcpy function in the C standard library1 . The $f2 function has 101 LoC (Lines of Code). Since this
+function is implemented in WASM and does not depend on external
+functions, one cannot confirm its vulnerability nature without fully
+understanding it and realizing its similarity to the stpcpy in the C
+standard library.
+We use wasm-decompile [13] to convert the WASM program
+back into C-like code (Listing 3). The decompiled code has improved
+readability with 31 LOC (C-like) compared to 101 LOC of WAT. The
+decreased LoC indicates the improved readability of the program.
+However, we also need to point out that compared to the original program in Listing 1, the decompiled program has increased
+LoC, and the parameter data type of function f1 is different from
+vulnerable (we would explain this in Section 5), which shows the
+improvement comparing with the WASM binary and limitations
+regarding the original code.
+Besides readability, WASM decompilers may generate incorrect
+results, which breaks the correctness of the decompiled code. To
+demonstrate this, we tested a simple C program that contains a sum
+function (see Listing 4). We compiled the C program into WASM
+and retained the exported function symbols. We then used wasmdecompile to convert the WASM program into C-like code (Listing 5)
+and found that the decompiled code was incorrect. Specifically, line
+3 in the decompiled code, which calculates the sum from 1 to n,
+returns 2𝑛 − 2 instead of the correct result, 𝑛(𝑛 + 1)/2. This could
+potentially mislead reverse engineers working with the WASM
+code, leading them to manually check the WASM code instead of
+the decompiled one to ensure its functionality.
+The observed differences between the original and decompiled
+code raised the following intuitive questions that we aim to address
+in this paper:
+• Q1: To what extent can we trust the decompiled code to present
+the underlying program’s functionality accurately? In other words,
+how do we examine the correctness of the decompiled code?
+Ensuring that the decompiled code faithfully reproduces the
+original program’s functionality is crucial for reliable reverse
+engineering and code analysis.
+• Q2: Some examples of decompiled code (e.g., Listing 3) could still
+be too long to understand for developers. Is there an automated
+and objective way to measure the readability of the decompiled
+code? Quantifying readability would provide valuable insights
+into the code’s understandability, maintainability, and ease of
+debugging.
+• Q3: Sometimes, even if a piece of code is initially difficult to
+understand, it may still be comprehensible if we can observe a
+similar structure in the original source code. Can we quantify
+the structural similarity between the decompiled code and the
+original source code in addition to assessing readability? Measuring structural similarity can help determine how closely the
+decompiled code resembles the original, aiding in code comprehension and validation.
+
+1 The only difference between stpcpy and strcpy is the return value. stpcpy returns
+
+a pointer to the terminating \0 character of the target string while strcpy returns a
+pointer to the beginning of the string. Both functions are vulnerable to stack overflow.
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+Addressing these questions is crucial for advancing the capabilities of decompilers and enhancing the accuracy and usability of
+decompiled code in various application domains.
+
+3
+
+METHODOLOGY
+
+To answer Q1-Q3 from Section 2, we introduced a series of techniques to comprehensively evaluate existing WASM decompilers
+in terms of the decompiled output’s correctness, readability, and
+structural similarity to the original code.
+To establish a baseline for comparison, we used the decompiled
+results obtained from native binary decompilers. We reasoned that
+these tools have undergone rigorous development and real-world
+utilization over the years, making them reliable reference points.
+To conduct our evaluation, we carefully selected a consistent
+set of C programs and compiled them separately into both native
+binaries and WASM files. Subsequently, we applied the chosen
+decompilers to reverse-engineer the executable files and obtain the
+decompiled C code from both sides. We then conducted a functionlevel comparison between the decompiled outputs from native
+binaries and WASM.
+For correctness, we further re-compiled the decompiled code into
+executable files and executed them to test whether they preserved
+the same functionality as the original C code. This step allows us
+to verify the accuracy of the decompilers in faithfully reproducing
+the intended behavior of the original programs.
+Regarding readability and structural similarity, we applied various metrics commonly used in software engineering to evaluate
+the decompiled code.
+An overview workflow of our methodology can be found in
+Figure 1.
+
+3.1
+
+Correctness
+
+The accuracy of decompilation tools plays a crucial role in software
+development, security, and reverse engineering. A perfectly accurate decompiled program should be capable of being re-compiled
+back into executable files and exhibit the same functionality as the
+original binary.
+However, most state-of-the-art decompilers prioritize enhancing
+the readability of the decompiled code, which often results in C
+pseudo-code that may not strictly adhere to correct syntax. Additionally, these tools typically focus on analyzing the semantics per
+function and may struggle with reasoning about data structures or
+global variable access, which are commonly used in C programs.
+In short, while readability is a crucial aspect of decompilation,
+accessing the correctness of decompiled code presents two main
+challenges:
+
+C1: Decompilers often produce C-like code that is not directly
+re-compilable, emphasizing readability over perfect accuracy in
+reproducing the original binary.
+C2: Decompilers may face difficulties effectively handling global
+variables and memory pointers, which can lead to discrepancies in
+the decompiled code.
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+W. Wu et al.
+
+Figure 1: Overview of methodology workflow
+On the other hand, WASM decompilers inherently incorporate
+features that facilitate code re-compilability (effectively addressing C1). However, challenges persist in generating re-executable
+programs due to the inherent nature of WASM and its primary use
+as a library and function within web browsers. Two properties of
+WASM introduce divergences in the decompiled code:
+• Differences in memory management and representation:
+WASM employs a stack-based, linear memory model, which contrasts with the memory management and representation used in
+traditional native binaries. This property poses C2 as a challenge
+for WASM decompilers.
+• Usage of embedded environment-specific functions:
+During decompilation, certain operations, such as standard C
+library functions that access system resources like memory, files,
+networks, and devices, are transformed into system-call-like functions that exclusively exist within the JavaScript environment of
+the web browser.
+The second property of WASM leads to the third challenge for
+evaluating the correctness of decompiled WASM:
+C3: While decompiled WASM programs are represented as C code,
+they commonly cannot be executed directly in a native environment due to the absence of necessary runtime libraries. Additionally, these decompiled programs faithfully reproduce operations
+as if they were intended to be used as library modules within web
+browsers. As a result, they lack entry points for direct execution
+outside the WASM environment, making it infeasible to execute
+them in a non-WASM context.
+To address the three challenges (C1, C2, and C3) in evaluating the correctness of decompiled WASM code, we leveraged the
+synthesized code generated by DecFuzzer [28] and implemented
+a sandbox environment for the execution of wasm2c decompiled
+code.
+To the best of our knowledge, DecFuzzer is the only publicly
+available work that empirically assesses the correctness of native
+binary decompilers. It generated code containing only local-variable
+arithmetic computations into one single “core function”, ensuring
+full decompilability for all existing decompilers (C2). Subsequently,
+they syntactically restructured the decompiled code to make it recompilable (C1). The process concluded with the re-compilation of
+the code, and they compared the output of the re-compiled binary
+with the original binary’s execution results to verify correctness.
+
+As the synthesized programs generated by DecFuzzer do not
+utilize any library functions or global variables, they are suitable
+for porting to WASM decompilers too. We modified them to tackle
+further C2 and C3 for WASM. Specifically, we first transformed
+the synthesized programs into functionally stand-alone modules.
+This step ensures the compiled WASM is self-contained and does
+not depend on external runtime libraries and global variables (C2).
+Next, we implemented a sandbox environment to load and execute
+the decompiled WASM code (C3). This essentially makes it possible to execute the decompiled WASM code in the native binary
+environment so that we can compare it with the original binary’s
+execution results to verify correctness.
+We present the detailed implementation in Section 4.1.
+
+3.2
+
+Readability
+
+In our study, we introduced several metrics to quantify the readability and complexity of the decompiled programs automatically.
+To assess the complexity of the code, we selected several common
+algorithms commonly used in software engineering. This includes
+Lines of code, Max nesting depth, Cyclomatic complexity, and Halstead complexity measures. Generally, the higher the value of these
+metrics, the more complex and harder to read the code is. We briefly
+introduce these metrics below:
+• Lines of code. Lines of code measures the total number of lines in
+the code, indicating the code’s size and complexity. In our study,
+we counted only the physical lines in the text of the program’s
+source code, excluding comments and blanks [39]. Generally, a
+higher number of lines indicates a more complex and potentially
+harder-to-read code.
+• Max nesting depth. This metric calculates the maximum depth
+of nested structures, such as loops (e.g., for, while) and conditionals (e.g., if), within the code. A higher value implies deeper
+nesting, indicating increased complexity and reduced readability [32],.
+• Cyclomatic complexity. Cyclomatic complexity measures a
+program’s control-flow complexity [30]. It quantifies the number
+of linearly independent paths through the code, representing the
+number of decision points and possible execution paths. Higher
+cyclomatic complexity values suggest more intricate code structures, making the code more difficult to comprehend. For implementation, as we are comparing function-to-function instead
+of the whole program, we simply count the number of decision
+points in the function (such as an if statement or for statement).
+
+Is This the Same Code? A Comprehensive Study of Decompilation Techniques for WebAssembly Binaries
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+Table 1: List of readability and structural similarity metrics
+Metric
+Line of Code
+Max Nesting Depth
+Cyclomatic Complexity
+Halstead Complexity Measure
+# of goto, # of variables,
+# of cast, # of dead assignments
+
+Definition
+Source Lines of Code
+Depth of the most nested statement
+# of linearly independent paths (Control-Flow Complexity)
+Score proportional to operators and operands (Data-Flow Complexity)
+
+Range
+[0, ∞)
+[0, ∞)
+[1, ∞)
+[0, ∞)
+
+-
+
+[0, ∞)
+
+AST Node Quantity Compare
+AST Tree Edit Distance
+
+Common types of nodes between two ASTs
+Tree edit distance between two ASTs
+
+[0, 1]
+[0, 1]
+
+• Halstead complexity measures. The Halstead complexity measures a program’s data-flow complexity [51]. The original algorithm includes various metrics such as program vocabulary,
+program length, volume, difficulty, and effort. These measures
+assess the overall complexity of the code based on the number
+of distinct operators and operands used and their frequency of
+occurrence. In our study, we only calculated program effort for
+decompiled code.
+In addition to the above algorithms, we carefully selected a subset
+of metrics from previous decompiler works [47, 53] that are suitable
+for our function-to-function comparison. Specifically, these works
+aimed to reduce the reliance on goto statements in the decompiled
+code, recognizing their potential complexity in comprehension.
+Other properties, such as the number of cast and dead assignments,
+are also evaluated for the presented decompilers.
+The full list of metrics used in our research is presented in Table 1.
+We prioritize extensibility and scalability in our metric selection,
+and to achieve this, we do not include user studies in the scope of our
+work. By incorporating these metrics, we aim to comprehensively
+evaluate the readability and complexity of the decompiled programs,
+providing valuable insights for future decompiler development and
+analysis.
+
+3.3
+
+Structural Similarity
+
+The Abstract Syntax Tree (AST) is widely used for expressing and
+analyzing program structures. In this paper, we propose utilizing
+the AST to represent the structure of a program and then compare
+the AST of the original code with that of the decompiled code
+to determine their structural similarity. During the comparison
+of ASTs, we only consider the “type” of each node and not their
+specific values. For instance, in Figure 2, we solely compare the
+type of each node (represented by colors) and not the actual content
+of each node (e.g., “+”, “*”, “a”, and “b”). The main reason for this
+design is that we focus only on the structural differences with this
+metric and leave the numerical evaluation to correctness section.
+We employed two comparison algorithms to measure the similarity: Node quantity compare (NQC) and Tree edit distance (TED).
+Node quantity compare. In NQC, we count the number of nodes
+with the same type between two ASTs. The formula to calculate
+𝑁𝑄𝐶𝑠𝑐𝑜𝑟𝑒 is shown in Equation 1. The score range falls between
+[0, 1], where a higher score indicates a higher similarity between
+the two ASTs regarding shared nodes.
+∑︁ 𝑐𝑜𝑚𝑚𝑜𝑛 # 𝑜 𝑓 𝑒𝑎𝑐ℎ 𝑡 𝑦𝑝𝑒 𝑜 𝑓 𝑛𝑜𝑑𝑒𝑠
+𝑚𝑎𝑥 {𝑡𝑜𝑡𝑎𝑙 𝑛𝑜𝑑𝑒𝑠 𝑖𝑛 𝑜𝑛𝑒 𝑡𝑟𝑒𝑒 }
+
+(1)
+
+(a) Tree A
+
+(b) Tree B
+
+Figure 2: An example of AST comparison
+
+Take the two ASTs from Figure 2 for example. Among the trees,
+one 𝑅𝑒𝑡𝑢𝑟𝑛 node, one green node (operation node), and two red
+nodes (variable nodes) are common. The total nodes in Trees A and
+B are 4 and 6, respectively. Therefore, the score of NQC between
+1+1+2
+these two trees is 𝑁𝑄𝐶𝑠𝑐𝑜𝑟𝑒 = 𝑚𝑎𝑥
+{4,6} = 0.67. This score indicates a relatively high level of structural similarity between the two
+trees in terms of common nodes.
+Tree edit distance. The Tree edit distance (TED) algorithm calculates the number of steps required to transform one tree into
+another. Traditionally, the TED algorithm counts the costs of three
+operations: insert, delete, and replace. In our current implementation, we adopt a simplified approach. We calculate the differences
+in depths for each node, which means we only consider the insert
+and delete operations. We do not compare the content of each
+node during this process. By focusing solely on the differences in
+depths and considering only insert and delete operations, our
+implementation provides a straightforward and efficient way to
+measure the similarity between two trees.
+The recursive formula for computing 𝑇 𝐸𝐷𝑠𝑐𝑜𝑟𝑒 is shown in Equation 2. Let 𝐹 1 = 𝑇1 [𝑖..𝑗] be the post-order sub-forest of 𝑇1 and let 𝑟 1
+denote its rightmost root. Also, let 𝑅1 be the rightmost tree of 𝐹 1
+(the one rooted at 𝑟 1 ). The same notation holds for 𝑇2 :
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+𝑇 𝐸𝐷 ( ∅, ∅ ) = 0
+
+W. Wu et al.
+
+(2)
+
+𝑇 𝐸𝐷 (𝐹 1 , ∅ ) = 𝑇 𝐸𝐷 (𝐹 1 − 𝑟 1 , ∅ ) + 𝑐𝑜𝑠𝑡𝑑𝑒𝑙
+𝑇 𝐸𝐷 ( ∅, 𝐹 2 ) = 𝑇 𝐸𝐷 ( ∅, 𝐹 2 − 𝑟 2 ) + 𝑐𝑜𝑠𝑡𝑖𝑛𝑠
+𝑇 𝐸𝐷 (𝐹 1 , 𝐹 2 ) =
+
+
+𝑇 𝐸𝐷 (𝐹 1 − 𝑟 1 , 𝐹 2 ) + 𝑐𝑜𝑠𝑡𝑑𝑒𝑙
+
+𝑚𝑖𝑛 𝑇 𝐸𝐷 (𝐹 1 , 𝐹 2 − 𝑟 2 ) + 𝑐𝑜𝑠𝑡𝑖𝑛𝑠
+
+𝑇 𝐸𝐷 (𝐹 − 𝑟 , 𝐹 − 𝑟 ) + 𝑇 𝐸𝐷 (𝑅 − 𝑟 , 𝑅 − 𝑟 )
+1
+1 2
+1
+1
+1 2
+2
+
+
+𝑤ℎ𝑒𝑟𝑒 𝑐𝑜𝑠𝑡𝑑𝑒𝑙 = 𝑐𝑜𝑠𝑡𝑖𝑛𝑠 = 1
+
+In the case of native binary decompilation, we employed two
+open-source decompilers that were previously evaluated in the
+DecFuzzer paper: Ghidra [40] and RetDec [24]. These tools have
+been widely used and evaluated in various decompilation tasks,
+making them suitable candidates for our evaluation.
+
+3.5
+
+Benchmarks
+
+We use the 1,000 CSmith synthesized C programs from DecFuzzer
+for correctness. In the original work of DecFuzzer, the authors
+We also normalize and reverse the distance to 𝑇 𝐸𝐷𝑠𝑐𝑜𝑟𝑒 into
+further mutated them to test decompilers rigorously. We considvalues between [0, 1]. 𝑇 𝐸𝐷 (𝑇1,𝑇2 ) represents the TED distance
+ered 1,000 programs reasonable for our attempt to examine WASM
+between trees 𝑇1 and 𝑇2 , while |𝑇1 | and |𝑇2 | denote the total number
+decompilers, and we did not mutate them further.
+of nodes in each respective tree. The larger the 𝑇 𝐸𝐷𝑠𝑐𝑜𝑟𝑒 we obtain,
+For evaluating structural similarity and readability, we employed
+the more structurally closer the two trees are.
+two widely used C benchmark suites: PolyBenchC [43] and CH𝑇 𝐸𝐷 (𝑇1 ,𝑇2 )
+Stone [19]. These benchmark suites contain real-world program
+(3)
+𝑇 𝐸𝐷𝑠𝑐𝑜𝑟𝑒 = 1 −
+|𝑇1 | + |𝑇2 |
+implementations that are likely to be used in the WASM environment, such as scientific visualization, encryption, simulation, image
+For the example shown in Figure 2, with Equation 2, The TED
+recognition, etc.
+distance between the two trees is 0.199, resulting in a 𝑇 𝐸𝐷𝑠𝑐𝑜𝑟𝑒 of
+We opted not to include the programs from DecFuzzer for struc0.801 (1 - 0.199). This score indicates a relatively high structural
+tural similarity and readability evaluation for two main reasons.
+similarity between the two trees.
+Firstly, we found that since DecFuzzer’s synthesized programs may
+contain dead code, some portions of the code are automatically
+removed during compiling, even when setting the compiler opti3.4 Compilers & Decompilers
+mization level to 0. This results in the decompilers not handling the
+In our C-to-WASM compilation process, we opted to use Emscripten
+exact same program as the original one, making it less reasonable
+(emcc) [11], a comprehensive compiler toolchain for WASM built
+to include these programs.
+on LLVM [25]. As emcc utilizes LLVM as its foundation, we chose
+Secondly, the original synthesized code from DecFuzzer is not
+to employ clang to generate the native binary to ensure consistency
+designed
+for human readers and contains no specific meaning or
+in both compilation and re-compilation. Additionally, we aimed to
+intended functionality. Consequently, including these programs in
+set the compilation options to be identical to those used within the
+the evaluation would not be meaningful for assessing decompiled
+emcc implementation.
+code’s structural similarity and readability.
+For the WASM decompilation process, we utilized three widely
+used WASM decompilers: wasm2c [14], w2c2 [36], and wasm-decompile [4]. In contrast, PolyBenchC and CHStone are not used in the correctness evaluation due to their inclusion of library calls, which
+Wasm2c is part of the WABT WebAssembly tool set [12]. It conare challenging for both native and WASM decompilers to handle
+verts a WASM binary file to C source code along with the auxiliary
+correctly during runtime. Therefore, we reserved these benchmark
+header and supports various experimental WASM features, such as
+suites to assess the structural similarity and readability aspects of
+exceptions and threading, by incorporating specific command-line
+the decompiled programs.
+options. Wasm2c can generate bug-free C programs that can be
+compiled and executed, and the behavior of the recompiled program is expected to adhere to the original program; that is, the
+correctness of the program shall hold.
+Wasm-decompile [4] is also a component of WABT toolset. The
+reason to include another tool from the WABT toolset is that wasmdecompile and wasm2c have very different design goals, and the
+difference is significant enough to include both decompilers in our
+study (see Sec. 5). Wasm-decompile “is aimed at users that want to
+be able to ‘read’ large volumes of Wasm code [4]." Decompiled code
+generated by wasm-decompile is not designed to "be a programming
+language," that is, the functionality of recompilation is currently
+not provided, and the execution correctness of the decompiled code
+is not guaranteed. In conclusion, wasm-decompile focuses on the
+decompiled code’s readability and not correctness.
+W2c2 [36] is a standalone tool that translates WASM modules
+to portable C. While it supports basic WebAssembly features, it
+also includes three experimental WASM features: bulk memory
+operations, sign-extension operators, and non-trapping float-to-int
+conversions.
+
+4
+
+IMPLEMENTATION
+
+The total scripts for compiling benchmarks and generating metrics
+contain around 5,000 lines of Python and shell scripts.
+
+4.1
+
+Correctness
+
+DecFuzzer utilized CSmith [55], a widely recognized C-code synthesizer for compiler testing, to generate C code for evaluating
+decompilers. In its original form, the generated code operated on
+global variables and computed a checksum to verify execution results. DecFuzzer consolidated the synthesized code into a single
+function, func, and operated on local copies of the original global
+variables. As func contains no library calls or global variable access, it can be fully compiled and decompiled by state-of-the-art
+decompilers. To generate re-compilable code, DecFuzzer deployed a
+simple rewriter to fix the syntax errors in decompiled code. Finally,
+the rewritten code was re-compiled and executed to test against
+the original binary.
+
+Is This the Same Code? A Comprehensive Study of Decompilation Techniques for WebAssembly Binaries
+
+To adapt DecFuzzer for WASM, we wrapped func into an importable module that can be called and receive output from the
+main function. This module-based approach was chosen because
+the WASM code handles memory differently, making it challenging
+to create a complete program that can be executed natively. Luckily,
+as a standalone WASM module, the code can be imported and called
+within a testing framework simulating a browser environment. This
+modified code was then compiled to WASM, decompiled back to C,
+re-compiled to object files, and eventually imported and called by
+our sandbox testing framework.
+Besides the above efforts, we upgraded DecFuzzer’s syntax rewriters to match the latest compiler and decompiler versions. We also
+switched from using GCC to clang, which aligned better with the
+WASM toolchain and resulted in fewer errors during preliminary
+testing. To make the DecFuzzer code compatible with WASM, we
+created a Python converter with approximately 300 lines of code.
+Additionally, we patched the legacy RLBox[58] code to match the
+latest WASM toolchain and integrated it into our evaluation framework for sandbox testing. Besides, w2c2 is skipped for our correctness evaluation due to the current lack of support for sandboxing
+the w2c2 decompiled code.
+
+4.2
+
+5
+
+• How does each decompiler perform in terms of the specific metrics?
+
+5.1
+
+Correctness
+
+Table 2 shows the result of our correctness evaluation. Factors are
+based on DecFuzzer, including execution results and the number of
+decompile or re-compile failures.
+From the table, we can clearly see that wasm2c outperformed
+native binary decompilers by achieving a 100% correctness rate. We
+attribute this success to the fact that wasm2c adopts a conservative
+approach when translating WASM to decompiled code: Performing
+minimal optimizations. Consequently, when the execution environment was appropriately set up, the decompiled code faithfully
+reproduced the original functionality. This high correctness rate
+can also be attributed to the more uncomplicated instruction set in
+WASM compared to native binary code. Therefore, it’s relatively
+simple to translate WASM bytecode to C code directly, whereas
+native binary decompilers often face challenges in handling lowlevel instructions. Propagating these instructions as functions in
+the decompiled code without providing corresponding runtime
+implementations often leads to re-compile failures.
+
+Readability & Structural Similarity
+
+For readability and structural similarity, we built the analysis on top
+of clang Python API [10] and cppcheck [29]. As Clang API relies on
+the Clang preprocessor, the under-analyzing target must be C syntactically correct. We leveraged the syntax rewriter of DecFuzzer to
+try to make the native binary’s decompiled code re-compilable. Due
+to the limitation of the preprocessor, it cannot parse the decompiled
+code generated by wasm-decompile under optimization level 1 or
+2, as the code would break the type system during the analysis
+progress.
+
+EVALUATION RESULTS
+
+As introduced in the previous chapters, we evaluated the state-ofthe-art WASM decompilers, w2c2, wasm2c, and wasm-decompile,
+in three aspects: correctness, readability of the decompiled code,
+and structural similarity of the decompiled code with the source
+code. Based on decompiler characteristics introduced in Section 3.4,
+w2c2 is excluded from the correctness evaluation, and the structural
+similarity evaluation of wasm-decompile is limited.
+To establish a baseline for comparison, we also included decompilers of native binaries, namely Ghidra and RetDec. All experiments
+were performed on an Intel-i5 machine with four cores, 8GB RAM,
+and running ArchLinux. To ensure the validity of the results, we
+used the latest versions of all software.
+For the selected benchmarks, we observed that the compiling and
+decompiling processes could be completed within five seconds without significant memory consumption. Given the swift execution of
+these processes, we did not measure and compare the decompilers’
+runtime performance. Instead, our focus was solely on evaluating
+the quality of the generated code.
+In each section of the evaluation, we address the following questions through the use of proposed metrics:
+• Can proposed metrics help evaluate and characterize decompilers?
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+Table 2: Correctness results.
+Bench
+wasm2c
+wasm-decompile
+Ghidra
+RetDec
+
+Success
+1,000
+649
+818
+775
+
+Re-compile Failure
+0
+6
+13
+0
+
+Exec. Discrepancy
+0
+345
+169
+225
+
+Total
+
+1,000
+
+Compared to wasm2c, the other three decompilers all suffer
+from compilation failure and execution discrepancies. First, as presented to be a decompiler to improve readability for WASM, wasmdecompile is only able to achieve 649 out of 1000 program correct.
+We manually reviewed the semantically incorrect code, and summarized the reason for failures into two main reason:
+Unfaithful representation of the original WASM workflow
+In order to improve redability, wasm-decompile translates WASM’s
+stack-based instructions into SSA formats, which is theoretically
+more readable for human than long lines of C code in wasm2c.
+However, this transformation also introduces errors in the value
+passing and data flow, which leads to the incorrect execution of the
+decompiled code.
+False identification of structures and pointers In the synthesized benchmark for testing correctness, we introduce no pointer
+or special data structure to reduce the complexity of evaluation.
+However, wasm-decompile falsely grouped some of the variables as
+data structures and accessed through pointer offsets on stack. This
+not only results in violation of C syntax that resulted in incompilabiity, but potentially introduce rooms for more error to preserve
+the original program’s semantic. Moreover, it conversely increases
+the difficulty for understanding the decompile code.
+We showed a code snippet of the decompile output for wasmdecompile in Listing 6. The first part of the code is how wasmdecompile translates function epilogue. As all function parameters
+are stored on stack and then loaded during function calls, wasmdecompile may falsely group some parameters as one data structure,
+while the original program actually only passes integer values.
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+The latter part of the listing shows how variable type casting is
+represented with wasm-decompile. The variable n is a 32-bit integer
+casting to 8-bit and stored into q. This kind of operation sequence
+is conducted through out the decompile code, making the code not
+only long and hard to read, but also introducing correctness errors
+throughout the long dependency chain.
+Listing 6: Code snippet of decompile code generated by wasmdecompile
+1 export function func_1 () : int {
+2 var a : int = stack_pointer ;
+3 var b: int = 16;
+4 var c :{ a : int , b: int /∗ ... ∗/ } = a − b;
+5 stack_pointer = c ;
+6
+7 var f : int = −1051244671;
+8 c.b = f ;
+9 var g: int = 1902055121;
+10 c . a = g;
+11 // ....
+12 var o: int = 24;
+13 var p: int = n << o;
+14 var q: int = p >> o;
+15 // ....
+16 }
+
+For native-binary decompilers, both Ghidra and RetDec achieved
+slightly better results than wasm-decompile, but still have a significant number of failures. The main reason for the failures is the
+decompilers’ capabilities of translating low-level instructions to
+high-level C code. For such instructions, the decompilers often
+directly translate them to function calls, mimicking the original
+instructions. The runtime environment does not support such cases
+and will either lead to re-compile failures or be falsely rewritten by
+the DecFuzzer, leading to incorrect execution results. For example,
+Ghidra places CONCAT as a pseudo function to translate assembly
+code instructions such as mov AH, 2. While serving a purpose in
+the original code, the existing DecFuzzer implementation falsely
+removed it from the decompiled code to make the decompiled program re-compilable.
+Summary: With the presented approach for evaluating correctness,
+we highlight the remarkable 100% accuracy of wasm2c’s decompiled code. The limitation of wasm-decompile in correctness not
+only emphasizes the importance of evaluating decompilers from
+multiple perspectives but also underscores the challenges in recovering WASM’s stack-based instructions into high-level C code.
+While native binary decompilers present some failures, it is essential to note that some may be attributed to the evaluation approach
+rather than inherent issues with the decompilers themselves. More
+refined evaluation methodologies and techniques can address and
+improve these specific cases separately.
+
+5.2
+
+Readability
+
+We conducted a comprehensive evaluation by compiling each C
+code in PolyBenchC and CHStone at optimization levels 0, 1, and 2
+to both WASM and native binaries and subsequently decompiled
+outputs to compare their differences.
+
+W. Wu et al.
+
+The complete evaluation results are in Table 3 and Figure 3.
+Regarding the readability metrics, higher values generally indicate
+more challenging to understand.
+First, by comparing the results for Lines of code, Maximum nesting depth, Cyclomatic complexity, and Halstead complexity measure,
+it is evident that WASM decompilers generated significantly different code compared to others. The decompiled WASM code contains
+more lines of code and variables. Structurally, it exhibits a “flattened” code with a relatively low maximum nesting depth and
+Cyclomatic complexity. However, as the Halstead complexity measure indicates, the data flows are notably complicated. The low
+nesting depth also comes from the fact that WASM’s decompiled
+code relies heavily on goto statements. This discrepancy is mainly
+due to the fundamental differences between WASM’s stack-based
+instruction set and C’s register-based language. The state-of-the-art
+native binary decompilers attempt to translate the code to resemble
+the semantics of C code closely, while the WASM decompilers lack
+such design as observed in the motivation decompiled code (Section 2), all three WASM decompilers primarily convert WASM’s
+stack-based instructions into C syntax directly.
+Although wasm-decompile is designed to generate readable decompiled code, it is interesting that the readability metrics do not
+necessarily support this statement. With optimization level 0, decompiled code generated by wasm-decompile has a significantly
+larger number in most metrics evaluated because wasm-decompile
+attempts to recover the WASM semantics into readable format faithfully. However, as WASM has only a limited number of types, a
+large portion of the decompiled code is related to type conversion
+between variables in support of the original C programs’ semantics.
+Faithfully translating these operations could help to understand
+small-scale analysis of variable dependency better, but may not
+necessarily improve the whole program’s readability. This is highly
+reflected in the differences in the total LoC and type castings between wasm-decompile and wasm2c. wasm2c does not specify the
+casting of variables in code while preserving the correct semantics
+as shown in Section 5.1, while wasm-decompile explicitly shows
+such program flow and resulted in higher numbers in these two
+metrics.
+In comparing native binary decompilers, Ghidra generally generated more compact code and was closer to the original. This
+is attributed to Ghidra’s continuous development and successful
+heuristics in decompiling. In contrast, RetDec produced more lines
+of code and variables. This is due to its failures in recovering many
+native binary instructions into high-level C code and simply migrating instructions to C functions. E.g., RetDec directly used v8 =
+__asm_movsd(v3) in the decompiled code as the translation of the
+instruction movsd.
+For other metrics, some may not directly reflect the code’s readability but offer insights into the characteristics of the generated
+decompiled code. For instance, Ghidra had excessive type casting.
+This is due to its strategy for pointers and data-structure recovery,
+but it may not essentially affect how we interpret the code.
+Interestingly, higher compilation optimization levels have different effects on different decompilers. WASM decompilers tend to
+produce more compact code at higher optimization levels, mainly
+because highly optimized WASM files are smaller in size, resulting in shorter decompiled code when directly translated. However,
+
+Is This the Same Code? A Comprehensive Study of Decompilation Techniques for WebAssembly Binaries
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+Table 3: Results of readability evaluation
+Metrics
+
+Opt Level
+
+Original Code
+
+w2c2
+
+Decompilers
+wasm-decompile
+
+wasm2c
+
+Ghidra
+
+RetDec
+
+10,376
+11,290
+15,575
+98
+175
+405
+138
+99
+92
+2,883
+3,261
+4,952
+4
+4
+8
+
+4,818
+7,487
+9,249
+21
+63
+131
+2,872
+2,520
+2,958
+519
+760
+1,110
+31
+7
+8
+
+Total
+Lines of code
+
+# of goto statements
+
+# of type casting
+
+# of variables
+
+# Lines of dead code
+
+Maximum nesting depth
+
+Cyclomatic complexity
+
+Halstead complexity measure
+
+O0
+O1
+O2
+O0
+O1
+O2
+O0
+O1
+O2
+O0
+O1
+O2
+O0
+O1
+O2
+
+74,473
+24,828
+27,440
+767
+738
+584
+0
+0
+0
+16,109
+1,496
+1,622
+64
+143
+513
+
+2,619
+
+0
+
+39
+
+194
+
+4
+
+O0
+O1
+O2
+O0
+O1
+O2
+O0
+O1
+O2
+
+Average
+
+Stdev
+
+0.952
+
+1.163
+
+14.329
+
+18.067
+
+3.996
+
+4.144
+
+Average
+1.221
+1.228
+1.766
+3.634
+5.152
+5.883
+43.177
+46.341
+55.253
+
+Stdev
+1.534
+1.558
+2.447
+3.853
+7.295
+8.192
+31.158
+54.848
+62.667
+
+72,362
+28,332
+30,461
+576
+296
+257
+0
+0
+0
+19,368
+1,591
+1,711
+207
+25
+140
+Average
+0.655
+0.600
+1.462
+4.924
+6.766
+7.359
+52.026
+52.563
+66.963
+
+Stdev
+0.477
+0.492
+1.514
+4.667
+8.030
+8.530
+24.492
+51.660
+63.842
+
+23,744
+7,975
+7,771
+768
+774
+455
+627
+382
+642
+18,804
+619
+741
+7
+14
+35
+Average
+1.455
+1.041
+1.710
+6.283
+6.710
+6.228
+26.084
+30.778
+36.559
+
+Stdev
+1.409
+1.241
+2.065
+6.139
+8.475
+8.180
+9.363
+26.185
+32.038
+
+Average
+1.634
+1.855
+2.097
+6.772
+7.517
+9.255
+30.956
+31.434
+30.818
+
+Stdev
+1.798
+2.010
+2.428
+8.465
+9.430
+12.438
+30.761
+26.192
+25.237
+
+Average
+1.338
+2.000
+1.745
+4.683
+7.883
+9.048
+36.106
+35.865
+42.948
+
+Stdev
+1.464
+1.911
+1.813
+4.412
+8.920
+10.252
+44.118
+36.894
+42.853
+
+Table 4: Results of structural similarity evaluation
+Metrics
+
+Node quantity compare
+
+Tree edit distance
+
+Opt Level
+
+O0
+O1
+O2
+O0
+O1
+O2
+
+w2c2
+Average
+0.170
+0.230
+0.223
+0.166
+0.219
+0.210
+
+Stdev
+0.206
+0.195
+0.201
+0.169
+0.158
+0.166
+
+Average
+0.047
+0.197
+0.193
+0.062
+0.184
+0.191
+
+this does not necessarily mean that the decompiled code more
+closely resembles the original program nor improve readability.
+For example, in Listing 7, we show a code snippet of decompile
+code genereated by wasm-decompile with optimization level 2. It is
+observable that although the total lines of code could be less as operations are shrinking into single lines, but the code is syntactically
+incorrect and semantically incomprehensible for the complicated
+value assignments between operations.
+Listing 7: Decompiled code by wasm-decompile with compiler optimization
+1 export function KeySchedule(a: int_ptr , /∗ ... ∗/ ) : int {
+2
+// ...
+3
+c = b − (g = b / i ) ∗ i ;
+4
+if (eqz(c) ) {
+5
+f = Sbox;
+6
+c = f + (( e = (c = (( a = word + (a << 2) ) + 1440) [0]: int ) / 16) <<
+7
+8
+9
+10
+11
+
+Decompilers
+wasm-decompile
+
+wasm2c
+
+6) + (c − (e << 4) << 2) ;
+e = f + (( d = (e = a [240]) / 16) << 6) + (e − (d << 4) << 2) ;
+h = ( f + (( h = (d = a [120]) / 16) << 6) ) [d − (h << 4) ]: int ^
+(Rcon0 + (g << 2) − 4) [0]: int ;
+g = a [0];
+goto B_q;
+
+Stdev
+0.022
+0.140
+0.147
+0.046
+0.151
+0.152
+
+Average
+0.134
+N/A
+N/A
+0.149
+N/A
+N/A
+
+12
+13
+14 }
+
+}
+//
+
+Stdev
+0.066
+N/A
+N/A
+0.103
+N/A
+N/A
+
+Ghidra
+Average
+0.573
+0.470
+0.436
+0.495
+0.403
+0.377
+
+Stdev
+0.260
+0.284
+0.304
+0.236
+0.236
+0.256
+
+RetDec
+Average
+0.506
+0.378
+0.357
+0.439
+0.343
+0.325
+
+Stdev
+0.310
+0.291
+0.300
+0.286
+0.257
+0.267
+
+....
+
+On the contrary, higher optimization levels do not necessarily lead to more compact code for native binary decompilers. Native compilers use aggressive algorithms to optimize binary size
+and performance, while these optimized operations may not be
+easily translated into C semantics. Decompilers typically create
+highly readable code through heuristic approaches. When a binary
+is highly optimized, it may not fit within the existing heuristics,
+resulting in larger decompiled code with more direct assembly-to-C
+translations.
+Summary: The evaluation results unveil substantial differences in
+the decompiled code generated by WASM decompilers. Notably, the
+decompiled code exhibits excessive lines of code, frequent usage of
+goto statements, and intricate data flows, all of which negatively
+impact code readability.
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+W. Wu et al.
+
+(a) Line of Code
+
+(b) Maximum Nesting Depth
+
+(c) Cyclomatic Complexity
+
+(d) Halstead Complexity Measure
+
+(e) Node Quantity Compare
+
+(f) Tree Edit Distance
+
+Figure 3: Readability and structural similarity results consistent with Tables 3 and 4.
+
+Moreover, these metrics provide valuable insights into other
+interesting aspects, such as the influence of compiler optimization
+levels on each decompiler’s performance. The interplay between
+these factors can be considered to be a robust indicator for assessing
+the quality of decompiled code generated by the decompilers.
+
+5.3
+
+Structural Similarity
+
+The evaluation of structural similarity yields similar observations
+to the readability metrics. The results of structural similarity can
+be found in Table 4. As we have mentioned before, due to parser
+limitation, wasm-decompile-generated code can only be analyzed
+under optimization level 0. The evaluation compared original and
+decompiled functions by normalizing the computed Node Quantity
+Compare (NQC) and Tree Edit Distance (TED) scores to a range of
+[0, 1]. Higher scores indicate greater structural similarity between
+the functions.
+In general, the structural similarity results align with the findings
+from the readability evaluation. WASM decompiled code exhibits
+significant differences compared to native binary decompiled code,
+and the trend of structural similarity varies with different optimization levels. Higher optimization levels lead to increased structural
+similarity for WASM decompilers, while for native binary decompilers, the opposite trend is observed.
+Notably, the structural similarity evaluation revealed insights
+that are not evident in the readability evaluation. Specifically, the
+improvements introduced by w2c2 are more apparent. We observed
+
+several exceptional high scores for w2c2 decompiled code, corresponding to w2c2’s outliers in Figure 3e and Figure 3f. Our manual
+inspection revealed that these scores are primarily associated with
+pure arithmetic functions like mul64To128, which do not contain
+pointers or data structures. These functions exhibit minimal structural differences between the compiled WASM and native binary.
+As a result, w2c2 successfully decompiled them with high NQC
+and TED scores that are closer to what native binary decompilers
+obtained. In contrast, wasm2c still produced long and complicated
+code for these functions.
+Summary: Overall, the structural similarity evaluation provides
+additional insights into the performance of decompilers. Specifically,
+it highlights the effectiveness of w2c2 in handling certain types
+of functions that exhibit minimal structural differences between
+compiled WASM and native binary versions.
+
+6
+
+DISCUSSION AND FUTURE WORK
+
+In this study, we evaluated and compared state-of-the-art WASM
+decompilers. To achieve our goal, we collected and integrated multiple metrics from previous works and created a comprehensive
+framework for evaluating decompilers. This framework assesses
+correctness, readability, and structural aspects, and includes a case
+study. Through our analysis, we gained valuable insights into the
+performance and capabilities of existing decompilers. However, our
+investigation also revealed certain limitations and disadvantages
+that warrant attention in future research endeavors.
+
+Is This the Same Code? A Comprehensive Study of Decompilation Techniques for WebAssembly Binaries
+
+6.1
+
+Correctness
+
+We evaluated the correctness of WASM decompilers that generated
+compilable C code. Still, the process was limited by the absence
+of a substantial portion of the original features in C programming.
+It would benefit the community if a framework were developed
+to assess the correctness of decompilers for a broader range of C
+programs.
+Further investigations could also explore the correctness of
+WASM decompilers for different languages, platforms, or applications, extending the scope of our findings. Assessing our findings’
+generalizability across different WASM compilers and decompilers
+is crucial to comprehensively understanding correctness challenges.
+
+6.2
+
+Readability and Structural Similarity
+
+We encountered several challenges when delving further into the
+readability and structural similarity. Distinguishing whether an issue lies within the scope of the “WASM decompiler” or is a broader
+“WASM” or “decompiler” problem posed a difficulty. For example,
+the inherent design of WASM as a stack-based machine lacks concepts of arrays. Consequently, a straightforward comparison between the decompiled code and native binaries becomes problematic due to their structural differences. Devising fair evaluation
+methods to handle such disparities and identifying the appropriate
+properties for comparison is a compelling direction.
+
+6.3
+
+Benchmark and Evaluation Metrics
+
+We conducted the experiments by treating the compile and decompile process as black-box, i.e., we naively compile C programs
+into WASM, decompile WASM binaries, execute them with evaluation metrics, and analyze results. The benchmarks we chose are
+commonly used datasets for C programs, which cover different implementations of algorithms for a wide range of usages. Though our
+approach is straightforward and unbiased, it may also strive away
+from the natural usage of WASM. However, reproducing our approach with real-world WASM programs is difficult as most WASM
+programs are closed-source without ground truth for comparing
+the decompiled code against. One possible future direction may
+be a case-oriented study of the decompilation results for certain
+domain-specific usage of WASM, or analyzing the insufficiency
+of WASM decompilers from fundamental programming language
+aspects.
+
+7
+
+RELATED WORKS
+
+Reverse Engineering. Decompilation reverses the compilation
+and transforms the binary code back to high-level code. Since compilation is not a fully reversible process, it is difficult to construct a
+decompiler that can decompile an arbitrary executable back into the
+high-level code it was compiled from [34]. Reverse engineering can
+be used to find bugs, vulnerabilities, and malware, and perform verification, comparison, and multi-platform portability [15]. Besides
+the two open-source native binary decompilers Ghidra [40] and
+RetDec [24] in the study, we also considered angr [2] and snowman
+[56]. However, they can only generate C pseudocode or C programs
+containing syntax errors; thus, decompiled programs are not recompilable. Thus, these native decompilers are excluded from the study.
+To measure the complexity of decompiled programs, in addition
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+to the widely-used Cyclomatic complexity metric [30], previous
+decompiler research by Khaled et al. [53] highlighted that complicated goto statements in decompiled C code could be a significant
+obstacle for developers to understand the control flow. To improve
+readability, they attempted to reduce the number of such statements.
+Subsequently, a later work by Eric et al. [47] introduced more code
+properties, including the number of casts and dead assignments.
+Reverse Engineering on WebAssembly. Wasmdec [52] is an
+open-source WebAssembly decompiler. However, it stopped updating in 2018 and didn’t support many new features of WebAssembly
+standards. JEB [48] is a commercial decompiler that provides the
+WebAssembly decompilation function. [8] implemented a Datalogbased WebAssembly decompiler and found that all generated programs can be decompiled. More than 97% of decompiled programs
+are recompilable, while only 70% of the lowest complexity programs
+maintained correctness, and when the complexity increased, this
+percentage fell below 20%. [6] investigated the viability of applying machine learning techniques, i.e., Neural Machine Translation
+(NMT), for decompiling WebAssembly binaries to C source code.
+WebAssembly Study. WebAssembly has been used for cryptomining [5, 23, 35], games [5], software libraries [22, 38], computer
+vision [41, 57], and encryption [3]. Researchers have analyzed topics
+including the presence of WebAssembly in the wild [3], bugs in WebAssembly [44], and the performance of WebAssembly. To analyze
+WebAssembly performance, WebAssembly implementations of programs are compared with native or JavaScript counterparts. Haas
+et al. [18] compared the performance of WebAssembly to asm.js
+and native code. Jangda et al. [21] investigated the slowdown of
+WebAssembly compared to native code and found that while optimizations can reduce the program size and execution time, some
+limitations arise from the design constraints of WebAssembly itself.
+Spies and Mock [49] demonstrated that, on average, WebAssembly
+code is smaller and executes faster than equivalent JavaScript code.
+Yan et al. [54] compared the performance of WebAssembly with
+equivalent JavaScript and noted the effects of compiler optimization techniques, JIT optimization, and different platforms on the
+results. Compared with those WebAssembly topics, WebAssembly
+decompilers are less studied.
+
+8
+
+CONCLUSION
+
+In this paper, we performed an empirical analysis using a selection of diverse metrics to evaluate the generated code from WASM
+decompilers. Our evaluation framework covers multiple perspectives, including correctness, readability, and structural aspects. By
+employing these metrics, we have demonstrated their usability in
+assessing C-based decompilers and provided valuable insights into
+the properties and limitations of current decompiled code. We believe that our findings and the framework we presented will serve as
+a useful guide for future researchers in the field. Our work aims to
+foster the development of more sophisticated decompilers and contribute to the enhancement of both decompiling and WebAssembly
+toolchains.
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+REFERENCES
+[1] Syrus Akbary. 2023. Wasmer. https://wasmer.io/
+[2] Angr. 2023. Angr. https://angr.io/
+[3] Nuttapong Attrapadung, Goichiro Hanaoka, Shigeo Mitsunari, Yusuke Sakai,
+Kana Shimizu, and Tadanori Teruya. 2018. Efficient two-level homomorphic
+encryption in prime-order bilinear groups and a fast implementation in webassembly. In Proceedings of the 2018 on Asia Conference on Computer and Communications Security. 685–697.
+[4] Josh Auten. 2023. Github - wwwg/wasmdec: WebAssembly to C decompiler.
+https://wwwg.github.io/web-wasmdec/
+[5] Rick Battagline. 2019. Hands-On Game Development with WebAssembly: Learn
+WebAssembly C++ programming by building a retro space game. Packt Publishing
+Ltd.
+[6] Adam Benali. 2022. An Initial Investigation of Neural Decompilation for WebAssembly.
+[7] John Bergbom. 2018. Memory safety: old vulnerabilities become new with WebAssembly. Technical Report. Forcepoint. https://www.forcepoint.com/sites/
+default/files/resources/files/report-web-assembly-memory-safety-en.pdf
+[8] Love Brandefelt. 2022. Decompilation of WebAssembly using Datalog.
+[9] Gengbiao Chen, Zhuo Wang, Ruoyu Zhang, Kan Zhou, Shiqiu Huang, Kangqi
+Ni, Zhengwei Qi, Kai Chen, and Haibing Guan. 2010. A Refined Decompiler
+to Generate C Code with High Readability. In 2010 17th Working Conference
+on Reverse Engineering. IEEE Computer Society, Beverly, MA, 150–154. https:
+//doi.org/10.1109/WCRE.2010.24
+[10] Clang. 2023. Clang Indexing Library Bindings — libclang 15.0.6 documentation.
+https://libclang.readthedocs.io/en/latest/#
+[11] Emscripten contributors. [n. d.]. Emscripten documentation. https://emscripten.
+org/index.html
+[12] WABT developers. 2023. The WebAssembly Binary Toolkit. https://github.com/
+WebAssembly/wabt
+[13] WABT developers. 2023. WABT Documentation. https://webassembly.github.io/
+wabt/doc/wasm-decompile.1.html
+[14] WABT developers. 2023. Wasm2c Documentation. https://webassembly.github.
+io/wabt/doc/wasm2c.1.html
+[15] EelcoVisser. 2023. Why decompilation. http://www.program-transformation.
+org/Transform/WhyDecompilation
+[16] Dan Gohman. 2023. https://wasmtime.dev/
+[17] Robbert Gurdeep Singh and Christophe Scholliers. 2019. WARDuino: A Dynamic
+WebAssembly Virtual Machine for Programming Microcontrollers. In Proceedings
+of the 16th ACM SIGPLAN International Conference on Managed Programming Languages and Runtimes (Athens, Greece) (MPLR 2019). Association for Computing
+Machinery, New York, NY, USA, 27–36. https://doi.org/10.1145/3357390.3361029
+[18] Andreas Haas, Andreas Rossberg, Derek L. Schuff, Ben L. Titzer, Michael Holman,
+Dan Gohman, Luke Wagner, Alon Zakai, and JF Bastien. 2017. Bringing the
+web up to speed with WebAssembly. In Proceedings of the 38th ACM SIGPLAN
+Conference on Programming Language Design and Implementation (PLDI 2017).
+Association for Computing Machinery, New York, NY, USA, 185–200. https:
+//doi.org/10.1145/3062341.3062363
+[19] Yuko Hara, Hiroyuki Tomiyama, Shinya Honda, and Hiroaki Takada. 2009. Proposal and Quantitative Analysis of the CHStone Benchmark Program Suite for
+Practical C-based High-level Synthesis. Journal of Information Processing 17
+(2009), 242–254. https://doi.org/10.2197/ipsjjip.17.242
+[20] Aaron Hilbig, Daniel Lehmann, and Michael Pradel. 2021. An Empirical Study
+of Real-World WebAssembly Binaries: Security, Languages, Use Cases. In Proceedings of the Web Conference 2021. ACM, Ljubljana Slovenia, 2696–2708.
+https://doi.org/10.1145/3442381.3450138
+[21] Abhinav Jangda, Bobby Powers, Emery D Berger, and Arjun Guha. 2019. Not So
+Fast: Analyzing the Performance of WebAssembly vs. Native Code.. In USENIX
+Annual Technical Conference. 107–120.
+[22] Hunseop Jeong, Jinwoo Jeong, Sangyong Park, and Kwanghyuk Kim. 2018. WATT:
+A novel web-based toolkit to generate WebAssembly-based libraries and applications. In 2018 IEEE International Conference on Consumer Electronics (ICCE). IEEE,
+1–2.
+[23] Radhesh Krishnan Konoth, Emanuele Vineti, Veelasha Moonsamy, Martina
+Lindorfer, Christopher Kruegel, Herbert Bos, and Giovanni Vigna. 2018.
+Minesweeper: An in-depth look into drive-by cryptocurrency mining and its
+defense. In Proceedings of the 2018 ACM SIGSAC Conference on Computer and
+Communications Security. 1714–1730.
+[24] Jakub Křoustek, Peter Matula, and P Zemek. 2017. Retdec: An open-source
+machine-code decompiler. In July 2018.
+[25] Chris Lattner and Vikram Adve. 2004. LLVM: A compilation framework for
+lifelong program analysis & transformation. In International symposium on code
+generation and optimization, 2004. CGO 2004. IEEE, 75–86.
+[26] Daniel Lehmann, Johannes Kinder, and Michael Pradel. 2020. Everything old is
+new again: Binary security of { WebAssembly } . In 29th USENIX Security Symposium (USENIX Security 20). 217–234.
+
+W. Wu et al.
+
+[27] Renju Liu, Luis Garcia, and Mani Srivastava. 2021. Aerogel: Lightweight Access
+Control Framework for WebAssembly-Based Bare-Metal IoT Devices. In 2021
+IEEE/ACM Symposium on Edge Computing (SEC). Institute of Electrical and Electronics Engineers, New York City, NY, 94–105. https://doi.org/10.1145/3453142.
+3491282
+[28] Zhibo Liu and Shuai Wang. 2020. How far we have come: Testing decompilation correctness of C decompilers. In Proceedings of the 29th ACM SIGSOFT
+International Symposium on Software Testing and Analysis. 475–487.
+[29] Daniel Marjamäki. [n. d.]. Cppcheck. https://cppcheck.sourceforge.io/
+[30] Thomas J McCabe. 1976. A complexity measure. IEEE Transactions on software
+Engineering SE-2, 4 (1976), 308–320.
+[31] Timothy McCallum. 2019. Diving into Ethereum’s Virtual Machine (EVM):
+the future of Ewasm. https://hackernoon.com/diving-into-ethereums-virtualmachine-the-future-of-ewasm-wrk32iy.
+[32] Steve McConnell. 2004. Code Complete (2 ed.). Microsoft Press, United States.
+[33] Brian McFadden, Tyler Lukasiewicz, Jeff Dileo, and Justin Engler. 2018.
+NCC Group Whitepaper Security Chasms of WASM.
+Technical Report.
+NCC Group. https://i.blackhat.com/us-18/Thu-August-9/us-18-LukasiewiczWebAssembly-A-New-World-of-Native_Exploits-On-The-Web-wp.pdf
+[34] Jerome Miecznikowski and Laurie Hendren. 2002. Decompiling Java bytecode:
+Problems, traps and Pitfalls. Lecture Notes in Computer Science (2002), 111–127.
+https://doi.org/10.1007/3-540-45937-5_10
+[35] Marius Musch, Christian Wressnegger, Martin Johns, and Konrad Rieck. 2019.
+Thieves in the Browser: Web-based Cryptojacking in the Wild. In Proceedings of
+the 14th International Conference on Availability, Reliability and Security. 1–10.
+[36] Bastian Müller. 2023. W2c2. https://github.com/turbolent/w2c2
+[37] Shravan Narayan, Craig Disselkoen, Tal Garfinkel, Nathan Froyd, Eric Rahm,
+Sorin Lerner, Hovav Shacham, and Deian Stefan. 2020. Retrofitting Fine Grain
+Isolation in the Firefox Renderer. In 29th USENIX Security Symposium (USENIX
+Security 20). USENIX Association, Berkeley, CA, 699–716. https://www.usenix.
+org/conference/usenixsecurity20/presentation/narayan
+[38] Shravan Narayan, Tal Garfinkel, Sorin Lerner, Hovav Shacham, and Deian Stefan.
+2019. Gobi: WebAssembly as a practical path to library sandboxing. arXiv preprint
+arXiv:1912.02285 (2019).
+[39] Vu Nguyen, Sophia Deeds-Rubin, Thomas Tan, and Barry Boehm. 2007. A SLOC
+counting standard. In Cocomo ii forum, Vol. 2007. Citeseer, 1–16.
+[40] NSA. 2023. Ghidra. https://ghidra-sre.org/
+[41] OpenCV. [n. d.]. OpenCV: Build OpenCV.js. https://docs.opencv.org/4.7.0/d4/
+da1/tutorial_js_setup.html
+[42] Vasile Adrian Bogdan Pop, Arto Niemi, Valentin Manea, Antti Rusanen, and
+Jan-Erik Ekberg. 2022. Towards Securely Migrating Webassembly Enclaves. In
+Proceedings of the 15th European Workshop on Systems Security (Rennes, France)
+(EuroSec ’22). Association for Computing Machinery, New York, NY, USA, 43–49.
+https://doi.org/10.1145/3517208.3523755
+[43] Louis-Noël Pouchet. 2023. PolyBench/C – Homepage of Louis-Noël Pouchet.
+https://web.cse.ohio-state.edu/~pouchet.2/software/polybench/
+[44] Alan Romano, Xinyue Liu, Yonghwi Kwon, and Weihang Wang. 2021. An empirical study of bugs in webassembly compilers. In 2021 36th IEEE/ACM International
+Conference on Automated Software Engineering (ASE). IEEE, 42–54.
+[45] Andreas Rossberg. 2023. Introduction - WebAssembly 2.0 (Draft 2023-03-01).
+https://webassembly.github.io/spec/core/intro/introduction.html
+[46] Eric Schulte, Jason Ruchti, Matt Noonan, David Ciarletta, and Alexey Loginov.
+2018. Evolving exact decompilation. In Workshop on Binary Analysis Research
+(BAR). Ithaca, NY.
+[47] Eric Schulte, Jason Ruchti, Matt Noonan, David Ciarletta, and Alexey Loginov.
+2018. Evolving exact decompilation. In Workshop on Binary Analysis Research
+(BAR).
+[48] PNF Software. 2023. Webassembly analysis. https://www.pnfsoftware.com/jeb/
+manual/webassembly/
+[49] Benedikt Spies and Markus Mock. 2021. An Evaluation of WebAssembly in
+Non-Web Environments. In 2021 XLVII Latin American Computing Conference
+(CLEI). 1–10. https://doi.org/10.1109/CLEI53233.2021.9640153
+[50] Luke Wagner. 2017. WebAssembly consensus and end of Browser Preview.
+[51] Elaine J Weyuker. 1988. Evaluating software complexity measures. IEEE transactions on Software Engineering 14, 9 (1988), 1357–1365.
+[52] Wwwg. 2023. WWWG/wasmdec: WebAssembly to C decompiler. https://github.
+com/wwwg/wasmdec
+[53] Khaled Yakdan, Sebastian Eschweiler, Elmar Gerhards-Padilla, and Matthew
+Smith. 2015. No More Gotos: Decompilation Using Pattern-Independent ControlFlow Structuring and Semantic-Preserving Transformations.. In NDSS. Citeseer.
+[54] Yutian Yan, Tengfei Tu, Lijian Zhao, Yuchen Zhou, and Weihang Wang. 2021.
+Understanding the performance of webassembly applications. In Proceedings of
+the 21st ACM Internet Measurement Conference. 533–549.
+[55] Xuejun Yang, Yang Chen, Eric Eide, and John Regehr. 2011. Finding and understanding bugs in C compilers. In Proceedings of the 32nd ACM SIGPLAN conference
+on Programming language design and implementation. 283–294.
+[56] Yegord. 2023. Yegord/snowman: Snowman Decompiler. https://github.com/
+yegord/snowman
+
+Is This the Same Code? A Comprehensive Study of Decompilation Techniques for WebAssembly Binaries
+
+[57] Ann Yuan and Marat Dukhan. 2020. Supercharging the TensorFlow.js WebAssembly
+backend with SIMD and multi-threading. https://blog.tensorflow.org/2020/09/
+supercharging-tensorflowjs-webassembly.html
+
+SecureComm 2024, October 2024, Dubai, United Arab Emirates
+
+[58] Alon Zakai. [n. d.]. WasmBoxC: Simple, Easy, and Fast VM-less Sandboxing.
+https://kripken.github.io/blog/wasm/2020/07/27/wasmboxc.html
+
+

@@ -1,0 +1,101 @@
+tree_depth = 4
+
+proj_name = guisample
+name = sample
+
+!ifndef guisample_autodepends
+guisample_autodepends = .AUTODEPEND
+!endif
+
+guisample_wreslib_cli = gui
+
+!ifdef sys_windowed
+!ifeq host_os os2
+guisample_os2pm = 1
+!endif
+!endif
+
+additional_clean = *.grh
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+!include win386.mif
+
+!include $(gui_dir)/client.mif
+
+#
+# cflags
+#
+.c: ../c;$(os_source_dir);$(os_extra_dir)
+
+inc_dirs = -I. -I"../h" $(cli_gui_inc_dirs) $(cli_gui_inc_dirs_internal)
+
+!ifdef sys_windowed
+extra_cpp_flags = -DGUI_IS_GUI
+!endif
+
+#
+# lflags
+#
+extra_l_flags_nov = import @$(nwoss_dir)/common/imp/ownwos.imp
+!ifdef sys_windowed
+!else
+extra_l_flags_win = import DEATH GDI.121 import RESURRECTION GDI.122
+!endif
+
+#
+# EXE's
+#
+!ifdef guisample_os2pm
+exetarg_objs       = guimem.obj pmsample.obj
+!else
+exetarg_objs       = guimem.obj dlgstat.obj dlgdynam.obj dlgtest.obj sampdef.obj sample.obj
+!endif
+exetarg_libs       = $(cli_gui_libs)
+exetarg_name       = sample
+exetarg_res        = sample.res
+!include exetarg.mif
+
+#
+# rc and others
+#
+!ifdef guisample_os2pm
+rc_inc_dirs = -I. -I"../res/pm" -I"../res" -I"../h"
+guisamples_rc_deps1 = ../res/pm/sample.dlg &
+    ../res/pm/dlg.ico &
+    ../res/pm/main.ico &
+    ../res/pm/win1.ico &
+    ../res/pm/win2.ico &
+    ../res/pm/win3.ico
+!else
+rc_inc_dirs = -I. -I"../res/win" -I"../res" -I"../h"
+guisamples_rc_deps1 = ../res/win/sample.dlg &
+    ../res/win/dlg.ico &
+    ../res/win/main.ico &
+    ../res/win/win1.ico &
+    ../res/win/win2.ico &
+    ../res/win/win3.ico &
+    ../res/sample.men
+!endif
+
+rc_inc_dirs += $(cli_gui_rc_inc_dirs)
+guisamples_rc_deps = &
+    $(guisamples_rc_deps1) &
+    ../res/change.bmp &
+    ../res/five.bmp &
+    ../res/four.bmp &
+    ../res/max.bmp &
+    ../res/min.bmp &
+    ../res/one.bmp &
+    ../res/resize.bmp &
+    ../res/restore.bmp &
+    ../res/three.bmp &
+    ../res/two.bmp
+
+!ifdef sys_windowed
+extra_rc_flags = -DRESX_GUI
+!endif
+
+sample.res : ../res/sample.rc $(guisamples_rc_deps) $(cli_gui_rc_deps)
+    $(rcu8) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -ad $(rc_flags) $(rc_inc_path) $[@ -fo=$@

@@ -1,0 +1,1006 @@
+[02:53:18] /* loading: START.EXE */
+[02:53:18] [dbg] build_project: path=START.EXE suffix=.exe force_blob=False
+[02:53:18] [dbg] dos_mz load base=0x10000
+[02:53:18] [dbg] project built: arch=86_16 entry=0x15542
+[02:53:21] [dbg] loaded sidecar metadata: format=flair_pat+flair_sig code_labels=3 data_labels=0 structs=0
+[02:53:21] [dbg] flair signature catalogs: Turbo Pascal V5.0/5.5/6.0/7.0, 348 modules, Turbo Vision for TP 6.0/7.0, 1523 modules
+[02:53:21] /* info: recovery evidence: sidecar-assisted recovery (flair_pat+flair_sig) */
+[02:53:21] /* discovering likely functions... */
+[02:53:21] /* Signature-matched library labels available as bounded hints; recovering binary-owned functions from direct call/prologue evidence before generic CFG recovery. */
+[02:53:21] /* hidden-sidecar EXE: queueing ranked direct-binary function candidates for full decompilation without waiting for whole-program CFG recovery. */
+[02:53:21] /* skipping 3 signature-matched function(s) by default. */
+[02:53:21] /* binary: START.EXE */
+[02:53:21] /* arch: 86_16 */
+[02:53:21] /* entry: 0x15542 */
+[02:53:21] /* info: direct-binary recovery found 204 likely non-library function entries */
+[02:53:21] /* functions queued for decompilation: 204 */
+[02:53:21] /* info: selected 204 function(s) for decompilation */
+[02:53:21] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
+[02:53:21] [dbg] recovery worker: start 0x10547 sub_10547 mode=ranked recovery_timeout=5s
+[02:53:21] [dbg] isolated function worker: start 0x10547 sub_10547 requested_timeout=2s hard_timeout=4s
+[02:53:21] [dbg] function complexity for 0x10547 sub_10547: blocks=1, bytes=3
+[02:53:21] [dbg] decompile_function: addr=0x10547 name=sub_10547
+[02:53:21] [dbg] function 0x10547 not normalized, normalizing...
+[02:53:21] [dbg] Decompiler returned for 0x10547
+[02:53:21] [dbg] decompilation time for 0x10547 sub_10547: 0.18s
+[02:53:21] /* == function 0x10547 sub_10547 == */
+[02:53:21] /* info: function 0x10547 sub_10547 attempt=decompiled validation=disabled */
+[02:53:21] /* -- c -- */
+void sub_10547(void)
+{
+    return;
+}
+[02:53:21] [dbg] recovery worker: start 0x10544 sub_10544 mode=ranked recovery_timeout=5s
+[02:53:21] [dbg] isolated function worker: start 0x10544 sub_10544 requested_timeout=2s hard_timeout=4s
+[02:53:21] [dbg] function complexity for 0x10544 sub_10544: blocks=1, bytes=3
+[02:53:21] [dbg] decompile_function: addr=0x10544 name=sub_10544
+[02:53:21] [dbg] function 0x10544 not normalized, normalizing...
+[02:53:21] [dbg] Decompiler returned for 0x10544
+[02:53:22] [dbg] decompilation time for 0x10544 sub_10544: 0.19s
+[02:53:22] /* == function 0x10544 sub_10544 == */
+[02:53:22] /* info: function 0x10544 sub_10544 attempt=decompiled validation=disabled */
+[02:53:22] /* -- c -- */
+void sub_10544(void)
+{
+    return;
+}
+[02:53:22] [dbg] recovery worker: start 0x10010 sub_10010 mode=ranked recovery_timeout=5s
+
+[02:53:27] /* == function 0x10010 sub_10010 == */
+[02:53:27] /* stage: recovery:ranked */
+[02:53:27] /* info: function 0x10010 sub_10010 attempt=timed_out validation=disabled */
+[02:53:27] /* -- timeout -- */
+[02:53:27] Timed out while recovering sub_10010 at 0x10010 (stage=recovery timeout=5s mode=ranked).
+[02:53:27] /* -- lift break probe -- */
+[02:53:27] no per-instruction lift failure detected in linear probe window
+[02:53:27] /* -- asm fallback -- */
+[02:53:27] 0x10010: push bp
+[02:53:27] 0x10011: mov bp, sp
+[02:53:27] 0x10013: sub sp, 0x1c
+[02:53:27] 0x10016: push si
+[02:53:27] 0x10017: mov word ptr [0x628c], 0
+[02:53:27] 0x1001d: mov word ptr [0x628a], 0x4f2
+[02:53:27] 0x10023: mov word ptr [0x45fc], 0
+[02:53:27] 0x10029: mov word ptr [0x45fa], 0x4f4
+[02:53:27] 0x1002f: mov word ptr [bp - 0x10], 0
+[02:53:27] 0x10034: mov word ptr [bp - 0x12], 0x4f0
+[02:53:27] 0x10039: les bx, ptr [bp - 0x12]
+[02:53:27] 0x1003c: mov ax, word ptr es:[bx]
+[02:53:27] 0x1003f: mov word ptr [0x77f4], ax
+[02:53:27] 0x10042: mov word ptr [0x77f2], 0
+[02:53:27] 0x10048: mov ax, word ptr es:[bx]
+[02:53:27] 0x1004b: mov word ptr [0x4606], ax
+[02:53:27] 0x1004e: mov word ptr [0x4604], 0x120e
+[02:53:27] 0x10054: call 0x12fac
+[02:53:27] 0x10057: les bx, ptr [0x77f2]
+[02:53:27] 0x1005b: push word ptr es:[bx + 0x1e]
+[02:53:27] 0x1005f: call 0x12a88
+[02:53:27] 0x10062: add sp, 2
+[02:53:27] 0x10065: les bx, ptr [0x77f2]
+[02:53:27] 0x10069: push word ptr es:[bx + 0x1a]
+[02:53:27] 0x1006d: call 0x12a88
+[02:53:27] 0x10070: add sp, 2
+[02:53:27] 0x10073: les bx, ptr [0x77f2]
+[02:53:27] 0x10077: push word ptr es:[bx + 0x1c]
+[02:53:27] 0x1007b: call 0x12a88
+[02:53:27] 0x1007e: add sp, 2
+[02:53:27] 0x10081: mov ax, 2
+[02:53:27] 0x10084: push ax
+[02:53:27] 0x10085: les bx, ptr [0x77f2]
+[02:53:27] 0x10089: push word ptr es:[bx + 0x20]
+[02:53:27] 0x1008d: lcall 0x16b5, 0xc2f
+[02:53:27] 0x10092: add sp, 4
+[02:53:27] 0x10095: les bx, ptr [0x77f2]
+[02:53:27] 0x10099: mov al, byte ptr es:[bx + 0x24]
+[02:53:27] 0x1009d: mov byte ptr [0x678c], al
+[02:53:27] 0x100a0: call 0x104a0
+[02:53:27] 0x100a3: lcall 0x16b5, 0xcb1
+[02:53:27] 0x100a8: sub ax, ax
+[02:53:27] 0x100aa: push ax
+[02:53:27] 0x100ab: push ax
+[02:53:27] 0x100ac: lcall 0x16b5, 0xcac
+[02:53:27] 0x100b1: add sp, 4
+[02:53:27] 0x100b4: les bx, ptr [0x628a]
+[02:53:27] 0x100b8: cmp word ptr es:[bx], 1
+[02:53:27] 0x100bc: je 0x100c1
+[02:53:27] 0x100be: jmp 0x1029a
+[02:53:27] [dbg] recovery worker: start 0x155f4 sub_155f4 mode=ranked recovery_timeout=5s
+
+[02:53:32] /* == function 0x155f4 sub_155f4 == */
+[02:53:32] /* stage: recovery:ranked */
+[02:53:32] /* info: function 0x155f4 sub_155f4 attempt=timed_out validation=disabled */
+[02:53:32] /* -- timeout -- */
+[02:53:32] Timed out while recovering sub_155f4 at 0x155f4 (stage=recovery timeout=5s mode=ranked).
+[02:53:32] /* -- lift break probe -- */
+[02:53:32] no per-instruction lift failure detected in linear probe window
+[02:53:32] /* -- asm fallback -- */
+[02:53:32] 0x155f4: mov ah, 0x30
+[02:53:32] 0x155f6: int 0x21
+[02:53:32] 0x155f8: mov word ptr [0x2897], ax
+[02:53:32] 0x155fb: mov ax, 0x3500
+[02:53:32] 0x155fe: int 0x21
+[02:53:32] 0x15600: mov word ptr [0x2883], bx
+[02:53:32] 0x15604: mov word ptr [0x2885], es
+[02:53:32] 0x15608: push cs
+[02:53:32] 0x15609: pop ds
+[02:53:32] 0x1560a: mov ax, 0x2500
+[02:53:32] 0x1560d: mov dx, 0x55d6
+[02:53:32] 0x15610: int 0x21
+[02:53:32] 0x15612: push ss
+[02:53:32] 0x15613: pop ds
+[02:53:32] 0x15614: mov cx, word ptr [0x2a20]
+[02:53:32] 0x15618: jcxz 0x15648
+[02:53:32] 0x1561a: mov es, word ptr [0x2895]
+[02:53:32] 0x1561e: mov si, word ptr es:[0x2c]
+[02:53:32] 0x15623: lds ax, ptr [0x2a22]
+[02:53:32] 0x15627: mov dx, ds
+[02:53:32] 0x15629: xor bx, bx
+[02:53:32] 0x1562b: lcall ss:[0x2a1e]
+[02:53:32] 0x15630: jae 0x15637
+[02:53:32] 0x15632: push ss
+[02:53:32] 0x15633: pop ds
+[02:53:32] 0x15634: jmp 0x15e68
+[02:53:32] [dbg] recovery worker: start 0x156b8 sub_156b8 mode=ranked recovery_timeout=5s
+[02:53:32] [dbg] isolated function worker: start 0x156b8 sub_156b8 requested_timeout=3s hard_timeout=5s
+[02:53:32] [dbg] function complexity for 0x156b8 sub_156b8: blocks=3, bytes=23
+[02:53:32] [dbg] decompile_function: addr=0x156b8 name=sub_156b8
+[02:53:32] [dbg] function 0x156b8 not normalized, normalizing...
+[02:53:32] [dbg] registered 2 direct callee stub(s) for 0x156b8
+[02:53:32] [dbg] Decompiler returned for 0x156b8
+[02:53:32] [dbg] decompilation time for 0x156b8 sub_156b8: 0.35s
+[02:53:32] /* == function 0x156b8 sub_156b8 == */
+[02:53:32] /* info: function 0x156b8 sub_156b8 attempt=decompiled validation=disabled */
+[02:53:32] /* -- c -- */
+void sub_156b8(void)
+{
+    sub_5741(); /* do not return */
+    sub_5741(); /* do not return */
+}
+[02:53:32] [dbg] recovery worker: start 0x15714 sub_15714 mode=ranked recovery_timeout=5s
+[02:53:32] [dbg] isolated function worker: start 0x15714 sub_15714 requested_timeout=2s hard_timeout=4s
+[02:53:32] [dbg] function complexity for 0x15714 sub_15714: blocks=1, bytes=6
+[02:53:32] [dbg] decompile_function: addr=0x15714 name=sub_15714
+[02:53:32] [dbg] function 0x15714 not normalized, normalizing...
+[02:53:32] [dbg] Decompiler returned for 0x15714
+[02:53:32] [dbg] decompilation time for 0x15714 sub_15714: 0.24s
+[02:53:32] /* == function 0x15714 sub_15714 == */
+[02:53:32] /* info: function 0x15714 sub_15714 attempt=decompiled validation=disabled */
+[02:53:32] /* -- c -- */
+void sub_15714(void)
+{
+    unsigned short vvar_0;
+    goto vvar_0{r16|2b} + 9;
+}
+[02:53:32] [dbg] recovery worker: start 0x15741 sub_15741 mode=ranked recovery_timeout=5s
+[02:53:32] [dbg] isolated function worker: start 0x15741 sub_15741 requested_timeout=2s hard_timeout=4s
+[02:53:32] [dbg] function complexity for 0x15741 sub_15741: blocks=2, bytes=10
+[02:53:32] [dbg] decompile_function: addr=0x15741 name=sub_15741
+[02:53:32] [dbg] function 0x15741 not normalized, normalizing...
+[02:53:33] [dbg] Decompiler returned for 0x15741
+[02:53:33] [dbg] decompilation time for 0x15741 sub_15741: 0.49s
+[02:53:33] /* == function 0x15741 sub_15741 == */
+[02:53:33] /* info: function 0x15741 sub_15741 attempt=decompiled validation=disabled */
+[02:53:33] /* -- c -- */
+void sub_15741(void)
+{
+    unsigned short vvar_0;
+    unsigned short vvar_2;
+    unsigned short di;  // di
+
+    if (vvar_0{r12|2b} >= di)
+        goto LABEL_0x574f;
+    goto vvar_2{r16|2b} - 8;
+}
+[02:53:33] [dbg] recovery worker: start 0x15750 sub_15750 mode=ranked recovery_timeout=5s
+
+[02:53:38] /* == function 0x15750 sub_15750 == */
+[02:53:38] /* stage: recovery:ranked */
+[02:53:38] /* info: function 0x15750 sub_15750 attempt=timed_out validation=disabled */
+[02:53:38] /* -- timeout -- */
+[02:53:38] Timed out while recovering sub_15750 at 0x15750 (stage=recovery timeout=5s mode=ranked).
+[02:53:38] /* -- lift break probe -- */
+[02:53:38] no per-instruction lift failure detected in linear probe window
+[02:53:38] /* -- asm fallback -- */
+[02:53:38] 0x15750: cmp si, di
+[02:53:38] 0x15752: jae 0x15762
+[02:53:38] 0x15754: sub di, 4
+[02:53:38] 0x15757: mov ax, word ptr [di]
+[02:53:38] 0x15759: or ax, word ptr [di + 2]
+[02:53:38] 0x1575c: je 0x15750
+[02:53:38] 0x1575e: lcall [di]
+[02:53:38] 0x15760: jmp 0x15750
+[02:53:38] [dbg] recovery worker: start 0x15e48 sub_15e48 mode=ranked recovery_timeout=5s
+
+[02:53:43] /* == function 0x15e48 sub_15e48 == */
+[02:53:43] /* stage: recovery:ranked */
+[02:53:43] /* info: function 0x15e48 sub_15e48 attempt=timed_out validation=disabled */
+[02:53:43] /* -- timeout -- */
+[02:53:43] Timed out while recovering sub_15e48 at 0x15e48 (stage=recovery timeout=5s mode=ranked).
+[02:53:43] /* -- lift break probe -- */
+[02:53:43] no per-instruction lift failure detected in linear probe window
+[02:53:43] /* -- asm fallback -- */
+[02:53:43] 0x15e48: push bp
+[02:53:43] 0x15e49: mov bp, sp
+[02:53:43] 0x15e4b: mov ax, 0xfc
+[02:53:43] 0x15e4e: push ax
+[02:53:43] 0x15e4f: call 0x15ebb
+[02:53:43] 0x15e52: cmp word ptr [0x28d0], 0
+[02:53:43] 0x15e57: je 0x15e5d
+[02:53:43] 0x15e59: call word ptr [0x28d0]
+[02:53:43] 0x15e5d: mov ax, 0xff
+[02:53:43] 0x15e60: push ax
+[02:53:43] 0x15e61: call 0x15ebb
+[02:53:43] 0x15e64: mov sp, bp
+[02:53:43] 0x15e66: pop bp
+[02:53:43] 0x15e67: ret
+[02:53:43] [dbg] recovery worker: start 0x15e6e sub_15e6e mode=ranked recovery_timeout=5s
+[02:53:43] [dbg] isolated function worker: start 0x15e6e sub_15e6e requested_timeout=2s hard_timeout=4s
+[02:53:43] [dbg] function complexity for 0x15e6e sub_15e6e: blocks=1, bytes=14
+[02:53:43] [dbg] decompile_function: addr=0x15e6e name=sub_15e6e
+[02:53:43] [dbg] function 0x15e6e not normalized, normalizing...
+[02:53:43] [dbg] Decompiler returned for 0x15e6e
+[02:53:44] [dbg] decompilation time for 0x15e6e sub_15e6e: 0.46s
+[02:53:44] /* == function 0x15e6e sub_15e6e == */
+[02:53:44] /* info: function 0x15e6e sub_15e6e attempt=decompiled validation=disabled */
+[02:53:44] /* -- c -- */
+void sub_15e6e(void)
+{
+    unsigned short vvar_3;
+    goto vvar_3{r16|2b} - 3;
+}
+[02:53:44] [dbg] recovery worker: start 0x15ebb sub_15ebb mode=ranked recovery_timeout=5s
+[02:53:44] [dbg] isolated function worker: start 0x15ebb sub_15ebb requested_timeout=5s hard_timeout=7s
+[02:53:44] [dbg] function complexity for 0x15ebb sub_15ebb: blocks=5, bytes=41
+[02:53:44] [dbg] decompile_function: addr=0x15ebb name=sub_15ebb
+[02:53:44] [dbg] function 0x15ebb not normalized, normalizing...
+[02:53:44] [dbg] registered 2 direct callee stub(s) for 0x15ebb
+[02:53:46] [dbg] Decompiler returned for 0x15ebb
+[02:53:47] [dbg] decompilation time for 0x15ebb sub_15ebb: 3.20s
+[02:53:47] /* == function 0x15ebb sub_15ebb == */
+[02:53:47] /* info: function 0x15ebb sub_15ebb attempt=decompiled validation=disabled */
+[02:53:47] /* -- c -- */
+int write(int fd, const void *buf, unsigned int count);
+
+short sub_15ebb(void)
+{
+    unsigned short ir_6;
+    unsigned short vvar_5;
+    unsigned short ax;  // ax
+    unsigned short flags;  // flags
+    char ir_6;  // 4150
+
+    ax = sub_5e90();
+    if (!ax)
+        goto LABEL_0x5edd;
+    ir_6 = *((char *)ax);
+    if (1 & !(1 & (((((((((flags & -2 & -5 | ~(0 ^ 0 >> 4 ^ (0 ^ 0 >> 4) >> 2 ^ (0 ^ 0 >> 4 ^ (0 ^ 0 >> 4) >> 2) >> 1) * 4) & -17 & -65 | (!0) * 64) & -129 | (1 & 0 >> 15) * 128) & -2049 & -2 | 0 < ir_6) & -5 | ~(0 - ir_6 ^ 0 - ir_6 >> 4 ^ (0 - ir_6 ^ 0 - ir_6 >> 4) >> 2 ^ (0 - ir_6 ^ 0 - ir_6 >> 4 ^ (0 - ir_6 ^ 0 - ir_6 >> 4) >> 2) >> 1) * 4) & -17 | ((0 ^ ir_6 ^ 0 - ir_6) >> 4) * 16) & -65 | (!0 - ir_6) * 64) & -129 | (1 & 0 - ir_6 >> 7) * 128) & -2049 | (((0 ^ ir_6) & (0 ^ 0 - ir_6)) >> 7) * 0x800) >> 6))
+        goto vvar_5{r16|2b};
+    write(2, NULL, 0xffff);
+}
+[02:53:47] [dbg] recovery worker: start 0x154a1 sub_154a1 mode=ranked recovery_timeout=5s
+
+[02:53:52] /* == function 0x154a1 sub_154a1 == */
+[02:53:52] /* stage: recovery:ranked */
+[02:53:52] /* info: function 0x154a1 sub_154a1 attempt=timed_out validation=disabled */
+[02:53:52] /* -- timeout -- */
+[02:53:52] Timed out while recovering sub_154a1 at 0x154a1 (stage=recovery timeout=5s mode=ranked).
+[02:53:52] /* -- lift break probe -- */
+[02:53:52] no per-instruction lift failure detected in linear probe window
+[02:53:52] /* -- asm fallback -- */
+[02:53:52] 0x154a1: push bp
+[02:53:52] 0x154a2: mov bp, sp
+[02:53:52] 0x154a4: mov bx, word ptr [bp + 4]
+[02:53:52] 0x154a7: mov cl, 4
+[02:53:52] 0x154a9: shl bx, cl
+[02:53:52] 0x154ab: mov bx, word ptr [bx + 0x5ce6]
+[02:53:52] 0x154af: and bx, 0x7f
+[02:53:52] 0x154b2: shl bx, 1
+[02:53:52] 0x154b4: push word ptr [bx + 0x7202]
+[02:53:52] 0x154b8: mov ax, 0x4592
+[02:53:52] 0x154bb: push ax
+[02:53:52] 0x154bc: call 0x126b0
+[02:53:52] 0x154bf: add sp, 4
+[02:53:52] 0x154c2: mov bx, word ptr [bp + 4]
+[02:53:52] 0x154c5: mov cl, 4
+[02:53:52] 0x154c7: shl bx, cl
+[02:53:52] 0x154c9: mov bx, word ptr [bx + 0x5cd8]
+[02:53:52] 0x154cd: shl bx, 1
+[02:53:52] 0x154cf: push word ptr [bx + 0x7202]
+[02:53:52] 0x154d3: call 0x126fd
+[02:53:52] 0x154d6: add sp, 2
+[02:53:52] 0x154d9: or ax, ax
+[02:53:52] 0x154db: je 0x15524
+[02:53:52] 0x154dd: mov bx, word ptr [bp + 4]
+[02:53:52] 0x154e0: mov cl, 4
+[02:53:52] 0x154e2: shl bx, cl
+[02:53:52] 0x154e4: mov bx, word ptr [bx + 0x5ce6]
+[02:53:52] 0x154e8: and bx, 0x7f
+[02:53:52] 0x154eb: shl bx, 1
+[02:53:52] 0x154ed: push word ptr [bx + 0x7202]
+[02:53:52] 0x154f1: call 0x126fd
+[02:53:52] 0x154f4: add sp, 2
+[02:53:52] 0x154f7: or ax, ax
+[02:53:52] 0x154f9: je 0x15509
+[02:53:52] 0x154fb: mov ax, 0x2818
+[02:53:52] 0x154fe: push ax
+[02:53:52] 0x154ff: mov ax, 0x4592
+[02:53:52] 0x15502: push ax
+[02:53:52] 0x15503: call 0x12719
+[02:53:52] 0x15506: add sp, 4
+[02:53:52] 0x15509: mov bx, word ptr [bp + 4]
+[02:53:52] 0x1550c: mov cl, 4
+[02:53:52] 0x1550e: shl bx, cl
+[02:53:52] 0x15510: mov bx, word ptr [bx + 0x5cd8]
+[02:53:52] 0x15514: shl bx, 1
+[02:53:52] 0x15516: push word ptr [bx + 0x7202]
+[02:53:52] 0x1551a: mov ax, 0x4592
+[02:53:52] 0x1551d: push ax
+[02:53:52] 0x1551e: call 0x12719
+[02:53:52] 0x15521: add sp, 4
+[02:53:52] 0x15524: mov ax, 0x4592
+[02:53:52] 0x15527: push ax
+[02:53:52] 0x15528: call 0x126fd
+[02:53:52] 0x1552b: add sp, 2
+[02:53:52] 0x1552e: cmp ax, 0x1e
+[02:53:52] 0x15531: jle 0x1553d
+[02:53:52] 0x15533: mov byte ptr [0x45af], 0x2e
+[02:53:52] 0x15538: mov byte ptr [0x45b0], 0
+[02:53:52] 0x1553d: mov sp, bp
+[02:53:52] 0x1553f: pop bp
+[02:53:52] 0x15540: ret
+[02:53:52] [dbg] recovery worker: start 0x15472 sub_15472 mode=ranked recovery_timeout=5s
+[02:53:52] [dbg] isolated function worker: start 0x15472 sub_15472 requested_timeout=2s hard_timeout=4s
+[02:53:52] [dbg] function complexity for 0x15472 sub_15472: blocks=2, bytes=13
+[02:53:52] [dbg] decompile_function: addr=0x15472 name=sub_15472
+[02:53:52] [dbg] function 0x15472 not normalized, normalizing...
+[02:53:52] [dbg] Decompiler returned for 0x15472
+[02:53:52] [dbg] decompilation time for 0x15472 sub_15472: 0.26s
+[02:53:52] /* == function 0x15472 sub_15472 == */
+[02:53:52] /* info: function 0x15472 sub_15472 attempt=decompiled validation=disabled */
+[02:53:52] /* -- c -- */
+void sub_15472(unsigned short a1, unsigned short a2)
+{
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    if (*(&(&s_2)[4]) <= *(&(&s_2)[8]))
+        goto LABEL_0x547f;
+}
+[02:53:52] [dbg] recovery worker: start 0x15657 sub_15657 mode=ranked recovery_timeout=5s
+[02:53:52] [dbg] isolated function worker: start 0x15657 sub_15657 requested_timeout=3s hard_timeout=5s
+[02:53:52] [dbg] function complexity for 0x15657 sub_15657: blocks=6, bytes=27
+[02:53:52] [dbg] decompile_function: addr=0x15657 name=sub_15657
+[02:53:52] [dbg] function 0x15657 not normalized, normalizing...
+[02:53:57] [dbg] Decompiler returned for 0x15657
+[02:53:57] [dbg] decompilation time for 0x15657 sub_15657: 4.65s
+[02:53:57] /* == function 0x15657 sub_15657 == */
+[02:53:57] /* info: function 0x15657 sub_15657 attempt=decompiled validation=disabled */
+[02:53:57] /* -- c -- */
+void sub_15657(void)
+{
+    unsigned short ir_2;
+    unsigned short ir_9;
+    unsigned short vvar_2;
+    unsigned short es;  // es
+    unsigned short di;  // di
+    unsigned short flags;  // flags
+    char ir_2;  // 4108
+    unsigned short flags_2;  // flags
+    char ir_9;  // 4147
+
+    ir_2 = *((char *)di);
+    if (!ir_2)
+        goto LABEL_0x5689;
+    if (1)
+        goto vvar_2{r16|2b};
+    if ((flags_2 & 64))
+        goto LABEL_0x5672;
+    ir_9 = *((char *)(es * 16 + di + (1 & (char)(flags_2 >> 10) ? 65535 : 1)));
+    flags = ...;
+    if (1 & !(1 & flags >> 6))
+        goto vvar_2{r16|2b};
+    if (!(flags & 64))
+        goto LABEL_0x5689;
+}
+[02:53:57] [dbg] recovery worker: start 0x156d2 sub_156d2 mode=ranked recovery_timeout=5s
+[02:53:57] [dbg] isolated function worker: start 0x156d2 sub_156d2 requested_timeout=6s hard_timeout=8s
+[02:53:57] [dbg] function complexity for 0x156d2 sub_156d2: blocks=8, bytes=56
+[02:53:57] [dbg] decompile_function: addr=0x156d2 name=sub_156d2
+[02:53:57] [dbg] function 0x156d2 not normalized, normalizing...
+[02:53:57] [dbg] registered 6 direct callee stub(s) for 0x156d2
+[02:53:58] [dbg] Decompiler returned for 0x156d2
+[02:53:58] [dbg] decompilation time for 0x156d2 sub_156d2: 0.74s
+[02:53:58] /* == function 0x156d2 sub_156d2 == */
+[02:53:58] /* info: function 0x156d2 sub_156d2 attempt=decompiled validation=disabled */
+[02:53:58] /* -- c -- */
+int close(int fd);
+
+void sub_156d2(void)
+{
+    unsigned short ir_5;
+    unsigned short vvar_1;
+    unsigned short vvar_2;
+    unsigned short ax;  // ax
+    char ir_5;  // 4111
+    char s_0;  // [bp+0x0]
+
+    sub_5741(); /* do not return */
+    sub_5750(); /* do not return */
+    ax = sub_5e6e();
+    if (!ax)
+        goto LABEL_0x56f6;
+    if (*(vvar_1{r10|2b} + 4))
+        goto LABEL_0x56f6;
+    *((unsigned short *)&(&s_0)[4]) = 255;
+    ir_5 = *((char *)10403);
+    if (!(ir_5 & 1))
+        goto LABEL_0x5707;
+    close(5);
+    goto vvar_2{r16|2b} - 12;
+}
+[02:53:58] [dbg] recovery worker: start 0x15764 sub_15764 mode=ranked recovery_timeout=5s
+[02:53:58] [dbg] isolated function worker: start 0x15764 sub_15764 requested_timeout=3s hard_timeout=5s
+[02:53:58] [dbg] function complexity for 0x15764 sub_15764: blocks=2, bytes=23
+[02:53:58] [dbg] decompile_function: addr=0x15764 name=sub_15764
+[02:53:58] [dbg] function 0x15764 not normalized, normalizing...
+[02:53:58] [dbg] Decompiler returned for 0x15764
+[02:53:59] [dbg] decompilation time for 0x15764 sub_15764: 0.57s
+[02:53:59] /* == function 0x15764 sub_15764 == */
+[02:53:59] /* info: function 0x15764 sub_15764 attempt=decompiled validation=disabled */
+[02:53:59] /* -- c -- */
+void sub_15764(void)
+{
+    unsigned short vvar_10;
+    unsigned short vvar_3;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    vvar_10{r8|2b} = (int)(&s_2 + 16);
+    *((unsigned short far *)MK_FP(ss, vvar_10{r8|2b} - 2)) = di;
+    *((int far *)MK_FP(ss, vvar_10{r8|2b} - 4)) = vvar_3{r12|2b};
+    if (&s_2 - 0x10)
+        goto LABEL_0x577b;
+}
+[02:53:59] [dbg] recovery worker: start 0x1531c sub_1531c mode=ranked recovery_timeout=5s
+[02:53:59] [dbg] isolated function worker: start 0x1531c sub_1531c requested_timeout=3s hard_timeout=5s
+[02:53:59] [dbg] function complexity for 0x1531c sub_1531c: blocks=1, bytes=17
+[02:53:59] [dbg] decompile_function: addr=0x1531c name=sub_1531c
+[02:53:59] [dbg] function 0x1531c not normalized, normalizing...
+[02:53:59] [dbg] Decompiler returned for 0x1531c
+[02:53:59] [dbg] decompilation time for 0x1531c sub_1531c: 0.30s
+[02:53:59] /* == function 0x1531c sub_1531c == */
+[02:53:59] /* info: function 0x1531c sub_1531c attempt=decompiled validation=disabled */
+[02:53:59] /* -- c -- */
+void sub_1531c(void)
+{
+}
+[02:53:59] [dbg] recovery worker: start 0x152f4 sub_152f4 mode=ranked recovery_timeout=5s
+
+[02:54:04] /* == function 0x152f4 sub_152f4 == */
+[02:54:04] /* stage: recovery:ranked */
+[02:54:04] /* info: function 0x152f4 sub_152f4 attempt=timed_out validation=disabled */
+[02:54:04] /* -- timeout -- */
+[02:54:04] Timed out while recovering sub_152f4 at 0x152f4 (stage=recovery timeout=5s mode=ranked).
+[02:54:04] /* -- lift break probe -- */
+[02:54:04] no per-instruction lift failure detected in linear probe window
+[02:54:04] /* -- asm fallback -- */
+[02:54:04] 0x152f4: push bp
+[02:54:04] 0x152f5: mov bp, sp
+[02:54:04] 0x152f7: push si
+[02:54:04] 0x152f8: mov si, word ptr [bp + 4]
+[02:54:04] 0x152fb: mov cl, 4
+[02:54:04] 0x152fd: shl si, cl
+[02:54:04] 0x152ff: les bx, ptr [0x4604]
+[02:54:04] 0x15303: push word ptr es:[bx + 0x38]
+[02:54:04] 0x15307: push word ptr [si + 0x5cdc]
+[02:54:04] 0x1530b: push word ptr [si + 0x5cda]
+[02:54:04] 0x1530f: call 0x1531c
+[02:54:04] 0x15312: add sp, 6
+[02:54:04] 0x15315: jmp 0x15317
+[02:54:04] [dbg] recovery worker: start 0x152bb sub_152bb mode=ranked recovery_timeout=5s
+
+[02:54:09] /* == function 0x152bb sub_152bb == */
+[02:54:09] /* stage: recovery:ranked */
+[02:54:09] /* info: function 0x152bb sub_152bb attempt=timed_out validation=disabled */
+[02:54:09] /* -- timeout -- */
+[02:54:09] Timed out while recovering sub_152bb at 0x152bb (stage=recovery timeout=5s mode=ranked).
+[02:54:09] /* -- lift break probe -- */
+[02:54:09] no per-instruction lift failure detected in linear probe window
+[02:54:09] /* -- asm fallback -- */
+[02:54:09] 0x152bb: push bp
+[02:54:09] 0x152bc: mov bp, sp
+[02:54:09] 0x152be: sub sp, 4
+[02:54:09] 0x152c1: mov ax, word ptr [bp + 4]
+[02:54:09] 0x152c4: mov word ptr [bp - 4], ax
+[02:54:09] 0x152c7: mov word ptr [bp - 2], ds
+[02:54:09] 0x152ca: mov ax, word ptr [bp + 6]
+[02:54:09] 0x152cd: imul word ptr [bp + 8]
+[02:54:09] 0x152d0: push ax
+[02:54:09] 0x152d1: push word ptr [0x457c]
+[02:54:09] 0x152d5: push word ptr [0x457e]
+[02:54:09] 0x152d9: push word ptr [bp - 4]
+[02:54:09] 0x152dc: push ds
+[02:54:09] 0x152dd: call 0x15c2a
+[02:54:09] 0x152e0: add sp, 0xa
+[02:54:09] 0x152e3: mov ax, word ptr [bp + 6]
+[02:54:09] 0x152e6: imul word ptr [bp + 8]
+[02:54:09] 0x152e9: add word ptr [0x457c], ax
+[02:54:09] 0x152ed: mov sp, bp
+[02:54:09] 0x152ef: pop bp
+[02:54:09] 0x152f0: ret
+[02:54:09] [dbg] recovery worker: start 0x15268 sub_15268 mode=ranked recovery_timeout=5s
+[02:54:09] [dbg] isolated function worker: start 0x15268 sub_15268 requested_timeout=3s hard_timeout=5s
+[02:54:09] [dbg] function complexity for 0x15268 sub_15268: blocks=1, bytes=25
+[02:54:09] [dbg] decompile_function: addr=0x15268 name=sub_15268
+[02:54:09] [dbg] function 0x15268 not normalized, normalizing...
+[02:54:09] [dbg] Decompiler returned for 0x15268
+[02:54:09] [dbg] decompilation time for 0x15268 sub_15268: 0.40s
+[02:54:09] /* == function 0x15268 sub_15268 == */
+[02:54:09] /* info: function 0x15268 sub_15268 attempt=decompiled validation=disabled */
+[02:54:09] /* -- c -- */
+
+void sub_15268(void)
+{
+    unsigned short dx;  // dx
+    unsigned short ax;  // ax
+
+    dx = g_77f4;
+    ax = g_77f2 + 122;
+    g_457c = ax;
+    g_457e = dx;
+}
+[02:54:09] [dbg] recovery worker: start 0x1581e sub_1581e mode=ranked recovery_timeout=5s
+[02:54:10] [dbg] isolated function worker: start 0x1581e sub_1581e requested_timeout=4s hard_timeout=6s
+[02:54:10] [dbg] function complexity for 0x1581e sub_1581e: blocks=4, bytes=31
+[02:54:10] [dbg] decompile_function: addr=0x1581e name=sub_1581e
+[02:54:10] [dbg] function 0x1581e not normalized, normalizing...
+[02:54:10] [dbg] registered 4 direct callee stub(s) for 0x1581e
+[02:54:10] [dbg] Decompiler returned for 0x1581e
+[02:54:10] [dbg] decompilation time for 0x1581e sub_1581e: 0.92s
+[02:54:10] /* == function 0x1581e sub_1581e == */
+[02:54:10] /* info: function 0x1581e sub_1581e attempt=decompiled validation=disabled */
+[02:54:10] /* -- c -- */
+void sub_1581e(void)
+{
+    unsigned short vvar_7;
+    unsigned short vvar_9;
+    unsigned short vvar_2;
+    unsigned short vvar_10;
+    unsigned short vvar_15;
+    unsigned short vvar_16;
+    unsigned short ss;  // ss
+    unsigned short si;  // si
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    vvar_7{r8|2b} = (int)(&s_2 + 2);
+    vvar_9{r8|2b} = vvar_7{r8|2b} - 2;
+    *((int far *)MK_FP(ss, vvar_7{r8|2b} - 2)) = vvar_2{r12|2b};
+    vvar_10{r8|2b} = vvar_9{r8|2b} - 2;
+    *((unsigned short far *)MK_FP(ss, vvar_9{r8|2b} - 2)) = 22568;
+    si = sub_62e2();
+    if (!(&s_2 - 0x2))
+        goto LABEL_0x583e;
+    vvar_15{r8|2b} = vvar_10{r8|2b} - 2;
+    *((unsigned short far *)MK_FP(ss, vvar_10{r8|2b} - 2)) = si;
+    vvar_16{r8|2b} = vvar_15{r8|2b} - 2;
+    *((short far *)MK_FP(ss, vvar_15{r8|2b} - 2)) = *((short *)&(&s_2)[6]);
+    *((short far *)MK_FP(ss, vvar_16{r8|2b} - 2)) = *((short *)&(&s_2)[4]);
+    *((unsigned short far *)MK_FP(ss, vvar_16{r8|2b} - 4)) = 22584;
+    sub_617c(); /* do not return */
+}
+[02:54:10] [dbg] recovery worker: start 0x15846 sub_15846 mode=ranked recovery_timeout=5s
+[02:54:11] [dbg] isolated function worker: start 0x15846 sub_15846 requested_timeout=5s hard_timeout=7s
+[02:54:11] [dbg] function complexity for 0x15846 sub_15846: blocks=3, bytes=41
+[02:54:11] [dbg] decompile_function: addr=0x15846 name=sub_15846
+[02:54:11] [dbg] function 0x15846 not normalized, normalizing...
+[02:54:11] [dbg] Decompiler returned for 0x15846
+[02:54:11] [dbg] decompilation time for 0x15846 sub_15846: 0.60s
+[02:54:11] /* == function 0x15846 sub_15846 == */
+[02:54:11] /* info: function 0x15846 sub_15846 attempt=decompiled validation=disabled */
+[02:54:11] /* -- c -- */
+void sub_15846(unsigned short a1, unsigned short a2, unsigned short a3)
+{
+    unsigned short vvar_12;
+    unsigned short vvar_6;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ax;  // ax
+    char s_6;  // [bp-0x6]
+
+    vvar_12{r8|2b} = (int)(&s_6 + 6);
+    *((unsigned short far *)MK_FP(ss, vvar_12{r8|2b} - 2)) = di;
+    *((int far *)MK_FP(ss, vvar_12{r8|2b} - 4)) = vvar_6{r12|2b};
+    ax = *((short *)&(&s_6)[2]) * (a2 | a2 * 0x100);
+    *((unsigned short *)&(&s_6)[6]) = ax;
+    *((unsigned short *)&(&s_6)[8]) = ax;
+    if (!*(&(&s_6)[2]))
+        goto LABEL_0x5869;
+    if (*(&(&s_6)[4]))
+        goto LABEL_0x5870;
+}
+[02:54:11] [dbg] recovery worker: start 0x150eb sub_150eb mode=ranked recovery_timeout=5s
+[02:54:11] [dbg] isolated function worker: start 0x150eb sub_150eb requested_timeout=3s hard_timeout=5s
+[02:54:11] [dbg] function complexity for 0x150eb sub_150eb: blocks=3, bytes=23
+[02:54:11] [dbg] decompile_function: addr=0x150eb name=sub_150eb
+[02:54:11] [dbg] function 0x150eb not normalized, normalizing...
+[02:54:12] [dbg] Decompiler returned for 0x150eb
+[02:54:12] [dbg] decompilation time for 0x150eb sub_150eb: 0.45s
+[02:54:12] /* == function 0x150eb sub_150eb == */
+[02:54:12] /* info: function 0x150eb sub_150eb attempt=decompiled validation=disabled */
+[02:54:12] /* -- c -- */
+void sub_150eb(unsigned short a1)
+{
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    if (*(&(&s_2)[4]))
+        goto LABEL_0x5108;
+    if (*(&(&s_2)[6]) <= 0)
+        goto LABEL_0x5102;
+}
+[02:54:12] [dbg] recovery worker: start 0x15a2c sub_15a2c mode=ranked recovery_timeout=5s
+[02:54:12] [dbg] isolated function worker: start 0x15a2c sub_15a2c requested_timeout=4s hard_timeout=6s
+[02:54:12] [dbg] function complexity for 0x15a2c sub_15a2c: blocks=3, bytes=43
+[02:54:12] [dbg] decompile_function: addr=0x15a2c name=sub_15a2c
+[02:54:12] [dbg] function 0x15a2c not normalized, normalizing...
+[02:54:12] [dbg] Decompiler returned for 0x15a2c
+[02:54:12] [dbg] decompilation time for 0x15a2c sub_15a2c: 0.69s
+[02:54:12] /* == function 0x15a2c sub_15a2c == */
+[02:54:12] /* info: function 0x15a2c sub_15a2c attempt=decompiled validation=disabled */
+[02:54:12] /* -- c -- */
+void sub_15a2c(unsigned short a1, unsigned short a2, unsigned short a3)
+{
+    unsigned short vvar_12;
+    unsigned short vvar_6;
+    unsigned short a52;
+    unsigned short a58;
+    unsigned short ss;  // ss
+    unsigned short di;  // di
+    unsigned short ax;  // ax
+    char s_6;  // [bp-0x6]
+
+    vvar_12{r8|2b} = (int)(&s_6 + 4);
+    *((unsigned short far *)MK_FP(ss, vvar_12{r8|2b} - 2)) = di;
+    *((int far *)MK_FP(ss, vvar_12{r8|2b} - 4)) = vvar_6{r12|2b};
+    ax = *((short *)&(&s_6)[2]) * (a2 | a2 * 0x100);
+    *((unsigned short *)&(&s_6)[6]) = ax;
+    *((unsigned short *)&(&s_6)[8]) = ax;
+    if (!*(&(&s_6)[2]))
+        goto LABEL_0x5a52;
+    if (*(&(&s_6)[4]))
+        goto LABEL_0x5a58;
+}
+[02:54:12] [dbg] recovery worker: start 0x14f76 sub_14f76 mode=ranked recovery_timeout=5s
+[02:54:13] [dbg] isolated function worker: start 0x14f76 sub_14f76 requested_timeout=3s hard_timeout=5s
+[02:54:13] [dbg] function complexity for 0x14f76 sub_14f76: blocks=3, bytes=29
+[02:54:13] [dbg] decompile_function: addr=0x14f76 name=sub_14f76
+[02:54:13] [dbg] function 0x14f76 not normalized, normalizing...
+[02:54:13] [dbg] registered 2 direct callee stub(s) for 0x14f76
+[02:54:14] [dbg] Decompiler returned for 0x14f76
+[02:54:14] [dbg] decompilation time for 0x14f76 sub_14f76: 1.20s
+[02:54:14] /* == function 0x14f76 sub_14f76 == */
+[02:54:14] /* info: function 0x14f76 sub_14f76 attempt=decompiled validation=disabled */
+[02:54:14] /* -- c -- */
+
+void sub_14f76(void)
+{
+    unsigned short vvar_8;
+    unsigned short vvar_11;
+    unsigned short vvar_12;
+    unsigned short vvar_13;
+    unsigned short ss;  // ss
+    unsigned short ax;  // ax
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    vvar_8{r8|2b} = (int)(&s_2 + 2);
+    vvar_11{r8|2b} = vvar_8{r8|2b} - 2;
+    *((unsigned short far *)MK_FP(ss, vvar_8{r8|2b} - 2)) = 10226;
+    vvar_12{r8|2b} = vvar_11{r8|2b} - 2;
+    *((short far *)MK_FP(ss, vvar_11{r8|2b} - 2)) = *((short *)&(&s_2)[4]);
+    vvar_13{r8|2b} = vvar_12{r8|2b} - 2;
+    *((unsigned short far *)MK_FP(ss, vvar_12{r8|2b} - 2)) = 20358;
+    ax = sub_5268();
+    g_4600 = ax;
+    if (&s_2 - 0x2)
+        goto LABEL_0x4f93;
+}
+[02:54:14] [dbg] recovery worker: start 0x15b68 sub_15b68 mode=ranked recovery_timeout=5s
+[02:54:14] [dbg] isolated function worker: start 0x15b68 sub_15b68 requested_timeout=2s hard_timeout=4s
+[02:54:14] [dbg] function complexity for 0x15b68 sub_15b68: blocks=2, bytes=20
+[02:54:14] [dbg] decompile_function: addr=0x15b68 name=sub_15b68
+[02:54:14] [dbg] function 0x15b68 not normalized, normalizing...
+[02:54:14] [dbg] Decompiler returned for 0x15b68
+[02:54:14] [dbg] decompilation time for 0x15b68 sub_15b68: 0.35s
+[02:54:14] /* == function 0x15b68 sub_15b68 == */
+[02:54:14] /* info: function 0x15b68 sub_15b68 attempt=decompiled validation=disabled */
+[02:54:14] /* -- c -- */
+void sub_15b68(void)
+{
+    unsigned short ds;  // ds
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    if (*(&(&s_2)[4]) < *(ds * 16 + 10396))
+        goto LABEL_0x5b7c;
+}
+[02:54:14] [dbg] recovery worker: start 0x15be2 sub_15be2 mode=ranked recovery_timeout=5s
+[02:54:14] [dbg] isolated function worker: start 0x15be2 sub_15be2 requested_timeout=4s hard_timeout=6s
+[02:54:14] [dbg] function complexity for 0x15be2 sub_15be2: blocks=4, bytes=43
+[02:54:14] [dbg] decompile_function: addr=0x15be2 name=sub_15be2
+[02:54:14] [dbg] function 0x15be2 not normalized, normalizing...
+[02:54:16] [dbg] Decompiler returned for 0x15be2
+[02:54:16] [dbg] decompilation time for 0x15be2 sub_15be2: 2.17s
+[02:54:16] /* == function 0x15be2 sub_15be2 == */
+[02:54:16] /* info: function 0x15be2 sub_15be2 attempt=decompiled validation=disabled */
+[02:54:16] /* -- c -- */
+short sub_15be2(unsigned short a1)
+{
+    unsigned short ir_2;
+    unsigned short vvar_6;
+    unsigned short ds;  // ds
+    char ir_2;  // 4166
+    unsigned short flags;  // flags
+    unsigned short flags_2;  // flags
+    unsigned short di;  // di
+    unsigned short cx;  // cx
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    ir_2 = *((char *)(ds * 16 + *((short *)&(&s_2)[6])));
+    flags_2 = ...;
+    di = *((short *)&(&s_2)[6]) + (1 & (char)(flags_2 >> 10) ? 65535 : 1);
+    if (1 & !(1 & flags_2 >> 6))
+        goto vvar_6{r16|2b};
+    cx = ~(65534);
+    if (cx != 1)
+        goto vvar_6{r16|2b};
+    if (!(di - cx))
+        goto LABEL_0x5c07;
+}
+[02:54:16] [dbg] recovery worker: start 0x15c2a sub_15c2a mode=ranked recovery_timeout=5s
+
+[02:54:22] /* == function 0x15c2a sub_15c2a == */
+[02:54:22] /* stage: recovery:ranked */
+[02:54:22] /* info: function 0x15c2a sub_15c2a attempt=timed_out validation=disabled */
+[02:54:22] /* -- timeout -- */
+[02:54:22] Timed out while recovering sub_15c2a at 0x15c2a (stage=recovery timeout=5s mode=ranked).
+[02:54:22] /* -- lift break probe -- */
+[02:54:22] no per-instruction lift failure detected in linear probe window
+[02:54:22] /* -- asm fallback -- */
+[02:54:22] /* note: assembly pattern: x86 string-instruction copy loop; evidence from asm, not guessed C */
+[02:54:22] 0x15c2a: push bp
+[02:54:22] 0x15c2b: mov bp, sp
+[02:54:22] 0x15c2d: push si
+[02:54:22] 0x15c2e: push di
+[02:54:22] 0x15c2f: push ds
+[02:54:22] 0x15c30: mov ds, word ptr [bp + 4]
+[02:54:22] 0x15c33: mov si, word ptr [bp + 6]
+[02:54:22] 0x15c36: mov es, word ptr [bp + 8]
+[02:54:22] 0x15c39: mov di, word ptr [bp + 0xa]
+[02:54:22] 0x15c3c: mov cx, word ptr [bp + 0xc]
+[02:54:22] 0x15c3f: rep movsb byte ptr es:[di], byte ptr [si]
+[02:54:22] 0x15c41: pop ds
+[02:54:22] 0x15c42: pop di
+[02:54:22] 0x15c43: pop si
+[02:54:22] 0x15c44: mov sp, bp
+[02:54:22] 0x15c46: pop bp
+[02:54:22] 0x15c47: ret
+[02:54:22] [dbg] recovery worker: start 0x15c48 sub_15c48 mode=ranked recovery_timeout=5s
+[02:54:22] [dbg] isolated function worker: start 0x15c48 sub_15c48 requested_timeout=2s hard_timeout=4s
+[02:54:22] [dbg] function complexity for 0x15c48 sub_15c48: blocks=1, bytes=13
+[02:54:22] [dbg] decompile_function: addr=0x15c48 name=sub_15c48
+[02:54:22] [dbg] function 0x15c48 not normalized, normalizing...
+[02:54:22] [dbg] Decompiler returned for 0x15c48
+[02:54:22] [dbg] decompilation time for 0x15c48 sub_15c48: 0.42s
+[02:54:22] /* == function 0x15c48 sub_15c48 == */
+[02:54:22] /* info: function 0x15c48 sub_15c48 attempt=decompiled validation=disabled */
+[02:54:22] /* -- c -- */
+short sub_15c48(void)
+{
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+}
+[02:54:22] [dbg] recovery worker: start 0x15c56 sub_15c56 mode=ranked recovery_timeout=5s
+[02:54:22] [dbg] isolated function worker: start 0x15c56 sub_15c56 requested_timeout=2s hard_timeout=4s
+[02:54:22] [dbg] function complexity for 0x15c56 sub_15c56: blocks=2, bytes=15
+[02:54:22] [dbg] decompile_function: addr=0x15c56 name=sub_15c56
+[02:54:22] [dbg] function 0x15c56 not normalized, normalizing...
+[02:54:22] [dbg] Decompiler returned for 0x15c56
+[02:54:22] [dbg] decompilation time for 0x15c56 sub_15c56: 0.28s
+[02:54:22] /* == function 0x15c56 sub_15c56 == */
+[02:54:22] /* info: function 0x15c56 sub_15c56 attempt=decompiled validation=disabled */
+[02:54:22] /* -- c -- */
+int dos_int21(void);
+
+short sub_15c56(void)
+{
+    dos_int21();
+}
+[02:54:22] [dbg] recovery worker: start 0x15c66 sub_15c66 mode=ranked recovery_timeout=5s
+[02:54:22] [dbg] isolated function worker: start 0x15c66 sub_15c66 requested_timeout=2s hard_timeout=4s
+[02:54:22] [dbg] function complexity for 0x15c66 sub_15c66: blocks=2, bytes=14
+[02:54:22] [dbg] decompile_function: addr=0x15c66 name=sub_15c66
+[02:54:22] [dbg] function 0x15c66 not normalized, normalizing...
+[02:54:23] [dbg] Decompiler returned for 0x15c66
+[02:54:23] [dbg] decompilation time for 0x15c66 sub_15c66: 0.25s
+[02:54:23] /* == function 0x15c66 sub_15c66 == */
+[02:54:23] /* info: function 0x15c66 sub_15c66 attempt=decompiled validation=disabled */
+[02:54:23] /* -- c -- */
+void sub_15c66(void)
+{
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    if (*(&(&s_2)[4]) < 0)
+        goto LABEL_0x5c74;
+}
+[02:54:23] [dbg] recovery worker: start 0x15c7c sub_15c7c mode=ranked recovery_timeout=5s
+[02:54:23] [dbg] isolated function worker: start 0x15c7c sub_15c7c requested_timeout=2s hard_timeout=4s
+[02:54:23] [dbg] function complexity for 0x15c7c sub_15c7c: blocks=1, bytes=17
+[02:54:23] [dbg] decompile_function: addr=0x15c7c name=sub_15c7c
+[02:54:23] [dbg] function 0x15c7c not normalized, normalizing...
+[02:54:23] [dbg] Decompiler returned for 0x15c7c
+[02:54:23] [dbg] decompilation time for 0x15c7c sub_15c7c: 0.29s
+[02:54:23] /* == function 0x15c7c sub_15c7c == */
+[02:54:23] /* info: function 0x15c7c sub_15c7c attempt=decompiled validation=disabled */
+[02:54:23] /* -- c -- */
+
+short sub_15c7c(void)
+{
+    unsigned short ax;  // ax
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    ax = *((short *)&(&s_2)[4]);
+    g_28cc = ax;
+    g_28ce = 0;
+}
+[02:54:23] [dbg] recovery worker: start 0x14e03 sub_14e03 mode=ranked recovery_timeout=5s
+[02:54:23] [dbg] isolated function worker: start 0x14e03 sub_14e03 requested_timeout=3s hard_timeout=5s
+[02:54:23] [dbg] function complexity for 0x14e03 sub_14e03: blocks=3, bytes=29
+[02:54:23] [dbg] decompile_function: addr=0x14e03 name=sub_14e03
+[02:54:23] [dbg] function 0x14e03 not normalized, normalizing...
+[02:54:23] [dbg] registered 2 direct callee stub(s) for 0x14e03
+[02:54:24] [dbg] Decompiler returned for 0x14e03
+[02:54:24] [dbg] decompilation time for 0x14e03 sub_14e03: 1.23s
+[02:54:24] /* == function 0x14e03 sub_14e03 == */
+[02:54:24] /* info: function 0x14e03 sub_14e03 attempt=decompiled validation=disabled */
+[02:54:24] /* -- c -- */
+
+void sub_14e03(void)
+{
+    unsigned short vvar_8;
+    unsigned short vvar_11;
+    unsigned short vvar_12;
+    unsigned short vvar_13;
+    unsigned short ss;  // ss
+    unsigned short ax;  // ax
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    vvar_8{r8|2b} = (int)(&s_2 + 4);
+    vvar_11{r8|2b} = vvar_8{r8|2b} - 2;
+    *((unsigned short far *)MK_FP(ss, vvar_8{r8|2b} - 2)) = 10223;
+    vvar_12{r8|2b} = vvar_11{r8|2b} - 2;
+    *((short far *)MK_FP(ss, vvar_11{r8|2b} - 2)) = *((short *)&(&s_2)[4]);
+    vvar_13{r8|2b} = vvar_12{r8|2b} - 2;
+    *((unsigned short far *)MK_FP(ss, vvar_12{r8|2b} - 2)) = 19987;
+    ax = sub_581e();
+    g_4600 = ax;
+    if (&s_2 - 0x4)
+        goto LABEL_0x4e20;
+}
+[02:54:24] [dbg] recovery worker: start 0x15cb4 sub_15cb4 mode=ranked recovery_timeout=5s
+[02:54:25] [dbg] isolated function worker: start 0x15cb4 sub_15cb4 requested_timeout=6s hard_timeout=8s
+[02:54:25] [dbg] function complexity for 0x15cb4 sub_15cb4: blocks=4, bytes=81
+[02:54:25] [dbg] decompile_function: addr=0x15cb4 name=sub_15cb4
+[02:54:25] [dbg] function 0x15cb4 not normalized, normalizing...
+[02:54:28] [dbg] Decompiler returned for 0x15cb4
+[02:54:29] [dbg] decompilation time for 0x15cb4 sub_15cb4: 4.63s
+[02:54:29] /* == function 0x15cb4 sub_15cb4 == */
+[02:54:29] /* info: function 0x15cb4 sub_15cb4 attempt=decompiled validation=disabled */
+[02:54:29] /* -- c -- */
+void sub_15cb4(unsigned short a1, unsigned short a2, unsigned short a3)
+{
+    unsigned short ax_4;  // ax
+    unsigned short flags_4;  // flags
+    unsigned short dx_2;  // dx
+    unsigned short ax_5;  // ax
+    unsigned short flags_5;  // flags
+    unsigned short ax_6;  // ax
+    unsigned short di;  // di
+    unsigned short ax;  // ax
+    unsigned short flags;  // flags
+    unsigned short flags_2;  // flags
+    unsigned short dx;  // dx
+    unsigned short ax_2;  // ax
+    unsigned short flags_3;  // flags
+    unsigned short s_2;  // [bp-0x2]
+
+    di = 0;
+    ax = *((short *)&(&s_2)[6]);
+    flags_2 = ...;
+    if ((flags_2 & 128) == (flags_2 & 0x800))
+        goto LABEL_0x5cd4;
+    dx = *((short *)&(&s_2)[4]);
+    ax_2 = ax * -1;
+    flags_3 = ...;
+    *((unsigned short *)&(&s_2)[6]) = ax_2 - (1 & flags_3);
+    *((unsigned short *)&(&s_2)[4]) = dx * -1;
+    ax_4 = *((short *)&(&s_2)[10]);
+    flags_4 = ...;
+    if ((flags_4 & 128) == (flags_4 & 0x800))
+        goto LABEL_0x5cec;
+    dx_2 = *((short *)&(&s_2)[8]);
+    ax_5 = *((short *)&(&s_2)[10]) * -1;
+    flags_5 = ...;
+    ax_6 = ax_5 - (1 & flags_5);
+    *((unsigned short *)&(&s_2)[10]) = ax_6;
+    *((unsigned short *)&(&s_2)[8]) = dx_2 * -1;
+    if (*(&(&s_2)[10]) * -1 - (1 & flags_5))
+        goto LABEL_0x5d05;
+}
+[02:54:29] [dbg] recovery worker: start 0x14d96 sub_14d96 mode=ranked recovery_timeout=5s
+[02:54:29] [dbg] isolated function worker: start 0x14d96 sub_14d96 requested_timeout=5s hard_timeout=7s
+[02:54:29] [dbg] function complexity for 0x14d96 sub_14d96: blocks=4, bytes=55
+[02:54:29] [dbg] decompile_function: addr=0x14d96 name=sub_14d96
+[02:54:29] [dbg] function 0x14d96 not normalized, normalizing...
+[02:54:29] [dbg] registered 2 direct callee stub(s) for 0x14d96
+[02:54:30] [dbg] Decompiler returned for 0x14d96
+[02:54:31] [dbg] decompilation time for 0x14d96 sub_14d96: 1.11s
+[02:54:31] /* == function 0x14d96 sub_14d96 == */
+[02:54:31] /* info: function 0x14d96 sub_14d96 attempt=decompiled validation=disabled */
+[02:54:31] /* -- c -- */
+void sub_14d96(void)
+{
+    unsigned short vvar_7;
+    unsigned short vvar_9;
+    unsigned short vvar_12;
+    unsigned short ss;  // ss
+    unsigned short ax;  // ax
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    vvar_7{r8|2b} = (int)(&s_2 + 4);
+    vvar_9{r8|2b} = vvar_7{r8|2b} - 2;
+    *((short far *)MK_FP(ss, vvar_7{r8|2b} - 2)) = *((short *)&(&s_2)[4]);
+    *((unsigned short far *)MK_FP(ss, vvar_9{r8|2b} - 2)) = 19874;
+    vvar_12{r8|2b} = vvar_9{r8|2b};
+    *((unsigned short *)&(&s_2)[4]) = sub_5c66();
+    *((short far *)MK_FP(ss, vvar_12{r8|2b} - 2)) = *((short *)&(&s_2)[6]);
+    *((unsigned short far *)MK_FP(ss, vvar_12{r8|2b} - 4)) = 19886;
+    ax = sub_5c66();
+    *((unsigned short *)&(&s_2)[6]) = ax;
+    if (*(&(&s_2)[4]) <= ax)
+        goto LABEL_0x4dcd;
+}
+[02:54:31] [dbg] recovery worker: start 0x15d50 sub_15d50 mode=ranked recovery_timeout=5s
+[02:54:31] [dbg] isolated function worker: start 0x15d50 sub_15d50 requested_timeout=3s hard_timeout=5s
+[02:54:31] [dbg] function complexity for 0x15d50 sub_15d50: blocks=2, bytes=27
+[02:54:31] [dbg] decompile_function: addr=0x15d50 name=sub_15d50
+[02:54:31] [dbg] function 0x15d50 not normalized, normalizing...
+[02:54:31] [dbg] Decompiler returned for 0x15d50
+[02:54:31] [dbg] decompilation time for 0x15d50 sub_15d50: 0.62s
+[02:54:31] /* == function 0x15d50 sub_15d50 == */
+[02:54:31] /* info: function 0x15d50 sub_15d50 attempt=decompiled validation=disabled */
+[02:54:31] /* -- c -- */
+short sub_15d50(unsigned short a1, unsigned short a2, unsigned short a3)
+{
+    unsigned short ax;  // ax
+    unsigned short bx;  // bx
+    unsigned short flags;  // flags
+    unsigned short s_2;  // [bp-0x2]
+
+    s_2 = &s_2 + 2;
+    ax = *((short *)&(&s_2)[6]);
+    bx = *((short *)&(&s_2)[10]);
+    if (!((((flags & -2 & -5 | ~((bx | ax) ^ (bx | ax) >> 4 ^ ((bx | ax) ^ (bx | ax) >> 4) >> 2 ^ ((bx | ax) ^ (bx | ax) >> 4 ^ ((bx | ax) ^ (bx | ax) >> 4) >> 2) >> 1) * 4) & -17 & -65 | (!bx && !ax) * 64) & -129 | (1 & (bx | ax) >> 15) * 128) & -2049 & 64))
+        goto LABEL_0x5d6b;
+}
+[02:54:31] [dbg] recovery worker: start 0x15d84 sub_15d84 mode=ranked recovery_timeout=5s
+[02:54:31] [dbg] isolated function worker: start 0x15d84 sub_15d84 requested_timeout=6s hard_timeout=8s

@@ -1,0 +1,192 @@
+﻿namespace Spice86.Core.Emulator.Memory;
+
+using Spice86.Core.Emulator.Memory.Indexer;
+using Spice86.Core.Emulator.VM.Breakpoint;
+using Spice86.Shared.Utils;
+
+/// <summary>
+/// Represents the memory bus of the IBM PC.
+/// </summary>
+public sealed class Memory : Indexable.Indexable, IMemory {
+    /// <inheritdoc/>
+    public IMemoryDevice Ram { get; }
+
+    private readonly AddressReadWriteBreakpoints _memoryBreakpoints;
+    private IMemoryDevice[] _memoryDevices;
+    private readonly List<DeviceRegistration> _devices = new();
+
+    /// <summary>
+    /// Represents the optional 20th address line suppression feature for legacy 8086 programs.
+    /// </summary>
+    public A20Gate A20Gate { get; }
+
+    /// <summary>
+    /// Instantiate a new memory bus.
+    /// </summary>
+    /// <param name="memoryBreakpoints">The class that holds breakpoints based on memory access.</param>
+    /// <param name="baseMemory">The memory device that should provide the default memory implementation</param>
+    /// <param name="a20gate">The class that implements A20 Gate on/off support.</param>
+    /// <param name="initializeResetVector">Whether to initialize the reset vector with a HLT instruction.</param>
+    public Memory(AddressReadWriteBreakpoints memoryBreakpoints, IMemoryDevice baseMemory, A20Gate a20gate, bool initializeResetVector = false) {
+        _memoryBreakpoints = memoryBreakpoints;
+        uint memorySize = baseMemory.Size;
+        _memoryDevices = new IMemoryDevice[memorySize];
+        Ram = baseMemory;
+        RegisterMapping(0, memorySize, Ram);
+        (UInt8, UInt16, UInt16BigEndian, UInt32, Int8, Int16, Int32, SegmentedAddress16, SegmentedAddress32) = InstantiateIndexersFromByteReaderWriter(this);
+        A20Gate = a20gate;
+    }
+
+    /// <inheritdoc />
+    public byte[] ReadRam(uint length = 0, uint offset = 0) {
+        if (length == 0) {
+            length = (uint)_memoryDevices.Length;
+        }
+        length = Math.Min(length, (uint)_memoryDevices.Length - offset);
+        byte[] copy = new byte[length];
+        for (uint address = 0; address < copy.Length; address++) {
+            copy[address] = _memoryDevices[address + offset].Read(address + offset);
+        }
+        return copy;
+    }
+    
+    /// <inheritdoc />
+    public void WriteRam(byte[] array, uint offset = 0) {
+        var length = Math.Min(array.Length, (uint)_memoryDevices.Length - offset);
+        for (uint address = 0; address < length; address++) {
+            _memoryDevices[address + offset].Write(address + offset, array[address]);
+        }
+    }
+
+    /// <inheritdoc />
+    public byte SneakilyRead(uint address) {
+        return _memoryDevices[address].Read(address);
+    }
+
+    /// <inheritdoc />
+    public void SneakilyWrite(uint address, byte value) {
+        _memoryDevices[address].Write(address, value);
+    }
+
+    /// <inheritdoc/>
+    public byte this[uint address] {
+        get {
+            address = A20Gate.TransformAddress(address);
+            _memoryBreakpoints.MonitorReadAccess(address);
+            return SneakilyRead(address);
+        }
+        set {
+            address = A20Gate.TransformAddress(address);
+            CurrentlyWritingByte = value;
+            _memoryBreakpoints.MonitorWriteAccess(address);
+            SneakilyWrite(address, value);        }
+    }
+
+    /// <summary>
+    ///     Allows memory write breakpoints to access the byte being written before it actually is.
+    /// </summary>
+    public byte CurrentlyWritingByte {
+        get;
+        private set;
+    }
+
+    /// <inheritdoc/>
+    public int Length => _memoryDevices.Length;
+
+    public IList<byte> GetSlice(int address, int length) {
+        return UInt8.GetSlice(address, length);
+    }
+
+    /// <summary>
+    ///     Find the address of a value in memory.
+    /// </summary>
+    /// <param name="address">The address in memory to start the search from</param>
+    /// <param name="len">The maximum amount of memory to search</param>
+    /// <param name="value">The sequence of bytes to search for</param>
+    /// <returns>The address of the first occurence of the specified sequence of bytes, or null if not found.</returns>
+    public uint? SearchValue(uint address, int len, IList<byte> value) {
+        int end = (int)(address + len);
+        if (end >= _memoryDevices.Length) {
+            end = _memoryDevices.Length;
+        }
+
+        for (long i = address; i < end; i++) {
+            long endValue = value.Count;
+            if (endValue + i >= _memoryDevices.Length) {
+                endValue = _memoryDevices.Length - i;
+            }
+
+            int j = 0;
+            while (j < endValue && _memoryDevices[i + j].Read((uint)(i + j)) == value[j]) {
+                j++;
+            }
+
+            if (j == endValue) {
+                return (uint)i;
+            }
+        }
+
+        return null;
+    }
+
+    /// <inheritdoc/>
+    public override UInt8Indexer UInt8 {
+        get;
+    }
+
+    /// <inheritdoc/>
+    public override UInt16Indexer UInt16 {
+        get;
+    }
+    
+    /// <inheritdoc/>
+    public override UInt16BigEndianIndexer UInt16BigEndian {
+        get;
+    }
+
+    /// <inheritdoc/>
+    public override UInt32Indexer UInt32 {
+        get;
+    }
+
+    /// <inheritdoc/>
+    public override Int8Indexer Int8 {
+        get;
+    }
+
+    /// <inheritdoc/>
+    public override Int16Indexer Int16 {
+        get;
+    }
+
+    /// <inheritdoc/>
+    public override Int32Indexer Int32 {
+        get;
+    }
+
+    /// <inheritdoc/>
+    public override SegmentedAddress16Indexer SegmentedAddress16 {
+        get;
+    }
+    
+    /// <inheritdoc/>
+    public override SegmentedAddress32Indexer SegmentedAddress32 {
+        get;
+    }
+
+    /// <inheritdoc/>
+    public void RegisterMapping(uint baseAddress, uint size, IMemoryDevice memoryDevice) {
+        uint endAddress = baseAddress + size;
+        if (endAddress >= _memoryDevices.Length) {
+            Array.Resize(ref _memoryDevices, (int)endAddress);
+        }
+
+        for (uint i = baseAddress; i < endAddress; i++) {
+            _memoryDevices[i] = memoryDevice;
+        }
+
+        _devices.Add(new DeviceRegistration(baseAddress, endAddress, memoryDevice));
+    }
+
+    private record DeviceRegistration(uint StartAddress, uint EndAddress, IMemoryDevice Device);
+}

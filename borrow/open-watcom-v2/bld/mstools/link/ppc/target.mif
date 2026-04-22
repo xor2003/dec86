@@ -1,0 +1,11 @@
+proj_name = linkppc
+
+target_cpu = ppc
+
+!ifndef linkppc_autodepends
+linkppc_autodepends = .AUTODEPEND
+!endif
+
+linkppc_ntverrc = ..
+
+!include ../../link.mif

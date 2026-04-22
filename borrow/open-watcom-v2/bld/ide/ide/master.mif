@@ -1,0 +1,111 @@
+tree_depth = 4
+
+proj_name = ide
+
+!ifndef ide_autodepends
+ide_autodepends = .AUTODEPEND
+!endif
+
+ide_ntmanif = ../res/win
+ide_ntverrc = ../res/win
+
+ide_wreslib_cli = gui
+ide_wreslib_incl = 1
+
+sys_windowed = 1
+
+ide_rc_host_os2 = os2
+ide_rc_host_nt  = win
+ide_rc_host_win = win
+
+docs_host_dir = $(docs_dir)/$(host_os)
+
+additional_clean = *.grc *.grh
+!ifndef nowgml
+additional_clean += $(docs_host_dir)/ide.gh
+!endif
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+!include $(idelib_dir)/client.mif
+!include $(wpi_dir)/client.mif
+!include $(rcsdll_dir)/client.mif
+
+!include ../objects.mif
+
+#
+# cflags
+#
+c_path_os2  = $(batch_dir)/os2
+c_path_nt   = $(batch_dir)/nt
+c_path_win  = $(batch_dir)/dos
+
+.c : ../cpp;$(c_path_$(host_os));$(batch_dir)/c;$(watcom_dir)/c
+.cpp : ../cpp
+
+inc_dirs_win = -I"$(batch_dir)/dos"
+inc_dirs = -I"../h" $(cli_idelib_inc_dirs) $(cli_wpi_inc_dirs) &
+    -I"$(docs_host_dir)" -I"$(editdll_dir)" $(cli_rcsdll_inc_dirs) -I"$(batch_dir)/h"
+
+extra_cpp_flags     = -DGUI_IS_GUI
+!ifdef nowgml
+extra_cpp_flags     += -DNOWGML
+!endif
+extra_cpp_flags_os2 = -D__OS2_PM__
+
+!ifeq host_os win
+extra_cpp_flags_f_link  = -DSERVER
+!endif
+
+!ifdef __WATCOM_TOOLS__
+!ifeq host_os win
+extra_c_flags_f_link  += -3
+!endif
+!endif
+
+!ifdef __WATCOM_TOOLS__
+extra_cxx_flags_i86 = -zc -zm
+!endif
+
+#
+# lflags
+#
+extra_l_flags   = op eliminate op description 'Open Watcom IDE'
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+!ifndef nowgml
+exetarg_prebuild_objs = $(docs_host_dir)/ide.gh
+!endif
+exetarg_objs          = $(objs)
+exetarg_libs          = $(cli_idelib_libs) $(cli_gui_libs)
+exetarg_res           = $(proj_name).res
+!include exetarg.mif
+
+#
+# rc and others
+#
+rc_inc_dirs = -I"../res/$(ide_rc_host_$(host_os))" -I"../res" $(cli_idelib_rc_inc_dirs)
+
+!ifdef sys_windowed
+extra_rc_flags = -DRESX_GUI
+!endif
+
+$(proj_name).res : ../res/ide.rc $(cli_idelib_rc_deps)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+curr_dir=$+$(%__CWD__)$-
+
+$(docs_host_dir) : .SYMBOLIC
+    $(noecho)cd $@
+
+$(docs_host_dir)/ide.gh : $(docs_host_dir) .ALWAYS
+    $(noecho)!$(nested_wmake) -h -f ../mif/master.mif hbook=ide header=1 dotarget=$(host_os) tree_depth=2
+    $(noecho)cd "$(curr_dir)"

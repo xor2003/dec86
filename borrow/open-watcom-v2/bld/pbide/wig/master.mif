@@ -1,0 +1,78 @@
+tree_depth = 4
+
+proj_name = wig
+
+wig_autodepends = .AUTODEPEND
+
+wig_trmem = 1
+
+suppress_zc = 1
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+#
+# cflags
+#
+.c : ../c;$(trmem_dir)
+
+inc_dirs = -I. -I"../h" -I"$(trmem_dir)"
+
+!ifdef sys_dll
+extra_cpp_flags = -D__DLL__
+!endif
+
+extra_c_flags =
+!ifdef sys_dll
+extra_c_flags_win = -zw -zu
+!else
+extra_c_flags_win = -zW
+!endif
+
+#
+# lflags
+#
+extra_l_flags_dll_win = op rwr export WEP RESIDENT
+
+# explicit rules
+#################
+
+objs += &
+    keywords.obj &
+    scanner.obj &
+    pbmem.obj &
+    hashtab.obj &
+    srusuprt.obj &
+    gen_cpp.obj &
+    options.obj &
+    list.obj &
+    filelist.obj &
+    wig.obj $(trmem_objs)
+
+!ifdef sys_dll
+#
+# DLL
+#
+dlltarg_prebuild_objs = ytab.h
+dlltarg_objs = $(objs)
+dlltarg_libs = $(libs)
+dlltarg_name = pbide
+!include dlltarg.mif
+!else
+#
+# EXE
+#
+exetarg_prebuild_objs = ytab.h
+exetarg_objs = $(objs)
+exetarg_libs = $(libs)
+exetarg_name = wig
+!include exetarg.mif
+!endif
+
+#
+# rc and others
+#
+ytab.c ytab.h: ../c/sruparse.y ../c/yydriver.c
+    @%make echo_yacc
+    $(noecho)$(yacc) -d $[@ ../c/yydriver.c > $(nulldevice)

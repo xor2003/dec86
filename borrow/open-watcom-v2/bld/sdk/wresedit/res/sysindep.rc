@@ -1,0 +1,7 @@
+/* UTF-8 encoding, ¥ */
+
+/* private clipboard format bitmap */
+"PrivateFmt"    BITMAP "clip.bmp"
+
+#include "rename.dlg"
+

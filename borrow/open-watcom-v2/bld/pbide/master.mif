@@ -1,0 +1,38 @@
+tree_depth = 4
+
+proj_name = pbide
+
+pbide_autodepends = .AUTODEPEND
+
+#pbide_ntverrc = ..
+
+name = dlldbg
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+#
+# cflags
+#
+.c: ..
+
+extra_c_flags_win =-zW
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+exetarg_name = $(name)
+exetarg_objs = dlldbg.obj
+exetarg_res  = $(name).res
+!include exetarg.mif
+
+#
+# rc and others
+#
+$(name).res : ../dlldbg.rc ../debugger.ico $(__MAKEFILES__)
+    @%make echo_rc
+    $(rc) $(ppflags_common) $(rc_cppflags) $(rc_flags) $[@ -fo=$@

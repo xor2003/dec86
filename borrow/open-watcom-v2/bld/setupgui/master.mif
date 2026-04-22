@@ -1,0 +1,169 @@
+proj_name = setupgui
+
+setupgui_autodepends = .AUTODEPEND
+
+setupgui_ntmanif = ../res/nt
+setupgui_ntverrc = ../res/nt
+
+setupgui_nofpu = 1
+
+setupgui_nodoslfn = 1
+
+setupgui_trmem = 1
+
+setupgui_wreslib_cli = gui
+
+setupgui_dos_extender = causeway
+
+.ERROR:
+
+additional_clean = *.i *.rex setup.inf *.grc *.grh
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+!include win386.mif
+
+!include $(gui_dir)/client.mif
+!include $(hlpview_dir)/client.mif
+!include $(wpi_dir)/client.mif
+!include $(setupgui_dir)/zlib/client.mif
+!include $(setupgui_dir)/ziplib/client.mif
+
+#
+# cflags
+#
+.c : ../c;$(trmem_dir)
+
+inc_dirs  = -I"../h" $(cli_wpi_inc_dirs) $(cli_gui_inc_dirs) $(cli_gui_inc_dirs_internal) &
+    $(cli_hlpview_inc_dirs) $(cli_libzip_inc_dirs) $(cli_zlib_inc_dirs)
+
+!ifdef sys_windowed
+extra_cpp_flags     = -DGUI_IS_GUI
+extra_cpp_flags_os2 = -D__OS2_PM__
+!endif
+
+# custom version of resource finder
+extra_c_flags_f_loadfind = $(cli_wres_inc_dirs)
+
+#
+# lflags
+#
+extra_l_flags_dos = option stack=30K
+extra_l_flags_os2 = option stack=30K
+extra_l_flags_nt = option stack=30K, heap=20K
+extra_l_flags_ntaxp = lib {shell32.lib uuid.lib}
+extra_l_flags_win386 = option stack=24K
+
+# explicit rules
+##################
+
+!ifdef sys_windowed
+all : csetup.exe f77setup.exe .SYMBOLIC
+!else
+all : setup.exe .SYMBOLIC
+!endif
+
+#
+# objects
+#
+objs = &
+    setup.obj &
+    setupfil.obj &
+    setupinf.obj &
+    guistats.obj &
+    dlggen.obj &
+    guiutils.obj &
+    guictrl.obj &
+    genvbl.obj &
+    dynarray.obj &
+    gendlg.obj &
+    hash.obj &
+    nlmver.obj &
+    strvbuf.obj &
+    utils.obj
+
+mem_objs = &
+    setupmem.obj $(trmem_objs)
+
+#                     i_dos i_linux i_nt i_os2 i_win i_osx i_bsd
+#===========================================================================
+!inject setupio.obj   i_dos i_linux i_nt i_os2 i_win i_osx i_bsd
+!inject os2util.obj                      i_os2
+!inject winutil.obj                 i_nt i_os2 i_win
+!inject winddeml.obj                i_nt       i_win
+
+objs += $(i_$(host_os)) $(mem_objs)
+
+# custom version of resource finder
+!ifdef sys_windowed
+!else
+objs += loadfind.obj
+!endif
+
+libs = $(cli_gui_libs) $(cli_libzip_libs) $(cli_zlib_libs)
+
+#
+# EXE's
+#
+exetarg_objs          = $(objs)
+exetarg_libs          = $(libs)
+
+exetarg_res           = setup.res
+exetarg_name          = setup
+!include exetarg.mif
+
+exetarg_res           = csetup.res
+exetarg_name          = csetup
+!include exetarg.mif
+
+exetarg_res           = f77setup.res
+exetarg_name          = f77setup
+!include exetarg.mif
+
+exetarg_res           = jcsetup.res
+exetarg_name          = jcsetup
+!include exetarg.mif
+
+exetarg_res           = jf77setup.res
+exetarg_name          = jf77setup
+!include exetarg.mif
+
+#
+# rc and others
+#
+!ifdef sys_windowed
+depend_res_os2 = ../res/os2/setup.ico
+!endif
+depend_res_nt  = ../res/nt/setup.ico ../res/nt/disk.ico
+depend_res_win = ../res/win/setup.ico ../res/win/disk.ico
+depend_res = ../h/setup.h $(depend_res_$(host_os))
+
+rc_inc_dirs = -I"../res/$(host_os)" -I"../res" $(cli_gui_rc_inc_dirs)
+
+!ifdef sys_windowed
+extra_rc_flags = -DRESX_GUI
+!endif
+extra_rc_flags_win = -30
+
+# UI resources
+setup.res : ../res/setup.rc $(depend_res) $(cli_gui_rc_deps) $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+# GUI resources
+csetup.res : ../res/setup.rc $(depend_res) ../res/wcc.bmp $(cli_gui_rc_deps) $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -DCSETUP $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+jcsetup.res : ../res/setup.rc $(depend_res) ../res/wcc.bmp $(cli_gui_rc_deps) $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -DJCSETUP -DJAPANESE $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+f77setup.res : ../res/setup.rc $(depend_res) ../res/f77.bmp $(cli_gui_rc_deps) $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -DF77SETUP $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+jfsetup.res : ../res/setup.rc $(depend_res) ../res/f77.bmp $(cli_gui_rc_deps) $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -DJFSETUP -DJAPANESE $(rc_flags) $(rc_inc_path) $[@ -fo=$@

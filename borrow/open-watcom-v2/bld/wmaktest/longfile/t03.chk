@@ -1,0 +1,4 @@
+Creating longfile.xyz
+Creating longfile2.xyz
+rm longfile.xyz
+rm longfile2.xyz

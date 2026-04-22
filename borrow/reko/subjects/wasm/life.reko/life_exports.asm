@@ -1,0 +1,5 @@
+;;; Segment .exports (000A0000)
+; (export "memory" (memory 0))
+; (export "count_neighbors" (func 0))
+; (export "update_gen" (func 1))
+; (export "main" (func 2))

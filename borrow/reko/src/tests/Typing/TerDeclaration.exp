@@ -1,0 +1,55 @@
+// Before ///////
+// proc1
+// Return size: 0
+void proc1()
+proc1_entry:
+	// succ:  l1
+l1:
+	Mem4[0x1300<16>:word16] = rand()
+	return
+	// succ:  proc1_exit
+proc1_exit:
+
+// After ///////
+// proc1
+// Return size: 0
+void proc1()
+proc1_entry:
+	// succ:  l1
+l1:
+	g_w1300 = rand()
+	return
+	// succ:  proc1_exit
+proc1_exit:
+
+// Equivalence classes ////////////
+Eq_1: (struct "Globals" (1300 int16 w1300))
+	globals_t (in globals : (ptr32 (struct "Globals")))
+Eq_2: (fn int16 ())
+	T_2 (in rand : ptr32)
+	T_3 (in signature of rand : void)
+// Type Variables ////////////
+globals_t: (in globals : (ptr32 (struct "Globals")))
+  Class: Eq_1
+  DataType: (ptr32 Eq_1)
+  OrigDataType: (ptr32 (struct "Globals"))
+T_2: (in rand : ptr32)
+  Class: Eq_2
+  DataType: (ptr32 Eq_2)
+  OrigDataType: (ptr32 (fn T_4 ()))
+T_3: (in signature of rand : void)
+  Class: Eq_2
+  DataType: (ptr32 Eq_2)
+  OrigDataType: 
+T_4: (in rand() : int16)
+  Class: Eq_4
+  DataType: int16
+  OrigDataType: int16
+T_5: (in 0x1300<16> : word16)
+  Class: Eq_5
+  DataType: (ptr16 int16)
+  OrigDataType: (ptr16 (struct (0 T_6 t0000)))
+T_6: (in Mem4[0x1300<16>:word16] : word16)
+  Class: Eq_4
+  DataType: int16
+  OrigDataType: word16

@@ -1,0 +1,563 @@
+A Decompilation-Driven Framework for Malware
+Detection with Large Language Models
+Aniesh Chawla∗ , Udbhav Prasad∗
+∗ California, USA
+
+{chawla.aniesh, udbhav523}@gmail.com
+
+arXiv:2601.09035v1 [cs.CR] 14 Jan 2026
+
+∗ These authors contributed equally to this work.
+
+Abstract—The parallel evolution of Large Language
+Models (LLMs) with advanced code-understanding capabilities and the increasing sophistication of malware
+presents a new frontier for cybersecurity research. This
+paper evaluates the efficacy of state-of-the-art LLMs in
+classifying executable code as either benign or malicious.
+We introduce an automated pipeline that first decompiles Windows executable into a C code using Ghidra
+disassembler and then leverages LLMs to perform the
+classification. Our evaluation reveals that while standard
+LLMs show promise, they are not yet robust enough to
+replace traditional anti-virus software. We demonstrate
+that a fine-tuned model, trained on curated malware
+and benign datasets, significantly outperforms its vanilla
+counterpart. However, the performance of even this specialized model degrades notably when encountering newer
+malware. This finding demonstrates the critical need for
+continuous fine-tuning with emerging threats to maintain
+model effectiveness against the changing coding patterns
+and behaviors of malicious software.
+Index Terms—Malware, Ghidra, Cybersecurity, LLMs,
+GenAI, Machine Learning Algorithms, LLMs Code development
+
+I. I NTRODUCTION
+Traditional signature-based malware detection methods increasingly struggle to identify novel malware variants that employ advanced obfuscation techniques, polymorphic transformations, and previously unseen attack
+vectors. This limitation has sparked significant interest
+in leveraging artificial intelligence, particularly Large
+Language Models (LLMs), to enhance malware detection
+capabilities through advanced code comprehension and
+semantic analysis [1] [2] [3].
+Large Language Models have demonstrated remarkable proficiency in understanding and analyzing code
+across various programming languages, making them
+promising candidates for binary analysis [4] and malware
+
+Fig. 1: System to classify Malware/Benign binary file
+
+classification tasks [5]. Recent research has explored
+LLM applications across multiple cybersecurity domains
+like vulnerability detection, network intrusion analysis,
+and malicious code identification. However, the direct
+application of LLMs to decompiled executable code for
+malware classification represents a relatively underexplored frontier with significant potential for advancing
+automated threat detection capabilities.
+The integration of reverse engineering tools, particularly the Ghidra [6] framework, with modern LLMs
+presents a novel methodology for automated malware
+analysis. Ghidra’s sophisticated decompilation capabilities can transform binary executables into humanreadable C code, creating an intermediate representation
+that LLMs can effectively process and analyze. This
+approach bridges the gap between low-level binary analysis and high-level semantic understanding, potentially
+enabling more nuanced and context-aware malware detection than traditional static analysis methods.
+This paper introduces an automated pipeline that com-
+
+bines Ghidra’s decompilation capabilities with state-ofthe-art LLMs to classify Windows executables as either
+benign or malicious. Our research addresses critical limitations identified in previous studies, including the reliance on hypothetical datasets and the lack of real-world
+applicability. By utilizing authentic malware samples
+from established repositories and contemporary benign
+executables, we evaluate the practical effectiveness of
+both vanilla and fine-tuned LLMs in production-relevant
+scenarios.
+The primary contribution of this work lies in demonstrating how fine-tuning significantly enhances LLM
+performance on malware classification tasks. This work
+also reveals the limitations that necessitate continuous
+model updates to maintain effectiveness against emerging
+threats. Our findings provide crucial insights into the
+practical deployment challenges and opportunities for
+LLM-based malware detection systems, contributing to
+the broader understanding of artificial intelligence applications in cybersecurity defense strategies.
+II. R ELATED W ORK
+A. Surveys and Systematic Reviews
+Khan et al. (2024) [7] present a comprehensive review of the applications, challenges, and risk mitigation strategies surrounding the use of large language
+models (LLMs) for malware detection and prevention.
+Their study analyzes the existing literature, categorizing
+it into key areas such as harmful content generation,
+weaponization, malware dissemination, benchmarking,
+and new model proposals. The paper examines major
+uses of LLMs, ranging from honeypot generation and
+text-based threat identification to code analysis, trend
+detection, and disguised malware recognition. Despite
+these contributions, the paper is limited by its use of
+hypothetical rather than real-world data, gaps in research
+coverage on weaponization and malware distribution,
+and challenges surrounding the explainability and interpretability of LLM-based decisions. Additionally, the
+necessity for frequent model retraining poses practical
+challenges for integration into live security systems.
+The approach taken by our paper overcomes these
+limitations using real malware samples collected from
+various sources ( [8], [9]) as well as common and uncommon benign files ensures applicability of the discussed
+techniques in production scenarios. Moreover, our paper
+demonstrates the significant positive effects of fine tuning
+
+instead of full retraining on custom data, which is of
+great practical use to large enterprises.
+Wang et al. [10] present a comprehensive survey of
+LLM applications in program analysis, systematically
+categorizing existing work into static analysis, dynamic
+analysis, and hybrid approaches across vulnerability detection, malware detection, program verification, fuzzing,
+penetration testing, and unit test generation. The authors
+demonstrate how LLMs enhance traditional program
+analysis through context-aware code comprehension and
+semantic understanding, leveraging intermediate representations such as Abstract Syntax Trees (AST), Control
+Flow Graphs (CFG), and Data Flow Graphs (DFG).
+However, the paper acknowledges significant limitations
+ranging from non-deterministic outputs leading to inconsistent results and hallucinations and practical constraints
+involving high costs, token limits restricting scalability,
+and heavy reliance on prompt engineering expertise.
+B. Reverse Engineering and Binary Analysis
+Pordanesh and Tan [11] analyze how GPT-4 and
+similar architectures interpret and explain decompiled or
+disassembled code. Their experiments show how LLMs
+facilitate malware analyst workflows, including function
+inference and behavior annotation from raw binaries.
+However, their study reveals significant limitations in
+GPT-4’s ability to handle complex control structures and
+intricate code relationships, with particular weakness in
+identifying stealth techniques (46.7% error rate) and establishing logical connections between code components.
+Technical reports from industry (e.g., CrowdStrike
+[12]) demonstrate the deployment of byte-level transformers directly on binaries for scalable malware classification, often outperforming classical signature-based
+methods. However, these industry approaches lack detailed methodological transparency and independent validation, making it difficult to assess their effectiveness
+against sophisticated evasion techniques.
+Rondanini et al. [13] analyze the ability of opensource LLMs to describe file functions extracted from
+binaries, as well as classifying API calls relevant for
+threat detection. These studies are constrained by limited
+context windows that restrict analysis of large binary
+files and struggles with maintaining accuracy as input
+complexity increases. While our approach is also limited
+by the context windows offered by off-the-shelf models,
+we show how input complexity can be overcome with
+fine-tuning.
+
+III. E XPERIMENT S ETUP
+A. Data Collection
+To construct a comprehensive dataset for our evaluation, we aggregated executable files from two primary
+sources: a well-established academic data set and a
+repository of contemporary, most recent threats.
+1) Baseline Dataset: Our baseline dataset is derived
+from the corpus provided in the Malware Data Science
+book [8]. This dataset consists of 1,419 Windows executable files originally sourced from VirusTotal.com in
+2017. It comprises of:
+• Malware: 428 Malware samples of which we could
+use approx. 240 samples. This represents a diverse set of malicious families prevalent during
+that period. All the malware samples are of type
+’Backdoor’.
+• Benignware: Even though the book has 991 benign
+ware samples consisting of legitimate software commonly uploaded by users, we were only able to use
+365 samples.
+Please note that we were able to use only a subset of
+the samples available from the book. This limitation was
+necessary because the size of the decompiled executables
+often exceeds the input token limits of the LLMs. For
+example, the file Backdoor.Win32.Prorat.szb_2874.exe
+(187 KB) expands to a text file of approximately 2.5
+MB upon decompilation. Consequently, because these
+token limits vary, the specific set of malware and benign
+samples used in our experiments also differed between
+LLMs.
+2) Contemporary Dataset: To assess the models’ ability to detect modern threats, we compiled a second
+dataset of recent files from 2025.
+• Malware Samples: We downloaded 120 newly submitted malware executables from Malware Bazaar
+(malwarebazaar.com), a public repository that provides access to active and emerging threats. The
+downloaded samples consists of were distributed
+across 49 distinct malware families. Table I shows
+the top 10 Malware families.
+• Benign Samples: For our contemporary benign
+set, we specifically chose system drivers and other
+low-level utility executable. These 28 files were
+selected because their core function involves direct interaction with the operating system kernel
+and hardware—actions that often mirror the lowlevel manipulations performed by malware. This
+
+intentional selection of "malware-like" benign files
+helps create a more difficult classification problem,
+thereby testing the models’ ability to discern malicious intent beyond superficial code similarities.
+B. Classification Prompt Design
+To ensure a standardized and replicable classification
+process, we engineered a specific zero-shot prompt (Listing. 1) that was used for all the models. This prompt
+frames the task, instructs the model to act as a cybersecurity expert, defines the step-by-step logic, and strictly
+enforces a JSON output format for parsing.
+
+Listing 1: The complete prompt provided to all LLM
+evaluations.
+You are an expert in cybersecurity and
+,→ reverse engineering, specializing in
+,→ malware analysis. Your task is to
+,→ analyze a given C code, which has been
+,→ generated from decompiling an
+,→ executable file using Ghidra, and
+,→ determine if the file is malware.
+You are free to utilize any relevant malware
+,→ analysis rules or techniques, such as
+,→ YARA rules, to aid in your assessment.
+,→ Your final determination should be
+,→ either "True" if the file is malware,
+,→ or "False" if it is not.
+# Step by Step instructions
+1. Analyze the provided File (C code) for
+,→ suspicious functions, API calls, or
+,→ patterns commonly associated with
+,→ malware.
+2. Apply known malware analysis rules or
+,→ techniques, such as YARA rules, to
+,→ identify potential malicious indicators
+,→ within the File.
+3. Based on the analysis, determine if the
+,→ File exhibits characteristics of
+,→ malware.
+4. Output "True" if the File is identified as
+,→ malware, and "False" if it is not.
+,→ Only Answer in True/False.
+5. Output Format: ```{"Malware": <True/False
+,→ >}```
+IMPORTANT NOTE: Start directly with the
+,→ output, do not output any delimiters.
+Take a Deep Breath, read the instructions
+,→ again, read the inputs again. Each
+,→ instruction is crucial and must be
+,→ executed with utmost care and attention
+,→ to detail.
+
+C. Quarantining and Licensing
+We retrieved malware samples from MalwareBazaar
+under its CC0 (public-domain) licensing terms, which
+permit free use for both commercial and non-commercial
+research, but disclaim any warranty or liability.
+All raw binaries were stored in an encrypted, accessrestricted quarantine volume, labelled by SHA256 hash
+and reverted after each analysis run. The analysis was
+carried out in isolated virtual machines with no direct
+internet connectivity (only via simulated, filtered network
+proxies). After each experiment, the virtual machine
+was reverted to a clean snapshot and any residual files
+securely wiped. Access logs and sample provenance
+metadata were retained; raw malware was never transferred to general-purpose systems.
+TABLE I: Malware Family Distribution for Contemporary Dataset
+Malware Family
+
+Count
+
+LummaStealer
+XWorm
+GCleaner
+SalatStealer
+CoinMiner
+AsyncRAT
+ValleyRAT
+SnakeKeylogger
+Nebula
+AgentTesla
+
+24
+12
+7
+6
+6
+6
+5
+5
+5
+5
+
+IV. E VALUATION
+This section talks about the empirical evaluation of
+Large Language Models (LLMs) for malware classification. The analysis is presented in three stages: first,
+establishing a performance baseline using various standard, or "vanilla," LLMs; second, assessing the impact
+of fine-tuning on the best-performing model; and third,
+analyzing the performance drivers and limitations of
+these models.
+A. Malware Classification on Vanilla LLMs
+To establish a baseline, several state-of-the-art LLMs
+were evaluated on their ability to classify malware from
+the 2017 Baseline Dataset. The models tested include
+Llama 3.3 70B, Codestral, Claude 3.7 Sonnet, and Gemini 2.5 Pro. For each classification task, the model was
+provided with the decompiled C code from Ghidra and
+the corresponding static analysis of the file as context.
+
+The performance of these models was compared
+against an XGBoost classifier trained on static analysis
+data from 1,200 samples in the baseline dataset. The
+XGBoost classifier achieved a near-perfect accuracy of
+98.5% on the test data, consistent with findings from
+similar studies [14]. This result demonstrates that a
+traditional machine learning model, when trained on
+relevant static features, can outperform vanilla LLMs on
+a known dataset.
+Amongst the LLMs, Gemini 2.5 Pro demonstrated the
+highest performance. As detailed in Table II, it achieved
+an accuracy of 80.1%, precision of 82.5%, and a recall
+of 74.4%. Its F1-score, a harmonic mean of precision
+and recall, was also the highest among the LLMs at
+78.7%, making it the strongest candidate for further finetuning. The other models, while showing high recall,
+suffered from significantly lower accuracy and precision,
+as shown in Table II and Table III.
+TABLE II: Confusion Matrix Values for Different Models on 2017 data
+Model
+
+TP
+
+FN
+
+FP
+
+TN
+
+Gemini 2.5 Pro
+Llama 3.3 70B
+Codestral
+Claude 3.7 Sonnet
+
+264
+204
+169
+177
+
+91
+36
+65
+63
+
+52
+260
+104
+144
+
+312
+70
+65
+164
+
+B. Malware classification on Fine Tuned LLM
+The Gemini 2.5 Pro model was chosen for supervised
+fine-tuning based on its superior performance on the
+baseline tests. The tuning dataset consisted of 200 files
+from the Baseline Dataset, specifically the 100 smallest
+malware samples and 100 smallest benign samples, a
+selection method used to manage both the input token
+limits and cost associated for fine tuning. This fine-tuning
+process was conducted on Google Cloud Vertex AI over
+40 epochs
+The fine-tuned Gemini 2.5 Pro model was then evaluated against the Contemporary 2025 Dataset, discussed
+in section III-A. The performance of the fine-tuned
+model was higher than even the XGBoost model, achieving 83.2% in accuracy, 94.4% precision, and 84.2%
+recall as shown in Table IV and Table V. This indicates
+that even though tuned LLM performed well on the
+contemporary test data, it still requires constant finetuning to understand the new evolving threats.
+In contrast, the performance of the XGBoost classifier
+degraded significantly when applied to the new dataset,
+
+with its accuracy dropping to 74.4%. This highlights
+the brittleness of traditional models, which struggle to
+generalize to new and evolving threats not present in
+their training data.
+C. Analysis on Performance of Vanilla LLMs
+We hypothesize that an LLM’s effectiveness in malware analysis is fundamentally capped to its underlying code comprehension capabilities. Although code
+generation benchmarks are an indirect measure of this
+ability, they indicate that even top models achieve scores
+around 85% (Aider Polyglot [15], Live Code Bench
+[16]), suggesting a similar ceiling for code analysis tasks
+without specialized training. The superior performance of
+the fine-tuned model demonstrates that targeted training
+on domain-specific data can overcome these general
+limitations. It is hypothesized that as the general coding
+and reasoning abilities of LLMs continue to advance,
+their baseline performance on malware detection via
+decompiled code will improve, potentially establishing
+this approach as an industry standard.
+TABLE III: Performance Metrics for Models on 2017
+Data
+Model
+Llama 3.3 70B
+Codestral
+Claude 3.7 Sonnet
+Gemini 2.5 Pro
+XGBoost Classifier
+
+Accuracy
+
+Precision
+
+Recall
+
+F1
+
+48.1%
+58.1%
+62.2%
+80.1%
+98.5%
+
+44%
+61.9%
+55.1%
+83.5%
+95.6%
+
+85%
+72.2%
+73.8%
+74.4%
+100%
+
+57.9%
+66.7%
+63.1%
+78.7%
+97.7%
+
+TABLE IV: Confusion Matrix Values for Models on
+Contemporary 2025 Data
+Model
+
+TP
+
+TN
+
+FP
+
+FN
+
+Gemini Pro 2.5
+Gemini Pro 2.5 Tuned
+XGBoost Classifier
+
+71
+101
+106
+
+24
+22
+24
+
+4
+6
+4
+
+49
+19
+14
+
+TABLE V: Performance Metrics for Models on 2025
+Data
+Model
+Gemini Pro 2.5
+Gemini Pro 2.5(T)
+XGBoost Classifier
+
+Accuracy
+
+Precision
+
+Recall
+
+F1
+
+64.2%
+83.2%
+74.3%
+
+94.7%
+94.4%
+81.5%
+
+59.1%
+84.2%
+88.3%
+
+72.8%
+89.0%
+84.8%
+
+V. D ISCUSSION AND F UTURE W ORK
+The current work demonstrates that large language
+models (LLMs) achieve strong performance in binary
+classification tasks, accurately distinguishing between
+benign and malicious executables.
+A. Contextual Information
+Integrating additional data modalities such as dynamic execution traces, sandbox detonation results, and
+provenance metadata into a hybrid analysis framework
+can elevate these results to production-grade reliability.
+Such systems would employ hierarchical attention and
+cross-modal fusion mechanisms to weigh and correlate
+information from diverse sources.
+B. Context Window
+Models with limited token windows struggle to maintain relevance across lengthy code sequences, leading
+to “lost-in-the-middle” failures and degraded performance on critical segments. Simply expanding context
+size incurs prohibitive computational and memory costs,
+underscoring the need for more efficient long-context
+processing techniques such as hierarchical chunking,
+adaptive attention, and memory-augmented architectures.
+Promising strategies include chunk-based summarization with progressive context propagation, adaptive attention that selectively focuses on high-salience code
+regions, and memory-augmented modules capable of
+preserving long-term dependencies across analysis tasks
+C. Domain-specific Models
+General-purpose models offer versatile transfer learning benefits but often lack specialized understanding
+of malware terminology and code patterns. Domainadaptive training methods, including continuous pretraining on curated cybersecurity datasets and parameterefficient fine-tuning, can imbue models with necessary
+domain knowledge without sacrificing broader language
+capabilities.
+Tan et al. [17] describe methods to use LLMs to
+decompile binaries. Future work can replace the use
+of Ghidra with such models to evaluate the efficacy of
+techniques that use LLMs end to end in the malware
+detection pipeline.
+
+D. Explainability
+Transparency remains a core concern for LLM-based
+security systems. The black-box nature of these models hinders analyst trust and regulatory compliance, as
+interpretable explanations of classification decisions are
+essential for validation and debugging.
+R EFERENCES
+[1] Hamed Jelodar, Samita Bai, Parisa Hamedi, Hesamodin Mohammadian, Roozbeh Razavi-Far, and Ali Ghorbani. Large
+language model (llm) for software security: Code analysis,
+malware analysis, reverse engineering, 2025.
+[2] Hanxiang Xu, Shenao Wang, Ningke Li, Kailong Wang, Yanjie
+Zhao, Kai Chen, Ting Yu, Yang Liu, and Haoyu Wang. Large
+language models for cyber security: A systematic literature
+review, 2025.
+[3] Nicolas Papernot et al. Cybersecurity for artificial intelligence
+and artificial intelligence for cybersecurity. Intelligence-Based
+Systems, 5:100125, 2025.
+[4] et al. Chen. Leveraging large language models for security call
+graph and data-flow analysis. arXiv, 2025. arXiv:2505.07360.
+[5] et al. Li. Reverse engineering with ai assistance: Advancing
+binary analysis. arXiv, 2025. arXiv:2503.04302.
+[6] National Security Agency. Ghidra Software Reverse Engineering Framework. https://ghidra-sre.org/, 2019.
+[7] Jamal Al-Karaki, Muhammad Al-Zafar Khan, and Marwan
+Omar. Exploring llms for malware detection: Review, framework design, and countermeasure approaches. arXiv preprint
+arXiv:2409.07587, 2024.
+[8] Joshua Saxe and Hillary Sanders. Malware Data Science: Attack
+Detection and Attribution. No Starch Press, San Francisco, CA,
+2018.
+[9] abuse.ch. MalwareBazaar: Malware sample exchange. Accessed: Aug 20, 2025.
+[10] Jiayimei Wang, Tao Ni, Wei-Bin Lee, and Qingchuan Zhao. A
+contemporary survey of large language model-assisted program
+analysis. arXiv preprint arXiv:2502.18474, February 2025.
+arXiv:2502.18474v1 [cs.SE].
+[11] Saman Pordanesh and Benjamin Tan. Exploring the efficacy
+of large language models (gpt-4) in binary reverse engineering.
+arXiv preprint arXiv:2406.06637, 2024.
+[12] CrowdStrike Research Team. Byte back: Next-generation malware classification using binary transformers. CrowdStrike Blog,
+2025.
+[13] Christian Rondanini, Barbara Carminati, Elena Ferrari, Antonio
+Gaudiano, and Ashish Kundu. Malware detection at the edge
+with lightweight llms. arXiv preprint arXiv:2503.04302, 2024.
+[14] Marcelo Invert Palma Salas and Paulo De Geus. Static analysis
+for malware classification using machine and deep learning. In
+2023 XLIX Latin American Computer Conference (CLEI), pages
+1–10, 2023.
+[15] Aider. Aider LLM Leaderboards. Accessed: Aug 28, 2025.
+[16] Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan,
+Tianjun Zhang, Sida Wang, Armando Solar-Lezama, Koushik
+Sen, and Ion Stoica. Livecodebench: Holistic and contamination
+free evaluation of large language models for code, 2024.
+
+[17] Hanzhuo Tan, Qi Luo, Jing Li, and Yuqun Zhang.
+Llm4decompile: Decompiling binary code with large language
+models. In Proceedings of the 2024 Conference on Empirical
+Methods in Natural Language Processing, page 3473–3487.
+Association for Computational Linguistics, 2024.
+
+

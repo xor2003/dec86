@@ -1,0 +1,157 @@
+proj_name = browser
+
+!ifndef browser_autodepends
+browser_autodepends = .AUTODEPEND
+!endif
+
+browser_ntmanif = ../res
+browser_ntverrc = ../res
+
+browser_trmem = 1
+
+docs_host_dir = $(docs_dir)/$(host_os)
+
+additional_clean = *.grc *.grh
+!ifndef nowgml
+additional_clean += $(docs_host_dir)/wbrw.gh
+!endif
+
+sys_windowed = 1
+
+.extensions: .gpp
+
+exetarg_name = wbrw
+ntverrc_exe = $(exetarg_name)
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+!include $(dwarfr_dir)/client.mif
+!include $(wclass_dir)/client.mif
+!include tools.mif
+
+!include ../template.mif
+
+#
+# cflags
+#
+.c: ../cpp;../merge/c;$(lib_misc_dir)/c;$(trmem_dir)
+.cpp: ../cpp;../brg/cpp
+.gpp: ../gen
+
+inc_dirs = -I"../h" -I"../brg/h" -I"../gen" $(cli_wclass_inc_dirs) -I"$(docs_host_dir)" &
+    $(cli_dwarfr_inc_dirs) -I"$(editdll_dir)"
+
+extra_cpp_flags = -DNOPERSIST
+!ifeq debug 2
+extra_cpp_flags += -DDEBUG -DDEBUG_ASSERT -DDEBUGTREE
+!endif
+!ifdef use_virtmem
+extra_cpp_flags += -DUSE_VIRTMEM
+!endif
+!ifdef nowgml
+extra_cpp_flags += -DNOWGML
+!endif
+
+extra_cpp_flags_f_rxwrap = -DALLOC=WBRAlloc
+
+extra_cxx_flags = -ew -xs
+!ifdef gen_browser_file
+extra_cxx_flags += -db
+!endif
+
+extra_c_flags_i86 = -zc -zm
+!ifdef DBG
+extra_c_flags_i86 += -zw
+!else
+extra_c_flags_i86 += -zW
+!endif
+
+extra_c_flags_f_rxwrap = -I"$(posix_dir)/h" -I"$(posix_dir)/misc" $(incl_file_opts)brmem.h
+extra_c_flags_f_keysym = -I"$(posix_dir)/h"
+extra_c_flags_f_util = -I"$(posix_dir)/h"
+extra_c_flags_f_demangle = -I"$(lib_misc_dir)/h"
+
+!ifeq trmem 1
+! ifdef __WATCOM_TOOLS__
+extra_c_flags_f_brmem = -of+
+! endif
+!endif
+
+#
+# lflags
+#
+lflags_wini86  = sys windows font mem op stack=16k
+lflags_dos386  = sys pharlap
+
+extra_l_flags   = op eliminate
+!ifndef quick_link
+extra_l_flags   += op show,art,static
+!endif
+
+extra_l_flags_dos = op stub=$(pharlap)stub386.exe
+extra_l_flags_win = op packdata=48k seg CLASS CODE FIXED, CLASS FAR_DATA FIXED, CLASS DATA FIXED
+extra_l_flags_ntaxp = op undefsok
+extra_l_flags_os2 =
+
+# explicit rules
+#################
+
+!ifdef gen_browser_file
+ext = mbr
+mbr_files = $+$(template)$-
+!endif
+
+ext = obj
+objs      = $+$(template)$- rxwrap.obj brmem.obj $(trmem_objs)
+
+!ifeq debug 2
+objs_dbg  = debuglog.obj
+!endif
+
+#
+# EXE
+#
+!ifndef nowgml
+exetarg_prebuild_objs = $(docs_host_dir)/wbrw.gh
+!endif
+exetarg_objs          = $(objs) $(objs_dbg)
+exetarg_libs          = $(cli_dwarfr_libs) $(cli_wclass_libs)
+exetarg_res           = $(proj_name).res
+!include exetarg.mif
+!ifdef gen_browser_file
+    $(noecho)%create browser.wbr
+    @for %i in ($(mbr_files)) do @%append browser.wbr file %i
+!endif
+
+#
+# rc and others
+#
+rc_inc_dirs = -I"../res/bmp" -I"../res/dlg" -I"../res/cur" -I"../res" -I"../h" -I"../res/ico" $(cli_wclass_rc_inc_dirs)
+
+!ifdef sys_windowed
+extra_rc_flags = -DRESX_GUI
+!endif
+
+extra_rc_flags_os2 = -I"../res/ico_pm"
+
+$(proj_name).res : ../res/wbrw.rc $(cli_wclass_rc_deps)
+    @%make echo_rc
+    $(rc) $(ppflags_common) $(rc_cppflags) $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+curr_dir=$+$(%__CWD__)$-
+
+$(docs_host_dir) : .SYMBOLIC
+    $(noecho)cd $@
+
+$(docs_host_dir)/wbrw.gh : $(docs_host_dir) .ALWAYS
+    $(noecho)!$(nested_wmake) -h -f ../mif/master.mif hbook=wbrw header=1 dotarget=$(host_os) tree_depth=2
+    $(noecho)cd "$(curr_dir)"
+
+# implicit rules
+#################
+
+.gpp.obj: .AUTODEPEND
+    @%make echo_cxx
+    $(cxx) $(ppflags_common) $(ppflags_autodep) $(ppflags_sys) $(extra_cpp_flags_f_$[&) $(cflags) $(extra_cxx_flags) $(extra_c_flags_f_$[&) $(inc_path) $[@

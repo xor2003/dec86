@@ -1,0 +1,24 @@
+#pmake: binmake
+#
+# Create the Linux std.trp
+#
+host_os  = $(bld_os)
+host_cpu = $(bld_cpu)
+
+!ifndef target_cpu
+! ifeq bld_cpu 386
+target_cpu = x86
+! else
+target_cpu = $(bld_cpu)
+! endif
+!endif
+
+os      = linux
+srv     = lcl
+which   = TRAP
+
+extra_objs = $(linux_trap_objs)
+
+!include $(trap_dir)/lcl/linux/linux.mif
+!include $(trap_dir)/lcl/lcl.mif
+!include $(trap_dir)/master.mif

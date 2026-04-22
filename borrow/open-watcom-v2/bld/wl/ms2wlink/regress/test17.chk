@@ -1,0 +1,5 @@
+# This file produced by MS2WLINK
+system dos
+file obj.obj
+file 2.obj
+option nocaseexact

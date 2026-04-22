@@ -1,0 +1,99 @@
+= fn0C00_0000 ========================
+fp:fp
+    def:  def fp
+    uses: sp_2 = fp
+sp_2: orig: sp
+    def:  sp_2 = fp
+Top_3: orig: Top
+    def:  Top_3 = 0<i8>
+ax_4: orig: ax
+    def:  ax_4 = 0<16>
+    uses: SZ_5 = cond(ax_4)
+          Mem9[ds:0x300<16>:word16] = ax_4
+          Mem10[ds:0x302<16>:word16] = ax_4
+          Mem11[ds:0x304<16>:word16] = ax_4
+SZ_5: orig: SZ
+    def:  SZ_5 = cond(ax_4)
+O_6: orig: O
+    def:  O_6 = 0<32>
+C_7: orig: C
+    def:  C_7 = 0<32>
+ds:ds
+    def:  def ds
+    uses: Mem9[ds:0x300<16>:word16] = ax_4
+          Mem10[ds:0x302<16>:word16] = ax_4
+          Mem11[ds:0x304<16>:word16] = ax_4
+Mem9: orig: Mem0
+    def:  Mem9[ds:0x300<16>:word16] = ax_4
+Mem10: orig: Mem0
+    def:  Mem10[ds:0x302<16>:word16] = ax_4
+Mem11: orig: Mem0
+    def:  Mem11[ds:0x304<16>:word16] = ax_4
+// fn0C00_0000
+// Return size: 2
+define fn0C00_0000
+fn0C00_0000_entry:
+	def fp
+	def ds
+	sp_2 = fp
+	Top_3 = 0<i8>
+	// succ:  l0C00_0000
+l0C00_0000:
+	ax_4 = 0<16>
+	SZ_5 = cond(ax_4)
+	O_6 = 0<32>
+	C_7 = 0<32>
+	Mem9[ds:0x300<16>:word16] = ax_4
+	Mem10[ds:0x302<16>:word16] = ax_4
+	Mem11[ds:0x304<16>:word16] = ax_4
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:
+
+fp:fp
+    def:  def fp
+    uses: sp_2 = fp
+sp_2: orig: sp
+    def:  sp_2 = fp
+Top_3: orig: Top
+    def:  Top_3 = 0<i8>
+ax_4: orig: ax
+    def:  ax_4 = 0<16>
+    uses: SZ_5 = cond(ax_4)
+SZ_5: orig: SZ
+    def:  SZ_5 = cond(ax_4)
+O_6: orig: O
+    def:  O_6 = 0<32>
+C_7: orig: C
+    def:  C_7 = 0<32>
+ds:ds
+    def:  def ds
+    uses: Mem9[ds:0x300<16>:word16] = 0<16>
+          Mem10[ds:0x302<16>:word16] = 0<16>
+          Mem11[ds:0x304<16>:word16] = 0<16>
+Mem9: orig: Mem0
+    def:  Mem9[ds:0x300<16>:word16] = 0<16>
+Mem10: orig: Mem0
+    def:  Mem10[ds:0x302<16>:word16] = 0<16>
+Mem11: orig: Mem0
+    def:  Mem11[ds:0x304<16>:word16] = 0<16>
+// fn0C00_0000
+// Return size: 2
+define fn0C00_0000
+fn0C00_0000_entry:
+	def fp
+	def ds
+	sp_2 = fp
+	Top_3 = 0<i8>
+	// succ:  l0C00_0000
+l0C00_0000:
+	ax_4 = 0<16>
+	SZ_5 = cond(ax_4)
+	O_6 = 0<32>
+	C_7 = 0<32>
+	Mem9[ds:0x300<16>:word16] = 0<16>
+	Mem10[ds:0x302<16>:word16] = 0<16>
+	Mem11[ds:0x304<16>:word16] = 0<16>
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:

@@ -1,0 +1,296 @@
+fp:fp
+    def:  def fp
+    uses: call fn0C00_0008 (retsize: 2;)	uses: sp:fp
+sp_2: orig: sp
+sp_3: orig: sp
+    def:  call fn0C00_0008 (retsize: 2;)	uses: sp:fp
+si:si
+    def:  def si
+    uses: Mem6[ds:0x0304:word16] = si
+ds:ds
+    def:  def ds
+    uses: Mem6[ds:0x0304:word16] = si
+Mem6: orig: Mem0
+    def:  Mem6[ds:0x0304:word16] = si
+// fn0C00_0000
+// Return size: 2
+define fn0C00_0000
+fn0C00_0000_entry:
+	def fp
+	def si
+	def ds
+	// succ:  l0C00_0000
+l0C00_0000:
+	call fn0C00_0008 (retsize: 2;)
+		uses: sp:fp
+	Mem6[ds:0x0304:word16] = si
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:
+
+fp:fp
+sp_2: orig: sp
+eax:eax
+    def:  def eax
+    uses: ax_70 = (word16) eax (alias)
+          dx_69 = (word16) (eax >>u 0x00000010<32>) (alias)
+edx_4: orig: edx
+edx_5: orig: edx
+SCZO_6: orig: SCZO
+bx:bx
+bx_8: orig: bx
+    def:  bx_8 = 0x0000
+    uses: bx_27 = PHI(bx_8, bx_62)
+SZO_9: orig: SZO
+C_10: orig: C
+si:si
+si_12: orig: si
+    def:  si_12 = 0x0000
+    uses: si_28 = PHI(si_12, si_43)
+SZO_13: orig: SZO
+C_14: orig: C
+cx:cx
+cx_16: orig: cx
+    def:  cx_16 = 0x0000
+    uses: cx_31 = PHI(cx_16, cx_64)
+SZO_17: orig: SZO
+C_18: orig: C
+di_19: orig: di
+    def:  di_19 = 0x0010
+    uses: di_20 = PHI(di_19, di_67)
+di_20: orig: di
+    def:  di_20 = PHI(di_19, di_67)
+    uses: branch di_20 == 0x0000 l0C00_0047
+          di_67 = di_20 - 0x0001
+di_21: orig: di
+SZO_22: orig: SZO
+C_23: orig: C
+dx_24: orig: dx
+    def:  dx_24 = PHI(dx_69, dx_60)
+    uses: bx_dx_71 = SEQ(bx_27, dx_24)
+dx_25: orig: dx
+    def:  dx_25 = (word16) bx_dx_72
+    uses: bx_dx_72 = bx_dx_71 - SEQ(si_28, 0x4000)
+          bx_dx_79 = SEQ(bx_29, dx_25)
+          dx_49 = PHI(dx_25, dx_34)
+SCZO_26: orig: SCZO
+bx_27: orig: bx
+    def:  bx_27 = PHI(bx_8, bx_62)
+    uses: bx_dx_71 = SEQ(bx_27, dx_24)
+si_28: orig: si
+    def:  si_28 = PHI(si_12, si_43)
+    uses: si_43 = si_28 * 0x0002 + C_41
+bx_29: orig: bx
+    def:  bx_29 = SLICE(bx_dx_72, word16, 16)
+    uses: bx_dx_72 = bx_dx_71 - SEQ(si_28, 0x4000)
+          bx_dx_79 = SEQ(bx_29, dx_25)
+          cx_32 = cx_31 - (bx_29 <u 0x0000)
+          bx_52 = PHI(bx_29, bx_36)
+SCZO_30: orig: SCZO
+cx_31: orig: cx
+    def:  cx_31 = PHI(cx_16, cx_64)
+    uses: cx_32 = cx_31 - (bx_29 <u 0x0000)
+cx_32: orig: cx
+    def:  cx_32 = cx_31 - (bx_29 <u 0x0000)
+    uses: SCZO_33 = cond(cx_32)
+          cx_38 = cx_32 + (bx_36 <u 0x0000)
+          branch cx_32 >=u 0x0000 l0C00_0030
+          cx_55 = PHI(cx_32, cx_38)
+SCZO_33: orig: SCZO
+    def:  SCZO_33 = cond(cx_32)
+    uses: C_40 = PHI(SCZO_33, SCZO_39)
+dx_34: orig: dx
+    def:  dx_34 = (word16) bx_dx_80
+    uses: bx_dx_80 = bx_dx_79 + SEQ(si_28, 0x4000)
+          dx_49 = PHI(dx_25, dx_34)
+SCZO_35: orig: SCZO
+bx_36: orig: bx
+    def:  bx_36 = SLICE(bx_dx_80, word16, 16)
+    uses: bx_dx_80 = bx_dx_79 + SEQ(si_28, 0x4000)
+          cx_38 = cx_32 + (bx_36 <u 0x0000)
+          bx_52 = PHI(bx_29, bx_36)
+SCZO_37: orig: SCZO
+cx_38: orig: cx
+    def:  cx_38 = cx_32 + (bx_36 <u 0x0000)
+    uses: SCZO_39 = cond(cx_38)
+          cx_55 = PHI(cx_32, cx_38)
+SCZO_39: orig: SCZO
+    def:  SCZO_39 = cond(cx_38)
+    uses: C_40 = PHI(SCZO_33, SCZO_39)
+C_40: orig: C
+    def:  C_40 = PHI(SCZO_33, SCZO_39)
+    uses: C_41 = !C_40
+C_41: orig: C
+    def:  C_41 = !C_40
+    uses: si_43 = si_28 * 0x0002 + C_41
+si_42: orig: si
+    def:  si_42 = PHI(si_28, si_28)
+si_43: orig: si
+    def:  si_43 = si_28 * 0x0002 + C_41
+    uses: si_28 = PHI(si_12, si_43)
+SCZO_44: orig: SCZO
+ax_45: orig: ax
+    def:  ax_45 = PHI(ax_46, ax_46)
+ax_46: orig: ax
+    def:  ax_46 = PHI(ax_70, ax_58)
+    uses: dx_ax_73 = SEQ(dx_49, ax_46)
+          dx_ax_74 = SEQ(dx_49, ax_46)
+ax_47: orig: ax
+    def:  ax_47 = (word16) dx_ax_75
+    uses: dx_ax_75 = dx_ax_73 + dx_ax_74
+          dx_ax_76 = SEQ(dx_50, ax_47)
+          dx_ax_77 = SEQ(dx_50, ax_47)
+SCZO_48: orig: SCZO
+dx_49: orig: dx
+    def:  dx_49 = PHI(dx_25, dx_34)
+    uses: dx_ax_73 = SEQ(dx_49, ax_46)
+          dx_ax_74 = SEQ(dx_49, ax_46)
+dx_50: orig: dx
+    def:  dx_50 = SLICE(dx_ax_75, word16, 16)
+    uses: dx_ax_75 = dx_ax_73 + dx_ax_74
+          dx_ax_76 = SEQ(dx_50, ax_47)
+          dx_ax_77 = SEQ(dx_50, ax_47)
+          bx_53 = bx_52 * 0x0002 + (dx_50 <u 0x0000)
+SCZO_51: orig: SCZO
+bx_52: orig: bx
+    def:  bx_52 = PHI(bx_29, bx_36)
+    uses: bx_53 = bx_52 * 0x0002 + (dx_50 <u 0x0000)
+bx_53: orig: bx
+    def:  bx_53 = bx_52 * 0x0002 + (dx_50 <u 0x0000)
+    uses: bx_62 = bx_53 * 0x0002 + (dx_60 <u 0x0000)
+          cx_56 = cx_55 * 0x0002 + (bx_53 <u 0x0000)
+SCZO_54: orig: SCZO
+cx_55: orig: cx
+    def:  cx_55 = PHI(cx_32, cx_38)
+    uses: cx_56 = cx_55 * 0x0002 + (bx_53 <u 0x0000)
+cx_56: orig: cx
+    def:  cx_56 = cx_55 * 0x0002 + (bx_53 <u 0x0000)
+    uses: cx_64 = cx_56 * 0x0002 + (bx_62 <u 0x0000)
+SCZO_57: orig: SCZO
+ax_58: orig: ax
+    def:  ax_58 = (word16) dx_ax_78
+    uses: dx_ax_78 = dx_ax_76 + dx_ax_77
+          ax_46 = PHI(ax_70, ax_58)
+SCZO_59: orig: SCZO
+dx_60: orig: dx
+    def:  dx_60 = SLICE(dx_ax_78, word16, 16)
+    uses: dx_ax_78 = dx_ax_76 + dx_ax_77
+          bx_62 = bx_53 * 0x0002 + (dx_60 <u 0x0000)
+          dx_24 = PHI(dx_69, dx_60)
+SCZO_61: orig: SCZO
+bx_62: orig: bx
+    def:  bx_62 = bx_53 * 0x0002 + (dx_60 <u 0x0000)
+    uses: cx_64 = cx_56 * 0x0002 + (bx_62 <u 0x0000)
+          bx_27 = PHI(bx_8, bx_62)
+SCZO_63: orig: SCZO
+cx_64: orig: cx
+    def:  cx_64 = cx_56 * 0x0002 + (bx_62 <u 0x0000)
+    uses: cx_31 = PHI(cx_16, cx_64)
+SCZO_65: orig: SCZO
+di_66: orig: di
+    def:  di_66 = PHI(di_21, di_21)
+di_67: orig: di
+    def:  di_67 = di_20 - 0x0001
+    uses: di_20 = PHI(di_19, di_67)
+SZO_68: orig: SZO
+dx_69: orig: dx
+    def:  dx_69 = (word16) (eax >>u 0x00000010<32>) (alias)
+    uses: dx_24 = PHI(dx_69, dx_60)
+ax_70: orig: ax
+    def:  ax_70 = (word16) eax (alias)
+    uses: ax_46 = PHI(ax_70, ax_58)
+bx_dx_71: orig: bx_dx
+    def:  bx_dx_71 = SEQ(bx_27, dx_24)
+    uses: bx_dx_72 = bx_dx_71 - SEQ(si_28, 0x4000)
+bx_dx_72: orig: bx_dx
+    def:  bx_dx_72 = bx_dx_71 - SEQ(si_28, 0x4000)
+dx_ax_73: orig: dx_ax
+    def:  dx_ax_73 = SEQ(dx_49, ax_46)
+    uses: dx_ax_75 = dx_ax_73 + dx_ax_74
+dx_ax_74: orig: dx_ax
+    def:  dx_ax_74 = SEQ(dx_49, ax_46)
+    uses: dx_ax_75 = dx_ax_73 + dx_ax_74
+dx_ax_75: orig: dx_ax
+    def:  dx_ax_75 = dx_ax_73 + dx_ax_74
+dx_ax_76: orig: dx_ax
+    def:  dx_ax_76 = SEQ(dx_50, ax_47)
+    uses: dx_ax_78 = dx_ax_76 + dx_ax_77
+dx_ax_77: orig: dx_ax
+    def:  dx_ax_77 = SEQ(dx_50, ax_47)
+    uses: dx_ax_78 = dx_ax_76 + dx_ax_77
+dx_ax_78: orig: dx_ax
+    def:  dx_ax_78 = dx_ax_76 + dx_ax_77
+bx_dx_79: orig: bx_dx
+    def:  bx_dx_79 = SEQ(bx_29, dx_25)
+    uses: bx_dx_80 = bx_dx_79 + SEQ(si_28, 0x4000)
+bx_dx_80: orig: bx_dx
+    def:  bx_dx_80 = bx_dx_79 + SEQ(si_28, 0x4000)
+// fn0C00_0008
+// Return size: 2
+define fn0C00_0008
+fn0C00_0008_entry:
+	def eax
+	ax_70 = (word16) eax (alias)
+	// succ:  l0C00_0008
+l0C00_0008:
+	dx_69 = (word16) (eax >>u 0x00000010<32>) (alias)
+	bx_8 = 0x0000
+	si_12 = 0x0000
+	cx_16 = 0x0000
+	di_19 = 0x0010
+	// succ:  l0C00_0018
+l0C00_0018:
+	ax_46 = PHI(ax_70, ax_58)
+	cx_31 = PHI(cx_16, cx_64)
+	si_28 = PHI(si_12, si_43)
+	bx_27 = PHI(bx_8, bx_62)
+	dx_24 = PHI(dx_69, dx_60)
+	di_20 = PHI(di_19, di_67)
+	branch di_20 == 0x0000 l0C00_0047
+	// succ:  l0C00_001C l0C00_0047
+l0C00_001C:
+	bx_dx_71 = SEQ(bx_27, dx_24)
+	bx_dx_72 = bx_dx_71 - SEQ(si_28, 0x4000)
+	dx_25 = (word16) bx_dx_72
+	bx_29 = SLICE(bx_dx_72, word16, 16)
+	cx_32 = cx_31 - (bx_29 <u 0x0000)
+	SCZO_33 = cond(cx_32)
+	branch cx_32 >=u 0x0000 l0C00_0030
+	// succ:  l0C00_0027 l0C00_0030
+l0C00_0027:
+	bx_dx_79 = SEQ(bx_29, dx_25)
+	bx_dx_80 = bx_dx_79 + SEQ(si_28, 0x4000)
+	dx_34 = (word16) bx_dx_80
+	bx_36 = SLICE(bx_dx_80, word16, 16)
+	cx_38 = cx_32 + (bx_36 <u 0x0000)
+	SCZO_39 = cond(cx_38)
+	// succ:  l0C00_0030
+l0C00_0030:
+	cx_55 = PHI(cx_32, cx_38)
+	bx_52 = PHI(bx_29, bx_36)
+	dx_49 = PHI(dx_25, dx_34)
+	C_40 = PHI(SCZO_33, SCZO_39)
+	C_41 = !C_40
+	si_43 = si_28 * 0x0002 + C_41
+	dx_ax_73 = SEQ(dx_49, ax_46)
+	dx_ax_74 = SEQ(dx_49, ax_46)
+	dx_ax_75 = dx_ax_73 + dx_ax_74
+	ax_47 = (word16) dx_ax_75
+	dx_50 = SLICE(dx_ax_75, word16, 16)
+	bx_53 = bx_52 * 0x0002 + (dx_50 <u 0x0000)
+	cx_56 = cx_55 * 0x0002 + (bx_53 <u 0x0000)
+	dx_ax_76 = SEQ(dx_50, ax_47)
+	dx_ax_77 = SEQ(dx_50, ax_47)
+	dx_ax_78 = dx_ax_76 + dx_ax_77
+	ax_58 = (word16) dx_ax_78
+	dx_60 = SLICE(dx_ax_78, word16, 16)
+	bx_62 = bx_53 * 0x0002 + (dx_60 <u 0x0000)
+	cx_64 = cx_56 * 0x0002 + (bx_62 <u 0x0000)
+	di_67 = di_20 - 0x0001
+	goto l0C00_0018
+	// succ:  l0C00_0018
+l0C00_0047:
+	return
+	// succ:  fn0C00_0008_exit
+fn0C00_0008_exit:
+

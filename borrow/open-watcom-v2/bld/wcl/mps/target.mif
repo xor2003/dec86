@@ -1,0 +1,17 @@
+!ifdef bootstrap
+proj_name = bwclmps
+bwclmps_autodepends = .AUTODEPEND
+!else
+proj_name = wclmps
+wclmps_autodepends = .AUTODEPEND
+!endif
+
+wclmps_ntverrc = ../../h
+
+wclmps_trmem = 1
+
+target_cpu = mps
+
+extra_cpp_flags = -DWCLMPS
+
+!include ../../master.mif

@@ -1,0 +1,14 @@
+dip_format = hllcv
+
+imp_objs = &
+        hllmisc.obj &
+        hllld.obj &
+        hllmod.obj &
+        hlltype.obj &
+        hllsym.obj &
+        hllcue.obj &
+        hllvirt.obj &
+        hllloc.obj &
+        demangle.obj
+
+!include ../../master.mif

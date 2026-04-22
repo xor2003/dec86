@@ -1,0 +1,81 @@
+tree_depth = 4
+
+proj_name = fmedit
+
+fmedit_autodepends = .AUTODEPEND
+
+fmedit_ntverrc = ../res
+
+sys_dll = 1
+
+suppress_bd = 1
+
+additional_clean = *.grc
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+#
+# cflags
+#
+.c:   ../src;$(version_dir);$(watcom_dir)/c
+
+inc_dirs = -I"../src" -I"../dev" -I"../res"
+
+extra_cpp_flags = -DFMEDITDLL
+
+extra_c_flags_win = -zu -zw
+
+!ifdef __WATCOM_TOOLS__
+extra_c_flags_f_fmedit = -bd
+!endif
+
+#
+# lflags
+#
+extra_l_flags_dll     = op implib
+extra_l_flags_dll_win = op rwr export WEP RESIDENT
+
+# explicit rules
+#################
+
+#
+# DLL
+#
+dlltarg_objs = &
+    align.obj &
+    space.obj &
+    fmedit.obj &
+    grid.obj &
+    paint.obj &
+    mouse.obj &
+    eatom.obj &
+    object.obj &
+    state.obj &
+    list.obj &
+    memory.obj &
+    cursor.obj &
+    scroll.obj &
+    oitem.obj &
+    currobj.obj &
+    curritem.obj &
+    clip.obj &
+    dlist.obj &
+    keybd.obj &
+    verdll.obj &
+    $(objs_$(host_os)) &
+    verimp.obj
+dlltarg_res           = $(proj_name).res
+!include dlltarg.mif
+
+#
+# rc and others
+#
+rc_inc_dirs = -I"../res" -I"../dev"
+
+extra_rc_flags_win = -30
+
+$(proj_name).res: ../res/fmedit.rc $(__MAKEFILES__) .AUTODEPEND
+    @%make echo_rc
+    $(rc) $(ppflags_common) $(rc_cppflags) $(rc_flags) $(rc_inc_path) $[@ -fo=$@

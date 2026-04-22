@@ -36,6 +36,25 @@ def plan_x86_16_exact_slice(original_start: int, original_end: int) -> X86ExactS
     )
 
 
+def non_optimized_slice_codegen_policy(
+    arch_name: str | None,
+    slice_plan: X86ExactSlicePlan | None,
+) -> tuple[bool, bool]:
+    """
+    Pick the bounded non-optimized codegen policy for one-function exact slices.
+
+    Exact rebased x86-16 slices already carry original-address linkage and now
+    depend on postprocess callsite repair to keep direct-call targets and push
+    arguments visible. Keep structured simplify off in this lane, but do allow
+    postprocess so the same typed callsite facts can survive across recovery
+    paths.
+    """
+
+    if arch_name == "86_16" and slice_plan is not None:
+        return False, True
+    return False, False
+
+
 def function_original_addr(function: Any) -> int:
     original_addr = _ORIGINAL_ADDR_BY_FUNCTION_ID.get(id(function))
     if isinstance(original_addr, int):

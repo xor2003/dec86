@@ -1,0 +1,58 @@
+{
+    "name": "86box",
+    "version-string": "6.0",
+    "homepage": "https://86box.net/",
+    "documentation": "https://86box.readthedocs.io/",
+    "license": "GPL-2.0-or-later",
+    "dependencies": [
+        "freetype",
+        "libpng",
+        "sdl2",
+        "rtmidi",
+        "libslirp",
+        "fluidsynth"
+    ],
+    "features": {
+        "qt-ui": {
+            "description": "Qt User Interface",
+            "dependencies": [
+                {
+                    "name": "qtbase",
+                    "default-features": false,
+                    "features": [
+                        "concurrent",
+                        "default-features",
+                        "gui",
+                        "opengl",
+                        "harfbuzz",
+                        "network",
+                        "vulkan",
+                        "widgets",
+                        "png",
+                        "zstd"
+                    ]
+                },
+                {
+                    "name": "qttools",
+                    "default-features": false,
+                    "features": [
+                        "linguist"
+                    ],
+                    "host": true
+                }
+            ]
+        },
+        "munt": {
+            "description": "Roland MT-32 emulation",
+            "dependencies": [
+                "libmt32emu"
+            ]
+        },
+        "openal": {
+            "description": "OpenAL sound backend",
+            "dependencies": [
+                "openal-soft"
+            ]
+        }
+    }
+}

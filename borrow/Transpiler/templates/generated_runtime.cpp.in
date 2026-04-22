@@ -1,0 +1,3092 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#include "generated_runtime.h"
+#include "generated_data.h"
+#include "generated_game.h"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <conio.h>
+#include <deque>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <thread>
+#include <unordered_set>
+#include <vector>
+#include <windows.h>
+
+GeneratedRuntimeState g_generated_runtime_state{};
+GeneratedRuntimeState g_generated_standalone_runtime_state{};
+
+void generated_reset_runtime_state(GeneratedRuntimeState* state) {
+    memset(state, 0, sizeof(*state));
+}
+
+uint32_t generated_phys(uint16_t segment, uint16_t offset) {
+    return (((uint32_t)segment << 4u) + (uint32_t)offset) & 0xFFFFFu;
+}
+
+namespace {
+
+template <typename RegionT, typename PhysicalFn, typename SizeFn>
+const RegionT* generated_find_region_covering_impl(const RegionT* regions,
+                                                   size_t count,
+                                                   uint32_t physical,
+                                                   size_t* byte_offset,
+                                                   PhysicalFn physical_fn,
+                                                   SizeFn size_fn) {
+    size_t lo = 0u;
+    size_t hi = count;
+    while (lo < hi) {
+        const size_t mid = lo + ((hi - lo) / 2u);
+        if (physical_fn(regions[mid]) <= physical) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    if (lo == 0u) {
+        return NULL;
+    }
+    const RegionT& region = regions[lo - 1u];
+    const uint32_t start = physical_fn(region);
+    const size_t size = size_fn(region);
+    const uint32_t end = start + static_cast<uint32_t>(size);
+    if (physical < start || physical >= end) {
+        return NULL;
+    }
+    if (byte_offset != NULL) {
+        *byte_offset = static_cast<size_t>(physical - start);
+    }
+    return &region;
+}
+
+constexpr uint32_t kGeneratedGraphicsVideoPhys = 0xA0000u;
+constexpr uint32_t kGeneratedGraphicsVideoEndPhys = 0xB0000u;
+constexpr uint32_t kGeneratedMode13VideoEndPhys = 0xAFA00u;
+constexpr UINT_PTR kGeneratedPresentTimerId = 1u;
+constexpr uint16_t kGeneratedHostStubSegment = 0xF000u;
+constexpr uint16_t kGeneratedHostStubInt08Offset = 0x0100u;
+constexpr uint16_t kGeneratedHostStubInt09Offset = 0x0110u;
+
+struct GeneratedScriptedKeyEvent {
+    uint16_t key_ax = 0u;
+    uint32_t due_ms = 0u;
+};
+
+struct GeneratedHostState {
+    HWND hwnd = NULL;
+    bool window_class_registered = false;
+    std::deque<uint16_t> key_queue;
+    std::deque<uint8_t> keyboard_scan_queue;
+    std::vector<GeneratedScriptedKeyEvent> scripted_keys;
+    size_t scripted_key_index = 0u;
+    std::unordered_set<uint16_t> key_down;
+    uint8_t keyboard_controller_data = 0u;
+    std::array<uint32_t, 256> palette{};
+    std::array<uint8_t, 16> attr_palette{};
+    uint8_t attr_index = 0u;
+    bool attr_expect_data = false;
+    uint8_t dac_write_index = 0u;
+    uint8_t dac_component = 0u;
+    std::array<uint8_t, 3> dac_triplet = {0u, 0u, 0u};
+    uint8_t sequencer_index = 0u;
+    uint8_t sequencer_map_mask = 0x0Fu;
+    uint16_t sequencer_map_mask_seen = 0u;
+    uint8_t graphics_index = 0u;
+    uint8_t gc_set_reset = 0u;
+    uint8_t gc_enable_set_reset = 0u;
+    uint8_t gc_color_compare = 0u;
+    uint8_t gc_data_rotate = 0u;
+    uint8_t gc_read_map_select = 0u;
+    uint8_t gc_mode = 0u;
+    uint8_t gc_misc = 0u;
+    uint8_t gc_color_dont_care = 0x0Fu;
+    uint8_t gc_bit_mask = 0xFFu;
+    std::array<std::vector<uint8_t>, 4> planar{};
+    std::array<uint8_t, 4> gc_latch = {0u, 0u, 0u, 0u};
+    bool gc_word_latch_valid = false;
+    uint16_t gc_word_latch_off = 0u;
+    std::array<uint8_t, 4> gc_word_latch_lo = {0u, 0u, 0u, 0u};
+    std::array<uint8_t, 4> gc_word_latch_hi = {0u, 0u, 0u, 0u};
+    std::vector<uint32_t> frame_argb;
+    unsigned irq0_trace_count = 0u;
+    uint8_t crtc_index = 0u;
+    uint16_t crtc_start_addr = 0u;
+    std::array<uint32_t, 8> mode0d_page_write_count = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    std::array<uint32_t, 4> mode0d_plane_write_count = {0u, 0u, 0u, 0u};
+    std::array<uint32_t, 4> mode0d_plane_nonzero_write_count = {0u, 0u, 0u, 0u};
+    unsigned mode0d_write_trace_count = 0u;
+    std::chrono::steady_clock::time_point tick_epoch = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point next_present = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point next_irq0 = std::chrono::steady_clock::now();
+    bool pit_ch0_low_byte_pending = false;
+    uint8_t pit_ch0_low_byte = 0u;
+    uint16_t pit_ch0_divisor = 0u;
+    std::vector<uint8_t> active_hw_interrupts;
+    std::unordered_set<uint64_t> persistent_dynamic_targets;
+    bool dynamic_targets_loaded = false;
+    int runtime_service_depth = 0;
+};
+
+GeneratedRuntimeState* g_generated_active_state = NULL;
+
+void generated_present_video(GeneratedRuntimeState* state);
+void generated_append_trace_line(const char* category, const char* message);
+
+struct GeneratedRuntimeServiceGuard {
+    GeneratedHostState& h;
+    explicit GeneratedRuntimeServiceGuard(GeneratedHostState& state) : h(state) { ++h.runtime_service_depth; }
+    ~GeneratedRuntimeServiceGuard() { --h.runtime_service_depth; }
+};
+
+uint32_t generated_ega64_index_to_argb(uint8_t value) {
+    const uint32_t r = ((value & 0x04u) ? 0xAAu : 0u) + ((value & 0x20u) ? 0x55u : 0u);
+    const uint32_t g = ((value & 0x02u) ? 0xAAu : 0u) + ((value & 0x10u) ? 0x55u : 0u);
+    const uint32_t b = ((value & 0x01u) ? 0xAAu : 0u) + ((value & 0x08u) ? 0x55u : 0u);
+    return 0xFF000000u | (r << 16u) | (g << 8u) | b;
+}
+
+uint32_t generated_vga_rgb6_to_argb(uint8_t r6, uint8_t g6, uint8_t b6) {
+    const uint32_t r = static_cast<uint32_t>(r6 & 0x3Fu) * 255u / 63u;
+    const uint32_t g = static_cast<uint32_t>(g6 & 0x3Fu) * 255u / 63u;
+    const uint32_t b = static_cast<uint32_t>(b6 & 0x3Fu) * 255u / 63u;
+    return 0xFF000000u | (r << 16u) | (g << 8u) | b;
+}
+
+static const char* generated_dynamic_target_db_path(void) {
+    const char* explicit_path = getenv("MZ2CPP_DYNAMIC_TARGET_DB");
+    if (explicit_path != NULL && explicit_path[0] != '\0') {
+        return explicit_path;
+    }
+    return "mz2cpp_dynamic_targets.txt";
+}
+
+static unsigned generated_is_in_original_image_range(uint16_t cs, uint16_t ip) {
+    const uint32_t phys = generated_phys(cs, ip);
+    return phys >= kGeneratedLoadModulePhysical && phys < kGeneratedImageEndPhysical;
+}
+
+static uint64_t generated_dynamic_target_key(uint16_t src_cs,
+                                             uint16_t src_ip,
+                                             uint16_t target_cs,
+                                             uint16_t target_ip) {
+    const uint32_t source = (((uint32_t)src_cs & 0xFFFFu) << 16u) | ((uint32_t)src_ip & 0xFFFFu);
+    const uint32_t target = (((uint32_t)target_cs & 0xFFFFu) << 16u) | ((uint32_t)target_ip & 0xFFFFu);
+    return ((uint64_t)source << 32u) | (uint64_t)target;
+}
+
+static void generated_load_dynamic_target_db(GeneratedHostState& h) {
+    if (h.dynamic_targets_loaded) {
+        return;
+    }
+    h.dynamic_targets_loaded = true;
+    {
+        FILE* file = fopen(generated_dynamic_target_db_path(), "rb");
+        if (file == NULL) {
+            return;
+        }
+        char line[128];
+        while (fgets(line, sizeof(line), file) != NULL) {
+            unsigned parsed_src_cs = 0u;
+            unsigned parsed_src_ip = 0u;
+            unsigned parsed_cs = 0u;
+            unsigned parsed_ip = 0u;
+            if (sscanf(line, "SRC %x:%x TARGET %x:%x", &parsed_src_cs, &parsed_src_ip, &parsed_cs, &parsed_ip) == 4) {
+                const uint64_t key =
+                    generated_dynamic_target_key((uint16_t)parsed_src_cs,
+                                                (uint16_t)parsed_src_ip,
+                                                (uint16_t)parsed_cs,
+                                                (uint16_t)parsed_ip);
+                h.persistent_dynamic_targets.insert(key);
+                continue;
+            }
+            if (sscanf(line, "PC %x:%x", &parsed_cs, &parsed_ip) == 2) {
+                const uint64_t key =
+                    generated_dynamic_target_key(0xFFFFu, 0xFFFFu, (uint16_t)parsed_cs, (uint16_t)parsed_ip);
+                h.persistent_dynamic_targets.insert(key);
+            }
+        }
+        fclose(file);
+    }
+}
+
+static void generated_append_text_line(const char* path, const char* text) {
+    if (path == NULL || path[0] == '\0' || text == NULL) {
+        return;
+    }
+    {
+        FILE* file = fopen(path, "ab");
+        if (file == NULL) {
+            return;
+        }
+        fprintf(file, "%s\n", text);
+        fclose(file);
+    }
+}
+
+std::chrono::microseconds generated_pit_period_for_divisor(uint16_t divisor) {
+    const uint64_t counts = divisor == 0u ? 65536ull : (uint64_t)divisor;
+    uint64_t us = (counts * 1000000ull + 596591ull) / 1193182ull;
+    if (us == 0ull) {
+        us = 1ull;
+    }
+    return std::chrono::microseconds(us);
+}
+
+GeneratedHostState& generated_host() {
+    static GeneratedHostState host_state = [] {
+        GeneratedHostState h;
+        size_t i = 0u;
+        while (i < h.palette.size()) {
+            const uint32_t c = static_cast<uint32_t>(i & 0xFFu);
+            h.palette[i] = 0xFF000000u | (c << 16u) | (c << 8u) | c;
+            ++i;
+        }
+        i = 0u;
+        while (i < 64u) {
+            h.palette[i] = generated_ega64_index_to_argb(static_cast<uint8_t>(i));
+            ++i;
+        }
+        i = 0u;
+        while (i < h.attr_palette.size()) {
+            h.attr_palette[i] = static_cast<uint8_t>(i);
+            ++i;
+        }
+        i = 0u;
+        while (i < h.planar.size()) {
+            h.planar[i].assign(0x10000u, 0u);
+            ++i;
+        }
+        return h;
+    }();
+    return host_state;
+}
+
+void generated_set_palette_index_alias(GeneratedHostState& h, uint8_t reg, uint8_t value) {
+    if (reg < h.attr_palette.size()) {
+        h.attr_palette[reg] = static_cast<uint8_t>(value & 0x3Fu);
+    }
+}
+
+void generated_set_palette_dac_entry(GeneratedHostState& h, uint16_t index, uint8_t r6, uint8_t g6, uint8_t b6) {
+    if (index < h.palette.size()) {
+        h.palette[index] = generated_vga_rgb6_to_argb(r6, g6, b6);
+    }
+}
+
+void generated_clear_word_latch(GeneratedHostState& h) {
+    h.gc_word_latch_valid = false;
+}
+
+void generated_reset_planar_state(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    size_t i = 0u;
+    h.attr_index = 0u;
+    h.attr_expect_data = false;
+    h.dac_write_index = 0u;
+    h.dac_component = 0u;
+    h.dac_triplet[0] = 0u;
+    h.dac_triplet[1] = 0u;
+    h.dac_triplet[2] = 0u;
+    h.sequencer_index = 0u;
+    h.sequencer_map_mask = 0x0Fu;
+    h.sequencer_map_mask_seen = (uint16_t)(1u << h.sequencer_map_mask);
+    h.graphics_index = 0u;
+    h.gc_set_reset = 0u;
+    h.gc_enable_set_reset = 0u;
+    h.gc_color_compare = 0u;
+    h.gc_data_rotate = 0u;
+    h.gc_read_map_select = 0u;
+    h.gc_mode = 0u;
+    h.gc_misc = 0u;
+    h.gc_color_dont_care = 0x0Fu;
+    h.gc_bit_mask = 0xFFu;
+    h.crtc_index = 0u;
+    h.crtc_start_addr = 0u;
+    h.mode0d_page_write_count = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    h.mode0d_plane_write_count = {0u, 0u, 0u, 0u};
+    h.mode0d_plane_nonzero_write_count = {0u, 0u, 0u, 0u};
+    h.mode0d_write_trace_count = 0u;
+    h.irq0_trace_count = 0u;
+    while (i < h.attr_palette.size()) {
+        h.attr_palette[i] = static_cast<uint8_t>(i);
+        ++i;
+    }
+    i = 0u;
+    while (i < 64u) {
+        h.palette[i] = generated_ega64_index_to_argb(static_cast<uint8_t>(i));
+        ++i;
+    }
+    generated_clear_word_latch(h);
+    i = 0u;
+    while (i < h.planar.size()) {
+        std::fill(h.planar[i].begin(), h.planar[i].end(), static_cast<uint8_t>(0u));
+        h.gc_latch[i] = 0u;
+        ++i;
+    }
+    if (state != NULL) {
+        std::fill(state->memory + kGeneratedGraphicsVideoPhys,
+                  state->memory + kGeneratedGraphicsVideoEndPhys,
+                  static_cast<uint8_t>(0u));
+    }
+}
+
+uint8_t generated_rotate_right8(uint8_t value, uint8_t count) {
+    count = static_cast<uint8_t>(count & 7u);
+    if (count == 0u) {
+        return value;
+    }
+    return static_cast<uint8_t>((value >> count) | (value << (8u - count)));
+}
+
+uint8_t generated_raster_op(uint8_t src, uint8_t latch, uint8_t op) {
+    switch (op & 0x03u) {
+    case 0u: return src;
+    case 1u: return static_cast<uint8_t>(src & latch);
+    case 2u: return static_cast<uint8_t>(src | latch);
+    default: return static_cast<uint8_t>(src ^ latch);
+    }
+}
+
+uint8_t generated_mode0d_peek_byte_no_latch(const GeneratedHostState& h, uint16_t off) {
+    if (off >= h.planar[0].size()) {
+        return 0u;
+    }
+    if (((h.gc_mode >> 3u) & 0x01u) == 0u) {
+        return h.planar[h.gc_read_map_select & 0x03u][off];
+    }
+    {
+        uint8_t out = 0u;
+        uint8_t bit = 0u;
+        while (bit < 8u) {
+            const uint8_t mask = static_cast<uint8_t>(0x80u >> bit);
+            uint8_t color = 0u;
+            uint8_t plane = 0u;
+            while (plane < 4u) {
+                color = static_cast<uint8_t>(color | (((h.planar[plane][off] & mask) ? 1u : 0u) << plane));
+                ++plane;
+            }
+            if ((((color ^ h.gc_color_compare) & h.gc_color_dont_care) & 0x0Fu) == 0u) {
+                out = static_cast<uint8_t>(out | mask);
+            }
+            ++bit;
+        }
+        return out;
+    }
+}
+
+uint8_t generated_mode0d_read_byte(const GeneratedRuntimeState*, uint16_t off) {
+    GeneratedHostState& h = generated_host();
+    if (off >= h.planar[0].size()) {
+        return 0u;
+    }
+    {
+        uint8_t plane = 0u;
+        while (plane < 4u) {
+            h.gc_latch[plane] = h.planar[plane][off];
+            ++plane;
+        }
+    }
+    if (((h.gc_mode >> 3u) & 0x01u) == 0u) {
+        return h.gc_latch[h.gc_read_map_select & 0x03u];
+    }
+    return generated_mode0d_peek_byte_no_latch(h, off);
+}
+
+void generated_mode0d_write_byte(GeneratedRuntimeState* state, uint16_t off, uint8_t value) {
+    GeneratedHostState& h = generated_host();
+    if (off >= h.planar[0].size()) {
+        return;
+    }
+    const uint8_t write_mode = static_cast<uint8_t>(h.gc_mode & 0x03u);
+    const uint8_t rotate = static_cast<uint8_t>(h.gc_data_rotate & 0x07u);
+    const uint8_t raster = static_cast<uint8_t>((h.gc_data_rotate >> 3u) & 0x03u);
+    const uint8_t bit_mask = h.gc_bit_mask;
+    const uint8_t rotated = generated_rotate_right8(value, rotate);
+    uint8_t plane = 0u;
+    while (plane < 4u) {
+        const uint8_t plane_mask = static_cast<uint8_t>(1u << plane);
+        const uint8_t latch = h.gc_latch[plane];
+        uint8_t result = h.planar[plane][off];
+        switch (write_mode) {
+        case 0u: {
+            uint8_t src = rotated;
+            if ((h.gc_enable_set_reset & plane_mask) != 0u) {
+                src = (h.gc_set_reset & plane_mask) ? 0xFFu : 0x00u;
+            }
+            src = generated_raster_op(src, latch, raster);
+            result = static_cast<uint8_t>((src & bit_mask) | (latch & static_cast<uint8_t>(~bit_mask)));
+            break;
+        }
+        case 1u:
+            result = latch;
+            break;
+        case 2u: {
+            uint8_t src = (value & plane_mask) ? 0xFFu : 0x00u;
+            src = generated_raster_op(src, latch, raster);
+            result = static_cast<uint8_t>((src & bit_mask) | (latch & static_cast<uint8_t>(~bit_mask)));
+            break;
+        }
+        default: {
+            const uint8_t src = (h.gc_set_reset & plane_mask) ? 0xFFu : 0x00u;
+            const uint8_t mask = static_cast<uint8_t>(rotated & bit_mask);
+            result = static_cast<uint8_t>((src & mask) | (latch & static_cast<uint8_t>(~mask)));
+            break;
+        }
+        }
+        if ((h.sequencer_map_mask & plane_mask) != 0u) {
+            h.planar[plane][off] = result;
+            ++h.mode0d_plane_write_count[plane];
+            if (result != 0u) {
+                ++h.mode0d_plane_nonzero_write_count[plane];
+            }
+        }
+        ++plane;
+    }
+    {
+        const char* trace_writes = getenv("MZ2CPP_TRACE_MODE0D_WRITES");
+        if (trace_writes != NULL && trace_writes[0] == '1' && h.mode0d_write_trace_count < 4096u) {
+            char trace_message[256];
+            snprintf(trace_message,
+                     sizeof(trace_message),
+                     "ip=%04X:%04X off=%04X value=%02X seq=%02X gcmode=%02X gr=%02X bitmask=%02X latch=[%02X,%02X,%02X,%02X] planes=[%02X,%02X,%02X,%02X]",
+                     (unsigned)state->cs,
+                     (unsigned)state->ip,
+                     (unsigned)off,
+                     (unsigned)value,
+                     (unsigned)h.sequencer_map_mask,
+                     (unsigned)h.gc_mode,
+                     (unsigned)h.gc_data_rotate,
+                     (unsigned)h.gc_bit_mask,
+                     (unsigned)h.gc_latch[0],
+                     (unsigned)h.gc_latch[1],
+                     (unsigned)h.gc_latch[2],
+                     (unsigned)h.gc_latch[3],
+                     (unsigned)h.planar[0][off],
+                     (unsigned)h.planar[1][off],
+                     (unsigned)h.planar[2][off],
+                     (unsigned)h.planar[3][off]);
+            generated_append_trace_line("mode0d_write", trace_message);
+            ++h.mode0d_write_trace_count;
+        }
+    }
+    ++h.mode0d_page_write_count[(off >> 13u) & 0x07u];
+    state->video_dirty = 1u;
+}
+
+void generated_mode0d_plot_pixel(GeneratedRuntimeState* state, uint16_t x, uint16_t y, uint8_t color, bool xor_mode) {
+    GeneratedHostState& h = generated_host();
+    if (x >= 320u || y >= 200u) {
+        return;
+    }
+    {
+        const uint16_t off = static_cast<uint16_t>(y * 40u + (x >> 3u));
+        const uint8_t mask = static_cast<uint8_t>(0x80u >> (x & 7u));
+        uint8_t pixel = static_cast<uint8_t>(color & 0x0Fu);
+        if (xor_mode) {
+            uint8_t old = 0u;
+            uint8_t plane = 0u;
+            while (plane < 4u) {
+                old = static_cast<uint8_t>(old | (((h.planar[plane][off] & mask) ? 1u : 0u) << plane));
+                ++plane;
+            }
+            pixel = static_cast<uint8_t>(pixel ^ old);
+        }
+        {
+            uint8_t plane = 0u;
+            while (plane < 4u) {
+                uint8_t* dst = &h.planar[plane][off];
+                if (((pixel >> plane) & 1u) != 0u) {
+                    *dst = static_cast<uint8_t>(*dst | mask);
+                } else {
+                    *dst = static_cast<uint8_t>(*dst & static_cast<uint8_t>(~mask));
+                }
+                ++plane;
+            }
+        }
+        state->memory[kGeneratedGraphicsVideoPhys + off] = generated_mode0d_peek_byte_no_latch(h, off);
+        state->video_dirty = 1u;
+    }
+}
+
+uint8_t generated_mode0d_read_pixel(uint16_t x, uint16_t y) {
+    GeneratedHostState& h = generated_host();
+    if (x >= 320u || y >= 200u) {
+        return 0u;
+    }
+    {
+        const uint16_t off = static_cast<uint16_t>(y * 40u + (x >> 3u));
+        const uint8_t mask = static_cast<uint8_t>(0x80u >> (x & 7u));
+        uint8_t pixel = 0u;
+        uint8_t plane = 0u;
+        while (plane < 4u) {
+            pixel = static_cast<uint8_t>(pixel | (((h.planar[plane][off] & mask) ? 1u : 0u) << plane));
+            ++plane;
+        }
+        return pixel;
+    }
+}
+
+void generated_apply_keyboard_scan_to_shift_flags(GeneratedRuntimeState* state, uint8_t scan_byte) {
+    const uint8_t scan = static_cast<uint8_t>(scan_byte & 0x7Fu);
+    const bool is_break = (scan_byte & 0x80u) != 0u;
+    switch (scan) {
+    case 0x2Au:
+        if (is_break) state->keyboard_shift_flags &= static_cast<uint8_t>(~0x02u);
+        else state->keyboard_shift_flags |= 0x02u;
+        break;
+    case 0x36u:
+        if (is_break) state->keyboard_shift_flags &= static_cast<uint8_t>(~0x01u);
+        else state->keyboard_shift_flags |= 0x01u;
+        break;
+    case 0x1Du:
+        if (is_break) state->keyboard_shift_flags &= static_cast<uint8_t>(~0x04u);
+        else state->keyboard_shift_flags |= 0x04u;
+        break;
+    case 0x38u:
+        if (is_break) state->keyboard_shift_flags &= static_cast<uint8_t>(~0x08u);
+        else state->keyboard_shift_flags |= 0x08u;
+        break;
+    default:
+        break;
+    }
+}
+
+void generated_blt_argb_frame(HWND hwnd, HDC dc, const std::vector<uint32_t>& frame, int width, int height) {
+    BITMAPINFO bmi{};
+    RECT rc{};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    GetClientRect(hwnd, &rc);
+    StretchDIBits(dc, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                  0, 0, width, height, frame.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
+}
+
+void generated_append_trace_line(const char* category, const char* message) {
+    const char* path = getenv("MZ2CPP_TRACE_FILE");
+    fprintf(stderr,
+            "%s: %s\n",
+            category != NULL ? category : "trace",
+            message != NULL ? message : "");
+    fflush(stderr);
+    if (path == NULL || path[0] == '\0') {
+        return;
+    }
+    {
+        FILE* file = fopen(path, "ab");
+        if (file == NULL) {
+            return;
+        }
+        fprintf(file,
+                "%s: %s\n",
+                category != NULL ? category : "trace",
+                message != NULL ? message : "");
+        fclose(file);
+    }
+}
+
+bool generated_parse_trace_word_addr(uint16_t* out_segment, uint16_t* out_offset) {
+    const char* spec = getenv("MZ2CPP_TRACE_WORD_ADDR");
+    unsigned seg = 0u;
+    unsigned off = 0u;
+    if (spec == NULL || spec[0] == '\0') {
+        return false;
+    }
+    if (spec[0] == '*' && spec[1] == ':') {
+        if (sscanf(spec + 2, "%x", &off) != 1) {
+            return false;
+        }
+        if (out_segment != NULL) {
+            *out_segment = 0xFFFFu;
+        }
+        if (out_offset != NULL) {
+            *out_offset = (uint16_t)(off & 0xFFFFu);
+        }
+        return true;
+    }
+    if (sscanf(spec, "%x:%x", &seg, &off) != 2) {
+        return false;
+    }
+    if (out_segment != NULL) {
+        *out_segment = (uint16_t)(seg & 0xFFFFu);
+    }
+    if (out_offset != NULL) {
+        *out_offset = (uint16_t)(off & 0xFFFFu);
+    }
+    return true;
+}
+
+bool generated_trace_word_addr_matches(uint16_t segment, uint16_t offset) {
+    uint16_t watch_segment = 0u;
+    uint16_t watch_offset = 0u;
+    if (!generated_parse_trace_word_addr(&watch_segment, &watch_offset)) {
+        return false;
+    }
+    if (offset != watch_offset) {
+        return false;
+    }
+    return watch_segment == 0xFFFFu || segment == watch_segment;
+}
+
+void generated_trace_word_access(const GeneratedRuntimeState* state,
+                                 const char* kind,
+                                 uint16_t segment,
+                                 uint16_t offset,
+                                 uint16_t value) {
+    char message[256];
+    snprintf(message,
+             sizeof(message),
+             "%s %04X:%04X=%04X cs:ip=%04X:%04X ds=%04X es=%04X ss=%04X sp=%04X",
+             kind != NULL ? kind : "word",
+             (unsigned)segment,
+             (unsigned)offset,
+             (unsigned)value,
+             state != NULL ? (unsigned)state->cs : 0u,
+             state != NULL ? (unsigned)state->ip : 0u,
+             state != NULL ? (unsigned)state->ds : 0u,
+             state != NULL ? (unsigned)state->es : 0u,
+             state != NULL ? (unsigned)state->ss : 0u,
+             state != NULL ? (unsigned)state->sp : 0u);
+    generated_append_trace_line("word", message);
+}
+
+void generated_render_mode0d_page_to_frame(GeneratedHostState& h, uint16_t base, std::vector<uint32_t>* out_frame) {
+    if (out_frame == NULL) {
+        return;
+    }
+    if (out_frame->size() != 320u * 200u) {
+        out_frame->assign(320u * 200u, 0u);
+    }
+    {
+        uint16_t y = 0u;
+        while (y < 200u) {
+            uint16_t xb = 0u;
+            while (xb < 40u) {
+                const uint16_t off = static_cast<uint16_t>(base + y * 40u + xb);
+                const uint8_t p0 = h.planar[0][off];
+                const uint8_t p1 = h.planar[1][off];
+                const uint8_t p2 = h.planar[2][off];
+                const uint8_t p3 = h.planar[3][off];
+                uint8_t bit = 0u;
+                while (bit < 8u) {
+                    const uint8_t mask = static_cast<uint8_t>(0x80u >> bit);
+                    uint8_t pix = 0u;
+                    pix = static_cast<uint8_t>(pix | ((p0 & mask) ? 1u : 0u));
+                    pix = static_cast<uint8_t>(pix | (((p1 & mask) ? 1u : 0u) << 1u));
+                    pix = static_cast<uint8_t>(pix | (((p2 & mask) ? 1u : 0u) << 2u));
+                    pix = static_cast<uint8_t>(pix | (((p3 & mask) ? 1u : 0u) << 3u));
+                    (*out_frame)[(size_t)y * 320u + (size_t)xb * 8u + bit] =
+                        h.palette[h.attr_palette[pix & 0x0Fu] & 0xFFu];
+                    ++bit;
+                }
+                ++xb;
+            }
+            ++y;
+        }
+    }
+}
+
+LRESULT CALLBACK GeneratedHostWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    GeneratedHostState& h = generated_host();
+    switch (msg) {
+    case WM_TIMER:
+        if (wparam == kGeneratedPresentTimerId && g_generated_active_state != NULL && g_generated_active_state->video_dirty != 0u) {
+            generated_present_video(g_generated_active_state);
+            g_generated_active_state->video_dirty = 0u;
+            h.next_present = std::chrono::steady_clock::now() + std::chrono::milliseconds(16);
+            return 0;
+        }
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        if (dc != NULL) {
+            if (h.frame_argb.size() == 320u * 200u) {
+                generated_blt_argb_frame(hwnd, dc, h.frame_argb, 320, 200);
+            } else {
+                RECT rc{};
+                HBRUSH black = CreateSolidBrush(RGB(0, 0, 0));
+                GetClientRect(hwnd, &rc);
+                FillRect(dc, &rc, black);
+                DeleteObject(black);
+            }
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_DESTROY:
+        KillTimer(hwnd, kGeneratedPresentTimerId);
+        if (g_generated_active_state != NULL) {
+            g_generated_active_state->terminated = 1u;
+            g_generated_active_state->exit_code = 0u;
+        }
+        PostQuitMessage(0);
+        h.hwnd = NULL;
+        return 0;
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN: {
+        const bool was_down = (lparam & 0x40000000u) != 0;
+        UINT scan_code = static_cast<UINT>((lparam >> 16) & 0xFFu);
+        if (scan_code == 0u) {
+            scan_code = MapVirtualKeyA(static_cast<UINT>(wparam), MAPVK_VK_TO_VSC);
+        }
+        {
+            const uint16_t scan = static_cast<uint16_t>(scan_code & 0xFFu);
+            if (was_down || h.key_down.find(scan) != h.key_down.end()) {
+                return 0;
+            }
+            h.key_down.insert(scan);
+            BYTE key_state[256];
+            WORD translated = 0;
+            unsigned char ascii = 0u;
+            if (!GetKeyboardState(key_state)) {
+                memset(key_state, 0, sizeof(key_state));
+            }
+            if (ToAscii(static_cast<UINT>(wparam), scan_code, key_state, &translated, 0) == 1) {
+                ascii = static_cast<unsigned char>(translated & 0x00FFu);
+            }
+            if (g_generated_active_state != NULL) {
+                generated_apply_keyboard_scan_to_shift_flags(g_generated_active_state, static_cast<uint8_t>(scan));
+            }
+            h.keyboard_scan_queue.push_back(static_cast<uint8_t>(scan));
+            h.key_queue.push_back(static_cast<uint16_t>((scan << 8u) | ascii));
+        }
+        return 0;
+    }
+    case WM_KEYUP:
+    case WM_SYSKEYUP: {
+        uint16_t scan = static_cast<uint16_t>((static_cast<UINT>(lparam >> 16) & 0xFFu));
+        if (scan == 0u) {
+            scan = static_cast<uint16_t>(MapVirtualKeyA(static_cast<UINT>(wparam), MAPVK_VK_TO_VSC) & 0xFFu);
+        }
+        if (scan != 0u) {
+            if (g_generated_active_state != NULL) {
+                generated_apply_keyboard_scan_to_shift_flags(g_generated_active_state, static_cast<uint8_t>(scan | 0x80u));
+            }
+            h.keyboard_scan_queue.push_back(static_cast<uint8_t>(scan | 0x80u));
+            h.key_down.erase(scan);
+        }
+        return 0;
+    }
+    case WM_KILLFOCUS:
+        if (g_generated_active_state != NULL) {
+            for (std::unordered_set<uint16_t>::const_iterator it = h.key_down.begin(); it != h.key_down.end(); ++it) {
+                generated_apply_keyboard_scan_to_shift_flags(g_generated_active_state, static_cast<uint8_t>((*it & 0x00FFu) | 0x80u));
+            }
+        }
+        h.key_down.clear();
+        return 0;
+    default:
+        return DefWindowProcA(hwnd, msg, wparam, lparam);
+    }
+}
+
+void generated_ensure_window(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    (void)state;
+    if (!h.window_class_registered) {
+        WNDCLASSA wc{};
+        wc.lpfnWndProc = GeneratedHostWindowProc;
+        wc.hInstance = GetModuleHandleA(NULL);
+        wc.lpszClassName = "mz2cpp_generated_window";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        if (!RegisterClassA(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+            return;
+        }
+        h.window_class_registered = true;
+    }
+    if (h.hwnd == NULL) {
+        h.hwnd = CreateWindowExA(0, "mz2cpp_generated_window", "MZEXE2CPP Generated Game",
+                                 WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                                 CW_USEDEFAULT, CW_USEDEFAULT, 960, 720,
+                                 NULL, NULL, GetModuleHandleA(NULL), NULL);
+        if (h.hwnd != NULL) {
+            ShowWindow(h.hwnd, SW_SHOW);
+            SetForegroundWindow(h.hwnd);
+            SetFocus(h.hwnd);
+            SetTimer(h.hwnd, kGeneratedPresentTimerId, 16u, NULL);
+        }
+    }
+}
+
+void generated_pump_messages(void) {
+    MSG msg;
+    while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+}
+
+void generated_present_mode13(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    if (h.hwnd == NULL) {
+        return;
+    }
+    if (h.frame_argb.size() != 320u * 200u) {
+        h.frame_argb.assign(320u * 200u, 0u);
+    }
+    {
+        size_t i = 0u;
+        while (i < h.frame_argb.size()) {
+            const uint8_t idx = state->memory[kGeneratedGraphicsVideoPhys + i];
+            h.frame_argb[i] = h.palette[idx];
+            ++i;
+        }
+    }
+    BITMAPINFO bmi{};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = 320;
+    bmi.bmiHeader.biHeight = -200;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    RECT rc{};
+    GetClientRect(h.hwnd, &rc);
+    HDC dc = GetDC(h.hwnd);
+    StretchDIBits(dc, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                  0, 0, 320, 200, h.frame_argb.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
+    ReleaseDC(h.hwnd, dc);
+}
+
+uint16_t generated_pick_mode0d_present_base(const GeneratedHostState& h) {
+    {
+        const char* forced_page_text = getenv("MZ2CPP_MODE0D_PAGE");
+        if (forced_page_text != NULL && forced_page_text[0] != '\0') {
+            char* end = NULL;
+            const long forced_page = strtol(forced_page_text, &end, 0);
+            if (end != forced_page_text && forced_page >= 0 && forced_page < 8) {
+                return (uint16_t)((uint16_t)forced_page * 0x2000u);
+            }
+        }
+    }
+
+    return h.crtc_start_addr;
+}
+
+void generated_present_mode0d(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    if (h.hwnd == NULL) {
+        return;
+    }
+    if (h.frame_argb.size() != 320u * 200u) {
+        h.frame_argb.assign(320u * 200u, 0u);
+    }
+    {
+        const uint16_t base = generated_pick_mode0d_present_base(h);
+        generated_render_mode0d_page_to_frame(h, base, &h.frame_argb);
+    }
+    BITMAPINFO bmi{};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = 320;
+    bmi.bmiHeader.biHeight = -200;
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    RECT rc{};
+    GetClientRect(h.hwnd, &rc);
+    HDC dc = GetDC(h.hwnd);
+    StretchDIBits(dc, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                  0, 0, 320, 200, h.frame_argb.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
+    ReleaseDC(h.hwnd, dc);
+    (void)state;
+}
+
+void generated_present_video(GeneratedRuntimeState* state) {
+    generated_ensure_window(state);
+    if (generated_host().hwnd == NULL) {
+        return;
+    }
+    if (state->video_mode == 0x0013u) {
+        generated_present_mode13(state);
+    } else if (state->video_mode == 0x000Du) {
+        generated_present_mode0d(state);
+    }
+}
+
+unsigned generated_phys_is_video(uint32_t phys) {
+    return phys >= kGeneratedGraphicsVideoPhys && phys < kGeneratedGraphicsVideoEndPhys;
+}
+
+} // namespace
+
+static unsigned generated_trace_env_enabled(const char* name);
+
+const GeneratedNamedStaticSymbol* generated_find_named_static_symbol_covering_phys(uint32_t physical, size_t* byte_offset) {
+    return generated_find_region_covering_impl(
+        kGeneratedNamedStaticSymbols,
+        kGeneratedNamedStaticSymbolCount,
+        physical,
+        byte_offset,
+        [](const GeneratedNamedStaticSymbol& symbol) { return symbol.physical; },
+        [](const GeneratedNamedStaticSymbol& symbol) { return symbol.size; });
+}
+
+const GeneratedNamedStaticSymbol* generated_find_named_static_symbol_covering(uint16_t segment,
+                                                                              uint16_t offset,
+                                                                              size_t* byte_offset) {
+    return generated_find_named_static_symbol_covering_phys(generated_phys(segment, offset), byte_offset);
+}
+
+const GeneratedMemoryRegion* generated_find_code_region_covering_phys(uint32_t physical, size_t* byte_offset) {
+    return generated_find_region_covering_impl(
+        kGeneratedCodeRegions,
+        kGeneratedCodeRegionCount,
+        physical,
+        byte_offset,
+        [](const GeneratedMemoryRegion& region) { return region.physical; },
+        [](const GeneratedMemoryRegion& region) { return region.size; });
+}
+
+const GeneratedMemoryRegion* generated_find_residual_region_covering_phys(uint32_t physical, size_t* byte_offset) {
+    return generated_find_region_covering_impl(
+        kGeneratedResidualRegions,
+        kGeneratedResidualRegionCount,
+        physical,
+        byte_offset,
+        [](const GeneratedMemoryRegion& region) { return region.physical; },
+        [](const GeneratedMemoryRegion& region) { return region.size; });
+}
+
+unsigned generated_is_in_named_static_region(uint16_t segment, uint16_t offset) {
+    return generated_find_named_static_symbol_covering(segment, offset, NULL) != NULL;
+}
+
+unsigned generated_is_named_static_readonly(uint16_t segment, uint16_t offset) {
+    const GeneratedNamedStaticSymbol* symbol = generated_find_named_static_symbol_covering(segment, offset, NULL);
+    return symbol != NULL && symbol->writable == 0u;
+}
+
+unsigned char generated_read_static_u8_phys(const GeneratedRuntimeState* state, uint32_t physical) {
+    return state->memory[physical & 0xFFFFFu];
+}
+
+uint16_t generated_read_static_u16_phys(const GeneratedRuntimeState* state, uint32_t physical) {
+    const uint32_t lo_phys = physical & 0xFFFFFu;
+    const uint32_t hi_phys = (physical + 1u) & 0xFFFFFu;
+    return static_cast<uint16_t>(state->memory[lo_phys]) |
+           static_cast<uint16_t>(static_cast<uint16_t>(state->memory[hi_phys]) << 8u);
+}
+
+void generated_write_static_u8_phys(GeneratedRuntimeState* state, uint32_t physical, unsigned char value) {
+    state->memory[physical & 0xFFFFFu] = value;
+}
+
+void generated_write_static_u16_phys(GeneratedRuntimeState* state, uint32_t physical, uint16_t value) {
+    const uint32_t lo_phys = physical & 0xFFFFFu;
+    const uint32_t hi_phys = (physical + 1u) & 0xFFFFFu;
+    state->memory[lo_phys] = static_cast<unsigned char>(value & 0x00FFu);
+    state->memory[hi_phys] = static_cast<unsigned char>((value >> 8u) & 0x00FFu);
+}
+
+unsigned char generated_read_u8(const GeneratedRuntimeState* state, uint16_t segment, uint16_t offset) {
+    const uint32_t phys = generated_phys(segment, offset);
+    if (state->video_mode == 0x000Du && phys >= kGeneratedGraphicsVideoPhys && phys < kGeneratedGraphicsVideoEndPhys) {
+        GeneratedHostState& h = generated_host();
+        generated_clear_word_latch(h);
+        return generated_mode0d_read_byte(state, static_cast<uint16_t>(phys - kGeneratedGraphicsVideoPhys));
+    }
+    return state->memory[phys];
+}
+
+uint16_t generated_read_u16(const GeneratedRuntimeState* state, uint16_t segment, uint16_t offset) {
+    const uint32_t phys = generated_phys(segment, offset);
+    if (state->video_mode == 0x000Du && phys >= kGeneratedGraphicsVideoPhys && (phys + 1u) < kGeneratedGraphicsVideoEndPhys) {
+        GeneratedHostState& h = generated_host();
+        const uint16_t poff = static_cast<uint16_t>(phys - kGeneratedGraphicsVideoPhys);
+        const uint16_t lo = generated_mode0d_read_byte(state, poff);
+        h.gc_word_latch_lo = h.gc_latch;
+        const uint16_t hi = generated_mode0d_read_byte(state, static_cast<uint16_t>(poff + 1u));
+        h.gc_word_latch_hi = h.gc_latch;
+        h.gc_word_latch_off = poff;
+        h.gc_word_latch_valid = true;
+        {
+            const uint16_t value = static_cast<uint16_t>(lo | (hi << 8u));
+            if (generated_trace_word_addr_matches(segment, offset)) {
+                generated_trace_word_access(state, "read", segment, offset, value);
+            }
+            return value;
+        }
+    }
+    {
+        const uint16_t value = (uint16_t)state->memory[phys] | (uint16_t)(state->memory[(phys + 1u) & 0xFFFFFu] << 8u);
+        if (generated_trace_word_addr_matches(segment, offset)) {
+            generated_trace_word_access(state, "read", segment, offset, value);
+        }
+        return value;
+    }
+}
+
+void generated_write_u8(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, unsigned char value) {
+    const uint32_t phys = generated_phys(segment, offset);
+    if (state->video_mode == 0x000Du && phys >= kGeneratedGraphicsVideoPhys && phys < kGeneratedGraphicsVideoEndPhys) {
+        GeneratedHostState& h = generated_host();
+        const uint16_t poff = static_cast<uint16_t>(phys - kGeneratedGraphicsVideoPhys);
+        generated_clear_word_latch(h);
+        generated_mode0d_write_byte(state, poff, value);
+        state->memory[phys] = generated_mode0d_peek_byte_no_latch(h, poff);
+        ++state->host_video_write_count;
+        return;
+    }
+    state->memory[phys] = value;
+    if (generated_phys_is_video(phys)) {
+        state->video_dirty = 1u;
+        ++state->host_video_write_count;
+    }
+}
+
+void generated_write_u16(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, uint16_t value) {
+    const uint32_t phys = generated_phys(segment, offset);
+    if (state->video_mode == 0x000Du && phys >= kGeneratedGraphicsVideoPhys && (phys + 1u) < kGeneratedGraphicsVideoEndPhys) {
+        GeneratedHostState& h = generated_host();
+        const uint16_t poff = static_cast<uint16_t>(phys - kGeneratedGraphicsVideoPhys);
+        if (h.gc_word_latch_valid && h.gc_word_latch_off == poff) {
+            h.gc_latch = h.gc_word_latch_lo;
+            generated_mode0d_write_byte(state, poff, static_cast<uint8_t>(value & 0x00FFu));
+            state->memory[phys] = generated_mode0d_peek_byte_no_latch(h, poff);
+            h.gc_latch = h.gc_word_latch_hi;
+            generated_mode0d_write_byte(state, static_cast<uint16_t>(poff + 1u), static_cast<uint8_t>((value >> 8u) & 0x00FFu));
+            state->memory[phys + 1u] = generated_mode0d_peek_byte_no_latch(h, static_cast<uint16_t>(poff + 1u));
+            generated_clear_word_latch(h);
+            state->host_video_write_count += 2u;
+            if (generated_trace_word_addr_matches(segment, offset)) {
+                generated_trace_word_access(state, "write", segment, offset, value);
+            }
+            return;
+        }
+        generated_clear_word_latch(h);
+    }
+    generated_write_u8(state, segment, offset, (unsigned char)(value & 0x00FFu));
+    generated_write_u8(state, segment, (uint16_t)(offset + 1u), (unsigned char)((value >> 8u) & 0x00FFu));
+    if (generated_trace_word_addr_matches(segment, offset)) {
+        generated_trace_word_access(state, "write", segment, offset, value);
+    }
+}
+
+GENERATED_NOINLINE unsigned char generated_get_reg8(const GeneratedRuntimeState* state, unsigned index) {
+    const uint16_t value = (index & 0x03u) == 0u ? state->ax :
+                           (index & 0x03u) == 1u ? state->cx :
+                           (index & 0x03u) == 2u ? state->dx :
+                                                  state->bx;
+    if ((index & 0x04u) != 0u) {
+        return static_cast<unsigned char>((value >> 8u) & 0x00FFu);
+    }
+    return static_cast<unsigned char>(value & 0x00FFu);
+}
+
+GENERATED_NOINLINE void generated_set_reg8(GeneratedRuntimeState* state, unsigned index, unsigned char value) {
+    uint16_t* reg = (index & 0x03u) == 0u ? &state->ax :
+                    (index & 0x03u) == 1u ? &state->cx :
+                    (index & 0x03u) == 2u ? &state->dx :
+                                           &state->bx;
+    if ((index & 0x04u) != 0u) {
+        *reg = static_cast<uint16_t>((*reg & 0x00FFu) | (static_cast<uint16_t>(value) << 8u));
+    } else {
+        *reg = static_cast<uint16_t>((*reg & 0xFF00u) | static_cast<uint16_t>(value));
+    }
+}
+
+void generated_set_flag(GeneratedRuntimeState* state, uint16_t mask, unsigned value) {
+    if (value) {
+        state->flags |= mask;
+    } else {
+        state->flags &= (uint16_t)~mask;
+    }
+}
+
+unsigned generated_get_flag(const GeneratedRuntimeState* state, uint16_t mask) {
+    return (state->flags & mask) != 0u;
+}
+
+static unsigned generated_even_parity8(unsigned char value) {
+    value ^= (unsigned char)(value >> 4u);
+    value &= 0x0Fu;
+    return ((0x6996u >> value) & 1u) != 0u;
+}
+
+unsigned generated_parity_u8(unsigned char value) {
+    return generated_even_parity8(value);
+}
+
+static void generated_set_logic_flags8(GeneratedRuntimeState* state, unsigned char value) {
+    generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (value & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, value == 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(value));
+}
+
+static void generated_set_logic_flags16(GeneratedRuntimeState* state, uint16_t value) {
+    generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (value & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, value == 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)value));
+}
+
+unsigned char generated_logic_u8(GeneratedRuntimeState* state, unsigned char value) {
+    generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_AF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (value & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, value == 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(value));
+    return value;
+}
+
+uint16_t generated_logic_u16(GeneratedRuntimeState* state, uint16_t value) {
+    generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_AF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (value & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, value == 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)value));
+    return value;
+}
+
+unsigned char generated_add_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right) {
+    const unsigned result32 = (unsigned)left + (unsigned)right;
+    const unsigned char result8 = (unsigned char)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result8 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result8 & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result8));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ right ^ result8) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ result8) & (right ^ result8) & 0x80u) != 0u);
+    return result8;
+}
+
+uint16_t generated_add_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right) {
+    const uint32_t result32 = (uint32_t)left + (uint32_t)right;
+    const uint16_t result16 = (uint16_t)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result16 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result16 & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result16));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ right ^ result16) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ result16) & (right ^ result16) & 0x8000u) != 0u);
+    return result16;
+}
+
+unsigned char generated_sub_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right) {
+    const unsigned result32 = (unsigned)left - (unsigned)right;
+    const unsigned char result8 = (unsigned char)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result8 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result8 & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result8));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ right ^ result8) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ right) & (left ^ result8) & 0x80u) != 0u);
+    return result8;
+}
+
+uint16_t generated_sub_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right) {
+    const uint32_t result32 = (uint32_t)left - (uint32_t)right;
+    const uint16_t result16 = (uint16_t)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result16 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result16 & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result16));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ right ^ result16) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ right) & (left ^ result16) & 0x8000u) != 0u);
+    return result16;
+}
+
+unsigned char generated_inc_u8(GeneratedRuntimeState* state, unsigned char value) {
+    const unsigned char result = (unsigned char)(value + 1u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((value ^ 0x01u ^ result) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, value == 0x7Fu);
+    return result;
+}
+
+unsigned char generated_dec_u8(GeneratedRuntimeState* state, unsigned char value) {
+    const unsigned char result = (unsigned char)(value - 1u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((value ^ 0x01u ^ result) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, value == 0x80u);
+    return result;
+}
+
+uint16_t generated_inc_u16(GeneratedRuntimeState* state, uint16_t value) {
+    const uint16_t result = (uint16_t)(value + 1u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((value ^ 0x0001u ^ result) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, value == 0x7FFFu);
+    return result;
+}
+
+uint16_t generated_dec_u16(GeneratedRuntimeState* state, uint16_t value) {
+    const uint16_t result = (uint16_t)(value - 1u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((value ^ 0x0001u ^ result) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, value == 0x8000u);
+    return result;
+}
+
+unsigned char generated_neg_u8(GeneratedRuntimeState* state, unsigned char value) {
+    const unsigned char result = (unsigned char)(0u - (unsigned)value);
+    generated_set_flag(state, GENERATED_FLAG_CF, value != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((value ^ result) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, value == 0x80u);
+    return result;
+}
+
+uint16_t generated_neg_u16(GeneratedRuntimeState* state, uint16_t value) {
+    const uint16_t result = (uint16_t)(0u - (unsigned)value);
+    generated_set_flag(state, GENERATED_FLAG_CF, value != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((value ^ result) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, value == 0x8000u);
+    return result;
+}
+
+unsigned char generated_adc_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right) {
+    const unsigned rhs = (unsigned)right + (generated_get_flag(state, GENERATED_FLAG_CF) ? 1u : 0u);
+    const unsigned result32 = (unsigned)left + rhs;
+    const unsigned char result8 = (unsigned char)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result8 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result8 & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result8));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ rhs ^ result8) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ result8) & (rhs ^ result8) & 0x80u) != 0u);
+    return result8;
+}
+
+uint16_t generated_adc_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right) {
+    const unsigned rhs = (unsigned)right + (generated_get_flag(state, GENERATED_FLAG_CF) ? 1u : 0u);
+    const uint32_t result32 = (uint32_t)left + rhs;
+    const uint16_t result16 = (uint16_t)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result16 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result16 & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result16));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ rhs ^ result16) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ result16) & (rhs ^ result16) & 0x8000u) != 0u);
+    return result16;
+}
+
+unsigned char generated_sbb_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right) {
+    const unsigned rhs = (unsigned)right + (generated_get_flag(state, GENERATED_FLAG_CF) ? 1u : 0u);
+    const unsigned result32 = (unsigned)left - rhs;
+    const unsigned char result8 = (unsigned char)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result8 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result8 & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result8));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ rhs ^ result8) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ rhs) & (left ^ result8) & 0x80u) != 0u);
+    return result8;
+}
+
+uint16_t generated_sbb_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right) {
+    const unsigned rhs = (unsigned)right + (generated_get_flag(state, GENERATED_FLAG_CF) ? 1u : 0u);
+    const uint32_t result32 = (uint32_t)left - rhs;
+    const uint16_t result16 = (uint16_t)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result16 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result16 & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result16));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ rhs ^ result16) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ rhs) & (left ^ result16) & 0x8000u) != 0u);
+    return result16;
+}
+
+void generated_finish_shift_u8(GeneratedRuntimeState* state, unsigned char value, unsigned of) {
+    generated_set_flag(state, GENERATED_FLAG_OF, of);
+    generated_set_flag(state, GENERATED_FLAG_AF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (value & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, value == 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(value));
+}
+
+void generated_finish_shift_u16(GeneratedRuntimeState* state, uint16_t value, unsigned of) {
+    generated_set_flag(state, GENERATED_FLAG_OF, of);
+    generated_set_flag(state, GENERATED_FLAG_AF, 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (value & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_ZF, value == 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)value));
+}
+
+unsigned char generated_shift_rotate_u8(GeneratedRuntimeState* state,
+                                        unsigned reg_field,
+                                        unsigned char value,
+                                        unsigned steps) {
+    if (steps == 0u) {
+        return value;
+    }
+    unsigned char old = value;
+    for (unsigned index = 0u; index < steps; ++index) {
+        old = value;
+        switch (reg_field) {
+        case 0u:
+            value = (unsigned char)(((value << 1u) | (value >> 7u)) & 0xFFu);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x80u) != 0u);
+            break;
+        case 1u:
+            value = (unsigned char)(((value >> 1u) | (value << 7u)) & 0xFFu);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x01u) != 0u);
+            break;
+        case 2u: {
+            const unsigned char carry = generated_get_flag(state, GENERATED_FLAG_CF) ? 1u : 0u;
+            value = (unsigned char)(((value << 1u) | carry) & 0xFFu);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x80u) != 0u);
+            break;
+        }
+        case 3u: {
+            const unsigned char carry = generated_get_flag(state, GENERATED_FLAG_CF) ? 0x80u : 0u;
+            value = (unsigned char)(((value >> 1u) | carry) & 0xFFu);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x01u) != 0u);
+            break;
+        }
+        case 4u:
+            value = (unsigned char)((value << 1u) & 0xFFu);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x80u) != 0u);
+            break;
+        case 5u:
+            value = (unsigned char)(value >> 1u);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x01u) != 0u);
+            break;
+        case 7u:
+            value = (unsigned char)(((value >> 1u) | (value & 0x80u)) & 0xFFu);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x01u) != 0u);
+            break;
+        default:
+            return value;
+        }
+    }
+
+    switch (reg_field) {
+    case 0u:
+    case 2u:
+        generated_set_flag(state, GENERATED_FLAG_OF, ((value & 0x80u) != 0u) != (generated_get_flag(state, GENERATED_FLAG_CF) != 0u));
+        break;
+    case 1u:
+    case 3u:
+        generated_set_flag(state, GENERATED_FLAG_OF, ((value & 0x80u) != 0u) != ((value & 0x40u) != 0u));
+        break;
+    case 4u:
+        generated_finish_shift_u8(state, value, ((old ^ value) & 0x80u) != 0u);
+        break;
+    case 5u:
+        generated_finish_shift_u8(state, value, (old & 0x80u) != 0u);
+        break;
+    case 7u:
+        generated_finish_shift_u8(state, value, 0u);
+        break;
+    default:
+        break;
+    }
+    return value;
+}
+
+uint16_t generated_shift_rotate_u16(GeneratedRuntimeState* state,
+                                    unsigned reg_field,
+                                    uint16_t value,
+                                    unsigned steps) {
+    if (steps == 0u) {
+        return value;
+    }
+    uint16_t old = value;
+    for (unsigned index = 0u; index < steps; ++index) {
+        old = value;
+        switch (reg_field) {
+        case 0u:
+            value = (uint16_t)((value << 1u) | (value >> 15u));
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x8000u) != 0u);
+            break;
+        case 1u:
+            value = (uint16_t)((value >> 1u) | (value << 15u));
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x0001u) != 0u);
+            break;
+        case 2u: {
+            const uint16_t carry = generated_get_flag(state, GENERATED_FLAG_CF) ? 1u : 0u;
+            value = (uint16_t)((value << 1u) | carry);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x8000u) != 0u);
+            break;
+        }
+        case 3u: {
+            const uint16_t carry = generated_get_flag(state, GENERATED_FLAG_CF) ? 0x8000u : 0u;
+            value = (uint16_t)((value >> 1u) | carry);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x0001u) != 0u);
+            break;
+        }
+        case 4u:
+            value = (uint16_t)(value << 1u);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x8000u) != 0u);
+            break;
+        case 5u:
+            value = (uint16_t)(value >> 1u);
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x0001u) != 0u);
+            break;
+        case 7u:
+            value = (uint16_t)((value >> 1u) | (value & 0x8000u));
+            generated_set_flag(state, GENERATED_FLAG_CF, (old & 0x0001u) != 0u);
+            break;
+        default:
+            return value;
+        }
+    }
+
+    switch (reg_field) {
+    case 0u:
+    case 2u:
+        generated_set_flag(state, GENERATED_FLAG_OF, ((value & 0x8000u) != 0u) != (generated_get_flag(state, GENERATED_FLAG_CF) != 0u));
+        break;
+    case 1u:
+    case 3u:
+        generated_set_flag(state, GENERATED_FLAG_OF, ((value & 0x8000u) != 0u) != ((value & 0x4000u) != 0u));
+        break;
+    case 4u:
+        generated_finish_shift_u16(state, value, ((old ^ value) & 0x8000u) != 0u);
+        break;
+    case 5u:
+        generated_finish_shift_u16(state, value, (old & 0x8000u) != 0u);
+        break;
+    case 7u:
+        generated_finish_shift_u16(state, value, 0u);
+        break;
+    default:
+        break;
+    }
+    return value;
+}
+
+void generated_mul_u8(GeneratedRuntimeState* state, unsigned char multiplier) {
+    const unsigned int result16 = (unsigned int)generated_get_reg8(state, 0u) * (unsigned int)multiplier;
+    state->ax = (uint16_t)(result16 & 0xFFFFu);
+    generated_set_flag(state, GENERATED_FLAG_CF, (result16 & 0xFF00u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, (result16 & 0xFF00u) != 0u);
+}
+
+void generated_imul_u8(GeneratedRuntimeState* state, unsigned char multiplier) {
+    const signed char left = (signed char)generated_get_reg8(state, 0u);
+    const signed char right = (signed char)multiplier;
+    const int result16 = (int)left * (int)right;
+    state->ax = (uint16_t)(result16 & 0xFFFFu);
+    const signed char low = (signed char)(result16 & 0x00FF);
+    generated_set_flag(state, GENERATED_FLAG_CF, result16 != (int)low);
+    generated_set_flag(state, GENERATED_FLAG_OF, result16 != (int)low);
+}
+
+void generated_mul_u16(GeneratedRuntimeState* state, uint16_t multiplier) {
+    const unsigned int result32 = (unsigned int)state->ax * (unsigned int)multiplier;
+    state->ax = (uint16_t)(result32 & 0xFFFFu);
+    state->dx = (uint16_t)(result32 >> 16u);
+    generated_set_flag(state, GENERATED_FLAG_CF, state->dx != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, state->dx != 0u);
+}
+
+void generated_cmp_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right) {
+    const uint32_t result32 = (uint32_t)left - (uint32_t)right;
+    const uint16_t result16 = (uint16_t)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result16 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result16 & 0x8000u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8((unsigned char)result16));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ right ^ result16) & 0x0010u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ right) & (left ^ result16) & 0x8000u) != 0u);
+}
+
+void generated_cmp_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right) {
+    const unsigned result32 = (unsigned)left - (unsigned)right;
+    const unsigned char result8 = (unsigned char)result32;
+    generated_set_flag(state, GENERATED_FLAG_CF, result32 > 0xFFu);
+    generated_set_flag(state, GENERATED_FLAG_ZF, result8 == 0u);
+    generated_set_flag(state, GENERATED_FLAG_SF, (result8 & 0x80u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_PF, generated_even_parity8(result8));
+    generated_set_flag(state, GENERATED_FLAG_AF, ((left ^ right ^ result8) & 0x10u) != 0u);
+    generated_set_flag(state, GENERATED_FLAG_OF, ((left ^ right) & (left ^ result8) & 0x80u) != 0u);
+}
+
+void generated_test_u8(GeneratedRuntimeState* state, unsigned char left, unsigned char right) {
+    generated_set_logic_flags8(state, (unsigned char)(left & right));
+}
+
+void generated_test_u16(GeneratedRuntimeState* state, uint16_t left, uint16_t right) {
+    generated_set_logic_flags16(state, (uint16_t)(left & right));
+}
+
+void generated_and_u8_direct(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, unsigned char imm) {
+    const unsigned char result = (unsigned char)(generated_read_u8(state, segment, offset) & imm);
+    generated_write_u8(state, segment, offset, result);
+    generated_set_logic_flags8(state, result);
+}
+
+void generated_push_u16(GeneratedRuntimeState* state, uint16_t value) {
+    state->sp = (uint16_t)(state->sp - 2u);
+    generated_write_u16(state, state->ss, state->sp, value);
+}
+
+uint16_t generated_pop_u16(GeneratedRuntimeState* state) {
+    const uint16_t value = generated_read_u16(state, state->ss, state->sp);
+    state->sp = (uint16_t)(state->sp + 2u);
+    return value;
+}
+
+void generated_push_regs_ax_bx_cx_dx_bp_si_di_es_ds(GeneratedRuntimeState* state) {
+    generated_push_u16(state, state->ax);
+    generated_push_u16(state, state->bx);
+    generated_push_u16(state, state->cx);
+    generated_push_u16(state, state->dx);
+    generated_push_u16(state, state->bp);
+    generated_push_u16(state, state->si);
+    generated_push_u16(state, state->di);
+    generated_push_u16(state, state->es);
+    generated_push_u16(state, state->ds);
+}
+
+void generated_pop_regs_ds_es_di_si_bp_dx_cx_bx_ax(GeneratedRuntimeState* state) {
+    state->ds = generated_pop_u16(state);
+    state->es = generated_pop_u16(state);
+    state->di = generated_pop_u16(state);
+    state->si = generated_pop_u16(state);
+    state->bp = generated_pop_u16(state);
+    state->dx = generated_pop_u16(state);
+    state->cx = generated_pop_u16(state);
+    state->bx = generated_pop_u16(state);
+    state->ax = generated_pop_u16(state);
+}
+
+void generated_movsb_once(GeneratedRuntimeState* state, uint16_t source_segment) {
+    const unsigned char value = generated_read_u8(state, source_segment, state->si);
+    generated_write_u8(state, state->es, state->di, value);
+    if (generated_get_flag(state, GENERATED_FLAG_DF)) {
+        state->si = (uint16_t)(state->si - 1u);
+        state->di = (uint16_t)(state->di - 1u);
+    } else {
+        state->si = (uint16_t)(state->si + 1u);
+        state->di = (uint16_t)(state->di + 1u);
+    }
+}
+
+void generated_movsw_once(GeneratedRuntimeState* state, uint16_t source_segment) {
+    const uint16_t value = generated_read_u16(state, source_segment, state->si);
+    generated_write_u16(state, state->es, state->di, value);
+    if (generated_get_flag(state, GENERATED_FLAG_DF)) {
+        state->si = (uint16_t)(state->si - 2u);
+        state->di = (uint16_t)(state->di - 2u);
+    } else {
+        state->si = (uint16_t)(state->si + 2u);
+        state->di = (uint16_t)(state->di + 2u);
+    }
+}
+
+void generated_cmpsb_once(GeneratedRuntimeState* state, uint16_t source_segment) {
+    const unsigned char left = generated_read_u8(state, source_segment, state->si);
+    const unsigned char right = generated_read_u8(state, state->es, state->di);
+    generated_cmp_u8(state, left, right);
+    if (generated_get_flag(state, GENERATED_FLAG_DF)) {
+        state->si = (uint16_t)(state->si - 1u);
+        state->di = (uint16_t)(state->di - 1u);
+    } else {
+        state->si = (uint16_t)(state->si + 1u);
+        state->di = (uint16_t)(state->di + 1u);
+    }
+}
+
+void generated_stosb_once(GeneratedRuntimeState* state) {
+    generated_write_u8(state, state->es, state->di, generated_get_reg8(state, 0u));
+    if (generated_get_flag(state, GENERATED_FLAG_DF)) {
+        state->di = (uint16_t)(state->di - 1u);
+    } else {
+        state->di = (uint16_t)(state->di + 1u);
+    }
+}
+
+void generated_stosw_once(GeneratedRuntimeState* state) {
+    generated_write_u16(state, state->es, state->di, state->ax);
+    if (generated_get_flag(state, GENERATED_FLAG_DF)) {
+        state->di = (uint16_t)(state->di - 2u);
+    } else {
+        state->di = (uint16_t)(state->di + 2u);
+    }
+}
+
+void generated_lodsb_once(GeneratedRuntimeState* state, uint16_t source_segment) {
+    generated_set_reg8(state, 0u, generated_read_u8(state, source_segment, state->si));
+    if (generated_get_flag(state, GENERATED_FLAG_DF)) {
+        state->si = (uint16_t)(state->si - 1u);
+    } else {
+        state->si = (uint16_t)(state->si + 1u);
+    }
+}
+
+void generated_lodsw_once(GeneratedRuntimeState* state, uint16_t source_segment) {
+    state->ax = generated_read_u16(state, source_segment, state->si);
+    if (generated_get_flag(state, GENERATED_FLAG_DF)) {
+        state->si = (uint16_t)(state->si - 2u);
+    } else {
+        state->si = (uint16_t)(state->si + 2u);
+    }
+}
+
+void generated_rep_movsb(GeneratedRuntimeState* state, uint16_t source_segment) {
+    while (state->cx != 0u) {
+        generated_movsb_once(state, source_segment);
+        state->cx = (uint16_t)(state->cx - 1u);
+    }
+}
+
+void generated_rep_movsw(GeneratedRuntimeState* state, uint16_t source_segment) {
+    while (state->cx != 0u) {
+        generated_movsw_once(state, source_segment);
+        state->cx = (uint16_t)(state->cx - 1u);
+    }
+}
+
+void generated_rep_stosb(GeneratedRuntimeState* state) {
+    while (state->cx != 0u) {
+        generated_stosb_once(state);
+        state->cx = (uint16_t)(state->cx - 1u);
+    }
+}
+
+void generated_rep_stosw(GeneratedRuntimeState* state) {
+    while (state->cx != 0u) {
+        generated_stosw_once(state);
+        state->cx = (uint16_t)(state->cx - 1u);
+    }
+}
+
+void generated_rep_lodsb(GeneratedRuntimeState* state, uint16_t source_segment) {
+    while (state->cx != 0u) {
+        generated_lodsb_once(state, source_segment);
+        state->cx = (uint16_t)(state->cx - 1u);
+    }
+}
+
+void generated_rep_lodsw(GeneratedRuntimeState* state, uint16_t source_segment) {
+    while (state->cx != 0u) {
+        generated_lodsw_once(state, source_segment);
+        state->cx = (uint16_t)(state->cx - 1u);
+    }
+}
+
+void generated_rep_cmpsb(GeneratedRuntimeState* state, uint16_t source_segment, unsigned repeat_while_equal) {
+    while (state->cx != 0u) {
+        generated_cmpsb_once(state, source_segment);
+        state->cx = (uint16_t)(state->cx - 1u);
+        if (repeat_while_equal) {
+            if (!generated_get_flag(state, GENERATED_FLAG_ZF)) {
+                break;
+            }
+        } else if (generated_get_flag(state, GENERATED_FLAG_ZF)) {
+            break;
+        }
+    }
+}
+
+void generated_iret(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    if (generated_trace_env_enabled("MZ2CPP_TRACE_IRET")) {
+        char message[192];
+        snprintf(message,
+                 sizeof(message),
+                 "before cs:ip=%04X:%04X ds=%04X es=%04X ss=%04X sp=%04X flags=%04X depth=%u",
+                 (unsigned)state->cs,
+                 (unsigned)state->ip,
+                 (unsigned)state->ds,
+                 (unsigned)state->es,
+                 (unsigned)state->ss,
+                 (unsigned)state->sp,
+                 (unsigned)state->flags,
+                 (unsigned)h.active_hw_interrupts.size());
+        generated_append_trace_line("iret", message);
+    }
+    state->ip = generated_pop_u16(state);
+    state->cs = generated_pop_u16(state);
+    state->flags = generated_pop_u16(state);
+    if (!h.active_hw_interrupts.empty()) {
+        h.active_hw_interrupts.pop_back();
+    }
+    if (generated_trace_env_enabled("MZ2CPP_TRACE_IRET")) {
+        char message[192];
+        snprintf(message,
+                 sizeof(message),
+                 "after cs:ip=%04X:%04X ds=%04X es=%04X ss=%04X sp=%04X flags=%04X depth=%u",
+                 (unsigned)state->cs,
+                 (unsigned)state->ip,
+                 (unsigned)state->ds,
+                 (unsigned)state->es,
+                 (unsigned)state->ss,
+                 (unsigned)state->sp,
+                 (unsigned)state->flags,
+                 (unsigned)h.active_hw_interrupts.size());
+        generated_append_trace_line("iret", message);
+    }
+}
+
+static void generated_bios_tick_advance(GeneratedRuntimeState* state) {
+    const uint16_t tick_lo = generated_read_u16(state, 0x0040u, 0x006Cu);
+    const uint16_t tick_hi = generated_read_u16(state, 0x0040u, 0x006Eu);
+    const uint32_t tick = ((uint32_t)tick_hi << 16u) | (uint32_t)tick_lo;
+    const uint32_t next_tick = tick + 1u;
+    generated_write_u16(state, 0x0040u, 0x006Cu, (uint16_t)(next_tick & 0xFFFFu));
+    generated_write_u16(state, 0x0040u, 0x006Eu, (uint16_t)(next_tick >> 16u));
+}
+
+static void generated_host_stub_bios_timer_iret(GeneratedRuntimeState* state) {
+    generated_bios_tick_advance(state);
+    generated_iret(state);
+}
+
+static void generated_dispatch_irq1_if_pending(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    if (h.keyboard_scan_queue.empty()) {
+        return;
+    }
+    if (state == NULL || state->terminated != 0u) {
+        return;
+    }
+    if (h.runtime_service_depth != 0) {
+        return;
+    }
+    if (!h.active_hw_interrupts.empty()) {
+        return;
+    }
+    if (generated_get_flag(state, GENERATED_FLAG_IF) == 0u) {
+        return;
+    }
+    {
+        const uint16_t target_cs = state->interrupt_segment[0x09u];
+        const uint16_t target_ip = state->interrupt_offset[0x09u];
+        const size_t depth_before = h.active_hw_interrupts.size();
+        if (target_cs == 0u && target_ip == 0u) {
+            return;
+        }
+        h.keyboard_controller_data = h.keyboard_scan_queue.front();
+        h.keyboard_scan_queue.pop_front();
+        generated_push_u16(state, state->flags);
+        generated_push_u16(state, state->cs);
+        generated_push_u16(state, state->ip);
+        generated_set_flag(state, GENERATED_FLAG_IF, 0u);
+        generated_set_flag(state, 0x0100u, 0u);
+        h.active_hw_interrupts.push_back(0x09u);
+        generated_jump_far(state, target_cs, target_ip);
+        if (h.active_hw_interrupts.size() != depth_before) {
+            h.active_hw_interrupts.resize(depth_before);
+            state->ip = generated_pop_u16(state);
+            state->cs = generated_pop_u16(state);
+            state->flags = generated_pop_u16(state);
+        }
+    }
+}
+
+static unsigned generated_handle_host_stub_iret_target(GeneratedRuntimeState* state, uint16_t target_cs, uint16_t target_ip) {
+    if (target_cs != kGeneratedHostStubSegment) {
+        return 0u;
+    }
+    if (target_ip == kGeneratedHostStubInt08Offset) {
+        generated_host_stub_bios_timer_iret(state);
+        return 1u;
+    }
+    if (target_ip == kGeneratedHostStubInt09Offset) {
+        generated_iret(state);
+        return 1u;
+    }
+    return 0u;
+}
+
+void generated_jump_far(GeneratedRuntimeState* state, uint16_t target_cs, uint16_t target_ip) {
+    const uint16_t src_cs = state->cs;
+    const uint16_t src_ip = state->ip;
+    if (generated_handle_host_stub_iret_target(state, target_cs, target_ip) != 0u) {
+        return;
+    }
+    state->cs = target_cs;
+    state->ip = target_ip;
+    if (generated_dispatch_root(state, target_cs, target_ip) != 0u) {
+        return;
+    }
+    ::generated_note_dynamic_target(state, src_cs, src_ip, target_cs, target_ip, "external_far_jump");
+    generated_runtime_note_call(state, "unsupported_external_far_jump");
+    state->terminated = 1u;
+}
+
+unsigned char generated_port_in_u8(GeneratedRuntimeState* state, uint16_t port) {
+    (void)state;
+    GeneratedHostState& h = generated_host();
+    switch (port) {
+    case 0x0060u:
+        return h.keyboard_controller_data;
+    case 0x03C5u:
+        if (h.sequencer_index == 0x02u) {
+            return h.sequencer_map_mask;
+        }
+        return 0u;
+    case 0x03CFu:
+        switch (h.graphics_index) {
+        case 0x00u: return h.gc_set_reset;
+        case 0x01u: return h.gc_enable_set_reset;
+        case 0x02u: return h.gc_color_compare;
+        case 0x03u: return h.gc_data_rotate;
+        case 0x04u: return h.gc_read_map_select;
+        case 0x05u: return h.gc_mode;
+        case 0x06u: return h.gc_misc;
+        case 0x07u: return h.gc_color_dont_care;
+        case 0x08u: return h.gc_bit_mask;
+        default: return 0u;
+        }
+    case 0x03B4u:
+    case 0x03D4u:
+        return h.crtc_index;
+    case 0x03B5u:
+    case 0x03D5u:
+        switch (h.crtc_index) {
+        case 0x0Cu: return static_cast<unsigned char>((h.crtc_start_addr >> 8u) & 0x00FFu);
+        case 0x0Du: return static_cast<unsigned char>(h.crtc_start_addr & 0x00FFu);
+        default: return 0u;
+        }
+    case 0x03DAu: {
+        const auto now = std::chrono::steady_clock::now();
+        const auto us = std::chrono::duration_cast<std::chrono::microseconds>(now - h.tick_epoch).count();
+        constexpr long long kPeriodUs = 14285;
+        constexpr long long kPulseUs = 1200;
+        const long long phase = kPeriodUs > 0 ? (us % kPeriodUs) : 0;
+        const bool vblank = phase < kPulseUs;
+        h.attr_expect_data = false;
+        if (!vblank) {
+            std::this_thread::yield();
+        }
+        return static_cast<unsigned char>((vblank ? 0x08u : 0x00u) | (vblank ? 0x01u : 0x00u));
+    }
+    default:
+        return 0u;
+    }
+}
+
+void generated_port_out_u8(GeneratedRuntimeState* state, uint16_t port, unsigned char value) {
+    GeneratedHostState& h = generated_host();
+    switch (port) {
+    case 0x0040u:
+        if (!h.pit_ch0_low_byte_pending) {
+            h.pit_ch0_low_byte = value;
+            h.pit_ch0_low_byte_pending = true;
+        } else {
+            h.pit_ch0_divisor = (uint16_t)(h.pit_ch0_low_byte | ((uint16_t)value << 8u));
+            h.pit_ch0_low_byte_pending = false;
+            h.next_irq0 = std::chrono::steady_clock::now() + generated_pit_period_for_divisor(h.pit_ch0_divisor);
+        }
+        break;
+    case 0x0043u:
+        if (((value >> 6u) & 0x03u) == 0x00u) {
+            h.pit_ch0_low_byte_pending = false;
+        }
+        break;
+    case 0x03C0u:
+        if (!h.attr_expect_data) {
+            h.attr_index = static_cast<uint8_t>(value & 0x1Fu);
+            h.attr_expect_data = true;
+        } else {
+            if (h.attr_index < 16u) {
+                h.attr_palette[h.attr_index] = value;
+                state->video_dirty = 1u;
+            }
+            h.attr_expect_data = false;
+        }
+        break;
+    case 0x03C4u:
+        h.sequencer_index = value;
+        break;
+    case 0x03C5u:
+        if (h.sequencer_index == 0x02u) {
+            h.sequencer_map_mask = static_cast<uint8_t>(value & 0x0Fu);
+            h.sequencer_map_mask_seen = (uint16_t)(h.sequencer_map_mask_seen | (uint16_t)(1u << h.sequencer_map_mask));
+        }
+        break;
+    case 0x03C8u:
+        h.dac_write_index = value;
+        h.dac_component = 0u;
+        break;
+    case 0x03C9u: {
+        h.dac_triplet[h.dac_component] = value;
+        ++h.dac_component;
+        if (h.dac_component == 3u) {
+            generated_set_palette_dac_entry(h, h.dac_write_index, h.dac_triplet[0], h.dac_triplet[1], h.dac_triplet[2]);
+            ++h.dac_write_index;
+            h.dac_component = 0u;
+            state->video_dirty = 1u;
+        }
+        break;
+    }
+    case 0x03CEu:
+        h.graphics_index = value;
+        break;
+    case 0x03CFu:
+        switch (h.graphics_index) {
+        case 0x00u: h.gc_set_reset = static_cast<uint8_t>(value & 0x0Fu); break;
+        case 0x01u: h.gc_enable_set_reset = static_cast<uint8_t>(value & 0x0Fu); break;
+        case 0x02u: h.gc_color_compare = static_cast<uint8_t>(value & 0x0Fu); break;
+        case 0x03u: h.gc_data_rotate = static_cast<uint8_t>(value & 0x1Fu); break;
+        case 0x04u: h.gc_read_map_select = static_cast<uint8_t>(value & 0x03u); break;
+        case 0x05u: h.gc_mode = static_cast<uint8_t>(value & 0x1Bu); break;
+        case 0x06u: h.gc_misc = value; break;
+        case 0x07u: h.gc_color_dont_care = static_cast<uint8_t>(value & 0x0Fu); break;
+        case 0x08u: h.gc_bit_mask = value; break;
+        default: break;
+        }
+        break;
+    case 0x03B4u:
+    case 0x03D4u:
+        h.crtc_index = value;
+        break;
+    case 0x03B5u:
+    case 0x03D5u:
+        switch (h.crtc_index) {
+        case 0x0Cu:
+            h.crtc_start_addr = static_cast<uint16_t>((h.crtc_start_addr & 0x00FFu) | (static_cast<uint16_t>(value) << 8u));
+            state->video_dirty = 1u;
+            break;
+        case 0x0Du:
+            h.crtc_start_addr = static_cast<uint16_t>((h.crtc_start_addr & 0xFF00u) | value);
+            state->video_dirty = 1u;
+            break;
+        default:
+            break;
+        }
+        break;
+    case 0x0388u:
+    case 0x0389u:
+        break;
+    default:
+        break;
+    }
+}
+
+void generated_port_out_u16(GeneratedRuntimeState* state, uint16_t port, uint16_t value) {
+    generated_port_out_u8(state, port, static_cast<unsigned char>(value & 0x00FFu));
+    generated_port_out_u8(state, static_cast<uint16_t>(port + 1u), static_cast<unsigned char>((value >> 8u) & 0x00FFu));
+}
+#define GENERATED_KEY_AX(scan_code, ascii_code) ((uint16_t)(((uint16_t)(scan_code) << 8u) | (uint16_t)(ascii_code)))
+
+static int generated_ascii_upper(int ch) {
+    if (ch >= 'a' && ch <= 'z') {
+        return ch - ('a' - 'A');
+    }
+    return ch;
+}
+
+static unsigned generated_token_equals(const char* token, const char* text) {
+    if (token == NULL || text == NULL) {
+        return 0u;
+    }
+    while (*token != '\0' && *text != '\0') {
+        if (generated_ascii_upper((unsigned char)*token) != generated_ascii_upper((unsigned char)*text)) {
+            return 0u;
+        }
+        ++token;
+        ++text;
+    }
+    return *token == '\0' && *text == '\0';
+}
+
+static unsigned generated_hex_digit_value(int ch, uint16_t* out_value) {
+    if (ch >= '0' && ch <= '9') {
+        *out_value = (uint16_t)(ch - '0');
+        return 1u;
+    }
+    ch = generated_ascii_upper(ch);
+    if (ch >= 'A' && ch <= 'F') {
+        *out_value = (uint16_t)(10 + (ch - 'A'));
+        return 1u;
+    }
+    return 0u;
+}
+
+static unsigned generated_parse_hex_u16(const char* text, uint16_t* out_value) {
+    uint32_t value = 0u;
+    uint16_t digit = 0u;
+    unsigned parsed = 0u;
+    if (text == NULL || out_value == NULL) {
+        return 0u;
+    }
+    if (text[0] == '0' && generated_ascii_upper((unsigned char)text[1]) == 'X') {
+        text += 2;
+    }
+    while (*text != '\0') {
+        if (generated_hex_digit_value((unsigned char)*text, &digit) == 0u) {
+            return 0u;
+        }
+        value = (value << 4u) | digit;
+        if (value > 0xFFFFu) {
+            return 0u;
+        }
+        ++parsed;
+        ++text;
+    }
+    if (parsed == 0u) {
+        return 0u;
+    }
+    *out_value = (uint16_t)value;
+    return 1u;
+}
+
+static unsigned generated_parse_decimal_u32(const char* text, uint32_t* out_value) {
+    uint32_t value = 0u;
+    unsigned parsed = 0u;
+    if (text == NULL || out_value == NULL) {
+        return 0u;
+    }
+    while (*text != '\0') {
+        const unsigned char ch = (unsigned char)*text;
+        if (ch < '0' || ch > '9') {
+            return 0u;
+        }
+        value = value * 10u + (uint32_t)(ch - '0');
+        ++parsed;
+        ++text;
+    }
+    if (parsed == 0u) {
+        return 0u;
+    }
+    *out_value = value;
+    return 1u;
+}
+
+static uint16_t generated_translate_ascii_key(int ch) {
+    switch (ch & 0xFF) {
+    case 0x1Bu: return ((uint16_t)(((uint16_t)0x01u << 8u) | (uint16_t)0x1Bu));
+    case '1': return ((uint16_t)(((uint16_t)0x02u << 8u) | (uint16_t)'1'));
+    case '2': return ((uint16_t)(((uint16_t)0x03u << 8u) | (uint16_t)'2'));
+    case '3': return ((uint16_t)(((uint16_t)0x04u << 8u) | (uint16_t)'3'));
+    case '4': return ((uint16_t)(((uint16_t)0x05u << 8u) | (uint16_t)'4'));
+    case '5': return ((uint16_t)(((uint16_t)0x06u << 8u) | (uint16_t)'5'));
+    case '6': return ((uint16_t)(((uint16_t)0x07u << 8u) | (uint16_t)'6'));
+    case '7': return ((uint16_t)(((uint16_t)0x08u << 8u) | (uint16_t)'7'));
+    case '8': return ((uint16_t)(((uint16_t)0x09u << 8u) | (uint16_t)'8'));
+    case '9': return ((uint16_t)(((uint16_t)0x0Au << 8u) | (uint16_t)'9'));
+    case '0': return ((uint16_t)(((uint16_t)0x0Bu << 8u) | (uint16_t)'0'));
+    case '-': return ((uint16_t)(((uint16_t)0x0Cu << 8u) | (uint16_t)'-'));
+    case '=': return ((uint16_t)(((uint16_t)0x0Du << 8u) | (uint16_t)'='));
+    case 0x08: return ((uint16_t)(((uint16_t)0x0Eu << 8u) | (uint16_t)0x08u));
+    case 0x09: return ((uint16_t)(((uint16_t)0x0Fu << 8u) | (uint16_t)0x09u));
+    case 'q': case 'Q': return ((uint16_t)(((uint16_t)0x10u << 8u) | (uint16_t)'q'));
+    case 'w': case 'W': return ((uint16_t)(((uint16_t)0x11u << 8u) | (uint16_t)'w'));
+    case 'e': case 'E': return ((uint16_t)(((uint16_t)0x12u << 8u) | (uint16_t)'e'));
+    case 'r': case 'R': return ((uint16_t)(((uint16_t)0x13u << 8u) | (uint16_t)'r'));
+    case 't': case 'T': return ((uint16_t)(((uint16_t)0x14u << 8u) | (uint16_t)'t'));
+    case 'y': case 'Y': return ((uint16_t)(((uint16_t)0x15u << 8u) | (uint16_t)'y'));
+    case 'u': case 'U': return ((uint16_t)(((uint16_t)0x16u << 8u) | (uint16_t)'u'));
+    case 'i': case 'I': return ((uint16_t)(((uint16_t)0x17u << 8u) | (uint16_t)'i'));
+    case 'o': case 'O': return ((uint16_t)(((uint16_t)0x18u << 8u) | (uint16_t)'o'));
+    case 'p': case 'P': return ((uint16_t)(((uint16_t)0x19u << 8u) | (uint16_t)'p'));
+    case '[': return ((uint16_t)(((uint16_t)0x1Au << 8u) | (uint16_t)'['));
+    case ']': return ((uint16_t)(((uint16_t)0x1Bu << 8u) | (uint16_t)']'));
+    case 0x0Du: return ((uint16_t)(((uint16_t)0x1Cu << 8u) | (uint16_t)0x0Du));
+    case 'a': case 'A': return ((uint16_t)(((uint16_t)0x1Eu << 8u) | (uint16_t)'a'));
+    case 's': case 'S': return ((uint16_t)(((uint16_t)0x1Fu << 8u) | (uint16_t)'s'));
+    case 'd': case 'D': return ((uint16_t)(((uint16_t)0x20u << 8u) | (uint16_t)'d'));
+    case 'f': case 'F': return ((uint16_t)(((uint16_t)0x21u << 8u) | (uint16_t)'f'));
+    case 'g': case 'G': return ((uint16_t)(((uint16_t)0x22u << 8u) | (uint16_t)'g'));
+    case 'h': case 'H': return ((uint16_t)(((uint16_t)0x23u << 8u) | (uint16_t)'h'));
+    case 'j': case 'J': return ((uint16_t)(((uint16_t)0x24u << 8u) | (uint16_t)'j'));
+    case 'k': case 'K': return ((uint16_t)(((uint16_t)0x25u << 8u) | (uint16_t)'k'));
+    case 'l': case 'L': return ((uint16_t)(((uint16_t)0x26u << 8u) | (uint16_t)'l'));
+    case ';': return ((uint16_t)(((uint16_t)0x27u << 8u) | (uint16_t)';'));
+    case '\'': return ((uint16_t)(((uint16_t)0x28u << 8u) | (uint16_t)'\''));
+    case '`': return ((uint16_t)(((uint16_t)0x29u << 8u) | (uint16_t)'`'));
+    case '\\': return ((uint16_t)(((uint16_t)0x2Bu << 8u) | (uint16_t)'\\'));
+    case 'z': case 'Z': return ((uint16_t)(((uint16_t)0x2Cu << 8u) | (uint16_t)'z'));
+    case 'x': case 'X': return ((uint16_t)(((uint16_t)0x2Du << 8u) | (uint16_t)'x'));
+    case 'c': case 'C': return ((uint16_t)(((uint16_t)0x2Eu << 8u) | (uint16_t)'c'));
+    case 'v': case 'V': return ((uint16_t)(((uint16_t)0x2Fu << 8u) | (uint16_t)'v'));
+    case 'b': case 'B': return ((uint16_t)(((uint16_t)0x30u << 8u) | (uint16_t)'b'));
+    case 'n': case 'N': return ((uint16_t)(((uint16_t)0x31u << 8u) | (uint16_t)'n'));
+    case 'm': case 'M': return ((uint16_t)(((uint16_t)0x32u << 8u) | (uint16_t)'m'));
+    case ',': return ((uint16_t)(((uint16_t)0x33u << 8u) | (uint16_t)','));
+    case '.': return ((uint16_t)(((uint16_t)0x34u << 8u) | (uint16_t)'.'));
+    case '/': return ((uint16_t)(((uint16_t)0x35u << 8u) | (uint16_t)'/'));
+    case ' ': return ((uint16_t)(((uint16_t)0x39u << 8u) | (uint16_t)' '));
+    default: return GENERATED_KEY_AX((unsigned char)(ch & 0xFF), 0x00u);
+    }
+}
+
+static uint16_t generated_translate_extended_key(int ch) {
+    switch (ch & 0xFF) {
+    case 0x48: return ((uint16_t)(((uint16_t)0x48u << 8u) | (uint16_t)0x00u));
+    case 0x50: return ((uint16_t)(((uint16_t)0x50u << 8u) | (uint16_t)0x00u));
+    case 0x4B: return ((uint16_t)(((uint16_t)0x4Bu << 8u) | (uint16_t)0x00u));
+    case 0x4D: return ((uint16_t)(((uint16_t)0x4Du << 8u) | (uint16_t)0x00u));
+    case 0x47: return ((uint16_t)(((uint16_t)0x47u << 8u) | (uint16_t)0x00u));
+    case 0x4F: return ((uint16_t)(((uint16_t)0x4Fu << 8u) | (uint16_t)0x00u));
+    case 0x49: return ((uint16_t)(((uint16_t)0x49u << 8u) | (uint16_t)0x00u));
+    case 0x51: return ((uint16_t)(((uint16_t)0x51u << 8u) | (uint16_t)0x00u));
+    case 0x52: return ((uint16_t)(((uint16_t)0x52u << 8u) | (uint16_t)0x00u));
+    case 0x53: return ((uint16_t)(((uint16_t)0x53u << 8u) | (uint16_t)0x00u));
+    default: return ((uint16_t)(((uint16_t)(unsigned char)(ch & 0xFF) << 8u) | (uint16_t)0x00u));
+    }
+}
+
+static uint16_t generated_parse_script_key_token(const char* token) {
+    uint16_t value = 0u;
+    if (token == NULL || token[0] == '\0') {
+        return 0u;
+    }
+    if (token[0] != '\0' && token[1] == '\0') {
+        return generated_translate_ascii_key((unsigned char)token[0]);
+    }
+    if (generated_token_equals(token, "ESC") || generated_token_equals(token, "ESCAPE")) {
+        return ((uint16_t)(((uint16_t)0x01u << 8u) | (uint16_t)0x1Bu));
+    }
+    if (generated_token_equals(token, "ENTER") || generated_token_equals(token, "RETURN")) {
+        return ((uint16_t)(((uint16_t)0x1Cu << 8u) | (uint16_t)0x0Du));
+    }
+    if (generated_token_equals(token, "SPACE")) {
+        return ((uint16_t)(((uint16_t)0x39u << 8u) | (uint16_t)' '));
+    }
+    if (generated_token_equals(token, "TAB")) {
+        return ((uint16_t)(((uint16_t)0x0Fu << 8u) | (uint16_t)0x09u));
+    }
+    if (generated_token_equals(token, "BACKSPACE") || generated_token_equals(token, "BS")) {
+        return ((uint16_t)(((uint16_t)0x0Eu << 8u) | (uint16_t)0x08u));
+    }
+    if (generated_token_equals(token, "UP")) {
+        return ((uint16_t)(((uint16_t)0x48u << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "DOWN")) {
+        return ((uint16_t)(((uint16_t)0x50u << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "LEFT")) {
+        return ((uint16_t)(((uint16_t)0x4Bu << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "RIGHT")) {
+        return ((uint16_t)(((uint16_t)0x4Du << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "HOME")) {
+        return ((uint16_t)(((uint16_t)0x47u << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "END")) {
+        return ((uint16_t)(((uint16_t)0x4Fu << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "PGUP") || generated_token_equals(token, "PRIOR")) {
+        return ((uint16_t)(((uint16_t)0x49u << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "PGDN") || generated_token_equals(token, "NEXT")) {
+        return ((uint16_t)(((uint16_t)0x51u << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "INS") || generated_token_equals(token, "INSERT")) {
+        return ((uint16_t)(((uint16_t)0x52u << 8u) | (uint16_t)0x00u));
+    }
+    if (generated_token_equals(token, "DEL") || generated_token_equals(token, "DELETE")) {
+        return ((uint16_t)(((uint16_t)0x53u << 8u) | (uint16_t)0x00u));
+    }
+    if ((generated_ascii_upper((unsigned char)token[0]) == 'A') &&
+        (generated_ascii_upper((unsigned char)token[1]) == 'X') &&
+        token[2] == '=' &&
+        generated_parse_hex_u16(token + 3, &value) != 0u) {
+        return value;
+    }
+    if (generated_parse_hex_u16(token, &value) != 0u) {
+        return value;
+    }
+    return 0u;
+}
+
+static void generated_load_scripted_keys_from_env(GeneratedHostState& h) {
+    const char* script = getenv("MZ2CPP_SCRIPT_KEYS");
+    char* buffer = NULL;
+    char* cursor = NULL;
+    uint32_t schedule_ms = 0u;
+    if (script == NULL || script[0] == '\0') {
+        return;
+    }
+    buffer = static_cast<char*>(malloc(strlen(script) + 1u));
+    if (buffer == NULL) {
+        return;
+    }
+    memcpy(buffer, script, strlen(script) + 1u);
+    cursor = buffer;
+    while (*cursor != '\0') {
+        char* token_begin = cursor;
+        char* token_end = NULL;
+        uint16_t key_ax = 0u;
+        while (*token_begin == ' ' || *token_begin == '\t' || *token_begin == ',' || *token_begin == ';') {
+            ++token_begin;
+        }
+        token_end = token_begin;
+        while (*token_end != '\0' && *token_end != ',' && *token_end != ';') {
+            ++token_end;
+        }
+        if (*token_end != '\0') {
+            *token_end = '\0';
+            cursor = token_end + 1;
+        } else {
+            cursor = token_end;
+        }
+        while (token_end > token_begin && (token_end[-1] == ' ' || token_end[-1] == '\t')) {
+            token_end[-1] = '\0';
+            --token_end;
+        }
+        if (token_begin[0] == '\0') {
+            continue;
+        }
+        if (((generated_ascii_upper((unsigned char)token_begin[0]) == 'W') &&
+             (generated_ascii_upper((unsigned char)token_begin[1]) == 'A') &&
+             (generated_ascii_upper((unsigned char)token_begin[2]) == 'I') &&
+             (generated_ascii_upper((unsigned char)token_begin[3]) == 'T') &&
+             token_begin[4] == '=') ||
+            ((generated_ascii_upper((unsigned char)token_begin[0]) == 'D') &&
+             (generated_ascii_upper((unsigned char)token_begin[1]) == 'E') &&
+             (generated_ascii_upper((unsigned char)token_begin[2]) == 'L') &&
+             (generated_ascii_upper((unsigned char)token_begin[3]) == 'A') &&
+             (generated_ascii_upper((unsigned char)token_begin[4]) == 'Y') &&
+             token_begin[5] == '=') ||
+            ((generated_ascii_upper((unsigned char)token_begin[0]) == 'P') &&
+             (generated_ascii_upper((unsigned char)token_begin[1]) == 'A') &&
+             (generated_ascii_upper((unsigned char)token_begin[2]) == 'U') &&
+             (generated_ascii_upper((unsigned char)token_begin[3]) == 'S') &&
+             (generated_ascii_upper((unsigned char)token_begin[4]) == 'E') &&
+             token_begin[5] == '=')) {
+            uint32_t delay_ms = 0u;
+            const char* value_text = strchr(token_begin, '=');
+            if (value_text != NULL && generated_parse_decimal_u32(value_text + 1, &delay_ms) != 0u) {
+                schedule_ms += delay_ms;
+            }
+            continue;
+        }
+        key_ax = generated_parse_script_key_token(token_begin);
+        if (key_ax != 0u) {
+            h.scripted_keys.push_back(GeneratedScriptedKeyEvent{key_ax, schedule_ms});
+        }
+    }
+    free(buffer);
+}
+
+static void generated_flush_scripted_keys(GeneratedHostState& h) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - h.tick_epoch).count();
+    while (h.scripted_key_index < h.scripted_keys.size()) {
+        const GeneratedScriptedKeyEvent& event = h.scripted_keys[h.scripted_key_index];
+        if ((uint64_t)elapsed < (uint64_t)event.due_ms) {
+            break;
+        }
+        h.key_queue.push_back(event.key_ax);
+        ++h.scripted_key_index;
+    }
+}
+
+static unsigned generated_poll_keyboard(GeneratedRuntimeState* state, uint16_t* out_ax) {
+    GeneratedHostState& h = generated_host();
+    generated_host_poll(state);
+    if (state->keyboard_peek_valid != 0u) {
+        *out_ax = state->keyboard_peek_ax;
+        return 1u;
+    }
+    if (!h.key_queue.empty()) {
+        state->keyboard_peek_ax = h.key_queue.front();
+        h.key_queue.pop_front();
+        state->keyboard_peek_valid = 1u;
+        *out_ax = state->keyboard_peek_ax;
+        return 1u;
+    }
+    if (_kbhit() == 0) {
+        return 0u;
+    }
+    {
+        const int first = _getch();
+        if (first == 0 || first == 0xE0) {
+            state->keyboard_peek_ax = generated_translate_extended_key(_getch());
+        } else {
+            state->keyboard_peek_ax = generated_translate_ascii_key(first);
+        }
+    }
+    state->keyboard_peek_valid = 1u;
+    *out_ax = state->keyboard_peek_ax;
+    return 1u;
+}
+
+static uint16_t generated_wait_keyboard(GeneratedRuntimeState* state) {
+    uint16_t key_ax = 0u;
+    if (state->video_mode == 0x000Du || state->video_mode == 0x0013u) {
+        generated_present_video(state);
+        state->video_dirty = 0u;
+    }
+    while (generated_poll_keyboard(state, &key_ax) == 0u) {
+        if (state->video_mode == 0x000Du || state->video_mode == 0x0013u) {
+            generated_present_video(state);
+            state->video_dirty = 0u;
+        }
+        generated_host_poll(state);
+        Sleep(1u);
+    }
+    state->keyboard_peek_valid = 0u;
+    return key_ax;
+}
+
+static uint16_t generated_consume_keyboard(GeneratedRuntimeState* state) {
+    const uint16_t key_ax = generated_wait_keyboard(state);
+    state->keyboard_peek_ax = 0u;
+    return key_ax;
+}
+
+static unsigned generated_dos_find_free_handle(const GeneratedRuntimeState* state) {
+    unsigned handle = 5u;
+    while (handle < 32u) {
+        if (state->dos_files[handle] == NULL) {
+            return handle;
+        }
+        ++handle;
+    }
+    return 0u;
+}
+
+static void generated_dos_read_buffer(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, FILE* file, uint16_t count) {
+    uint16_t index = 0u;
+    while (index < count) {
+        const int byte_value = fgetc(file);
+        if (byte_value == EOF) {
+            break;
+        }
+        generated_write_u8(state, segment, (uint16_t)(offset + index), (unsigned char)(byte_value & 0xFF));
+        ++index;
+    }
+    state->ax = index;
+}
+
+static uint16_t generated_dos_write_buffer(GeneratedRuntimeState* state, uint16_t segment, uint16_t offset, FILE* file, uint16_t count) {
+    uint16_t index = 0u;
+    while (index < count) {
+        const unsigned char byte_value = generated_read_u8(state, segment, (uint16_t)(offset + index));
+        if (fputc((int)byte_value, file) == EOF) {
+            break;
+        }
+        ++index;
+    }
+    return index;
+}
+
+static void generated_log_dos_io(GeneratedRuntimeState* state, const char* message) {
+    if (state->generated_io_log_count >= 128u) {
+        return;
+    }
+    ++state->generated_io_log_count;
+    printf("generated dos %u: %s\n", state->generated_io_log_count, message);
+}
+
+static void generated_dispatch_irq0_if_due(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    const auto now = std::chrono::steady_clock::now();
+    const char* trace_irq0 = getenv("MZ2CPP_TRACE_IRQ0");
+    if (now < h.next_irq0) {
+        return;
+    }
+    h.next_irq0 = now + generated_pit_period_for_divisor(h.pit_ch0_divisor);
+    if (trace_irq0 != NULL && trace_irq0[0] == '1' && h.irq0_trace_count < 64u) {
+        char trace_message[192];
+        snprintf(trace_message,
+                 sizeof(trace_message),
+                 "poll cs:ip=%04X:%04X flags=%04X if=%u depth=%u term=%u vec08=%04X:%04X",
+                 state != NULL ? (unsigned)state->cs : 0u,
+                 state != NULL ? (unsigned)state->ip : 0u,
+                 state != NULL ? (unsigned)state->flags : 0u,
+                 state != NULL ? generated_get_flag(state, GENERATED_FLAG_IF) : 0u,
+                 (unsigned)h.active_hw_interrupts.size(),
+                 state != NULL ? state->terminated : 0u,
+                 state != NULL ? (unsigned)state->interrupt_segment[0x08u] : 0u,
+                 state != NULL ? (unsigned)state->interrupt_offset[0x08u] : 0u);
+        generated_append_trace_line("irq0_poll", trace_message);
+        ++h.irq0_trace_count;
+    }
+    if (state == NULL || state->terminated != 0u) {
+        return;
+    }
+    if (h.runtime_service_depth != 0) {
+        generated_bios_tick_advance(state);
+        return;
+    }
+    if (!h.active_hw_interrupts.empty()) {
+        return;
+    }
+    if (generated_get_flag(state, GENERATED_FLAG_IF) == 0u) {
+        return;
+    }
+    {
+        const uint16_t target_cs = state->interrupt_segment[0x08u];
+        const uint16_t target_ip = state->interrupt_offset[0x08u];
+        const size_t depth_before = h.active_hw_interrupts.size();
+        if (target_cs == 0u && target_ip == 0u) {
+            return;
+        }
+        generated_push_u16(state, state->flags);
+        generated_push_u16(state, state->cs);
+        generated_push_u16(state, state->ip);
+        generated_set_flag(state, GENERATED_FLAG_IF, 0u);
+        generated_set_flag(state, 0x0100u, 0u);
+        state->cs = target_cs;
+        state->ip = target_ip;
+        h.active_hw_interrupts.push_back(0x08u);
+        if (generated_dispatch_root(state, target_cs, target_ip) == 0u) {
+            if (h.active_hw_interrupts.size() > depth_before) {
+                h.active_hw_interrupts.resize(depth_before);
+            }
+            state->ip = generated_pop_u16(state);
+            state->cs = generated_pop_u16(state);
+            state->flags = generated_pop_u16(state);
+            return;
+        }
+        if (h.active_hw_interrupts.size() != depth_before) {
+            h.active_hw_interrupts.resize(depth_before);
+            state->ip = generated_pop_u16(state);
+            state->cs = generated_pop_u16(state);
+            state->flags = generated_pop_u16(state);
+        }
+    }
+}
+
+void generated_host_poll(GeneratedRuntimeState* state) {
+    GeneratedHostState& h = generated_host();
+    generated_ensure_window(state);
+    generated_pump_messages();
+    generated_flush_scripted_keys(h);
+    if (state == NULL || state->terminated != 0u) {
+        return;
+    }
+    generated_dispatch_irq0_if_due(state);
+    generated_dispatch_irq1_if_pending(state);
+    if (state->terminated != 0u) {
+        return;
+    }
+    if (state->video_dirty != 0u && std::chrono::steady_clock::now() >= h.next_present) {
+        generated_present_video(state);
+        state->video_dirty = 0u;
+        h.next_present = std::chrono::steady_clock::now() + std::chrono::milliseconds(16);
+    }
+}
+
+void generated_interrupt(GeneratedRuntimeState* state, unsigned char vector) {
+    generated_host_poll(state);
+    GeneratedRuntimeServiceGuard guard(generated_host());
+    switch (vector) {
+    case 0x10u: {
+        GeneratedHostState& h = generated_host();
+        const unsigned char ah = (unsigned char)((state->ax >> 8u) & 0x00FFu);
+        switch (ah) {
+        case 0x00u:
+            state->video_mode = (uint16_t)(state->ax & 0x00FFu);
+            if (state->video_mode == 0x000Du) {
+                generated_reset_planar_state(state);
+            } else if (state->video_mode == 0x0013u) {
+                memset(state->memory + kGeneratedGraphicsVideoPhys, 0, kGeneratedMode13VideoEndPhys - kGeneratedGraphicsVideoPhys);
+            }
+            state->video_dirty = 1u;
+            generated_host_poll(state);
+            return;
+        case 0x02u:
+            return;
+        case 0x03u:
+            state->cx = 0u;
+            return;
+        case 0x05u: {
+            const uint8_t page = (uint8_t)(state->ax & 0x00FFu);
+            if (state->video_mode == 0x000Du) {
+                h.crtc_start_addr = (uint16_t)((uint16_t)(page & 0x07u) * 0x2000u);
+                state->video_dirty = 1u;
+            }
+            return;
+        }
+        case 0x0Fu:
+            state->ax = (uint16_t)((state->ax & 0xFF00u) | (state->video_mode & 0x00FFu));
+            state->ax = (uint16_t)((state->ax & 0x00FFu) | (80u << 8u));
+            state->bx = (uint16_t)(state->bx & 0x00FFu);
+            if (state->video_mode == 0x000Du) {
+                state->bx = (uint16_t)(state->bx | (((uint16_t)((h.crtc_start_addr >> 13u) & 0x07u)) << 8u));
+            }
+            return;
+        case 0x0Cu: {
+            const uint8_t color = (uint8_t)(state->ax & 0x00FFu);
+            if (state->video_mode == 0x0013u) {
+                if (state->cx < 320u && state->dx < 200u) {
+                    state->memory[kGeneratedGraphicsVideoPhys + (uint32_t)state->dx * 320u + state->cx] = color;
+                    state->video_dirty = 1u;
+                }
+            } else if (state->video_mode == 0x000Du) {
+                generated_mode0d_plot_pixel(state, state->cx, state->dx, (uint8_t)(color & 0x0Fu), (color & 0x80u) != 0u);
+            }
+            return;
+        }
+        case 0x0Du:
+            if (state->video_mode == 0x0013u) {
+                if (state->cx < 320u && state->dx < 200u) {
+                    state->ax = (uint16_t)((state->ax & 0xFF00u) | state->memory[kGeneratedGraphicsVideoPhys + (uint32_t)state->dx * 320u + state->cx]);
+                } else {
+                    state->ax = (uint16_t)(state->ax & 0xFF00u);
+                }
+            } else if (state->video_mode == 0x000Du) {
+                state->ax = (uint16_t)((state->ax & 0xFF00u) | generated_mode0d_read_pixel(state->cx, state->dx));
+            } else {
+                state->ax = (uint16_t)(state->ax & 0xFF00u);
+            }
+            return;
+        case 0x10u: {
+            const uint8_t al = (uint8_t)(state->ax & 0x00FFu);
+            switch (al) {
+            case 0x00u:
+                generated_set_palette_index_alias(h, (uint8_t)(state->bx & 0x00FFu), (uint8_t)((state->bx >> 8u) & 0x00FFu));
+                state->video_dirty = 1u;
+                return;
+            case 0x02u: {
+                uint16_t base = state->dx;
+                uint16_t i = 0u;
+                uint8_t palette_values[16];
+                while (i < 16u) {
+                    const uint8_t palette_value = generated_read_u8(state, state->es, (uint16_t)(base + i));
+                    palette_values[i] = palette_value;
+                    generated_set_palette_index_alias(h, (uint8_t)i, palette_value);
+                    ++i;
+                }
+                {
+                    const char* trace_palette = getenv("MZ2CPP_TRACE_PALETTE");
+                    if (trace_palette != NULL && trace_palette[0] == '1') {
+                        char trace_message[256];
+                        snprintf(trace_message,
+                                 sizeof(trace_message),
+                                 "int10_1002 es:dx=%04X:%04X values=[%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X]",
+                                 (unsigned)state->es,
+                                 (unsigned)state->dx,
+                                 (unsigned)palette_values[0],
+                                 (unsigned)palette_values[1],
+                                 (unsigned)palette_values[2],
+                                 (unsigned)palette_values[3],
+                                 (unsigned)palette_values[4],
+                                 (unsigned)palette_values[5],
+                                 (unsigned)palette_values[6],
+                                 (unsigned)palette_values[7],
+                                 (unsigned)palette_values[8],
+                                 (unsigned)palette_values[9],
+                                 (unsigned)palette_values[10],
+                                 (unsigned)palette_values[11],
+                                 (unsigned)palette_values[12],
+                                 (unsigned)palette_values[13],
+                                 (unsigned)palette_values[14],
+                                 (unsigned)palette_values[15]);
+                        generated_append_trace_line("palette", trace_message);
+                    }
+                }
+                state->video_dirty = 1u;
+                return;
+            }
+            case 0x10u:
+                generated_set_palette_dac_entry(h,
+                    (uint16_t)(state->bx & 0x00FFu),
+                    (uint8_t)((state->dx >> 8u) & 0x00FFu),
+                    (uint8_t)((state->cx >> 8u) & 0x00FFu),
+                    (uint8_t)(state->cx & 0x00FFu));
+                state->video_dirty = 1u;
+                return;
+            case 0x12u: {
+                uint16_t index = state->bx;
+                uint16_t ptr = state->dx;
+                uint16_t i = 0u;
+                while (i < state->cx) {
+                    const uint8_t r6 = generated_read_u8(state, state->es, ptr++);
+                    const uint8_t g6 = generated_read_u8(state, state->es, ptr++);
+                    const uint8_t b6 = generated_read_u8(state, state->es, ptr++);
+                    generated_set_palette_dac_entry(h, (uint16_t)(index + i), r6, g6, b6);
+                    ++i;
+                }
+                state->video_dirty = 1u;
+                return;
+            }
+            default:
+                return;
+            }
+        }
+        default:
+            return;
+        }
+    }
+    case 0x16u: {
+        const unsigned char ah = (unsigned char)((state->ax >> 8u) & 0x00FFu);
+        switch (ah) {
+        case 0x00u:
+            state->ax = generated_consume_keyboard(state);
+            generated_set_flag(state, GENERATED_FLAG_ZF, 0u);
+            return;
+        case 0x01u: {
+            uint16_t key_ax = 0u;
+            if (generated_poll_keyboard(state, &key_ax) != 0u) {
+                state->ax = key_ax;
+                generated_set_flag(state, GENERATED_FLAG_ZF, 0u);
+            } else {
+                generated_set_flag(state, GENERATED_FLAG_ZF, 1u);
+            }
+            return;
+        }
+        case 0x02u:
+            state->ax = (uint16_t)((state->ax & 0xFF00u) | state->keyboard_shift_flags);
+            generated_set_flag(state, GENERATED_FLAG_ZF, 0u);
+            return;
+        default:
+            generated_set_flag(state, GENERATED_FLAG_ZF, 1u);
+            return;
+        }
+    }
+    case 0x21u: {
+        const unsigned char ah = (unsigned char)((state->ax >> 8u) & 0x00FFu);
+        const unsigned char al = (unsigned char)(state->ax & 0x00FFu);
+        if (generated_trace_env_enabled("MZ2CPP_TRACE_INT21")) {
+            char trace_message[256];
+            snprintf(trace_message,
+                     sizeof(trace_message),
+                     "ax=%04X bx=%04X cx=%04X dx=%04X ds=%04X es=%04X ss=%04X sp=%04X flags=%04X",
+                     (unsigned)state->ax,
+                     (unsigned)state->bx,
+                     (unsigned)state->cx,
+                     (unsigned)state->dx,
+                     (unsigned)state->ds,
+                     (unsigned)state->es,
+                     (unsigned)state->ss,
+                     (unsigned)state->sp,
+                     (unsigned)state->flags);
+            generated_append_trace_line("int21", trace_message);
+        }
+        switch (ah) {
+        case 0x3Du: {
+            const unsigned access = (unsigned)(al & 0x03u);
+            const char* path = (const char*)(state->memory + generated_phys(state->ds, state->dx));
+            const char* mode = "rb";
+            unsigned handle = 0u;
+            FILE* file = NULL;
+            if (access == 1u) {
+                mode = "wb";
+            } else if (access == 2u) {
+                mode = "rb+";
+            }
+            handle = generated_dos_find_free_handle(state);
+            if (handle == 0u) {
+                state->ax = 0x0004u;
+                generated_set_flag(state, GENERATED_FLAG_CF, 1u);
+                return;
+            }
+            file = fopen(path, mode);
+            if (file == NULL && access == 2u) {
+                file = fopen(path, "rb");
+            }
+            if (file == NULL) {
+                state->ax = 0x0002u;
+                generated_set_flag(state, GENERATED_FLAG_CF, 1u);
+                return;
+            }
+            state->dos_files[handle] = file;
+            state->ax = (uint16_t)handle;
+            {
+                char message[192];
+                snprintf(message, sizeof(message), "open '%s' -> handle=%u", path, handle);
+                generated_log_dos_io(state, message);
+            }
+            generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+            return;
+        }
+        case 0x3Eu: {
+            const unsigned handle = (unsigned)state->bx;
+            if (handle >= 32u || state->dos_files[handle] == NULL) {
+                state->ax = 0x0006u;
+                generated_set_flag(state, GENERATED_FLAG_CF, 1u);
+                return;
+            }
+            {
+                char message[96];
+                snprintf(message, sizeof(message), "close handle=%u", handle);
+                generated_log_dos_io(state, message);
+            }
+            fclose(state->dos_files[handle]);
+            state->dos_files[handle] = NULL;
+            state->ax = 0x0000u;
+            generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+            return;
+        }
+        case 0x3Fu: {
+            const unsigned handle = (unsigned)state->bx;
+            if (handle >= 32u || state->dos_files[handle] == NULL) {
+                state->ax = 0x0006u;
+                generated_set_flag(state, GENERATED_FLAG_CF, 1u);
+                return;
+            }
+            generated_dos_read_buffer(state, state->ds, state->dx, state->dos_files[handle], state->cx);
+            if (state->ax == 0u || state->generated_io_log_count < 16u) {
+                char message[128];
+                snprintf(message, sizeof(message), "read handle=%u count=%u -> %u", handle, (unsigned)state->cx, (unsigned)state->ax);
+                generated_log_dos_io(state, message);
+            }
+            generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+            return;
+        }
+        case 0x40u: {
+            const unsigned handle = (unsigned)state->bx;
+            if (handle == 1u || handle == 2u) {
+                uint16_t index = 0u;
+                while (index < state->cx) {
+                    putchar((int)generated_read_u8(state, state->ds, (uint16_t)(state->dx + index)));
+                    ++index;
+                }
+                fflush(stdout);
+                state->ax = state->cx;
+                {
+                    char message[128];
+                    snprintf(message, sizeof(message), "write std handle=%u count=%u -> %u", handle, (unsigned)state->cx, (unsigned)state->ax);
+                    generated_log_dos_io(state, message);
+                }
+                generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+                return;
+            }
+            if (handle >= 32u || state->dos_files[handle] == NULL) {
+                state->ax = 0x0006u;
+                generated_set_flag(state, GENERATED_FLAG_CF, 1u);
+                return;
+            }
+            state->ax = generated_dos_write_buffer(state, state->ds, state->dx, state->dos_files[handle], state->cx);
+            fflush(state->dos_files[handle]);
+            {
+                char message[128];
+                snprintf(message, sizeof(message), "write handle=%u count=%u -> %u", handle, (unsigned)state->cx, (unsigned)state->ax);
+                generated_log_dos_io(state, message);
+            }
+            generated_set_flag(state, GENERATED_FLAG_CF, 0u);
+            return;
+        }
+        case 0x09u: {
+            const char* text = (const char*)(state->memory + generated_phys(state->ds, state->dx));
+            while (*text != '\0' && *text != '$') {
+                putchar(*text++);
+            }
+            return;
+        }
+        case 0x25u:
+            state->interrupt_offset[al] = state->dx;
+            state->interrupt_segment[al] = state->ds;
+            return;
+        case 0x35u:
+            state->bx = state->interrupt_offset[al];
+            state->es = state->interrupt_segment[al];
+            return;
+        case 0x4Cu:
+            state->exit_code = al;
+            state->terminated = 1u;
+            return;
+        default:
+            return;
+        }
+    }
+    default:
+        return;
+    }
+}
+
+unsigned generated_check_condition(const GeneratedRuntimeState* state, unsigned opcode) {
+    switch (opcode & 0x0Fu) {
+    case 0x00u: return generated_get_flag(state, GENERATED_FLAG_OF);
+    case 0x01u: return !generated_get_flag(state, GENERATED_FLAG_OF);
+    case 0x02u: return generated_get_flag(state, GENERATED_FLAG_CF);
+    case 0x03u: return !generated_get_flag(state, GENERATED_FLAG_CF);
+    case 0x04u: return generated_get_flag(state, GENERATED_FLAG_ZF);
+    case 0x05u: return !generated_get_flag(state, GENERATED_FLAG_ZF);
+    case 0x06u: return generated_get_flag(state, GENERATED_FLAG_CF) || generated_get_flag(state, GENERATED_FLAG_ZF);
+    case 0x07u: return !generated_get_flag(state, GENERATED_FLAG_CF) && !generated_get_flag(state, GENERATED_FLAG_ZF);
+    case 0x08u: return generated_get_flag(state, GENERATED_FLAG_SF);
+    case 0x09u: return !generated_get_flag(state, GENERATED_FLAG_SF);
+    case 0x0Au: return generated_get_flag(state, GENERATED_FLAG_PF);
+    case 0x0Bu: return !generated_get_flag(state, GENERATED_FLAG_PF);
+    case 0x0Cu: return generated_get_flag(state, GENERATED_FLAG_SF) != generated_get_flag(state, GENERATED_FLAG_OF);
+    case 0x0Du: return generated_get_flag(state, GENERATED_FLAG_SF) == generated_get_flag(state, GENERATED_FLAG_OF);
+    case 0x0Eu: return generated_get_flag(state, GENERATED_FLAG_ZF) ||
+                       (generated_get_flag(state, GENERATED_FLAG_SF) != generated_get_flag(state, GENERATED_FLAG_OF));
+    case 0x0Fu: return !generated_get_flag(state, GENERATED_FLAG_ZF) &&
+                       (generated_get_flag(state, GENERATED_FLAG_SF) == generated_get_flag(state, GENERATED_FLAG_OF));
+    }
+    return 0u;
+}
+
+#undef GENERATED_KEY_AX
+
+void generated_runtime_init(GeneratedRuntimeState* state) {
+    memset(state, 0, sizeof(*state));
+    g_generated_active_state = state;
+    for (size_t i = 0u; i < kGeneratedCodeRegionCount; ++i) {
+        const GeneratedMemoryRegion& region = kGeneratedCodeRegions[i];
+        memcpy(state->memory + region.physical, region.bytes, region.size);
+    }
+    for (size_t i = 0u; i < kGeneratedNamedStaticSymbolCount; ++i) {
+        const GeneratedNamedStaticSymbol& symbol = kGeneratedNamedStaticSymbols[i];
+        memcpy(state->memory + symbol.physical, symbol.bytes, symbol.size);
+    }
+    for (size_t i = 0u; i < kGeneratedResidualRegionCount; ++i) {
+        const GeneratedMemoryRegion& region = kGeneratedResidualRegions[i];
+        memcpy(state->memory + region.physical, region.bytes, region.size);
+    }
+    state->memory[kGeneratedPspPhysical + 0x0000u] = 0xCDu;
+    state->memory[kGeneratedPspPhysical + 0x0001u] = 0x20u;
+    state->memory[kGeneratedPspPhysical + 0x0002u] = 0xFFu;
+    state->memory[kGeneratedPspPhysical + 0x0003u] = 0x9Fu;
+    state->memory[kGeneratedPspPhysical + 0x0080u] = 0x00u;
+    state->cs = kGeneratedEntryCS;
+    state->ip = kGeneratedEntryIP;
+    state->ss = kGeneratedStackSS;
+    state->sp = kGeneratedStackSP;
+    state->ds = kGeneratedLoadSegment;
+    state->es = kGeneratedLoadSegment;
+    state->flags = GENERATED_FLAG_IF;
+    state->video_mode = 0x0003u;
+    state->video_dirty = 1u;
+    state->host_video_write_count = 0u;
+    state->keyboard_shift_flags = 0u;
+    state->keyboard_peek_ax = 0u;
+    state->keyboard_peek_valid = 0u;
+    state->interrupt_offset[0x08u] = kGeneratedHostStubInt08Offset;
+    state->interrupt_segment[0x08u] = kGeneratedHostStubSegment;
+    state->interrupt_offset[0x09u] = kGeneratedHostStubInt09Offset;
+    state->interrupt_segment[0x09u] = kGeneratedHostStubSegment;
+    state->interrupt_offset[0x24u] = 0x0000u;
+    state->interrupt_segment[0x24u] = 0x0000u;
+    generated_reset_planar_state(state);
+    generated_host().tick_epoch = std::chrono::steady_clock::now();
+    generated_host().next_present = generated_host().tick_epoch;
+    generated_host().next_irq0 = generated_host().tick_epoch + generated_pit_period_for_divisor(generated_host().pit_ch0_divisor);
+    generated_host().pit_ch0_low_byte_pending = false;
+    generated_host().pit_ch0_low_byte = 0u;
+    generated_host().pit_ch0_divisor = 0u;
+    generated_host().key_queue.clear();
+    generated_host().keyboard_scan_queue.clear();
+    generated_host().scripted_keys.clear();
+    generated_host().scripted_key_index = 0u;
+    generated_host().active_hw_interrupts.clear();
+    generated_host().keyboard_controller_data = 0u;
+    generated_host().persistent_dynamic_targets.clear();
+    generated_host().dynamic_targets_loaded = false;
+    generated_host().runtime_service_depth = 0;
+    generated_load_scripted_keys_from_env(generated_host());
+    generated_load_dynamic_target_db(generated_host());
+    state->memory[generated_phys(kGeneratedHostStubSegment, kGeneratedHostStubInt08Offset)] = 0xCFu;
+    state->memory[generated_phys(kGeneratedHostStubSegment, kGeneratedHostStubInt09Offset)] = 0xCFu;
+    generated_write_u16(state, 0x0000u, 0x08u * 4u, kGeneratedHostStubInt08Offset);
+    generated_write_u16(state, 0x0000u, 0x08u * 4u + 2u, kGeneratedHostStubSegment);
+    generated_write_u16(state, 0x0000u, 0x09u * 4u, kGeneratedHostStubInt09Offset);
+    generated_write_u16(state, 0x0000u, 0x09u * 4u + 2u, kGeneratedHostStubSegment);
+    generated_host_poll(state);
+}
+
+static void generated_copy_note(char* dst, size_t dst_size, const char* src);
+
+void generated_note_dynamic_target(GeneratedRuntimeState* state,
+                                   uint16_t src_cs,
+                                   uint16_t src_ip,
+                                   uint16_t target_cs,
+                                   uint16_t target_ip,
+                                   const char* note) {
+    if (state != NULL) {
+        state->last_dynamic_src_cs = src_cs;
+        state->last_dynamic_src_ip = src_ip;
+        state->last_dynamic_target_cs = target_cs;
+        state->last_dynamic_target_ip = target_ip;
+        generated_copy_note(state->last_dynamic_note, sizeof(state->last_dynamic_note), note);
+    }
+    fprintf(stderr,
+            "dynamic_target: %04X:%04X -> %04X:%04X (%s)\n",
+            (unsigned)src_cs,
+            (unsigned)src_ip,
+            (unsigned)target_cs,
+            (unsigned)target_ip,
+            note != NULL ? note : "dynamic");
+    fflush(stderr);
+    if (!generated_is_in_original_image_range(target_cs, target_ip)) {
+        return;
+    }
+    GeneratedHostState& h = generated_host();
+    generated_load_dynamic_target_db(h);
+    {
+        const uint64_t key = generated_dynamic_target_key(src_cs, src_ip, target_cs, target_ip);
+        if (!h.persistent_dynamic_targets.insert(key).second) {
+            return;
+        }
+    }
+    {
+        char line[96];
+        snprintf(line,
+                 sizeof(line),
+                 "SRC %04X:%04X TARGET %04X:%04X",
+                 (unsigned)src_cs,
+                 (unsigned)src_ip,
+                 (unsigned)target_cs,
+                 (unsigned)target_ip);
+        generated_append_text_line(generated_dynamic_target_db_path(), line);
+    }
+    {
+        char trace_message[128];
+        snprintf(trace_message,
+                 sizeof(trace_message),
+                 "new %04X:%04X from %04X:%04X (%s)",
+                 (unsigned)target_cs,
+                 (unsigned)target_ip,
+                 (unsigned)src_cs,
+                 (unsigned)src_ip,
+                 note != NULL ? note : "dynamic");
+        generated_append_trace_line("dynamic_target", trace_message);
+    }
+}
+
+static void generated_copy_note(char* dst, size_t dst_size, const char* src) {
+    if (dst_size == 0u) {
+        return;
+    }
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+    strncpy(dst, src, dst_size - 1u);
+    dst[dst_size - 1u] = '\0';
+}
+
+static unsigned generated_trace_env_enabled(const char* name) {
+    const char* value = getenv(name);
+    return value != NULL && value[0] == '1';
+}
+
+static unsigned generated_trace_call_matches(const char* name) {
+    const char* filter = getenv("MZ2CPP_TRACE_CALL_FILTER");
+    if (name == NULL) {
+        return 0u;
+    }
+    if (filter == NULL || filter[0] == '\0') {
+        return 1u;
+    }
+
+    while (*filter != '\0') {
+        while (*filter == ' ' || *filter == '\t' || *filter == ',' || *filter == ';') {
+            ++filter;
+        }
+        const char* token_start = filter;
+        while (*filter != '\0' && *filter != ',' && *filter != ';') {
+            ++filter;
+        }
+        const char* token_end = filter;
+        while (token_end > token_start &&
+               (token_end[-1] == ' ' || token_end[-1] == '\t')) {
+            --token_end;
+        }
+        const size_t token_length = (size_t)(token_end - token_start);
+        if (token_length != 0u) {
+            char token[128];
+            const size_t copy_length = token_length < (sizeof(token) - 1u) ? token_length : (sizeof(token) - 1u);
+            memcpy(token, token_start, copy_length);
+            token[copy_length] = '\0';
+            if (strstr(name, token) != NULL) {
+                return 1u;
+            }
+        }
+    }
+
+    return 0u;
+}
+
+void generated_runtime_note_call(GeneratedRuntimeState* state, const char* name) {
+    const unsigned is_unsupported =
+        name != NULL && (strncmp(name, "unsupported_", 12u) == 0 || strncmp(name, "divide_", 7u) == 0);
+    generated_copy_note(state->last_runtime_name, sizeof(state->last_runtime_name), name);
+    ++state->poll_counter;
+    if ((state->poll_counter & 0x001Fu) == 0u) {
+        generated_host_poll(state);
+    }
+    if (is_unsupported) {
+        generated_copy_note(state->last_unsupported_name, sizeof(state->last_unsupported_name), name);
+        generated_append_trace_line("unsupported", name);
+    }
+    if (generated_trace_env_enabled("MZ2CPP_TRACE_CALLS") &&
+        generated_trace_call_matches(name)) {
+        char trace_message[256];
+        snprintf(trace_message,
+                 sizeof(trace_message),
+                 "%s cs:ip=%04X:%04X ax=%04X bx=%04X cx=%04X dx=%04X si=%04X di=%04X bp=%04X ds=%04X es=%04X ss:sp=%04X:%04X",
+                 name != NULL ? name : "(null)",
+                 state != NULL ? (unsigned)state->cs : 0u,
+                 state != NULL ? (unsigned)state->ip : 0u,
+                 state != NULL ? (unsigned)state->ax : 0u,
+                 state != NULL ? (unsigned)state->bx : 0u,
+                 state != NULL ? (unsigned)state->cx : 0u,
+                 state != NULL ? (unsigned)state->dx : 0u,
+                 state != NULL ? (unsigned)state->si : 0u,
+                 state != NULL ? (unsigned)state->di : 0u,
+                 state != NULL ? (unsigned)state->bp : 0u,
+                 state != NULL ? (unsigned)state->ds : 0u,
+                 state != NULL ? (unsigned)state->es : 0u,
+                 state != NULL ? (unsigned)state->ss : 0u,
+                 state != NULL ? (unsigned)state->sp : 0u);
+        generated_append_trace_line("call", trace_message);
+    }
+}
+
+void generated_dump_termination_state(const GeneratedRuntimeState* state, FILE* file) {
+    if (state == NULL || file == NULL) {
+        return;
+    }
+
+    fprintf(file,
+            "termination: reason=%s terminated=%u exit=%u\n",
+            state->last_unsupported_name[0] != '\0' ? state->last_unsupported_name : "none",
+            state->terminated,
+            state->exit_code);
+    fprintf(file,
+            "location: cs:ip=%04X:%04X phys=%05X ss:sp=%04X:%04X top=%04X %04X %04X\n",
+            (unsigned)state->cs,
+            (unsigned)state->ip,
+            (unsigned)generated_phys(state->cs, state->ip),
+            (unsigned)state->ss,
+            (unsigned)state->sp,
+            (unsigned)generated_read_u16(state, state->ss, state->sp),
+            (unsigned)generated_read_u16(state, state->ss, (uint16_t)(state->sp + 2u)),
+            (unsigned)generated_read_u16(state, state->ss, (uint16_t)(state->sp + 4u)));
+    fprintf(file,
+            "regs: ax=%04X bx=%04X cx=%04X dx=%04X si=%04X di=%04X bp=%04X ds=%04X es=%04X flags=%04X\n",
+            (unsigned)state->ax,
+            (unsigned)state->bx,
+            (unsigned)state->cx,
+            (unsigned)state->dx,
+            (unsigned)state->si,
+            (unsigned)state->di,
+            (unsigned)state->bp,
+            (unsigned)state->ds,
+            (unsigned)state->es,
+            (unsigned)state->flags);
+    fprintf(file,
+            "flow: last_runtime=%s polls=%u io_logs=%u video_mode=%u dirty=%u host_writes=%u\n",
+            state->last_runtime_name[0] != '\0' ? state->last_runtime_name : "none",
+            state->poll_counter,
+            state->generated_io_log_count,
+            (unsigned)state->video_mode,
+            state->video_dirty,
+            state->host_video_write_count);
+    if (state->last_dynamic_note[0] != '\0') {
+        fprintf(file,
+                "dynamic: %04X:%04X -> %04X:%04X (%s)\n",
+                (unsigned)state->last_dynamic_src_cs,
+                (unsigned)state->last_dynamic_src_ip,
+                (unsigned)state->last_dynamic_target_cs,
+                (unsigned)state->last_dynamic_target_ip,
+                state->last_dynamic_note);
+    }
+}
+

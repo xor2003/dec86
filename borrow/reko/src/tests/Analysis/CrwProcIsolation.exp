@@ -1,0 +1,99 @@
+void fn0C00_0000(Sequence segptr32 ds_di)
+// MayUse:  Sequence ds:di:[0..31]
+// DataTypes: 
+//   Sequence ds:di: segptr32
+// LiveOut:
+// Trashed: SCZO ax Top
+// Preserved: di ds sp
+// fn0C00_0000
+// Return size: 0
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// sp:sp
+// di:di
+// ss:ss
+// ax:ax
+// ds:ds
+// Top:Top
+// ds_di:Sequence ds:di
+// S:S
+// C:C
+// Z:Z
+// O:O
+// wLoc02:Stack -0002
+// return address size: 2
+void fn0C00_0000(segptr32 ds_di)
+fn0C00_0000_entry:
+	def ds_di
+	ds = SLICE(ds_di, selector, 16)
+	// succ:  l0C00_0000
+l0C00_0000:
+	fn0C00_000F(ds_di)
+	ax_11 = fn0C00_0014(0x100<16>)
+	Mem17[ds:0x300<16>:word16] = ax_11
+	// succ:  l0C00_000E_thunk_fn0C00_000F
+l0C00_000E_thunk_fn0C00_000F:
+	fn0C00_000F(ds_di)
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:
+void fn0C00_000F(Sequence segptr32 ds_di)
+// MayUse:  Sequence ds:di:[0..31]
+// DataTypes: 
+//   Sequence ds:di: (ptr32 (struct 0002))
+// LiveOut:
+// Trashed: Top
+// Preserved: sp
+// fn0C00_000F
+// Return size: 0
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// sp:sp
+// di:di
+// ds:ds
+// Top:Top
+// ds_di:Sequence ds:di
+// return address size: 2
+void fn0C00_000F(segptr32 ds_di)
+fn0C00_000F_entry:
+	def ds_di
+	// succ:  l0C00_000F
+l0C00_000F:
+	Mem6[ds_di:word16] = 0<16>
+	return
+	// succ:  fn0C00_000F_exit
+fn0C00_000F_exit:
+Register word16 fn0C00_0014(Register word16 ax)
+// MayUse:  ax:[0..15]
+// DataTypes: 
+//   ax: word16
+// LiveOut: ax:[0..15]-fn0C00_0000
+// Trashed: SCZO ax di Top
+// Preserved: sp
+// fn0C00_0014
+// Return size: 0
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// sp:sp
+// di:di
+// SZ:SZ
+// O:O
+// C:C
+// ax:ax
+// SZO:SZO
+// Top:Top
+// S:S
+// Z:Z
+// return address size: 2
+word16 fn0C00_0014(word16 ax)
+fn0C00_0014_entry:
+	def ax
+	// succ:  l0C00_0014
+l0C00_0014:
+	ax_9 = ax - 1<16>
+	return ax_9
+	// succ:  fn0C00_0014_exit
+fn0C00_0014_exit:

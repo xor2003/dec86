@@ -1,0 +1,78 @@
+name: Reko
+
+on:
+  push:
+    branches: [ master, msbuildify ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  MSBUILDDISABLENODEREUSE: 1
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+        include:
+          - os: macos-15-intel
+            build_config: UnixRelease
+          - os: ubuntu-latest
+            build_config: UnixRelease
+          - os: windows-latest
+            build_config: Release
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: |
+          8.0.x
+    - name: Install dependencies
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          sudo apt-get install libcapstone-dev
+        elif [ "$RUNNER_OS" == "macOS" ]; then
+          brew install capstone pkg-config
+        fi
+    - name: Clear Nuget Cache
+      shell: bash
+      run: dotnet nuget locals all --clear
+    - name: Build
+      shell: bash
+      env:
+        BUILD_CONFIG: ${{ matrix.build_config }}
+      run: dotnet msbuild -p:Platform=x64 -p:Configuration=$BUILD_CONFIG -t:build_solution -m ./src/BuildTargets/BuildTargets.csproj
+    - name: Unit Tests
+      shell: bash
+      run: dotnet msbuild -p:Platform=x64 -p:Configuration=Release -t:run_unit_tests -m ./src/BuildTargets/BuildTargets.csproj
+    - name: Regression Tests
+      shell: bash
+      run: dotnet msbuild -p:Platform=x64 -p:Configuration=Release -t:run_regressions -m ./src/BuildTargets/BuildTargets.csproj
+    - name: Create Runtime nupkg
+      shell: bash
+      env:
+        BUILD_CONFIG: ${{ matrix.build_config }}
+      run: dotnet msbuild -p:Platform=x64 -p:Configuration=Release -t:create_runtime_nupkg -m ./src/BuildTargets/BuildTargets.csproj
+    - name: Create Installer .msi
+      if: matrix.os == 'windows-latest'
+      run: dotnet msbuild -p:Platform=x64 -p:Configuration=Release -t:create_msi_wix -m ./src/BuildTargets/BuildTargets.csproj
+    - name: Create Release
+      shell: bash
+      env:
+        BUILD_CONFIG: ${{ matrix.build_config }}
+      run: dotnet msbuild -p:Platform=x64 -p:Configuration=Release -t:create_release -m ./src/BuildTargets/BuildTargets.csproj
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: reko-${{ matrix.os }}
+        if-no-files-found: warn
+        path: |
+          bin/WindowsDecompiler-*.zip
+          bin/CmdLine-*.zip
+          bin/*.msi
+          bin/*.nupkg
+          src/BuildTargets/build/run_regressions/regression.log

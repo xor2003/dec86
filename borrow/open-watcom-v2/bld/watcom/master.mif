@@ -1,0 +1,55 @@
+proj_name = watcom
+
+watcom_autodepends = .AUTODEPEND
+
+watcom_noasan = 1
+
+#
+# only host version is build
+# it builds clibext objects which are used
+# only for tools running on this host
+#
+!ifneq host_os $(bld_os)
+skip_build = 1
+!else ifneq host_cpu $(bld_cpu)
+skip_build = 1
+!endif
+
+!include cproj.mif
+!include deftarg.mif
+
+.c: ../c
+
+inc_dirs = -I"../h"
+
+!ifndef __WATCOM_TOOLS__
+libs = clibext.lib clibexts.lib
+!else ifdef bootstrap
+libs = clibext.lib clibexts.lib
+!endif
+
+all: $(libs) .SYMBOLIC
+
+clibext.lib : clibext.obj
+    @%make echo_lib
+    $(bld_lib) $<
+
+clibexts.lib : clibexts.obj
+    @%make echo_lib
+    $(bld_lib) $<
+
+clibext.obj: clibext.c $(__MAKEFILES__) $($(proj_name)_autodepends)
+    @%make echo_cc
+!ifdef bootstrap
+    $(cc) $(ppflags_common) $(ppflags_autodep) $(bld_ppflags_sys) $(bld_cppflags) $(cflags) $(c_flags) $(inc_path) $[@
+!else
+    $(cc) $(ppflags_common) $(ppflags_autodep) $(ppflags_sys) $(cppflags) $(cflags) $(c_flags) $(inc_path) $[@
+!endif
+
+clibexts.obj: clibext.c $(__MAKEFILES__) $($(proj_name)_autodepends)
+    @%make echo_cc
+!ifdef bootstrap
+    $(cc) $(ppflags_common) $(ppflags_autodep) $(bld_ppflags_sys) $(bld_cppflags) $(extra_cpp_dll_flags) $(cflags_dll) $(c_flags) $(inc_path) $[@
+!else
+    $(cc) $(ppflags_common) $(ppflags_autodep) $(ppflags_sys) $(cppflags) $(extra_cpp_dll_flags) $(cflags_dll) $(c_flags) $(inc_path) $[@
+!endif

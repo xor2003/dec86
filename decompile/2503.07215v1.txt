@@ -1,0 +1,1690 @@
+Control Flow-Augmented Decompiler based on Large Language Model
+
+arXiv:2503.07215v1 [cs.SE] 10 Mar 2025
+
+Peipei Liu1 , Jian Sun1 , Li Chen1 , Zhaoteng Yan1 , Peizheng Zhang1
+Dapeng Sun1 , Dawei Wang1 , Dan Li2
+1
+Zhongguancun Laboratory 2 Tsinghua University
+{liupp, sunjian, lichen}@zgclab.edu.cn,
+
+Abstract
+Binary decompilation plays a crucial role in various tasks related to security threat analysis and
+software engineering, such as binary vulnerability detection and software supply chain analysis.
+Current prevalent binary decompilation methods
+primarily rely on large language models (LLMs)
+and can be broadly classified into two main approaches: prompt-based decompilation and end-toend decompilation. Prompt-based methods typically require significant effort to analyze and summarize the predicted data to extract aspect-specific
+expert knowledge, which is then fed into a generalpurpose large language model to address specific
+decompilation tasks. End-to-end methods, on the
+other hand, carefully construct training datasets
+or neural networks to perform post-training on
+general-purpose large language models, thereby
+obtaining domain-specific large language models
+for decompiling the predicted data. However,
+both existing approaches still face significant challenges, including the absence of rich semantic representations of the input code and the neglect of
+control flow information, which is crucial for accurate decompilation. Furthermore, most current
+decompilation techniques are specifically tailored
+for the x86 architecture, making it difficult to efficiently adapt and generalize them to other bit width
+or instruction architectures. To address these limitations, we propose a novel end-to-end decompilation LLM, CFADecLLM, which aims to enhance existing end-to-end decompilation methods.
+We conduct extensive experiments on the public
+dataset Humaneval and Exebench across four optimization levels, and results demonstrate that our
+approach outperforms existing methods in multiple
+metrics, validating its effectiveness and superiority.
+
+1
+
+Introduction
+
+Binary reverse engineering is the technical process of extracting a program’s structure, logic, and functional information
+from the compiled binary code [Kruegel et al., 2004]. It
+serves a critical role in the field of software security, with its
+
+primary applications spanning across the several areas: vulnerability analysis and exploitation [Szekeres et al., 2013],
+malware analysis [Egele et al., 2008], software intellectual
+property protection and copyright disputes, software security
+assessment, protocol reverse engineering, and compatibility
+analysis [Bossert et al., 2014].
+Decompilation, as a core technique of binary reverse engineering, aims to transform machine-readable binary code into
+human-readable high-level language code [Fu et al., 2019].
+By analyzing the control flow and data flow within the binary
+code, decompilation reconstructs program structures, infers
+variable names and types, and interprets function semantics,
+ultimately producing a high-level representation that closely
+approximates the original source code [David et al., 2020].
+Advanced decompilation techniques enable researchers to
+quickly grasp program logic, thereby significantly improving
+the efficiency of software security research.
+Existing decompilation techniques can be broadly categorized into three types: (1) Tool and Expert KnowledgeBased Methods. These approaches rely on specialized reverse engineering tools and the in-depth knowledge of experts regarding system architecture, compiler behavior, and
+program semantics, and achieve structured analysis of the
+program with control flow graph (CFG) construction, data
+flow analysis, and symbolic execution [Yakdan et al., 2015].
+(2) Statistical Machine Learning and Deep Neural NetworkBased Methods. By modeling and learning the context and
+structural features of the code, these approaches predict patterns within binary code, thus significantly enhancing the
+automation level in decompilation. However, their generalization ability remains limited when dealing with complex
+control flows or heavily obfuscated code [Zhu et al., 2024;
+Liang et al., 2021]. (3) Large Language Model-Based Methods. The success of large language models (LLMs) in natural
+language processing tasks has inspired research into their application in decompilation, bringing new heights in decompilation efficiency and performance. Two main technical channels exist for LLM-based decompilation: prompt-based channel [Wong et al., 2023; Hu et al., 2024; Feng et al., 2024]
+and end-to-end channel [Tan et al., 2024; Jiang et al., 2024;
+Feng et al., 2024]. Within the prompt-based channel, traditional decompilation tools (such as Ghidra, IDA) are first
+used to generate initial pseudo-code from binary code. Expert
+knowledge is then applied to check the decompiled pseudo-
+
+code and design prompts. Finally, these prompts, along with
+the pseudo-code, are input into a general-purpose large language model to generate more precise decompilation results.
+Different from the former approach, end-to-end methods first
+disassemble binary code and regard the generated assembly
+code as a domain-specific language (DSL). A training dataset
+is then constructed in the form of 〈assembly code, source
+code〉, which is used for further post-training on a generalpurpose large model to develop a decompilation-specific
+large language model (e.g., CodeBERT, LLM4Decompile).
+During inference, the model can directly capture the semantics of assembly code and generate the corresponding highlevel language representation, thereby enhancing the accuracy and generalization capability of decompilation.
+Currently, large language model-based decompilation
+methods are gradually emerging as a mainstream approach.
+Despite notable advancements in automating decompilation
+and handling complex code, current LLM-based decompilation methods face a key limitation: inadequate consideration
+and utilization of the global control flow structure. This structure is important for capturing a program’s execution logic
+and understanding the semantics of complex functions, as
+evidenced by its critical role in previous research and many
+applications such as binary code similarity detection, binary
+code search, and third-party library identification [Yang et al.,
+2022; Jin et al., 2022]. Moreover, existing methods are primarily designed for the x86 architecture and are difficult to
+extend to other instruction set architectures.
+Based on the observation, we propose integrating the control flow structure information of binary code with large language models to build a Control Fow-Agmented Decompiler
+based on LLM (CFADecLLM), which can also be applied
+across different instruction set architectures, enabling efficient cross-architecture decompilation.
+Specifically, the achievement of CFADecLLM consists of
+four steps. First, we compile the source code into binary
+code across different instruction architectures and bit-widths.
+Then, we disassemble the binary code using widely-used
+tools to obtain control flow graphs and assembly code. To
+leverage the strengths of different tools and enable complementary advantages in the generated assembly information,
+we use objdump to generate assembly code and IDA to produce control flow graphs. Next, we represent decompilationrelated information, including the control flow graph and assembly code, in a structured format and transform it into a
+form that can be effectively interpreted and understood by
+natural language models. Finally, we carefully design precise
+natural language prompts, incorporating as many instruction
+requirements and assembly details as possible to dynamically
+guide the decompilation process during both training and inference.
+After training, we conduct experiments and analysis on two
+publicly available datasets, ExeBench and HumanEval. The
+results demonstrate the superiority of both our models compared to previous research.
+In summary, our contributions can be summarized as follows:
+1. We propose integrating control flow graphs into large
+models for decompilation, enabling us to fully leverage
+
+control flow information to recover program logic. To
+the best of our knowledge, this is the first work to incorporate control flow information into LLMs for decompilation.
+2. We meticulously construct a dataset where each sample
+incorporates control flow information and instruction architecture details through rich and flexible natural language descriptions. Based on this dataset, we perform
+post-training on a general-purpose large model to obtain
+a domain-specific large model tailored for decompilation.
+3. Through extensive experiments and analyses, we
+demonstrate the competitive performance of our model
+compared to the current top-performing models.
+
+2
+
+Related Works
+
+2.1
+
+Decompilation
+
+The origins of decompilation can be traced back to Cristina
+Cifuentes’ groundbreaking work [Cifuentes, 1994], which introduced interval theory-based techniques.
+Traditional decompilation tools analyze a program’s CFG
+for reverse engineering. The commercial Hex-Rays extension
+for IDA Pro [Hex-Rays, 2025] is an industry standard, offering a balance of efficiency and usability for structural analysis. Open-source alternatives like Ghidra [Ghidra, 2025]
+improve accessibility and transparency but often fail to effectively reverse compiler optimizations, reflecting assembly code structure instead of reconstructing high-level source
+code.
+Phoenix [Brumley et al., 2013] enhances control flow analysis through iterative techniques. DREAM [Yakdan et al.,
+2015] removes goto statements to generate more structured
+code, though sometimes at the expense of readability. Revng
+[Federico et al., 2018] employs the Control Flow Combing
+algorithm to minimize goto usage, which can result in code
+bloat, while Revng-c [Gussoni et al., 2020] generates gotofree code to reduce complexity. In contrast, SAILR [Basque
+et al., 2024] argues that decompilers should preserve the
+structure of the original source code, aiming to reverse transformations that induce goto statements for better alignment
+with the original code.
+Building on DREAM, DREAM++ [Yakdan et al., 2016]
+introduces function inlining transformations but is limited by
+its predefined handling of library functions, restricting scalability. ERASE [Zhang et al., 2024a] addresses these limitations by optimizing function inlining and improving data flow
+handling, particularly in recursive inlining scenarios.
+
+2.2
+
+Neural Network-Based Decompilation
+
+Drawing inspiration from neural machine translation (NMT),
+decompilation has been reformulated as a translation problem between two programming languages. Early efforts utilized recurrent neural networks to decompile binary code into
+higher-level code, marking a significant departure from traditional rule-based decompilers [Katz et al., 2018a]. While
+these approaches demonstrated the feasibility of applying
+NMT to decompilation, they were limited in both accuracy
+
+endbr64
+test %rdi,%rdi
+je 87 <imc_fits_dtype_string+0x87>
+push %rbp
+cmpb $0x0,(%rdi)
+mov %rdi,%rbp
+je 80 <imc_fits_dtype_string+0x80>
+lea 0x0(%rip),%rsi
+callq 1e <imc_fits_dtype_string+0x1e>
+mov %rax,%r8
+
+...
+
+The assembly code is obtained by disassembling the
+binary file (compiled by GCC) using objdump, and
+its content is represented as a JSON dictionary:
+\n{assembly_prompt}\n\n- The control flow graph
+(CFG) information is extracted by IDA from the
+binary file and is represented as another JSON
+dictionary: \n{cfg_prompt}\n\\nThe high-level
+source code is:
+
+Assembly Code
+int imc_fits_dtype_string(char *dtype)
+{
+int fitsdtype = -1;
+if (dtype != NULL && dtype[0] != '\0')
+{
+if (strstr(dtype, "SHORT"))
+{
+…
+return fitsdtype;
+}
+
+LLM
+
+Prompt
+
+int imc_fits_dtype_string(char *dtype)
+{
+int fitsdtype = -1;
+if (dtype != NULL && dtype[0] != '\0')
+{
+if (strstr(dtype, "SHORT"))
+{
+…
+return fitsdtype;
+}
+
+Disassembly Tools
+
+Source Code
+
+CFG
+
+Structured Data Instance
+
+Source Code
+
+Figure 1: Architecture of our proposed CFADecLLM
+
+and complex binary structures. Building on this foundation,
+Katz et al. [Katz et al., 2019] identified the core challenge
+as the information asymmetry between high-level programming languages (PLs) and low-level PLs, and they proposed
+the TraFix to improve sequence prediction tasks by enhancing alignment between low-level instructions and high-level
+constructs. However, the automation and precision were still
+limited.
+Coda [Fu et al., 2019] introduced an end-to-end neural
+framework for decompilation, employing multiple models for
+specific statement types, yet struggled with complex binary
+code. Neutron [Liang et al., 2021], an attention-based approach, improved accuracy by better mapping assembly to
+high-level constructs, but a gap still remained. NeurDP [Cao
+et al., 2022] utilized graph neural networks to bridge the
+gap for compiler-optimized binaries, introducing intermediate representations and Optimized Translation Units (OTU)
+to enhance the decompilation of optimized binary code.
+Recent advancements in decompilation have been motivated by the success of Large Language Models, exploring
+two primary approaches: prompt-based decompilation and
+end-to-end decompilation. Prompt-based decompilation uses
+LLMs to enhance traditional decompilers like Ghidra and
+IDA Pro, improving readability and re-executability. For instance, DeGPT [Hu et al., 2024] reduced cognitive load in
+Ghidra by 24.4%, and DecGPT [Wong et al., 2023] boosted
+IDA Pro’s re-executability rate to over 75% by integrating error messages into the refinement process.
+End-to-End decompilation fine-tunes LLMs to directly
+generate high-level code from binaries. Early efforts, like
+BTC [Hosseini and Dolan-Gavitt, 2022], demonstrated the
+potential of transformers but struggled with complex binaries.
+Slade [Armengol-Estapé et al., 2024] introduced a smaller,
+efficient model optimized for assembly, while Nova [Jiang
+et al., 2024] scaled the approach with a 1-billion-parameter
+model, improving accuracy. However, open-source models
+are still limited to around 200 million parameters. Feng et
+al.[Feng et al., 2024] proposed the sc2dec method to improve performance without fine-tuning by recompiling decompilation results for in-context learning and aligning assembly code with source code using debugging informa-
+
+tion. LLM4Decompile[Tan et al., 2024], built on DeepSeekCoder, introduced models for both direct binary decompilation and refining Ghidra’s outputs. It achieved notable gains
+in readability and executability, and set a new performance
+standard for decompilation.
+
+2.3
+
+Binary Comprehension
+
+Focusing on recovering semantic information to optimize binary comprehension, previous studies have proposed various
+optimization methods. These approaches aim to recover details such as function names, variable types, and data structures from stripped binaries. For instance, Nero[David et
+al., 2020] and NFRE[Gao et al., 2021] used encoder-decoder
+frameworks, with Nero leveraging graph neural network
+(GNN) and long short-term memory (LSTM) for function
+name prediction and NFRE incorporating instruction-level
+control flow information to reduce analysis costs. DEBIN[He
+et al., 2018] employed Conditional Random Field (CRF)
+based dependency graphs to predict both function names and
+variable information, while SYMLM[Jin et al., 2022] integrated calling context into function embeddings for enhanced
+name predictions.
+OSPREY[Zhang et al., 2021] focused on variable type recovery, combining deterministic rules with probabilistic inference for improved accuracy. TYGR[Zhu et al., 2024] utilized graph-based data-flow analysis with GNNs to enhance
+type inference, and Epitome[Zhang et al., 2024b] applied
+multi-task learning and vote-based tokenization to improve
+function name prediction across different optimization levels,
+using pre-trained assembly models and fine-grained CFGs for
+better semantic understanding.
+
+3
+
+Method
+
+As shown in Figure 1, this section presents the detailed implementation of our CFADecLLM. Section 3.1 presents the data
+construction process and provides a detailed explanation of
+its specific format. Section 3.2 explains how the control flow
+graph is transformed into a natural language representation,
+and Section 3.3 demonstrates the construction of instructions
+for guiding the large language model in the decompilation
+task.
+
+1
+
+{
+"arch": XXX, # arm/mips/x86
+"mode":XXX, # 32/64
+"opts": XXX, #O0,O1,O2,O3
+"comassem": XXX # concatenate the entire assembly code of the function body (
+compilable) using "\n" for line breaks.
+"sourcecode": XXX # concatenate the target high-level C code using "\n" for line
+breaks.
+"assemgraph": {
+"nodes":
+[
+{
+"bytecode": ["55", "89", "e5", "83", "e4", "f0"], # the bytecode of all
+instructions in a CFG block.
+"addr": (Ox000001, Ox200001) # the starting and ending addresses of the
+instructions in a CFG block.
+"assemblock": ["push rbp", "mov
+ebp, esp", "and esp, 0xfffffff0"]
+}, # assembly instructions in a CFG block.
+... ...
+],
+"edges":[(1,3), (0,4), (4,6), (1,5), ...], # a list of tuples, where each tuple
+represents the indices of CFG blocks that have a connecting edge.
+"nodeNum": XXX # the number of CFG blocks contained in the function body.
+}
+
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+
+}
+
+Figure 2: Data instance within dictionary format
+
+3.1
+
+Dataset
+
+We here first present the process of dataset collection and organization, then describe the representation of each data instance including CFG, assembly code, and source code generated based on multi-optimization and dual-bitwidth compilation1 .
+(1) Data Collection
+We build our datasets on top of existing source code datasets,
+Exebench [Armengol-Estapé et al., 2022], a ML-scale,
+function-level dataset that pairs real-world C code sourced
+from GitHub with input-output (IO) examples enabling these
+programs to be executed. Using 0.8 million C functions from
+Exebench, we generate our datasets through the following
+steps:
+Step1 Resolve Data Type Conflicts. To generate 32-bit
+executables of C functions, we address data type conflicts
+between 32-bit standard libraries and Exebench-generated
+.c files. For instance, we replace the 64-bit-specific definition typedef unsigned long size t; used in
+Exebench with typedef unsigned int size t; to
+comply with the 32-bit program standards.
+Step2 Compile. The .c files containing the source code of
+the target functions are compiled using GCC into executables
+with four different optimization levels (O0, O1, O2, and O3)
+and two bitwidths (32-bit and 64-bit). After compilation, the
+1
+Here, we use dual bit-width as an example to illustrate cross-X
+(including different architectures) data processing.
+
+executables are stripped to remove debugging information for
+further processing.
+Step3 Disassemble. To ensure variety and accuracy in the
+disassembled assembly code, we utilize both Objdump[Binutils, 2025] and IDA Pro[Hex-Rays, 2025] for disassembly.
+We also develop a custom IDA plugin to facilitate this process. Additionally, when IDA cannot correctly identify the
+boundaries of a target function, we use function boundaries
+identified by Objdump to augment the IDA-generated assembly code, ensuring comprehensive coverage of the target
+function.
+Step4 Generate CFG. Recognizing the importance of semantically accurate CFGs, we develop an IDA plugin to construct CFGs from the target function’s assembly code. Basic
+blocks are formed by grouping instructions between branch
+instructions. Using the disassembled code, IDA Pro identifies transitions between blocks by analyzing jump and branch
+instructions, thereby creating a precise representation of the
+target function’s control flow.
+(2) Structured Data Representation
+After all the processing steps, we represent each data instance in a structured dictionary format that contains various functional and attribute information, making it easy to
+use in following downstream tasks. The data representation
+can be seen in Figure 2. This data structure comprises six
+main features, including the instruction set architecture, bit
+width, optimization level, assembly code generated by Objdump, and the CFG. The CFG feature encodes information
+about all basic blocks (“nodes”), the number of basic blocks
+
+Python Code
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+
+def convert_cfg(datapoint):
+assembly_prompt = {
+"instruction set architecture": datapoint["arch"],
+"bit width": datapoint["mode"],
+"compiler optimization level": datapoint["opts"],
+"assembly code": datapoint["comassem"]}
+cfg_prompt = {
+"a list of cfg_blocks": datapoint["assemgraph"]["nodes"],
+"edges between two connected cfg_blocks": datapoint["assemgraph"]["edges"],
+"cfg_block count": datapoint["assemgraph"]["nodenum"]
+}
+assembly_prompt = json.dumps(assembly_prompt)
+cfg_prompt = json.dumps(cfg_prompt)
+
+14
+15
+
+prompt4input = f"The assembly code is obtained by disassembling the binary file (
+compiled by GCC) using objdump, and its content is represented as a JSON
+dictionary: \n{assembly_prompt}\n\n- The control flow graph (CFG) information is
+extracted by IDA from the binary file and is represented as another JSON
+dictionary: \n{cfg_prompt}\n\nEach ’cfg_block’ in ’a list of cfg_blocks’
+contains: \n - ’assemblock’: The assembly instructions within the block.\n - ’
+bytecode’: The hexadecimal bytecode corresponding to the block. \n - ’addr’:
+The tuple of start and end addresses of the instructions.\n\nThe high-level
+source code is: "
+
+Figure 3: Python function for converting CFG to NLP description
+
+(“nodeNum”), and the transition edges between basic blocks
+(“edges”). The “edges” represent an undirected graph, where
+each value corresponds to the index of a basic block in the
+“nodes”. Additionally, each basic block includes its bytecode (“bytecode”), boundary addresses (“addr”), and assembly code (“assemblock”). This unified representation provides not only low-level details about the function’s implementation logic but also rich contextual data, enabling more
+accurate and interpretable model training during the decompilation process.
+
+3.2
+
+Natural Language Transformation of
+Structured CFG
+
+In this section, we transform assembly code and the structured CFG information into human-readable natural language
+descriptions to facilitate processing and understanding by
+large language models. The details are shown in Figure 3.
+We first improve the initial data construction format by using key-value pairs to clearly describe the specific roles and
+functions of each assembly information in the decompilation
+process, ensuring that each field has a clear and easily interpretable semantic meaning.
+Then, to enable the large model to better understand and
+process this structured data, we convert the dictionary into
+a JSON string with natural language description. Through
+this conversion, we not only preserve the hierarchical structure of the original data but also make it more compatible
+with the model’s input requirements, enhancing its ability
+to comprehend instruction attributes. Additionally, this approach reduces the constraints imposed by structured data on
+
+input formatting, allowing the model to perform reasoning
+in a more natural textual environment, thereby improving its
+performance in complex tasks.
+
+3.3
+
+Instruction Prompt
+
+In this section, we concatenate the prompt4input with
+the training instruction “You are a professional decompilation assistant. Your task is to analyze the input assembly
+code and control flow graph (CFG) information, understand
+the function’s logic, and derive the corresponding high-level
+source code. Please ensure that the output source code is
+well-structured, syntactically correct, and accurately reflects
+the logic and functionality of the assembly code. ”, which includes LLM’s roles and task objectives to design an optimized
+prompt. The prompt aims to enhance the multidimensional
+features of the input information, enabling the large model
+to effectively parse the syntax, semantics, and control flow
+structure of the assembly code during decompilation, thereby
+improving the model’s performance in the source code generation task.
+Finally, the prompt is input into the large model for endto-end fine-tuning with source code as the target output.
+Through this process, we expect the large model to accurately
+recover the corresponding high-level source code while preserving the original assembly code features.
+
+Benchmark
+Model
+Metric
+
+Human-eval 64-bit
+gpt-4o
+Re-exe(%) ES(%)
+
+Deepseek Coder
+Re-exe(%) ES(%)
+
+LLM4Decompile
+Re-exe(%) ES(%)
+
+Deepseek V3
+Re-exe(%) ES(%)
+
+ours(SF)
+Re-exe(%) ES(%)
+
+O0
+O1
+O2
+O3
+
+42.68
+14.02
+14.63
+11.59
+
+20.72
+18.54
+16.93
+14.39
+
+9.15
+3.66
+6.10
+3.05
+
+20.75
+14.03
+12.01
+9.45
+
+47.20
+20.61
+21.22
+20.24
+
+28.21
+14.94
+7.01
+9.47
+
+45.73
+16.46
+17.68
+10.37
+
+41.01
+28.33
+27.56
+25.16
+
+59.76
+42.07
+33.54
+28.66
+
+46.43
+38.49
+38.47
+38.3
+
+AVG
+
+20.73
+
+17.65
+
+5.49
+
+14.06
+
+27.32
+
+14.91
+
+22.56
+
+30.02
+
+41.51
+
+40.92
+
+Table 1: Main comparison between our method with the baselines models at O0, O1, O2, O3 on Human-eval 64-bit
+
+Benchmark
+Model
+Metric
+
+Human-eval 32-bit
+gpt-4o
+Re-exe(%) ES(%)
+
+Deepseek Coder
+Re-exe(%) ES(%)
+
+LLM4Decompile
+Re-exe(%) ES(%)
+
+Deepseek V3
+Re-exe(%) ES(%)
+
+ours(SF)
+Re-exe(%) ES(%)
+
+O0
+O1
+O2
+O3
+
+31.1
+14.63
+14.63
+14.63
+
+35.07
+29.72
+29.13
+27.88
+
+3.66
+2.44
+3.05
+4.27
+
+28.1
+27.42
+25.66
+25.04
+
+0
+0
+0
+0
+
+13.48
+21.33
+19.38
+19.02
+
+39.63
+17.68
+11.59
+13.41
+
+35.99
+30.46
+30.72
+29.63
+
+54.88
+29.88
+32.93
+29.27
+
+45.64
+38.54
+38.74
+37.77
+
+AVG
+
+18.25
+
+30.95
+
+3.36
+
+26.56
+
+0.00
+
+18.80
+
+20.08
+
+31.20
+
+36.74
+
+40.67
+
+Table 2: Main comparison between our method with the baselines models at O0, O1, O2, O3 on Human-eval 32-bit
+
+4
+
+Experiments
+
+4.1
+
+Experimental Setups
+
+Benchmarks. We use HumanEval-Decompile [Tan et al.,
+2024] and ExeBench [Armengol-Estapé et al., 2022] as our
+benchmarks. HumanEval-Decompile includes 164 C functions derived from Python solutions and assertions in HumanEval [Chen et al., 2021], a widely used benchmark for
+code generation evaluation. Since HumanEval only supports
+compilation for x86-64, we extended it to include 32-bit compilations as well. The original test dataset of ExeBench comprises 5,000 C programs extracted from real-world GitHub
+repositories. These programs include not only complete C
+function definitions but also provide input-output (IO) examples and external functions/header files, ensuring the executability of each function. However, due to unresolved conflicts preventing some functions from compiling into 32-bit
+executables, we randomly selected 300 compilable functions
+as an actual benchmark for our experiments.
+Metrics. Following prior research, we adopt the Reexecutability Rate (%) and Edit Similarity (%) as metrics
+[Tan et al., 2024; Armengol-Estapé et al., 2024] to provide
+a comprehensive evaluation of decompilation methods’ performance.
+The Re-executability Rate evaluates whether the decompiled code can be executed to produce the same behavior as
+the original program. This is achieved by running the decompiled C code of a test function alongside its corresponding
+assertions to verify the correctness of the decompilation results.
+The Edit Similarity is a key metric for evaluating the readability of decompiled code, and it quantifies the similarity between the decompiled code and original code. Following the
+work of [Armengol-Estapé et al., 2024], we use edit distance,
+
+a standard metric employed in other neural approaches [Katz
+et al., 2018b; Hosseini and Dolan-Gavitt, 2022], to define edit
+edit distance
+similarity. The result, 1 − sequence
+length , is normalized by
+the length of the ground truth sequence, where a higher edit
+similarity indicates better readability of the decompiled code.
+Baselines. We compare our CFADecLLM with a recent
+prominent LLMs in the field of decompilation and some wellknown universal LLMs, specifically including:
+• DeepSeek-Coder [Guo et al., 2024], the current state-ofthe-art open-source code LLM, representing the leading
+publicly available model tailored for coding tasks.
+• LLM4Decompile [Tan et al., 2024], the latest and most
+advanced LLM for end-to-end decompilation, built on
+DeepSeek-Coder. It supports both direct binary decompilation and the refinement of Ghidra’s outputs, delivering significant improvements in readability and executability.
+• GPT-4o [OpenAI et al., 2024], a top-performing
+general-purpose LLM, renowned for its outstanding capabilities in understanding and generating high-level
+programming languages.
+• DeepSeek-V3 [DeepSeek-AI et al., 2024] is an advanced open-source language model designed for highperformance natural language processing tasks, optimized for multilingual understanding and generation. It
+emphasizes efficiency and scalability, supporting diverse
+applications like code generation, mathematical reasoning, and context-aware dialogue.
+Implementation. We use the LLM4Decompile-1.3B
+model [Tan et al., 2024] as the base. When finetuning the
+model, we set the batch-size as 16, learning rate as 2e-5, max
+sequence length as 4096. The training process is conducted
+
+Benchmark
+Model
+Metric
+
+Exebench 64-bit
+gpt-4o
+Re-exe(%) ES(%)
+
+Deepseek Coder
+Re-exe(%) ES(%)
+
+LLM4Decompile
+Re-exe(%) ES(%)
+
+Deepseek V3
+Re-exe(%) ES(%)
+
+ours(SF)
+Re-exe(%) ES(%)
+
+O0
+O1
+O2
+O3
+
+1.33
+4.67
+6.67
+5.67
+
+20.49
+12.98
+13.49
+13.03
+
+5.00
+9.00
+8.00
+8.00
+
+22.58
+12.32
+12.27
+12.35
+
+2.67
+3.00
+2.33
+2.67
+
+12.94
+11.53
+10.75
+10.41
+
+3.67
+6.67
+8.00
+6.67
+
+22.74
+11.87
+11.88
+11.50
+
+28.33
+8.33
+7.33
+7.33
+
+64.93
+33.14
+30.74
+30.35
+
+AVG
+
+4.58
+
+14.99
+
+7.50
+
+14.88
+
+2.67
+
+11.41
+
+6.25
+
+14.00
+
+12.83
+
+39.79
+
+Table 3: Main comparison between our method with the baselines models at O0, O1, O2, O3 on Exebench 64-bit
+
+Benchmark
+Model
+Metric
+
+Exebench 32-bit
+gpt-4o
+Re-exe(%) ES(%)
+
+Deepseek Coder
+Re-exe(%) ES(%)
+
+LLM4Decompile
+Re-exe(%) ES(%)
+
+Deepseek V3
+Re-exe(%) ES(%)
+
+ours(SF)
+Re-exe(%) ES(%)
+
+O0
+O1
+O2
+O3
+
+0.67
+4.00
+4.33
+3.67
+
+18.69
+13.49
+13.91
+13.85
+
+3.00
+4.33
+5.67
+5.33
+
+21.00
+13.33
+13.28
+13.14
+
+0.00
+0.67
+1.33
+1.33
+
+18.79
+18.76
+17.56
+18.03
+
+3.67
+6.67
+8.00
+6.67
+
+21.72
+12.44
+13.28
+13.02
+
+30.33
+15.67
+14.00
+13.33
+
+65.32
+38.69
+37.52
+36.52
+
+AVG
+
+4.17
+
+15.74
+
+4.83
+
+15.19
+
+0.83
+
+18.04
+
+6.17
+
+15.12
+
+18.08
+
+44.51
+
+Table 4: Main comparison between our method with the baselines models at O0, O1, O2, O3 on Exebench 32-bit
+
+for one epoch. All experiments are done on NVIDIA H10080GB GPU clusters. We adopt greedy search for generating
+decompiled high-level source code in model inference.
+
+4.2
+
+Main Results
+
+The main experimental results can be seen at Table 1, Table 2,
+Table 3, Table 4. From the experimental results, our method
+consistently outperforms other methods (gpt-4o, Deepseek
+Coder, LLM4Decompile, Deepseek V3) across both datasets
+and bitwidths. Below is a detailed analysis of the results:
+
+(1) Human-eval 64-bit Results Analysis
+• Re-exe: Our method outperforms all other methods
+in terms of Re-exe on all test sets (O0, O1, O2,
+O3), with an average value of 41.51%. In comparison, gpt-4o achieves 20.73%, Deepseek Coder 5.49%,
+LLM4Decompile 27.32%, and Deepseek V3 22.56%.
+• ES: Our method also achieves a significant ES of
+40.92%, surpassing gpt-4o (17.65%) and Deepseek V3
+(30.02%).
+Conclusion: On Human-eval 64-bit, our method demonstrates superior performance in both Re-exe and ES, showcasing a stronger decompilation capability than existing
+methods.
+
+(2) Human-eval 32-bit Results Analysis
+• Re-exe: Our method achieves a Re-exe of 36.74%,
+significantly outperforming gpt-4o (18.25%), Deepseek
+Coder (3.36%), LLM4Decompile (0%), and Deepseek
+V3 (20.08%).
+• ES: Our method achieves a remarkable ES of 40.67%,
+which is higher than Deepseek V3 (31.20%) and gpt-4o
+(30.95%).
+
+Conclusion: On Human-eval 32-bit, our method leads in
+both Re-exe and ES, with a notable improvement in executable rate, surpassing Deepseek Coder by over 10 times and
+gpt-4o by almost double.
+
+(3) Exebench 64-bit Results Analysis
+• Re-exe: Our method has an average Re-exe of 12.83%,
+which is competitive, though slightly lower on O0.
+However, on O1, O2, and O3, our method outperforms
+others.
+• ES: Our method achieves an impressive ES of 39.79%,
+far exceeding Deepseek V3 (14.00%).
+Conclusion: On Exebench 64-bit, our method demonstrates
+a significant advantage in ES, with competitive Re-exe, especially excelling in certain sub-tasks.
+
+(4) Exebench 32-bit Results Analysis
+• Re-exe: Our method achieves Re-exe of 18.08% on
+Exebench 32-bit, outperforming all other methods including gpt-4o (4.17%) and Deepseek V3 (6.17%).
+• ES: Our method also achieves ES of 44.51%, significantly higher than Deepseek V3 (15.12%) and gpt-4o
+(15.74%).
+Conclusion: On Exebench 32-bit, our method outperforms
+others in both Re-exe and ES, demonstrating its superiority
+in smaller-width decompilation tasks.
+
+Overall Experimental Conclusion
+• Our method outperforms all other methods in terms of
+Re-exe, proving its reliability in generating executable
+decompiled code.
+
+1 int archHcubDomTerm(const ArchHcub *
+
+const archptr, ArchHcubDom *
+const domnptr, const ArchDomNum
+domnnum)
+2{
+3
+
+if (domnnum < (1 << archptr->
+dimnnbr))
+{
+domnptr->dimncur = 0;
+domnptr->bitsset = domnnum;
+return (0);
+}
+return (1);
+
+4
+5
+6
+7
+8
+9
+10 }
+
+1 int archHcubDomTerm(const ArchHcub *
+
+2{
+3
+4
+5
+6
+7
+8
+9
+10
+11 }
+
+int cl = *param1;
+int eax = 1;
+int r8d = 1;
+eax <<= cl;
+if (param2 <= eax)
+{
+param3[1] = 0;
+}
+*param3 = param2;
+return r8d;
+
+(d) gpt-4o
+
+if (termnum >= (1 << archptr->
+dimnnbr))
+{
+return(1);
+}
+domnptr->bitsset = 0;
+domnptr->dimncur = termnum;
+return(0);
+
+2{
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12 }
+
+if (nbVars < (1 << arch->dimnnbr))
+{
+term->bitsset = 0;
+term->dimncur = nbVars;
+return 1;
+}
+return 0;
+
+(b) CFADecLLM
+
+(c) LLM4Decompile
+1 int archHcubDomTerm(int *rdi, int *rsi
+
+param2, int *param3)
+2{
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14 }
+
+arch, ArchHcubDom *term, int
+nbVars)
+
+1 int archHcubDomTerm(int *rdi, int *rsi
+
+(a) Source code
+1 int archHcubDomTerm(int *param1, int
+
+1 int archHcubDomTerm(const ArchHcub *
+
+archptr, ArchHcubDom *domnptr,int
+termnum)
+
+, int edx)
+2{
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14 }
+
+, int edx)
+
+int ecx = *rdi;
+int eax = 1;
+int r8d = 1;
+eax = eax << ecx;
+if (eax <= edx)
+{
+*(rsi + 1) = 0;
+r8d = 0;
+}
+*rsi = edx;
+return r8d;
+
+(e) Deepseek-v3
+
+2{
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14 }
+
+int ecx = *rdi;
+int eax = 1;
+int r8d = 1;
+eax = eax << ecx;
+if (eax <= edx)
+{
+*(rsi + 1) = 0;
+r8d = 0;
+}
+*rsi = edx;
+return r8d;
+
+(f) Deepseek Coder
+
+Figure 4: Case study on Correct Control Flow. Presented are the source code (a) of the case sample alongside the decompilations of
+CFADecLLM (b), LLM4Decompile (c), GPT-4o (d), DeepSeek-v3 (e), and DeepSeek-Coder (f).
+
+• Our method also leads in ES, which indicates that the
+generated code is closer to the ground truth both in structure and semantics.
+• On both Human-eval (64-bit & 32-bit) datasets, our
+method shows significant improvements, outperforming
+existing methods.
+• On Exebench (64-bit & 32-bit), our method still holds a
+clear advantage, especially in ES.
+• The consistent performance of our model across two
+different bitwidths (32-bit and 64-bit) demonstrates its
+strong decompilation capability in cross-bitwidth scenarios and further extended cross-architecture. This
+highlights the robustness of our approach in handling diverse and complex decompilation tasks.
+Final Conclusion: Our model demonstrates overall superior performance in decompilation tasks, excelling in both executable rate and code similarity, outperforming current stateof-the-art methods.
+
+4.3
+
+Case Study
+
+In this section, we present two cases that highlight the advantages of CFADecLLM in terms of decompilation correctness
+and readability compared to four other baseline models.
+
+(1) Correctness of control flow
+Figure 4 presents a case study based on a test sample from
+ExeBench, where only CFADecLLM successfully recovers
+
+the correct control flow during decompilation. The figure
+compares the decompilations of CFADecLLM and four baseline models for the ’-O2’ compiled 64-bit binary of the sample’s source code. In the LLM4Decompile decompilation,
+the return values (Fig.4(c), Lines 8 and 11) in the two
+branches of the if condition (Fig.4(c), Line 3) are inverse
+compared to the source code’s control flow (Fig.4(a), Lines
+3, 7 and 11). This same issue is observed in the GPT-4o,
+DeepSeek-v3, and DeepSeek-Coder decompilations. This indicates that the baseline models cannot correctly infer branch
+transitions from the assembly code directly. Additionally, in
+the LLM4Decompile decompilation, the two assignment operations to the second input parameter (Fig.4(c), Lines 5 and
+6) are incorrectly executed before return 1 (Fig.4(c), Line
+8), whereas they should occur before return 0 (Fig.4(a),
+Lines 5, 6, and 7) in the source code, forming a basic block in
+the control flow. Similarily, one of the assignment operations
+is misplaced before both returns in the GPT-4o (Fig.4(d),
+Lines 12 and 13), DeepSeek-v3 (Fig.4(e), Lines 12 and 13),
+and DeepSeek-Coder (Fig.4(f), Lines 12 and 13) decompilations. This issue suggests that the baseline models fail to
+correctly form basic blocks within the control flow from the
+assembly code directly. In contrast, while the if condition
+in CFADecLLM’s decompilation (Fig.4(b), Line 3) is the inverse of the source code’s, the overall control flow is correctly
+reconstructed. This correctness benefits from CFADecLLM’s
+ability to learn and utilize control flow graph (CFG) knowledge. Moreover, the inversion of the if condition results in
+more compact and structured true branch blocks enclosed in
+
+curly braces { }, improving the readability of the decompilation.
+
+(2) Readability of decompilation
+Figure 5 presents a case study based on a test sample
+from ExeBench, demonstrating how CFADecLLM enhances
+the readability of its decompilation——surpassing even the
+source code. The figure compares the decompilations of
+CFADecLLM and four baseline models for the ’-O1’ compiled 64-bit binary of the sample’s source code. While
+maintaining correctness, CFADecLLM effectively eliminates
+unnecessary if-else nesting by avoiding explicit else
+branches, which are present in both the source code (Fig.5(a),
+Lines 3 and 8) and the LLM4Decompile decompilation
+(Fig.5(c), Line 8). This reduction in nested conditionals simplifies the code structure and improves readability. Additionally, CFADecLLM generates more concise code, avoiding goto statements, unlike DeepSeek-v3 (Fig.5(e), Lines
+13 and 20) and DeepSeek-Coder (Fig.5(f), Lines 13 and 20).
+The CFADecLLM decompilation consists of only 10 lines of
+valid code, whereas DeepSeek-v3 and DeepSeek-Coder produce significantly longer code with 32 and 31 lines, respectively. Furthermore, compared to the source code and the
+four baseline decompilations, CFADecLLM adheres to the
+”Early Return” principle in modern C coding style (Fig.5(b),
+Lines 6 and 10), reducing complexity and enhancing readability. The model also generates meaningful variable names
+and avoids unnecessary procedural variables, aligning more
+closely with human-written code. In contrast, DeepSeek-v3
+and DeepSeek-Coder (Fig.5(e) and Fig.5(f)) produce decompilations that resemble assembly code, using register names
+as variable names and explicitly rendering each register operation, making them far less comprehensible to humans. Overall, CFADecLLM produces more streamlined and readable
+decompilation than the source code and the four baselines.
+This improvement stems from its ability to leverage control
+flow graph (CFG) knowledge effectively.
+
+5
+
+Conclusion
+
+In this paper, we propose CFADecLLM, a novel control
+flow-augmented decompilation framework based on large
+language models. Unlike existing LLM-based decompilation approaches, our method explicitly integrates control flow
+graph (CFG) information into the decompilation process, enabling a more comprehensive understanding of program execution logic and improving the accuracy of high-level code
+reconstruction. To achieve this, we construct a structured
+dataset that combines assembly code and control flow information, allowing for more effective learning and generalization. Furthermore, we enhance decompilation efficiency by
+designing natural language prompts that dynamically guide
+the model during both training and inference.
+Extensive experiments on two publicly available benchmarks, HumanEval and ExeBench, across multiple
+bitwidths (32-bit and 64-bit), demonstrate the superior performance of our approach. Our model significantly outperforms existing state-of-the-art methods in terms of both reexecutability (Re-exe) and semantic similarity (ES), highlighting its effectiveness in real-world decompilation tasks.
+
+The results further validate that incorporating global control flow information enhances decompilation quality, particularly in scenarios involving complex control structures.
+Additionally, our findings underscore the potential of large
+language models in decompilation tasks and highlight the importance of cross-architecture adaptability. Unlike prior approaches primarily designed for x86, our idea may generalize
+well across different instruction set architectures through different bitwidths, paving the way for more versatile and robust
+decompilation solutions.
+In future work, we aim to explore the integration of additional program analysis techniques, such as data dependency
+analysis and symbolic execution, to further refine the decompilation process. Moreover, we plan to investigate methods
+for improving model interpretability, ensuring that decompiled results not only achieve high execution accuracy but
+also maintain human readability and logical consistency.
+Overall, our work advances the state of binary decompilation by bridging the gap between control flow analysis
+and large language models, setting a new benchmark for
+future research in the field.
+
+References
+[Armengol-Estapé et al., 2022] Jordi
+Armengol-Estapé,
+Jackson Woodruff, and et al. Exebench: an ml-scale
+dataset of executable c functions. In Proceedings of the
+6th ACM SIGPLAN International Symposium on Machine
+Programming, MAPS 2022, page 50–59, New York, NY,
+USA, 2022. Association for Computing Machinery.
+[Armengol-Estapé et al., 2024] Jordi
+Armengol-Estapé,
+Jackson Woodruff, and et al. Slade: A portable small
+language model decompiler for optimized assembly.
+In Proceedings of the 2024 IEEE/ACM International
+Symposium on Code Generation and Optimization, CGO
+’24, page 67–80. IEEE Press, 2024.
+[Basque et al., 2024] Zion Leonahenahe Basque, Ati Priya
+Bajaj, and et al. Ahoy SAILR! there is no need to DREAM
+of c: A Compiler-Aware structuring algorithm for binary decompilation. In 33rd USENIX Security Symposium
+(USENIX Security 24), pages 361–378, Philadelphia, PA,
+August 2024. USENIX Association.
+[Binutils, 2025] Binutils. objdump, 2025. [Online].
+[Bossert et al., 2014] Georges Bossert, Frédéric Guihéry,
+and et al. Towards automated protocol reverse engineering using semantic information. In Proceedings of the
+9th ACM Symposium on Information, Computer and Communications Security, ASIA CCS ’14, page 51–62, New
+York, NY, USA, 2014.
+[Brumley et al., 2013] David Brumley, JongHyup Lee, and
+et al.
+Native x86 decompilation using SemanticsPreserving structural analysis and iterative Control-Flow
+structuring.
+In 22nd USENIX Security Symposium
+(USENIX Security 13), pages 353–368, Washington, D.C.,
+August 2013. USENIX Association.
+[Cao et al., 2022] Ying Cao, Ruigang Liang, and et al.
+Boosting neural networks to decompile optimized bina-
+
+ries. In Proceedings of the 38th Annual Computer Security Applications Conference, ACSAC ’22, page 508–518,
+New York, NY, USA, 2022.
+[Chen et al., 2021] Mark Chen, Jerry Tworek, and et al.
+Evaluating large language models trained on code, 2021.
+[Cifuentes, 1994] Cristina Garcia Cifuentes. Reverse compilation techniques. 1994.
+[David et al., 2020] Yaniv David, Uri Alon, and et al. Neural
+reverse engineering of stripped binaries using augmented
+control flow graphs. Proc. ACM Program. Lang., 4(OOPSLA), November 2020.
+[DeepSeek-AI et al., 2024] DeepSeek-AI, Aixin Liu, Bei
+Feng, and et al. Deepseek-v3 technical report. ArXiv,
+abs/2412.19437, 2024.
+[Egele et al., 2008] Manuel Egele, Theodoor Scholte, and
+et al. A survey on automated dynamic malware-analysis
+techniques and tools. ACM Comput. Surv., 44(2), March
+2008.
+[Federico et al., 2018] Alessandro Di Federico, Pietro Fezzardi, and et al. rev.ng: A multi-architecture framework
+for reverse engineering and vulnerability discovery. 2018
+International Carnahan Conference on Security Technology (ICCST), pages 1–5, 2018.
+[Feng et al., 2024] Yunlong Feng, Dechuan Teng, and et al.
+Self-constructed context decompilation with fined-grained
+alignment enhancement, 2024.
+[Fu et al., 2019] Cheng Fu, Huili Chen, and et al. Coda: an
+end-to-end neural program decompiler. In Proceedings of
+the 33rd International Conference on Neural Information
+Processing Systems, Red Hook, NY, USA, 2019. Curran
+Associates Inc.
+[Gao et al., 2021] Han Gao, Shaoyin Cheng, and et al. A
+lightweight framework for function name reassignment
+based on large-scale stripped binaries. In Proceedings of
+the 30th ACM SIGSOFT International Symposium on Software Testing and Analysis, ISSTA 2021, page 607–619,
+New York, NY, USA, 2021.
+[Ghidra, 2025] Ghidra. Ghidra software reverse engineering
+framework, 2025. Accessed: 2025-01-14.
+[Guo et al., 2024] Daya Guo, Qihao Zhu, and et al.
+Deepseek-coder: When the large language model meets
+programming – the rise of code intelligence, 2024.
+[Gussoni et al., 2020] Andrea Gussoni, Alessandro Di Federico, and et al. A comb for decompiled c code. In
+Proceedings of the 15th ACM Asia Conference on Computer and Communications Security, ASIA CCS ’20, page
+637–651, New York, NY, USA, 2020.
+[He et al., 2018] Jingxuan He, Pesho Ivanov, and et al. Debin: Predicting debug information in stripped binaries.
+In Proceedings of the 2018 ACM SIGSAC Conference on
+Computer and Communications Security, CCS ’18, page
+1667–1680, New York, NY, USA, 2018.
+[Hex-Rays, 2025] Hex-Rays. Hex-rays decompiler, 2025.
+Accessed: 2025-01-14.
+
+[Hosseini and Dolan-Gavitt, 2022] Iman Hosseini and Brendan Dolan-Gavitt. Beyond the c: Retargetable decompilation using neural machine translation. In Proceedings
+2022 Workshop on Binary Analysis Research, BAR 2022.
+Internet Society, 2022.
+[Hu et al., 2024] Peiwei Hu, Ruigang Liang, and et al.
+Degpt: Optimizing decompiler output with llm. In Proceedings 2024 Network and Distributed System Security
+Symposium (2024). https://api. semanticscholar. org/CorpusID, volume 267622140, 2024.
+[Jiang et al., 2024] Nan Jiang, Chengxiao Wang, and et al.
+Nova: Generative language models for assembly code with
+hierarchical attention and contrastive learning. In Submitted to The Thirteenth International Conference on Learning Representations, 2024. under review.
+[Jin et al., 2022] Xin Jin, Kexin Pei, and et al. Symlm: Predicting function names in stripped binaries via contextsensitive execution-aware code embeddings. Proceedings
+of the 2022 ACM SIGSAC Conference on Computer and
+Communications Security, 2022.
+[Katz et al., 2018a] Deborah S. Katz, Jason Ruchti, and et al.
+Using recurrent neural networks for decompilation. In
+2018 IEEE 25th International Conference on Software
+Analysis, Evolution and Reengineering (SANER), pages
+346–356, 2018.
+[Katz et al., 2018b] Deborah S. Katz, Jason Ruchti, and et al.
+Using recurrent neural networks for decompilation. In
+2018 IEEE 25th International Conference on Software
+Analysis, Evolution and Reengineering (SANER), pages
+346–356, 2018.
+[Katz et al., 2019] Omer Katz, Yuval Olshaker, Yoav Goldberg, and Eran Yahav. Towards neural decompilation,
+2019.
+[Kruegel et al., 2004] Christopher Kruegel, William Robertson, and et al. Detecting kernel-level rootkits through binary analysis. In Proceedings of the 20th Annual Computer Security Applications Conference, ACSAC ’04, page
+91–100, USA, 2004. IEEE Computer Society.
+[Liang et al., 2021] Ruigang Liang, Ying Cao, and et al.
+Neutron: an attention-based neural decompiler. Cybersecurity, 4:5, 03 2021.
+[OpenAI et al., 2024] OpenAI, Josh Achiam, Steven Adler,
+and et al. Gpt-4 technical report, 2024.
+[Szekeres et al., 2013] László Szekeres, Mathias Payer, and
+et al. Sok: Eternal war in memory. In 2013 IEEE Symposium on Security and Privacy, pages 48–62, 2013.
+[Tan et al., 2024] Hanzhuo Tan, Qi Luo, and et al.
+Llm4decompile: Decompiling binary code with large language models, 2024.
+[Wong et al., 2023] Wai Kin Wong, Huaijin Wang, and et al.
+Refining decompiled c code with large language models,
+2023.
+[Yakdan et al., 2015] Khaled Yakdan, Sebastian Eschweiler,
+and et al.
+No more gotos: Decompilation using pattern-independent control-flow structuring and
+
+semantic-preserving transformations. In Network and Distributed System Security Symposium, 2015.
+[Yakdan et al., 2016] Khaled Yakdan, Sergej Dechand, and
+et al. Helping johnny to analyze malware: A usabilityoptimized decompiler and malware analysis user study.
+2016 IEEE Symposium on Security and Privacy (SP),
+pages 158–177, 2016.
+[Yang et al., 2022] Jia Yang, Cai Fu, and et al. Codee: A
+tensor embedding scheme for binary code search. IEEE
+Transactions on Software Engineering, 48(7):2224–2244,
+2022.
+[Zhang et al., 2021] Zhuo Zhang, Yapeng Ye, and et al. Osprey: Recovery of variable and data structure via probabilistic analysis for stripped binary. In 2021 IEEE Symposium on Security and Privacy (SP), pages 813–832, 2021.
+[Zhang et al., 2024a] Runze Zhang, Ying Cao, and et al. Optimizing Decompiler Output by Eliminating Redundant
+Data Flow in Self-Recursive Inlining . In 2024 IEEE International Conference on Software Maintenance and Evolution (ICSME), pages 38–49, Los Alamitos, CA, USA, October 2024. IEEE Computer Society.
+[Zhang et al., 2024b] Xiaoling Zhang, Zhengzi Xu, and et al.
+Enhancing function name prediction using votes-based
+name tokenization and multi-task learning. Proc. ACM
+Softw. Eng., 1(FSE), July 2024.
+[Zhu et al., 2024] Chang Zhu, Ziyang Li, and et al. Tygr:
+Type inference on stripped binaries using graph neural networks. In USENIX Security Symposium, 2024.
+
+1 int irlink_init(void){
+2
+hw.fd = irlink_open(hw.device);
+3
+if (hw.fd < 0){
+4
+logprintf(LOG_ERR, "Could not
+
+1 int irlink_init(void){
+2
+hw.fd = irlink_open(hw.device);
+3
+if (hw.fd < 0){
+4
+logprintf(LOG_ERR, "Could not
+
+open the ’%s’ device", hw
+.device);
+
+open the ’%s’ device", hw
+.device);
+
+5
+6
+7
+8
+9
+
+10
+11
+12
+13
+14 }
+
+} else {
+5
+if (irlink_detect(hw.fd) == 0) 6
+{
+7
+return 1;
+8
+} else {
+9
+logprintf(LOG_ERR, "Failed 10
+to detect IRLink on 11
+’%s’ device", hw.
+12
+device);
+irlink_deinit();
+}
+13
+}
+14
+return 0;
+15
+
+irlink_open", errno);
+return 0;
+}
+if (irlink_detect(hw.fd) == 0)
+return 1;
+
+7
+8
+9
+10
+11
+12
+13
+
+logprintf(LOG_ERR, "Failed to
+detect IRLink on ’%s’ device"
+14
+, hw.device);
+15
+irlink_deinit();
+
+16
+17
+18 }
+
+return 0;
+
+16 }
+
+(a) Source code
+
+1 int irlink_init(void){
+2
+hw.fd = irlink_open(hw.device);
+3
+4
+if (hw.fd < 0) {
+5
+6
+logprintf(LOG_ERR, "
+
+(b) CFADecLLM
+
+1 int irlink_init(){
+1 int irlink_init(){
+2
+int result;
+2
+int eax = *(int*)0x0;
+3
+int status = irlink_open(hw.fd);
+3
+int edi = eax;
+4
+hw.fd = status;
+4
+void* rax = (void*)96;
+5
+if (hw.fd >= 0){
+5
+*(void**)0x0 = rax;
+6
+status = irlink_detect(hw.fd); 6
+rax = *(void**)0x0;
+7
+if (status != 0){
+7
+if ((long)rax < 0){
+8
+return 1;
+8
+int edx = *(int*)0x0;
+9
+}
+9
+eax = *(int*)0x0;
+10
+} else {
+10
+void* rsi = (void*)0x0;
+11
+11
+edi = eax;
+12
+// Some initialization logic
+12
+rax = (void*)c3;
+in case of negative
+13
+goto label104;
+status
+14
+} else {
+13
+irlink_deinit();
+15
+rax = *(void**)0x0;
+14
+}
+16
+void* rdi = rax;
+15
+17
+rax = (void*)d4;
+16
+// Return 0 if everything is
+18
+if (rax != 0){
+initialized correctly
+19
+eax = 1;
+17
+return 0;
+20
+goto label109;
+18 }
+21
+} else {
+22
+edx = *(int*)0x0;
+23
+eax = *(int*)0x0;
+(d) gpt-4o
+24
+rsi = (void*)0x0;
+25
+edi = eax;
+26
+rax = (void*)fa;
+27
+eax = 0;
+28
+}
+29
+}
+30 label104:
+31
+eax = 0;
+32 label109:
+33
+return eax;
+34 }
+
+} else {
+if (irlink_detect(hw.fd) == 0)
+return 1;
+logprintf(LOG_ERR, "
+irlink_detect", errno);
+irlink_deinit();
+}
+return 0;
+
+(c) LLM4Decompile
+1 int irlink_init(){
+2
+int eax = *(int*)0x0;
+3
+int edi = eax;
+4
+void* rax = (void*)96;
+5
+*(void**)0x0 = rax;
+6
+rax = *(void**)0x0;
+7
+if ((long)rax < 0){
+8
+int edx = *(int*)0x0;
+9
+eax = *(int*)0x0;
+10
+void* rsi = (void*)0x0;
+11
+edi = eax;
+12
+rax = (void*)c3;
+13
+goto label_104;
+14
+}
+15
+rax = *(void**)0x0;
+16
+void* rdi = rax;
+17
+rax = (void*)d4;
+18
+if (rax != 0){
+19
+eax = 1;
+20
+goto label_109;
+21
+}
+22
+int edx = *(int*)0x0;
+23
+eax = *(int*)0x0;
+24
+void* rsi = (void*)0x0;
+25
+edi = eax;
+26
+rax = (void*)fa;
+27 label_104:
+28
+eax = 0;
+29
+rax = (void*)104;
+30 label_109:
+31
+eax = 0;
+32
+return eax;
+33 }
+
+(f) Deepseek Coder
+(e) Deepseek-v3
+
+Figure 5: Case Study on Readable Decompilation. Presented are the source code (a) of the case sample alongside the decompilations of
+CFADecLLM (b), LLM4Decompile (c), GPT-4o (d), DeepSeek-v3 (e), and DeepSeek-Coder (f).
+
+

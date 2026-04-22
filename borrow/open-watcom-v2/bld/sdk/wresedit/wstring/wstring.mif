@@ -1,0 +1,20 @@
+tree_depth = 5
+
+proj_name = wstring
+
+!ifndef wstring_autodepends
+wstring_autodepends = .AUTODEPEND
+!endif
+
+wstring_ntverrc = ../res
+
+wstring_wreslib_cli = gui
+wstring_wreslib_incl = 1
+
+sys_object = &
+    wmain.obj winfo.obj wstr.obj whndl.obj &
+    whints.obj wstat.obj &
+    wedit.obj wtoolbar.obj wribbon.obj &
+    wdel.obj wnewitem.obj wsvobj.obj wstr2rc.obj
+
+!include ../../master.mif

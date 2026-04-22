@@ -58,18 +58,19 @@ def assess_decompiled_c_text(rendered_text: str) -> DecompilationQualityAssessme
     if not isinstance(rendered_text, str) or not rendered_text.strip():
         return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
 
-    markers = tuple(label for label, pattern in _RAW_IR_MARKERS if pattern.search(rendered_text))
+    code_lines = [
+        line.strip()
+        for line in rendered_text.splitlines()
+        if line.strip() and line.strip() not in {"{", "}"} and not line.strip().startswith(("/*", "*", "//"))
+    ]
+    code_only_text = "\n".join(code_lines)
+    markers = tuple(label for label, pattern in _RAW_IR_MARKERS if pattern.search(code_only_text))
     if not markers:
         return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
 
     if _FATAL_MARKERS.intersection(markers):
         return DecompilationQualityAssessment(reject_as_decompiled=True, markers=markers)
 
-    code_lines = [
-        line.strip()
-        for line in rendered_text.splitlines()
-        if line.strip() and line.strip() not in {"{", "}"} and not line.strip().startswith(("/*", "*", "//"))
-    ]
     raw_ir_line_count = sum(
         1
         for line in code_lines

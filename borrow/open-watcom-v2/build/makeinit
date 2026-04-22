@@ -1,0 +1,163 @@
+# don't ask, just nuke the files
+.ERASE
+
+bld_ver       = $+$(%OWBLDVER)$-
+bld_ver_str   = $+$(%OWBLDVERSTR)$-
+bld_ver_tool  = $+$(%OWBLDVERTOOL)$-
+curr_year     = xxxx
+!if $(__VERSION__) >= 1300
+curr_year     = $+$(%__CYEAR__)$-
+!endif
+patch_level   = 0
+!if $(__VERSION__) < 1300
+!ifdef __MSDOS__
+__DOS__=
+!endif
+!endif
+
+bin_subdir    = $+$(%OWOBJDIR)$-
+!ifdef %OWDLLOBJDIR
+dll_subdir    = $+$(%OWDLLOBJDIR)$-
+!else
+dll_subdir    = dllobjs
+!endif
+
+!ifndef verbose
+!ifdef %OWVERBOSE
+verbose       = $+$(%OWVERBOSE)$-
+!else
+verbose       = 0
+!endif
+!endif
+
+!ifndef nowgml
+!ifdef %OWNOWGML
+!ifeq %OWNOWGML 1
+nowgml = 1
+!endif
+!endif
+!endif
+
+noecho = @
+!ifneq verbose 0
+noecho =
+!endif
+
+.mif: "$(%OWROOT)/build/mif"
+
+# setup non-WATCOM tools macros
+!ifeq %OWTOOLS VISUALC
+__MSVC_TOOLS__ = $+$(%OWTOOLSVER)$-
+!else ifeq %OWTOOLS GCC
+__GCC_TOOLS__ = $+$(%OWTOOLSVER)$-
+!else ifeq %OWTOOLS CLANG
+__CLANG_TOOLS__ = $+$(%OWTOOLSVER)$-
+!else ifeq %OWTOOLS INTEL
+__INTEL_TOOLS__ = $+$(%OWTOOLSVER)$-
+!else ifeq %OWTOOLS WATCOM
+__WATCOM_TOOLS__ = $+$(%OWTOOLSVER)$-
+!else
+# if OWTOOLS is WATCOM or not defined or unknow value, default to WATCOM
+__WATCOM_TOOLS__ = 0
+!endif
+
+!ifdef %TESTBOOT
+!ifeq %TESTBOOT 1
+testbootstrap = 1
+!endif
+!endif
+
+!ifdef %BOOTSTRAP_CPU
+bld_cpu = $+$(%BOOTSTRAP_CPU)$-
+bld_os = $+$(%BOOTSTRAP_OS)$-
+!else ifdef __DOS__
+bld_cpu = 386
+bld_os = dos
+!else ifdef __OS2__
+bld_cpu = 386
+bld_os = os2
+!else ifdef __NT386__
+bld_cpu = 386
+bld_os = nt
+!else ifdef __NTX64__
+bld_cpu = x64
+bld_os = nt
+!else ifdef __NTAXP__
+bld_cpu = axp
+bld_os = nt
+!else ifdef __NTMIPS__
+bld_cpu = mps
+bld_os = nt
+!else ifdef __LINUX386__
+bld_cpu = 386
+bld_os = linux
+!else ifdef __LINUXX64__
+bld_cpu = x64
+bld_os = linux
+!else ifdef __LINUXMIPS__
+bld_cpu = mps
+bld_os = linux
+!else ifdef __LINUXPPC__
+bld_cpu = ppc
+bld_os = linux
+!else ifdef __LINUXARM__
+bld_cpu = arm
+bld_os = linux
+!else ifdef __LINUXARM64__
+bld_cpu = a64
+bld_os = linux
+!else ifdef __BSD386__
+bld_cpu = 386
+bld_os = bsd
+!else ifdef __BSDX64__
+bld_cpu = x64
+bld_os = bsd
+!else ifdef __BSDPPC__
+bld_cpu = ppc
+bld_os = bsd
+!else ifdef __HAIKU386__
+bld_cpu = 386
+bld_os = haiku
+!else ifdef __HAIKUX64__
+bld_cpu = x64
+bld_os = haiku
+!else ifdef __HAIKUPPC__
+bld_cpu = ppc
+bld_os = haiku
+!else ifdef __OSX386__
+bld_cpu = 386
+bld_os = osx
+!else ifdef __OSXX64__
+bld_cpu = x64
+bld_os = osx
+!else ifdef __OSXPPC__
+bld_cpu = ppc
+bld_os = osx
+!else ifdef __OSXARM__
+bld_cpu = arm
+bld_os = osx
+!else ifdef __OSXARM64__
+bld_cpu = a64
+bld_os = osx
+!endif
+
+nested_wmake = wmake
+
+dft_oflags     = -oaxt
+
+!ifdef nulldevice_$(bld_os)
+nulldevice = $(nulldevice_$(bld_os))
+!else ifdef __UNIX__
+nulldevice = /dev/null
+!else
+nulldevice = nul
+!endif
+
+# default windowing support
+!ifdef %OWDEFAULT_WINDOWING
+!ifeq %OWDEFAULT_WINDOWING 1
+default_windowing = 1
+!endif
+!endif
+
+!include cdirs.mif

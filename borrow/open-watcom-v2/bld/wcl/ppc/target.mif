@@ -1,0 +1,17 @@
+!ifdef bootstrap
+proj_name = bwclppc
+bwclppc_autodepends = .AUTODEPEND
+!else
+proj_name = wclppc
+wclppc_autodepends = .AUTODEPEND
+!endif
+
+wclppc_ntverrc = ../../h
+
+wclppc_trmem = 1
+
+target_cpu = ppc
+
+extra_cpp_flags = -DWCLPPC
+
+!include ../../master.mif

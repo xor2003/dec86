@@ -1,0 +1,143 @@
+proj_name = was
+
+!ifndef was_autodepends
+was_autodepends = .AUTODEPEND
+!endif
+
+was_ntverrc = ..
+
+was_trmem    = 1
+
+was_wreslib_cli = text
+
+additional_clean = *.c *.h *.re *.y *.gh *.gc *.grh *.grc
+
+!ifdef bootstrap
+exetarg_name = bwas$(target_cpu)
+!else
+exetarg_name = was$(target_cpu)
+!endif
+
+ntverrc_exe = $(exetarg_name)
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+!include $(owl_dir)/client.mif
+!include $(cpp_dir)/client.mif
+!include $(as_dir)/client.mif
+
+# cflags
+#################
+
+.c: $(cli_asminline_c);$(trmem_dir);$(cli_cpp_c_dirs);$(fe_misc_dir)/c;$(watcom_dir)/c
+
+inc_dirs = -I. $(cli_asminline_inc_dirs) $(cli_owl_inc_dirs) $(cli_cpp_inc_dirs) -I"$(fe_misc_dir)/h"
+
+extra_cpp_flags_target_axp = -DAS_ALPHA
+extra_cpp_flags_target_mps = -DAS_MIPS
+extra_cpp_flags_target_ppc = -DAS_PPC
+
+extra_cpp_flags = $(extra_cpp_flags_target_$(target_cpu))
+!ifeq debug 2
+extra_cpp_flags += -DAS_DEBUG_DUMP
+!endif
+!ifndef test_inline_as
+extra_cpp_flags += -D_STANDALONE_
+!endif
+
+extra_c_flags = -fh
+
+!ifdef __WATCOM_TOOLS__
+extra_c_flags_f_aslexyy = -fh=pch02.pch
+extra_c_flags_f_asilexyy = -fh=pch03.pch
+extra_c_flags_f_preproc = -fh=$^:pch04.pch
+extra_c_flags_f_ppexpr = -fh=$^:pch04.pch
+extra_c_flags_f_ppmacro = -fh=$^:pch04.pch
+extra_c_flags_f_ppenv = -fh=$^:pch04.pch
+extra_c_flags_f_pathlist = -fh=$^:pch06.pch
+!endif
+
+!ifeq trmem 1
+! ifdef __WATCOM_TOOLS__
+!  if $(__WATCOM_TOOLS__) < 1300
+extra_c_flags_f_asmem = -of+
+!  endif
+! endif
+!endif
+
+# lflags
+#################
+
+# explicit rules
+#################
+
+#
+# objects (see client.mif make file in as root)
+#
+as_objs = &
+    $(as_comm_objs) &
+    $(as_targ_objs_$(target_cpu)) &
+    $(as_stand_objs) &
+    $(cli_cpp_objs) $(trmem_objs)
+
+#
+# TEST
+#
+!ifdef test_inline_as
+asi_test_objs = $(cli_asminline_objs) asitest.obj $(trmem_objs)
+asinline.exe : asi_msg.grh asilexyy.gc asiytab.gc $(asi_test_objs) $(cli_owl_libs) $(__MAKEFILES__)
+    $(cl) $(clflags) $(asi_test_objs) $(cli_owl_libs) $(ldflags)
+!endif
+
+#
+# EXE
+#
+exetarg_prebuild_objs = msg.grh usage.gh cmdlnprs.gh asytab.gc aslexyy.gc
+exetarg_objs = $(as_objs)
+exetarg_libs = $(cli_owl_libs)
+exetarg_res = $(proj_name).res
+!include exetarg.mif
+
+#
+# rc and others
+#
+extra_rc_flags_nt = $(ntverrc_def) $(ntverrc_inc_dirs)
+
+$(proj_name).res : $(as_dir)/h/as.rc $(ntverrc_exe_deps) msg.grh usage.gh $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -D_STANDALONE_ $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+msg.grh : $(as_dir)/h/as.msg $(__MAKEFILES__)
+    @%make echo_cpp
+    $(cppu8) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) $(cppflags) -D_STANDALONE_ -omsg.tmp $[@
+    @%make echo_awk
+    $(noecho)*awk -v base=MSG_AS_BASE -f $(build_dir)/makemsg.awk -v OUTFILE=$^. msg.tmp
+
+asytab.gc : $(as_dir)/y/as.y $(as_dir)/y/yydriver.c $(__MAKEFILES__)
+    @rm -f tmp.tmp asytab.gh asytab.gc
+    @%make echo_wsplice
+    $(noecho)*wsplice -u $(as_wsplice_opts_$(target_cpu)) -k_STANDALONE_ $[@ tmp.tmp
+    @%make echo_yacc
+    $(noecho)$(yacc) -b asy -d -db -dd tmp.tmp $(as_dir)/y/yydriver.c > $(nulldevice)
+    %ren asytab.c asytab.gc
+    %ren asytab.h asytab.gh
+
+aslexyy.gc : $(as_dir)/y/scan.re $(__MAKEFILES__)
+    @%make echo_wsplice
+    $(noecho)*wsplice -u $(as_wsplice_opts_$(target_cpu)) -k_STANDALONE_ $[@ tmp.tmp
+    @%make echo_re2c
+    $(noecho)re2c tmp.tmp > $@
+
+# optencod options and targets for various hosts
+#optencod_enc_linux  = -utf8
+
+optencod_targets = $(target_cpu) $(host_os)
+!ifeq debug 2
+optencod_targets += dbg
+!endif
+
+cmdlnprs.gh cmdlnprs.gc usage.gh : ../../h/options.gml $(__MAKEFILES__)
+    @%make echo_optencod
+    $(optencod) -rc=MSG_USAGE_BASE -utf8 $(optencod_opt_$(host_os)) $[@ cmdlnprs.gh cmdlnprs.gc usage.gh . $(optencod_targets)

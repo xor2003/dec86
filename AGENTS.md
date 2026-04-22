@@ -590,11 +590,38 @@ Never do these unless explicitly marked as a temporary rescue:
 
 - Keep modules focused and small.
 - Split mixed-responsibility files before adding more logic.
+- Avoid lader effect.
 - Prefer SRP over convenience.
 - It is forbidden to add any code to file bigger when 400 lines.
-For example to inertia_decompiler/cli.py and ./angr_platforms/tests/test_x86_16_cli.py.
+For example to inertia_decompiler/:
+cli_interrupt_modeling.py
+runtime_support.py
+cli_fallback_decompilation.py
+cli_decompilation.py
+cli_function_discovery.py
+cli_c_text_postprocess.py
+cli_core.py
+cli_c_ast_rewrites.py
+.
 - Avoid hidden coupling and global state.
 - Keep data flow explicit.
+
+### Split integrity rules
+
+When splitting a large file, do real decomposition, not indirection.
+
+Forbidden:
+- rename-only splits (`foo.py` -> `foo_legacy.py`) presented as completed decomposition
+- compatibility modules that only proxy/re-export old monolith logic as the final state
+- runtime symbol injection machinery such as `globals().update(...)`, module `__dict__` patching, or wildcard import shims used to reconstruct old globals
+- adding optional-import fallbacks like `module = None` for required dependencies just to keep imports passing
+
+Required for a split to count as done:
+- old monolith implementation is removed or reduced to a short, temporary shim explicitly marked transitional
+- each new module has explicit static imports for what it uses
+- no dynamic cross-module binding required at runtime
+- compile/import checks pass and one focused runtime smoke command matches pre-split behavior
+- if behavior regresses, keep the split flagged as incomplete; do not claim completion
 
 ### Comments
 - Prefer self-documenting code (clear names)

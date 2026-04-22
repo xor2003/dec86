@@ -1,0 +1,93 @@
+fp:fp
+    def:  def fp
+    uses: sp_2 = fp
+sp_2: orig: sp
+    def:  sp_2 = fp
+    uses: bp_4 = sp_2
+Top_3: orig: Top
+    def:  Top_3 = 0<i8>
+    uses: use Top_3
+bp_4: orig: bp
+    def:  bp_4 = sp_2
+    uses: ax_7 = Mem0[ss:bp_4 + 6<i16>:word16]
+          sp_15 = bp_4
+          use bp_4
+ss:ss
+    def:  def ss
+    uses: ax_7 = Mem0[ss:bp_4 + 6<i16>:word16]
+Mem0:Mem
+    def:  def Mem0
+    uses: ax_7 = Mem0[ss:bp_4 + 6<i16>:word16]
+ax_7: orig: ax
+    def:  ax_7 = Mem0[ss:bp_4 + 6<i16>:word16]
+    uses: ax_8 = ax_7 | ax_7
+          ax_8 = ax_7 | ax_7
+ax_8: orig: ax
+    def:  ax_8 = ax_7 | ax_7
+    uses: SZ_9 = cond(ax_8)
+          ax_16 = PHI((ax_8, l0C00_0000), (ax_13, l0C00_0009))
+SZ_9: orig: SZ
+    def:  SZ_9 = cond(ax_8)
+    uses: Z_12 = SZ_9 & 4<32> (alias)
+          S_20 = SZ_9 & 1<32> (alias)
+O_10: orig: O
+    def:  O_10 = 0<32>
+    uses: use O_10
+C_11: orig: C
+    def:  C_11 = 0<32>
+    uses: use C_11
+Z_12: orig: Z
+    def:  Z_12 = SZ_9 & 4<32> (alias)
+    uses: branch Test(NE,Z_12) l0C00_000C
+          use Z_12
+ax_13: orig: ax
+    def:  ax_13 = 0xFFFF<16>
+    uses: ax_16 = PHI((ax_8, l0C00_0000), (ax_13, l0C00_0009))
+ax_16: orig: ax
+    def:  ax_16 = PHI((ax_8, l0C00_0000), (ax_13, l0C00_0009))
+    uses: use ax_16
+sp_15: orig: sp
+    def:  sp_15 = bp_4
+    uses: use sp_15
+S_20: orig: S
+    def:  S_20 = SZ_9 & 1<32> (alias)
+    uses: use S_20
+// fn0C00_0000
+// Return size: 2
+define fn0C00_0000
+fn0C00_0000_entry:
+	def fp
+	def ss
+	def Mem0
+	sp_2 = fp
+	Top_3 = 0<i8>
+	// succ:  l0C00_0000
+l0C00_0000:
+	bp_4 = sp_2
+	ax_7 = Mem0[ss:bp_4 + 6<i16>:word16]
+	ax_8 = ax_7 | ax_7
+	SZ_9 = cond(ax_8)
+	Z_12 = SZ_9 & 4<32> (alias)
+	S_20 = SZ_9 & 1<32> (alias)
+	O_10 = 0<32>
+	C_11 = 0<32>
+	branch Test(NE,Z_12) l0C00_000C
+	// succ:  l0C00_0009 l0C00_000C
+l0C00_0009:
+	ax_13 = 0xFFFF<16>
+	// succ:  l0C00_000C
+l0C00_000C:
+	ax_16 = PHI((ax_8, l0C00_0000), (ax_13, l0C00_0009))
+	sp_15 = bp_4
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:
+	use ax_16
+	use bp_4
+	use C_11
+	use O_10
+	use S_20
+	use sp_15
+	use Top_3
+	use Z_12
+

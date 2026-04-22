@@ -1,0 +1,21 @@
+﻿namespace Spice86.Core.Emulator.VM.Breakpoint;
+
+using Spice86.Shared.Emulator.VM.Breakpoint;
+
+using System;
+
+/// <summary>
+/// A breakpoint that is triggered unconditionally when reached.
+/// </summary>
+public class UnconditionalBreakPoint : BreakPoint {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="UnconditionalBreakPoint"/> class.
+    /// </summary>
+    /// <param name="breakPointType">The type of the breakpoint.</param>
+    /// <param name="onReached">The action to perform when the breakpoint is reached.</param>
+    /// <param name="removeOnTrigger">A value indicating whether to remove the breakpoint after it has been triggered.</param>
+    public UnconditionalBreakPoint(BreakPointType breakPointType,
+        Action<BreakPoint> onReached, bool removeOnTrigger)
+        : base(breakPointType, onReached, removeOnTrigger) {
+    }
+}

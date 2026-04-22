@@ -1,0 +1,40 @@
+# ----------------------------------------------------
+# Test 07:
+# ----------------------------------------------------
+# - Test that path with last character in search path being backslash works.
+
+.EXTENSIONS: .abc .xyz
+
+!ifdef __UNIX__
+TESTPATH=testpath/
+!else
+TESTPATH=testpath\
+!endif
+FILES=myfile.abc "my second file.abc"
+
+.xyz: $(TESTPATH)
+
+.xyz.abc:
+    %copy "$[@" "$^@"
+
+test: .symbolic create $(FILES) clean
+
+create: .symbolic
+    -mkdir testpath
+    @echo Creating <<"$(TESTPATH)myfile.xyz"
+OK
+<< keep
+    @echo Creating <<"$(TESTPATH)my second file.xyz"
+OK
+<< keep
+
+myfile.abc: $(TESTPATH)myfile.xyz
+
+"my second file.abc": "$(TESTPATH)my second file.xyz"
+
+clean: .symbolic
+    -rm -f $(TESTPATH)myfile.xyz
+    -rm -f "$(TESTPATH)my second file.xyz"
+    -rm -f myfile.abc
+    -rm -f "my second file.abc"
+    -rmdir testpath

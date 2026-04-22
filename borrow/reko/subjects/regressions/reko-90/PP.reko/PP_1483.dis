@@ -1,0 +1,1904 @@
+void fn1483_0ADB()
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse: 
+// LiveOut:
+// Trashed: Top
+// Preserved: sp
+fn1483_0ADB_entry:
+l1483_0ADB:
+	return
+fn1483_0ADB_exit:
+
+
+void fn1483_0ADC(segptr32 ds_di, segptr32 ss_bp, word16 ax, word16 cx, word16 dx, byte bl, byte bh, word16 si, selector es, selector fs, word16 wArg00, word16 wArg04, word16 wArg0A, selector psegArg01A2)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  ax:[0..15] bh:[0..7] bl:[0..7] cs:[0..15] cx:[0..15] dx:[0..15] es:[0..15] fs:[0..15] Sequence ds:di:[0..31] Sequence ss:bp:[0..31] si:[0..15] Stack +0000:[0..15] Stack +0004:[0..15] Stack +000A:[0..15] Stack +01A2:[0..15]
+// LiveOut:
+// Trashed: SCZDOP ax bp bx cx di ds dx es si Top
+// Preserved: sp ss
+fn1483_0ADC_entry:
+l1483_0ADC:
+	es_di_74 = fn1483_0D3F(ds_di, ss_bp, ax, cx, dx, bl, bh, si, es, fs, wArg00, wArg04, wArg0A, psegArg01A2)
+	ST62[<invalid> - 1<i8>:real64] = rRet0
+	Top_29 = <invalid>
+	ST39[Top_29:real64] = CONVERT(Mem0[es_di_74 + 0xFFFFE086<32>:real32], real32, real64) - ST[Top_29:real64]
+	return
+fn1483_0ADC_exit:
+
+
+word16 fn1483_0C11(segptr32 ds_si, segptr32 es_di, byte al, word16 cx, word16 bx, word16 bp)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0C55
+// MayUse:  ax:[0..7] bp:[0..15] bx:[0..15] cs:[0..15] cx:[0..15] Sequence ds:si:[0..31] Sequence es:di:[0..31] ss:[0..15]
+// LiveOut: ax:[0..15]-fn1483_0C55
+// Trashed: SCZDOP bp di ds dx eax ebx ecx es si ss Top
+// Preserved: sp
+fn1483_0C11_entry:
+	ss = SLICE(ss_bp, selector, 16)
+	si = SLICE(ds_si, word16, 0)
+	al = SLICE(ax, byte, 0)
+	ds = SLICE(ds_si, selector, 16)
+	di = SLICE(es_di, word16, 0)
+	bp = SLICE(ss_bp, word16, 0)
+	es = SLICE(es_di, selector, 16)
+l1483_0C11:
+	branch al != Mem11[ss:si:byte] l1483_0C4D
+l1483_0C1B:
+	branch al - 0x8C<8> != CONVERT(al <u Mem11[ss:si:byte], bool, byte) && cx != 1<16> l1483_0C6C
+l1483_0C24:
+	Mem134[es_di:word16] = 0x1955<16>
+l1483_0C4D:
+l1483_0C53_thunk_fn1483_0C55:
+	return SLICE(fn1483_0C55(), word16, 0)
+l1483_0C6C:
+	ss_bp_193 = fn1483_1BB8(ds_si, 0x55<8>, 0x19<8>, cx - 1<16>, 0x8000<16>, bx, bp, di, es, out ax_52, out cx_194, out dh_195, out bx_54, out si_60, out di_55, out es_59, out ds_56)
+	di_67 = di_55 + Mem35[ds_56:bx_54:word16]
+	ax_68 = ax_52 + Mem35[ds_56:bx_54 + 0x3303<16>:word16] (alias)
+	v24_87 = Mem35[ds_56:ax_68 + 0x20E<16> + di_67:word16] + di_67
+	Mem88[ds_56:ax_68 + 0x20E<16> + di_67:word16] = v24_87
+	ecx_58 = <invalid>
+	cx_90 = SLICE(ecx_58, word16, 0) (alias)
+	ss_61 = SLICE(ss_bp_193, selector, 16) (alias)
+	ch_112 = SLICE(cx_90 - 1<16>, byte, 8) (alias)
+	cl_121 = SLICE(cx_90, byte, 0) - 1<8> (alias)
+	branch v24_87 != 0<16> && cx_90 != 1<16> l1483_0C85_thunk_fn1483_0CA0
+	goto l1483_0C87
+l1483_0C85_thunk_fn1483_0CA0:
+	return fn1483_0CA0(SEQ(es_59, di_67), ss_bp_193, si_60, ds_56, out di_196)
+l1483_0C87:
+	al_113 = Mem88[ds_56:ax_68:byte] (alias)
+	Mem111[ss_61:bx:word16] = si_60
+	Mem116[es_59:di_67:byte] = Mem111[ds_56:si_60:byte]
+	cx_122 = SEQ(CONVERT(ch_112 + al_113, byte, word32), cl_121) (alias)
+l1483_0C8F_thunk_fn1483_0C91:
+	// Failed to bind call argument.
+	// Please report this issue at https://github.com/uxmal/reko
+	stackArg0 = <invalid>
+	return fn1483_0C91(SEQ(ds, bx), ss_bp, al, cx_122, si_60 + 1<i16>, di_67 + 1<i16>, stackArg0, out di_198, out es_199)
+fn1483_0C11_exit:
+
+
+word32 fn1483_0C55()
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0C11
+//      fn1483_0C91
+// MayUse: 
+// LiveOut: eax:[0..31]-fn1483_0C11
+// Trashed: SCZOP ax di dx si sp Top
+// Preserved: ax
+fn1483_0C55_entry:
+l1483_0C55:
+	branch Z l1483_0C55_thunk_fn1483_0C11
+	goto l1483_0C57
+l1483_0C55_thunk_fn1483_0C11:
+	ax_7 = fn1483_0C11(SEQ(ds, si), SEQ(es, di), SLICE(ax_7, byte, 0), cx, bx, bp)
+	return
+l1483_0C57:
+	return
+fn1483_0C55_exit:
+
+
+word16 fn1483_0C91(segptr32 ds_bx, segptr32 ss_bp, byte al, word16 cx, word16 si, word16 di, selector psegArg00, word16 & diOut, selector & esOut)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0C11
+//      fn1483_0CFA
+//      fn1483_0CFC
+// MayUse:  ax:[0..7] cx:[0..15] di:[0..15] Sequence ds:bx:[0..31] Sequence ss:bp:[0..31] si:[0..15] Stack +0000:[0..15]
+// LiveOut: di:[0..15]-fn1483_0CFC eax:[0..15]-fn1483_0C11 es:[0..15]-fn1483_0CFC
+// Trashed: SCZO ax bp bx cx di dx es sp Top
+// Preserved: ss
+fn1483_0C91_entry:
+	al_12 = SLICE(ax, byte, 0) (alias)
+	ch = SLICE(cx, byte, 8)
+	ds = SLICE(ds_bx, selector, 16)
+	bx = SLICE(ds_bx, word16, 0)
+l1483_0C91:
+	branch !OVERFLOW<byte>(al_12 + ch) l1483_0C96_thunk_fn1483_0C55
+	goto l1483_0C98
+l1483_0C96_thunk_fn1483_0C55:
+	ax_21 = fn1483_0C55()
+	diOut = di
+	esOut = <invalid>
+	return ax_21
+l1483_0C98:
+	branch Mem0[ds_bx + CONVERT(si, word16, uipr32):word16] *s 0x18<16> == 0<16> && cx != 1<16> l1483_0CA9
+	goto l1483_0C9D
+l1483_0C9B_thunk_fn1483_0CA0:
+	ax_39 = fn1483_0CA0(SEQ(psegArg00, di), ss_bp, si, ds, out di_43)
+	diOut = di_43
+	esOut = <invalid>
+	return ax_39
+l1483_0C9D:
+	Mem50[ds:bx + 0x2203<16> + si:word16] = Mem0[ds:bx + 0x2203<16> + si:word16] + (cx - 1<16>)
+l1483_0C9D_thunk_fn1483_0CA0:
+	ax_54 = fn1483_0CA0(SEQ(psegArg00, di), ss_bp, si, ds, out di_58)
+	diOut = di_58
+	esOut = <invalid>
+	return ax_54
+fn1483_0C91_exit:
+
+
+word16 fn1483_0CA0(segptr32 es_di, segptr32 ss_bp, word16 si, selector ds, word16 & diOut)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0C11
+//      fn1483_0C91
+// MayUse:  ds:[0..15] Sequence es:di:[0..31] Sequence ss:bp:[0..31] si:[0..15]
+// LiveOut: ax:[0..15]-fn1483_0C11 di:[0..15]-fn1483_0C91
+// Trashed: SCZO ax bp bx cx di dx Top
+// Preserved: sp
+fn1483_0CA0_entry:
+	bp = SLICE(ss_bp, word16, 0)
+	di = SLICE(es_di, word16, 0)
+l1483_0CA0:
+	fn1483_FD4E()
+	bl_98 = SLICE(bx_85, byte, 0) (alias)
+	ah_99 = SLICE(ax_84, byte, 8) (alias)
+	bh_102 = SLICE(bx_85, byte, 8) (alias)
+l1483_0CA9_in_fn1483_0CA0:
+	Mem95[ds:bx_85:byte] = Mem0[ds:bx_85:byte] + Mem0[ds:si + 0x173E<16>:byte] *s 0x62<8>
+	bl_100 = bl_98 + ah_99
+	bx_103 = SEQ(bh_102, bl_100) (alias)
+	Mem106[ds:bx_103 - 86<i16> + di:byte] = __rol<byte,byte>(Mem95[ds:bx_103 - 86<i16> + di:byte], 0xE2<8>)
+	Mem109[ss_bp + 0x7B<32>:word16] = __ror<word16,byte>(Mem106[ss_bp + 0x7B<32>:word16], 1<8>)
+	Mem111[ds:bx_103:byte] = Mem109[ds:bx_103:byte] + bl_100 + CONVERT((Mem106[ss_bp + 0x7B<32>:word16] & 1<16>) != 0<16>, bool, byte)
+	bl_112 = bl_100 & Mem111[ds:bx_103:byte]
+	Mem116[es_di:byte] = SLICE(ax_84, byte, 0) - 0xAC<8>
+	bx_119 = SEQ(bh_102, bl_112) (alias)
+	Mem121[ds:bx_119:word16] = Mem116[ds:bx_119:word16] + bx_119
+	Mem126[ds:di + 21<i16>:word16] = CONVERT(ax_84 - 0xBDCB<16>, word16, word32)
+	fn1483_4FE0()
+	Mem136[ds:0xF7E3<16>:word16] = Mem126[ds:0xF7E3<16>:word16] - dx_131
+	Mem139[ds:bx_130 + (di + 1<i16>):word16] = Mem136[ds:bx_130 + (di + 1<i16>):word16] + (bp - 1<16>)
+	ax_151 = __in<word16>(0x8B<8>)
+	diOut = di + 1<i16>
+	return ax_151
+fn1483_0CA0_exit:
+
+
+word16 fn1483_0CED(segptr32 es_di, segptr32 ss_bp, word16 ax, word16 dx, word16 bx, word16 si, selector ds, selector fs, word16 wArg00, selector psegArg02, word16 wArg06, word16 wArg0A, word16 wArg10, selector & esOut)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0D3F
+// MayUse:  ax:[0..15] bx:[0..15] ds:[0..15] dx:[0..15] fs:[0..15] Sequence es:di:[0..31] Sequence ss:bp:[0..31] si:[0..15] Stack +0000:[0..15] Stack +0002:[0..15] Stack +0006:[0..15] Stack +000A:[0..15] Stack +0010:[0..15]
+// LiveOut: di:[0..15]-fn1483_0D3F es:[0..15]-fn1483_0D3F
+// Trashed: SCZO ax bp bx cx di dx es si sp Top
+// Preserved: ds ss
+fn1483_0CED_entry:
+	di = SLICE(es_di, word16, 0)
+	bl_17 = SLICE(bx, byte, 0) (alias)
+	bh_26 = SLICE(bx, byte, 8) (alias)
+	al_33 = SLICE(ax, byte, 0) (alias)
+	ah_34 = SLICE(ax, byte, 8) (alias)
+	es = SLICE(es_di, selector, 16)
+	goto l1483_0CED
+l1483_0CE5_in_fn1483_0CED:
+	esOut = es
+	return di + 2<i16>
+l1483_0CED:
+	si_8 = si + Mem0[ds:di:word16]
+	v9_10 = Mem0[ds:bx + 0xF7E2<16> + si_8:word16] + fp
+	Mem11[ds:bx + 0xF7E2<16> + si_8:word16] = v9_10
+	Mem15[es_di:word16] = ax
+	SCZO_12 = cond(v9_10)
+	bx_27 = SEQ(bh_26, bl_17 + 1<8>) (alias)
+	branch bl_17 != 0xFF<8> l1483_0CE5_in_fn1483_0CED
+l1483_0CF8:
+	Mem29[ds:bx_27 + si_8:byte] = __rcr<byte,byte>(Mem15[ds:bx_27 + si_8:byte], 0xAC<8>, SCZO_12 & 2<32>)
+l1483_0CF9_thunk_fn1483_0CFC:
+	di_41 = fn1483_0CFC(SEQ(ds, di + 2<i16>), ss_bp, al_33, ah_34, wArg00, dx, bl_17 + 1<8>, bh_26, si_8, fs, psegArg02, wArg06, wArg10, out es_43)
+	esOut = es_43
+	return di_41
+fn1483_0CED_exit:
+
+
+word16 fn1483_0CFA(segptr32 ds_di, segptr32 ss_bp, byte al, byte ah, word16 cx, word16 dx, byte bl, byte bh, word16 si, selector fs, selector psegArg00, word16 wArg04, word16 wArg0E, selector & esOut)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0D3F
+// MayUse:  ah:[0..7] al:[0..7] bh:[0..7] bl:[0..7] cx:[0..15] dx:[0..15] fs:[0..15] Sequence ds:di:[0..31] Sequence ss:bp:[0..31] si:[0..15] Stack +0000:[0..15] Stack +0004:[0..15] Stack +000E:[0..15]
+// LiveOut: di:[0..15]-fn1483_0D3F es:[0..15]-fn1483_0D3F
+// Trashed: SCZO ax bp bx cx di dx es si Top
+// Preserved: ds sp ss
+fn1483_0CFA_entry:
+	ds = SLICE(ds_di, selector, 16)
+	ch = SLICE(cx, byte, 8)
+l1483_0CFA:
+	Mem10[ds:si + 0xD832<16>:byte] = Mem0[ds:si + 0xD832<16>:byte] - ch - C
+l1483_0CFA_thunk_fn1483_0CFC:
+	di_29 = fn1483_0CFC(ds_di, ss_bp, al, ah, cx, dx, bl, bh, si, fs, psegArg00, wArg04, wArg0E, out es_31)
+	esOut = es_31
+	return di_29
+fn1483_0CFA_exit:
+
+
+word16 fn1483_0CFC(segptr32 ds_di, segptr32 ss_bp, byte al, byte ah, word16 cx, word16 dx, byte bl, byte bh, word16 si, selector fs, selector psegArg00, word16 wArg04, word16 wArg0E, selector & esOut)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0CED
+//      fn1483_0CFA
+// MayUse:  ah:[0..7] al:[0..7] bh:[0..7] bl:[0..7] cx:[0..15] dx:[0..15] fs:[0..15] Sequence ds:di:[0..31] Sequence ss:bp:[0..31] si:[0..15] Stack +0000:[0..15] Stack +0004:[0..15] Stack +000E:[0..15]
+// LiveOut: di:[0..15]-fn1483_0CED es:[0..15]-fn1483_0CED
+// Trashed: SCZO ax bp bx cx di dx es si Top
+// Preserved: ds sp ss
+fn1483_0CFC_entry:
+	ds = SLICE(ds_di, selector, 16)
+	di = SLICE(ds_di, word16, 0)
+l1483_0CFC:
+	bx_57 = SEQ(bh, bl ^ al) (alias)
+	al_60 = Mem0[CONVERT(bx_57, word16, uipr32) + ds_di:byte]
+	Mem64[ss_bp + CONVERT(si, word16, uipr32):word16] = 0xD1FF<16>
+	branch cx == 0<16> l1483_0D04_thunk_fn1483_0C91
+	goto l1483_0D04_thunk_fn1483_0D06
+l1483_0D04_thunk_fn1483_0C91:
+	fn1483_0C91(SEQ(ds, bx_57), ss_bp, al_60, cx, si, di, psegArg00, out di_77, out es_74)
+	esOut = es_74
+	return di_77
+l1483_0D04_thunk_fn1483_0D06:
+	di_89 = fn1483_0D06(SEQ(ds, bx_57), dx, fs, psegArg00, wArg04, wArg0E)
+	esOut = es
+	return di_89
+fn1483_0CFC_exit:
+
+
+word16 fn1483_0D06(segptr32 ds_bx, word16 dx, selector fs, word16 wArg00, word16 wArg04, word16 wArg0E)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0CFA
+//      fn1483_0CFC
+// MayUse:  dx:[0..15] fs:[0..15] Sequence ds:bx:[0..31] Stack +0000:[0..15] Stack +0004:[0..15] Stack +000E:[0..15]
+// LiveOut: di:[0..15]-fn1483_0CFC
+// Trashed: SCZO ax bp bx cx di dx si sp Top
+// Preserved: ds
+fn1483_0D06_entry:
+	ds = SLICE(ds_bx, selector, 16)
+	bx = SLICE(ds_bx, word16, 0)
+l1483_0D06:
+	Mem10[ds_bx + 0xFFFFE209<32>:word16] = Mem0[ds_bx + 0xFFFFE209<32>:word16] - dx - C
+	branch bx == dx l1483_0D2B
+l1483_0D11:
+	msdos_display_string(SEQ(ds, 0xD21<16>))
+	Mem42[fs:wArg04 + 82<i16> + wArg00:byte] = Mem10[fs:wArg04 + 82<i16> + wArg00:byte] & SLICE(wArg0E, byte, 0)
+	di = wArg00
+l1483_0D2B:
+	return di
+fn1483_0D06_exit:
+
+
+segptr32 fn1483_0D3F(segptr32 ds_di, segptr32 ss_bp, word16 ax, word16 cx, word16 dx, byte bl, byte bh, word16 si, selector es, selector fs, word16 wArg02, word16 wArg06, word16 wArg0C, selector psegArg01A4)
+// stackDelta: -9582; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0ADC
+// MayUse:  ax:[0..15] bh:[0..7] bl:[0..7] cs:[0..15] cx:[0..15] dx:[0..15] es:[0..15] fs:[0..15] Sequence ds:di:[0..31] Sequence ss:bp:[0..31] si:[0..15] Stack +0002:[0..15] Stack +0006:[0..15] Stack +000C:[0..15] Stack +01A4:[0..15]
+// LiveOut: Sequence es:di:[0..31]-fn1483_0ADC Top:[0..7]-fn1483_0ADC
+// Trashed: SCZDOP ax bp bx cx di ds dx es si sp Top
+// Preserved: ss
+fn1483_0D3F_entry:
+	di = SLICE(ds_di, word16, 0)
+	al_17 = SLICE(ax, byte, 0) (alias)
+	ah_19 = SLICE(ax, byte, 8) (alias)
+	ss = SLICE(ss_bp, selector, 16)
+	ch_34 = SLICE(cx, byte, 8) (alias)
+	bp = SLICE(ss_bp, word16, 0)
+	ds = SLICE(ds_di, selector, 16)
+	dh_45 = SLICE(dx, byte, 8) (alias)
+	dl_55 = SLICE(dx, byte, 0) (alias)
+	es_di_53 = SEQ(es, di) (alias)
+l1483_0D3F:
+	branch P l1483_0D40_thunk_fn1483_0CFA
+	goto l1483_0D42
+l1483_0D40_thunk_fn1483_0CFA:
+	return SEQ(es_28, fn1483_0CFA(ds_di, ss_bp, al_17, ah_19, cx, dx, bl, bh, si, fs, ax, wArg02, wArg0C, out es_28))
+l1483_0D42:
+	bx_37 = SEQ(bh, 0xB4<8>) (alias)
+	ch_38 = ch_34 - Mem7[ds:(bx_37 + 2<i16>) + si:byte]
+	ax_42 = SEQ(ah_19, al_17 + ch_34) + 0xFC68<16> + CONVERT(ch_38 <u 0<8>, bool, word16)
+	dx_56 = SEQ(dh_45 ^ 0x17<8>, dl_55) (alias)
+	branch (dh_45 ^ 0x17<8>) < 0<8> l1483_0D50_thunk_fn1483_0CED
+	goto l1483_0D52
+l1483_0D50_thunk_fn1483_0CED:
+	return SEQ(es_64, fn1483_0CED(es_di_53, ss_bp, ax_42, dx_56, bx_37, si, ds, fs, si, ax, wArg02, wArg06, wArg0C, out es_64))
+l1483_0D52:
+	v21_76 = Mem75[ds:bx_37 + 67<i16> + si:word16]
+	Mem77[ds:bx_37 + 67<i16> + si:word16] = bp
+	Mem80[ds_di:byte] = Mem77[ds_di:byte] << 0x68<8>
+	v25_84 = -Mem80[ss:v21_76 - 6<i16>:word16]
+	Mem85[ss:v21_76 - 6<i16>:word16] = v25_84
+	bp_189 = v21_76
+	branch !OVERFLOW<word16>(v25_84) l1483_0D69
+l1483_0D68_1:
+	__syscall<byte>(4<8>)
+l1483_0D69:
+	Mem93[ds:si + 0x5C87<16>:byte] = ch_38
+	fn1483_8A82()
+	Mem122[ss:sp_113 - 2<i16>:word16] = ax_114
+	Mem124[ss:sp_113 - 4<i16>:word16] = cx_115
+	Mem126[ss:sp_113 - 6<i16>:word16] = dx_117
+	Mem128[ss:sp_113 - 8<i16>:word16] = bx_116
+	Mem130[ss:sp_113 - 10<i16>:word16] = sp_113
+	Mem132[ss:sp_113 - 12<i16>:word16] = v21_76
+	Mem134[ss:sp_113 - 14<i16>:word16] = si
+	Mem136[ss:sp_113 - 16<i16>:word16] = di
+	bx_138 = bx_116 + Mem136[ds:(bx_116 - 121<i16>) + di:word16] + SCZDOP_119
+	dh_140 = SLICE(dx_117, byte, 8) (alias)
+	Mem143[ss:v21_76 + 0xF512<16> + di:byte] = Mem136[ss:v21_76 + 0xF512<16> + di:byte] + dh_140 + CONVERT(bx_138 <u 0<16>, bool, byte)
+	Mem146[ds:bx_138 + 0x7D<16>:byte] = Mem143[ds:bx_138 + 0x7D<16>:byte] & SLICE(ax_114, byte, 0)
+	ax_149 = CONVERT(ax_114 - 0x8747<16>, word16, word32)
+	ch_152 = SLICE(cx_115, byte, 8) (alias)
+	ax_160 = __aad(si)
+	ax_157 = SEQ(SLICE(ax_149, byte, 8), SLICE(ax_149, byte, 0) + ch_152 + CONVERT(ax_149 <u 0<16>, bool, byte)) (alias)
+	v35_161 = Mem146[ds:ax_157 + 0x995D<16>:word16]
+	Mem162[ds:ax_157 + 0x995D<16>:word16] = ax_157
+	Mem166[ss:sp_113 - 18<i16>:word16] = sp_113 - 16<i16>
+	al_167 = SLICE(ax_160, byte, 0) (alias)
+	al_174 = al_167 + 0x2A<8> + ch_152
+	bx_173 = bx_138 + Mem166[ds:bx_138 + v35_161:word16]
+	SCZDOP_178 = SEQ(SLICE(cond(al_174), word16, 16), Mem166[ss:sp_113 - 18<i16>:word16])
+	ah_375 = SLICE(ax_160, byte, 8) (alias)
+	si_163 = v35_161
+	bl_182 = SLICE(bx_173, byte, 0) (alias)
+	bh_398 = SLICE(bx_173, byte, 8) (alias)
+	P_337 = SCZDOP_178 & 0x20<32> (alias)
+	sp_179 = sp_113 - 16<i16>
+	cl_465 = SLICE(cx_115, byte, 0) - 1<8> (alias)
+	dx_496 = SEQ(dh_140 - SLICE(bx_138, byte, 8) - CONVERT(al_167 <u 0xD6<8>, bool, byte), SLICE(dx_117, byte, 0)) (alias)
+	ch_499 = SLICE(cx_115 - 1<16>, byte, 8) (alias)
+	branch SCZDOP_178 & 4<32> && cx_115 != 1<16> l1483_0D99
+l1483_0D97:
+	v40_395 = Mem166[ds:bx_173 + 40<i16> + di:byte] - ah_375 - SCZDOP_178
+	Mem396[ds:bx_173 + 40<i16> + di:byte] = v40_395
+	goto l1483_0D9A
+l1483_0D99:
+	v41_183 = Mem166[ds:bx_173 + v35_161:byte] - bl_182
+	Mem184[ds:bx_173 + v35_161:byte] = v41_183
+	v73_514 = v41_183 <=u 0<8>
+	goto l1483_0D9B
+l1483_0D9A:
+	Mem401[ds:v35_161 + 90<i16>:byte] = Mem396[ds:v35_161 + 90<i16>:byte] - bh_398 - CONVERT(v40_395 <u 0<8>, bool, byte)
+	goto l1483_0D9D
+l1483_0D9B:
+	cx_663 = SEQ(ch_499, cl_465) (alias)
+	ds_bx_679 = SEQ(ds, bx_173) (alias)
+	branch v41_183 < 0<8> l1483_0DF7
+l1483_0D9D:
+	v43_409 = CONVERT(Mem408[ds_di + 45<i16>:byte] - (al_174 | 0x3F<8>), byte, word32)
+	Mem410[ds_di + 45<i16>:byte] = v43_409
+	Mem414[es:di:byte] = al_174 | 0x3F<8>
+	v76_517 = v43_409 >= 0<8>
+	ds_bx_666 = SEQ(ds, bx_173) (alias)
+	cx_663 = SEQ(ch_499, cl_465) (alias)
+	es_di_688 = SEQ(es, di + 1<i16>) (alias)
+	branch v43_409 >= 0<8> l1483_0DB9
+l1483_0DA7:
+	Mem417[es:di + 1<i16>:byte] = al_174 | 0x3F<8>
+	ds_bx_672 = SEQ(ds, bx_173) (alias)
+	cx_663 = SEQ(ch_499, cl_465) (alias)
+	es_di_685 = SEQ(es, di + 2<i16>) (alias)
+l1483_0DA8:
+	es_481 = SLICE(es_di_685, selector, 16) (alias)
+	bx_441 = SLICE(ds_bx_672, word16, 0) (alias)
+	di_437 = SLICE(es_di_685, word16, 0) (alias)
+	ds_423 = SLICE(ds_bx_672, selector, 16) (alias)
+	branch v76_517 l1483_0DBE
+l1483_0DAA:
+	Mem436[ss:bp_189 + si_163:word16] = -Mem425[ss:bp_189 + si_163:word16]
+	__cli()
+	Mem443[ds_423:bx_441 + 69<i16> + (di_437 - 1<16>):word16] = Mem436[ss:sp_179:word16]
+	bp_447 = bp_189 + 1<16>
+	Mem449[ds_423:bx_441 + 0xC079<16> + si_163:word16] = Mem443[ds_423:bx_441 + 0xC079<16> + si_163:word16] + bp_447
+	sp_179 = sp_179 + 4<i16>
+	bp_189 = bp_447 - 1<16>
+	ds_bx_666 = ds_bx_672 (alias)
+	es_di_688 = SEQ(es_481, di_437 - 1<16>) (alias)
+l1483_0DB9:
+	di_460 = SLICE(es_di_688, word16, 0) (alias)
+	Mem462[ds_bx_666 + CONVERT(di_460, word16, uipr32):byte] = Mem455[ds_bx_666 + CONVERT(di_460, word16, uipr32):byte] >>u 1<8>
+	bx_459 = SLICE(ds_bx_666, word16, 0) (alias)
+	ds_423 = SLICE(ds_bx_666, selector, 16) (alias)
+	Mem468[ds_423:bx_459 + 2<i16> + di_460:byte] = Mem462[ds_423:bx_459 + 2<i16> + di_460:byte] + SLICE(cx_663, byte, 0)
+	sp_179 = sp_179 + 2<i16>
+	cx_669 = cx_663 (alias)
+	es_di_682 = es_di_688 (alias)
+	goto l1483_0DBF
+l1483_0DBE:
+	cx_669 = cx_663 (alias)
+	es_di_682 = es_di_685 (alias)
+l1483_0DBF:
+	Mem477[ss:sp_179 - 2<i16>:word16] = cs
+	Mem483[ss:0xB01<16>:word16] = SLICE(es_di_682, selector, 16)
+	cl_485 = SLICE(cx_669, byte, 0) (alias)
+	Mem487[ds_423:0x8C00<16>:byte] = Mem483[ds_423:0x8C00<16>:byte] + cl_485
+	Mem492[ss:bp_189 + 0x8CC3<16>:word16] = __ror<word16,byte>(Mem487[ss:bp_189 + 0x8CC3<16>:word16], cl_485)
+	return es_di_682
+l1483_0DF3:
+	Mem230[bx_207:bx_207 + 1<16> + si_163:byte] = CONVERT(Mem215[bx_207:bx_207 + 1<16> + si_163:byte] + bl_228, byte, word32)
+	v73_514 = ax_232 <=u fp + 0x18A<16>
+	cx_663 = SEQ(ch_266, cl_192 - 1<8>) (alias)
+	ds_bx_679 = SEQ(bx_207, bx_207 + 1<16>) (alias)
+l1483_0DF7:
+	P_337 = P_337 & 0x20<32> (alias)
+	P_339 = P_337 & 0x20<32> (alias)
+	bx_207 = SLICE(ds_bx_679, word16, 0) (alias)
+	sp_179 = fp + 420<i16>
+	cl_192 = SLICE(cx_663, byte, 0) (alias)
+	branch v73_514 l1483_0E14
+l1483_0DF9:
+	fn1483_E62A()
+	return SEQ(es, di)
+l1483_0E14:
+	Mem194[ss:bp_189 + di:byte] = Mem191[ss:bp_189 + di:byte] ^ cl_192
+	v76_517 = Mem194[ss:bp_189 + di:byte] >= 0<8>
+	__in<word16>(dx_496)
+	ds_bx_672 = ds_bx_679 (alias)
+	es_di_685 = SEQ(es, di) (alias)
+	branch Mem194[ss:bp_189 + di:byte] != 0<8> l1483_0DA8
+l1483_0E19:
+	si_163 = si_163 + 1<16>
+	ah_220 = SLICE(fp + 0x8FAA<16>, byte, 8) | Mem215[ss:(fp + 0xD8F<16>) + si_163:byte]
+	es = psegArg01A4
+	bp_189 = fp + 0x18A<16>
+	bl_228 = SLICE(bx_207, byte, 0) + 1<8> (alias)
+	ax_232 = SEQ(ah_220, SLICE(fp, byte, 0) + 0xAA<8>) (alias)
+	ch_266 = SLICE(cx_663 - 1<16>, byte, 8) (alias)
+	branch ah_220 == 0<8> && cx_663 != 1<16> l1483_0DF3
+l1483_0E35:
+	Mem235[bx_207:bx_207 + 1<16> + si_163:word16] = CONVERT(Mem215[bx_207:bx_207 + 1<16> + si_163:word16] + ax_232, word16, word32)
+	cl_260 = CONVERT(cl_192 - 1<8> - Mem258[bx_207:si_163 + 0x5F<16>:byte], byte, word32)
+	al_236 = Mem235[bx_207:si_163:byte]
+	ah_252 = ah_220 ^ Mem251[bx_207:(bx_207 + 2<16>) + (si_163 + 1<i16>):byte]
+	Mem262[bx_207:si_163 + 0x6347<16>:byte] = Mem258[bx_207:si_163 + 0x6347<16>:byte] ^ cl_260
+	al_267 = al_236 | ch_266
+	si_237 = si_163 + 1<i16> + 2<i16>
+	di_239 = 0<16>
+	SCZOP_340 = cond(al_267) | P_339 (alias)
+	cx_272 = SEQ(ch_266, cl_260) (alias)
+	branch al_267 == 0<8> l1483_0ED9
+l1483_0E5E:
+	ax_349 = SEQ(SCZOP_340, al_267) (alias)
+	branch (ch_266 | al_267) != 0<8> l1483_0E70
+l1483_0E64:
+	__out<word16>(dx_496, ax_349 + 0xE80C<16>)
+	goto l1483_0E72
+l1483_0E70:
+l1483_0E72:
+	return SEQ(psegArg01A4, 0<16>)
+l1483_0ED6:
+	al_267 = Mem327[bx_207:si_307:byte]
+	si_237 = si_307 + 1<i16>
+	cx_272 = SEQ(ch_501, al_267) (alias)
+l1483_0ED9:
+	cl_512 = SLICE(cx_272, byte, 0) (alias)
+	branch cx_272 == 0<16> l1483_0EEE
+l1483_0EDB:
+	si_307 = si_237 + 0<i16>
+	ah_252 = 0<8>
+	cx_329 = SEQ(0x2A<8>, cl_512) (alias)
+l1483_0EE4:
+	di_239 = di_239 + CONVERT(Mem317[bx_207:si_307:byte], uint8, uint16)
+	Mem327[psegArg01A4:di_239:word16] = Mem317[psegArg01A4:di_239:word16] + dx_496
+	cx_329 = cx_329 - 1<16>
+	si_307 = si_307 + 1<i16>
+	ch_501 = SLICE(cx_329, byte, 8) (alias)
+	branch cx_329 != 0<16> l1483_0EE4
+l1483_0EEC:
+	goto l1483_0ED6
+l1483_0EEE:
+	Mem281[bx_207:0x300<16>:word16] = Mem276[bx_207:0x300<16>:word16] + SEQ(ah_252, al_267 | 0x20<8>)
+	__cli()
+	Mem284[bx_207:0x8602<16>:word16] = Mem281[bx_207:0x8602<16>:word16] + dx_496
+	fn3024_8E10()
+	return SEQ(psegArg01A4, di_239)
+fn1483_0D3F_exit:
+
+
+void fn1483_1777(byte al, byte bl, byte bh, word16 si, selector ds)
+// stackDelta: 2; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  al:[0..7] bh:[0..7] bl:[0..7] ds:[0..15] si:[0..15]
+// LiveOut:
+// Trashed:
+// Preserved:
+// Terminates process
+fn1483_1777_entry:
+l1483_1777:
+	fn1483_467E(SEQ(ds, bh, bl - al - C), al, si)
+fn1483_1777_exit:
+
+
+word32 fn1483_1B91(byte al, word16 bx, word16 di, selector ds, selector psegArg00)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_1BB9
+// MayUse:  al:[0..7] bx:[0..15] di:[0..15] ds:[0..15] Stack +0000:[0..15]
+// LiveOut: SCZOP-fn1483_1BB9
+// Trashed: SCZOP ax bx di ds dx ecx Top
+// Preserved: sp
+fn1483_1B91_entry:
+	bh = SLICE(bx, byte, 8)
+l1483_1B91:
+	Mem19[ds:bx + 0x10F8<16> + di:word16] = ~Mem0[ds:bx + 0x10F8<16> + di:word16]
+	v20_34 = Mem29[psegArg00:bx + 0x3201<16> + di:word16]
+	Mem35[psegArg00:bx + 0x3201<16> + di:word16] = di
+	__in<byte>(0x41<8>)
+	__sti()
+	Mem48[psegArg00:0xFF1F<16>:word16] = Mem35[psegArg00:0xFF1F<16>:word16] + 1<16>
+	__in<byte>(fp)
+	ax_23 = SEQ(ah ^ 0x2E<8>, (al - 0x28<8> ^ 0xF9<8>) - bh) (alias)
+l1483_1BB7_thunk_fn1483_1BB9:
+	fn1483_1BB9(ax, ax_23, dx, bx, bp, si, v20_34, es, psegArg00, out cx_77, out dh_78, out bx_79, out bp_80, out si_81, out di_82, out es_83, out ds_84)
+	SCZOP_61 = <invalid>
+	return SCZOP_61 & 2<32> | SCZOP_61 & 0x10<32> | SCZOP_61 & 0x20<32> | SCZOP_61 & 1<32> | SCZOP_61 & 4<32>
+fn1483_1B91_exit:
+
+
+segptr32 fn1483_1BB8(segptr32 ds_si, byte al, byte ah, word16 cx, word16 dx, word16 bx, word16 bp, word16 di, selector es, word16 & axOut, word16 & cxOut, byte & dhOut, word16 & bxOut, word16 & siOut, word16 & diOut, selector & esOut, selector & dsOut)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_0C11
+// MayUse:  ah:[0..7] al:[0..7] bp:[0..15] bx:[0..15] cs:[0..15] cx:[0..15] di:[0..15] dx:[0..15] es:[0..15] Sequence ds:si:[0..31] ss:[0..15]
+// LiveOut: ax:[0..15]-fn1483_0C11 bx:[0..15]-fn1483_0C11 di:[0..15]-fn1483_0C11 ds:[0..15]-fn1483_0C11 dx:[8..15]-fn1483_0C11 ecx:[0..15]-fn1483_0C11 es:[0..15]-fn1483_0C11 si:[0..15]-fn1483_0C11 Sequence ss:bp:[0..31]-fn1483_0C11
+// Trashed: SCZOP ax bp bx di ds dx ecx es si ss Top
+// Preserved: sp
+fn1483_1BB8_entry:
+	ds = SLICE(ds_si, selector, 16)
+	si = SLICE(ds_si, word16, 0)
+l1483_1BB8:
+	ax_16 = SEQ(ah, al | Mem0[ds_si:byte]) (alias)
+l1483_1BB8_thunk_fn1483_1BB9:
+	axOut = fn1483_1BB9(ax_16, cx, dx, bx, bp, si, di, es, ds, out cx_47, out dh_48, out bx_24, out bp_23, out si_29, out di_25, out es_31, out ds_26)
+	cxOut = <invalid>
+	dhOut = <invalid>
+	bxOut = bx_24
+	siOut = si_29
+	diOut = di_25
+	esOut = es_31
+	dsOut = ds_26
+	ss_32 = <invalid>
+	return SEQ(ss_32, bp_23)
+fn1483_1BB8_exit:
+
+
+word16 fn1483_1BB9(word16 ax, word16 cx, word16 dx, word16 bx, word16 bp, word16 si, word16 di, selector es, selector ds, word16 & cxOut, byte & dhOut, word16 & bxOut, word16 & bpOut, word16 & siOut, word16 & diOut, selector & esOut, selector & dsOut)
+// stackDelta: 4; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_1B91
+//      fn1483_1BB8
+// MayUse:  ax:[0..15] bp:[0..15] bx:[0..15] cs:[0..15] cx:[0..15] di:[0..15] ds:[0..15] dx:[0..15] es:[0..15] si:[0..15] ss:[0..15]
+// LiveOut: ax:[0..15]-fn1483_1BB8 bp:[0..15]-fn1483_1BB8 bx:[0..15]-fn1483_1BB8 di:[0..15]-fn1483_1BB8 ds:[0..15]-fn1483_1BB8 dx:[8..15]-fn1483_1BB8 ecx:[0..15]-fn1483_1BB8 es:[0..15]-fn1483_1BB8 si:[0..15]-fn1483_1BB8 ss:[0..15]-fn1483_1BB8
+// Trashed: SCZOP ax bp bx di ds dx ecx es si sp ss Top
+// Preserved:
+fn1483_1BB9_entry:
+	C_237 = C
+	sp_116 = fp
+	goto l1483_1BB9
+l1483_1B13:
+	__sti()
+	call Mem6[0x1483<16>:bx:segptr32] (retsize: 0;)
+		uses: ax:ax_44,bx:bx_45,cx:cx_261,dx:dx_42,Mem:Mem6
+		defs: ax:ax_44,bx:bx_45,dx:dx_42,ecx:ecx_43
+	cxOut = <invalid>
+	dhOut = <invalid>
+	bxOut = bx_45
+	bpOut = bp
+	siOut = ax
+	diOut = di
+	esOut = es_16
+	dsOut = <invalid>
+	cx_261 = SLICE(ecx_43, word16, 0) (alias)
+	return ax_44
+l1483_1B38:
+	dx_9 = dx - 1<16>
+	dh_178 = SLICE(dx_9, byte, 8) (alias)
+	branch dx_9 != 0<16> l1483_1B7F
+l1483_1B3B:
+	branch dx_9 == 0<16> && cx != 1<16> l1483_1B6D
+l1483_1B3D:
+	es_16 = Mem6[ss:sp_116:selector]
+	sp_17 = sp_116 + 2<i16>
+	branch si == bx l1483_1B51
+l1483_1B44:
+	ax_26 = si - 1<16>
+	ah_47 = SLICE(sp_17, byte, 8) (alias)
+	branch SLICE(sp_17, byte, 0) + bh_32 + CONVERT(si <u bx, bool, byte) == 0<8> l1483_1B13
+l1483_1B4E:
+	Mem49[ds:ax:byte] = Mem6[ds:ax:byte] + ah_47
+	Mem53[ss:ax_26 - 2<i16>:word16] = cs
+	sp_17 = ax_26 - 2<i16>
+l1483_1B51:
+	es = Mem56[ss:sp_17:selector]
+	al_62 = Mem56[ds:ax:byte]
+	Mem64[es:0x2FB<16>:byte] = al_62
+	// Failed to bind call argument.
+	// Please report this issue at https://github.com/uxmal/reko
+	stackArg0 = <invalid>
+	SCZOP_73 = fn1483_1B91(al_62, bx_85, 0x2FC<16>, ds, stackArg0)
+	__cli()
+	Mem76[es:0x2FB<16>:word16] = 0xA0D<16>
+	sp_58 = sp_17 + 2<i16>
+	ax_91 = Mem76[ss:sp_58 + 0xE<16>:word16]
+	di_78 = Mem76[ss:sp_58:word16]
+	si = Mem76[ss:sp_58 + 2<16>:word16]
+	bp = Mem76[ss:sp_58 + 4<16>:word16]
+	bx_85 = Mem76[ss:sp_58 + 8<16>:word16]
+	cl_106 = Mem76[ss:sp_58 + 0xC<16>:byte] (alias)
+	Mem94[es:di_78:byte] = SLICE(ax_91, byte, 0)
+	v41_101 = Mem94[ds:bx_85 + (di_78 + 1<i16>):word16] + bx_85
+	Mem102[ds:bx_85 + (di_78 + 1<i16>):word16] = v41_101
+	Mem108[ds:di_78 + 1<i16>:byte] = __rcl<byte,byte>(Mem102[ds:di_78 + 1<i16>:byte], cl_106, cond(v41_101) & 2<32>)
+	ax_97 = ax_91 - 0xECBA<16> - SCZOP_73
+	sp_116 = sp_58 + 0x10<16>
+	di = di_78 + 1<i16>
+	al_109 = SLICE(ax_97, byte, 0) (alias)
+	ah_126 = SLICE(ax_97, byte, 8) (alias)
+	bx = bx_85
+l1483_1B6D:
+	sp_117 = sp_116 - 2<i16>
+	Mem120[ss:sp_117:word16] = si
+	al_112 = al_109 & 0x5C<8>
+	bl_135 = SLICE(bx, byte, 0) (alias)
+	bh_132 = SLICE(bx, byte, 8) (alias)
+	ax_129 = SEQ(ah_126, al_112) (alias)
+	branch al_112 != 0<8> l1483_1BE8
+l1483_1B75:
+	Mem149[ss:sp_117 - 2<i16>:word16] = 0x6365<16>
+	di = Mem149[ss:Mem149[ds:bx + 0x726A<16>:word16] *s 0x46<16>:word16]
+	si = Mem149[ss:Mem149[ds:bx + 0x726A<16>:word16] *s 0x46<16> + 2<16>:word16]
+	bx = Mem149[ss:Mem149[ds:bx + 0x726A<16>:word16] *s 0x46<16> + 8<16>:word16]
+	dh_178 = Mem149[ss:Mem149[ds:bx + 0x726A<16>:word16] *s 0x46<16> + 0xB<16>:byte] (alias)
+	cl_186 = Mem149[ss:Mem149[ds:bx + 0x726A<16>:word16] *s 0x46<16> + 0xC<16>:byte] (alias)
+	al_109 = Mem149[ss:Mem149[ds:bx + 0x726A<16>:word16] *s 0x46<16> + 0xE<16>:byte] (alias)
+	sp_116 = Mem149[ds:bx + 0x726A<16>:word16] *s 0x46<16> + 0x10<16>
+l1483_1B7F:
+	bp = Mem169[ds:si + 101<i16>:word16] *s 0x3A64<16>
+	Mem175[ss:Mem169[ds:si + 101<i16>:word16] *s 0x3A64<16> + si:byte] = Mem169[ss:Mem169[ds:si + 101<i16>:word16] *s 0x3A64<16> + si:byte] & al_109
+	dh_183 = dh_178 ^ Mem175[ds:bx + di:byte]
+	ax_185 = __in<word16>(0xC<8>)
+	Mem190[ds:0x2CF2<16>:byte] = Mem175[ds:0x2CF2<16>:byte] ^ cl_186
+	Mem193[ds:di:byte] = Mem190[ds:di:byte] - dh_183
+	Mem199[ds:di + 0xEA01<16>:word16] = ~Mem193[ds:di + 0xEA01<16>:word16]
+	sp_208 = sp_116 - 2<i16>
+	Mem209[ss:sp_208:word16] = sp_116
+	ds = Mem209[ss:sp_208 + 2<i16>:selector]
+	dx = Mem209[ss:sp_208:word16]
+	v37_214 = Mem209[ds:di + 0xB0A<16>:word16]
+	Mem215[ds:di + 0xB0A<16>:word16] = di
+	__in<byte>(0x41<8>)
+	__sti()
+	Mem231[ds:0xFF1F<16>:word16] = Mem215[ds:0xFF1F<16>:word16] + 1<16>
+	al_194 = SLICE(ax_185, byte, 0) (alias)
+	bx = 0xD909<16>
+	cx = SEQ(SLICE(ax_185, byte, 8), al_194 - 0xD9<8>)
+	sp_116 = sp_208 + 4<i16>
+	di = v37_214
+	C_237 = 0<32>
+	ax = SEQ(SLICE(SEQ(0xAF<8>, cl_186) + 0xA587<16> + CONVERT(al_194 <u 0xD9<8>, bool, word16), byte, 8), CONVERT(__in<byte>(dx) - 0xF8<8>, byte, word32) & 0xA<8>) (alias)
+l1483_1BB9:
+	bh_32 = SLICE(bx, byte, 8) (alias)
+	al_109 = SLICE(ax, byte, 0) (alias)
+	ah_126 = SLICE(ax, byte, 8) (alias)
+	cl_186 = SLICE(cx, byte, 0) (alias)
+	branch C_237 l1483_1BBF
+l1483_1BBC:
+	goto l1483_1B38
+l1483_1BBF:
+l1483_1BE8:
+	bh_138 = bh_132 | Mem120[ds:bx + 3<i16>:byte]
+	Mem142[ss:sp_117 - 2<i16>:word16] = es
+	cxOut = <invalid>
+	dhOut = <invalid>
+	bxOut = SEQ(bh_138, bl_135)
+	bpOut = bp - 2<16>
+	siOut = 0x7269<16>
+	diOut = di
+	esOut = es
+	dsOut = <invalid>
+	return ax_129 - 0x85FE<16>
+fn1483_1BB9_exit:
+
+
+void fn1483_1C50(byte ah, word16 dx)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// MayUse:  ah:[0..7] dx:[0..15]
+// LiveOut:
+// Trashed: ax dx Top
+// Preserved: sp
+fn1483_1C50_entry:
+l1483_1C50:
+	al_5 = __in<byte>(dx)
+	call SEQ(ah, al_5) (retsize: 0;)
+		uses: ah:ah,al:al_5,dx:dx,Mem:Mem0
+	return
+fn1483_1C50_exit:
+
+
+void fn1483_467E(segptr32 ds_bx, byte al, word16 si)
+// stackDelta: 0; fpuStackDelta: 0; fpuMaxParam: -1
+// Called from:
+//      fn1483_1777
+// MayUse:  al:[0..7] Sequence ds:bx:[0..31] si:[0..15]
+// LiveOut:
+// Trashed:
+// Preserved:
+// Terminates process
+fn1483_467E_entry:
+l1483_467E:
+	Mem10[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem0[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem12[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem10[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem14[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem12[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem16[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem14[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem18[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem16[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem20[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem18[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem22[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem20[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem24[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem22[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem26[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem24[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem28[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem26[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem30[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem28[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem32[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem30[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem34[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem32[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem36[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem34[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem38[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem36[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem40[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem38[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem42[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem40[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem44[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem42[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem46[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem44[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem48[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem46[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem50[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem48[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem52[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem50[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem54[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem52[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem56[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem54[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem58[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem56[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem60[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem58[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem62[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem60[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem64[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem62[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem66[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem64[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem68[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem66[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem70[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem68[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem72[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem70[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem74[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem72[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem76[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem74[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem78[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem76[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem80[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem78[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem82[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem80[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem84[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem82[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem86[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem84[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem88[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem86[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem90[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem88[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem92[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem90[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem94[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem92[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem96[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem94[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem98[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem96[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem100[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem98[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem102[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem100[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem104[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem102[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem106[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem104[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem108[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem106[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem110[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem108[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem112[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem110[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem114[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem112[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem116[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem114[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem118[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem116[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem120[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem118[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem122[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem120[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem124[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem122[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem126[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem124[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem128[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem126[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem130[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem128[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem132[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem130[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem134[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem132[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem136[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem134[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem138[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem136[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem140[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem138[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem142[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem140[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem144[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem142[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem146[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem144[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem148[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem146[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem150[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem148[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem152[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem150[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem154[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem152[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem156[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem154[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem158[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem156[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem160[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem158[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem162[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem160[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem164[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem162[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem166[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem164[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem168[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem166[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem170[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem168[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem172[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem170[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem174[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem172[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem176[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem174[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem178[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem176[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem180[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem178[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem182[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem180[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem184[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem182[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem186[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem184[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem188[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem186[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem190[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem188[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem192[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem190[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem194[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem192[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem196[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem194[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem198[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem196[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem200[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem198[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem202[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem200[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem204[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem202[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem206[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem204[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem208[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem206[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem210[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem208[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem212[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem210[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem214[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem212[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem216[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem214[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem218[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem216[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem220[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem218[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem222[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem220[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem224[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem222[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem226[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem224[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem228[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem226[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem230[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem228[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem232[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem230[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem234[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem232[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem236[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem234[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem238[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem236[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem240[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem238[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem242[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem240[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem244[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem242[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem246[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem244[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem248[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem246[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem250[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem248[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem252[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem250[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem254[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem252[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem256[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem254[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem258[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem256[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem260[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem258[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem262[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem260[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem264[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem262[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem266[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem264[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem268[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem266[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem270[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem268[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem272[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem270[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem274[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem272[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem276[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem274[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem278[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem276[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem280[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem278[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem282[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem280[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem284[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem282[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem286[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem284[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem288[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem286[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem290[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem288[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem292[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem290[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem294[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem292[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem296[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem294[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem298[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem296[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem300[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem298[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem302[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem300[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem304[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem302[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem306[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem304[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem308[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem306[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem310[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem308[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem312[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem310[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem314[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem312[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem316[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem314[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem318[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem316[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem320[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem318[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem322[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem320[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem324[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem322[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem326[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem324[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem328[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem326[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem330[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem328[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem332[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem330[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem334[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem332[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem336[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem334[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem338[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem336[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem340[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem338[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem342[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem340[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem344[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem342[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem346[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem344[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem348[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem346[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem350[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem348[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem352[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem350[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem354[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem352[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem356[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem354[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem358[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem356[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem360[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem358[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem362[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem360[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem364[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem362[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem366[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem364[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem368[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem366[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem370[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem368[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem372[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem370[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem374[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem372[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem376[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem374[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem378[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem376[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem380[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem378[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem382[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem380[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem384[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem382[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem386[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem384[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem388[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem386[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem390[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem388[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem392[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem390[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem394[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem392[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem396[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem394[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem398[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem396[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem400[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem398[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem402[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem400[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem404[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem402[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem406[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem404[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem408[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem406[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem410[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem408[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem412[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem410[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem414[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem412[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem416[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem414[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem418[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem416[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem420[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem418[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem422[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem420[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem424[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem422[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem426[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem424[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem428[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem426[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem430[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem428[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem432[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem430[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem434[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem432[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem436[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem434[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem438[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem436[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem440[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem438[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem442[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem440[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem444[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem442[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem446[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem444[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem448[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem446[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem450[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem448[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem452[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem450[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem454[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem452[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem456[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem454[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem458[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem456[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem460[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem458[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem462[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem460[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem464[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem462[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem466[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem464[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem468[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem466[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem470[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem468[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem472[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem470[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem474[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem472[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem476[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem474[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem478[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem476[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem480[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem478[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem482[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem480[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem484[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem482[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem486[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem484[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem488[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem486[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem490[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem488[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem492[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem490[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem494[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem492[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem496[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem494[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem498[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem496[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem500[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem498[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem502[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem500[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem504[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem502[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem506[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem504[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem508[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem506[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem510[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem508[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem512[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem510[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem514[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem512[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem516[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem514[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem518[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem516[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem520[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem518[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem522[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem520[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem524[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem522[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem526[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem524[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem528[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem526[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem530[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem528[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem532[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem530[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem534[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem532[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem536[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem534[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem538[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem536[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem540[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem538[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem542[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem540[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem544[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem542[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem546[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem544[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem548[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem546[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem550[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem548[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem552[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem550[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem554[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem552[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem556[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem554[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem558[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem556[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem560[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem558[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem562[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem560[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem564[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem562[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem566[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem564[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem568[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem566[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem570[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem568[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem572[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem570[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem574[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem572[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem576[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem574[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem578[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem576[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem580[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem578[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem582[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem580[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem584[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem582[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem586[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem584[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem588[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem586[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem590[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem588[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem592[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem590[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem594[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem592[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem596[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem594[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem598[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem596[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem600[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem598[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem602[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem600[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem604[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem602[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem606[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem604[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem608[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem606[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem610[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem608[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem612[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem610[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem614[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem612[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem616[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem614[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem618[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem616[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem620[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem618[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem622[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem620[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem624[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem622[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem626[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem624[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem628[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem626[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem630[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem628[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem632[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem630[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem634[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem632[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem636[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem634[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem638[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem636[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem640[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem638[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem642[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem640[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem644[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem642[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem646[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem644[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem648[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem646[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem650[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem648[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem652[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem650[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem654[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem652[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem656[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem654[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem658[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem656[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem660[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem658[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem662[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem660[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem664[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem662[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem666[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem664[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem668[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem666[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem670[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem668[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem672[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem670[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem674[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem672[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem676[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem674[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem678[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem676[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem680[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem678[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem682[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem680[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem684[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem682[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem686[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem684[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem688[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem686[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem690[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem688[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem692[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem690[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem694[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem692[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem696[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem694[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem698[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem696[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem700[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem698[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem702[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem700[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem704[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem702[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem706[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem704[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem708[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem706[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem710[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem708[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem712[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem710[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem714[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem712[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem716[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem714[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem718[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem716[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem720[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem718[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem722[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem720[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem724[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem722[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem726[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem724[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem728[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem726[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem730[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem728[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem732[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem730[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem734[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem732[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem736[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem734[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem738[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem736[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem740[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem738[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem742[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem740[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem744[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem742[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem746[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem744[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem748[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem746[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem750[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem748[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem752[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem750[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem754[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem752[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem756[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem754[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem758[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem756[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem760[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem758[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem762[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem760[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem764[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem762[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem766[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem764[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem768[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem766[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem770[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem768[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem772[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem770[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem774[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem772[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem776[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem774[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem778[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem776[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem780[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem778[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem782[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem780[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem784[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem782[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem786[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem784[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem788[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem786[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem790[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem788[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem792[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem790[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem794[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem792[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem796[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem794[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem798[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem796[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem800[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem798[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem802[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem800[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem804[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem802[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem806[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem804[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem808[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem806[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem810[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem808[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem812[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem810[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem814[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem812[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem816[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem814[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem818[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem816[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem820[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem818[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem822[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem820[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem824[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem822[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem826[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem824[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem828[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem826[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem830[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem828[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem832[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem830[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem834[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem832[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem836[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem834[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem838[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem836[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem840[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem838[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem842[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem840[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem844[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem842[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem846[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem844[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem848[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem846[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem850[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem848[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem852[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem850[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem854[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem852[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem856[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem854[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem858[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem856[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem860[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem858[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem862[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem860[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem864[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem862[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem866[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem864[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem868[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem866[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem870[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem868[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem872[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem870[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem874[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem872[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem876[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem874[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem878[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem876[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem880[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem878[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem882[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem880[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem884[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem882[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem886[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem884[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem888[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem886[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem890[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem888[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem892[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem890[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem894[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem892[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem896[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem894[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem898[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem896[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem900[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem898[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem902[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem900[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem904[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem902[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem906[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem904[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem908[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem906[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem910[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem908[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem912[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem910[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem914[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem912[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem916[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem914[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem918[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem916[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem920[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem918[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem922[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem920[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem924[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem922[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem926[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem924[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem928[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem926[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem930[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem928[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem932[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem930[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem934[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem932[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem936[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem934[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem938[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem936[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem940[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem938[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem942[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem940[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem944[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem942[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem946[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem944[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem948[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem946[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem950[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem948[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem952[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem950[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem954[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem952[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem956[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem954[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem958[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem956[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem960[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem958[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem962[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem960[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem964[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem962[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem966[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem964[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem968[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem966[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem970[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem968[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem972[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem970[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem974[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem972[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem976[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem974[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem978[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem976[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem980[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem978[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem982[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem980[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem984[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem982[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem986[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem984[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem988[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem986[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem990[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem988[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem992[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem990[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem994[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem992[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem996[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem994[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem998[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem996[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1000[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem998[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1002[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1000[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1004[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1002[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1006[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1004[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1008[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1006[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1010[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1008[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1012[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1010[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1014[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1012[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1016[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1014[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1018[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1016[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1020[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1018[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1022[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1020[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1024[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1022[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1026[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1024[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1028[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1026[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1030[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1028[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1032[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1030[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1034[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1032[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1036[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1034[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1038[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1036[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1040[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1038[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1042[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1040[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1044[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1042[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1046[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1044[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1048[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1046[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1050[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1048[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1052[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1050[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1054[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1052[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1056[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1054[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1058[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1056[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1060[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1058[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1062[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1060[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1064[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1062[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1066[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1064[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1068[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1066[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1070[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1068[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1072[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1070[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1074[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1072[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1076[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1074[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1078[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1076[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1080[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1078[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1082[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1080[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1084[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1082[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1086[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1084[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1088[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1086[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1090[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1088[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1092[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1090[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1094[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1092[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1096[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1094[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1098[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1096[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1100[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1098[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1102[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1100[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1104[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1102[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1106[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1104[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1108[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1106[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1110[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1108[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1112[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1110[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1114[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1112[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1116[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1114[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1118[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1116[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1120[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1118[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1122[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1120[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1124[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1122[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1126[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1124[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1128[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1126[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1130[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1128[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1132[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1130[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1134[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1132[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1136[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1134[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1138[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1136[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1140[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1138[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1142[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1140[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1144[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1142[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1146[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1144[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1148[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1146[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1150[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1148[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1152[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1150[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1154[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1152[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1156[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1154[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1158[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1156[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1160[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1158[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1162[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1160[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1164[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1162[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1166[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1164[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1168[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1166[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1170[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1168[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1172[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1170[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1174[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1172[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1176[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1174[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1178[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1176[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1180[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1178[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1182[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1180[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1184[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1182[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1186[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1184[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1188[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1186[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1190[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1188[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1192[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1190[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1194[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1192[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1196[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1194[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1198[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1196[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1200[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1198[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1202[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1200[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1204[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1202[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1206[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1204[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1208[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1206[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1210[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1208[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1212[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1210[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1214[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1212[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1216[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1214[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1218[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1216[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1220[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1218[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1222[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1220[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1224[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1222[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1226[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1224[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1228[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1226[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1230[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1228[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1232[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1230[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1234[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1232[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1236[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1234[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1238[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1236[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1240[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1238[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1242[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1240[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1244[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1242[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1246[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1244[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1248[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1246[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1250[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1248[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1252[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1250[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1254[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1252[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1256[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1254[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1258[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1256[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1260[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1258[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1262[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1260[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1264[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1262[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1266[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1264[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1268[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1266[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1270[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1268[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1272[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1270[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1274[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1272[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1276[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1274[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1278[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1276[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1280[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1278[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1282[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1280[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1284[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1282[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1286[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1284[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1288[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1286[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1290[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1288[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1292[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1290[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1294[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1292[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1296[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1294[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1298[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1296[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1300[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1298[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1302[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1300[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1304[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1302[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1306[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1304[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1308[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1306[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1310[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1308[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1312[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1310[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1314[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1312[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1316[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1314[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1318[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1316[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1320[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1318[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1322[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1320[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1324[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1322[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1326[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1324[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1328[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1326[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1330[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1328[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1332[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1330[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1334[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1332[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1336[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1334[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1338[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1336[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1340[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1338[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1342[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1340[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1344[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1342[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1346[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1344[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1348[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1346[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1350[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1348[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1352[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1350[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1354[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1352[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1356[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1354[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1358[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1356[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1360[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1358[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1362[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1360[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1364[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1362[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1366[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1364[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1368[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1366[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1370[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1368[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1372[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1370[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1374[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1372[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1376[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1374[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1378[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1376[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1380[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1378[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1382[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1380[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1384[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1382[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1386[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1384[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1388[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1386[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1390[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1388[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1392[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1390[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1394[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1392[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1396[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1394[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1398[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1396[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1400[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1398[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1402[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1400[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1404[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1402[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1406[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1404[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1408[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1406[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1410[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1408[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1412[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1410[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1414[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1412[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1416[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1414[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1418[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1416[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1420[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1418[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1422[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1420[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1424[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1422[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1426[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1424[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1428[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1426[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1430[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1428[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1432[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1430[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1434[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1432[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1436[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1434[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1438[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1436[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1440[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1438[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1442[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1440[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1444[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1442[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1446[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1444[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1448[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1446[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1450[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1448[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1452[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1450[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1454[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1452[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1456[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1454[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1458[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1456[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1460[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1458[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1462[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1460[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1464[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1462[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1466[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1464[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1468[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1466[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1470[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1468[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1472[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1470[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1474[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1472[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1476[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1474[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1478[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1476[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1480[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1478[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1482[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1480[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1484[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1482[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1486[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1484[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1488[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1486[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1490[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1488[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1492[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1490[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1494[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1492[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1496[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1494[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1498[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1496[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1500[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1498[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1502[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1500[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1504[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1502[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1506[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1504[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1508[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1506[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1510[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1508[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1512[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1510[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1514[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1512[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1516[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1514[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1518[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1516[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1520[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1518[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1522[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1520[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1524[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1522[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1526[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1524[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1528[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1526[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1530[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1528[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1532[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1530[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1534[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1532[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1536[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1534[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1538[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1536[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1540[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1538[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1542[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1540[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1544[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1542[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1546[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1544[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1548[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1546[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1550[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1548[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1552[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1550[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1554[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1552[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1556[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1554[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1558[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1556[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1560[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1558[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1562[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1560[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1564[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1562[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1566[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1564[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1568[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1566[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1570[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1568[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1572[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1570[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1574[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1572[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1576[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1574[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1578[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1576[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1580[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1578[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1582[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1580[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1584[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1582[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1586[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1584[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1588[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1586[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1590[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1588[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1592[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1590[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1594[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1592[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1596[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1594[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1598[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1596[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1600[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1598[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1602[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1600[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1604[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1602[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1606[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1604[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1608[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1606[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1610[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1608[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1612[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1610[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1614[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1612[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1616[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1614[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1618[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1616[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1620[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1618[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1622[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1620[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1624[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1622[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1626[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1624[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1628[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1626[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1630[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1628[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1632[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1630[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1634[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1632[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1636[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1634[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1638[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1636[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1640[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1638[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1642[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1640[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1644[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1642[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1646[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1644[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1648[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1646[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1650[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1648[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1652[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1650[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1654[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1652[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1656[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1654[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1658[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1656[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1660[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1658[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1662[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1660[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1664[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1662[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1666[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1664[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1668[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1666[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1670[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1668[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1672[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1670[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1674[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1672[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1676[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1674[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1678[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1676[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1680[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1678[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1682[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1680[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1684[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1682[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1686[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1684[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1688[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1686[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1690[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1688[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1692[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1690[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1694[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1692[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1696[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1694[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1698[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1696[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1700[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1698[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1702[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1700[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1704[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1702[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1706[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1704[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1708[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1706[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1710[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1708[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1712[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1710[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1714[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1712[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1716[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1714[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1718[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1716[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1720[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1718[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1722[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1720[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1724[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1722[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1726[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1724[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1728[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1726[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1730[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1728[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1732[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1730[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1734[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1732[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1736[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1734[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1738[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1736[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1740[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1738[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1742[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1740[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1744[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1742[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1746[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1744[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1748[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1746[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1750[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1748[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1752[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1750[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1754[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1752[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1756[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1754[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1758[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1756[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1760[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1758[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1762[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1760[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1764[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1762[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1766[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1764[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1768[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1766[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1770[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1768[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1772[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1770[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1774[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1772[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1776[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1774[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1778[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1776[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1780[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1778[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1782[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1780[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1784[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1782[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1786[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1784[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1788[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1786[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1790[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1788[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1792[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1790[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1794[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1792[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1796[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1794[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1798[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1796[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1800[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1798[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1802[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1800[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1804[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1802[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1806[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1804[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1808[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1806[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1810[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1808[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1812[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1810[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1814[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1812[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1816[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1814[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1818[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1816[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1820[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1818[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1822[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1820[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1824[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1822[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1826[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1824[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1828[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1826[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1830[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1828[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1832[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1830[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1834[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1832[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1836[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1834[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1838[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1836[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1840[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1838[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1842[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1840[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1844[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1842[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1846[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1844[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1848[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1846[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1850[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1848[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1852[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1850[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1854[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1852[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1856[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1854[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1858[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1856[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1860[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1858[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1862[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1860[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1864[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1862[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1866[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1864[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1868[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1866[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1870[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1868[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1872[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1870[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1874[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1872[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1876[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1874[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1878[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1876[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1880[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1878[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1882[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1880[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1884[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1882[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1886[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1884[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1888[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1886[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1890[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1888[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1892[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1890[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1894[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1892[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1896[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1894[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1898[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1896[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1900[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1898[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1902[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1900[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1904[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1902[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1906[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1904[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1908[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1906[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1910[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1908[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1912[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1910[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1914[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1912[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1916[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1914[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1918[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1916[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1920[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1918[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1922[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1920[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1924[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1922[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1926[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1924[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1928[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1926[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1930[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1928[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1932[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1930[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1934[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1932[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1936[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1934[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1938[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1936[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1940[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1938[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1942[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1940[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1944[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1942[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1946[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1944[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1948[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1946[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1950[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1948[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1952[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1950[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1954[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1952[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1956[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1954[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1958[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1956[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1960[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1958[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1962[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1960[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1964[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1962[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1966[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1964[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1968[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1966[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1970[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1968[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1972[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1970[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1974[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1972[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1976[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1974[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1978[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1976[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1980[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1978[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1982[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1980[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1984[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1982[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1986[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1984[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1988[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1986[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1990[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1988[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1992[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1990[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1994[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1992[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1996[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1994[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem1998[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1996[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2000[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem1998[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2002[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2000[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2004[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2002[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2006[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2004[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2008[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2006[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2010[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2008[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2012[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2010[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2014[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2012[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2016[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2014[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2018[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2016[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2020[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2018[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2022[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2020[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2024[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2022[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2026[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2024[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2028[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2026[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2030[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2028[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2032[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2030[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2034[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2032[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2036[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2034[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2038[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2036[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2040[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2038[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2042[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2040[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2044[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2042[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2046[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2044[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2048[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2046[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2050[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2048[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2052[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2050[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2054[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2052[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2056[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2054[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2058[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2056[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2060[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2058[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2062[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2060[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2064[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2062[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2066[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2064[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2068[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2066[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2070[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2068[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2072[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2070[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2074[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2072[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2076[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2074[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2078[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2076[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2080[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2078[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2082[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2080[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2084[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2082[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2086[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2084[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2088[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2086[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2090[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2088[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2092[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2090[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2094[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2092[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2096[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2094[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2098[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2096[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2100[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2098[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2102[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2100[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2104[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2102[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2106[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2104[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2108[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2106[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2110[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2108[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2112[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2110[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2114[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2112[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2116[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2114[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2118[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2116[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2120[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2118[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2122[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2120[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2124[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2122[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2126[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2124[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2128[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2126[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2130[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2128[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2132[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2130[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2134[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2132[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2136[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2134[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2138[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2136[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2140[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2138[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2142[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2140[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2144[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2142[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2146[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2144[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2148[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2146[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2150[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2148[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2152[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2150[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2154[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2152[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2156[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2154[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2158[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2156[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2160[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2158[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2162[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2160[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2164[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2162[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2166[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2164[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2168[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2166[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2170[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2168[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2172[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2170[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2174[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2172[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2176[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2174[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2178[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2176[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2180[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2178[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2182[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2180[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2184[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2182[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2186[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2184[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2188[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2186[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2190[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2188[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2192[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2190[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2194[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2192[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2196[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2194[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2198[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2196[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2200[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2198[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2202[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2200[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2204[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2202[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2206[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2204[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2208[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2206[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2210[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2208[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2212[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2210[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2214[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2212[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2216[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2214[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2218[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2216[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2220[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2218[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2222[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2220[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2224[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2222[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2226[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2224[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2228[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2226[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2230[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2228[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2232[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2230[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2234[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2232[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2236[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2234[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2238[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2236[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2240[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2238[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2242[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2240[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2244[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2242[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2246[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2244[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2248[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2246[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2250[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2248[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2252[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2250[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2254[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2252[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2256[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2254[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2258[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2256[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2260[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2258[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2262[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2260[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2264[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2262[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2266[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2264[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2268[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2266[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2270[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2268[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2272[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2270[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2274[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2272[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2276[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2274[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2278[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2276[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2280[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2278[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2282[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2280[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2284[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2282[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2286[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2284[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2288[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2286[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2290[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2288[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2292[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2290[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2294[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2292[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2296[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2294[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2298[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2296[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2300[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2298[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2302[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2300[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2304[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2302[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2306[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2304[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2308[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2306[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2310[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2308[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2312[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2310[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2314[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2312[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2316[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2314[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+	Mem2318[ds_bx + CONVERT(si, word16, uipr32):byte] = Mem2316[ds_bx + CONVERT(si, word16, uipr32):byte] + al
+fn1483_467E_exit:
+
+

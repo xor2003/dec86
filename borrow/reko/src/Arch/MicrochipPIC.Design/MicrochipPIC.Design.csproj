@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="$(ProjectDir)../../Drivers/CommonBuildProperties.items" />
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    <RootNamespace>Reko.Arch.MicrochipPIC.Design</RootNamespace>
+    <AssemblyName>Reko.Arch.MicrochipPIC.Design</AssemblyName>
+    <Configurations>Debug;Release</Configurations>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Core\Core.csproj" />
+    <ProjectReference Include="..\..\Gui\Gui.csproj" />
+    <ProjectReference Include="..\Motorola\Motorola.csproj" />
+    <ProjectReference Include="..\..\Libraries\Microchip\Utils\Microchip.Utils.csproj" />
+    <ProjectReference Include="..\Microchip\MicrochipPIC.csproj" />
+  </ItemGroup>
+</Project>

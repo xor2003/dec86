@@ -1,0 +1,416 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+This file contains the definitions of all files required for a
+complete Reko distribution. The ItemGroups defined here are consumed
+by the PreBuild.targets file.
+-->
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <IsMac>$([MSBuild]::IsOSPlatform(OSX))</IsMac>
+    <UnixDllExt Condition="$(IsMac)">dylib</UnixDllExt>
+    <UnixDllExt Condition="!$(IsMac)">so</UnixDllExt>
+    <!-- Use this for assemblies that are targetting the  .NET Standard profile -->
+    <StandardOutputDir>$(Configuration)\net8.0</StandardOutputDir>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <!-- All the plug-ins that don't involve user interfaces and are
+         environment agnostic. -->
+
+    <ProjectReference Include="$(SolutionDir)Arch\Alpha\Alpha.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Altera\Altera.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Angstrem\Angstrem.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Arc\Arc.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Arm\Arm.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Avr\Avr.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Blackfin\Blackfin.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\C166\C166.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Cil\Cil.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\CompactRisc\CompactRisc.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Cray\Cray.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\CSky\CSky.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Epson\Epson.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Etrax\Etrax.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Fujitsu\Fujitsu.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\H8\H8.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\i8051\i8051.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\IA64\IA64.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Infineon\Infineon.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Kalimba\Kalimba.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\LatticeMico\LatticeMico.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Loongson\Loongson.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\M16C\M16C.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Motorola\Motorola.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Maxim\Maxim.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\MCore\MCore.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\MicroBlaze\MicroBlaze.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Microchip\MicrochipPIC.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\MilStd1750\MilStd1750.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Mips\Mips.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\MN103\MN103.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Mos6502\Mos6502.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\MSP430\MSP430.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\NatSemi\NatSemi.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Nec\Nec.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Oki\Oki.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\OpenRISC\OpenRISC.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Padauk\Padauk.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\PaRisc\PaRisc.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Pdp\Pdp.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\PowerPC\PowerPC.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Qualcomm\Qualcomm.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Renesas\Renesas.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\RiscV\RiscV.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Sanyo\Sanyo.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Sparc\Sparc.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\SuperH\SuperH.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Telink\Telink.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Tlcs\Tlcs.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Tms7000\Tms7000.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Tms320C28\Tms320C28.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\V850\V850.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Vax\Vax.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\WE32100\WE32100.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\X86\X86.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\XCore\XCore.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Xtensa\Xtensa.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\Zilog\Zilog.csproj" />
+    <ProjectReference Include="$(SolutionDir)Arch\zSeries\zSeries.csproj" />
+    <ProjectReference Include="$(SolutionDir)Core\Core.csproj" />
+    <ProjectReference Include="$(SolutionDir)Decompiler\Decompiler.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\AmigaOS\AmigaOS.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\AtariTOS\AtariTOS.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\BbcMicro\BbcMicro.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\C64\C64.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Cpm\Cpm.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Dreamcast\Dreamcast.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Gameboy\Gameboy.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Hpux\Hpux.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\MacOS\MacOS.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\MorphOS\MorphOS.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Msdos\Msdos.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\NeoGeo\NeoGeo.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\OpenVMS\OpenVMS.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\OS2\OS2.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\PalmOS\PalmOS.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Pdp10Env\Pdp10Env.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Ps3\Ps3.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\RiscOS\RiscOS.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\RT11\RT11.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\SegaGenesis\SegaGenesis.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Snes\Snes.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Switch\Switch.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\SysV\SysV.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Trs80\Trs80.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Wii\Wii.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Windows\Windows.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\Xbox\Xbox.csproj" />
+    <ProjectReference Include="$(SolutionDir)Environments\ZX81\ZX81.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Archives\Archives.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\AOut\AOut.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\BinHex\BinHex.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Coff\Coff.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\DiskImages\DiskImages.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Dol\Dol.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Elf\Elf.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\HpSom\HpSom.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Hunk\Hunk.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\IntelHex\IntelHex.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Ldm\Ldm.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Llvm\LLVM.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\MachO\MachO.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\MzExe\MzExe.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Nro\Nro.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\OdbgScript\OdbgScript.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Omf\Omf.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Pef\Pef.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Srec\Srec.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\TekHex\TekHex.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\TypeLib\TypeLib.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\VmsExe\VmsExe.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\WebAssembly\WebAssembly.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\Xbe\Xbe.csproj" />
+    <ProjectReference Include="$(SolutionDir)ImageLoaders\XexLoader\Xex.csproj" />
+    <ProjectReference Include="$(SolutionDir)Libraries\Libc\Libc.csproj" />
+    <ProjectReference Include="$(SolutionDir)Libraries\Python\Python.csproj" />
+    <ProjectReference Include="$(SolutionDir)Native\NativeProxy.csproj" />
+    <ProjectReference Include="$(SolutionDir)Scripts\Python\Python.csproj" />
+    <ProjectReference Include="$(SolutionDir)Symbols\LGSymLoader\LGSymLoader.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ConfigurationFiles Include="$(SolutionDir)Drivers\reko.config" />
+
+    <Architectures Include="$(SolutionDir)Arch\Alpha\bin\$(StandardOutputDir)\Reko.Arch.Alpha.*" />
+    <Architectures Include="$(SolutionDir)Arch\Arc\bin\$(StandardOutputDir)\Reko.Arch.Arc.*" />
+    <Architectures Include="$(SolutionDir)Arch\Arm\bin\$(StandardOutputDir)\Reko.Arch.Arm.*" />
+    <Architectures Include="$(SolutionDir)Arch\Avr\bin\$(StandardOutputDir)\Reko.Arch.Avr.*" />
+    <Architectures Include="$(SolutionDir)Arch\Blackfin\bin\$(StandardOutputDir)\Reko.Arch.Blackfin.*" />
+    <Architectures Include="$(SolutionDir)Arch\C166\bin\$(StandardOutputDir)\Reko.Arch.C166.*" />
+    <Architectures Include="$(SolutionDir)Arch\CompactRisc\bin\$(StandardOutputDir)\Reko.Arch.CompactRisc.*" />
+    <Architectures Include="$(SolutionDir)Arch\Cray\bin\$(StandardOutputDir)\Reko.Arch.Cray.*" />
+    <Architectures Include="$(SolutionDir)Arch\CSky\bin\$(StandardOutputDir)\Reko.Arch.CSky.*" />
+    <Architectures Include="$(SolutionDir)Arch\Epson\bin\$(StandardOutputDir)\Reko.Arch.Epson.*" />
+    <Architectures Include="$(SolutionDir)Arch\Etrax\bin\$(StandardOutputDir)\Reko.Arch.Etrax.*" />
+    <Architectures Include="$(SolutionDir)Arch\Fujitsu\bin\$(StandardOutputDir)\Reko.Arch.Fujitsu.*" />
+    <Architectures Include="$(SolutionDir)Arch\H8\bin\$(StandardOutputDir)\Reko.Arch.H8.*" />
+    <Architectures Include="$(SolutionDir)Arch\i8051\bin\$(StandardOutputDir)\Reko.Arch.i8051.*" />
+    <Architectures Include="$(SolutionDir)Arch\IA64\bin\$(StandardOutputDir)\Reko.Arch.IA64.*" />
+    <Architectures Include="$(SolutionDir)Arch\Infineon\bin\$(StandardOutputDir)\Reko.Arch.Infineon.*" />
+    <Architectures Include="$(SolutionDir)Arch\LatticeMico\bin\$(StandardOutputDir)\Reko.Arch.LatticeMico.*" />
+    <Architectures Include="$(SolutionDir)Arch\Loongson\bin\$(StandardOutputDir)\Reko.Arch.Loongson.*" />
+    <Architectures Include="$(SolutionDir)Arch\M16C\bin\$(StandardOutputDir)\Reko.Arch.M16C.*" />
+    <Architectures Include="$(SolutionDir)Arch\Motorola\bin\$(StandardOutputDir)\Reko.Arch.Motorola.*" />
+    <Architectures Include="$(SolutionDir)Arch\Maxim\bin\$(StandardOutputDir)\Reko.Arch.Maxim.*" />
+    <Architectures Include="$(SolutionDir)Arch\MCore\bin\$(StandardOutputDir)\Reko.Arch.MCore.*" />
+    <Architectures Include="$(SolutionDir)Arch\MicroBlaze\bin\$(StandardOutputDir)\Reko.Arch.MicroBlaze.*" />
+    <Architectures Include="$(SolutionDir)Arch\Microchip\bin\$(Configuration)\Reko.Arch.MicrochipPIC.*" />
+    <Architectures Include="$(SolutionDir)Arch\MilStd1750\bin\$(StandardOutputDir)\Reko.Arch.MilStd1750.*" />
+    <Architectures Include="$(SolutionDir)Arch\Mips\bin\$(StandardOutputDir)\Reko.Arch.Mips.*" />
+    <Architectures Include="$(SolutionDir)Arch\MN103\bin\$(StandardOutputDir)\Reko.Arch.MN103.*" />
+    <Architectures Include="$(SolutionDir)Arch\Mos6502\bin\$(StandardOutputDir)\Reko.Arch.Mos6502.*" />
+    <Architectures Include="$(SolutionDir)Arch\MSP430\bin\$(StandardOutputDir)\Reko.Arch.Msp430.*" />
+    <Architectures Include="$(SolutionDir)Arch\Nec\bin\$(StandardOutputDir)\Reko.Arch.Nec.*" />
+    <Architectures Include="$(SolutionDir)Arch\OpenRISC\bin\$(StandardOutputDir)\Reko.Arch.OpenRISC.*" />
+    <Architectures Include="$(SolutionDir)Arch\Padauk\bin\$(StandardOutputDir)\\Reko.Arch.Padauk.*" />
+    <Architectures Include="$(SolutionDir)Arch\PaRisc\bin\$(StandardOutputDir)\\Reko.Arch.PaRisc.*" />
+    <Architectures Include="$(SolutionDir)Arch\Pdp\bin\$(StandardOutputDir)\Reko.Arch.Pdp.*" />
+    <Architectures Include="$(SolutionDir)Arch\PowerPC\bin\$(StandardOutputDir)\Reko.Arch.PowerPC.*" />
+    <Architectures Include="$(SolutionDir)Arch\Qualcomm\bin\$(StandardOutputDir)\Reko.Arch.Qualcomm.*" />
+    <Architectures Include="$(SolutionDir)Arch\Renesas\bin\$(StandardOutputDir)\Reko.Arch.Renesas.*" />
+    <Architectures Include="$(SolutionDir)Arch\RiscV\bin\$(StandardOutputDir)\Reko.Arch.RiscV.*" />
+    <Architectures Include="$(SolutionDir)Arch\Sanyo\bin\$(StandardOutputDir)\Reko.Arch.Sanyo.*" />
+    <Architectures Include="$(SolutionDir)Arch\Sparc\bin\$(StandardOutputDir)\Reko.Arch.Sparc.*" />
+    <Architectures Include="$(SolutionDir)Arch\SuperH\bin\$(StandardOutputDir)\Reko.Arch.SuperH.*" />
+    <Architectures Include="$(SolutionDir)Arch\Telink\bin\$(StandardOutputDir)\Reko.Arch.Telink.*" />
+    <Architectures Include="$(SolutionDir)Arch\Tlcs\bin\$(StandardOutputDir)\Reko.Arch.Tlcs.*" />
+    <Architectures Include="$(SolutionDir)Arch\Tms7000\bin\$(StandardOutputDir)\Reko.Arch.Tms7000.*" />
+    <Architectures Include="$(SolutionDir)Arch\Tms320C28\bin\$(StandardOutputDir)\Reko.Arch.Tms320C28.*" />
+    <Architectures Include="$(SolutionDir)Arch\V850\bin\$(StandardOutputDir)\Reko.Arch.V850.*" />
+    <Architectures Include="$(SolutionDir)Arch\Vax\bin\$(StandardOutputDir)\Reko.Arch.Vax.*" />
+    <Architectures Include="$(SolutionDir)Arch\WE32100\bin\$(StandardOutputDir)\Reko.Arch.WE32100.*" />
+    <Architectures Include="$(SolutionDir)Arch\X86\bin\$(StandardOutputDir)\Reko.Arch.X86.*" />
+    <Architectures Include="$(SolutionDir)Arch\XCore\bin\$(StandardOutputDir)\Reko.Arch.XCore.*" />
+    <Architectures Include="$(SolutionDir)Arch\Xtensa\bin\$(StandardOutputDir)\Reko.Arch.Xtensa.*" />
+    <Architectures Include="$(SolutionDir)Arch\Zilog\bin\$(StandardOutputDir)\Reko.Arch.Zilog.*" />
+    <Architectures Include="$(SolutionDir)Arch\zSeries\bin\$(StandardOutputDir)\Reko.Arch.zSeries.*" />
+
+    <DecompilerMetadata Include="$(SolutionDir)Decompiler\Loading\Signatures\*.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Arch\Oki\NX8_200\nx8_200_memory_map.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Arch\Oki\NX8_500\nx8_500_memory_map.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\AtariTOS\atariTOS.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\C64\*.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Cpm\cpm_map.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Dreamcast\vmu.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Msdos\bios_kbd.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Msdos\bios_video.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Msdos\dpmi.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Msdos\msdos.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Msdos\realmodeintservices.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\msvcrt.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\ntoskrnl.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\win16c.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\windows32.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\windows_CE.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\wsock32.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\windows64.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\oleaut32.def" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\oleaut32.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\win16characteristics.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\win32characteristics.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\win64characteristics.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Windows\wince.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\AmigaOS\exec.funcs" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\NeoGeo\NeoGeoPocket.xml" />
+
+    <DecompilerMetadataMacos Include="$(SolutionDir)Environments\MacOS\Classic\Mac MPW Interfaces 1991 PASCAL.pas" />
+    <DecompilerMetadataMacos Include="$(SolutionDir)Environments\MacOS\Classic\MacOSClassicInterfaces.p" />
+
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\ANSICALL.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BKSCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BMSCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVH8514A.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVHCGA.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVHEGA.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVHINIT.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVHMPA.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVHVGA.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVHWNDW.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVHXGA.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\BVSCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\DOSCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\DOSRFICO.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\HELPMGR.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\KBDCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\LOCKDLL.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\MONCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\MOUCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\MSG.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\NAMPIPES.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\NLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\OS2SM.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\OS2SMDUM.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMDRAG.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMGPI.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMSHAPI.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMSHLTKT.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMSPL.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMTKT.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMTRACE.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMVIOP.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMWIN.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\PMWINDUM.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\QUECALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\REXX.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\REXXAPI.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\SESMGR.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\SPOOLCP.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\VIOCALLS.def" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\fsd.xml" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\fsh.xml" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\16\fsu.xml" />
+    <DecompilerMetadataOs2_16 Include="$(SolutionDir)Environments\OS2\os2-16.xml" />
+    
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\bdcalls.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\dive.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\DOSCALLS.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\ftpapi.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\glut.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\helpmgr.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\kbdcalls.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\libaux.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\libtk.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\libuni.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\mciapi.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\mdm.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\mmio.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\moncalls.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\moucalls.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\msg.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\nampipes.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\nls.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\opengl.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmctls.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmdrag.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmgpi.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmshapi.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmspl.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmviop.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmwin.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\pmwp.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\quecalls.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\rexx.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\rexxapi.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\rtmidi.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\sesmgr.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\sw.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\tcpip32.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\uconv.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\upm32.def" />
+    <DecompilerMetadataOs2_32 Include="$(SolutionDir)Environments\OS2\32\viocalls.def" />
+
+    <DecompilerMetadata Include="$(SolutionDir)Decompiler\Loading\Signatures\*.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\RT11\rt11_*.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SegaGenesis\SegaGenesis.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\lp32.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\lp64.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\libc.so.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\Xlib.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\opengl.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\linux-syscalls-i386.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\sysv-sparc32-emulation.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\SysV\sysvcharacteristics.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Trs80\CoCoMemoryMap.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Trs80\Trs80Rom.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Trs80\Trs80Rom.xml" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Xbox\Xbox\xboxkernel.def" />
+    <DecompilerMetadata Include="$(SolutionDir)Environments\Xbox\Xbox360\xbox360krnl.def" />
+    <DecompilerMetadata Include="$(SolutionDir)ImageLoaders\AOut\VaxUnix.inc" />
+    <DecompilerMetadata Include="$(SolutionDir)..\external\reactos\coredll.def" />
+    <DecompilerMetadata Include="$(SolutionDir)..\external\wine\*.spec" />
+    <DecompilerMetadata Include="$(SolutionDir)tools\genPICdb\picdb.zip" />
+
+    <OdbgScripts Include="$(SolutionDir)ImageLoaders\OdbgScript\scripts\*.osc" />
+
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\AOut\bin\$(StandardOutputDir)\Reko.ImageLoaders.AOut.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Archives\bin\$(StandardOutputDir)\Reko.ImageLoaders.Archives.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\BinHex\bin\$(StandardOutputDir)\Reko.ImageLoaders.BinHex.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\DiskImages\bin\$(StandardOutputDir)\Reko.ImageLoaders.DiskImages.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Dol\bin\$(StandardOutputDir)\Reko.ImageLoaders.Dol.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Elf\bin\$(StandardOutputDir)\Reko.ImageLoaders.Elf.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\HpSom\bin\$(StandardOutputDir)\Reko.ImageLoaders.HpSom.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Hunk\bin\$(StandardOutputDir)\Reko.ImageLoaders.Hunk.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\IntelHex\bin\$(StandardOutputDir)\Reko.ImageLoaders.IntelHex.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Ldm\bin\$(StandardOutputDir)\Reko.ImageLoaders.Ldm.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Llvm\bin\$(StandardOutputDir)\Reko.ImageLoaders.LLVM.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\MachO\bin\$(StandardOutputDir)\Reko.ImageLoaders.MachO.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\MzExe\bin\$(StandardOutputDir)\Reko.ImageLoaders.MzExe.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Nro\bin\$(StandardOutputDir)\Reko.ImageLoaders.Nro.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\OdbgScript\bin\$(StandardOutputDir)\Reko.ImageLoaders.OdbgScript.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Omf\bin\$(StandardOutputDir)\Reko.ImageLoaders.Omf.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Pef\bin\$(StandardOutputDir)\Reko.ImageLoaders.Pef.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Srec\bin\$(StandardOutputDir)\Reko.ImageLoaders.Srec.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\TekHex\bin\$(StandardOutputDir)\Reko.ImageLoaders.TekHex.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\VmsExe\bin\$(StandardOutputDir)\Reko.ImageLoaders.VmsExe.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\WebAssembly\bin\$(StandardOutputDir)\Reko.ImageLoaders.WebAssembly.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Xbe\bin\$(StandardOutputDir)\Reko.ImageLoaders.Xbe.*" />
+    <ImageLoaders Include="$(SolutionDir)ImageLoaders\Xex\bin\$(StandardOutputDir)\Reko.ImageLoaders.Xex.*" />
+
+    <Environments Include="$(SolutionDir)Environments\AmigaOS\bin\$(StandardOutputDir)\Reko.Environments.AmigaOS.*" />
+    <Environments Include="$(SolutionDir)Environments\AtariTOS\bin\$(StandardOutputDir)\Reko.Environments.AtariTOS.*" />
+    <Environments Include="$(SolutionDir)Environments\BbcMicro\bin\$(StandardOutputDir)\Reko.Environments.BbcMicro.*" />
+    <Environments Include="$(SolutionDir)Environments\C64\bin\$(StandardOutputDir)\Reko.Environments.C64.*" />
+    <Environments Include="$(SolutionDir)Environments\Cpm\bin\$(StandardOutputDir)\Reko.Environments.Cpm.*" />
+    <Environments Include="$(SolutionDir)Environments\Dreamcast\bin\$(StandardOutputDir)\Reko.Environments.Dreamcast.*" />
+    <Environments Include="$(SolutionDir)Environments\Gameboy\bin\$(StandardOutputDir)\Reko.Environments.Gameboy.*" />
+    <Environments Include="$(SolutionDir)Environments\Hpux\bin\$(StandardOutputDir)\Reko.Environments.Hpux.*" />
+    <Environments Include="$(SolutionDir)Environments\MacOS\bin\$(StandardOutputDir)\Reko.Environments.MacOS.*" />
+    <Environments Include="$(SolutionDir)Environments\MorphOS\bin\$(StandardOutputDir)\Reko.Environments.MorphOS.*" />
+    <Environments Include="$(SolutionDir)Environments\Msdos\bin\$(StandardOutputDir)\Reko.Environments.Msdos.*" />
+    <Environments Include="$(SolutionDir)Environments\NeoGeo\bin\$(StandardOutputDir)\Reko.Environments.NeoGeo.*" />
+    <Environments Include="$(SolutionDir)Environments\OpenVMS\bin\$(StandardOutputDir)\Reko.Environments.OpenVMS.*" />
+    <Environments Include="$(SolutionDir)Environments\OS2\16\bin\$(StandardOutputDir)\Reko.Environments.OS2.*" />
+    <Environments Include="$(SolutionDir)Environments\Pdp10Env\bin\$(StandardOutputDir)\Reko.Environments.Pdp10Env.*" />
+    <Environments Include="$(SolutionDir)Environments\Ps3\bin\$(StandardOutputDir)\Reko.Environments.Ps3.*" />
+    <Environments Include="$(SolutionDir)Environments\RiscOS\bin\$(StandardOutputDir)\Reko.Environments.RiscOS.*" />
+    <Environments Include="$(SolutionDir)Environments\RT11\bin\$(StandardOutputDir)\Reko.Environments.RT11.*" />
+    <Environments Include="$(SolutionDir)Environments\SegaGenesis\bin\$(StandardOutputDir)\Reko.Environments.SegaGenesis.*" />
+    <Environments Include="$(SolutionDir)Environments\Snes\bin\$(StandardOutputDir)\Reko.Environments.Snes.*" />
+    <Environments Include="$(SolutionDir)Environments\Switch\bin\$(StandardOutputDir)\Reko.Environments.Switch.*" />
+    <Environments Include="$(SolutionDir)Environments\SysV\bin\$(StandardOutputDir)\Reko.Environments.SysV.*" />
+    <Environments Include="$(SolutionDir)Environments\Trs80\bin\$(StandardOutputDir)\Reko.Environments.Trs80.*" />
+    <Environments Include="$(SolutionDir)Environments\Wii\bin\$(StandardOutputDir)\Reko.Environments.Wii.*" />
+    <Environments Include="$(SolutionDir)Environments\Windows\bin\$(StandardOutputDir)\Reko.Environments.Windows.*" />
+    <Environments Include="$(SolutionDir)Environments\Xbox\bin\$(StandardOutputDir)\Reko.Environments.Xbox.*" />
+    <Environments Include="$(SolutionDir)Environments\ZX81\bin\$(StandardOutputDir)\Reko.Environments.ZX81.*" />
+
+    <PythonScripts Include="$(SolutionDir)Scripts\Python\*.py" />
+
+    <SymbolSources Include="$(SolutionDir)Sources\LGSymLoader\bin\$(Configuration)\Reko.Symbols.LGSymLoader.*" />
+
+    <Libraries Include="$(SolutionDir)Libraries\Libc\bin\$(StandardOutputDir)\Reko.Libraries.Libc.*" />
+    <Libraries Include="$(SolutionDir)Libraries\MacsBug\bin\$(StandardOutputDir)\Reko.Libraries.MacsBug.*" />
+    <Libraries Include="$(SolutionDir)Libraries\Python\bin\$(StandardOutputDir)\Reko.Libraries.Python.*" />
+    <Libraries Include="$(SolutionDir)Libraries\Microchip\Utils\bin\$(Configuration)\Reko.Libraries.Microchip.Utils.*" />
+
+    <PluginFiles Include="$(SolutionDir)Core\Plugins\README.md" />
+
+    <ExternalComponents Include="$(SolutionDir)..\external\Capstone.NET\*.dll" />
+  </ItemGroup>
+
+  <!-- Platform dependent files go here-->
+
+  <ItemGroup Condition=" '$(OS)|$(Platform)' == 'Windows_NT|x86'">
+    <Architectures Include="$(SolutionDir)Native\build\$(Platform)\$(Configuration)\ArmNative\ArmNative.dll" />
+    <Architectures Include="$(SolutionDir)Native\build\$(Platform)\$(Configuration)\ArmNative\ArmNative.pdb" />
+    <ExternalComponents Include="$(SolutionDir)..\external\Capstone\X86\capstone*.dll" />
+  </ItemGroup>
+  <ItemGroup Condition=" '$(OS)|$(Platform)' == 'Windows_NT|x64'">
+    <Architectures Include="$(SolutionDir)Native\build\$(Platform)\$(Configuration)\ArmNative\ArmNative.dll" />
+    <Architectures Include="$(SolutionDir)Native\build\$(Platform)\$(Configuration)\ArmNative\ArmNative.pdb" />
+    <ExternalComponents Include="$(SolutionDir)..\external\Capstone\X64\capstone.dll" />
+  </ItemGroup>
+  <ItemGroup Condition=" '$(OS)' == 'Unix'">
+    <Architectures Include="$(SolutionDir)Native\build\$(Platform)\$(Configuration)\ArmNative\libArmNative.$(UnixDllExt)" />
+  </ItemGroup>
+</Project>

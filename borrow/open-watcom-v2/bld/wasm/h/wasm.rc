@@ -1,0 +1,33 @@
+/* UTF-8 encoding, ¥ */
+
+#include "wasmmsg.rh"
+#include "wreslang.rh"
+
+STRINGTABLE
+BEGIN
+    #define pick(c,e,j) (c + RLE_ENGLISH * MSG_LANG_SPACING), [ e ]
+
+    #include "wasmc.msg"
+  #if defined( _STANDALONE_ )
+    #include "wasms.msg"
+
+    #include "usage.gh"
+  #endif
+
+    #undef pick
+
+    #define pick(c,e,j) (c + RLE_JAPANESE * MSG_LANG_SPACING), [ j ]
+
+    #include "wasmc.msg"
+  #if defined( _STANDALONE_ )
+    #include "wasms.msg"
+
+    #include "usage.gh"
+  #endif
+
+    #undef pick
+END
+
+#if defined( __NT__ ) && defined( RESX_NTVER )
+    #include "exever.grc"
+#endif

@@ -1,0 +1,66 @@
+// ManyIncrements
+// Return size: 0
+define ManyIncrements
+ManyIncrements_entry:
+	r63 = fp
+	goto loopTop
+	// succ:  loopTop
+done:
+	return
+	// succ:  ManyIncrements_exit
+l1:
+l2:
+	r1 = Mem0[r0:byte]
+	r0 = r0 + 1<32>
+	Mem0[0x33333330<32>:word32] = r1
+	r1 = Mem0[r0:byte]
+	r0 = r0 + 1<32>
+	Mem0[0x33333331<32>:word32] = r1
+	goto loopTop
+	// succ:  loopTop
+l3:
+	r1 = Mem0[r0:byte]
+	r0 = r0 + 1<32>
+	Mem0[0x33333330<32>:word32] = r1
+	// succ:  loopTop
+loopTop:
+	r1 = Mem0[r0:byte]
+	r0 = r0 + 1<32>
+	branch r1 != 1<i8> not1
+	goto l2
+	// succ:  l2 not1
+not1:
+	branch r1 != 2<i8> done
+	goto l3
+	// succ:  l3 done
+ManyIncrements_exit:
+
+define ManyIncrements
+{
+	ptr32 fp;
+	word32 r63 = fp;
+	while (true)
+	{
+		word32 r1;
+		word32 r0;
+		while (true)
+		{
+			r1 = Mem0[r0:byte];
+			++r0;
+			if (r1 != 1<i8>)
+				break;
+			r1 = Mem0[r0:byte];
+			++r0;
+			Mem0[0x33333330<32>:word32] = r1;
+			r1 = Mem0[r0:byte];
+			++r0;
+			Mem0[0x33333331<32>:word32] = r1;
+		}
+		if (r1 != 2<i8>)
+			break;
+		r1 = Mem0[r0:byte];
+		++r0;
+		Mem0[0x33333330<32>:word32] = r1;
+	}
+}
+===========================

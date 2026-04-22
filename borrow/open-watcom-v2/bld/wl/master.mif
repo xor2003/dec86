@@ -1,0 +1,149 @@
+# the linker master make file
+#
+# This depends on the following projects:
+# orl, plusplus, dwarf, watcom, and trmem
+
+proj_name = wlink
+
+!ifndef wlink_autodepends
+wlink_autodepends = .AUTODEPEND
+!endif
+
+wlink_ntverrc = ../res
+
+wlink_trmem = 1
+
+wlink_wreslib_cli = text
+wlink_wreslib_incl = 1
+
+wlink_qnx_usage = 1
+
+# Base DLL name needs to be 8 chars or less on OS/2, argh! Additionally,
+# internal module name may be required to match file name on some platforms.
+!ifdef bootstrap
+exetarg_name = bwlink
+dlltarg_name = bwlinkd
+!else
+exetarg_name = wlink
+dlltarg_name = wlinkd
+!endif
+ntverrc_exe = $(exetarg_name)
+ntverrc_dll = $(dlltarg_name)
+
+# get rid of the -zc
+suppress_zc = 1
+
+additional_clean = *.grh *.grc
+
+!ifndef bootstrap
+!include idedlls.mif
+!endif
+!include cproj.mif
+!include defrule.mif
+!include dllrule.mif
+!include deftarg.mif
+!include dllbase.mif
+
+!include $(orl_dir)/client.mif
+!include $(dwarfw_dir)/client.mif
+
+!include $(wlink_dir)/wlobjs.mif
+
+#
+# cflags
+#
+.c: $(wlink_dir)/c;$(wrc_dir)/c;$(lib_misc_dir)/c;$(watcom_dir)/c;$(trmem_dir)
+
+inc_dirs = -I. -I"$(wlink_dir)/h" $(cli_dwarfw_inc_dirs) $(cli_orl_inc_dirs) -I"$(wrc_dir)/h" &
+    $(cli_wres_inc_dirs) -I"$(lib_misc_dir)/h" -I"$(watcom_dir)/c"
+
+extra_cpp_flags = -DINSIDE_WLINK
+!ifdef DLLS_IMPLEMENTED
+extra_cpp_flags += -DDLLS_IMPLEMENTED
+!endif
+!ifdef use_virtmem
+extra_cpp_flags += -DUSE_VIRTMEM
+!endif
+!ifndef wlink_dll
+extra_cpp_flags += -DIDE_PGM
+!endif
+
+extra_cpp_flags_f_idedrv      = -DCHAIN_CALLBACK
+extra_cpp_flags_f_ideentry    = -DCHAIN_CALLBACK
+extra_cpp_flags_f_maindrv     = -DDLL_NAME=$(dlltarg_name)
+extra_cpp_flags_f_stidedrv    = -DSTATIC_LINKAGE
+
+!ifeq trmem 1
+! ifdef __WATCOM_TOOLS__
+!  if $(__WATCOM_TOOLS__) < 1300
+extra_c_flags_f_wlmem = -of+
+!  endif
+! endif
+!endif
+
+#
+# lflags
+#
+extra_l_flags_qnx     = op st=24k, off=32k
+
+extra_l_flags_dll     = option implib $(wlink_dllbase_$(host))
+extra_l_flags_dll_nt  = initinstance terminstance op modname='$(dlltarg_name).dll'
+extra_l_flags_dll_os2 = initinstance terminstance op modname='$(dlltarg_name)'
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+!ifdef no_orl
+wlink_libs            = $(cli_dwarfw_libs)
+!else
+wlink_libs            = $(cli_dwarfw_libs) $(cli_orl_libs)
+!endif
+
+!ifdef wlink_dll
+exetarg_prebuild_objs = $(extra_link_res_$(host_os)) $(dlltarg_name).dll
+exetarg_objs          = $(comp_objs_drv)
+exetarg_libs          = $(dlltarg_name).lib
+!else
+exetarg_prebuild_objs = $(extra_link_res_$(host_os)) rcmsg.grh
+exetarg_objs          = $(comp_objs_exe)
+exetarg_libs          = $(wlink_libs)
+!endif
+exetarg_res           = wresexe.res
+!include exetarg.mif
+
+#
+# DLL
+#
+dlltarg_prebuild_objs = $(dll_subdir) rcmsg.grh
+dlltarg_objs          = $(comp_objs_dll)
+dlltarg_libs          = $(wlink_libs)
+dlltarg_res           = wresdll.res
+!include dlltarg.mif
+
+#
+# rc and others
+#
+rc_inc_dirs = -I. -I"$(wlink_dir)/h" -I"$(wrc_dir)/h"
+
+wresexe.res : $(wlink_dir)/res/wlink.rc rcmsg.grh $(wlink_dir)/res/wlink.msg &
+            $(wlink_dir)/h/wlnkmsg.h $(wlink_dir)/res/lnkerror.msg $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+wresdll.res : $(wlink_dir)/res/wlink.rc rcmsg.grh $(wlink_dir)/res/wlink.msg &
+            $(wlink_dir)/h/wlnkmsg.h $(wlink_dir)/res/lnkerror.msg $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -DRESX_DLL $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+rcmsg.grh : $(wrc_dir)/h/rc.msg $(__MAKEFILES__)
+    @%make echo_awk
+    $(noecho)*awk -v base=MSG_RC_BASE -f $(build_dir)/makemsg.awk -v OUTFILE=$^. $[@
+
+!ifdef qnx_usage
+$(qnx_usage) : $(wlink_dir)/h/usage.sp $(__MAKEFILES__)
+    @%make echo_wsplice
+    $(noecho)*wsplice -u $[@ $@
+!endif

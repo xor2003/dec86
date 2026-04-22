@@ -1,0 +1,397 @@
+;	Static Name Aliases
+;
+	TITLE   testflag.c
+	NAME    testflag
+
+	.8087
+_TEXT	SEGMENT  WORD PUBLIC 'CODE'
+_TEXT	ENDS
+_DATA	SEGMENT  WORD PUBLIC 'DATA'
+_DATA	ENDS
+CONST	SEGMENT  WORD PUBLIC 'CONST'
+CONST	ENDS
+_BSS	SEGMENT  WORD PUBLIC 'BSS'
+_BSS	ENDS
+$$SYMBOLS	SEGMENT  BYTE PUBLIC 'DEBSYM'
+$$SYMBOLS	ENDS
+$$TYPES	SEGMENT  BYTE PUBLIC 'DEBTYP'
+$$TYPES	ENDS
+DGROUP	GROUP	CONST, _BSS, _DATA
+	ASSUME  CS: _TEXT, DS: DGROUP, SS: DGROUP
+EXTRN	__acrtused:ABS
+EXTRN	_external_function:NEAR
+EXTRN	_g_game_data:BYTE
+EXTRN	_g_player_state:QWORD
+EXTRN	_g_flags:WORD
+EXTRN	_g_result_array:BYTE
+_TEXT      SEGMENT
+	ASSUME	CS: _TEXT
+;|*** #include <stdio.h>
+;|*** #include <dos.h>
+;|*** 
+;|*** /* --- 1. EXTERNAL TYPE AND VARIABLE DEFINITIONS --- */
+;|*** /* These simulate the kinds of data structures found in a real game project. */
+;|*** 
+;|*** /* A typical game data structure, byte-aligned. */
+;|*** #pragma pack(1)
+;|*** struct SomeGameData {
+;|***     int   some_value;
+;|***     char  name[10];
+;|***     char  status_flag;
+;|*** };
+;|*** #pragma pack()
+;|*** 
+;|*** /* A structure containing a 32-bit long and a far pointer. */
+;|*** struct PlayerState {
+;|***     long player_score;
+;|***     char far *video_buffer;
+;|*** };
+;|*** 
+;|*** /* External (global) variables that the function will interact with. */
+;|*** extern struct SomeGameData g_game_data;
+;|*** extern struct PlayerState  g_player_state;
+;|*** extern int                 g_flags;
+;|*** extern int                 g_result_array[10];
+;|*** 
+;|*** /* Prototype for an external function to test calling conventions. */
+;|*** void external_function(int index, long value);
+;|*** 
+;|*** 
+;|*** /* --- 2. THE TEST SUITE FUNCTION --- */
+;|*** /*
+;|***  * This function takes a variety of parameters and uses every major
+;|***  * C language structure to exercise the compiler's code generator.
+;|***  */
+;|*** int compiler_idiom_test_suite(int param_int, char* param_string, long param_long, struct SomeGameData far* param_far_ptr)
+;|*** {
+; Line 38
+	PUBLIC	_compiler_idiom_test_suite
+_compiler_idiom_test_suite	PROC NEAR
+	*** 000000	55 			push	bp
+	*** 000001	8b ec 			mov	bp,sp
+	*** 000003	83 ec 12 		sub	sp,18
+	*** 000006	56 			push	si
+;	param_int = 4
+;	param_string = 6
+;	param_long = 8
+;	param_far_ptr = 12
+;	i = -8
+;	j = -14
+;	result = -18
+;	temp_val = -4
+;	status_code = -16
+;	local_long = -12
+;	local_ptr = -2
+;	loop_counter = -6
+;|***     /* --- PRE-C89: All variables must be declared at the top of the function --- */
+;|***     int i;
+;|***     int j;
+;|***     int result;
+;|***     int temp_val;
+;|***     int status_code;
+;|***     long local_long;
+;|***     struct SomeGameData *local_ptr;
+;|***     int loop_counter;
+;|*** 
+;|***     /* --- Simple Assignments and Arithmetic --- */
+;|***     result = param_int * 2;
+; Line 50
+	*** 000007	8b 46 04 		mov	ax,WORD PTR [bp+4]	;param_int
+	*** 00000a	d1 e0 			shl	ax,1
+	*** 00000c	89 46 ee 		mov	WORD PTR [bp-18],ax	;result
+;|***     temp_val = 10;
+; Line 51
+	*** 00000f	c7 46 fc 0a 00 		mov	WORD PTR [bp-4],10	;temp_val
+;|*** 
+;|***     /* --- IF / ELSE IF / ELSE Logic --- */
+;|***     if (result > 100) {
+; Line 54
+	*** 000014	3d 64 00 		cmp	ax,100
+	*** 000017	7e 07 			jle	$I310
+;|***         result = 100;
+; Line 55
+	*** 000019	c7 46 ee 64 00 		mov	WORD PTR [bp-18],100	;result
+;|***     } else if (result < 0) {
+; Line 56
+	*** 00001e	eb 11 			jmp	SHORT $I313
+					$I310:
+	*** 000020	83 7e ee 00 		cmp	WORD PTR [bp-18],0	;result
+	*** 000024	7d 08 			jge	$I312
+;|***         result = 0;
+; Line 57
+	*** 000026	c7 46 ee 00 00 		mov	WORD PTR [bp-18],0	;result
+;|***     } else {
+; Line 58
+	*** 00002b	eb 04 			jmp	SHORT $I313
+	*** 00002d	90 			nop	
+					$I312:
+;|***         result++;
+; Line 59
+	*** 00002e	ff 46 ee 		inc	WORD PTR [bp-18]	;result
+;|***     }
+; Line 60
+					$I313:
+;|*** 
+;|***     /* --- Complex IF with Boolean Logic and Pointer Checks --- */
+;|***     /* Look for short-circuiting behavior with && */
+;|***     if ((g_flags & 0x01) && param_far_ptr != NULL) {
+; Line 64
+	*** 000031	f6 06 00 00 01 		test	BYTE PTR _g_flags,1
+	*** 000036	74 10 			je	$I314
+	*** 000038	8b 46 0c 		mov	ax,WORD PTR [bp+12]	;param_far_ptr
+	*** 00003b	0b 46 0e 		or	ax,WORD PTR [bp+14]
+	*** 00003e	74 08 			je	$I314
+;|***         /* Accessing a far pointer. Look for 'les bx, ...' instruction. */
+;|***         param_far_ptr->status_flag = 1;
+; Line 66
+	*** 000040	c4 5e 0c 		les	bx,DWORD PTR [bp+12]	;param_far_ptr
+	*** 000043	26 c6 47 0c 01 		mov	BYTE PTR es:[bx+12],1
+;|***     }
+; Line 67
+;|*** 
+;|***     /* --- Pointer and Struct Access (Near Pointer) --- */
+;|***     local_ptr = &g_game_data;
+; Line 70
+					$I314:
+	*** 000048	c7 46 fe 00 00 		mov	WORD PTR [bp-2],OFFSET _g_game_data	;local_ptr
+;|***     local_ptr->some_value = result;
+; Line 71
+	*** 00004d	8b 46 ee 		mov	ax,WORD PTR [bp-18]	;result
+	*** 000050	a3 00 00 		mov	WORD PTR _g_game_data,ax
+;|*** 
+;|***     /* --- FOR Loop with Array Access --- */
+;|***     /* Note that 'i' is declared at the top of the function. */
+;|***     for (i = 0; i < 8; i++) {
+; Line 75
+	*** 000053	c7 46 f8 00 00 		mov	WORD PTR [bp-8],0	;i
+					$FC316:
+;|***         g_game_data.name[i] = param_string[i];
+; Line 76
+	*** 000058	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;i
+	*** 00005b	8b 76 06 		mov	si,WORD PTR [bp+6]	;param_string
+	*** 00005e	8a 00 			mov	al,[bx][si]
+	*** 000060	88 87 02 00 		mov	BYTE PTR _g_game_data[bx+2],al
+;|***         g_result_array[i] = i * result;
+; Line 77
+	*** 000064	8b 46 f8 		mov	ax,WORD PTR [bp-8]	;i
+	*** 000067	f7 6e ee 		imul	WORD PTR [bp-18]	;result
+	*** 00006a	8b 5e f8 		mov	bx,WORD PTR [bp-8]	;i
+	*** 00006d	d1 e3 			shl	bx,1
+	*** 00006f	89 87 00 00 		mov	WORD PTR _g_result_array[bx],ax
+;|***     }
+; Line 78
+	*** 000073	ff 46 f8 		inc	WORD PTR [bp-8]	;i
+	*** 000076	83 7e f8 08 		cmp	WORD PTR [bp-8],8	;i
+	*** 00007a	7c dc 			jl	$FC316
+;|*** 
+;|***     /* --- WHILE Loop --- */
+;|***     loop_counter = 5;
+; Line 81
+	*** 00007c	c7 46 fa 05 00 		mov	WORD PTR [bp-6],5	;loop_counter
+;|***     while (loop_counter > 0) {
+; Line 82
+					$FC319:
+;|***         temp_val += loop_counter;
+; Line 83
+	*** 000081	8b 46 fa 		mov	ax,WORD PTR [bp-6]	;loop_counter
+	*** 000084	01 46 fc 		add	WORD PTR [bp-4],ax	;temp_val
+;|***         loop_counter--;
+; Line 84
+	*** 000087	ff 4e fa 		dec	WORD PTR [bp-6]	;loop_counter
+;|***     }
+; Line 85
+	*** 00008a	83 7e fa 00 		cmp	WORD PTR [bp-6],0	;loop_counter
+	*** 00008e	7f f1 			jg	$FC319
+;|*** 
+;|***     /* --- DO-WHILE Loop (guaranteed to run at least once) --- */
+;|***     j = 0;
+; Line 88
+	*** 000090	c7 46 f2 00 00 		mov	WORD PTR [bp-14],0	;j
+;|***     do {
+; Line 89
+					$D321:
+;|***         temp_val++;
+; Line 90
+	*** 000095	ff 46 fc 		inc	WORD PTR [bp-4]	;temp_val
+;|***         j++;
+; Line 91
+	*** 000098	ff 46 f2 		inc	WORD PTR [bp-14]	;j
+;|***     } while (j < g_game_data.some_value);
+; Line 92
+	*** 00009b	a1 00 00 		mov	ax,WORD PTR _g_game_data
+	*** 00009e	39 46 f2 		cmp	WORD PTR [bp-14],ax	;j
+	*** 0000a1	7c f2 			jl	$D321
+;|*** 
+;|*** 
+;|***     /* --- SWITCH Statement --- */
+;|***     /* This is a key test. /Ot will often create a jump table for this, */
+;|***     /* while /Zi will create a long chain of "compare and jump". */
+;|***     status_code = g_flags & 0xF0;
+; Line 98
+	*** 0000a3	a1 00 00 		mov	ax,_g_flags
+	*** 0000a6	25 f0 00 		and	ax,240
+	*** 0000a9	89 46 f0 		mov	WORD PTR [bp-16],ax	;status_code
+;|***     switch (status_code) {
+; Line 99
+	*** 0000ac	3d 10 00 		cmp	ax,16
+	*** 0000af	74 17 			je	$SC328
+	*** 0000b1	3d 20 00 		cmp	ax,32
+	*** 0000b4	74 2a 			je	$SC329
+	*** 0000b6	3d 80 00 		cmp	ax,128
+	*** 0000b9	74 2d 			je	$SC330
+	*** 0000bb	3d 90 00 		cmp	ax,144
+	*** 0000be	74 2d 			je	$SC331
+;|***         case 0x10:
+;|***             result = 1;
+;|***             break;
+;|***         case 0x20:
+;|***             result = 2;
+;|***             break;
+;|***         case 0x80:
+;|***             result = 8;
+;|***             /* Deliberate fall-through */
+;|***         case 0x90:
+;|***             result += 9;
+;|***             break;
+;|***         default:
+;|***             result = -1;
+; Line 113
+	*** 0000c0	c7 46 ee ff ff 		mov	WORD PTR [bp-18],-1	;result
+;|***             break;
+; Line 114
+	*** 0000c5	eb 06 			jmp	SHORT $SB325
+	*** 0000c7	90 			nop	
+					$SC328:
+;|***             result = 1;
+; Line 101
+	*** 0000c8	c7 46 ee 01 00 		mov	WORD PTR [bp-18],1	;result
+;|***             break;
+; Line 102
+					$SB325:
+;|***         case 0x20:
+;|***             result = 2;
+;|***             break;
+;|***         case 0x80:
+;|***             result = 8;
+;|***             /* Deliberate fall-through */
+;|***         case 0x90:
+;|***             result += 9;
+;|***             break;
+;|***         default:
+;|***             result = -1;
+;|***             break;
+;|***     }
+;|*** 
+;|***     /* --- 32-bit LONG Arithmetic --- */
+;|***     /* Look for operations using the dx:ax register pair. */
+;|***     /* A 32-bit shift is often implemented as a small loop. */
+;|***     local_long = param_long << 4; /* long multiplication */
+; Line 120
+	*** 0000cd	8b 46 08 		mov	ax,WORD PTR [bp+8]	;param_long
+	*** 0000d0	8b 56 0a 		mov	dx,WORD PTR [bp+10]
+	*** 0000d3	b1 04 			mov	cl,4
+					$L20000:
+	*** 0000d5	d1 e0 			shl	ax,1
+	*** 0000d7	d1 d2 			rcl	dx,1
+	*** 0000d9	fe c9 			dec	cl
+	*** 0000db	74 17 			je	$L20001
+	*** 0000dd	eb f6 			jmp	SHORT $L20000
+	*** 0000df	90 			nop	
+					$SC329:
+;|***             result = 2;
+; Line 104
+	*** 0000e0	c7 46 ee 02 00 		mov	WORD PTR [bp-18],2	;result
+;|***             break;
+; Line 105
+	*** 0000e5	eb e6 			jmp	SHORT $SB325
+	*** 0000e7	90 			nop	
+					$SC330:
+;|***         case 0x80:
+;|***             result = 8;
+; Line 107
+	*** 0000e8	c7 46 ee 08 00 		mov	WORD PTR [bp-18],8	;result
+;|***             /* Deliberate fall-through */
+;|***         case 0x90:
+; Line 109
+					$SC331:
+;|***             result += 9;
+; Line 110
+	*** 0000ed	83 46 ee 09 		add	WORD PTR [bp-18],9	;result
+;|***             break;
+; Line 111
+	*** 0000f1	eb da 			jmp	SHORT $SB325
+	*** 0000f3	90 			nop	
+					$L20001:
+	*** 0000f4	89 46 f4 		mov	WORD PTR [bp-12],ax	;local_long
+	*** 0000f7	89 56 f6 		mov	WORD PTR [bp-10],dx
+;|***         default:
+;|***             result = -1;
+;|***             break;
+;|***     }
+;|*** 
+;|***     /* --- 32-bit LONG Arithmetic --- */
+;|***     /* Look for operations using the dx:ax register pair. */
+;|***     /* A 32-bit shift is often implemented as a small loop. */
+;|***     local_long = param_long << 4; /* long multiplication */
+;|***     local_long += g_player_state.player_score;
+; Line 121
+	*** 0000fa	a1 00 00 		mov	ax,WORD PTR _g_player_state
+	*** 0000fd	8b 16 02 00 		mov	dx,WORD PTR _g_player_state+2
+	*** 000101	01 46 f4 		add	WORD PTR [bp-12],ax	;local_long
+	*** 000104	11 56 f6 		adc	WORD PTR [bp-10],dx
+;|*** 
+;|***     /* --- Function Call --- */
+;|***     /* Tests the CDECL calling convention (arguments pushed right-to-left). */
+;|***     external_function(result, local_long);
+; Line 125
+	*** 000107	ff 76 f6 		push	WORD PTR [bp-10]
+	*** 00010a	ff 76 f4 		push	WORD PTR [bp-12]	;local_long
+	*** 00010d	ff 76 ee 		push	WORD PTR [bp-18]	;result
+	*** 000110	e8 00 00 		call	_external_function
+	*** 000113	83 c4 06 		add	sp,6
+;|*** 
+;|***     /* --- GOTO Statement --- */
+;|***     if (result == -1) {
+; Line 128
+	*** 000116	83 7e ee ff 		cmp	WORD PTR [bp-18],-1	;result
+	*** 00011a	75 0a 			jne	$I333
+;|***         goto error_handler;
+;|***     }
+;|***     result = 1;
+;|***     goto end_of_function;
+;|*** 
+;|*** error_handler:
+;|***     result = 0;
+; Line 135
+	*** 00011c	c7 46 ee 00 00 		mov	WORD PTR [bp-18],0	;result
+;|*** 
+;|*** end_of_function:
+; Line 137
+					$end_of_function335:
+;|***     return result;
+; Line 138
+	*** 000121	8b 46 ee 		mov	ax,WORD PTR [bp-18]	;result
+	*** 000124	eb 08 			jmp	SHORT $EX301
+					$I333:
+	*** 000126	c7 46 ee 01 00 		mov	WORD PTR [bp-18],1	;result
+;|***     goto end_of_function;
+; Line 132
+	*** 00012b	eb f4 			jmp	SHORT $end_of_function335
+	*** 00012d	90 			nop	
+					$EX301:
+	*** 00012e	5e 			pop	si
+	*** 00012f	8b e5 			mov	sp,bp
+	*** 000131	5d 			pop	bp
+	*** 000132	c3 			ret	
+	*** 000133	90 			nop	
+
+_compiler_idiom_test_suite	ENDP
+_TEXT	ENDS
+END
+;|*** 
+;|*** error_handler:
+;|***     result = 0;
+;|*** 
+;|*** end_of_function:
+;|***     return result;
+;|*** }

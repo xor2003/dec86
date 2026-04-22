@@ -1,0 +1,39 @@
+tree_depth = 4
+
+proj_name = ms2wlink
+
+ms2wlink_autodepends = .AUTODEPEND
+
+ms2wlink_trmem = 1
+
+memory_model_i86 = m
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+
+#
+# cflags
+#
+.c: ../c;$(trmem_dir)
+
+inc_dirs = -I"../h"
+
+!ifeq trmem 1
+! ifdef __WATCOM_TOOLS__
+!  if $(__WATCOM_TOOLS__) < 1300
+extra_c_flags_f_mem = -of+
+!  endif
+! endif
+!endif
+
+#
+# lflags
+#
+extra_l_flags_os2 = op stack=8k
+
+#
+# EXE
+#
+exetarg_objs = fileio.obj keyword.obj mem.obj ms2wlink.obj parsems.obj utils.obj $(trmem_objs)
+!include exetarg.mif

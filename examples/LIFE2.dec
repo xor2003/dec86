@@ -1,0 +1,503 @@
+[16:42:19] /* loading: LIFE2.EXE */
+[16:42:19] [dbg] build_project: path=LIFE2.EXE suffix=.exe force_blob=False
+[16:42:19] [dbg] dos_mz load base=0x10000
+[16:42:19] [dbg] project built: arch=86_16 entry=0x11423
+[dbg] loaded sidecar metadata: format=flair_pat+signature_catalog code_labels=57 data_labels=0 structs=0
+[dbg] signature-matched compiler families: IDA FLAIR, Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
+[16:43:02] /* info: recovery evidence: sidecar-assisted recovery (flair_pat+signature_catalog) */
+[16:43:02] /* discovering likely functions... */
+[16:43:02] /* Signature-matched library labels available as bounded hints; recovering binary-owned functions from direct call/prologue evidence before generic CFG recovery. */
+[16:43:02] /* hidden-sidecar EXE: queueing ranked direct-binary function candidates for full decompilation without waiting for whole-program CFG recovery. */
+[16:43:02] /* skipping 57 signature-matched function(s) by default. */
+[16:43:02] /* binary: LIFE2.EXE */
+[16:43:02] /* arch: 86_16 */
+[16:43:02] /* entry: 0x11423 */
+[16:43:02] /* info: direct-binary recovery found 70 likely non-library function entries */
+[16:43:02] /* functions queued for decompilation: 70 */
+[16:43:02] /* info: selected 70 function(s) for decompilation */
+[16:43:02] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
+[16:43:02] [dbg] recovery worker: start 0x10010 sub_10010 mode=ranked recovery_timeout=240s
+[16:43:02] [dbg] isolated function worker: start 0x10010 sub_10010 requested_timeout=240s hard_timeout=242s
+[16:43:02] [dbg] function complexity for 0x10010 sub_10010: blocks=3, bytes=20
+[16:43:02] [dbg] decompile_function: addr=0x10010 name=sub_10010
+[16:43:02] [dbg] function 0x10010 not normalized, normalizing...
+[16:43:02] [dbg] registered 2 direct callee stub(s) for 0x10010
+[16:43:02] [dbg] Decompiler returned for 0x10010
+[16:43:03] [dbg] decompilation time for 0x10010 sub_10010: 0.32s
+[16:43:03] /* == function 0x10010 sub_10010 == */
+[16:43:03] [dbg] decompile_function: addr=0x10010 name=sub_10010
+[16:43:03] [dbg] function 0x10010 not normalized, normalizing...
+[16:43:03] [dbg] registered 2 direct callee stub(s) for 0x10010
+[16:43:03] [dbg] function complexity for 0x10010 sub_10010: blocks=3, bytes=20
+[16:43:03] [dbg] decompile_function: addr=0x10010 name=sub_10010
+[16:43:03] [dbg] registered 2 direct callee stub(s) for 0x10010
+[16:43:03] [dbg] Decompiler returned for 0x10010
+[16:43:03] [dbg] decompilation time for 0x10010 sub_10010: 0.35s
+[16:43:03] [dbg] decompile_function: addr=0x10010 name=sub_10010
+[16:43:03] [dbg] registered 2 direct callee stub(s) for 0x10010
+[16:43:03] [dbg] function complexity for 0x10010 sub_10010: blocks=3, bytes=20
+[16:43:03] [dbg] decompile_function: addr=0x10010 name=sub_10010
+[16:43:03] [dbg] registered 2 direct callee stub(s) for 0x10010
+[16:43:03] [dbg] Decompiler returned for 0x10010
+[16:43:03] [dbg] decompilation time for 0x10010 sub_10010: 0.34s
+[16:43:03] [dbg] decompile_function: addr=0x10010 name=sub_10010
+[16:43:03] [dbg] registered 2 direct callee stub(s) for 0x10010
+[16:43:03] [dbg] function complexity for 0x10010 sub_10010: blocks=3, bytes=20
+[16:43:03] [dbg] decompile_function: addr=0x10010 name=sub_10010
+[16:43:03] [dbg] registered 2 direct callee stub(s) for 0x10010
+[16:43:04] [dbg] Decompiler returned for 0x10010
+[16:43:04] [dbg] decompilation time for 0x10010 sub_10010: 0.36s
+[16:43:04] [dbg] non-optimized fallback unavailable for 0x10010 sub_10010: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[16:43:04] /* info: function 0x10010 sub_10010 attempt=empty validation=disabled */
+[16:43:04] /* -- empty -- */
+[16:43:04] Decompiler produced unresolved IR-shaped C (store-op, load-op, conv-op, ...).
+[16:43:04] /* -- asm fallback -- */
+[16:43:04] 0x10010: push bp
+[16:43:04] 0x10011: mov bp, sp
+[16:43:04] 0x10013: mov ax, 0
+[16:43:04] 0x10016: call 0x1140d
+[16:43:04] 0x10019: push di
+[16:43:04] 0x1001a: push si
+[16:43:04] 0x1001b: cmp word ptr [bp + 4], 1
+[16:43:04] 0x1001f: je 0x10024
+[16:43:04] 0x10021: jmp 0x1002d
+[16:43:04] [dbg] recovery worker: start 0x114cd sub_114cd mode=ranked recovery_timeout=240s
+[16:43:04] [dbg] isolated function worker: start 0x114cd sub_114cd requested_timeout=240s hard_timeout=242s
+[16:43:04] [dbg] function complexity for 0x114cd sub_114cd: blocks=5, bytes=30
+[16:43:04] [dbg] decompile_function: addr=0x114cd name=sub_114cd
+[16:43:04] [dbg] function 0x114cd not normalized, normalizing...
+[16:43:05] [dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:05] [dbg] clinic:skip-peephole-complex-block block=0x114e3
+[16:43:05] [dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:05] [dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:05] [dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:05] [dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:05] [dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:05] [dbg] Decompiler returned for 0x114cd
+[16:43:05] [dbg] decompilation time for 0x114cd sub_114cd: 0.89s
+[16:43:05] /* == function 0x114cd sub_114cd == */
+[16:43:05] [dbg] decompile_function: addr=0x114cd name=sub_114cd
+[16:43:05] [dbg] function 0x114cd not normalized, normalizing...
+[16:43:05] [dbg] function complexity for 0x114cd sub_114cd: blocks=5, bytes=30
+[16:43:05] [dbg] decompile_function: addr=0x114cd name=sub_114cd
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114e3
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:06] [dbg] Decompiler returned for 0x114cd
+[16:43:06] [dbg] decompilation time for 0x114cd sub_114cd: 0.86s
+[16:43:06] [dbg] decompile_function: addr=0x114cd name=sub_114cd
+[16:43:06] [dbg] registered 2 direct callee stub(s) for 0x114cd
+[16:43:06] [dbg] function complexity for 0x114cd sub_114cd: blocks=5, bytes=30
+[16:43:06] [dbg] decompile_function: addr=0x114cd name=sub_114cd
+[16:43:06] [dbg] registered 2 direct callee stub(s) for 0x114cd
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114e3
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:07] [dbg] Decompiler returned for 0x114cd
+[16:43:07] [dbg] decompilation time for 0x114cd sub_114cd: 0.72s
+[16:43:07] [dbg] decompile_function: addr=0x114cd name=sub_114cd
+[16:43:07] [dbg] registered 2 direct callee stub(s) for 0x114cd
+[16:43:07] [dbg] function complexity for 0x114cd sub_114cd: blocks=5, bytes=30
+[16:43:07] [dbg] decompile_function: addr=0x114cd name=sub_114cd
+[16:43:07] [dbg] registered 2 direct callee stub(s) for 0x114cd
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114e3
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[dbg] clinic:skip-peephole-complex-block block=0x114de
+[16:43:08] [dbg] Decompiler returned for 0x114cd
+[16:43:08] [dbg] decompilation time for 0x114cd sub_114cd: 0.74s
+[16:43:08] [dbg] non-optimized fallback unavailable for 0x114cd sub_114cd: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[16:43:08] /* info: function 0x114cd sub_114cd attempt=fallback validation=disabled */
+[16:43:08] /* problem: empty */
+[16:43:08] Decompiler produced unresolved IR-shaped C (raw-register-frag).
+[16:43:08] /* non-optimized fallback unavailable: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery. */
+[16:43:08] /* -- c (string intrinsic fallback) -- */
+int __x86_16_cmps(unsigned short width);
+unsigned short __x86_16_scas_zterm_len(unsigned short width);
+
+void sub_114cd(void)
+{
+    int __x86_16_compare;
+    /* memcmp_class, width=1 */
+    __x86_16_compare = __x86_16_cmps(1);
+    unsigned short __x86_16_length;
+    /* strlen_class */
+    __x86_16_length = __x86_16_scas_zterm_len(1);
+}
+
+[16:43:08] [dbg] recovery worker: start 0x1157c sub_1157c mode=ranked recovery_timeout=240s
+[16:43:08] [dbg] isolated function worker: start 0x1157c sub_1157c requested_timeout=240s hard_timeout=242s
+[16:43:08] [dbg] function complexity for 0x1157c sub_1157c: blocks=3, bytes=23
+[16:43:08] [dbg] decompile_function: addr=0x1157c name=sub_1157c
+[16:43:08] [dbg] function 0x1157c not normalized, normalizing...
+[16:43:08] [dbg] registered 2 direct callee stub(s) for 0x1157c
+[16:43:08] [dbg] Decompiler returned for 0x1157c
+[16:43:08] [dbg] decompilation time for 0x1157c sub_1157c: 0.34s
+[16:43:08] /* == function 0x1157c sub_1157c == */
+[16:43:08] [dbg] decompile_function: addr=0x1157c name=sub_1157c
+[16:43:08] [dbg] function 0x1157c not normalized, normalizing...
+[16:43:08] [dbg] registered 2 direct callee stub(s) for 0x1157c
+[16:43:08] [dbg] function complexity for 0x1157c sub_1157c: blocks=3, bytes=23
+[16:43:08] [dbg] decompile_function: addr=0x1157c name=sub_1157c
+[16:43:08] [dbg] registered 2 direct callee stub(s) for 0x1157c
+[16:43:08] [dbg] Decompiler returned for 0x1157c
+[16:43:09] [dbg] decompilation time for 0x1157c sub_1157c: 0.37s
+[16:43:09] [dbg] decompile_function: addr=0x1157c name=sub_1157c
+[16:43:09] [dbg] registered 2 direct callee stub(s) for 0x1157c
+[16:43:09] [dbg] function complexity for 0x1157c sub_1157c: blocks=3, bytes=23
+[16:43:09] [dbg] decompile_function: addr=0x1157c name=sub_1157c
+[16:43:09] [dbg] registered 2 direct callee stub(s) for 0x1157c
+[16:43:09] [dbg] Decompiler returned for 0x1157c
+[16:43:09] [dbg] decompilation time for 0x1157c sub_1157c: 0.36s
+[16:43:09] [dbg] decompile_function: addr=0x1157c name=sub_1157c
+[16:43:09] [dbg] registered 2 direct callee stub(s) for 0x1157c
+[16:43:09] [dbg] function complexity for 0x1157c sub_1157c: blocks=3, bytes=23
+[16:43:09] [dbg] decompile_function: addr=0x1157c name=sub_1157c
+[16:43:09] [dbg] registered 2 direct callee stub(s) for 0x1157c
+[16:43:09] [dbg] Decompiler returned for 0x1157c
+[16:43:09] [dbg] decompilation time for 0x1157c sub_1157c: 0.41s
+[16:43:09] [dbg] non-optimized fallback unavailable for 0x1157c sub_1157c: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[16:43:09] /* info: function 0x1157c sub_1157c attempt=empty validation=disabled */
+[16:43:09] /* -- empty -- */
+[16:43:09] Decompiler produced unresolved IR-shaped C (store-op, conv-op, raw-endness, ...).
+[16:43:09] /* -- asm fallback -- */
+[16:43:09] 0x1157c: push bp
+[16:43:09] 0x1157d: mov bp, sp
+[16:43:09] 0x1157f: mov si, 0x644
+[16:43:09] 0x11582: mov di, 0x644
+[16:43:09] 0x11585: call 0x115d8
+[16:43:09] 0x11588: mov si, 0x51c
+[16:43:09] 0x1158b: mov di, 0x51e
+[16:43:09] 0x1158e: call 0x115d8
+[16:43:09] 0x11591: jmp 0x11596
+[16:43:09] [dbg] recovery worker: start 0x11593 sub_11593 mode=ranked recovery_timeout=240s
+[16:43:10] [dbg] isolated function worker: start 0x11593 sub_11593 requested_timeout=240s hard_timeout=242s
+[16:43:10] [dbg] function complexity for 0x11593 sub_11593: blocks=5, bytes=34
+[16:43:10] [dbg] decompile_function: addr=0x11593 name=sub_11593
+[16:43:10] [dbg] function 0x11593 not normalized, normalizing...
+[16:43:10] [dbg] registered 4 direct callee stub(s) for 0x11593
+[16:43:11] [dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:11] [dbg] clinic:skip-peephole-complex-block block=0x115b2
+[16:43:11] [dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:11] [dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:11] [dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:11] [dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:11] [dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:10] [dbg] Decompiler returned for 0x11593
+[16:43:11] [dbg] decompilation time for 0x11593 sub_11593: 0.93s
+[16:43:11] /* == function 0x11593 sub_11593 == */
+[16:43:11] [dbg] decompile_function: addr=0x11593 name=sub_11593
+[16:43:11] [dbg] function 0x11593 not normalized, normalizing...
+[16:43:11] [dbg] registered 4 direct callee stub(s) for 0x11593
+[16:43:11] [dbg] function complexity for 0x11593 sub_11593: blocks=5, bytes=34
+[16:43:11] [dbg] decompile_function: addr=0x11593 name=sub_11593
+[16:43:11] [dbg] registered 4 direct callee stub(s) for 0x11593
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115b2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:11] [dbg] Decompiler returned for 0x11593
+[16:43:12] [dbg] decompilation time for 0x11593 sub_11593: 0.86s
+[16:43:12] [dbg] decompile_function: addr=0x11593 name=sub_11593
+[16:43:12] [dbg] registered 1 direct callee stub(s) for 0x11593
+[16:43:12] [dbg] function complexity for 0x11593 sub_11593: blocks=5, bytes=34
+[16:43:12] [dbg] decompile_function: addr=0x11593 name=sub_11593
+[16:43:12] [dbg] registered 1 direct callee stub(s) for 0x11593
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115b2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:12] [dbg] Decompiler returned for 0x11593
+[16:43:13] [dbg] decompilation time for 0x11593 sub_11593: 0.81s
+[16:43:13] [dbg] decompile_function: addr=0x11593 name=sub_11593
+[16:43:13] [dbg] registered 1 direct callee stub(s) for 0x11593
+[16:43:13] [dbg] function complexity for 0x11593 sub_11593: blocks=5, bytes=34
+[16:43:13] [dbg] decompile_function: addr=0x11593 name=sub_11593
+[16:43:13] [dbg] registered 1 direct callee stub(s) for 0x11593
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115b2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[dbg] clinic:skip-peephole-complex-block block=0x115a2
+[16:43:13] [dbg] Decompiler returned for 0x11593
+[16:43:14] [dbg] decompilation time for 0x11593 sub_11593: 0.88s
+[16:43:14] [dbg] non-optimized fallback unavailable for 0x11593 sub_11593: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[16:43:14] /* info: function 0x11593 sub_11593 attempt=empty validation=disabled */
+[16:43:14] /* -- empty -- */
+[16:43:14] Decompiler produced unresolved IR-shaped C (store-op, conv-op, raw-endness, ...).
+[16:43:14] /* -- asm fallback -- */
+[16:43:14] 0x11593: push bp
+[16:43:14] 0x11594: mov bp, sp
+[16:43:14] 0x11596: mov si, 0x51e
+[16:43:14] 0x11599: mov di, 0x51e
+[16:43:14] 0x1159c: call 0x115d8
+[16:43:14] 0x1159f: call 0x1196f
+[16:43:14] 0x115a2: mov cx, 0x14
+[16:43:14] 0x115a5: xor bx, bx
+[16:43:14] 0x115a7: test byte ptr [bx + 0x1be], 1
+[16:43:14] 0x115ac: je 0x115b2
+[16:43:14] 0x115ae: mov ah, 0x3e
+[16:43:14] 0x115b0: int 0x21
+[16:43:14] 0x115b2: inc bx
+[16:43:14] 0x115b3: loop 0x115a7
+[16:43:14] 0x115b5: call 0x115bf
+[16:43:14] 0x115b8: mov ax, word ptr [bp + 4]
+[16:43:14] 0x115bb: mov ah, 0x4c
+[16:43:14] 0x115bd: int 0x21
+[16:43:14] 0x115bf: mov cx, word ptr [0x512]
+[16:43:14] 0x115c3: jcxz 0x115cc
+[16:43:14] 0x115c5: mov bx, 2
+[16:43:14] 0x115c8: lcall [0x510]
+[16:43:14] 0x115cc: push ds
+[16:43:14] 0x115cd: lds dx, ptr [0x1a6]
+[16:43:14] 0x115d1: mov ax, 0x2500
+[16:43:14] 0x115d4: int 0x21
+[16:43:14] 0x115d6: pop ds
+[16:43:14] 0x115d7: ret
+[16:43:14] [dbg] recovery worker: start 0x115bf sub_115bf mode=ranked recovery_timeout=240s
+[16:43:14] [dbg] isolated function worker: start 0x115bf sub_115bf requested_timeout=240s hard_timeout=242s
+[16:43:14] [dbg] function complexity for 0x115bf sub_115bf: blocks=1, bytes=6
+[16:43:14] [dbg] decompile_function: addr=0x115bf name=sub_115bf
+[16:43:14] [dbg] function 0x115bf not normalized, normalizing...
+[16:43:14] [dbg] Decompiler returned for 0x115bf
+[16:43:14] [dbg] decompilation time for 0x115bf sub_115bf: 0.22s
+[16:43:14] /* == function 0x115bf sub_115bf == */
+[16:43:14] [dbg] decompile_function: addr=0x115bf name=sub_115bf
+[16:43:14] [dbg] function 0x115bf not normalized, normalizing...
+[16:43:14] [dbg] function complexity for 0x115bf sub_115bf: blocks=1, bytes=6
+[16:43:14] [dbg] decompile_function: addr=0x115bf name=sub_115bf
+[16:43:14] [dbg] Decompiler returned for 0x115bf
+[16:43:14] [dbg] decompilation time for 0x115bf sub_115bf: 0.21s
+[16:43:14] [dbg] decompile_function: addr=0x115bf name=sub_115bf
+[16:43:14] [dbg] function complexity for 0x115bf sub_115bf: blocks=1, bytes=6
+[16:43:14] [dbg] decompile_function: addr=0x115bf name=sub_115bf
+[16:43:14] [dbg] Decompiler returned for 0x115bf
+[16:43:14] [dbg] decompilation time for 0x115bf sub_115bf: 0.21s
+[16:43:15] [dbg] decompile_function: addr=0x115bf name=sub_115bf
+[16:43:15] [dbg] function complexity for 0x115bf sub_115bf: blocks=1, bytes=6
+[16:43:15] [dbg] decompile_function: addr=0x115bf name=sub_115bf
+[16:43:15] [dbg] Decompiler returned for 0x115bf
+[16:43:15] [dbg] decompilation time for 0x115bf sub_115bf: 0.21s
+[16:43:15] [dbg] non-optimized fallback unavailable for 0x115bf sub_115bf: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[16:43:15] /* info: function 0x115bf sub_115bf attempt=empty validation=disabled */
+[16:43:15] /* -- empty -- */
+[16:43:15] Decompiler produced unresolved IR-shaped C (raw-register-frag).
+[16:43:15] /* -- asm fallback -- */
+[16:43:15] 0x115bf: mov cx, word ptr [0x512]
+[16:43:15] 0x115c3: jcxz 0x115cc
+[16:43:15] 0x115c5: mov bx, 2
+[16:43:15] 0x115c8: lcall [0x510]
+[16:43:15] 0x115cc: push ds
+[16:43:15] 0x115cd: lds dx, ptr [0x1a6]
+[16:43:15] 0x115d1: mov ax, 0x2500
+[16:43:15] 0x115d4: int 0x21
+[16:43:15] 0x115d6: pop ds
+[16:43:15] 0x115d7: ret
+[16:43:15] [dbg] recovery worker: start 0x115d8 sub_115d8 mode=ranked recovery_timeout=240s
+[16:43:15] [dbg] isolated function worker: start 0x115d8 sub_115d8 requested_timeout=240s hard_timeout=242s
+[16:43:15] [dbg] function complexity for 0x115d8 sub_115d8: blocks=2, bytes=10
+[16:43:15] [dbg] decompile_function: addr=0x115d8 name=sub_115d8
+[16:43:15] [dbg] function 0x115d8 not normalized, normalizing...
+[16:43:15] [dbg] clinic:skip-peephole-complex-block block=0x115dc
+[16:43:15] [dbg] Decompiler returned for 0x115d8
+[16:43:15] [dbg] decompilation time for 0x115d8 sub_115d8: 0.52s
+[16:43:15] /* == function 0x115d8 sub_115d8 == */
+[16:43:15] [dbg] decompile_function: addr=0x115d8 name=sub_115d8
+[16:43:15] [dbg] function 0x115d8 not normalized, normalizing...
+[16:43:15] [dbg] function complexity for 0x115d8 sub_115d8: blocks=2, bytes=10
+[16:43:15] [dbg] decompile_function: addr=0x115d8 name=sub_115d8
+[dbg] clinic:skip-peephole-complex-block block=0x115dc
+[16:43:16] [dbg] Decompiler returned for 0x115d8
+[16:43:16] [dbg] decompilation time for 0x115d8 sub_115d8: 0.48s
+[16:43:16] [dbg] decompile_function: addr=0x115d8 name=sub_115d8
+[16:43:16] [dbg] function complexity for 0x115d8 sub_115d8: blocks=2, bytes=10
+[16:43:16] [dbg] decompile_function: addr=0x115d8 name=sub_115d8
+[dbg] clinic:skip-peephole-complex-block block=0x115dc
+[16:43:16] [dbg] Decompiler returned for 0x115d8
+[16:43:17] [dbg] decompilation time for 0x115d8 sub_115d8: 0.45s
+[16:43:17] [dbg] decompile_function: addr=0x115d8 name=sub_115d8
+[16:43:17] [dbg] function complexity for 0x115d8 sub_115d8: blocks=2, bytes=10
+[16:43:17] [dbg] decompile_function: addr=0x115d8 name=sub_115d8
+[dbg] clinic:skip-peephole-complex-block block=0x115dc
+[16:43:17] [dbg] Decompiler returned for 0x115d8
+[16:43:17] [dbg] decompilation time for 0x115d8 sub_115d8: 0.49s
+[16:43:17] [dbg] non-optimized fallback unavailable for 0x115d8 sub_115d8: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[16:43:17] /* info: function 0x115d8 sub_115d8 attempt=empty validation=disabled */
+[16:43:17] /* -- empty -- */
+[16:43:17] Decompiler produced unresolved IR-shaped C (raw-register-frag).
+[16:43:17] /* -- asm fallback -- */
+[16:43:17] 0x115d8: cmp si, di
+[16:43:17] 0x115da: jae 0x115e6
+[16:43:17] 0x115dc: dec di
+[16:43:17] 0x115dd: dec di
+[16:43:17] 0x115de: mov cx, word ptr [di]
+[16:43:17] 0x115e0: jcxz 0x115d8
+[16:43:17] 0x115e2: call cx
+[16:43:17] 0x115e4: jmp 0x115d8
+[16:43:17] [dbg] recovery worker: start 0x119d3 sub_119d3 mode=ranked recovery_timeout=240s
+[16:43:17] [dbg] isolated function worker: start 0x119d3 sub_119d3 requested_timeout=240s hard_timeout=242s
+[16:43:17] [dbg] function complexity for 0x119d3 sub_119d3: blocks=4, bytes=39
+[16:43:17] [dbg] decompile_function: addr=0x119d3 name=sub_119d3
+[16:43:17] [dbg] function 0x119d3 not normalized, normalizing...
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ee
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ee
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ee
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ee
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ee
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ee
+[16:43:20] [dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:19] [dbg] Decompiler returned for 0x119d3
+[16:43:20] [dbg] decompilation time for 0x119d3 sub_119d3: 2.65s
+[16:43:20] /* == function 0x119d3 sub_119d3 == */
+[16:43:20] [dbg] decompile_function: addr=0x119d3 name=sub_119d3
+[16:43:20] [dbg] function 0x119d3 not normalized, normalizing...
+[16:43:20] [dbg] function complexity for 0x119d3 sub_119d3: blocks=4, bytes=39
+[16:43:20] [dbg] decompile_function: addr=0x119d3 name=sub_119d3
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:22] [dbg] Decompiler returned for 0x119d3
+[16:43:22] [dbg] decompilation time for 0x119d3 sub_119d3: 1.84s
+[16:43:22] [dbg] decompile_function: addr=0x119d3 name=sub_119d3
+[16:43:22] [dbg] function complexity for 0x119d3 sub_119d3: blocks=4, bytes=39
+[16:43:22] [dbg] decompile_function: addr=0x119d3 name=sub_119d3
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:24] [dbg] Decompiler returned for 0x119d3
+[16:43:24] [dbg] decompilation time for 0x119d3 sub_119d3: 1.90s
+[16:43:24] [dbg] decompile_function: addr=0x119d3 name=sub_119d3
+[16:43:24] [dbg] function complexity for 0x119d3 sub_119d3: blocks=4, bytes=39
+[16:43:24] [dbg] decompile_function: addr=0x119d3 name=sub_119d3
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ee
+[dbg] clinic:skip-peephole-complex-block block=0x119ea
+[16:43:26] [dbg] Decompiler returned for 0x119d3
+[16:43:26] [dbg] decompilation time for 0x119d3 sub_119d3: 1.85s
+[16:43:26] [dbg] non-optimized fallback unavailable for 0x119d3 sub_119d3: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[16:43:26] /* info: function 0x119d3 sub_119d3 attempt=fallback validation=disabled */
+[16:43:26] /* problem: empty */
+[16:43:26] Decompiler produced unresolved IR-shaped C (store-op, load-op, conv-op, ...).
+[16:43:26] /* non-optimized fallback unavailable: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery. */
+[16:43:26] /* -- c (string intrinsic fallback) -- */
+unsigned short __x86_16_scas_zterm_len(unsigned short width);
+
+void sub_119d3(void)
+{
+    unsigned short __x86_16_length;
+    /* strlen_class */
+    __x86_16_length = __x86_16_scas_zterm_len(1);
+}
+
+[16:43:26] [dbg] recovery worker: start 0x1223b sub_1223b mode=ranked recovery_timeout=240s
+[16:43:27] [dbg] isolated function worker: start 0x1223b sub_1223b requested_timeout=240s hard_timeout=242s
+[16:43:27] [dbg] function complexity for 0x1223b sub_1223b: blocks=6, bytes=92
+[16:43:27] [dbg] decompile_function: addr=0x1223b name=sub_1223b
+[16:43:27] [dbg] function 0x1223b not normalized, normalizing...
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12252
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12261
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12266
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12270
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12261
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12266
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12252
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x1228c
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12261
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12266
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12252
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x1228c
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12261
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12266
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12252
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x1228c
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12261
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12266
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12252
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x1228c
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x1228c
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12266
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12261
+[16:43:34] [dbg] clinic:skip-peephole-complex-block block=0x12252
+[16:43:32] [dbg] Decompiler returned for 0x1223b
+[16:43:34] [dbg] decompilation time for 0x1223b sub_1223b: 6.95s
+[16:43:34] /* == function 0x1223b sub_1223b == */
+[16:43:34] [dbg] decompile_function: addr=0x1223b name=sub_1223b
+[16:43:34] [dbg] function 0x1223b not normalized, normalizing...
+[16:43:34] [dbg] function complexity for 0x1223b sub_1223b: blocks=6, bytes=92
+[16:43:34] [dbg] decompile_function: addr=0x1223b name=sub_1223b
+[dbg] clinic:skip-peephole-complex-block block=0x12252
+[dbg] clinic:skip-peephole-complex-block block=0x12261
+[dbg] clinic:skip-peephole-complex-block block=0x12266
+[dbg] clinic:skip-peephole-complex-block block=0x12270
+[dbg] clinic:skip-peephole-complex-block block=0x12261
+[dbg] clinic:skip-peephole-complex-block block=0x12266
+[dbg] clinic:skip-peephole-complex-block block=0x12252
+[dbg] clinic:skip-peephole-complex-block block=0x1228c
+[dbg] clinic:skip-peephole-complex-block block=0x12261
+[dbg] clinic:skip-peephole-complex-block block=0x12266
+[dbg] clinic:skip-peephole-complex-block block=0x12252
+[dbg] clinic:skip-peephole-complex-block block=0x1228c

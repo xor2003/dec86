@@ -1,0 +1,522 @@
+/****************************************************************************
+*
+*                            Open Watcom Project
+*
+* Copyright (c) 2023-2026 The Open Watcom Contributors. All Rights Reserved.
+*    Portions Copyright (c) 1983-2002 Sybase, Inc. All Rights Reserved.
+*
+*  ========================================================================
+*
+*    This file contains Original Code and/or Modifications of Original
+*    Code as defined in and that are subject to the Sybase Open Watcom
+*    Public License version 1.0 (the 'License'). You may not use this file
+*    except in compliance with the License. BY USING THIS FILE YOU AGREE TO
+*    ALL TERMS AND CONDITIONS OF THE LICENSE. A copy of the License is
+*    provided with the Original Code and Modifications, and is also
+*    available at www.sybase.com/developer/opensource.
+*
+*    The Original Code and all software distributed under the License are
+*    distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+*    EXPRESS OR IMPLIED, AND SYBASE AND ALL CONTRIBUTORS HEREBY DISCLAIM
+*    ALL SUCH WARRANTIES, INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF
+*    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR
+*    NON-INFRINGEMENT. Please see the License for the specific language
+*    governing rights and limitations under the License.
+*
+*  ========================================================================
+*
+* Description:  Eliminate unit productions.
+*
+****************************************************************************/
+
+
+#include <stdio.h>
+#include <ctype.h>
+#include <string.h>
+
+#include "yacc.h"
+#include "yaccins.h"
+#include "alloc.h"
+
+
+static unsigned     changeOccurred;
+static unsigned     deadStates;
+
+#if 0
+void dumpInternalState( a_state *state )
+{
+    a_parent        *parent;
+    a_shift_action  *saction;
+    a_reduce_action *raction;
+    size_t          col;
+    size_t          new_col;
+    bitnum          *mp;
+    an_item         **item;
+    sym_n           sym_idx;
+
+    printf( "state %d: %p (%u)\n", state->sidx, state, state->kersize );
+    printf( "  parent states:" );
+    col = 4;
+    for( parent = state->parents; parent != NULL; parent = parent->next ) {
+        printf( " %d(%p)", parent->state->sidx, parent->state );
+        --col;
+        if( col == 0 ) {
+            printf( "\n" );
+            col = 5;
+        }
+    }
+    printf( "\n" );
+    for( item = state->items; *item != NULL; ++item ) {
+        showitem( *item, " ." );
+    }
+    printf( "actions:" );
+    col = 8;
+    for( saction = state->trans; saction->sym != NULL; ++saction ) {
+        new_col = col + 1 + strlen( saction->sym->name ) + 1 + 1 + 3;
+        if( new_col > 79 ) {
+            putchar('\n');
+            new_col -= col;
+        }
+        col = new_col;
+        printf( " %s:s%03d", saction->sym->name, saction->state->sidx );
+    }
+    putchar( '\n' );
+    col = 0;
+    for( raction = state->redun; raction->pro != NULL; ++raction ) {
+        for( mp = Members( raction->follow ); mp-- != setmembers; ) {
+            sym_idx = *mp;
+            new_col = col + 1 + strlen( symtab[sym_idx]->name );
+            if( new_col > 79 ) {
+                putchar('\n');
+                new_col -= col;
+            }
+            col = new_col;
+            printf( " %s", symtab[sym_idx]->name );
+        }
+        new_col = col + 1 + 5;
+        if( new_col > 79 ) {
+            putchar('\n');
+            new_col -= col;
+        }
+        col = new_col;
+        printf( ":r%03d", raction->pro->pidx );
+    }
+    putchar( '\n' );
+}
+#endif
+
+static a_state *findNewShiftState( a_state *state, a_sym *sym )
+{
+    a_shift_action  *saction;
+
+    for( saction = state->trans; saction->sym != NULL; ++saction ) {
+        if( saction->sym == sym ) {
+            return( saction->state );
+        }
+    }
+    return( NULL );
+}
+
+static a_pro *analyseParents( a_state *state, a_pro *pro, a_word *reduce_set )
+{
+    a_pro           *test_pro;
+    a_pro           *new_pro;
+    a_sym           *old_lhs;
+    a_state         *parent_state;
+    a_state         *new_state;
+    a_parent        *parent;
+    a_parent        *split_parent;
+    a_reduce_action *raction;
+
+    split_parent = NULL;
+    new_pro = NULL;
+    old_lhs = pro->sym;
+    for( parent = state->parents; parent != NULL; parent = parent->next ) {
+        parent_state = parent->state;
+        new_state = findNewShiftState( parent_state, old_lhs );
+        if( new_state == NULL ) {
+            printf( "error! %u %s %u\n", state->sidx, old_lhs->name, parent_state->sidx );
+            exit(1);
+        }
+        for( raction = new_state->redun; (test_pro = raction->pro) != NULL; ++raction ) {
+            if( !test_pro->unit ) {
+                continue;
+            }
+            if( EmptyIntersection( reduce_set, raction->follow ) ) {
+                continue;
+            }
+            if( new_pro == NULL ) {
+                new_pro = test_pro;
+            } else if( new_pro != test_pro ) {
+                new_pro = NULL;
+                break;
+            }
+            /*
+             * we have a reduce of a unit rule on similar tokens
+             */
+            Intersection( reduce_set, raction->follow );
+            break;
+        }
+        if( new_pro == NULL || test_pro == NULL ) {
+            split_parent = parent;
+        }
+    }
+    if( Empty( reduce_set ) || split_parent != NULL ) {
+        new_pro = NULL;
+    }
+    return( new_pro );
+}
+
+static a_shift_action *addShiftAction( a_sym *sym, a_state *state, a_shift_action *saction )
+{
+    a_shift_action  *s;
+    size_t          i;
+
+    for( s = saction; s->sym != NULL; ++s ) {}  /* skip to last NULL item */
+    i = ( s - saction ) + 1;
+    saction = MemReallocSafe( saction, ( i + 1 ) * sizeof( *saction ) );
+    saction[i - 1].sym = sym;
+    saction[i - 1].state = state;
+    memset( &saction[i], 0, sizeof( *saction ) );
+    return( saction );
+}
+
+static a_reduce_action *addReduceAction( a_pro *pro, a_word *follow, a_reduce_action *raction )
+{
+    a_reduce_action *r;
+    a_word          *new_follow;
+    size_t          i;
+
+    for( r = raction; r->pro != NULL; ++r ) {}  /* skip to last NULL item */
+    i = ( r - raction ) + 1;
+    new_follow = MemAllocSetSafe( 1 );
+    Assign( new_follow, follow );
+    raction = MemReallocSafe( raction, ( i + 1 ) * sizeof( *raction ) );
+    raction[i - 1].pro = pro;
+    raction[i - 1].follow = new_follow;
+    memset( &raction[i], 0, sizeof( *raction ) );
+    return( raction );
+}
+
+static a_reduce_action *removeReduceAction( a_reduce_action *remove, a_reduce_action *raction )
+{
+    a_reduce_action *r;
+    a_reduce_action *copy_raction;
+
+    copy_raction = NULL;
+    for( r = raction; r->pro != NULL; ++r ) {
+        if( r == remove ) {
+            copy_raction = r;
+        } else if( copy_raction != NULL ) {
+            *copy_raction++ = *r;
+        }
+    }
+    if( copy_raction != NULL ) {
+        *copy_raction = *r;
+    }
+    return( raction );
+}
+
+static a_sym *onlyOneReduction( a_state *state )
+{
+    a_reduce_action *raction;
+    a_pro           *pro;
+    a_pro           *save_pro;
+
+    /*
+     * We shouldn't kill ambiguous states because a user that has to deal
+     * with a crazy language (like C++) might want to keep the state around.
+     * This check has the dual benefit of eliminating a lot of checking
+     * and solving part of the ambiguous state problem.
+     */
+    if( state->kersize != 1 ) {
+        return( NULL );
+    }
+    if( IsAmbiguous( state ) ) {
+        /*
+         * catch all of the ambiguous states
+         */
+        return( NULL );
+    }
+    /*
+     * iterate over all shifts in the state
+     */
+    if( state->trans->sym != NULL ) {
+        /*
+         * state contains at least one shift
+         */
+        return( NULL );
+    }
+    /*
+     * iterate over all reductions in state
+     */
+    save_pro = NULL;
+    for( raction = state->redun; (pro = raction->pro) != NULL; ++raction ) {
+        if( save_pro != NULL ) {
+            /*
+             * state contains at least two reductions
+             */
+            return( NULL );
+        }
+        if( ! pro->unit ) {
+            /*
+             * state contains at least one reduction by a non-unit production
+             */
+            return( NULL );
+        }
+        save_pro = pro;
+    }
+    if( save_pro == NULL ) {
+        /*
+         * should never execute this but just in case...
+         */
+        return( NULL );
+    }
+    return( save_pro->sym );
+}
+
+static void removeParent( a_state *state, a_state *parent )
+{
+    a_parent        **prev;
+    a_parent        *curr;
+
+    if( state->parents == NULL ) {
+        return;
+    }
+    prev = &(state->parents);
+    for( curr = *prev; curr != NULL; curr = curr->next ) {
+        if( curr->state == parent ) {
+            *prev = curr->next;
+            MemFree( curr );
+            break;
+        }
+        prev = &(curr->next);
+    }
+    if( state->parents == NULL ) {
+        ++deadStates;
+        Dead( state );
+    }
+}
+
+static a_state *onlyShiftsOnTerminals( a_state *state )
+{
+    a_shift_action  *saction;
+    a_sym           *sym;
+
+    /*
+     * If there are shifts on non-terminals then the unit reduction
+     * is important because it moves to the correct state for more
+     * reductions.  We cannot remove this unit reduction.
+     */
+    for( saction = state->trans; (sym = saction->sym) != NULL; ++saction ) {
+        if( sym->pro != NULL ) {
+            return( NULL );
+        }
+    }
+    return( state );
+}
+
+static bool immediateShift( a_state *state, a_reduce_action *raction, a_pro *pro )
+{
+    a_sym           *unit_lhs;
+    a_sym           *term_sym;
+    a_state         *after_lhs_state;
+    a_state         *final_state;
+    a_state         *check_state;
+    a_parent        *parent;
+    a_word          *follow;
+    bitnum          *mp;
+    bool            change_occurred;
+    sym_n           sym_idx;
+
+    /*
+     * requirements:
+     * (1) state must have a reduction by a unit production (L1 <- r1) on
+     *     a set of tokens (s)
+     * (2) all parents must shift to a state where a shift on a terminal
+     *     in s ends up in a new state that is the same for all parents
+     *
+     * action:
+     *     add shift on terminal to common parent shift state
+     */
+//    dumpInternalState( state );
+    follow = raction->follow;
+    unit_lhs = pro->sym;
+    change_occurred = false;
+    for( mp = Members( follow ); mp-- != setmembers; ) {
+        sym_idx = *mp;
+        term_sym = symtab[sym_idx];
+        check_state = NULL;
+        for( parent = state->parents; parent != NULL; parent = parent->next ) {
+            after_lhs_state = findNewShiftState( parent->state, unit_lhs );
+            after_lhs_state = onlyShiftsOnTerminals( after_lhs_state );
+            if( after_lhs_state == NULL ) {
+                check_state = NULL;
+                break;
+            }
+            final_state = findNewShiftState( after_lhs_state, term_sym );
+            if( final_state == NULL ) {
+                check_state = NULL;
+                break;
+            }
+            if( check_state != NULL && check_state != final_state ) {
+                check_state = NULL;
+                break;
+            }
+            check_state = final_state;
+        }
+        if( check_state != NULL ) {
+            /*
+             * all shifts in *terminal ended up in the same state!
+             */
+            state->trans = addShiftAction( term_sym, check_state, state->trans );
+            ClearBit( follow, sym_idx, WSIZE );
+            change_occurred = true;
+            ++changeOccurred;
+        }
+    }
+    if( Empty( follow ) ) {
+        state->redun = removeReduceAction( raction, state->redun );
+        change_occurred = true;
+    }
+    return( change_occurred );
+}
+
+static int multiUnitReduce( a_state *state, a_reduce_action *raction, a_pro *pro, a_word *reduce_set )
+{
+    a_pro           *new_pro;
+
+    /*
+     * requirements:
+     * (1) state must have a reduction by a unit production (L1 <- r1) on
+     *     a set of tokens (s)
+     * (2) all parents must reduce by an unit production (L2 <- L1) on
+     *     a set of tokens (t)
+     *
+     * action:
+     *     change state to reduce (L2<-r1) instead of (L1<-r1) on t
+     *     (if s != t, we have to add a new reduce action)
+     */
+    Assign( reduce_set, raction->follow );
+    new_pro = analyseParents( state, pro, reduce_set );
+    if( new_pro != NULL ) {
+        /*
+         * parents satisfied all the conditions
+         */
+        if( Equal( reduce_set, raction->follow ) ) {
+            raction->pro = new_pro;
+        } else {
+            AndNot( raction->follow, reduce_set );
+            state->redun = addReduceAction( new_pro, reduce_set, state->redun );
+        }
+        ++changeOccurred;
+        return( 1 );
+    }
+    return( 0 );
+}
+
+static bool shiftToSingleReduce( a_state *state, a_shift_action *saction )
+{
+    a_state         *sub_state;
+    a_sym           *new_lhs;
+    bool            made_change;
+
+    /*
+     * requirements:
+     * (1) state (s1) must have a shift on token (t) into a state (s2)
+     *     that only has one action and it must be a reduction by
+     *     an unit production
+     *     (after which state (s1) will shift into state (s3))
+     *
+     * action:
+     *     change shift action for token (t) to shift into state (s3)
+     */
+    made_change = false;
+    for( sub_state = saction->state; (new_lhs = onlyOneReduction( sub_state )) != NULL; sub_state = saction->state ) {
+        saction->state = findNewShiftState( state, new_lhs );
+        removeParent( sub_state, state );
+        made_change = true;
+        ++changeOccurred;
+    }
+    saction->units_checked = true;
+    return( made_change );
+}
+
+static void tryElimination( a_state *state, a_word *reduce_set )
+{
+    a_reduce_action *raction;
+    a_pro           *pro;
+
+    if( IsDead( state ) ) {
+        return;
+    }
+    if( IsAmbiguous( state ) ) {
+        return;
+    }
+    /*
+     * iterate over all reductions in state
+     */
+    for( pro = state->redun->pro; pro != NULL; ) {
+        for( raction = state->redun; (pro = raction->pro) != NULL; ++raction ) {
+            if( pro->unit ) {
+                if( multiUnitReduce( state, raction, pro, reduce_set ) ) {
+                    /*
+                     * state->redun could have changed
+                     */
+                    break;
+                }
+                if( immediateShift( state, raction, pro ) ) {
+                    /*
+                     * state->redun could have changed
+                     */
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static void tossSingleReduceStates( a_state *state )
+{
+    a_shift_action  *saction;
+
+    if( IsDead( state ) ) {
+        return;
+    }
+    /*
+     * iterate over all shifts in the state
+     */
+    for( saction = state->trans; saction->sym != NULL; ++saction ) {
+        if( saction->units_checked )
+            continue;
+        shiftToSingleReduce( state, saction );
+    }
+}
+
+void EliminateUnitReductions( void )
+/**********************************/
+{
+    unsigned        sum;
+    a_word          *reduce_set;
+    action_n        sidx;
+
+    sum = 0;
+    do {
+        changeOccurred = 0;
+        for( sidx = 0; sidx < nstate; ++sidx ) {
+            tossSingleReduceStates( statetab[sidx] );
+        }
+        sum += changeOccurred;
+    } while( changeOccurred );
+    reduce_set = MemAllocSetSafe( 1 );
+    do {
+        changeOccurred = 0;
+        for( sidx = 0; sidx < nstate; ++sidx ) {
+            tryElimination( statetab[sidx], reduce_set );
+        }
+        sum += changeOccurred;
+    } while( changeOccurred );
+    MemFreeSet( reduce_set );
+    dumpstatistic( "unit reduction states removed", deadStates );
+    dumpstatistic( "unit reduction optimizations", sum );
+}

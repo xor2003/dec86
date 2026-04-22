@@ -1,0 +1,733 @@
+[22:51:51] /* loading: LIFE.EXE */
+[22:51:51] [dbg] build_project: path=LIFE.EXE suffix=.exe force_blob=False
+[22:51:51] [dbg] dos_mz load base=0x10000
+[22:51:51] [dbg] project built: arch=86_16 entry=0x11423
+[dbg] loaded sidecar metadata: format=codeview_nb00+cod_listing+flair_pat+signature_catalog code_labels=143 data_labels=58 structs=0
+[dbg] signature-matched compiler families: IDA FLAIR, Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
+[22:51:51] /* info: recovery evidence: sidecar/debug-assisted recovery (codeview_nb00+cod_listing+flair_pat+signature_catalog) */
+[22:51:51] /* discovering likely functions... */
+[22:51:51] /* sidecar label ranking prepared 74 entries in 8.0ms. */
+[22:51:51] /* skipping 69 signature-matched function(s) by default. */
+[22:51:51] /* == known function catalog (sidecar-backed) == */
+0x10010 main size=0xda range=[0x10010, 0x100ea)
+0x100ea init_life size=0x8f range=[0x100ea, 0x10179)
+0x10179 init_buf size=0x2a range=[0x10179, 0x101a3)
+0x101a3 draw_box size=0xdc range=[0x101a3, 0x1027f)
+0x1027f draw_prompt_box size=0x41 range=[0x1027f, 0x102c0)
+0x102c0 init_mats size=0xeb range=[0x102c0, 0x103ab)
+0x103ab rand_dist size=0xbc range=[0x103ab, 0x10467)
+0x10467 timer size=0x80 range=[0x10467, 0x104e7)
+0x104e7 generation size=0x1a6 range=[0x104e7, 0x1068d)
+0x10632 FISRQQ size=0x5b range=[0x10632, 0x1068d)
+0x1068d pass2 size=0xc6 range=[0x1068d, 0x10753)
+0x10753 proc_key size=0x90 range=[0x10753, 0x107e3)
+0x107e3 pause_screen size=0x148 range=[0x107e3, 0x1092b)
+0x1092b init_adapter size=0xc3 range=[0x1092b, 0x109ee)
+0x109ee is_ega size=0x6b range=[0x109ee, 0x10a59)
+0x10a59 set_mode size=0x47 range=[0x10a59, 0x10aa0)
+0x10aa0 set_cursor size=0x11 range=[0x10aa0, 0x10ab1)
+0x10ab1 clear_mat size=0x14 range=[0x10ab1, 0x10ac5)
+0x10ac5 get_key size=0x1e range=[0x10ac5, 0x10ae3)
+0x10ae3 refresh size=0x4a range=[0x10ae3, 0x10b2d)
+0x10b2d edit size=0x11 range=[0x10b2d, 0x10b3e)
+0x10c02 fpsignal size=0x3d range=[0x10c02, 0x10c3f)
+0x10c3f forcdecpt size=0x39 range=[0x10c3f, 0x10c78)
+0x10ccc positive size=0x1e range=[0x10ccc, 0x10cea)
+0x10cea fassign size=0x43 range=[0x10cea, 0x10d2d)
+0x10d2d cftoe size=0xee range=[0x10d2d, 0x10e1b)
+0x10e32 FICRQQ size=0xb1 range=[0x10e32, 0x10ee3)
+0x10fb2 fltout size=0x44 range=[0x10fb2, 0x10ff6)
+0x1105d $i8_output size=0x145 range=[0x1105d, 0x111a2)
+0x113c9 atof size=0x41 range=[0x113c9, 0x1140a)
+0x1140a atol size=0x3 range=[0x1140a, 0x1140d)
+0x11423 astart size=0x9c range=[0x11423, 0x114bf)
+0x114bf cintDIV size=0x3 range=[0x114bf, 0x114c2)
+0x114cd cinit size=0xaf range=[0x114cd, 0x1157c)
+0x1157c exit size=0x17 range=[0x1157c, 0x11593)
+0x11593 exit size=0x2c range=[0x11593, 0x115bf)
+0x115bf ctermsub size=0x28 range=[0x115bf, 0x115e7)
+0x11632 FIERQQ size=0x36 range=[0x11632, 0x11668)
+0x116eb printf size=0x36 range=[0x116eb, 0x11721)
+0x11721 srand size=0x11 range=[0x11721, 0x11732)
+0x11732 rand size=0x2c range=[0x11732, 0x1175e)
+0x117f5 stbuf size=0x9f range=[0x117f5, 0x11894)
+0x11894 ftbuf size=0x86 range=[0x11894, 0x1191a)
+0x1199f maperror size=0x34 range=[0x1199f, 0x119d3)
+0x119d3 NMSG_TEXT size=0x30 range=[0x119d3, 0x11a03)
+0x1223b setargv size=0xe5 range=[0x1223b, 0x12320)
+0x12320 dtoxtime size=0x116 range=[0x12320, 0x12436)
+0x12436 setenvp size=0x66 range=[0x12436, 0x1249c)
+0x1249c flsbuf size=0x12b range=[0x1249c, 0x125c7)
+0x125c7 fflush size=0x68 range=[0x125c7, 0x1262f)
+0x12651 myalloc size=0x42 range=[0x12651, 0x12693)
+0x12693 tzset size=0xb6 range=[0x12693, 0x12749)
+0x12749 isindst size=0xdc range=[0x12749, 0x12825)
+0x1282f flushall size=0x31 range=[0x1282f, 0x12860)
+0x12860 getenv size=0x50 range=[0x12860, 0x128b0)
+0x128be malloc size=0x46 range=[0x128be, 0x12904)
+0x1292c write size=0xda range=[0x1292c, 0x12a06)
+0x12a66 amalloc size=0xe1 range=[0x12a66, 0x12b47)
+0x12b47 amexpand size=0x3a range=[0x12b47, 0x12b81)
+0x12bfc brkctl size=0xc4 range=[0x12bfc, 0x12cc0)
+0x12d21 fltin size=0x45 range=[0x12d21, 0x12d66)
+0x12d66 $i8_input size=0x3a0 range=[0x12d66, 0x13106)
+0x13134 fpmath size=0x1dc range=[0x13134, 0x13310)
+0x13310 FPEXCEPTION87 size=0x523 range=[0x13310, 0x13833)
+0x13833 fpemulator size=0x1aa6 range=[0x13833, 0x152d9)
+0x14000 FJARQQ size=0x107c range=[0x14000, 0x1507c)
+0x15313 FPINSTALL87 size=0x7c range=[0x15313, 0x1538f)
+0x1538f FPTERMINATE87 size=0x93 range=[0x1538f, 0x15422)
+0x15c32 FIDRQQ size=0x23ce range=[0x15c32, 0x18000)
+0x18000 FJSRQQ size=0x1876 range=[0x18000, 0x19876)
+0x19876 fltused size=0x9c7 range=[0x19876, 0x1a23d)
+0x1a23d FIWRQQ size=0x1dc3 range=[0x1a23d, 0x1c000)
+0x1c000 FJCRQQ size=0x3e32 range=[0x1c000, 0x1fe32)
+0x1fe32 FIARQQ
+[22:51:51] /* binary: LIFE.EXE */
+[22:51:51] /* arch: 86_16 */
+[22:51:51] /* entry: 0x11423 */
+[22:51:51] /* functions queued for decompilation: 74 */
+[22:51:51] /* info: selected 74 function(s) for decompilation */
+[22:51:51] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
+[22:51:51] [dbg] recovery worker: start 0x10010 main mode=lst recovery_timeout=120s
+[22:51:52] [dbg] isolated function worker: start 0x10010 main requested_timeout=120s hard_timeout=122s
+[22:51:52] [dbg] function complexity for 0x10010 main: blocks=3, bytes=20
+[22:51:52] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:52] [dbg] function 0x10010 not normalized, normalizing...
+[22:51:52] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:52] [dbg] Decompiler returned for 0x10010
+[22:51:52] [dbg] decompilation time for 0x10010 main: 0.67s
+[22:51:52] /* == function 0x10010 main == */
+[22:51:52] [dbg] function complexity for 0x10010 main: blocks=3, bytes=20
+[22:51:52] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:52] [dbg] function 0x10010 not normalized, normalizing...
+[22:51:52] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:53] [dbg] Decompiler returned for 0x10010
+[22:51:53] [dbg] decompilation time for 0x10010 main: 0.60s
+[22:51:53] [dbg] function complexity for 0x10010 main: blocks=3, bytes=20
+[22:51:53] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:53] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:53] [dbg] Decompiler returned for 0x10010
+[22:51:54] [dbg] decompilation time for 0x10010 main: 0.61s
+[22:51:54] [dbg] function complexity for 0x10010 main: blocks=3, bytes=20
+[22:51:54] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:54] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:54] [dbg] Decompiler returned for 0x10010
+[22:51:54] [dbg] decompilation time for 0x10010 main: 0.60s
+[22:51:54] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:54] [dbg] function 0x10010 not normalized, normalizing...
+[22:51:55] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:55] [dbg] function complexity for 0x10010 main: blocks=3, bytes=20
+[22:51:55] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:55] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:55] [dbg] Decompiler returned for 0x10010
+[22:51:55] [dbg] decompilation time for 0x10010 main: 0.52s
+[22:51:55] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:55] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:55] [dbg] function complexity for 0x10010 main: blocks=3, bytes=20
+[22:51:55] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:55] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:55] [dbg] Decompiler returned for 0x10010
+[22:51:56] [dbg] decompilation time for 0x10010 main: 0.52s
+[22:51:56] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:56] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:56] [dbg] function complexity for 0x10010 main: blocks=3, bytes=20
+[22:51:56] [dbg] decompile_function: addr=0x10010 name=main
+[22:51:56] [dbg] registered 2 direct callee stub(s) for 0x10010
+[22:51:56] [dbg] Decompiler returned for 0x10010
+[22:51:56] [dbg] decompilation time for 0x10010 main: 0.54s
+[22:51:56] [dbg] non-optimized fallback unavailable for 0x10010 main: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[22:51:56] /* info: function 0x10010 main attempt=empty validation=disabled */
+[22:51:56] /* -- empty -- */
+[22:51:56] Decompiler produced unresolved IR-shaped C (store-op, load-op, conv-op, ...).
+[22:51:56] /* -- asm fallback -- */
+[22:51:56] 0x10010: push bp
+[22:51:56] 0x10011: mov bp, sp
+[22:51:56] 0x10013: mov ax, 0
+[22:51:56] 0x10016: call 0x1140d
+[22:51:56] 0x10019: push di
+[22:51:56] 0x1001a: push si
+[22:51:56] 0x1001b: cmp word ptr [bp + 4], 1
+[22:51:56] 0x1001f: je 0x10024
+[22:51:56] 0x10021: jmp 0x1002d
+[22:51:56] 0x10024: mov word ptr [0x172c], 1
+[22:51:56] 0x1002a: jmp 0x10040
+[22:51:56] 0x1002d: mov bx, word ptr [bp + 6]
+[22:51:56] 0x10030: push word ptr [bx + 2]
+[22:51:56] 0x10033: call 0x1140a
+[22:51:56] 0x10036: add sp, 2
+[22:51:56] 0x10039: mov word ptr [0x854], ax
+[22:51:56] 0x1003c: mov word ptr [0x856], dx
+[22:51:56] 0x10040: call 0x100ea
+[22:51:56] 0x10043: mov word ptr [0x36], 0
+[22:51:56] 0x10049: call 0x10179
+[22:51:56] 0x1004c: push word ptr [0x852]
+[22:51:56] 0x10050: call 0x101a3
+[22:51:56] 0x10053: add sp, 2
+[22:51:56] 0x10056: call 0x102c0
+[22:51:56] 0x10059: int 0x35
+[22:51:56] 0x1005b: push es
+[22:51:56] 0x1005c: mov fs, word ptr [di]
+[22:51:56] 0x1005e: int 0x38
+[22:51:56] 0x10060: push ds
+[22:51:56] 0x10062: add ax, 0xec83
+[22:51:56] 0x10065: or byte ptr [bp + di - 0x3224], cl
+[22:51:56] 0x10069: cmp word ptr [bx], bx
+[22:51:56] 0x1006b: int 0x3d
+[22:51:56] 0x1006d: call 0x103ab
+[22:51:56] 0x10070: add sp, 8
+[22:51:56] 0x10073: mov word ptr [0x172a], 0
+[22:51:56] 0x10079: cmp word ptr [0x172c], 0
+[22:51:56] 0x1007e: je 0x10083
+[22:51:56] 0x10080: jmp 0x1009b
+[22:51:56] 0x10083: mov ax, word ptr [0x854]
+[22:51:56] 0x10086: mov dx, word ptr [0x856]
+[22:51:56] 0x1008a: sub word ptr [0x854], 1
+[22:51:56] 0x1008f: sbb word ptr [0x856], 0
+[22:51:56] 0x10094: or ax, dx
+[22:51:56] 0x10096: jne 0x1009b
+[22:51:56] 0x10098: jmp 0x100cc
+[22:51:56] 0x1009b: call 0x10753
+[22:51:56] 0x1009e: cmp word ptr [0x172a], 0
+[22:51:56] 0x100a3: je 0x100a8
+[22:51:56] 0x100a5: jmp 0x100bb
+[22:51:56] 0x100a8: cmp word ptr [0x650], 0xa
+[22:51:56] 0x100ad: jl 0x100b2
+[22:51:56] 0x100af: jmp 0x100b5
+[22:51:56] 0x100b2: call 0x10467
+[22:51:56] 0x100b5: call 0x104e7
+[22:51:56] 0x100b8: jmp 0x100c9
+[22:51:56] 0x100bb: call 0x107e3
+[22:51:56] 0x100be: cmp ax, 0
+[22:51:56] 0x100c1: jne 0x100c6
+[22:51:56] 0x100c3: jmp 0x100c9
+[22:51:56] 0x100c6: jmp 0x100cc
+[22:51:56] 0x100c9: jmp 0x10079
+[22:51:56] 0x100cc: cmp word ptr [0x36], 0
+[22:51:56] 0x100d1: je 0x100d6
+[22:51:56] 0x100d3: jmp 0x10043
+[22:51:56] 0x100d6: mov ax, 0
+[22:51:56] 0x100d9: push ax
+[22:51:56] 0x100da: mov ax, 0x18
+[22:51:56] 0x100dd: push ax
+[22:51:56] 0x100de: call 0x10aa0
+[22:51:56] 0x100e1: add sp, 4
+[22:51:56] 0x100e4: pop si
+[22:51:56] 0x100e5: pop di
+[22:51:56] 0x100e6: mov sp, bp
+[22:51:56] 0x100e8: pop bp
+[22:51:56] 0x100e9: ret
+[22:51:56] [dbg] recovery worker: start 0x1092b init_adapter mode=lst recovery_timeout=120s
+[22:51:57] [dbg] isolated function worker: start 0x1092b init_adapter requested_timeout=120s hard_timeout=122s
+[22:51:57] [dbg] function complexity for 0x1092b init_adapter: blocks=4, bytes=50
+[22:51:57] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:51:57] [dbg] function 0x1092b not normalized, normalizing...
+[22:51:57] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[22:51:58] [dbg] clinic:skip-peephole-complex-block block=0x10949
+[22:51:58] [dbg] Decompiler returned for 0x1092b
+[22:51:58] [dbg] decompilation time for 0x1092b init_adapter: 1.57s
+[22:51:58] /* == function 0x1092b init_adapter == */
+[22:51:59] [dbg] function complexity for 0x1092b init_adapter: blocks=4, bytes=50
+[22:51:59] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:51:59] [dbg] function 0x1092b not normalized, normalizing...
+[22:51:59] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[dbg] clinic:skip-peephole-complex-block block=0x10949
+[22:52:00] [dbg] Decompiler returned for 0x1092b
+[22:52:00] [dbg] decompilation time for 0x1092b init_adapter: 1.53s
+[22:52:00] [dbg] function complexity for 0x1092b init_adapter: blocks=4, bytes=50
+[22:52:00] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:00] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[dbg] clinic:skip-peephole-complex-block block=0x10949
+[22:52:01] [dbg] Decompiler returned for 0x1092b
+[22:52:01] [dbg] decompilation time for 0x1092b init_adapter: 1.15s
+[22:52:02] [dbg] function complexity for 0x1092b init_adapter: blocks=4, bytes=50
+[22:52:02] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:02] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[dbg] clinic:skip-peephole-complex-block block=0x10949
+[22:52:02] [dbg] Decompiler returned for 0x1092b
+[22:52:03] [dbg] decompilation time for 0x1092b init_adapter: 1.27s
+[22:52:03] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:03] [dbg] function 0x1092b not normalized, normalizing...
+[22:52:03] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[22:52:03] [dbg] function complexity for 0x1092b init_adapter: blocks=4, bytes=50
+[22:52:03] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:03] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[dbg] clinic:skip-peephole-complex-block block=0x10949
+[22:52:04] [dbg] Decompiler returned for 0x1092b
+[22:52:04] [dbg] decompilation time for 0x1092b init_adapter: 1.33s
+[22:52:05] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:05] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[22:52:05] [dbg] function complexity for 0x1092b init_adapter: blocks=4, bytes=50
+[22:52:05] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:05] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[dbg] clinic:skip-peephole-complex-block block=0x10949
+[22:52:06] [dbg] Decompiler returned for 0x1092b
+[22:52:06] [dbg] decompilation time for 0x1092b init_adapter: 1.24s
+[22:52:06] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:06] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[22:52:06] [dbg] function complexity for 0x1092b init_adapter: blocks=4, bytes=50
+[22:52:06] [dbg] decompile_function: addr=0x1092b name=init_adapter
+[22:52:06] [dbg] registered 4 direct callee stub(s) for 0x1092b
+[dbg] clinic:skip-peephole-complex-block block=0x10949
+[22:52:07] [dbg] Decompiler returned for 0x1092b
+[22:52:07] [dbg] decompilation time for 0x1092b init_adapter: 1.39s
+[22:52:07] [dbg] non-optimized fallback unavailable for 0x1092b init_adapter: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[22:52:07] /* info: function 0x1092b init_adapter attempt=empty validation=disabled */
+[22:52:07] /* -- empty -- */
+[22:52:07] Decompiler produced unresolved IR-shaped C (store-op, load-op, conv-op, ...).
+[22:52:07] /* -- asm fallback -- */
+[22:52:07] 0x1092b: push bp
+[22:52:07] 0x1092c: mov bp, sp
+[22:52:07] 0x1092e: mov ax, 0x10
+[22:52:07] 0x10931: call 0x1140d
+[22:52:07] 0x10934: push di
+[22:52:07] 0x10935: push si
+[22:52:07] 0x10936: mov byte ptr [bp - 0xf], 0xf
+[22:52:07] 0x1093a: lea ax, [bp - 0x10]
+[22:52:07] 0x1093d: push ax
+[22:52:07] 0x1093e: lea ax, [bp - 0x10]
+[22:52:07] 0x10941: push ax
+[22:52:07] 0x10942: mov ax, 0x10
+[22:52:07] 0x10945: push ax
+[22:52:07] 0x10946: call 0x115e7
+[22:52:07] 0x10949: add sp, 6
+[22:52:07] 0x1094c: mov al, byte ptr [bp - 0x10]
+[22:52:07] 0x1094f: sub ah, ah
+[22:52:07] 0x10951: mov word ptr [bp - 2], ax
+[22:52:07] 0x10954: cmp word ptr [bp - 2], 7
+[22:52:07] 0x10958: je 0x1095d
+[22:52:07] 0x1095a: jmp 0x10966
+[22:52:07] 0x1095d: mov word ptr [0x858], 1
+[22:52:07] 0x10963: jmp 0x109e8
+[22:52:07] 0x10966: cmp word ptr [bp - 2], 0xf
+[22:52:07] 0x1096a: je 0x1096f
+[22:52:07] 0x1096c: jmp 0x10982
+[22:52:07] 0x1096f: mov word ptr [0x858], 1
+[22:52:07] 0x10975: mov ax, 7
+[22:52:07] 0x10978: push ax
+[22:52:07] 0x10979: call 0x10a59
+[22:52:07] 0x1097c: add sp, 2
+[22:52:07] 0x1097f: jmp 0x109e8
+[22:52:07] 0x10982: call 0x109ee
+[22:52:07] 0x10985: mov word ptr [0x858], ax
+[22:52:07] 0x10988: cmp word ptr [bp - 2], 8
+[22:52:07] 0x1098c: jge 0x10991
+[22:52:07] 0x1098e: jmp 0x109a7
+[22:52:07] 0x10991: cmp word ptr [bp - 2], 0xe
+[22:52:07] 0x10995: jle 0x1099a
+[22:52:07] 0x10997: jmp 0x109a7
+[22:52:07] 0x1099a: mov ax, 3
+[22:52:07] 0x1099d: push ax
+[22:52:07] 0x1099e: call 0x10a59
+[22:52:07] 0x109a1: add sp, 2
+[22:52:07] 0x109a4: jmp 0x109e8
+[22:52:07] 0x109a7: mov ax, word ptr [bp - 2]
+[22:52:07] 0x109aa: jmp 0x109ca
+[22:52:07] 0x109ad: mov ax, 3
+[22:52:07] 0x109b0: push ax
+[22:52:07] 0x109b1: call 0x10a59
+[22:52:07] 0x109b4: add sp, 2
+[22:52:07] 0x109b7: jmp 0x109e8
+[22:52:07] 0x109ba: mov ax, 2
+[22:52:07] 0x109bd: push ax
+[22:52:07] 0x109be: call 0x10a59
+[22:52:07] 0x109c1: add sp, 2
+[22:52:07] 0x109c4: jmp 0x109e8
+[22:52:07] 0x109c7: jmp 0x109e8
+[22:52:07] 0x109ca: cmp ax, 6
+[22:52:07] 0x109cd: jbe 0x109d2
+[22:52:07] 0x109cf: jmp 0x109e8
+[22:52:07] 0x109d2: add ax, ax
+[22:52:07] 0x109d4: xchg bx, ax
+[22:52:07] 0x109d5: jmp word ptr cs:[bx + 0x9da]
+[22:52:07] 0x109da: mov dx, 0xad09
+[22:52:07] 0x109dd: or word ptr [bp + si - 0x52f7], di
+[22:52:07] 0x109e1: or word ptr [di - 0x45f7], bp
+[22:52:07] 0x109e5: or word ptr [bp + si + 0x5e09], di
+[22:52:07] 0x109e9: pop di
+[22:52:07] 0x109ea: mov sp, bp
+[22:52:07] 0x109ec: pop bp
+[22:52:07] 0x109ed: ret
+[22:52:07] [dbg] recovery worker: start 0x102c0 init_mats mode=lst recovery_timeout=120s
+[22:52:08] [dbg] isolated function worker: start 0x102c0 init_mats requested_timeout=120s hard_timeout=122s
+[22:52:08] [dbg] function complexity for 0x102c0 init_mats: blocks=5, bytes=67
+[22:52:08] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:08] [dbg] function 0x102c0 not normalized, normalizing...
+[22:52:08] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102db
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102db
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:10] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[22:52:10] [dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[22:52:10] [dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:10] [dbg] Decompiler returned for 0x102c0
+[22:52:10] [dbg] decompilation time for 0x102c0 init_mats: 2.20s
+[22:52:10] /* == function 0x102c0 init_mats == */
+[22:52:10] [dbg] function complexity for 0x102c0 init_mats: blocks=5, bytes=67
+[22:52:10] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:10] [dbg] function 0x102c0 not normalized, normalizing...
+[22:52:10] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:12] [dbg] Decompiler returned for 0x102c0
+[22:52:12] [dbg] decompilation time for 0x102c0 init_mats: 1.78s
+[22:52:12] [dbg] function complexity for 0x102c0 init_mats: blocks=5, bytes=67
+[22:52:12] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:12] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:13] [dbg] Decompiler returned for 0x102c0
+[22:52:14] [dbg] decompilation time for 0x102c0 init_mats: 1.60s
+[22:52:14] [dbg] function complexity for 0x102c0 init_mats: blocks=5, bytes=67
+[22:52:14] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:14] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:15] [dbg] Decompiler returned for 0x102c0
+[22:52:15] [dbg] decompilation time for 0x102c0 init_mats: 1.36s
+[22:52:16] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:16] [dbg] function 0x102c0 not normalized, normalizing...
+[22:52:16] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[22:52:16] [dbg] function complexity for 0x102c0 init_mats: blocks=5, bytes=67
+[22:52:16] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:16] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:17] [dbg] Decompiler returned for 0x102c0
+[22:52:17] [dbg] decompilation time for 0x102c0 init_mats: 1.38s
+[22:52:17] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:17] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[22:52:17] [dbg] function complexity for 0x102c0 init_mats: blocks=5, bytes=67
+[22:52:17] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:17] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:18] [dbg] Decompiler returned for 0x102c0
+[22:52:19] [dbg] decompilation time for 0x102c0 init_mats: 1.40s
+[22:52:19] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:19] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[22:52:19] [dbg] function complexity for 0x102c0 init_mats: blocks=5, bytes=67
+[22:52:19] [dbg] decompile_function: addr=0x102c0 name=init_mats
+[22:52:19] [dbg] registered 4 direct callee stub(s) for 0x102c0
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102db
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:variable-recovery-size-mismatch op=Sub lhs_bits=32 rhs_bits=16 expr_bits=16
+[dbg] clinic:skip-peephole-complex-block block=0x102e9
+[22:52:20] [dbg] Decompiler returned for 0x102c0
+[22:52:20] [dbg] decompilation time for 0x102c0 init_mats: 1.40s
+[22:52:20] [dbg] non-optimized fallback unavailable for 0x102c0 init_mats: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[22:52:20] /* info: function 0x102c0 init_mats attempt=empty validation=disabled */
+[22:52:20] /* -- empty -- */
+[22:52:20] Decompiler produced unresolved IR-shaped C (store-op, conv-op, raw-endness, ...).
+[22:52:20] /* -- asm fallback -- */
+[22:52:20] 0x102c0: push bp
+[22:52:20] 0x102c1: mov bp, sp
+[22:52:20] 0x102c3: mov ax, 6
+[22:52:20] 0x102c6: call 0x1140d
+[22:52:20] 0x102c9: push di
+[22:52:20] 0x102ca: push si
+[22:52:20] 0x102cb: mov word ptr [bp - 2], 0xa5a
+[22:52:20] 0x102d0: mov ax, 0x666
+[22:52:20] 0x102d3: push ax
+[22:52:20] 0x102d4: mov ax, 0xa5a
+[22:52:20] 0x102d7: push ax
+[22:52:20] 0x102d8: call 0x10ab1
+[22:52:20] 0x102db: add sp, 4
+[22:52:20] 0x102de: mov ax, 0x666
+[22:52:20] 0x102e1: push ax
+[22:52:20] 0x102e2: mov ax, 0x10c0
+[22:52:20] 0x102e5: push ax
+[22:52:20] 0x102e6: call 0x10ab1
+[22:52:20] 0x102e9: add sp, 4
+[22:52:20] 0x102ec: mov bx, word ptr [bp - 2]
+[22:52:20] 0x102ef: inc word ptr [bp - 2]
+[22:52:20] 0x102f2: mov byte ptr [bx], 6
+[22:52:20] 0x102f5: mov word ptr [bp - 4], 0
+[22:52:20] 0x102fa: cmp word ptr [bp - 4], 0x4c
+[22:52:20] 0x102fe: jl 0x10303
+[22:52:20] 0x10300: jmp 0x10318
+[22:52:20] 0x10303: jmp 0x1030c
+[22:52:20] 0x10306: inc word ptr [bp - 4]
+[22:52:20] 0x10309: jmp 0x102fa
+[22:52:20] 0x1030c: mov bx, word ptr [bp - 2]
+[22:52:20] 0x1030f: inc word ptr [bp - 2]
+[22:52:20] 0x10312: mov byte ptr [bx], 2
+[22:52:20] 0x10315: jmp 0x10306
+[22:52:20] 0x10318: mov bx, word ptr [bp - 2]
+[22:52:20] 0x1031b: inc word ptr [bp - 2]
+[22:52:20] 0x1031e: mov byte ptr [bx], 7
+[22:52:20] 0x10321: mov word ptr [bp - 6], 0
+[22:52:20] 0x10326: cmp word ptr [bp - 6], 0x13
+[22:52:20] 0x1032a: jl 0x1032f
+[22:52:20] 0x1032c: jmp 0x10370
+[22:52:20] 0x1032f: jmp 0x10338
+[22:52:20] 0x10332: inc word ptr [bp - 6]
+[22:52:20] 0x10335: jmp 0x10326
+[22:52:20] 0x10338: mov bx, word ptr [bp - 2]
+[22:52:20] 0x1033b: inc word ptr [bp - 2]
+[22:52:20] 0x1033e: mov byte ptr [bx], 4
+[22:52:20] 0x10341: mov word ptr [bp - 4], 0
+[22:52:20] 0x10346: cmp word ptr [bp - 4], 0x4c
+[22:52:20] 0x1034a: jl 0x1034f
+[22:52:20] 0x1034c: jmp 0x10364
+[22:52:20] 0x1034f: jmp 0x10358
+[22:52:20] 0x10352: inc word ptr [bp - 4]
+[22:52:20] 0x10355: jmp 0x10346
+[22:52:20] 0x10358: mov bx, word ptr [bp - 2]
+[22:52:20] 0x1035b: inc word ptr [bp - 2]
+[22:52:20] 0x1035e: mov byte ptr [bx], 1
+[22:52:20] 0x10361: jmp 0x10352
+[22:52:20] 0x10364: mov bx, word ptr [bp - 2]
+[22:52:20] 0x10367: inc word ptr [bp - 2]
+[22:52:20] 0x1036a: mov byte ptr [bx], 5
+[22:52:20] 0x1036d: jmp 0x10332
+[22:52:20] 0x10370: mov bx, word ptr [bp - 2]
+[22:52:20] 0x10373: inc word ptr [bp - 2]
+[22:52:20] 0x10376: mov byte ptr [bx], 8
+[22:52:20] 0x10379: mov word ptr [bp - 4], 0
+[22:52:20] 0x1037e: cmp word ptr [bp - 4], 0x4c
+[22:52:20] 0x10382: jl 0x10387
+[22:52:20] 0x10384: jmp 0x1039c
+[22:52:20] 0x10387: jmp 0x10390
+[22:52:20] 0x1038a: inc word ptr [bp - 4]
+[22:52:20] 0x1038d: jmp 0x1037e
+[22:52:20] 0x10390: mov bx, word ptr [bp - 2]
+[22:52:20] 0x10393: inc word ptr [bp - 2]
+[22:52:20] 0x10396: mov byte ptr [bx], 3
+[22:52:20] 0x10399: jmp 0x1038a
+[22:52:20] 0x1039c: mov bx, word ptr [bp - 2]
+[22:52:20] 0x1039f: inc word ptr [bp - 2]
+[22:52:20] 0x103a2: mov byte ptr [bx], 9
+[22:52:20] 0x103a5: pop si
+[22:52:20] 0x103a6: pop di
+[22:52:20] 0x103a7: mov sp, bp
+[22:52:20] 0x103a9: pop bp
+[22:52:20] 0x103aa: ret
+[22:52:20] [dbg] recovery worker: start 0x10179 init_buf mode=lst recovery_timeout=120s
+[22:52:20] [dbg] isolated function worker: start 0x10179 init_buf requested_timeout=120s hard_timeout=122s
+[22:52:20] [dbg] function complexity for 0x10179 init_buf: blocks=3, bytes=23
+[22:52:20] [dbg] decompile_function: addr=0x10179 name=init_buf
+[22:52:20] [dbg] function 0x10179 not normalized, normalizing...
+[22:52:20] [dbg] registered 2 direct callee stub(s) for 0x10179
+[22:52:20] [dbg] Decompiler returned for 0x10179
+[22:52:21] [dbg] decompilation time for 0x10179 init_buf: 0.47s
+[22:52:21] /* == function 0x10179 init_buf == */
+[22:52:21] /* info: function 0x10179 init_buf attempt=decompiled validation=disabled */
+[22:52:21] /* -- c -- */
+/* COD annotations:
+ * globals = scrnbuf, attrib
+ */
+
+void init_buf(void)
+{
+    register char *p = scrnbuf;
+    *p++ = ' ';
+    *p++ = attrib;
+}
+[22:52:21] [dbg] recovery worker: start 0x100ea init_life mode=lst recovery_timeout=120s
+[22:52:21] [dbg] isolated function worker: start 0x100ea init_life requested_timeout=120s hard_timeout=122s
+[22:52:21] [dbg] function complexity for 0x100ea init_life: blocks=3, bytes=20
+[22:52:21] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:21] [dbg] function 0x100ea not normalized, normalizing...
+[22:52:21] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:21] [dbg] Decompiler returned for 0x100ea
+[22:52:22] [dbg] decompilation time for 0x100ea init_life: 1.00s
+[22:52:22] /* == function 0x100ea init_life == */
+[22:52:22] [dbg] function complexity for 0x100ea init_life: blocks=3, bytes=20
+[22:52:22] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:22] [dbg] function 0x100ea not normalized, normalizing...
+[22:52:22] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:23] [dbg] Decompiler returned for 0x100ea
+[22:52:23] [dbg] decompilation time for 0x100ea init_life: 0.97s
+[22:52:23] [dbg] function complexity for 0x100ea init_life: blocks=3, bytes=20
+[22:52:23] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:23] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:24] [dbg] Decompiler returned for 0x100ea
+[22:52:24] [dbg] decompilation time for 0x100ea init_life: 1.33s
+[22:52:24] [dbg] function complexity for 0x100ea init_life: blocks=3, bytes=20
+[22:52:25] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:25] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:25] [dbg] Decompiler returned for 0x100ea
+[22:52:26] [dbg] decompilation time for 0x100ea init_life: 1.31s
+[22:52:26] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:26] [dbg] function 0x100ea not normalized, normalizing...
+[22:52:26] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:26] [dbg] function complexity for 0x100ea init_life: blocks=3, bytes=20
+[22:52:26] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:26] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:26] [dbg] Decompiler returned for 0x100ea
+[22:52:27] [dbg] decompilation time for 0x100ea init_life: 0.82s
+[22:52:27] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:27] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:27] [dbg] function complexity for 0x100ea init_life: blocks=3, bytes=20
+[22:52:27] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:27] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:27] [dbg] Decompiler returned for 0x100ea
+[22:52:28] [dbg] decompilation time for 0x100ea init_life: 0.84s
+[22:52:28] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:28] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:28] [dbg] function complexity for 0x100ea init_life: blocks=3, bytes=20
+[22:52:28] [dbg] decompile_function: addr=0x100ea name=init_life
+[22:52:28] [dbg] registered 4 direct callee stub(s) for 0x100ea
+[22:52:29] [dbg] Decompiler returned for 0x100ea
+[22:52:29] [dbg] decompilation time for 0x100ea init_life: 1.28s
+[22:52:29] [dbg] non-optimized fallback unavailable for 0x100ea init_life: shared-project slice lean: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-no-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.; shared-project slice full-with-refs: empty: Non-optimized slice decompilation remained unresolved after bounded recovery.
+[22:52:29] /* info: function 0x100ea init_life attempt=empty validation=disabled */
+[22:52:29] /* -- empty -- */
+[22:52:29] Decompiler produced unresolved IR-shaped C (store-op, conv-op, raw-endness, ...).
+[22:52:29] /* -- asm fallback -- */
+[22:52:29] 0x100ea: push bp
+[22:52:29] 0x100eb: mov bp, sp
+[22:52:29] 0x100ed: mov ax, 0
+[22:52:29] 0x100f0: call 0x1140d
+[22:52:29] 0x100f3: push di
+[22:52:29] 0x100f4: push si
+[22:52:29] 0x100f5: call 0x1092b
+[22:52:29] 0x100f8: mov ax, word ptr [0x858]
+[22:52:29] 0x100fb: jmp 0x10140
+[22:52:29] 0x100fe: mov word ptr [0x1726], 0
+[22:52:29] 0x10104: mov word ptr [0x1728], 0xb000
+[22:52:29] 0x1010a: mov word ptr [0x650], 5
+[22:52:29] 0x10110: jmp 0x1015b
+[22:52:29] 0x10113: mov word ptr [0x1726], 0
+[22:52:29] 0x10119: mov word ptr [0x1728], 0xb800
+[22:52:29] 0x1011f: mov word ptr [0x650], 0xa
+[22:52:29] 0x10125: jmp 0x1015b
+[22:52:29] 0x10128: mov word ptr [0x1726], 0
+[22:52:29] 0x1012e: mov word ptr [0x1728], 0xb800
+[22:52:29] 0x10134: mov word ptr [0x650], 5
+[22:52:29] 0x1013a: jmp 0x1015b
+[22:52:29] 0x1013d: jmp 0x1015b
+[22:52:29] 0x10140: cmp ax, 1
+[22:52:29] 0x10143: jne 0x10148
+[22:52:29] 0x10145: jmp 0x100fe
+[22:52:29] 0x10148: cmp ax, 2
+[22:52:29] 0x1014b: jne 0x10150
+[22:52:29] 0x1014d: jmp 0x10113
+[22:52:29] 0x10150: cmp ax, 3
+[22:52:29] 0x10153: jne 0x10158
+[22:52:29] 0x10155: jmp 0x10128
+[22:52:29] 0x10158: jmp 0x1015b
+[22:52:29] 0x1015b: mov word ptr [0x2592], 0xfe
+[22:52:29] 0x10161: mov word ptr [0x852], 0xb
+[22:52:29] 0x10167: int 0x35
+[22:52:29] 0x10169: push es
+[22:52:29] 0x1016a: add ax, 0x35cd
+[22:52:29] 0x1016e: push ds
+[22:52:29] 0x1016f: mov fs, word ptr [di]
+[22:52:29] 0x10171: int 0x3d
+[22:52:29] 0x10173: pop si
+[22:52:29] 0x10174: pop di
+[22:52:29] 0x10175: mov sp, bp
+[22:52:29] 0x10177: pop bp
+[22:52:29] 0x10178: ret
+[22:52:29] [dbg] recovery worker: start 0x1027f draw_prompt_box mode=lst recovery_timeout=120s
+[22:52:30] [dbg] isolated function worker: start 0x1027f draw_prompt_box requested_timeout=120s hard_timeout=122s
+[22:52:30] [dbg] function complexity for 0x1027f draw_prompt_box: blocks=6, bytes=65
+[22:52:30] [dbg] decompile_function: addr=0x1027f name=draw_prompt_box
+[22:52:30] [dbg] function 0x1027f not normalized, normalizing...
+[22:52:30] [dbg] registered 6 direct callee stub(s) for 0x1027f
+[22:52:32] [dbg] clinic:skip-peephole-complex-block block=0x10295
+[22:52:32] [dbg] clinic:skip-peephole-complex-block block=0x1029f
+[22:52:32] [dbg] clinic:skip-peephole-complex-block block=0x102a9
+[22:52:32] [dbg] clinic:skip-peephole-complex-block block=0x102b7
+[22:52:32] [dbg] clinic:skip-peephole-complex-block block=0x10295
+[22:52:32] [dbg] clinic:skip-peephole-complex-block block=0x1029f
+[22:52:32] [dbg] clinic:skip-peephole-complex-block block=0x102a9
+[22:52:31] [dbg] Decompiler returned for 0x1027f
+[22:52:32] [dbg] decompilation time for 0x1027f draw_prompt_box: 2.35s
+[22:52:32] /* == function 0x1027f draw_prompt_box == */
+[22:52:32] [dbg] function complexity for 0x1027f draw_prompt_box: blocks=6, bytes=65
+[22:52:32] [dbg] decompile_function: addr=0x1027f name=draw_prompt_box
+[22:52:32] [dbg] function 0x1027f not normalized, normalizing...
+[22:52:32] [dbg] registered 6 direct callee stub(s) for 0x1027f
+[dbg] clinic:skip-peephole-complex-block block=0x10295
+[dbg] clinic:skip-peephole-complex-block block=0x1029f
+[dbg] clinic:skip-peephole-complex-block block=0x102a9
+[dbg] clinic:skip-peephole-complex-block block=0x102b7
+[dbg] clinic:skip-peephole-complex-block block=0x10295
+[dbg] clinic:skip-peephole-complex-block block=0x1029f
+[dbg] clinic:skip-peephole-complex-block block=0x102a9
+[22:52:33] [dbg] Decompiler returned for 0x1027f
+[22:52:34] [dbg] decompilation time for 0x1027f draw_prompt_box: 1.89s
+[22:52:34] [dbg] function complexity for 0x1027f draw_prompt_box: blocks=6, bytes=65
+[22:52:34] [dbg] decompile_function: addr=0x1027f name=draw_prompt_box
+[22:52:34] [dbg] registered 6 direct callee stub(s) for 0x1027f
+[dbg] clinic:skip-peephole-complex-block block=0x10295
+[dbg] clinic:skip-peephole-complex-block block=0x1029f
+[dbg] clinic:skip-peephole-complex-block block=0x102a9
+[dbg] clinic:skip-peephole-complex-block block=0x102b7
+[dbg] clinic:skip-peephole-complex-block block=0x10295
+[dbg] clinic:skip-peephole-complex-block block=0x1029f
+[dbg] clinic:skip-peephole-complex-block block=0x102a9
+[22:52:36] [dbg] Decompiler returned for 0x1027f
+[22:52:36] [dbg] decompilation time for 0x1027f draw_prompt_box: 1.93s
+[22:52:36] [dbg] function complexity for 0x1027f draw_prompt_box: blocks=6, bytes=65
+[22:52:36] [dbg] decompile_function: addr=0x1027f name=draw_prompt_box
+[22:52:36] [dbg] registered 6 direct callee stub(s) for 0x1027f
+[dbg] clinic:skip-peephole-complex-block block=0x10295
+[dbg] clinic:skip-peephole-complex-block block=0x1029f
+[dbg] clinic:skip-peephole-complex-block block=0x102a9
+[dbg] clinic:skip-peephole-complex-block block=0x102b7
+[dbg] clinic:skip-peephole-complex-block block=0x10295
+[dbg] clinic:skip-peephole-complex-block block=0x1029f
+[dbg] clinic:skip-peephole-complex-block block=0x102a9
+[22:52:38] [dbg] Decompiler returned for 0x1027f
+[22:52:38] [dbg] decompilation time for 0x1027f draw_prompt_box: 2.10s
+[22:52:38] [dbg] decompile_function: addr=0x1027f name=draw_prompt_box
+[22:52:38] [dbg] function 0x1027f not normalized, normalizing...
+[22:52:38] [dbg] registered 6 direct callee stub(s) for 0x1027f
+[22:52:38] [dbg] function complexity for 0x1027f draw_prompt_box: blocks=6, bytes=65
+[22:52:39] [dbg] decompile_function: addr=0x1027f name=draw_prompt_box
+[22:52:39] [dbg] registered 6 direct callee stub(s) for 0x1027f
+[dbg] clinic:skip-peephole-complex-block block=0x10295

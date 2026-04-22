@@ -1,0 +1,18 @@
+﻿<UserControl x:Class="Reko.UserInterfaces.AvaloniaUI.Views.Tools.DiagnosticsView"
+             xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:vm="using:Reko.UserInterfaces.AvaloniaUI.ViewModels.Tools"
+             mc:Ignorable="d"
+             d:DesignWidth="300" d:DesignHeight="400"
+             x:DataType="vm:DiagnosticsViewModel" x:CompileBindings="True">
+  <Grid Focusable="True">
+      <DataGrid Name="diagnosticsView" ItemsSource="{Binding FilteredDiagnostics}">
+		  <DataGrid.Columns>
+			  <DataGridTextColumn x:DataType="vm:DiagnosticItem" Header="Location" Binding="{Binding Location}"></DataGridTextColumn>
+			  <DataGridTextColumn x:DataType="vm:DiagnosticItem" Header="Description" Binding="{Binding Description}" Width="6*"></DataGridTextColumn>
+		  </DataGrid.Columns>
+	  </DataGrid>
+  </Grid>
+</UserControl>

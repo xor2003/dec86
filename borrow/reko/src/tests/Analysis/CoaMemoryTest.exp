@@ -1,0 +1,52 @@
+fp:fp
+sp_2: orig: sp
+Top_3: orig: Top
+ds:ds
+    def:  def ds
+    uses: ax_7 = Mem0[ds:bx + 4<i16>:word16]
+          Mem9[ds:bx + 6<i16>:word16] = ax_7 *s ax_7
+          Mem12[ds:si + 0x4D4<16>:word16] = si + 2<i16>
+bx:bx
+    def:  def bx
+    uses: ax_7 = Mem0[ds:bx + 4<i16>:word16]
+          Mem9[ds:bx + 6<i16>:word16] = ax_7 *s ax_7
+Mem0:Mem
+    def:  def Mem0
+    uses: ax_7 = Mem0[ds:bx + 4<i16>:word16]
+ax_7: orig: ax
+    def:  ax_7 = Mem0[ds:bx + 4<i16>:word16]
+    uses: Mem9[ds:bx + 6<i16>:word16] = ax_7 *s ax_7
+          Mem9[ds:bx + 6<i16>:word16] = ax_7 *s ax_7
+ax_8: orig: ax
+Mem9: orig: Mem0
+    def:  Mem9[ds:bx + 6<i16>:word16] = ax_7 *s ax_7
+si:si
+    def:  def si
+    uses: Mem12[ds:si + 0x4D4<16>:word16] = si + 2<i16>
+          Mem12[ds:si + 0x4D4<16>:word16] = si + 2<i16>
+bx_11: orig: bx
+Mem12: orig: Mem0
+    def:  Mem12[ds:si + 0x4D4<16>:word16] = si + 2<i16>
+ax_13: orig: ax
+SZ_14: orig: SZ
+O_15: orig: O
+C_16: orig: C
+S_17: orig: S
+Z_18: orig: Z
+// fn0C00_0000
+// Return size: 0
+void fn0C00_0000(word16 bx, word16 si, selector ds)
+fn0C00_0000_entry:
+	def ds
+	def bx
+	def Mem0
+	def si
+	// succ:  l0C00_0000
+l0C00_0000:
+	ax_7 = Mem0[ds:bx + 4<i16>:word16]
+	Mem9[ds:bx + 6<i16>:word16] = ax_7 *s ax_7
+	Mem12[ds:si + 0x4D4<16>:word16] = si + 2<i16>
+	return
+	// succ:  fn0C00_0000_exit
+fn0C00_0000_exit:
+

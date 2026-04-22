@@ -8,7 +8,49 @@ from angr.sim_type import SimTypeBottom
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 
-def _materialize_missing_stack_local_declarations(codegen, *, stack_slot_identity_for_variable, stack_type_for_size):
+_STACK_BP_PLACEHOLDER_RE = re.compile(
+    r"<[^>\n]*\|Stack\s+(?P<base>bp)(?P<sign>[+-])0x(?P<offset>[0-9A-Fa-f]+),\s*(?P<size>\d+)\s*B>"
+)
+
+
+def _materialized_stack_placeholder_variable(codegen, cvar, *, stack_type_for_size):
+    variable = getattr(cvar, "variable", None)
+    placeholder_name = getattr(variable, "name", None)
+    if not isinstance(placeholder_name, str):
+        placeholder_name = getattr(cvar, "name", None)
+    if not isinstance(placeholder_name, str):
+        return None
+
+    match = _STACK_BP_PLACEHOLDER_RE.search(placeholder_name)
+    if match is None:
+        return None
+
+    offset = int(match.group("offset"), 16)
+    if match.group("sign") == "-":
+        offset = -offset
+    size = max(int(match.group("size")), 1)
+    region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    stack_var = SimStackVariable(
+        offset,
+        size,
+        base=match.group("base"),
+        name=f"s_{offset & 0xFFFF:x}",
+        region=region,
+    )
+    variable_type = getattr(cvar, "variable_type", None)
+    if variable_type is None:
+        variable_type = stack_type_for_size(size)
+    return stack_var, variable_type
+
+
+def _materialize_missing_stack_local_declarations(
+    codegen,
+    *,
+    stack_slot_identity_for_variable,
+    stack_type_for_size,
+    replace_c_children,
+    iter_c_nodes_deep,
+):
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return False
@@ -40,6 +82,82 @@ def _materialize_missing_stack_local_declarations(codegen, *, stack_slot_identit
     source_variables = stack_local_candidates.values() if isinstance(stack_local_candidates, dict) else getattr(cfunc, "variables_in_use", {}).items()
 
     changed = False
+    placeholder_cache: dict[str, structured_c.CVariable] = {}
+    variables_in_use = getattr(cfunc, "variables_in_use", None)
+
+    def _canonical_placeholder_cvar(node):
+        nonlocal changed
+        if not isinstance(node, structured_c.CVariable):
+            return node
+        replacement = _materialized_stack_placeholder_variable(
+            codegen,
+            node,
+            stack_type_for_size=stack_type_for_size,
+        )
+        if replacement is None:
+            return node
+        stack_var, variable_type = replacement
+        key = getattr(getattr(node, "variable", None), "name", None) or getattr(node, "name", None)
+        if isinstance(key, str) and key in placeholder_cache:
+            return placeholder_cache[key]
+        original_var = getattr(node, "variable", None)
+        try:
+            node.variable = stack_var
+        except Exception:
+            replacement_cvar = structured_c.CVariable(stack_var, variable_type=variable_type, codegen=codegen)
+            if isinstance(key, str):
+                placeholder_cache[key] = replacement_cvar
+            if isinstance(variables_in_use, dict):
+                if original_var in variables_in_use:
+                    variables_in_use.pop(original_var, None)
+                variables_in_use[stack_var] = replacement_cvar
+            if isinstance(stack_local_candidates, dict):
+                stack_local_candidates[id(stack_var)] = (stack_var, replacement_cvar)
+            changed = True
+            return replacement_cvar
+        node.variable_type = variable_type
+        replacement_cvar = node
+        replacement_var = stack_var
+        if isinstance(variables_in_use, dict):
+            if original_var in variables_in_use:
+                variables_in_use.pop(original_var, None)
+            variables_in_use[replacement_var] = replacement_cvar
+        if isinstance(stack_local_candidates, dict):
+            if original_var is not None:
+                stack_local_candidates.pop(id(original_var), None)
+            stack_local_candidates[id(replacement_var)] = (replacement_var, replacement_cvar)
+        if isinstance(key, str):
+            placeholder_cache[key] = replacement_cvar
+        changed = True
+        return replacement_cvar
+
+    root = getattr(cfunc, "statements", None)
+    if root is not None:
+        new_root = _canonical_placeholder_cvar(root)
+        if new_root is not root:
+            cfunc.statements = new_root
+            if hasattr(cfunc, "body"):
+                cfunc.body = new_root
+        if replace_c_children(cfunc.statements, _canonical_placeholder_cvar):
+            changed = True
+    if isinstance(variables_in_use, dict) and root is not None:
+        live_variable_ids = {
+            id(getattr(node, "variable", None))
+            for node in iter_c_nodes_deep(cfunc.statements)
+            if isinstance(node, structured_c.CVariable) and getattr(node, "variable", None) is not None
+        }
+        for variable in list(variables_in_use):
+            name = getattr(variable, "name", None)
+            if not isinstance(name, str) or _STACK_BP_PLACEHOLDER_RE.search(name) is None:
+                continue
+            if id(variable) in live_variable_ids:
+                continue
+            variables_in_use.pop(variable, None)
+            if isinstance(stack_local_candidates, dict):
+                stack_local_candidates.pop(id(variable), None)
+            unified_locals.pop(variable, None)
+            changed = True
+
     for variable, cvar in source_variables:
         if not isinstance(variable, SimStackVariable):
             continue

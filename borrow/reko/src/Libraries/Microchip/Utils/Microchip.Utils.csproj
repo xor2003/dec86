@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ProjectGuid>{45E095E9-D7C2-40AA-913B-AB77582AFBB4}</ProjectGuid>
+    <TargetFramework>net8.0</TargetFramework>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <RootNamespace>Reko.Libraries.Microchip</RootNamespace>
+    <AssemblyName>Reko.Libraries.Microchip.Utils</AssemblyName>
+    <Configurations>Debug;Release</Configurations>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Core\Core.csproj" />
+    <Content Include="$(SolutionDir)tools\genPICdb\picdb.zip">
+      <CopyToOutputDirectory>Newer</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

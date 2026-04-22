@@ -1,0 +1,20 @@
+// ReturnMock
+// Return size: 0
+// Mem0:Mem
+// fp:fp
+// %continuation:%continuation
+// r1:Stack -0004
+// return address size: ?
+define ReturnMock
+ReturnMock_entry:
+	// succ:  l1
+l1:
+	branch r1 == 0<i32> zero
+	// succ:  l2 zero
+l2:
+	return 0<i32>
+	// succ:  ReturnMock_exit
+zero:
+	return 1<i32>
+	// succ:  ReturnMock_exit
+ReturnMock_exit:

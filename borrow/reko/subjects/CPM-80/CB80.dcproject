@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://schemata.jklnet.org/Reko/v4">
+  <arch>z80</arch>
+  <platform>cpm</platform>
+  <input>
+    <filename>CB80.COM</filename>
+    <disassembly>CB80.asm</disassembly>
+    <intermediate-code>CB80.dis</intermediate-code>
+    <output>CB80.c</output>
+    <types-file>CB80.h</types-file>
+    <global-vars>CB80.globals.c</global-vars>
+    <user>
+      <address>0100</address>
+      <loader>raw</loader>
+      <processor name="z80" />
+      <platform name="cpm" />
+      <heuristic name="shingle" />
+      <onLoad Enabled="false" />
+      <registerValues />
+      <outputFilePolicy>Segment</outputFilePolicy>
+    </user>
+  </input>
+</project>

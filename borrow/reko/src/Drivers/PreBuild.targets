@@ -1,0 +1,36 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- 
+Custom target that copies outputs from Reko projects that are always
+loaded dynamically (using the services provided by IConfigurationService).
+-->
+<Project>
+  <Target Name="CopyAllTheFiles" AfterTargets="CopyFilesToOutputDirectory">
+    <Message Importance="high" Text="Copying configuration files @(ConfigurationFiles) to $(TargetDir)" />
+    <Copy SourceFiles="@(ConfigurationFiles)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying Decompiler metadata files to $(TargetDir)" />
+    <Copy SourceFiles="@(DecompilerMetadata)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying OS/2 16-bit metadata files to $(TargetDir)os2-16" />
+    <Copy SourceFiles="@(DecompilerMetadataOs2_16)" DestinationFolder="$(TargetDir)os2-16" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying OS/2 32-bit metadata files to $(TargetDir)os2-32" />
+    <Copy SourceFiles="@(DecompilerMetadataOs2_32)" DestinationFolder="$(TargetDir)os2-32" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying MacOS metadata files to $(TargetDir)macos" />
+    <Copy SourceFiles="@(DecompilerMetadataMacos)" DestinationFolder="$(TargetDir)macos" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying ImageLoaders to $(TargetDir)" />
+    <Copy SourceFiles="@(ImageLoaders)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying Architectures to $(TargetDir)" />
+    <Copy SourceFiles="@(Architectures)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying Assemblers to $(TargetDir)" />
+    <Copy SourceFiles="@(Environments)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying Scripts to $(TargetDir)Python" />
+    <Copy SourceFiles="@(PythonScripts)" DestinationFolder="$(TargetDir)Python" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying Libraries to $(TargetDir)" />
+    <Copy SourceFiles="@(Libraries)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying Odbg scripts to $(TargetDir)" />
+    <Copy SourceFiles="@(OdbgScripts)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying external binaries to $(TargetDir)" />
+    <Copy SourceFiles="@(ExternalComponents)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Copying plugins files to $(TargetDir)plugins" />
+    <Copy SourceFiles="@(PluginFiles)" DestinationFolder="$(TargetDir)plugins" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

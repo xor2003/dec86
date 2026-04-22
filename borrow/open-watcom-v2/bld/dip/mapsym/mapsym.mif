@@ -1,0 +1,15 @@
+#
+# Mapsym DIP makefile
+#
+
+dip_format = mapsym
+
+imp_objs = &
+        msymmisc.obj &
+        msymld.obj &
+        msymmod.obj &
+        msymtype.obj &
+        msymsym.obj &
+        msymcue.obj
+
+!include ../../master.mif

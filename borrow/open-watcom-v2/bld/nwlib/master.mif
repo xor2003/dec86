@@ -1,0 +1,203 @@
+# be very careful with the ordering of the cproj.mif and defrule.mif
+proj_name       = wlib
+
+!ifndef wlib_autodepends
+wlib_autodepends = .AUTODEPEND
+!endif
+
+wlib_ntverrc = ../h
+
+wlib_trmem = 1
+
+!ifdef bootstrap
+wlib_wreslib_cli = incl_msgtext
+!else
+wlib_wreslib_cli = text
+!endif
+
+wlib_qnx_usage = 1
+
+# Base DLL name needs to be 8 chars or less on OS/2, argh! Additionally,
+# internal module name may be required to match file name on some platforms.
+!ifdef bootstrap
+exetarg_name = bwlib
+dlltarg_name = bwlibd
+!else
+exetarg_name = wlib
+dlltarg_name = wlibd
+!endif
+ntverrc_exe = $(exetarg_name)
+ntverrc_dll = $(dlltarg_name)
+
+additional_clean = *.gh *.grh *.grc *.gc
+
+!include cproj.mif
+!include defrule.mif
+!include dllrule.mif
+!include deftarg.mif
+!include dllbase.mif
+
+!include $(orl_dir)/client.mif
+
+#
+# cflags
+#
+!ifdef bootstrap
+!include $(orl_dir)/orlobjs.mif
+.c: ../c;$(lib_misc_dir)/c;$(fe_misc_dir)/c;$(watcom_dir)/c;$(trmem_dir);$(cli_orl_c_dirs)
+inc_dirs =  -I. -I.. -I"../h" $(cli_orl_inc_dirs) -I"$(lib_misc_dir)/h" -I"$(fe_misc_dir)/h" $(cli_orl_inc_dirs_internal)
+!else
+.c: ../c;$(lib_misc_dir)/c;$(fe_misc_dir)/c;$(watcom_dir)/c;$(trmem_dir)
+inc_dirs =  -I. -I.. -I"../h" $(cli_orl_inc_dirs) -I"$(lib_misc_dir)/h" -I"$(fe_misc_dir)/h"
+!endif
+
+extra_cpp_flags = -DINSIDE_WLIB
+!ifndef wlib_dll
+extra_cpp_flags += -DIDE_PGM
+!endif
+
+extra_cpp_flags_f_idedrv   = -DSTATIC_LINKAGE
+extra_cpp_flags_f_maindrv  = -DDLL_NAME=$(dlltarg_name)
+
+!ifeq trmem 1
+! ifdef __WATCOM_TOOLS__
+!  if $(__WATCOM_TOOLS__) < 1300
+extra_c_flags_f_mem = -of+
+!  endif
+! endif
+!endif
+
+#
+# lflags
+#
+extra_l_flags_qnx = op offset=64k, stack=60k
+
+extra_l_flags_dll     = option implib $(wlib_dllbase_$(host))
+extra_l_flags_dll_nt  = initinstance terminstance op modname='$(dlltarg_name).dll'
+extra_l_flags_dll_os2 = INITINSTANCE TERMINSTANCE op manyautodata op modname='$(dlltarg_name)'
+
+# explicit rules
+#################
+
+#
+# objects
+#
+common_objs = &
+    $(_subdir_)wlib.obj &
+    $(_subdir_)libio.obj &
+    $(_subdir_)symtable.obj &
+    $(_subdir_)omfproc.obj &
+    $(_subdir_)writelib.obj &
+    $(_subdir_)convert.obj &
+    $(_subdir_)wlibutil.obj &
+    $(_subdir_)libwalk.obj &
+    $(_subdir_)symlist.obj &
+    $(_subdir_)proclib.obj &
+    $(_subdir_)cmdlinea.obj &
+    $(_subdir_)cmdlinew.obj &
+    $(_subdir_)cmdline.obj &
+    $(_subdir_)cmdlnprs.obj &
+    $(_subdir_)cmdscan.obj &
+    $(_subdir_)error.obj &
+    $(_subdir_)implib.obj &
+    $(_subdir_)elfobjs.obj &
+    $(_subdir_)orlrtns.obj &
+    $(_subdir_)mem.obj &
+    $(_subdir_)demangle.obj &
+    $(_subdir_)omfhash.obj &
+    $(_subdir_)omfutil.obj &
+    $(_subdir_)coffwrt.obj &
+    $(_subdir_)inlib.obj &
+    $(_subdir_)idemsgpr.obj &
+    $(_subdir_)ideentry.obj $(trmem_objs)
+
+!ifdef bootstrap
+wlib_orl_objs = $(cli_orl_objs)
+!endif
+
+dll_objs_nt  = $(dll_subdir)/ntdll.obj
+dll_objs_os2 = $(dll_subdir)/os2dll.obj
+
+wlib_template = $(common_objs) $(wlib_orl_objs)
+
+drv_objs = maindrv.obj idedrv.obj idemsgfm.obj
+_subdir_ = $(dll_subdir)/
+dll_objs = $+$(wlib_template)$- $(dll_objs_$(host_os))
+_subdir_ =
+exe_objs = $+$(wlib_template)$- $(drv_objs)
+
+prebuild_objs = usagew.gh usagea.gh msg.grh
+
+#
+# EXE
+#
+!ifdef wlib_dll
+exetarg_prebuild_objs = $(dlltarg_name).dll
+exetarg_objs          = $(drv_objs)
+exetarg_libs          = $(dlltarg_name).lib
+!else
+exetarg_prebuild_objs = $(prebuild_objs)
+exetarg_objs          = $(exe_objs)
+!ifndef bootstrap
+exetarg_libs          = $(cli_orl_libs)
+!endif
+!endif
+#
+# Resource compiler is not available for librarian bootstrap build
+# resources can be used during regular build only
+#
+!ifndef bootstrap
+!ifndef wlib_dll
+exetarg_res           = wresexe.res
+!endif
+!endif
+!include exetarg.mif
+
+#
+# DLL
+#
+dlltarg_prebuild_objs = $(dll_subdir) $(prebuild_objs)
+dlltarg_objs          = $(dll_objs)
+!ifndef bootstrap
+dlltarg_libs          = $(cli_orl_libs)
+!endif
+#
+# Resource compiler is not available for librarian bootstrap build
+# resources can be used during regular build only
+#
+!ifndef bootstrap
+dlltarg_res           = wresdll.res
+!endif
+!include dlltarg.mif
+
+#
+# rc and others
+#
+wresexe.res : ../h/wlib.rc ../h/wlib.msg msg.grh $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+wresdll.res : ../h/wlib.rc ../h/wlib.msg msg.grh $(__MAKEFILES__)
+    @%make echo_rc
+    $(rcu8j) $(ppflags_common) $(ppflags_wreslib) $(rc_cppflags) -DRESX_DLL $(rc_flags) $(rc_inc_path) $[@ -fo=$@
+
+msg.grh :  ../h/wlib.msg $(__MAKEFILES__)
+    @%make echo_awk
+    $(noecho)*awk -v base=MSG_RC_BASE -f $(build_dir)/makemsg.awk -v OUTFILE=$^. $[@
+
+# optencod options and targets for various hosts
+#optencod_enc_linux  = -utf8
+
+optencod_targets = $(host_os)
+!ifeq debug 2
+optencod_targets += dbg
+!endif
+
+usagew.gh $(qnx_usage) : ../gml/optionsw.gml $(__MAKEFILES__)
+    @%make echo_optencod
+    $(optencod) -rc=MSG_USAGE_WLIB_BASE -x=_W -utf8 $(optencod_opt_$(host_os)) $[@ cmdlprsw.gh cmdlprsw.gc $@ cmdlnprs.gh $(optencod_targets)
+
+usagea.gh : ../gml/optionsa.gml $(__MAKEFILES__)
+    @%make echo_optencod
+    $(optencod) -p -x=_B -utf8 $[@ cmdlprsb.gh cmdlprsb.gc . . $(optencod_targets)
+    $(optencod) -rc=MSG_USAGE_AR_BASE -x=_A -utf8 $[@ cmdlprsa.gh cmdlprsa.gc $@ cmdlnprs.gh targ1 $(optencod_targets)

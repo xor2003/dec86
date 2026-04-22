@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://schemata.jklnet.org/Reko/v5">
+  <arch>x86-protected-32</arch>
+  <platform>win32</platform>
+  <input>
+    <filename>VCExeSample.exe</filename>
+    <asmDir>VCExeSample.reko</asmDir>
+    <srcDir>VCExeSample.reko</srcDir>
+    <includeDir>VCExeSample.reko</includeDir>
+    <resources>VCExeSample.reko</resources>
+    <user>
+      <processor />
+      <procedure name="main">
+        <characteristics />
+        <address>00401000</address>
+        <CSignature>int main(int argc, char *argv[])</CSignature>
+      </procedure>
+      <procedure name="test1">
+        <characteristics />
+        <address>00401030</address>
+        <CSignature>void test1(char *arg1, int arg2, char *arg3, float arg4)</CSignature>
+      </procedure>
+      <procedure name="indirect_call_test3">
+        <characteristics />
+        <address>004010B0</address>
+        <CSignature>void indirect_call_test3(cdecl_class *c)</CSignature>
+      </procedure>
+      <procedure name="test6">
+        <characteristics />
+        <address>00401120</address>
+        <CSignature>void test6(cdecl_class *c, int a, int b)</CSignature>
+      </procedure>
+      <procedure name="nested_structs_test13">
+        <characteristics />
+        <address>00401360</address>
+        <CSignature>void nested_structs_test13(nested_structs_type *str)</CSignature>
+      </procedure>
+      <procedure name="double_return_test15">
+        <characteristics />
+        <address>004013B0</address>
+        <CSignature>double double_return_test15(double d)</CSignature>
+      </procedure>
+      <procedure name="Win32CrtStartup">
+        <characteristics />
+        <address>0040165F</address>
+        <decompile>false</decompile>
+        <CSignature>DWORD Win32CrtStartup()</CSignature>
+      </procedure>
+      <annotation addr="00401383">gbl_nested_structs.a = 5</annotation>
+      <annotation addr="0040138D">gbl_nested_structs.str.b = 6</annotation>
+      <annotation addr="00401397">gbl_nested_structs.str.c = 7</annotation>
+      <annotation addr="004013A1">gbl_nested_structs.d = 8</annotation>
+      <call>
+        <address>00401113</address>
+        <signature retOnStack="4" stackDelta="4">
+          <return name="">
+            <void />
+          </return>
+          <arg name="c">
+            <ptr size="4">
+              <type>cdecl_class</type>
+            </ptr>
+            <stack />
+          </arg>
+          <arg name="i">
+            <prim domain="SignedInt" size="4" />
+            <stack />
+          </arg>
+          <arg name="f">
+            <prim domain="Real" size="4" />
+            <stack />
+          </arg>
+        </signature>
+      </call>
+      <global>
+        <Address>00403018</Address>
+        <type>cdecl_class_ptr</type>
+        <Name>gbl_c</Name>
+      </global>
+      <global>
+        <Address>0040301C</Address>
+        <type>nested_structs_type</type>
+        <Name>gbl_nested_structs</Name>
+      </global>
+      <global>
+        <Address>00403034</Address>
+        <ptr size="4">
+          <type>thiscall_class</type>
+        </ptr>
+        <Name>gbl_thiscall</Name>
+      </global>
+      <onLoad Enabled="false" />
+      <registerValues />
+      <extractResources>false</extractResources>
+      <outputFilePolicy>Segment</outputFilePolicy>
+    </user>
+  </input>
+  <metadata>
+    <filename>nested_struct.inc</filename>
+  </metadata>
+  <metadata>
+    <filename>decl.xml</filename>
+  </metadata>
+</project>

@@ -1,0 +1,36 @@
+tree_depth = 4
+
+proj_name = res2res
+
+res2res_autodepends = .AUTODEPEND
+
+res2res_trmemcvr = 1
+res2res_trmem    = 1
+
+!include cproj.mif
+!include defrule.mif
+!include deftarg.mif
+!include wres.mif
+
+#
+# cflags
+#
+.c: ../c;$(trmem_dir);$(watcom_dir)/c
+
+inc_dirs = -I"../h" $(cli_wres_inc_dirs)
+
+# explicit rules
+#################
+
+#
+# EXE
+#
+exetarg_objs = &
+    bincpy.obj &
+    convert.obj &
+    layer0.obj &
+    m2wres.obj &
+    param.obj &
+    res2res.obj &
+    w2mres.obj $(trmem_objs)
+!include exetarg.mif

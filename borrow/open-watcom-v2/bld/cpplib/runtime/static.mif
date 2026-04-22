@@ -1,0 +1,29 @@
+# objects to be included in each image (as required)
+#
+# - targdir is used in rtdll project
+
+static_objs = $+ &
+    $(targdir)areaexc.obj &
+    $(targdir)fsroot.obj &
+    $(targdir)moddtorr.obj &
+    $(targdir)stabmod.obj &
+    $(targdir)stablcl.obj &
+    $(targdir)undefmbd.obj &
+    $(targdir)prwdata.obj &
+    $-
+
+!ifeq linkage dynamic
+dynamic_objs = $+ &
+    $(targdir)dfsroot.obj &
+    $(targdir)dstabmod.obj &
+    $-
+
+sw_br_f_areaexc=yes
+sw_br_f_fsroot=yes
+sw_br_f_moddtorr=yes
+sw_br_f_prwdata=yes
+sw_br_f_stabmod=yes
+sw_br_f_stablcl=yes
+sw_br_f_undefmbd=yes
+
+!endif

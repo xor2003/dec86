@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://schemata.jklnet.org/Reko/v5">
+  <arch>testArch</arch>
+  <platform>testOS</platform>
+  <input>
+    <asmDir />
+    <user>
+      <loader>CustomLoader</loader>
+      <procedure name="foo">
+        <signature>
+          <return>
+            <reg>eax</reg>
+          </return>
+          <arg>
+            <prim domain="SignedInt" size="4" />
+            <stack />
+          </arg>
+          <arg>
+            <prim domain="SignedInt" size="4" />
+            <stack />
+          </arg>
+        </signature>
+        <address>1000:0010</address>
+      </procedure>
+      <call>
+        <address>1000:0320</address>
+        <noreturn>true</noreturn>
+      </call>
+      <indirectJump instrAdress="1000:0380" tableAddress="1000:0400" idxReg="R1" />
+      <global>
+        <Address>2000:0000</Address>
+        <str term="z">
+          <prim domain="Character" size="1" />
+        </str>
+        <Name>g_20000</Name>
+      </global>
+      <jumpTable tableAddress="1000:0400">
+        <dst>1000:0500</dst>
+        <dst>1000:0513</dst>
+        <dst>1000:05BA</dst>
+      </jumpTable>
+      <registerValues>
+        <assume addr="00012310" reg="eax" value="00001231" />
+        <assume addr="00012310" reg="ecx" value="42424711" />
+      </registerValues>
+      <renderBaseInstrs>true</renderBaseInstrs>
+      <outputFilePolicy>Segment</outputFilePolicy>
+    </user>
+  </input>
+</project>
