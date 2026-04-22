@@ -1,5 +1,11 @@
 # Finalizer Latest
 
+Completion checkpoint (finalizer iteration from injected `review.approved`):
+- Current primary runtime task in `.ralph/agent/tasks.jsonl` is still the umbrella `objective:task-0001-complete-plan` (`task-1776859260-46ae`) and remains `in_progress`; `task-0001` also remains `in_progress`.
+- Latest worker artifact does not claim completion for the active atomic step: `.ralph/agent/worker.latest.md` marks PLAN item `#1` as `advanced, not complete`, with the remaining blocker that recovered exact-slice callsite evidence still does not surface through live postprocess/codegen output on `SwapBars`/`ReInitBars`/`Beep`.
+- Latest review artifact is not approval evidence: `.ralph/agent/review.latest.md` records `Verdict: changes_requested` because the claimed `QuickSort` reviewer acceptance proof at `--addr 0x10ce0 --timeout 30 --alternate-source-c` did not reproduce and instead exited `3` with timeout-policy output.
+- Finalizer outcome for this loop: no task completion can be honestly confirmed for the current primary execution item; loop is closed with explicit mismatch attribution instead of a false completion claim.
+
 Completed task: `fix:sweep-nameerror-angr` (`task-1776857679-3b9d`).
 
 Evidence reviewed:
@@ -31,3 +37,19 @@ Completion checkpoint (review.approved, fallback `_pick_function_lean` NameError
   - import restored in `inertia_decompiler/cli_fallback_decompilation.py` (`_pick_function_lean` available at fallback call sites)
   - focused repro `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x102e0 --timeout 6 --alternate-source-c` now ends as timeout-policy (`exit 3`) with no traceback/NameError
   - PLAN `#2` status remains not pruned this iteration, consistent with review note "advanced, not complete"
+
+Completion checkpoint (checker attribution closure, former PLAN item `#1`):
+- Current umbrella task `objective:task-0001-complete-plan` (`task-1776859260-46ae`) remains `in_progress`; this loop closes the atomic checker-attribution substep only.
+- Evidence now records explicit exact-run verdicts for the previously omitted anchors:
+  - `.ralph/agent/check.latest.md` marks `0x10ce0 QuickSort` as `validation=uncollected`
+  - `.ralph/agent/check.latest.md` marks `0x102e0 RunMenu` 30s and 60s follow-ups as `validation=uncollected`
+  - `.codex_automation/evidence.log` and `.ralph/agent/sweep.latest.md` mirror `0x102e0=uncollected`, `0x10ce0=uncollected`
+- PLAN action completed: former item `#1` was pruned from `PLAN.md` after the artifacts gained explicit verdict attribution for every checker anchor.
+
+Completion checkpoint (review.approved, width-boundary PLAN item pruned):
+- Confirmed the active primary execution task remains the umbrella `objective:task-0001-complete-plan` (`task-1776859260-46ae`) and stays `in_progress`; this finalizer closes only the approved width-boundary atomic step.
+- Evidence reviewed from `.ralph/agent/review.latest.md`:
+  - focused suite `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_regs.py angr_platforms/tests/test_x86_16_condition_ir.py angr_platforms/tests/test_x86_16_alu_helpers.py angr_platforms/tests/test_x86_16_runtime_support_traces.py -q` => `33 passed`
+  - focused one-function reruns `--addr 0x10ce0` and `--addr 0x10f38` both exited `0`
+  - review found no `clinic:variable-recovery-size-mismatch`, no `Non-constant VexValue has no value property`, and no traceback on those anchors
+- PLAN action completed: the finished width-boundary item was removed from `PLAN.md`, and remaining condition/lowering quality work stays owned by later numbered items.
