@@ -32,6 +32,33 @@ def test_cli_main_invokes_harness_run(monkeypatch):
     assert "finalize" not in called
 
 
+def test_cli_main_persists_positional_task(monkeypatch, tmp_path):
+    called = {}
+
+    class DummyHarness:
+        def __init__(self, cfg, llm_cfg):
+            called["cfg"] = cfg
+
+        def run(self, resume=False):
+            called["resume"] = resume
+            return 0
+
+        def run_crash_review(self, exit_code):
+            called["crash"] = exit_code
+
+        def finalize_run(self, reason, exit_code):
+            called["finalize"] = (reason, exit_code)
+
+    monkeypatch.setenv("ROOT_DIR", str(tmp_path))
+    monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
+    monkeypatch.setattr(cli, "launch_web_ui", lambda _cfg, harness=None: None)
+
+    assert cli.main(["add", "harness", "task"]) == 0
+    task_file = tmp_path / ".codex_automation" / "requested_task.md"
+    assert task_file.read_text(encoding="utf-8") == "add harness task\n"
+    assert called["resume"] is False
+
+
 def test_cli_main_passes_resume_flag(monkeypatch):
     called = {}
 

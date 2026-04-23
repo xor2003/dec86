@@ -345,7 +345,7 @@ def test_run_role_emits_status_heartbeat_during_long_provider_call(monkeypatch, 
     def fake_write_status(step: str, status: str, extra: str = "") -> None:
         status_updates.append((step, status, extra))
 
-    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id=""):
+    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id="", **_kwargs):
         time.sleep(0.05)
         log_file.write_text("x" * 200 + "\nGlobal Remaining steps: 1\n", encoding="utf-8")
         return 0
@@ -418,7 +418,7 @@ def test_run_role_records_session_ledger_and_history(monkeypatch, tmp_path):
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
 
-    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id=""):
+    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id="", **_kwargs):
         log_file.write_text("tokens used: 1234\nGlobal Remaining steps: 1\n", encoding="utf-8")
         return 0
 
@@ -1180,10 +1180,10 @@ def test_role_timeout_secs_uses_shorter_budget_for_non_worker(monkeypatch, tmp_p
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
 
-    assert harness.role_timeout_secs("worker") == cfg.codex_timeout_secs
-    assert harness.role_timeout_secs("planner") == min(cfg.codex_timeout_secs, 300)
-    assert harness.role_timeout_secs("reviewer") == min(cfg.codex_timeout_secs, 180)
-    assert harness.role_timeout_secs("checker") == min(cfg.codex_timeout_secs, 180)
+    assert harness.role_timeout_secs("worker") == min(cfg.codex_timeout_secs, 120)
+    assert harness.role_timeout_secs("planner") == min(cfg.codex_timeout_secs, 180)
+    assert harness.role_timeout_secs("reviewer") == min(cfg.codex_timeout_secs, 120)
+    assert harness.role_timeout_secs("checker") == min(cfg.codex_timeout_secs, 120)
 
 
 def test_planner_timeout_continues_with_existing_plan(monkeypatch, tmp_path):

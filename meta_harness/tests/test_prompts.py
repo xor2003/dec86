@@ -9,6 +9,7 @@ from meta_harness.prompts import (
     build_reviewer_prompt,
     build_worker_prompt,
 )
+from meta_harness.task_intake import write_pending_task
 
 
 def _cfg(monkeypatch, tmp_path):
@@ -29,6 +30,9 @@ def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path)
     assert "what to edit in those files in execution order" in prompt
     assert "definition of done" in prompt
     assert "execution specification" in prompt
+    assert "Estimated rounds: N" in prompt
+    assert "ceil(Estimated rounds * 1.5)" in prompt
+    assert "Stuck playbook timeout-or-silent-agent" in prompt
     assert (
         "Goal, Why now, Edit targets, Required edits, Required tests, Verification commands, Definition of done, Stop conditions"
         in prompt
@@ -62,6 +66,16 @@ def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path)
     assert "Do not claim a root cause unless the current logs or artifacts support it" in prompt
     assert "If the existing logs do not explain the current tail-validation failure family well enough" in prompt
     assert "Green level: red" in prompt
+
+
+def test_planner_prompt_includes_pending_operator_task(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    write_pending_task(tmp_path, "Add deterministic PLAN.md task intake.")
+
+    prompt = build_planner_prompt(cfg)
+
+    assert "Operator task intake" in prompt
+    assert "Add deterministic PLAN.md task intake." in prompt
 
 
 def test_planner_prompt_accepts_current_item_and_rewrite_target(monkeypatch, tmp_path):

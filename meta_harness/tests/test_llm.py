@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import sys
 from pathlib import Path
 
 import pytest
@@ -177,3 +178,31 @@ def test_run_provider_once_supports_mock_provider(monkeypatch, tmp_path):
     assert "start provider=mock" in text
     assert "Green level: focused-item-green" in text
     assert "Global Remaining steps: 0" in text
+
+
+def test_run_and_mirror_output_restarts_silent_agent(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    monkeypatch.setenv("AGENT_NO_OUTPUT_RESTART_SECS", "1")
+    monkeypatch.setenv("AGENT_NO_OUTPUT_MAX_RESTARTS", "1")
+    flag = tmp_path / "seen.flag"
+    log = tmp_path / "silent.log"
+    script = (
+        "from pathlib import Path; import time; "
+        f"p=Path({str(flag)!r}); "
+        "print('ok', flush=True) if p.exists() else (p.write_text('1'), time.sleep(2))"
+    )
+
+    rc = llm_mod._run_and_mirror_output(
+        [sys.executable, "-c", script],
+        log_file=log,
+        config=cfg,
+        header="[test] start provider=mock mode=new model=x prompt=p root=r\n",
+        env=llm_mod._provider_env(cfg),
+        proc_name="python",
+    )
+
+    text = log.read_text(encoding="utf-8")
+    assert rc == 0
+    assert "no output for 1s; restarting agent executable" in text
+    assert "restart=1 start provider=mock" in text
+    assert "ok" in text

@@ -6,6 +6,10 @@
 
 ## Fixes
 
+### mem-1776947520-e21d
+> failure: cmd=./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x109e8 --timeout 30 --alternate-source-c with temporary callsite debug instrumentation, exit=1, error=NameError: name 'debug_events' is not defined in _materialize_callsite_stack_arguments_8616, next=place temporary debug state in the materializer scope or remove instrumentation before rerunning
+<!-- tags: tooling, error-handling, debug, stack-segment | created: 2026-04-23 -->
+
 ### mem-1776944201-5f4b
 > failure: cmd=./.venv/bin/python - <<'PY' from angr.sim_variable import SimRegisterVariable ... print(v.__dict__) PY, exit=1, error=SimRegisterVariable has no __dict__ during local attribute introspection, next=use dir/getattr for SimRegisterVariable fields
 <!-- tags: tooling, error-handling, python | created: 2026-04-23 -->

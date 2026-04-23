@@ -5,6 +5,7 @@ import sys
 
 from .config import LlmConfig, RuntimeConfig
 from .orchestrator import HarnessError, MetaHarness, ResourceBlockedError, RoleRunError
+from .task_intake import write_pending_task
 from .webui import launch_web_ui
 
 
@@ -12,6 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Python orchestration harness for iterative repository improvement.")
     parser.add_argument("--resume", action="store_true", help="Resume the latest incomplete cycle if one exists.")
     parser.add_argument("--fresh", action="store_true", help="Ignore any incomplete cycle and start a new one.")
+    parser.add_argument("task", nargs="*", help="Optional operator task to convert into PLAN.md execution-spec steps.")
     return parser
 
 
@@ -19,6 +21,9 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(argv)
     cfg = RuntimeConfig.from_env(argv)
+    if args.task:
+        write_pending_task(cfg.root_dir, " ".join(args.task))
+        args.fresh = True
     llm_cfg = LlmConfig.from_env()
     harness = MetaHarness(cfg, llm_cfg)
     web_ui = launch_web_ui(cfg, harness=harness)

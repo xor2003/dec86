@@ -13,6 +13,7 @@ from meta_harness.policy import (
     decide_worker_runtime,
     decide_worker_timeout,
 )
+from meta_harness.stuck_policy import classify_stuck_reason, decide_stuck, estimated_rounds, stuck_after_rounds
 from meta_harness.task_packet import (
     TASK_PACKET_SCHEMA_VERSION,
     count_remaining_plan_steps,
@@ -155,3 +156,19 @@ def test_green_level_policy_infers_focused_and_cycle_levels():
     assert focused.actions[0].details["green_level"] == GREEN_FOCUSED
     assert cycle.actions[0].details["green_level"] == GREEN_CYCLE
     assert red.actions[0].details["green_level"] == GREEN_RED
+
+
+def test_stuck_policy_uses_one_and_half_round_budget():
+    item = "1. Goal: fix focused thing.\nEstimated rounds: 4\nDefinition of done: pytest passes.\n"
+    decision = decide_stuck(item, completed_rounds=6, runtime_context="timeout")
+
+    assert estimated_rounds(item) == 4
+    assert stuck_after_rounds(item) == 6
+    assert decision.is_stuck is True
+    assert decision.category == "timeout-or-silent-agent"
+    assert "restart fresh context" in decision.playbook
+
+
+def test_stuck_policy_classifies_broad_item():
+    item = "1. Goal: broad.\n" + ("`file.py:1` " * 20)
+    assert classify_stuck_reason(item) == "plan-item-too-broad"
