@@ -61,7 +61,7 @@ def _normalize_source_names(values: Iterable[object]) -> list[str]:
         text = str(value).strip()
         if not text:
             continue
-        looks_like_path = text.startswith(("/", "\\")) or "\\" in text
+        looks_like_path = _looks_like_filesystem_path(text)
         if looks_like_path:
             windows_path = PureWindowsPath(text)
             candidate = windows_path.stem if windows_path.suffix else text
@@ -70,6 +70,14 @@ def _normalize_source_names(values: Iterable[object]) -> list[str]:
             candidate = path.stem if path.suffix else text
         normalized.append(candidate)
     return normalized
+
+
+def _looks_like_filesystem_path(text: str) -> bool:
+    if text.startswith(("/", "\\")):
+        return True
+    if len(text) >= 3 and text[1] == ":" and text[2] in {"\\", "/"}:
+        return True
+    return "\\" in text
 
 
 def _stable_unique_sorted(values: Iterable[str]) -> list[str]:

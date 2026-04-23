@@ -37,6 +37,7 @@ from types import SimpleNamespace
 from angr_platforms.X86_16.cod_extract import (
     extract_cod_function_entries,
     extract_cod_proc_metadata,
+    infer_cod_logic_start,
     extract_simple_cod_logic_entries,
     extract_small_two_arg_cod_logic_entries,
     join_cod_entries_with_synthetic_globals,
