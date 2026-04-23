@@ -324,6 +324,14 @@ from inertia_decompiler.non_optimized_fallback import (
     sidecar_verdict_closes_non_optimized_lane,
 )
 
+from .direct_addr_failure_family import (
+    advance_failure_family_state,
+    FailureFamilyState,
+    build_failure_family_snapshot,
+    record_failure_family_retry_stop,
+    remember_failure_family_candidate,
+)
+
 print = _timestamped_print
 __all__ = ['_apply_binary_specific_annotations', '_sidecar_cod_metadata_for_function', '_snapshot_codegen_text', '_regenerate_codegen_text_safely', '_emit_optional_source_sidecar_c_block', '_format_minimal_codegen_output', '_apply_known_cod_object_annotations', '_cod_proc_has_call_heavy_helper_profile', '_decompile_function', '_function_complexity', '_direct_call_stub_filter_regions', '_register_direct_call_target_function_stubs', '_prepare_function_for_decompilation', '_function_decompilation_profile', '_preferred_decompiler_options', '_preferred_expr_collapse_depth', '_decompile_function_with_stats']
 
@@ -391,6 +399,19 @@ def _snapshot_codegen_text(codegen) -> str:
         return codegen.text
     except Exception:
         return ""
+
+
+def _emit_c_stage_trace(project: angr.Project, function, label: str, c_text: str) -> None:
+    """Print an opt-in labeled C snapshot so text provenance is visible."""
+
+    if not bool(getattr(project, "_inertia_trace_c_stages", False)):
+        return
+    if not isinstance(c_text, str) or not c_text.strip():
+        return
+    display_addr = function_original_addr(function)
+    print(f"/* -- c trace: {display_addr:#x} {getattr(function, 'name', 'sub')} :: {label} -- */")
+    print(c_text if c_text.endswith("\n") else c_text + "\n")
+    sys.stdout.flush()
 
 def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool]:
     fallback_text = _snapshot_codegen_text(codegen)
@@ -519,6 +540,7 @@ def _decompile_function(
     enable_postprocess: bool = True,
     allow_isolated_retry: bool = True,
     deadline: float | None = None,
+    failure_family_state: FailureFamilyState | None = None,
 ) -> tuple[str, str]:
     setattr(project, "_inertia_partial_codegen_text", None)
     setattr(project, "_inertia_last_tail_validation_snapshot", None)
@@ -632,6 +654,7 @@ def _decompile_function(
                         enable_postprocess=enable_postprocess,
                         allow_isolated_retry=False,
                         deadline=deadline,
+                        failure_family_state=failure_family_state,
                     ),
                     timeout=max(1, timeout) + 1,
                 )
@@ -677,6 +700,7 @@ def _decompile_function(
             enable_postprocess=enable_postprocess,
             allow_isolated_retry=False,
             deadline=deadline,
+            failure_family_state=failure_family_state,
         )
 
     dec = None
@@ -700,25 +724,35 @@ def _decompile_function(
                                     expr_collapse_depth=expr_collapse_depth,
                                 )
                             if dec.codegen is None:
-                                fallback_options = None if decompiler_options is not None else [("structurer_cls", "Phoenix")]
-                                logging.getLogger(__name__).debug(
-                                    "Selected decompiler structurer produced no code for %s; retrying with %s.",
-                                    function,
-                                    "SAILR" if decompiler_options is not None else "Phoenix",
+                                failure_snapshot = build_failure_family_snapshot(
+                                    status="empty",
+                                    failure_stage=getattr(project, "_inertia_decompiler_stage", None),
+                                    fallback_kind="structurer_retry",
+                                    tail_validation_verdict="uncollected",
+                                    artifact_path=f"{function_original_addr(function):#x}:{function.name}",
                                 )
-                                if fallback_options is None:
-                                    dec = project.analyses.Decompiler(
-                                        function,
-                                        cfg=cfg,
-                                        expr_collapse_depth=expr_collapse_depth,
-                                    )
-                                else:
-                                    dec = project.analyses.Decompiler(
-                                        function,
-                                        cfg=cfg,
-                                        options=fallback_options,
-                                        expr_collapse_depth=expr_collapse_depth,
-                                    )
+                                repeat_reason = remember_failure_family_candidate(
+                                    failure_family_state,
+                                    failure_snapshot,
+                                )
+                                if repeat_reason is not None:
+                                    record_failure_family_retry_stop(failure_family_state, failure_snapshot)
+                                    print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry")
+                                    detail = "Decompiler did not produce code."
+                                    messages = _analysis_log_messages(dec)
+                                    if messages:
+                                        detail += " angr details: " + "; ".join(messages[:3])
+                                    if getattr(dec, "clinic", None) is None:
+                                        detail += " clinic=None."
+                                        clinic_failure = _clinic_failure_detail()
+                                        if clinic_failure is not None:
+                                            detail += f" {clinic_failure}."
+                                    setattr(project, "_inertia_partial_codegen_text", None)
+                                    return "empty", detail
+                                logging.getLogger(__name__).debug(
+                                    "Selected decompiler structurer produced no code for %s; stopping same-family retry.",
+                                    function,
+                                )
                             print(f"[dbg] Decompiler returned for {hex(function.addr)}")
                             sys.stdout.flush()
     except _AnalysisTimeout:
@@ -763,11 +797,61 @@ def _decompile_function(
     if dec.codegen is None:
         messages = _analysis_log_messages(dec)
         if _should_retry_in_isolation(dec):
+            failure_snapshot = build_failure_family_snapshot(
+                status="empty",
+                failure_stage=getattr(project, "_inertia_decompiler_stage", None),
+                fallback_kind="isolated_retry",
+                tail_validation_verdict="uncollected",
+                artifact_path=f"{function_original_addr(function):#x}:{function.name}",
+            )
+            repeat_reason = remember_failure_family_candidate(
+                failure_family_state,
+                failure_snapshot,
+            )
+            if repeat_reason is not None:
+                record_failure_family_retry_stop(failure_family_state, failure_snapshot)
+                print(f"[dbg] stop: {repeat_reason}; lane=isolated_retry")
+                detail = "Decompiler did not produce code."
+                if messages:
+                    detail += " angr details: " + "; ".join(messages[:3])
+                if getattr(dec, "clinic", None) is None:
+                    detail += " clinic=None."
+                    clinic_failure = _clinic_failure_detail()
+                    if clinic_failure is not None:
+                        detail += f" {clinic_failure}."
+                setattr(project, "_inertia_partial_codegen_text", None)
+                return "empty", detail
+            advance_failure_family_state(failure_family_state)
             retried = _retry_in_isolated_project()
             if retried is not None and retried[0] == "ok":
                 return retried
             if retried is not None and retried[0] != "empty":
                 return retried
+        if decompiler_options is None:
+            fallback_snapshot = build_failure_family_snapshot(
+                status="empty",
+                failure_stage=getattr(project, "_inertia_decompiler_stage", None),
+                fallback_kind="structurer_retry",
+                tail_validation_verdict="uncollected",
+                artifact_path=f"{function_original_addr(function):#x}:{function.name}",
+            )
+            repeat_reason = remember_failure_family_candidate(
+                failure_family_state,
+                fallback_snapshot,
+            )
+            if repeat_reason is not None:
+                record_failure_family_retry_stop(failure_family_state, fallback_snapshot)
+                print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry")
+                detail = "Decompiler did not produce code."
+                if messages:
+                    detail += " angr details: " + "; ".join(messages[:3])
+                if getattr(dec, "clinic", None) is None:
+                    detail += " clinic=None."
+                    clinic_failure = _clinic_failure_detail()
+                    if clinic_failure is not None:
+                        detail += f" {clinic_failure}."
+                setattr(project, "_inertia_partial_codegen_text", None)
+                return "empty", detail
         detail = "Decompiler did not produce code."
         if messages:
             detail += " angr details: " + "; ".join(messages[:3])
@@ -962,6 +1046,7 @@ def _decompile_function(
         )
     else:
         rendered_text = _snapshot_codegen_text(dec.codegen)
+    _emit_c_stage_trace(project, function, "post-structured-codegen", rendered_text)
     formatted = _format_known_helper_calls(
         project,
         function,
@@ -970,6 +1055,7 @@ def _decompile_function(
         binary_path,
         cod_metadata=effective_cod_metadata,
     )
+    _emit_c_stage_trace(project, function, "post-helper-call-format", formatted)
     formatted = _normalize_boolean_conditions(formatted)
     formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
     formatted = _fix_carr_inboxlng_guard_blind_spot(formatted, function, binary_path)
@@ -985,10 +1071,12 @@ def _decompile_function(
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
     formatted = _annotate_cod_proc_output(formatted, function, effective_cod_metadata)
+    _emit_c_stage_trace(project, function, "post-cod-annotation", formatted)
     formatted = _collapse_annotated_stack_aliases_text(formatted)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
     formatted = _rewrite_known_helper_signature_text(formatted, function)
+    _emit_c_stage_trace(project, function, "post-helper-signature-rewrite", formatted)
     formatted = _prune_trailing_generic_return_text(formatted)
     formatted = _materialize_annotated_cod_declarations_text(formatted, function, effective_cod_metadata)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
@@ -997,6 +1085,7 @@ def _decompile_function(
     formatted = _sanitize_mangled_autonames_text(formatted)
     formatted = normalize_unresolved_c_text(formatted)
     formatted = _prune_unused_local_declarations_text(formatted)
+    _emit_c_stage_trace(project, function, "post-final-text-cleanup", formatted)
     if not (
         binary_path is not None
         and binary_path.name.lower().endswith(".cod")
@@ -1014,6 +1103,7 @@ def _decompile_function(
             rf"(?P=indent)return\s+{re.escape(helper_name)}\((?P=args)\);\s*$"
         )
         formatted = redundant_wrapper_pattern.sub(rf"\g<indent>return {helper_name}(\g<args>);", formatted)
+    _emit_c_stage_trace(project, function, "final-emitted-c", formatted)
     quality = assess_decompiled_c_text(formatted)
     if quality.reject_as_decompiled:
         _remember_tail_validation_snapshot(dec.codegen)
@@ -1341,6 +1431,7 @@ def _decompile_function_with_stats(
     enable_structured_simplify: bool = True,
     enable_postprocess: bool = True,
     allow_isolated_retry: bool = True,
+    failure_family_state: FailureFamilyState | None = None,
 ):
     block_count, byte_count = _function_complexity(function)
     display_addr = function_original_addr(function)
@@ -1362,9 +1453,11 @@ def _decompile_function_with_stats(
         enable_postprocess=enable_postprocess,
         allow_isolated_retry=allow_isolated_retry,
         deadline=deadline,
+        failure_family_state=failure_family_state,
     )
     partial_payload = getattr(project, "_inertia_partial_codegen_text", None)
     elapsed = time.perf_counter() - start
+    advance_failure_family_state(failure_family_state)
     print(f"[dbg] decompilation time for {display_addr:#x} {function.name}: {elapsed:.2f}s")
     sys.stdout.flush()
     return status, payload, partial_payload, block_count, byte_count, elapsed

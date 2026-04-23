@@ -10,6 +10,7 @@ CYCLE_STATE_SCHEMA_VERSION = "meta_harness.cycle_state.v1"
 PREFLIGHT_STATE_SCHEMA_VERSION = "meta_harness.preflight.v1"
 SESSION_LEDGER_SCHEMA_VERSION = "meta_harness.session.v1"
 HISTORY_EVENT_SCHEMA_VERSION = "meta_harness.event.v1"
+EVIDENCE_FACTS_SCHEMA_VERSION = "meta_harness.evidence_facts.v1"
 
 EVENT_NAMES = {
     "cycle.started",
@@ -213,5 +214,177 @@ def compact_runtime_signals(
         "top_roles_by_tokens": [{"name": name, "tokens": count} for name, count in role_tokens.most_common(5)],
         "top_plan_items_by_sessions": [
             {"item": name, "count": count} for name, count in plan_item_sessions.most_common(5)
+        ],
+    }
+
+
+def build_evidence_facts(
+    text: str,
+    *,
+    low_confidence_threshold: float = 0.6,
+    generated_at: str | None = None,
+) -> dict[str, object]:
+    facts: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    key_value_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{2,})=(-?\d+(?:\.\d+)?)\b")
+    validation_re = re.compile(r"\bvalidation=([A-Za-z_][A-Za-z0-9_-]*)")
+    done_re = re.compile(r"\bdone in ([0-9]+(?:\.[0-9]+)?)s")
+    detail_re = re.compile(r"detail artifact (\S+)")
+    retry_re = re.compile(r"retry reason=(.+)")
+    failure_ratio_re = re.compile(r"failures=(\d+)/(\d+)")
+
+    def _normalize_value(value: object) -> str:
+        if isinstance(value, dict):
+            return json.dumps(value, sort_keys=True)
+        if isinstance(value, float):
+            return f"{value:.6g}"
+        return str(value)
+
+    def _add_fact(
+        *,
+        kind: str,
+        key: str,
+        value: object,
+        confidence: float,
+        line_no: int,
+        line: str,
+        reason: str,
+    ) -> None:
+        dedupe_key = (kind, key, _normalize_value(value))
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        bounded = round(max(0.0, min(1.0, confidence)), 3)
+        facts.append(
+            {
+                "kind": kind,
+                "key": key,
+                "value": value,
+                "confidence": bounded,
+                "confidence_pct": round(bounded * 100.0, 1),
+                "line_no": line_no,
+                "line": line,
+                "reason": reason,
+                "needs_more_evidence": bounded < low_confidence_threshold,
+            }
+        )
+
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        lower = line.lower()
+
+        for match in failure_ratio_re.finditer(line):
+            _add_fact(
+                kind="structured",
+                key="failures",
+                value={"failed": int(match.group(1)), "total": int(match.group(2))},
+                confidence=0.99,
+                line_no=line_no,
+                line=line,
+                reason="explicit failures counter from sweep output",
+            )
+
+        for match in validation_re.finditer(line):
+            _add_fact(
+                kind="structured",
+                key="validation",
+                value=match.group(1),
+                confidence=0.99,
+                line_no=line_no,
+                line=line,
+                reason="explicit validation status from sweep output",
+            )
+
+        for match in done_re.finditer(line):
+            _add_fact(
+                kind="structured",
+                key="elapsed_seconds",
+                value=float(match.group(1)),
+                confidence=0.97,
+                line_no=line_no,
+                line=line,
+                reason="explicit completion timing from sweep output",
+            )
+
+        for match in detail_re.finditer(line):
+            _add_fact(
+                kind="artifact",
+                key="detail_artifact",
+                value=match.group(1),
+                confidence=0.96,
+                line_no=line_no,
+                line=line,
+                reason="explicit artifact path emitted by sweep",
+            )
+
+        for match in retry_re.finditer(line):
+            _add_fact(
+                kind="structured",
+                key="retry_reason",
+                value=match.group(1).strip(),
+                confidence=0.93,
+                line_no=line_no,
+                line=line,
+                reason="explicit retry note from sweep output",
+            )
+
+        for match in key_value_re.finditer(line):
+            key = match.group(1)
+            if key in {"validation", "failures"}:
+                continue
+            value_text = match.group(2)
+            value = float(value_text) if "." in value_text else int(value_text)
+            _add_fact(
+                kind="counter",
+                key=key,
+                value=value,
+                confidence=0.92,
+                line_no=line_no,
+                line=line,
+                reason="explicit key=value counter from sweep output",
+            )
+
+        if "timeout" in lower:
+            _add_fact(
+                kind="heuristic",
+                key="observed_timeout",
+                value=True,
+                confidence=0.45,
+                line_no=line_no,
+                line=line,
+                reason="timeout wording seen in sweep log",
+            )
+        if "fallback" in lower:
+            _add_fact(
+                kind="heuristic",
+                key="observed_fallback",
+                value=True,
+                confidence=0.42,
+                line_no=line_no,
+                line=line,
+                reason="fallback wording seen in sweep log",
+            )
+
+    low_confidence_facts = [fact for fact in facts if bool(fact.get("needs_more_evidence"))]
+    return {
+        "schema_version": EVIDENCE_FACTS_SCHEMA_VERSION,
+        "generated_at": generated_at or iso_now(),
+        "summary": {
+            "fact_count": len(facts),
+            "low_confidence_threshold": low_confidence_threshold,
+            "low_confidence_fact_count": len(low_confidence_facts),
+            "needs_more_evidence": bool(low_confidence_facts),
+        },
+        "facts": facts,
+        "needs_more_evidence": [
+            {
+                "key": str(fact.get("key", "")),
+                "confidence_pct": fact.get("confidence_pct"),
+                "reason": str(fact.get("reason", "")),
+                "line_no": fact.get("line_no"),
+            }
+            for fact in sorted(low_confidence_facts, key=lambda fact: float(fact.get("confidence", 0.0)))[:5]
         ],
     }

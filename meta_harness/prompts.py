@@ -52,10 +52,12 @@ def _repo_standing_tasks(cfg: RuntimeConfig) -> str:
 
 
 def build_master_prompt(cfg: RuntimeConfig) -> str:
+    evidence_facts_file = cfg.state_dir / "evidence_facts.json"
     if cfg.compact_prompts:
         return (
             f"Work in {cfg.root_dir}. Repo rules: {cfg.rules_file}.\n"
-            f"Maintain {cfg.plan_path}. Use {cfg.evidence_log_file} as current evidence.\n\n"
+            f"Maintain {cfg.plan_path}. Use {cfg.evidence_log_file} as current evidence.\n"
+            f"Structured sweep observations live at {evidence_facts_file}.\n\n"
             f"Priorities: 1) {cfg.primary_priority}; 2) {cfg.secondary_priority}; "
             f"3) {cfg.general_improvement_rule}; 4) {cfg.architecture_guidance}.\n"
             f"Compare against: {cfg.compare_input_description}.\n"
@@ -96,9 +98,12 @@ def build_master_prompt(cfg: RuntimeConfig) -> str:
 
 
 def build_checker_prompt(cfg: RuntimeConfig) -> str:
+    evidence_facts_file = cfg.state_dir / "evidence_facts.json"
     return build_master_prompt(cfg) + (
         "\nChecker step:\n"
         f"- Inspect {cfg.evidence_log_file} for crashes, timeouts, or obvious regressions.\n"
+        f"- Read {evidence_facts_file} and print the observed sweep facts with confidence percentages.\n"
+        "- If a fact is low confidence, say more evidence is needed before treating it as settled.\n"
         "- Prefer the existing evidence, current plan, and current logs over fresh exploration.\n"
         "- Do not run pytest, corpus scans, or broad repository searches in this step unless the current evidence is missing a fact you cannot otherwise obtain.\n"
         "- Print current quality for correctness and recompilation.\n"
@@ -114,12 +119,14 @@ def build_planner_prompt(
     rewrite_target: str = "",
     task_packet: str = "",
 ) -> str:
+    evidence_facts_file = cfg.state_dir / "evidence_facts.json"
     prompt = build_master_prompt(cfg) + (
         "\nPlanner step:\n"
         "- Analyze the current difference between relevant inputs and generated outputs.\n"
         "- Inspect the current code state.\n"
         f"- Do not rerun the evidence sweep; the sweep step already produced {cfg.evidence_log_file} and the checker step reviewed it for this cycle.\n"
-        f"- Read the current evidence and debug logs first, especially {cfg.evidence_log_file}, recent stderr/debug output, and any tail-validation summary or detail-artifact paths already recorded by the sweep.\n"
+        f"- Read the current evidence and debug logs first, especially {cfg.evidence_log_file}, {evidence_facts_file}, recent stderr/debug output, and any tail-validation summary or detail-artifact paths already recorded by the sweep.\n"
+        "- Treat low-confidence sweep facts as evidence gaps. If the blocker rests on low confidence, plan more evidence first.\n"
         "- Before writing any plan item, brainstorm the earliest correct architectural layer and the smallest stable insertion point for the fix.\n"
         "- If the harness/control loop itself is causing retries, stalls, or planning drift, treat harness simplification as a valid first-class fix.\n"
         "- Prefer the simplest control flow that preserves quality; if the harness grew more complex than needed for the current lane, plan to simplify it instead of layering on more policy.\n"

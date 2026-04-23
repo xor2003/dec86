@@ -15,6 +15,17 @@ from angr_platforms.X86_16.widening_alias import (
 from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
 
 from .cli_core import main
+from . import cache as _cache
+from . import cli_core as _cli_core
+from . import cli_decompilation as _cli_decompilation
+from . import cli_fallback_decompilation as _cli_fallback_decompilation
+from . import cli_function_discovery as _cli_function_discovery
+from . import non_optimized_fallback as _non_optimized_fallback
+from . import project_loading as _project_loading
+from . import runtime_support as _runtime_support
+from . import sidecar_metadata as _sidecar_metadata
+from . import tail_validation as _tail_validation
+from . import work_items as _work_items
 from .cli_c_ast_rewrites import (
     _addr_exprs_are_byte_pair,
     _c_constant_value,
@@ -47,6 +58,20 @@ from .cli_c_ast_rewrites import (
 from .cli_c_text_postprocess import _simplify_x86_16_stack_byte_pointers
 from . import cli_c_ast_rewrites as _cli_c_ast_rewrites
 from . import cli_c_text_postprocess as _cli_c_text_postprocess
+
+_PROXY_MODULES = (
+    _cli_core,
+    _cli_decompilation,
+    _cli_fallback_decompilation,
+    _cli_function_discovery,
+    _non_optimized_fallback,
+    _project_loading,
+    _runtime_support,
+    _sidecar_metadata,
+    _tail_validation,
+    _work_items,
+    _cache,
+)
 
 structured_c = structured_codegen.c
 
@@ -89,12 +114,27 @@ def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
 
 
 class _CompatModule(ModuleType):
+    def __getattr__(self, name: str):
+        for module in _PROXY_MODULES:
+            if hasattr(module, name):
+                return getattr(module, name)
+        raise AttributeError(name)
+
     def __setattr__(self, name: str, value):
         ModuleType.__setattr__(self, name, value)
+        for module in _PROXY_MODULES:
+            if hasattr(module, name):
+                setattr(module, name, value)
         if hasattr(_cli_c_ast_rewrites, name):
             setattr(_cli_c_ast_rewrites, name, value)
         if hasattr(_cli_c_text_postprocess, name):
             setattr(_cli_c_text_postprocess, name, value)
+
+    def __dir__(self) -> list[str]:
+        names = set(ModuleType.__dir__(self))
+        for module in _PROXY_MODULES:
+            names.update(dir(module))
+        return sorted(names)
 
 
 _THIS_MODULE = sys.modules[__name__]
