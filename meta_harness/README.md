@@ -239,6 +239,17 @@ For this repo's active lane, the intended prioritization is:
 - keep architectural placement correct, but do not let subsystem purity outrank
   a clearly worse emitted result
 
+For repeated one-address SORTDEMO debugging, prefer one bounded stage bundle over
+re-reading `git diff` and the same decompile logs. The repo now carries:
+
+```bash
+./.venv/bin/python scripts/capture_sortdemo_debug_bundle.py ./SORTDEMO.EXE --addr 0x10010
+```
+
+That bundle writes raw asm, the nearby COD window, raw angr codegen, a focused
+post-callsite snapshot, a focused post-stack-lowering snapshot, and final CLI
+stdout/stderr under `.codex_automation/stage_debug/<addr>/`.
+
 ```bash
 python - <<'PY'
 from meta_harness.config import RuntimeConfig
