@@ -1,6 +1,16 @@
 Strictly follow AGENTS.md. Put fixes to the right architectural layer. Remove completed steps only with proof from focused tests and one-function decompile evidence.
 I see "validation=uncollected" - enable collection.
 
+0. Goal: Add one deterministic SORTDEMO one-function debug bundle lane so worker cycles can inspect where garbage C appears without rereading `git diff` or repeating blind decompile reruns.
+Why now: `.codex_automation/onefn/0x10010.log` still shows garbage around `clearscreen()` and raw SS carriers, and the current harness loop does not preserve enough stage evidence to tell whether the bad output comes from raw angr codegen, callsite fact passes, stack lowering, or final CLI formatting.
+Edit targets: `/home/xor/vextest/scripts/capture_sortdemo_debug_bundle.py`, `/home/xor/vextest/meta_harness/prompts.py`, `/home/xor/vextest/meta_harness/README.md`, `/home/xor/vextest/meta_harness/tests/test_prompts.py`, `/home/xor/vextest/meta_harness/tests/test_sortdemo_debug_bundle.py`.
+Required edits: Add one focused script that captures for a single `--addr` the raw linear asm, nearby COD assembly and source comments, raw angr codegen, post-callsite snapshot, post-stack-lowering snapshot, and final `decompile.py` stdout/stderr into `.codex_automation/stage_debug/<addr>/`. Update planner/worker prompt rules so the harness uses this bundle before repeating `git diff` or the same one-function decompile loop. Document the lane in the harness README and add focused tests for the prompt contract and COD-window helper.
+Required tests: `meta_harness/tests/test_prompts.py`; `meta_harness/tests/test_sortdemo_debug_bundle.py`.
+Verification commands: `./.venv/bin/pytest -q meta_harness/tests/test_prompts.py meta_harness/tests/test_sortdemo_debug_bundle.py -q`; `./.venv/bin/python scripts/capture_sortdemo_debug_bundle.py ./SORTDEMO.EXE --addr 0x10010`.
+Definition of done: A focused `0x10010` debug bundle lands under `.codex_automation/stage_debug/0x10010/` with stable stage files, and the worker/planner prompts tell the harness to use that bundle instead of repeated diffs or blind reruns.
+Stop conditions: Stop if the bundle only captures final rendered C with no earlier stage separation. Stop if the harness guidance still allows repeated `git diff` loops before any new artifact is collected.
+Estimated rounds: 1.
+
 1. Goal: Make typed stack-probe arg pickup require a proven SS outgoing-store shape before `_materialize_callsite_stack_arguments_8616` rewrites a call.
 Why now: `.codex_automation/onefn/0x10010.log` still shows `clearscreen()` with empty args plus raw `*((ss << 4) + vvar_24 - 2) = 0;`, so correctness is still weak and recompilation is still bad on the live SORTDEMO anchor.
 Edit targets: `/home/xor/vextest/angr_platforms/angr_platforms/X86_16/decompiler_postprocess_calls.py:561-980`, `/home/xor/vextest/angr_platforms/angr_platforms/X86_16/decompiler_postprocess_utils.py:51-92`, `/home/xor/vextest/angr_platforms/tests/test_x86_16_stack_probe_return_state_regression.py:146-337`.
