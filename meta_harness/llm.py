@@ -118,6 +118,13 @@ def _append_to_logs(outputs: tuple[object, ...], text: str) -> None:
         out.flush()
 
 
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
 def _agent_no_output_restart_secs() -> int:
     try:
         return max(0, int(os.environ.get("AGENT_NO_OUTPUT_RESTART_SECS", "180")))
@@ -154,6 +161,7 @@ def _stream_process_output(
     outputs: tuple[object, ...],
     *,
     idle_timeout_secs: int,
+    activity_log_file: Path,
 ) -> tuple[int, bool]:
     assert proc.stdout is not None
     try:
@@ -165,7 +173,8 @@ def _stream_process_output(
 
     import select
 
-    last_output = time.monotonic()
+    last_log_growth = time.monotonic()
+    last_log_size = _file_size(activity_log_file)
     while True:
         if proc.poll() is not None:
             while True:
@@ -176,19 +185,30 @@ def _stream_process_output(
                 if not chunk:
                     return proc.wait(), False
                 _append_to_logs(outputs, chunk.decode("utf-8", errors="replace"))
+                current_size = _file_size(activity_log_file)
+                if current_size > last_log_size:
+                    last_log_size = current_size
+                    last_log_growth = time.monotonic()
         readable, _, _ = select.select([stdout_fd], [], [], 1.0)
         if readable:
             chunk = os.read(stdout_fd, 8192)
             if chunk:
-                last_output = time.monotonic()
                 _append_to_logs(outputs, chunk.decode("utf-8", errors="replace"))
+                current_size = _file_size(activity_log_file)
+                if current_size > last_log_size:
+                    last_log_size = current_size
+                    last_log_growth = time.monotonic()
                 continue
             if proc.poll() is not None:
                 return proc.wait(), False
-        if idle_timeout_secs > 0 and time.monotonic() - last_output >= idle_timeout_secs:
+        current_size = _file_size(activity_log_file)
+        if current_size > last_log_size:
+            last_log_size = current_size
+            last_log_growth = time.monotonic()
+        if idle_timeout_secs > 0 and time.monotonic() - last_log_growth >= idle_timeout_secs:
             _append_to_logs(
                 outputs,
-                f"[{_timestamp()}] no output for {idle_timeout_secs}s; restarting agent executable\n",
+                f"[{_timestamp()}] log did not grow for {idle_timeout_secs}s; restarting agent executable\n",
             )
             _terminate_process(proc)
             return 124, True
@@ -230,7 +250,12 @@ def _run_and_mirror_output(
             )
             register_child_process(config.status_file.parent, proc.pid, proc_name, str(config.root_dir), _timestamp())
             try:
-                rc, idle_restart = _stream_process_output(proc, outputs, idle_timeout_secs=idle_timeout_secs)
+                rc, idle_restart = _stream_process_output(
+                    proc,
+                    outputs,
+                    idle_timeout_secs=idle_timeout_secs,
+                    activity_log_file=config.last_log_file,
+                )
             finally:
                 unregister_child_process(config.status_file.parent, proc.pid)
             if idle_restart and attempt < max_restarts:
@@ -253,8 +278,7 @@ def run_provider_once(
     session_id: str = "",
     timeout_secs: int | None = None,
 ) -> int:
-    effective_timeout_secs = int(timeout_secs or config.codex_timeout_secs)
-    timeout_cmd = ["timeout", "--foreground", f"{effective_timeout_secs}s"]
+    del timeout_secs
     codex_preexec = _build_codex_memory_preexec_fn(config.codex_memory_limit_mb)
     provider_env = _provider_env(config)
     header = (
@@ -285,7 +309,7 @@ def run_provider_once(
                 prompt,
             ]
         return _run_and_mirror_output(
-            timeout_cmd + cmd,
+            cmd,
             log_file=log_file,
             config=config,
             header=header,
@@ -296,7 +320,7 @@ def run_provider_once(
     if provider == "ollama":
         with prompt_file.open("rb") as inp:
             return _run_and_mirror_output(
-                timeout_cmd + [config.ollama_cmd, "run", model],
+                [config.ollama_cmd, "run", model],
                 log_file=log_file,
                 config=config,
                 header=header,
@@ -305,7 +329,7 @@ def run_provider_once(
                 stdin=inp,
             )
     if provider == "llamacpp":
-        cmd = timeout_cmd + [config.llamacpp_cmd, "-m", model]
+        cmd = [config.llamacpp_cmd, "-m", model]
         if config.llamacpp_extra_args:
             cmd.extend(shlex.split(config.llamacpp_extra_args))
         cmd.extend(["-f", str(prompt_file)])

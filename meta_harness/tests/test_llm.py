@@ -128,6 +128,35 @@ def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
     assert calls
 
 
+def test_run_provider_once_does_not_wrap_agent_in_wall_clock_timeout(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("hello", encoding="utf-8")
+    log = tmp_path / "run.log"
+    seen: dict[str, object] = {}
+
+    class Proc:
+        pid = 1236
+        stdout = io.StringIO("provider output\n")
+
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, *args, **kwargs):
+        seen["cmd"] = list(cmd)
+        return Proc()
+
+    monkeypatch.setattr("meta_harness.llm.subprocess.Popen", fake_popen)
+
+    rc = run_provider_once("codex", "new", "tiny", "prompt", prompt, log, cfg, timeout_secs=1)
+
+    assert rc == 0
+    cmd = seen["cmd"]
+    assert isinstance(cmd, list)
+    assert cmd[:2] != ["timeout", "--foreground"]
+    assert cmd[0] == "codex"
+
+
 def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_path):
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = tmp_path / "prompt.txt"
@@ -203,6 +232,6 @@ def test_run_and_mirror_output_restarts_silent_agent(monkeypatch, tmp_path):
 
     text = log.read_text(encoding="utf-8")
     assert rc == 0
-    assert "no output for 1s; restarting agent executable" in text
+    assert "log did not grow for 1s; restarting agent executable" in text
     assert "restart=1 start provider=mock" in text
     assert "ok" in text

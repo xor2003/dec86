@@ -13,7 +13,13 @@ from meta_harness.policy import (
     decide_worker_runtime,
     decide_worker_timeout,
 )
-from meta_harness.stuck_policy import classify_stuck_reason, decide_stuck, estimated_rounds, stuck_after_rounds
+from meta_harness.stuck_policy import (
+    classify_stuck_reason,
+    decide_stuck,
+    estimated_rounds,
+    stuck_after_rounds,
+    stuck_playbook,
+)
 from meta_harness.task_packet import (
     TASK_PACKET_SCHEMA_VERSION,
     count_remaining_plan_steps,
@@ -172,3 +178,16 @@ def test_stuck_policy_uses_one_and_half_round_budget():
 def test_stuck_policy_classifies_broad_item():
     item = "1. Goal: broad.\n" + ("`file.py:1` " * 20)
     assert classify_stuck_reason(item) == "plan-item-too-broad"
+
+
+def test_stuck_policy_has_category_specific_playbooks():
+    categories = {
+        "timeout-or-silent-agent": "restart fresh context",
+        "test-or-runtime-failure": "keep the failing command fixed",
+        "evidence-gap": "diagnostic/data-collection PLAN step",
+        "plan-item-too-broad": "rewrite into smaller Execution Specification items",
+        "worker-no-progress": "narrower task packet",
+    }
+
+    for category, expected in categories.items():
+        assert expected in stuck_playbook(category)
