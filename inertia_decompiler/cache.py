@@ -13,6 +13,7 @@ DECOMPILATION_CACHE_DIR = _ROOT / ".inertia_decomp_cache"
 RECOVERY_CACHE_SOURCE_FILES = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
+    _ROOT / "inertia_decompiler" / "cli_decompilation.py",
     _ROOT / "inertia_decompiler" / "cache.py",
     _ROOT / "inertia_decompiler" / "decompilation_quality.py",
     _ROOT / "inertia_decompiler" / "disassembly_helpers.py",
@@ -46,6 +47,7 @@ SIDECAR_METADATA_CACHE_SOURCE_FILES = (
 DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
+    _ROOT / "inertia_decompiler" / "cli_decompilation.py",
     _ROOT / "inertia_decompiler" / "cache.py",
     _ROOT / "inertia_decompiler" / "decompilation_quality.py",
     _ROOT / "inertia_decompiler" / "disassembly_helpers.py",
@@ -61,6 +63,7 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "condition_ir.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_flags.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_calls.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_stage.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_simplify.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_structuring_stage.py",

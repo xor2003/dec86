@@ -56,6 +56,30 @@ That means alias, widening, traits, types, and readable control-flow recovery
 should move toward typed Inertia IR artifacts, not deeper dependence on AIL or
 raw VEX tmp shape.
 
+## Layer ownership map
+
+Land new work in the earliest correct layer.
+
+- `frontend`: `angr_platforms/angr_platforms/X86_16/`
+  - arch, loader, lift, SimOS, sidecar/signature ingestion
+- `IR`: `angr_platforms/angr_platforms/X86_16/ir/`
+- `semantics`: `angr_platforms/angr_platforms/X86_16/semantics/`
+- `alias`: `angr_platforms/angr_platforms/X86_16/alias/`
+- `widening`: `angr_platforms/angr_platforms/X86_16/widening/`
+- `traits / summaries / confidence`: package-root `angr_platforms/angr_platforms/X86_16/*.py`
+- `types / lowering / object recovery`: `angr_platforms/angr_platforms/X86_16/lowering/` plus package-root `type_*.py`
+- `structuring`: `angr_platforms/angr_platforms/X86_16/structuring/` plus `decompiler_structuring_stage.py`
+- `rewrite / cleanup`: `angr_platforms/angr_platforms/X86_16/postprocess/` plus `decompiler_postprocess_stage.py`
+- `tail validation`: `angr_platforms/angr_platforms/X86_16/tail_validation*.py`, `validation_*.py`
+- `CLI / fallback / reporting`: `inertia_decompiler/`
+
+Placement rules:
+
+- semantic recovery belongs under `angr_platforms/angr_platforms/X86_16/`, not `inertia_decompiler/`
+- cleanup-only late rewrites belong under `postprocess/`
+- do not add new ownership to root-level compatibility files such as `alias_model.py`, `alias_domains.py`, `alias_state.py`, `alias_transfer.py`
+- when both a subpackage and a root-level `X86_16/*.py` file exist for the same concern, prefer the subpackage unless the root file is already the clear owner
+
 ## Target decompiler
 
 We are building a decompiler for:
@@ -510,9 +534,7 @@ Repo-root Python one-liners launched with `python -c` or `python -` are memory-c
 
 Plan layering rules:
 
-- keep `PLAN.md` and `PLAN2.md` for active execution checklists
-- keep `DEMO.md` for the repeatable external-facing demo story and artifacts
-- keep `GLOBAL_PLAN.md` for long-horizon architectural phases and milestone criteria
+- keep `PLAN.md` for active execution checklists
 - do not replace an execution checklist with vague strategic prose
 
 Resume rules:
@@ -520,36 +542,6 @@ Resume rules:
 - `--resume` continues from the first unfinished step in the latest incomplete cycle
 - `done-with-failures` counts as completed for sweep-step resume
 - `--fresh` starts a new cycle
-
-Token-efficiency defaults:
-
-- prefer compact prompts
-- prefer short continuation prompts on `codex resume`
-- use `gpt-5.4-mini` by default for planner/checker/worker/reviewer unless a stronger model is justified
-- keep visible assistant output in lean "caveman" style by default: short sentences, little filler, result first
-- prefer concise structured artifacts over free-form prose when the user does not need narrative explanation
-
-Token-efficiency discipline:
-
-- compress visible output, not the reasoning substrate
-- prefer typed artifacts, task packets, and machine-readable state over replaying full chat history
-- prefer external persisted state and small deltas over resending prior turns
-- prefer summarization or compact state snapshots over replaying long intermediate logs
-- load only the smallest relevant code, log, artifact, or tool slice needed for the current decision
-- prefer semantic retrieval, exact symbol lookup, and focused file windows over broad repository tours
-- prefer lazy loading of tool schemas, context, and reference material; do not dump large definitions up front
-- prefer one stable artifact path or summary row over repeating the same evidence in prose
-- trim tool and CLI output before feeding it back to a model; keep only the signal
-- prefer cleaned text or markdown over noisy HTML or verbose raw tool payloads
-- prefer compact structured output or short bullet rows over verbose explanatory prose
-- prefer compact machine-readable formats and stable schemas; avoid bloated serialization when a smaller exact form works
-- do not repeat the same prompt preamble, file dump, test output, or evidence excerpt when a prior artifact already proves the point
-- do not re-run the same expensive command without a concrete code change, hypothesis change, or missing measurement
-- when a backend supports prompt caching, previous-response chaining, or equivalent prefix reuse, prefer it for stable instructions and tool schemas
-- prefer semantic or exact-match caching of repeated retrieval work when correctness is unchanged
-- use cheap preprocessing or summarization steps before the main reasoning model when that reduces large raw inputs without hiding signal
-- use small/cheap models for routing, pruning, summarization, or classification, and reserve stronger models for the reasoning step that actually needs them
-- if a token-saving trick would hide evidence, remove semantic detail, or weaken attribution, do not use it
 
 ## Review checklist
 
@@ -591,6 +583,9 @@ Never do these unless explicitly marked as a temporary rescue:
 - Keep modules focused and small.
 - Split mixed-responsibility files before adding more logic.
 - Avoid lader effect.
+- logging is a friend for debugging
+- docstrings is a must
+- comment complex or important things
 - Prefer SRP over convenience.
 - It is forbidden to add any code to file bigger when 400 lines.
 For example to inertia_decompiler/:
@@ -695,12 +690,3 @@ If recovered coverage is substantially below the exact region, report it as trun
 - Project overview and usage: [`README.md`](/home/xor/vextest/README.md)
 - Main long-term roadmap: [`angr_platforms/docs/dream_decompiler_execution_plan.md`](/home/xor/vextest/angr_platforms/docs/dream_decompiler_execution_plan.md)
 - Current working plan: [`PLAN.md`](/home/xor/vextest/PLAN.md)
-- Secondary active execution plan: [`PLAN2.md`](/home/xor/vextest/PLAN2.md)
-- Demo plan: [`DEMO.md`](/home/xor/vextest/DEMO.md)
-- Long-horizon architectural plan: [`GLOBAL_PLAN.md`](/home/xor/vextest/GLOBAL_PLAN.md)
-- Meta harness usage: [`meta_harness/README.md`](/home/xor/vextest/meta_harness/README.md)
-
-Act autonomously. Do not ask for permission or clarification if the next step is logically clear. Proceed with the implementation until the task is complete.
-Provide full, production-ready code. Do not use placeholders, comments like 'insert logic here', or truncated snippets. Complete the entire file.
-Identify, analyze, and fix the issue in one go. If you encounter a minor ambiguity, make an educated guess based on the existing codebase and proceed.
-Be hyper-concise. No preamble/outro. Direct answers only. Use shorthand. Don't ask to continue—just finish.

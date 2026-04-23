@@ -53,3 +53,9 @@ Completion checkpoint (review.approved, width-boundary PLAN item pruned):
   - focused one-function reruns `--addr 0x10ce0` and `--addr 0x10f38` both exited `0`
   - review found no `clinic:variable-recovery-size-mismatch`, no `Non-constant VexValue has no value property`, and no traceback on those anchors
 - PLAN action completed: the finished width-boundary item was removed from `PLAN.md`, and remaining condition/lowering quality work stays owned by later numbered items.
+
+Completion checkpoint (review.approved, partial PLAN #1 ordering change):
+- Current primary runtime task remains the umbrella `objective:task-0001-complete-plan` (`task-1776859260-46ae`) and stays `in_progress`; `task-0001` also remains `in_progress`.
+- Approved atomic scope: typed stable-SS stack lowering now runs through `run_stack_lowering_pass_8616()` before late CLI byte-offset/cvar cleanup, and `lowering/stack_lowering.py` no longer uses a dynamic `globals().update(...)` export wrapper.
+- Evidence reviewed from `.ralph/agent/review.latest.md`: `test_x86_16_segmented_stack_alias.py` => `11 passed`; COD stack-slot subset => `2 passed, 68 deselected`; compileall exited `0`; one-function `0x10010` and `0x109e8` lanes exited `0`.
+- PLAN action: no pruning or closure. PLAN #1 remains open because emitted exact-lane C is unchanged and still contains raw `*((ss << 4) + vvar_...)` stack-carrier stores.

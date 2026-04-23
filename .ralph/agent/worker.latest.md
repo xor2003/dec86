@@ -1,36 +1,28 @@
 # Worker Latest
 
 ## Task
-- event handled: `plan.ready`
-- active PLAN item worked: `#1 Preserve stack-probe/chkstk helper return-state as typed stack-address evidence so SwapBars stops degrading to fake stack carriers and raw segmented arg stores`
+- event handled: direct `/tmp/.tmprtOLiX` execution
+- active PLAN item worked: `#1 stack-probe/callsite return-state to typed SS stack-address evidence`
+- scope: harden callsite stack-argument materialization so segment-register carriers are refused by typed register identity, not only by rendered register names
 
 ## Changes
-- Updated `/home/xor/vextest/angr_platforms/angr_platforms/X86_16/analysis_helpers.py`:
-  - widened direct-callsite recovery so exact-slice functions can recover callsites from call instructions that sit in the middle of a block, not only block-ending calls
-  - made direct target decoding work for a specific callsite address inside a larger block, while preserving the old block-end behavior
-  - made `collect_neighbor_call_targets()` self-heal empty direct-call inventories before downstream callsite consumers inspect them
-- Added focused regression coverage in `/home/xor/vextest/angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py`:
-  - exact-slice target rebasing now covers a mid-block callsite address
-  - `_attach_callsite_summaries_8616()` now recovers multiple mid-block direct calls from an empty `_call_sites` inventory
+- Updated `/home/xor/vextest/angr_platforms/angr_platforms/X86_16/decompiler_postprocess_calls.py`:
+  - `_materialize_callsite_stack_arguments_8616` now recognizes `cs`/`ds`/`es`/`ss` arguments through structured `SimRegisterVariable` identity via `_segment_reg_name_8616`
+  - this prevents unnamed segment registers from being promoted as recovered call arguments
+- Updated `/home/xor/vextest/angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py`:
+  - added coverage for refusing an unnamed `cs` carrier as a call argument after stack-probe evidence
+- Tried later CLI callsite materialization before stack lowering, but reverted it because it regressed `main` call ordering/coverage (`setvideomode` disappeared and `RunMenu` shifted). The safe follow-up remains earlier typed stack-base identity for `vvar_*` carriers, not late CLI wiring.
 
 ## Verification
-- Focused tests run:
-  - `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py angr_platforms/tests/test_x86_16_callsite_summary.py angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py`
-  - result: `29 passed`
-- Required one-function commands from PLAN #1 rerun:
-  - `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10768 --timeout 30 --alternate-source-c` => `exit 0`
-  - `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10678 --timeout 30 --alternate-source-c` => `exit 0`
-  - `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10e70 --timeout 30 --alternate-source-c` => `exit 0`
-- Focused exact-slice probe:
-  - `_recover_lst_function(..., 0x10768, "SwapBars")` + `patch_direct_call_sites()` now recovers `0x1006`, `0x100e`, `0x1017`, `0x1020` and `summarize_x86_16_callsite()` resolves `aNchkstk`, both `DrawBar` calls, and `DrawTime`
+- `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py` => `23 passed`
+- `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_stack_probe_return_state_regression.py angr_platforms/tests/test_x86_16_segmented_stack_alias.py` => `12 passed`
+- `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_package_exports.py -k 'decompiler_postprocess_registry_order or postprocess_passes_for_wrapper'` => `1 passed, 15 deselected`
+- `./.venv/bin/python -m compileall -q inertia_decompiler/cli_decompilation.py angr_platforms/angr_platforms/X86_16/decompiler_postprocess_calls.py` => `exit 0`
+- `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10010 --timeout 30 --alternate-source-c` => `exit 0`; raw `ss << 4` / `vvar_*` stack carriers remain; segment-register args are no longer guessed for `displaycursor`/`setvideomode`
+- `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x109e8 --timeout 30 --alternate-source-c` => `exit 0`; raw `ss << 4` / `vvar_*` stack carriers remain
+- `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10768 --timeout 30 --alternate-source-c` => `exit 0`; no `ss << 4` match in the focused grep
 
 ## DoD status
 - PLAN item #1: **advanced, not complete**
-- Completed this iteration:
-  - earliest-layer exact-slice callsite inventory is no longer empty when direct calls live mid-block
-  - downstream callsite summary consumers now have recoverable callsite/target evidence on `SwapBars` exact slices instead of an empty inventory
-  - focused regression coverage locks this exact-slice mid-block recovery behavior
-- Remaining blocker for closure:
-  - live exact-lane output for `SwapBars` (`0x10768`) is still unchanged: fake carrier setup (`s_2 = &s_2 + 2`, `s_2 = vvar_2`) and raw SS argument-store scaffolding remain in emitted C
-  - support anchors `ReInitBars` (`0x10678`) and `Beep` (`0x10e70`) also remain unchanged on this iteration, so the recovered callsite inventory is still not surfacing through the live postprocess/codegen output
-  - next worker should instrument the live exact-slice postprocess path on `SwapBars` to compare recovered callsite count vs. actual `CFunctionCall` nodes and identify where the recovered summaries stop propagating
+- No `PLAN.md` pruning is justified because `0x10010` and `0x109e8` still emit raw stack-carrier stores.
+- Next worker should continue at the earliest typed evidence layer: derive stack-probe return/base identity for `vvar_*` carriers before attempting any later CLI callsite rewiring.

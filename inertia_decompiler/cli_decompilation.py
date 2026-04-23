@@ -41,8 +41,14 @@ from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations
 from angr_platforms.X86_16.annotations import _apply_known_helper_signatures, annotate_function
 from angr_platforms.X86_16.cod_extract import CODProcMetadata, extract_cod_proc_metadata
 from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
+from angr_platforms.X86_16.decompiler_postprocess_calls import (
+    _attach_callsite_summaries_8616,
+    _materialize_callsite_prototypes_8616,
+    _materialize_callsite_stack_arguments_8616,
+)
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lst_extract import LSTMetadata
+from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
 
 from inertia_decompiler.cache import (
     _function_decompilation_cache_key,
@@ -814,9 +820,21 @@ def _decompile_function(
 
     def _run_stack_lowering_pass() -> bool:
         return run_stack_lowering_pass_8616(
+            lower_stable_ss_stack_accesses=lambda: apply_x86_16_segmented_memory_reasoning(dec.codegen),
             rewrite_ss_stack_byte_offsets=lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
             canonicalize_stack_cvars=lambda: _canonicalize_stack_cvars(dec.codegen),
         )
+
+    def _run_callsite_stack_fact_pass() -> bool:
+        changed_local = False
+        for rewrite in (
+            lambda: _attach_callsite_summaries_8616(project, dec.codegen),
+            lambda: _materialize_callsite_stack_arguments_8616(project, dec.codegen),
+            lambda: _materialize_callsite_prototypes_8616(project, dec.codegen),
+        ):
+            if rewrite():
+                changed_local = True
+        return changed_local
 
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
@@ -827,6 +845,7 @@ def _decompile_function(
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
+        _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
         lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
@@ -852,6 +871,7 @@ def _decompile_function(
         lambda: _prune_unused_local_declarations(dec.codegen),
         lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
         lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
+        _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
         lambda: _prune_unused_local_declarations(dec.codegen),
@@ -865,6 +885,7 @@ def _decompile_function(
         lambda: _attach_register_names(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
+        _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
         lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
@@ -891,6 +912,7 @@ def _decompile_function(
             lambda: _prune_unused_local_declarations(dec.codegen),
             lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
             lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
+            _run_callsite_stack_fact_pass,
             _run_stack_lowering_pass,
             lambda: _run_typed_widening_pass(project, dec.codegen),
             lambda: _prune_unused_local_declarations(dec.codegen),
