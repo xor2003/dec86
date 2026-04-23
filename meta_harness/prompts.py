@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from .config import RuntimeConfig
+from .stuck_policy import stuck_playbook
+from .task_intake import read_pending_task
 
 
 def _style_contract() -> str:
@@ -138,6 +140,16 @@ def build_planner_prompt(
         "- Each item must say what to edit in those files in execution order.\n"
         "- Each item must specify the concrete functions, tests, or scripts to change.\n"
         "- Each item must contain these explicit fields in this order: Goal, Why now, Edit targets, Required edits, Required tests, Verification commands, Definition of done, Stop conditions.\n"
+        "- Each item must also include: Estimated rounds: N.\n"
+        "- Estimated rounds must be a small integer budget for how many worker cycles should be enough when the item is well-scoped.\n"
+        "- For each goal, generate an Execution Specification: exact edits in execution order, exact tests, exact DoD, exact stop conditions, and the estimated round count.\n"
+        "- If a task was supplied by the operator, add deterministic PLAN.md steps for it instead of leaving it only in chat or comments.\n"
+        "- If an item remains stuck for at least ceil(Estimated rounds * 1.5), classify the stuck reason and apply the matching playbook before retrying.\n"
+        "- Stuck playbook timeout-or-silent-agent: " + stuck_playbook("timeout-or-silent-agent") + ".\n"
+        "- Stuck playbook test-or-runtime-failure: " + stuck_playbook("test-or-runtime-failure") + ".\n"
+        "- Stuck playbook evidence-gap: " + stuck_playbook("evidence-gap") + ".\n"
+        "- Stuck playbook plan-item-too-broad: " + stuck_playbook("plan-item-too-broad") + ".\n"
+        "- Stuck playbook worker-no-progress: " + stuck_playbook("worker-no-progress") + ".\n"
         "- Required edits must be imperative and executable, not descriptive.\n"
         "- Verification commands must be concrete shell commands, not generic advice.\n"
         "- Each item must include a deterministic definition of done.\n"
@@ -158,6 +170,15 @@ def build_planner_prompt(
         "- If there is nothing meaningful left to do, say that clearly.\n"
         "- At the end, print exactly: Global Remaining steps: N\n"
     )
+    pending_task = read_pending_task(cfg.root_dir)
+    if pending_task:
+        prompt += (
+            "\nOperator task intake:\n"
+            "- Convert this task into new or updated PLAN.md Execution Specification items.\n"
+            "- Delete .codex_automation/requested_task.md only after the task is represented in PLAN.md.\n"
+            "- Preserve AGENTS.md constraints and do not skip the checker/planner/worker/reviewer separation.\n"
+            f"{pending_task}\n"
+        )
     current_item_text = current_item.strip()
     rewrite_target_text = rewrite_target.strip()
     task_packet_text = task_packet.strip()

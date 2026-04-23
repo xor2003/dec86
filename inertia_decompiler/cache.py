@@ -66,6 +66,7 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_calls.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_stage.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_postprocess_simplify.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "callsite_stack_metadata.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "decompiler_structuring_stage.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lift_86_16.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "load_dos_mz.py",

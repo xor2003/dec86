@@ -5,6 +5,8 @@ import shlex
 import subprocess
 import os
 import json
+import signal
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -116,6 +118,82 @@ def _append_to_logs(outputs: tuple[object, ...], text: str) -> None:
         out.flush()
 
 
+def _agent_no_output_restart_secs() -> int:
+    try:
+        return max(0, int(os.environ.get("AGENT_NO_OUTPUT_RESTART_SECS", "180")))
+    except ValueError:
+        return 180
+
+
+def _agent_no_output_max_restarts() -> int:
+    try:
+        return max(0, int(os.environ.get("AGENT_NO_OUTPUT_MAX_RESTARTS", "1")))
+    except ValueError:
+        return 1
+
+
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        proc.kill()
+    proc.wait()
+
+
+def _stream_process_output(
+    proc: subprocess.Popen[str],
+    outputs: tuple[object, ...],
+    *,
+    idle_timeout_secs: int,
+) -> tuple[int, bool]:
+    assert proc.stdout is not None
+    try:
+        stdout_fd = proc.stdout.fileno()
+    except (AttributeError, OSError, ValueError, TypeError):
+        for line in proc.stdout:
+            _append_to_logs(outputs, line)
+        return proc.wait(), False
+
+    import select
+
+    last_output = time.monotonic()
+    while True:
+        if proc.poll() is not None:
+            while True:
+                readable, _, _ = select.select([stdout_fd], [], [], 0)
+                if not readable:
+                    return proc.wait(), False
+                chunk = os.read(stdout_fd, 8192)
+                if not chunk:
+                    return proc.wait(), False
+                _append_to_logs(outputs, chunk.decode("utf-8", errors="replace"))
+        readable, _, _ = select.select([stdout_fd], [], [], 1.0)
+        if readable:
+            chunk = os.read(stdout_fd, 8192)
+            if chunk:
+                last_output = time.monotonic()
+                _append_to_logs(outputs, chunk.decode("utf-8", errors="replace"))
+                continue
+            if proc.poll() is not None:
+                return proc.wait(), False
+        if idle_timeout_secs > 0 and time.monotonic() - last_output >= idle_timeout_secs:
+            _append_to_logs(
+                outputs,
+                f"[{_timestamp()}] no output for {idle_timeout_secs}s; restarting agent executable\n",
+            )
+            _terminate_process(proc)
+            return 124, True
+
+
 def _run_and_mirror_output(
     cmd: list[str],
     *,
@@ -130,27 +208,34 @@ def _run_and_mirror_output(
     config.last_log_file.parent.mkdir(parents=True, exist_ok=True)
     with log_file.open("w", encoding="utf-8") as out, config.last_log_file.open("w", encoding="utf-8") as mirror:
         outputs = (out, mirror)
-        _append_to_logs(outputs, header)
-        proc = subprocess.Popen(
-            cmd,
-            stdin=stdin,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-            preexec_fn=preexec_fn,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
-        register_child_process(config.status_file.parent, proc.pid, proc_name, str(config.root_dir), _timestamp())
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                _append_to_logs(outputs, line)
-            rc = proc.wait()
-        finally:
-            unregister_child_process(config.status_file.parent, proc.pid)
+        idle_timeout_secs = _agent_no_output_restart_secs()
+        max_restarts = _agent_no_output_max_restarts()
+        for attempt in range(max_restarts + 1):
+            attempt_header = header if attempt == 0 else header.replace("] start ", f"] restart={attempt} start ", 1)
+            _append_to_logs(outputs, attempt_header)
+            if stdin is not None and hasattr(stdin, "seek"):
+                stdin.seek(0)
+            proc = subprocess.Popen(
+                cmd,
+                stdin=stdin,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env,
+                preexec_fn=preexec_fn,
+                start_new_session=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            register_child_process(config.status_file.parent, proc.pid, proc_name, str(config.root_dir), _timestamp())
+            try:
+                rc, idle_restart = _stream_process_output(proc, outputs, idle_timeout_secs=idle_timeout_secs)
+            finally:
+                unregister_child_process(config.status_file.parent, proc.pid)
+            if idle_restart and attempt < max_restarts:
+                continue
+            break
     footer = f"[{_timestamp()}] end rc={rc}\n"
     with log_file.open("a", encoding="utf-8") as out, config.last_log_file.open("a", encoding="utf-8") as mirror:
         _append_to_logs((out, mirror), footer)
