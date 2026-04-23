@@ -176,7 +176,7 @@ class _Engine:
         raise AssertionError("guard not installed")
 
 
-def test_variable_recovery_guard_logs_size_mismatch(capsys) -> None:
+def test_variable_recovery_guard_skips_size_mismatch_log_when_width_coercion_succeeds(capsys) -> None:
     original = install_angr_variable_recovery_binop_sub_size_guard(
         _Engine,
         richr_cls=_FakeRichR,
@@ -191,8 +191,7 @@ def test_variable_recovery_guard_logs_size_mismatch(capsys) -> None:
     captured = capsys.readouterr()
     assert isinstance(result, _FakeRichR)
     assert result.data.size() == 16
-    assert "clinic:variable-recovery-size-mismatch" in captured.err
-    assert "lhs_bits=16 rhs_bits=32 expr_bits=16" in captured.err
+    assert "clinic:variable-recovery-size-mismatch" not in captured.err
 
 
 class _SignedOffsetEngine(_Engine):
@@ -217,3 +216,37 @@ def test_variable_recovery_guard_sign_extends_negative_16bit_sub_operand() -> No
     assert isinstance(result, _FakeRichR)
     assert result.data.size() == 16
     assert result.data.concrete_value == 0x0034
+
+
+class _BrokenBV(_FakeBV):
+    def zero_extend(self, nbits: int) -> _FakeBV:  # noqa: ARG002
+        raise RuntimeError("cannot widen")
+
+    def __getitem__(self, item) -> _FakeBV:  # noqa: ANN001
+        raise RuntimeError("cannot slice")
+
+
+class _BrokenWidthEngine(_Engine):
+    def _expr_pair(self, arg0, arg1):  # noqa: ANN001
+        lhs = _FakeRichR(_BrokenBV(16), typevar=None)
+        rhs = _FakeRichR(_FakeBV(32), typevar=None)
+        return lhs, rhs
+
+
+def test_variable_recovery_guard_logs_size_mismatch_when_width_coercion_fails(capsys) -> None:
+    original = install_angr_variable_recovery_binop_sub_size_guard(
+        _BrokenWidthEngine,
+        richr_cls=_FakeRichR,
+        typevars_module=_FakeTypevars,
+    )
+    try:
+        engine = _BrokenWidthEngine()
+        result = engine._handle_binop_Sub(_FakeExpr())
+    finally:
+        _BrokenWidthEngine._handle_binop_Sub = original
+
+    captured = capsys.readouterr()
+    assert isinstance(result, _FakeRichR)
+    assert result.data.size() == 16
+    assert "clinic:variable-recovery-size-mismatch" in captured.err
+    assert "lhs_bits=16 rhs_bits=32 expr_bits=16" in captured.err

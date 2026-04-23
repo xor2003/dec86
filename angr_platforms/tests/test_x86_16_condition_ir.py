@@ -72,6 +72,17 @@ def test_vex_condition_lifting_uses_typed_condition_ops():
     assert build_condition_from_binop("Iop_CmpNE16", left, IRValue(MemSpace.CONST, const=0, size=2, expr=("int",))).op == "nonzero"
 
 
+def test_vex_condition_lifting_harmonizes_operand_widths_from_cmp_opcode():
+    left = IRValue(MemSpace.REG, name="eax", size=4, expr=("reg",))
+    right = IRValue(MemSpace.CONST, const=1, size=1, expr=("int",))
+
+    condition = build_condition_from_binop("Iop_CmpEQ32", left, right)
+
+    assert condition is not None
+    assert condition.op == "eq"
+    assert tuple(value.size for value in condition.args) == (4, 4)
+
+
 def _tmp(tmp: int):
     return SimpleNamespace(tag="Iex_RdTmp", tmp=tmp)
 

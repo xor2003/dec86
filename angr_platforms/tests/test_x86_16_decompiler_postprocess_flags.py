@@ -158,6 +158,54 @@ def test_rewrite_flag_bit_value_uses_recovers_carry_predicate_for_numeric_use():
     assert after_assign.rhs.rhs.op == "CmpLT"
 
 
+def test_rewrite_flag_bit_value_uses_recovers_shift_materialized_carry_predicate():
+    project = _project()
+    codegen = _codegen([])
+    flags_var = _reg(project, "flags", codegen, var_name="flags_tmp")
+    target_var = _reg(project, "dx", codegen, var_name="dx_tmp")
+    carry_predicate = CBinaryOp("CmpLT", _reg(project, "ax", codegen), _reg(project, "bx", codegen), codegen=codegen)
+    flags_value = CBinaryOp(
+        "Or",
+        CBinaryOp(
+            "Shl",
+            CBinaryOp("And", carry_predicate, _const(1, codegen), codegen=codegen),
+            _const(0, codegen),
+            codegen=codegen,
+        ),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    numeric_carry_use = CBinaryOp(
+        "And",
+        CBinaryOp("Shr", flags_var, _const(0, codegen), codegen=codegen),
+        _const(1, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(flags_var, flags_value, codegen=codegen),
+            CAssignment(
+                target_var,
+                CBinaryOp("Add", _reg(project, "dx", codegen), numeric_carry_use, codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _rewrite_flag_bit_value_uses_8616(codegen)
+
+    assert changed is True
+    after_assign = codegen.cfunc.statements.statements[1]
+    assert isinstance(after_assign, CAssignment)
+    assert _c_expr_uses_var_8616(after_assign.rhs, flags_var) is False
+    assert isinstance(after_assign.rhs, CBinaryOp)
+    assert isinstance(after_assign.rhs.rhs, CBinaryOp)
+    assert after_assign.rhs.rhs.op == "CmpLT"
+
+
 def test_rewrite_flag_bit_value_uses_refuses_masked_flag_value_that_is_not_zero_or_one():
     project = _project()
     codegen = _codegen([])

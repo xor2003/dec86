@@ -2083,7 +2083,7 @@ def test_rank_function_cfg_pairs_for_display_prefers_large_pre_entry_body_when_c
     assert [function.addr for _cfg, function in ranked[:3]] == [0x11423, 0x10010, 0x11440]
 
 
-def test_function_attempt_status_reports_disabled_tail_validation(capsys):
+def test_function_attempt_status_reports_uncollected_when_tail_validation_disabled(capsys):
     function = SimpleNamespace(
         addr=0x10010,
         name="sub_10010",
@@ -2096,7 +2096,7 @@ def test_function_attempt_status_reports_disabled_tail_validation(capsys):
         validation_snapshot=None,
     )
 
-    assert "attempt=decompiled validation=disabled" in capsys.readouterr().out
+    assert "attempt=decompiled validation=uncollected" in capsys.readouterr().out
 
 
 def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path):
@@ -2867,6 +2867,153 @@ def test_coalesce_segmented_word_store_statements_refuses_non_joinable_stack_slo
     assert codegen.cfunc.statements.statements[1].lhs is next_lhs
 
 
+def test_coalesce_segmented_word_store_statements_accepts_stable_ds_segment_const_pair_without_alias_identity(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, bits=16, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+
+    low_addr_expr = object()
+    high_addr_expr = object()
+    low_lhs = object()
+    high_lhs = object()
+    rhs_low = structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen)
+    rhs_high = structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen)
+    word_rhs = structured_c.CConstant(0x3412, SimTypeShort(False), codegen=codegen)
+    replacement_lhs = object()
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_lhs, rhs_low, codegen=codegen),
+            structured_c.CAssignment(high_lhs, rhs_high, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_byte_store_addr_expr",
+        lambda node: low_addr_expr if node is low_lhs else high_addr_expr if node is high_lhs else None,
+    )
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
+    monkeypatch.setattr(decompile, "_match_word_rhs_from_byte_pair", lambda _lo, _hi, _codegen, _project: word_rhs)
+    monkeypatch.setattr(
+        decompile,
+        "describe_alias_storage",
+        lambda _expr: SimpleNamespace(identity=None, can_join=lambda _other: False),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_addr_expr",
+        lambda expr, _project: SimpleNamespace(kind="segment_const", seg_name="ds", linear=0x0BAA if expr is low_addr_expr else 0x0BAB),
+    )
+    monkeypatch.setattr(decompile, "_resolve_stack_cvar_from_addr_expr", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_make_word_dereference_from_addr_expr", lambda _codegen, _project, _addr_expr: replacement_lhs)
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    replacement = codegen.cfunc.statements.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert replacement.lhs is replacement_lhs
+    assert replacement.rhs is word_rhs
+
+
+def test_match_byte_store_addr_expr_accepts_word_typed_dereference_split_store():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    addr_expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant(0x2000, SimTypeShort(False), codegen=codegen),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    deref = decompile._make_word_dereference_from_addr_expr(codegen, project, addr_expr)
+
+    assert decompile._match_byte_store_addr_expr(deref) is addr_expr
+
+
+def test_coalesce_segmented_word_store_statements_rewrites_word_typed_split_store_inside_while_loop(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        arg_list=(),
+        sort_local_vars=lambda: None,
+        unified_local_vars={},
+        variables_in_use={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+
+    low_addr_expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant(0x2000, SimTypeShort(False), codegen=codegen),
+        structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    high_addr_expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant(0x2000, SimTypeShort(False), codegen=codegen),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    low_lhs = decompile._make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
+    high_lhs = decompile._make_word_dereference_from_addr_expr(codegen, project, high_addr_expr)
+    rhs_low = structured_c.CConstant(0x12, SimTypeChar(False), codegen=codegen)
+    rhs_high = structured_c.CConstant(0x34, SimTypeChar(False), codegen=codegen)
+    word_rhs = structured_c.CConstant(0x3412, SimTypeShort(False), codegen=codegen)
+    replacement_lhs = object()
+
+    loop_body = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_lhs, rhs_low, codegen=codegen),
+            structured_c.CAssignment(high_lhs, rhs_high, codegen=codegen),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    loop = structured_c.CWhileLoop(
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        loop_body,
+        codegen=codegen,
+    )
+    cfunc.statements = structured_c.CStatements([loop], addr=0x10010, codegen=codegen)
+
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
+    monkeypatch.setattr(decompile, "_match_word_rhs_from_byte_pair", lambda _lo, _hi, _codegen, _project: word_rhs)
+    monkeypatch.setattr(
+        decompile,
+        "describe_alias_storage",
+        lambda _expr: SimpleNamespace(identity=None, can_join=lambda _other: False),
+    )
+    monkeypatch.setattr(
+        decompile,
+        "_classify_segmented_addr_expr",
+        lambda expr, _project: SimpleNamespace(kind="segment_const", seg_name="ds", linear=0x2000 if expr is low_addr_expr else 0x2001),
+    )
+    monkeypatch.setattr(decompile, "_resolve_stack_cvar_from_addr_expr", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_make_word_dereference_from_addr_expr", lambda _codegen, _project, _addr_expr: replacement_lhs)
+
+    changed = decompile._coalesce_segmented_word_store_statements(project, codegen)
+
+    assert changed is True
+    rewritten_loop = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten_loop, structured_c.CWhileLoop)
+    assert len(rewritten_loop.body.statements) == 1
+    replacement = rewritten_loop.body.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert replacement.lhs is replacement_lhs
+    assert replacement.rhs is word_rhs
+
+
 def test_coalesce_segmented_word_load_expressions_preserves_existing_dereference_evidence(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(addr=0x10010)
@@ -3192,6 +3339,137 @@ def test_coalesce_direct_ss_local_word_statements_refuses_region_mismatch(monkey
     assert changed is False
     assert len(cfunc.statements.statements) == 2
     assert low_var.size == 1
+
+
+def test_coalesce_direct_ss_local_word_statements_rewrites_stack_address_split_store_inside_while_loop(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        variables_in_use={},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    low_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
+    low_cvar = structured_c.CVariable(low_var, codegen=codegen)
+    word_var = SimStackVariable(0, 2, base="bp", name="local_0", region=0x10010)
+    word_cvar = structured_c.CVariable(word_var, codegen=codegen)
+    low_addr_expr = object()
+    high_addr_expr = object()
+    low_lhs = object()
+    high_lhs = object()
+
+    loop_body = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                low_lhs,
+                low_cvar,
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                high_lhs,
+                structured_c.CBinaryOp(
+                    "Shr",
+                    low_cvar,
+                    structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    loop = structured_c.CWhileLoop(
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        loop_body,
+        codegen=codegen,
+    )
+    cfunc.statements = structured_c.CStatements([loop], addr=0x10010, codegen=codegen)
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_byte_store_addr_expr",
+        lambda node: low_addr_expr if node is low_lhs else high_addr_expr if node is high_lhs else None,
+    )
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: True)
+    monkeypatch.setattr(
+        decompile,
+        "_match_shift_right_8_expr",
+        lambda node: low_cvar if node is loop_body.statements[1].rhs else None,
+    )
+    monkeypatch.setattr(decompile, "_resolve_stack_cvar_from_addr_expr", lambda _project, _codegen, expr: word_cvar if expr is low_addr_expr else None)
+    monkeypatch.setattr(decompile, "_canonicalize_stack_cvar_expr", lambda expr, _codegen: expr)
+
+    changed = decompile._coalesce_direct_ss_local_word_statements(project, codegen)
+
+    assert changed is True
+    rewritten_loop = cfunc.statements.statements[0]
+    assert isinstance(rewritten_loop, structured_c.CWhileLoop)
+    assert len(rewritten_loop.body.statements) == 1
+    replacement = rewritten_loop.body.statements[0]
+    assert isinstance(replacement, structured_c.CAssignment)
+    assert replacement.lhs is word_cvar
+    assert replacement.rhs is low_cvar
+
+
+def test_coalesce_direct_ss_local_word_statements_refuses_nonadjacent_stack_address_pair(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(byte_width=8, name="X86"))
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        variables_in_use={},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    low_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
+    low_cvar = structured_c.CVariable(low_var, codegen=codegen)
+    low_addr_expr = object()
+    high_addr_expr = object()
+    low_lhs = object()
+    high_lhs = object()
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(low_lhs, low_cvar, codegen=codegen),
+            structured_c.CAssignment(
+                high_lhs,
+                structured_c.CBinaryOp(
+                    "Shr",
+                    low_cvar,
+                    structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    monkeypatch.setattr(
+        decompile,
+        "_match_byte_store_addr_expr",
+        lambda node: low_addr_expr if node is low_lhs else high_addr_expr if node is high_lhs else None,
+    )
+    monkeypatch.setattr(decompile, "_addr_exprs_are_byte_pair", lambda _low, _high, _project: False)
+    monkeypatch.setattr(
+        decompile,
+        "_match_shift_right_8_expr",
+        lambda node: low_cvar if node is root.statements[1].rhs else None,
+    )
+
+    changed = decompile._coalesce_direct_ss_local_word_statements(project, codegen)
+
+    assert changed is False
+    assert len(cfunc.statements.statements) == 2
+    assert cfunc.statements.statements[0].lhs is low_lhs
+    assert cfunc.statements.statements[1].lhs is high_lhs
 
 
 def test_coalesce_far_pointer_stack_expressions_avoids_byte_local_alias_for_far_pointer_store(monkeypatch):

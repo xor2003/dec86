@@ -3,7 +3,7 @@ from __future__ import annotations
 from inertia_decompiler.acceptance_scorecard import build_acceptance_scorecard
 
 
-def test_acceptance_scorecard_counts_output_noise_deterministically() -> None:
+def test_acceptance_scorecard_defaults_validation_to_uncollected_without_evidence() -> None:
     output = """
 /* == c == */
 void main(void)
@@ -28,7 +28,7 @@ void main(void)
     assert scorecard.vvar_count == 2
     assert scorecard.anonymous_sub_count == 1
     assert scorecard.recovery_mode == "decompiled"
-    assert scorecard.validation_verdict == "disabled"
+    assert scorecard.validation_verdict == "uncollected"
     assert scorecard.source_present is True
 
 

@@ -1241,31 +1241,81 @@ def _initial_cs_linear_base(project) -> int | None:
     return (cs & 0xFFFF) << 4
 
 
+def _canonical_code_linear_addr(project, addr: int | None) -> int | None:
+    if not isinstance(addr, int):
+        return None
+    original_project = getattr(project, "_inertia_original_project", None)
+    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    if original_project is None or not isinstance(original_delta, int):
+        return addr
+
+    original_main = getattr(getattr(original_project, "loader", None), "main_object", None)
+    original_base = getattr(original_main, "linked_base", None)
+    if not isinstance(original_base, int):
+        return addr
+    if addr < original_base:
+        return addr + original_delta
+    return addr
+
+
+def _neighbor_image_bounds(project) -> tuple[int | None, int | None]:
+    candidate_projects = [getattr(project, "_inertia_original_project", None), project]
+    for candidate_project in candidate_projects:
+        main_object = getattr(getattr(candidate_project, "loader", None), "main_object", None)
+        linked_base = getattr(main_object, "linked_base", None)
+        max_addr = getattr(main_object, "max_addr", None)
+        if isinstance(linked_base, int) and isinstance(max_addr, int):
+            return linked_base, linked_base + max_addr + 1
+    return None, None
+
+
+def _direct_call_insn_from_block(project, block_addr: int):
+    block = project.factory.block(block_addr, opt_level=0)
+    insns = getattr(getattr(block, "capstone", None), "insns", ()) or ()
+    if not insns:
+        return None
+
+    for insn in insns:
+        if getattr(insn, "address", None) != block_addr:
+            continue
+        mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+        if mnemonic in {"call", "lcall"}:
+            return insn
+
+    last = insns[-1]
+    mnemonic = str(getattr(last, "mnemonic", "") or "").lower()
+    if mnemonic in {"call", "lcall"}:
+        return last
+    return None
+
+
+def _resolve_direct_call_target_from_insn(project, insn) -> int | None:
+    operands = getattr(getattr(insn, "insn", None), "operands", ()) or ()
+    mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+
+    if mnemonic == "lcall" and len(operands) == 2 and all(getattr(op, "type", None) == 2 for op in operands):
+        seg = operands[0].imm & 0xFFFF
+        off = operands[1].imm & 0xFFFF
+        return _canonical_code_linear_addr(project, (seg << 4) + off)
+
+    if mnemonic == "call" and len(operands) == 1 and getattr(operands[0], "type", None) == 2:
+        return _canonical_code_linear_addr(project, operands[0].imm & 0xFFFF)
+
+    return None
+
+
 def resolve_direct_call_target_from_block(project, block_addr: int) -> int | None:
     """
-    Recover a direct call target from the last instruction in a block.
+    Recover a direct call target from a block-end call or a callsite inside a block.
 
     This is intentionally narrow and only handles the direct near/far forms
     that show up in our DOS samples. Indirect calls still return ``None``.
     """
 
-    block = project.factory.block(block_addr, opt_level=0)
-    insns = getattr(block.capstone, "insns", ())
-    if not insns:
+    insn = _direct_call_insn_from_block(project, block_addr)
+    if insn is None:
         return None
-
-    last = insns[-1]
-    operands = getattr(last.insn, "operands", ())
-
-    if last.mnemonic == "lcall" and len(operands) == 2 and all(op.type == 2 for op in operands):
-        seg = operands[0].imm & 0xFFFF
-        off = operands[1].imm & 0xFFFF
-        return (seg << 4) + off
-
-    if last.mnemonic == "call" and len(operands) == 1 and operands[0].type == 2:
-        return operands[0].imm & 0xFFFF
-
-    return None
+    return _resolve_direct_call_target_from_insn(project, insn)
 
 
 def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | None:
@@ -1287,12 +1337,68 @@ def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | Non
     if last.mnemonic == "ljmp" and len(operands) == 2 and all(op.type == 2 for op in operands):
         seg = operands[0].imm & 0xFFFF
         off = operands[1].imm & 0xFFFF
-        return (seg << 4) + off
+        return _canonical_code_linear_addr(project, (seg << 4) + off)
 
     if last.mnemonic == "jmp" and len(operands) == 1 and operands[0].type == 2:
-        return operands[0].imm & 0xFFFF
+        return _canonical_code_linear_addr(project, operands[0].imm & 0xFFFF)
 
     return None
+
+
+def patch_direct_call_sites(function) -> bool:
+    """
+    Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
+
+    Rebased exact-region recovery for small 16-bit functions sometimes keeps the
+    block boundaries but loses the function callsite inventory. Downstream
+    callsite summaries and argument recovery consume `Function.get_call_sites()`,
+    so patch the direct block-end calls back into `_call_sites` before later
+    passes give up on call reasoning.
+    """
+
+    project = getattr(function, "project", None)
+    if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
+        return False
+
+    call_sites = getattr(function, "_call_sites", None)
+    if not isinstance(call_sites, dict):
+        return False
+    if call_sites:
+        return False
+
+    changed = False
+    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
+        try:
+            block = project.factory.block(block_addr, opt_level=0)
+        except Exception:
+            continue
+        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        if not insns:
+            continue
+        for insn in insns:
+            mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+            if mnemonic not in {"call", "lcall"}:
+                continue
+            callsite_addr = getattr(insn, "address", None)
+            if not isinstance(callsite_addr, int):
+                continue
+            target_addr = _resolve_direct_call_target_from_insn(project, insn)
+            if target_addr is None:
+                target_addr = resolve_stored_near_call_target_from_function(function, callsite_addr)
+            if target_addr is None:
+                continue
+            size = getattr(insn, "size", None)
+            if not isinstance(size, int) or size <= 0:
+                size = getattr(getattr(insn, "insn", None), "size", None)
+            return_addr = None
+            if isinstance(size, int) and size > 0:
+                return_addr = callsite_addr + size
+            current = call_sites.get(callsite_addr)
+            recovered = (target_addr, return_addr)
+            if current != recovered:
+                call_sites[callsite_addr] = recovered
+                changed = True
+    return changed
 
 
 def resolve_stored_near_call_target_from_function(function, callsite_addr: int) -> int | None:
@@ -1348,7 +1454,7 @@ def resolve_stored_near_call_target_from_function(function, callsite_addr: int) 
         dst_disp = _absolute_mem_disp(dst)
         if dst_disp != slot_disp:
             continue
-        return cs_base + (src.imm & 0xFFFF)
+        return _canonical_code_linear_addr(project, cs_base + (src.imm & 0xFFFF))
 
     return None
 
@@ -1401,7 +1507,7 @@ def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> i
         dst_disp = _absolute_mem_disp(dst)
         if dst_disp != slot_disp:
             continue
-        return cs_base + (src.imm & 0xFFFF)
+        return _canonical_code_linear_addr(project, cs_base + (src.imm & 0xFFFF))
 
     return None
 
@@ -1457,12 +1563,9 @@ def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
     if project is None or project.arch.name != "86_16":
         return []
 
-    main_object = getattr(project.loader, "main_object", None)
-    linked_base = getattr(main_object, "linked_base", None)
-    max_addr = getattr(main_object, "max_addr", None)
-    image_end = None
-    if isinstance(linked_base, int) and isinstance(max_addr, int):
-        image_end = linked_base + max_addr + 1
+    patch_direct_call_sites(function)
+
+    linked_base, image_end = _neighbor_image_bounds(project)
 
     recovered: list[CallTargetSeed] = []
     seen: set[tuple[int, int]] = set()

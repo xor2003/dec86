@@ -27,7 +27,7 @@ except ImportError:
     _typehoon_lifter = None
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from .alias_model import _stack_slot_identity_can_join, _stack_slot_identity_for_variable
+from .alias.alias_model import _stack_slot_identity_can_join, _stack_slot_identity_for_variable
 from .analysis_helpers import preferred_known_helper_signature_decl
 from .annotations import ANNOTATION_KEY, annotate_function
 from .decompiler_postprocess_utils import (

@@ -114,6 +114,30 @@ def test_segmented_memory_reasoning_allows_ss_lowering_with_stable_ss_evidence()
     assert isinstance(lhs.variable, SimStackVariable)
 
 
+def test_segmented_memory_reasoning_allows_ss_lowering_with_provisional_typed_ss_evidence():
+    project, codegen = _codegen(summary={"stable_address_space_counts": {"ds": 1}, "address_space_counts": {"ds": 1, "ss": 1}})
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                _ss_stack_deref(project, -2, 2, codegen),
+                _const(7, codegen),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    after_codegen = deepcopy(codegen)
+
+    changed = apply_x86_16_segmented_memory_reasoning(after_codegen)
+
+    assert changed is True
+    lhs = after_codegen.cfunc.statements.statements[0].lhs
+    assert isinstance(lhs, CVariable)
+    assert isinstance(lhs.variable, SimStackVariable)
+
+
 def test_address_ir_facade_preserves_segmented_spaces():
     stack = build_address_ir_8616(
         MemSpace.SS,

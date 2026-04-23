@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Layer: IR
+# Responsibility: typed address artifacts bridged from resolved operands.
+# Forbidden: object/type guessing and rewrite ownership.
+
 from dataclasses import dataclass
 
 from .addressing_helpers import ResolvedMemoryOperand

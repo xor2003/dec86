@@ -273,12 +273,45 @@ def _is_shifted_high_byte_8616(high_expr, low_expr) -> bool:
 
 def _single_assignment_expr_for_variable_8616(codegen, target):
     cfunc = getattr(codegen, "cfunc", None)
-    statements = getattr(getattr(cfunc, "statements", None), "statements", None)
-    if not statements:
+    root = getattr(cfunc, "statements", None)
+    if root is None:
         return None
 
+    def _iter_statement_nodes(node):
+        stack = [node]
+        seen: set[int] = set()
+        while stack:
+            current = stack.pop()
+            if not _structured_codegen_node_8616(current):
+                continue
+            current_id = id(current)
+            if current_id in seen:
+                continue
+            seen.add(current_id)
+            yield current
+
+            nested_statements = getattr(current, "statements", None)
+            if isinstance(nested_statements, (list, tuple)):
+                for item in reversed(tuple(nested_statements)):
+                    stack.append(item)
+
+            body = getattr(current, "body", None)
+            if body is not None:
+                stack.append(body)
+
+            else_node = getattr(current, "else_node", None)
+            if else_node is not None:
+                stack.append(else_node)
+
+            condition_and_nodes = getattr(current, "condition_and_nodes", None)
+            if isinstance(condition_and_nodes, (list, tuple)):
+                for pair in reversed(tuple(condition_and_nodes)):
+                    if isinstance(pair, tuple):
+                        for item in reversed(pair):
+                            stack.append(item)
+
     matches = []
-    for stmt in statements:
+    for stmt in _iter_statement_nodes(root):
         if not isinstance(stmt, CAssignment):
             continue
         lhs = getattr(stmt, "lhs", None)
@@ -310,13 +343,23 @@ def _resolve_stack_bp_term_8616(node, project=None, codegen=None, seen: set[int]
     if variable is None:
         return node
     name = getattr(variable, "name", None)
-    if not (isinstance(name, str) and (name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_"))):
+    should_follow_single_assignment = isinstance(name, str) and (
+        name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_")
+    )
+    if isinstance(variable, SimStackVariable):
+        should_follow_single_assignment = True
+    if not should_follow_single_assignment:
         return node
 
     replacement = _single_assignment_expr_for_variable_8616(codegen, node)
     if replacement is None:
         return node
-    return _resolve_stack_bp_term_8616(replacement, project, codegen, seen)
+    resolved_replacement = _resolve_stack_bp_term_8616(replacement, project, codegen, seen)
+    if isinstance(variable, SimStackVariable):
+        stack_disp = _stack_bp_displacement_8616(resolved_replacement, project, codegen)
+        if stack_disp is None:
+            return node
+    return resolved_replacement
 
 
 def _stack_bp_displacement_8616(node, project=None, codegen=None) -> int | None:
@@ -382,51 +425,56 @@ def _stack_bp_displacement_8616(node, project=None, codegen=None) -> int | None:
 
 
 def _match_bp_stack_dereference_8616(node, project, codegen=None) -> int | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
     if not isinstance(node, CUnaryOp) or node.op != "Dereference":
         return None
 
     operand = node.operand
-    if isinstance(operand, CTypeCast):
+    while isinstance(operand, CTypeCast):
         operand = operand.expr
 
-    def extract(add_node) -> int | None:
-        if isinstance(add_node, CTypeCast):
-            return extract(add_node.expr)
+    def _flatten_add_sub(term, sign: int = 1) -> list[tuple[object, int]]:
+        while isinstance(term, CTypeCast):
+            term = term.expr
+        if isinstance(term, CBinaryOp) and term.op == "Add":
+            return _flatten_add_sub(term.lhs, sign) + _flatten_add_sub(term.rhs, sign)
+        if isinstance(term, CBinaryOp) and term.op == "Sub":
+            return _flatten_add_sub(term.lhs, sign) + _flatten_add_sub(term.rhs, -sign)
+        return [(term, sign)]
 
-        if isinstance(add_node, CBinaryOp) and add_node.op == "Sub":
-            rhs_const = _c_constant_value_8616(add_node.rhs)
-            if rhs_const is None:
-                return None
-            base_disp = extract(add_node.lhs)
-            if base_disp is None:
-                return None
-            return base_disp - rhs_const
-
-        if not isinstance(add_node, CBinaryOp) or add_node.op != "Add":
-            return None
-
-        for maybe_seg, maybe_addr in ((add_node.lhs, add_node.rhs), (add_node.rhs, add_node.lhs)):
-            seg_name, _linear = _match_real_mode_linear_expr_8616(maybe_seg, project)
-            if seg_name != "ss":
-                continue
-            disp = _stack_bp_displacement_8616(maybe_addr, project, codegen)
-            if disp is not None:
-                return disp
-
-        for maybe_add, maybe_const in ((add_node.lhs, add_node.rhs), (add_node.rhs, add_node.lhs)):
-            if not isinstance(maybe_add, CBinaryOp) or maybe_add.op != "Add":
-                continue
-            disp = extract(maybe_add)
-            if disp is None:
-                continue
-            const = _c_constant_value_8616(maybe_const)
-            if const is None:
-                continue
-            return disp + const
-
+    terms = _flatten_add_sub(operand)
+    if not terms:
         return None
 
-    return extract(operand)
+    const_total = 0
+    has_ss_segment = False
+    non_segment_terms: list[tuple[object, int]] = []
+    for term, sign in terms:
+        value = _c_constant_value_8616(term)
+        if value is not None:
+            const_total += sign * value
+            continue
+        seg_name, linear = _match_real_mode_linear_expr_8616(term, project)
+        if seg_name == "ss":
+            has_ss_segment = True
+            if isinstance(linear, int):
+                const_total += sign * linear
+            continue
+        non_segment_terms.append((term, sign))
+
+    if not has_ss_segment:
+        return None
+    if len(non_segment_terms) != 1:
+        return None
+
+    addr_term, sign = non_segment_terms[0]
+    if sign != 1:
+        return None
+    base_disp = _stack_bp_displacement_8616(addr_term, project, codegen)
+    if base_disp is None:
+        return None
+    return base_disp + const_total
 
 
 def _match_bp_stack_load_8616(node, project) -> int | None:

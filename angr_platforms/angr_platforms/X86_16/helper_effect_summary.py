@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
 
@@ -95,6 +95,18 @@ def summarize_x86_16_helper_eligibility(source: Any) -> HelperEligibilitySummary
             HelperEligibilityRefusal(
                 "return_kind_unknown",
                 "helper-wrapper eligibility requires a settled return kind",
+            )
+        )
+    stack_probe_helper = False
+    if isinstance(source, Mapping):
+        stack_probe_helper = bool(source.get("stack_probe_helper", False))
+    else:
+        stack_probe_helper = bool(getattr(source, "stack_probe_helper", False))
+    if stack_probe_helper and effect_summary.helper_return_state == "unknown":
+        refusals.append(
+            HelperEligibilityRefusal(
+                "helper_return_state_unknown",
+                "stack-probe helper return state is unresolved; keep explicit refusal instead of guessed stack-address semantics",
             )
         )
 

@@ -25,6 +25,7 @@ from .tail_validation import (
     compare_x86_16_tail_validation_summaries,
     fingerprint_x86_16_tail_validation_boundary,
     persist_x86_16_tail_validation_snapshot,
+    x86_16_tail_validation_result_passed,
 )
 
 __all__ = [
@@ -99,6 +100,11 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
+            "_materialize_callsite_stack_arguments_8616",
+            _calls._materialize_callsite_stack_arguments_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
             "_materialize_callsite_prototypes_8616",
             _calls._materialize_callsite_prototypes_8616,
             True,
@@ -144,7 +150,17 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
 
     profile = info.get("x86_16_decompilation_profile", {})
     if isinstance(profile, dict) and profile.get("wrapper_like"):
-        return DECOMPILER_POSTPROCESS_PASSES[:11]
+        wrapper_pass_names = {
+            "_lower_stable_ss_stack_accesses_8616",
+            "_attach_callsite_summaries_8616",
+            "_materialize_callsite_stack_arguments_8616",
+            "_materialize_callsite_prototypes_8616",
+            "_normalize_call_target_names_8616",
+        }
+        return tuple(
+            spec for spec in DECOMPILER_POSTPROCESS_PASSES
+            if spec.name in wrapper_pass_names or DECOMPILER_POSTPROCESS_PASSES.index(spec) < 11
+        )
 
     return DECOMPILER_POSTPROCESS_PASSES
 
@@ -222,10 +238,13 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         if validation_enabled and per_pass_validation_enabled:
             current_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
             validation = compare_x86_16_tail_validation_summaries(baseline_summary, current_summary)
-            if validation["changed"]:
+            if not x86_16_tail_validation_result_passed(validation):
                 codegen._inertia_postprocess_validation_failed = True
                 codegen._inertia_postprocess_validation_failure_pass = pass_name
-                codegen._inertia_postprocess_validation_failure_error = validation.get("summary_text")
+                codegen._inertia_postprocess_validation_failure_error = (
+                    validation.get("summary_text")
+                    or f"tail-validation status={validation.get('status', 'unknown')}"
+                )
                 _restore_codegen_cfunc(codegen, snapshot)
                 return False
 
@@ -430,7 +449,7 @@ def _decompile_8616(self):
     if isinstance(snapshot, dict):
         setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
     log = logging.getLogger(__name__)
-    if validation["changed"]:
+    if not x86_16_tail_validation_result_passed(validation):
         log.warning("%s", validation["verdict"])
     else:
         log.info("%s", validation["verdict"])

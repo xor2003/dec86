@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Optional, Set
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
 
-from .alias_model import _stack_storage_facts_for_segmented_address_8616
+from .alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 from .decompiler_postprocess_utils import _match_bp_stack_dereference_8616, _replace_c_children_8616
 
 if TYPE_CHECKING:
@@ -387,7 +387,7 @@ def _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer: SegmentAssociati
     assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
     if not assignments or analyzer is None:
         typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
-        if stable_spaces and "ss" not in stable_spaces:
+        if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
             return False
         codegen._inertia_typed_ir_address_spaces = typed_spaces
         codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
@@ -397,7 +397,7 @@ def _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer: SegmentAssociati
     typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
     codegen._inertia_typed_ir_address_spaces = typed_spaces
     codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
-    if stable_spaces and "ss" not in stable_spaces:
+    if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
         return False
     return decision.associated_space == "stack" and decision.classification in {"single", "const"}
 

@@ -12,6 +12,7 @@ from angr_platforms.X86_16.alu_helpers import (
     shift_right_operation,
 )
 from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
+from pyvex.lifting.util.vex_helper import Type
 
 
 class _AluEmu:
@@ -251,6 +252,21 @@ def test_build_compare_condition_zero_rhs_sub_becomes_unary_nonzero():
     )
 
 
+def test_build_compare_condition_harmonizes_plain_int_width_to_peer_operand():
+    lhs = type("_FakeOperand", (), {"width": 16, "value": 4, "ty": Type.int_16})()
+
+    condition = build_compare_condition_8616(lhs, 2, _AluEmu().update_eflags_sub)
+
+    assert condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.CONST, const=4, size=2, expr=("vex_const",)),
+            IRValue(MemSpace.CONST, const=2, size=2, expr=("int",)),
+        ),
+        expr=("update_eflags_sub",),
+    )
+
+
 def test_build_compare_condition_refuses_non_constant_vexvalue_value_property():
     class _BadValue:
         @property
@@ -262,7 +278,7 @@ def test_build_compare_condition_refuses_non_constant_vexvalue_value_property():
     assert condition == IRCondition(
         op="compare",
         args=(
-            IRValue(MemSpace.TMP, name="_BadValue", size=0, expr=("_BadValue",)),
+            IRValue(MemSpace.TMP, name="_BadValue", size=1, expr=("_BadValue",)),
             IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
         ),
         expr=("update_eflags_sub",),

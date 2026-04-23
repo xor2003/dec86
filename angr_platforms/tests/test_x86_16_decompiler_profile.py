@@ -140,7 +140,24 @@ def test_tiny_wrapper_like_postprocess_keeps_argument_normalization():
 
     pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
 
-    assert tuple(spec.name for spec in pass_specs) == tuple(spec.name for spec in DECOMPILER_POSTPROCESS_PASSES[:10])
+    assert tuple(spec.name for spec in pass_specs) == (
+        "_apply_word_global_types_8616",
+        "_apply_annotations_8616",
+        "_promote_stack_prototype_from_bp_loads_8616",
+        "_prune_return_address_stack_arguments_8616",
+        "_prune_unused_unnamed_memory_declarations_8616",
+        "_rewrite_decoded_jcc_conditions_8616",
+        "_rewrite_flag_condition_pairs_8616",
+        "_rewrite_flag_bit_value_uses_8616",
+        "_prune_unused_flag_assignments_8616",
+        "_prune_overwritten_flag_assignments_8616",
+        "_fix_interval_guard_conditions_8616",
+        "_lower_stable_ss_stack_accesses_8616",
+        "_attach_callsite_summaries_8616",
+        "_materialize_callsite_stack_arguments_8616",
+        "_materialize_callsite_prototypes_8616",
+        "_normalize_call_target_names_8616",
+    )
 
 
 def test_call_heavy_small_function_postprocess_keeps_full_pass_list():

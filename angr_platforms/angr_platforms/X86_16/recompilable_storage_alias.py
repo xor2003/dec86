@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .alias_model import AliasStorageFacts
+from .alias.alias_model import AliasStorageFacts
 from .recompilable_storage_map import RecompilableStorageMapArtifact
 from .recompilable_storage_map_producer import (
     SegmentedStorageSeed,

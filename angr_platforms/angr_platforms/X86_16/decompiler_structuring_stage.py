@@ -34,6 +34,7 @@ from .tail_validation import (
     collect_x86_16_tail_validation_summary,
     fingerprint_x86_16_tail_validation_boundary,
     persist_x86_16_tail_validation_snapshot,
+    x86_16_tail_validation_result_passed,
 )
 
 __all__ = [
@@ -217,6 +218,13 @@ def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
             existing = {}
             setattr(codegen, "_inertia_structuring_pass_validation", existing)
         existing[spec_name] = validation
+        if not x86_16_tail_validation_result_passed(validation):
+            codegen._inertia_structuring_validation_failed = True
+            codegen._inertia_structuring_validation_failure_pass = spec_name
+            codegen._inertia_structuring_validation_failure_error = (
+                validation.get("summary_text")
+                or f"tail-validation status={validation.get('status', 'unknown')}"
+            )
 
     return finalize
 
@@ -260,6 +268,9 @@ def _structuring_codegen_8616(project, codegen) -> bool:
     codegen._inertia_structuring_failed = False
     codegen._inertia_structuring_failure_pass = None
     codegen._inertia_structuring_failure_error = None
+    codegen._inertia_structuring_validation_failed = False
+    codegen._inertia_structuring_validation_failure_pass = None
+    codegen._inertia_structuring_validation_failure_error = None
     codegen._inertia_last_structuring_pass = None
     pass_specs = _decompiler_structuring_passes_for_function(project, codegen)
     codegen._inertia_structuring_passes = tuple(spec.name for spec in pass_specs)
@@ -273,6 +284,8 @@ def _structuring_codegen_8616(project, codegen) -> bool:
                 spec_changed = spec.func(codegen)
             if finalize_validation is not None:
                 finalize_validation()
+                if getattr(codegen, "_inertia_structuring_validation_failed", False):
+                    break
         except Exception as ex:  # noqa: BLE001
             codegen._inertia_structuring_failed = True
             codegen._inertia_structuring_failure_pass = spec.name
@@ -317,6 +330,15 @@ def _decompile_structuring_8616(self):
                 structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
                 structuring_info["failure_pass"] = getattr(self.codegen, "_inertia_structuring_failure_pass", None)
                 structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
+                structuring_info["validation_failed"] = bool(
+                    getattr(self.codegen, "_inertia_structuring_validation_failed", False)
+                )
+                structuring_info["validation_failure_pass"] = getattr(
+                    self.codegen, "_inertia_structuring_validation_failure_pass", None
+                )
+                structuring_info["validation_failure_error"] = getattr(
+                    self.codegen, "_inertia_structuring_validation_failure_error", None
+                )
                 structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
                 structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
                 structuring_info["struct_merging_stats"] = getattr(self.codegen, "_inertia_struct_merging_stats", None)
@@ -374,6 +396,15 @@ def _decompile_structuring_8616(self):
             structuring_info["failed"] = bool(getattr(self.codegen, "_inertia_structuring_failed", False))
             structuring_info["failure_pass"] = getattr(self.codegen, "_inertia_structuring_failure_pass", None)
             structuring_info["failure_error"] = getattr(self.codegen, "_inertia_structuring_failure_error", None)
+            structuring_info["validation_failed"] = bool(
+                getattr(self.codegen, "_inertia_structuring_validation_failed", False)
+            )
+            structuring_info["validation_failure_pass"] = getattr(
+                self.codegen, "_inertia_structuring_validation_failure_pass", None
+            )
+            structuring_info["validation_failure_error"] = getattr(
+                self.codegen, "_inertia_structuring_validation_failure_error", None
+            )
             structuring_info["pass_names"] = getattr(self.codegen, "_inertia_structuring_passes", ())
             structuring_info["last_stage"] = getattr(self.project, "_inertia_decompiler_stage", None)
             structuring_info["tail_validation_verdict"] = validation["verdict"]
@@ -387,7 +418,7 @@ def _decompile_structuring_8616(self):
                 validation=validation,
             )
     log = logging.getLogger(__name__)
-    if validation["changed"]:
+    if not x86_16_tail_validation_result_passed(validation):
         log.warning("%s", validation["verdict"])
     else:
         log.info("%s", validation["verdict"])

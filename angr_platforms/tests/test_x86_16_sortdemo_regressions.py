@@ -57,6 +57,7 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     assert "function: 0x10f18 Sleep" in result.stdout
     assert "void Sleep(clock_t wait)" in result.stdout
     assert "flags_2 = ...;" not in result.stdout
+    assert "flags_2 =" not in result.stdout
     assert "if (...)" not in result.stdout
     assert "if (!(...))" not in result.stdout
     assert "(flags_3 & 128) == (flags_3 & 0x800)" not in result.stdout
@@ -64,7 +65,7 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     assert "ss << 4" not in result.stdout
     assert "(&s_" not in result.stdout
     assert "*(&" not in result.stdout
-    assert scorecard.validation_verdict in {"stable", "changed"}
+    assert scorecard.validation_verdict == "stable"
 
 
 def test_sortdemo_heapsort_anchor_no_longer_prunes_local_lane_after_repeated_empty_results():
@@ -99,10 +100,37 @@ def test_sortdemo_percolateup_anchor_no_longer_crashes_on_vexvalue_register_reso
     assert "function: 0x109e8 PercolateUp" in result.stdout
     if result.returncode == 0:
         assert "short PercolateUp(int iMaxLevel)" in result.stdout
+        assert "stack_bp_" not in result.stdout
+        assert "(&s_fffa)[" not in result.stdout
         assert "flags & 64" not in result.stdout
+        assert "*((ds << 4) + 2986 + 1) =" not in result.stdout
+        assert "*((ds << 4) + 2986) =" in result.stdout
     else:
         assert "Decompilation timeout" in combined
         assert "non-optimized fallback failed" in combined
+
+
+def test_sortdemo_quicksort_anchor_distinguishes_timeout_from_old_vexvalue_crash():
+    try:
+        result = _run_decompile_addr(SORTDEMO_EXE, 0x10CE0, subprocess_timeout=20)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        combined = f"{stderr}{stdout}"
+        assert "Non-constant VexValue has no value property" not in combined
+        assert "function: 0x10ce0 QuickSort" in stdout
+        return
+
+    combined = _combined_output(result)
+
+    assert result.returncode in {0, 4}, combined
+    assert "Non-constant VexValue has no value property" not in combined
+    assert "function: 0x10ce0 QuickSort" in result.stdout
+    if result.returncode == 0:
+        assert "Function recovery failed" not in combined
+    else:
+        assert "Decompilation timeout" in combined
+        assert "Function recovery failed" not in combined
 
 
 def test_sortdemo_acceptance_scorecards_capture_main_sleep_and_percolateup_state():

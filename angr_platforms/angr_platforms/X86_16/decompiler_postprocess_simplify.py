@@ -13,7 +13,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from .alias_model import _storage_domain_for_expr
+from .semantics.alias_query import _storage_domain_for_expr
 from .widening_alias import join_adjacent_register_slices
 from .widening_model import prove_adjacent_storage_slices
 from .decompiler_postprocess_flags import _bool_cite_values_8616

@@ -17,6 +17,8 @@ def test_function_effect_summary_is_deterministic_and_sorted():
             "direct_branch_count": 3,
             "indirect_branch_count": 0,
             "return_kind": "word",
+            "helper_return_state": "stack_address",
+            "helper_return_space": "ss",
         }
     )
 
@@ -27,6 +29,8 @@ def test_function_effect_summary_is_deterministic_and_sorted():
     assert summary.frame_stack_writes == (2, 8)
     assert summary.memory_reads == ("ds:0x20", "es:0x10")
     assert summary.memory_writes == ("ss:0x4",)
+    assert summary.helper_return_state == "stack_address"
+    assert summary.helper_return_space == "ss"
     assert summary.has_indirect_control() is True
 
 

@@ -5,7 +5,7 @@ ITY_I8 = Type.int_8
 ITY_I16 = Type.int_16
 ITY_I32 = Type.int_32
 
-from .addressing_helpers import ResolvedMemoryOperand, linear_address
+from .addressing_helpers import ResolvedMemoryOperand, linear_address, resolve_memory_operand_8616
 from .hardware import Hardware
 from .regs import reg16_t, sgreg_t
 from .stack_helpers import pop16, pop32, push16, push32, push_far_return_frame16
@@ -66,12 +66,13 @@ class DataAccess(Hardware):
         history.append((mode, operand))
         return operand
 
+    def _resolve_memory_operand(self, seg, addr, width_bits: int, mode: int) -> ResolvedMemoryOperand:
+        operand = self._resolved_segment_operand(seg, addr, width_bits)
+        self._record_resolved_operand(operand, mode)
+        return operand
+
     def _resolved_segment_operand(self, seg, addr, width_bits: int) -> ResolvedMemoryOperand:
-        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-            linear = self.convert_ss_vaddr(addr)
-        else:
-            linear = self.v2p(seg, addr)
-        return ResolvedMemoryOperand(seg, addr, linear, width_bits, 16)
+        return resolve_memory_operand_8616(self, seg, addr, width_bits, address_bits=16)
 
     def search_tlb(self, vpn):
         if vpn + 1 > len(self.tlb) or self.tlb[vpn] is None:
@@ -96,52 +97,28 @@ class DataAccess(Hardware):
         return pop16(self)
 
     def read_mem32_seg(self, seg, addr):
-        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 32), MODE_READ)
-        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-            paddr = self.convert_ss_vaddr(addr)
-            return self.read_mem32(paddr)
-        paddr = self.v2p(seg, addr)
-        return self.read_mem32(paddr)
+        operand = self._resolve_memory_operand(seg, addr, 32, MODE_READ)
+        return self.read_mem32(operand.linear)
 
     def read_mem16_seg(self, seg, addr):
-        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 16), MODE_READ)
-        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-            paddr = self.convert_ss_vaddr(addr)
-            return self.read_mem16(paddr)
-        paddr = self.v2p(seg, addr)
-        return self.read_mem16(paddr)
+        operand = self._resolve_memory_operand(seg, addr, 16, MODE_READ)
+        return self.read_mem16(operand.linear)
 
     def read_mem8_seg(self, seg, addr):
-        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 8), MODE_READ)
-        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-            paddr = self.convert_ss_vaddr(addr)
-            return self.read_mem8(paddr)
-        paddr = self.v2p(seg, addr)
-        return self.read_mem8(paddr)
+        operand = self._resolve_memory_operand(seg, addr, 8, MODE_READ)
+        return self.read_mem8(operand.linear)
 
     def write_mem32_seg(self, seg, addr, value):
-        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 32), MODE_WRITE)
-        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-            paddr = self.convert_ss_vaddr(addr)
-            return self.write_mem32(paddr, value)
-        paddr = self.v2p(seg, addr)
-        self.write_mem32(paddr, value)
+        operand = self._resolve_memory_operand(seg, addr, 32, MODE_WRITE)
+        self.write_mem32(operand.linear, value)
 
     def write_mem16_seg(self, seg, addr, value):
-        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 16), MODE_WRITE)
-        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-            paddr = self.convert_ss_vaddr(addr)
-            return self.write_mem16(paddr, value)
-        paddr = self.v2p(seg, addr)
-        self.write_mem16(paddr, value)
+        operand = self._resolve_memory_operand(seg, addr, 16, MODE_WRITE)
+        self.write_mem16(operand.linear, value)
 
     def write_mem8_seg(self, seg, addr, value):
-        self._record_resolved_operand(self._resolved_segment_operand(seg, addr, 8), MODE_WRITE)
-        if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-            paddr = self.convert_ss_vaddr(addr)
-            return self.write_mem8(paddr, value)
-        paddr = self.v2p(seg, addr)
-        self.write_mem8(paddr, value)
+        operand = self._resolve_memory_operand(seg, addr, 8, MODE_WRITE)
+        self.write_mem8(operand.linear, value)
 
     def get_code8(self, offset):
         assert offset == 0

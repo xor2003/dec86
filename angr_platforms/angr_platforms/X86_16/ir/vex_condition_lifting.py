@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import re
 
-from ..condition_ir import build_condition_ir_8616, normalize_condition_op_8616
+from .condition_ir import build_condition_ir_8616, harmonize_condition_args_8616, normalize_condition_op_8616
 from .core import IRCondition, IRValue
 
 __all__ = [
@@ -21,8 +22,17 @@ def _zero_fold(cond_op: str, left: IRValue, right: IRValue) -> IRCondition | Non
     return None
 
 
+def _compare_size_bytes(op: str) -> int:
+    match = re.search(r"(\d+)(?:[SU])?$", op)
+    if match is None:
+        return 0
+    bits = int(match.group(1))
+    return 0 if bits <= 0 else max(1, bits // 8)
+
+
 def build_condition_from_binop(op: str, left: IRValue, right: IRValue) -> IRCondition | None:
     folded = op.lower()
+    left, right = harmonize_condition_args_8616(left, right, size=_compare_size_bytes(op))
     variants = {
         "cmpeq": "eq",
         "cmpne": "ne",

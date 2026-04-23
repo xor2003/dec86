@@ -23,6 +23,8 @@ class FunctionEffectSummary:
     direct_branch_count: int = 0
     indirect_branch_count: int = 0
     return_kind: str = "unknown"
+    helper_return_state: str = "none"
+    helper_return_space: str | None = None
 
     def frame_only_stack(self) -> bool:
         return bool(self.frame_stack_reads or self.frame_stack_writes) and not (
@@ -43,7 +45,8 @@ class FunctionEffectSummary:
             f"indirect_calls={self.indirect_call_count} "
             f"direct_branches={self.direct_branch_count} "
             f"indirect_branches={self.indirect_branch_count} "
-            f"return={self.return_kind}"
+            f"return={self.return_kind} "
+            f"helper_return={self.helper_return_state}"
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -60,6 +63,8 @@ class FunctionEffectSummary:
             "direct_branch_count": self.direct_branch_count,
             "indirect_branch_count": self.indirect_branch_count,
             "return_kind": self.return_kind,
+            "helper_return_state": self.helper_return_state,
+            "helper_return_space": self.helper_return_space,
             "frame_only_stack": self.frame_only_stack(),
         }
 
@@ -91,6 +96,10 @@ def _count(source: Any, name: str) -> int:
 
 
 def summarize_x86_16_function_effects(source: Any) -> FunctionEffectSummary:
+    helper_return_space = _value(source, "helper_return_space", None)
+    helper_return_space_str = (
+        str(helper_return_space).strip() if isinstance(helper_return_space, str) and str(helper_return_space).strip() else None
+    )
     return FunctionEffectSummary(
         register_inputs=_sorted_str_tuple(_value(source, "register_inputs", ())),
         register_outputs=_sorted_str_tuple(_value(source, "register_outputs", ())),
@@ -104,4 +113,6 @@ def summarize_x86_16_function_effects(source: Any) -> FunctionEffectSummary:
         direct_branch_count=_count(source, "direct_branch_count"),
         indirect_branch_count=_count(source, "indirect_branch_count"),
         return_kind=str(_value(source, "return_kind", "unknown")),
+        helper_return_state=str(_value(source, "helper_return_state", "none")),
+        helper_return_space=helper_return_space_str,
     )

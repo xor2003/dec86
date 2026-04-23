@@ -34,3 +34,17 @@ def test_helper_effect_summary_refuses_indirect_control_and_memory_effects():
         "indirect_control",
         "nonlocal_memory_effects",
     )
+
+
+def test_helper_effect_summary_refuses_stack_probe_helper_when_return_state_is_unknown():
+    summary = summarize_x86_16_helper_eligibility(
+        {
+            "stack_probe_helper": True,
+            "direct_call_count": 1,
+            "return_kind": "scalar",
+            "helper_return_state": "unknown",
+        }
+    )
+
+    assert summary.status == "refused"
+    assert "helper_return_state_unknown" in tuple(item.kind for item in summary.refusals)

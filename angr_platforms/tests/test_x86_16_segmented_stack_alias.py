@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from types import SimpleNamespace
 
+import decompile
 from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CStatements, CUnaryOp, CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
@@ -15,6 +16,7 @@ from angr_platforms.X86_16.segmented_memory_reasoning import (
     apply_x86_16_segmented_memory_reasoning,
 )
 from angr_platforms.X86_16.decompiler_postprocess_utils import _match_bp_stack_dereference_8616
+from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -298,3 +300,189 @@ def test_match_bp_stack_dereference_handles_sub_form_for_vvar_chain():
     displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
 
     assert displacement == -10
+
+
+def test_match_bp_stack_dereference_follows_stack_local_pointer_carrier_assignment():
+    project, codegen = _codegen([])
+    temp = _reg(project, "ax", codegen)
+    temp.variable.name = "vvar_20"
+    carrier = _stack(-2, codegen, name="s_2")
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                temp,
+                CBinaryOp(
+                    "Add",
+                    CUnaryOp("Reference", _stack(-10, codegen, name="s_a"), codegen=codegen),
+                    _const(2, codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            CAssignment(
+                carrier,
+                temp,
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", _reg(project, "ss", codegen), _const(16, codegen), codegen=codegen),
+            CBinaryOp(
+                "Sub",
+                carrier,
+                _const(2, codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
+
+    assert displacement == -10
+
+
+def test_match_bp_stack_dereference_handles_nested_add_sub_chain_from_vvar_base():
+    project, codegen = _codegen([])
+    temp = _reg(project, "ax", codegen)
+    temp.variable.name = "vvar_16"
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                temp,
+                CUnaryOp("Reference", _stack(-6, codegen, name="s_6"), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Sub",
+            CBinaryOp(
+                "Add",
+                CBinaryOp(
+                    "Sub",
+                    CBinaryOp(
+                        "Sub",
+                        CBinaryOp(
+                            "Add",
+                            CBinaryOp("Shl", _reg(project, "ss", codegen), _const(4, codegen), codegen=codegen),
+                            temp,
+                            codegen=codegen,
+                        ),
+                        _const(2, codegen),
+                        codegen=codegen,
+                    ),
+                    _const(2, codegen),
+                    codegen=codegen,
+                ),
+                _const(2, codegen),
+                codegen=codegen,
+            ),
+            _const(2, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
+
+    assert displacement == -10
+
+
+def test_rewrite_ss_stack_byte_offsets_resolves_pointer_alias_by_variable_name():
+    project, codegen = _codegen([])
+    cfunc = codegen.cfunc
+    cfunc.project = SimpleNamespace(
+        loader=SimpleNamespace(main_object=SimpleNamespace(binary_basename="SORTDEMO.EXE"))
+    )
+    cfunc.arg_list = []
+    cfunc.unified_local_vars = {}
+    cfunc.sort_local_vars = lambda: None
+
+    ss = _reg(project, "ss", codegen)
+    alias_var = SimRegisterVariable(0, 2, name="vvar_16")
+    alias_cvar = CVariable(alias_var, codegen=codegen)
+    alias_use_var = SimRegisterVariable(0, 2, name=None)
+    alias_use_cvar = CVariable(alias_use_var, codegen=codegen)
+    base_var = SimStackVariable(-6, 2, base="bp", name="s_6", region=0x4010)
+    base_cvar = CVariable(base_var, codegen=codegen)
+    target_var = SimStackVariable(-8, 2, base="bp", name="local_8", region=0x4010)
+    target_cvar = CVariable(target_var, codegen=codegen)
+    cfunc.variables_in_use = {
+        alias_var: alias_cvar,
+        alias_use_var: alias_use_cvar,
+        base_var: base_cvar,
+        target_var: target_cvar,
+        ss.variable: ss,
+    }
+
+    addr_expr = CBinaryOp("Add", alias_use_cvar, _const(-2, codegen), codegen=codegen)
+    store = CAssignment(
+        CUnaryOp(
+            "Dereference",
+            CBinaryOp(
+                "Add",
+                CBinaryOp("Mul", ss, _const(16, codegen), codegen=codegen),
+                addr_expr,
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        _const(7, codegen),
+        codegen=codegen,
+    )
+    cfunc.statements = CStatements(
+        [
+            CAssignment(alias_cvar, CUnaryOp("Reference", base_cvar, codegen=codegen), codegen=codegen),
+            store,
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    cfunc.body = cfunc.statements
+
+    changed = decompile._rewrite_ss_stack_byte_offsets(project, codegen)
+
+    assert changed is True
+    lowered_lhs = cfunc.statements.statements[1].lhs
+    assert isinstance(lowered_lhs, CVariable)
+    assert lowered_lhs.variable is target_var
+
+
+def test_stack_lowering_entrypoint_runs_typed_ss_lowering_before_cli_cleanup():
+    calls: list[str] = []
+
+    def lower_stable_ss_stack_accesses() -> bool:
+        calls.append("typed-ss")
+        return True
+
+    def rewrite_ss_stack_byte_offsets() -> bool:
+        calls.append("rewrite")
+        return False
+
+    def canonicalize_stack_cvars() -> bool:
+        calls.append("canonicalize")
+        return False
+
+    changed = run_stack_lowering_pass_8616(
+        lower_stable_ss_stack_accesses=lower_stable_ss_stack_accesses,
+        rewrite_ss_stack_byte_offsets=rewrite_ss_stack_byte_offsets,
+        canonicalize_stack_cvars=canonicalize_stack_cvars,
+        max_rounds=1,
+    )
+
+    assert changed is True
+    assert calls == ["typed-ss", "rewrite", "canonicalize"]

@@ -733,6 +733,14 @@ def _tail_validation_function_sort_key(item: Mapping[str, object]) -> tuple[str,
 def _tail_validation_stage_status(entry: object) -> str:
     if not isinstance(entry, Mapping):
         return "uncollected"
+    status = entry.get("status")
+    if isinstance(status, str) and status:
+        normalized = status.lower()
+        if normalized in {"stable", "passed"}:
+            return "passed"
+        if normalized in {"changed", "unknown", "uncollected"}:
+            return normalized
+        return "unknown"
     if "changed" not in entry:
         return "unknown"
     return "changed" if bool(entry.get("changed", False)) else "passed"
@@ -889,9 +897,14 @@ def extract_x86_16_tail_validation_snapshot(function_info: Mapping[str, object] 
         if not isinstance(entry, Mapping):
             continue
         status = entry.get("status")
+        if not (isinstance(status, str) and status):
+            if "changed" in entry:
+                status = "changed" if bool(entry.get("changed", False)) else "stable"
+            else:
+                status = "unknown"
         stages[stage] = {
             "changed": bool(entry.get("changed", False)),
-            "status": status if isinstance(status, str) and status else ("changed" if bool(entry.get("changed", False)) else "stable"),
+            "status": status,
             "mode": entry.get("mode"),
             "verdict": entry.get("verdict"),
             "summary_text": entry.get("summary_text"),
@@ -900,6 +913,17 @@ def extract_x86_16_tail_validation_snapshot(function_info: Mapping[str, object] 
         if isinstance(delta, Mapping):
             stages[stage]["delta"] = dict(delta)
     return stages
+
+
+def x86_16_tail_validation_result_passed(validation: Mapping[str, object] | None) -> bool:
+    if not isinstance(validation, Mapping):
+        return False
+    status = validation.get("status")
+    if isinstance(status, str) and status:
+        return status.lower() in {"stable", "passed"}
+    if "changed" in validation:
+        return not bool(validation.get("changed", False))
+    return False
 
 
 def x86_16_tail_validation_snapshot_passed(

@@ -182,7 +182,7 @@ from .addressing_helpers import (
     describe_x86_16_mixed_width_extension_surface,  # noqa: F401
     describe_x86_16_mixed_width_instruction_surface,  # noqa: F401
 )
-from .alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
+from .alias.alias_model import describe_x86_16_alias_recovery_api  # noqa: F401
 from .analysis_helpers import (
     describe_x86_16_interrupt_api_surface,  # noqa: F401
     describe_x86_16_interrupt_core_surface,  # noqa: F401

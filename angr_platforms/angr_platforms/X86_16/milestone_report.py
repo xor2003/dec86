@@ -10,7 +10,7 @@ from .addressing_helpers import (
     describe_x86_16_mixed_width_extension_surface,
     describe_x86_16_mixed_width_instruction_surface,
 )
-from .alias_model import describe_x86_16_alias_recovery_api
+from .alias.alias_model import describe_x86_16_alias_recovery_api
 from .analysis_helpers import (
     describe_x86_16_interrupt_api_surface,
     describe_x86_16_interrupt_core_surface,

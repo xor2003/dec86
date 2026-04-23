@@ -156,6 +156,21 @@ def linear_address(emu, segment, offset):
     return emu.v2p(segment, offset)
 
 
+def resolve_memory_operand_8616(
+    emu,
+    seg,
+    addr,
+    width_bits: int,
+    *,
+    address_bits: int = 16,
+) -> "ResolvedMemoryOperand":
+    if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
+        linear = emu.convert_ss_vaddr(addr)
+    else:
+        linear = emu.v2p(seg, addr)
+    return ResolvedMemoryOperand(seg, addr, linear, width_bits, address_bits)
+
+
 @dataclass(frozen=True)
 class ResolvedMemoryOperand:
     segment: sgreg_t

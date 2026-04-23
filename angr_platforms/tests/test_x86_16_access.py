@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from angr_platforms.X86_16.access import MODE_READ, MODE_WRITE, DataAccess
+from angr_platforms.X86_16.addressing_helpers import resolve_memory_operand_8616
 from angr_platforms.X86_16.ir.core import AddressStatus, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.regs import sgreg_t
 
@@ -13,6 +14,7 @@ class _FakeAccess:
         self.writes = []
 
     _record_resolved_operand = DataAccess._record_resolved_operand
+    _resolve_memory_operand = DataAccess._resolve_memory_operand
     _resolved_segment_operand = DataAccess._resolved_segment_operand
 
     def convert_ss_vaddr(self, addr):
@@ -69,3 +71,18 @@ def test_ss_access_keeps_stack_space_in_recorded_operand():
     assert typed.space is MemSpace.SS
     assert typed.status is AddressStatus.STABLE
     assert typed.segment_origin is SegmentOrigin.PROVEN
+
+
+def test_resolve_memory_operand_builder_owns_linear_and_typed_policy():
+    access = _FakeAccess()
+
+    ds_operand = resolve_memory_operand_8616(access, sgreg_t.DS, 0x100, 16)
+    ss_operand = resolve_memory_operand_8616(access, sgreg_t.SS, 0x22, 16)
+
+    assert ds_operand.linear == ("linear", sgreg_t.DS, 0x100)
+    assert ds_operand.typed_address().space is MemSpace.DS
+    assert ds_operand.typed_address().segment_origin is SegmentOrigin.PROVEN
+
+    assert ss_operand.linear == ("ss-linear", 0x22)
+    assert ss_operand.typed_address().space is MemSpace.SS
+    assert ss_operand.typed_address().segment_origin is SegmentOrigin.PROVEN

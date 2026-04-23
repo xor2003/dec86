@@ -47,6 +47,7 @@ from angr_platforms.X86_16.tail_validation import (
     resolve_x86_16_validation_cached_artifact,
     summarize_x86_16_tail_validation_records,
     x86_16_tail_validation_snapshot_passed,
+    x86_16_tail_validation_result_passed,
 )
 
 
@@ -1026,6 +1027,30 @@ def test_tail_validation_snapshot_preserves_delta_for_aggregate_family_reports()
     assert snapshot["postprocess"]["delta"] == delta
 
 
+def test_tail_validation_snapshot_without_status_or_changed_stays_unknown():
+    snapshot = extract_x86_16_tail_validation_snapshot(
+        {
+            "x86_16_tail_validation": {
+                "postprocess": {
+                    "mode": "live_out",
+                    "verdict": "postprocess whole-tail validation [live_out] unknown: not collected",
+                    "summary_text": "not collected",
+                }
+            }
+        }
+    )
+
+    assert snapshot == {
+        "postprocess": {
+            "changed": False,
+            "status": "unknown",
+            "mode": "live_out",
+            "verdict": "postprocess whole-tail validation [live_out] unknown: not collected",
+            "summary_text": "not collected",
+        }
+    }
+
+
 def test_tail_validation_snapshot_can_be_persisted_on_codegen_without_function_info():
     codegen = _DummyCodegen()
     persisted = persist_x86_16_tail_validation_snapshot(
@@ -1087,6 +1112,15 @@ def test_tail_validation_snapshot_passed_rejects_non_stable_statuses():
     assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "changed"}}, expected_stages=("postprocess",)) is False
     assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "unknown"}}, expected_stages=("postprocess",)) is False
     assert x86_16_tail_validation_snapshot_passed({"postprocess": {"status": "uncollected"}}, expected_stages=("postprocess",)) is False
+
+
+def test_tail_validation_result_passed_only_accepts_stable_or_passed_status():
+    assert x86_16_tail_validation_result_passed({"status": "stable"}) is True
+    assert x86_16_tail_validation_result_passed({"status": "passed"}) is True
+    assert x86_16_tail_validation_result_passed({"changed": False}) is True
+    assert x86_16_tail_validation_result_passed({"status": "unknown", "changed": False}) is False
+    assert x86_16_tail_validation_result_passed({"status": "uncollected", "changed": False}) is False
+    assert x86_16_tail_validation_result_passed({"changed": True}) is False
 
 
 def test_tail_validation_record_summary_aggregates_stage_status():
@@ -1752,6 +1786,56 @@ def test_postprocess_codegen_keeps_accepted_changes_when_live_out_stays_stable(m
     assert codegen._inertia_postprocess_validation_failed is False
     assert codegen._inertia_postprocess_validation_failure_pass is None
     assert codegen._inertia_last_postprocess_pass == "_second_pass"
+
+
+def test_postprocess_codegen_rejects_non_stable_per_pass_validation_status(monkeypatch):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_postprocess_per_pass_validation_enabled=True,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(state="baseline"), project=project)
+
+    def _summary(_project, codegen_arg, *, mode="live_out"):
+        return SimpleNamespace(state=codegen_arg.cfunc.state, mode=mode)
+
+    def _compare(_before, _after):
+        if _after.state == "accepted":
+            return {
+                "changed": False,
+                "status": "unknown",
+                "summary_text": "validation metadata missing",
+            }
+        return {
+            "changed": False,
+            "status": "stable",
+            "summary_text": "state stable",
+        }
+
+    def _pass(codegen_arg):
+        codegen_arg.cfunc.state = "accepted"
+        return True
+
+    monkeypatch.setattr(postprocess_stage._globals, "_coalesce_word_global_loads_8616", lambda _project, _codegen: set())
+    monkeypatch.setattr(
+        postprocess_stage._globals,
+        "_coalesce_word_global_constant_stores_8616",
+        lambda _project, _codegen: set(),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_decompiler_postprocess_passes_for_function",
+        lambda _project, _codegen: (postprocess_stage.DecompilerPostprocessPassSpec("_pass", _pass, False),),
+    )
+    monkeypatch.setattr(postprocess_stage, "collect_x86_16_tail_validation_summary", _summary)
+    monkeypatch.setattr(postprocess_stage, "compare_x86_16_tail_validation_summaries", _compare)
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert codegen.cfunc.state == "baseline"
+    assert codegen._inertia_postprocess_validation_failed is True
+    assert codegen._inertia_postprocess_validation_failure_pass == "_pass"
+    assert codegen._inertia_postprocess_validation_failure_error == "validation metadata missing"
 
 
 def test_tail_validation_compare_summaries_treats_negated_compare_and_inverted_compare_as_stable():
