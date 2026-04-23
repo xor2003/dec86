@@ -6,6 +6,58 @@
 
 ## Fixes
 
+### mem-1776944201-5f4b
+> failure: cmd=./.venv/bin/python - <<'PY' from angr.sim_variable import SimRegisterVariable ... print(v.__dict__) PY, exit=1, error=SimRegisterVariable has no __dict__ during local attribute introspection, next=use dir/getattr for SimRegisterVariable fields
+<!-- tags: tooling, error-handling, python | created: 2026-04-23 -->
+
+### mem-1776942714-fcf5
+> failure: cmd=./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_package_exports.py -k 'decompiler_postprocess_registry_order or postprocess_passes_for_wrapper', exit=1, error=test_x86_16_decompiler_postprocess_registry_order still expects old pass order with _lower_stable_ss_stack_accesses_8616 before callsite passes, next=update the registry-order expectation and any wrapper pass-order assertions to match the intentional canonical ordering change
+<!-- tags: testing, error-handling, postprocess | created: 2026-04-23 -->
+
+### mem-1776940577-fc69
+> failure: cmd=rg -n 'postprocess|validation|changed|unknown|failed|warning|WARNING' /tmp/inertia_109e8.after.out /tmp/inertia_109e8.after.err, exit=1, error=no postprocess/validation diagnostics in exact-lane stderr/stdout, next=inspect function info or pass behavior via focused tests instead of relying on console diagnostics
+<!-- tags: tooling, error-handling, decompile | created: 2026-04-23 -->
+
+### mem-1776940365-61a8
+> failure: cmd=rg -n '_attach_callsite_summaries_8616|_materialize_callsite_stack_arguments_8616|_materialize_callsite_prototypes_8616' inertia_decompiler/cli_decompilation.py -S, exit=1, error=no direct callsite postprocess pass names in cli_decompilation.py, next=inspect decompiler_postprocess_stage integration and CLI wrapper imports before assuming pass is unused
+<!-- tags: tooling, error-handling, search | created: 2026-04-23 -->
+
+### mem-1776940277-e7ac
+> failure: cmd=sed -n '1,220p' inertia_decompiler/decompiler_postprocess_calls.py, exit=2, error=file does not exist; next=read angr_platforms/angr_platforms/X86_16/decompiler_postprocess_calls.py canonical module
+<!-- tags: tooling, error-handling, paths | created: 2026-04-23 -->
+
+### mem-1776939556-de97
+> failure: cmd=rg -n "run_stack_lowering_pass|lower_stable_ss_stack_accesses|_run_stack_lowering_pass" angr_platforms/tests inertia_decompiler tests -S, exit=2, error=rg: tests: No such file or directory, next=search existing angr_platforms/tests path and omit missing repository-root tests directory
+<!-- tags: tooling, error-handling, paths | created: 2026-04-23 -->
+
+### mem-1776939556-8d9b
+> failure: cmd=./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_callsite_summary.py angr_platforms/tests/test_x86_16_helper_effect_summary.py angr_platforms/tests/test_x86_16_stack_probe_return_state_regression.py angr_platforms/tests/test_x86_16_segmented_stack_alias.py, exit=1, error=stack_probe_return_state_regression exposed oversized summary fallback returned False, next=allow stack-probe SS return-state fallback to use concrete collected stack stores when strict oversized summary shape fails
+<!-- tags: testing, error-handling, stack-segment | created: 2026-04-23 -->
+
+### mem-1776939556-84b9
+> failure: cmd=./.venv/bin/python decompile.py --help | rg -n "cache|no-cache|fresh", exit=1, error=no cache-related help matches, next=inspect inertia_decompiler/cache.py source directly for cache invalidation inputs
+<!-- tags: tooling, error-handling, cache | created: 2026-04-23 -->
+
+### mem-1776939556-bebf
+> failure: cmd=rg -n "postprocess|validation|Skipping|warning|WARNING|tail|materialize|rewrite" /tmp/inertia_109e8.err /tmp/inertia_109e8.out, exit=1, error=no matches while checking diagnostics, next=treat as absence of warnings and continue with focused code inspection
+<!-- tags: tooling, error-handling, decompile | created: 2026-04-23 -->
+
+### mem-1776938378-c3dd
+> failure: cmd=rg -n "_attach_callsite|_materialize_callsite" inertia_decompiler/cli_decompilation.py inertia_decompiler/cli_c_ast_rewrites.py, exit=1, error=no matches, next=broaden search to repository callsite symbols before assuming pass is unused
+<!-- tags: tooling, error-handling, search | created: 2026-04-23 -->
+
+### mem-1776938378-6354
+> failure: cmd=rg -n "aNchkstk|chkstk|stack-probe|stack probe|Nchk" -S inertia_decompiler angr_platforms tests *.py *.md, exit=2, error=rg: tests: No such file or directory, next=rerun repository-root searches with existing paths only (for tests use angr_platforms/tests)
+<!-- tags: tooling, error-handling, paths | created: 2026-04-23 -->
+
+### mem-1776937281-eb48
+> failure: cmd=sed -n '1,260p' angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py from /home/xor/vextest/angr_platforms, exit=2, error=duplicated submodule path; cmd=./.venv/bin/pytest from /home/xor/vextest/angr_platforms, exit=127, error=.venv absent in submodule root; next=run repository-root paths from /home/xor/vextest or submodule-relative paths from /home/xor/vextest/angr_platforms
+<!-- tags: tooling, error-handling, paths | created: 2026-04-23 -->
+
+### mem-1776936694-c039
+> failure: cmd=sed -n '1,220p' .ralph/agent/scratchpad.md, exit=2, error=no such file or directory, next=create .ralph/agent/scratchpad.md and continue sweep protocol
+<!-- tags: tooling, error-handling, ralph | created: 2026-04-23 -->
+
 ### mem-1776890236-c637
 > failure: cmd=sed -n '1,220p' .ralph/urgent-steer.json, exit=2, error=no such file or directory, next=locate the active urgent steer artifact and read that path before rerunning ralph emit
 <!-- tags: tooling, error-handling, ralph | created: 2026-04-22 -->

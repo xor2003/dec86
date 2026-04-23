@@ -2,39 +2,33 @@
 
 ## Findings
 
-- Blocking: the claimed reviewer acceptance proof does not reproduce deterministically. `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10ce0 --timeout 30 --alternate-source-c` exited `3` with the timeout banner on rerun, so the prior close/prune evidence for the width-boundary atomic step is not currently reproducible. Feedback target: `QuickSort` reviewer anchor in `PLAN.md` acceptance evidence; touched code paths remain `angr_platforms/X86_16/ir/vex_condition_lifting.py::build_condition_from_binop` and `angr_platforms/X86_16/semantics/alu_semantics.py::build_compare_condition_8616`.
+- No blocking findings. The prior deterministic blocker is fixed: `angr_platforms/tests/test_x86_16_package_exports.py` now expects the intentional callsite-before-stable-SS postprocess order, and the focused registry/wrapper test passes.
 
 ## Verdict
-- changes_requested
 
-## Scope reviewed
-- `PLAN.md`
+- approved
+
+## Scope Reviewed
+
 - `.ralph/agent/worker.latest.md`
-- `angr_platforms/angr_platforms/X86_16/ir/condition_ir.py`
-- `angr_platforms/angr_platforms/X86_16/ir/vex_condition_lifting.py`
-- `angr_platforms/angr_platforms/X86_16/semantics/alu_semantics.py`
-- `angr_platforms/tests/test_x86_16_condition_ir.py`
-- `angr_platforms/tests/test_x86_16_alu_helpers.py`
+- `angr_platforms/angr_platforms/X86_16/decompiler_postprocess_stage.py`
+- `angr_platforms/angr_platforms/X86_16/decompiler_postprocess_calls.py`
+- `angr_platforms/tests/test_x86_16_package_exports.py`
+- `angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py`
+- `angr_platforms/tests/test_x86_16_stack_probe_return_state_regression.py`
+- focused decompile outputs captured under `/tmp/review_10010.current.out`, `/tmp/review_109e8.current.out`, and `/tmp/review_10768.current.out`
 
-## Evidence
-- Focused tests rerun and passed:
-  - `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_regs.py angr_platforms/tests/test_x86_16_condition_ir.py angr_platforms/tests/test_x86_16_alu_helpers.py angr_platforms/tests/test_x86_16_runtime_support_traces.py -q`
-  - result: `33 passed`
-- Focused one-function reruns:
-  - `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10f38 --timeout 30 --alternate-source-c` -> `exit 0`
-  - `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10ce0 --timeout 30 --alternate-source-c` -> `exit 3`
-- `QuickSort` rerun ended with:
-  - `/* Timed out while recovering a function after 30s after exhausting direct-address fallback budget. */`
-  - `/* Tip: try a larger --timeout for larger binaries. */`
-- No `clinic:variable-recovery-size-mismatch`, no `Non-constant VexValue has no value property`, and no traceback were observed in the focused reruns.
+## Evidence Rerun
 
-## Decision
-- Architecture-layer placement is acceptable: the patch lives in typed condition production, not rewrite.
-- Review still fails because the worker's claimed deterministic one-function acceptance evidence for `QuickSort` did not reproduce under the required reviewer lane.
-- Planner should treat the prior width-boundary closure/prune as unsupported by current proof until the exact 30s `QuickSort` lane is made deterministic or the acceptance evidence is re-scoped honestly.
+- `ralph tools task ready` -> no ready tasks.
+- `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_package_exports.py -k 'decompiler_postprocess_registry_order or postprocess_passes_for_wrapper'` -> `1 passed, 15 deselected`.
+- `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py angr_platforms/tests/test_x86_16_stack_probe_return_state_regression.py angr_platforms/tests/test_x86_16_callsite_summary.py angr_platforms/tests/test_x86_16_helper_effect_summary.py` -> `33 passed`.
+- `./.venv/bin/pytest -q angr_platforms/tests/test_x86_16_segmented_stack_alias.py 'angr_platforms/tests/test_x86_16_cod_regressions.py' -k 'stack_slot or stack_local_pointer_alias'` -> `2 passed, 79 deselected`.
+- `./.venv/bin/python -m compileall -q angr_platforms/angr_platforms/X86_16/segmented_memory_reasoning.py angr_platforms/angr_platforms/X86_16/callsite_summary.py angr_platforms/angr_platforms/X86_16/decompiler_postprocess_stage.py angr_platforms/angr_platforms/X86_16/decompiler_postprocess_calls.py inertia_decompiler/cli_decompilation.py` -> `exit 0`.
+- `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10010 --timeout 30 --alternate-source-c` -> `exit 0`; raw `ss << 4`/`vvar_*` stack carriers remain, so PLAN #1 is not complete.
+- `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x109e8 --timeout 30 --alternate-source-c` -> `exit 0`; raw `ss << 4`/`vvar_*` stack carriers remain, so PLAN #1 is not complete.
+- `./.venv/bin/python -u decompile.py /home/xor/vextest/SORTDEMO.EXE --addr 0x10768 --timeout 30 --alternate-source-c` -> `exit 0`; no `ss << 4` match, but `vvar_*` locals remain.
 
-## Blocking checks
-- architecture layer violation: none found
-- deterministic DoD proof: failed on `0x10ce0 QuickSort --timeout 30`
-- hidden fallback presented as success: not observed
-- forbidden full SORTDEMO run: not used
+## Plan Pruning
+
+- No `PLAN.md` item was removed. The implementation fixes the previous review blocker and preserves deterministic focused evidence, but it is still only a partial PLAN #1 advance because `0x10010` and `0x109e8` continue to emit raw stack-carrier artifacts.

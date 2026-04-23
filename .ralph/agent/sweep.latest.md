@@ -1,11 +1,12 @@
 # Sweep Latest
 
-- Refreshed: `2026-04-22T16:08:37Z`
+- Refreshed: `2026-04-23T10:03:50Z`
 - Command: `./.venv/bin/python -u decompile.py "${PWD}/SORTDEMO.EXE" --timeout 6 --max-functions 8`
 - Lane: scan-safe bounded sweep (max 8 funcs, timeout 6s)
 - Result: success
 - Exit code: 0
-- Timestamp: `2026-04-22 18:02:14-18:02:15 +0200`
+- Timestamp: `2026-04-23 12:03:47-12:03:50 +0200`
+- Functions queued: 20
 - Functions shown: 8
 - Decompiled: 8
 - ASM/detail fallback: 0
