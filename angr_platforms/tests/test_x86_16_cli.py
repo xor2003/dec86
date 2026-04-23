@@ -10,9 +10,20 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import decompile
+import inertia_decompiler.cli_decompilation as cli_decompilation
+import inertia_decompiler.cli_core as cli_core
 import inertia_decompiler.cache as recovery_cache
+from inertia_decompiler.direct_addr_failure_family import (
+    advance_failure_family_state,
+    FailureFamilyState,
+    build_failure_family_snapshot,
+    failure_family_repeat_reason,
+    remember_failure_family_candidate,
+)
+import inertia_decompiler.decompile_file_summary as file_summary
 import inertia_decompiler.non_optimized_fallback as non_optimized_fallback
 import inertia_decompiler.sidecar_cache as sidecar_cache
+from inertia_decompiler.work_items import FunctionWorkItem
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
@@ -157,6 +168,41 @@ def test_emit_function_timing_summary_ignores_cached_timings(capsys):
     assert "0x1000 cached" not in out
 
 
+def test_emit_file_summary_sorts_and_dedupes_compilers_and_signature_sources(capsys):
+    project = SimpleNamespace(
+        _inertia_signature_compiler_names=(
+            "Microsoft C v6ax",
+            "Microsoft C v5",
+            "Microsoft C v5.1",
+            "Microsoft C v5",
+        ),
+        _inertia_flair_sig_titles=("ZLIB", "bsort"),
+        _inertia_flair_local_pat_sources=(r"C:\\sig\\BSORT.sig",),
+        _inertia_peer_exe_titles=("showmenu", "zlib"),
+    )
+    metadata = SimpleNamespace(signature_code_addrs=(0x1000, 0x1010))
+
+    file_summary.emit_file_decompilation_summary(
+        project,
+        metadata,
+        shown_total=8,
+        decompiled=7,
+        failed=1,
+        skipped_signature_labels=3,
+        same_family_retry_stops=2,
+        fallback_family_labels=("isolated_retry", "structurer_retry"),
+    )
+
+    assert capsys.readouterr().out.strip().splitlines() == [
+        "summary: probable compiler versions: Microsoft C v5, Microsoft C v5.1, Microsoft C v6ax",
+        "summary: probable library/signature sources: BSORT, showmenu, ZLIB",
+        "summary: signature-matched library functions: 2",
+        "summary: hidden signature-matched labels: 3",
+        "summary: same_family_retry_stops=2 fallback_family_labels=isolated_retry, structurer_retry",
+        "summary: shown=8 decompiled=7 asm_or_detail_fallback=1",
+    ]
+
+
 def test_asm_fallback_pattern_note_names_string_instruction_evidence():
     note = decompile._asm_fallback_pattern_note(
         "0x1168f: rep movsb byte ptr es:[di], byte ptr [si]\n"
@@ -218,12 +264,158 @@ def test_adaptive_per_byte_timeout_model_scales_from_successes():
 
 
 
+def test_direct_addr_failure_family_repeat_reason_changes_on_new_proof():
+    base = build_failure_family_snapshot(
+        status="empty",
+        failure_stage="structuring",
+        fallback_kind="isolated_retry",
+        tail_validation_verdict="uncollected",
+        artifact_path="0x102e0:RunMenu",
+    )
+    repeat = build_failure_family_snapshot(
+        status="empty",
+        failure_stage="structuring",
+        fallback_kind="isolated_retry",
+        tail_validation_verdict="uncollected",
+        artifact_path="0x102e0:RunMenu",
+    )
+    changed_artifact = build_failure_family_snapshot(
+        status="empty",
+        failure_stage="structuring",
+        fallback_kind="isolated_retry",
+        tail_validation_verdict="uncollected",
+        artifact_path="0x102e0:RunMenu:retry",
+    )
+    changed_verdict = build_failure_family_snapshot(
+        status="empty",
+        failure_stage="structuring",
+        fallback_kind="isolated_retry",
+        tail_validation_verdict="stable",
+        artifact_path="0x102e0:RunMenu",
+    )
+
+    assert failure_family_repeat_reason(base, repeat) is not None
+    assert failure_family_repeat_reason(base, changed_artifact) is None
+    assert failure_family_repeat_reason(base, changed_verdict) is None
+
+
+def test_direct_addr_failure_family_state_tracks_previous_candidate_and_new_proof():
+    state = FailureFamilyState()
+    base = build_failure_family_snapshot(
+        status="empty",
+        failure_stage="structuring",
+        fallback_kind="structurer_retry",
+        tail_validation_verdict="uncollected",
+        artifact_path="0x102e0:RunMenu",
+    )
+    repeat = build_failure_family_snapshot(
+        status="empty",
+        failure_stage="structuring",
+        fallback_kind="structurer_retry",
+        tail_validation_verdict="uncollected",
+        artifact_path="0x102e0:RunMenu",
+    )
+    changed = build_failure_family_snapshot(
+        status="empty",
+        failure_stage="structuring",
+        fallback_kind="structurer_retry",
+        tail_validation_verdict="changed",
+        artifact_path="0x102e0:RunMenu:retry",
+    )
+
+    assert remember_failure_family_candidate(state, base) is None
+    assert state.previous_snapshot is None
+    assert state.candidate_snapshot == base
+    assert state.new_proof_seen is False
+    assert state.repeat_detected is False
+    advance_failure_family_state(state)
+    assert state.previous_snapshot == base
+
+    assert remember_failure_family_candidate(state, repeat) is not None
+    assert state.previous_snapshot == base
+    assert state.candidate_snapshot == repeat
+    assert state.new_proof_seen is False
+    assert state.repeat_detected is True
+    advance_failure_family_state(state)
+    assert state.previous_snapshot == repeat
+
+    assert remember_failure_family_candidate(state, changed) is None
+    assert state.previous_snapshot == repeat
+    assert state.candidate_snapshot == changed
+    assert state.new_proof_seen is True
+    assert state.repeat_detected is False
+
+
+def test_decompile_function_with_stats_skips_same_family_retry_without_new_proof(monkeypatch, capsys):
+    calls: list[int] = []
+
+    class _FakeDecompiler:
+        def __init__(self):
+            self.codegen = None
+            self.errors = [SimpleNamespace(exc_type=KeyError, exc_value=KeyError("same family"))]
+            self.clinic = None
+
+    class _FakeAnalyses:
+        def Decompiler(self, *_args, **_kwargs):
+            calls.append(1)
+            return _FakeDecompiler()
+
+    project = SimpleNamespace(
+        analyses=_FakeAnalyses(),
+        arch=SimpleNamespace(name="86_16"),
+        entry=0x1000,
+        loader=SimpleNamespace(main_object=SimpleNamespace(linked_base=0x1000, max_addr=0x1000)),
+        _inertia_decompiler_stage="structuring",
+    )
+    function = SimpleNamespace(addr=0x102E0, name="RunMenu", info={}, project=project, normalized=True)
+    cfg = SimpleNamespace()
+
+    monkeypatch.setattr(cli_decompilation, "_analysis_timeout", lambda *_args, **_kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(cli_decompilation, "_guard_angr_peephole_expr_bitwidth_assertion", lambda *_args, **_kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(cli_decompilation, "_guard_angr_variable_recovery_binop_sub_size_mismatch", lambda *_args, **_kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(cli_decompilation, "_guard_angr_ail_narrowing", lambda *_args, **_kwargs: contextlib.nullcontext())
+    monkeypatch.setattr(cli_decompilation, "_guard_angr_clinic_stage_markers", lambda *_args, **_kwargs: contextlib.nullcontext())
+
+    status, payload, partial_payload, block_count, byte_count, elapsed = cli_decompilation._decompile_function_with_stats(
+        project,
+        cfg,
+        function,
+        timeout=2,
+        api_style="default",
+        binary_path=None,
+        cod_metadata=None,
+        synthetic_globals=None,
+        lst_metadata=None,
+        enable_structured_simplify=True,
+        enable_postprocess=True,
+        allow_isolated_retry=True,
+        failure_family_state=FailureFamilyState(
+            previous_snapshot=build_failure_family_snapshot(
+                status="empty",
+                failure_stage="structuring",
+                fallback_kind="structurer_retry",
+                tail_validation_verdict="uncollected",
+                artifact_path="0x102e0:RunMenu",
+            )
+        ),
+    )
+    captured = capsys.readouterr()
+
+    assert status == "empty"
+    assert "stop: same failure family" in captured.out
+    assert calls == [1]
+    assert partial_payload is None
+    assert block_count == 0
+    assert byte_count == 0
+    assert elapsed >= 0
+
+
 def test_function_work_cache_ignores_timeout_records(monkeypatch):
     function = SimpleNamespace(addr=0x1234, name="sub_1234", project=None)
-    item = decompile.FunctionWorkItem(index=1, function_cfg=object(), function=function)
-    monkeypatch.setattr(decompile, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    item = FunctionWorkItem(index=1, function_cfg=object(), function=function)
+    monkeypatch.setattr(cli_core, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
-        decompile,
+        cli_core,
         "_load_cache_json",
         lambda *_args, **_kwargs: {
             "status": "timeout",
@@ -232,7 +424,7 @@ def test_function_work_cache_ignores_timeout_records(monkeypatch):
         },
     )
 
-    result, _debug, _cache_key, _tail_enabled, _expected_stages = decompile._function_work_cache_lookup(
+    result, _debug, _cache_key, _tail_enabled, _expected_stages = cli_core._function_work_cache_lookup(
         item,
         binary_path=None,
         timeout=2,

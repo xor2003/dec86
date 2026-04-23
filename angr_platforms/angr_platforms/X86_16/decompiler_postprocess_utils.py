@@ -16,6 +16,7 @@ __all__ = [
     "_c_constant_value_8616",
     "_segment_reg_name_8616",
     "_match_real_mode_linear_expr_8616",
+    "_match_real_mode_segmented_store_shape_8616",
     "_match_segmented_dereference_8616",
     "_replace_c_children_8616",
     "_iter_c_nodes_deep_8616",
@@ -81,6 +82,67 @@ def _match_real_mode_linear_expr_8616(node, project) -> tuple[str | None, int | 
             if seg_name is not None:
                 return seg_name, linear
     return None, None
+
+
+def _match_real_mode_segmented_store_shape_8616(node, project) -> tuple[str | None, tuple[tuple[int, object], ...]]:
+    """
+    Match a real-mode dereference shaped as one segment base plus explicit offset terms.
+
+    This stays stricter than "lhs contains ss somewhere": the node must be a real
+    memory dereference and its address must decompose into exactly one positive
+    segment-base term plus zero or more signed offset terms.
+    """
+
+    def _strip_casts(expr):
+        while isinstance(expr, CTypeCast):
+            expr = expr.expr
+        return expr
+
+    def _segment_base_name(expr) -> str | None:
+        expr = _strip_casts(expr)
+        if isinstance(expr, CBinaryOp) and expr.op == "Shl":
+            for maybe_seg, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                if _c_constant_value_8616(maybe_scale) == 4:
+                    return _segment_reg_name_8616(maybe_seg, project)
+        if isinstance(expr, CBinaryOp) and expr.op == "Mul":
+            for maybe_seg, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
+                if _c_constant_value_8616(maybe_scale) == 16:
+                    return _segment_reg_name_8616(maybe_seg, project)
+        return None
+
+    def _collect_signed_terms(expr, sign: int, out: list[tuple[int, object]]) -> None:
+        expr = _strip_casts(expr)
+        if isinstance(expr, CBinaryOp) and expr.op == "Add":
+            _collect_signed_terms(expr.lhs, sign, out)
+            _collect_signed_terms(expr.rhs, sign, out)
+            return
+        if isinstance(expr, CBinaryOp) and expr.op == "Sub":
+            _collect_signed_terms(expr.lhs, sign, out)
+            _collect_signed_terms(expr.rhs, -sign, out)
+            return
+        out.append((sign, expr))
+
+    node = _strip_casts(node)
+    if not isinstance(node, CUnaryOp) or node.op != "Dereference":
+        return None, ()
+
+    signed_terms: list[tuple[int, object]] = []
+    _collect_signed_terms(node.operand, 1, signed_terms)
+
+    segment_name: str | None = None
+    offset_terms: list[tuple[int, object]] = []
+    for sign, term in signed_terms:
+        base_name = _segment_base_name(term)
+        if base_name is None:
+            offset_terms.append((sign, term))
+            continue
+        if sign != 1 or segment_name is not None:
+            return None, ()
+        segment_name = base_name
+
+    if segment_name is None:
+        return None, ()
+    return segment_name, tuple(offset_terms)
 
 
 def _match_segmented_dereference_8616(node, project) -> tuple[str | None, int | None]:

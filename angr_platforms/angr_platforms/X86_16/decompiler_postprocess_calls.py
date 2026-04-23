@@ -23,6 +23,7 @@ from .decompiler_postprocess_utils import (
     _iter_c_nodes_deep_8616,
     _match_bp_stack_dereference_8616,
     _match_real_mode_linear_expr_8616,
+    _match_real_mode_segmented_store_shape_8616,
     _segment_reg_name_8616,
     _match_segmented_dereference_8616,
 )
@@ -617,6 +618,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     record_callsite_summary_map_facts_8616(codegen, summary_map)
 
     changed = False
+    materialized_callsite_metadata_ids: dict[int, tuple[int, ...]] = {}
     def _arg_width_from_expr(expr) -> int:
         node = expr
         while isinstance(node, CTypeCast):
@@ -672,6 +674,24 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         if summary_map.get(id(call)) != updated:
             summary_map[id(call)] = updated
             changed = True
+
+    def _record_prunable_segment_metadata_ids(call, statements: list, consumed_indices: list[int]) -> None:
+        if call is None or not consumed_indices:
+            return
+        tail_ids: list[int] = []
+        scan = max(consumed_indices) + 1
+        while scan < len(statements):
+            stmt = statements[scan]
+            if _is_segment_register_metadata_store(stmt):
+                tail_ids.append(id(stmt))
+                scan += 1
+                continue
+            if _is_stack_carrier_temp_assignment(stmt):
+                scan += 1
+                continue
+            break
+        if tail_ids:
+            materialized_callsite_metadata_ids[id(call)] = tuple(tail_ids)
 
     def _call_from_statement(stmt):
         if isinstance(stmt, CFunctionCall):
@@ -791,27 +811,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     def _store_matches_typed_stack_probe_fact(lhs, fact: TypedStackProbeReturnFact8616 | None) -> bool:
         if lhs is None or fact is None:
             return False
-        seg_name, _linear = _match_segmented_dereference_8616(lhs, project)
-        if seg_name == fact.segment_space:
-            return True
-        nodes = (lhs, *_iter_c_nodes_deep_8616(lhs))
-        for raw_node in nodes:
-            node = raw_node
-            while isinstance(node, CTypeCast):
-                node = node.expr
-            if isinstance(node, CBinaryOp) and node.op in {"Shl", "Mul"}:
-                if _segment_reg_name_8616(node.lhs, project) == fact.segment_space:
-                    return True
-                if _segment_reg_name_8616(node.rhs, project) == fact.segment_space:
-                    return True
-            if isinstance(node, CUnaryOp) and node.op == "Dereference":
-                seg_name, _linear = _match_real_mode_linear_expr_8616(getattr(node, "operand", None), project)
-                if seg_name == fact.segment_space:
-                    return True
-                seg_name, _linear = _match_real_mode_linear_expr_8616(node, project)
-                if seg_name == fact.segment_space:
-                    return True
-        return False
+        seg_name, _offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
+        return seg_name == fact.segment_space
 
     def _typed_stack_store_rhs_from_statement(stmt, fact: TypedStackProbeReturnFact8616 | None):
         if fact is None:
@@ -1101,6 +1102,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     if all(rhs is not None for rhs in candidate_rhs) and _all_arg_exprs_are_non_segment_registers(candidate_rhs):
                         call.args = list(candidate_rhs)
                         record_stack_arg_materialization_8616(codegen, len(candidate_rhs))
+                        _record_prunable_segment_metadata_ids(
+                            call,
+                            new_statements,
+                            list(range(len(new_statements) - expected_arg_count, len(new_statements))),
+                        )
                         del new_statements[-expected_arg_count:]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
@@ -1123,6 +1129,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     ):
                         call.args = list(expanded_rhs)
                         record_stack_arg_materialization_8616(codegen, len(expanded_rhs))
+                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         for consume_idx in sorted(consumed_indices, reverse=True):
                             del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
@@ -1136,6 +1143,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     if _all_arg_exprs_are_non_segment_registers(backtracked_rhs):
                         call.args = list(backtracked_rhs)
                         record_stack_arg_materialization_8616(codegen, len(backtracked_rhs))
+                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         for consume_idx in sorted(consumed_indices, reverse=True):
                             del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
@@ -1166,6 +1174,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     if candidate_rhs and not _is_segment_register_value_expr(candidate_rhs[0]):
                         call.args = [candidate_rhs[0]]
                         record_stack_arg_materialization_8616(codegen, 1)
+                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         for consume_idx in sorted(consumed_indices, reverse=True):
                             del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
@@ -1193,6 +1202,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 ):
                     call.args = list(candidate_rhs)
                     record_stack_arg_materialization_8616(codegen, len(candidate_rhs))
+                    _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                     for consume_idx in sorted(consumed_indices, reverse=True):
                         del new_statements[consume_idx]
                     _refresh_summary_arg_shape(call, summary)
@@ -1256,6 +1266,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
     if isinstance(getattr(root, "statements", None), (list, tuple)):
         _rewrite_block(root)
+    codegen._inertia_materialized_callsite_metadata_ids = materialized_callsite_metadata_ids
     if prune_materialized_callsite_segment_metadata_8616(project, codegen):
         changed = True
     return changed

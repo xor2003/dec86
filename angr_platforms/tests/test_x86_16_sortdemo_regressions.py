@@ -45,6 +45,34 @@ def _combined_output(result: subprocess.CompletedProcess[str]) -> str:
     return f"{result.stderr}{result.stdout}"
 
 
+def _run_decompile_file(
+    path: Path,
+    *,
+    max_functions: int = 8,
+    analysis_timeout: int = 30,
+    subprocess_timeout: int = 90,
+) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env.setdefault("INERTIA_ENABLE_TAIL_VALIDATION", "1")
+    return subprocess.run(
+        [
+            sys.executable,
+            str(CLI_PATH),
+            str(path),
+            "--timeout",
+            str(analysis_timeout),
+            "--max-functions",
+            str(max_functions),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=subprocess_timeout,
+        check=False,
+    )
+
+
 def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_clean():
     result = _run_decompile_addr(SORTDEMO_EXE, 0x10F28)
     scorecard = build_acceptance_scorecard(
@@ -66,6 +94,30 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     assert "(&s_" not in result.stdout
     assert "*(&" not in result.stdout
     assert scorecard.validation_verdict == "stable"
+
+
+def test_sortdemo_file_summary_lines_are_stable_and_sorted():
+    first = _run_decompile_file(SORTDEMO_EXE, max_functions=8)
+    second = _run_decompile_file(SORTDEMO_EXE, max_functions=8)
+
+    assert first.returncode in {0, 2}, first.stderr + first.stdout
+    assert second.returncode in {0, 2}, second.stderr + second.stdout
+
+    def _summary_lines(text: str) -> list[str]:
+        return [line for line in text.splitlines() if line.startswith("summary:")]
+
+    expected = [
+        "summary: probable compiler versions: Microsoft C v5, Microsoft C v5.1, Microsoft C v6ax",
+        "summary: probable library/signature sources: local_omf_pat, pat_backend:hyperscan",
+        "summary: signature-matched library functions: 67",
+        "summary: hidden signature-matched labels: 67",
+        "summary: same_family_retry_stops=0 fallback_family_labels=none",
+        f"summary: shown=8 decompiled={8 if first.returncode == 0 else 0} asm_or_detail_fallback={0 if first.returncode == 0 else 8}",
+    ]
+    first_summary = _summary_lines(first.stdout)
+    second_summary = _summary_lines(second.stdout)
+    assert first_summary[2:8] == expected
+    assert second_summary[2:8] == expected
 
 
 def test_sortdemo_heapsort_anchor_no_longer_prunes_local_lane_after_repeated_empty_results():
@@ -123,11 +175,13 @@ def test_sortdemo_quicksort_anchor_distinguishes_timeout_from_old_vexvalue_crash
 
     combined = _combined_output(result)
 
-    assert result.returncode in {0, 4}, combined
+    assert result.returncode in {0, 3, 4}, combined
     assert "Non-constant VexValue has no value property" not in combined
     assert "function: 0x10ce0 QuickSort" in result.stdout
     if result.returncode == 0:
         assert "Function recovery failed" not in combined
+    elif result.returncode == 3:
+        assert "Timed out while recovering a function after 6s after exhausting direct-address fallback budget." in combined
     else:
         assert "Decompilation timeout" in combined
         assert "Function recovery failed" not in combined
