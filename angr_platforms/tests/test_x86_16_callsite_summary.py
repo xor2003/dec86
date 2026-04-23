@@ -195,6 +195,8 @@ def test_callsite_summary_marks_known_stack_probe_helpers(monkeypatch):
     assert summary.stack_probe_helper is True
     assert summary.helper_return_state == "stack_address"
     assert summary.helper_return_space == "ss"
+    assert summary.helper_return_width == 2
+    assert summary.helper_return_address_kind == "stack"
 
 
 def test_callsite_summary_marks_rebased_exact_slice_stack_probe_helper_from_original_project(monkeypatch):
@@ -225,6 +227,8 @@ def test_callsite_summary_marks_rebased_exact_slice_stack_probe_helper_from_orig
 
     assert summary is not None
     assert summary.stack_probe_helper is True
+    assert summary.helper_return_width == 2
+    assert summary.helper_return_address_kind == "stack"
 
 
 def test_callsite_summary_marks_stack_probe_returned_stack_address_when_ax_is_consumed(monkeypatch):
@@ -253,3 +257,5 @@ def test_callsite_summary_marks_stack_probe_returned_stack_address_when_ax_is_co
     assert summary.return_used is True
     assert summary.helper_return_state == "stack_address"
     assert summary.helper_return_space == "ss"
+    assert summary.helper_return_width == 2
+    assert summary.helper_return_address_kind == "stack"

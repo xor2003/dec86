@@ -109,6 +109,18 @@ def summarize_x86_16_helper_eligibility(source: Any) -> HelperEligibilitySummary
                 "stack-probe helper return state is unresolved; keep explicit refusal instead of guessed stack-address semantics",
             )
         )
+    if (
+        stack_probe_helper
+        and effect_summary.helper_return_state == "stack_address"
+        and effect_summary.helper_return_address_kind == "stack"
+        and effect_summary.helper_return_width is None
+    ):
+        refusals.append(
+            HelperEligibilityRefusal(
+                "helper_return_width_unknown",
+                "stack-probe helper stack-address returns need known width before helper-wrapper use",
+            )
+        )
 
     if refusals:
         return HelperEligibilitySummary(

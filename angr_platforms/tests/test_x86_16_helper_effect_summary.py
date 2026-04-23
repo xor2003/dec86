@@ -48,3 +48,19 @@ def test_helper_effect_summary_refuses_stack_probe_helper_when_return_state_is_u
 
     assert summary.status == "refused"
     assert "helper_return_state_unknown" in tuple(item.kind for item in summary.refusals)
+
+
+def test_helper_effect_summary_refuses_stack_probe_helper_when_return_width_is_unknown():
+    summary = summarize_x86_16_helper_eligibility(
+        {
+            "stack_probe_helper": True,
+            "direct_call_count": 1,
+            "return_kind": "scalar",
+            "helper_return_state": "stack_address",
+            "helper_return_space": "ss",
+            "helper_return_address_kind": "stack",
+        }
+    )
+
+    assert summary.status == "refused"
+    assert "helper_return_width_unknown" in tuple(item.kind for item in summary.refusals)

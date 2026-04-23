@@ -25,6 +25,8 @@ class FunctionEffectSummary:
     return_kind: str = "unknown"
     helper_return_state: str = "none"
     helper_return_space: str | None = None
+    helper_return_width: int | None = None
+    helper_return_address_kind: str = "none"
 
     def frame_only_stack(self) -> bool:
         return bool(self.frame_stack_reads or self.frame_stack_writes) and not (
@@ -46,7 +48,10 @@ class FunctionEffectSummary:
             f"direct_branches={self.direct_branch_count} "
             f"indirect_branches={self.indirect_branch_count} "
             f"return={self.return_kind} "
-            f"helper_return={self.helper_return_state}"
+            f"helper_return={self.helper_return_state} "
+            f"helper_space={self.helper_return_space} "
+            f"helper_width={self.helper_return_width} "
+            f"helper_addr_kind={self.helper_return_address_kind}"
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -65,6 +70,8 @@ class FunctionEffectSummary:
             "return_kind": self.return_kind,
             "helper_return_state": self.helper_return_state,
             "helper_return_space": self.helper_return_space,
+            "helper_return_width": self.helper_return_width,
+            "helper_return_address_kind": self.helper_return_address_kind,
             "frame_only_stack": self.frame_only_stack(),
         }
 
@@ -100,6 +107,14 @@ def summarize_x86_16_function_effects(source: Any) -> FunctionEffectSummary:
     helper_return_space_str = (
         str(helper_return_space).strip() if isinstance(helper_return_space, str) and str(helper_return_space).strip() else None
     )
+    helper_return_width = _value(source, "helper_return_width", None)
+    helper_return_width_int = helper_return_width if isinstance(helper_return_width, int) and helper_return_width > 0 else None
+    helper_return_address_kind = _value(source, "helper_return_address_kind", "none")
+    helper_return_address_kind_str = (
+        str(helper_return_address_kind).strip()
+        if isinstance(helper_return_address_kind, str) and str(helper_return_address_kind).strip()
+        else "none"
+    )
     return FunctionEffectSummary(
         register_inputs=_sorted_str_tuple(_value(source, "register_inputs", ())),
         register_outputs=_sorted_str_tuple(_value(source, "register_outputs", ())),
@@ -115,4 +130,6 @@ def summarize_x86_16_function_effects(source: Any) -> FunctionEffectSummary:
         return_kind=str(_value(source, "return_kind", "unknown")),
         helper_return_state=str(_value(source, "helper_return_state", "none")),
         helper_return_space=helper_return_space_str,
+        helper_return_width=helper_return_width_int,
+        helper_return_address_kind=helper_return_address_kind_str,
     )

@@ -17,6 +17,10 @@ from angr_platforms.X86_16.segmented_memory_reasoning import (
 )
 from angr_platforms.X86_16.decompiler_postprocess_utils import _match_bp_stack_dereference_8616
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
+from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
+    TypedStackProbeReturnFact8616,
+    build_typed_stack_probe_return_facts_8616,
+)
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -486,3 +490,57 @@ def test_stack_lowering_entrypoint_runs_typed_ss_lowering_before_cli_cleanup():
 
     assert changed is True
     assert calls == ["typed-ss", "rewrite", "canonicalize"]
+
+
+def test_stack_lowering_entrypoint_builds_typed_stack_probe_return_facts_from_summaries():
+    project, codegen = _codegen([])
+    probe = SimpleNamespace()
+    codegen._inertia_callsite_summaries = {
+        id(probe): SimpleNamespace(
+            stack_probe_helper=True,
+            helper_return_state="stack_address",
+            helper_return_space="ss",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
+        )
+    }
+
+    changed = run_stack_lowering_pass_8616(
+        lower_stable_ss_stack_accesses=lambda: False,
+        rewrite_ss_stack_byte_offsets=lambda: False,
+        canonicalize_stack_cvars=lambda: False,
+        codegen=codegen,
+        max_rounds=1,
+    )
+
+    assert changed is False
+    assert codegen._inertia_typed_stack_probe_return_facts == {
+        id(probe): TypedStackProbeReturnFact8616(
+            call_node_id=id(probe),
+            segment_space="ss",
+            width=2,
+            carrier_keys=(),
+        )
+    }
+
+
+def test_stack_lowering_builder_refuses_non_ss_or_unknown_width_facts():
+    project, codegen = _codegen([])
+    codegen._inertia_callsite_summaries = {
+        1: SimpleNamespace(
+            stack_probe_helper=True,
+            helper_return_state="stack_address",
+            helper_return_space="ds",
+            helper_return_width=2,
+            helper_return_address_kind="stack",
+        ),
+        2: SimpleNamespace(
+            stack_probe_helper=True,
+            helper_return_state="stack_address",
+            helper_return_space="ss",
+            helper_return_width=None,
+            helper_return_address_kind="stack",
+        ),
+    }
+
+    assert build_typed_stack_probe_return_facts_8616(codegen) == {}

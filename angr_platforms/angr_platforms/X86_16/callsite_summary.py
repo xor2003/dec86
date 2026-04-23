@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from .analysis_helpers import collect_neighbor_call_targets
 from .callee_name_normalization import normalize_callee_name_8616
@@ -22,6 +22,22 @@ class CallsiteSummary8616:
     stack_probe_helper: bool = False
     helper_return_state: str = "none"
     helper_return_space: str | None = None
+    helper_return_width: int | None = None
+    helper_return_address_kind: str = "none"
+
+    def brief(self) -> str:
+        return (
+            f"callsite={self.callsite_addr:#x} "
+            f"target={None if self.target_addr is None else hex(self.target_addr)} "
+            f"args={self.arg_count} "
+            f"helper_return={self.helper_return_state} "
+            f"helper_space={self.helper_return_space} "
+            f"helper_width={self.helper_return_width} "
+            f"helper_addr_kind={self.helper_return_address_kind}"
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
 
 
 def _is_stack_probe_target_name_8616(name: str | None) -> bool:
@@ -262,6 +278,8 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
     if not insns:
         helper_return_state = "stack_address" if stack_probe_helper else "none"
         helper_return_space = "ss" if stack_probe_helper else None
+        helper_return_width = 2 if stack_probe_helper else None
+        helper_return_address_kind = "stack" if stack_probe_helper else "none"
         return CallsiteSummary8616(
             callsite_addr,
             target_addr,
@@ -275,11 +293,15 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
             stack_probe_helper,
             helper_return_state=helper_return_state,
             helper_return_space=helper_return_space,
+            helper_return_width=helper_return_width,
+            helper_return_address_kind=helper_return_address_kind,
         )
     call_idx = _find_call_index(insns, callsite_addr)
     if call_idx is None:
         helper_return_state = "stack_address" if stack_probe_helper else "none"
         helper_return_space = "ss" if stack_probe_helper else None
+        helper_return_width = 2 if stack_probe_helper else None
+        helper_return_address_kind = "stack" if stack_probe_helper else "none"
         return CallsiteSummary8616(
             callsite_addr,
             target_addr,
@@ -293,6 +315,8 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
             stack_probe_helper,
             helper_return_state=helper_return_state,
             helper_return_space=helper_return_space,
+            helper_return_width=helper_return_width,
+            helper_return_address_kind=helper_return_address_kind,
         )
 
     cleanup = _stack_cleanup_after_call(function, insns, call_idx, callsite_addr)
@@ -301,12 +325,17 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
     return_register, return_used = _return_use_after_call(function, insns, call_idx, callsite_addr)
     helper_return_state = "none"
     helper_return_space = None
+    helper_return_width = None
+    helper_return_address_kind = "none"
     if stack_probe_helper:
         if return_register not in {None, "ax"}:
             helper_return_state = "unknown"
+            helper_return_address_kind = "unknown"
         else:
             helper_return_state = "stack_address"
             helper_return_space = "ss"
+            helper_return_width = 2
+            helper_return_address_kind = "stack"
     return CallsiteSummary8616(
         callsite_addr=callsite_addr,
         target_addr=target_addr,
@@ -320,4 +349,6 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
         stack_probe_helper=stack_probe_helper,
         helper_return_state=helper_return_state,
         helper_return_space=helper_return_space,
+        helper_return_width=helper_return_width,
+        helper_return_address_kind=helper_return_address_kind,
     )

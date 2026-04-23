@@ -19,6 +19,8 @@ def test_function_effect_summary_is_deterministic_and_sorted():
             "return_kind": "word",
             "helper_return_state": "stack_address",
             "helper_return_space": "ss",
+            "helper_return_width": 2,
+            "helper_return_address_kind": "stack",
         }
     )
 
@@ -31,6 +33,8 @@ def test_function_effect_summary_is_deterministic_and_sorted():
     assert summary.memory_writes == ("ss:0x4",)
     assert summary.helper_return_state == "stack_address"
     assert summary.helper_return_space == "ss"
+    assert summary.helper_return_width == 2
+    assert summary.helper_return_address_kind == "stack"
     assert summary.has_indirect_control() is True
 
 
