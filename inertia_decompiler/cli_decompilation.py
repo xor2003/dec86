@@ -47,6 +47,8 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _materialize_callsite_stack_arguments_8616,
 )
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
+from angr_platforms.X86_16.lowering.stack_probe_return_facts import build_typed_stack_probe_return_facts_8616
+from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
 
@@ -823,12 +825,14 @@ def _decompile_function(
             lower_stable_ss_stack_accesses=lambda: apply_x86_16_segmented_memory_reasoning(dec.codegen),
             rewrite_ss_stack_byte_offsets=lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
             canonicalize_stack_cvars=lambda: _canonicalize_stack_cvars(dec.codegen),
+            codegen=dec.codegen,
         )
 
     def _run_callsite_stack_fact_pass() -> bool:
         changed_local = False
         for rewrite in (
             lambda: _attach_callsite_summaries_8616(project, dec.codegen),
+            lambda: bool(build_typed_stack_probe_return_facts_8616(dec.codegen)),
             lambda: _materialize_callsite_stack_arguments_8616(project, dec.codegen),
             lambda: _materialize_callsite_prototypes_8616(project, dec.codegen),
         ):
@@ -948,6 +952,9 @@ def _decompile_function(
         if not iter_changed:
             break
         changed = True
+    stack_probe_fact_stats = format_stack_probe_fact_stats_8616(dec.codegen)
+    if stack_probe_fact_stats is not None:
+        print(f"[dbg] stack-probe fact stats for {function.addr:#x}: {stack_probe_fact_stats}")
     if changed:
         rendered_text, _ = _regenerate_codegen_text_safely(
             dec.codegen,
