@@ -41,6 +41,7 @@ from .runtime_records import (
     PREFLIGHT_STATE_SCHEMA_VERSION,
     SESSION_LEDGER_SCHEMA_VERSION,
     append_jsonl,
+    build_evidence_facts,
     build_history_event,
     compact_runtime_signals,
     iso_now,
@@ -87,6 +88,10 @@ class MetaHarness:
     completed_step_statuses = {"done", "done-with-failures"}
     graceful_exit_codes = {124, 130, 143}
     _SWEEP_THREAD_EXHAUSTION_MARKER = "RuntimeError: can't start new thread"
+
+    @property
+    def evidence_facts_file(self) -> Path:
+        return self.cfg.state_dir / "evidence_facts.json"
 
     def __init__(self, cfg: RuntimeConfig, llm_cfg: LlmConfig):
         self.cfg = cfg
@@ -785,6 +790,15 @@ class MetaHarness:
         failed, _total = matches[-1]
         return int(failed)
 
+    def refresh_evidence_facts(self) -> dict[str, object]:
+        text = self.cfg.evidence_log_file.read_text(encoding="utf-8", errors="replace") if self.cfg.evidence_log_file.exists() else ""
+        payload = build_evidence_facts(text, generated_at=self.iso_now())
+        write_json(self.evidence_facts_file, payload)
+        if self.cycle_state is not None:
+            self.cycle_state["evidence_fact_summary"] = payload.get("summary", {})
+            self._save_cycle_state()
+        return payload
+
     def prepare_cycle_workspace(self) -> None:
         self.cleanup_state_dir()
         self.current_cycle_index += 1
@@ -942,6 +956,7 @@ class MetaHarness:
         self.capture_cycle_artifact(self.cfg.status_file, f"status.{tag}.txt")
         self.capture_cycle_artifact(self.cfg.last_log_file, f"last.{tag}.log")
         self.capture_cycle_artifact(self.cfg.evidence_log_file, f"evidence_sweep.{tag}.log")
+        self.capture_cycle_artifact(self.evidence_facts_file, f"evidence_facts.{tag}.json")
         state_file = self.cycle_state_file()
         if state_file is not None and state_file.exists():
             self.capture_cycle_artifact(state_file, f"cycle.{tag}.json")
@@ -2008,6 +2023,8 @@ class MetaHarness:
                 retry_mode="forced_serial_function_decompilation",
             )
         if rc != 0 and completed_sweep:
+            facts_payload = self.refresh_evidence_facts()
+            facts_summary = facts_payload.get("summary", {}) if isinstance(facts_payload, dict) else {}
             self.log(f"{self.cfg.sweep_label} completed with non-zero rc={rc}; continuing because evidence was produced")
             self.record_event(
                 "sweep.finished",
@@ -2016,11 +2033,17 @@ class MetaHarness:
                 failure_class="sweep_failure",
                 rc=rc,
                 completed_sweep=completed_sweep,
+                fact_count=facts_summary.get("fact_count", 0),
+                low_confidence_fact_count=facts_summary.get("low_confidence_fact_count", 0),
             )
             if self.cfg.evidence_log_file.exists():
                 shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
             self.write_status("full-sweep", "done-with-failures", f"log={self.cfg.evidence_log_file.name} rc={rc}")
-            self.mark_cycle_step("full-sweep", "done-with-failures", f"rc={rc}")
+            self.mark_cycle_step(
+                "full-sweep",
+                "done-with-failures",
+                f"rc={rc} facts={facts_summary.get('fact_count', 0)} low_confidence={facts_summary.get('low_confidence_fact_count', 0)}",
+            )
             self.capture_cycle_artifact(self.cfg.evidence_log_file, "evidence_sweep.log")
             self.capture_cycle_snapshot("sweep")
             self.trim_old_logs()
@@ -2039,16 +2062,24 @@ class MetaHarness:
             self.write_status("full-sweep", "failed", f"see {self.cfg.evidence_log_file.name}")
             self.mark_cycle_step("full-sweep", "failed", f"rc={rc}")
             self.die(f"{self.cfg.sweep_label} failed")
+        facts_payload = self.refresh_evidence_facts()
+        facts_summary = facts_payload.get("summary", {}) if isinstance(facts_payload, dict) else {}
         self.record_event(
             "sweep.finished",
             "completed",
             "evidence sweep completed",
             rc=rc,
             log=self.cfg.evidence_log_file.name,
+            fact_count=facts_summary.get("fact_count", 0),
+            low_confidence_fact_count=facts_summary.get("low_confidence_fact_count", 0),
         )
         shutil.copy2(self.cfg.evidence_log_file, self.cfg.last_log_file)
         self.write_status("full-sweep", "done", f"log={self.cfg.evidence_log_file.name}")
-        self.mark_cycle_step("full-sweep", "done", f"log={self.cfg.evidence_log_file.name}")
+        self.mark_cycle_step(
+            "full-sweep",
+            "done",
+            f"log={self.cfg.evidence_log_file.name} facts={facts_summary.get('fact_count', 0)} low_confidence={facts_summary.get('low_confidence_fact_count', 0)}",
+        )
         self.capture_cycle_artifact(self.cfg.evidence_log_file, "evidence_sweep.log")
         self.capture_cycle_snapshot("sweep")
         self.trim_old_logs()

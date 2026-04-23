@@ -196,10 +196,20 @@ def test_checker_and_crash_prompts_reference_evidence(monkeypatch, tmp_path):
     checker = build_checker_prompt(cfg)
     crash = build_crash_reviewer_prompt(cfg, "/tmp/cycle", 7)
     assert str(cfg.evidence_log_file) in checker
+    assert str(cfg.state_dir / "evidence_facts.json") in checker
+    assert "confidence percentages" in checker
+    assert "more evidence is needed" in checker
     assert "Do not run pytest, corpus scans, or broad repository searches" in checker
     assert "Harness restart required" in crash
     assert "/tmp/cycle" in crash
     assert "too complex for the current lane" in crash
+
+
+def test_checker_prompt_mentions_evidence_facts_artifact(monkeypatch, tmp_path):
+    cfg = _cfg(monkeypatch, tmp_path)
+    checker = build_checker_prompt(cfg)
+    assert str(cfg.state_dir / "evidence_facts.json") in checker
+    assert "confidence percentages" in checker
 
 
 def test_resume_prompt_is_short_and_keeps_required_marker(monkeypatch, tmp_path):

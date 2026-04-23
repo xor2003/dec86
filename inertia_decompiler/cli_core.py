@@ -479,6 +479,7 @@ from inertia_decompiler.tail_validation import (
     tail_validation_runtime_enabled as _tail_validation_runtime_enabled,
     tail_validation_snapshot_for_fallback as _tail_validation_snapshot_for_fallback,
     tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
+    x86_16_tail_validation_snapshot_passed,
 )
 
 from inertia_decompiler.runtime_support import (
@@ -537,6 +538,8 @@ from inertia_decompiler.non_optimized_fallback import (
     describe_non_optimized_unavailable,
     sidecar_verdict_closes_non_optimized_lane,
 )
+
+from inertia_decompiler.direct_addr_failure_family import FailureFamilyState, build_failure_family_snapshot
 
 print = _timestamped_print
 __all__ = ['_argument_was_explicit', '_parse_int', '_function_recovery_detail', '_bounded_non_optimized_timeout', '_direct_addr_wall_clock_budget', '_prepare_ranked_binary_preview_items', '_supplement_function_cfg_pairs_with_ranked_preview', '_supplement_function_cfg_pairs_with_seeded_recovery', '_function_work_cache_lookup', '_run_function_work_item', '_function_work_result_for_fork_ipc', '_emit_function_timing_summary', '_helper_name', '_iter_c_nodes', 'main']
@@ -851,6 +854,7 @@ def _run_function_work_item(
     decompile_project = item.function.project
     decompile_cfg = item.function_cfg
     decompile_function = item.function
+    failure_family_state = FailureFamilyState()
 
     def _run_local(project_obj, cfg_obj, function_obj) -> tuple[str, str, str | None, str, dict[str, object] | None, float, int, int]:
         with _capture_thread_output() as (stdout_buf, stderr_buf):
@@ -867,6 +871,7 @@ def _run_function_work_item(
                 enable_structured_simplify=enable_structured_simplify,
                 enable_postprocess=enable_postprocess,
                 allow_isolated_retry=allow_isolated_retry,
+                failure_family_state=failure_family_state,
             )
         debug_output_local = stdout_buf.getvalue()
         err_output = stderr_buf.getvalue()
@@ -957,6 +962,8 @@ def _run_function_work_item(
         elapsed=elapsed,
         block_count=block_count,
         byte_count=byte_count,
+        same_family_retry_stops=failure_family_state.same_family_retry_stops,
+        fallback_family_labels=failure_family_state.fallback_family_labels,
     )
 
 def _function_work_result_for_fork_ipc(result: FunctionWorkResult) -> FunctionWorkResult:
@@ -1071,6 +1078,11 @@ def main(argv: list[str] | None = None) -> int:
         help="When a same-stem .c/.C source sidecar exists, print it before each decompiled C block.",
     )
     parser.add_argument(
+        "--trace-c-stages",
+        action="store_true",
+        help="Print labeled C snapshots after major decompilation text stages so line origin is visible.",
+    )
+    parser.add_argument(
         "--proc",
         default=None,
         help="Extract and decompile one procedure from a .COD listing by PROC name.",
@@ -1177,6 +1189,7 @@ def main(argv: list[str] | None = None) -> int:
             base_addr=args.base_addr,
             entry_point=args.entry_point,
         )
+        setattr(project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
         _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
         lst_metadata = _load_lst_metadata(
             args.binary,
@@ -1194,6 +1207,7 @@ def main(argv: list[str] | None = None) -> int:
         if lst_metadata is None:
             print("/* no helper metadata (.lst/.map/.cod/debug info) found; using raw binary analysis and quick function-entry scans. */")
         print(_recovery_evidence_line(args.binary, lst_metadata))
+    setattr(project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
     low_memory_path = _prefer_low_memory_path()
     interactive_stdout = _stdout_is_interactive()
     precise_sidecar_regions = metadata_has_precise_code_regions(lst_metadata)
@@ -1646,6 +1660,7 @@ def main(argv: list[str] | None = None) -> int:
             if code_name is not None:
                 func.name = code_name
         direct_project = getattr(func, "project", project)
+        setattr(direct_project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
         _apply_binary_specific_annotations(
             direct_project,
             args.binary,
@@ -1666,6 +1681,7 @@ def main(argv: list[str] | None = None) -> int:
 
         print("/* decompiling... */", flush=True)
         direct_tail_validation_snapshot: dict[str, object] | None = None
+        direct_failure_family_state = FailureFamilyState()
         try:
             def direct_decompile_job():
                 result = _decompile_function_with_stats(
@@ -1678,8 +1694,18 @@ def main(argv: list[str] | None = None) -> int:
                     cod_metadata=cod_metadata,
                     synthetic_globals=synthetic_globals,
                     lst_metadata=lst_metadata,
+                    failure_family_state=direct_failure_family_state,
                 )
-                return (*result, _tail_validation_snapshot_for_function_run(direct_project, func))
+                return (
+                    *result,
+                    _tail_validation_snapshot_for_function_run(direct_project, func),
+                    FailureFamilyState(
+                        previous_snapshot=direct_failure_family_state.previous_snapshot,
+                        candidate_snapshot=direct_failure_family_state.candidate_snapshot,
+                        new_proof_seen=direct_failure_family_state.new_proof_seen,
+                        repeat_detected=direct_failure_family_state.repeat_detected,
+                    ),
+                )
 
             direct_decompile_timeout = max(1, args.timeout) + 1
             direct_decompile_timeout = max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1))
@@ -1698,8 +1724,14 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=direct_decompile_timeout,
                     thread_name_prefix="direct-decomp",
                 )
-            if direct_extra and isinstance(direct_extra[-1], dict):
-                direct_tail_validation_snapshot = dict(direct_extra[-1])
+            for extra in direct_extra:
+                if isinstance(extra, dict):
+                    direct_tail_validation_snapshot = dict(extra)
+                elif isinstance(extra, FailureFamilyState):
+                    direct_failure_family_state.previous_snapshot = extra.previous_snapshot
+                    direct_failure_family_state.candidate_snapshot = extra.candidate_snapshot
+                    direct_failure_family_state.new_proof_seen = extra.new_proof_seen
+                    direct_failure_family_state.repeat_detected = extra.repeat_detected
         except FuturesTimeoutError:
             status = "timeout"
             payload = f"Timed out after {args.timeout}s."
@@ -1719,6 +1751,14 @@ def main(argv: list[str] | None = None) -> int:
             partial_payload=partial_payload,
             tail_validation=direct_tail_validation_snapshot or _tail_validation_snapshot_for_function_run(direct_project, func),
         )
+        direct_failure_family_snapshot = build_failure_family_snapshot(
+            status=direct_result.status,
+            failure_stage=getattr(direct_result, "failure_stage", None),
+            fallback_kind="direct_addr",
+            tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation),
+            artifact_path=f"{func.addr:#x}:{func.name}",
+        )
+        print(f"[dbg] direct failure family: {direct_failure_family_snapshot.label()}")
         if status != "ok":
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address decompilation budget")
             direct_display_addr = function_original_addr(func)
@@ -1726,19 +1766,22 @@ def main(argv: list[str] | None = None) -> int:
             slice_result = None
             sidecar_closed_nonopt = False
             known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
+            exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
             if partial_payload is None and (precise_sidecar_regions or using_rebased_direct_slice):
-                _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
-                known_nonopt_result = _try_decompile_non_optimized_known_function(
-                    direct_project,
-                    cfg,
-                    func,
-                    timeout=max(1, min(_bounded_non_optimized_timeout(args.timeout), _remaining_direct_addr_budget() or 1)),
-                    api_style=args.api_style,
-                    binary_path=args.binary,
-                    lst_metadata=None if using_rebased_direct_slice else lst_metadata,
-                    cod_metadata=cod_metadata,
-                    synthetic_globals=synthetic_globals,
-                )
+                if not exact_retry_blocked:
+                    _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
+                    known_nonopt_result = _try_decompile_non_optimized_known_function(
+                        direct_project,
+                        cfg,
+                        func,
+                        timeout=max(1, min(_bounded_non_optimized_timeout(args.timeout), _remaining_direct_addr_budget() or 1)),
+                        api_style=args.api_style,
+                        binary_path=args.binary,
+                        lst_metadata=None if using_rebased_direct_slice else lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        failure_family_state=direct_failure_family_state,
+                    )
             known_nonopt_c = _non_optimized_slice_rendered(known_nonopt_result)
             if known_nonopt_c is not None:
                 _emit_tail_validation_for_function_run_or_uncollected(
@@ -1758,17 +1801,20 @@ def main(argv: list[str] | None = None) -> int:
                     c_header="\n/* == c (non-optimized fallback) == */",
                 )
                 return 0
+            exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
             if precise_sidecar_regions and not using_rebased_direct_slice:
-                _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
-                slice_result = _try_decompile_sidecar_slice(
-                    project,
-                    lst_metadata,
-                    direct_display_addr,
-                    func.name,
-                    timeout=max(1, min(args.timeout, _remaining_direct_addr_budget() or 1)),
-                    api_style=args.api_style,
-                    binary_path=args.binary,
-                )
+                if not exact_retry_blocked:
+                    _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
+                    slice_result = _try_decompile_sidecar_slice(
+                        project,
+                        lst_metadata,
+                        direct_display_addr,
+                        func.name,
+                        timeout=max(1, min(args.timeout, _remaining_direct_addr_budget() or 1)),
+                        api_style=args.api_style,
+                        binary_path=args.binary,
+                        failure_family_state=direct_failure_family_state,
+                    )
             if slice_result is not None:
                 if slice_result.status != "ok":
                     sidecar_closed_nonopt = sidecar_verdict_closes_non_optimized_lane(slice_result.verdict)
@@ -1838,6 +1884,7 @@ def main(argv: list[str] | None = None) -> int:
                 and known_nonopt_c is None
                 and (precise_sidecar_regions or using_rebased_direct_slice)
                 and not sidecar_closed_nonopt
+                and not (direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen)
             ):
                 _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
                 nonopt_result = _try_decompile_non_optimized_slice(
@@ -1849,6 +1896,8 @@ def main(argv: list[str] | None = None) -> int:
                     binary_path=args.binary,
                     lst_metadata=None if using_rebased_direct_slice else lst_metadata,
                     cod_metadata=cod_metadata,
+                    failure_family_state=direct_failure_family_state,
+                    original_addr=direct_display_addr,
                 )
             nonopt_c = _non_optimized_slice_rendered(nonopt_result)
             if nonopt_c is not None:
@@ -2617,6 +2666,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n/* == function {function.addr:#x} {function.name} == */")
         if getattr(result, "failure_stage", None):
             print(f"/* stage: {result.failure_stage} */")
+        failure_family_snapshot = build_failure_family_snapshot(
+            status=getattr(result, "status", None),
+            failure_stage=getattr(result, "failure_stage", None),
+            fallback_kind="file_sweep",
+            tail_validation_verdict=_tail_validation_display_status(getattr(result, "tail_validation", None)),
+            artifact_path=f"{function.addr:#x}:{function.name}",
+        )
+        print(f"/* failure family: {failure_family_snapshot.label()} */")
         if args.show_asm:
             print("/* -- asm -- */")
             print(_format_first_block_asm(project, function.addr))
@@ -3226,6 +3283,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"summary: {timed_out} discovered function(s) timed out during decompilation")
         if failed:
             print(f"summary: {failed} functions fell back to asm/details")
+        same_family_retry_stops = sum(getattr(result, "same_family_retry_stops", 0) for result in result_map.values())
+        fallback_family_labels = sorted(
+            {
+                label
+                for result in result_map.values()
+                for label in getattr(result, "fallback_family_labels", ())
+                if label
+            },
+            key=lambda item: (item.casefold(), item),
+        )
         emit_file_decompilation_summary(
             project,
             lst_metadata,
@@ -3233,6 +3300,8 @@ def main(argv: list[str] | None = None) -> int:
             decompiled=decompiled,
             failed=failed,
             skipped_signature_labels=skipped_signature_labels,
+            same_family_retry_stops=same_family_retry_stops,
+            fallback_family_labels=fallback_family_labels,
         )
         _emit_function_timing_summary(function_tasks, result_map)
         return 0 if decompiled else 2
@@ -3415,6 +3484,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"summary: {timed_out} discovered function(s) timed out during decompilation")
     if failed:
         print(f"summary: {failed} functions fell back to asm/details")
+    same_family_retry_stops = sum(getattr(result, "same_family_retry_stops", 0) for result in result_map.values())
+    fallback_family_labels = sorted(
+        {
+            label
+            for result in result_map.values()
+            for label in getattr(result, "fallback_family_labels", ())
+            if label
+        },
+        key=lambda item: (item.casefold(), item),
+    )
     emit_file_decompilation_summary(
         project,
         lst_metadata,
@@ -3422,6 +3501,8 @@ def main(argv: list[str] | None = None) -> int:
         decompiled=decompiled,
         failed=failed,
         skipped_signature_labels=skipped_signature_labels,
+        same_family_retry_stops=same_family_retry_stops,
+        fallback_family_labels=fallback_family_labels,
     )
     _emit_function_timing_summary(function_tasks, result_map)
     return 0 if decompiled else 2

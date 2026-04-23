@@ -8,6 +8,8 @@ import argparse
 
 import atexit
 
+import angr
+
 import contextlib
 
 import copy
@@ -158,6 +160,7 @@ from inertia_decompiler.cli_decompilation import (
     _prepare_function_for_decompilation,
     _sidecar_cod_metadata_for_function,
 )
+from inertia_decompiler.direct_addr_failure_family import FailureFamilyState
 
 from inertia_decompiler.sidecar_policy import metadata_has_precise_code_regions
 
@@ -281,6 +284,7 @@ def _try_decompile_sidecar_slice(
     timeout: int,
     api_style: str,
     binary_path: Path | None,
+    failure_family_state: FailureFamilyState | None = None,
 ) -> SliceRecoveryAttemptOutcome | None:
     region = _lst_code_region(lst_metadata, addr)
     if region is None:
@@ -319,6 +323,7 @@ def _try_decompile_sidecar_slice(
                 binary_path,
                 lst_metadata=lst_metadata,
                 allow_isolated_retry=False,
+                failure_family_state=failure_family_state,
             )
             if status == "ok" and assess_decompiled_c_text(payload).reject_as_decompiled:
                 status = "empty"
@@ -406,6 +411,8 @@ def _try_decompile_non_optimized_slice(
     lst_metadata: LSTMetadata | None,
     cod_metadata: CODProcMetadata | None = None,
     allow_fresh_project_retry: bool = True,
+    failure_family_state: FailureFamilyState | None = None,
+    original_addr: int | None = None,
 ) -> NonOptimizedSliceOutcome:
     # Non-optimized fallback output is intentionally never cached. It is a best-effort rescue path,
     # not a stable primary decompilation result.
@@ -471,6 +478,8 @@ def _try_decompile_non_optimized_slice(
                 slice_project._inertia_disable_ail_narrowing = True
                 slice_project._inertia_disable_complex_expr_scan = True
                 slice_project._inertia_fast_block_peephole = True
+            if isinstance(original_addr, int):
+                mark_function_original_addr(func, original_addr)
             _prepare_function_for_decompilation(slice_project, func, effective_cod_metadata)
             if effective_cod_metadata is None:
                 effective_cod_metadata = _sidecar_cod_metadata_for_function(
@@ -495,6 +504,7 @@ def _try_decompile_non_optimized_slice(
                 enable_structured_simplify=enable_structured_simplify,
                 enable_postprocess=enable_postprocess,
                 allow_isolated_retry=False,
+                failure_family_state=failure_family_state,
             )
             if status == "ok" and assess_decompiled_c_text(payload).reject_as_decompiled:
                 status = "empty"
@@ -710,6 +720,7 @@ def _try_decompile_non_optimized_known_function(
     lst_metadata: LSTMetadata | None,
     cod_metadata: CODProcMetadata | None = None,
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
+    failure_family_state: FailureFamilyState | None = None,
 ) -> NonOptimizedSliceOutcome:
     effective_cod_metadata = cod_metadata or _sidecar_cod_metadata_for_function(
         project,
@@ -731,6 +742,7 @@ def _try_decompile_non_optimized_known_function(
         enable_structured_simplify=False,
         enable_postprocess=False,
         allow_isolated_retry=False,
+        failure_family_state=failure_family_state,
     )
     if status == "ok" and assess_decompiled_c_text(payload).reject_as_decompiled:
         status = "empty"

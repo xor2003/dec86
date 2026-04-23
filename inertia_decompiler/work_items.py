@@ -61,6 +61,8 @@ class FunctionWorkResult:
     failure_stage: str | None = None
     block_count: int | None = None
     byte_count: int | None = None
+    same_family_retry_stops: int = 0
+    fallback_family_labels: tuple[str, ...] = ()
 
 
 def emit_tail_validation_for_function_run_or_uncollected(

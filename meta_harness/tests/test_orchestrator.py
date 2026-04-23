@@ -10,6 +10,7 @@ from meta_harness.config import LlmConfig, RuntimeConfig
 from meta_harness.orchestrator import MetaHarness, ResourceBlockedError, RoleRunError
 from meta_harness.runtime_records import (
     CYCLE_STATE_SCHEMA_VERSION,
+    EVIDENCE_FACTS_SCHEMA_VERSION,
     EVENT_NAMES,
     FAILURE_CLASSES,
     HISTORY_EVENT_SCHEMA_VERSION,
@@ -905,6 +906,49 @@ def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path):
 
     state = json.loads((harness.current_cycle_dir / "cycle.state.json").read_text(encoding="utf-8"))
     assert state["steps"]["full-sweep"]["status"] == "done-with-failures"
+    facts = json.loads((cfg.state_dir / "evidence_facts.json").read_text(encoding="utf-8"))
+    assert facts["schema_version"] == EVIDENCE_FACTS_SCHEMA_VERSION
+    assert facts["summary"]["fact_count"] >= 1
+    assert any(fact["key"] == "failures" for fact in facts["facts"])
+
+
+def test_sweep_step_marks_low_confidence_observations_as_needing_more_evidence(monkeypatch, tmp_path):
+    cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
+    harness = MetaHarness(cfg, llm_cfg)
+    harness.prepare_cycle_workspace()
+    cfg.evidence_log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    for rel in cfg.evidence_input_files:
+        path = cfg.root_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("stub\n", encoding="utf-8")
+
+    class DummyProc:
+        pid = 4999
+        stdout = iter(["fallback lane hit after timeout\n", "done in 1.0s; failures=0/1\n"])
+
+        def wait(self):
+            return 0
+
+    class RunResult:
+        def __init__(self):
+            self.stdout = ""
+            self.returncode = 0
+
+    monkeypatch.setattr(harness, "check_stop_file", lambda: None)
+    monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
+    monkeypatch.setattr(harness, "trim_old_logs", lambda: None)
+    monkeypatch.setattr("meta_harness.orchestrator.register_child_process", lambda *args, **kwargs: None)
+    monkeypatch.setattr("meta_harness.orchestrator.unregister_child_process", lambda *args, **kwargs: None)
+    monkeypatch.setattr("meta_harness.orchestrator.subprocess.run", lambda *args, **kwargs: RunResult())
+    monkeypatch.setattr("meta_harness.orchestrator.subprocess.Popen", lambda *args, **kwargs: DummyProc())
+
+    harness.sweep_step()
+
+    facts = json.loads((cfg.state_dir / "evidence_facts.json").read_text(encoding="utf-8"))
+    assert facts["summary"]["needs_more_evidence"] is True
+    assert facts["summary"]["low_confidence_fact_count"] >= 1
+    assert any(fact["key"] == "observed_fallback" and fact["needs_more_evidence"] for fact in facts["facts"])
 
 
 def test_sweep_step_retries_thread_exhaustion_in_forced_serial_mode(monkeypatch, tmp_path):

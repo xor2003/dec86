@@ -1,14 +1,14 @@
-[17:37:57] /* loading: SORTDEMO.EXE */
-[17:37:57] [dbg] build_project: path=SORTDEMO.EXE suffix=.exe force_blob=False
-[17:37:57] [dbg] dos_mz load base=0x10000
-[17:37:57] [dbg] project built: arch=86_16 entry=0x10f9a
+[22:06:56] /* loading: SORTDEMO.EXE */
+[22:06:56] [dbg] build_project: path=SORTDEMO.EXE suffix=.exe force_blob=False
+[22:06:56] [dbg] dos_mz load base=0x10000
+[22:06:56] [dbg] project built: arch=86_16 entry=0x10f9a
 [dbg] loaded sidecar metadata: format=cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan code_labels=87 data_labels=0 structs=0
 [dbg] signature-matched compiler versions: Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
-[17:37:57] /* info: recovery evidence: sidecar-assisted recovery (cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan) */
-[17:37:57] /* discovering likely functions... */
-[17:37:57] /* sidecar label ranking prepared 20 entries in 1.6ms. */
-[17:37:57] /* skipping 67 signature-matched function(s) by default. */
-[17:37:57] /* == known function catalog (sidecar-backed) == */
+[22:06:56] /* info: recovery evidence: sidecar-assisted recovery (cod_listing+flair_pat+signature_catalog+local_omf_pat+pat_backend:hyperscan) */
+[22:06:56] /* discovering likely functions... */
+[22:06:56] /* sidecar label ranking prepared 20 entries in 3.0ms. */
+[22:06:56] /* skipping 67 signature-matched function(s) by default. */
+[22:06:56] /* == known function catalog (sidecar-backed) == */
 0x10010 main size=0x4d range=[0x10010, 0x1005d)
 0x10060 InitMenu size=0x17b range=[0x10060, 0x101db)
 0x101f0 DrawFrame size=0xdc range=[0x101f0, 0x102cc)
@@ -29,26 +29,26 @@
 0x10ce0 QuickSort size=0x17d range=[0x10ce0, 0x10e5d)
 0x10e70 Beep size=0xa8 range=[0x10e70, 0x10f18)
 0x10f38 Sleep size=0x3b range=[0x10f38, 0x10f73)
-[17:37:57] /* binary: SORTDEMO.EXE */
-[17:37:57] /* arch: 86_16 */
-[17:37:57] /* entry: 0x10f9a */
-[17:37:57] /* functions queued for decompilation: 20 */
-[17:37:57] /* info: selected 20 function(s) for decompilation */
-[17:37:57] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
-[17:37:57] [dbg] recovery worker: start 0x10010 main mode=lst recovery_timeout=120s
-[17:37:57] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
-[17:37:57] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
-[17:37:57] [dbg] isolated function worker: start 0x1000 main requested_timeout=120s hard_timeout=122s
-[17:37:57] [dbg] function complexity for 0x10010 main: blocks=9, bytes=77
-[17:37:57] [dbg] decompile_function: addr=0x10010 (slice=0x1000) name=main
-[17:37:57] [dbg] function 0x1000 not normalized, normalizing...
-[17:37:57] [dbg] registered 10 direct callee stub(s) for 0x1000
-[17:37:58] [dbg] Decompiler returned for 0x1000
-[17:37:58] [dbg] stack-probe fact stats for 0x1000: summaries_attached=8 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:37:58] [dbg] decompilation time for 0x10010 main: 1.21s
-[17:37:58] /* == function 0x10010 main == */
-[17:37:58] /* info: function 0x10010 main attempt=decompiled validation=uncollected */
-[17:37:58] /* -- source c -- */
+[22:06:56] /* binary: SORTDEMO.EXE */
+[22:06:56] /* arch: 86_16 */
+[22:06:56] /* entry: 0x10f9a */
+[22:06:56] /* functions queued for decompilation: 20 */
+[22:06:56] /* info: selected 20 function(s) for decompilation */
+[22:06:56] /* parallel function decompilation: disabled; using isolated serial fork/COW workers to bound RAM */
+[22:06:56] [dbg] recovery worker: start 0x10010 main mode=lst recovery_timeout=120s
+[22:06:56] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
+[22:06:56] [dbg] rebased exact-region recovery for main: 0x10010-0x1005d -> 0x1000-0x104d
+[22:06:56] [dbg] isolated function worker: start 0x1000 main requested_timeout=120s hard_timeout=122s
+[22:06:56] [dbg] function complexity for 0x10010 main: blocks=9, bytes=77
+[22:06:56] [dbg] decompile_function: addr=0x10010 (slice=0x1000) name=main
+[22:06:56] [dbg] function 0x1000 not normalized, normalizing...
+[22:06:56] [dbg] registered 10 direct callee stub(s) for 0x1000
+[22:06:57] [dbg] Decompiler returned for 0x1000
+[22:06:58] [dbg] stack-probe fact stats for 0x1000: summaries_attached=8 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=3 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:06:58] [dbg] decompilation time for 0x10010 main: 2.07s
+[22:06:58] /* == function 0x10010 main == */
+[22:06:58] /* info: function 0x10010 main attempt=decompiled validation=uncollected */
+[22:06:58] /* -- source c -- */
 void main()
 {
     cRow = _settextrows( 43 );
@@ -59,7 +59,7 @@ void main()
     RunMenu();                     // Respond to menu until quit
     _setvideomode( _DEFAULTMODE );
 }
-[17:37:58] /* -- c -- */
+[22:06:58] /* -- c -- */
 /* COD annotations:
  * globals = cRow
  * calls = aNchkstk, settextrows, clearscreen, displaycursor, InitBars, InitMenu, RunMenu, setvideomode
@@ -85,41 +85,38 @@ short main(void)
     ax = settextrows();
     vvar_20 = &s_8;
     *((ds << 4) + 2978) = ax;
-    *((ss << 4) + vvar_20 - 2) = 0;
     vvar_24 = vvar_20 - 2 + -2;
     *((ss << 4) + vvar_24) = cs;
     *(vvar_24 + 1) = cs >> 8;
-    clearscreen();
+    clearscreen(0);
     vvar_27 = vvar_24 - 2 + 2;
-    *((ss << 4) + vvar_27 - 2) = 0;
     vvar_31 = vvar_27 - 2 + -2;
     *((ss << 4) + vvar_31) = cs;
     *(vvar_31 + 1) = cs >> 8;
-    displaycursor();
+    displaycursor(0);
     InitBars();
     InitMenu();
     vvar_40 = vvar_31 - 2 + 2 - 2 - 2 - 2;
     RunMenu();
-    *((ss << 4) + vvar_40 - 2) = 65535;
     vvar_44 = vvar_40 - 2 + -2;
     *((ss << 4) + vvar_44) = cs;
     *(vvar_44 + 1) = cs >> 8;
-    setvideomode();
+    setvideomode(65535);
 }
-[17:37:58] [dbg] recovery worker: start 0x10f38 Sleep mode=lst recovery_timeout=120s
-[17:37:58] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
-[17:37:58] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
-[17:37:58] [dbg] isolated function worker: start 0x1000 Sleep requested_timeout=120s hard_timeout=122s
-[17:37:58] [dbg] function complexity for 0x10f38 Sleep: blocks=12, bytes=62
-[17:37:58] [dbg] decompile_function: addr=0x10f38 (slice=0x1000) name=Sleep
-[17:37:58] [dbg] function 0x1000 not normalized, normalizing...
-[17:37:59] [dbg] registered 4 direct callee stub(s) for 0x1000
-[17:37:59] [dbg] Decompiler returned for 0x1000
-[17:37:59] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:37:59] [dbg] decompilation time for 0x10f38 Sleep: 0.94s
-[17:37:59] /* == function 0x10f38 Sleep == */
-[17:37:59] /* info: function 0x10f38 Sleep attempt=decompiled validation=uncollected */
-[17:37:59] /* -- source c -- */
+[22:06:58] [dbg] recovery worker: start 0x10f38 Sleep mode=lst recovery_timeout=120s
+[22:06:58] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
+[22:06:58] [dbg] rebased exact-region recovery for Sleep: 0x10f38-0x10f73 -> 0x1000-0x103b
+[22:06:58] [dbg] isolated function worker: start 0x1000 Sleep requested_timeout=120s hard_timeout=122s
+[22:06:58] [dbg] function complexity for 0x10f38 Sleep: blocks=12, bytes=62
+[22:06:58] [dbg] decompile_function: addr=0x10f38 (slice=0x1000) name=Sleep
+[22:06:58] [dbg] function 0x1000 not normalized, normalizing...
+[22:06:58] [dbg] registered 4 direct callee stub(s) for 0x1000
+[22:06:59] [dbg] Decompiler returned for 0x1000
+[22:07:00] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:07:00] [dbg] decompilation time for 0x10f38 Sleep: 1.61s
+[22:07:00] /* == function 0x10f38 Sleep == */
+[22:07:00] /* info: function 0x10f38 Sleep attempt=decompiled validation=uncollected */
+[22:07:00] /* -- source c -- */
 /* Pauses for a specified number of microseconds. */
 void Sleep( clock_t wait )
 {
@@ -129,7 +126,7 @@ void Sleep( clock_t wait )
     while( goal >= clock() )
         ;
 }
-[17:37:59] /* -- c -- */
+[22:07:00] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = wait
  * [bp-0x4] = goal
@@ -172,20 +169,20 @@ void Sleep(clock_t wait)
 
     return;
 }
-[17:37:59] [dbg] recovery worker: start 0x109e8 PercolateUp mode=lst recovery_timeout=120s
-[17:38:00] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
-[17:38:00] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
-[17:38:00] [dbg] isolated function worker: start 0x1000 PercolateUp requested_timeout=120s hard_timeout=122s
-[17:38:00] [dbg] function complexity for 0x109e8 PercolateUp: blocks=12, bytes=127
-[17:38:00] [dbg] decompile_function: addr=0x109e8 (slice=0x1000) name=PercolateUp
-[17:38:00] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:00] [dbg] registered 6 direct callee stub(s) for 0x1000
-[17:38:01] [dbg] Decompiler returned for 0x1000
-[17:38:02] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:38:02] [dbg] decompilation time for 0x109e8 PercolateUp: 2.45s
-[17:38:02] /* == function 0x109e8 PercolateUp == */
-[17:38:02] /* info: function 0x109e8 PercolateUp attempt=decompiled validation=uncollected */
-[17:38:02] /* -- source c -- */
+[22:07:00] [dbg] recovery worker: start 0x109e8 PercolateUp mode=lst recovery_timeout=120s
+[22:07:00] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
+[22:07:00] [dbg] rebased exact-region recovery for PercolateUp: 0x109e8-0x10a61 -> 0x1000-0x1079
+[22:07:00] [dbg] isolated function worker: start 0x1000 PercolateUp requested_timeout=120s hard_timeout=122s
+[22:07:00] [dbg] function complexity for 0x109e8 PercolateUp: blocks=12, bytes=127
+[22:07:00] [dbg] decompile_function: addr=0x109e8 (slice=0x1000) name=PercolateUp
+[22:07:00] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:00] [dbg] registered 6 direct callee stub(s) for 0x1000
+[22:07:03] [dbg] Decompiler returned for 0x1000
+[22:07:04] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=2 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:07:04] [dbg] decompilation time for 0x109e8 PercolateUp: 3.67s
+[22:07:04] /* == function 0x109e8 PercolateUp == */
+[22:07:04] /* info: function 0x109e8 PercolateUp attempt=decompiled validation=uncollected */
+[22:07:04] /* -- source c -- */
 /* PercolateUp - Converts elements into a "heap" with the largest
  * element at the top (see the diagram above).
  */
@@ -218,7 +215,7 @@ void PercolateUp( int iMaxLevel )
             break;
     }
 }
-[17:38:02] /* -- c -- */
+[22:07:04] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iMaxLevel
  * [bp-0x4] = i
@@ -240,7 +237,6 @@ short PercolateUp(int iMaxLevel)
     unsigned short ss;  // ss
     unsigned short di;  // di
     char ir_10_2; // 4223
-    unsigned short ax_5;  // ax
     unsigned short ax_6;  // ax
     unsigned short ax_7;  // ax
     unsigned short ax_8;  // ax
@@ -267,15 +263,11 @@ short PercolateUp(int iMaxLevel)
         ir_10_2 = *((ds << 4) + 2986 + 1);
         *((ds << 4) + 2986) = (ir_9_2 | ir_10_2 << 8) + 1;
         if (*((ds << 4) + (iMaxLevel << 1) + 2892) > *((ds << 4) + (arg_0 << 1) + 2892))
-        ax_5 = iMaxLevel;
-        ax_6 = ax_5 << 1;
         vvar_65 = vvar_11 - 2;
-        *((ss << 4) + vvar_11 - 2) = ax_6 + 2892;
         ax_7 = arg_0;
         ax_8 = ax_7 << 1;
-        *((ss << 4) + vvar_65 - 2) = ax_8 + 2892;
         vvar_72 = vvar_65 - 2 - 2;
-        Swaps();
+        Swaps(ax_6 + 2892, ax_8 + 2892);
         vvar_74 = vvar_72 + 4;
         vvar_76 = vvar_74 - 2;
         *((ss << 4) + vvar_74 - 2) = iMaxLevel;
@@ -287,20 +279,20 @@ short PercolateUp(int iMaxLevel)
 
     return ax_8;
 }
-[17:38:02] [dbg] recovery worker: start 0x10970 HeapSort mode=lst recovery_timeout=120s
-[17:38:02] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
-[17:38:02] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
-[17:38:02] [dbg] isolated function worker: start 0x1000 HeapSort requested_timeout=120s hard_timeout=122s
-[17:38:02] [dbg] function complexity for 0x10970 HeapSort: blocks=16, bytes=135
-[17:38:04] [dbg] decompile_function: addr=0x10970 (slice=0x1000) name=HeapSort
-[17:38:04] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:04] [dbg] registered 9 direct callee stub(s) for 0x1000
-[17:38:05] [dbg] Decompiler returned for 0x1000
-[17:38:06] [dbg] stack-probe fact stats for 0x1000: summaries_attached=5 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=4 stable_ss_lowering_replacements=0
-[17:38:08] [dbg] decompilation time for 0x10970 HeapSort: 5.82s
-[17:38:08] /* == function 0x10970 HeapSort == */
-[17:38:08] /* info: function 0x10970 HeapSort attempt=decompiled validation=uncollected */
-[17:38:08] /* -- source c -- */
+[22:07:04] [dbg] recovery worker: start 0x10970 HeapSort mode=lst recovery_timeout=120s
+[22:07:04] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
+[22:07:04] [dbg] rebased exact-region recovery for HeapSort: 0x10970-0x109e8 -> 0x1000-0x1078
+[22:07:04] [dbg] isolated function worker: start 0x1000 HeapSort requested_timeout=120s hard_timeout=122s
+[22:07:04] [dbg] function complexity for 0x10970 HeapSort: blocks=16, bytes=135
+[22:07:08] [dbg] decompile_function: addr=0x10970 (slice=0x1000) name=HeapSort
+[22:07:08] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:08] [dbg] registered 9 direct callee stub(s) for 0x1000
+[22:07:10] [dbg] Decompiler returned for 0x1000
+[22:07:10] [dbg] stack-probe fact stats for 0x1000: summaries_attached=5 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=4 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:07:14] [dbg] decompilation time for 0x10970 HeapSort: 9.45s
+[22:07:14] /* == function 0x10970 HeapSort == */
+[22:07:14] /* info: function 0x10970 HeapSort attempt=decompiled validation=uncollected */
+[22:07:14] /* -- source c -- */
 /* HeapSort - HeapSort (also called TreeSort) works by calling
  * PercolateUp and PercolateDown. PercolateUp organizes the elements
  * into a "heap" or "tree," which has the properties shown below:
@@ -339,7 +331,7 @@ void HeapSort()
         PercolateDown( i - 1 );
     }
 }
-[17:38:08] /* -- c -- */
+[22:07:14] /* -- c -- */
 /* COD annotations:
  * [bp-0x2] = i
  * globals = cRow, abarWork
@@ -388,20 +380,20 @@ short HeapSort(void)
         s_4 = g_-4 - 1;
     }
 }
-[17:38:08] [dbg] recovery worker: start 0x107b8 Swaps mode=lst recovery_timeout=120s
-[17:38:08] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
-[17:38:09] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
-[17:38:09] [dbg] isolated function worker: start 0x1000 Swaps requested_timeout=120s hard_timeout=122s
-[17:38:09] [dbg] function complexity for 0x107b8 Swaps: blocks=2, bytes=47
-[17:38:09] [dbg] decompile_function: addr=0x107b8 (slice=0x1000) name=Swaps
-[17:38:09] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:09] [dbg] registered 2 direct callee stub(s) for 0x1000
-[17:38:09] [dbg] Decompiler returned for 0x1000
-[17:38:10] [dbg] stack-probe fact stats for 0x1000: summaries_attached=1 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:38:10] [dbg] decompilation time for 0x107b8 Swaps: 1.54s
-[17:38:10] /* == function 0x107b8 Swaps == */
-[17:38:10] /* info: function 0x107b8 Swaps attempt=decompiled validation=uncollected */
-[17:38:10] /* -- source c -- */
+[22:07:14] [dbg] recovery worker: start 0x107b8 Swaps mode=lst recovery_timeout=120s
+[22:07:14] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
+[22:07:14] [dbg] rebased exact-region recovery for Swaps: 0x107b8-0x107e7 -> 0x1000-0x102f
+[22:07:14] [dbg] isolated function worker: start 0x1000 Swaps requested_timeout=120s hard_timeout=122s
+[22:07:14] [dbg] function complexity for 0x107b8 Swaps: blocks=2, bytes=47
+[22:07:14] [dbg] decompile_function: addr=0x107b8 (slice=0x1000) name=Swaps
+[22:07:14] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:14] [dbg] registered 2 direct callee stub(s) for 0x1000
+[22:07:15] [dbg] Decompiler returned for 0x1000
+[22:07:15] [dbg] stack-probe fact stats for 0x1000: summaries_attached=1 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:07:16] [dbg] decompilation time for 0x107b8 Swaps: 1.37s
+[22:07:16] /* == function 0x107b8 Swaps == */
+[22:07:16] /* info: function 0x107b8 Swaps attempt=decompiled validation=uncollected */
+[22:07:16] /* -- source c -- */
 /* Swaps - Exchanges two bar structures.
  */
 void Swaps( BAR *bar1, BAR *bar2 )
@@ -413,7 +405,7 @@ void Swaps( BAR *bar1, BAR *bar2 )
     *bar1  = *bar2;
     *bar2  = barTmp;
 }
-[17:38:10] /* -- c -- */
+[22:07:16] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = bar1
  * [bp+0x6] = bar2
@@ -452,20 +444,20 @@ short Swaps(BAR *bar1, BAR *bar2)
 
     return ax_2;
 }
-[17:38:10] [dbg] recovery worker: start 0x10768 SwapBars mode=lst recovery_timeout=120s
-[17:38:10] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
-[17:38:10] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
-[17:38:10] [dbg] isolated function worker: start 0x1000 SwapBars requested_timeout=120s hard_timeout=122s
-[17:38:10] [dbg] function complexity for 0x10768 SwapBars: blocks=5, bytes=44
-[17:38:10] [dbg] decompile_function: addr=0x10768 (slice=0x1000) name=SwapBars
-[17:38:10] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:10] [dbg] registered 6 direct callee stub(s) for 0x1000
-[17:38:11] [dbg] Decompiler returned for 0x1000
-[17:38:11] [dbg] stack-probe fact stats for 0x1000: summaries_attached=4 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=2 stable_ss_lowering_replacements=0
-[17:38:11] [dbg] decompilation time for 0x10768 SwapBars: 1.11s
-[17:38:11] /* == function 0x10768 SwapBars == */
-[17:38:11] /* info: function 0x10768 SwapBars attempt=decompiled validation=uncollected */
-[17:38:11] /* -- source c -- */
+[22:07:16] [dbg] recovery worker: start 0x10768 SwapBars mode=lst recovery_timeout=120s
+[22:07:16] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
+[22:07:16] [dbg] rebased exact-region recovery for SwapBars: 0x10768-0x10794 -> 0x1000-0x102c
+[22:07:16] [dbg] isolated function worker: start 0x1000 SwapBars requested_timeout=120s hard_timeout=122s
+[22:07:16] [dbg] function complexity for 0x10768 SwapBars: blocks=5, bytes=44
+[22:07:16] [dbg] decompile_function: addr=0x10768 (slice=0x1000) name=SwapBars
+[22:07:16] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:16] [dbg] registered 6 direct callee stub(s) for 0x1000
+[22:07:16] [dbg] Decompiler returned for 0x1000
+[22:07:17] [dbg] stack-probe fact stats for 0x1000: summaries_attached=4 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=2 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:07:17] [dbg] decompilation time for 0x10768 SwapBars: 1.03s
+[22:07:17] /* == function 0x10768 SwapBars == */
+[22:07:17] /* info: function 0x10768 SwapBars attempt=decompiled validation=uncollected */
+[22:07:17] /* -- source c -- */
 /* SwapBars - Calls DrawBar twice to switch the two bars in iRow1 and
  * iRow2, then calls DrawTime to update the time.
  */
@@ -475,7 +467,7 @@ void SwapBars( int iRow1, int iRow2 )
     DrawBar( iRow2 );
     DrawTime( iRow1 );
 }
-[17:38:11] /* -- c -- */
+[22:07:17] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iRow1
  * [bp+0x6] = iRow2
@@ -498,20 +490,20 @@ void SwapBars(int iRow1, int iRow2)
     DrawTime(iRow1);
     return;
 }
-[17:38:11] [dbg] recovery worker: start 0x10678 ReInitBars mode=lst recovery_timeout=120s
-[17:38:12] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
-[17:38:12] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
-[17:38:12] [dbg] isolated function worker: start 0x1000 ReInitBars requested_timeout=120s hard_timeout=122s
-[17:38:12] [dbg] function complexity for 0x10678 ReInitBars: blocks=9, bytes=89
-[17:38:12] [dbg] decompile_function: addr=0x10678 (slice=0x1000) name=ReInitBars
-[17:38:12] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:12] [dbg] registered 5 direct callee stub(s) for 0x1000
-[17:38:13] [dbg] Decompiler returned for 0x1000
-[17:38:13] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=1 stable_ss_lowering_replacements=0
-[17:38:13] [dbg] decompilation time for 0x10678 ReInitBars: 1.49s
-[17:38:13] /* == function 0x10678 ReInitBars == */
-[17:38:13] /* info: function 0x10678 ReInitBars attempt=decompiled validation=uncollected */
-[17:38:13] /* -- source c -- */
+[22:07:17] [dbg] recovery worker: start 0x10678 ReInitBars mode=lst recovery_timeout=120s
+[22:07:17] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
+[22:07:17] [dbg] rebased exact-region recovery for ReInitBars: 0x10678-0x106c8 -> 0x1000-0x1050
+[22:07:17] [dbg] isolated function worker: start 0x1000 ReInitBars requested_timeout=120s hard_timeout=122s
+[22:07:17] [dbg] function complexity for 0x10678 ReInitBars: blocks=9, bytes=89
+[22:07:17] [dbg] decompile_function: addr=0x10678 (slice=0x1000) name=ReInitBars
+[22:07:17] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:17] [dbg] registered 5 direct callee stub(s) for 0x1000
+[22:07:18] [dbg] Decompiler returned for 0x1000
+[22:07:19] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=1 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:07:19] [dbg] decompilation time for 0x10678 ReInitBars: 2.09s
+[22:07:19] /* == function 0x10678 ReInitBars == */
+[22:07:19] /* info: function 0x10678 ReInitBars attempt=decompiled validation=uncollected */
+[22:07:19] /* -- source c -- */
 /* ReInitBars - Restores the array abarWork to its original unsorted
  * state and draws the unsorted bars.
  */
@@ -526,7 +518,7 @@ void ReInitBars()
         DrawBar( iRow );
     }
 }
-[17:38:13] /* -- c -- */
+[22:07:19] /* -- c -- */
 /* COD annotations:
  * [bp-0x2] = iRow
  * globals = clStart, cRow, abarPerm, abarWork
@@ -565,20 +557,20 @@ short ReInitBars(void)
 
     return ax;
 }
-[17:38:13] [dbg] recovery worker: start 0x10e70 Beep mode=lst recovery_timeout=120s
-[17:38:13] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
-[17:38:13] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
-[17:38:14] [dbg] isolated function worker: start 0x1000 Beep requested_timeout=120s hard_timeout=122s
-[17:38:14] [dbg] function complexity for 0x10e70 Beep: blocks=19, bytes=194
-[17:38:14] [dbg] decompile_function: addr=0x10e70 (slice=0x1000) name=Beep
-[17:38:14] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:14] [dbg] registered 9 direct callee stub(s) for 0x1000
-[17:38:16] [dbg] Decompiler returned for 0x1000
-[17:38:17] [dbg] stack-probe fact stats for 0x1000: summaries_attached=9 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=5 stable_ss_lowering_replacements=0
-[17:38:17] [dbg] decompilation time for 0x10e70 Beep: 3.93s
-[17:38:18] /* == function 0x10e70 Beep == */
-[17:38:18] /* info: function 0x10e70 Beep attempt=decompiled validation=uncollected */
-[17:38:18] /* -- source c -- */
+[22:07:19] [dbg] recovery worker: start 0x10e70 Beep mode=lst recovery_timeout=120s
+[22:07:19] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
+[22:07:20] [dbg] rebased exact-region recovery for Beep: 0x10e70-0x10f18 -> 0x1000-0x10a8
+[22:07:20] [dbg] isolated function worker: start 0x1000 Beep requested_timeout=120s hard_timeout=122s
+[22:07:20] [dbg] function complexity for 0x10e70 Beep: blocks=19, bytes=194
+[22:07:20] [dbg] decompile_function: addr=0x10e70 (slice=0x1000) name=Beep
+[22:07:20] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:20] [dbg] registered 9 direct callee stub(s) for 0x1000
+[22:07:22] [dbg] Decompiler returned for 0x1000
+[22:07:24] [dbg] stack-probe fact stats for 0x1000: summaries_attached=9 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=5 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:07:24] [dbg] decompilation time for 0x10e70 Beep: 4.75s
+[22:07:24] /* == function 0x10e70 Beep == */
+[22:07:24] /* info: function 0x10e70 Beep attempt=decompiled validation=uncollected */
+[22:07:24] /* -- source c -- */
 /* Beep - Sounds the speaker for a time specified in microseconds by
  * duration at a pitch specified in hertz by frequency.
  */
@@ -629,7 +621,7 @@ void Beep( int frequency, int duration )
 
 #endif              /* DOS version */
 }
-[17:38:18] /* -- c -- */
+[22:07:24] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = frequency
  * [bp+0x6] = duration
@@ -716,21 +708,21 @@ short Beep(int frequency, int duration)
 
     return ax_2;
 }
-[17:38:18] [dbg] recovery worker: start 0x10ce0 QuickSort mode=lst recovery_timeout=120s
-[17:38:18] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
-[17:38:18] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
-[17:38:18] [dbg] isolated function worker: start 0x1000 QuickSort requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-23 17:38:22,660 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on QuickSort
-[17:38:18] [dbg] function complexity for 0x10ce0 QuickSort: blocks=42, bytes=438
-[17:38:18] [dbg] decompile_function: addr=0x10ce0 (slice=0x1000) name=QuickSort
-[17:38:18] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:18] [dbg] registered 8 direct callee stub(s) for 0x1000
-[17:38:32] [dbg] Decompiler returned for 0x1000
-[17:38:37] [dbg] stack-probe fact stats for 0x1000: summaries_attached=11 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=14 stable_ss_lowering_replacements=0
-[17:38:38] [dbg] decompilation time for 0x10ce0 QuickSort: 19.22s
-[17:38:38] /* == function 0x10ce0 QuickSort == */
-[17:38:38] /* info: function 0x10ce0 QuickSort attempt=decompiled validation=uncollected */
-[17:38:38] /* -- source c -- */
+[22:07:24] [dbg] recovery worker: start 0x10ce0 QuickSort mode=lst recovery_timeout=120s
+[22:07:25] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
+[22:07:25] [dbg] rebased exact-region recovery for QuickSort: 0x10ce0-0x10e5d -> 0x1000-0x117d
+[22:07:26] [dbg] isolated function worker: start 0x1000 QuickSort requested_timeout=120s hard_timeout=122s
+WARNING  | 2026-04-23 22:07:33,356 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on QuickSort
+[22:07:26] [dbg] function complexity for 0x10ce0 QuickSort: blocks=42, bytes=438
+[22:07:26] [dbg] decompile_function: addr=0x10ce0 (slice=0x1000) name=QuickSort
+[22:07:26] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:26] [dbg] registered 8 direct callee stub(s) for 0x1000
+[22:07:46] [dbg] Decompiler returned for 0x1000
+[22:07:49] [dbg] stack-probe fact stats for 0x1000: summaries_attached=11 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=14 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:07:49] [dbg] decompilation time for 0x10ce0 QuickSort: 23.36s
+[22:07:49] /* == function 0x10ce0 QuickSort == */
+[22:07:49] /* info: function 0x10ce0 QuickSort attempt=decompiled validation=uncollected */
+[22:07:49] /* -- source c -- */
 /* QuickSort - QuickSort works by picking a random "pivot" element,
  * then moving every element that is bigger to one side of the pivot,
  * and every element that is smaller to the other side. QuickSort is
@@ -800,7 +792,7 @@ void QuickSort( int iLow, int iHigh )
         }
     }
 }
-[17:38:38] /* -- c -- */
+[22:07:49] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iLow
  * [bp+0x6] = iHigh
@@ -913,20 +905,20 @@ short QuickSort(int iLow, int iHigh)
         QuickSort(iLow + 1);
     }
 }
-[17:38:38] [dbg] recovery worker: start 0x10c18 ShellSort mode=lst recovery_timeout=120s
-[17:38:38] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
-[17:38:38] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
-[17:38:39] [dbg] isolated function worker: start 0x1000 ShellSort requested_timeout=120s hard_timeout=122s
-[17:38:39] [dbg] function complexity for 0x10c18 ShellSort: blocks=19, bytes=218
-[17:38:39] [dbg] decompile_function: addr=0x10c18 (slice=0x1000) name=ShellSort
-[17:38:39] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:39] [dbg] registered 6 direct callee stub(s) for 0x1000
-[17:38:48] [dbg] Decompiler returned for 0x1000
-[17:38:50] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:38:51] [dbg] decompilation time for 0x10c18 ShellSort: 11.91s
-[17:38:51] /* == function 0x10c18 ShellSort == */
-[17:38:51] /* info: function 0x10c18 ShellSort attempt=decompiled validation=uncollected */
-[17:38:51] /* -- source c -- */
+[22:07:49] [dbg] recovery worker: start 0x10c18 ShellSort mode=lst recovery_timeout=120s
+[22:07:49] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
+[22:07:50] [dbg] rebased exact-region recovery for ShellSort: 0x10c18-0x10cd4 -> 0x1000-0x10bc
+[22:07:50] [dbg] isolated function worker: start 0x1000 ShellSort requested_timeout=120s hard_timeout=122s
+[22:07:50] [dbg] function complexity for 0x10c18 ShellSort: blocks=19, bytes=218
+[22:07:50] [dbg] decompile_function: addr=0x10c18 (slice=0x1000) name=ShellSort
+[22:07:50] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:50] [dbg] registered 6 direct callee stub(s) for 0x1000
+[22:07:56] [dbg] Decompiler returned for 0x1000
+[22:07:58] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=2 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:07:58] [dbg] decompilation time for 0x10c18 ShellSort: 8.29s
+[22:07:58] /* == function 0x10c18 ShellSort == */
+[22:07:58] /* info: function 0x10c18 ShellSort attempt=decompiled validation=uncollected */
+[22:07:58] /* -- source c -- */
 /* ShellSort - ShellSort is similar to the BubbleSort. However, it
  * begins by comparing elements that are far apart (separated by the
  * value of the iOffset variable, which is initially half the distance
@@ -969,7 +961,7 @@ void ShellSort()
         iOffset = iOffset / 2;
     }
 }
-[17:38:51] /* -- c -- */
+[22:07:58] /* -- c -- */
 /* COD annotations:
  * [bp-0x8] = iSwitch
  * [bp-0x6] = iLimit
@@ -984,7 +976,6 @@ short ShellSort(void)
     unsigned short vvar_51;
     unsigned short vvar_96;
     unsigned short vvar_33;
-    unsigned short vvar_19;
     unsigned short vvar_103;
     unsigned short vvar_105;
     unsigned short vvar_110;
@@ -997,7 +988,6 @@ short ShellSort(void)
     char ir_13_2; // 4109
     unsigned short ds;  // ds
     unsigned short flags;  // flags
-    unsigned short ax_7;  // ax
     unsigned short ax_8;  // ax
     unsigned short ax_9;  // ax
     unsigned short ax_10;  // ax
@@ -1047,15 +1037,11 @@ short ShellSort(void)
                 *((ds << 4) + 2986) = (ir_12_2 | ir_13_2 << 8) + 1;
                 if ((flags & 128) == (flags & 0x800))
                 {
-                    ax_7 = s_2 + (s_ffec | s_ffed << 8);
-                    ax_8 = ax_7 << 1;
                     vvar_96 = vvar_33 - 2;
-                    *((ss << 4) + vvar_19 - 2) = ax_8 + 2892;
                     ax_9 = s_2;
                     ax_10 = ax_9 << 1;
-                    *((ss << 4) + vvar_96 - 2) = ax_10 + 2892;
                     vvar_103 = vvar_96 - 2 - 2;
-                    Swaps();
+                    Swaps(ax_8 + 2892, ax_10 + 2892);
                     vvar_105 = vvar_103 + 4;
                     ax_11 = s_2;
                     ir_30_2 = s_ffec;
@@ -1082,20 +1068,20 @@ short ShellSort(void)
 
     return ax_9;
 }
-[17:38:51] [dbg] recovery worker: start 0x10b50 ExchangeSort mode=lst recovery_timeout=120s
-[17:38:51] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
-[17:38:51] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
-[17:38:51] [dbg] isolated function worker: start 0x1000 ExchangeSort requested_timeout=120s hard_timeout=122s
-[17:38:51] [dbg] function complexity for 0x10b50 ExchangeSort: blocks=21, bytes=187
-[17:38:51] [dbg] decompile_function: addr=0x10b50 (slice=0x1000) name=ExchangeSort
-[17:38:51] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:51] [dbg] registered 8 direct callee stub(s) for 0x1000
-[17:38:54] [dbg] Decompiler returned for 0x1000
-[17:38:54] [dbg] stack-probe fact stats for 0x1000: summaries_attached=4 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:38:54] [dbg] decompilation time for 0x10b50 ExchangeSort: 3.08s
-[17:38:54] /* == function 0x10b50 ExchangeSort == */
-[17:38:54] /* info: function 0x10b50 ExchangeSort attempt=decompiled validation=uncollected */
-[17:38:54] /* -- source c -- */
+[22:07:58] [dbg] recovery worker: start 0x10b50 ExchangeSort mode=lst recovery_timeout=120s
+[22:07:58] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
+[22:07:59] [dbg] rebased exact-region recovery for ExchangeSort: 0x10b50-0x10bf4 -> 0x1000-0x10a4
+[22:07:59] [dbg] isolated function worker: start 0x1000 ExchangeSort requested_timeout=120s hard_timeout=122s
+[22:07:59] [dbg] function complexity for 0x10b50 ExchangeSort: blocks=21, bytes=187
+[22:07:59] [dbg] decompile_function: addr=0x10b50 (slice=0x1000) name=ExchangeSort
+[22:07:59] [dbg] function 0x1000 not normalized, normalizing...
+[22:07:59] [dbg] registered 8 direct callee stub(s) for 0x1000
+[22:08:03] [dbg] Decompiler returned for 0x1000
+[22:08:03] [dbg] stack-probe fact stats for 0x1000: summaries_attached=4 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=3 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:08:04] [dbg] decompilation time for 0x10b50 ExchangeSort: 4.82s
+[22:08:04] /* == function 0x10b50 ExchangeSort == */
+[22:08:04] /* info: function 0x10b50 ExchangeSort attempt=decompiled validation=uncollected */
+[22:08:04] /* -- source c -- */
 /* ExchangeSort - The ExchangeSort compares each element--starting with
  * the first--with every following element. If any of the following
  * elements is smaller than the current element, it is exchanged with
@@ -1128,7 +1114,7 @@ void ExchangeSort()
         }
     }
 }
-[17:38:54] /* -- c -- */
+[22:08:04] /* -- c -- */
 /* COD annotations:
  * [bp-0x6] = iRowCur
  * [bp-0x4] = iRowMin
@@ -1146,20 +1132,20 @@ short ExchangeSort(void)
     vvar_37 = &s_fff8;
     s_fff8 = vvar_26;
 }
-[17:38:54] [dbg] recovery worker: start 0x10a88 PercolateDown mode=lst recovery_timeout=120s
-[17:38:55] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
-[17:38:55] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
-[17:38:55] [dbg] isolated function worker: start 0x1000 PercolateDown requested_timeout=120s hard_timeout=122s
-[17:38:55] [dbg] function complexity for 0x10a88 PercolateDown: blocks=18, bytes=204
-[17:38:55] [dbg] decompile_function: addr=0x10a88 (slice=0x1000) name=PercolateDown
-[17:38:55] [dbg] function 0x1000 not normalized, normalizing...
-[17:38:55] [dbg] registered 6 direct callee stub(s) for 0x1000
-[17:38:58] [dbg] Decompiler returned for 0x1000
-[17:38:59] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:38:59] [dbg] decompilation time for 0x10a88 PercolateDown: 4.72s
-[17:38:59] /* == function 0x10a88 PercolateDown == */
-[17:38:59] /* info: function 0x10a88 PercolateDown attempt=decompiled validation=uncollected */
-[17:38:59] /* -- source c -- */
+[22:08:04] [dbg] recovery worker: start 0x10a88 PercolateDown mode=lst recovery_timeout=120s
+[22:08:04] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
+[22:08:04] [dbg] rebased exact-region recovery for PercolateDown: 0x10a88-0x10b2c -> 0x1000-0x10a4
+[22:08:04] [dbg] isolated function worker: start 0x1000 PercolateDown requested_timeout=120s hard_timeout=122s
+[22:08:05] [dbg] function complexity for 0x10a88 PercolateDown: blocks=18, bytes=204
+[22:08:05] [dbg] decompile_function: addr=0x10a88 (slice=0x1000) name=PercolateDown
+[22:08:05] [dbg] function 0x1000 not normalized, normalizing...
+[22:08:05] [dbg] registered 6 direct callee stub(s) for 0x1000
+[22:08:12] [dbg] Decompiler returned for 0x1000
+[22:08:14] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=2 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:08:14] [dbg] decompilation time for 0x10a88 PercolateDown: 9.89s
+[22:08:14] /* == function 0x10a88 PercolateDown == */
+[22:08:14] /* info: function 0x10a88 PercolateDown attempt=decompiled validation=uncollected */
+[22:08:14] /* -- source c -- */
 /* PercolateDown - Converts elements to a "heap" with the largest elements
  * at the bottom. When this is done to a reversed heap (largest elements
  * at top), it has the effect of sorting the elements.
@@ -1206,7 +1192,7 @@ void PercolateDown( int iMaxLevel )
             break;
     }
 }
-[17:38:59] /* -- c -- */
+[22:08:14] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iMaxLevel
  * [bp-0x4] = iChild
@@ -1232,7 +1218,6 @@ short PercolateDown(int iMaxLevel)
     char ir_15_2; // 4113
     char ir_16_2; // 4107
     char ir_17_2; // 4109
-    unsigned short ax_5;  // ax
     unsigned short ax_6;  // ax
     unsigned short ax_7;  // ax
     unsigned short ax_8;  // ax
@@ -1273,15 +1258,11 @@ short PercolateDown(int iMaxLevel)
             ir_17_2 = *((ds << 4) + 2986 + 1);
             *((ds << 4) + 2986) = (ir_16_2 | ir_17_2 << 8) + 1;
             if (*((ds << 4) + (arg_0 << 1) + 2892) < *((ds << 4) + (iMaxLevel << 1) + 2892))
-            ax_5 = iMaxLevel;
-            ax_6 = ax_5 << 1;
             vvar_77 = vvar_12 - 2;
-            *((ss << 4) + vvar_12 - 2) = ax_6 + 2892;
             ax_7 = arg_0;
             ax_8 = ax_7 << 1;
-            *((ss << 4) + vvar_77 - 2) = ax_8 + 2892;
             vvar_84 = vvar_77 - 2 - 2;
-            Swaps();
+            Swaps(ax_6 + 2892, ax_8 + 2892);
             vvar_86 = vvar_84 + 4;
             vvar_88 = vvar_86 - 2;
             *((ss << 4) + vvar_86 - 2) = iMaxLevel;
@@ -1298,20 +1279,20 @@ short PercolateDown(int iMaxLevel)
 
     return ax_8;
 }
-[17:38:59] [dbg] recovery worker: start 0x108d0 BubbleSort mode=lst recovery_timeout=120s
-[17:39:00] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
-[17:39:00] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
-[17:39:00] [dbg] isolated function worker: start 0x1000 BubbleSort requested_timeout=120s hard_timeout=122s
-[17:39:00] [dbg] function complexity for 0x108d0 BubbleSort: blocks=15, bytes=163
-[17:39:00] [dbg] decompile_function: addr=0x108d0 (slice=0x1000) name=BubbleSort
-[17:39:00] [dbg] function 0x1000 not normalized, normalizing...
-[17:39:00] [dbg] registered 6 direct callee stub(s) for 0x1000
-[17:39:02] [dbg] Decompiler returned for 0x1000
-[17:39:03] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:39:03] [dbg] decompilation time for 0x108d0 BubbleSort: 3.58s
-[17:39:03] /* == function 0x108d0 BubbleSort == */
-[17:39:03] /* info: function 0x108d0 BubbleSort attempt=decompiled validation=uncollected */
-[17:39:03] /* -- source c -- */
+[22:08:14] [dbg] recovery worker: start 0x108d0 BubbleSort mode=lst recovery_timeout=120s
+[22:08:15] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
+[22:08:15] [dbg] rebased exact-region recovery for BubbleSort: 0x108d0-0x1095b -> 0x1000-0x108b
+[22:08:16] [dbg] isolated function worker: start 0x1000 BubbleSort requested_timeout=120s hard_timeout=122s
+[22:08:16] [dbg] function complexity for 0x108d0 BubbleSort: blocks=15, bytes=163
+[22:08:16] [dbg] decompile_function: addr=0x108d0 (slice=0x1000) name=BubbleSort
+[22:08:16] [dbg] function 0x1000 not normalized, normalizing...
+[22:08:16] [dbg] registered 6 direct callee stub(s) for 0x1000
+[22:08:21] [dbg] Decompiler returned for 0x1000
+[22:08:22] [dbg] stack-probe fact stats for 0x1000: summaries_attached=3 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=2 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:08:23] [dbg] decompilation time for 0x108d0 BubbleSort: 7.26s
+[22:08:23] /* == function 0x108d0 BubbleSort == */
+[22:08:23] /* info: function 0x108d0 BubbleSort attempt=decompiled validation=uncollected */
+[22:08:23] /* -- source c -- */
 /* BubbleSort - BubbleSort cycles through the elements, comparing
  * adjacent elements and swapping pairs that are out of order. It
  * continues to do this until no out-of-order pairs are found.
@@ -1342,7 +1323,7 @@ void BubbleSort()
         iLimit = iSwitch;
     } while( iSwitch );
 }
-[17:39:03] /* -- c -- */
+[22:08:23] /* -- c -- */
 /* COD annotations:
  * [bp-0x6] = iSwitch
  * [bp-0x4] = iLimit
@@ -1357,7 +1338,6 @@ short BubbleSort(void)
     unsigned short vvar_28;
     unsigned short vvar_65;
     unsigned short vvar_21;
-    unsigned short vvar_13;
     unsigned short vvar_72;
     unsigned short vvar_74;
     unsigned short vvar_79;
@@ -1366,7 +1346,6 @@ short BubbleSort(void)
     unsigned short ss;  // ss
     unsigned short di;  // di
     unsigned short flags;  // flags
-    unsigned short ax_3;  // ax
     unsigned short ax_4;  // ax
     unsigned short ax_5;  // ax
     unsigned short ax_6;  // ax
@@ -1399,15 +1378,11 @@ short BubbleSort(void)
             *((ds << 4) + 2986) = (ir_6_2 | ir_7_2 << 8) + 1;
             if ((flags & 128) == (flags & 0x800))
             {
-                ax_3 = iSwitch;
-                ax_4 = ax_3 << 1;
                 vvar_65 = vvar_21 - 2;
-                *((ss << 4) + vvar_13 - 2) = ax_4 + 2894;
                 ax_5 = iSwitch;
                 ax_6 = ax_5 << 1;
-                *((ss << 4) + vvar_65 - 2) = ax_6 + 2892;
                 vvar_72 = vvar_65 - 2 - 2;
-                Swaps();
+                Swaps(ax_4 + 2894, ax_6 + 2892);
                 vvar_74 = vvar_72 + 4;
                 ax_7 = iSwitch;
                 vvar_79 = vvar_74 - 2;
@@ -1428,21 +1403,21 @@ short BubbleSort(void)
 
     return ax_7;
 }
-[17:39:03] [dbg] recovery worker: start 0x10808 InsertionSort mode=lst recovery_timeout=120s
-[17:39:04] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
-[17:39:04] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
-[17:39:04] [dbg] isolated function worker: start 0x1000 InsertionSort requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-23 17:39:06,085 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on InsertionSort
-[17:39:04] [dbg] function complexity for 0x10808 InsertionSort: blocks=20, bytes=199
-[17:39:04] [dbg] decompile_function: addr=0x10808 (slice=0x1000) name=InsertionSort
-[17:39:04] [dbg] function 0x1000 not normalized, normalizing...
-[17:39:04] [dbg] registered 6 direct callee stub(s) for 0x1000
-[17:39:09] [dbg] Decompiler returned for 0x1000
-[17:39:10] [dbg] stack-probe fact stats for 0x1000: summaries_attached=5 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=3 stable_ss_lowering_replacements=0
-[17:39:11] [dbg] decompilation time for 0x10808 InsertionSort: 6.81s
-[17:39:11] /* == function 0x10808 InsertionSort == */
-[17:39:11] /* info: function 0x10808 InsertionSort attempt=decompiled validation=uncollected */
-[17:39:11] /* -- source c -- */
+[22:08:23] [dbg] recovery worker: start 0x10808 InsertionSort mode=lst recovery_timeout=120s
+[22:08:23] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
+[22:08:24] [dbg] rebased exact-region recovery for InsertionSort: 0x10808-0x108c0 -> 0x1000-0x10b8
+[22:08:24] [dbg] isolated function worker: start 0x1000 InsertionSort requested_timeout=120s hard_timeout=122s
+WARNING  | 2026-04-23 22:08:28,057 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on InsertionSort
+[22:08:24] [dbg] function complexity for 0x10808 InsertionSort: blocks=20, bytes=199
+[22:08:24] [dbg] decompile_function: addr=0x10808 (slice=0x1000) name=InsertionSort
+[22:08:24] [dbg] function 0x1000 not normalized, normalizing...
+[22:08:24] [dbg] registered 6 direct callee stub(s) for 0x1000
+[22:08:35] [dbg] Decompiler returned for 0x1000
+[22:08:38] [dbg] stack-probe fact stats for 0x1000: summaries_attached=5 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=3 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:08:39] [dbg] decompilation time for 0x10808 InsertionSort: 14.59s
+[22:08:39] /* == function 0x10808 InsertionSort == */
+[22:08:39] /* info: function 0x10808 InsertionSort attempt=decompiled validation=uncollected */
+[22:08:39] /* -- source c -- */
 /* InsertionSort - InsertionSort compares the length of each element
  * with the lengths of all the preceding elements. When the appropriate
  * place for the new element is found, the element is inserted and
@@ -1483,7 +1458,7 @@ void InsertionSort()
         DrawTime( iRowTmp );
     }
 }
-[17:39:11] /* -- c -- */
+[22:08:39] /* -- c -- */
 /* COD annotations:
  * [bp-0x8] = barTemp
  * [bp-0x6] = iLength
@@ -1577,20 +1552,20 @@ short InsertionSort(void)
 
     return ax_4;
 }
-[17:39:11] [dbg] recovery worker: start 0x106c8 DrawBar mode=lst recovery_timeout=120s
-[17:39:11] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
-[17:39:11] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
-[17:39:11] [dbg] isolated function worker: start 0x1000 DrawBar requested_timeout=120s hard_timeout=122s
-[17:39:11] [dbg] function complexity for 0x106c8 DrawBar: blocks=7, bytes=147
-[17:39:11] [dbg] decompile_function: addr=0x106c8 (slice=0x1000) name=DrawBar
-[17:39:11] [dbg] function 0x1000 not normalized, normalizing...
-[17:39:11] [dbg] registered 7 direct callee stub(s) for 0x1000
-[17:39:13] [dbg] Decompiler returned for 0x1000
-[17:39:14] [dbg] stack-probe fact stats for 0x1000: summaries_attached=6 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:39:14] [dbg] decompilation time for 0x106c8 DrawBar: 3.36s
-[17:39:14] /* == function 0x106c8 DrawBar == */
-[17:39:14] /* info: function 0x106c8 DrawBar attempt=decompiled validation=uncollected */
-[17:39:14] /* -- source c -- */
+[22:08:39] [dbg] recovery worker: start 0x106c8 DrawBar mode=lst recovery_timeout=120s
+[22:08:39] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
+[22:08:39] [dbg] rebased exact-region recovery for DrawBar: 0x106c8-0x1075b -> 0x1000-0x1093
+[22:08:39] [dbg] isolated function worker: start 0x1000 DrawBar requested_timeout=120s hard_timeout=122s
+[22:08:40] [dbg] function complexity for 0x106c8 DrawBar: blocks=7, bytes=147
+[22:08:40] [dbg] decompile_function: addr=0x106c8 (slice=0x1000) name=DrawBar
+[22:08:40] [dbg] function 0x1000 not normalized, normalizing...
+[22:08:40] [dbg] registered 7 direct callee stub(s) for 0x1000
+[22:08:43] [dbg] Decompiler returned for 0x1000
+[22:08:46] [dbg] stack-probe fact stats for 0x1000: summaries_attached=6 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:08:46] [dbg] decompilation time for 0x106c8 DrawBar: 6.62s
+[22:08:46] /* == function 0x106c8 DrawBar == */
+[22:08:46] /* info: function 0x106c8 DrawBar attempt=decompiled validation=uncollected */
+[22:08:46] /* -- source c -- */
 /* DrawBar - Prints a bar at a specified row by first blanking the
  * old bar, then drawing a new bar having the length and color given in
  * the work array.
@@ -1607,7 +1582,7 @@ void DrawBar( int iRow )
     _settextcolor( abarWork[iRow].clr );
     _outtextxy( achT, 0, iRow + 1 );
 }
-[17:39:14] /* -- c -- */
+[22:08:46] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iRow
  * [bp-0x2e] = cSpace
@@ -1673,21 +1648,21 @@ short DrawBar(int iRow)
     *(vvar_79 + 1) = cs >> 8;
     settextcolor();
 }
-[17:39:14] [dbg] recovery worker: start 0x10560 InitBars mode=lst recovery_timeout=120s
-[17:39:14] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
-[17:39:15] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
-[17:39:15] [dbg] isolated function worker: start 0x1000 InitBars requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-23 17:39:18,680 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on InitBars
-[17:39:15] [dbg] function complexity for 0x10560 InitBars: blocks=29, bytes=303
-[17:39:15] [dbg] decompile_function: addr=0x10560 (slice=0x1000) name=InitBars
-[17:39:15] [dbg] function 0x1000 not normalized, normalizing...
-[17:39:15] [dbg] registered 10 direct callee stub(s) for 0x1000
-[17:39:25] [dbg] Decompiler returned for 0x1000
-[17:39:26] [dbg] stack-probe fact stats for 0x1000: summaries_attached=6 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:39:26] [dbg] decompilation time for 0x10560 InitBars: 11.62s
-[17:39:26] /* == function 0x10560 InitBars == */
-[17:39:26] /* info: function 0x10560 InitBars attempt=decompiled validation=uncollected */
-[17:39:26] /* -- source c -- */
+[22:08:46] [dbg] recovery worker: start 0x10560 InitBars mode=lst recovery_timeout=120s
+[22:08:46] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
+[22:08:47] [dbg] rebased exact-region recovery for InitBars: 0x10560-0x10672 -> 0x1000-0x1112
+[22:08:47] [dbg] isolated function worker: start 0x1000 InitBars requested_timeout=120s hard_timeout=122s
+WARNING  | 2026-04-23 22:08:53,177 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on InitBars
+[22:08:47] [dbg] function complexity for 0x10560 InitBars: blocks=29, bytes=303
+[22:08:47] [dbg] decompile_function: addr=0x10560 (slice=0x1000) name=InitBars
+[22:08:47] [dbg] function 0x1000 not normalized, normalizing...
+[22:08:47] [dbg] registered 10 direct callee stub(s) for 0x1000
+[22:09:05] [dbg] Decompiler returned for 0x1000
+[22:09:07] [dbg] stack-probe fact stats for 0x1000: summaries_attached=6 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=1 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:09:07] [dbg] decompilation time for 0x10560 InitBars: 19.93s
+[22:09:07] /* == function 0x10560 InitBars == */
+[22:09:07] /* info: function 0x10560 InitBars attempt=decompiled validation=uncollected */
+[22:09:07] /* -- source c -- */
 /* InitBars - Initializes the bar arrays and the menu box.
  */
 void InitBars()
@@ -1740,7 +1715,7 @@ void InitBars()
     /* Assign permanent sort values to temporary and draw unsorted bars. */
     ReInitBars();
 }
-[17:39:26] /* -- c -- */
+[22:09:07] /* -- c -- */
 /* COD annotations:
  * [bp-0x76] = iRand
  * [bp-0x74] = iColorMax
@@ -1784,11 +1759,10 @@ short InitBars(void)
     vvar_51 = vvar_46 + 2 + -2;
     *((ss << 4) + vvar_51) = ss;
     *(vvar_51 + 1) = ss >> 8;
-    *((ss << 4) + vvar_51 - 2) = &local_5e + 1;
     vvar_53 = vvar_51 - 2 + -2;
     *((ss << 4) + vvar_53) = cs;
     *(vvar_53 + 1) = cs >> 8;
-    getvideoconfig();
+    getvideoconfig(&local_5e + 1);
     if (local_e != 1)
     {
         if (local_c == 2)
@@ -1802,20 +1776,20 @@ LABEL_1056_2:
     }
     GetRandom();
 }
-[17:39:26] [dbg] recovery worker: start 0x10498 DrawTime mode=lst recovery_timeout=120s
-[17:39:27] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
-[17:39:27] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
-[17:39:27] [dbg] isolated function worker: start 0x1000 DrawTime requested_timeout=120s hard_timeout=122s
-[17:39:27] [dbg] function complexity for 0x10498 DrawTime: blocks=15, bytes=194
-[17:39:27] [dbg] decompile_function: addr=0x10498 (slice=0x1000) name=DrawTime
-[17:39:27] [dbg] function 0x1000 not normalized, normalizing...
-[17:39:27] [dbg] registered 15 direct callee stub(s) for 0x1000
-[17:39:31] [dbg] Decompiler returned for 0x1000
-[17:39:42] [dbg] stack-probe fact stats for 0x1000: summaries_attached=10 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=4 stable_ss_lowering_replacements=0
-[17:39:42] [dbg] decompilation time for 0x10498 DrawTime: 15.48s
-[17:39:42] /* == function 0x10498 DrawTime == */
-[17:39:42] /* info: function 0x10498 DrawTime attempt=decompiled validation=uncollected */
-[17:39:42] /* -- source c -- */
+[22:09:07] [dbg] recovery worker: start 0x10498 DrawTime mode=lst recovery_timeout=120s
+[22:09:07] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
+[22:09:07] [dbg] rebased exact-region recovery for DrawTime: 0x10498-0x10554 -> 0x1000-0x10bc
+[22:09:08] [dbg] isolated function worker: start 0x1000 DrawTime requested_timeout=120s hard_timeout=122s
+[22:09:08] [dbg] function complexity for 0x10498 DrawTime: blocks=15, bytes=194
+[22:09:08] [dbg] decompile_function: addr=0x10498 (slice=0x1000) name=DrawTime
+[22:09:08] [dbg] function 0x1000 not normalized, normalizing...
+[22:09:08] [dbg] registered 15 direct callee stub(s) for 0x1000
+[22:09:13] [dbg] Decompiler returned for 0x1000
+[22:09:23] [dbg] stack-probe fact stats for 0x1000: summaries_attached=10 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=12 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:09:24] [dbg] decompilation time for 0x10498 DrawTime: 16.12s
+[22:09:24] /* == function 0x10498 DrawTime == */
+[22:09:24] /* info: function 0x10498 DrawTime attempt=decompiled validation=uncollected */
+[22:09:24] /* -- source c -- */
 /* DrawTime - Prints seconds elapsed since the given sorting routine
  * started. Note that this time includes both the time it takes to redraw
  * the bars plus the pause while Beep plays a note, and thus is not an
@@ -1842,7 +1816,7 @@ void DrawTime( int iCurrentRow )
     else
         Sleep( clPause );               // Pause
 }
-[17:39:42] /* -- c -- */
+[22:09:24] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iCurrentRow
  * [bp-0x50] = achTiming
@@ -1938,33 +1912,26 @@ short DrawTime(int iCurrentRow)
     vvar_53 = vvar_51 - 2 - 2;
     ax_7 = outtextxy();
     vvar_55 = vvar_53 - 2;
-    *((ss << 4) + vvar_53 - 2) = dx_3;
     vvar_56 = vvar_55 - 2;
-    *((ss << 4) + vvar_55 - 2) = ax_7;
     vvar_58 = vvar_56 - 2;
-    *((ss << 4) + vvar_56 - 2) = 381;
-    *((ss << 4) + vvar_58 - 2) = &s_2_2 + 80;
     vvar_61 = vvar_58 - 2 - 2;
-    Beep();
+    Beep(dx_3, ax_7, 381, &s_2_2 + 80);
     vvar_63 = vvar_61 + 12;
     vvar_66 = vvar_63 - 2;
-    *((ss << 4) + vvar_63 - 2) = 59;
     ax_2 = *((ds << 4) + 2988) | *((ds << 4) + 2988 + 1) << 8;
-    *((ss << 4) + vvar_66 - 2) = ax_2 + 7;
     vvar_71 = vvar_66 - 2 + -2;
     *((ss << 4) + vvar_71) = cs;
     *(vvar_71 + 1) = cs >> 8;
     vvar_72 = vvar_71 - 2;
-    Sleep();
+    Sleep(59, ax_2 + 7);
     vvar_77 = vvar_72 + 4 + -2;
     *((ss << 4) + vvar_77) = ss;
     *(vvar_77 + 1) = ss >> 8;
-    *((ss << 4) + vvar_77 - 2) = &s_2_2 + 80;
     vvar_79 = vvar_77 - 2 + -2;
     *((ss << 4) + vvar_79) = cs;
     *(vvar_79 + 1) = cs >> 8;
     vvar_80 = vvar_79 - 2;
-    Sleep();
+    Sleep(&s_2_2 + 80);
     vvar_82 = vvar_80 + 4;
     if (!*(ds * 16 + 2886))
     {
@@ -1989,30 +1956,29 @@ short DrawTime(int iCurrentRow)
         ir_24_2 = s_3;
         ax_4 = ax_3 * (ir_23_2 | ir_24_2 << 8);
     }
-    *((ss << 4) + vvar_91 - 2) = ax_4;
     vvar_102 = vvar_91 - 2 - 2;
-    Beep();
+    Beep(ax_4);
     vvar_104 = vvar_102 + 4;
     ax_5 = *((ds << 4) + 306) | *((ds << 4) + 306 + 1) << 8;
     Sleep((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8) - (1 & ((((((((((((flags & -2 | (vvar_102 + 4 >> 16 & 1) << 0) & -5 | (~(vvar_102 + 4 ^ vvar_102 + 4 >> 4 ^ (vvar_102 + 4 ^ vvar_102 + 4 >> 4) >> 2 ^ (vvar_102 + 4 ^ vvar_102 + 4 >> 4 ^ (vvar_102 + 4 ^ vvar_102 + 4 >> 4) >> 2) >> 1) & 1) << 2) & -17 | ((vvar_102 ^ 4 ^ vvar_102 + 4) >> 4 & 1) << 4) & -65 | (!vvar_102 + 4) << 6) & -129 | (1 & vvar_102 + 4 >> 15) << 7) & -2049 | ((~(vvar_102 ^ 4) & (vvar_102 ^ vvar_102 + 4)) >> 15 & 1) << 11) & -2 | (ax_5 < 75) << 0) & -5 | (~(ax_5 - 75 ^ ax_5 - 75 >> 4 ^ (ax_5 - 75 ^ ax_5 - 75 >> 4) >> 2 ^ (ax_5 - 75 ^ ax_5 - 75 >> 4 ^ (ax_5 - 75 ^ ax_5 - 75 >> 4) >> 2) >> 1) & 1) << 2) & -17 | ((ax_5 ^ 75 ^ ax_5 - 75) >> 4 & 1) << 4) & -65 | (ax_5 == 75) << 6) & -129 | (1 & ax_5 - 75 >> 15) << 7) & -2049 | (((ax_5 ^ 75) & (ax_5 ^ ax_5 - 75)) >> 15 & 1) << 11) >> 0), ax_5 - 75);
 
     return ax_5;
 }
-[17:39:42] [dbg] recovery worker: start 0x102e0 RunMenu mode=lst recovery_timeout=120s
-[17:39:43] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
-[17:39:43] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
-[17:39:44] [dbg] isolated function worker: start 0x1000 RunMenu requested_timeout=120s hard_timeout=122s
-WARNING  | 2026-04-23 17:39:54,078 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on RunMenu
-[17:39:44] [dbg] function complexity for 0x102e0 RunMenu: blocks=76, bytes=459
-[17:39:44] [dbg] decompile_function: addr=0x102e0 (slice=0x1000) name=RunMenu
-[17:39:44] [dbg] function 0x1000 not normalized, normalizing...
-[17:39:44] [dbg] registered 25 direct callee stub(s) for 0x1000
-[17:40:15] [dbg] Decompiler returned for 0x1000
-[17:40:28] [dbg] stack-probe fact stats for 0x1000: summaries_attached=27 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:40:29] [dbg] decompilation time for 0x102e0 RunMenu: 45.51s
-[17:40:29] /* == function 0x102e0 RunMenu == */
-[17:40:29] /* info: function 0x102e0 RunMenu attempt=decompiled validation=uncollected */
-[17:40:29] /* -- source c -- */
+[22:09:24] [dbg] recovery worker: start 0x102e0 RunMenu mode=lst recovery_timeout=120s
+[22:09:24] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
+[22:09:25] [dbg] rebased exact-region recovery for RunMenu: 0x102e0-0x10491 -> 0x1000-0x11b1
+[22:09:25] [dbg] isolated function worker: start 0x1000 RunMenu requested_timeout=120s hard_timeout=122s
+WARNING  | 2026-04-23 22:09:40,721 | angr.analyses.decompiler.optimization_passes.optimization_pass | Internal structuring failed for OptimizationPass on RunMenu
+[22:09:25] [dbg] function complexity for 0x102e0 RunMenu: blocks=76, bytes=459
+[22:09:25] [dbg] decompile_function: addr=0x102e0 (slice=0x1000) name=RunMenu
+[22:09:25] [dbg] function 0x1000 not normalized, normalizing...
+[22:09:25] [dbg] registered 25 direct callee stub(s) for 0x1000
+[22:10:12] [dbg] Decompiler returned for 0x1000
+[22:10:21] [dbg] stack-probe fact stats for 0x1000: summaries_attached=27 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=12 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=6
+[22:10:22] [dbg] decompilation time for 0x102e0 RunMenu: 56.99s
+[22:10:22] /* == function 0x102e0 RunMenu == */
+[22:10:22] /* info: function 0x102e0 RunMenu attempt=decompiled validation=uncollected */
+[22:10:22] /* -- source c -- */
 /* RunMenu - The RunMenu procedure first calls the ReInitBars
  * procedure to make sure the abarWork is in its unsorted form, then
  * prompts the user to make one of the following choices:
@@ -2108,7 +2074,7 @@ void RunMenu()
         }
     }
 }
-[17:40:29] /* -- c -- */
+[22:10:22] /* -- c -- */
 /* COD annotations:
  * [bp-0x2] = ch
  * globals = iCompares, iSwaps, cszMenu, iCurChoice, cRow, clPause, fSound
@@ -2121,7 +2087,6 @@ short RunMenu(void)
     unsigned short vvar_32;
     unsigned short vvar_35;
     unsigned short vvar_13;
-    unsigned short vvar_9;
     unsigned short vvar_40;
     unsigned short vvar_41;
     unsigned short vvar_43;
@@ -2195,21 +2160,18 @@ short RunMenu(void)
         *((ds << 4) + 2986) = 0;
         *((ds << 4) + 2980) = 0;
         vvar_35 = vvar_13 - 2;
-        *((ss << 4) + vvar_9 - 2) = 75;
         ax = *((ds << 4) + 352) | *((ds << 4) + 352 + 1) << 8;
-        *((ss << 4) + vvar_35 - 2) = ax + 1;
         vvar_40 = vvar_35 - 2 + -2;
         *((ss << 4) + vvar_40) = cs;
         *(vvar_40 + 1) = cs >> 8;
         vvar_41 = vvar_40 - 2;
-        settextposition();
+        settextposition(75, ax + 1);
         vvar_43 = vvar_41 + 4;
-        *((ss << 4) + vvar_43 - 2) = 1;
         vvar_47 = vvar_43 - 2 + -2;
         *((ss << 4) + vvar_47) = cs;
         *(vvar_47 + 1) = cs >> 8;
         vvar_48 = vvar_47 - 2;
-        displaycursor();
+        displaycursor(1);
         vvar_52 = vvar_48 + 2 - 2;
         s_0 = getch();
         *((ss << 4) + vvar_52 - 2) = 0;
@@ -2229,9 +2191,8 @@ short RunMenu(void)
             ShellSort();
             vvar_184 = vvar_66 - 2 - 2;
             sub_184c();
-            *((ss << 4) + vvar_184 - 2) = 0;
             vvar_188 = vvar_184 - 2 - 2;
-            sub_11b1();
+            4529(0);
             vvar_190 = vvar_188 + 2;
             goto LABEL_11a8;
         }
@@ -2243,9 +2204,8 @@ short RunMenu(void)
             ShellSort();
             vvar_135 = vvar_66 - 2 - 2;
             QuickSort();
-            *((ss << 4) + vvar_135 - 2) = 0;
             vvar_139 = vvar_135 - 2 - 2;
-            InitMenu();
+            InitMenu(0);
             vvar_141 = vvar_139 + 2;
             goto LABEL_11a8_2;
         }
@@ -2255,9 +2215,8 @@ short RunMenu(void)
             ShellSort();
             vvar_125 = vvar_66 - 2 - 2;
             InsertionSort();
-            *((ss << 4) + vvar_125 - 2) = 0;
             vvar_129 = vvar_125 - 2 - 2;
-            DrawTime();
+            DrawTime(0);
             vvar_131 = vvar_129 + 2;
             goto LABEL_11a8_3;
         }
@@ -2266,15 +2225,11 @@ short RunMenu(void)
             *((ds << 4) + 2988) = 5;
             ShellSort();
             vvar_110 = vvar_66 - 2 + -2;
-            *((ss << 4) + vvar_110) = *((ds << 4) + 2978) | *((ds << 4) + 2978 + 1) << 8;
-            *(vvar_110 + 1) = (*((ds << 4) + 2978) | *((ds << 4) + 2978 + 1) << 8) >> 8;
-            *((ss << 4) + vvar_110 - 2) = 0;
             vvar_113 = vvar_110 - 2 - 2;
-            sub_19f4();
+            sub_19f4(*((ds << 4) + 2978) | *((ds << 4) + 2978 + 1) << 8, (*((ds << 4) + 2978) | *((ds << 4) + 2978 + 1) << 8) >> 8, 0);
             vvar_115 = vvar_113 + 4;
-            *((ss << 4) + vvar_115 - 2) = 0;
             vvar_119 = vvar_115 - 2 - 2;
-            sub_11b1();
+            4529(0);
             vvar_121 = vvar_119 + 2;
             goto LABEL_11a8_4;
         }
@@ -2284,9 +2239,8 @@ short RunMenu(void)
             ShellSort();
             vvar_100 = vvar_66 - 2 - 2;
             sub_1914();
-            *((ss << 4) + vvar_100 - 2) = 0;
             vvar_104 = vvar_100 - 2 - 2;
-            sub_11b1();
+            4529(0);
             vvar_106 = vvar_104 + 2;
             goto LABEL_11a8_5;
         }
@@ -2335,9 +2289,8 @@ LABEL_11a8_6:
                 ShellSort();
                 vvar_163 = vvar_66 - 2 - 2;
                 HeapSort();
-                *((ss << 4) + vvar_163 - 2) = 0;
                 vvar_167 = vvar_163 - 2 - 2;
-                ExchangeSort();
+                ExchangeSort(0);
                 vvar_169 = vvar_167 + 2;
                 goto LABEL_11a8_8;
             }
@@ -2362,20 +2315,20 @@ LABEL_11ab:
 
     return ax_9;
 }
-[17:40:29] [dbg] recovery worker: start 0x101f0 DrawFrame mode=lst recovery_timeout=120s
-[17:40:30] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
-[17:40:30] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
-[17:40:30] [dbg] isolated function worker: start 0x1000 DrawFrame requested_timeout=120s hard_timeout=122s
-[17:40:30] [dbg] function complexity for 0x101f0 DrawFrame: blocks=16, bytes=228
-[17:40:30] [dbg] decompile_function: addr=0x101f0 (slice=0x1000) name=DrawFrame
-[17:40:30] [dbg] function 0x1000 not normalized, normalizing...
-[17:40:30] [dbg] registered 4 direct callee stub(s) for 0x1000
-[17:40:35] [dbg] Decompiler returned for 0x1000
-[17:40:41] [dbg] stack-probe fact stats for 0x1000: summaries_attached=10 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=2 stable_ss_lowering_replacements=0
-[17:40:41] [dbg] decompilation time for 0x101f0 DrawFrame: 10.81s
-[17:40:41] /* == function 0x101f0 DrawFrame == */
-[17:40:41] /* info: function 0x101f0 DrawFrame attempt=decompiled validation=uncollected */
-[17:40:41] /* -- source c -- */
+[22:10:22] [dbg] recovery worker: start 0x101f0 DrawFrame mode=lst recovery_timeout=120s
+[22:10:23] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
+[22:10:23] [dbg] rebased exact-region recovery for DrawFrame: 0x101f0-0x102cc -> 0x1000-0x10dc
+[22:10:23] [dbg] isolated function worker: start 0x1000 DrawFrame requested_timeout=120s hard_timeout=122s
+[22:10:23] [dbg] function complexity for 0x101f0 DrawFrame: blocks=16, bytes=228
+[22:10:23] [dbg] decompile_function: addr=0x101f0 (slice=0x1000) name=DrawFrame
+[22:10:23] [dbg] function 0x1000 not normalized, normalizing...
+[22:10:23] [dbg] registered 4 direct callee stub(s) for 0x1000
+[22:10:28] [dbg] Decompiler returned for 0x1000
+[22:10:32] [dbg] stack-probe fact stats for 0x1000: summaries_attached=10 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=14 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:10:33] [dbg] decompilation time for 0x101f0 DrawFrame: 9.54s
+[22:10:33] /* == function 0x101f0 DrawFrame == */
+[22:10:33] /* info: function 0x101f0 DrawFrame attempt=decompiled validation=uncollected */
+[22:10:33] /* -- source c -- */
 /* DrawFrame - Draws a rectangular frame using the double-line box
  * characters. The parameters iTop, iLeft, iWidth, and iHeight are
  * the row and column arguments for the upper-left and lower-right
@@ -2406,7 +2359,7 @@ void DrawFrame( int iTop, int iLeft, int iWidth, int iHeight )
     achTmp[iWidth - 1] = LRIGHT;
     _outtextxy( achTmp, iLeft, iTop + iHeight );
 }
-[17:40:41] /* -- c -- */
+[22:10:33] /* -- c -- */
 /* COD annotations:
  * [bp+0x4] = iTop
  * [bp+0x6] = iLeft
@@ -2457,23 +2410,18 @@ short DrawFrame(int iTop, int iLeft, int iWidth, int iHeight)
     s_6 = 205;
     outtextxy();
     vvar_25 = &s_6;
-    *((ss << 4) + &(&s_4)[81 + iLeft]) = -69;
-    *((ss << 4) + &(&s_4)[80 + iLeft]) = 0;
     vvar_29 = vvar_25 - 2;
-    *((ss << 4) + vvar_25 - 2) = arg_0;
-    *((ss << 4) + vvar_29 - 2) = iRow;
     vvar_31 = vvar_29 - 2 + -2;
     *((ss << 4) + vvar_31) = cs;
     *(vvar_31 + 1) = cs >> 8;
-    outtextxy();
+    outtextxy(-69, 0, arg_0, iRow);
     vvar_37 = vvar_31 - 2 + 4 + -2;
     *((ss << 4) + vvar_37) = ss;
     *(vvar_37 + 1) = ss >> 8;
-    *((ss << 4) + vvar_37 - 2) = &s_4 + 80;
     vvar_39 = vvar_37 - 2 + -2;
     *((ss << 4) + vvar_39) = cs;
     *(vvar_39 + 1) = cs >> 8;
-    memset();
+    memset(&s_4 + 80);
     vvar_42 = vvar_39 - 2 + 4;
     vvar_44 = vvar_42 - 2;
     *((ss << 4) + vvar_42 - 2) = iLeft;
@@ -2485,20 +2433,17 @@ short DrawFrame(int iTop, int iLeft, int iWidth, int iHeight)
     for (arg_0 = iRow + 1; arg_0 <= iTop; s_fffd = g_-4 + 1 >> 8)
     {
         vvar_94 = vvar_2 - 2;
-        *((ss << 4) + vvar_2 - 2) = arg_0;
-        *((ss << 4) + vvar_94 - 2) = arg_0;
         vvar_96 = vvar_94 - 2 + -2;
         *((ss << 4) + vvar_96) = cs;
         *(vvar_96 + 1) = cs >> 8;
-        outtextxy();
+        outtextxy(arg_0, arg_0);
         vvar_102 = vvar_96 - 2 + 4 + -2;
         *((ss << 4) + vvar_102) = ss;
         *(vvar_102 + 1) = ss >> 8;
-        *((ss << 4) + vvar_102 - 2) = &s_4 + 80;
         vvar_104 = vvar_102 - 2 + -2;
         *((ss << 4) + vvar_104) = cs;
         *(vvar_104 + 1) = cs >> 8;
-        memset();
+        memset(&s_4 + 80);
         vvar_107 = vvar_104 - 2 + 4;
         s_4 = g_-4 + 1;
     }
@@ -2508,37 +2453,33 @@ short DrawFrame(int iTop, int iLeft, int iWidth, int iHeight)
     *((ss << 4) + vvar_58 - 2) = 205;
     outtextxy(&s_4 + 80);
     vvar_65 = vvar_60 - 2 - 2 + 6;
-    *((ss << 4) + &(&s_4)[81 + iLeft]) = -68;
     vvar_68 = vvar_65 - 2;
-    *((ss << 4) + vvar_65 - 2) = arg_0;
-    *((ss << 4) + vvar_68 - 2) = iTop + g_2;
     vvar_73 = vvar_68 - 2 + -2;
     *((ss << 4) + vvar_73) = cs;
     *(vvar_73 + 1) = cs >> 8;
-    outtextxy();
+    outtextxy(-68, arg_0, iTop + g_2);
     vvar_79 = vvar_73 - 2 + 4 + -2;
     *((ss << 4) + vvar_79) = ss;
     *(vvar_79 + 1) = ss >> 8;
-    *((ss << 4) + vvar_79 - 2) = &s_4 + 80;
     vvar_81 = vvar_79 - 2 + -2;
     *((ss << 4) + vvar_81) = cs;
     *(vvar_81 + 1) = cs >> 8;
-    memset();
+    memset(&s_4 + 80);
 }
-[17:40:41] [dbg] recovery worker: start 0x10060 InitMenu mode=lst recovery_timeout=120s
-[17:40:42] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
-[17:40:42] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
-[17:40:42] [dbg] isolated function worker: start 0x1000 InitMenu requested_timeout=120s hard_timeout=122s
-[17:40:42] [dbg] function complexity for 0x10060 InitMenu: blocks=37, bytes=418
-[17:40:42] [dbg] decompile_function: addr=0x10060 (slice=0x1000) name=InitMenu
-[17:40:42] [dbg] function 0x1000 not normalized, normalizing...
-[17:40:42] [dbg] registered 9 direct callee stub(s) for 0x1000
-[17:40:49] [dbg] Decompiler returned for 0x1000
-[17:41:04] [dbg] stack-probe fact stats for 0x1000: summaries_attached=19 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=0 stable_ss_lowering_replacements=0
-[17:41:04] [dbg] decompilation time for 0x10060 InitMenu: 21.99s
-[17:41:04] /* == function 0x10060 InitMenu == */
-[17:41:04] /* info: function 0x10060 InitMenu attempt=decompiled validation=uncollected */
-[17:41:04] /* -- source c -- */
+[22:10:33] [dbg] recovery worker: start 0x10060 InitMenu mode=lst recovery_timeout=120s
+[22:10:33] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
+[22:10:34] [dbg] rebased exact-region recovery for InitMenu: 0x10060-0x101db -> 0x1000-0x117b
+[22:10:34] [dbg] isolated function worker: start 0x1000 InitMenu requested_timeout=120s hard_timeout=122s
+[22:10:34] [dbg] function complexity for 0x10060 InitMenu: blocks=37, bytes=418
+[22:10:34] [dbg] decompile_function: addr=0x10060 (slice=0x1000) name=InitMenu
+[22:10:34] [dbg] function 0x1000 not normalized, normalizing...
+[22:10:34] [dbg] registered 9 direct callee stub(s) for 0x1000
+[22:10:47] [dbg] Decompiler returned for 0x1000
+[22:11:01] [dbg] stack-probe fact stats for 0x1000: summaries_attached=19 stack_probe_summaries=1 ss_stack_address_returns=1 stack_arg_materializations=32 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=5
+[22:11:02] [dbg] decompilation time for 0x10060 InitMenu: 28.08s
+[22:11:02] /* == function 0x10060 InitMenu == */
+[22:11:02] /* info: function 0x10060 InitMenu attempt=decompiled validation=uncollected */
+[22:11:02] /* -- source c -- */
 /* InitMenu - Calls the DrawFrame procedure to draw the frame around the
  * sort menu, then prints the different options stored in the menu array.
  */
@@ -2570,7 +2511,7 @@ void InitMenu()
     if( clPause == 0L )
         _outtextxy( ach, LEFTCOLUMN, cszMenu - 3 );
 }
-[17:41:04] /* -- c -- */
+[22:11:02] /* -- c -- */
 /* COD annotations:
  * [bp-0x12] = ach
  * [bp-0x2] = i
@@ -2625,7 +2566,6 @@ short InitMenu(void)
     unsigned short vvar_146;
     unsigned short vvar_148;
     unsigned short vvar_151;
-    unsigned short vvar_16;
     unsigned short vvar_156;
     unsigned short vvar_157;
     unsigned short vvar_162;
@@ -2633,6 +2573,7 @@ short InitMenu(void)
     unsigned short vvar_165;
     unsigned short vvar_167;
     unsigned short vvar_173;
+    unsigned short vvar_16;
     unsigned short vvar_178;
     unsigned short vvar_184;
     unsigned short vvar_186;
@@ -2659,61 +2600,48 @@ short InitMenu(void)
     vvar_44 = &s_8;
     ax = 0;
     vvar_48 = vvar_44 - 2;
-    *((ss << 4) + vvar_44 - 2) = ax;
-    *((ss << 4) + vvar_48 - 2) = ax;
     vvar_50 = vvar_48 - 2 + -2;
     *((ss << 4) + vvar_50) = cs;
     *(vvar_50 + 1) = cs >> 8;
     vvar_51 = vvar_50 - 2;
-    setbkcolor();
+    setbkcolor(ax, ax);
     vvar_53 = vvar_51 + 4;
     ax_2 = *((ds << 4) + 352) | *((ds << 4) + 352 + 1) << 8;
     vvar_58 = vvar_53 - 2;
-    *((ss << 4) + vvar_53 - 2) = ax_2 + 2;
     vvar_60 = vvar_58 - 2;
-    *((ss << 4) + vvar_58 - 2) = 35;
     vvar_62 = vvar_60 - 2;
-    *((ss << 4) + vvar_60 - 2) = 45;
-    *((ss << 4) + vvar_62 - 2) = 1;
     vvar_65 = vvar_62 - 2 - 2;
-    DrawFrame();
+    DrawFrame(ax_2 + 2, 35, 45, 1);
     vvar_67 = vvar_65 + 8;
     if (*(ds * 16 + 2886))
     {
         vvar_79 = vvar_12 - 2;
-        *((ss << 4) + vvar_12 - 2) = 354;
-        *((ss << 4) + vvar_79 - 2) = &s_4 + 16;
         vvar_82 = vvar_79 - 2 - 2;
-        outtextxy();
+        outtextxy(354, &s_4 + 16);
         vvar_84 = vvar_82 + 4;
     }
     else
     {
         vvar_71 = vvar_12 - 2;
-        *((ss << 4) + vvar_12 - 2) = 358;
-        *((ss << 4) + vvar_71 - 2) = &s_4 + 16;
         vvar_74 = vvar_71 - 2 - 2;
-        outtextxy();
+        outtextxy(358, &s_4 + 16);
         vvar_76 = vvar_74 + 4;
     }
     vvar_87 = vvar_21 - 2;
-    *((ss << 4) + vvar_21 - 2) = 62;
     ax_4 = *((ds << 4) + 352) | *((ds << 4) + 352 + 1) << 8;
-    *((ss << 4) + vvar_87 - 2) = ax_4 - 7;
     vvar_92 = vvar_87 - 2 + -2;
     *((ss << 4) + vvar_92) = cs;
     *(vvar_92 + 1) = cs >> 8;
     vvar_93 = vvar_92 - 2;
-    strcpy();
+    strcpy(62, ax_4 - 7);
     vvar_98 = vvar_93 + 4 + -2;
     *((ss << 4) + vvar_98) = ss;
     *(vvar_98 + 1) = ss >> 8;
-    *((ss << 4) + vvar_98 - 2) = &s_4 + 16;
     vvar_100 = vvar_98 - 2 + -2;
     *((ss << 4) + vvar_100) = cs;
     *(vvar_100 + 1) = cs >> 8;
     vvar_101 = vvar_100 - 2;
-    outtextxy();
+    outtextxy(&s_4 + 16);
     vvar_103 = vvar_101 + 4;
     vvar_107 = vvar_103 - 2;
     *((ss << 4) + vvar_103 - 2) = 0;
@@ -2727,94 +2655,79 @@ short InitMenu(void)
     vvar_111 = vvar_110 - 2;
     ax_9 = sprintf();
     vvar_113 = vvar_111 - 2;
-    *((ss << 4) + vvar_111 - 2) = 0;
     vvar_114 = vvar_113 - 2;
-    *((ss << 4) + vvar_113 - 2) = ax_9;
     vvar_116 = vvar_114 - 2;
-    *((ss << 4) + vvar_114 - 2) = 362;
-    *((ss << 4) + vvar_116 - 2) = &s_4 + 16;
     vvar_119 = vvar_116 - 2 - 2;
-    outtextxy();
+    outtextxy(0, ax_9, 362, &s_4 + 16);
     vvar_121 = vvar_119 + 8;
     vvar_124 = vvar_121 - 2;
-    *((ss << 4) + vvar_121 - 2) = 62;
     ax_5 = *((ds << 4) + 352) | *((ds << 4) + 352 + 1) << 8;
-    *((ss << 4) + vvar_124 - 2) = ax_5 - 5;
     vvar_129 = vvar_124 - 2 + -2;
     *((ss << 4) + vvar_129) = cs;
     *(vvar_129 + 1) = cs >> 8;
     vvar_130 = vvar_129 - 2;
-    strcpy();
+    strcpy(62, ax_5 - 5);
     vvar_135 = vvar_130 + 4 + -2;
     *((ss << 4) + vvar_135) = ss;
     *(vvar_135 + 1) = ss >> 8;
-    *((ss << 4) + vvar_135 - 2) = &s_4 + 16;
     vvar_137 = vvar_135 - 2 + -2;
     *((ss << 4) + vvar_137) = cs;
     *(vvar_137 + 1) = cs >> 8;
     vvar_138 = vvar_137 - 2;
-    outtextxy();
+    outtextxy(&s_4 + 16);
     vvar_140 = vvar_138 + 4;
     vvar_143 = vvar_140 - 2;
-    *((ss << 4) + vvar_140 - 2) = 368;
-    *((ss << 4) + vvar_143 - 2) = &s_4 + 16;
     vvar_146 = vvar_143 - 2 - 2;
-    outtextxy();
+    outtextxy(368, &s_4 + 16);
     vvar_148 = vvar_146 + 4;
     if (*(ds * 16 + 306) == 900 && !*(ds * 16 + 308))
     {
         vvar_151 = vvar_148 - 2;
-        *((ss << 4) + vvar_16 - 2) = 48;
         ax_6 = *((ds << 4) + 352) | *((ds << 4) + 352 + 1) << 8;
-        *((ss << 4) + vvar_151 - 2) = ax_6 - 4;
         vvar_156 = vvar_151 - 2 + -2;
         *((ss << 4) + vvar_156) = cs;
         *(vvar_156 + 1) = cs >> 8;
         vvar_157 = vvar_156 - 2;
-        strcpy();
+        strcpy(48, ax_6 - 4);
         vvar_162 = vvar_157 + 4 + -2;
         *((ss << 4) + vvar_162) = ss;
         *(vvar_162 + 1) = ss >> 8;
-        *((ss << 4) + vvar_162 - 2) = &s_4 + 16;
         vvar_164 = vvar_162 - 2 + -2;
         *((ss << 4) + vvar_164) = cs;
         *(vvar_164 + 1) = cs >> 8;
         vvar_165 = vvar_164 - 2;
-        outtextxy();
+        outtextxy(&s_4 + 16);
         vvar_167 = vvar_165 + 4;
     }
     ax_7 = *((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8;
     ir_22_2 = *((ds << 4) + 306 + 1);
     if (!((((flags & -2 & -5 | ~((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4 ^ ((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4) >> 2 ^ ((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4 ^ ((*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) ^ (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306)) >> 4) >> 2) >> 1) * 4) & -17 & -65 | (!(*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8) && !*((ds << 4) + 306) && !ir_22_2 * 0x100) * 64) & -129 | (1 & (*((ds << 4) + 308) | *((ds << 4) + 308 + 1) << 8 | *((ds << 4) + 306) | ir_22_2 * 0x100) >> 15) * 128) & -2049 & 64))
     vvar_173 = vvar_16 - 2;
-    *((ss << 4) + vvar_16 - 2) = 48;
-    *((ss << 4) + vvar_173 - 2) = (*((ds << 4) + 352) | *((ds << 4) + 352 + 1) << 8) - 3;
     vvar_178 = vvar_173 - 2 + -2;
     *((ss << 4) + vvar_178) = cs;
     *(vvar_178 + 1) = cs >> 8;
-    strcpy();
+    strcpy(48, (*((ds << 4) + 352) | *((ds << 4) + 352 + 1) << 8) - 3);
     vvar_184 = vvar_178 - 2 + 4 + -2;
     *((ss << 4) + vvar_184) = ss;
     *(vvar_184 + 1) = ss >> 8;
-    *((ss << 4) + vvar_184 - 2) = &s_4 + 16;
     vvar_186 = vvar_184 - 2 + -2;
     *((ss << 4) + vvar_186) = cs;
     *(vvar_186 + 1) = cs >> 8;
-    outtextxy();
+    outtextxy(&s_4 + 16);
 
     return ax_7;
 }
-[17:41:04] /* info: decompilation attempted for 20/20 selected function(s) */
+[22:11:02] /* info: decompilation attempted for 20/20 selected function(s) */
 
-[17:41:04] summary: decompiled 20/20 selected functions
-summary: probable compiler versions: Microsoft C v5, Microsoft C v6ax, Microsoft C v5.1
+[22:11:02] summary: decompiled 20/20 selected functions
+summary: probable compiler versions: Microsoft C v5, Microsoft C v5.1, Microsoft C v6ax
 summary: probable library/signature sources: local_omf_pat, pat_backend:hyperscan
 summary: signature-matched library functions: 67
 summary: hidden signature-matched labels: 67
 summary: shown=20 decompiled=20 asm_or_detail_fallback=0
-[17:41:04] summary: slowest function attempt(s), top 5:
-[17:41:04] summary:   0x102e0 RunMenu: 45.51s status=decompiled
-[17:41:04] summary:   0x10060 InitMenu: 21.99s status=decompiled
-[17:41:04] summary:   0x10ce0 QuickSort: 19.22s status=decompiled
-[17:41:04] summary:   0x10498 DrawTime: 15.48s status=decompiled
-[17:41:04] summary:   0x10c18 ShellSort: 11.91s status=decompiled
+[22:11:02] summary: slowest function attempt(s), top 5:
+[22:11:02] summary:   0x102e0 RunMenu: 56.99s status=decompiled
+[22:11:02] summary:   0x10060 InitMenu: 28.08s status=decompiled
+[22:11:02] summary:   0x10ce0 QuickSort: 23.36s status=decompiled
+[22:11:02] summary:   0x10560 InitBars: 19.93s status=decompiled
+[22:11:02] summary:   0x10498 DrawTime: 16.12s status=decompiled
