@@ -17,6 +17,7 @@ from .decompiler_postprocess_utils import (
     _iter_c_nodes_deep_8616,
     _match_bp_stack_dereference_8616,
     _match_real_mode_linear_expr_8616,
+    _segment_reg_name_8616,
     _match_segmented_dereference_8616,
 )
 
@@ -571,6 +572,25 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return size
         return 2
 
+    def _is_segment_register_value_expr(expr) -> bool:
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        if isinstance(node, CBinaryOp) and node.op in {"Shr", "Shl", "And", "Or"}:
+            return _is_segment_register_value_expr(node.lhs)
+        variable = getattr(node, "variable", None)
+        name = getattr(variable, "name", None) or getattr(node, "name", None)
+        if isinstance(name, str) and name.lower() in {"cs", "ds", "es", "ss"}:
+            return True
+        project = getattr(codegen, "project", None)
+        if project is None:
+            return False
+        seg_name = _segment_reg_name_8616(node, project)
+        return seg_name in {"cs", "ds", "es", "ss"}
+
+    def _has_non_segment_register_arg_expr(args) -> bool:
+        return any(not _is_segment_register_value_expr(arg) for arg in args)
+
     def _prototype_arg_count(call) -> int | None:
         callee_func = getattr(call, "callee_func", None)
         prototype = getattr(callee_func, "prototype", None)
@@ -598,9 +618,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         expr = getattr(stmt, "expr", None)
         if isinstance(expr, CFunctionCall):
             return expr
-        for node in _iter_c_nodes_deep_8616(stmt):
-            if isinstance(node, CFunctionCall):
-                return node
+        if isinstance(getattr(stmt, "statements", None), (list, tuple)):
+            for node in _iter_c_nodes_deep_8616(stmt):
+                if isinstance(node, CFunctionCall):
+                    return node
         return None
 
     def _statement_contains_call(stmt) -> bool:
@@ -831,16 +852,23 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         rhs_values.reverse()
         return tuple(rhs_values)
 
-    def _rewrite_block(block) -> None:
+    def _rewrite_block(
+        block,
+        *,
+        inherited_stack_probe_seen: bool = False,
+        inherited_stack_probe_address_seen: bool = False,
+    ) -> tuple[bool, bool]:
         nonlocal changed
         statements = getattr(block, "statements", None)
         if not isinstance(statements, (list, tuple)):
-            return
+            return inherited_stack_probe_seen, inherited_stack_probe_address_seen
         statements = list(statements)
         new_statements = []
         i = 0
-        stack_probe_seen = any(bool(getattr(item, "stack_probe_helper", False)) for item in summary_map.values())
-        stack_probe_address_seen = any(
+        stack_probe_seen = inherited_stack_probe_seen or any(
+            bool(getattr(item, "stack_probe_helper", False)) for item in summary_map.values()
+        )
+        stack_probe_address_seen = inherited_stack_probe_address_seen or any(
             bool(getattr(item, "stack_probe_helper", False))
             and getattr(item, "helper_return_state", None) == "stack_address"
             and getattr(item, "helper_return_space", None) in {None, "ss"}
@@ -881,9 +909,30 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if len(new_statements) >= expected_arg_count:
                     candidate_stmts = new_statements[-expected_arg_count:]
                     candidate_rhs = [_stack_store_rhs_from_statement(candidate) for candidate in candidate_stmts]
-                    if all(rhs is not None for rhs in candidate_rhs):
+                    if all(rhs is not None for rhs in candidate_rhs) and _has_non_segment_register_arg_expr(candidate_rhs):
                         call.args = list(candidate_rhs)
                         del new_statements[-expected_arg_count:]
+                        _refresh_summary_arg_shape(call, summary)
+                        changed = True
+                        strict_arg_shape_applied = True
+                if (
+                    not strict_arg_shape_applied
+                    and stack_probe_address_seen
+                    and stack_probe_seen
+                    and not is_stack_probe_helper
+                ):
+                    expanded_rhs, consumed_indices = _collect_backtracked_stack_args(
+                        new_statements,
+                        wanted_count=None,
+                        max_count=4,
+                    )
+                    if (
+                        len(expanded_rhs) > expected_arg_count
+                        and _has_non_segment_register_arg_expr(expanded_rhs)
+                    ):
+                        call.args = list(expanded_rhs)
+                        for consume_idx in sorted(consumed_indices, reverse=True):
+                            del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -892,7 +941,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         new_statements,
                         wanted_count=expected_arg_count,
                     )
-                    if backtracked_rhs:
+                    if backtracked_rhs and _has_non_segment_register_arg_expr(backtracked_rhs):
                         call.args = list(backtracked_rhs)
                         for consume_idx in sorted(consumed_indices, reverse=True):
                             del new_statements[consume_idx]
@@ -901,7 +950,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         strict_arg_shape_applied = True
                 if not strict_arg_shape_applied:
                     inline_rhs = _extract_inline_stack_store_args(stmt, call, expected_arg_count)
-                    if inline_rhs:
+                    if inline_rhs and _has_non_segment_register_arg_expr(inline_rhs):
                         call.args = list(inline_rhs)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
@@ -915,7 +964,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     and len(new_statements) >= 1
                 ):
                     candidate_rhs = _stack_store_rhs_from_statement(new_statements[-1])
-                    if candidate_rhs is not None:
+                    if candidate_rhs is not None and not _is_segment_register_value_expr(candidate_rhs):
                         call.args = [candidate_rhs]
                         del new_statements[-1:]
                         _refresh_summary_arg_shape(call, summary)
@@ -928,7 +977,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 and len(new_statements) >= 1
             ):
                 candidate_rhs, consumed_indices = _collect_backtracked_stack_args(new_statements, wanted_count=None, max_count=4)
-                if candidate_rhs and (stack_probe_address_seen or stack_probe_seen or summary is None):
+                if (
+                    candidate_rhs
+                    and _has_non_segment_register_arg_expr(candidate_rhs)
+                    and (stack_probe_address_seen or stack_probe_seen or summary is None)
+                ):
                     call.args = list(candidate_rhs)
                     for consume_idx in sorted(consumed_indices, reverse=True):
                         del new_statements[consume_idx]
@@ -936,7 +989,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     changed = True
                 else:
                     inline_rhs = _extract_inline_stack_store_args(stmt, call, 1)
-                    if inline_rhs and (stack_probe_address_seen or stack_probe_seen or summary is None):
+                    if (
+                        inline_rhs
+                        and _has_non_segment_register_arg_expr(inline_rhs)
+                        and (stack_probe_address_seen or stack_probe_seen or summary is None)
+                    ):
                         call.args = [inline_rhs[0]]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
@@ -948,15 +1005,28 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         for stmt in getattr(block, "statements", ()) or ():
             nested = getattr(stmt, "body", None)
             if isinstance(getattr(nested, "statements", None), (list, tuple)):
-                _rewrite_block(nested)
+                _rewrite_block(
+                    nested,
+                    inherited_stack_probe_seen=stack_probe_seen,
+                    inherited_stack_probe_address_seen=stack_probe_address_seen,
+                )
             else_node = getattr(stmt, "else_node", None)
             if isinstance(getattr(else_node, "statements", None), (list, tuple)):
-                _rewrite_block(else_node)
+                _rewrite_block(
+                    else_node,
+                    inherited_stack_probe_seen=stack_probe_seen,
+                    inherited_stack_probe_address_seen=stack_probe_address_seen,
+                )
             for pair in getattr(stmt, "condition_and_nodes", ()) or ():
                 if isinstance(pair, tuple) and len(pair) == 2:
                     branch = pair[1]
                     if isinstance(getattr(branch, "statements", None), (list, tuple)):
-                        _rewrite_block(branch)
+                        _rewrite_block(
+                            branch,
+                            inherited_stack_probe_seen=stack_probe_seen,
+                            inherited_stack_probe_address_seen=stack_probe_address_seen,
+                        )
+        return stack_probe_seen, stack_probe_address_seen
 
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
     if isinstance(getattr(root, "statements", None), (list, tuple)):

@@ -34,7 +34,7 @@ def _empty_codegen(project):
     return codegen
 
 
-def test_stack_probe_typed_return_state_allows_single_arg_recovery_when_summary_arg_count_is_oversized():
+def test_stack_probe_typed_return_state_refuses_partial_recovery_when_summary_arg_count_is_oversized():
     project = _project()
     codegen = _empty_codegen(project)
     structured_c = _scg.c
@@ -107,9 +107,9 @@ def test_stack_probe_typed_return_state_allows_single_arg_recovery_when_summary_
             target_addr=0x1544,
             return_addr=0x4015,
             kind="direct_near",
-            arg_count=8,  # weak/oversized summary shape from noisy cleanup evidence
-            arg_widths=(2, 2, 2, 2, 2, 2, 2, 2),
-            stack_cleanup=16,
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
             return_register=None,
             return_used=False,
         ),
@@ -117,10 +117,10 @@ def test_stack_probe_typed_return_state_allows_single_arg_recovery_when_summary_
 
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
-    assert changed is True
-    assert len(codegen.cfunc.statements.statements) == 2
-    final_stmt = codegen.cfunc.statements.statements[1]
+    assert changed is False
+    assert len(codegen.cfunc.statements.statements) == 3
+    final_stmt = codegen.cfunc.statements.statements[2]
     assert isinstance(final_stmt, CExpressionStatement)
-    assert final_stmt.expr.args == [arg_slot]
-    assert codegen._inertia_callsite_summaries[id(draw_bar)].arg_count == 1
-    assert codegen._inertia_callsite_summaries[id(draw_bar)].arg_widths == (2,)
+    assert final_stmt.expr.args == []
+    assert codegen._inertia_callsite_summaries[id(draw_bar)].arg_count == 2
+    assert codegen._inertia_callsite_summaries[id(draw_bar)].arg_widths == (2, 2)

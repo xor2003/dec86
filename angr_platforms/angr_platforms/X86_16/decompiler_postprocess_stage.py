@@ -85,16 +85,6 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
-            "_lower_stable_ss_stack_accesses_8616",
-            _segmented_mem._lower_stable_ss_stack_accesses_8616,
-            False,
-        ),
-        DecompilerPostprocessPassSpec(
-            "_normalize_function_prototype_arg_names_8616",
-            _post._normalize_function_prototype_arg_names_8616,
-            True,
-        ),
-        DecompilerPostprocessPassSpec(
             "_attach_callsite_summaries_8616",
             _calls._attach_callsite_summaries_8616,
             True,
@@ -107,6 +97,16 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_materialize_callsite_prototypes_8616",
             _calls._materialize_callsite_prototypes_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_lower_stable_ss_stack_accesses_8616",
+            _segmented_mem._lower_stable_ss_stack_accesses_8616,
+            False,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_normalize_function_prototype_arg_names_8616",
+            _post._normalize_function_prototype_arg_names_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
