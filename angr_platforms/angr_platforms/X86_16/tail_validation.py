@@ -33,6 +33,11 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_condition_8616
+from .ir.condition_ir import (
+    _INVERTED_COMPARISON_OPS_8616,
+    normalize_condition_fingerprint_algebraic_8616,
+    normalize_condition_fingerprint_string_8616,
+)
 from .tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from .tail_validation_fingerprint import (
     TAIL_VALIDATION_FINGERPRINT_VERSION,
@@ -173,61 +178,23 @@ def _json_fingerprint(payload: object) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-_INVERTED_COMPARISON_OPS_8616 = {
-    "CmpEQ": "CmpNE",
-    "CmpNE": "CmpEQ",
-    "CmpLT": "CmpGE",
-    "CmpLE": "CmpGT",
-    "CmpGT": "CmpLE",
-    "CmpGE": "CmpLT",
-}
-
-_TAIL_VALIDATION_CONTROL_FLOW_PREFIXES_8616 = (
-    "if:",
-    "ifbreak:",
-    "while:",
-    "dowhile:",
-    "for:",
-    "switch:",
-)
-
-
-def _split_fingerprint_call_8616(value: str) -> tuple[str, str] | None:
-    if not isinstance(value, str) or not value.endswith(")"):
-        return None
-    open_idx = value.find("(")
-    if open_idx <= 0:
-        return None
-    return value[:open_idx], value[open_idx + 1 : -1]
-
-
-def _canonicalize_condition_fingerprint_string_8616(value: str) -> str:
-    if not isinstance(value, str) or not value:
-        return value
-
-    for prefix in _TAIL_VALIDATION_CONTROL_FLOW_PREFIXES_8616:
-        if value.startswith(prefix):
-            return prefix + _canonicalize_condition_fingerprint_string_8616(value[len(prefix) :])
-
-    call = _split_fingerprint_call_8616(value)
-    if call is None:
-        return value
-    op, inner = call
-    if op == "Not":
-        inner_call = _split_fingerprint_call_8616(inner)
-        if inner_call is None:
-            return value
-        inner_op, inner_args = inner_call
-        inverted = _INVERTED_COMPARISON_OPS_8616.get(inner_op)
-        if inverted is not None:
-            return f"{inverted}({inner_args})"
-    return value
-
-
 def _canonicalize_summary_field_values_8616(field_name: str, values: set[str]) -> set[str]:
+    """Canonicalize condition/control-flow fingerprint strings for comparison.
+
+    Delegates to two IR-layer normalizers:
+    1. ``normalize_condition_fingerprint_string_8616`` inverts ``Not(CmpEQ(...))`` → ``CmpNE(...)``
+    2. ``normalize_condition_fingerprint_algebraic_8616`` canonicalizes ``CmpEQ(Sub(x,const:c),const:0)`` → ``CmpEQ(x,const:c)``
+
+    These are validation-only; they do not mutate IR or feed results back into recovery.
+    """
     if field_name not in {"conditions", "control_flow_effects"}:
         return values
-    return {_canonicalize_condition_fingerprint_string_8616(value) for value in values}
+    normalized: set[str] = set()
+    for value in values:
+        v1 = normalize_condition_fingerprint_string_8616(value)
+        v2 = normalize_condition_fingerprint_algebraic_8616(v1)
+        normalized.add(v2)
+    return normalized
 
 
 def _invert_condition_fingerprint_8616(node, project, contextual_condition_fingerprints: Mapping[int, str]) -> str | None:

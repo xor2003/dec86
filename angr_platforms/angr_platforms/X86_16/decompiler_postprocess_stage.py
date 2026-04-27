@@ -18,6 +18,7 @@ from . import decompiler_postprocess_jcc as _jcc
 from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
+from .optimization.pass_driver import _run_optimization_passes_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
@@ -277,6 +278,16 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         project._inertia_decompiler_stage = "postprocess"
         return accepted_changed
 
+    # ── Optimization layer ──
+    if not per_pass_validation_enabled:
+        try:
+            if _run_optimization_passes_8616(codegen):
+                accepted_changed = True
+                last_changed_pass = "optimization"
+                codegen._inertia_last_postprocess_pass = "optimization"
+        except Exception as ex:
+            logging.getLogger(__name__).warning("Optimization pass failed: %s", ex)
+
     for spec in pass_specs:
         project._inertia_decompiler_stage = f"postprocess:{spec.name}"
         if spec.needs_project:
@@ -360,6 +371,8 @@ def _decompile_8616(self):
     before_collect_started = time.perf_counter()
     before_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
     before_collect_elapsed = time.perf_counter() - before_collect_started
+    # Snapshot pre-postprocess codegen for semantic gate
+    pre_postprocess_cfunc_snapshot = _snapshot_codegen_cfunc(self.codegen)
     postprocess_started = time.perf_counter()
     changed = _postprocess_codegen_8616(self.project, self.codegen)
     postprocess_elapsed = time.perf_counter() - postprocess_started
@@ -450,7 +463,15 @@ def _decompile_8616(self):
         setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
     log = logging.getLogger(__name__)
     if not x86_16_tail_validation_result_passed(validation):
-        log.warning("%s", validation["verdict"])
+        log.warning(
+            "Postprocess validation changed — discarding postprocessed C, emitting pre-postprocess C: %s",
+            validation["verdict"],
+        )
+        # Semantic gate: restore pre-postprocess codegen when postprocess changed live-out observables
+        if pre_postprocess_cfunc_snapshot is not None:
+            _restore_codegen_cfunc(self.codegen, pre_postprocess_cfunc_snapshot)
+            codegen._inertia_postprocess_discarded = True
+            codegen._inertia_postprocess_discard_verdict = validation["verdict"]
     else:
         log.info("%s", validation["verdict"])
     self.project._inertia_decompiler_stage = "done"
