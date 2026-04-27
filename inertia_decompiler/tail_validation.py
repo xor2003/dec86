@@ -68,6 +68,16 @@ def tail_validation_enabled_for_run(binary_path: Path | None, *, proc: str | Non
     return False
 
 
+def _compute_cfg_hash_from_result(result: Any, item: Any) -> str | None:
+    """Compute a lightweight CFG hash from function block addresses."""
+    function = getattr(result, "function", None) or getattr(item, "function", None)
+    block_addrs = getattr(function, "block_addrs_set", None)
+    if not block_addrs:
+        return None
+    payload = ",".join(str(addr) for addr in sorted(block_addrs))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def tail_validation_record_for_result(item: Any, result: Any) -> dict[str, object] | None:
     snapshot = getattr(result, "tail_validation", None)
     function = getattr(result, "function", None) or getattr(item, "function", None)
@@ -89,11 +99,21 @@ def tail_validation_record_for_result(item: Any, result: Any) -> dict[str, objec
         "function_addr": getattr(function, "addr", 0),
         "function_name": proc_name,
     }
+    block_count = getattr(result, "block_count", None)
+    byte_count = getattr(result, "byte_count", None)
+    cfg_hash = _compute_cfg_hash_from_result(result, item)
     if isinstance(snapshot, dict) and snapshot:
-        return {
+        record = {
             **identity,
             **snapshot,
         }
+        if block_count is not None:
+            record["block_count"] = block_count
+        if byte_count is not None:
+            record["byte_count"] = byte_count
+        if cfg_hash is not None:
+            record["cfg_hash"] = cfg_hash
+        return record
     status = getattr(result, "status", None)
     payload = getattr(result, "payload", None)
     debug_output = getattr(result, "debug_output", None)
@@ -105,12 +125,19 @@ def tail_validation_record_for_result(item: Any, result: Any) -> dict[str, objec
     if exit_detail is None:
         exit_detail = "tail validation snapshot missing"
     exit_kind = status if isinstance(status, str) and status else "uncollected"
-    return {
+    record = {
         **identity,
         "tail_validation_uncollected": True,
         "exit_kind": exit_kind,
         "exit_detail": exit_detail,
     }
+    if block_count is not None:
+        record["block_count"] = block_count
+    if byte_count is not None:
+        record["byte_count"] = byte_count
+    if cfg_hash is not None:
+        record["cfg_hash"] = cfg_hash
+    return record
 
 
 def collect_tail_validation_records(

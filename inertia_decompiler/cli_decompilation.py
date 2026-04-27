@@ -773,6 +773,7 @@ def _decompile_function(
             )
         setattr(project, "_inertia_partial_codegen_text", partial_payload)
         timeout_stage = getattr(project, "_inertia_decompiler_stage", None)
+        print(f"[dbg] {function.addr:#x} {function.name} TIMEOUT stage={timeout_stage}")
         if timeout_stage == "core":
             detail = "during core decompilation"
         elif isinstance(timeout_stage, str) and timeout_stage.startswith("core:clinic:"):
@@ -910,6 +911,7 @@ def _decompile_function(
             rewrite_ss_stack_byte_offsets=lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
             canonicalize_stack_cvars=lambda: _canonicalize_stack_cvars(dec.codegen),
             codegen=dec.codegen,
+            project=project,
         )
 
     def _run_callsite_stack_fact_pass() -> bool:

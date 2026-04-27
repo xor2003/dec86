@@ -49,6 +49,11 @@ def main() -> None:
             print(f"[!] Failed: {e2}")
             sys.exit(1)
 
+    # Enable tail validation for decompilation run through this project,
+    # respecting the INERTIA_ENABLE_TAIL_VALIDATION environment variable.
+    from inertia_decompiler.tail_validation import tail_validation_enabled_for_run, set_tail_validation_runtime_enabled
+    set_tail_validation_runtime_enabled(proj, tail_validation_enabled_for_run(exe))
+
     # Start GDB RSP server
     from inertia_decompiler.debugger_gdb import GDBServer
 

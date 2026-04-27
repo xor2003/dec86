@@ -322,6 +322,24 @@ def _load_lst_metadata(
             for addr, name in tdinfo.data_labels.items():
                 data_labels.setdefault(addr, name)
             source_formats.append("turbo_debug_tdinfo")
+            # Add TDS version info for compiler identification
+            if tdinfo.tds_version_str and tdinfo.tds_version_str != "N/A (pre-2.0 format)":
+                # TDS version can help identify the Borland toolchain
+                if tdinfo.products:
+                    # Extract product names and add as compiler hints
+                    for product in tdinfo.products.split(","):
+                        product = product.strip()
+                        if product and product not in matched_compiler_names:
+                            matched_compiler_names.append(product)
+                # Add the TLink version as a compiler hint
+                if tdinfo.tlink_version_str and tdinfo.tlink_version_str not in ("unknown", "1.0/1.1"):
+                    tlink_hint = f"Borland TLink {tdinfo.tlink_version_str}"
+                    if tlink_hint not in matched_compiler_names:
+                        matched_compiler_names.append(tlink_hint)
+            elif tdinfo.tds_version_str == "N/A (pre-2.0 format)":
+                # Pre-2.0 format binaries were from Turbo C 1.0/1.5 era
+                if "Turbo C 1.0" not in matched_compiler_names:
+                    matched_compiler_names.append("Turbo C 1.0")
     except Exception as exc:
         print(f"[dbg] failed to parse Turbo Debug TDInfo metadata from {binary}: {exc}")
 

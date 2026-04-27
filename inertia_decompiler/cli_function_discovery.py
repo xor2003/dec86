@@ -34,7 +34,12 @@ from pathlib import Path
 
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.analysis_helpers import seed_calling_conventions
+from angr_platforms.X86_16.analysis_helpers import (
+    extend_cfg_for_far_calls,
+    extend_cfg_for_neighbor_calls,
+    patch_interrupt_service_call_sites,
+    seed_calling_conventions,
+)
 
 from inertia_decompiler.cache import (
     _function_decompilation_cache_key,
