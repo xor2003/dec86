@@ -16,6 +16,10 @@ from angr_platforms.X86_16.segmented_memory_reasoning import (
     apply_x86_16_segmented_memory_reasoning,
 )
 from angr_platforms.X86_16.decompiler_postprocess_utils import _match_bp_stack_dereference_8616
+from angr_platforms.X86_16.lowering.real_mode_linear import (
+    lower_stable_ss_linear_stack_dereferences_8616,
+    match_stable_ss_linear_stack_access_8616,
+)
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
@@ -404,6 +408,68 @@ def test_match_bp_stack_dereference_handles_nested_add_sub_chain_from_vvar_base(
     displacement = _match_bp_stack_dereference_8616(deref, project, codegen)
 
     assert displacement == -10
+
+
+def test_real_mode_linear_stack_access_matches_sp_register_carrier_without_late_shape_guess():
+    project, codegen = _codegen([])
+    codegen._inertia_typed_stack_probe_return_facts = {
+        1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
+    }
+    sp = _reg(project, "sp", codegen)
+    ss = _reg(project, "ss", codegen)
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Sub",
+            CBinaryOp(
+                "Add",
+                CBinaryOp("Shl", ss, _const(4, codegen), codegen=codegen),
+                sp,
+                codegen=codegen,
+            ),
+            _const(2, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    access = match_stable_ss_linear_stack_access_8616(deref, project, codegen)
+
+    assert access is not None
+    assert access.displacement == -2
+
+
+def test_real_mode_linear_stack_lowering_replaces_stable_ss_sp_carrier():
+    project, codegen = _codegen([])
+    codegen._inertia_typed_stack_probe_return_facts = {
+        1: TypedStackProbeReturnFact8616(call_node_id=1, segment_space="ss", width=2, carrier_keys=())
+    }
+    sp = _reg(project, "sp", codegen)
+    ss = _reg(project, "ss", codegen)
+    deref = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Shl", ss, _const(4, codegen), codegen=codegen),
+            CBinaryOp("Sub", sp, _const(2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(deref, _const(7, codegen), codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_stable_ss_linear_stack_dereferences_8616(codegen)
+
+    assert changed is True
+    lhs = codegen.cfunc.statements.statements[0].lhs
+    assert isinstance(lhs, CVariable)
+    assert isinstance(lhs.variable, SimStackVariable)
+    assert lhs.variable.offset == -2
 
 
 def test_rewrite_ss_stack_byte_offsets_resolves_pointer_alias_by_variable_name():

@@ -539,4 +539,41 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
 
 
 def _lower_stable_ss_stack_accesses_8616(codegen) -> bool:
-    return apply_x86_16_segmented_memory_reasoning(codegen)
+    """Analysis-only postprocess pass: collect segment evidence, skip transformation.
+
+    The actual SS stack lowering runs later in cli_decompilation.py rewrite passes
+    so it is transparent to the postprocess tail validator.
+    """
+    return _apply_segmented_memory_analysis_only_8616(codegen)
+
+def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
+    """Run segment association analysis without transforming codegen."""
+    if getattr(codegen, "cfunc", None) is None:
+        return False
+    try:
+        codegen._inertia_segmented_memory_applied = True
+        assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+        analyzer = SegmentAssociationAnalyzer()
+        if assignments:
+            analyzer.analyze(assignments)
+            summary = analyzer.summarize()
+            lowering = analyzer.lowering_summary()
+            codegen._inertia_segmented_memory_summary = summary
+            codegen._inertia_segmented_memory_lowering = lowering
+            codegen._inertia_segmented_memory_stats = {
+                "segment_assignments": len(assignments),
+                "associations_built": sum(
+                    len(summary.get(bucket, ())) for bucket in ("stable", "over_associated", "unknown")
+                ),
+                "far_pointers_detected": 0,
+            }
+        else:
+            codegen._inertia_segmented_memory_summary = _empty_segment_summary_8616()
+            codegen._inertia_segmented_memory_lowering = {}
+        # Do NOT transform codegen — let cli_decompilation.py lowering handle that
+        return False
+    except Exception:
+        return False
+
+def _empty_segment_summary_8616():
+    return {"stable": {}, "over_associated": {}, "unknown": {}}

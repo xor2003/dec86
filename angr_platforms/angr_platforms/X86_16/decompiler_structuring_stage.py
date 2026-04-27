@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
@@ -277,6 +278,11 @@ def _structuring_codegen_8616(project, codegen) -> bool:
     for spec in pass_specs:
         try:
             project._inertia_decompiler_stage = f"structuring:{spec.name}"
+            if os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
+                import sys as _sys
+                import time as _time
+                _sys.stderr.write(f"[{_time.strftime('%H:%M:%S')}] structuring pass: {spec.name}\n")
+                _sys.stderr.flush()
             finalize_validation = _maybe_validate_structuring_pass_8616(project, codegen, spec.name)
             if spec.needs_project:
                 spec_changed = spec.func(project, codegen)

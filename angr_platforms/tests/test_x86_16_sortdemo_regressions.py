@@ -116,8 +116,8 @@ def test_sortdemo_file_summary_lines_are_stable_and_sorted():
     ]
     first_summary = _summary_lines(first.stdout)
     second_summary = _summary_lines(second.stdout)
-    assert first_summary[2:8] == expected
-    assert second_summary[2:8] == expected
+    assert first_summary[1:7] == expected
+    assert second_summary[1:7] == expected
 
 
 def test_sortdemo_heapsort_anchor_no_longer_prunes_local_lane_after_repeated_empty_results():

@@ -8,6 +8,37 @@ from pathlib import Path
 _TDINFO_MAGIC = 0x52FB
 _PAGE_SIZE = 512
 
+# TLink/TDS Version Identification Table
+# Maps TDS major.minor version to TLink version, commandline format, and associated products
+#
+# OLD Format (1.0-1.1 did not contain TDS info):
+#   TDS 2.8  -> TLink 2.0a (31.10.1988) - Turbo Assembler 1.0, Turbo C 2.0, Turbo C 2.01
+#   TDS 2.8  -> TLink 2.0b (2.5.1989)  - Turbo Assembler 1.01
+#   TDS 2.9  -> TLink 3.0 (7.5.1990)   - Turbo Assembler 2.0
+#   TDS 2.9  -> TLink 3.01 (29.10.1990) - Turbo Assembler 2.01
+#
+# NEW Format:
+#   TDS 3.0  -> TLink 4.0 (23.4.1991)  - Borland C++ 2.0
+#   TDS 3.10 -> TLink 5.0 (11.11.1991) - Borland C++ 3.0
+#   TDS 3.10 -> TLink 5.1 (10.6.1992)  - Borland C++ 3.1
+#   TDS 4.1  -> TLink 6.00 (2.12.1993) - Turbo Assembler 4.0, Borland C++ 4.0
+#   TDS 4.1  -> TLink 7.0a (17.11.1994) - Borland C++ 4.5, 4.52
+#   TDS 4.3  -> TLink 7.1.30.1 (21.2.1996) - Turbo Assembler 5.0
+#   TDS 4.3  -> TLink 7.1.32.2 (6.5.1997)  - Borland C++ 5.0, 5.02
+
+_TDS_VERSION_MAP = {
+    # (tds_major, tds_minor): (tds_version_str, tlink_version_str, commandline_hint, products)
+    (2, 8): ("2.8", "2.0a/2.0b", "Turbo Link  Version 2.0  Copyright (c) 1987, 1988 Borland International", "Turbo Assembler 1.0/1.01, Turbo C 2.0/2.01"),
+    (2, 9): ("2.9", "3.0/3.01", "Turbo Link  Version 3.0 Copyright (c) 1987, 1990 Borland International", "Turbo Assembler 2.0/2.01"),
+    (3, 0): ("3.0", "4.0", "Turbo Link  Version 4.0 Copyright (c) 1991 Borland International", "Borland C++ 2.0"),
+    (3, 10): ("3.10", "5.0/5.1", "Turbo Link  Version 5.0 Copyright (c) 1991 Borland International", "Borland C++ 3.0/3.1"),
+    (4, 1): ("4.1", "6.00/7.0a", "Turbo Link  Version 6.00 Copyright (c) 1992, 1993 Borland International", "Turbo Assembler 4.0, Borland C++ 4.0/4.5/4.52"),
+    (4, 3): ("4.3", "7.1.30.1/7.1.32.2", "Turbo Link  Version 7.1 Copyright (c) 1987, 1996 Borland International", "Turbo Assembler 5.0, Borland C++ 5.0/5.02"),
+}
+
+# TDS versions that have no TDS info (pre-2.0 format)
+_OLD_FORMAT_NO_TDS = {(1, 0), (1, 1)}
+
 
 class TDInfoSymbolClass(IntEnum):
     STATIC = 0
@@ -55,6 +86,11 @@ class TDInfoEXEInfo:
     type_names: tuple[str, ...] = ()
     code_labels: dict[int, str] = field(default_factory=dict)
     data_labels: dict[int, str] = field(default_factory=dict)
+    # TLink/TDS version identification
+    tds_version_str: str = ""
+    tlink_version_str: str = ""
+    commandline_hint: str = ""
+    products: str = ""
 
 
 def parse_tdinfo_exe(path: Path, *, load_base_linear: int = 0) -> TDInfoEXEInfo | None:
@@ -147,6 +183,21 @@ def parse_tdinfo_exe_bytes(data: bytes, *, load_base_linear: int = 0) -> TDInfoE
         else:
             data_labels.setdefault(linear, name)
 
+    # Lookup TLink/TDS version identification
+    tds_key = (major_version, minor_version)
+    if tds_key in _OLD_FORMAT_NO_TDS:
+        tds_version_str = "N/A (pre-2.0 format)"
+        tlink_version_str = "1.0/1.1"
+        commandline_hint = "No TDS info in header"
+        products = "Turbo C 1.0/1.5"
+    elif tds_key in _TDS_VERSION_MAP:
+        tds_version_str, tlink_version_str, commandline_hint, products = _TDS_VERSION_MAP[tds_key]
+    else:
+        tds_version_str = f"{major_version}.{minor_version}"
+        tlink_version_str = "unknown"
+        commandline_hint = ""
+        products = ""
+
     return TDInfoEXEInfo(
         header=header,
         debug_info_offset=debug_info_offset,
@@ -156,6 +207,10 @@ def parse_tdinfo_exe_bytes(data: bytes, *, load_base_linear: int = 0) -> TDInfoE
         type_names=tuple(dict.fromkeys(type_names)),
         code_labels=code_labels,
         data_labels=data_labels,
+        tds_version_str=tds_version_str,
+        tlink_version_str=tlink_version_str,
+        commandline_hint=commandline_hint,
+        products=products,
     )
 
 
