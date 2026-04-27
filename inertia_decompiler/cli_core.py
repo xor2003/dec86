@@ -3252,7 +3252,10 @@ def main(argv: list[str] | None = None) -> int:
                             allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                         )
                 if result is not None and result.status == "ok":
-                    adaptive_timeout_model.observe_success(getattr(result, "byte_count", None), getattr(result, "elapsed", None))
+                    byte_count = getattr(result, "byte_count", None)
+                    elapsed = getattr(result, "elapsed", None)
+                    if isinstance(byte_count, int) and isinstance(elapsed, (int, float)):
+                        adaptive_timeout_model.observe_success(byte_count, float(elapsed))
                 result_map[item.index] = result
                 if result is not None and item.index not in emitted_indexes:
                     d, f = _emit_function_result(item, result)
