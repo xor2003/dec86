@@ -2183,6 +2183,21 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
     if metadata is None:
         return c_text
 
+    prepend_block = ""
+    raw_entries = getattr(metadata, "cod_raw_entries", ()) or ()
+    if raw_entries:
+        from angr_platforms.X86_16.cod_comment_emitter import format_cod_comment_block
+
+        prepend_block = format_cod_comment_block(
+            func_name=getattr(function, "name", "") or "sub",
+            proc_kind="NEAR",
+            cod_path=getattr(metadata, "cod_path", None),
+            entries=list(raw_entries),
+            source_lines=getattr(metadata, "source_lines", ()) or (),
+        )
+        if prepend_block:
+            prepend_block += "\n\n"
+
     source_decl = _source_decl_from_cod_source_lines(metadata.source_lines)
     source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
     positive_arg_aliases = [
@@ -2489,6 +2504,8 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
     c_text = _collapse_duplicate_type_keywords_text(c_text)
     c_text = _simplify_x86_16_wrapped_stack_offsets(c_text)
     c_text = _prune_unused_local_declarations_text(c_text)
+    if prepend_block:
+        c_text = prepend_block + c_text
     return c_text
 
 def _prune_unused_staging_assignments(c_text: str) -> str:
