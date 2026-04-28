@@ -8,7 +8,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 
-DECOMPILATION_CACHE_SCHEMA = 2
+DECOMPILATION_CACHE_SCHEMA = 3
 DECOMPILATION_CACHE_DIR = _ROOT / ".inertia_decomp_cache"
 RECOVERY_CACHE_SOURCE_FILES = (
     _ROOT / "decompile.py",
@@ -48,6 +48,7 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
     _ROOT / "inertia_decompiler" / "cli_decompilation.py",
+    _ROOT / "inertia_decompiler" / "cli_c_text_postprocess.py",
     _ROOT / "inertia_decompiler" / "cache.py",
     _ROOT / "inertia_decompiler" / "decompilation_quality.py",
     _ROOT / "inertia_decompiler" / "disassembly_helpers.py",
@@ -75,6 +76,11 @@ DECOMPILATION_CACHE_SOURCE_FILES = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "tail_validation_fingerprint.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "tail_validation_routing.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "type_array_matching.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "cod_comment_emitter.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "cod_extract.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "ir" / "core.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "pipeline" / "invariants.py",
+    _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "validation_summary.py",
     _ROOT / "inertia_decompiler" / "cli_access_object_hints.py",
     _ROOT / "inertia_decompiler" / "cli_access_profiles.py",
     _ROOT / "inertia_decompiler" / "cli_access_traits.py",
