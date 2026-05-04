@@ -163,6 +163,10 @@ def apply_x86_16_function_interface_surface(project, codegen) -> bool:
         return False
 
     def _render_text_with_interface(_cfunc):  # noqa: ANN001
+        # ── Runtime contract: facts produced must be consumed before C emission ──
+        from .pipeline.contracts import assert_pipeline_contracts_8616
+        assert_pipeline_contracts_8616(codegen)
+
         rendered = original(_cfunc)
         if not isinstance(rendered, str):
             return rendered

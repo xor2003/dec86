@@ -595,9 +595,10 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
     root = codegen.cfunc.statements
     new_root = transform(root)
     if new_root is not root:
-        codegen.cfunc.statements = new_root
+        from .decompiler_postprocess_utils import _safe_assign_cfunc_statements_8616
+        root = _safe_assign_cfunc_statements_8616(codegen, new_root, root)
         if hasattr(codegen.cfunc, "body"):
-            codegen.cfunc.body = new_root
+            codegen.cfunc.body = codegen.cfunc.statements
     if _replace_c_children_8616(codegen.cfunc.statements, transform):
         changed = True
     return changed

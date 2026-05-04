@@ -1734,6 +1734,90 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
     return cfg
 
 
+# ── Function discovery ranking ──
+
+
+@dataclass(frozen=True)
+class EntryScore:
+    """Deterministic entry-point confidence score for function discovery ranking."""
+
+    addr: int
+    score: int
+    source: str = ""
+
+
+def score_entry_address_8616(
+    addr: int,
+    *,
+    is_explicit_entry: bool = False,
+    is_direct_call_target: bool = False,
+    is_mz_relocation_target: bool = False,
+    has_prologue_match: bool = False,
+    is_interrupt_service: bool = False,
+    is_known_wrapper: bool = False,
+    source_hint: str = "",
+) -> EntryScore:
+    """Compute a deterministic entry score for function discovery ranking.
+
+    Weighted signal combination with address ascending as tie-break.
+    Higher score = stronger evidence this is a real function entry point.
+
+    Signals:
+        explicit_entry:         +100  (MZ/NE entry point, linker entry)
+        direct_call_target:     +80   (called by another function)
+        mz_relocation_target:   +60   (MZ relocation entry)
+        prologue_match:         +40   (push bp / mov bp,sp pattern)
+        interrupt_service:      +20   (interrupt vector target)
+        known_wrapper:          -30   (runtime/compiler wrapper, e.g. __acrtused)
+
+    Tie-break: address ascending (lower addr = earlier = higher priority).
+    """
+    score = 0
+    if is_explicit_entry:
+        score += 100
+    if is_direct_call_target:
+        score += 80
+    if is_mz_relocation_target:
+        score += 60
+    if has_prologue_match:
+        score += 40
+    if is_interrupt_service:
+        score += 20
+    if is_known_wrapper:
+        score -= 30
+
+    return EntryScore(addr=addr, score=score, source=source_hint)
+
+
+def rank_entry_addresses_8616(
+    entries: list[tuple[int, dict[str, object]]],
+) -> list[EntryScore]:
+    """Sort entry addresses by discovery confidence score, descending.
+
+    Each entry is (addr, signals_dict).  Signals dict may contain:
+        explicit_entry, direct_call_target, mz_relocation_target,
+        prologue_match, interrupt_service, known_wrapper, source.
+
+    Tie-break: address ascending.
+    """
+    scored = [
+        score_entry_address_8616(
+            addr,
+            is_explicit_entry=bool(signals.get("explicit_entry")),
+            is_direct_call_target=bool(signals.get("direct_call_target")),
+            is_mz_relocation_target=bool(signals.get("mz_relocation_target")),
+            has_prologue_match=bool(signals.get("prologue_match")),
+            is_interrupt_service=bool(signals.get("interrupt_service")),
+            is_known_wrapper=bool(signals.get("known_wrapper")),
+            source_hint=str(signals.get("source", "")),
+        )
+        for addr, signals in entries
+    ]
+    # Higher score first; tie-break by address ascending
+    scored.sort(key=lambda e: (-e.score, e.addr))
+    return scored
+
+
 def extend_cfg_for_neighbor_calls(
     project,
     function,

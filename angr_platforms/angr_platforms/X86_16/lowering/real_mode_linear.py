@@ -12,7 +12,7 @@ late cleanup code.
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable, SimVariable
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 
@@ -151,6 +151,10 @@ def _stack_pointer_carrier_offset_8616(node, project, codegen) -> int | None:
             delta = _stack_probe_carrier_delta_8616(node, codegen)
             if delta is not None:
                 return delta
+    bp_reg, bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
+    if isinstance(bp_reg, int) and reg == bp_reg and (size is None or size == bp_size):
+        return 0
+
     sp_reg, sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
     if not (isinstance(sp_reg, int) and reg == sp_reg and (size is None or size == sp_size)):
         return None
@@ -396,6 +400,11 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen)
         if carrier_offset is not None:
             return carrier_offset
+        # Try BP base frame — BP is the canonical frame pointer (offset 0).
+        dirty_reg = getattr(dirty, "reg", None)
+        bp_reg, _bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
+        if isinstance(dirty_reg, int) and isinstance(bp_reg, int) and dirty_reg == bp_reg:
+            return 0
         _diag["carrier_none"] = True
         _log_refusal_8616(codegen, "cdirty_diag", **_diag)
         return None
@@ -445,14 +454,19 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
         if const is not None:
             offset_total += sign * const
             continue
-        offset_terms.append(term if sign == 1 else structured_c.CBinaryOp("Sub", structured_c.CConstant(0, None, codegen=codegen), term, codegen=codegen))
+        offset_terms.append(term if sign == 1 else structured_c.CBinaryOp("Sub", structured_c.CConstant(0, SimTypeInt(16, signed=False), codegen=codegen), term, codegen=codegen))
 
-    if segment_name != "ss" or len(offset_terms) != 1:
+    if segment_name != "ss" or len(offset_terms) > 1:
         _log_refusal_8616(codegen, "segment_or_terms", segment=segment_name, terms=len(offset_terms))
         return None
-    base_offset = _stack_offset_from_expr_8616(offset_terms[0], project, codegen)
+    
+    if len(offset_terms) == 0:
+        base_offset = 0
+    else:
+        base_offset = _stack_offset_from_expr_8616(offset_terms[0], project, codegen)
+        
     if base_offset is None:
-        _log_refusal_8616(codegen, "offset_unresolved", segment=segment_name, offset_expr_type=type(offset_terms[0]).__name__, const_offset=offset_total)
+        _log_refusal_8616(codegen, "offset_unresolved", segment=segment_name, offset_expr_type=type(offset_terms[0]).__name__ if offset_terms else "None", const_offset=offset_total)
         return None
     displacement = base_offset + offset_total
     width_bits = getattr(getattr(node, "type", None), "size", None)
@@ -463,6 +477,105 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
         _log_refusal_8616(codegen, "no_stack_facts", displacement=displacement, width=width, region=region)
         return None
     return RealModeLinearStackAccess8616(displacement=displacement, width=width)
+
+
+def match_stable_ds_es_linear_global_access_8616(node, project, codegen) -> RealModeLinearStackAccess8616 | None:
+    """Match a dereference of ``(ds << 4) + addr`` or ``(es << 4) + addr``."""
+
+    node = _strip_casts_8616(node)
+    if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+        return None
+
+    segment_name: str | None = None
+    offset_total = 0
+    offset_terms: list[object] = []
+
+    for sign, term in _flatten_signed_terms_8616(node.operand):
+        seg = _segment_base_name_8616(term, project)
+        if seg is not None:
+            if sign != 1 or segment_name is not None:
+                return None
+            segment_name = seg
+            continue
+        const = _constant_value_8616(term)
+        if const is not None:
+            offset_total += sign * const
+            continue
+        return None
+
+    if segment_name not in {"ds", "es"}:
+        return None
+
+    width_bits = getattr(getattr(node, "type", None), "size", None)
+    width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
+    return RealModeLinearStackAccess8616(displacement=offset_total, width=width)
+
+
+def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) -> bool:
+    """Replace stable DS/ES real-mode linear dereferences with global variable references."""
+
+    if project is None:
+        project = getattr(codegen, "project", None)
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if project is None or root is None:
+        return False
+
+    def global_cvar(access: RealModeLinearStackAccess8616):
+        addr = access.displacement & 0xFFFF
+        name = f"g_{addr:04X}"
+        variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            for variable, cvar in variables_in_use.items():
+                if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == access.displacement:
+                    return cvar
+                if isinstance(variable, SimVariable) and getattr(variable, "name", None) == name:
+                    return cvar
+        variable = SimStackVariable(addr, access.width or 1, base="bp", name=name, region=getattr(codegen.cfunc, "addr", None))
+        cvar = structured_c.CVariable(variable, variable_type=None, codegen=codegen)
+        if isinstance(variables_in_use, dict):
+            variables_in_use[variable] = cvar
+        unified = getattr(codegen.cfunc, "unified_local_vars", None)
+        if isinstance(unified, dict):
+            unified[variable] = {(cvar, getattr(cvar, "variable_type", None))}
+        return cvar
+
+    changed = False
+
+    def transform(node):
+        nonlocal changed
+        access = match_stable_ds_es_linear_global_access_8616(node, project, codegen)
+        if access is not None:
+            changed = True
+            return global_cvar(access)
+        return node
+
+    def replace_children(node) -> bool:
+        local_changed = False
+        for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
+            if not hasattr(node, attr):
+                continue
+            value = getattr(node, attr)
+            if isinstance(value, list):
+                for index, item in enumerate(tuple(value)):
+                    replacement = transform(item)
+                    if replacement is not item:
+                        value[index] = replacement
+                        local_changed = True
+                    if replace_children(value[index]):
+                        local_changed = True
+            elif value is not None:
+                replacement = transform(value)
+                if replacement is not value:
+                    setattr(node, attr, replacement)
+                    local_changed = True
+                    value = replacement
+                if replace_children(value):
+                    local_changed = True
+        return local_changed
+
+    if replace_children(root):
+        changed = True
+    return changed
 
 
 def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> bool:
@@ -531,5 +644,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
 __all__ = (
     "RealModeLinearStackAccess8616",
     "lower_stable_ss_linear_stack_dereferences_8616",
+    "lower_stable_ds_es_linear_global_dereferences_8616",
     "match_stable_ss_linear_stack_access_8616",
+    "match_stable_ds_es_linear_global_access_8616",
 )

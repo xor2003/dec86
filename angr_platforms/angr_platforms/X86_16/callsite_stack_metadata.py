@@ -343,7 +343,12 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
                     stack_probe_address_seen = id(call) in typed_fact_map
                 elif getattr(summary, "helper_return_state", None) == "stack_address":
                     stack_probe_address_seen = getattr(summary, "helper_return_space", None) in {None, "ss"}
-            if call is not None and stack_probe_address_seen and not bool(getattr(summary, "stack_probe_helper", False)):
+            # Allow pruning for any call that has recorded segment-metadata store IDs.
+            # Far calls (opcode 0x9A / CALL FAR) push CS as part of their call frame;
+            # those stores are segment metadata and should be pruned even without a
+            # preceding stack-probe helper call.
+            has_materialized_metadata = call is not None and bool(materialized_metadata_ids.get(id(call), ()))
+            if call is not None and (stack_probe_address_seen or has_materialized_metadata) and not bool(getattr(summary, "stack_probe_helper", False)):
                 args = tuple(getattr(call, "args", ()) or ())
                 if args and all(not _segment_register_value_expr_8616(arg, project) for arg in args):
                     prunable_ids = {
@@ -354,6 +359,38 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
                         if len(kept_statements) != len(new_statements):
                             new_statements = kept_statements
                             changed = True
+            # Far calls push CS + IP as a far return frame BEFORE the call.
+            # The stores look like: *(vvar_N + 1) = cs >> 8;
+            # Detect any preceding memory store whose rhs is a segment register
+            # value, then prune it and its carrier-temp feeders.
+            _call_args = tuple(getattr(call, "args", ()) or ()) if call is not None else ()
+            if call is not None and _call_args and all(not _segment_register_value_expr_8616(arg, project) for arg in _call_args):
+                removed = 0
+                scan = len(new_statements) - 1
+                # Collect consecutive segment-register memory stores walking backwards
+                while scan >= 0:
+                    candidate = new_statements[scan]
+                    assignments = _assignment_nodes_8616(candidate)
+                    if not assignments:
+                        break
+                    lhs, rhs = _assignment_lhs_rhs_8616(assignments[-1])
+                    if not _lhs_writes_memory_8616(lhs) or not _segment_register_value_expr_8616(rhs, project):
+                        break
+                    removed += 1
+                    scan -= 1
+                # Also prune carrier-temp assignments (vvar_*) that feed the stores
+                while scan >= 0:
+                    candidate = new_statements[scan]
+                    lhs, _rhs = _assignment_lhs_rhs_8616(candidate)
+                    if _lhs_writes_memory_8616(lhs):
+                        break
+                    if _generic_stack_carrier_name_8616(lhs if lhs is not None else candidate) is None:
+                        break
+                    removed += 1
+                    scan -= 1
+                if removed > 0:
+                    new_statements = new_statements[:-removed]
+                    changed = True
             new_statements.append(stmt)
 
         if new_statements != list(statements):

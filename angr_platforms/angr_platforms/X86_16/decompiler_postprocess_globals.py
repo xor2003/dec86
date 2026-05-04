@@ -110,6 +110,9 @@ def _coalesce_word_global_loads_8616(project, codegen) -> set[int]:
     root = codegen.cfunc.statements
     new_root = transform(root)
     if new_root is not root:
+        # Preserve CStatements wrapper — transform() may return a plain list
+        if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
+            new_root = CStatements(statements=new_root if isinstance(new_root, list) else [new_root], codegen=codegen)
         codegen.cfunc.statements = new_root
         root = new_root
     _replace_c_children_8616(root, transform)

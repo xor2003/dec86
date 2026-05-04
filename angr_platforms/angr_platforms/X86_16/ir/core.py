@@ -8,6 +8,7 @@ __all__ = [
     "AddressStatus",
     "SegmentOrigin",
     "IRAddress",
+    "is_stack_address_8616",
     "IRAtom",
     "IRBlock",
     "IRCondition",
@@ -85,6 +86,31 @@ class IRAddress:
             "segment_origin": self.segment_origin.value,
             "expr": self.expr,
         }
+
+
+def is_stack_address_8616(addr: IRAddress) -> bool:
+    """Return True if addr is a proven or likely SS:BP/SP stack slot.
+
+    AGENTS rule: SS:BP+offset MUST become a stack slot, never fallback to memory.
+    """
+    if addr.space != MemSpace.SS:
+        return False
+    # Proven segment origin: explicit SS segment instruction
+    if addr.segment_origin == SegmentOrigin.PROVEN:
+        base_set = set(addr.base)
+        if {"ss"} & base_set or {"bp"} & base_set or {"sp"} & base_set:
+            return True
+    # Expression-based: BP or SP appears in the expression tuple
+    if addr.expr:
+        expr_set = set(addr.expr)
+        if {"bp", "sp", "ss"} & expr_set:
+            return True
+    # Defaulted segment with BP base hint
+    if addr.segment_origin == SegmentOrigin.DEFAULTED and addr.space == MemSpace.SS:
+        base_set = set(addr.base)
+        if {"bp"} & base_set:
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)

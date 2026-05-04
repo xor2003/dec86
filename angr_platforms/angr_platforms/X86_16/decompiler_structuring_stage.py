@@ -264,6 +264,44 @@ def _structuring_codegen_8616(project, codegen) -> bool:
         codegen._inertia_last_structuring_pass = None
         return False
 
+    # Alias-completeness gate: structuring cannot run with provisional SS stack.
+    # AGENTS rule #1: SS:BP+offset → stack slot → variable, never guess.
+    _assert_alias_complete_8616(codegen)
+
+    # ── Stack lowering (before structuring) ──
+    # Must run early: alias facts → stack variables → structuring sees named variables.
+    if not getattr(codegen, "_inertia_ss_stack_lowered", False):
+        try:
+            from .lowering.real_mode_linear import (
+                lower_stable_ss_linear_stack_dereferences_8616,
+                lower_stable_ds_es_linear_global_dereferences_8616,
+            )
+            lower_stable_ss_linear_stack_dereferences_8616(codegen)
+            lower_stable_ds_es_linear_global_dereferences_8616(codegen)
+        except Exception:
+            pass
+        try:
+            from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
+            lower_stack_accesses_from_alias_facts_8616(codegen)
+        except Exception:
+            pass
+        codegen._inertia_ss_stack_lowered = True
+
+    # ── Hard contract gate: classified > 0 && materialized == 0 → PipelineHardError ──
+    try:
+        from .pipeline.contracts import assert_pipeline_contracts_8616
+        assert_pipeline_contracts_8616(codegen)
+    except Exception as e:
+        codegen._inertia_structuring_failed = True
+        codegen._inertia_structuring_failure_pass = "pipeline_contracts"
+        codegen._inertia_structuring_failure_error = str(e)
+        logging.getLogger(__name__).warning(
+            "Pipeline contract violation in %s: %s",
+            getattr(codegen, "cfunc", None) or "unknown",
+            e,
+        )
+        return False
+
     changed = False
     last_changed_pass = None
     codegen._inertia_structuring_failed = False
@@ -429,6 +467,48 @@ def _decompile_structuring_8616(self):
     else:
         log.info("%s", validation["verdict"])
     self.project._inertia_decompiler_stage = "structuring_done"
+
+
+def _assert_alias_complete_8616(codegen) -> None:
+    """Block structuring when SS stack alias facts are incomplete.
+
+    AGENTS rule #1: SS:BP+offset → stack slot → variable, never guess.
+    AGENTS rule #8: validation must be honest — unreviewed SS is not safe.
+
+    Consults the module-level alias fact cache populated during VEX lifting
+    (access._inertia_module_alias_fact_cache).  Returns without error when
+    no SS accesses are present (e.g. pure register / DS-only functions).
+
+    Raises PipelineHardError if any proven SS access lacks stable stack alias.
+    """
+    from .access import _inertia_module_alias_fact_cache
+    from .alias.alias_model_impl import AliasFailure
+    from .ir.core import MemSpace
+    from .pipeline.errors import PipelineHardError
+
+    cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+    if not isinstance(func_addr, int):
+        return
+
+    facts = _inertia_module_alias_fact_cache.get(func_addr, None)
+    if not isinstance(facts, list):
+        return  # No facts recorded for this function — likely not yet lifted with typed IR.
+
+    has_ss = False
+    for fact in facts:
+        if isinstance(fact, AliasFailure):
+            if getattr(fact, "space", None) in {"ss", "SS"}:
+                has_ss = True
+                raise PipelineHardError(
+                    f"structuring before stable stack alias: {fact.reason}",
+                    layer="structuring",
+                )
+        elif hasattr(fact, "domain") and getattr(fact.domain, "space", None) == "stack":
+            has_ss = True
+
+    if not has_ss:
+        return  # No SS accesses — nothing to block.
 
 
 def apply_x86_16_decompiler_structuring() -> None:

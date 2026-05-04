@@ -9,9 +9,15 @@ def run_typed_widening_pass_8616(
     *,
     coalesce_direct_ss_local_word_statements,
     coalesce_segmented_word_store_statements,
+    copy_propagation_fn=None,
 ) -> bool:
     """
-    Execute widening-owned word-store coalescing passes in deterministic order.
+    Execute widening-owned passes in deterministic order.
+
+    Order:
+    1. Word-store coalescing (SROA-like)
+    2. Copy propagation (EarlyCSE-like)
+    3. Load/store folding (GVN-like)
 
     This pass is the widening ownership boundary: callers provide typed helpers,
     widening decides pass ordering and changed-state aggregation.
@@ -19,6 +25,8 @@ def run_typed_widening_pass_8616(
     changed = False
     changed = coalesce_direct_ss_local_word_statements(project, codegen) or changed
     changed = coalesce_segmented_word_store_statements(project, codegen) or changed
+    if copy_propagation_fn is not None:
+        changed = copy_propagation_fn(codegen) or changed
     return changed
 
 

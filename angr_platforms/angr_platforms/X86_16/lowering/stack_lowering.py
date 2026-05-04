@@ -13,7 +13,15 @@ from .stack_lowering_impl import (
     _resolve_stack_cvar_at_offset,
     _resolve_stack_cvar_from_addr_expr,
 )
-from .real_mode_linear import lower_stable_ss_linear_stack_dereferences_8616
+from .stack_lowering_result import (
+    StackLoweringResult,
+    StackSlotFailure,
+    materialization_diagnostics_8616,
+)
+from .real_mode_linear import (
+    lower_stable_ss_linear_stack_dereferences_8616,
+    lower_stable_ds_es_linear_global_dereferences_8616,
+)
 from .stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
     build_typed_stack_probe_return_facts_8616,
@@ -47,6 +55,8 @@ def run_stack_lowering_pass_8616(
         round_changed = False
         if codegen is not None and lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
             record_stable_ss_lowering_replacement_8616(codegen)
+        if codegen is not None and lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
+            record_stable_ss_lowering_replacement_8616(codegen)
             round_changed = True
         if lower_stable_ss_stack_accesses is not None:
             lowered = lower_stable_ss_stack_accesses()
@@ -67,11 +77,9 @@ def run_stack_lowering_pass_8616(
     if codegen is not None:
         refusal_log = getattr(codegen, "_inertia_ss_lowering_refusal_log", None)
         if isinstance(refusal_log, list) and refusal_log:
-            import sys as _sys, time as _time
-            prefix = f"[{_time.strftime('%H:%M:%S')}] [ss_lowering_diag]"
-            for entry in refusal_log:
-                _sys.stderr.write(f"{prefix} {entry}\n")
-            _sys.stderr.flush()
+            if not hasattr(codegen, "_inertia_ss_lowering_refusal_summary"):
+                codegen._inertia_ss_lowering_refusal_summary = []
+            codegen._inertia_ss_lowering_refusal_summary.extend(refusal_log)
     return changed
 
 

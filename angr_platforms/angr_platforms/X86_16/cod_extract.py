@@ -15,6 +15,8 @@ class CODProcMetadata:
     global_names: tuple[str, ...]
     source_lines: tuple[str, ...]
     source_line_set: frozenset[str]
+    cod_raw_entries: tuple[dict[str, object], ...] = ()
+    cod_path: str | None = None
 
     def has_source_lines(self, required_lines: tuple[str, ...]) -> bool:
         if not required_lines:
@@ -223,6 +225,12 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             if canonical_name not in global_names:
                 global_names.append(canonical_name)
 
+    raw_entries: list[dict[str, object]] = []
+    try:
+        raw_entries = extract_cod_function_entries(cod_path, proc_name, proc_kind)
+    except Exception:
+        pass
+
     return CODProcMetadata(
         stack_aliases=stack_aliases,
         call_names=tuple(call_names),
@@ -230,6 +238,8 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
         global_names=tuple(global_names),
         source_lines=tuple(source_lines),
         source_line_set=frozenset(source_lines),
+        cod_raw_entries=tuple(raw_entries),
+        cod_path=str(cod_path),
     )
 
 

@@ -13,6 +13,14 @@ from .emulator import Emulator
 from .instr16 import Instr16
 from .instr32 import Instr32
 from .instruction import InstrData
+from .ir.condition_ir import (
+    ConditionSource,
+    ConditionIR,
+    ConditionFailure,
+    build_condition_from_cmp_8616,
+    build_condition_from_test_8616,
+    deduplicate_conditions_8616,
+)
 from .jcc_condition import _direct_jcc_condition_from_last_condition_8616
 from .parse import CHSZ_AD, CHSZ_OP
 from .regs import reg16_t
@@ -82,6 +90,12 @@ class Instruction_ANY(Instruction):
         self.irsb_c = irsb_c
         self.mark_instruction_start()
         self.emu.irsb = irsb_c
+        # Set the block address on the emulator so facts are keyed by block.
+        # The actual IRSB is available via self.emu.irsb.irsb (pyvex pattern).
+        # Fall back to self.addr (instruction address).
+        actual_irsb = getattr(self.emu.irsb, "irsb", self.emu.irsb)
+        block_addr = getattr(actual_irsb, "addr", self.addr)
+        self.emu._inertia_current_block_addr = block_addr
         self.emu.set_lifter_instruction(_LifterInstructionFacade(irsb_c, self))
         self._past_instructions = past_instructions
         self._future_instructions = future_instructions
@@ -96,6 +110,10 @@ class Instruction_ANY(Instruction):
         self.addr = addr
         self.instr = InstrData()
         self.emu = Emulator(arch, None)
+        # Set block address and function address on emulator so _record_semantic_memory_access
+        # can key facts into _inertia_module_alias_fact_cache and evidence_cache
+        self.emu._inertia_current_block_addr = addr
+        self.emu._inertia_current_function_addr = addr
         self.instr16 = Instr16(self.emu, self.instr)
         self.instr32 = Instr32(self.emu, self.instr)
         self.emu.set_lifter_instruction(None)
@@ -318,10 +336,23 @@ class Instruction_ANY(Instruction):
     def _store_mem16(self, mem_spec, value):
         self.store(value, self._addr_from_bp_mem(mem_spec))
 
+    def _record_mem_access(self, seg: str, offset: int, mode: int = 0) -> None:
+        try:
+            func_addr = getattr(self.emu, "_inertia_current_function_addr", None)
+            if isinstance(func_addr, int):
+                from .ir.core import IRAddress
+                from .semantics.evidence_cache import record_access
+                addr = IRAddress(segment=seg, offset=offset)
+                record_access(func_addr, mode, addr)
+        except Exception:
+            pass
+
     def _load_abs16(self, offset):
+        self._record_mem_access("ds", offset, 0)
         return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_16)
 
     def _load_abs8(self, offset):
+        self._record_mem_access("ds", offset, 0)
         return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_8)
 
     def _real_mode_linear(self, seg_reg, off16):
@@ -330,9 +361,15 @@ class Instruction_ANY(Instruction):
         return (seg << self.constant(4, Type.int_8)) + off32
 
     def _stack_load16(self, off16):
+        off_val = getattr(off16, "constant", None)
+        if isinstance(off_val, int):
+            self._record_mem_access("ss", off_val, 0)
         return self.load(self._real_mode_linear("ss", off16), Type.int_16)
 
     def _stack_store16(self, off16, value):
+        off_val = getattr(off16, "constant", None)
+        if isinstance(off_val, int):
+            self._record_mem_access("ss", off_val, 1)
         self.store(value, self._real_mode_linear("ss", off16))
 
     def _set_zf_from_cond(self, cond):
@@ -402,6 +439,7 @@ class Instruction_ANY(Instruction):
         elif op_name == "or":
             result = dst | src
         elif op_name == "cmp":
+            self._record_cmp_condition_source(dst, src)
             if not self._next_instruction_is_simple_jcc():
                 self._update_cmp_flags(dst, src)
             return
@@ -423,6 +461,7 @@ class Instruction_ANY(Instruction):
         elif op_name == "or":
             result = dst | src
         elif op_name == "cmp":
+            self._record_cmp_condition_source(dst, src)
             if not self._next_instruction_is_simple_jcc():
                 self._update_cmp_flags(dst, src)
             return
@@ -444,6 +483,7 @@ class Instruction_ANY(Instruction):
         elif op_name == "or":
             result = dst | src
         elif op_name == "cmp":
+            self._record_cmp_condition_source(dst, src)
             if not self._next_instruction_is_simple_jcc():
                 self._update_cmp_flags(dst, src)
             return
@@ -560,8 +600,72 @@ class Instruction_ANY(Instruction):
             return _finish(lhs > rhs)
         return None
 
+    def _record_cmp_condition_source(self, lhs, rhs, *, width_bits: int = 16) -> None:
+        """Record CMP operands on the emulator for downstream JCC consumption."""
+        source = ConditionSource(
+            kind="cmp",
+            lhs=lhs,
+            rhs=rhs,
+            width_bits=width_bits,
+            addr=self.addr,
+        )
+        self.emu._inertia_last_condition_source = source
+
+    def _record_test_condition_source(self, value, *, width_bits: int = 16) -> None:
+        """Record TEST/self-test operands for downstream JCC consumption."""
+        source = ConditionSource(
+            kind="test",
+            lhs=value,
+            rhs=None,
+            width_bits=width_bits,
+            addr=self.addr,
+        )
+        self.emu._inertia_last_condition_source = source
+
     def _emit_simple_jcc(self, taken_cond, target):
+        # Before emitting, record the typed ConditionIR if source available
+        source = getattr(self.emu, "_inertia_last_condition_source", None)
+        if isinstance(source, ConditionSource):
+            jcc_mnemonic = self.simple_semantics[0] if self.simple_semantics else ""
+            if source.kind == "cmp":
+                cond_ir = build_condition_from_cmp_8616(
+                    source.lhs,
+                    source.rhs,
+                    jcc_mnemonic,
+                    width_bits=source.width_bits,
+                )
+            elif source.kind == "test":
+                cond_ir = build_condition_from_test_8616(
+                    source.lhs,
+                    jcc_mnemonic,
+                    width_bits=source.width_bits,
+                )
+            else:
+                cond_ir = ConditionFailure(
+                    "unknown_condition_source_kind",
+                    source=("jcc", jcc_mnemonic),
+                    detail=f"kind={source.kind}",
+                )
+            self._record_typed_condition_8616(cond_ir)
         self.jump(taken_cond, target, JumpKind.Boring)
+
+    # Module-level condition cache for transfer from lifter to codegen.
+    # Keyed by block address → list[ConditionIR | ConditionFailure].
+    _inertia_module_condition_cache: dict[int, list[ConditionIR | ConditionFailure]] = {}
+
+    def _record_typed_condition_8616(self, cond: ConditionIR | ConditionFailure) -> None:
+        """Record a typed condition on the emulator AND module cache for function-level transfer."""
+        log = getattr(self.emu, "_inertia_typed_conditions", None)
+        if not isinstance(log, list):
+            log = []
+            self.emu._inertia_typed_conditions = log
+        log.append(cond)
+        # Also write into module-level cache (keyed by block address)
+        block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
+        cache = Instruction_ANY._inertia_module_condition_cache
+        if block_addr not in cache:
+            cache[block_addr] = []
+        cache[block_addr].append(cond)
 
     def _lift_simple(self):
         kind = self.simple_semantics[0]
@@ -678,43 +782,67 @@ class Instruction_ANY(Instruction):
             return
         if kind == "cmp_mem_reg16":
             _, mem_spec, src_reg = self.simple_semantics
+            lhs_val = self._load_mem16(mem_spec)
+            rhs_val = self._get_reg16(src_reg)
+            self._record_cmp_condition_source(lhs_val, rhs_val)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(self._load_mem16(mem_spec), self._get_reg16(src_reg))
+                self._update_cmp_flags(lhs_val, rhs_val)
             return
         if kind == "cmp_mem_imm16":
             _, mem_spec, imm = self.simple_semantics
+            lhs_val = self._load_mem16(mem_spec)
+            rhs_val = self._const16(imm)
+            self._record_cmp_condition_source(lhs_val, rhs_val)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(self._load_mem16(mem_spec), self._const16(imm))
+                self._update_cmp_flags(lhs_val, rhs_val)
             return
         if kind == "cmp_abs_reg16":
             _, offset, src_reg = self.simple_semantics
+            lhs_val = self._load_abs16(offset)
+            rhs_val = self._get_reg16(src_reg)
+            self._record_cmp_condition_source(lhs_val, rhs_val)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(self._load_abs16(offset), self._get_reg16(src_reg))
+                self._update_cmp_flags(lhs_val, rhs_val)
             return
         if kind == "cmp_abs_imm16":
             _, offset, imm = self.simple_semantics
+            lhs_val = self._load_abs16(offset)
+            rhs_val = self._const16(imm)
+            self._record_cmp_condition_source(lhs_val, rhs_val)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(self._load_abs16(offset), self._const16(imm))
+                self._update_cmp_flags(lhs_val, rhs_val)
             return
         if kind == "cmp_reg_abs8":
             _, dst_reg, offset = self.simple_semantics
+            lhs_val = self.get(dst_reg, Type.int_8)
+            rhs_val = self._load_abs8(offset)
+            self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags8(self.get(dst_reg, Type.int_8), self._load_abs8(offset))
+                self._update_cmp_flags8(lhs_val, rhs_val)
             return
         if kind == "cmp_abs_reg8":
             _, offset, src_reg = self.simple_semantics
+            lhs_val = self._load_abs8(offset)
+            rhs_val = self.get(src_reg, Type.int_8)
+            self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags8(self._load_abs8(offset), self.get(src_reg, Type.int_8))
+                self._update_cmp_flags8(lhs_val, rhs_val)
             return
         if kind == "cmp_abs_imm8":
             _, offset, imm = self.simple_semantics
+            lhs_val = self._load_abs8(offset)
+            rhs_val = self.constant(imm, Type.int_8)
+            self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags8(self._load_abs8(offset), self.constant(imm, Type.int_8))
+                self._update_cmp_flags8(lhs_val, rhs_val)
             return
         if kind == "cmp_reg_abs16":
             _, lhs_reg, offset = self.simple_semantics
+            lhs_val = self._get_reg16(lhs_reg)
+            rhs_val = self._load_abs16(offset)
+            self._record_cmp_condition_source(lhs_val, rhs_val)
             if not self._next_instruction_is_simple_jcc():
-                self._update_cmp_flags(self._get_reg16(lhs_reg), self._load_abs16(offset))
+                self._update_cmp_flags(lhs_val, rhs_val)
             return
         if kind in {"je", "jz", "jne", "jnz", "jmp", "jle", "jg", "jl", "jge", "jb", "jbe", "ja", "jae", "jnb", "jnc", "jc"}:
             _, abs_target = self.simple_semantics

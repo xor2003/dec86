@@ -84,6 +84,8 @@ def _simplify_boolean_cites_8616(codegen) -> bool:
     root = codegen.cfunc.statements
     new_root = transform(root)
     if new_root is not root:
+        if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
+            new_root = CStatements(statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen)
         codegen.cfunc.statements = new_root
         root = new_root
         changed = True
@@ -375,6 +377,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
     root = codegen.cfunc.statements
     new_root = transform(root)
     if new_root is not root:
+        if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
+            new_root = CStatements(statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen)
         codegen.cfunc.statements = new_root
         root = new_root
         changed = True

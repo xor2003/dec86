@@ -4,8 +4,8 @@ from __future__ import annotations
 # Responsibility: typed condition domain representation.
 # Forbidden: late rewrite ownership and text-pattern semantics.
 
-from dataclasses import replace
-from typing import Literal
+from dataclasses import dataclass, replace, field
+from typing import Any, Literal
 
 from .core import IRCondition, IRValue
 
@@ -41,8 +41,221 @@ _COMPARE_SYMBOLS_8616: dict[str, str] = {
     "uge": ">=",
 }
 
+# ── JCC mnemonic → ConditionOp mapping ──
 
-def build_condition_ir_8616(op: ConditionOp, *args: IRValue, expr: tuple[str, ...] | None = None) -> IRCondition:
+JCC_TO_COND_8616: dict[str, ConditionOp] = {
+    "je": "eq",
+    "jz": "eq",
+    "jne": "ne",
+    "jnz": "ne",
+
+    "jb": "ult",
+    "jc": "ult",
+    "jnae": "ult",
+
+    "jae": "uge",
+    "jnb": "uge",
+    "jnc": "uge",
+
+    "jbe": "ule",
+    "jna": "ule",
+
+    "ja": "ugt",
+    "jnbe": "ugt",
+
+    "jl": "slt",
+    "jnge": "slt",
+
+    "jge": "sge",
+    "jnl": "sge",
+
+    "jle": "sle",
+    "jng": "sle",
+
+    "jg": "sgt",
+    "jnle": "sgt",
+}
+
+
+# ── Condition builders from CMP/TEST sources ──
+
+@dataclass(frozen=True, slots=True)
+class ConditionIR:
+    """Typed condition IR object — the canonical form for branches.
+
+    Forbidden: flags-based conditions, tmp-based conditions.
+    AGENTS rule: Conditions must be explicit (``x < y``, not ``flags & ZF``).
+    """
+
+    op: ConditionOp
+    lhs: Any
+    rhs: Any | None = None
+    width_bits: int = 16
+    source: tuple[str, ...] = ()
+
+    @property
+    def is_comparison(self) -> bool:
+        return self.op in {
+            "eq", "ne", "slt", "sle", "sgt", "sge",
+            "ult", "ule", "ugt", "uge",
+        }
+
+    @property
+    def is_zero_test(self) -> bool:
+        return self.op in {"zero", "nonzero"}
+
+    @property
+    def is_signed(self) -> bool:
+        return self.op in {"slt", "sle", "sgt", "sge"}
+
+    @property
+    def is_unsigned(self) -> bool:
+        return self.op in {"ult", "ule", "ugt", "uge"}
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionFailure:
+    reason: str
+    source: tuple[str, ...] = ()
+    detail: str = ""
+
+    @property
+    def is_failure(self) -> bool:
+        return True
+
+
+# Type alias for condition-or-failure returns
+ConditionResult = ConditionIR | ConditionFailure
+
+
+def build_condition_from_cmp_8616(
+    lhs: Any,
+    rhs: Any,
+    jcc: str,
+    *,
+    width_bits: int = 16,
+) -> ConditionResult:
+    """Build a ConditionIR from CMP operands + JCC mnemonic.
+
+    CMP lhs, rhs
+    JCC label  →  ConditionIR(op, lhs, rhs)
+    """
+    op = JCC_TO_COND_8616.get(jcc.lower())
+    if op is None:
+        return ConditionFailure(
+            "unsupported_jcc",
+            source=("cmp", jcc),
+            detail=f"JCC mnemonic '{jcc}' not in JCC_TO_COND_8616",
+        )
+    return ConditionIR(
+        op=op,
+        lhs=lhs,
+        rhs=rhs,
+        width_bits=width_bits,
+        source=("cmp", jcc),
+    )
+
+
+def build_condition_from_test_8616(
+    value: Any,
+    jcc: str,
+    *,
+    width_bits: int = 16,
+) -> ConditionResult:
+    """Build a ConditionIR from TEST/OR/AND self-test + JCC mnemonic.
+
+    test ax, ax  (or: or ax, ax / and ax, ax where both operands same)
+    jz label  →  ConditionIR(ZERO, ax)
+    """
+    jcc = jcc.lower()
+    if jcc in {"je", "jz"}:
+        return ConditionIR(
+            op="zero",
+            lhs=value,
+            width_bits=width_bits,
+            source=("test", jcc),
+        )
+    if jcc in {"jne", "jnz"}:
+        return ConditionIR(
+            op="nonzero",
+            lhs=value,
+            width_bits=width_bits,
+            source=("test", jcc),
+        )
+    return ConditionFailure(
+        "unsupported_test_jcc",
+        source=("test", jcc),
+        detail=f"TEST JCC '{jcc}' not supported (only je/jz/jne/jnz)",
+    )
+
+
+def build_condition_from_compare_8616(
+    op: ConditionOp,
+    lhs: Any,
+    rhs: Any,
+    *,
+    width_bits: int = 16,
+    source: tuple[str, ...] = (),
+) -> ConditionIR:
+    """Direct ConditionIR constructor from known op and operands."""
+    return ConditionIR(
+        op=op,
+        lhs=lhs,
+        rhs=rhs,
+        width_bits=width_bits,
+        source=source,
+    )
+
+
+# ── Condition source tracking (on emulator) ──
+
+@dataclass(slots=True)
+class ConditionSource:
+    """Lightweight record of last CMP/TEST for JCC consumption."""
+    kind: str  # "cmp" or "test"
+    lhs: Any | None = None
+    rhs: Any | None = None
+    width_bits: int = 16
+    addr: int | None = None
+
+
+# ── Condition sorting/deduplication ──
+
+def condition_sort_key_8616(cond: ConditionIR) -> tuple:
+    """Deterministic sort key for ConditionIR."""
+    return (
+        "".join(cond.source),
+        cond.op,
+        str(cond.lhs) if cond.lhs is not None else "",
+        str(cond.rhs) if cond.rhs is not None else "",
+        cond.width_bits,
+    )
+
+
+def deduplicate_conditions_8616(conditions: list[ConditionIR]) -> list[ConditionIR]:
+    """Return deduplicated, deterministically sorted conditions."""
+    seen: set[tuple] = set()
+    unique: list[ConditionIR] = []
+    for cond in sorted(conditions, key=condition_sort_key_8616):
+        key = condition_sort_key_8616(cond)
+        if key not in seen:
+            seen.add(key)
+            unique.append(cond)
+    return unique
+
+
+# ── IRValue-based builders (for use with the core IR types) ──
+
+def build_condition_ir_8616(
+    op: ConditionOp,
+    *args: IRValue,
+    expr: tuple[str, ...] | None = None,
+) -> IRCondition:
+    """Build an IRCondition from typed op and value args.
+
+    This is the existing IR-layer builder — kept for compatibility.
+    Preference: use ConditionIR and its builders above for semantic recovery.
+    """
     return IRCondition(op=op, args=tuple(args), expr=expr)
 
 
@@ -68,7 +281,10 @@ def normalize_condition_op_8616(op: str) -> ConditionOp:
         return "nonzero"
     if op in {"masked_zero", "zero"}:
         return "zero"
-    if op in {"eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge", "compare"}:
+    if op in {
+        "eq", "ne", "slt", "sle", "sgt", "sge",
+        "ult", "ule", "ugt", "uge", "compare",
+    }:
         return op  # type: ignore[return-value]
     if op in {"lt", "le", "gt", "ge"}:
         return f"s{op}"  # type: ignore[return-value]
@@ -82,7 +298,11 @@ def is_condition_truth_test_8616(op: str) -> bool:
 
 
 def is_condition_compare_family_8616(op: str) -> bool:
-    return normalize_condition_op_8616(op) in {"compare", "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge"}
+    return normalize_condition_op_8616(op) in {
+        "compare", "eq", "ne",
+        "slt", "sle", "sgt", "sge",
+        "ult", "ule", "ugt", "uge",
+    }
 
 
 def condition_compare_symbol_8616(op: str) -> str | None:
@@ -117,7 +337,11 @@ def inverted_comparison_op_8616(op: str) -> str | None:
     return _INVERTED_COMPARISON_OPS_8616.get(op)
 
 
-def normalize_condition_fingerprint_string_8616(value: str, *, control_flow_prefixes: tuple[str, ...] | None = None) -> str:
+def normalize_condition_fingerprint_string_8616(
+    value: str,
+    *,
+    control_flow_prefixes: tuple[str, ...] | None = None,
+) -> str:
     """Canonicalize a condition fingerprint string by inverting ``Not(CmpEQ(...))`` → ``CmpNE(...)``.
 
     This operates on fingerprint-string representations of conditions.
@@ -139,7 +363,10 @@ def normalize_condition_fingerprint_string_8616(value: str, *, control_flow_pref
 
     for prefix in control_flow_prefixes:
         if value.startswith(prefix):
-            return prefix + normalize_condition_fingerprint_string_8616(value[len(prefix):], control_flow_prefixes=control_flow_prefixes)
+            return prefix + normalize_condition_fingerprint_string_8616(
+                value[len(prefix):],
+                control_flow_prefixes=control_flow_prefixes,
+            )
 
     call = _split_fingerprint_call_8616(value)
     if call is None:
@@ -240,7 +467,11 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
                         inner_call = _split_fingerprint_call_8616(sub_args[0])
                         if inner_call is not None and inner_call[0] == "Sub":
                             inner_args = _split_fingerprint_args_8616(inner_call[1])
-                            if len(inner_args) == 2 and inner_args[1].startswith("const:") and sub_args[1].startswith("const:"):
+                            if (
+                                len(inner_args) == 2
+                                and inner_args[1].startswith("const:")
+                                and sub_args[1].startswith("const:")
+                            ):
                                 try:
                                     a = int(inner_args[1].split(":")[-1], 0) if inner_args[1].startswith("const:") else 0
                                     b = int(sub_args[1].split(":")[-1], 0) if sub_args[1].startswith("const:") else 0

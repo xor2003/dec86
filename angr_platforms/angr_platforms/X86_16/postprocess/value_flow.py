@@ -18,7 +18,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 
 from ..decompiler_postprocess_utils import _same_c_expression_8616
-from .alias_query import _storage_domain_for_expr
+from ..semantics.alias_query import _storage_domain_for_expr
 
 __all__ = ["_apply_value_flow_renaming_8616"]
 

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from angr.analyses.decompiler.decompiler import Decompiler
+from angr.analyses.decompiler.structured_codegen.c import CStatements
 
 from . import decompiler_postprocess as _post
 from . import decompiler_postprocess_calls as _calls
@@ -18,7 +19,19 @@ from . import decompiler_postprocess_jcc as _jcc
 from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
-from .optimization.pass_driver import _run_optimization_passes_8616
+from .decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
+from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
+from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+from .lowering.stack_lowering_from_facts import (
+    lower_stack_accesses_from_alias_facts_8616,
+    build_stack_variable_bindings_from_alias_facts_8616,
+)
+from .lowering.ss_bp_substitution import (
+    apply_stack_variable_bindings_to_c_text,
+    substitute_ss_bp_dereferences_with_variables,
+)
+from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
+from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
@@ -180,6 +193,25 @@ def _snapshot_codegen_cfunc(codegen):
         return None
 
 
+def _repair_cfunc_statements_wrapper(codegen) -> bool:
+    """Ensure codegen.cfunc.statements is always a CStatements, not a raw list.
+
+    Multiple transform() callbacks return plain Python lists instead of
+    CStatements objects, which corrupts all downstream passes. This repair
+    function is called before every postprocess step to guard against poisoning.
+    """
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+    statements = getattr(cfunc, "statements", None)
+    if statements is None:
+        return False
+    if isinstance(statements, list) and not isinstance(statements, CStatements):
+        cfunc.statements = CStatements(statements=statements, codegen=codegen)
+        return True
+    return False
+
+
 def _restore_codegen_cfunc(codegen, snapshot) -> bool:
     if snapshot is None:
         return False
@@ -220,6 +252,9 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
     def _apply_step(pass_name: str, step_func) -> bool:
         nonlocal accepted_changed, last_changed_pass
+        # Repair: ensure statements is always CStatements before every pass.
+        # Many transform() callbacks return plain lists, which corrupts downstream.
+        _repair_cfunc_statements_wrapper(codegen)
         snapshot = _snapshot_codegen_cfunc(codegen) if per_pass_validation_enabled else None
         try:
             step_changed = bool(step_func())
@@ -255,20 +290,21 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             codegen._inertia_last_postprocess_pass = pass_name
         return True
 
+    # ── Transfer typed conditions BEFORE typed condition pass ──
+    if not getattr(codegen, "_inertia_typed_conditions_transferred", False):
+        cfunc = getattr(codegen, "cfunc", None)
+        func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+        if func_addr is not None:
+            try:
+                transfer_typed_conditions_to_codegen_8616(project, func_addr, codegen)
+            except Exception:
+                pass
+        codegen._inertia_typed_conditions_transferred = True
+
+    # ── Typed condition rewriting pass (ConditionIR → explicit C comparisons) ──
     if not _apply_step(
-        "_coalesce_word_global_loads_8616",
-        lambda: _globals._coalesce_word_global_loads_8616(project, codegen),
-    ):
-        codegen._inertia_postprocess_changed = accepted_changed
-        project._inertia_decompiler_stage = "postprocess"
-        return accepted_changed
-    if codegen._inertia_postprocess_validation_failed:
-        codegen._inertia_postprocess_changed = accepted_changed
-        project._inertia_decompiler_stage = "postprocess"
-        return accepted_changed
-    if not _apply_step(
-        "_coalesce_word_global_constant_stores_8616",
-        lambda: _globals._coalesce_word_global_constant_stores_8616(project, codegen),
+        "_apply_typed_conditions_to_codegen_8616",
+        lambda: _apply_typed_conditions_to_codegen_8616(project, codegen),
     ):
         codegen._inertia_postprocess_changed = accepted_changed
         project._inertia_decompiler_stage = "postprocess"
@@ -280,13 +316,19 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
     # ── Optimization layer ──
     if not per_pass_validation_enabled:
-        try:
-            if _run_optimization_passes_8616(codegen):
-                accepted_changed = True
-                last_changed_pass = "optimization"
-                codegen._inertia_last_postprocess_pass = "optimization"
-        except Exception as ex:
-            logging.getLogger(__name__).warning("Optimization pass failed: %s", ex)
+        # Skip optimization for now — widening passes handle
+        # CStatements internally via _unwrap_statements_8616
+        if not _apply_step(
+            "optimization",
+            lambda: _run_optimization_passes_8616(codegen),
+        ):
+            codegen._inertia_postprocess_changed = accepted_changed
+            project._inertia_decompiler_stage = "postprocess"
+            return accepted_changed
+        if codegen._inertia_postprocess_validation_failed:
+            codegen._inertia_postprocess_changed = accepted_changed
+            project._inertia_decompiler_stage = "postprocess"
+            return accepted_changed
 
     for spec in pass_specs:
         project._inertia_decompiler_stage = f"postprocess:{spec.name}"
@@ -323,6 +365,81 @@ def _regenerate_text_safely(codegen, *, context: str) -> bool:
     codegen._inertia_regeneration_context = context
     codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
     return True
+
+
+def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
+    """Run the pre-rewrite invariant checks and record results on codegen.
+
+    AGENTS rule: rewrite must not hide bad alias/type/condition recovery.
+    If invariants fail, rewrite is skipped and honest partial output is emitted.
+    
+    CRITICAL: transfer semantic alias facts from lifter/emulator to codegen
+    BEFORE running invariants, so the invariant checks can see them.
+    """
+    # Transfer alias facts from emulator → codegen
+    if not getattr(codegen, "_inertia_semantic_facts_transferred", False):
+        try:
+            transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
+        except Exception as ex:
+            setattr(codegen, "_inertia_semantic_facts_transfer_error", str(ex))
+        finally:
+            codegen._inertia_semantic_facts_transferred = True
+
+    # Transfer typed conditions from emulator → codegen
+    if not getattr(codegen, "_inertia_typed_conditions_transferred", False):
+        cfunc = getattr(codegen, "cfunc", None)
+        func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+        if func_addr is not None:
+            try:
+                transfer_typed_conditions_to_codegen_8616(project, func_addr, codegen)
+            except Exception:
+                pass
+        codegen._inertia_typed_conditions_transferred = True
+
+    # Repair statements wrapper before invariant check (last pass may have corrupted it)
+    _repair_cfunc_statements_wrapper(codegen)
+
+    c_text = ""
+    with contextlib.suppress(Exception):
+        c_text = getattr(codegen, "text", "") or getattr(codegen, "_text", "") or ""
+
+    # ── Apply fact-based ss << 4 → variable name substitution ──
+    # This is rewrite-layer cleanup using already-materialized alias facts.
+    # DISABLED in normal path: text-based substitution violates AGENTS rule
+    # "no text-based recovery".  Kept behind debug flag for emergency use.
+    if c_text and getattr(codegen, "_inertia_allow_late_stack_text_bridge", False):
+        try:
+            c_text = apply_stack_variable_bindings_to_c_text(c_text, codegen)
+        except Exception:
+            pass
+
+    report = validate_before_rewrite_8616(codegen, c_text=c_text, project=project)
+
+    if function is not None:
+        info = getattr(function, "info", None)
+        if isinstance(info, MutableMapping):
+            info["x86_16_pre_rewrite_invariant_report"] = report.to_dict()
+
+    codegen._inertia_invariant_report = report
+    codegen._inertia_invariant_checked = True
+
+    if report.rewrite_blocked:
+        codegen._inertia_rewrite_failed = True
+        codegen._inertia_rewrite_failure_pass = "invariant_gate"
+        codegen._inertia_rewrite_failure_error = report.skip_reason
+
+        formatted = format_invariant_report_8616(report)
+        log = logging.getLogger(__name__)
+        log.warning("Pre-rewrite invariant gate BLOCKED rewrite for %#x (%s): %s",
+                     getattr(function, 'addr', 0),
+                     getattr(function, 'name', '?'),
+                     report.skip_reason)
+        log.warning("Invariant report:\n%s", formatted)
+    else:
+        log = logging.getLogger(__name__)
+        log.debug("Pre-rewrite invariant gate passed for %#x (%s)",
+                   getattr(function, 'addr', 0),
+                   getattr(function, 'name', '?'))
 
 
 def _decompile_8616(self):
@@ -387,6 +504,8 @@ def _decompile_8616(self):
     context = f"{getattr(function, 'addr', 'unknown')!r} {getattr(function, 'name', 'unknown')}"
     if changed:
         _regenerate_text_safely(self.codegen, context=context)
+    # ── Pre-rewrite invariant gate ──
+    _inertia_run_pre_rewrite_invariant_gate(self.project, self.codegen, function)
     after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
     after_collect_started = time.perf_counter()
     after_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)

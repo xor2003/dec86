@@ -337,6 +337,85 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
     return _impl(expr)
 
 
+@dataclass(frozen=True)
+class AliasFailure:
+    """Explicit failure record when alias recovery cannot resolve a proven address.
+
+    AGENTS rule: proven SS must become stack slot, never silently fallback to memory.
+    """
+    reason: str
+    address: "object | None" = None
+    space: str | None = None
+    offset: int | None = None
+
+
+def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | AliasFailure | None:
+    """Build alias storage facts from a typed IRAddress.
+
+    This is the canonical IR→Alias entry point.  Must be called at IR creation time,
+    not later in the pipeline.
+
+    Returns:
+        AliasStorageFacts on success.
+        AliasFailure when the address cannot be classified yet (not silently hidden).
+        None for addresses that are genuinely unclassifiable.
+    Raises PipelineHardError for proven addresses that cannot be resolved.
+
+    AGENTS rule #1: Must not guess. If SS is proven but unresolvable, fail hard.
+    """
+    from ..ir.core import IRAddress, MemSpace, AddressStatus, SegmentOrigin, is_stack_address_8616
+    from ..pipeline.errors import PipelineHardError
+
+    if not isinstance(addr, IRAddress):
+        return None
+
+    if addr.space == MemSpace.SS:
+        # Only create stable stack facts when all conditions are met:
+        #   1. Base contains "bp"
+        #   2. Status is STABLE
+        #   3. Offset is an integer (not symbolic)
+        has_bp_base = addr.base == ("bp",)
+        has_stable_offset = isinstance(addr.offset, int) and addr.status == AddressStatus.STABLE
+
+        if is_stack_address_8616(addr) and has_bp_base and has_stable_offset:
+            return _stack_storage_facts_for_segmented_address_8616(
+                "ss",
+                addr.offset,
+                addr.size,
+                region=None,
+            )
+
+        # Hard-fail only for STABLE SS addresses without a recognized BP base.
+        # PROVISIONAL SS addresses (e.g. SP-relative push/pop during prologue
+        # before BP is set up, or symbolic offsets not yet resolved) are expected
+        # and must not block decompilation.
+        if addr.status == AddressStatus.STABLE:
+            raise PipelineHardError(
+                f"unresolved SS address: base={addr.base} offset={addr.offset} status={addr.status}",
+                layer="alias",
+            )
+        # PROVISIONAL SS: return explicit AliasFailure — not silently hidden
+        return AliasFailure(
+            reason="provisional SS address cannot be classified",
+            address=addr,
+            space="SS",
+            offset=addr.offset if isinstance(addr.offset, int) else None,
+        )
+
+    # DS/ES memory
+    if addr.space in {MemSpace.DS, MemSpace.ES}:
+        return AliasStorageFacts(
+            domain=_StorageDomainSignature(
+                "memory",
+                addr.size,
+                _StorageView(addr.offset * 8 if isinstance(addr.offset, int) else 0, addr.size * 8 if addr.size else None),
+            ),
+            identity=("memory", addr.offset) if isinstance(addr.offset, int) else None,
+        )
+
+    return None
+
+
 def describe_alias_storage(expr) -> AliasStorageFacts:
     from ..semantics.alias_query import describe_alias_storage as _impl
 
@@ -426,9 +505,11 @@ __all__ = [
     "_storage_domain_for_variable",
     "_storage_domain_for_expr",
     "_merge_storage_domains",
+    "AliasFailure",
     "AliasStorageFacts",
     "AliasRecoveryAPISpec",
     "ALIAS_RECOVERY_API",
+    "alias_facts_for_ir_address_8616",
     "can_join_alias_storage",
     "compatible_alias_storage_views",
     "describe_alias_storage",

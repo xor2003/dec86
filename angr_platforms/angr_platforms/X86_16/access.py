@@ -15,6 +15,12 @@ MODE_READ = 0
 MODE_WRITE = 1
 MODE_EXEC = 2
 
+# Module-level fact cache — bridges ephemeral emulator → persistent pipeline.
+# Key = function address (int), value = list of AliasStorageFacts/AliasFailure.
+# Populated by _record_semantic_memory_access() during VEX lifting.
+# Consumed by collect_semantic_alias_facts_from_project_8616().
+_inertia_module_alias_fact_cache: dict[int, list[object]] = {}
+
 
 class DataAccess(Hardware):
     def __init__(self, *args, **kwargs):
@@ -28,13 +34,6 @@ class DataAccess(Hardware):
 
     def get_segment(self, reg):
         return self.get_sgreg(reg)
-
-    #def trans_v2p(self, mode, seg, vaddr):
-    #    laddr = self.trans_v2l(mode, seg, vaddr)
-    #
-    #    paddr = laddr
-    #    return paddr
-
 
     def convert_ss_vaddr(self, vaddr):
         _, off = self.convert_segoff2vexv(sgreg_t.SS, vaddr)
@@ -64,7 +63,56 @@ class DataAccess(Hardware):
             history = []
             self._inertia_resolved_operands = history
         history.append((mode, operand))
+        self._record_semantic_memory_access(operand, mode)
         return operand
+
+    def _record_semantic_memory_access(self, operand: ResolvedMemoryOperand, mode: int) -> None:
+        """Record typed IR address for alias/type consumption.
+
+        The execution path still uses operand.exec_linear (linear) for the actual
+        read/write.  This log is consumed by the alias and type recovery layers.
+
+        AGENTS rule #3: exec_linear is execution-only; assert_semantic_safe()
+        blocks accidental leakage of linear IR into semantic layers.
+        """
+        from .ir.core import IRAddress
+
+        # Hard block: no linear addresses in semantic logs
+        operand.assert_semantic_safe()
+
+        semantic_log = getattr(self, "_inertia_semantic_access_log", None)
+        if not isinstance(semantic_log, list):
+            semantic_log = []
+            self._inertia_semantic_access_log = semantic_log
+
+        addr = operand.ir_address()
+
+        # Do NOT create alias facts here.
+        # Lifting may only record semantic IR addresses.
+        # Alias facts are produced after stack-frame normalization
+        # in collect_normalized_semantic_alias_facts_from_project_8616().
+
+        if isinstance(addr, IRAddress):
+            semantic_log.append((mode, addr))
+            # Write to canonical evidence_cache (function-keyed, no sys.modules hack)
+            # Use module-level context set by fact_transfer before block lifting,
+            # NOT the emulator instance which only knows instruction address.
+            #
+            # During initial CFG construction, context is None — silently skip.
+            # The collection phase (fact_transfer.py) re-lifts blocks with
+            # set_current_function_addr() active, which populates evidence_cache.
+            from .semantics.evidence_cache import get_current_function_addr, record_access
+            func_addr = get_current_function_addr()
+            if not isinstance(func_addr, int):
+                # Diagnostic: count uncollected accesses (only in debug mode)
+                _uncollected = getattr(self, "_inertia_uncollected_accesses", 0)
+                self._inertia_uncollected_accesses = _uncollected + 1
+                return
+            record_access(
+                function_addr=func_addr,
+                mode=mode,
+                addr=addr,
+            )
 
     def _resolve_memory_operand(self, seg, addr, width_bits: int, mode: int) -> ResolvedMemoryOperand:
         operand = self._resolved_segment_operand(seg, addr, width_bits)
@@ -98,27 +146,27 @@ class DataAccess(Hardware):
 
     def read_mem32_seg(self, seg, addr):
         operand = self._resolve_memory_operand(seg, addr, 32, MODE_READ)
-        return self.read_mem32(operand.linear)
+        return self.read_mem32(operand.exec_linear)
 
     def read_mem16_seg(self, seg, addr):
         operand = self._resolve_memory_operand(seg, addr, 16, MODE_READ)
-        return self.read_mem16(operand.linear)
+        return self.read_mem16(operand.exec_linear)
 
     def read_mem8_seg(self, seg, addr):
         operand = self._resolve_memory_operand(seg, addr, 8, MODE_READ)
-        return self.read_mem8(operand.linear)
+        return self.read_mem8(operand.exec_linear)
 
     def write_mem32_seg(self, seg, addr, value):
         operand = self._resolve_memory_operand(seg, addr, 32, MODE_WRITE)
-        self.write_mem32(operand.linear, value)
+        self.write_mem32(operand.exec_linear, value)
 
     def write_mem16_seg(self, seg, addr, value):
         operand = self._resolve_memory_operand(seg, addr, 16, MODE_WRITE)
-        self.write_mem16(operand.linear, value)
+        self.write_mem16(operand.exec_linear, value)
 
     def write_mem8_seg(self, seg, addr, value):
         operand = self._resolve_memory_operand(seg, addr, 8, MODE_WRITE)
-        self.write_mem8(operand.linear, value)
+        self.write_mem8(operand.exec_linear, value)
 
     def get_code8(self, offset):
         assert offset == 0

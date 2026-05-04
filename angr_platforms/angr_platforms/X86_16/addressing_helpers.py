@@ -153,6 +153,7 @@ def describe_x86_16_mixed_width_instruction_surface() -> dict[str, object]:
 
 
 def linear_address(emu, segment, offset):
+    # EXECUTION ONLY. Forbidden for alias/type/rewrite semantics.
     return emu.v2p(segment, offset)
 
 
@@ -164,20 +165,50 @@ def resolve_memory_operand_8616(
     *,
     address_bits: int = 16,
 ) -> "ResolvedMemoryOperand":
+    # EXECUTION ONLY: exec_linear is computed for the engine, not for semantics.
+    # Alias/type/structuring layers MUST use operand.ir_address() instead.
     if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-        linear = emu.convert_ss_vaddr(addr)
+        exec_linear = emu.convert_ss_vaddr(addr)
     else:
-        linear = emu.v2p(seg, addr)
-    return ResolvedMemoryOperand(seg, addr, linear, width_bits, address_bits)
+        exec_linear = emu.v2p(seg, addr)
+    return ResolvedMemoryOperand(seg, addr, exec_linear, width_bits, address_bits)
 
 
 @dataclass(frozen=True)
 class ResolvedMemoryOperand:
     segment: sgreg_t
     offset: Any
-    linear: Any
+    exec_linear: Any
     width_bits: int
     address_bits: int
+
+    @property
+    def linear(self) -> Any:
+        """Deprecated: use exec_linear for execution-only linear address.
+        
+        This property exists only for backward compatibility.
+        Forbidden for alias/type/rewrite semantics — use ir_address() instead.
+        """
+        return self.exec_linear
+
+    def ir_address(self, *, expr: tuple[str, ...] | None = None) -> IRAddress:
+        """Semantic IR address — the ONLY path for alias/type/structuring layers."""
+        return self.typed_address(expr=expr)
+
+    def assert_semantic_safe(self) -> None:
+        """Block accidental use of linear address in semantic layers.
+
+        Raises PipelineHardError if exec_linear leaks into non-execution code.
+        AGENTS rule #3: segmented memory; exec_linear is execution-only.
+        """
+        from .ir.core import IRAddress
+        from .pipeline.errors import PipelineHardError
+        if isinstance(self.exec_linear, IRAddress):
+            raise PipelineHardError(
+                "exec_linear must not be an IRAddress — linear is execution-only, "
+                "use ir_address() for semantic layers",
+                layer="addressing",
+            )
 
     def typed_address(self, *, expr: tuple[str, ...] | None = None) -> IRAddress:
         space_map = {
@@ -199,14 +230,72 @@ class ResolvedMemoryOperand:
             base = (self.segment.value,)
         else:
             base = ()
+
+        size = max(1, self.width_bits // 8) if isinstance(self.width_bits, int) and self.width_bits > 0 else 0
+        seg_origin = SegmentOrigin.PROVEN if explicit_segment else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN)
+
+        # Unwrap VexValue wrapper and resolve RdTmp chain via IRSB
+        offset_raw = self.offset
+        tmp_defs = None
+        if hasattr(self.offset, "rdt"):
+            offset_raw = self.offset.rdt
+            irsb_c = getattr(self.offset, "irsb_c", None)
+            if irsb_c is not None:
+                tmp_defs = _build_tmp_defs_from_irsb(irsb_c)
+                offset_raw = _resolve_rdtmp_chain(offset_raw, tmp_defs)
+
+        # Integer offset
+        if isinstance(offset_raw, int):
+            # SS:int is NOT a stable stack slot — only SS:BP+const is
+            if space == MemSpace.SS:
+                if not base:
+                    base = ("ss",)
+                return IRAddress(
+                    space=space,
+                    base=base,
+                    offset=offset_raw,
+                    size=size,
+                    status=AddressStatus.PROVISIONAL,
+                    segment_origin=seg_origin,
+                    expr=expr,
+                )
+            # DS/ES:int — stable memory address
+            return IRAddress(
+                space=space,
+                base=base,
+                offset=offset_raw,
+                size=size,
+                status=AddressStatus.STABLE if stable else AddressStatus.PROVISIONAL,
+                segment_origin=seg_origin,
+                expr=expr,
+            )
+
+        # Symbolic offset — try to extract BP-relative constant
+        extracted = extract_bp_relative_offset_8616(offset_raw, tmp_defs=tmp_defs)
+        if extracted is not None:
+            offset_val, bp_base = extracted
+            # BP-relative stack slot: STABLE status, base = ("bp",)
+            if space == MemSpace.SS:
+                base = ("bp",)
+            return IRAddress(
+                space=space,
+                base=base,
+                offset=offset_val,
+                size=size,
+                status=AddressStatus.STABLE,
+                segment_origin=seg_origin,
+                expr=None,
+            )
+
+        # Not BP-relative: return PROVISIONAL — do NOT fake offset 0
         return IRAddress(
             space=space,
             base=base,
-            offset=self.offset if isinstance(self.offset, int) else 0,
-            size=max(1, self.width_bits // 8) if isinstance(self.width_bits, int) and self.width_bits > 0 else 0,
-            status=AddressStatus.STABLE if stable else AddressStatus.PROVISIONAL,
-            segment_origin=SegmentOrigin.PROVEN if explicit_segment else (SegmentOrigin.DEFAULTED if space != MemSpace.UNKNOWN else SegmentOrigin.UNKNOWN),
-            expr=expr,
+            offset=0,
+            size=size,
+            status=AddressStatus.PROVISIONAL,
+            segment_origin=seg_origin,
+            expr=(str(self.offset),) if self.offset is not None else expr,
         )
 
 
@@ -293,6 +382,7 @@ def resolve_modrm32_address(emu, modrm, sib, disp8: int, disp32: int) -> tuple[s
 
 
 def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, address_bits: int) -> ResolvedMemoryOperand:
+    # EXECUTION ONLY
     return ResolvedMemoryOperand(segment, offset, linear_address(emu, segment, offset), width_bits, address_bits)
 
 
@@ -344,6 +434,229 @@ def load_far_pointer(emu, segment: sgreg_t, offset, operand_bits: int, address_b
 
 def load_far_pointer16(emu, segment: sgreg_t, offset, address_bits: int = 16):
     return load_word_pair16(emu, segment, offset, address_bits=address_bits)
+
+
+def _build_tmp_defs_from_irsb(irsb_c) -> dict[int, Any]:
+    """Build a tmp_index → WrTmp statement mapping from an IRSB or IRSBCustomizer."""
+    tmp_defs = {}
+    if irsb_c is None:
+        return tmp_defs
+    # Unwrap IRSBCustomizer to underlying IRSB
+    irsb = getattr(irsb_c, "irsb", irsb_c)
+    stmts = getattr(irsb, "statements", None) or ()
+    for stmt in stmts:
+        stmt_tmp = getattr(stmt, "tmp", None)
+        if isinstance(stmt_tmp, int):
+            tmp_defs[stmt_tmp] = stmt
+    return tmp_defs
+
+
+def _resolve_rdtmp_chain(expr: Any, tmp_defs: dict) -> Any:
+    """Resolve RdTmp nodes to their defining expressions, recursively."""
+    if not isinstance(tmp_defs, dict) or not tmp_defs:
+        return expr
+
+    class_name = getattr(type(expr), "__name__", "")
+    if "RdTmp" in class_name:
+        tmp_idx = getattr(expr, "tmp", None)
+        if isinstance(tmp_idx, int) and tmp_idx in tmp_defs:
+            stmt = tmp_defs[tmp_idx]
+            stmt_expr = getattr(stmt, "data", None)
+            if stmt_expr is not None:
+                # Recursively resolve — the defining expression may contain RdTmps too
+                return _resolve_rdtmp_chain(stmt_expr, tmp_defs)
+
+    # For Binop/Unop/etc, resolve args recursively
+    args = getattr(expr, "args", None)
+    if args is not None:
+        resolved_args = [_resolve_rdtmp_chain(a, tmp_defs) for a in args]
+        if resolved_args != list(args):
+            new_expr = type(expr)(getattr(expr, "op", None), resolved_args)
+            return new_expr
+
+    return expr
+
+
+def extract_bp_relative_offset_8616(offset_expr: Any, *, tmp_defs: dict | None = None) -> tuple[int, tuple[str, ...]] | None:
+    """Extract a BP-relative constant offset from a symbolic offset expression.
+
+    Handles only proven forms:
+        BP + const
+        BP - const
+        const + BP
+        BP
+        BP + SI/DI + const
+        BP + SI/DI - const
+
+    Returns (offset, base_tuple) or None.
+    Does NOT guess for BX+SI, SP+unknown, tmp, or other complex forms.
+    """
+    # Resolve RdTmp → defining expression if tmp_defs available
+    if tmp_defs is not None:
+        offset_expr = _resolve_rdtmp_chain(offset_expr, tmp_defs)
+
+    # Integer offset: pass through
+    if isinstance(offset_expr, int):
+        return (offset_expr, ("bp",))
+
+    # VEX expression: try to match BP +/- const pattern
+    op = getattr(offset_expr, "op", None)
+    if op is None:
+        return None
+
+    op_str = str(op)
+    args = getattr(offset_expr, "args", None) or []
+
+    if len(args) < 2:
+        # Unary or single-arg — check if it's just BP
+        for arg in args:
+            if _is_bp_reg(arg, tmp_defs=tmp_defs):
+                return (0, ("bp",))
+        return None
+
+    # Flatten nested Add/Sub chains into terms
+    terms, const = _collect_add_sub_terms(offset_expr, tmp_defs=tmp_defs)
+    if terms is None:
+        # Fallback to simple 2-arg patterns
+        left, right = args[0], args[1]
+        if op_str in {"Iop_Add16", "Iop_Add32"}:
+            if _is_bp_reg(left, tmp_defs=tmp_defs) and isinstance(right, int):
+                return (right & 0xFFFF, ("bp",))
+            if isinstance(left, int) and _is_bp_reg(right, tmp_defs=tmp_defs):
+                return (left & 0xFFFF, ("bp",))
+        if op_str in {"Iop_Sub16", "Iop_Sub32"}:
+            if _is_bp_reg(left, tmp_defs=tmp_defs) and isinstance(right, int):
+                return (-(right & 0xFFFF), ("bp",))
+        return None
+
+    # Accept: BP (+ SI/DI) + const
+    has_bp = any(_is_bp_reg(term, tmp_defs=tmp_defs) for term in terms)
+    has_index = any(_is_index_reg_8616(term) for term in terms)
+    non_reg_terms = [t for t in terms if not _is_bp_reg(t, tmp_defs=tmp_defs) and not _is_index_reg_8616(t)]
+
+    if has_bp and not non_reg_terms:
+        # BP only or BP + index: accept
+        return (const & 0xFFFF, ("bp",))
+
+    return None
+
+
+def _collect_add_sub_terms(
+    expr: Any,
+    *,
+    tmp_defs: dict | None = None,
+) -> tuple[list[Any], int] | None:
+    """Flatten Iop_Add16/Add32 and Iop_Sub16/Sub32 chains.
+
+    Returns (non_constant_terms, constant_total) or None if unsupported.
+    Constant terms are summed into the constant_total.
+    Sub-expressions in Sub positions negate their constant contribution.
+    """
+    # Resolve RdTmp chains through tmp_defs first
+    if tmp_defs is not None:
+        expr = _resolve_rdtmp_chain(expr, tmp_defs)
+
+    op = getattr(expr, "op", None)
+    if op is None:
+        # Leaf expression: VEX Get, RdTmp, Const, or int literal.
+        # These are atomic terms — return them as a single-term list.
+        if isinstance(expr, int):
+            return ([], expr & 0xFFFF)
+        return ([expr], 0)
+
+    op_str = str(op)
+    args = getattr(expr, "args", None) or []
+    if not args:
+        return None
+
+    if op_str in {"Iop_Add16", "Iop_Add32"}:
+        left_terms, left_const = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
+        right_terms, right_const = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+        if left_terms is not None and right_terms is not None:
+            return (left_terms + right_terms, (left_const + right_const) & 0xFFFF)
+        # One side may be non-decomposable; treat it as a term
+        if left_terms is not None:
+            return (left_terms + [args[1]], left_const & 0xFFFF)
+        if right_terms is not None:
+            return (right_terms + [args[0]], right_const & 0xFFFF)
+        return ([args[0], args[1]], 0)
+
+    if op_str in {"Iop_Sub16", "Iop_Sub32"}:
+        left_terms, left_const = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
+        right_terms, right_const = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+        if left_terms is not None and right_terms is not None:
+            return (left_terms + right_terms, (left_const - right_const) & 0xFFFF)
+        if left_terms is not None:
+            return (left_terms + [args[1]], left_const & 0xFFFF)
+        if right_terms is not None:
+            return (right_terms + [args[0]], (-right_const) & 0xFFFF)
+        return ([args[0], args[1]], 0)
+
+    # Leaf: constant or register
+    if isinstance(expr, int):
+        return ([], expr & 0xFFFF)
+    reg_offset = getattr(expr, "reg", None)
+    if isinstance(reg_offset, int):
+        return ([expr], 0)
+
+    return None
+
+
+def _is_index_reg_8616(expr: Any) -> bool:
+    """Check if a VEX expression is SI or DI.
+
+    VEX guest state offsets (from archinfo arch_from_id('x86_16')):
+      si → offset=32
+      di → offset=36
+    The reg16_t enum values (SI=6, DI=7) are NOT VEX guest offsets.
+    """
+    class_name = getattr(type(expr), "__name__", "")
+    if "Get" in class_name:
+        offset = getattr(expr, "offset", None)
+        if isinstance(offset, int) and offset in {32, 36}:
+            return True
+
+    # Obsolete path: reg16_t enum values (never matched VEX expressions)
+    reg_offset = getattr(expr, "reg", None)
+    if isinstance(reg_offset, int) and reg_offset in {6, 7}:
+        return True
+
+    return False
+
+
+def _is_bp_reg(expr: Any, *, tmp_defs: dict | None = None) -> bool:
+    """Check if a VEX expression is a BP register reference.
+
+    BP appears as:
+      - Get(offset=28, ...)   — VEX guest state offset for bp (archinfo arch_from_id('x86_16'))
+      - RdTmp(tmp=N) when tmp_defs maps N → WrTmp(..., Get(offset=28, ...))
+
+    The old reg16_t enum value 5 is NOT a VEX guest offset — that was a bug.
+    """
+    class_name = getattr(type(expr), "__name__", "")
+
+    # RdTmp: resolve through tmp_defs if available
+    if "RdTmp" in class_name and tmp_defs is not None:
+        tmp_idx = getattr(expr, "tmp", None)
+        if isinstance(tmp_idx, int):
+            stmt = tmp_defs.get(tmp_idx)
+            if stmt is not None:
+                stmt_expr = getattr(stmt, "data", None) or getattr(stmt, "expr", None)
+                if stmt_expr is not None:
+                    return _is_bp_reg(stmt_expr, tmp_defs=tmp_defs)
+
+    # Direct Get node: VEX guest state offset 28 = bp
+    if "Get" in class_name:
+        offset = getattr(expr, "offset", None)
+        if isinstance(offset, int) and offset == 28:
+            return True
+
+    # Obsolete path: reg16_t enum value (never matched VEX expressions)
+    reg_offset = getattr(expr, "reg", None)
+    if isinstance(reg_offset, int) and reg_offset == 5:
+        return True
+
+    return False
 
 
 def advance_ip16(emu, byte_count: int):

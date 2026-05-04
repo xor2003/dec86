@@ -5,11 +5,30 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
     CBinaryOp,
     CConstant,
+    CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+
+def _safe_assign_cfunc_statements_8616(codegen, new_root, old_root):
+    """Assign new_root to codegen.cfunc.statements preserving CStatements wrapper.
+
+    Multiple transform() functions return plain lists or single nodes instead of
+    CStatements, which corrupts all downstream passes. This helper ensures the
+    CStatements wrapper is always present.
+    """
+    from angr.analyses.decompiler.structured_codegen.c import CStatements
+
+    if isinstance(old_root, CStatements) and not isinstance(new_root, CStatements):
+        if isinstance(new_root, list):
+            new_root = CStatements(statements=new_root, codegen=codegen)
+        else:
+            new_root = CStatements(statements=[new_root], codegen=codegen)
+    codegen.cfunc.statements = new_root
+    return new_root
+
 
 __all__ = [
     "_structured_codegen_node_8616",
@@ -28,6 +47,26 @@ __all__ = [
     "_match_bp_stack_load_8616",
     "_match_bp_stack_dereference_8616",
 ]
+
+
+def _unwrap_statements_8616(node) -> tuple:
+    """Safely extract statement children from any C AST container node.
+
+    CStatements is not iterable in some angr versions.  This function
+    unwraps both plain lists and CStatements wrappers into a tuple.
+    """
+    if node is None:
+        return ()
+    if isinstance(node, CStatements):
+        return tuple(getattr(node, "statements", ()) or ())
+    if isinstance(node, (list, tuple)):
+        return tuple(node)
+    raw = getattr(node, "statements", ())
+    if isinstance(raw, CStatements):
+        return tuple(raw.statements)
+    if isinstance(raw, (list, tuple)):
+        return tuple(raw)
+    return ()
 
 
 def _structured_codegen_node_8616(value) -> bool:
@@ -210,6 +249,11 @@ def _replace_c_children_8616(node, transform) -> bool:
             else:
                 new_items.append(item)
         if list_changed:
+            # Preserve CStatements wrapper on nested 'statements' attributes.
+            # Setting a plain list breaks all downstream passes expecting .statements
+            # on structured nodes (e.g. CIfElse, CWhileLoop, CForLoop).
+            if attr == "statements" and isinstance(items, CStatements):
+                new_items = CStatements(statements=new_items, codegen=getattr(node, "codegen", None))
             setattr(node, attr, new_items)
             changed = True
 
@@ -266,6 +310,15 @@ def _iter_c_nodes_deep_8616(node, seen: set[int] | None = None):
                     for subitem in item:
                         if _structured_codegen_node_8616(subitem):
                             yield from _iter_c_nodes_deep_8616(subitem, seen)
+        elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+            # Guard: treat iterable non-list/tuple nodes the same way
+            # (e.g. CStatements may be iterable in some angr versions)
+            try:
+                for item in value:
+                    if _structured_codegen_node_8616(item):
+                        yield from _iter_c_nodes_deep_8616(item, seen)
+            except (TypeError, AttributeError):
+                pass
 
 
 def _global_memory_addr_8616(node) -> int | None:
