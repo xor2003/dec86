@@ -273,3 +273,128 @@ Forbidden:
 ## Final rule
 
 > If a fix makes output prettier without improving underlying semantics, it is wrong.
+
+---
+
+## Execution discipline
+
+Every semantic improvement must include a closed evidence loop:
+
+```text
+capture → normalize → classify → materialize → verify → report
+```
+
+A patch is incomplete if it only captures or transfers facts without proving that downstream output consumed them.
+
+Required counters for every new semantic lane:
+
+* `raw_fact_count`
+* `normalized_fact_count`
+* `classified_fact_count`
+* `materialized_count`
+* `failure_count`
+
+If `classified_fact_count > 0` and `materialized_count == 0`, the pipeline must fail.
+
+Silent fallback is forbidden unless explicitly enabled by a debug flag.
+
+Legacy fallback must never be used in normal acceptance runs.
+
+### Acceptance routine
+
+For each target function, report:
+
+```text
+function: 0x...
+raw_accesses:
+normalized_accesses:
+alias_facts:
+stack_facts:
+stack_bindings:
+stack_materialized:
+condition_facts:
+condition_materialized:
+validation_verdict:
+primary_blocker:
+```
+
+A change is accepted only if one of these is true:
+
+1. Output improves and validation remains honest
+2. Output refuses with a more precise blocker
+3. Diagnostic counters identify the next missing layer
+
+A change is rejected if:
+
+* Counters are missing
+* Fallback hides the failure
+* Facts are produced but not consumed
+* Output changes only in rewrite
+* Generated C is inspected to recover semantics
+
+### Agent fixing loop
+
+For every agent task:
+
+```text
+1. Pick exactly one target function.
+2. Record baseline counters.
+3. Change one layer only.
+4. Run the same target.
+5. Compare counters.
+6. Accept only if the counter moved at the intended layer.
+7. If output unchanged, identify first zero/bad counter.
+```
+
+Example counter-driven diagnosis:
+
+```text
+raw_accesses = 0
+→ fix lifter/context/cache
+
+raw_accesses > 0, normalized = 0
+→ fix stack_frame_recovery
+
+normalized > 0, stack_facts = 0
+→ fix alias classification
+
+stack_facts > 0, stack_materialized = 0
+→ fix lowering/materialization
+
+condition_facts > 0, condition_materialized = 0
+→ fix condition consumption
+
+materialized > 0, output still bad
+→ fix structuring/codegen integration
+```
+
+---
+
+### Materialization is not binding
+
+Creating metadata objects such as `StackVariableBinding`, `ConditionIR`, or alias facts is not materialization.
+
+Materialization means the downstream representation used for code generation has changed:
+
+- AIL expression replaced
+- SimVariable registered and used
+- C emission uses `local_*`, `arg_*`, or explicit condition
+
+Counters must distinguish:
+
+```text
+classified_count
+binding_count
+materialized_count
+```
+
+`binding_count > 0` and `materialized_count == 0` is failure, not progress.
+
+## Bottom line
+
+The agent followed the previous plan enough to create better evidence, but it still reports **evidence creation as success**. The next fix must force actual consumption:
+
+```text
+facts are not success
+bindings are not success
+only materialized output or precise blocker is success

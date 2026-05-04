@@ -46,7 +46,20 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _materialize_callsite_prototypes_8616,
     _materialize_callsite_stack_arguments_8616,
 )
+from angr_platforms.X86_16.decompiler_postprocess_flags import (
+    _prune_overwritten_flag_assignments_8616,
+    _prune_unused_flag_assignments_8616,
+    _rewrite_flag_bit_value_uses_8616,
+    _rewrite_flag_condition_pairs_8616,
+)
+from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
+from angr_platforms.X86_16.lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
+from angr_platforms.X86_16.lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+from angr_platforms.X86_16.lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
+from angr_platforms.X86_16.pipeline.contracts import assert_pipeline_contracts_8616
+from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import build_typed_stack_probe_return_facts_8616
 from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
 from angr_platforms.X86_16.lst_extract import LSTMetadata
@@ -877,6 +890,17 @@ def _decompile_function(
             binary_path,
             effective_cod_metadata,
         )
+        # ── PIPELINE CONTRACT GATE: enforce closed loop before C emission ──
+        try:
+            assert_pipeline_contracts_8616(dec.codegen)
+        except PipelineHardError:
+            raise  # let the caller handle it as a real failure
+
+        # ── FINAL EMISSION GATE: forbid ss << 4, stack[, etc. in final C ──
+        assert_final_c_quality_8616(
+            formatted,
+            function_addr=function_original_addr(function),
+        )
         setattr(project, "_inertia_partial_codegen_text", None)
         return "ok", formatted
     setattr(project, "_inertia_rewrite_cache", {})
@@ -926,6 +950,18 @@ def _decompile_function(
                 changed_local = True
         return changed_local
 
+    # ── FACT-BASED STACK LOWERING: transfer + materialize BEFORE old-style passes ──
+    # AGENTS rule: alias facts must be transferred and materialized early.
+    # If this produces bindings but no materialized variables, PipelineHardError raises.
+    if not getattr(dec.codegen, "_inertia_semantic_facts_transferred", False):
+        transfer_semantic_alias_facts_to_codegen_8616(project, dec.codegen)
+    alias_facts = getattr(dec.codegen, "_inertia_semantic_alias_facts", None)
+    if alias_facts:
+        try:
+            lower_stack_accesses_from_alias_facts_8616(dec.codegen, alias_facts)
+        except Exception:
+            pass  # errors raised as PipelineHardError from within the function
+
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
         lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
@@ -933,6 +969,12 @@ def _decompile_function(
         lambda: _attach_segment_register_names(dec.codegen, project),
         lambda: _attach_register_names(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
+        lambda: transfer_typed_conditions_to_codegen_8616(project, function.addr, dec.codegen),
+        lambda: _apply_typed_conditions_to_codegen_8616(project, dec.codegen),
+        lambda: _rewrite_flag_condition_pairs_8616(dec.codegen),
+        lambda: _rewrite_flag_bit_value_uses_8616(dec.codegen),
+        lambda: _prune_unused_flag_assignments_8616(project, dec.codegen),
+        lambda: _prune_overwritten_flag_assignments_8616(project, dec.codegen),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
         _run_callsite_stack_fact_pass,
@@ -1115,6 +1157,18 @@ def _decompile_function(
             marker_summary += ", ..."
         return "empty", f"Decompiler produced unresolved IR-shaped C ({marker_summary})."
     _remember_tail_validation_snapshot(dec.codegen)
+    # ── PIPELINE CONTRACT GATE: enforce closed loop before C emission ──
+    try:
+        assert_pipeline_contracts_8616(dec.codegen)
+    except PipelineHardError:
+        raise  # let the caller handle it as a real failure
+
+    # ── FINAL EMISSION GATE: forbid ss << 4, stack[, etc. in final C ──
+    assert_final_c_quality_8616(
+        formatted,
+        function_addr=function_original_addr(function),
+    )
+
     setattr(project, "_inertia_partial_codegen_text", None)
     return "ok", formatted
 
