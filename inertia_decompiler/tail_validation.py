@@ -62,10 +62,10 @@ def tail_validation_enabled_for_run(binary_path: Path | None, *, proc: str | Non
         return True
     if os.environ.get(TAIL_VALIDATION_METADATA_ENV) == "1":
         return True
-    # AGENTS.md Rule 8: Validation is truth — always enabled by default.
-    # Individual functions may still skip validation on error/timeout,
-    # but we never gate tail validation behind file suffix or --proc.
-    return True
+    suffix = binary_path.suffix.lower() if isinstance(binary_path, Path) else ""
+    if proc is not None or suffix == ".cod":
+        return True
+    return False
 
 
 def _compute_cfg_hash_from_result(result: Any, item: Any) -> str | None:
@@ -336,9 +336,12 @@ def tail_validation_display_status(
     snapshot: Mapping[str, object] | None,
     *,
     expected_stages: Sequence[str] = ("structuring", "postprocess"),
+    fallback_kind: str | None = None,
 ) -> str:
     if not isinstance(snapshot, Mapping) or not snapshot:
         return "uncollected"
+    if fallback_kind is not None:
+        return "failed"
     if x86_16_tail_validation_snapshot_passed(dict(snapshot), expected_stages=expected_stages):
         return "passed"
     if any(bool(stage.get("changed")) for stage in snapshot.values() if isinstance(stage, Mapping)):

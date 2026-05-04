@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 # AUTO-GENERATED split from cli_runtime_shared.py
 
 from __future__ import annotations
@@ -1756,7 +1754,7 @@ def main(argv: list[str] | None = None) -> int:
             status=direct_result.status,
             failure_stage=getattr(direct_result, "failure_stage", None),
             fallback_kind="direct_addr",
-            tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation),
+            tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation, fallback_kind="direct_addr"),
             artifact_path=f"{func.addr:#x}:{func.name}",
         )
         print(f"[dbg] direct failure family: {direct_failure_family_snapshot.label()}")
@@ -2382,6 +2380,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     ):
         function_cfg_pairs = _rank_function_cfg_pairs_for_display(project, function_cfg_pairs)
+
     if (
         args.addr is None
         and args.binary.suffix.lower() == ".exe"
@@ -2671,7 +2670,7 @@ def main(argv: list[str] | None = None) -> int:
             status=getattr(result, "status", None),
             failure_stage=getattr(result, "failure_stage", None),
             fallback_kind="file_sweep",
-            tail_validation_verdict=_tail_validation_display_status(getattr(result, "tail_validation", None)),
+            tail_validation_verdict=_tail_validation_display_status(getattr(result, "tail_validation", None), fallback_kind="file_sweep"),
             artifact_path=f"{function.addr:#x}:{function.name}",
         )
         print(f"/* failure family: {failure_family_snapshot.label()} */")
