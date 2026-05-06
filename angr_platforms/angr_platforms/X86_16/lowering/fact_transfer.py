@@ -79,37 +79,63 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
     from ..alias.alias_model_impl import alias_facts_for_ir_address_8616, AliasFailure
     from ..semantics.evidence_cache import get_accesses_for_function as _evidence_get_accesses
     from ..semantics.stack_frame_recovery import (
+        StackFrameInfo8616,
         assert_no_unresolved_stable_ss_before_alias_8616,
         detect_stack_frame_8616,
+        _gather_ir_artifacts_from_function_blocks,
+        _detect_sp_proven_delta_from_blocks,
         normalize_semantic_accesses_8616,
     )
 
-    # ── Ensure evidence cache is populated with correct function key ──
-    # Blocks were lifted during CFG construction without function context.
-    # Re-lift them now with function context set so evidence_cache gets
-    # the correct function_addr key.
-    _set_function_context(function_addr)
-    try:
-        kb = getattr(project, "kb", None) if project is not None else None
-        if kb is not None:
-            func = kb.functions.function(addr=function_addr, create=False)
-            if func is not None:
-                block_addrs = sorted(getattr(func, "block_addrs_set", set()) or set())
-                for ba in block_addrs:
-                    try:
-                        project.factory.block(ba, opt_level=0)
-                    except Exception:
-                        pass
-    finally:
-        _clear_function_context()
+    # ── Migrate block-keyed accesses → function-keyed ──
+    # During initial CFG construction (when function context is unknown),
+    # accesses are recorded by block address.  Now that we know which
+    # blocks belong to this function, migrate them.
+    from ..semantics.evidence_cache import (
+        get_accesses_for_block,
+        migrate_block_accesses_to_function,
+    )
+    kb = getattr(project, "kb", None) if project is not None else None
+    if kb is not None:
+        func = kb.functions.function(addr=function_addr, create=False)
+        if func is not None:
+            block_addrs = sorted(getattr(func, "block_addrs_set", set()) or set())
+            total_migrated = 0
+            for ba in block_addrs:
+                n = migrate_block_accesses_to_function(ba, function_addr)
+                total_migrated += n
+            if total_migrated > 0:
+                import sys
+                sys.stderr.write(
+                    f"[MIGRATE] 0x{function_addr:x}: migrated {total_migrated} "
+                    f"block-keyed accesses from {len(block_addrs)} blocks\n"
+                )
+                sys.stderr.flush()
 
     # Read raw semantic accesses from canonical evidence_cache (function-keyed)
     raw_accesses = _evidence_get_accesses(function_addr)
 
+    # ── Collect IR artifacts for BP frame detection (VEX blocks, NOT text) ──
+    ir_artifacts = _gather_ir_artifacts_from_function_blocks(project, function_addr)
+
     frame = detect_stack_frame_8616(
         function_addr=function_addr,
+        ir_artifacts=ir_artifacts,
         semantic_accesses=raw_accesses,
     )
+
+    # ── SP delta: detect proven frame size from VEX ──
+    proven_sp_delta = _detect_sp_proven_delta_from_blocks(project, function_addr)
+    if proven_sp_delta is not None and frame.uses_bp_frame:
+        frame = StackFrameInfo8616(
+            function_addr=function_addr,
+            uses_bp_frame=True,
+            bp_established=True,
+            sp_delta_known=True,
+            frame_base="bp",
+            frame_kind="bp",
+            evidence=tuple(frame.evidence) + (f"proven_sp_delta={proven_sp_delta}",),
+        )
 
     normalized = normalize_semantic_accesses_8616(raw_accesses, frame)
     assert_no_unresolved_stable_ss_before_alias_8616(normalized)
@@ -207,11 +233,6 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
         codegen._inertia_semantic_facts_transferred = True
         return 0
 
-    # Read raw semantic access counts from canonical evidence_cache
-    from ..semantics.evidence_cache import get_accesses_for_function as _evidence_get_accesses_raw
-    raw_accesses = _evidence_get_accesses_raw(func_addr)
-    raw_count = len(raw_accesses)
-
     # Only allow legacy fallback if explicitly enabled by debug flag.
     # Silent fallback is FORBIDDEN — it makes regressions invisible.
     allow_legacy = bool(getattr(project, "_inertia_allow_legacy_fact_fallback", False))
@@ -226,6 +247,12 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
             codegen._inertia_semantic_fact_transfer_fallback_used = True
         else:
             raise
+
+    # Read raw semantic access counts from canonical evidence_cache
+    # MUST be read AFTER collect_normalized (which re-lifts blocks and populates the cache).
+    from ..semantics.evidence_cache import get_accesses_for_function as _evidence_get_accesses_raw
+    raw_accesses = _evidence_get_accesses_raw(func_addr)
+    raw_count = len(raw_accesses)
 
     codegen._inertia_semantic_alias_facts = facts + failures
     codegen._inertia_semantic_facts_transferred = True

@@ -58,9 +58,18 @@ class SemanticLaneState:
         """Raise PipelineHardError if the lane is broken.
 
         Rules:
+        - raw > 0 && normalized == 0 → HARD error (IR normalization failure)
         - classified > 0 && materialized == 0 → HARD error
         - bound > 0 && materialized == 0 → HARD error (bindings are not materialization)
         """
+        if self.raw > 0 and self.normalized == 0:
+            raise PipelineHardError(
+                f"{self.name}: {self.raw} raw accesses captured but 0 normalized "
+                f"(classified={self.classified} bound={self.bound} "
+                f"materialized={self.materialized})",
+                layer=layer or "pipeline_contract",
+            )
+
         if self.classified > 0 and self.materialized == 0:
             raise PipelineHardError(
                 f"{self.name}: {self.classified} facts classified but 0 materialized "
@@ -91,7 +100,9 @@ class SemanticLaneState:
 
     @property
     def is_closed(self) -> bool:
-        """True if the lane has no un-materialized facts."""
+        """True if the lane has no un-materialized facts and all raw inputs were normalized."""
+        if self.raw > 0 and self.normalized == 0:
+            return False
         if self.classified > 0 and self.materialized == 0:
             return False
         if self.bound > 0 and self.materialized == 0:

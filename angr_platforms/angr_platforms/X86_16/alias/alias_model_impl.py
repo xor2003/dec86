@@ -374,10 +374,10 @@ def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | Alias
         #   1. Base contains "bp"
         #   2. Status is STABLE
         #   3. Offset is an integer (not symbolic)
-        has_bp_base = addr.base == ("bp",)
+        has_stack_base = addr.base in {("bp",), ("sp",)}
         has_stable_offset = isinstance(addr.offset, int) and addr.status == AddressStatus.STABLE
 
-        if is_stack_address_8616(addr) and has_bp_base and has_stable_offset:
+        if is_stack_address_8616(addr) and has_stack_base and has_stable_offset:
             return _stack_storage_facts_for_segmented_address_8616(
                 "ss",
                 addr.offset,

@@ -94,25 +94,42 @@ class DataAccess(Hardware):
 
         if isinstance(addr, IRAddress):
             semantic_log.append((mode, addr))
-            # Write to canonical evidence_cache (function-keyed, no sys.modules hack)
-            # Use module-level context set by fact_transfer before block lifting,
-            # NOT the emulator instance which only knows instruction address.
+            # Write to canonical evidence_cache.
             #
-            # During initial CFG construction, context is None — silently skip.
-            # The collection phase (fact_transfer.py) re-lifts blocks with
-            # set_current_function_addr() active, which populates evidence_cache.
-            from .semantics.evidence_cache import get_current_function_addr, record_access
-            func_addr = get_current_function_addr()
-            if not isinstance(func_addr, int):
-                # Diagnostic: count uncollected accesses (only in debug mode)
-                _uncollected = getattr(self, "_inertia_uncollected_accesses", 0)
-                self._inertia_uncollected_accesses = _uncollected + 1
-                return
-            record_access(
-                function_addr=func_addr,
-                mode=mode,
-                addr=addr,
+            # During initial CFG construction, function context is unknown.
+            # Record by BLOCK address (available from the emulator's lifter/irsb).
+            # The collection phase (fact_transfer.py) migrates block→function
+            # via migrate_block_accesses_to_function().
+            #
+            # When function context IS known (re-lift), record directly by function.
+            from .semantics.evidence_cache import (
+                get_current_function_addr,
+                get_accesses_for_block,
+                record_access,
+                record_access_by_block,
             )
+            func_addr = get_current_function_addr()
+            if isinstance(func_addr, int):
+                record_access(
+                    function_addr=func_addr,
+                    mode=mode,
+                    addr=addr,
+                )
+            else:
+                # No function context — record by block address.
+                # The lifter sets _inertia_current_block_addr on the emulator
+                # before lifting each block (lift_86_16.py line ~98/115).
+                block_addr = getattr(self, "_inertia_current_block_addr", None)
+                if isinstance(block_addr, int):
+                    record_access_by_block(
+                        block_addr=block_addr,
+                        mode=mode,
+                        addr=addr,
+                    )
+                else:
+                    # No block address either — truly uncollected
+                    _uncollected = getattr(self, "_inertia_uncollected_accesses", 0)
+                    self._inertia_uncollected_accesses = _uncollected + 1
 
     def _resolve_memory_operand(self, seg, addr, width_bits: int, mode: int) -> ResolvedMemoryOperand:
         operand = self._resolved_segment_operand(seg, addr, width_bits)

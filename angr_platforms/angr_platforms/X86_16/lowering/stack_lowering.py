@@ -53,8 +53,13 @@ def run_stack_lowering_pass_8616(
     changed = False
     for _ in range(max(max_rounds, 1)):
         round_changed = False
-        if codegen is not None and lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
-            record_stable_ss_lowering_replacement_8616(codegen)
+        # ── Legacy SS linear lowering ──
+        # This path does (seg << 4) + offset arithmetic — forbidden by AGENTS.md
+        # rule "never flatten memory".  Disabled in normal path; kept behind
+        # debug flag for emergency compatibility testing.
+        if codegen is not None and getattr(codegen, "_inertia_allow_legacy_ss_linear_lowering", False):
+            if lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
+                record_stable_ss_lowering_replacement_8616(codegen)
         if codegen is not None and lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
             record_stable_ss_lowering_replacement_8616(codegen)
             round_changed = True

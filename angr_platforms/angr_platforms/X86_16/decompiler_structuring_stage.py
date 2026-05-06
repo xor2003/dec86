@@ -288,15 +288,20 @@ def _structuring_codegen_8616(project, codegen) -> bool:
         codegen._inertia_ss_stack_lowered = True
 
     # ── Hard contract gate: classified > 0 && materialized == 0 → PipelineHardError ──
+    # PipelineHardError MUST propagate — never silently caught.
+    # Only non-fatal errors (import, attribute) are logged and cause structuring abort.
+    from .pipeline.contracts import assert_pipeline_contracts_8616
+    from .pipeline.errors import PipelineHardError
     try:
-        from .pipeline.contracts import assert_pipeline_contracts_8616
         assert_pipeline_contracts_8616(codegen)
+    except PipelineHardError:
+        raise
     except Exception as e:
         codegen._inertia_structuring_failed = True
         codegen._inertia_structuring_failure_pass = "pipeline_contracts"
         codegen._inertia_structuring_failure_error = str(e)
         logging.getLogger(__name__).warning(
-            "Pipeline contract violation in %s: %s",
+            "Pipeline contract gate setup error in %s: %s",
             getattr(codegen, "cfunc", None) or "unknown",
             e,
         )

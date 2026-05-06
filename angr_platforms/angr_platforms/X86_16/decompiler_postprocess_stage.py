@@ -30,6 +30,7 @@ from .lowering.ss_bp_substitution import (
     apply_stack_variable_bindings_to_c_text,
     substitute_ss_bp_dereferences_with_variables,
 )
+from .pipeline.contracts import assert_pipeline_contracts_8616
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
 from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
 from .tail_validation import (
@@ -385,6 +386,18 @@ def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
         finally:
             codegen._inertia_semantic_facts_transferred = True
 
+    # ── Materialize stack facts into real SimStackVariables ──
+    # This must run AFTER fact transfer and BEFORE the invariant gate.
+    # AGENTS rule: facts are not success, only materialized output is success.
+    if not getattr(codegen, "_inertia_stack_lowered_from_facts", False):
+        alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+        if isinstance(alias_facts, list) and alias_facts:
+            try:
+                lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+            except Exception as ex:
+                setattr(codegen, "_inertia_stack_lowering_error", str(ex))
+        codegen._inertia_stack_lowered_from_facts = True
+
     # Transfer typed conditions from emulator → codegen
     if not getattr(codegen, "_inertia_typed_conditions_transferred", False):
         cfunc = getattr(codegen, "cfunc", None)
@@ -422,6 +435,11 @@ def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
 
     codegen._inertia_invariant_report = report
     codegen._inertia_invariant_checked = True
+
+    # ── HARD CONTRACT GATE: abort if facts exist but aren't materialized ──
+    # This MUST run after lowering and before any output is emitted.
+    # If stack_facts > 0 and stack_materialized == 0, raise PipelineHardError.
+    assert_pipeline_contracts_8616(codegen)
 
     if report.rewrite_blocked:
         codegen._inertia_rewrite_failed = True
