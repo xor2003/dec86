@@ -14,7 +14,12 @@ from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
 from .decompiler_postprocess_flags import _c_expr_uses_register_8616
-from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _structured_codegen_node_8616
+from .decompiler_postprocess_utils import (
+    _iter_c_nodes_deep_8616,
+    _same_c_expression_8616,
+    _structured_codegen_node_8616,
+)
+from .tail_validation_fingerprint import _expr_fingerprint
 
 __all__ = ["_rewrite_decoded_jcc_conditions_8616"]
 
@@ -236,6 +241,15 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     and _c_expr_uses_register_8616(cond, flags_offset)
                 ):
                     decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
+                    if decoded is not None:
+                        # Validation truth boundary: never replace a flags-based guard
+                        # with a self-compare such as x > x. That indicates the local
+                        # decode collapsed distinct operands into the same expression.
+                        if (
+                            _same_c_expression_8616(decoded.lhs, decoded.rhs)
+                            or _expr_fingerprint(decoded.lhs, project) == _expr_fingerprint(decoded.rhs, project)
+                        ):
+                            decoded = None
                     if decoded is not None:
                         new_cond = CBinaryOp(
                             decoded.op,

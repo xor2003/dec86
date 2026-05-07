@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from angr.ailment.expression import BasePointerOffset
 
 from inertia_decompiler.runtime_support import (
+    install_angr_basepointeroffset_codegen_guard,
     install_angr_peephole_expr_bitwidth_guard,
     install_angr_variable_recovery_binop_sub_size_guard,
 )
@@ -134,6 +135,25 @@ class _FakeRichR:
         self.data = data
         self.typevar = typevar
         self.type_constraints = type_constraints or set()
+
+
+class _FakeStructuredCodegen:
+    def _handle(self, node, **kwargs):  # noqa: ANN001
+        raise TypeError(type(node).__name__)
+
+    def _handle_Expr_StackBaseOffset(self, node, **kwargs):  # noqa: ANN001
+        return ("stackbase", node.offset, kwargs.get("lvalue", False))
+
+
+def test_basepointeroffset_codegen_guard_reuses_stackbase_handler():
+    original = install_angr_basepointeroffset_codegen_guard(_FakeStructuredCodegen)
+    try:
+        codegen = _FakeStructuredCodegen()
+        result = codegen._handle(BasePointerOffset(None, 16, "stack_base", -8), lvalue=True)
+    finally:
+        _FakeStructuredCodegen._handle = original
+
+    assert result == ("stackbase", -8, True)
 
 
 class _FakeState:

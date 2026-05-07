@@ -306,8 +306,16 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
     from ..alias.alias_model_impl import AliasFailure, AliasStorageFacts
 
     failures: list[str] = []
+    provisional_count = 0
     for fact in semantic_alias_facts:
         if isinstance(fact, AliasFailure):
+            # PROVISIONAL SS addresses (push/pop/call/ret traffic) are stack
+            # activity, not stack variables.  Per AGENTS rule: stack activity
+            # may exist while stack_facts = 0 — this is valid and must not be
+            # treated as failure.
+            if "provisional" in fact.reason.lower():
+                provisional_count += 1
+                continue
             failures.append(
                 f"SS offset={fact.offset} reason={fact.reason}"
             )
@@ -420,3 +428,19 @@ def _check_condition_facts_consumed(codegen: Any, report: InvariantReport) -> No
                 detail=f"condition_facts={condition_facts}, condition_materialized={materialized}",
             )
         )
+
+
+def classify_stack_blocker_8616(diag) -> str | None:
+    """Classify stack-materialization blockers from diagnostics.
+
+    Returns a human-readable blocker label, or None if no hard blocker is found.
+    This is the canonical blocker taxonomy for stack lowering.
+    """
+    if diag.get("ss_stack_accesses", 0) > 0 and diag.get("stack_facts", 0) == 0:
+        if diag.get("bp_stable_accesses", 0) == 0:
+            return "stack activity detected but no stable frame"
+
+    if diag.get("stack_facts", 0) > 0 and diag.get("stack_materialized", 0) == 0:
+        return "stack facts not materialized"
+
+    return None

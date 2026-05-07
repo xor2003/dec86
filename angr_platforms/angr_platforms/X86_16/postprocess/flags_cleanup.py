@@ -62,6 +62,22 @@ def _c_variable_register_offset_8616(node) -> int | None:
     return None
 
 
+def _flags_register_offset_8616(codegen) -> int | None:
+    project = getattr(codegen, "project", None)
+    arch = getattr(project, "arch", None)
+    if arch is None:
+        return None
+    reg = arch.registers.get("flags")
+    return None if reg is None else int(reg[0])
+
+
+def _expr_uses_raw_flags_register_8616(expr, codegen) -> bool:
+    flags_offset = _flags_register_offset_8616(codegen)
+    if flags_offset is None:
+        return False
+    return _c_expr_uses_register_8616(expr, flags_offset)
+
+
 def _extract_flag_test_info_8616(node):
     invert = False
     while True:
@@ -236,6 +252,8 @@ def _rewrite_flag_bit_value_expr_8616(node, assignments, codegen):
                 continue
             predicate = _extract_flag_predicate_from_expr_8616(assign_stmt.rhs, bit)
             if predicate is None:
+                return expr
+            if _c_expr_uses_var_8616(predicate, flag_var) or _expr_uses_raw_flags_register_8616(predicate, codegen):
                 return expr
             changed = True
             return predicate
@@ -699,7 +717,11 @@ def _rewrite_flag_condition_expr_8616(node, flag_var, flag_expr, codegen):
         if info is None or not _same_c_expression_8616(info[0], flag_var):
             return expr
         rewritten = _recover_ordering_condition_from_flag_mask_8616(flag_expr, info, codegen)
-        if rewritten is None:
+        if (
+            rewritten is None
+            or _c_expr_uses_var_8616(rewritten, flag_var)
+            or _expr_uses_raw_flags_register_8616(rewritten, codegen)
+        ):
             return expr
         changed = True
         return rewritten

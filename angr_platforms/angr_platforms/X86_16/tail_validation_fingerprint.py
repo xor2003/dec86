@@ -86,20 +86,46 @@ def _stack_word_pair_fingerprint(node, project) -> str | None:
     if not isinstance(node, CBinaryOp) or node.op != "Or":
         return None
     left, right = node.lhs, node.rhs
-    deref_low = _extract_deref_node(left)
-    deref_high = _extract_deref_scaled_node(right, scale=256)
-    if deref_low is None or deref_high is None:
-        deref_low = _extract_deref_node(right)
-        deref_high = _extract_deref_scaled_node(left, scale=256)
-    if deref_low is None or deref_high is None:
-        return None
-    low_offset = _match_bp_stack_dereference_8616(deref_low, project)
-    high_offset = _match_bp_stack_dereference_8616(deref_high, project)
+    low_offset = _stack_byte_offset_from_expr_8616(left, project)
+    high_offset = _stack_byte_offset_from_scaled_expr_8616(right, project, scale=256)
+    if not isinstance(low_offset, int) or not isinstance(high_offset, int):
+        low_offset = _stack_byte_offset_from_expr_8616(right, project)
+        high_offset = _stack_byte_offset_from_scaled_expr_8616(left, project, scale=256)
     if not isinstance(low_offset, int) or not isinstance(high_offset, int):
         return None
     if high_offset != low_offset + 1:
         return None
     return f"stack:{low_offset:+#x}"
+
+
+def _stack_byte_offset_from_expr_8616(node, project) -> int | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    if isinstance(node, CVariable):
+        variable = getattr(node, "variable", None)
+        offset = getattr(variable, "offset", None)
+        if isinstance(offset, int):
+            return offset
+    if isinstance(node, CUnaryOp) and node.op == "Dereference":
+        return _match_bp_stack_dereference_8616(node, project)
+    return None
+
+
+def _stack_byte_offset_from_scaled_expr_8616(node, project, *, scale: int) -> int | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    if not isinstance(node, CBinaryOp):
+        return None
+    if node.op == "Mul":
+        if _c_constant_int_value(node.lhs) == scale:
+            return _stack_byte_offset_from_expr_8616(node.rhs, project)
+        if _c_constant_int_value(node.rhs) == scale:
+            return _stack_byte_offset_from_expr_8616(node.lhs, project)
+    if node.op == "Shl":
+        shift_bits = _c_constant_int_value(node.rhs)
+        if shift_bits == 8:
+            return _stack_byte_offset_from_expr_8616(node.lhs, project)
+    return None
 
 
 def _extract_deref_node(node):

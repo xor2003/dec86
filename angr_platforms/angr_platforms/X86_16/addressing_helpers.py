@@ -246,7 +246,21 @@ class ResolvedMemoryOperand:
 
         # Integer offset
         if isinstance(offset_raw, int):
-            # SS:int is NOT a stable stack slot — only SS:BP+const is
+            # IMPORTANT:
+            # SS memory activity is not automatically a stack variable.
+            #
+            # The following are intentionally PROVISIONAL:
+            #   - push/pop traffic
+            #   - transient SP movement
+            #   - call frame setup
+            #   - unresolved symbolic SP expressions
+            #
+            # Only proven frame-relative accesses
+            # (BP+const or proven SP+stable_delta+const)
+            # may become STABLE stack slots.
+            #
+            # AGENTS rule:
+            # stack activity != materializable variable
             if space == MemSpace.SS:
                 if not base:
                     base = ("ss",)

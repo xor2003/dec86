@@ -34,13 +34,16 @@ def build_typed_stack_probe_return_facts_8616(codegen) -> dict[int, TypedStackPr
             continue
         if getattr(summary, "helper_return_state", None) != "stack_address":
             continue
-        if getattr(summary, "helper_return_address_kind", None) != "stack":
+        address_kind = getattr(summary, "helper_return_address_kind", None)
+        if address_kind in {None, "none"}:
+            address_kind = "stack"
+        if address_kind != "stack":
             continue
         if getattr(summary, "helper_return_space", None) != "ss":
             continue
         width = getattr(summary, "helper_return_width", None)
         if not isinstance(width, int) or width <= 0:
-            continue
+            width = 2
         facts[call_node_id] = TypedStackProbeReturnFact8616(
             call_node_id=call_node_id,
             segment_space="ss",

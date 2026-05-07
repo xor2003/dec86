@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import replace
 import re
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CFunctionCall, CTypeCast, CUnaryOp
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypeShort
-from angr.sim_variable import SimMemoryVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
 from .analysis_helpers import patch_direct_call_sites
 from .cod_extract import extract_cod_proc_metadata
@@ -24,8 +25,10 @@ from .decompiler_postprocess_utils import (
     _match_bp_stack_dereference_8616,
     _match_real_mode_linear_expr_8616,
     _match_real_mode_segmented_store_shape_8616,
+    _replace_c_children_8616,
     _segment_reg_name_8616,
     _match_segmented_dereference_8616,
+    _same_c_expression_8616,
 )
 from .stack_probe_fact_trace import (
     record_callsite_summary_fact_8616,
@@ -272,6 +275,46 @@ def _call_name_is_unknown_8616(name: str | None) -> bool:
     return name is None or name.startswith("sub_") or name == "CallReturn"
 
 
+def _call_node_matches_summary_8616(project, node, summary) -> bool:
+    if node is None or summary is None:
+        return False
+    call_name = _call_node_name_8616(node)
+    if bool(getattr(summary, "stack_probe_helper", False)) and _is_stack_probe_call_name_8616(call_name):
+        return True
+
+    target_addr = getattr(summary, "target_addr", None)
+    if isinstance(target_addr, int):
+        for candidate_addr in _candidate_target_addrs_from_call_8616(node):
+            if candidate_addr == target_addr:
+                return True
+        for candidate_name in (
+            _sidecar_label_for_target_8616(project, target_addr),
+            normalize_callee_name_8616(getattr(_lookup_callee_function_8616(project, target_addr), "name", None)),
+        ):
+            if isinstance(candidate_name, str) and candidate_name == call_name:
+                return True
+    return False
+
+
+def _source_name_matches_target_8616(project, target_addr: int | None, expected_source_name: str | None) -> bool:
+    if not isinstance(expected_source_name, str) or not expected_source_name:
+        return False
+    normalized_expected = normalize_callee_name_8616(expected_source_name)
+    if not isinstance(normalized_expected, str):
+        return False
+    if not isinstance(target_addr, int):
+        return True
+    for candidate_name in (
+        _sidecar_label_for_target_8616(project, target_addr),
+        normalize_callee_name_8616(getattr(_lookup_callee_function_8616(project, target_addr), "name", None)),
+    ):
+        if isinstance(candidate_name, str) and candidate_name == normalized_expected:
+            return True
+    functions = getattr(getattr(project, "kb", None), "functions", None)
+    function = getattr(functions, "function", lambda **_: None)(name=normalized_expected, create=False)
+    return getattr(function, "addr", None) == target_addr
+
+
 def _align_cod_call_names_8616(project, codegen) -> bool:
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
@@ -474,7 +517,26 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
             unmatched_callsites.append(callsite_addr)
 
     remaining_nodes.extend(node for node in call_nodes if id(node) not in used_node_ids and node not in remaining_nodes)
-    ordered_pairs.extend(zip(remaining_nodes, unmatched_callsites))
+    still_unmatched_callsites: list[int] = []
+    if remaining_nodes and unmatched_callsites:
+        available_nodes = list(remaining_nodes)
+        for callsite_addr in unmatched_callsites:
+            summary = summarize_x86_16_callsite(function, callsite_addr)
+            matched_index = None
+            if summary is not None:
+                for idx, node in enumerate(available_nodes):
+                    if _call_node_matches_summary_8616(project, node, summary):
+                        matched_index = idx
+                        break
+            if matched_index is None:
+                still_unmatched_callsites.append(callsite_addr)
+                continue
+            node = available_nodes.pop(matched_index)
+            ordered_pairs.append((node, callsite_addr))
+            used_node_ids.add(id(node))
+        remaining_nodes = available_nodes
+    if len(remaining_nodes) == 1 and len(still_unmatched_callsites) == 1:
+        ordered_pairs.append((remaining_nodes[0], still_unmatched_callsites[0]))
 
     for node, callsite_addr in ordered_pairs:
         summary = summarize_x86_16_callsite(function, callsite_addr)
@@ -511,6 +573,7 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         if (
             isinstance(expected_source_name, str)
             and callee_func is not None
+            and _source_name_matches_target_8616(project, target_addr, expected_source_name)
             and (
                 callee_name is None
                 or callee_name.startswith("sub_")
@@ -526,6 +589,7 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         elif (
             callee_name is None
             and isinstance(expected_source_name, str)
+            and _source_name_matches_target_8616(project, target_addr, expected_source_name)
             and getattr(node, "callee_target", None) != expected_source_name
         ):
             node.callee_target = expected_source_name
@@ -653,6 +717,164 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
 
     def _all_arg_exprs_are_non_segment_registers(args) -> bool:
         return bool(args) and all(not _is_segment_register_value_expr(arg) for arg in args)
+
+    def _is_plain_register_value_expr(expr) -> bool:
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        if not isinstance(node, structured_c.CVariable):
+            return False
+        variable = getattr(node, "variable", None)
+        if not isinstance(variable, SimRegisterVariable):
+            return False
+        return not _is_segment_register_value_expr(node)
+
+    def _plain_register_expr_key(expr):
+        if not _is_plain_register_value_expr(expr):
+            return None
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        variable = getattr(node, "variable", None)
+        if variable is None:
+            return None
+        return (
+            getattr(variable, "reg", None),
+            getattr(variable, "size", None),
+            getattr(variable, "name", None) or getattr(node, "name", None),
+        )
+
+    def _is_c_ast_node(value) -> bool:
+        return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
+
+    def _clone_c_ast_tree(node):
+        if not _is_c_ast_node(node):
+            return node
+        cloned = copy(node)
+        for attr in (
+            "lhs",
+            "rhs",
+            "expr",
+            "operand",
+            "condition",
+            "cond",
+            "iftrue",
+            "iffalse",
+        ):
+            if not hasattr(cloned, attr):
+                continue
+            value = getattr(cloned, attr, None)
+            if _is_c_ast_node(value):
+                setattr(cloned, attr, _clone_c_ast_tree(value))
+        for attr in ("args", "operands"):
+            if not hasattr(cloned, attr):
+                continue
+            items = getattr(cloned, attr, None)
+            if not isinstance(items, (list, tuple)):
+                continue
+            rebuilt = [_clone_c_ast_tree(item) if _is_c_ast_node(item) else item for item in items]
+            setattr(cloned, attr, tuple(rebuilt) if isinstance(items, tuple) else rebuilt)
+        return cloned
+
+    def _resolve_recent_value_assignment(expr, statements_prefix: list):
+        if not _is_plain_register_value_expr(expr):
+            return expr
+        for stmt in reversed(tuple(statements_prefix)):
+            for assignment in reversed(_iter_assignment_nodes(stmt)):
+                lhs, rhs = _assignment_lhs_rhs(assignment)
+                if lhs is None or rhs is None:
+                    continue
+                if not _same_c_expression_8616(lhs, expr):
+                    continue
+                if _assignment_lhs_writes_memory(lhs) or _is_segment_register_value_expr(rhs):
+                    return None
+                if _same_c_expression_8616(rhs, expr):
+                    return None
+                return rhs
+        return None
+
+    def _expr_contains_plain_register_uses(expr) -> bool:
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            while isinstance(node, CTypeCast):
+                node = node.expr
+            if _is_plain_register_value_expr(node):
+                return True
+            for attr in ("lhs", "rhs", "operand", "expr", "condition", "iftrue", "iffalse"):
+                child = getattr(node, attr, None)
+                if child is not None:
+                    stack.append(child)
+        return False
+
+    def _resolve_register_carriers_in_expr(expr, statements_prefix: list, seen_keys: set | None = None):
+        if not _expr_contains_plain_register_uses(expr):
+            return expr
+
+        if seen_keys is None:
+            seen_keys = set()
+        rewritten = _clone_c_ast_tree(expr)
+        failed = False
+
+        def transform(node):
+            nonlocal failed
+            if failed or not _is_plain_register_value_expr(node):
+                return node
+            key = _plain_register_expr_key(node)
+            if key is not None and key in seen_keys:
+                failed = True
+                return node
+            resolved = _resolve_recent_value_assignment(node, statements_prefix)
+            if resolved is None:
+                failed = True
+                return node
+            next_seen = set(seen_keys)
+            if key is not None:
+                next_seen.add(key)
+            resolved = _resolve_register_carriers_in_expr(resolved, statements_prefix, next_seen)
+            if resolved is None or _expr_contains_plain_register_uses(resolved):
+                failed = True
+                return node
+            return _clone_c_ast_tree(resolved)
+
+        new_root = transform(rewritten)
+        if new_root is not rewritten:
+            rewritten = new_root
+        if failed:
+            return None
+        _replace_c_children_8616(rewritten, transform)
+        if failed or _expr_contains_plain_register_uses(rewritten):
+            return None
+        return rewritten
+
+    def _normalize_materialized_call_args(rhs_values: list, source_indices: list[int], statements: list):
+        if not rhs_values:
+            return None
+        if all(
+            not _is_segment_register_value_expr(rhs) and not _expr_contains_plain_register_uses(rhs)
+            for rhs in rhs_values
+        ):
+            return list(rhs_values)
+        normalized = []
+        if len(source_indices) != len(rhs_values):
+            source_indices = [-1] * len(rhs_values)
+        for rhs, source_idx in zip(rhs_values, source_indices):
+            if _is_segment_register_value_expr(rhs):
+                return None
+            if not _expr_contains_plain_register_uses(rhs):
+                normalized.append(rhs)
+                continue
+            prefix = statements[:source_idx] if isinstance(source_idx, int) and source_idx >= 0 else statements
+            resolved = _resolve_register_carriers_in_expr(rhs, prefix)
+            if resolved is None:
+                return None
+            expr = _clone_c_ast_tree(resolved)
+            if _is_segment_register_value_expr(expr) or _expr_contains_plain_register_uses(expr):
+                return None
+            normalized.append(expr)
+        return normalized
 
     def _prototype_arg_count(call) -> int | None:
         callee_func = getattr(call, "callee_func", None)
@@ -788,10 +1010,46 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     return True
             return False
 
+        def _contains_dirty_expr(term) -> bool:
+            nodes = (term, *_iter_c_nodes_deep_8616(term))
+            for raw_node in nodes:
+                if raw_node.__class__.__name__ == "CDirtyExpression":
+                    return True
+            return False
+
+        def _is_virtual_dirty_expr(term) -> bool:
+            dirty = getattr(term, "dirty", None)
+            if isinstance(dirty, str):
+                return dirty.startswith("vvar_") or dirty.startswith("tmp_") or dirty.startswith("ir_")
+            if dirty is None:
+                return False
+            varid = getattr(dirty, "varid", None)
+            if isinstance(varid, int):
+                return True
+            name = getattr(dirty, "name", None)
+            return isinstance(name, str) and (
+                name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_")
+            )
+
+        def _contains_unresolved_dirty_expr(term) -> bool:
+            nodes = (term, *_iter_c_nodes_deep_8616(term))
+            for raw_node in nodes:
+                if raw_node.__class__.__name__ != "CDirtyExpression":
+                    continue
+                if _is_virtual_dirty_expr(raw_node):
+                    continue
+                return True
+            return False
+
         for assignment in reversed(_iter_assignment_nodes(stmt)):
             lhs, rhs = _assignment_lhs_rhs(assignment)
             if lhs is None:
                 continue
+            if _contains_unresolved_dirty_expr(lhs):
+                continue
+            seg_name, _offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
+            if seg_name == "ss":
+                return rhs
             if _match_bp_stack_dereference_8616(lhs, project, codegen) is not None:
                 return rhs
             seg_name, _linear = _match_segmented_dereference_8616(lhs, project)
@@ -812,7 +1070,17 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         if lhs is None or fact is None:
             return False
         seg_name, _offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
-        return seg_name == fact.segment_space
+        if seg_name != fact.segment_space:
+            return False
+
+        def _contains_dirty_expr(term) -> bool:
+            nodes = (term, *_iter_c_nodes_deep_8616(term))
+            for raw_node in nodes:
+                if raw_node.__class__.__name__ == "CDirtyExpression":
+                    return True
+            return False
+
+        return not any(_contains_dirty_expr(term) for _sign, term in _offset_terms)
 
     def _typed_stack_store_rhs_from_statement(stmt, fact: TypedStackProbeReturnFact8616 | None):
         if fact is None:
@@ -1083,11 +1351,18 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 elif summary is None:
                     # Legacy path: keep previous behavior when callsite summary was not attached.
                     stack_probe_address_seen = True
+            # A typed stack-probe fact is strong evidence for a helper-returned SS
+            # address. If no typed fact exists, direct segmented SS stores before the
+            # call remain valid evidence and the generic stack-arg backtracker must
+            # stay enabled.
+            typed_stack_probe_materialization = (
+                typed_stack_probe_fact is not None and stack_probe_seen and not is_stack_probe_helper
+            )
             expected_arg_count = arg_count
             if isinstance(prototype_arg_count, int) and prototype_arg_count > 0:
                 if not isinstance(expected_arg_count, int) or expected_arg_count <= 0:
                     expected_arg_count = prototype_arg_count
-                elif stack_probe_seen and prototype_arg_count > expected_arg_count:
+                elif typed_stack_probe_materialization and prototype_arg_count > expected_arg_count:
                     expected_arg_count = prototype_arg_count
             if (
                 call is not None
@@ -1099,13 +1374,19 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if len(new_statements) >= expected_arg_count:
                     candidate_stmts = new_statements[-expected_arg_count:]
                     candidate_rhs = [_stack_store_rhs_from_statement(candidate) for candidate in candidate_stmts]
-                    if all(rhs is not None for rhs in candidate_rhs) and _all_arg_exprs_are_non_segment_registers(candidate_rhs):
-                        call.args = list(candidate_rhs)
-                        record_stack_arg_materialization_8616(codegen, len(candidate_rhs))
+                    candidate_indices = list(range(len(new_statements) - expected_arg_count, len(new_statements)))
+                    normalized_args = (
+                        _normalize_materialized_call_args(candidate_rhs, candidate_indices, new_statements)
+                        if all(rhs is not None for rhs in candidate_rhs)
+                        else None
+                    )
+                    if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
+                        call.args = list(normalized_args)
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(
                             call,
                             new_statements,
-                            list(range(len(new_statements) - expected_arg_count, len(new_statements))),
+                            candidate_indices,
                         )
                         del new_statements[-expected_arg_count:]
                         _refresh_summary_arg_shape(call, summary)
@@ -1123,37 +1404,83 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         max_count=4,
                         typed_probe_fact=typed_stack_probe_fact,
                     )
+                    normalized_args = _normalize_materialized_call_args(
+                        expanded_rhs,
+                        list(reversed(consumed_indices)),
+                        new_statements,
+                    )
                     if (
-                        len(expanded_rhs) > expected_arg_count
-                        and _all_arg_exprs_are_non_segment_registers(expanded_rhs)
+                        normalized_args is not None
+                        and len(normalized_args) > expected_arg_count
+                        and _all_arg_exprs_are_non_segment_registers(normalized_args)
                     ):
-                        call.args = list(expanded_rhs)
-                        record_stack_arg_materialization_8616(codegen, len(expanded_rhs))
+                        call.args = list(normalized_args)
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         for consume_idx in sorted(consumed_indices, reverse=True):
                             del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
-                if not strict_arg_shape_applied and not (stack_probe_seen and not is_stack_probe_helper):
+                if (
+                    not strict_arg_shape_applied
+                    and typed_stack_probe_fact is not None
+                    and stack_probe_seen
+                    and not is_stack_probe_helper
+                ):
+                    typed_rhs, consumed_indices = _collect_backtracked_stack_args(
+                        new_statements,
+                        wanted_count=expected_arg_count,
+                        max_count=max(expected_arg_count, 1),
+                        typed_probe_fact=typed_stack_probe_fact,
+                    )
+                    normalized_args = _normalize_materialized_call_args(
+                        typed_rhs,
+                        list(reversed(consumed_indices)),
+                        new_statements,
+                    )
+                    if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
+                        call.args = list(normalized_args)
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                        _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
+                        for consume_idx in sorted(consumed_indices, reverse=True):
+                            del new_statements[consume_idx]
+                        _refresh_summary_arg_shape(call, summary)
+                        changed = True
+                        strict_arg_shape_applied = True
+                if not strict_arg_shape_applied and not typed_stack_probe_materialization:
                     backtracked_rhs, consumed_indices = _collect_backtracked_stack_args(
                         new_statements,
                         wanted_count=expected_arg_count,
                     )
-                    if _all_arg_exprs_are_non_segment_registers(backtracked_rhs):
-                        call.args = list(backtracked_rhs)
-                        record_stack_arg_materialization_8616(codegen, len(backtracked_rhs))
+                    normalized_args = _normalize_materialized_call_args(
+                        backtracked_rhs,
+                        list(reversed(consumed_indices)),
+                        new_statements,
+                    )
+                    if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
+                        call.args = list(normalized_args)
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         for consume_idx in sorted(consumed_indices, reverse=True):
                             del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
-                if not strict_arg_shape_applied and not (stack_probe_seen and not is_stack_probe_helper):
+                if not strict_arg_shape_applied and not typed_stack_probe_materialization:
                     inline_rhs = _extract_inline_stack_store_args(stmt, call, expected_arg_count)
-                    if _all_arg_exprs_are_non_segment_registers(inline_rhs):
-                        call.args = list(inline_rhs)
-                        record_stack_arg_materialization_8616(codegen, len(inline_rhs))
+                    normalized_args = (
+                        _normalize_materialized_call_args(
+                            list(inline_rhs),
+                            list(range(max(0, i - len(inline_rhs)), i)),
+                            new_statements,
+                        )
+                        if inline_rhs is not None
+                        else None
+                    )
+                    if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
+                        call.args = list(normalized_args)
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -1171,8 +1498,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         max_count=1,
                         typed_probe_fact=typed_stack_probe_fact,
                     )
-                    if candidate_rhs and not _is_segment_register_value_expr(candidate_rhs[0]):
-                        call.args = [candidate_rhs[0]]
+                    normalized_args = _normalize_materialized_call_args(
+                        candidate_rhs,
+                        list(reversed(consumed_indices)),
+                        new_statements,
+                    )
+                    if normalized_args is not None and not _is_segment_register_value_expr(normalized_args[0]):
+                        call.args = [normalized_args[0]]
                         record_stack_arg_materialization_8616(codegen, 1)
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                         for consume_idx in sorted(consumed_indices, reverse=True):
@@ -1192,16 +1524,23 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     max_count=4,
                     typed_probe_fact=typed_stack_probe_fact if stack_probe_seen else None,
                 )
+                normalized_args = _normalize_materialized_call_args(
+                    candidate_rhs,
+                    list(reversed(consumed_indices)),
+                    new_statements,
+                )
                 if (
-                    candidate_rhs
-                    and _all_arg_exprs_are_non_segment_registers(candidate_rhs)
+                    normalized_args is not None
+                    and _all_arg_exprs_are_non_segment_registers(normalized_args)
                     and (
                         (typed_stack_probe_fact is not None and stack_probe_address_seen and stack_probe_seen)
+                        or (not typed_stack_probe_materialization)
+                        or (typed_stack_probe_fact is None and stack_probe_seen and stack_probe_address_seen and not is_stack_probe_helper)
                         or (not stack_probe_seen and summary is None)
                     )
                 ):
-                    call.args = list(candidate_rhs)
-                    record_stack_arg_materialization_8616(codegen, len(candidate_rhs))
+                    call.args = list(normalized_args)
+                    record_stack_arg_materialization_8616(codegen, len(normalized_args))
                     _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
                     for consume_idx in sorted(consumed_indices, reverse=True):
                         del new_statements[consume_idx]
@@ -1209,15 +1548,26 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     changed = True
                 else:
                     inline_rhs = _extract_inline_stack_store_args(stmt, call, 1)
+                    normalized_args = (
+                        _normalize_materialized_call_args(
+                            list(inline_rhs),
+                            [max(i - 1, 0)],
+                            new_statements,
+                        )
+                        if inline_rhs
+                        else None
+                    )
                     if (
-                        inline_rhs
-                        and _all_arg_exprs_are_non_segment_registers(inline_rhs)
+                        normalized_args is not None
+                        and _all_arg_exprs_are_non_segment_registers(normalized_args)
                         and (
                             (typed_stack_probe_fact is not None and stack_probe_address_seen and stack_probe_seen)
+                            or (not typed_stack_probe_materialization)
+                            or (typed_stack_probe_fact is None and stack_probe_seen and stack_probe_address_seen and not is_stack_probe_helper)
                             or (not stack_probe_seen and summary is None)
                         )
                     ):
-                        call.args = [inline_rhs[0]]
+                        call.args = [normalized_args[0]]
                         record_stack_arg_materialization_8616(codegen, 1)
                         _refresh_summary_arg_shape(call, summary)
                         changed = True

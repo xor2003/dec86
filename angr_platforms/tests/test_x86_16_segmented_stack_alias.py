@@ -4,9 +4,17 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import decompile
-from angr.analyses.decompiler.structured_codegen.c import CAssignment, CBinaryOp, CConstant, CStatements, CUnaryOp, CVariable
-from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CStatements,
+    CTypeCast,
+    CUnaryOp,
+    CVariable,
+)
+from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -15,9 +23,12 @@ from angr_platforms.X86_16.segmented_memory_reasoning import (
     SegmentRegister,
     apply_x86_16_segmented_memory_reasoning,
 )
+from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
 from angr_platforms.X86_16.decompiler_postprocess_utils import _match_bp_stack_dereference_8616
 from angr_platforms.X86_16.lowering.real_mode_linear import (
+    lower_stable_ds_es_linear_global_dereferences_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
+    match_stable_ds_es_linear_global_access_8616,
     match_stable_ss_linear_stack_access_8616,
 )
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
@@ -73,11 +84,23 @@ def _stack(offset: int, codegen, *, name: str = "local"):
     return CVariable(SimStackVariable(offset, 2, base="bp", name=name, region=0x4010), codegen=codegen)
 
 
-def _ds_deref(project, linear: int, codegen):
+def _ds_deref(project, linear: int, codegen, *, width: int = 16):
     ds = _reg(project, "ds", codegen)
+    type_ = SimTypeChar(False) if width == 8 else SimTypeShort(False)
+    address = CBinaryOp(
+        "Add",
+        CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen),
+        CConstant(linear, type_, codegen=codegen),
+        codegen=codegen,
+    )
     return CUnaryOp(
         "Dereference",
-        CBinaryOp("Add", CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen), _const(linear, codegen), codegen=codegen),
+        CTypeCast(
+            SimTypeShort(False),
+            SimTypePointer(type_),
+            address,
+            codegen=codegen,
+        ),
         codegen=codegen,
     )
 
@@ -470,6 +493,104 @@ def test_real_mode_linear_stack_lowering_replaces_stable_ss_sp_carrier():
     assert isinstance(lhs, CVariable)
     assert isinstance(lhs.variable, SimStackVariable)
     assert lhs.variable.offset == -2
+    assert isinstance(getattr(lhs, "variable_type", None), SimTypeShort)
+
+
+def test_real_mode_linear_global_lowering_preserves_global_write_identity():
+    project, before_codegen = _codegen([])
+    before_codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                _ds_deref(project, 0x0BAA, before_codegen),
+                _const(7, before_codegen),
+                codegen=before_codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=before_codegen,
+    )
+    before_codegen.cfunc.body = before_codegen.cfunc.statements
+    after_codegen = deepcopy(before_codegen)
+
+    access = match_stable_ds_es_linear_global_access_8616(
+        after_codegen.cfunc.statements.statements[0].lhs,
+        project,
+        after_codegen,
+    )
+    assert access is not None
+    assert access.displacement == 0x0BAA
+
+    changed = lower_stable_ds_es_linear_global_dereferences_8616(after_codegen)
+
+    assert changed is True
+    lhs = after_codegen.cfunc.statements.statements[0].lhs
+    assert isinstance(lhs, CVariable)
+    assert isinstance(lhs.variable, SimMemoryVariable)
+    assert lhs.variable.addr == 0x0BAA
+    assert isinstance(getattr(lhs, "variable_type", None), SimTypeShort)
+
+    before_summary = collect_x86_16_tail_validation_summary(project, before_codegen, mode="coarse")
+    after_summary = collect_x86_16_tail_validation_summary(project, after_codegen, mode="coarse")
+    diff = compare_x86_16_tail_validation_summaries(before_summary, after_summary)
+    assert diff["changed"] is True
+    assert diff["delta"]["segmented_writes"]["removed"] == ("deref:ds:0xbaa",)
+    assert diff["delta"]["global_writes"]["added"] == ("global:0xbaa",)
+
+
+def test_real_mode_linear_global_lowering_assigns_byte_type_from_access_width():
+    project, codegen = _codegen([])
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                _ds_deref(project, 0x0BA7, codegen, width=8),
+                _const(7, codegen),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_stable_ds_es_linear_global_dereferences_8616(codegen)
+
+    assert changed is True
+    lhs = codegen.cfunc.statements.statements[0].lhs
+    assert isinstance(lhs, CVariable)
+    assert isinstance(lhs.variable, SimMemoryVariable)
+    assert lhs.variable.addr == 0x0BA7
+    assert isinstance(getattr(lhs, "variable_type", None), SimTypeChar)
+
+
+def test_structuring_stage_does_not_relower_ds_globals_after_validation_boundary(monkeypatch):
+    project, codegen = _codegen([])
+    project._inertia_structuring_enabled = True
+    project._inertia_tail_validation_enabled = True
+    project._inertia_decompiler_stage = None
+    project.kb = SimpleNamespace(functions=SimpleNamespace(function=lambda *args, **kwargs: None))
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                _ds_deref(project, 0x0BAA, codegen),
+                _const(7, codegen),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    before_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    monkeypatch.setattr(_structuring_stage, "_assert_alias_complete_8616", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(_structuring_stage, "_decompiler_structuring_passes_for_function", lambda *_args, **_kwargs: ())
+
+    changed = _structuring_stage._structuring_codegen_8616(project, codegen)
+
+    assert changed is False
+    after_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+    diff = compare_x86_16_tail_validation_summaries(before_summary, after_summary)
+    assert diff["changed"] is False
 
 
 def test_rewrite_ss_stack_byte_offsets_resolves_pointer_alias_by_variable_name():

@@ -274,10 +274,8 @@ def _structuring_codegen_8616(project, codegen) -> bool:
         try:
             from .lowering.real_mode_linear import (
                 lower_stable_ss_linear_stack_dereferences_8616,
-                lower_stable_ds_es_linear_global_dereferences_8616,
             )
             lower_stable_ss_linear_stack_dereferences_8616(codegen)
-            lower_stable_ds_es_linear_global_dereferences_8616(codegen)
         except Exception:
             pass
         try:

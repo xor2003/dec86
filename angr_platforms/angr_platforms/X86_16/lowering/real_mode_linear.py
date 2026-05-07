@@ -12,7 +12,8 @@ late cleanup code.
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_variable import SimRegisterVariable, SimStackVariable, SimVariable
+from angr.sim_type import SimTypeChar, SimTypeShort
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 
@@ -23,6 +24,12 @@ class RealModeLinearStackAccess8616:
 
     displacement: int
     width: int | None
+
+
+def _type_for_access_width_8616(width: int | None):
+    if width == 1:
+        return SimTypeChar(False)
+    return SimTypeShort(False)
 
 
 def _strip_casts_8616(node):
@@ -523,15 +530,40 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
     def global_cvar(access: RealModeLinearStackAccess8616):
         addr = access.displacement & 0xFFFF
         name = f"g_{addr:04X}"
+        target_type = _type_for_access_width_8616(access.width)
         variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
         if isinstance(variables_in_use, dict):
-            for variable, cvar in variables_in_use.items():
-                if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == access.displacement:
+            for variable, cvar in tuple(variables_in_use.items()):
+                if isinstance(variable, SimMemoryVariable) and getattr(variable, "addr", None) == addr:
+                    if getattr(variable, "size", None) != (access.width or 1):
+                        variable.size = access.width or 1
+                    if getattr(cvar, "variable_type", None) is None:
+                        cvar.variable_type = target_type
                     return cvar
                 if isinstance(variable, SimVariable) and getattr(variable, "name", None) == name:
+                    if getattr(cvar, "variable_type", None) is None:
+                        cvar.variable_type = target_type
                     return cvar
-        variable = SimStackVariable(addr, access.width or 1, base="bp", name=name, region=getattr(codegen.cfunc, "addr", None))
-        cvar = structured_c.CVariable(variable, variable_type=None, codegen=codegen)
+                if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == access.displacement:
+                    replacement = SimMemoryVariable(
+                        addr,
+                        access.width or 1,
+                        name=name,
+                        region=getattr(codegen.cfunc, "addr", None),
+                    )
+                    replacement_type = getattr(cvar, "variable_type", None) or target_type
+                    replacement_cvar = structured_c.CVariable(replacement, variable_type=replacement_type, codegen=codegen)
+                    variables_in_use.pop(variable, None)
+                    variables_in_use[replacement] = replacement_cvar
+                    unified = getattr(codegen.cfunc, "unified_local_vars", None)
+                    if isinstance(unified, dict):
+                        unified.pop(variable, None)
+                        unified[replacement] = {
+                            (replacement_cvar, getattr(replacement_cvar, "variable_type", None))
+                        }
+                    return replacement_cvar
+        variable = SimMemoryVariable(addr, access.width or 1, name=name, region=getattr(codegen.cfunc, "addr", None))
+        cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
         if isinstance(variables_in_use, dict):
             variables_in_use[variable] = cvar
         unified = getattr(codegen.cfunc, "unified_local_vars", None)
@@ -588,13 +620,18 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
         return False
 
     def stack_cvar(access: RealModeLinearStackAccess8616):
+        target_type = _type_for_access_width_8616(access.width)
         variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
         if isinstance(variables_in_use, dict):
             for variable, cvar in variables_in_use.items():
                 if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == access.displacement:
+                    if getattr(variable, "size", None) != (access.width or 1):
+                        variable.size = access.width or 1
+                    if getattr(cvar, "variable_type", None) is None:
+                        cvar.variable_type = target_type
                     return cvar
         variable = SimStackVariable(access.displacement, access.width or 1, base="bp", name=f"s_{access.displacement & 0xffff:x}", region=getattr(codegen.cfunc, "addr", None))
-        cvar = structured_c.CVariable(variable, variable_type=None, codegen=codegen)
+        cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
         if isinstance(variables_in_use, dict):
             variables_in_use[variable] = cvar
         unified = getattr(codegen.cfunc, "unified_local_vars", None)

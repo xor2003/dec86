@@ -22,8 +22,13 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeInt, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
-from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _structured_codegen_node_8616
+from .decompiler_postprocess_utils import (
+    _iter_c_nodes_deep_8616,
+    _same_c_expression_8616,
+    _structured_codegen_node_8616,
+)
 from .ir.condition_ir import ConditionIR
+from .tail_validation_fingerprint import _expr_fingerprint
 
 __all__ = ["_apply_typed_conditions_to_codegen_8616"]
 
@@ -149,7 +154,8 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
 
     def _walk_statements(statements_obj):
         nonlocal changed
-        stmts = tuple(getattr(statements_obj, "statements", ()) or ())
+        raw = getattr(statements_obj, "statements", ()) or ()
+        stmts = tuple(getattr(raw, "statements", raw) or ())
         for stmt in stmts:
             _walk(stmt)
 
@@ -165,7 +171,11 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
                 key = _condition_key_from_tags(cond)
                 if key is not None and key in condition_index:
                     new_cond = _build_c_condition_expr(project, condition_index[key], codegen)
-                    if new_cond is not None:
+                    if (
+                        new_cond is not None
+                        and not _same_c_expression_8616(new_cond.lhs, new_cond.rhs)
+                        and _expr_fingerprint(new_cond.lhs, project) != _expr_fingerprint(new_cond.rhs, project)
+                    ):
                         node.condition = new_cond
                         changed = True
 
@@ -176,7 +186,11 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
                 key = _condition_key_from_tags(cond)
                 if key is not None and key in condition_index:
                     new_cond = _build_c_condition_expr(project, condition_index[key], codegen)
-                    if new_cond is not None:
+                    if (
+                        new_cond is not None
+                        and not _same_c_expression_8616(new_cond.lhs, new_cond.rhs)
+                        and _expr_fingerprint(new_cond.lhs, project) != _expr_fingerprint(new_cond.rhs, project)
+                    ):
                         setattr(node, "condition", new_cond)
                         changed = True
 

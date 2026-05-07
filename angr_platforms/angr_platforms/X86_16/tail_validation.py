@@ -45,6 +45,7 @@ from .tail_validation_fingerprint import (
     _c_constant_int_value,
     _expr_fingerprint,
     _call_target_name,
+    _collect_direct_capstone_callsite_addrs_8616,
     _extract_same_zero_compare_expr_8616,
     _extract_zero_flag_source_expr_8616,
     _function_for_call_context_8616,
@@ -270,6 +271,105 @@ def _call_summary_target_addr_8616(project, summary) -> int | None:
     if isinstance(summary, Mapping):
         return _normalized_call_target_addr_8616(project, summary.get("target_addr"))
     return _normalized_call_target_addr_8616(project, getattr(summary, "target_addr", None))
+
+
+def _node_callsite_addr_8616(node) -> int | None:
+    tags = getattr(node, "tags", None)
+    if isinstance(tags, dict):
+        for key in ("ins_addr", "insn_addr", "stmt_addr", "addr"):
+            value = tags.get(key)
+            if isinstance(value, int):
+                return value
+    value = getattr(node, "addr", None)
+    return value if isinstance(value, int) else None
+
+
+def _candidate_target_addrs_from_call_8616(node) -> tuple[int, ...]:
+    addrs: list[int] = []
+    callee_func = getattr(node, "callee_func", None)
+    callee_addr = getattr(callee_func, "addr", None)
+    if isinstance(callee_addr, int):
+        addrs.append(callee_addr)
+    for target in (
+        getattr(node, "callee_target", None),
+        getattr(callee_func, "name", None),
+    ):
+        if not isinstance(target, str):
+            continue
+        match = re.search(r"0x([0-9a-fA-F]+)", target)
+        if match is None:
+            continue
+        try:
+            addrs.append(int(match.group(1), 16))
+        except ValueError:
+            continue
+    ordered: list[int] = []
+    for addr in addrs:
+        if addr not in ordered:
+            ordered.append(addr)
+    return tuple(ordered)
+
+
+def _call_node_matches_summary_8616(project, node, summary) -> bool:
+    if node is None or summary is None:
+        return False
+    target_addr = _call_summary_target_addr_8616(project, summary)
+    if not isinstance(target_addr, int):
+        return False
+    return target_addr in {
+        _normalized_call_target_addr_8616(project, candidate_addr)
+        for candidate_addr in _candidate_target_addrs_from_call_8616(node)
+        if isinstance(candidate_addr, int)
+    }
+
+
+def _ordered_contextual_call_pairs_8616(root, project) -> list[tuple[CFunctionCall, int]]:
+    function = _function_for_call_context_8616(root, project)
+    if function is None:
+        return []
+    callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
+    if not callsite_addrs:
+        callsite_addrs = _collect_direct_capstone_callsite_addrs_8616(function)
+    call_nodes = list(_iter_observable_call_nodes_for_validation_8616(root))
+    if not callsite_addrs or not call_nodes:
+        return []
+
+    nodes_by_callsite: dict[int, list[CFunctionCall]] = {}
+    remaining_nodes: list[CFunctionCall] = []
+    for node in call_nodes:
+        callsite_addr = _node_callsite_addr_8616(node)
+        if isinstance(callsite_addr, int):
+            nodes_by_callsite.setdefault(callsite_addr, []).append(node)
+        else:
+            remaining_nodes.append(node)
+
+    ordered_pairs: list[tuple[CFunctionCall, int]] = []
+    used_node_ids: set[int] = set()
+    unmatched_callsites: list[int] = []
+    for callsite_addr in callsite_addrs:
+        matched_nodes = nodes_by_callsite.get(callsite_addr)
+        if matched_nodes:
+            node = matched_nodes.pop(0)
+            ordered_pairs.append((node, callsite_addr))
+            used_node_ids.add(id(node))
+        else:
+            unmatched_callsites.append(callsite_addr)
+
+    remaining_nodes.extend(node for node in call_nodes if id(node) not in used_node_ids and node not in remaining_nodes)
+    available_nodes = list(remaining_nodes)
+    for callsite_addr in unmatched_callsites:
+        summary = summarize_x86_16_callsite(function, callsite_addr)
+        matched_index = None
+        if summary is not None:
+            for idx, node in enumerate(available_nodes):
+                if _call_node_matches_summary_8616(project, node, summary):
+                    matched_index = idx
+                    break
+        if matched_index is None:
+            continue
+        node = available_nodes.pop(matched_index)
+        ordered_pairs.append((node, callsite_addr))
+    return ordered_pairs
 
 
 def _node_boundary_fingerprint(
@@ -1463,17 +1563,12 @@ def _iter_observable_call_nodes_for_validation_8616(node):
 def _build_contextual_call_summary_map(root, project) -> dict[int, object]:
     if root is None:
         return {}
+    summary_map: dict[int, object] = {}
     function = _function_for_call_context_8616(root, project)
     if function is None:
         return {}
-    callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
-    if not callsite_addrs:
-        return {}
-    call_nodes = list(_iter_observable_call_nodes_for_validation_8616(root))
-    if not call_nodes:
-        return {}
-    summary_map: dict[int, object] = {}
-    for node, callsite_addr in zip(call_nodes, callsite_addrs):
+    ordered_pairs = _ordered_contextual_call_pairs_8616(root, project)
+    for node, callsite_addr in ordered_pairs:
         summary = summarize_x86_16_callsite(function, callsite_addr)
         target_addr = _call_summary_target_addr_8616(project, summary)
         if summary is not None and target_addr is not None:
@@ -1483,12 +1578,185 @@ def _build_contextual_call_summary_map(root, project) -> dict[int, object]:
                 summary_map[id(node)] = {"target_addr": target_addr, "summary": summary}
     if summary_map:
         return summary_map
+    call_nodes = list(_iter_observable_call_nodes_for_validation_8616(root))
+    if not call_nodes:
+        return {}
     direct_targets = _collect_direct_capstone_call_targets_for_function(function)
     for node, target_addr in zip(call_nodes, direct_targets):
         normalized_target = _normalized_call_target_addr_8616(project, target_addr)
         if isinstance(normalized_target, int):
             summary_map[id(node)] = {"target_addr": normalized_target}
     return summary_map
+
+
+def _call_from_statement_8616(stmt):
+    if isinstance(stmt, CFunctionCall):
+        return stmt
+    expr = getattr(stmt, "expr", None)
+    if isinstance(expr, CFunctionCall):
+        return expr
+    nested_statements = getattr(stmt, "statements", None)
+    if isinstance(nested_statements, (list, tuple)) and len(nested_statements) == 1:
+        return _call_from_statement_8616(nested_statements[0])
+    return None
+
+
+def _assignment_lhs_rhs_8616(node):
+    lhs = getattr(node, "lhs", None)
+    rhs = getattr(node, "rhs", None)
+    if lhs is None and hasattr(node, "dst"):
+        lhs = getattr(node, "dst", None)
+        rhs = getattr(node, "src", None)
+    return lhs, rhs
+
+
+def _iter_assignment_nodes_8616(node):
+    if isinstance(node, CAssignment) or node.__class__.__name__.endswith("Assignment"):
+        yield node
+    nested_statements = getattr(node, "statements", None)
+    if isinstance(nested_statements, (list, tuple)):
+        for nested in nested_statements:
+            yield from _iter_assignment_nodes_8616(nested)
+
+
+def _assignment_lhs_writes_memory_8616(lhs, project) -> bool:
+    if lhs is None:
+        return False
+    location = _location_fingerprint(lhs, project)
+    return location.startswith("stack:") or location.startswith("global:") or location.startswith("deref:")
+
+
+def _contains_call_8616(node) -> bool:
+    if isinstance(node, CFunctionCall):
+        return True
+    expr = getattr(node, "expr", None)
+    if isinstance(expr, CFunctionCall):
+        return True
+    return any(isinstance(child, CFunctionCall) for child in _iter_c_nodes_deep_8616(node))
+
+
+def _is_stack_carrier_temp_assignment_8616(stmt) -> bool:
+    candidates = list(_iter_assignment_nodes_8616(stmt))
+    if not candidates:
+        return False
+    lhs, rhs = _assignment_lhs_rhs_8616(candidates[-1])
+    if lhs is None or rhs is None:
+        return False
+    variable = getattr(lhs, "variable", None)
+    name = getattr(variable, "name", None) or getattr(lhs, "name", None)
+    if not isinstance(name, str) or not (name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")):
+        return False
+    rhs_node = rhs
+    while isinstance(rhs_node, CTypeCast):
+        rhs_node = rhs_node.expr
+    if isinstance(rhs_node, CUnaryOp) and rhs_node.op in {"Reference", "Dereference"}:
+        return True
+    return isinstance(rhs_node, CBinaryOp) and rhs_node.op in {"Add", "Sub", "Mul", "Shl", "Shr", "And", "Or", "Xor"}
+
+
+def _is_value_only_assignment_8616(stmt, project) -> bool:
+    candidates = list(_iter_assignment_nodes_8616(stmt))
+    if not candidates:
+        return False
+    lhs, _rhs = _assignment_lhs_rhs_8616(candidates[-1])
+    return not _assignment_lhs_writes_memory_8616(lhs, project)
+
+
+def _expr_mentions_temp_carrier_8616(expr) -> bool:
+    if expr is None:
+        return False
+    nodes = (expr, *_iter_c_nodes_deep_8616(expr))
+    for node in nodes:
+        variable = getattr(node, "variable", None)
+        name = getattr(variable, "name", None) or getattr(node, "name", None)
+        if isinstance(name, str) and (name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")):
+            return True
+        if node.__class__.__name__ == "CDirtyExpression":
+            dirty = getattr(node, "dirty", None)
+            dirty_name = getattr(dirty, "name", None)
+            if isinstance(dirty_name, str) and (
+                dirty_name.startswith("vvar_") or dirty_name.startswith("ir_") or dirty_name.startswith("tmp_")
+            ):
+                return True
+    return False
+
+
+def _looks_like_ss_segment_store_8616(lhs, project) -> bool:
+    while isinstance(lhs, CTypeCast):
+        lhs = lhs.expr
+    if not isinstance(lhs, CUnaryOp) or lhs.op != "Dereference":
+        return False
+    location = _location_fingerprint(lhs, project)
+    if location.startswith("deref:ss:"):
+        return True
+    return "reg:ss" in _expr_fingerprint(lhs.operand, project)
+
+
+def _is_dynamic_dirty_ss_location_8616(location: str) -> bool:
+    return isinstance(location, str) and location.startswith("deref:") and "reg:ss" in location and "CDirtyExpression" in location
+
+
+def _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_summaries: Mapping[int, object]) -> set[int]:
+    prunable_ids: set[int] = set()
+
+    def _scan_statement_list(statements) -> None:
+        stmt_list = list(statements or ())
+        for idx, stmt in enumerate(stmt_list):
+            call = _call_from_statement_8616(stmt)
+            if call is not None:
+                summary = contextual_call_summaries.get(id(call))
+                if isinstance(summary, Mapping):
+                    summary_obj = summary.get("summary", summary)
+                else:
+                    summary_obj = summary
+                expected_arg_count = getattr(summary_obj, "arg_count", None)
+                if isinstance(summary_obj, Mapping):
+                    expected_arg_count = summary_obj.get("arg_count", expected_arg_count)
+                explicit_arg_count = len(tuple(getattr(call, "args", ()) or ()))
+                carrier_backed_args = any(
+                    _expr_mentions_temp_carrier_8616(arg) for arg in (getattr(call, "args", ()) or ())
+                )
+                missing_arg_count = expected_arg_count - explicit_arg_count if isinstance(expected_arg_count, int) else 0
+                wanted_prunable_count = max(missing_arg_count, 1 if carrier_backed_args else 0)
+                if wanted_prunable_count > 0:
+                    scan = idx - 1
+                    collected = 0
+                    while scan >= 0 and collected < wanted_prunable_count:
+                        candidate = stmt_list[scan]
+                        if _is_stack_carrier_temp_assignment_8616(candidate):
+                            scan -= 1
+                            continue
+                        if _is_value_only_assignment_8616(candidate, project):
+                            scan -= 1
+                            continue
+                        assignments = list(_iter_assignment_nodes_8616(candidate))
+                        if len(assignments) == 1 and not _contains_call_8616(candidate):
+                            lhs, _rhs = _assignment_lhs_rhs_8616(assignments[0])
+                            if _looks_like_ss_segment_store_8616(lhs, project):
+                                prunable_ids.add(id(assignments[0]))
+                                collected += 1
+                                scan -= 1
+                                continue
+                        break
+            nested_statements = getattr(stmt, "statements", None)
+            if isinstance(nested_statements, (list, tuple)):
+                _scan_statement_list(nested_statements)
+            else_node = getattr(stmt, "else_node", None)
+            if else_node is not None:
+                _scan_statement_list(getattr(else_node, "statements", ()) or ())
+            for attr in ("body", "initializer", "iterator"):
+                child = getattr(stmt, attr, None)
+                if child is not None:
+                    _scan_statement_list(getattr(child, "statements", ()) or ())
+            if isinstance(stmt, CIfElse):
+                for _cond, child in tuple(getattr(stmt, "condition_and_nodes", ()) or ()):
+                    _scan_statement_list(getattr(child, "statements", ()) or ())
+
+    if isinstance(root, CStatements):
+        _scan_statement_list(getattr(root, "statements", ()) or ())
+    else:
+        _scan_statement_list((root,))
+    return prunable_ids
 
 
 def _collect_direct_capstone_call_targets_for_function(function) -> tuple[int, ...]:
@@ -1586,6 +1854,11 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
     contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
     contextual_call_summaries = _build_contextual_call_summary_map(root, project)
     contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
+    prunable_segment_write_ids = (
+        _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_summaries)
+        if mode == "live_out"
+        else set()
+    )
     normalized_loop_conditions: dict[int, str] = {}
     suppressed_control_flow_nodes: set[int] = set()
     for node in _iter_c_nodes_deep_8616(root):
@@ -1601,17 +1874,18 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
         if id(node) in suppressed_control_flow_nodes:
             continue
         if isinstance(node, CFunctionCall):
-            call_fingerprint = contextual_call_fingerprints.get(id(node))
+            summary = contextual_call_summaries.get(id(node))
+            target_addr = _call_summary_target_addr_8616(project, summary)
+            call_fingerprint = f"addr:{target_addr:#x}" if isinstance(target_addr, int) else None
             if call_fingerprint is None:
-                summary = contextual_call_summaries.get(id(node))
-                target_addr = _call_summary_target_addr_8616(project, summary)
-                if isinstance(target_addr, int):
-                    call_fingerprint = f"addr:{target_addr:#x}"
+                call_fingerprint = contextual_call_fingerprints.get(id(node))
             helper_calls.add(call_fingerprint or _call_target_name(node, project))
         elif isinstance(node, CReturn):
             returns.add(_expr_fingerprint(getattr(node, "retval", None), project))
             control_flow_effects.add("return")
         elif isinstance(node, CAssignment):
+            if id(node) in prunable_segment_write_ids:
+                continue
             lhs = getattr(node, "lhs", None)
             location = _location_fingerprint(lhs, project)
             if location.startswith("reg:"):
@@ -1627,6 +1901,8 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
             elif location.startswith("global:"):
                 global_writes.add(location)
             elif location.startswith("deref:"):
+                if mode == "live_out" and _is_dynamic_dirty_ss_location_8616(location):
+                    continue
                 segmented_writes.add(location)
         elif isinstance(node, CIfElse):
             pairs = tuple(getattr(node, "condition_and_nodes", ()) or ())

@@ -9,6 +9,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBreak,
     CConstant,
     CContinue,
+    CDirtyExpression,
+    CExpressionStatement,
     CFunctionCall,
     CIfElse,
     CReturn,
@@ -25,6 +27,7 @@ from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_st
 import angr_platforms.X86_16.tail_validation as tail_validation_module
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.tail_validation_fingerprint import build_x86_16_contextual_call_fingerprints
+import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
 from angr_platforms.X86_16.tail_validation import (
     X86_16TailValidationSummary,
     X86_16ValidationCacheDescriptor,
@@ -242,6 +245,130 @@ def test_contextual_call_fingerprints_descend_through_expr_wrappers():
 
     inner_call = wrapped_call.expr
     assert fingerprints == {id(inner_call): "callsite:0x4012"}
+
+
+def test_tail_validation_fingerprint_normalizes_stack_variable_byte_pair_to_word_slot():
+    project = _project()
+    codegen = _DummyCodegen()
+    expr = CBinaryOp(
+        "Or",
+        _stack(-0xA, codegen, name="low"),
+        CBinaryOp("Mul", _stack(-0x9, codegen, name="high"), _const(0x100, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+
+    fp = tail_validation_fingerprint_module._expr_fingerprint(expr, project)
+
+    assert fp == "stack:-0xa"
+
+
+def test_tail_validation_live_out_ignores_consumed_ss_outgoing_arg_store(monkeypatch):
+    project = _project()
+    function = SimpleNamespace(get_call_sites=lambda: (0x4012,))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: function if addr == 0x4010 else None
+        )
+    )
+
+    before_codegen = _DummyCodegen()
+    temp_var = CVariable(SimRegisterVariable(2, 2, name="vvar_67"), codegen=before_codegen)
+    _codegen(
+        [
+            CAssignment(_ss_stack_deref(project, -2, -2, before_codegen), _const(97, before_codegen), codegen=before_codegen),
+            CAssignment(
+                temp_var,
+                CBinaryOp("Sub", _stack(-2, before_codegen), _const(2, before_codegen), codegen=before_codegen),
+                codegen=before_codegen,
+            ),
+            CAssignment(
+                _reg(project, "ax", before_codegen, var_name="frequency"),
+                CFunctionCall("::0x14ae::inp", None, [], codegen=before_codegen),
+                codegen=before_codegen,
+            ),
+        ],
+        before_codegen,
+    )
+    before_codegen.cfunc.get_call_sites = lambda: (0x4012,)
+
+    after_codegen = _DummyCodegen()
+    _codegen(
+        [
+            CAssignment(
+                _reg(project, "ax", after_codegen, var_name="frequency"),
+                CFunctionCall("::0x14ae::inp", None, [_const(97, after_codegen)], codegen=after_codegen),
+                codegen=after_codegen,
+            ),
+        ],
+        after_codegen,
+    )
+    after_codegen.cfunc.get_call_sites = lambda: (0x4012,)
+
+    monkeypatch.setattr(
+        tail_validation_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _callsite_addr: SimpleNamespace(target_addr=0x14AE, arg_count=1),
+    )
+
+    before = collect_x86_16_tail_validation_summary(project, before_codegen, mode="live_out")
+    after = collect_x86_16_tail_validation_summary(project, after_codegen, mode="live_out")
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert before.helper_calls == ("addr:0x14ae",)
+    assert after.helper_calls == ("addr:0x14ae",)
+    assert diff["changed"] is False
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_live_out_ignores_dynamic_dirty_ss_segment_writes():
+    project = _project()
+    before_codegen = _DummyCodegen()
+    dirty_ss_store = CAssignment(
+        CUnaryOp(
+            "Dereference",
+            CTypeCast(
+                SimTypeShort(False),
+                SimTypeShort(False),
+                CBinaryOp(
+                    "Add",
+                    CBinaryOp("Shl", _reg(project, "ss", before_codegen), _const(4, before_codegen), codegen=before_codegen),
+                    CBinaryOp(
+                        "Sub",
+                        CBinaryOp(
+                            "Sub",
+                            CDirtyExpression("vvar_85", codegen=before_codegen),
+                            _const(2, before_codegen),
+                            codegen=before_codegen,
+                        ),
+                        _const(2, before_codegen),
+                        codegen=before_codegen,
+                    ),
+                    codegen=before_codegen,
+                ),
+                codegen=before_codegen,
+            ),
+            codegen=before_codegen,
+        ),
+        _const(97, before_codegen),
+        codegen=before_codegen,
+    )
+    before = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen([dirty_ss_store, CReturn(None, codegen=before_codegen)], before_codegen),
+        mode="live_out",
+    )
+    after_codegen = _DummyCodegen()
+    after = collect_x86_16_tail_validation_summary(
+        project,
+        _codegen([CReturn(None, codegen=after_codegen)], after_codegen),
+        mode="live_out",
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(before, after)
+
+    assert before.segmented_writes == ()
+    assert diff["changed"] is False
+    assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
 
 
 def test_tail_validation_uses_cod_call_name_fingerprint_when_cfg_and_direct_targets_missing(monkeypatch):

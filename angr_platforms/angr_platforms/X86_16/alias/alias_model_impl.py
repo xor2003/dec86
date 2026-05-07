@@ -13,8 +13,10 @@ def _canonical_stack_base(base: str | None) -> str:
     if not isinstance(base, str) or not base:
         return "bp"
     normalized = base.lower()
-    if normalized in {"bp", "sp", "ss"}:
-        return "bp"
+    if normalized in {"bp", "sp"}:
+        return normalized
+    if normalized == "ss":
+        return "ss"
     return normalized
 
 
@@ -374,6 +376,13 @@ def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | Alias
         #   1. Base contains "bp"
         #   2. Status is STABLE
         #   3. Offset is an integer (not symbolic)
+        # IMPORTANT:
+        # ("sp",) alone is NOT sufficient.
+        # Stability additionally requires:
+        #   - proven SP delta
+        #   - stable offset
+        #
+        # Dynamic SP traffic must remain PROVISIONAL.
         has_stack_base = addr.base in {("bp",), ("sp",)}
         has_stable_offset = isinstance(addr.offset, int) and addr.status == AddressStatus.STABLE
 

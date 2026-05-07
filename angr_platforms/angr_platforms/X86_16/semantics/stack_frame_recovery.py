@@ -120,29 +120,45 @@ def _looks_like_frame_evidence(obj: object) -> bool:
     or VEX IRSB objects.  Rejects plain strings / COD text.
     """
 
+    import sys
+    sys.stderr.flush()
+
     # ── Capstone instruction (structured, NOT text) ──
     mnemonic = getattr(obj, "mnemonic", None)
     if mnemonic is not None:
         mnem_str = str(mnemonic).lower()
         operands = getattr(obj, "operands", None) or []
+
+        # push bp — register-based detection using capstone reg IDs
         if mnem_str == "push":
             for op in operands:
                 reg_val = getattr(op, "reg", None)
-                if reg_val is not None and "bp" in str(reg_val).lower():
+                if isinstance(reg_val, int) and reg_val == 6:  # X86_REG_BP = 6
                     return True
+
+        # mov bp, sp
         elif mnem_str == "mov":
             if len(operands) >= 2:
                 dst_reg = getattr(operands[0], "reg", None)
                 src_reg = getattr(operands[1], "reg", None)
-                if dst_reg is not None and src_reg is not None:
-                    if "bp" in str(dst_reg).lower() and "sp" in str(src_reg).lower():
-                        return True
+                if isinstance(dst_reg, int) and dst_reg == 6 and isinstance(src_reg, int) and src_reg == 47:
+                    return True
+
         return False
 
-    # ── VEX IRSB — check statement tags for push-bp / mov-bp-sp ──
+    # ── VEX IRSB (direct) — check statement tags for push-bp / mov-bp-sp ──
     statements = getattr(obj, "statements", None)
     if statements is not None:
         return _vex_irsb_has_bp_frame(obj)
+
+    # ── angr Block — iterate capstone instructions for frame patterns ──
+    capstone = getattr(obj, "capstone", None)
+    if capstone is not None:
+        insns = getattr(capstone, "insns", None)
+        if insns is not None:
+            for insn in insns:
+                if _looks_like_frame_evidence(insn):
+                    return True
 
     # ── Reject string/COD artifacts ──
     if isinstance(obj, str):
@@ -171,7 +187,7 @@ def _vex_irsb_has_bp_frame(irsb) -> bool:
     except Exception:
         return False
 
-    for stmt in statements:
+    for stmt in getattr(irsb, "statements", ()) or ():
         tag = getattr(stmt, "tag", "")
         if tag == "Ist_Put":
             put_off = getattr(stmt, "offset", None)
@@ -185,6 +201,14 @@ def _vex_irsb_has_bp_frame(irsb) -> bool:
                 if _is_sub_constant(data, 2):
                     has_push_bp = True
 
+    import sys
+    # Dump only from first block encountered
+    if not hasattr(_vex_irsb_has_bp_frame, "_dumped_block"):
+        _vex_irsb_has_bp_frame._dumped_block = True
+        for stmt in getattr(irsb, "statements", ()) or ():
+            tag = getattr(stmt, "tag", "")
+            if tag in ("Ist_Put", "Ist_Store"):
+    sys.stderr.flush()
     return has_push_bp and has_mov_bp_sp
 
 

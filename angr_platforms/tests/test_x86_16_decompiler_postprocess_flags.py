@@ -272,6 +272,44 @@ def test_rewrite_flag_condition_pairs_recovers_signed_mask_compare_without_raw_f
     assert isinstance(after_condition.rhs, CBinaryOp)
 
 
+def test_rewrite_flag_condition_pairs_refuses_rewrite_that_still_reads_raw_flags():
+    project = _project()
+    codegen = _codegen([])
+    flags_var = _reg(project, "flags", codegen, var_name="flags_tmp")
+    flags_read = _reg(project, "flags", codegen, var_name="flags_read")
+    flags_value = CBinaryOp(
+        "Mul",
+        CBinaryOp("And", flags_read, _const(0x40, codegen), codegen=codegen),
+        _const(0x40, codegen),
+        codegen=codegen,
+    )
+    condition = CUnaryOp(
+        "Not",
+        CBinaryOp(
+            "CmpEQ",
+            CBinaryOp("And", flags_read, _const(0x40, codegen), codegen=codegen),
+            _const(0, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(flags_var, flags_value, codegen=codegen),
+            CIfElse([(condition, _empty_body(codegen))], codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _rewrite_flag_condition_pairs_8616(codegen)
+
+    assert changed is False
+    after_condition = codegen.cfunc.statements.statements[1].condition_and_nodes[0][0]
+    assert _c_expr_uses_var_8616(after_condition, flags_read) is True
+
+
 def test_rewrite_flag_condition_pairs_refuses_incomplete_signed_mask_recovery():
     project = _project()
     codegen = _codegen([])

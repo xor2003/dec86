@@ -124,6 +124,37 @@ def test_callsite_summary_uses_containing_block_for_push_args_before_call(monkey
     )
 
 
+def test_callsite_summary_counts_pushes_separated_by_register_setup(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "push", [_Operand(imm=1, size=2)]),
+            _Insn(0x1001, "mov", [_Operand(reg=2), _Operand(imm=0x61)], reg_names={2: "ax"}),
+            _Insn(0x1004, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1005, "call"),
+            _Insn(0x1008, "add", [_Operand(reg=1), _Operand(imm=4)], reg_names={1: "sp"}),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1005, 0x1544, 0x1008, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1005)
+
+    assert summary == CallsiteSummary8616(
+        callsite_addr=0x1005,
+        target_addr=0x1544,
+        return_addr=0x1008,
+        kind="direct_near",
+        arg_count=2,
+        arg_widths=(2, 2),
+        stack_cleanup=4,
+        return_register=None,
+        return_used=False,
+        stack_probe_helper=False,
+    )
+
+
 def test_callsite_summary_uses_fallthrough_cleanup_block_after_call(monkeypatch):
     call_block = SimpleNamespace(
         capstone=SimpleNamespace(
@@ -259,3 +290,34 @@ def test_callsite_summary_marks_stack_probe_returned_stack_address_when_ax_is_co
     assert summary.helper_return_space == "ss"
     assert summary.helper_return_width == 2
     assert summary.helper_return_address_kind == "stack"
+
+
+def test_callsite_summary_does_not_claim_stack_address_when_probe_return_is_not_consumed(monkeypatch):
+    insns = (
+        _Insn(0x1002, "call"),
+        _Insn(0x1005, "push", [_Operand(reg=3, size=2)], reg_names={3: "di"}),
+        _Insn(0x1006, "push", [_Operand(reg=4, size=2)], reg_names={4: "si"}),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    callee = SimpleNamespace(addr=0x1544, name="aNchkstk")
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: callee if addr == 0x1544 else None)),
+    )
+    function = SimpleNamespace(project=project)
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1002, 0x1544, 0x1005, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1002)
+
+    assert summary is not None
+    assert summary.stack_probe_helper is True
+    assert summary.return_register is None
+    assert summary.return_used is False
+    assert summary.helper_return_state == "none"
+    assert summary.helper_return_space is None
+    assert summary.helper_return_width is None
+    assert summary.helper_return_address_kind == "none"

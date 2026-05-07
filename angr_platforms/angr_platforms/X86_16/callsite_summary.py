@@ -192,15 +192,31 @@ def _push_arg_width(insn) -> int:
     return 2
 
 
+def _transparent_between_push_args_8616(insn) -> bool:
+    mnemonic = _mnemonic(insn)
+    if mnemonic not in {"mov", "lea"}:
+        return False
+    operands = _instruction_operands(insn)
+    if len(operands) != 2:
+        return False
+    return _operand_reg_name(insn, operands[0]) not in {"sp", "bp", "ss", "ds", "es", "cs"}
+
+
 def _collect_push_args_before_call(insns: tuple, idx: int) -> tuple[int, ...]:
     widths: list[int] = []
     scan = idx - 1
+    skipped_transparents = 0
     while scan >= 0:
         insn = insns[scan]
-        if not _mnemonic(insn).startswith("push"):
-            break
-        widths.append(_push_arg_width(insn))
-        scan -= 1
+        if _mnemonic(insn).startswith("push"):
+            widths.append(_push_arg_width(insn))
+            scan -= 1
+            continue
+        if widths and skipped_transparents < 4 and _transparent_between_push_args_8616(insn):
+            skipped_transparents += 1
+            scan -= 1
+            continue
+        break
     widths.reverse()
     return tuple(widths)
 
@@ -331,7 +347,7 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
         if return_register not in {None, "ax"}:
             helper_return_state = "unknown"
             helper_return_address_kind = "unknown"
-        else:
+        elif return_used is True:
             helper_return_state = "stack_address"
             helper_return_space = "ss"
             helper_return_width = 2
