@@ -224,6 +224,7 @@ from inertia_decompiler.runtime_support import (
     emit_timeout_and_exit as _emit_timeout_and_exit,
     format_address as _format_address,
     guard_angr_ail_narrowing as _guard_angr_ail_narrowing,
+    guard_angr_basepointeroffset_codegen_support as _guard_angr_basepointeroffset_codegen_support,
     guard_angr_clinic_stage_markers as _guard_angr_clinic_stage_markers,
     guard_angr_peephole_expr_bitwidth_assertion as _guard_angr_peephole_expr_bitwidth_assertion,
     guard_angr_variable_recovery_binop_sub_size_mismatch as _guard_angr_variable_recovery_binop_sub_size_mismatch,
@@ -291,6 +292,7 @@ from .cli_c_ast_rewrites import (
     _rewrite_ss_stack_byte_offsets,
     _run_typed_widening_pass,
     _simplify_basic_algebraic_identities,
+    _simplify_structured_c_expressions,
     _simplify_nested_mk_fp_calls,
 )
 from .cli_c_text_postprocess import (
@@ -718,38 +720,39 @@ def _decompile_function(
 
     dec = None
     try:
-        with _guard_angr_peephole_expr_bitwidth_assertion(project):
-            with _guard_angr_variable_recovery_binop_sub_size_mismatch(project):
-                with _guard_angr_ail_narrowing(project):
-                    with _guard_angr_clinic_stage_markers(project):
-                        with _analysis_timeout(_remaining_timeout()):
-                            if decompiler_options is None:
-                                dec = project.analyses.Decompiler(
-                                    function,
-                                    cfg=cfg,
-                                    expr_collapse_depth=expr_collapse_depth,
-                                )
-                            else:
-                                dec = project.analyses.Decompiler(
-                                    function,
-                                    cfg=cfg,
-                                    options=decompiler_options,
-                                    expr_collapse_depth=expr_collapse_depth,
-                                )
-                            if dec.codegen is None:
-                                failure_snapshot = build_failure_family_snapshot(
-                                    status="empty",
-                                    failure_stage=getattr(project, "_inertia_decompiler_stage", None),
-                                    fallback_kind="structurer_retry",
-                                    tail_validation_verdict="uncollected",
-                                    artifact_path=f"{function_original_addr(function):#x}:{function.name}",
-                                )
-                                repeat_reason = remember_failure_family_candidate(
-                                    failure_family_state,
-                                    failure_snapshot,
-                                )
-                                if repeat_reason is not None:
-                                    record_failure_family_retry_stop(failure_family_state, failure_snapshot)
+        with _guard_angr_basepointeroffset_codegen_support():
+            with _guard_angr_peephole_expr_bitwidth_assertion(project):
+                with _guard_angr_variable_recovery_binop_sub_size_mismatch(project):
+                    with _guard_angr_ail_narrowing(project):
+                        with _guard_angr_clinic_stage_markers(project):
+                            with _analysis_timeout(_remaining_timeout()):
+                                if decompiler_options is None:
+                                    dec = project.analyses.Decompiler(
+                                        function,
+                                        cfg=cfg,
+                                        expr_collapse_depth=expr_collapse_depth,
+                                    )
+                                else:
+                                    dec = project.analyses.Decompiler(
+                                        function,
+                                        cfg=cfg,
+                                        options=decompiler_options,
+                                        expr_collapse_depth=expr_collapse_depth,
+                                    )
+                                if dec.codegen is None:
+                                    failure_snapshot = build_failure_family_snapshot(
+                                        status="empty",
+                                        failure_stage=getattr(project, "_inertia_decompiler_stage", None),
+                                        fallback_kind="structurer_retry",
+                                        tail_validation_verdict="uncollected",
+                                        artifact_path=f"{function_original_addr(function):#x}:{function.name}",
+                                    )
+                                    repeat_reason = remember_failure_family_candidate(
+                                        failure_family_state,
+                                        failure_snapshot,
+                                    )
+                                    if repeat_reason is not None:
+                                        record_failure_family_retry_stop(failure_family_state, failure_snapshot)
                                     print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry")
                                     detail = "Decompiler did not produce code."
                                     messages = _analysis_log_messages(dec)
@@ -997,6 +1000,7 @@ def _decompile_function(
         lambda: _attach_pointer_member_names(project, dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
+        lambda: _simplify_structured_c_expressions(dec.codegen),
         lambda: _simplify_basic_algebraic_identities(dec.codegen),
         lambda: _materialize_missing_stack_local_declarations(dec.codegen),
         lambda: _materialize_missing_register_local_declarations(dec.codegen),
@@ -1038,6 +1042,7 @@ def _decompile_function(
             lambda: _attach_pointer_member_names(project, dec.codegen),
             lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
             lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
+            lambda: _simplify_structured_c_expressions(dec.codegen),
             lambda: _simplify_basic_algebraic_identities(dec.codegen),
             lambda: _materialize_missing_stack_local_declarations(dec.codegen),
             lambda: _materialize_missing_register_local_declarations(dec.codegen),

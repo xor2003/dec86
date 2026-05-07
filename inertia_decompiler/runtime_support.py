@@ -258,6 +258,25 @@ def install_angr_variable_recovery_binop_sub_size_guard(
     return original_handle_binop_sub
 
 
+def install_angr_basepointeroffset_codegen_guard(codegen_cls) -> object:
+    original_handle = codegen_cls._handle
+
+    def _guarded_handle(self, node, *args, **kwargs):  # noqa: ANN001
+        try:
+            from angr.ailment.expression import BasePointerOffset
+        except ImportError:
+            return original_handle(self, node, *args, **kwargs)
+
+        if isinstance(node, BasePointerOffset):
+            stackbase_handler = getattr(self, "_handle_Expr_StackBaseOffset", None)
+            if callable(stackbase_handler):
+                return stackbase_handler(node, *args, **kwargs)
+        return original_handle(self, node, *args, **kwargs)
+
+    codegen_cls._handle = _guarded_handle
+    return original_handle
+
+
 @contextlib.contextmanager
 def guard_angr_peephole_expr_bitwidth_assertion(project=None):
     from angr.analyses.decompiler import utils as decompiler_utils
@@ -268,6 +287,18 @@ def guard_angr_peephole_expr_bitwidth_assertion(project=None):
         yield
     finally:
         walker_cls._handle_expr = original_handle_expr
+
+
+@contextlib.contextmanager
+def guard_angr_basepointeroffset_codegen_support():
+    from angr.analyses.decompiler.structured_codegen import c as structured_codegen_c
+
+    codegen_cls = structured_codegen_c.CStructuredCodeGenerator
+    original_handle = install_angr_basepointeroffset_codegen_guard(codegen_cls)
+    try:
+        yield
+    finally:
+        codegen_cls._handle = original_handle
 
 
 @contextlib.contextmanager

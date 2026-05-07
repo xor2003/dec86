@@ -535,7 +535,8 @@ def _get_or_seed_inertia_alias_state(codegen):
     if not seeded:
         return None
     setattr(codegen, "_inertia_alias_state", alias_state)
-    setattr(cfunc, "_inertia_alias_state", alias_state)
+    with contextlib.suppress(AttributeError):
+        setattr(cfunc, "_inertia_alias_state", alias_state)
     return alias_state
 
 def _make_unique_identifier(base: str, used: set[str]) -> str:
@@ -774,6 +775,9 @@ def _replace_c_children(node, transform, seen: set[int] | None = None) -> bool:
             "rhs",
             "expr",
             "operand",
+            "addr",
+            "data",
+            "guard",
             "condition",
             "cond",
             "initializer",

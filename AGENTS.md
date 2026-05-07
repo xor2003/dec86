@@ -137,6 +137,76 @@ local_*
 arg_*
 ```
 
+### 4.1 Stack activity vs stack variables
+
+Not all SS accesses are stack variables.
+
+The following are distinct concepts:
+
+stack activity
+stable stack slot
+materialized variable
+
+Examples:
+
+```text
+push/pop/call/ret
+dynamic SP movement
+temporary spill traffic
+
+are stack activity, but are NOT automatically variables.
+```
+
+A stack variable may only be created when:
+
+1. stack space is proven
+2. frame model is proven
+3. offset is stable
+4. alias identity is stable
+
+Forbidden:
+
+SS access → automatic local_*
+SP provisional access → automatic variable
+invented BP/SP offsets
+
+Required diagnostics:
+
+ss_stack_accesses
+bp_stable_accesses
+sp_provisional_accesses
+stack_materialized
+primary_blocker
+
+Blocker taxonomy (see `classify_stack_blocker_8616` in pipeline/invariants.py):
+
+```text
+ss_stack_accesses > 0 AND stack_facts == 0 AND bp_stable_accesses == 0
+    → "stack activity detected but no stable frame"
+
+stack_facts > 0 AND stack_materialized == 0
+    → "stack facts not materialized"
+```
+
+Frame evidence must come from IR only:
+- BP must be proven from IR-level frame analysis (not text disassembly)
+- SP delta must be tracked and proven stable before SP-relative offsets become facts
+- Dynamic SP traffic (push/pop/call/ret, spills before BP setup) is stack activity,
+  NOT a variable — it must remain PROVISIONAL
+
+Never collapse SP/BP/SS identities. ("sp",) alone in the base tuple does not
+guarantee a stack variable — proven SP delta AND a stable offset are additionally
+required. Code that tests `addr.base in {("bp",), ("sp",)}` must also gate on
+stable offset; dynamic SP traffic without a proven delta must stay PROVISIONAL.
+
+Why this matters:
+
+Right now your team/agents still think:
+
+SS access == local variable
+
+which is architecturally wrong.
+
 ---
 
 ### 5. Conditions must be explicit
@@ -173,6 +243,36 @@ CFG
 alias
 typed structures
 ```
+
+### 6.1 Frame evidence must come from IR, never text
+
+Frame recovery may use:
+
+```text
+VEX IR
+AIL
+CFG
+decoded instruction metadata
+```
+
+Forbidden:
+
+```text
+regex on assembly
+generated C inspection
+instruction text parsing
+```
+
+Examples of allowed evidence:
+
+push bp
+mov bp, sp
+enter
+sp adjustment tracking
+
+only when recovered from IR/instruction metadata.
+
+This prevents future "parse asm text" regressions.
 
 ---
 
@@ -389,6 +489,36 @@ materialized_count
 ```
 
 `binding_count > 0` and `materialized_count == 0` is failure, not progress.
+
+### Stable stack slot requirement
+
+A stack slot is materializable only if:
+
+```text
+space = SS
+AND
+frame model is proven
+AND
+offset is stable
+```
+
+The following are NOT materializable:
+
+```text
+SS:SP dynamic transient accesses
+push/pop traffic
+call frame setup before stabilization
+symbolic SP without proven delta
+```
+
+Required behavior:
+
+stack activity may exist
+while stack_facts = 0
+
+This is valid and must not be treated as failure.
+
+This is the single most important clarification missing from your current AGENTS.
 
 ## Bottom line
 
