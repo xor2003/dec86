@@ -1,3 +1,0 @@
-g _LaunchPgm_
-new /sym wcpp386.sym cs:ebx ds:ebx
-b plusplus@wppcompile

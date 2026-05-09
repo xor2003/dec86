@@ -1,5 +1,0 @@
-tree_depth = 6
-
-base_libname = doslfn
-
-!include $(clib_dir)/mklib.mif

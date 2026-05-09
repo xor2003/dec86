@@ -1,2 +1,0 @@
-ghostscript 9.27
-dosbox 0.74-3

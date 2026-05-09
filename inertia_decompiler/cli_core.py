@@ -1362,18 +1362,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
                 return 4
             nonopt_result: NonOptimizedSliceOutcome | str | None = None
-            if precise_sidecar_regions:
-                _enforce_direct_addr_budget_timeout()
-                nonopt_result = _try_decompile_non_optimized_slice(
-                    project,
-                    args.addr,
-                    function_label or f"sub_{args.addr:x}",
-                    timeout=max(1, min(_bounded_non_optimized_timeout(args.timeout), _remaining_direct_addr_budget() or 1)),
-                    api_style=args.api_style,
-                    binary_path=args.binary,
-                    lst_metadata=lst_metadata,
-                    cod_metadata=cod_metadata,
-                )
+            _enforce_direct_addr_budget_timeout()
+            nonopt_result = _try_decompile_non_optimized_slice(
+                project,
+                args.addr,
+                function_label or f"sub_{args.addr:x}",
+                timeout=max(1, min(_bounded_non_optimized_timeout(args.timeout), _remaining_direct_addr_budget() or 1)),
+                api_style=args.api_style,
+                binary_path=args.binary,
+                lst_metadata=lst_metadata,
+                cod_metadata=cod_metadata,
+            )
             nonopt_c = _non_optimized_slice_rendered(nonopt_result)
             if nonopt_c is not None:
                 fallback_function = SimpleNamespace(addr=args.addr, name=function_label or f"sub_{args.addr:x}")

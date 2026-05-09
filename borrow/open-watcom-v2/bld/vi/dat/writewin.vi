@@ -1,5 +1,0 @@
-if "%N" == "untitled"
-    write ?
-else
-    write
-endif

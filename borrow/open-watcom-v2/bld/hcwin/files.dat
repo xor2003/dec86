@@ -1,9 +1,0 @@
-# Windows 3.x Help Compiler component of install manifest
-[ DEFAULT type="e" cond="wintarg" where="c f77 jc jf77" ]
-dir="binw"      usr="whc.exe"   cond+="doshost winhost |"
-dir="binnt"     usr="whc.exe"   cond+="wnthost"             where+="ac"
-dir="binnt64"   usr="whc.exe"   cond+="wnt64host"           keys="ntx64"
-dir="axpnt"     usr="whc.exe"   cond+="alphahost"           where="ac"
-dir="binp"      usr="whc.exe"   cond+="os2host"
-dir="binl"      usr="whc"       cond+="lnxhost"
-dir="binl64"    usr="whc"       cond+="lnx64host"           keys="lx64"

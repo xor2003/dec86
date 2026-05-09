@@ -1,5 +1,0 @@
-- WSAMPLE:
-	- hint box in chapter describing interrupts used by WSAMPLE
-		- monitored program cannot use INT 3
-		- cannot alter timer interrupt rate
-		- etc.

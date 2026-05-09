@@ -1,9 +1,0 @@
-proj_name = cl
-
-!ifndef cl_autodepends
-cl_autodepends = .AUTODEPEND
-!endif
-
-cl_ntverrc = ..
-
-!include ../../cl.mif

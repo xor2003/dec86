@@ -1,9 +1,0 @@
-# UTF-8 encoding, ¥
-push_button=+\
-        //0"&Yes"\
-        //1"はい(&Y)"\
-        //-1
-push_button=^\
-        //0"&No"\
-        //1"いいえ(&N)"\
-        //-1

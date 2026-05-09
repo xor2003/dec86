@@ -1,3 +1,0 @@
-b.asm(6): Error! E281: forced error:
-b.asm(6): Note! N291: macro called from file b.asm(12)
-b.asm(6): Note! N291: macro called from file b.asm(21)

@@ -1,3 +1,0 @@
-do_ax.inc(1): Error! E245: Model declared already
-do_ax.inc(1): Note! N290: included by file include.asm(5)
-include.asm(6): Warning! W249: End directive required at end of file

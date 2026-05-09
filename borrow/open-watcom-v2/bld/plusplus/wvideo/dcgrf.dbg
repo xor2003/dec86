@@ -1,3 +1,0 @@
-call DbgRedirectBeg
-call CallGraphDump
-viewcapt.dbg

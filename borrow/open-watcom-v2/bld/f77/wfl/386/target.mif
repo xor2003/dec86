@@ -1,3 +1,0 @@
-target_cpu = 386
-
-!include ../../master.mif

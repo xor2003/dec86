@@ -1,1 +1,0 @@
-extern HPALETTE CreateDIBPalette( BITMAPINFO * );

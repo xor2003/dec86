@@ -1,5 +1,0 @@
-LIBRARY ACLUI.DLL
-EXPORTS
-CreateSecurityPage@4
-EditSecurity@8
-EditSecurityAdvanced@12

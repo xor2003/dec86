@@ -1,9 +1,0 @@
-# UTF-8 encoding, ¥
-name=Final
-condition=PreviousInstall !
-static_text=\
-        //0"@ will now copy any selected files"\
-        //1"@ 選択されたファイルをコピーします"\
-        //-1
-static_text=
-include=poc.dlg

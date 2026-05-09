@@ -1,2 +1,0 @@
-call startit
-..\packfile.bat *

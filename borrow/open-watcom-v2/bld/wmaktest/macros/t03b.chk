@@ -1,3 +1,0 @@
-t03(6): Error(E08): Invalid macro name (fubar$fubar)
-t03(8): Error(E08): Invalid macro name (fubar$fubar)
-Error(E02): Make execution terminated

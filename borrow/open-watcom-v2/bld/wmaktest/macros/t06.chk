@@ -1,4 +1,0 @@
-echo hello2.c $  hello2.obj  hello2.c
-hello2.c $  hello2.obj  hello2.c
-echo hello.c $  hello.obj  hello.c
-hello.c $  hello.obj  hello.c

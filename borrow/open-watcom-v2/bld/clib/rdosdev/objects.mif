@@ -1,5 +1,0 @@
-#                        rdk
-#===========================
-!inject rdosdev.obj      rdk
-
-!include ../../../../objlist.mif

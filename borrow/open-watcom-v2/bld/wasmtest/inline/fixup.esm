@@ -1,5 +1,0 @@
-test_:
-    mov         eax,dword ptr x[eax+ebx] 
-    ret         
-x:
-    DB	0ffH, 0ffH, 0ffH, 0ffH

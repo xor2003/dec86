@@ -1,8 +1,0 @@
-!ifdef sys_windowed
-
-special = rcstr.grh
-
-!endif
-
-.c : $(ideact_dir)
-.c : $(posix_dir)/misc

@@ -1,4 +1,0 @@
-name=Help_Host
-include=hosttarg.dlg
-static_text=
-include=ok.dlg

@@ -1,3 +1,0 @@
-tree_depth = 5
-
-!include $(rtdll_dir)/master.mif

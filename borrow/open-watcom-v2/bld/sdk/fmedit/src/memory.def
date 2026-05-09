@@ -1,2 +1,0 @@
-extern void *EdAlloc( size_t );
-extern void  EdFree( void * );

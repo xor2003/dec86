@@ -1,1 +1,0 @@
-trp_objs = $(_subdir_)trpsupp.obj $(_subdir_)trpld.obj

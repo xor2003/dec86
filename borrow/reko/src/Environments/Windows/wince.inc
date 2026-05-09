@@ -1,1 +1,0 @@
-﻿void NKDbgPrintfW(LPCWSTR lpszFmt,...);

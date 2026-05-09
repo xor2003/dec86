@@ -1,9 +1,0 @@
-hello.obj
-hello
-..\macros\hello.xyz hello.c hello.boo
-..\macros\hello.xyz hello.c hello.boo
-hello.c
-..\macros . .
-hello
-hello.obj
-hello

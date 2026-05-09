@@ -1,2 +1,0 @@
- call fword ptr x
- jmp fword ptr x
