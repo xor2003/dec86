@@ -146,6 +146,12 @@ def _coalesce_linear_recurrence_statements(
                     if state.is_linear_register_temp(stmt.lhs):
                         stmt_base, stmt_delta = state.extract_linear_delta(stmt.rhs)
                         if stmt_base is not None:
+                            resolved_stmt_base = state.resolve_known_copy_alias_expr(stmt_base)
+                            if state.expr_contains_dereference(stmt_base) or state.expr_contains_dereference(resolved_stmt_base):
+                                visit(stmt)
+                                new_statements.append(stmt)
+                                i += 1
+                                continue
                             base_var = getattr(stmt_base, "variable", None) if isinstance(stmt_base, structured_c.CVariable) else None
                             if base_var is not None and (id(base_var) in state.dereferenced_variable_ids or id(base_var) in state.protected_linear_alias_ids):
                                 visit(stmt)

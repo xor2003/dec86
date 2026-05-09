@@ -1,3 +1,0 @@
- scasb
- scasw
- scasd

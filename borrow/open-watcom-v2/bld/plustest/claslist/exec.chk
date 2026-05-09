@@ -1,9 +1,0 @@
-PASS compiling pcfistt
-alpha 10
-beta 20
-nu 13
-mu 23
-0
-1
-2
-PASS executing pcfistt

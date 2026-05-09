@@ -1,3 +1,0 @@
-#include <windows.h>
-#include "driver.h"
-#include "driver.dlg"

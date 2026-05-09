@@ -114,6 +114,24 @@ Address(space=SS, offset=...)
 * execution
 * debugging
 
+### 3.1 DS / ES data-space decisions
+
+`DS` and `ES` must not be treated as compile-time constants by default.
+
+```text
+known numeric segment value
+!=
+proven stable data-space object identity
+```
+
+Rules:
+
+- never constant-fold `DS`/`ES` into a numeric linear base
+- if only segmented addressing is proven, keep the segmented form honestly
+- if stable `DS:offset` / `ES:offset` object identity is proven, lower to a typed data-space object/global reference
+- compiler evidence for a single data segment, or future explicit runtime segment evidence, may support that classification
+- such evidence does NOT permit global memory flattening or unrelated rewrites
+
 ---
 
 ### 4. Stack → Variable (REQUIRED)

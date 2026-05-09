@@ -16,6 +16,7 @@ from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
 
 from .cli_core import main
 from . import cache as _cache
+from . import cli_access_profiles as _cli_access_profiles
 from . import cli_core as _cli_core
 from . import cli_decompilation as _cli_decompilation
 from . import cli_fallback_decompilation as _cli_fallback_decompilation
@@ -61,6 +62,8 @@ from . import cli_c_text_postprocess as _cli_c_text_postprocess
 
 _PROXY_MODULES = (
     _cli_core,
+    _cli_access_profiles,
+    _cli_c_ast_rewrites,
     _cli_decompilation,
     _cli_fallback_decompilation,
     _cli_function_discovery,
@@ -74,6 +77,8 @@ _PROXY_MODULES = (
 )
 
 structured_c = structured_codegen.c
+_AccessTraitEvidenceProfile = _cli_access_profiles.AccessTraitEvidenceProfile
+_AccessTraitStrideEvidence = _cli_access_profiles.AccessTraitStrideEvidence
 
 
 def _match_adjacent_register_pair_var_expr(low_expr, high_expr, codegen):
@@ -178,6 +183,8 @@ __all__ = [
     "SimMemoryVariable",
     "SimRegisterVariable",
     "SimStackVariable",
+    "_AccessTraitEvidenceProfile",
+    "_AccessTraitStrideEvidence",
 ]
 
 if __name__ == "__main__":

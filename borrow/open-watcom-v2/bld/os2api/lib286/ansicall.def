@@ -1,5 +1,0 @@
-LIBRARY ANSICALL
-EXPORTS
-    ANSIINJECT                                  @1
-    ANSIKEYDEF                                  @2
-    ANSIINTERP                                  @3

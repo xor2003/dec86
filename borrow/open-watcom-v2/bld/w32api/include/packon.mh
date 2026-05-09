@@ -1,9 +1,0 @@
-/*
- *  packon.h    Enable structure packing
- *
-:include crwatcnt.sp
- */
-
-:include readonly.sp
-
-#pragma pack( __push, 1 )

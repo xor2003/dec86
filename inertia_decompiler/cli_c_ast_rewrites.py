@@ -1358,6 +1358,16 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
+    protected_dereference_addr_expr_ids: set[int] = set()
+    for walk_node in _iter_c_nodes_deep(getattr(codegen.cfunc, "statements", None)):
+        if not isinstance(walk_node, structured_c.CUnaryOp) or walk_node.op != "Dereference":
+            continue
+        addr_expr = _extract_dereference_addr_expr(walk_node)
+        if not _structured_codegen_node(addr_expr):
+            continue
+        for protected_node in _iter_c_nodes_deep(addr_expr):
+            protected_dereference_addr_expr_ids.add(id(protected_node))
+
     def _is_linear_register_temp(cvar) -> bool:
         return isinstance(cvar, structured_c.CVariable) and isinstance(getattr(cvar, "name", None), str) and re.fullmatch(
             r"(?:v\d+|vvar_\d+|ir_\d+)",
@@ -1598,6 +1608,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
     mask_shift_aliases: dict[int, tuple[object, int, int]] = {}
     copy_aliases: dict[int, _CopyAliasState] = {}
     linear_aliases: dict[int, object] = {}
+    dereference_backed_linear_temps: set[int] = set()
     _no_match = object()
     adjacent_byte_pair_cache: dict[tuple[int, int], object] = {}
     word_plus_minus_one_cache: dict[int, object] = {}
@@ -1632,7 +1643,9 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 break
             if not alias.can_inline():
                 break
-            current = _unwrap_c_casts(alias.expr)
+            # Inline a structural copy so later child rewrites do not mutate the
+            # original statement that defined the alias.
+            current = _unwrap_c_casts(_clone_structured_c_value(alias.expr))
         if isinstance(current, structured_c.CTypeCast):
             inner = _resolve_copy_alias_expr(current.expr, seen)
             if inner is not current.expr:
@@ -1670,6 +1683,53 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             return True
         if isinstance(expr, structured_c.CTypeCast):
             return _expr_is_copy_alias_candidate(expr.expr)
+        return False
+
+    def _expr_contains_dereference(expr) -> bool:
+        for walk_node in _iter_c_nodes_deep(expr):
+            if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
+                return True
+        return False
+
+    def _collect_dereference_backed_linear_temps(node):
+        aliases: set[int] = set()
+        for _ in range(4):
+            changed = False
+            for walk_node in _iter_c_nodes_deep(node):
+                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                    continue
+                if not _is_linear_register_temp(walk_node.lhs):
+                    continue
+                lhs_var = getattr(walk_node.lhs, "variable", None)
+                if lhs_var is None:
+                    continue
+                key = id(lhs_var)
+                if key in aliases:
+                    continue
+                rhs = _unwrap_c_casts(walk_node.rhs)
+                if _expr_contains_dereference(rhs):
+                    aliases.add(key)
+                    changed = True
+                    continue
+                if not isinstance(rhs, structured_c.CVariable):
+                    continue
+                rhs_var = getattr(rhs, "variable", None)
+                if rhs_var is not None and id(rhs_var) in aliases:
+                    aliases.add(key)
+                    changed = True
+            if not changed:
+                break
+        return aliases
+
+    def _expr_uses_dereference_backed_temp(expr, backed_ids: set[int]) -> bool:
+        if not backed_ids:
+            return False
+        for walk_node in _iter_c_nodes_deep(expr):
+            if not isinstance(walk_node, structured_c.CVariable):
+                continue
+            variable = getattr(walk_node, "variable", None)
+            if variable is not None and id(variable) in backed_ids:
+                return True
         return False
 
     def _stack_name_root(name: str | None) -> str | None:
@@ -1787,29 +1847,12 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         if not isinstance(low_var, SimMemoryVariable) or not isinstance(high_var, SimMemoryVariable):
             adjacent_byte_pair_cache[key] = _no_match
             return None
-        if not analyze_adjacent_storage_slices(low_var, high_var).ok:
-            adjacent_byte_pair_cache[key] = _no_match
-            return None
-        if getattr(low_var, "region", None) != getattr(high_var, "region", None):
-            adjacent_byte_pair_cache[key] = _no_match
-            return None
-        if getattr(high_var, "addr", None) != getattr(low_var, "addr", None) + 1:
-            adjacent_byte_pair_cache[key] = _no_match
-            return None
-        low_name = getattr(low_var, "name", None)
-        if not isinstance(low_name, str) or not low_name:
-            adjacent_byte_pair_cache[key] = _no_match
-            return None
-        if re.fullmatch(r"(?:v\d+|vvar_\d+)", low_name):
-            adjacent_byte_pair_cache[key] = _no_match
-            return None
-        result = structured_c.CVariable(
-            SimMemoryVariable(low_var.addr, 2, name=_sanitize_cod_identifier(low_name), region=codegen.cfunc.addr),
-            variable_type=SimTypeShort(False),
-            codegen=codegen,
-        )
-        adjacent_byte_pair_cache[key] = result
-        return result
+        # Global/object recovery owns DS/ES data-space objects. The structured
+        # simplifier must not synthesize a bare word object from adjacent byte
+        # globals here, because that late semantic jump can corrupt split byte
+        # store sequences into unresolved address-valued stores.
+        adjacent_byte_pair_cache[key] = _no_match
+        return None
 
     def _match_word_plus_minus_one_expr(node):
         key = id(node)
@@ -1968,6 +2011,17 @@ def _simplify_structured_c_expressions(codegen) -> bool:
             codegen=codegen,
         )
 
+    def _memory_backed_widening_base(node) -> bool:
+        if _expr_uses_dereference_backed_temp(node, dereference_backed_linear_temps):
+            return True
+        analysis = _analyze_widening_expr_cached(node)
+        if analysis is None:
+            return False
+        base_expr = _resolve_copy_alias_expr(_unwrap_c_casts(analysis.base_expr))
+        if isinstance(base_expr, structured_c.CVariable) and isinstance(getattr(base_expr, "variable", None), SimMemoryVariable):
+            return True
+        return isinstance(base_expr, structured_c.CUnaryOp) and base_expr.op == "Dereference"
+
     def _make_mk_fp(segment_expr, offset_expr):
         return structured_c.CFunctionCall("MK_FP", None, [segment_expr, offset_expr], codegen=codegen)
 
@@ -2046,19 +2100,25 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                 return node.expr
 
         if isinstance(node, structured_c.CBinaryOp):
+            if id(node) in protected_dereference_addr_expr_ids:
+                return node
             lhs = _resolve_copy_alias_expr(_unwrap_c_casts(node.lhs))
             rhs = _resolve_copy_alias_expr(_unwrap_c_casts(node.rhs))
+            resolved = structured_c.CBinaryOp(node.op, lhs, rhs, codegen=codegen)
+            resolved_contains_dereference = _expr_contains_dereference(resolved)
+            dereference_backed_source = _expr_uses_dereference_backed_temp(node, dereference_backed_linear_temps)
             if node.op in {"Add", "Or"}:
-                widened = _match_adjacent_byte_pair_var_expr(lhs, rhs)
-                if widened is None:
-                    widened = _match_adjacent_byte_pair_var_expr(rhs, lhs)
-                if widened is not None:
-                    return widened
-                widened = _match_adjacent_register_pair_var_expr(lhs, rhs, codegen)
-                if widened is None:
-                    widened = _match_adjacent_register_pair_var_expr(rhs, lhs, codegen)
-                if widened is not None:
-                    return widened
+                if not dereference_backed_source:
+                    widened = _match_adjacent_byte_pair_var_expr(lhs, rhs)
+                    if widened is None:
+                        widened = _match_adjacent_byte_pair_var_expr(rhs, lhs)
+                    if widened is not None:
+                        return widened
+                    widened = _match_adjacent_register_pair_var_expr(lhs, rhs, codegen)
+                    if widened is None:
+                        widened = _match_adjacent_register_pair_var_expr(rhs, lhs, codegen)
+                    if widened is not None:
+                        return widened
                 if node.op == "Add":
                     if isinstance(lhs, structured_c.CVariable) and isinstance(getattr(lhs, "variable", None), SimStackVariable):
                         if _c_constant_value(rhs) is not None:
@@ -2070,20 +2130,23 @@ def _simplify_structured_c_expressions(codegen) -> bool:
                             alias_expr = far_pointer_aliases.get(id(getattr(rhs, "variable", None)))
                             if alias_expr is not None:
                                 return _make_mk_fp(alias_expr, lhs)
-                delta = _match_word_plus_minus_one_expr(node)
-                if delta is not None:
-                    return delta
-                linear = _match_linear_word_delta_expr(node)
-                if linear is not None:
-                    return linear
-                high_update = _match_high_byte_preserving_word_expr(node)
-                if high_update is not None:
-                    return high_update
+                if not resolved_contains_dereference and not dereference_backed_source:
+                    if not _memory_backed_widening_base(node):
+                        delta = _match_word_plus_minus_one_expr(node)
+                        if delta is not None:
+                            return delta
+                        linear = _match_linear_word_delta_expr(node)
+                        if linear is not None:
+                            return linear
+                        high_update = _match_high_byte_preserving_word_expr(node)
+                        if high_update is not None:
+                            return high_update
             if node.op in {"Add", "Sub"}:
-                resolved = structured_c.CBinaryOp(node.op, lhs, rhs, codegen=codegen)
-                linear = _match_linear_word_delta_expr(resolved)
-                if linear is not None:
-                    return linear
+                if not resolved_contains_dereference and not dereference_backed_source:
+                    if not _memory_backed_widening_base(resolved):
+                        linear = _match_linear_word_delta_expr(resolved)
+                        if linear is not None:
+                            return linear
             if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):
                 if isinstance(lhs.value, int) and isinstance(rhs.value, int):
                     result = None
@@ -2335,6 +2398,7 @@ def _simplify_structured_c_expressions(codegen) -> bool:
         shift_extract_aliases = _collect_shift_extract_aliases(root)
         mask_shift_aliases = _collect_mask_shift_aliases(root)
         copy_aliases = _collect_copy_aliases(root)
+        dereference_backed_linear_temps = _collect_dereference_backed_linear_temps(root)
         far_pointer_aliases = _collect_far_pointer_stack_aliases(root)
         new_root = transform(root)
         if new_root is not root:

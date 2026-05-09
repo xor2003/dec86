@@ -1,9 +1,0 @@
-# UTF-8 encoding, ¥
-static_text=\
-        //0"Selective Installation"\
-        //1"選択インストール"\
-        //-1
-static_text=\
-        //0"	- You will be prompted to choose which components to copy."\
-        //1"	- コピーするコンポーネントを選択するプロンプトが出ます."\
-        //-1

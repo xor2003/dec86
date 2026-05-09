@@ -1,9 +1,0 @@
-proj_name = link
-
-!ifndef link_autodepends
-link_autodepends = .AUTODEPEND
-!endif
-
-link_ntverrc = ..
-
-!include ../../link.mif

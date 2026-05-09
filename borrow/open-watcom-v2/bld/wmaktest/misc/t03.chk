@@ -1,8 +1,0 @@
-echo before
-before
-echo default
-default
-echo after-1
-after-1
-echo after
-after

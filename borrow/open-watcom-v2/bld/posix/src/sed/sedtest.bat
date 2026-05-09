@@ -1,1 +1,0 @@
-sed -f ctrans pascal

@@ -1,3 +1,0 @@
- outsb
- outsw
- outsd

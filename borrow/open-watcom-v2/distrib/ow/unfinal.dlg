@@ -1,9 +1,0 @@
-# UTF-8 encoding, ¥
-name=UnInstallFinal
-condition=PreviousInstall UnInstall
-static_text=\
-        //0"@ will now remove all components"\
-        //1"@ はすべてのコンポーネントを削除します"\
-        //-1
-static_text=
-include=poc.dlg

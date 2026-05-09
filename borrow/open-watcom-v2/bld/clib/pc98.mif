@@ -1,5 +1,0 @@
-tree_depth = 6
-
-base_libname = pc98
-
-!include $(clib_dir)/mklib.mif

@@ -1,9 +1,0 @@
-/*
- *  pshpack8.h  Push 8-byte packing
- *
-:include crwatcnt.sp
- */
- 
-:include readonly.sp
-
-#pragma pack( __push, 8 )

@@ -1,2 +1,0 @@
-SZC_4 = cond(r1 - 2<i32>): cond(r1 - 2<i32>)
-C_5 = SZC_4: cond(r1 - 2<i32>)

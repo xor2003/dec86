@@ -1,9 +1,0 @@
-proj_name = lib
-
-!ifndef lib_autodepends
-lib_autodepends = .AUTODEPEND
-!endif
-
-lib_ntverrc = ..
-
-!include ../../lib.mif

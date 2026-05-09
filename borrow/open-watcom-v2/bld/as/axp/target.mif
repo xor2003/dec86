@@ -1,5 +1,0 @@
-tree_depth = 4
-
-target_cpu = axp
-
-!include ../../master.mif

@@ -1,6 +1,0 @@
-# This file produced by MS2WLINK
-system dos
-file obj.obj
-file 1.obj
-name 2.exe
-option nocaseexact

@@ -11,9 +11,14 @@ __pycache__/
 .inertia_decomp_cache/
 .inertia_pat_cache/
 
-80286/
-martypc/
+borrow/
 
 pid.txt
 res.log
 result.txt
+.toolchain
+.ralph
+.cache
+.codex*
+.corpus
+

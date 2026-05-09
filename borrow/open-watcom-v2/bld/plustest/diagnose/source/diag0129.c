@@ -1,5 +1,0 @@
-struct S {
-    void foo()
-    {
-    }
-};

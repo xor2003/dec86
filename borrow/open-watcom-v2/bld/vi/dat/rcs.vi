@@ -1,5 +1,0 @@
-if rdonly == 0
-    return ERR_NO_ERR
-endif
-checkout %F
-return ERR_NO_ERR

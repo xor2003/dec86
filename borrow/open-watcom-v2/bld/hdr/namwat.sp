@@ -1,1 +1,0 @@
-namespace watcom = _watcom;

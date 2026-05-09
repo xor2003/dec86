@@ -1,4 +1,0 @@
-LIBRARY SHDOCVW.DLL
-EXPORTS
-DoPrivacyDlg@16
-ImportPrivacySettings@12

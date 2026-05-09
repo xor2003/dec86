@@ -1,9 +1,0 @@
-c$ifdef INCL_CNRTREEDRAG
-c$define INCL_WINSTDDRAG
-c$endif
-
-c$define INCL_WINSTDCNR
-
-c$include pmstddlg.fap
-
-c$pragma aux (__syscall) CnrTreeRegister

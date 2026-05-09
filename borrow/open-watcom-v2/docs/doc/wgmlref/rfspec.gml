@@ -1,9 +1,0 @@
-:H1.General Specifications
-:INCLUDE file='rfsproc'.
-:INCLUDE file='rfshor'.
-:INCLUDE file='rfsvert'.
-:INCLUDE file='rfsflnk'.
-:INCLUDE file='rfsattr'.
-:INCLUDE file='rfssymb'.
-:INCLUDE file='rfsid'.
-:INCLUDE file='rfsintr'.

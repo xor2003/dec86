@@ -1,3 +1,0 @@
-call DbgRedirectBeg
-call dumpsymbol( <1> )
-viewcapt.dbg

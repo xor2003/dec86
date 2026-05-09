@@ -1,5 +1,0 @@
-# UTF-8 encoding, ¥
-radio_button=SelectiveInstall,true,\
-        //0"&Selective installation"\
-        //1"選択インストール (&S)"\
-        //-1

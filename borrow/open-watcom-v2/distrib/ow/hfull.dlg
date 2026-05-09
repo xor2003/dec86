@@ -1,9 +1,0 @@
-# UTF-8 encoding, ¥
-static_text=\
-        //0"Full Installation"\
-        //1"すべてインストール"\
-        //-1
-static_text=\
-        //0"	- All components will be copied to the hard disk."\
-        //1"	- すべてのコンポーネントをハードディスクにコピーされます."\
-        //-1

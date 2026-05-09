@@ -1,9 +1,0 @@
-/*
- *  olectlid.h  Old header for compatibility
- *
-:include crwatcnt.sp
- */
-
-:include readonly.sp
-
-#include <olectl.h>

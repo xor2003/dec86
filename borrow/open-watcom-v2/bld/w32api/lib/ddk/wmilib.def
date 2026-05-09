@@ -1,5 +1,0 @@
-LIBRARY WMILIB.SYS
-EXPORTS
-WmiCompleteRequest@20
-WmiFireEvent@20
-WmiSystemControl@16

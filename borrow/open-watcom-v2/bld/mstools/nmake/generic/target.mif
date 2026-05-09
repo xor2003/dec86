@@ -1,9 +1,0 @@
-proj_name = nmake
-
-!ifndef nmake_autodepends
-nmake_autodepends = .AUTODEPEND
-!endif
-
-nmake_ntverrc = ..
-
-!include ../../nmake.mif

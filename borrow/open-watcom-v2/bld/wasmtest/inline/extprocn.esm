@@ -1,3 +1,0 @@
-test_:
-    call        near ptr procn_
-    retf        

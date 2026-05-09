@@ -1,5 +1,0 @@
-#define MAX_ERROR_STRING 100
-
-extern void SetError( char * );
-extern void ReportPendingError( void );
-extern void ReportError( char *, HANDLE );

@@ -1,2 +1,0 @@
-extern void DrawTempRect( LPRECT );
-extern bool DoPainting( void );

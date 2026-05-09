@@ -1,8 +1,0 @@
-{
-    "git.ignoreLimitWarning": true,
-    "cmake.sourceDirectory": "/home/xor/vextest/86Box",
-    "rust-analyzer.enable": false,
-    "files.autoSave": "off",
-    "files.hotExit": "off",
-    "files.saveConflictResolution": "overwriteFileOnDisk"
-}
