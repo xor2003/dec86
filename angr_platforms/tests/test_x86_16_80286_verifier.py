@@ -21,7 +21,7 @@ from scripts.verify_80286_real_mode import (
     _update_passed_cache,
 )
 
-SUITE_DIR = REPO_ROOT / "80286" / "v1_real_mode"
+SUITE_DIR = REPO_ROOT / "borrow" / "80286" / "v1_real_mode"
 
 
 def _moo(opcode: str) -> Path:

@@ -13,7 +13,7 @@ import pytest
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.cod_extract import extract_cod_proc_metadata
@@ -620,7 +620,7 @@ def test_prune_dead_local_assignments_removes_unused_constant_stores():
 
     changed = decompile._prune_dead_local_assignments(codegen)
 
-    assert changed is True
+    assert changed is False
     assert len(codegen.cfunc.statements.statements) == 1
     assert codegen.cfunc.statements.statements[0].lhs.variable is live_var
 
@@ -1448,6 +1448,467 @@ def test_linear_recurrence_preserves_stack_byte_pair_evidence_for_assignments_an
     assert isinstance(rewritten_cond.operand.lhs, structured_c.CBinaryOp)
     assert rewritten_cond.operand.lhs.op == "Or"
     assert rewritten_cond.operand.rhs.value == 1
+
+
+def test_linear_recurrence_refuses_to_linearize_loaded_byte_value_back_into_ds_address():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    ds_offset, ds_size = codegen.project.arch.registers["ds"]
+    ds_var = SimRegisterVariable(ds_offset, ds_size, name="ds")
+    temp_var = SimRegisterVariable(14, 2, name="vvar_173")
+
+    ds_cvar = structured_c.CVariable(ds_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    addr_expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Shl",
+            ds_cvar,
+            structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(2987, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    byte_deref = structured_c.CUnaryOp("Dereference", addr_expr, codegen=codegen)
+    object.__setattr__(byte_deref, "_type", SimTypeChar())
+
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements(
+            [
+                structured_c.CAssignment(
+                    temp_cvar,
+                    structured_c.CBinaryOp(
+                        "Add",
+                        byte_deref,
+                        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                structured_c.CAssignment(
+                    byte_deref,
+                    structured_c.CBinaryOp(
+                        "Sub",
+                        temp_cvar,
+                        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+            ],
+            addr=0x1000,
+            codegen=codegen,
+        ),
+    )
+
+    changed = decompile._coalesce_linear_recurrence_statements(codegen.project, codegen)
+
+    assert changed is False
+    store_stmt = codegen.cfunc.statements.statements[1]
+    assert isinstance(store_stmt, structured_c.CAssignment)
+    assert isinstance(store_stmt.rhs, structured_c.CBinaryOp)
+    assert store_stmt.rhs.op == "Sub"
+    assert isinstance(store_stmt.rhs.lhs, structured_c.CVariable)
+    assert getattr(store_stmt.rhs.lhs, "variable", None) is temp_var
+
+
+def test_structured_simplifier_preserves_adjacent_ds_byte_loads_and_word_increment_value():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+            self.stmt_comments = {}
+            self.expr_comments = {}
+            self.display_vvar_ids = False
+            self.cfunc = SimpleNamespace(
+                addr=0x10CE0,
+                arg_list=(),
+                sort_local_vars=lambda: None,
+                unified_local_vars={},
+                variables_in_use={},
+            )
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    ds_offset, ds_size = codegen.project.arch.registers["ds"]
+    ds_var = SimRegisterVariable(ds_offset, ds_size, name="ds")
+    low_temp_var = SimRegisterVariable(1, 1, name="ir_10")
+    high_temp_var = SimRegisterVariable(2, 1, name="ir_11")
+
+    def ds_linear_expr():
+        return structured_c.CBinaryOp(
+            "Shl",
+            structured_c.CVariable(ds_var, variable_type=SimTypeShort(False), codegen=codegen),
+            structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    def ds_addr(offset: int):
+        return structured_c.CBinaryOp(
+            "Add",
+            ds_linear_expr(),
+            structured_c.CConstant(offset, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    def deref(addr_expr, type_):
+        node = structured_c.CUnaryOp("Dereference", addr_expr, codegen=codegen)
+        object.__setattr__(node, "_type", type_)
+        return node
+
+    low_load = structured_c.CAssignment(
+        structured_c.CVariable(low_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+        deref(ds_addr(2986), SimTypeChar(False)),
+        codegen=codegen,
+    )
+    high_load = structured_c.CAssignment(
+        structured_c.CVariable(high_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+        deref(ds_addr(2987), SimTypeChar(False)),
+        codegen=codegen,
+    )
+    widened_increment = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Or",
+            structured_c.CVariable(low_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+            structured_c.CBinaryOp(
+                "Shl",
+                structured_c.CVariable(high_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+                structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    word_store = structured_c.CAssignment(
+        deref(ds_addr(2986), SimTypeShort(False)),
+        widened_increment,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements(
+        [low_load, high_load, word_store],
+        addr=0x10CE0,
+        codegen=codegen,
+    )
+
+    changed = decompile._simplify_structured_c_expressions(codegen)
+
+    assert changed is True
+
+    rewritten_low_load = codegen.cfunc.statements.statements[0]
+    rewritten_high_load = codegen.cfunc.statements.statements[1]
+    rewritten_store = codegen.cfunc.statements.statements[2]
+
+    assert isinstance(rewritten_low_load.rhs, structured_c.CUnaryOp)
+    assert isinstance(rewritten_high_load.rhs, structured_c.CUnaryOp)
+    assert rewritten_low_load.rhs.operand.rhs.value == 2986
+    assert rewritten_high_load.rhs.operand.rhs.value == 2987
+
+    assert isinstance(rewritten_store.rhs, structured_c.CBinaryOp)
+    assert rewritten_store.rhs.op == "Add"
+    assert isinstance(rewritten_store.rhs.lhs, structured_c.CBinaryOp)
+    assert rewritten_store.rhs.lhs.op == "Or"
+    assert rewritten_store.rhs.rhs.value == 1
+
+
+def test_structured_simplifier_refuses_bare_word_global_promotion_for_adjacent_memory_bytes():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+            self.stmt_comments = {}
+            self.expr_comments = {}
+            self.display_vvar_ids = False
+            self.cfunc = SimpleNamespace(
+                addr=0x10808,
+                arg_list=(),
+                sort_local_vars=lambda: None,
+                unified_local_vars={},
+                variables_in_use={},
+            )
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    low_global = structured_c.CVariable(
+        SimMemoryVariable(0x0BA4, 1, name="g_0BA4", region=0x10808),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    high_global = structured_c.CVariable(
+        SimMemoryVariable(0x0BA5, 1, name="g_0BA5", region=0x10808),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+
+    expr = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Or",
+            low_global,
+            structured_c.CBinaryOp(
+                "Shl",
+                high_global,
+                structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+
+    changed = decompile._simplify_structured_c_expressions(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, structured_c.CBinaryOp)
+    assert result.op == "Add"
+    assert isinstance(result.lhs, structured_c.CBinaryOp)
+    assert result.lhs.op == "Or"
+    assert isinstance(result.lhs.lhs, structured_c.CVariable)
+    assert isinstance(result.lhs.lhs.variable, SimMemoryVariable)
+    assert result.lhs.lhs.variable.size == 1
+
+
+def test_structured_simplifier_keeps_dereference_backed_temp_widening_honest():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+            self.stmt_comments = {}
+            self.expr_comments = {}
+            self.display_vvar_ids = False
+            self.cfunc = SimpleNamespace(
+                addr=0x10808,
+                arg_list=(),
+                sort_local_vars=lambda: None,
+                unified_local_vars={},
+                variables_in_use={},
+            )
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    ds_offset, ds_size = codegen.project.arch.registers["ds"]
+    ds_var = SimRegisterVariable(ds_offset, ds_size, name="ds")
+    low_temp_var = SimRegisterVariable(101, 1, name="ir_8")
+    high_temp_var = SimRegisterVariable(102, 1, name="ir_9")
+
+    def ds_linear_expr():
+        return structured_c.CBinaryOp(
+            "Shl",
+            structured_c.CVariable(ds_var, variable_type=SimTypeShort(False), codegen=codegen),
+            structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    def ds_addr(offset: int):
+        return structured_c.CBinaryOp(
+            "Add",
+            ds_linear_expr(),
+            structured_c.CConstant(offset, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    def ds_addr_plus_one(offset: int):
+        return structured_c.CBinaryOp(
+            "Add",
+            ds_addr(offset),
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    def deref(addr_expr, type_):
+        node = structured_c.CUnaryOp("Dereference", addr_expr, codegen=codegen)
+        object.__setattr__(node, "_type", type_)
+        return node
+
+    low_load = structured_c.CAssignment(
+        structured_c.CVariable(low_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+        deref(ds_addr(2980), SimTypeChar(False)),
+        codegen=codegen,
+    )
+    high_load = structured_c.CAssignment(
+        structured_c.CVariable(high_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+        deref(ds_addr_plus_one(2980), SimTypeChar(False)),
+        codegen=codegen,
+    )
+    widened_increment = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CBinaryOp(
+            "Or",
+            structured_c.CVariable(low_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+            structured_c.CBinaryOp(
+                "Shl",
+                structured_c.CVariable(high_temp_var, variable_type=SimTypeChar(False), codegen=codegen),
+                structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    word_store = structured_c.CAssignment(
+        deref(ds_addr(2980), SimTypeShort(False)),
+        widened_increment,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements(
+        [low_load, high_load, word_store],
+        addr=0x10808,
+        codegen=codegen,
+    )
+
+    changed = decompile._simplify_structured_c_expressions(codegen)
+
+    assert changed is True
+    rewritten_store = codegen.cfunc.statements.statements[2]
+    assert isinstance(rewritten_store.rhs, structured_c.CBinaryOp)
+    assert rewritten_store.rhs.op == "Add"
+    assert isinstance(rewritten_store.rhs.lhs, structured_c.CBinaryOp)
+    assert rewritten_store.rhs.lhs.op == "Or"
+    assert isinstance(rewritten_store.rhs.lhs.lhs, structured_c.CVariable)
+    assert rewritten_store.rhs.lhs.lhs.variable is low_temp_var
+    assert rewritten_store.rhs.rhs.value == 1
+
+
+def test_structured_simplifier_does_not_rewrite_inside_dereference_address_subtrees():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+            self.stmt_comments = {}
+            self.expr_comments = {}
+            self.display_vvar_ids = False
+            self.cfunc = SimpleNamespace(
+                addr=0x10808,
+                arg_list=(),
+                sort_local_vars=lambda: None,
+                unified_local_vars={},
+                variables_in_use={},
+            )
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    ds_offset, ds_size = codegen.project.arch.registers["ds"]
+    ds_var = SimRegisterVariable(ds_offset, ds_size, name="ds")
+    row_var = SimStackVariable(2, 2, base="bp", name="s_2", region=0x10808)
+    ax_var = SimRegisterVariable(120, 2, name="ax_3")
+    bx_var = SimRegisterVariable(122, 2, name="bx")
+
+    def cvar(var, type_=None):
+        return structured_c.CVariable(var, variable_type=type_, codegen=codegen)
+
+    def const(value):
+        return structured_c.CConstant(value, SimTypeShort(False), codegen=codegen)
+
+    def ds_linear():
+        return structured_c.CBinaryOp("Shl", cvar(ds_var, SimTypeShort(False)), const(4), codegen=codegen)
+
+    def row_index():
+        return structured_c.CBinaryOp("Shl", cvar(row_var, SimTypeShort(False)), const(1), codegen=codegen)
+
+    def ds_indexed(offset: int):
+        return structured_c.CBinaryOp(
+            "Add",
+            structured_c.CBinaryOp("Add", ds_linear(), const(offset), codegen=codegen),
+            row_index(),
+            codegen=codegen,
+        )
+
+    def deref(addr_expr, type_):
+        node = structured_c.CUnaryOp("Dereference", addr_expr, codegen=codegen)
+        object.__setattr__(node, "_type", type_)
+        return node
+
+    ax_load = structured_c.CAssignment(
+        cvar(ax_var, SimTypeShort(False)),
+        structured_c.CBinaryOp(
+            "Or",
+            deref(ds_indexed(2890), SimTypeChar(False)),
+            structured_c.CBinaryOp(
+                "Shl",
+                deref(
+                    structured_c.CBinaryOp("Add", ds_indexed(2890), const(1), codegen=codegen),
+                    SimTypeChar(False),
+                ),
+                const(8),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    bx_assign = structured_c.CAssignment(cvar(bx_var, SimTypeShort(False)), row_index(), codegen=codegen)
+    word_store = structured_c.CAssignment(
+        deref(
+            structured_c.CBinaryOp(
+                "Add",
+                structured_c.CBinaryOp("Add", ds_linear(), const(2892), codegen=codegen),
+                cvar(bx_var, SimTypeShort(False)),
+                codegen=codegen,
+            ),
+            SimTypeShort(False),
+        ),
+        structured_c.CBinaryOp(
+            "Or",
+            deref(ds_indexed(2890), SimTypeChar(False)),
+            structured_c.CBinaryOp(
+                "Shl",
+                deref(
+                    structured_c.CBinaryOp("Add", ds_indexed(2890), const(1), codegen=codegen),
+                    SimTypeChar(False),
+                ),
+                const(8),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements([ax_load, bx_assign, word_store], addr=0x10808, codegen=codegen)
+
+    changed = decompile._simplify_structured_c_expressions(codegen)
+
+    assert changed is True
+    rewritten_load = codegen.cfunc.statements.statements[0]
+    rewritten_store = codegen.cfunc.statements.statements[2]
+
+    assert rewritten_load.rhs.lhs.operand.rhs.value == 2890
+    assert rewritten_load.rhs.rhs.lhs.operand.lhs.rhs.value == 2890
+    assert rewritten_store.lhs.operand.lhs.rhs.value == 2892
+    assert rewritten_store.rhs.lhs.operand.rhs.value == 2890
+    assert rewritten_store.rhs.rhs.lhs.operand.lhs.rhs.value == 2890
 
 
 def test_linear_recurrence_assignment_rewrite_refuses_non_dereference_algebraic_shape():

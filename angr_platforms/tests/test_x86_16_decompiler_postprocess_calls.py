@@ -17,6 +17,7 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.callsite_stack_metadata import _prune_dead_stack_carrier_assignments_8616
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _attach_callsite_summaries_8616,
@@ -41,6 +42,14 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+
+
+class _LoopLikeNode:
+    def __init__(self, body):
+        self.body = body
+        self.statements = None
+        self.else_node = None
+        self.condition_and_nodes = ()
 
 
 def _project():
@@ -2077,6 +2086,265 @@ def test_materialize_callsite_stack_arguments_extracts_inline_store_before_call_
     assert wrapped_drawtime.statements[0].expr.args == [irow1]
 
 
+def test_materialize_callsite_stack_arguments_consumes_repeated_value_carrier_assignments():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_31"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    second_arg = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant(0x0B4C, SimTypeShort(False), codegen=codegen),
+        structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    first_arg = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant(0x0B4C, SimTypeShort(False), codegen=codegen),
+        structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    call = CFunctionCall("Swaps", SimpleNamespace(name="Swaps"), [], codegen=codegen)
+
+    codegen.cfunc.statements = CStatements(
+        [
+            CStatements(
+                [
+                    CAssignment(carrier, second_arg, codegen=codegen),
+                    CAssignment(carrier, first_arg, codegen=codegen),
+                    CExpressionStatement(call, codegen=codegen),
+                ],
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1794,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+        )
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    wrapped = codegen.cfunc.statements.statements[0]
+    assert isinstance(wrapped, CStatements)
+    assert len(wrapped.statements) == 1
+    assert isinstance(wrapped.statements[0], CExpressionStatement)
+    assert wrapped.statements[0].expr.args == [second_arg, first_arg]
+
+
+def test_materialize_callsite_stack_arguments_consumes_trailing_store_after_previous_call_wrapper():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    def _ss_store(rhs_expr):
+        return CAssignment(
+            structured_c.CUnaryOp(
+                "Dereference",
+                structured_c.CBinaryOp(
+                    "Add",
+                    structured_c.CBinaryOp(
+                        "Mul",
+                        structured_c.CVariable(
+                            SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+                            codegen=codegen,
+                        ),
+                        structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    structured_c.CBinaryOp(
+                        "Add",
+                        structured_c.CUnaryOp(
+                            "Reference",
+                            structured_c.CVariable(
+                                SimStackVariable(-6, 2, base="bp", name="s_6", region=0x4010),
+                                variable_type=SimTypeShort(False),
+                                codegen=codegen,
+                            ),
+                            codegen=codegen,
+                        ),
+                        structured_c.CConstant(-2, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            rhs_expr,
+            codegen=codegen,
+        )
+
+    irow = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="iRowTmp", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_82"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    carrier_value = structured_c.CBinaryOp(
+        "Add",
+        structured_c.CConstant(0x0B4A, SimTypeShort(False), codegen=codegen),
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    probe_call = CFunctionCall("aNchkstk", SimpleNamespace(name="aNchkstk"), [], codegen=codegen)
+    drawbar_call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [irow], codegen=codegen)
+    drawtime_call = CFunctionCall("DrawTime", SimpleNamespace(name="DrawTime"), [], codegen=codegen)
+
+    codegen.cfunc.statements = CStatements(
+        [
+            CStatements([CExpressionStatement(probe_call, codegen=codegen)], codegen=codegen),
+            CStatements(
+                [
+                    CExpressionStatement(drawbar_call, codegen=codegen),
+                    CAssignment(carrier, carrier_value, codegen=codegen),
+                    _ss_store(irow),
+                ],
+                codegen=codegen,
+            ),
+            CExpressionStatement(drawtime_call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(probe_call): CallsiteSummary8616(
+            callsite_addr=0x4010,
+            target_addr=0x1001,
+            return_addr=0x4012,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register="ax",
+            return_used=True,
+            stack_probe_helper=True,
+            helper_return_state="stack_address",
+            helper_return_space="ss",
+        ),
+        id(drawtime_call): CallsiteSummary8616(
+            callsite_addr=0x4016,
+            target_addr=0x1550,
+            return_addr=0x4019,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert drawtime_call.args == [irow]
+
+
+def test_materialize_callsite_stack_arguments_handles_assignment_wrapped_call():
+    project = _project()
+    codegen = _empty_codegen(project)
+    structured_c = _scg.c
+
+    def _ss_store(rhs_expr):
+        return CAssignment(
+            structured_c.CUnaryOp(
+                "Dereference",
+                structured_c.CBinaryOp(
+                    "Add",
+                    structured_c.CBinaryOp(
+                        "Mul",
+                        structured_c.CVariable(
+                            SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+                            codegen=codegen,
+                        ),
+                        structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    structured_c.CBinaryOp(
+                        "Add",
+                        structured_c.CUnaryOp(
+                            "Reference",
+                            structured_c.CVariable(
+                                SimStackVariable(-6, 2, base="bp", name="s_6", region=0x4010),
+                                variable_type=SimTypeShort(False),
+                                codegen=codegen,
+                            ),
+                            codegen=codegen,
+                        ),
+                        structured_c.CConstant(-2, SimTypeShort(False), codegen=codegen),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            rhs_expr,
+            codegen=codegen,
+        )
+
+    irow = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="iRowTmp", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    result_var = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="ax_5"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    drawtime_call = CFunctionCall("DrawTime", SimpleNamespace(name="DrawTime"), [], codegen=codegen)
+
+    codegen.cfunc.statements = CStatements(
+        [
+            _ss_store(irow),
+            CAssignment(result_var, drawtime_call, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(drawtime_call): CallsiteSummary8616(
+            callsite_addr=0x4016,
+            target_addr=0x1550,
+            return_addr=0x4019,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register="ax",
+            return_used=True,
+        ),
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    assert drawtime_call.args == [irow]
+
+
 def test_tail_validation_call_fingerprint_prefers_resolved_function_addr_for_named_target():
     project = _project()
     project.kb = SimpleNamespace(
@@ -2124,3 +2392,43 @@ def test_tail_validation_stays_stable_for_unknown_to_named_call_when_callsite_ma
     )
 
     assert diff["changed"] is False
+
+
+def test_prune_dead_stack_carriers_only_recurses_into_plain_statement_blocks():
+    project = _project()
+    codegen = _DummyCodegen(project)
+    structured_c = _scg.c
+    local_slot = structured_c.CVariable(
+        SimStackVariable(-6, 2, base="bp", name="s_6", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_11"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    loop_body = CStatements(
+        [
+            CAssignment(
+                carrier,
+                structured_c.CUnaryOp("Reference", local_slot, codegen=codegen),
+                codegen=codegen,
+            ),
+            CExpressionStatement(CFunctionCall("Inner", SimpleNamespace(name="Inner"), [], codegen=codegen), codegen=codegen),
+        ],
+        addr=0x4020,
+        codegen=codegen,
+    )
+    loop_like = _LoopLikeNode(loop_body)
+    prefix = CStatements([], addr=0x4000, codegen=codegen)
+    suffix = CStatements([CReturn(None, codegen=codegen)], addr=0x4030, codegen=codegen)
+    root = CStatements([prefix, loop_like, suffix], addr=0x4010, codegen=codegen)
+    loop_like.statements = root.statements
+
+    changed = _prune_dead_stack_carrier_assignments_8616(root)
+
+    assert changed is True
+    assert root.statements[1] is loop_like
+    assert len(loop_body.statements) == 1
+    assert isinstance(loop_body.statements[0], CExpressionStatement)

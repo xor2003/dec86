@@ -584,8 +584,12 @@ def _collect_add_sub_terms(
         return None
 
     if op_str in {"Iop_Add16", "Iop_Add32"}:
-        left_terms, left_const = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
-        right_terms, right_const = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+        left_res = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
+        right_res = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+        if left_res is None or right_res is None:
+            return ([args[0], args[1]], 0)
+        left_terms, left_const = left_res
+        right_terms, right_const = right_res
         if left_terms is not None and right_terms is not None:
             return (left_terms + right_terms, (left_const + right_const) & 0xFFFF)
         # One side may be non-decomposable; treat it as a term
@@ -596,8 +600,12 @@ def _collect_add_sub_terms(
         return ([args[0], args[1]], 0)
 
     if op_str in {"Iop_Sub16", "Iop_Sub32"}:
-        left_terms, left_const = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
-        right_terms, right_const = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+        left_res = _collect_add_sub_terms(args[0], tmp_defs=tmp_defs)
+        right_res = _collect_add_sub_terms(args[1], tmp_defs=tmp_defs)
+        if left_res is None or right_res is None:
+            return ([args[0], args[1]], 0)
+        left_terms, left_const = left_res
+        right_terms, right_const = right_res
         if left_terms is not None and right_terms is not None:
             return (left_terms + right_terms, (left_const - right_const) & 0xFFFF)
         if left_terms is not None:

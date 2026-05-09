@@ -15,9 +15,9 @@ from capstone.x86_const import X86_OP_MEM
 from .arch_86_16 import Arch86_16
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SUITE_DIR = REPO_ROOT / "80286" / "v1_real_mode"
-DEFAULT_REVOCATION_LIST = REPO_ROOT / "80286" / "revocation_list.txt"
-DEFAULT_MOO_PARSER = REPO_ROOT / "80286" / "tools" / "moo2json.py"
+DEFAULT_SUITE_DIR = REPO_ROOT / "borrow" / "80286" / "v1_real_mode"
+DEFAULT_REVOCATION_LIST = REPO_ROOT / "borrow" / "80286" / "revocation_list.txt"
+DEFAULT_MOO_PARSER = REPO_ROOT / "borrow" / "80286" / "tools" / "moo2json.py"
 MAX_INSN_BYTES = 15
 REG_ORDER = ("ax", "bx", "cx", "dx", "cs", "ss", "ds", "es", "sp", "bp", "si", "di", "ip", "flags")
 STRING_OPCODES = {0x6C, 0x6D, 0x6E, 0x6F, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF}

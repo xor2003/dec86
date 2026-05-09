@@ -155,6 +155,42 @@ def test_callsite_summary_counts_pushes_separated_by_register_setup(monkeypatch)
     )
 
 
+def test_callsite_summary_counts_pushes_separated_by_register_arithmetic_chain(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "mov", [_Operand(reg=2), _Operand(imm=3)], reg_names={2: "ax"}),
+            _Insn(0x1003, "shl", [_Operand(reg=2), _Operand(imm=1)], reg_names={2: "ax"}),
+            _Insn(0x1005, "add", [_Operand(reg=2), _Operand(imm=0x0B4C)], reg_names={2: "ax"}),
+            _Insn(0x1008, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1009, "mov", [_Operand(reg=2), _Operand(imm=5)], reg_names={2: "ax"}),
+            _Insn(0x100C, "shl", [_Operand(reg=2), _Operand(imm=1)], reg_names={2: "ax"}),
+            _Insn(0x100E, "add", [_Operand(reg=2), _Operand(imm=0x0B4C)], reg_names={2: "ax"}),
+            _Insn(0x1011, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1012, "call"),
+            _Insn(0x1015, "add", [_Operand(reg=1), _Operand(imm=4)], reg_names={1: "sp"}),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1012, 0x1544, 0x1015, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1012)
+
+    assert summary == CallsiteSummary8616(
+        callsite_addr=0x1012,
+        target_addr=0x1544,
+        return_addr=0x1015,
+        kind="direct_near",
+        arg_count=2,
+        arg_widths=(2, 2),
+        stack_cleanup=4,
+        return_register=None,
+        return_used=False,
+        stack_probe_helper=False,
+    )
+
+
 def test_callsite_summary_uses_fallthrough_cleanup_block_after_call(monkeypatch):
     call_block = SimpleNamespace(
         capstone=SimpleNamespace(

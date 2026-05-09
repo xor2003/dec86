@@ -8,6 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CIfElse,
     CStatements,
     CTypeCast,
     CUnaryOp,
@@ -24,10 +25,15 @@ from angr_platforms.X86_16.segmented_memory_reasoning import (
     apply_x86_16_segmented_memory_reasoning,
 )
 from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_stage
-from angr_platforms.X86_16.decompiler_postprocess_utils import _match_bp_stack_dereference_8616
+from angr_platforms.X86_16.decompiler_postprocess_utils import (
+    _match_bp_stack_dereference_8616,
+    _stack_bp_displacement_8616,
+)
 from angr_platforms.X86_16.lowering.real_mode_linear import (
+    lower_stable_ds_es_linear_global_addresses_8616,
     lower_stable_ds_es_linear_global_dereferences_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
+    match_stable_ds_es_linear_global_address_8616,
     match_stable_ds_es_linear_global_access_8616,
     match_stable_ss_linear_stack_access_8616,
 )
@@ -103,6 +109,19 @@ def _ds_deref(project, linear: int, codegen, *, width: int = 16):
         ),
         codegen=codegen,
     )
+
+
+def _ds_addr(project, linear: int, codegen, extra_expr=None):
+    ds = _reg(project, "ds", codegen)
+    address = CBinaryOp(
+        "Add",
+        CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen),
+        CConstant(linear, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    if extra_expr is None:
+        return address
+    return CBinaryOp("Add", address, extra_expr, codegen=codegen)
 
 
 def _ss_stack_deref(project, stack_offset: int, addend: int, codegen):
@@ -433,6 +452,27 @@ def test_match_bp_stack_dereference_handles_nested_add_sub_chain_from_vvar_base(
     assert displacement == -10
 
 
+def test_stack_bp_displacement_refuses_self_referential_stack_carrier_cycle():
+    project, codegen = _codegen([])
+    carrier = _stack(-2, codegen, name="s_2")
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                carrier,
+                CBinaryOp("Add", carrier, _const(2, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    displacement = _stack_bp_displacement_8616(carrier, project, codegen)
+
+    assert displacement is None
+
+
 def test_real_mode_linear_stack_access_matches_sp_register_carrier_without_late_shape_guess():
     project, codegen = _codegen([])
     codegen._inertia_typed_stack_probe_return_facts = {
@@ -560,6 +600,91 @@ def test_real_mode_linear_global_lowering_assigns_byte_type_from_access_width():
     assert isinstance(lhs.variable, SimMemoryVariable)
     assert lhs.variable.addr == 0x0BA7
     assert isinstance(getattr(lhs, "variable_type", None), SimTypeChar)
+
+
+def test_real_mode_linear_global_lowering_recurses_into_condition_and_nodes():
+    project, codegen = _codegen([])
+    inner_body = CStatements(
+        [
+            CAssignment(
+                _ds_deref(project, 0x0BAA, codegen),
+                _const(7, codegen),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CIfElse(
+                [(CConstant(1, SimTypeShort(False), codegen=codegen), inner_body)],
+                None,
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_stable_ds_es_linear_global_dereferences_8616(codegen)
+
+    assert changed is True
+    if_stmt = codegen.cfunc.statements.statements[0]
+    lhs = if_stmt.condition_and_nodes[0][1].statements[0].lhs
+    assert isinstance(lhs, CVariable)
+    assert isinstance(lhs.variable, SimMemoryVariable)
+    assert lhs.variable.addr == 0x0BAA
+
+
+def test_match_stable_ds_es_linear_global_address_accepts_base_plus_scaled_index():
+    project, codegen = _codegen([])
+    index_expr = CBinaryOp("Shl", _reg(project, "bx", codegen), _const(1, codegen), codegen=codegen)
+
+    access = match_stable_ds_es_linear_global_address_8616(
+        _ds_addr(project, 0x0B4C, codegen, extra_expr=index_expr),
+        project,
+        codegen,
+    )
+
+    assert access is not None
+    assert access.segment_name == "ds"
+    assert access.displacement == 0x0B4C
+    assert access.residual_terms == ((1, index_expr),)
+
+
+def test_real_mode_linear_global_address_lowering_materializes_reference_base():
+    project, codegen = _codegen([])
+    index_expr = CBinaryOp("Shl", _reg(project, "bx", codegen), _const(1, codegen), codegen=codegen)
+    carrier = _reg(project, "ax", codegen)
+    carrier.variable.name = "vvar_20"
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                carrier,
+                _ds_addr(project, 0x0B4C, codegen, extra_expr=index_expr),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_stable_ds_es_linear_global_addresses_8616(codegen)
+
+    assert changed is True
+    rhs = codegen.cfunc.statements.statements[0].rhs
+    assert isinstance(rhs, CTypeCast)
+    assert isinstance(rhs.expr, CBinaryOp)
+    assert rhs.expr.op == "Add"
+    assert isinstance(rhs.expr.lhs, CUnaryOp)
+    assert rhs.expr.lhs.op == "Reference"
+    assert isinstance(rhs.expr.lhs.operand, CVariable)
+    assert isinstance(rhs.expr.lhs.operand.variable, SimMemoryVariable)
+    assert rhs.expr.lhs.operand.variable.addr == 0x0B4C
+    assert rhs.expr.rhs is index_expr
 
 
 def test_structuring_stage_does_not_relower_ds_globals_after_validation_boundary(monkeypatch):

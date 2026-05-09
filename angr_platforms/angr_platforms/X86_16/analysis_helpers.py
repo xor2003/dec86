@@ -1332,7 +1332,8 @@ def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | Non
         return None
 
     last = insns[-1]
-    operands = getattr(last.insn, "operands", ())
+    capstone_insn = getattr(last, "insn", None)
+    operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
 
     if last.mnemonic == "ljmp" and len(operands) == 2 and all(op.type == 2 for op in operands):
         seg = operands[0].imm & 0xFFFF
@@ -1341,6 +1342,14 @@ def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | Non
 
     if last.mnemonic == "jmp" and len(operands) == 1 and operands[0].type == 2:
         return _canonical_code_linear_addr(project, operands[0].imm & 0xFFFF)
+
+    op_str = str(getattr(last, "op_str", "") or "").strip().lower()
+    if last.mnemonic == "jmp" and op_str and "[" not in op_str:
+        for token in op_str.replace(":", " ").split():
+            try:
+                return _canonical_code_linear_addr(project, int(token, 0) & 0xFFFF)
+            except ValueError:
+                continue
 
     return None
 
@@ -1423,7 +1432,8 @@ def resolve_stored_near_call_target_from_function(function, callsite_addr: int) 
     if not insns:
         return None
     last = insns[-1]
-    operands = getattr(last.insn, "operands", ())
+    capstone_insn = getattr(last, "insn", None)
+    operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
     if last.mnemonic != "call" or len(operands) != 1 or operands[0].type != 3:
         return None
 
@@ -1476,7 +1486,8 @@ def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> i
     if not insns:
         return None
     last = insns[-1]
-    operands = getattr(last.insn, "operands", ())
+    capstone_insn = getattr(last, "insn", None)
+    operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
     if last.mnemonic != "jmp" or len(operands) != 1 or operands[0].type != 3:
         return None
 

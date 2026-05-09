@@ -194,12 +194,27 @@ def _push_arg_width(insn) -> int:
 
 def _transparent_between_push_args_8616(insn) -> bool:
     mnemonic = _mnemonic(insn)
-    if mnemonic not in {"mov", "lea"}:
+    if mnemonic in {"mov", "lea"}:
+        operands = _instruction_operands(insn)
+        if len(operands) != 2:
+            return False
+        return _operand_reg_name(insn, operands[0]) not in {"sp", "bp", "ss", "ds", "es", "cs"}
+
+    if mnemonic not in {"add", "sub", "shl", "shr", "and", "or", "xor", "inc", "dec"}:
         return False
     operands = _instruction_operands(insn)
+    if mnemonic in {"inc", "dec"}:
+        if len(operands) != 1:
+            return False
+        dest_name = _operand_reg_name(insn, operands[0])
+        return dest_name not in {"sp", "bp", "ss", "ds", "es", "cs"} if dest_name is not None else False
+
     if len(operands) != 2:
         return False
-    return _operand_reg_name(insn, operands[0]) not in {"sp", "bp", "ss", "ds", "es", "cs"}
+    dest_name = _operand_reg_name(insn, operands[0])
+    if dest_name in {"sp", "bp", "ss", "ds", "es", "cs"}:
+        return False
+    return dest_name is not None
 
 
 def _collect_push_args_before_call(insns: tuple, idx: int) -> tuple[int, ...]:

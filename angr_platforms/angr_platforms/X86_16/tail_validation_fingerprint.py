@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -16,6 +17,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .callee_name_normalization import normalize_callee_name_8616
+from .callsite_summary import summarize_x86_16_callsite as _summarize_x86_16_callsite_fallback
 from .decompiler_postprocess_calls import _cod_metadata_for_function_8616
 from .decompiler_postprocess_utils import (
     _iter_c_nodes_deep_8616,
@@ -322,6 +324,22 @@ def _call_symbol_name_8616(node: CFunctionCall) -> str | None:
     return None
 
 
+def _fingerprint_target_addr_from_summary_8616(summary) -> int | None:
+    if isinstance(summary, dict):
+        target_addr = summary.get("target_addr")
+    else:
+        target_addr = getattr(summary, "target_addr", None)
+    return target_addr if isinstance(target_addr, int) else None
+
+
+def _summarize_x86_16_callsite_for_fingerprint_8616(function, callsite_addr: int):
+    tail_validation_module = sys.modules.get("angr_platforms.X86_16.tail_validation")
+    summarize = getattr(tail_validation_module, "summarize_x86_16_callsite", None)
+    if callable(summarize):
+        return summarize(function, callsite_addr)
+    return _summarize_x86_16_callsite_fallback(function, callsite_addr)
+
+
 def build_x86_16_contextual_call_fingerprints(root, project) -> dict[int, str]:
     if root is None:
         return {}
@@ -335,7 +353,12 @@ def build_x86_16_contextual_call_fingerprints(root, project) -> dict[int, str]:
         if not callsite_addrs:
             callsite_addrs = _collect_direct_capstone_callsite_addrs_8616(function)
         for node, callsite_addr in zip(call_nodes, callsite_addrs):
-            fingerprints[id(node)] = f"callsite:{callsite_addr:#x}"
+            summary = _summarize_x86_16_callsite_for_fingerprint_8616(function, callsite_addr)
+            target_addr = _fingerprint_target_addr_from_summary_8616(summary)
+            if isinstance(target_addr, int):
+                fingerprints[id(node)] = f"addr:{target_addr:#x}"
+            else:
+                fingerprints[id(node)] = f"callsite:{callsite_addr:#x}"
     if len(fingerprints) < len(call_nodes):
         for node_id, fingerprint in _build_cod_call_name_fingerprints_8616(root, project, call_nodes).items():
             fingerprints.setdefault(node_id, fingerprint)
@@ -350,14 +373,16 @@ def build_x86_16_contextual_call_fingerprints(root, project) -> dict[int, str]:
 def _function_for_call_context_8616(root, project):
     codegen = getattr(root, "codegen", None)
     cfunc = getattr(codegen, "cfunc", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if isinstance(func_addr, int):
+        function = _lookup_function_for_call_context_8616(project, func_addr)
+        if function is not None:
+            return function
     if cfunc is not None and (
         callable(getattr(cfunc, "get_call_sites", None)) or getattr(cfunc, "block_addrs_set", None)
     ):
         return cfunc
-    func_addr = getattr(cfunc, "addr", None)
-    if not isinstance(func_addr, int):
-        return None
-    return _lookup_function_for_call_context_8616(project, func_addr)
+    return None
 
 
 def _collect_direct_capstone_callsite_addrs_8616(function) -> tuple[int, ...]:

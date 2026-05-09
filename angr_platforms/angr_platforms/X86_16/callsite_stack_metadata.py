@@ -17,6 +17,10 @@ __all__ = ["prune_materialized_callsite_segment_metadata_8616"]
 logger = logging.getLogger(__name__)
 
 
+def _is_plain_statement_block_8616(node: object) -> bool:
+    return node.__class__.__name__ == "CStatements"
+
+
 def _call_from_statement_8616(stmt: object) -> CFunctionCall | None:
     if isinstance(stmt, CFunctionCall):
         return stmt
@@ -185,10 +189,9 @@ def _dead_stack_carrier_assignment_8616(
     stmt: object,
     known_carriers: set[CarrierKey8616],
 ) -> tuple[CarrierKey8616, object] | None:
-    assignments = _assignment_nodes_8616(stmt)
-    if not assignments:
+    if not _is_assignment_node_8616(stmt):
         return None
-    lhs, rhs = _assignment_lhs_rhs_8616(assignments[-1])
+    lhs, rhs = _assignment_lhs_rhs_8616(stmt)
     if _lhs_writes_memory_8616(lhs):
         return None
     lhs_key = _stack_carrier_key_8616(lhs)
@@ -202,23 +205,28 @@ def _dead_stack_carrier_assignment_8616(
 def _collect_stack_carrier_assignments_8616(block: object) -> set[CarrierKey8616]:
     """Collect variables proven to carry stack addresses within this block."""
     known: set[CarrierKey8616] = set()
+    if not _is_plain_statement_block_8616(block):
+        return known
     statements = getattr(block, "statements", None)
     if not isinstance(statements, (list, tuple)):
         return known
     for stmt in statements:
-        for assignment in _assignment_nodes_8616(stmt):
-            lhs, rhs = _assignment_lhs_rhs_8616(assignment)
-            if _lhs_writes_memory_8616(lhs):
-                continue
-            lhs_key = _stack_carrier_key_8616(lhs)
-            if lhs_key is not None and _expr_is_pure_stack_address_carrier_8616(rhs, known):
-                known.add(lhs_key)
+        if not _is_assignment_node_8616(stmt):
+            continue
+        lhs, rhs = _assignment_lhs_rhs_8616(stmt)
+        if _lhs_writes_memory_8616(lhs):
+            continue
+        lhs_key = _stack_carrier_key_8616(lhs)
+        if lhs_key is not None and _expr_is_pure_stack_address_carrier_8616(rhs, known):
+            known.add(lhs_key)
     return known
 
 
 def _prune_dead_stack_carrier_assignments_8616(block: object) -> bool:
     """Remove dead generic address carriers left after call arguments are materialized."""
     changed = False
+    if not _is_plain_statement_block_8616(block):
+        return False
     statements = getattr(block, "statements", None)
     if not isinstance(statements, (list, tuple)):
         return False
@@ -228,16 +236,15 @@ def _prune_dead_stack_carrier_assignments_8616(block: object) -> bool:
             getattr(stmt, "body", None),
             getattr(stmt, "else_node", None),
         ):
-            if isinstance(getattr(child, "statements", None), (list, tuple)):
+            if _is_plain_statement_block_8616(child):
                 changed |= _prune_dead_stack_carrier_assignments_8616(child)
-        nested_statements = getattr(stmt, "statements", None)
-        if isinstance(nested_statements, (list, tuple)):
+        if _is_plain_statement_block_8616(stmt):
             changed |= _prune_dead_stack_carrier_assignments_8616(stmt)
         for pair in getattr(stmt, "condition_and_nodes", ()) or ():
             if (
                 isinstance(pair, tuple)
                 and len(pair) == 2
-                and isinstance(getattr(pair[1], "statements", None), (list, tuple))
+                and _is_plain_statement_block_8616(pair[1])
             ):
                 changed |= _prune_dead_stack_carrier_assignments_8616(pair[1])
 
@@ -298,7 +305,7 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
     """Drop stack-probe segment metadata stores after their call args are materialized."""
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
-    if not isinstance(getattr(root, "statements", None), (list, tuple)):
+    if not _is_plain_statement_block_8616(root):
         return False
 
     summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
@@ -320,6 +327,8 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
 
     def rewrite_block(block: object, inherited_stack_probe_address_seen: bool = False) -> bool:
         nonlocal changed
+        if not _is_plain_statement_block_8616(block):
+            return inherited_stack_probe_address_seen
         statements = getattr(block, "statements", None)
         if not isinstance(statements, (list, tuple)):
             return inherited_stack_probe_address_seen
@@ -401,16 +410,15 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
                 getattr(stmt, "body", None),
                 getattr(stmt, "else_node", None),
             ):
-                if isinstance(getattr(child, "statements", None), (list, tuple)):
+                if _is_plain_statement_block_8616(child):
                     rewrite_block(child, stack_probe_address_seen)
-            nested_statements = getattr(stmt, "statements", None)
-            if isinstance(nested_statements, (list, tuple)):
+            if _is_plain_statement_block_8616(stmt):
                 rewrite_block(stmt, stack_probe_address_seen)
             for pair in getattr(stmt, "condition_and_nodes", ()) or ():
                 if (
                     isinstance(pair, tuple)
                     and len(pair) == 2
-                    and isinstance(getattr(pair[1], "statements", None), (list, tuple))
+                    and _is_plain_statement_block_8616(pair[1])
                 ):
                     rewrite_block(pair[1], stack_probe_address_seen)
         return stack_probe_address_seen

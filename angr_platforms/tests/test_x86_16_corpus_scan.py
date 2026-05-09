@@ -438,6 +438,17 @@ def test_corpus_scan_summary_aggregates_tail_validation():
                 "examples": ({"cod_file": "B.COD", "proc_name": "_changed", "proc_kind": "NEAR"},),
             }
         ],
+        "changed_family_routing": [
+            {
+                "family": "helper call delta",
+                "count": 1,
+                "function_count": 1,
+                "stages": ("postprocess",),
+                "likely_layer": "helpers",
+                "next_root_cause_file": "angr_platforms/angr_platforms/X86_16/analysis_helpers.py",
+                "signal": "interrupt/dos helper lowering and naming",
+            }
+        ],
     }
     assert summary["tail_validation_cache"]["cache_hit"] is False
     assert isinstance(summary["tail_validation_cache"]["cache_key"], str)

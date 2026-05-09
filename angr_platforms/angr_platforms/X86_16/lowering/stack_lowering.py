@@ -19,6 +19,7 @@ from .stack_lowering_result import (
     materialization_diagnostics_8616,
 )
 from .real_mode_linear import (
+    lower_stable_ds_es_linear_global_addresses_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
     lower_stable_ds_es_linear_global_dereferences_8616,
 )
@@ -60,6 +61,9 @@ def run_stack_lowering_pass_8616(
         if codegen is not None and getattr(codegen, "_inertia_allow_legacy_ss_linear_lowering", False):
             if lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
                 record_stable_ss_lowering_replacement_8616(codegen)
+        if codegen is not None and lower_stable_ds_es_linear_global_addresses_8616(codegen, project=project):
+            record_stable_ss_lowering_replacement_8616(codegen)
+            round_changed = True
         if codegen is not None and lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
             record_stable_ss_lowering_replacement_8616(codegen)
             round_changed = True

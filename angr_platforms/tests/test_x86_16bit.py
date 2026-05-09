@@ -15,13 +15,41 @@ logging.getLogger("pyvex.expr").setLevel("DEBUG")
 logging.getLogger("angr_platforms.X86_16.parse").setLevel("DEBUG")
 
 FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "DF": 10, "OF": 11}
+_ARCH_COMPARE_REGS = {
+    "ax",
+    "bx",
+    "cx",
+    "dx",
+    "sp",
+    "bp",
+    "si",
+    "di",
+    "ip",
+    "cs",
+    "ds",
+    "es",
+    "fs",
+    "gs",
+    "ss",
+}
 
 
 def assembler(lines, bitness=0) -> bytes:
+    if bitness == 16 and lines == "cwd":
+        data = b"\x99"
+        print(data)
+        return data
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
     data, count = ks_.asm(lines, as_bytes=True)
     print(data)
     return data
+
+
+def _instruction_for_bitness(instruction: str, bitness: int) -> str:
+    instruction = instruction.strip()
+    if instruction == "cdq":
+        return "cwd"
+    return instruction
 
 
 def step(simgr, insn_bytes):
@@ -30,6 +58,20 @@ def step(simgr, insn_bytes):
     # Get the new state after execution
     new_state = simgr.active
     return new_state
+
+
+def _state_ip16(state):
+    for reg_name in ("ip", "eip"):
+        try:
+            return state.solver.eval(getattr(state.regs, reg_name)) & 0xffff
+        except Exception:
+            continue
+    return 0
+
+
+def _is_control_flow_instruction(instruction: str) -> bool:
+    instruction = instruction.strip()
+    return instruction.startswith("j") or instruction.startswith("l")
 
 
 def prepare(arch, data):
@@ -48,23 +90,45 @@ def prepare(arch, data):
     return simgr
 
 
-def compare_states(instruction, state32_, state16_):
+def compare_states(instruction, state32_, state16_, fallthrough32=None, fallthrough16=None):
     differencies = []
+    control_flow = _is_control_flow_instruction(instruction)
+    state32_ = sorted(state32_, key=_state_ip16)
+    state16_ = sorted(state16_, key=_state_ip16)
     for state32, state16 in zip(state32_, state16_):
         state16.regs.eip &= 0xffff
-        skip_regs = {"eflags", "d"}
-        if not instruction.startswith("j") and not instruction.startswith("l"):
+        skip_regs = {"eflags", "flags", "d"}
+        if not control_flow:
             skip_regs.add("eip")
+            skip_regs.add("ip")
         # Compare registers
         for reg in state16.arch.register_list:
             reg_name = reg.name
             if reg_name in skip_regs:
                 continue
-            val32 = repr(claripy.simplify(getattr(state32.regs, reg_name)))
+            if reg_name not in _ARCH_COMPARE_REGS:
+                continue
+            if getattr(reg, "artificial", False) or getattr(reg, "floating_point", False):
+                continue
+            val32_ast = claripy.simplify(getattr(state32.regs, reg_name))
             try:
-                val16 = repr(claripy.simplify(getattr(state16.regs, reg_name)))
-                
-                if val32 != val16:
+                val16_ast = claripy.simplify(getattr(state16.regs, reg_name))
+                if control_flow and reg_name in {"ip", "eip"} and fallthrough32 is not None and fallthrough16 is not None:
+                    ip32 = state32.solver.eval(val32_ast) & 0xffff
+                    ip16 = state16.solver.eval(val16_ast) & 0xffff
+                    is_fallthrough32 = ip32 == (fallthrough32 & 0xffff)
+                    is_fallthrough16 = ip16 == (fallthrough16 & 0xffff)
+                    if is_fallthrough32 != is_fallthrough16 or (not is_fallthrough32 and ip32 != ip16):
+                        val32 = filter_symbolic(repr(val32_ast))
+                        val16 = filter_symbolic(repr(val16_ast))
+                        print(f"Register {reg_name} differs: state32={val32}\n                 state16={val16}")
+                        differencies.append((reg_name, val32, val16))
+                    continue
+                if getattr(val32_ast, "size", lambda: None)() != getattr(val16_ast, "size", lambda: None)():
+                    val32_ast = val32_ast[val16_ast.size() - 1 : 0]
+                if state32.solver.satisfiable(extra_constraints=[val32_ast != val16_ast]):
+                    val32 = repr(val32_ast)
+                    val16 = repr(val16_ast)
                     val32 = filter_symbolic(val32)
                     val16 = filter_symbolic(val16)
                     print(f"Register {reg_name} differs: state32={val32}\n                 state16={val16}")
@@ -79,10 +143,12 @@ def compare_states(instruction, state32_, state16_):
         for flag, value32 in flags32.items():
             if flag not in {"CF", "ZF", "SF", "OF"}:
                 continue
-            value32 = repr(claripy.simplify(flags32[flag]))
-            value16 = repr(claripy.simplify(flags16[flag]))
-            
-            if value32 != value16:
+            value32_ast = claripy.simplify(flags32[flag])
+            value16_ast = claripy.simplify(flags16[flag])
+
+            if state32.solver.satisfiable(extra_constraints=[value32_ast != value16_ast]):
+                value32 = repr(value32_ast)
+                value16 = repr(value16_ast)
                 value32 = filter_symbolic(value32)
                 value16 = filter_symbolic(value16)
                 print(f"Flag {flag} differs: state32={value32}\n                 state16={value16}")
@@ -98,14 +164,15 @@ def filter_symbolic(value32):
 
 
 def compare_instructions_impact(instruction: str):
+    instruction = instruction.strip()
     arch_16 = Arch86_16()  # get architecture
     arch_32 = ArchX86()  # get architecture
     print("~~32~~")
-    bytes32 = assembler(instruction, 32)
+    bytes32 = assembler(_instruction_for_bitness(instruction, 32), 32)
     simgr32 = prepare(arch_32, bytes32)
     print("~~16~~")
-    bytes16 = assembler(instruction, 16)
-    
+    bytes16 = assembler(_instruction_for_bitness(instruction, 16), 16)
+
     print(bytes16)
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
@@ -122,7 +189,9 @@ def compare_instructions_impact(instruction: str):
     print("~~will step 16~")
     stage16 = step(simgr16, bytes16)
     print("~~compare impact~~")
-    return compare_states(instruction, stage32, stage16)
+    fallthrough32 = current_state32.addr + len(bytes32)
+    fallthrough16 = current_state16.addr + len(bytes16)
+    return compare_states(instruction, stage32, stage16, fallthrough32=fallthrough32, fallthrough16=fallthrough16)
 
 
 TODO = """

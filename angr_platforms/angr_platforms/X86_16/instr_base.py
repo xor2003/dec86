@@ -691,7 +691,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.int_imm8()
 
     def int_imm8(self) -> None:
-        #self.emu.lifter_instruction.put(self.emu.constant(self.instr.imm8), "ip_at_syscall")
+        next_ip = self.emu.get_ip() + self.emu.constant(self.instr.size, Type.int_16)
+        self.emu.lifter_instruction.put(next_ip.cast_to(Type.int_32), "ip_at_syscall")
         # Model real-mode interrupts as synthetic call targets so CFG/decompilation
         # can treat them like normal helper functions.
         self.emu.set_gpreg(reg16_t.IP, self.emu.constant(self.instr.imm8, Type.int_16))

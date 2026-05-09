@@ -59,8 +59,8 @@ class SemanticLaneState:
 
         Rules:
         - raw > 0 && normalized == 0 → HARD error (IR normalization failure)
-        - classified > 0 && materialized == 0 → HARD error
         - bound > 0 && materialized == 0 → HARD error (bindings are not materialization)
+        - classified > 0 && materialized == 0 → HARD error
         """
         if self.raw > 0 and self.normalized == 0:
             raise PipelineHardError(
@@ -70,19 +70,19 @@ class SemanticLaneState:
                 layer=layer or "pipeline_contract",
             )
 
-        if self.classified > 0 and self.materialized == 0:
-            raise PipelineHardError(
-                f"{self.name}: {self.classified} facts classified but 0 materialized "
-                f"(raw={self.raw} normalized={self.normalized} "
-                f"bound={self.bound} failures={self.failures})",
-                layer=layer or "pipeline_contract",
-            )
-
         if self.bound > 0 and self.materialized == 0:
             raise PipelineHardError(
                 f"{self.name}: {self.bound} bindings created but 0 materialized "
                 f"(raw={self.raw} normalized={self.normalized} "
                 f"classified={self.classified} failures={self.failures})",
+                layer=layer or "pipeline_contract",
+            )
+
+        if self.classified > 0 and self.materialized == 0:
+            raise PipelineHardError(
+                f"{self.name}: {self.classified} facts classified but 0 materialized "
+                f"(raw={self.raw} normalized={self.normalized} "
+                f"bound={self.bound} failures={self.failures})",
                 layer=layer or "pipeline_contract",
             )
 

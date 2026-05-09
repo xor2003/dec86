@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -26,6 +27,7 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 import angr_platforms.X86_16.tail_validation as tail_validation_module
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.tail_validation_condition_context import build_x86_16_contextual_condition_fingerprints
 from angr_platforms.X86_16.tail_validation_fingerprint import build_x86_16_contextual_call_fingerprints
 import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
 from angr_platforms.X86_16.tail_validation import (
@@ -156,6 +158,13 @@ def test_tail_validation_summary_collects_observable_effects():
     assert summary.control_flow_effects == ("return",)
 
 
+def test_tail_validation_legacy_and_canonical_modules_share_identity():
+    canonical = importlib.import_module("angr_platforms.X86_16.tail_validation")
+    legacy = importlib.import_module("angr_platforms.angr_platforms.X86_16.tail_validation")
+
+    assert legacy is canonical
+
+
 def test_tail_validation_negative_memory_addr_is_not_counted_as_global():
     project = _project()
     codegen_stub = _DummyCodegen()
@@ -198,6 +207,41 @@ def test_tail_validation_uses_callsite_summary_target_for_unknown_direct_call(mo
     summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
 
     assert summary.helper_calls in {("callsite:0x4012",), ("addr:0x104d",)}
+
+
+def test_tail_validation_context_ignores_wrapper_assignment_before_outer_condition():
+    project = _project()
+    codegen = _DummyCodegen()
+    flags_tmp = _reg(project, "flags", codegen, var_name="flags_tmp")
+    predicate = CBinaryOp("CmpEQ", _reg(project, "ax", codegen), _reg(project, "bx", codegen), codegen=codegen)
+    wrapped_assignment = CStatements(
+        [
+            CAssignment(
+                flags_tmp,
+                CBinaryOp("Mul", predicate, _const(0x40, codegen), codegen=codegen),
+                codegen=codegen,
+            )
+        ],
+        codegen=codegen,
+    )
+    condition = CBinaryOp(
+        "CmpNE",
+        CBinaryOp("And", flags_tmp, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    body = CStatements(
+        [
+            wrapped_assignment,
+            CIfElse([(condition, CStatements([], codegen=codegen))], codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+
+    mapping = build_x86_16_contextual_condition_fingerprints(body, project)
+
+    assert mapping == {}
 
 
 def test_tail_validation_uses_direct_capstone_callsite_fingerprint_when_cfg_callsites_missing(monkeypatch):
@@ -318,6 +362,42 @@ def test_tail_validation_live_out_ignores_consumed_ss_outgoing_arg_store(monkeyp
     assert after.helper_calls == ("addr:0x14ae",)
     assert diff["changed"] is False
     assert diff["delta"]["segmented_writes"] == {"added": (), "removed": ()}
+
+
+def test_tail_validation_prefers_kb_function_for_callsite_summary_over_codegen_stub(monkeypatch):
+    project = _project()
+    kb_function = SimpleNamespace(get_call_sites=lambda: (0x4012,))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr=None, name=None, create=False: kb_function if addr == 0x4010 else None
+        )
+    )
+    codegen = _DummyCodegen()
+    _codegen(
+        [
+            CAssignment(
+                _reg(project, "ax", codegen, var_name="frequency"),
+                CFunctionCall("::0x14ae::inp", None, [], codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        codegen,
+    )
+    codegen.cfunc.get_call_sites = lambda: (0x4012,)
+
+    seen = []
+
+    def _fake_summary(function, _callsite_addr):
+        seen.append(function)
+        return SimpleNamespace(target_addr=0x14AE, arg_count=1)
+
+    monkeypatch.setattr(tail_validation_module, "summarize_x86_16_callsite", _fake_summary)
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.helper_calls == ("addr:0x14ae",)
+    assert seen
+    assert all(function is kb_function for function in seen)
 
 
 def test_tail_validation_live_out_ignores_dynamic_dirty_ss_segment_writes():

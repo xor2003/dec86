@@ -347,7 +347,9 @@ def _branch_rel(emu, condition, displacement, instruction_size: int, target_widt
         return emit_jump(emu, target)
     if getattr(condition, "rdt", None) is False:
         return None
-    return emit_jump(emu, target)
+    target_expr = target.rdt if hasattr(target, "rdt") else target
+    emu.lifter_instruction.jump(condition, target_expr, JumpKind.Boring)
+    return target
 
 
 def branch_rel8(emu, condition, displacement):

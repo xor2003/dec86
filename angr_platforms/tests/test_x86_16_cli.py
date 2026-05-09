@@ -23,6 +23,7 @@ from inertia_decompiler.direct_addr_failure_family import (
 import inertia_decompiler.decompile_file_summary as file_summary
 import inertia_decompiler.non_optimized_fallback as non_optimized_fallback
 import inertia_decompiler.sidecar_cache as sidecar_cache
+from inertia_decompiler.slice_recovery import SliceRecoveryAttemptOutcome
 from inertia_decompiler.work_items import FunctionWorkItem
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -2406,15 +2407,27 @@ def test_run_function_work_item_bypasses_persistent_cache_without_passed_tail_va
     assert "cache bypass" in result.debug_output
     assert "validation=uncollected" in result.debug_output
     stored = decompile._load_cache_json("function_decompile", cache_key)
-    assert stored == {
-        "status": "ok",
-        "payload": "int sub_1000(void) { return 2; }",
-        "tail_validation": {
-            "structuring": {"changed": False, "mode": None, "verdict": "structuring stable", "summary_text": None},
-            "postprocess": {"changed": False, "mode": None, "verdict": "postprocess stable", "summary_text": None},
+    assert stored["status"] == "ok"
+    assert stored["payload"] == "int sub_1000(void) { return 2; }"
+    assert stored["tail_validation_passed"] is True
+    assert stored["elapsed"] == 0.01
+    assert stored["block_count"] == 1
+    assert stored["byte_count"] == 4
+    assert stored["tail_validation"] == {
+        "structuring": {
+            "changed": False,
+            "mode": None,
+            "status": "stable",
+            "verdict": "structuring stable",
+            "summary_text": None,
         },
-        "tail_validation_passed": True,
-        "elapsed": 0.01,
+        "postprocess": {
+            "changed": False,
+            "mode": None,
+            "status": "stable",
+            "verdict": "postprocess stable",
+            "summary_text": None,
+        },
     }
 
 
@@ -4271,7 +4284,7 @@ def test_main_uses_cached_exe_catalog_addresses_before_cfg(monkeypatch, tmp_path
         {"addrs": [0x10010]},
     )
 
-    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "3"])
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "0"])
     out = capsys.readouterr().out
 
     assert rc in {0, 2}
@@ -4584,10 +4597,11 @@ def test_main_emits_uncollected_tail_validation_for_direct_nonoptimized_fallback
     assert "[tail-validation]" in captured.err
     assert "not collected" in captured.err
     assert "detail artifact " in captured.err
-    assert '"records": []' in captured.err
     assert '"scanned": 1' in captured.err
     assert '"detail_cache_path": "' in captured.err
     assert '"detail_cache_path": null' not in captured.err
+    assert '"tail_validation_uncollected": true' in captured.err
+    assert '"function_name": "sub_11423"' in captured.err
 
 
 def test_main_renders_direct_nonoptimized_outcome_payload_instead_of_repr(monkeypatch, tmp_path, capsys):
@@ -4811,12 +4825,17 @@ def test_main_aggregate_uses_sidecar_fallback_tail_validation_snapshot(monkeypat
             "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
             "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},
         }
-        return ("ok", "int sub_10010(void) { return 0; }")
+        return SliceRecoveryAttemptOutcome(
+            attempt_name="sidecar_slice",
+            status="ok",
+            payload="int sub_10010(void) { return 0; }",
+            snapshot=project_arg._inertia_last_tail_validation_snapshot,
+        )
 
     monkeypatch.setattr(decompile, "_try_decompile_sidecar_slice", _fake_sidecar_slice)
     monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
 
-    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "3"])
+    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "0"])
     captured = capsys.readouterr()
 
     assert rc == 0
@@ -4837,14 +4856,23 @@ def test_main_direct_path_uses_peer_sidecar_fallback_tail_validation_snapshot(mo
     )
     cfg = SimpleNamespace()
     func = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
+    metadata = LSTMetadata(
+        data_labels={},
+        code_labels={0x10010: "sub_10010"},
+        code_ranges={0x10010: (0x10010, 0x10020)},
+        absolute_addrs=True,
+        source_format="cod_listing",
+    )
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
-    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: metadata)
     monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "_recover_direct_addr_function", lambda *_args, **_kwargs: (cfg, func))
     monkeypatch.setattr(decompile, "_decompile_function_with_stats", lambda *_args, **_kwargs: ("error", "Decompiler did not produce code.", None, 1, 4, 0.01))
+    monkeypatch.setattr(decompile, "_try_decompile_non_optimized_known_function", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(decompile, "_try_decompile_sidecar_slice", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         decompile,
         "_try_decompile_peer_sidecar_slice",
@@ -9134,9 +9162,10 @@ def test_try_decompile_sidecar_slice_retries_with_broader_exact_region_recovery(
 
 
 def test_try_decompile_sidecar_slice_preserves_tail_validation_snapshot_on_source_project(monkeypatch):
-    slice_project = SimpleNamespace()
+    slice_project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
     function = SimpleNamespace(name="func", info={})
     project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
         loader=SimpleNamespace(memory=SimpleNamespace(load=lambda *_args, **_kwargs: b"\x90\xc3")),
     )
     metadata = LSTMetadata(
@@ -9169,7 +9198,9 @@ def test_try_decompile_sidecar_slice_preserves_tail_validation_snapshot_on_sourc
         binary_path=None,
     )
 
-    assert result == ("ok", "void func(void)\n{\n}\n")
+    assert result is not None
+    assert result.status == "ok"
+    assert result.payload == "void func(void)\n{\n}\n"
     assert project._inertia_last_tail_validation_snapshot == {
         "structuring": {"changed": False, "mode": "live_out", "verdict": "structuring stable"},
         "postprocess": {"changed": False, "mode": "live_out", "verdict": "postprocess stable"},

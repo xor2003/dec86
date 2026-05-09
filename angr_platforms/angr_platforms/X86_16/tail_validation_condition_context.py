@@ -25,10 +25,6 @@ __all__ = ["build_x86_16_contextual_condition_fingerprints"]
 def _last_assignment_in_stmt(stmt):
     if isinstance(stmt, CAssignment):
         return stmt
-    if isinstance(stmt, CStatements) and stmt.statements:
-        last = stmt.statements[-1]
-        if isinstance(last, CAssignment):
-            return last
     return None
 
 

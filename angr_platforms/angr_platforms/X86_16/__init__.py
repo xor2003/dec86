@@ -5,6 +5,9 @@ try:
 except Exception:
     pass
 
+from importlib import import_module
+import sys
+
 __all__ = [
     "COD_SOURCE_REWRITE_REGISTRY",
     "annotations",
@@ -127,7 +130,6 @@ from . import (  # noqa: F401  # noqa: F401
     address_ir,
     annotations,
     arch_86_16,
-    bootstrap,
     calling_convention_compat,
     cod_extract,
     cod_source_rewrites,
@@ -144,10 +146,8 @@ from . import (  # noqa: F401  # noqa: F401
     decompiler_postprocess_flags,
     decompiler_postprocess_globals,
     decompiler_postprocess_simplify,
-    decompiler_postprocess_stage,
     decompiler_postprocess_utils,
     decompiler_return_compat,
-    decompiler_structuring_stage,
     function_effect_summary,
     function_summary,
     lift_86_16,
@@ -189,7 +189,6 @@ from .analysis_helpers import (
     describe_x86_16_interrupt_lowering_boundary,  # noqa: F401
 )
 from .annotations import apply_x86_16_metadata_annotations  # noqa: F401
-from .bootstrap import apply_x86_16_bootstrap  # noqa: F401
 from .calling_convention_compat import apply_x86_16_calling_convention_compatibility  # noqa: F401
 from .cod_known_objects import describe_x86_16_cod_known_objects  # noqa: F401
 from .cod_source_rewrites import (  # noqa: F401
@@ -205,17 +204,7 @@ from .cod_source_rewrites import (  # noqa: F401
 )
 from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
 from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
-from .decompiler_postprocess_stage import (  # noqa: F401
-    DecompilerPostprocessPassSpec,
-    apply_x86_16_decompiler_postprocess,
-    describe_x86_16_decompiler_postprocess_stage,
-)
 from .decompiler_return_compat import apply_x86_16_decompiler_return_compatibility  # noqa: F401
-from .decompiler_structuring_stage import (  # noqa: F401
-    DecompilerStructuringPassSpec,
-    apply_x86_16_decompiler_structuring,
-    describe_x86_16_decompiler_structuring_stage,
-)
 from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
 from .milestone_report import render_x86_16_tail_validation_console_summary  # noqa: F401
 from .readability_goals import (  # noqa: F401
@@ -250,8 +239,59 @@ from .tail_validation import (  # noqa: F401
 from .validation_manifest import describe_x86_16_validation_triage  # noqa: F401
 from .widening_model import describe_x86_16_widening_pipeline  # noqa: F401
 
+_LAZY_EXPORTS = {
+    "bootstrap": (".bootstrap", None),
+    "apply_x86_16_bootstrap": (".bootstrap", "apply_x86_16_bootstrap"),
+    "decompiler_postprocess_stage": (".decompiler_postprocess_stage", None),
+    "DecompilerPostprocessPassSpec": (".decompiler_postprocess_stage", "DecompilerPostprocessPassSpec"),
+    "apply_x86_16_decompiler_postprocess": (".decompiler_postprocess_stage", "apply_x86_16_decompiler_postprocess"),
+    "describe_x86_16_decompiler_postprocess_stage": (
+        ".decompiler_postprocess_stage",
+        "describe_x86_16_decompiler_postprocess_stage",
+    ),
+    "decompiler_structuring_stage": (".decompiler_structuring_stage", None),
+    "DecompilerStructuringPassSpec": (".decompiler_structuring_stage", "DecompilerStructuringPassSpec"),
+    "apply_x86_16_decompiler_structuring": (".decompiler_structuring_stage", "apply_x86_16_decompiler_structuring"),
+    "describe_x86_16_decompiler_structuring_stage": (
+        ".decompiler_structuring_stage",
+        "describe_x86_16_decompiler_structuring_stage",
+    ),
+}
+
+
+def __getattr__(name):
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(name)
+    module_name, attr_name = target
+    module = import_module(module_name, __name__)
+    value = module if attr_name is None else getattr(module, attr_name)
+    globals()[name] = value
+    return value
+
+
+def _alias_x86_16_module_tree() -> None:
+    canonical_root = "angr_platforms.X86_16"
+    legacy_root = "angr_platforms.angr_platforms.X86_16"
+    current_module = sys.modules[__name__]
+    sys.modules.setdefault(canonical_root, current_module)
+    sys.modules.setdefault(legacy_root, current_module)
+    prefixes = (
+        (canonical_root, legacy_root),
+        (legacy_root, canonical_root),
+    )
+    for name, module in tuple(sys.modules.items()):
+        for source_root, target_root in prefixes:
+            if name == source_root:
+                sys.modules.setdefault(target_root, module)
+            elif name.startswith(source_root + "."):
+                sys.modules.setdefault(target_root + name[len(source_root) :], module)
+
+
+_alias_x86_16_module_tree()
+
 try:
-    apply_x86_16_bootstrap()
+    __getattr__("apply_x86_16_bootstrap")()
 except Exception:
     pass
 

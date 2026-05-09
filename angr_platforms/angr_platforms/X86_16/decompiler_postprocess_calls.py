@@ -921,6 +921,12 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         expr = getattr(stmt, "expr", None)
         if isinstance(expr, CFunctionCall):
             return expr
+        rhs = getattr(stmt, "rhs", None)
+        if isinstance(rhs, CFunctionCall):
+            return rhs
+        src = getattr(stmt, "src", None)
+        if isinstance(src, CFunctionCall):
+            return src
         nested_statements = getattr(stmt, "statements", None)
         if isinstance(nested_statements, (list, tuple)) and len(nested_statements) == 1:
             return _call_from_statement(nested_statements[0])
@@ -1172,6 +1178,28 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         lhs, _rhs = _assignment_lhs_rhs(candidates[-1])
         return isinstance(lhs, structured_c.CVariable)
 
+    def _value_carrier_assignment_rhs_from_statement(stmt):
+        candidates = _iter_assignment_nodes(stmt)
+        if not candidates:
+            return None
+        lhs, rhs = _assignment_lhs_rhs(candidates[-1])
+        if lhs is None or rhs is None or _assignment_lhs_writes_memory(lhs):
+            return None
+        lhs_node = lhs
+        while isinstance(lhs_node, CTypeCast):
+            lhs_node = lhs_node.expr
+        if not isinstance(lhs_node, structured_c.CVariable):
+            return None
+        variable = getattr(lhs_node, "variable", None)
+        name = getattr(variable, "name", None) or getattr(lhs_node, "name", None)
+        if not isinstance(name, str) or not (
+            name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_")
+        ):
+            return None
+        if _is_segment_register_value_expr(rhs):
+            return None
+        return rhs
+
     def _assignment_lhs_writes_memory(lhs) -> bool:
         if lhs is None:
             return False
@@ -1208,6 +1236,52 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         max_count: int = 4,
         typed_probe_fact: TypedStackProbeReturnFact8616 | None = None,
     ) -> tuple[list, list]:
+        def _trailing_stack_store_rhss_after_last_call(stmt, *, max_collect: int) -> list:
+            nested_statements = getattr(stmt, "statements", None)
+            if not isinstance(nested_statements, (list, tuple)):
+                return []
+            sequence = list(nested_statements)
+            last_call_idx = None
+            for seq_idx, node in enumerate(sequence):
+                if _statement_contains_call(node):
+                    last_call_idx = seq_idx
+            if last_call_idx is None:
+                return []
+
+            rhss: list = []
+            skipped_carriers = 0
+            skipped_value_assignments = 0
+            for node in sequence[last_call_idx + 1 :]:
+                if _statement_contains_call(node):
+                    break
+                nested_rhss = (
+                    _typed_stack_store_rhss_from_statement(node, typed_probe_fact, max_collect=max_collect)
+                    if typed_probe_fact is not None
+                    else _stack_store_rhss_from_statement(node, max_collect=max_collect)
+                )
+                if nested_rhss:
+                    rhss.extend(nested_rhss)
+                    if len(rhss) >= max_collect:
+                        break
+                    continue
+                if _is_segment_register_metadata_store(node):
+                    skipped_carriers += 1
+                    if skipped_carriers > 4:
+                        break
+                    continue
+                if _is_stack_carrier_temp_assignment(node):
+                    skipped_carriers += 1
+                    if skipped_carriers > 4:
+                        break
+                    continue
+                if _is_non_memory_assignment(node) or _is_value_only_assignment(node):
+                    skipped_value_assignments += 1
+                    if skipped_value_assignments > 8:
+                        break
+                    continue
+                break
+            return rhss[:max_collect]
+
         rhs_values: list = []
         consumed_indices: list[int] = []
         skipped_carriers = 0
@@ -1217,6 +1291,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         while idx >= 0 and len(rhs_values) < limit:
             stmt = statements[idx]
             if _statement_contains_call(stmt):
+                trailing_rhss = _trailing_stack_store_rhss_after_last_call(
+                    stmt,
+                    max_collect=max(0, limit - len(rhs_values)),
+                )
+                if trailing_rhss:
+                    rhs_values.extend(reversed(trailing_rhss))
+                    consumed_indices.append(idx)
                 break
             rhss = (
                 _typed_stack_store_rhss_from_statement(stmt, typed_probe_fact, max_collect=max_count)
@@ -1254,6 +1335,35 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 continue
             break
         if wanted_count is not None and len(rhs_values) != wanted_count:
+            return [], []
+        rhs_values.reverse()
+        return rhs_values, consumed_indices
+
+    def _collect_backtracked_value_carrier_args(
+        statements: list,
+        *,
+        wanted_count: int,
+    ) -> tuple[list, list]:
+        if not isinstance(wanted_count, int) or wanted_count <= 0:
+            return [], []
+        rhs_values: list = []
+        consumed_indices: list[int] = []
+        idx = len(statements) - 1
+        while idx >= 0 and len(rhs_values) < wanted_count:
+            stmt = statements[idx]
+            if _statement_contains_call(stmt):
+                break
+            rhs = _value_carrier_assignment_rhs_from_statement(stmt)
+            if rhs is not None:
+                rhs_values.append(rhs)
+                consumed_indices.append(idx)
+                idx -= 1
+                continue
+            if _is_stack_carrier_temp_assignment(stmt):
+                idx -= 1
+                continue
+            break
+        if len(rhs_values) != wanted_count:
             return [], []
         rhs_values.reverse()
         return rhs_values, consumed_indices
@@ -1481,6 +1591,29 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
                         call.args = list(normalized_args)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                        _refresh_summary_arg_shape(call, summary)
+                        changed = True
+                        strict_arg_shape_applied = True
+                if (
+                    not strict_arg_shape_applied
+                    and not typed_stack_probe_materialization
+                    and isinstance(expected_arg_count, int)
+                    and expected_arg_count > 0
+                ):
+                    carrier_rhs, consumed_indices = _collect_backtracked_value_carrier_args(
+                        new_statements,
+                        wanted_count=expected_arg_count,
+                    )
+                    normalized_args = _normalize_materialized_call_args(
+                        carrier_rhs,
+                        list(reversed(consumed_indices)),
+                        new_statements,
+                    )
+                    if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
+                        call.args = list(normalized_args)
+                        record_stack_arg_materialization_8616(codegen, len(normalized_args))
+                        for consume_idx in sorted(consumed_indices, reverse=True):
+                            del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True

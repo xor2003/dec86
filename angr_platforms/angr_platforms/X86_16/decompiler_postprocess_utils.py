@@ -471,13 +471,15 @@ def _resolve_stack_bp_term_8616(node, project=None, codegen=None, seen: set[int]
         return node
     resolved_replacement = _resolve_stack_bp_term_8616(replacement, project, codegen, seen)
     if isinstance(variable, SimStackVariable):
-        stack_disp = _stack_bp_displacement_8616(resolved_replacement, project, codegen)
+        stack_disp = _stack_bp_displacement_8616(resolved_replacement, project, codegen, seen=seen)
         if stack_disp is None:
             return node
     return resolved_replacement
 
 
-def _stack_bp_displacement_8616(node, project=None, codegen=None) -> int | None:
+def _stack_bp_displacement_8616(node, project=None, codegen=None, seen: set[int] | None = None) -> int | None:
+    if seen is None:
+        seen = set()
     total = 0
     stack_offsets: list[int] = []
     found_stack_ref = False
@@ -486,7 +488,7 @@ def _stack_bp_displacement_8616(node, project=None, codegen=None) -> int | None:
         nonlocal total
         nonlocal found_stack_ref
 
-        term = _resolve_stack_bp_term_8616(term, project, codegen)
+        term = _resolve_stack_bp_term_8616(term, project, codegen, seen)
 
         if isinstance(term, CTypeCast):
             collect(term.expr)

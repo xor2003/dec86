@@ -280,6 +280,11 @@ class SimCC8616MSCmedium(SimCC):
     CALLEE_CLEANUP = True
 
 
+# Legacy compatibility alias for callers that imported the pre-memory-model
+# default Microsoft C calling convention by the unsuffixed name.
+SimCC8616MSC = SimCC8616MSCsmall
+
+
 register_simos("DOS", SimDOS86_16)
 register_default_cc("86_16", SimCC8616MSCsmall)
 register_default_cc("86_16", SimCC8616MSCsmall, platform="DOS")

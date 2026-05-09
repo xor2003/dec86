@@ -141,12 +141,16 @@ class Instruction_ANY(Instruction):
         raw = bytes(bitstrm[self.start * 8: self.start * 8 + 15 * 8])
         cs_prefix_len = 0
         instr = list(self.arch.capstone.disasm(raw, self.addr, 1))
-        if not instr and raw[:1] == b"\xF0":
+        if not instr:
             # Capstone rejects several LOCK-prefixed forms that the real 286 still
-            # executes. Decode the underlying opcode for mnemonic discovery, but let
-            # our own parser consume the real prefix byte stream below.
-            instr = list(self.arch.capstone.disasm(raw[1:], self.addr + 1, 1))
-            cs_prefix_len = 1 if instr else 0
+            # executes, and also segment-override + LOCK combinations.
+            # Decode the underlying opcode for mnemonic discovery, but let our
+            # own parser consume the real prefix byte stream below.
+            for strip_len in range(1, min(4, len(raw))):
+                instr = list(self.arch.capstone.disasm(raw[strip_len:], self.addr + strip_len, 1))
+                if instr:
+                    cs_prefix_len = strip_len
+                    break
         if not instr:
             raise ParseError("Couldn't disassemble instruction")
         self.cs = instr[0]

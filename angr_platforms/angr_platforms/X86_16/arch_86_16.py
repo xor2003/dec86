@@ -156,7 +156,7 @@ class Arch86_16(Arch):
         Register(
             name="ip",
             size=2,
-            alias_names=("pc",),
+            alias_names=("pc", "eip"),
             vex_offset=16,  # PC at fixed offset, no subreg/alias cycle
         ),
         Register(

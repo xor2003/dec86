@@ -12,7 +12,7 @@ late cleanup code.
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeChar, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
@@ -24,6 +24,15 @@ class RealModeLinearStackAccess8616:
 
     displacement: int
     width: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class RealModeLinearGlobalAddress8616:
+    """Stable DS/ES address-valued expression recovered from real-mode linear math."""
+
+    segment_name: str
+    displacement: int
+    residual_terms: tuple[tuple[int, object], ...]
 
 
 def _type_for_access_width_8616(width: int | None):
@@ -518,6 +527,55 @@ def match_stable_ds_es_linear_global_access_8616(node, project, codegen) -> Real
     return RealModeLinearStackAccess8616(displacement=offset_total, width=width)
 
 
+def _address_projection_term_is_safe_8616(node) -> bool:
+    node = _strip_casts_8616(node)
+    if _constant_value_8616(node) is not None:
+        return True
+    if isinstance(node, structured_c.CVariable):
+        return True
+    if isinstance(node, structured_c.CUnaryOp) and node.op in {"Neg", "BitNot", "Reference"}:
+        return _address_projection_term_is_safe_8616(node.operand)
+    if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub", "Mul", "Shl", "Shr", "And", "Or", "Xor"}:
+        return _address_projection_term_is_safe_8616(node.lhs) and _address_projection_term_is_safe_8616(node.rhs)
+    return False
+
+
+def match_stable_ds_es_linear_global_address_8616(node, project, codegen) -> RealModeLinearGlobalAddress8616 | None:
+    """Match an address-valued ``(ds << 4) + base + projection`` expression."""
+
+    node = _strip_casts_8616(node)
+    if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
+        return None
+
+    segment_name: str | None = None
+    displacement = 0
+    residual_terms: list[tuple[int, object]] = []
+    for sign, term in _flatten_signed_terms_8616(node):
+        seg = _segment_base_name_8616(term, project)
+        if seg is not None:
+            if sign != 1 or segment_name is not None:
+                return None
+            segment_name = seg
+            continue
+        const = _constant_value_8616(term)
+        if const is not None:
+            displacement += sign * const
+            continue
+        if not _address_projection_term_is_safe_8616(term):
+            return None
+        residual_terms.append((sign, term))
+
+    if segment_name not in {"ds", "es"}:
+        return None
+    if displacement == 0:
+        return None
+    return RealModeLinearGlobalAddress8616(
+        segment_name=segment_name,
+        displacement=displacement & 0xFFFF,
+        residual_terms=tuple(residual_terms),
+    )
+
+
 def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) -> bool:
     """Replace stable DS/ES real-mode linear dereferences with global variable references."""
 
@@ -603,8 +661,151 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
                     value = replacement
                 if replace_children(value):
                     local_changed = True
+        condition_and_nodes = getattr(node, "condition_and_nodes", None)
+        if condition_and_nodes:
+            new_pairs = []
+            pair_changed = False
+            for cond, body in condition_and_nodes:
+                new_cond = transform(cond)
+                if new_cond is not cond:
+                    pair_changed = True
+                    local_changed = True
+                new_body = transform(body)
+                if new_body is not body:
+                    pair_changed = True
+                    local_changed = True
+                if replace_children(new_cond):
+                    local_changed = True
+                if replace_children(new_body):
+                    local_changed = True
+                new_pairs.append((new_cond, new_body))
+            if pair_changed:
+                setattr(node, "condition_and_nodes", new_pairs)
         return local_changed
 
+    if replace_children(root):
+        changed = True
+    return changed
+
+
+def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bool:
+    """Replace stable DS/ES address-valued expressions with data-space object references."""
+
+    if project is None:
+        project = getattr(codegen, "project", None)
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if project is None or root is None:
+        return False
+
+    def global_address_cvar(displacement: int):
+        addr = displacement & 0xFFFF
+        name = f"g_{addr:04X}"
+        target_type = SimTypeChar(False)
+        variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            for variable, cvar in tuple(variables_in_use.items()):
+                if (
+                    isinstance(variable, SimMemoryVariable)
+                    and getattr(variable, "addr", None) == addr
+                    and getattr(variable, "size", None) == 1
+                ):
+                    if getattr(cvar, "variable_type", None) is None:
+                        cvar.variable_type = target_type
+                    return cvar
+                if (
+                    isinstance(variable, SimVariable)
+                    and getattr(variable, "name", None) == name
+                    and getattr(variable, "size", None) == 1
+                ):
+                    if getattr(cvar, "variable_type", None) is None:
+                        cvar.variable_type = target_type
+                    return cvar
+        variable = SimMemoryVariable(addr, 1, name=name, region=getattr(codegen.cfunc, "addr", None))
+        cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
+        if isinstance(variables_in_use, dict):
+            variables_in_use[variable] = cvar
+        unified = getattr(codegen.cfunc, "unified_local_vars", None)
+        if isinstance(unified, dict):
+            unified[variable] = {(cvar, getattr(cvar, "variable_type", None))}
+        return cvar
+
+    changed = False
+
+    def _reference_expr(displacement: int):
+        base_cvar = global_address_cvar(displacement)
+        return structured_c.CUnaryOp(
+            "Reference",
+            base_cvar,
+            codegen=codegen,
+        )
+
+    def transform(node):
+        nonlocal changed
+        access = match_stable_ds_es_linear_global_address_8616(node, project, codegen)
+        if access is None:
+            return node
+        base_expr = _reference_expr(access.displacement)
+        rebuilt = base_expr
+        for sign, term in access.residual_terms:
+            rebuilt = structured_c.CBinaryOp(
+                "Add" if sign == 1 else "Sub",
+                rebuilt,
+                term,
+                codegen=codegen,
+            )
+        ptr_type = SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
+        changed = True
+        return structured_c.CTypeCast(None, ptr_type, rebuilt, codegen=codegen)
+
+    def replace_children(node) -> bool:
+        local_changed = False
+        for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
+            if not hasattr(node, attr):
+                continue
+            value = getattr(node, attr)
+            if isinstance(value, list):
+                for index, item in enumerate(tuple(value)):
+                    replacement = transform(item)
+                    if replacement is not item:
+                        value[index] = replacement
+                        local_changed = True
+                    if replace_children(value[index]):
+                        local_changed = True
+            elif value is not None:
+                replacement = transform(value)
+                if replacement is not value:
+                    setattr(node, attr, replacement)
+                    local_changed = True
+                    value = replacement
+                if replace_children(value):
+                    local_changed = True
+        condition_and_nodes = getattr(node, "condition_and_nodes", None)
+        if condition_and_nodes:
+            new_pairs = []
+            pair_changed = False
+            for cond, body in condition_and_nodes:
+                new_cond = transform(cond)
+                if new_cond is not cond:
+                    pair_changed = True
+                    local_changed = True
+                new_body = transform(body)
+                if new_body is not body:
+                    pair_changed = True
+                    local_changed = True
+                if replace_children(new_cond):
+                    local_changed = True
+                if replace_children(new_body):
+                    local_changed = True
+                new_pairs.append((new_cond, new_body))
+            if pair_changed:
+                setattr(node, "condition_and_nodes", new_pairs)
+        return local_changed
+
+    new_root = transform(root)
+    if new_root is not root:
+        codegen.cfunc.statements = new_root
+        root = new_root
+        changed = True
     if replace_children(root):
         changed = True
     return changed
@@ -679,9 +880,12 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
 
 
 __all__ = (
+    "RealModeLinearGlobalAddress8616",
     "RealModeLinearStackAccess8616",
+    "lower_stable_ds_es_linear_global_addresses_8616",
     "lower_stable_ss_linear_stack_dereferences_8616",
     "lower_stable_ds_es_linear_global_dereferences_8616",
+    "match_stable_ds_es_linear_global_address_8616",
     "match_stable_ss_linear_stack_access_8616",
     "match_stable_ds_es_linear_global_access_8616",
 )

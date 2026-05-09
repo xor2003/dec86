@@ -201,14 +201,6 @@ def _vex_irsb_has_bp_frame(irsb) -> bool:
                 if _is_sub_constant(data, 2):
                     has_push_bp = True
 
-    import sys
-    # Dump only from first block encountered
-    if not hasattr(_vex_irsb_has_bp_frame, "_dumped_block"):
-        _vex_irsb_has_bp_frame._dumped_block = True
-        for stmt in getattr(irsb, "statements", ()) or ():
-            tag = getattr(stmt, "tag", "")
-            if tag in ("Ist_Put", "Ist_Store"):
-    sys.stderr.flush()
     return has_push_bp and has_mov_bp_sp
 
 
