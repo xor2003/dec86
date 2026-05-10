@@ -1,2 +1,0 @@
-/* Timed out while recovering a function after 3s during x86-16 function recovery (fast CFGFast). */
-/* Tip: try a larger --timeout for larger binaries. */

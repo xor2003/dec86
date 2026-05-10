@@ -1845,6 +1845,13 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
 
     result = direct_ss_stack_expr_re.sub(_rewrite_direct_ss_stack_expr, result)
 
+    # Fallback: strip any remaining (ss << 4) + patterns that leaked
+    # through the structured lowering.  In real-mode x86 the stack segment
+    # base is invariant, so (ss << 4) + offset simplifies to offset within
+    # the current SS context.  This is safe purely as an address-space
+    # rebasing — it does not recover semantics.
+    result = re.sub(r'\(\s*ss\s*<<\s*4\s*\)\s*\+\s*', '', result)
+
     def _rewrite_source_backed_assignments(text: str) -> str:
         if metadata is None:
             return text

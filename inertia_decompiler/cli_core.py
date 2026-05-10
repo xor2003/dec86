@@ -1753,7 +1753,7 @@ def main(argv: list[str] | None = None) -> int:
             status=direct_result.status,
             failure_stage=getattr(direct_result, "failure_stage", None),
             fallback_kind="direct_addr",
-            tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation, fallback_kind="direct_addr"),
+            tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation),
             artifact_path=f"{func.addr:#x}:{func.name}",
         )
         print(f"[dbg] direct failure family: {direct_failure_family_snapshot.label()}")
