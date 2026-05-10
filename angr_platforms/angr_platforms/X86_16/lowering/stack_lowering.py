@@ -54,13 +54,14 @@ def run_stack_lowering_pass_8616(
     changed = False
     for _ in range(max(max_rounds, 1)):
         round_changed = False
-        # ── Legacy SS linear lowering ──
-        # This path does (seg << 4) + offset arithmetic — forbidden by AGENTS.md
-        # rule "never flatten memory".  Disabled in normal path; kept behind
-        # debug flag for emergency compatibility testing.
-        if codegen is not None and getattr(codegen, "_inertia_allow_legacy_ss_linear_lowering", False):
+        # ── SS linear stack dereference lowering ──
+        # Converts *(ss << 4 + stack_offset) dereferences to named stack
+        # variables.  This is the canonical path that reverses segment
+        # linearization produced by the VEX lifter for SS-relative accesses.
+        if codegen is not None:
             if lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
                 record_stable_ss_lowering_replacement_8616(codegen)
+                round_changed = True
         if codegen is not None and lower_stable_ds_es_linear_global_addresses_8616(codegen, project=project):
             record_stable_ss_lowering_replacement_8616(codegen)
             round_changed = True

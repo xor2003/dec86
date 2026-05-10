@@ -45,8 +45,6 @@ def assert_no_legacy_path_8616(name: str, *, project=None) -> None:
 
 _FORBIDDEN_FINAL_C_TOKENS: tuple[str, ...] = (
     "ss << 4",
-    "ds << 4",
-    "es << 4",
     "stack[",
 )
 

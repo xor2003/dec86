@@ -574,6 +574,14 @@ def _collect_add_sub_terms(
     if op is None:
         # Leaf expression: VEX Get, RdTmp, Const, or int literal.
         # These are atomic terms — return them as a single-term list.
+        # Handle VEX Const objects (tag=Iex_Const, .con.value)
+        tag = getattr(expr, "tag", None)
+        if tag == "Iex_Const":
+            con = getattr(expr, "con", None)
+            if con is not None:
+                val = getattr(con, "value", None)
+                if isinstance(val, int):
+                    return ([], val & 0xFFFF)
         if isinstance(expr, int):
             return ([], expr & 0xFFFF)
         return ([expr], 0)
@@ -615,6 +623,14 @@ def _collect_add_sub_terms(
         return ([args[0], args[1]], 0)
 
     # Leaf: constant or register
+        # Handle VEX Const objects (tag=Iex_Const, .con.value)
+        tag = getattr(expr, "tag", None)
+        if tag == "Iex_Const":
+            con = getattr(expr, "con", None)
+            if con is not None:
+                val = getattr(con, "value", None)
+                if isinstance(val, int):
+                    return ([], val & 0xFFFF)
     if isinstance(expr, int):
         return ([], expr & 0xFFFF)
     reg_offset = getattr(expr, "reg", None)
@@ -635,7 +651,7 @@ def _is_index_reg_8616(expr: Any) -> bool:
     class_name = getattr(type(expr), "__name__", "")
     if "Get" in class_name:
         offset = getattr(expr, "offset", None)
-        if isinstance(offset, int) and offset in {32, 36}:
+        if isinstance(offset, int) and offset in {12, 14, 32, 36}:
             return True
 
     # Obsolete path: reg16_t enum values (never matched VEX expressions)
@@ -670,7 +686,7 @@ def _is_bp_reg(expr: Any, *, tmp_defs: dict | None = None) -> bool:
     # Direct Get node: VEX guest state offset 28 = bp
     if "Get" in class_name:
         offset = getattr(expr, "offset", None)
-        if isinstance(offset, int) and offset == 28:
+        if isinstance(offset, int) and offset in {10, 28}:
             return True
 
     # Obsolete path: reg16_t enum value (never matched VEX expressions)

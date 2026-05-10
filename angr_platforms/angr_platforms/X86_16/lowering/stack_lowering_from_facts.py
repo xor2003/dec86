@@ -103,9 +103,16 @@ def _stack_object_name(offset: int) -> str:
     return f"local_{-offset:x}"
 
 
-def _stack_type_for_size(size: int):
-    """Return SimTypeInt for the given byte size."""
-    return SimTypeInt(signed=False, size=size * 8)
+def _stack_type_for_size(size: int, *, codegen=None):
+    """Return SimTypeInt for the given byte size with arch attached if available."""
+    t = SimTypeInt(signed=False)
+    if codegen is not None:
+        arch = getattr(getattr(codegen, "project", None), "arch", None) or getattr(
+            getattr(codegen, "cfunc", None), "arch", None
+        )
+        if arch is not None:
+            t = t.with_arch(arch)
+    return t
 
 
 def _promote_direct_stack_cvariable(codegen, cvar, size, target_type):
@@ -138,11 +145,11 @@ def _materialize_stack_cvar_at_offset(
     if isinstance(variables_in_use, dict):
         for var, cvar in variables_in_use.items():
             if isinstance(var, SimStackVariable) and getattr(var, "offset", None) == offset:
-                target_type = _stack_type_for_size(size)
+                target_type = _stack_type_for_size(size, codegen=codegen)
                 _promote_direct_stack_cvariable(codegen, cvar, size, target_type)
                 return cvar
 
-    target_type = _stack_type_for_size(size)
+    target_type = _stack_type_for_size(size, codegen=codegen)
     variable = SimStackVariable(
         offset,
         size,
