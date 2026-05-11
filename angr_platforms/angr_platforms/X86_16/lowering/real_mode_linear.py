@@ -130,20 +130,221 @@ def _same_variable_storage_8616(lhs, rhs) -> bool:
     )
 
 
-def _single_assignment_rhs_8616(codegen, target):
+# ── Precomputed maps (built once per lowering pass) ──
+
+def _build_assignment_maps_8616(codegen):
+    """Precompute var_id→rhs, name→rhs, reg→rhs, first_name→rhs maps in a single pass."""
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-    if root is None or not isinstance(target, structured_c.CVariable):
-        return None
-    matches = []
+    if root is None:
+        return ({}, {}, {}, set(), set(), set(), {})
+
+    var_id_map: dict[int, object] = {}
+    name_map: dict[str, object] = {}
+    reg_map: dict[tuple, object] = {}
+    multi_var: set[int] = set()
+    multi_name: set[str] = set()
+    multi_reg: set[tuple] = set()
+    first_name_map: dict[str, object] = {}
+
     for stmt in _iter_statement_nodes_8616(root):
         if not isinstance(stmt, structured_c.CAssignment):
             continue
-        if not _same_variable_storage_8616(getattr(stmt, "lhs", None), target):
+        lhs = getattr(stmt, "lhs", None)
+        rhs = getattr(stmt, "rhs", None)
+
+        if not isinstance(lhs, structured_c.CVariable):
+            # CDirtyExpression lhs — record via dirty.name / dirty.varid
+            dirty_lhs = getattr(lhs, "dirty", None) if lhs is not None else None
+            dirty_name = getattr(dirty_lhs, "name", None)
+            dirty_varid = getattr(dirty_lhs, "varid", None)
+            if isinstance(dirty_name, str):
+                if dirty_name not in first_name_map:
+                    first_name_map[dirty_name] = rhs
+                if dirty_name in name_map:
+                    multi_name.add(dirty_name)
+                    name_map[dirty_name] = None
+                elif dirty_name not in multi_name:
+                    name_map[dirty_name] = rhs
+            if isinstance(dirty_varid, int):
+                vvar_name = f"vvar_{dirty_varid}"
+                if vvar_name not in first_name_map:
+                    first_name_map[vvar_name] = rhs
+                if vvar_name in name_map:
+                    multi_name.add(vvar_name)
+                    name_map[vvar_name] = None
+                elif vvar_name not in multi_name:
+                    name_map[vvar_name] = rhs
             continue
-        matches.append(getattr(stmt, "rhs", None))
-        if len(matches) > 1:
+
+        var = getattr(lhs, "variable", None)
+
+        var_id = id(var) if var is not None else None
+        if var_id is not None:
+            if var_id in var_id_map:
+                multi_var.add(var_id)
+                var_id_map[var_id] = None
+            elif var_id not in multi_var:
+                var_id_map[var_id] = rhs
+
+        name = getattr(lhs, "name", None) or getattr(var, "name", None)
+        if isinstance(name, str) and name:
+            if name not in first_name_map:
+                first_name_map[name] = rhs
+            if name in name_map:
+                multi_name.add(name)
+                name_map[name] = None
+            elif name not in multi_name:
+                name_map[name] = rhs
+
+        if isinstance(var, SimRegisterVariable):
+            reg = getattr(var, "reg", None)
+            size = getattr(var, "size", None)
+            if isinstance(reg, int) and isinstance(size, int):
+                reg_key = (reg, size)
+                if reg_key in reg_map:
+                    multi_reg.add(reg_key)
+                    reg_map[reg_key] = None
+                elif reg_key not in multi_reg:
+                    reg_map[reg_key] = rhs
+
+    return (var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, first_name_map)
+
+
+def _ensure_assignment_maps_8616(codegen) -> tuple:
+    """Return cached maps or build and cache them on codegen."""
+    cached = getattr(codegen, "_inertia_assignment_maps", None)
+    if cached is not None:
+        return cached
+    maps = _build_assignment_maps_8616(codegen)
+    setattr(codegen, "_inertia_assignment_maps", maps)
+    return maps
+
+
+def _build_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
+    """Precompute vvar_id → carrier_delta in a single pass, caching on codegen."""
+    project = getattr(codegen, "project", None)
+    sp_reg, _sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
+    facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
+    has_ss_facts = any(
+        getattr(fact, "segment_space", None) == "ss" for fact in facts.values()
+    )
+    deltas: dict[int, int] = {}
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+    if root is None:
+        return deltas
+
+    def _seed_from_init(expr, lhs_id):
+        if expr is None:
             return None
-    return matches[0] if len(matches) == 1 else None
+        rhs_stripped = _strip_casts_8616(expr)
+        ref_node: object = None
+        const_delta: int = 0
+        if isinstance(rhs_stripped, structured_c.CUnaryOp) and rhs_stripped.op == "Reference":
+            ref_node = rhs_stripped.operand
+        elif isinstance(rhs_stripped, structured_c.CBinaryOp) and rhs_stripped.op in {"Add", "Sub"}:
+            if isinstance(_strip_casts_8616(rhs_stripped.lhs), structured_c.CUnaryOp):
+                lhs_u = _strip_casts_8616(rhs_stripped.lhs)
+                if lhs_u.op == "Reference":
+                    ref_node = lhs_u.operand
+                    rhs_const = _constant_value_8616(rhs_stripped.rhs)
+                    if rhs_const is not None:
+                        const_delta = rhs_const if rhs_stripped.op == "Add" else -rhs_const
+            if ref_node is None and isinstance(_strip_casts_8616(rhs_stripped.rhs), structured_c.CUnaryOp):
+                rhs_u = _strip_casts_8616(rhs_stripped.rhs)
+                if rhs_u.op == "Reference" and rhs_stripped.op == "Add":
+                    ref_node = rhs_u.operand
+                    lhs_const = _constant_value_8616(rhs_stripped.lhs)
+                    if lhs_const is not None:
+                        const_delta = lhs_const
+        if ref_node is not None:
+            operand = _strip_casts_8616(ref_node)
+            if isinstance(operand, structured_c.CVariable):
+                var = getattr(operand, "variable", None)
+                if isinstance(var, SimStackVariable):
+                    offset = getattr(var, "offset", None)
+                    if isinstance(offset, int):
+                        deltas[lhs_id] = offset + const_delta
+                        return True
+        if isinstance(rhs_stripped, structured_c.CVariable):
+            var = getattr(rhs_stripped, "variable", None)
+            if isinstance(var, SimRegisterVariable) and getattr(var, "reg", None) == sp_reg and has_ss_facts:
+                deltas[lhs_id] = 0
+                return True
+        return None
+
+    for stmt in _iter_statement_nodes_8616(root):
+        if not isinstance(stmt, structured_c.CAssignment):
+            continue
+        lhs_id = _extract_vvar_id_8616(getattr(stmt, "lhs", None))
+        if not isinstance(lhs_id, int):
+            continue
+        _seed_from_init(getattr(stmt, "rhs", None), lhs_id)
+
+    changed = True
+    while changed:
+        changed = False
+        for stmt in _iter_statement_nodes_8616(root):
+            if not isinstance(stmt, structured_c.CAssignment):
+                continue
+            lhs_id = _extract_vvar_id_8616(getattr(stmt, "lhs", None))
+            if not isinstance(lhs_id, int) or lhs_id in deltas:
+                continue
+            base_ids: list[tuple[int, int]] = []
+            const_total = 0
+            unknown = False
+            for sign, term in _flatten_signed_terms_8616(getattr(stmt, "rhs", None)):
+                base_id = _extract_vvar_id_8616(term)
+                if isinstance(base_id, int):
+                    base_ids.append((sign, base_id))
+                    continue
+                const = _constant_value_8616(term)
+                if const is not None:
+                    const_total += sign * const
+                    continue
+                unknown = True
+            if unknown or len(base_ids) != 1:
+                continue
+            sign, base_id = base_ids[0]
+            if sign != 1 or base_id not in deltas:
+                continue
+            deltas[lhs_id] = deltas[base_id] + const_total
+            changed = True
+    return deltas
+
+
+def _ensure_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
+    """Return cached vvar_deltas or build and cache them on codegen."""
+    cached = getattr(codegen, "_inertia_vvar_carrier_deltas", None)
+    if cached is not None:
+        return cached
+    deltas = _build_vvar_carrier_delta_map_8616(codegen)
+    setattr(codegen, "_inertia_vvar_carrier_deltas", deltas)
+    return deltas
+
+
+# ── O(1) lookup wrappers ──
+
+def _single_assignment_rhs_8616(codegen, target):
+    if not isinstance(target, structured_c.CVariable):
+        return None
+    var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, _first_name_map = (
+        _ensure_assignment_maps_8616(codegen)
+    )
+    var = getattr(target, "variable", None)
+    var_id = id(var) if var is not None else None
+    if var_id is not None and var_id in var_id_map and var_id not in multi_var:
+        return var_id_map[var_id]
+    name = getattr(target, "name", None) or getattr(var, "name", None)
+    if isinstance(name, str) and name in name_map and name not in multi_name:
+        return name_map[name]
+    if isinstance(var, SimRegisterVariable):
+        reg = getattr(var, "reg", None)
+        size = getattr(var, "size", None)
+        if isinstance(reg, int) and isinstance(size, int):
+            reg_key = (reg, size)
+            if reg_key in reg_map and reg_key not in multi_reg:
+                return reg_map[reg_key]
+    return None
 
 
 def _stack_pointer_carrier_offset_8616(node, project, codegen) -> int | None:
@@ -202,21 +403,15 @@ def _lhs_name_8616(lhs) -> str | None:
 
 
 def _single_assignment_rhs_for_virtual_name_8616(codegen, target_name: str, *, allow_multi: bool = False):
-    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-    if root is None:
-        return None
-    matches = []
-    for stmt in _iter_statement_nodes_8616(root):
-        if not isinstance(stmt, structured_c.CAssignment):
-            continue
-        lhs = getattr(stmt, "lhs", None)
-        lhs_name = _lhs_name_8616(lhs)
-        if lhs_name != target_name:
-            continue
-        matches.append(getattr(stmt, "rhs", None))
-        if not allow_multi and len(matches) > 1:
-            return None
-    return matches[0] if matches else None
+    _unused_var_id_map, name_map, _unused_reg_map, _unused_multi_var, multi_name, _unused_multi_reg, first_name_map = (
+        _ensure_assignment_maps_8616(codegen)
+    )
+    if allow_multi:
+        # O(1) lookup from precomputed first-assignment map
+        return first_name_map.get(target_name)
+    if target_name in name_map and target_name not in multi_name:
+        return name_map[target_name]
+    return None
 
 
 def _extract_vvar_id_8616(node) -> int | None:
@@ -237,98 +432,9 @@ def _extract_vvar_id_8616(node) -> int | None:
 
 def _stack_probe_carrier_delta_8616(node, codegen) -> int | None:
     varid = _extract_vvar_id_8616(node)
-    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-    if not isinstance(varid, int) or root is None:
+    if not isinstance(varid, int):
         return None
-
-    # Seed deltas from vvars assigned directly from stack-pointer expressions.
-    # A base carrier is either the SP register (when SS stack-probe facts exist)
-    # or a reference to a stack variable (&stack_var) whose offset is known.
-    deltas: dict[int, int] = {}
-    project = getattr(codegen, "project", None)
-    sp_reg, _sp_size = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))
-    facts = getattr(codegen, "_inertia_typed_stack_probe_return_facts", {}) or {}
-    has_ss_facts = any(
-        getattr(fact, "segment_space", None) == "ss" for fact in facts.values()
-    )
-    def _seed_from_init(expr, lhs_id):
-        """Try to seed a carrier delta from a single init expression."""
-        if expr is None:
-            return None
-        rhs_stripped = _strip_casts_8616(expr)
-        ref_node: object = None
-        const_delta: int = 0
-        if isinstance(rhs_stripped, structured_c.CUnaryOp) and rhs_stripped.op == "Reference":
-            ref_node = rhs_stripped.operand
-        elif isinstance(rhs_stripped, structured_c.CBinaryOp) and rhs_stripped.op in {"Add", "Sub"}:
-            if isinstance(_strip_casts_8616(rhs_stripped.lhs), structured_c.CUnaryOp):
-                lhs_u = _strip_casts_8616(rhs_stripped.lhs)
-                if lhs_u.op == "Reference":
-                    ref_node = lhs_u.operand
-                    rhs_const = _constant_value_8616(rhs_stripped.rhs)
-                    if rhs_const is not None:
-                        const_delta = rhs_const if rhs_stripped.op == "Add" else -rhs_const
-            if ref_node is None and isinstance(_strip_casts_8616(rhs_stripped.rhs), structured_c.CUnaryOp):
-                rhs_u = _strip_casts_8616(rhs_stripped.rhs)
-                if rhs_u.op == "Reference" and rhs_stripped.op == "Add":
-                    ref_node = rhs_u.operand
-                    lhs_const = _constant_value_8616(rhs_stripped.lhs)
-                    if lhs_const is not None:
-                        const_delta = lhs_const
-        if ref_node is not None:
-            operand = _strip_casts_8616(ref_node)
-            if isinstance(operand, structured_c.CVariable):
-                var = getattr(operand, "variable", None)
-                if isinstance(var, SimStackVariable):
-                    offset = getattr(var, "offset", None)
-                    if isinstance(offset, int):
-                        deltas[lhs_id] = offset + const_delta
-                        return True
-        # SP register with SS stack-probe facts
-        if isinstance(rhs_stripped, structured_c.CVariable):
-            var = getattr(rhs_stripped, "variable", None)
-            if isinstance(var, SimRegisterVariable) and getattr(var, "reg", None) == sp_reg and has_ss_facts:
-                deltas[lhs_id] = 0
-                return True
-        return None
-
-    for stmt in _iter_statement_nodes_8616(root):
-        if not isinstance(stmt, structured_c.CAssignment):
-            continue
-        lhs_id = _extract_vvar_id_8616(getattr(stmt, "lhs", None))
-        if not isinstance(lhs_id, int):
-            continue
-        _seed_from_init(getattr(stmt, "rhs", None), lhs_id)
-
-    changed = True
-    while changed:
-        changed = False
-        for stmt in _iter_statement_nodes_8616(root):
-            if not isinstance(stmt, structured_c.CAssignment):
-                continue
-            lhs_id = _extract_vvar_id_8616(getattr(stmt, "lhs", None))
-            if not isinstance(lhs_id, int) or lhs_id in deltas:
-                continue
-            base_ids: list[tuple[int, int]] = []
-            const_total = 0
-            unknown = False
-            for sign, term in _flatten_signed_terms_8616(getattr(stmt, "rhs", None)):
-                base_id = _extract_vvar_id_8616(term)
-                if isinstance(base_id, int):
-                    base_ids.append((sign, base_id))
-                    continue
-                const = _constant_value_8616(term)
-                if const is not None:
-                    const_total += sign * const
-                    continue
-                unknown = True
-            if unknown or len(base_ids) != 1:
-                continue
-            sign, base_id = base_ids[0]
-            if sign != 1 or base_id not in deltas:
-                continue
-            deltas[lhs_id] = deltas[base_id] + const_total
-            changed = True
+    deltas = _ensure_vvar_carrier_delta_map_8616(codegen)
     return deltas.get(varid)
 
 
@@ -578,6 +684,8 @@ def match_stable_ds_es_linear_global_address_8616(node, project, codegen) -> Rea
 
 def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) -> bool:
     """Replace stable DS/ES real-mode linear dereferences with global variable references."""
+    import sys as _diag_sys
+
 
     if project is None:
         project = getattr(codegen, "project", None)
@@ -639,7 +747,15 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
             return global_cvar(access)
         return node
 
+    _seen = set(); _node_count = [0]
     def replace_children(node) -> bool:
+        _node_count[0] += 1
+        if _node_count[0] % 5000 == 0:
+            _diag_sys.stderr.write(f"[lower_ss_linear] tree walk: {_node_count[0]} unique nodes...\n"); _diag_sys.stderr.flush()
+        node_id = id(node)
+        if node_id in _seen:
+            return False
+        _seen.add(node_id)
         local_changed = False
         for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
             if not hasattr(node, attr):
@@ -685,10 +801,13 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
 
     if replace_children(root):
         changed = True
+    _diag_sys.stderr.write(f"[lower_ss_linear] tree walk DONE: {_node_count[0]} unique nodes visited\n"); _diag_sys.stderr.flush()
     return changed
 
 
 def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bool:
+    import sys as _diag_sys
+
     """Replace stable DS/ES address-valued expressions with data-space object references."""
 
     if project is None:
@@ -757,7 +876,15 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
         changed = True
         return structured_c.CTypeCast(None, ptr_type, rebuilt, codegen=codegen)
 
+    _seen = set(); _node_count = [0]
     def replace_children(node) -> bool:
+        _node_count[0] += 1
+        if _node_count[0] % 5000 == 0:
+            _diag_sys.stderr.write(f"[lower_ss_linear] tree walk: {_node_count[0]} unique nodes...\n"); _diag_sys.stderr.flush()
+        node_id = id(node)
+        if node_id in _seen:
+            return False
+        _seen.add(node_id)
         local_changed = False
         for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
             if not hasattr(node, attr):
@@ -808,17 +935,25 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
         changed = True
     if replace_children(root):
         changed = True
+    _diag_sys.stderr.write(f"[lower_ss_linear] tree walk DONE: {_node_count[0]} unique nodes visited\n"); _diag_sys.stderr.flush()
     return changed
 
 
 def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> bool:
     """Replace stable SS real-mode linear dereferences with stack variables."""
+    import sys as _diag_sys
 
     if project is None:
         project = getattr(codegen, "project", None)
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
     if project is None or root is None:
         return False
+
+    # Invalidate cached maps so they are rebuilt against current codegen state
+    setattr(codegen, "_inertia_assignment_maps", None)
+    setattr(codegen, "_inertia_vvar_carrier_deltas", None)
+
+    _diag_sys.stderr.write("[lower_ss_linear] START\n"); _diag_sys.stderr.flush()
 
     def stack_cvar(access: RealModeLinearStackAccess8616):
         target_type = _type_for_access_width_8616(access.width)
@@ -850,7 +985,15 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
             return stack_cvar(access)
         return node
 
+    _seen = set(); _node_count = [0]
     def replace_children(node) -> bool:
+        _node_count[0] += 1
+        if _node_count[0] % 5000 == 0:
+            _diag_sys.stderr.write(f"[lower_ss_linear] tree walk: {_node_count[0]} unique nodes...\n"); _diag_sys.stderr.flush()
+        node_id = id(node)
+        if node_id in _seen:
+            return False
+        _seen.add(node_id)
         local_changed = False
         for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
             if not hasattr(node, attr):
@@ -876,6 +1019,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
 
     if replace_children(root):
         changed = True
+    _diag_sys.stderr.write(f"[lower_ss_linear] tree walk DONE: {_node_count[0]} unique nodes visited\n"); _diag_sys.stderr.flush()
     return changed
 
 

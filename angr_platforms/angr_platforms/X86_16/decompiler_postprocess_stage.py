@@ -331,8 +331,15 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
             project._inertia_decompiler_stage = "postprocess"
             return accepted_changed
 
+    import time as _ppt
+    _t_pp_start = _ppt.perf_counter()
     for spec in pass_specs:
         project._inertia_decompiler_stage = f"postprocess:{spec.name}"
+        _t_pass = _ppt.perf_counter()
+        if os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
+            import sys as _ppsys
+            _ppsys.stderr.write(f"[{_ppt.strftime('%H:%M:%S')}] postprocess pass: {spec.name} (+{_t_pass - _t_pp_start:.1f}s)\n")
+            _ppsys.stderr.flush()
         if spec.needs_project:
             step = lambda spec=spec: spec.func(project, codegen)
         else:

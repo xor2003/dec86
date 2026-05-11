@@ -21,6 +21,7 @@ from ..decompiler_postprocess_utils import (
     _replace_c_children_8616,
     _same_c_expression_8616,
     _structured_codegen_node_8616,
+    _unwrap_statements_8616,
 )
 
 __all__ = [
@@ -326,7 +327,7 @@ def _rewrite_flag_bit_value_uses_8616(codegen) -> bool:
 
     def visit_block(node, incoming_assignments):
         local_assignments = list(incoming_assignments)
-        for stmt in list(node.statements):
+        for stmt in _unwrap_statements_8616(node):
             visit_stmt(stmt, local_assignments)
             assign_stmt, assign_container = _last_assignment_in_stmt(stmt)
             if _is_flags_assignment(assign_stmt):
