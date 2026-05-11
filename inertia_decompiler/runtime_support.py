@@ -11,6 +11,7 @@ import select
 import signal
 import sys
 import threading
+import traceback
 import time
 import weakref
 from collections.abc import Callable
@@ -315,63 +316,156 @@ def guard_angr_variable_recovery_binop_sub_size_mismatch(project=None):
 
 @contextlib.contextmanager
 def guard_angr_clinic_stage_markers(project):
+    import time as _time
     from angr.analyses.decompiler.block_simplifier import BlockSimplifier
     from angr.analyses.decompiler.clinic import Clinic
     from angr.analyses.decompiler.utils import peephole_optimize_multistmts, peephole_optimize_stmts
 
     orig_stage_pre_ssa = Clinic._stage_pre_ssa_level1_simplifications
+    orig_stage_ssa_level1 = Clinic._stage_transform_to_ssa_level1
+    orig_stage_post_ssa = Clinic._stage_post_ssa_level1_simplifications
+    orig_stage_recover_vars = Clinic._stage_recover_variables
     orig_simplify_block = Clinic._simplify_block
     orig_peephole_optimize = BlockSimplifier._peephole_optimize
+    _t0 = _time.perf_counter()
+    _last_stage: list[str] = ["start"]
+    _stage_entry: list[float] = [_t0]
+
+    def _emit_stage_time(new_stage: str) -> None:
+        now = _time.perf_counter()
+        elapsed_since_start = now - _t0
+        elapsed_in_prev = now - _stage_entry[0]
+        print(f"[dbg] stage-time: {new_stage} elapsed={elapsed_since_start:.2f}s (prev={_last_stage[0]} took {elapsed_in_prev:.2f}s)")
+        sys.stderr.flush()
+        _last_stage[0] = new_stage
+        _stage_entry[0] = now
 
     def _stage_pre_ssa_level1_simplifications(self, *args, **kwargs):  # noqa: ANN001
+        _emit_stage_time("clinic:pre_ssa_l1")
         project._inertia_decompiler_stage = "core:clinic:pre_ssa_level1_simplifications"
         return orig_stage_pre_ssa(self, *args, **kwargs)
 
+    def _stage_transform_to_ssa_level1(self, *args, **kwargs):  # noqa: ANN001
+        _emit_stage_time("clinic:ssa_level1")
+        project._inertia_decompiler_stage = "core:clinic:ssa_level1_transformation"
+        return orig_stage_ssa_level1(self, *args, **kwargs)
+
+    def _stage_post_ssa_level1_simplifications(self, *args, **kwargs):  # noqa: ANN001
+        _emit_stage_time("clinic:post_ssa_l1")
+        project._inertia_decompiler_stage = "core:clinic:post_ssa_level1_simplifications"
+        return orig_stage_post_ssa(self, *args, **kwargs)
+
+    def _stage_recover_variables(self, *args, **kwargs):  # noqa: ANN001
+        _emit_stage_time("clinic:recover_vars")
+        project._inertia_decompiler_stage = "core:clinic:recover_variables"
+        return orig_stage_recover_vars(self, *args, **kwargs)
+
+    _simplify_count: list[int] = [0]
+    _peephole_count: list[int] = [0]
+    _simplify_total: list[float] = [0.0]
+    _peephole_total: list[float] = [0.0]
+
     def _simplify_block(self, *args, **kwargs):  # noqa: ANN001
         project._inertia_decompiler_stage = "core:clinic:simplify_block"
-        return orig_simplify_block(self, *args, **kwargs)
+        _simplify_count[0] += 1
+        _t_start = _time.perf_counter()
+        result = orig_simplify_block(self, *args, **kwargs)
+        _simplify_total[0] += _time.perf_counter() - _t_start
+        if _simplify_count[0] % 20 == 0:
+            print(f"[dbg] stage-time: simplify_block x{_simplify_count[0]} cumulative={_simplify_total[0]:.2f}s (peephole x{_peephole_count[0]} cumulative={_peephole_total[0]:.2f}s)")
+            sys.stderr.flush()
+        return result
 
     def _peephole_optimize(self, *args, **kwargs):  # noqa: ANN001
         project._inertia_decompiler_stage = "core:clinic:peephole_optimize"
-        block = args[0] if args else kwargs.get("block")
-        if block is not None and getattr(project, "_inertia_fast_block_peephole", False):
-            statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
-            new_block = block.copy(statements=statements) if stmts_updated else block
-            statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)
-            if not multi_stmts_updated:
-                return new_block
-            return new_block.copy(statements=statements)
-        if block is not None and _block_has_pathologically_complex_expr(block):
-            skipped = getattr(project, "_inertia_complex_block_skip_seen", None)
-            if not isinstance(skipped, set):
-                skipped = set()
-                setattr(project, "_inertia_complex_block_skip_seen", skipped)
-            block_addr = getattr(block, "addr", None)
-            if block_addr not in skipped:
-                skipped.add(block_addr)
-                print(
-                    "[dbg] clinic:skip-peephole-complex-block "
-                    f"block={block_addr:#x}{_project_current_function_context_suffix(project)}",
-                    file=sys.stderr,
-                )
-                sys.stderr.flush()
-            statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
-            new_block = block.copy(statements=statements) if stmts_updated else block
-            statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)
-            if not multi_stmts_updated:
-                return new_block
-            return new_block.copy(statements=statements)
-        return orig_peephole_optimize(self, *args, **kwargs)
+        _peephole_count[0] += 1
+        _t_start = _time.perf_counter()
+        try:
+            block = args[0] if args else kwargs.get("block")
+            if block is not None and getattr(project, "_inertia_fast_block_peephole", False):
+                statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
+                new_block = block.copy(statements=statements) if stmts_updated else block
+                statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)
+                if not multi_stmts_updated:
+                    return new_block
+                return new_block.copy(statements=statements)
+            if block is not None and _block_has_pathologically_complex_expr(block):
+                skipped = getattr(project, "_inertia_complex_block_skip_seen", None)
+                if not isinstance(skipped, set):
+                    skipped = set()
+                    setattr(project, "_inertia_complex_block_skip_seen", skipped)
+                block_addr = getattr(block, "addr", None)
+                if block_addr not in skipped:
+                    skipped.add(block_addr)
+                    print(
+                        "[dbg] clinic:skip-peephole-complex-block "
+                        f"block={block_addr:#x}{_project_current_function_context_suffix(project)}",
+                        file=sys.stderr,
+                    )
+                    sys.stderr.flush()
+                statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
+                new_block = block.copy(statements=statements) if stmts_updated else block
+                statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)
+                if not multi_stmts_updated:
+                    return new_block
+                return new_block.copy(statements=statements)
+            return orig_peephole_optimize(self, *args, **kwargs)
+        finally:
+            _peephole_total[0] += _time.perf_counter() - _t_start
 
     Clinic._stage_pre_ssa_level1_simplifications = _stage_pre_ssa_level1_simplifications
+    Clinic._stage_transform_to_ssa_level1 = _stage_transform_to_ssa_level1
+    Clinic._stage_post_ssa_level1_simplifications = _stage_post_ssa_level1_simplifications
+    Clinic._stage_recover_variables = _stage_recover_variables
     Clinic._simplify_block = _simplify_block
     BlockSimplifier._peephole_optimize = _peephole_optimize
     try:
         yield
     finally:
         Clinic._stage_pre_ssa_level1_simplifications = orig_stage_pre_ssa
+        Clinic._stage_transform_to_ssa_level1 = orig_stage_ssa_level1
+        Clinic._stage_post_ssa_level1_simplifications = orig_stage_post_ssa
+        Clinic._stage_recover_variables = orig_stage_recover_vars
         Clinic._simplify_block = orig_simplify_block
         BlockSimplifier._peephole_optimize = orig_peephole_optimize
+
+
+@contextlib.contextmanager
+def guard_angr_fast_post_ssa_8616(project):
+    """Skip redundant ``_simplify_function`` calls in angr Clinic for 86_16.
+
+    Clinic calls ``_simplify_function`` seven times across stages.  Calls 4 and 5 (0-indexed)
+    are the 3rd and 4th whole-graph simplification rounds inside
+    ``_stage_post_ssa_level1_simplifications``, which redundantly redo variable unification
+    and expression narrowing that the x86_16 platform handles in its own structuring and
+    postprocess passes.  We turn those two calls into no-ops.
+
+    This wrapper is more robust than replacing the entire stage method because it does not
+    duplicate angr's internal stage implementation — it only intercepts one leaf method.
+    """
+    if getattr(getattr(project, "arch", None), "name", None) != "86_16":
+        yield
+        return
+
+    from angr.analyses.decompiler.clinic import Clinic
+
+    orig_simplify_function = Clinic._simplify_function
+    _counter: dict[int, int] = {}  # id(instance) -> call count
+
+    def _fast_simplify_function(self, ail_graph, **kwargs):  # noqa: ANN001
+        c = _counter.get(id(self), 0)
+        _counter[id(self)] = c + 1
+        # Calls 0-2 are earlier stages; calls 3 and 4 are the 3rd and 4th
+        # post-SSA whole-graph rounds that 86_16 does not need.
+        if c in (3, 4):
+            return
+        return orig_simplify_function(self, ail_graph, **kwargs)
+
+    Clinic._simplify_function = _fast_simplify_function
+    try:
+        yield
+    finally:
+        Clinic._simplify_function = orig_simplify_function
 
 
 @contextlib.contextmanager
@@ -568,7 +662,7 @@ def run_with_timeout_in_fork(
             try:
                 payload = ("ok", func())
             except BaseException as ex:  # noqa: BLE001
-                payload = ("err", type(ex).__name__, str(ex))
+                payload = ("err", type(ex).__name__, str(ex) + "\n" + traceback.format_exc())
             try:
                 data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
             except BaseException as ex:  # noqa: BLE001
@@ -823,6 +917,194 @@ def choose_function_parallelism(function_count: int) -> int:
         return 1
     workers_by_mem = max(1, budget_mb // DEFAULT_WORKER_MEMORY_FLOOR_MB)
     return min(workers, function_count, workers_by_mem)
+
+
+@contextlib.contextmanager
+def guard_angr_structurer_codegen_timing(project):
+    """Emit per-stage timing for RecursiveStructurer, RegionSimplifier, and StructuredCodeGenerator."""
+    import time as _time
+
+    from angr.analyses.decompiler.structuring.recursive_structurer import RecursiveStructurer
+    from angr.analyses.decompiler.region_simplifiers.region_simplifier import RegionSimplifier
+    from angr.analyses.decompiler.structured_codegen.c import CStructuredCodeGenerator
+
+    orig_rs_init = RecursiveStructurer.__init__
+    orig_ri_init = RegionSimplifier.__init__
+    orig_codegen_init = CStructuredCodeGenerator.__init__
+
+    def _timed_rs_init(self, *args, **kwargs):  # noqa: ANN001
+        _t0 = _time.perf_counter()
+        print(f"[dbg] stage-time: structurer:recursive start")
+        sys.stderr.flush()
+        try:
+            return orig_rs_init(self, *args, **kwargs)
+        finally:
+            _elapsed = _time.perf_counter() - _t0
+            print(f"[dbg] stage-time: structurer:recursive done elapsed={_elapsed:.2f}s")
+            sys.stderr.flush()
+
+    def _timed_ri_init(self, *args, **kwargs):  # noqa: ANN001
+        _t0 = _time.perf_counter()
+        print(f"[dbg] stage-time: region_simplifier start")
+        sys.stderr.flush()
+        try:
+            return orig_ri_init(self, *args, **kwargs)
+        finally:
+            _elapsed = _time.perf_counter() - _t0
+            print(f"[dbg] stage-time: region_simplifier done elapsed={_elapsed:.2f}s")
+            sys.stderr.flush()
+
+    def _timed_codegen_init(self, *args, **kwargs):  # noqa: ANN001
+        _t0 = _time.perf_counter()
+        print(f"[dbg] stage-time: codegen:C start")
+        sys.stderr.flush()
+        try:
+            return orig_codegen_init(self, *args, **kwargs)
+        finally:
+            _elapsed = _time.perf_counter() - _t0
+            print(f"[dbg] stage-time: codegen:C done elapsed={_elapsed:.2f}s")
+            sys.stderr.flush()
+
+    RecursiveStructurer.__init__ = _timed_rs_init
+    RegionSimplifier.__init__ = _timed_ri_init
+    CStructuredCodeGenerator.__init__ = _timed_codegen_init
+    try:
+        yield
+    finally:
+        RecursiveStructurer.__init__ = orig_rs_init
+        RegionSimplifier.__init__ = orig_ri_init
+        CStructuredCodeGenerator.__init__ = orig_codegen_init
+
+
+@contextlib.contextmanager
+def guard_angr_tail_validation_collection_timing():
+    """Emit timing for the tail validation 'before' collection in _decompile_structuring_8616."""
+    import time as _time
+
+    from angr_platforms.X86_16.tail_validation import (
+        fingerprint_x86_16_tail_validation_boundary,
+        collect_x86_16_tail_validation_summary,
+    )
+
+    orig_fingerprint = fingerprint_x86_16_tail_validation_boundary
+    orig_collect = collect_x86_16_tail_validation_summary
+
+    def _timed_fingerprint(project, codegen, *, mode):  # noqa: ANN001
+        _t0 = _time.perf_counter()
+        print(f"[dbg] stage-time: tail_validation:fingerprint:before start")
+        sys.stderr.flush()
+        try:
+            return orig_fingerprint(project, codegen, mode=mode)
+        finally:
+            _elapsed = _time.perf_counter() - _t0
+            print(f"[dbg] stage-time: tail_validation:fingerprint:before done elapsed={_elapsed:.2f}s")
+            sys.stderr.flush()
+
+    def _timed_collect(project, codegen, *, mode):  # noqa: ANN001
+        _t0 = _time.perf_counter()
+        print(f"[dbg] stage-time: tail_validation:collect:before start")
+        sys.stderr.flush()
+        try:
+            return orig_collect(project, codegen, mode=mode)
+        finally:
+            _elapsed = _time.perf_counter() - _t0
+            print(f"[dbg] stage-time: tail_validation:collect:before done elapsed={_elapsed:.2f}s")
+            sys.stderr.flush()
+
+    # Patch the module that _decompile_structuring_8616 imports from
+    import angr_platforms.X86_16.decompiler_structuring_stage as _ds_mod
+
+    _ds_mod.fingerprint_x86_16_tail_validation_boundary = _timed_fingerprint
+    _ds_mod.collect_x86_16_tail_validation_summary = _timed_collect
+    try:
+        yield
+    finally:
+        _ds_mod.fingerprint_x86_16_tail_validation_boundary = orig_fingerprint
+        _ds_mod.collect_x86_16_tail_validation_summary = orig_collect
+
+
+@contextlib.contextmanager
+def guard_angr_structuring_codegen_internal_timing():
+    """Emit timing for internal steps of _structuring_codegen_8616 before the pass loop."""
+    import time as _time
+    import angr_platforms.X86_16.decompiler_structuring_stage as _ds_mod
+    import angr_platforms.X86_16.pipeline.contracts as _contracts_mod
+
+    orig_alias = _ds_mod._assert_alias_complete_8616
+    orig_contracts = _contracts_mod.assert_pipeline_contracts_8616
+
+    def _timed_alias_complete(codegen):  # noqa: ANN001
+        _t0 = _time.perf_counter()
+        print(f"[dbg] stage-time: x86_16:_assert_alias_complete start")
+        sys.stderr.flush()
+        try:
+            return orig_alias(codegen)
+        finally:
+            _elapsed = _time.perf_counter() - _t0
+            print(f"[dbg] stage-time: x86_16:_assert_alias_complete done elapsed={_elapsed:.2f}s")
+            sys.stderr.flush()
+
+    def _timed_contracts(codegen):  # noqa: ANN001
+        _t0 = _time.perf_counter()
+        print(f"[dbg] stage-time: x86_16:assert_pipeline_contracts start")
+        sys.stderr.flush()
+        try:
+            return orig_contracts(codegen)
+        finally:
+            _elapsed = _time.perf_counter() - _t0
+            print(f"[dbg] stage-time: x86_16:assert_pipeline_contracts done elapsed={_elapsed:.2f}s")
+            sys.stderr.flush()
+
+    _ds_mod._assert_alias_complete_8616 = _timed_alias_complete
+    _contracts_mod.assert_pipeline_contracts_8616 = _timed_contracts
+
+    # Patch lowering functions at source
+    _orig_rml = None
+    _orig_slf = None
+    _rml_mod = None
+    _slf_mod = None
+    try:
+        import angr_platforms.X86_16.lowering.real_mode_linear as _rml_mod
+        _orig_rml = _rml_mod.lower_stable_ss_linear_stack_dereferences_8616
+        def _timed_rml(codegen):  # noqa: ANN001
+            _t0 = _time.perf_counter()
+            print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack start")
+            sys.stderr.flush()
+            try:
+                return _orig_rml(codegen)
+            finally:
+                _elapsed = _time.perf_counter() - _t0
+                print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack done elapsed={_elapsed:.2f}s")
+                sys.stderr.flush()
+        _rml_mod.lower_stable_ss_linear_stack_dereferences_8616 = _timed_rml
+    except Exception:
+        pass
+    try:
+        import angr_platforms.X86_16.lowering.stack_lowering_from_facts as _slf_mod
+        _orig_slf = _slf_mod.lower_stack_accesses_from_alias_facts_8616
+        def _timed_slf(codegen):  # noqa: ANN001
+            _t0 = _time.perf_counter()
+            print(f"[dbg] stage-time: x86_16:lower_stack_from_facts start")
+            sys.stderr.flush()
+            try:
+                return _orig_slf(codegen)
+            finally:
+                _elapsed = _time.perf_counter() - _t0
+                print(f"[dbg] stage-time: x86_16:lower_stack_from_facts done elapsed={_elapsed:.2f}s")
+                sys.stderr.flush()
+        _slf_mod.lower_stack_accesses_from_alias_facts_8616 = _timed_slf
+    except Exception:
+        pass
+
+    try:
+        yield
+    finally:
+        _ds_mod._assert_alias_complete_8616 = orig_alias
+        _contracts_mod.assert_pipeline_contracts_8616 = orig_contracts
+        if _orig_rml is not None and _rml_mod is not None:
+            _rml_mod.lower_stable_ss_linear_stack_dereferences_8616 = _orig_rml
+        if _orig_slf is not None and _slf_mod is not None:
+            _slf_mod.lower_stack_accesses_from_alias_facts_8616 = _orig_slf
 
 
 def should_force_serial_supplemental_decompilation(function_count: int) -> bool:

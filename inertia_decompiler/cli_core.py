@@ -1038,101 +1038,367 @@ def _iter_c_nodes(node):
                 if type(arg).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
                     yield from _iter_c_nodes(arg)
 
+def _fork_unavailable_reason() -> str:
+    live_threads = [
+        thread.name
+        for thread in threading.enumerate()
+        if thread is not threading.current_thread() and thread.is_alive()
+    ]
+    if live_threads:
+        return f"{len(live_threads)} live helper thread(s): {', '.join(live_threads[:4])}"
+    return f"threading.active_count()={threading.active_count()}"
+
+
+def _remember_fallback_tail_validation(
+    project: angr.Project,
+    fallback_tail_validation_by_index: dict[int, dict[str, object]],
+    item: FunctionWorkItem,
+    *,
+    function=None,
+    allow_project_fallback: bool = True,
+) -> dict[str, object]:
+    target_function = function if function is not None else item.function
+    snapshot = _tail_validation_snapshot_for_fallback(
+        project,
+        target_function,
+        allow_project_fallback=allow_project_fallback,
+    )
+    fallback_tail_validation_by_index[item.index] = snapshot
+    return snapshot
+
+
+
+def _emit_function_result(
+    item: FunctionWorkItem,
+    result: FunctionWorkResult,
+    *,
+    project: angr.Project,
+    args: Any,
+    lst_metadata: Any,
+    cod_metadata: Any,
+    synthetic_globals: Any,
+    precise_sidecar_regions: bool,
+    allow_heavy_fallbacks: bool,
+    interactive_stdout: bool,
+    use_serial_fork_per_function: bool,
+    fallback_tail_validation_by_index: dict[int, dict[str, object]],
+) -> tuple[int, int]:
+    decompiled_local = 0
+    failed_local = 0
+    attempt_status_printed = False
+    if result.debug_output:
+        print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+    function = item.function
+    print(f"\n/* == function {function.addr:#x} {function.name} == */")
+    if getattr(result, "failure_stage", None):
+        print(f"/* stage: {result.failure_stage} */")
+    failure_family_snapshot = build_failure_family_snapshot(
+        status=getattr(result, "status", None),
+        failure_stage=getattr(result, "failure_stage", None),
+        fallback_kind="file_sweep",
+        tail_validation_verdict=_tail_validation_display_status(getattr(result, "tail_validation", None), fallback_kind="file_sweep"),
+        artifact_path=f"{function.addr:#x}:{function.name}",
+    )
+    print(f"/* failure family: {failure_family_snapshot.label()} */")
+    if args.show_asm:
+        print("/* -- asm -- */")
+        print(_format_first_block_asm(project, function.addr))
+    if result.status == "ok":
+        decompiled_local += 1
+        _print_function_attempt_status(
+            function,
+            attempt="decompiled",
+            validation_snapshot=result.tail_validation,
+        )
+        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, result.payload, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c -- */")
+        return decompiled_local, failed_local
+
+    emitted_problem = False
+    if result.partial_payload:
+        _print_function_attempt_status(
+            function,
+            attempt=_function_attempt_display_status(result),
+            validation_snapshot=result.tail_validation,
+        )
+        attempt_status_printed = True
+        print(f"/* problem: {result.status} */")
+        _print_diagnostic_text(result.payload)
+        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, result.partial_payload, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (partial timeout) -- */")
+        emitted_problem = True
+
+    skip_heavy_fallbacks_for_result = bool(getattr(result, "skip_heavy_fallbacks", False))
+
+    slice_result: SliceRecoveryAttemptOutcome | None = None
+    if allow_heavy_fallbacks and precise_sidecar_regions and not skip_heavy_fallbacks_for_result:
+        slice_result = _try_decompile_sidecar_slice(
+            project,
+            lst_metadata,
+            function.addr,
+            function.name,
+            timeout=args.timeout,
+            api_style=args.api_style,
+            binary_path=args.binary,
+        )
+    if slice_result is not None and slice_result.status == "ok":
+        decompiled_local += 1
+        fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
+            item,
+            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
+        )
+        _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, slice_result.payload, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (sidecar slice fallback) -- */")
+        return decompiled_local, failed_local
+
+    nonopt_skip_reason: str | None = None
+    if not allow_heavy_fallbacks or skip_heavy_fallbacks_for_result:
+        sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
+        string_c = None
+        if result.partial_payload is None:
+            if sidecar_region is not None:
+                string_c = _try_emit_string_intrinsic_c(
+                    project,
+                    start=sidecar_region[0],
+                    end=sidecar_region[1],
+                    name=function.name,
+                )
+            else:
+                start, end = _infer_linear_disassembly_window(project, function.addr)
+                string_c = _try_emit_string_intrinsic_c(project, start=start, end=end, name=function.name)
+        if string_c is not None:
+            decompiled_local += 1
+            fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
+                item,
+                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("string_intrinsic"),
+            )
+            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+            if not emitted_problem:
+                print(f"/* problem: {result.status} */")
+                _print_diagnostic_text(result.payload)
+            nonopt_skip_reason = describe_non_optimized_unavailable(
+                allow_heavy_fallbacks=allow_heavy_fallbacks,
+                skip_heavy_fallbacks_for_result=skip_heavy_fallbacks_for_result,
+                interactive_stdout=interactive_stdout,
+                max_functions=args.max_functions,
+                addr_requested=args.addr is not None,
+                result_status=result.status,
+                failure_stage=getattr(result, "failure_stage", None),
+                nonopt_failure_detail=None,
+            )
+            if nonopt_skip_reason is not None:
+                print(f"/* non-optimized fallback unavailable: {nonopt_skip_reason} */")
+            _emit_optional_source_sidecar_c_block(args.binary, item.function.name, string_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (string intrinsic fallback) -- */")
+            return decompiled_local, failed_local
+        asm_fallback = (
+            _format_asm_range(project, sidecar_region[0], sidecar_region[1])
+            if sidecar_region is not None
+            else _format_asm_range(project, *_infer_linear_disassembly_window(project, function.addr))
+        )
+        failed_local += 1
+        if not attempt_status_printed:
+            _print_function_attempt_status(
+                function,
+                attempt=_function_attempt_display_status(result),
+                validation_snapshot=result.tail_validation,
+            )
+        if result.partial_payload is not None:
+            if emitted_problem:
+                print("/* -- asm fallback -- */")
+                _print_asm_fallback_text(asm_fallback)
+            return decompiled_local, failed_local
+        if result.status == "empty":
+            if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
+                print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
+            else:
+                print(f"/* -- {result.status} -- */")
+                _print_diagnostic_text(result.payload)
+                print("/* -- asm fallback -- */")
+                _print_asm_fallback_text(asm_fallback)
+            return decompiled_local, failed_local
+        print(f"/* -- {result.status} -- */")
+        _print_diagnostic_text(result.payload)
+        print("/* -- lift break probe -- */")
+        _print_diagnostic_text(_probe_lift_break(project, function.addr))
+        print("/* -- asm fallback -- */")
+        _print_asm_fallback_text(asm_fallback)
+        return decompiled_local, failed_local
+
+    if precise_sidecar_regions:
+        peer_sidecar_c = _try_decompile_peer_sidecar_slice(
+            project,
+            lst_metadata,
+            function.addr,
+            function.name,
+            timeout=args.timeout,
+            api_style=args.api_style,
+            binary_path=args.binary,
+        )
+        if peer_sidecar_c is not None:
+            decompiled_local += 1
+            fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
+                item,
+                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("peer_sidecar"),
+            )
+            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+            _emit_optional_source_sidecar_c_block(args.binary, item.function.name, peer_sidecar_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (peer sidecar fallback) -- */")
+            return decompiled_local, failed_local
+
+        trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, function.addr, function.name)
+        if trivial_c is not None:
+            decompiled_local += 1
+            fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
+                item,
+                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("trivial_sidecar"),
+            )
+            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+            _emit_optional_source_sidecar_c_block(args.binary, item.function.name, trivial_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (trivial sidecar fallback) -- */")
+            return decompiled_local, failed_local
+    nonopt_result: NonOptimizedSliceOutcome | str | None = None
+    known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
+    function_project = getattr(function, "project", project)
+    using_rebased_function_slice = function_project is not project
+    function_lst_metadata = None if using_rebased_function_slice else lst_metadata
+    if result.partial_payload is None and item.function_cfg is not None:
+        known_nonopt_result = _try_decompile_non_optimized_known_function(
+            function_project,
+            item.function_cfg,
+            function,
+            timeout=_bounded_non_optimized_timeout(args.timeout),
+            api_style=args.api_style,
+            binary_path=args.binary,
+            lst_metadata=function_lst_metadata,
+            cod_metadata=cod_metadata,
+        )
+    known_nonopt_c = _non_optimized_slice_rendered(known_nonopt_result)
+    if known_nonopt_c is not None:
+        decompiled_local += 1
+        fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
+            item,
+            function=function,
+            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
+        )
+        _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+        if not emitted_problem:
+            print(f"/* problem: {result.status} */")
+            _print_diagnostic_text(result.payload)
+        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, known_nonopt_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (non-optimized fallback) -- */")
+        return decompiled_local, failed_local
+    if (
+        result.partial_payload is None
+        and (precise_sidecar_regions or args.addr is not None)
+        and known_nonopt_c is None
+        and not sidecar_verdict_closes_non_optimized_lane(
+            slice_result.verdict if slice_result is not None else None
+        )
+    ):
+        nonopt_result = _try_decompile_non_optimized_slice(
+            function_project if using_rebased_function_slice else project,
+            function.addr,
+            function.name,
+            timeout=_bounded_non_optimized_timeout(args.timeout),
+            api_style=args.api_style,
+            binary_path=args.binary,
+            lst_metadata=function_lst_metadata,
+            cod_metadata=cod_metadata,
+            allow_fresh_project_retry=not use_serial_fork_per_function,
+        )
+    elif slice_result is not None and sidecar_verdict_closes_non_optimized_lane(slice_result.verdict):
+        print(
+            "/* non-optimized fallback unavailable: "
+            f"sidecar slice already closed the lane ({slice_result.verdict.stage}:{slice_result.verdict.stop_family}) */"
+        )
+    nonopt_c = _non_optimized_slice_rendered(nonopt_result)
+    if nonopt_c is not None:
+        decompiled_local += 1
+        fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
+            item,
+            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
+        )
+        _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+        if not emitted_problem:
+            print(f"/* problem: {result.status} */")
+            _print_diagnostic_text(result.payload)
+        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, nonopt_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (non-optimized fallback) -- */")
+        return decompiled_local, failed_local
+
+    sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
+    string_c = None
+    if sidecar_region is not None:
+        string_c = _try_emit_string_intrinsic_c(
+            project,
+            start=sidecar_region[0],
+            end=sidecar_region[1],
+            name=function.name,
+        )
+    else:
+        start, end = _infer_linear_disassembly_window(project, function.addr)
+        string_c = _try_emit_string_intrinsic_c(project, start=start, end=end, name=function.name)
+    if string_c is not None:
+        decompiled_local += 1
+        fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
+            item,
+            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("string_intrinsic"),
+        )
+        _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+        if not emitted_problem:
+            print(f"/* problem: {result.status} */")
+            _print_diagnostic_text(result.payload)
+        nonopt_skip_reason = describe_non_optimized_unavailable(
+            allow_heavy_fallbacks=allow_heavy_fallbacks,
+            skip_heavy_fallbacks_for_result=skip_heavy_fallbacks_for_result,
+            interactive_stdout=interactive_stdout,
+            max_functions=args.max_functions,
+            addr_requested=args.addr is not None,
+            result_status=result.status,
+            failure_stage=getattr(result, "failure_stage", None),
+            nonopt_failure_detail=_non_optimized_slice_failure_detail(nonopt_result),
+        )
+        if nonopt_skip_reason is not None:
+            print(f"/* non-optimized fallback unavailable: {nonopt_skip_reason} */")
+        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, string_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (string intrinsic fallback) -- */")
+        return decompiled_local, failed_local
+    asm_fallback = (
+        _format_asm_range(project, sidecar_region[0], sidecar_region[1])
+        if sidecar_region is not None
+        else _format_asm_range(project, *_infer_linear_disassembly_window(project, function.addr))
+    )
+    failed_local += 1
+    if not attempt_status_printed:
+        _print_function_attempt_status(
+            function,
+            attempt=_function_attempt_display_status(result),
+            validation_snapshot=result.tail_validation,
+        )
+    if result.status == "empty":
+        if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
+            print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
+        else:
+            if emitted_problem:
+                print("/* -- asm fallback -- */")
+                _print_asm_fallback_text(asm_fallback)
+                return decompiled_local, failed_local
+            print(f"/* -- {result.status} -- */")
+            _print_diagnostic_text(result.payload)
+            print("/* -- asm fallback -- */")
+            _print_asm_fallback_text(asm_fallback)
+    else:
+        if emitted_problem:
+            print("/* -- lift break probe -- */")
+            _print_diagnostic_text(_probe_lift_break(project, function.addr))
+            print("/* -- asm fallback -- */")
+            _print_asm_fallback_text(asm_fallback)
+            return decompiled_local, failed_local
+        print(f"/* -- {result.status} -- */")
+        _print_diagnostic_text(result.payload)
+        print("/* -- lift break probe -- */")
+        _print_diagnostic_text(_probe_lift_break(project, function.addr))
+        print("/* -- asm fallback -- */")
+        _print_asm_fallback_text(asm_fallback)
+    return decompiled_local, failed_local
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Decompile a DOS/x86-16 sample with angr-platforms.",
-    )
-    parser.add_argument("binary", type=Path, help="Path to the binary to decompile.")
-    parser.add_argument(
-        "--addr",
-        type=_parse_int,
-        default=None,
-        help="Function start address to decompile. Defaults to the entry point.",
-    )
-    parser.add_argument(
-        "--blob",
-        action="store_true",
-        help="Force blob loading instead of auto-detecting a loader backend.",
-    )
-    parser.add_argument(
-        "--base-addr",
-        type=_parse_int,
-        default=0x1000,
-        help="Base address for blob/.COM loading. Defaults to 0x1000.",
-    )
-    parser.add_argument(
-        "--entry-point",
-        type=_parse_int,
-        default=0x1000,
-        help="Entry point for blob/.COM loading. Defaults to 0x1000.",
-    )
-    parser.add_argument(
-        "--show-asm",
-        action="store_true",
-        help="Print the first lifted block before the decompiled C.",
-    )
-    parser.add_argument(
-        "--alternate-source-c",
-        action="store_true",
-        help="When a same-stem .c/.C source sidecar exists, print it before each decompiled C block.",
-    )
-    parser.add_argument(
-        "--trace-c-stages",
-        action="store_true",
-        help="Print labeled C snapshots after major decompilation text stages so line origin is visible.",
-    )
-    parser.add_argument(
-        "--proc",
-        default=None,
-        help="Extract and decompile one procedure from a .COD listing by PROC name.",
-    )
-    parser.add_argument(
-        "--proc-kind",
-        default="NEAR",
-        help="Procedure kind for --proc lookup in .COD files. Defaults to NEAR.",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=120,
-        help="Analysis timeout in seconds. Defaults to 120.",
-    )
-    parser.add_argument(
-        "--window",
-        type=_parse_int,
-        default=0x200,
-        help="Bound CFG recovery to [addr, addr+window). Defaults to 0x200.",
-    )
-    parser.add_argument(
-        "--max-memory-mb",
-        type=int,
-        default=2048,
-        help="Best-effort address-space limit in MB. Defaults to 2048.",
-    )
-    parser.add_argument(
-        "--max-functions",
-        type=int,
-        default=0,
-        help="Maximum number of recovered functions to print when decompiling a whole binary. Defaults to 0 (all functions).",
-    )
-    parser.add_argument(
-        "--api-style",
-        choices=("modern", "dos", "raw", "pseudo", "service", "msc", "compiler"),
-        default="modern",
-        help="Name recovered DOS helpers as modern-style calls, DOS/compiler-style calls, pseudo-callee service calls, or raw interrupt helpers.",
-    )
-    parser.add_argument(
-        "--pat-backend",
-        choices=("python_regex", "hyperscan"),
-        default="hyperscan",
-        help="PAT matcher backend. Use python_regex for the portable fallback or hyperscan for the faster scanner.",
-    )
-    parser.add_argument(
-        "--signature-catalog",
-        type=Path,
-        default=None,
-        help="Optional deduplicated PAT catalog built from .pat/.obj/.lib inputs.",
-    )
+    from .cli_arg_parser import _build_cli_argument_parser
+
+    parser = _build_cli_argument_parser()
     args = parser.parse_args(argv)
     timeout_was_explicit = _argument_was_explicit("--timeout")
 
@@ -2615,15 +2881,6 @@ def main(argv: list[str] | None = None) -> int:
         and project.arch.name == "86_16"
     )
 
-    def _fork_unavailable_reason() -> str:
-        live_threads = [
-            thread.name
-            for thread in threading.enumerate()
-            if thread is not threading.current_thread() and thread.is_alive()
-        ]
-        if live_threads:
-            return f"{len(live_threads)} live helper thread(s): {', '.join(live_threads[:4])}"
-        return f"threading.active_count()={threading.active_count()}"
     if force_isolated_function_projects:
         print("/* parallel x86-16 decompilation: using one fresh analysis project per shown function for stability. */")
 
@@ -2632,341 +2889,6 @@ def main(argv: list[str] | None = None) -> int:
         max_functions=args.max_functions,
         addr_requested=args.addr is not None,
     )
-    def _remember_fallback_tail_validation(
-        item: FunctionWorkItem,
-        *,
-        function=None,
-        allow_project_fallback: bool = True,
-    ) -> dict[str, object]:
-        target_function = function if function is not None else item.function
-        snapshot = _tail_validation_snapshot_for_fallback(
-            project,
-            target_function,
-            allow_project_fallback=allow_project_fallback,
-        )
-        fallback_tail_validation_by_index[item.index] = snapshot
-        return snapshot
-
-    def _emit_function_result(item: FunctionWorkItem, result: FunctionWorkResult) -> tuple[int, int]:
-        decompiled_local = 0
-        failed_local = 0
-        attempt_status_printed = False
-        def _emit_c_block(c_text: str, header: str) -> None:
-            _emit_optional_source_sidecar_c_block(
-                args.binary,
-                item.function.name,
-                c_text,
-                alternate_source_c=bool(args.alternate_source_c),
-                c_header=header,
-            )
-        if result.debug_output:
-            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
-        function = item.function
-        print(f"\n/* == function {function.addr:#x} {function.name} == */")
-        if getattr(result, "failure_stage", None):
-            print(f"/* stage: {result.failure_stage} */")
-        failure_family_snapshot = build_failure_family_snapshot(
-            status=getattr(result, "status", None),
-            failure_stage=getattr(result, "failure_stage", None),
-            fallback_kind="file_sweep",
-            tail_validation_verdict=_tail_validation_display_status(getattr(result, "tail_validation", None), fallback_kind="file_sweep"),
-            artifact_path=f"{function.addr:#x}:{function.name}",
-        )
-        print(f"/* failure family: {failure_family_snapshot.label()} */")
-        if args.show_asm:
-            print("/* -- asm -- */")
-            print(_format_first_block_asm(project, function.addr))
-        if result.status == "ok":
-            decompiled_local += 1
-            _print_function_attempt_status(
-                function,
-                attempt="decompiled",
-                validation_snapshot=result.tail_validation,
-            )
-            _emit_c_block(result.payload, "/* -- c -- */")
-            return decompiled_local, failed_local
-
-        emitted_problem = False
-        if result.partial_payload:
-            _print_function_attempt_status(
-                function,
-                attempt=_function_attempt_display_status(result),
-                validation_snapshot=result.tail_validation,
-            )
-            attempt_status_printed = True
-            print(f"/* problem: {result.status} */")
-            _print_diagnostic_text(result.payload)
-            _emit_c_block(result.partial_payload, "/* -- c (partial timeout) -- */")
-            emitted_problem = True
-
-        skip_heavy_fallbacks_for_result = bool(getattr(result, "skip_heavy_fallbacks", False))
-
-        slice_result: SliceRecoveryAttemptOutcome | None = None
-        if allow_heavy_fallbacks and precise_sidecar_regions and not skip_heavy_fallbacks_for_result:
-            slice_result = _try_decompile_sidecar_slice(
-                project,
-                lst_metadata,
-                function.addr,
-                function.name,
-                timeout=args.timeout,
-                api_style=args.api_style,
-                binary_path=args.binary,
-            )
-        if slice_result is not None and slice_result.status == "ok":
-            decompiled_local += 1
-            fallback_snapshot = _remember_fallback_tail_validation(
-                item,
-                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
-            )
-            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-            _emit_c_block(slice_result.payload, "/* -- c (sidecar slice fallback) -- */")
-            return decompiled_local, failed_local
-
-        nonopt_skip_reason: str | None = None
-        if not allow_heavy_fallbacks or skip_heavy_fallbacks_for_result:
-            sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
-            string_c = None
-            if result.partial_payload is None:
-                if sidecar_region is not None:
-                    string_c = _try_emit_string_intrinsic_c(
-                        project,
-                        start=sidecar_region[0],
-                        end=sidecar_region[1],
-                        name=function.name,
-                    )
-                else:
-                    start, end = _infer_linear_disassembly_window(project, function.addr)
-                    string_c = _try_emit_string_intrinsic_c(project, start=start, end=end, name=function.name)
-            if string_c is not None:
-                decompiled_local += 1
-                fallback_snapshot = _remember_fallback_tail_validation(
-                    item,
-                    allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("string_intrinsic"),
-                )
-                _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-                if not emitted_problem:
-                    print(f"/* problem: {result.status} */")
-                    _print_diagnostic_text(result.payload)
-                nonopt_skip_reason = describe_non_optimized_unavailable(
-                    allow_heavy_fallbacks=allow_heavy_fallbacks,
-                    skip_heavy_fallbacks_for_result=skip_heavy_fallbacks_for_result,
-                    interactive_stdout=interactive_stdout,
-                    max_functions=args.max_functions,
-                    addr_requested=args.addr is not None,
-                    result_status=result.status,
-                    failure_stage=getattr(result, "failure_stage", None),
-                    nonopt_failure_detail=None,
-                )
-                if nonopt_skip_reason is not None:
-                    print(f"/* non-optimized fallback unavailable: {nonopt_skip_reason} */")
-                _emit_c_block(string_c, "/* -- c (string intrinsic fallback) -- */")
-                return decompiled_local, failed_local
-            asm_fallback = (
-                _format_asm_range(project, sidecar_region[0], sidecar_region[1])
-                if sidecar_region is not None
-                else _format_asm_range(project, *_infer_linear_disassembly_window(project, function.addr))
-            )
-            failed_local += 1
-            if not attempt_status_printed:
-                _print_function_attempt_status(
-                    function,
-                    attempt=_function_attempt_display_status(result),
-                    validation_snapshot=result.tail_validation,
-                )
-            if result.partial_payload is not None:
-                if emitted_problem:
-                    print("/* -- asm fallback -- */")
-                    _print_asm_fallback_text(asm_fallback)
-                return decompiled_local, failed_local
-            if result.status == "empty":
-                if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
-                    print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
-                else:
-                    print(f"/* -- {result.status} -- */")
-                    _print_diagnostic_text(result.payload)
-                    print("/* -- asm fallback -- */")
-                    _print_asm_fallback_text(asm_fallback)
-                return decompiled_local, failed_local
-            print(f"/* -- {result.status} -- */")
-            _print_diagnostic_text(result.payload)
-            print("/* -- lift break probe -- */")
-            _print_diagnostic_text(_probe_lift_break(project, function.addr))
-            print("/* -- asm fallback -- */")
-            _print_asm_fallback_text(asm_fallback)
-            return decompiled_local, failed_local
-
-        if precise_sidecar_regions:
-            peer_sidecar_c = _try_decompile_peer_sidecar_slice(
-                project,
-                lst_metadata,
-                function.addr,
-                function.name,
-                timeout=args.timeout,
-                api_style=args.api_style,
-                binary_path=args.binary,
-            )
-            if peer_sidecar_c is not None:
-                decompiled_local += 1
-                fallback_snapshot = _remember_fallback_tail_validation(
-                    item,
-                    allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("peer_sidecar"),
-                )
-                _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-                _emit_c_block(peer_sidecar_c, "/* -- c (peer sidecar fallback) -- */")
-                return decompiled_local, failed_local
-
-            trivial_c = _try_emit_trivial_sidecar_c(project, lst_metadata, function.addr, function.name)
-            if trivial_c is not None:
-                decompiled_local += 1
-                fallback_snapshot = _remember_fallback_tail_validation(
-                    item,
-                    allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("trivial_sidecar"),
-                )
-                _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-                _emit_c_block(trivial_c, "/* -- c (trivial sidecar fallback) -- */")
-                return decompiled_local, failed_local
-        nonopt_result: NonOptimizedSliceOutcome | str | None = None
-        known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
-        function_project = getattr(function, "project", project)
-        using_rebased_function_slice = function_project is not project
-        function_lst_metadata = None if using_rebased_function_slice else lst_metadata
-        if result.partial_payload is None and item.function_cfg is not None:
-            known_nonopt_result = _try_decompile_non_optimized_known_function(
-                function_project,
-                item.function_cfg,
-                function,
-                timeout=_bounded_non_optimized_timeout(args.timeout),
-                api_style=args.api_style,
-                binary_path=args.binary,
-                lst_metadata=function_lst_metadata,
-                cod_metadata=cod_metadata,
-            )
-        known_nonopt_c = _non_optimized_slice_rendered(known_nonopt_result)
-        if known_nonopt_c is not None:
-            decompiled_local += 1
-            fallback_snapshot = _remember_fallback_tail_validation(
-                item,
-                function=function,
-                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
-            )
-            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-            if not emitted_problem:
-                print(f"/* problem: {result.status} */")
-                _print_diagnostic_text(result.payload)
-            _emit_c_block(known_nonopt_c, "/* -- c (non-optimized fallback) -- */")
-            return decompiled_local, failed_local
-        if (
-            result.partial_payload is None
-            and (precise_sidecar_regions or args.addr is not None)
-            and known_nonopt_c is None
-            and not sidecar_verdict_closes_non_optimized_lane(
-                slice_result.verdict if slice_result is not None else None
-            )
-        ):
-            nonopt_result = _try_decompile_non_optimized_slice(
-                function_project if using_rebased_function_slice else project,
-                function.addr,
-                function.name,
-                timeout=_bounded_non_optimized_timeout(args.timeout),
-                api_style=args.api_style,
-                binary_path=args.binary,
-                lst_metadata=function_lst_metadata,
-                cod_metadata=cod_metadata,
-                allow_fresh_project_retry=not use_serial_fork_per_function,
-            )
-        elif slice_result is not None and sidecar_verdict_closes_non_optimized_lane(slice_result.verdict):
-            print(
-                "/* non-optimized fallback unavailable: "
-                f"sidecar slice already closed the lane ({slice_result.verdict.stage}:{slice_result.verdict.stop_family}) */"
-            )
-        nonopt_c = _non_optimized_slice_rendered(nonopt_result)
-        if nonopt_c is not None:
-            decompiled_local += 1
-            fallback_snapshot = _remember_fallback_tail_validation(
-                item,
-                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
-            )
-            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-            if not emitted_problem:
-                print(f"/* problem: {result.status} */")
-                _print_diagnostic_text(result.payload)
-            _emit_c_block(nonopt_c, "/* -- c (non-optimized fallback) -- */")
-            return decompiled_local, failed_local
-
-        sidecar_region = _lst_code_region(lst_metadata, function.addr) if lst_metadata is not None else None
-        string_c = None
-        if sidecar_region is not None:
-            string_c = _try_emit_string_intrinsic_c(
-                project,
-                start=sidecar_region[0],
-                end=sidecar_region[1],
-                name=function.name,
-            )
-        else:
-            start, end = _infer_linear_disassembly_window(project, function.addr)
-            string_c = _try_emit_string_intrinsic_c(project, start=start, end=end, name=function.name)
-        if string_c is not None:
-            decompiled_local += 1
-            fallback_snapshot = _remember_fallback_tail_validation(
-                item,
-                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("string_intrinsic"),
-            )
-            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-            if not emitted_problem:
-                print(f"/* problem: {result.status} */")
-                _print_diagnostic_text(result.payload)
-            nonopt_skip_reason = describe_non_optimized_unavailable(
-                allow_heavy_fallbacks=allow_heavy_fallbacks,
-                skip_heavy_fallbacks_for_result=skip_heavy_fallbacks_for_result,
-                interactive_stdout=interactive_stdout,
-                max_functions=args.max_functions,
-                addr_requested=args.addr is not None,
-                result_status=result.status,
-                failure_stage=getattr(result, "failure_stage", None),
-                nonopt_failure_detail=_non_optimized_slice_failure_detail(nonopt_result),
-            )
-            if nonopt_skip_reason is not None:
-                print(f"/* non-optimized fallback unavailable: {nonopt_skip_reason} */")
-            _emit_c_block(string_c, "/* -- c (string intrinsic fallback) -- */")
-            return decompiled_local, failed_local
-        asm_fallback = (
-            _format_asm_range(project, sidecar_region[0], sidecar_region[1])
-            if sidecar_region is not None
-            else _format_asm_range(project, *_infer_linear_disassembly_window(project, function.addr))
-        )
-        failed_local += 1
-        if not attempt_status_printed:
-            _print_function_attempt_status(
-                function,
-                attempt=_function_attempt_display_status(result),
-                validation_snapshot=result.tail_validation,
-            )
-        if result.status == "empty":
-            if asm_fallback.startswith("<assembly unavailable") or asm_fallback == "<no instructions>":
-                print(f"/* no bytes available for function at {function.addr:#x}; likely external or synthetic */")
-            else:
-                if emitted_problem:
-                    print("/* -- asm fallback -- */")
-                    _print_asm_fallback_text(asm_fallback)
-                    return decompiled_local, failed_local
-                print(f"/* -- {result.status} -- */")
-                _print_diagnostic_text(result.payload)
-                print("/* -- asm fallback -- */")
-                _print_asm_fallback_text(asm_fallback)
-        else:
-            if emitted_problem:
-                print("/* -- lift break probe -- */")
-                _print_diagnostic_text(_probe_lift_break(project, function.addr))
-                print("/* -- asm fallback -- */")
-                _print_asm_fallback_text(asm_fallback)
-                return decompiled_local, failed_local
-            print(f"/* -- {result.status} -- */")
-            _print_diagnostic_text(result.payload)
-            print("/* -- lift break probe -- */")
-            _print_diagnostic_text(_probe_lift_break(project, function.addr))
-            print("/* -- asm fallback -- */")
-            _print_asm_fallback_text(asm_fallback)
-        return decompiled_local, failed_local
 
     if workers <= 1:
         decompiled = 0
@@ -3256,7 +3178,18 @@ def main(argv: list[str] | None = None) -> int:
                         adaptive_timeout_model.observe_success(byte_count, float(elapsed))
                 result_map[item.index] = result
                 if result is not None and item.index not in emitted_indexes:
-                    d, f = _emit_function_result(item, result)
+                    d, f = _emit_function_result(item, result,
+                        project=project,
+                        args=args,
+                        lst_metadata=lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        precise_sidecar_regions=precise_sidecar_regions,
+                        allow_heavy_fallbacks=allow_heavy_fallbacks,
+                        interactive_stdout=interactive_stdout,
+                        use_serial_fork_per_function=use_serial_fork_per_function,
+                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                    )
                     decompiled += d
                     failed += f
                     emitted_indexes.add(item.index)
@@ -3370,7 +3303,18 @@ def main(argv: list[str] | None = None) -> int:
                         result_map[item.index] = payload
                     result = result_map.get(item.index)
                     if result is not None and item.index not in emitted_indexes:
-                        d, f = _emit_function_result(item, result)
+                        d, f = _emit_function_result(item, result,
+                        project=project,
+                        args=args,
+                        lst_metadata=lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        precise_sidecar_regions=precise_sidecar_regions,
+                        allow_heavy_fallbacks=allow_heavy_fallbacks,
+                        interactive_stdout=interactive_stdout,
+                        use_serial_fork_per_function=use_serial_fork_per_function,
+                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                    )
                         decompiled += d
                         failed += f
                         emitted_indexes.add(item.index)
@@ -3417,7 +3361,18 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                             result = result_map.get(item.index)
                             if result is not None and item.index not in emitted_indexes:
-                                d, f = _emit_function_result(item, result)
+                                d, f = _emit_function_result(item, result,
+                        project=project,
+                        args=args,
+                        lst_metadata=lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        precise_sidecar_regions=precise_sidecar_regions,
+                        allow_heavy_fallbacks=allow_heavy_fallbacks,
+                        interactive_stdout=interactive_stdout,
+                        use_serial_fork_per_function=use_serial_fork_per_function,
+                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                    )
                                 decompiled += d
                                 failed += f
                                 emitted_indexes.add(item.index)
@@ -3440,7 +3395,18 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                             result = result_map.get(item.index)
                             if result is not None and item.index not in emitted_indexes:
-                                d, f = _emit_function_result(item, result)
+                                d, f = _emit_function_result(item, result,
+                        project=project,
+                        args=args,
+                        lst_metadata=lst_metadata,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        precise_sidecar_regions=precise_sidecar_regions,
+                        allow_heavy_fallbacks=allow_heavy_fallbacks,
+                        interactive_stdout=interactive_stdout,
+                        use_serial_fork_per_function=use_serial_fork_per_function,
+                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                    )
                                 decompiled += d
                                 failed += f
                                 emitted_indexes.add(item.index)
