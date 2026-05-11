@@ -226,8 +226,12 @@ from inertia_decompiler.runtime_support import (
     guard_angr_ail_narrowing as _guard_angr_ail_narrowing,
     guard_angr_basepointeroffset_codegen_support as _guard_angr_basepointeroffset_codegen_support,
     guard_angr_clinic_stage_markers as _guard_angr_clinic_stage_markers,
+    guard_angr_fast_post_ssa_8616 as _guard_angr_fast_post_ssa_8616,
     guard_angr_peephole_expr_bitwidth_assertion as _guard_angr_peephole_expr_bitwidth_assertion,
     guard_angr_variable_recovery_binop_sub_size_mismatch as _guard_angr_variable_recovery_binop_sub_size_mismatch,
+    guard_angr_structurer_codegen_timing as _guard_angr_structurer_codegen_timing,
+    guard_angr_tail_validation_collection_timing as _guard_angr_tail_validation_collection_timing,
+    guard_angr_structuring_codegen_internal_timing as _guard_angr_structuring_codegen_internal_timing,
     install_angr_peephole_expr_bitwidth_guard as _install_angr_peephole_expr_bitwidth_guard,
     install_angr_variable_recovery_binop_sub_size_guard as _install_angr_variable_recovery_binop_sub_size_guard,
     log_step,
@@ -725,52 +729,56 @@ def _decompile_function(
                 with _guard_angr_variable_recovery_binop_sub_size_mismatch(project):
                     with _guard_angr_ail_narrowing(project):
                         with _guard_angr_clinic_stage_markers(project):
-                            with _analysis_timeout(_remaining_timeout()):
-                                if decompiler_options is None:
-                                    dec = project.analyses.Decompiler(
-                                        function,
-                                        cfg=cfg,
-                                        expr_collapse_depth=expr_collapse_depth,
-                                    )
-                                else:
-                                    dec = project.analyses.Decompiler(
-                                        function,
-                                        cfg=cfg,
-                                        options=decompiler_options,
-                                        expr_collapse_depth=expr_collapse_depth,
-                                    )
-                                if dec.codegen is None:
-                                    failure_snapshot = build_failure_family_snapshot(
-                                        status="empty",
-                                        failure_stage=getattr(project, "_inertia_decompiler_stage", None),
-                                        fallback_kind="structurer_retry",
-                                        tail_validation_verdict="uncollected",
-                                        artifact_path=f"{function_original_addr(function):#x}:{function.name}",
-                                    )
-                                    repeat_reason = remember_failure_family_candidate(
-                                        failure_family_state,
-                                        failure_snapshot,
-                                    )
-                                    if repeat_reason is not None:
-                                        record_failure_family_retry_stop(failure_family_state, failure_snapshot)
-                                    print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry")
-                                    detail = "Decompiler did not produce code."
-                                    messages = _analysis_log_messages(dec)
-                                    if messages:
-                                        detail += " angr details: " + "; ".join(messages[:3])
-                                    if getattr(dec, "clinic", None) is None:
-                                        detail += " clinic=None."
-                                        clinic_failure = _clinic_failure_detail()
-                                        if clinic_failure is not None:
-                                            detail += f" {clinic_failure}."
-                                    setattr(project, "_inertia_partial_codegen_text", None)
-                                    return "empty", detail
-                                logging.getLogger(__name__).debug(
-                                    "Selected decompiler structurer produced no code for %s; stopping same-family retry.",
-                                    function,
-                                )
-                            print(f"[dbg] Decompiler returned for {hex(function.addr)}")
-                            sys.stdout.flush()
+                            with _guard_angr_fast_post_ssa_8616(project):
+                                with _guard_angr_structurer_codegen_timing(project):
+                                    with _guard_angr_tail_validation_collection_timing():
+                                        with _guard_angr_structuring_codegen_internal_timing():
+                                            with _analysis_timeout(_remaining_timeout()):
+                                                if decompiler_options is None:
+                                                    dec = project.analyses.Decompiler(
+                                                        function,
+                                                        cfg=cfg,
+                                                        expr_collapse_depth=expr_collapse_depth,
+                                                    )
+                                                else:
+                                                    dec = project.analyses.Decompiler(
+                                                        function,
+                                                        cfg=cfg,
+                                                        options=decompiler_options,
+                                                        expr_collapse_depth=expr_collapse_depth,
+                                                    )
+                                                if dec.codegen is None:
+                                                    failure_snapshot = build_failure_family_snapshot(
+                                                        status="empty",
+                                                        failure_stage=getattr(project, "_inertia_decompiler_stage", None),
+                                                        fallback_kind="structurer_retry",
+                                                        tail_validation_verdict="uncollected",
+                                                        artifact_path=f"{function_original_addr(function):#x}:{function.name}",
+                                                    )
+                                                    repeat_reason = remember_failure_family_candidate(
+                                                        failure_family_state,
+                                                        failure_snapshot,
+                                                    )
+                                                    if repeat_reason is not None:
+                                                        record_failure_family_retry_stop(failure_family_state, failure_snapshot)
+                                                    print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry")
+                                                    detail = "Decompiler did not produce code."
+                                                    messages = _analysis_log_messages(dec)
+                                                    if messages:
+                                                        detail += " angr details: " + "; ".join(messages[:3])
+                                                    if getattr(dec, "clinic", None) is None:
+                                                        detail += " clinic=None."
+                                                        clinic_failure = _clinic_failure_detail()
+                                                        if clinic_failure is not None:
+                                                            detail += f" {clinic_failure}."
+                                                    setattr(project, "_inertia_partial_codegen_text", None)
+                                                    return "empty", detail
+                                                logging.getLogger(__name__).debug(
+                                                    "Selected decompiler structurer produced no code for %s; stopping same-family retry.",
+                                                    function,
+                                                )
+                                                print(f"[dbg] Decompiler returned for {hex(function.addr)}")
+                                                sys.stdout.flush()
     except _AnalysisTimeout:
         partial_payload = None
         if dec is not None and getattr(dec, "codegen", None) is not None:

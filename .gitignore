@@ -21,4 +21,5 @@ result.txt
 .cache
 .codex*
 .corpus
-
+node_modules/
+.venv/

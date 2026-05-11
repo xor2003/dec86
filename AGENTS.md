@@ -546,3 +546,14 @@ The agent followed the previous plan enough to create better evidence, but it st
 facts are not success
 bindings are not success
 only materialized output or precise blocker is success
+
+## Improving code
+
+Execute the following test binary decompilation to get latest problems (it will take long):
+INERTIA_ENABLE_TAIL_VALIDATION=1 ./decompile.py --alternate-source-c ./SORTDEMO.EXE
+
+If you need single function then you need specify function address.
+
+## General rule
+ 
+Pipe output through head, tail, or grep to reduce result size. Avoid cat on large files — use Read with offset/limit instead.
