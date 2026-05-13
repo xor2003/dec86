@@ -27,6 +27,7 @@ from .variable_recovery_sub_guard import build_guarded_handle_binop_sub_8616
 DEFAULT_FREE_RAM_BUDGET_FRACTION = 0.45
 DEFAULT_WORKER_MEMORY_FLOOR_MB = 1536
 FORCE_SERIAL_FUNCTION_DECOMP_ENV = "INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION"
+_FORK_CHILD_PID: int | None = None
 
 START_TIME = time.perf_counter()
 LAST_STEP_TIME = START_TIME
@@ -604,7 +605,7 @@ class JumpkindLoggingHandler(logging.Handler):
                 print(f"[dbg] {msg}")
 
 
-class AnalysisTimeout(Exception):
+class AnalysisTimeout(BaseException):
     pass
 
 
@@ -614,9 +615,13 @@ def raise_timeout(_signum, _frame):
 
 @contextlib.contextmanager
 def analysis_timeout(timeout: int):
-    if timeout <= 0 or threading.current_thread() is not threading.main_thread():
+    if timeout <= 0:
         yield
         return
+    if threading.current_thread() is not threading.main_thread():
+        if _FORK_CHILD_PID != os.getpid():
+            yield
+            return
 
     old_handler = signal.signal(signal.SIGALRM, raise_timeout)
     signal.alarm(timeout)
@@ -657,6 +662,7 @@ def run_with_timeout_in_fork(
     read_fd, write_fd = os.pipe()
     pid = os.fork()
     if pid == 0:
+        _FORK_CHILD_PID = os.getpid()
         try:
             os.close(read_fd)
             try:
@@ -675,14 +681,27 @@ def run_with_timeout_in_fork(
                 os.close(write_fd)
             os._exit(0)
 
+    def _child_exit_detail(p: int, status: int) -> str:
+        if os.WIFEXITED(status):
+            return f"exitcode={os.WEXITSTATUS(status)}"
+        if os.WIFSIGNALED(status):
+            sig = os.WTERMSIG(status)
+            sig_name = getattr(signal, "Signals", lambda x: f"SIG={x}")(sig) if hasattr(signal, "strsignal") else f"SIG={sig}"
+            try:
+                sig_name = signal.strsignal(sig)  # type: ignore[attr-defined]
+            except Exception:
+                sig_name = f"signal={sig}"
+            return f"killed_by={sig_name}"
+        return f"exit_status_raw={int(status)}"
+
     os.close(write_fd)
     try:
         ready, _, _ = select.select([read_fd], [], [], max(1, timeout))
         if not ready:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-            raise TimeoutError(f"Timed out after {timeout}s.")
+            _pid, _status = os.waitpid(pid, 0)
+            raise TimeoutError(f"Timed out after {timeout}s (child {_child_exit_detail(pid, _status)}).")
         header = b""
         while len(header) < 8:
             chunk = os.read(read_fd, 8 - len(header))
@@ -690,8 +709,8 @@ def run_with_timeout_in_fork(
                 break
             header += chunk
         if len(header) != 8:
-            os.waitpid(pid, 0)
-            raise RuntimeError("fork child exited without result")
+            _pid, _status = os.waitpid(pid, 0)
+            raise RuntimeError(f"fork child exited without result ({_child_exit_detail(pid, _status)})")
         expected = int.from_bytes(header, "little")
         data = bytearray()
         while len(data) < expected:
@@ -699,19 +718,19 @@ def run_with_timeout_in_fork(
             if not chunk:
                 break
             data.extend(chunk)
-        os.waitpid(pid, 0)
+        _pid, _status = os.waitpid(pid, 0)
         if len(data) != expected:
-            raise RuntimeError("fork child returned incomplete result")
+            raise RuntimeError(f"fork child returned incomplete result (expected={expected}B got={len(data)}B {_child_exit_detail(pid, _status)})")
         payload = pickle.loads(bytes(data))
         if not isinstance(payload, tuple) or not payload:
-            raise RuntimeError("fork child returned invalid payload")
+            raise RuntimeError(f"fork child returned invalid payload ({_child_exit_detail(pid, _status)})")
         if payload[0] == "ok":
             return payload[1]
         if payload[0] == "err":
             if payload[1] in {"TimeoutError", "AnalysisTimeout"}:
                 raise TimeoutError(payload[2] or f"Timed out after {timeout}s.")
-            raise RuntimeError(f"{payload[1]}: {payload[2]}")
-        raise RuntimeError("fork child returned unknown status")
+            raise RuntimeError(f"{payload[1]}: {payload[2]} ({_child_exit_detail(pid, _status)})")
+        raise RuntimeError(f"fork child returned unknown status ({_child_exit_detail(pid, _status)})")
     finally:
         with contextlib.suppress(OSError):
             os.close(read_fd)
@@ -1063,20 +1082,38 @@ def guard_angr_structuring_codegen_internal_timing():
     _orig_slf = None
     _rml_mod = None
     _slf_mod = None
+    _sl_mod = None
+    _orig_rml_sl = None
+    _rml_timed_out = [False]  # mutable cell so _timed_rml closure can write
     try:
         import angr_platforms.X86_16.lowering.real_mode_linear as _rml_mod
         _orig_rml = _rml_mod.lower_stable_ss_linear_stack_dereferences_8616
-        def _timed_rml(codegen):  # noqa: ANN001
+        _BOUNDED_STAGE_SECONDS = 30
+        def _timed_rml(codegen, **kwargs):  # noqa: ANN001
+            if _rml_timed_out[0]:
+                return False
             _t0 = _time.perf_counter()
             print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack start")
             sys.stderr.flush()
             try:
-                return _orig_rml(codegen)
+                with analysis_timeout(int(_BOUNDED_STAGE_SECONDS)):
+                    return _orig_rml(codegen, **kwargs)
+            except AnalysisTimeout:
+                _rml_timed_out[0] = True
+                _elapsed = _time.perf_counter() - _t0
+                print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack TIMEOUT elapsed={_elapsed:.2f}s budget={_BOUNDED_STAGE_SECONDS}s", file=sys.stderr, flush=True)
+                return False
             finally:
                 _elapsed = _time.perf_counter() - _t0
                 print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack done elapsed={_elapsed:.2f}s")
                 sys.stderr.flush()
         _rml_mod.lower_stable_ss_linear_stack_dereferences_8616 = _timed_rml
+        # Also patch the import-time reference in stack_lowering.py that
+        # bypasses the module-level monkey-patch (see issue with
+        # "from .real_mode_linear import lower_stable_ss..." at module load).
+        import angr_platforms.X86_16.lowering.stack_lowering as _sl_mod
+        _orig_rml_sl = _sl_mod.lower_stable_ss_linear_stack_dereferences_8616
+        _sl_mod.lower_stable_ss_linear_stack_dereferences_8616 = _timed_rml
     except Exception:
         pass
     try:
@@ -1101,8 +1138,11 @@ def guard_angr_structuring_codegen_internal_timing():
     finally:
         _ds_mod._assert_alias_complete_8616 = orig_alias
         _contracts_mod.assert_pipeline_contracts_8616 = orig_contracts
-        if _orig_rml is not None and _rml_mod is not None:
-            _rml_mod.lower_stable_ss_linear_stack_dereferences_8616 = _orig_rml
+        # NOTE: lower_stable_ss_linear_stack_dereferences_8616 is KEPT patched
+        # with the 30s bounded-stage guard.  Without this, post-decompilation
+        # passes (tail_validation snapshots, recompilable storage, etc.) can
+        # re-enter unconstrained lower_ss_linear walks that consume the entire
+        # remaining fork budget.
         if _orig_slf is not None and _slf_mod is not None:
             _slf_mod.lower_stack_accesses_from_alias_facts_8616 = _orig_slf
 
