@@ -9,6 +9,7 @@ consume a typed SS address fact instead of re-learning the arithmetic shape in
 late cleanup code.
 """
 
+import sys
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -443,19 +444,29 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         seen = set()
     node = _strip_casts_8616(node)
     node_id = id(node)
+    offset_cache = getattr(codegen, "_inertia_stack_offset_cache", None)
+    if not isinstance(offset_cache, dict):
+        offset_cache = {}
+        setattr(codegen, "_inertia_stack_offset_cache", offset_cache)
+    cached = offset_cache.get(node_id, None)
+    if cached is not None:
+        return cached
     if node_id in seen:
         return None
     seen.add(node_id)
 
     const = _constant_value_8616(node)
     if const is not None:
+        offset_cache[node_id] = const
         return const
 
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
         operand = _strip_casts_8616(node.operand)
         variable = getattr(operand, "variable", None) if isinstance(operand, structured_c.CVariable) else None
         if isinstance(variable, SimStackVariable) and isinstance(getattr(variable, "offset", None), int):
+            offset_cache[node_id] = variable.offset
             return variable.offset
+        offset_cache[node_id] = None
         return None
 
     if isinstance(node, structured_c.CVariable):
@@ -463,10 +474,13 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         if isinstance(variable, SimRegisterVariable):
             carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen)
             if carrier_offset is not None:
+                offset_cache[node_id] = carrier_offset
                 return carrier_offset
         rhs = _single_assignment_rhs_8616(codegen, node)
         if rhs is not None:
-            return _stack_offset_from_expr_8616(rhs, project, codegen, seen)
+            resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
+            offset_cache[node_id] = resolved
+            return resolved
         # Fallback: try name-based lookup for virtual variables (vvar_*, tmp_*, ir_*)
         node_name = getattr(node, "name", None) or getattr(variable, "name", None)
         if isinstance(node_name, str) and (
@@ -476,12 +490,16 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         ):
             rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, node_name)
             if rhs is not None:
-                return _stack_offset_from_expr_8616(rhs, project, codegen, seen)
+                resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
+                offset_cache[node_id] = resolved
+                return resolved
         # Fallback: try vvar carrier-delta resolution for ss << 4 + vvar patterns
         if isinstance(node_name, str) and node_name.startswith("vvar_"):
             delta = _stack_probe_carrier_delta_8616(node, codegen)
             if delta is not None:
+                offset_cache[node_id] = delta
                 return delta
+        offset_cache[node_id] = None
         return None
 
     # CDirtyExpression: extract varid/name and try vvar resolution
@@ -497,12 +515,14 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
             if rhs is not None:
                 resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
                 if resolved is not None:
+                    offset_cache[node_id] = resolved
                     return resolved
                 _diag["rhs_found_but_unresolvable"] = True
             else:
                 _diag["rhs_not_found"] = True
             delta = _stack_probe_carrier_delta_8616(node, codegen)
             if delta is not None:
+                offset_cache[node_id] = delta
                 return delta
             _diag["carrier_delta_none"] = True
         elif isinstance(dirty_name, str):
@@ -512,6 +532,7 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
                 if rhs is not None:
                     resolved = _stack_offset_from_expr_8616(rhs, project, codegen, seen)
                     if resolved is not None:
+                        offset_cache[node_id] = resolved
                         return resolved
                     _diag["rhs_found_but_unresolvable"] = True
                 else:
@@ -521,31 +542,41 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         # Try SP carrier
         carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen)
         if carrier_offset is not None:
+            offset_cache[node_id] = carrier_offset
             return carrier_offset
         # Try BP base frame — BP is the canonical frame pointer (offset 0).
         dirty_reg = getattr(dirty, "reg", None)
         bp_reg, _bp_size = getattr(getattr(project, "arch", None), "registers", {}).get("bp", (None, None))
         if isinstance(dirty_reg, int) and isinstance(bp_reg, int) and dirty_reg == bp_reg:
+            offset_cache[node_id] = 0
             return 0
         _diag["carrier_none"] = True
         _log_refusal_8616(codegen, "cdirty_diag", **_diag)
+        offset_cache[node_id] = None
         return None
 
     dirty_carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen)
     if dirty_carrier_offset is not None:
+        offset_cache[node_id] = dirty_carrier_offset
         return dirty_carrier_offset
 
     if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
         lhs = _stack_offset_from_expr_8616(node.lhs, project, codegen, seen)
         rhs = _stack_offset_from_expr_8616(node.rhs, project, codegen, seen)
         if lhs is None and _constant_value_8616(node.rhs) is not None:
+            offset_cache[node_id] = None
             return None
         if rhs is None and _constant_value_8616(node.lhs) is not None and node.op == "Add":
+            offset_cache[node_id] = None
             return None
         if lhs is None or rhs is None:
+            offset_cache[node_id] = None
             return None
-        return lhs + rhs if node.op == "Add" else lhs - rhs
+        resolved = lhs + rhs if node.op == "Add" else lhs - rhs
+        offset_cache[node_id] = resolved
+        return resolved
 
+    offset_cache[node_id] = None
     return None
 
 
@@ -684,8 +715,6 @@ def match_stable_ds_es_linear_global_address_8616(node, project, codegen) -> Rea
 
 def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) -> bool:
     """Replace stable DS/ES real-mode linear dereferences with global variable references."""
-    import sys as _diag_sys
-
 
     if project is None:
         project = getattr(codegen, "project", None)
@@ -747,15 +776,11 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
             return global_cvar(access)
         return node
 
-    _seen = set(); _node_count = [0]
+    _seen = set()
     def replace_children(node) -> bool:
-        _node_count[0] += 1
-        if _node_count[0] % 5000 == 0:
-            _diag_sys.stderr.write(f"[lower_ss_linear] tree walk: {_node_count[0]} unique nodes...\n"); _diag_sys.stderr.flush()
-        node_id = id(node)
-        if node_id in _seen:
+        if id(node) in _seen:
             return False
-        _seen.add(node_id)
+        _seen.add(id(node))
         local_changed = False
         for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
             if not hasattr(node, attr):
@@ -801,13 +826,10 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
 
     if replace_children(root):
         changed = True
-    _diag_sys.stderr.write(f"[lower_ss_linear] tree walk DONE: {_node_count[0]} unique nodes visited\n"); _diag_sys.stderr.flush()
     return changed
 
 
 def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bool:
-    import sys as _diag_sys
-
     """Replace stable DS/ES address-valued expressions with data-space object references."""
 
     if project is None:
@@ -876,15 +898,11 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
         changed = True
         return structured_c.CTypeCast(None, ptr_type, rebuilt, codegen=codegen)
 
-    _seen = set(); _node_count = [0]
+    _seen = set()
     def replace_children(node) -> bool:
-        _node_count[0] += 1
-        if _node_count[0] % 5000 == 0:
-            _diag_sys.stderr.write(f"[lower_ss_linear] tree walk: {_node_count[0]} unique nodes...\n"); _diag_sys.stderr.flush()
-        node_id = id(node)
-        if node_id in _seen:
+        if id(node) in _seen:
             return False
-        _seen.add(node_id)
+        _seen.add(id(node))
         local_changed = False
         for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
             if not hasattr(node, attr):
@@ -935,13 +953,11 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
         changed = True
     if replace_children(root):
         changed = True
-    _diag_sys.stderr.write(f"[lower_ss_linear] tree walk DONE: {_node_count[0]} unique nodes visited\n"); _diag_sys.stderr.flush()
     return changed
 
 
 def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> bool:
     """Replace stable SS real-mode linear dereferences with stack variables."""
-    import sys as _diag_sys
 
     if project is None:
         project = getattr(codegen, "project", None)
@@ -952,8 +968,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
     # Invalidate cached maps so they are rebuilt against current codegen state
     setattr(codegen, "_inertia_assignment_maps", None)
     setattr(codegen, "_inertia_vvar_carrier_deltas", None)
-
-    _diag_sys.stderr.write("[lower_ss_linear] START\n"); _diag_sys.stderr.flush()
+    setattr(codegen, "_inertia_stack_offset_cache", None)
 
     def stack_cvar(access: RealModeLinearStackAccess8616):
         target_type = _type_for_access_width_8616(access.width)
@@ -979,21 +994,26 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
 
     def transform(node):
         nonlocal changed
+        node = _strip_casts_8616(node)
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return node
         access = match_stable_ss_linear_stack_access_8616(node, project, codegen)
         if access is not None:
             changed = True
             return stack_cvar(access)
         return node
 
-    _seen = set(); _node_count = [0]
+    _node_count = [0]
+    _seen = set()
     def replace_children(node) -> bool:
-        _node_count[0] += 1
-        if _node_count[0] % 5000 == 0:
-            _diag_sys.stderr.write(f"[lower_ss_linear] tree walk: {_node_count[0]} unique nodes...\n"); _diag_sys.stderr.flush()
-        node_id = id(node)
-        if node_id in _seen:
+        if node is None or not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
             return False
-        _seen.add(node_id)
+        _node_count[0] += 1
+        if _node_count[0] % 500 == 0:
+            print(f"[lower_ss_linear] tree walk: {_node_count[0]} nodes", file=sys.stderr, flush=True)
+        if id(node) in _seen:
+            return False
+        _seen.add(id(node))
         local_changed = False
         for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
             if not hasattr(node, attr):
@@ -1019,7 +1039,6 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
 
     if replace_children(root):
         changed = True
-    _diag_sys.stderr.write(f"[lower_ss_linear] tree walk DONE: {_node_count[0]} unique nodes visited\n"); _diag_sys.stderr.flush()
     return changed
 
 

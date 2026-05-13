@@ -193,7 +193,13 @@ def _match_segmented_dereference_8616(node, project) -> tuple[str | None, int | 
     return _match_real_mode_linear_expr_8616(operand, project)
 
 
-def _replace_c_children_8616(node, transform) -> bool:
+def _replace_c_children_8616(node, transform, seen: set[int] | None = None) -> bool:
+    if seen is None:
+        seen = set()
+    node_id = id(node)
+    if node_id in seen:
+        return False
+    seen.add(node_id)
     changed = False
 
     for attr in (
@@ -224,7 +230,7 @@ def _replace_c_children_8616(node, transform) -> bool:
                 setattr(node, attr, new_value)
                 changed = True
                 value = new_value
-            if _replace_c_children_8616(value, transform):
+            if _replace_c_children_8616(value, transform, seen):
                 changed = True
 
     for attr in ("args", "operands", "statements"):
@@ -243,7 +249,7 @@ def _replace_c_children_8616(node, transform) -> bool:
                 new_item = transform(item)
                 if new_item is not item:
                     list_changed = True
-                if _replace_c_children_8616(new_item, transform):
+                if _replace_c_children_8616(new_item, transform, seen):
                     changed = True
                 new_items.append(new_item)
             else:
@@ -270,9 +276,9 @@ def _replace_c_children_8616(node, transform) -> bool:
                 new_body = transform(body) if _structured_codegen_node_8616(body) else body
                 if new_cond is not cond or new_body is not body:
                     pair_changed = True
-                if _structured_codegen_node_8616(new_cond) and _replace_c_children_8616(new_cond, transform):
+                if _structured_codegen_node_8616(new_cond) and _replace_c_children_8616(new_cond, transform, seen):
                     changed = True
-                if _structured_codegen_node_8616(new_body) and _replace_c_children_8616(new_body, transform):
+                if _structured_codegen_node_8616(new_body) and _replace_c_children_8616(new_body, transform, seen):
                     changed = True
                 new_pairs.append((new_cond, new_body))
             if pair_changed:

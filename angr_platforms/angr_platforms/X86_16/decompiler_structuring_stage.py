@@ -354,10 +354,12 @@ def _structuring_codegen_8616(project, codegen) -> bool:
 
 
 def _decompile_structuring_8616(self):
-    _orig_decompiler_decompile = getattr(_decompile_structuring_8616, "_orig_decompiler_decompile", None)
+    _orig_decompiler_decompile = getattr(Decompiler, "_orig_before_structuring", None)
     if _orig_decompiler_decompile is None:
-        _orig_decompiler_decompile = Decompiler._decompile
-        _decompile_structuring_8616._orig_decompiler_decompile = _orig_decompiler_decompile
+        _orig_decompiler_decompile = getattr(_decompile_structuring_8616, "_orig_decompiler_decompile", None)
+        if _orig_decompiler_decompile is None:
+            _orig_decompiler_decompile = Decompiler._decompile
+            _decompile_structuring_8616._orig_decompiler_decompile = _orig_decompiler_decompile
     structuring_started = time.perf_counter()
     self.project._inertia_decompiler_stage = "core"
     _orig_decompiler_decompile(self)
@@ -516,5 +518,6 @@ def _assert_alias_complete_8616(codegen) -> None:
 
 def apply_x86_16_decompiler_structuring() -> None:
     if getattr(Decompiler._decompile, "__name__", "") != "_decompile_structuring_8616":
+        Decompiler._orig_before_structuring = Decompiler._decompile
         _decompile_structuring_8616._orig_decompiler_decompile = Decompiler._decompile
         Decompiler._decompile = _decompile_structuring_8616
