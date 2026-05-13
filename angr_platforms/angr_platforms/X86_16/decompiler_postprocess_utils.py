@@ -112,14 +112,22 @@ def _match_real_mode_linear_expr_8616(node, project) -> tuple[str | None, int | 
         linear = _c_constant_value_8616(maybe_const)
         if linear is None:
             continue
-        if not isinstance(maybe_mul, CBinaryOp) or maybe_mul.op != "Mul":
+        if not isinstance(maybe_mul, CBinaryOp):
             continue
-        for maybe_seg, maybe_scale in ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs)):
-            if _c_constant_value_8616(maybe_scale) != 16:
-                continue
-            seg_name = _segment_reg_name_8616(maybe_seg, project)
-            if seg_name is not None:
-                return seg_name, linear
+        if maybe_mul.op == "Mul":
+            for maybe_seg, maybe_scale in ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs)):
+                if _c_constant_value_8616(maybe_scale) != 16:
+                    continue
+                seg_name = _segment_reg_name_8616(maybe_seg, project)
+                if seg_name is not None:
+                    return seg_name, linear
+        if maybe_mul.op == "Shl":
+            for maybe_seg, maybe_scale in ((maybe_mul.lhs, maybe_mul.rhs), (maybe_mul.rhs, maybe_mul.lhs)):
+                if _c_constant_value_8616(maybe_scale) != 4:
+                    continue
+                seg_name = _segment_reg_name_8616(maybe_seg, project)
+                if seg_name is not None:
+                    return seg_name, linear
     return None, None
 
 
@@ -185,10 +193,12 @@ def _match_real_mode_segmented_store_shape_8616(node, project) -> tuple[str | No
 
 
 def _match_segmented_dereference_8616(node, project) -> tuple[str | None, int | None]:
+    while isinstance(node, CTypeCast):
+        node = node.expr
     if not isinstance(node, CUnaryOp) or node.op != "Dereference":
         return None, None
     operand = node.operand
-    if isinstance(operand, CTypeCast):
+    while isinstance(operand, CTypeCast):
         operand = operand.expr
     return _match_real_mode_linear_expr_8616(operand, project)
 

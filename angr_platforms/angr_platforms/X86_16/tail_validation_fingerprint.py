@@ -67,6 +67,12 @@ def _c_constant_int_value(node) -> int | None:
     return None
 
 
+def _strip_validation_casts(node):
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    return node
+
+
 def _wrap_not_fingerprint(fingerprint: str) -> str:
     if fingerprint.startswith("Not(") and fingerprint.endswith(")"):
         return fingerprint[4:-1]
@@ -243,9 +249,37 @@ def _normalize_zero_flag_comparison_8616(node):
     return CUnaryOp("Not", source_expr, codegen=getattr(node, "codegen", None))
 
 
+def _simplify_expr_for_fingerprint_8616(node):
+    node = _strip_validation_casts(node)
+    if isinstance(node, CUnaryOp):
+        operand = _simplify_expr_for_fingerprint_8616(getattr(node, "operand", None))
+        if operand is not getattr(node, "operand", None):
+            return CUnaryOp(node.op, operand, codegen=getattr(node, "codegen", None))
+        return node
+    if not isinstance(node, CBinaryOp):
+        return node
+    lhs = _simplify_expr_for_fingerprint_8616(node.lhs)
+    rhs = _simplify_expr_for_fingerprint_8616(node.rhs)
+    lhs_zero = _c_constant_int_value(lhs) == 0
+    rhs_zero = _c_constant_int_value(rhs) == 0
+    if node.op == "Mul" and (lhs_zero or rhs_zero):
+        return lhs if lhs_zero else rhs
+    if node.op in {"Or", "Add", "Xor"}:
+        if lhs_zero:
+            return rhs
+        if rhs_zero:
+            return lhs
+    if node.op in {"Sub"} and rhs_zero:
+        return lhs
+    if lhs is not node.lhs or rhs is not node.rhs:
+        return CBinaryOp(node.op, lhs, rhs, codegen=getattr(node, "codegen", None))
+    return node
+
+
 def _expr_fingerprint(node, project) -> str:
     if node is None:
         return "none"
+    node = _simplify_expr_for_fingerprint_8616(node)
     stack_pair = _stack_word_pair_fingerprint(node, project)
     if stack_pair is not None:
         return stack_pair
@@ -257,8 +291,6 @@ def _expr_fingerprint(node, project) -> str:
         return f"const:{node.value!r}"
     if isinstance(node, CVariable):
         return _location_fingerprint(node, project)
-    if isinstance(node, CTypeCast):
-        return f"cast:{_expr_fingerprint(node.expr, project)}"
     if isinstance(node, CUnaryOp):
         operand = getattr(node, "operand", None)
         if node.op == "Not" and isinstance(operand, CBinaryOp):
@@ -534,6 +566,6 @@ def _location_fingerprint(node, project) -> str:
             if isinstance(linear, int) and _segment_linear_lowering_allowed(node, seg_name):
                 return f"global:{linear:#x}"
             return f"deref:{seg_name}:{linear:#x}" if isinstance(linear, int) else f"deref:{seg_name}:unknown"
-        return f"deref:{_expr_fingerprint(node.operand, project)}"
+        return f"deref:{_expr_fingerprint(_strip_validation_casts(node.operand), project)}"
 
     return _expr_fingerprint(node, project)
