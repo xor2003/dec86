@@ -468,6 +468,7 @@ from inertia_decompiler.x86_16_exact_slice import (
 from inertia_decompiler.tail_validation import (
     TAIL_VALIDATION_ENABLE_ENV as _TAIL_VALIDATION_ENABLE_ENV,
     emit_tail_validation_console_summary as _emit_tail_validation_console_summary,
+    format_tail_validation_diagnostic as _format_tail_validation_diagnostic,
     inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
     parse_env_bool as _parse_env_bool,
     set_tail_validation_runtime_enabled as _set_tail_validation_runtime_enabled,
@@ -1096,7 +1097,7 @@ def _emit_function_result(
         status=getattr(result, "status", None),
         failure_stage=getattr(result, "failure_stage", None),
         fallback_kind="file_sweep",
-        tail_validation_verdict=_tail_validation_display_status(getattr(result, "tail_validation", None), fallback_kind="file_sweep"),
+        tail_validation_verdict=_tail_validation_display_status(getattr(result, "tail_validation", None)),
         artifact_path=f"{function.addr:#x}:{function.name}",
     )
     print(f"/* failure family: {failure_family_snapshot.label()} */")
@@ -1362,6 +1363,16 @@ def _emit_function_result(
         else _format_asm_range(project, *_infer_linear_disassembly_window(project, function.addr))
     )
     failed_local += 1
+    for _diag_line in _format_tail_validation_diagnostic(
+        result.tail_validation,
+        function_addr=function.addr,
+        function_name=function.name,
+        block_count=getattr(result, 'block_count', None),
+        byte_count=getattr(result, 'byte_count', None),
+        exit_kind=result.status,
+        exit_detail=result.payload,
+    ):
+        print(_diag_line)
     if not attempt_status_printed:
         _print_function_attempt_status(
             function,
@@ -1707,6 +1718,17 @@ def main(argv: list[str] | None = None) -> int:
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
             if recovery_detail is None:
                 recovery_detail = "during x86-16 function recovery (direct-address path)"
+            print(f"/* timeout: function {args.addr:#x} {function_label or f'sub_{args.addr:x}'} */")
+            _stored_snapshot = getattr(project, '_inertia_last_tail_validation_snapshot', None)
+            if isinstance(_stored_snapshot, dict) and _stored_snapshot:
+                for _diag_line in _format_tail_validation_diagnostic(
+                    _stored_snapshot,
+                    function_addr=args.addr,
+                    function_name=function_label or f"sub_{args.addr:x}",
+                    exit_kind="timeout",
+                    exit_detail=recovery_detail,
+                ):
+                    print(_diag_line)
             _emit_timeout_and_exit(args.timeout, recovery_detail)
         except FuturesTimeoutError:
             _enforce_direct_addr_budget_timeout()
@@ -1901,6 +1923,17 @@ def main(argv: list[str] | None = None) -> int:
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
             if recovery_detail is None:
                 recovery_detail = "during x86-16 function recovery (direct-address path)"
+            print(f"/* timeout: function {args.addr:#x} {function_label or f'sub_{args.addr:x}'} */")
+            _stored_snapshot = getattr(project, '_inertia_last_tail_validation_snapshot', None)
+            if isinstance(_stored_snapshot, dict) and _stored_snapshot:
+                for _diag_line in _format_tail_validation_diagnostic(
+                    _stored_snapshot,
+                    function_addr=args.addr,
+                    function_name=function_label or f"sub_{args.addr:x}",
+                    exit_kind="timeout",
+                    exit_detail=recovery_detail,
+                ):
+                    print(_diag_line)
             _emit_timeout_and_exit(args.timeout, recovery_detail)
         except Exception as ex:
             recovery_detail = _function_recovery_detail(getattr(project, "_inertia_decompiler_stage", None))
@@ -2254,6 +2287,16 @@ def main(argv: list[str] | None = None) -> int:
             nonopt_failure_detail = _non_optimized_slice_failure_detail(nonopt_result)
             if nonopt_failure_detail is not None:
                 print(f"/* non-optimized fallback failed: {nonopt_failure_detail} */")
+            for _diag_line in _format_tail_validation_diagnostic(
+                direct_result.tail_validation,
+                function_addr=func.addr,
+                function_name=func.name,
+                block_count=getattr(direct_result, 'block_count', None),
+                byte_count=getattr(direct_result, 'byte_count', None),
+                exit_kind=status,
+                exit_detail=payload,
+            ):
+                print(_diag_line)
             print("\n/* == lift break probe == */")
             print(_probe_lift_break(project, func.addr))
             print("\n/* == asm fallback == */")

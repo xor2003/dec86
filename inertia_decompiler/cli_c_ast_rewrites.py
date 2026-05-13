@@ -767,93 +767,90 @@ def _replace_c_children(node, transform, seen: set[int] | None = None) -> bool:
     if node_id in seen:
         return False
     seen.add(node_id)
-    try:
-        changed = False
+    changed = False
 
-        for attr in (
-            "lhs",
-            "rhs",
-            "expr",
-            "operand",
-            "addr",
-            "data",
-            "guard",
-            "condition",
-            "cond",
-            "initializer",
-            "iterator",
-            "body",
-            "iffalse",
-            "iftrue",
-            "callee_target",
-            "else_node",
-            "retval",
-        ):
-            if not hasattr(node, attr):
-                continue
-            try:
-                value = getattr(node, attr)
-            except Exception:
-                continue
-            if _structured_codegen_node(value):
-                new_value = transform(value)
-                if new_value is not value:
-                    setattr(node, attr, new_value)
-                    changed = True
-                    value = new_value
-                if _replace_c_children(value, transform, seen):
-                    changed = True
-
-        for attr in ("args", "operands", "statements"):
-            if not hasattr(node, attr):
-                continue
-            try:
-                items = getattr(node, attr)
-            except Exception:
-                continue
-            if not items:
-                continue
-            new_items = []
-            list_changed = False
-            for item in items:
-                if _structured_codegen_node(item):
-                    new_item = transform(item)
-                    if new_item is not item:
-                        list_changed = True
-                    if _replace_c_children(new_item, transform, seen):
-                        changed = True
-                    new_items.append(new_item)
-                else:
-                    new_items.append(item)
-            if list_changed:
-                setattr(node, attr, new_items)
+    for attr in (
+        "lhs",
+        "rhs",
+        "expr",
+        "operand",
+        "addr",
+        "data",
+        "guard",
+        "condition",
+        "cond",
+        "initializer",
+        "iterator",
+        "body",
+        "iffalse",
+        "iftrue",
+        "callee_target",
+        "else_node",
+        "retval",
+    ):
+        if not hasattr(node, attr):
+            continue
+        try:
+            value = getattr(node, attr)
+        except Exception:
+            continue
+        if _structured_codegen_node(value):
+            new_value = transform(value)
+            if new_value is not value:
+                setattr(node, attr, new_value)
+                changed = True
+                value = new_value
+            if _replace_c_children(value, transform, seen):
                 changed = True
 
-        if hasattr(node, "condition_and_nodes"):
-            try:
-                pairs = getattr(node, "condition_and_nodes")
-            except Exception:
-                pairs = None
-            if pairs:
-                new_pairs = []
-                pair_changed = False
-                for cond, body in pairs:
-                    new_cond = transform(cond) if _structured_codegen_node(cond) else cond
-                    new_body = transform(body) if _structured_codegen_node(body) else body
-                    if new_cond is not cond or new_body is not body:
-                        pair_changed = True
-                    if _structured_codegen_node(new_cond) and _replace_c_children(new_cond, transform, seen):
-                        changed = True
-                    if _structured_codegen_node(new_body) and _replace_c_children(new_body, transform, seen):
-                        changed = True
-                    new_pairs.append((new_cond, new_body))
-                if pair_changed:
-                    setattr(node, "condition_and_nodes", new_pairs)
+    for attr in ("args", "operands", "statements"):
+        if not hasattr(node, attr):
+            continue
+        try:
+            items = getattr(node, attr)
+        except Exception:
+            continue
+        if not items:
+            continue
+        new_items = []
+        list_changed = False
+        for item in items:
+            if _structured_codegen_node(item):
+                new_item = transform(item)
+                if new_item is not item:
+                    list_changed = True
+                if _replace_c_children(new_item, transform, seen):
                     changed = True
+                new_items.append(new_item)
+            else:
+                new_items.append(item)
+        if list_changed:
+            setattr(node, attr, new_items)
+            changed = True
 
-        return changed
-    finally:
-        seen.remove(node_id)
+    if hasattr(node, "condition_and_nodes"):
+        try:
+            pairs = getattr(node, "condition_and_nodes")
+        except Exception:
+            pairs = None
+        if pairs:
+            new_pairs = []
+            pair_changed = False
+            for cond, body in pairs:
+                new_cond = transform(cond) if _structured_codegen_node(cond) else cond
+                new_body = transform(body) if _structured_codegen_node(body) else body
+                if new_cond is not cond or new_body is not body:
+                    pair_changed = True
+                if _structured_codegen_node(new_cond) and _replace_c_children(new_cond, transform, seen):
+                    changed = True
+                if _structured_codegen_node(new_body) and _replace_c_children(new_body, transform, seen):
+                    changed = True
+                new_pairs.append((new_cond, new_body))
+            if pair_changed:
+                setattr(node, "condition_and_nodes", new_pairs)
+                changed = True
+
+    return changed
 
 def _iter_c_nodes_deep(node, seen: set[int] | None = None):
     if seen is None:

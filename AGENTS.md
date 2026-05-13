@@ -555,5 +555,25 @@ INERTIA_ENABLE_TAIL_VALIDATION=1 ./decompile.py --alternate-source-c ./SORTDEMO.
 If you need single function then you need specify function address.
 
 ## General rule
- 
+
 Pipe output through head, tail, or grep to reduce result size. Avoid cat on large files — use Read with offset/limit instead.
+
+## Exception hygiene
+
+Silent exception swallowing is the #1 cause of wasted debugging time in a multi-pass decompiler pipeline. A failure at layer N that is silently swallowed becomes a mystery failure at layer N+3, with no trail.
+
+**Every `except Exception: pass` is a future root-cause hunt.** Always log.
+
+| Severity | Level | When |
+|----------|-------|------|
+| `debug` | Expected/benign | Stale cached text, retryable timeouts, known edge cases that self-heal |
+| `warning` | Suspicious, recovered | Regeneration failure, validation divergence, fallback path taken |
+| `error` | Unrecoverable | Pipeline contract breach, invariant failure, missing required state |
+
+Rules:
+
+- `except Exception: pass` is forbidden. Always include a `log.debug(...)` at minimum.
+- `except Exception:` without logging the specific exception type and message is forbidden. Use `log.warning("... %s: %s", context, ex)` not just `log.warning("failed")`.
+- Include enough context to identify the function/address/stage: the `context` parameter pattern already used in `_regenerate_codegen_text_safely` is the template.
+- When a fallback path is taken, log at warning level so it's visible without `--debug` spam.
+- When an exception is re-raised, log at debug level before the `raise` so the re-raise site is recorded.

@@ -14,7 +14,9 @@ from angr_platforms.X86_16.milestone_report import (
 )
 from angr_platforms.X86_16.tail_validation import (
     build_x86_16_tail_validation_aggregate,
+    build_x86_16_tail_validation_verdict,
     extract_x86_16_tail_validation_snapshot,
+    format_x86_16_tail_validation_diff,
     x86_16_tail_validation_snapshot_passed,
 )
 
@@ -222,13 +224,14 @@ def emit_tail_validation_surface_summary(
 
 
 def tail_validation_snapshot_for_function_run(project, function) -> dict[str, object]:
-    snapshot = extract_x86_16_tail_validation_snapshot(getattr(function, "info", None))
-    if snapshot:
-        return snapshot
+    merged: dict[str, object] = {}
     fallback_snapshot = getattr(project, "_inertia_last_tail_validation_snapshot", None)
     if isinstance(fallback_snapshot, dict):
-        return dict(fallback_snapshot)
-    return {}
+        merged.update(fallback_snapshot)
+    snapshot = extract_x86_16_tail_validation_snapshot(getattr(function, "info", None))
+    if snapshot:
+        merged.update(snapshot)
+    return merged
 
 
 def tail_validation_snapshot_for_fallback(
@@ -342,8 +345,76 @@ def tail_validation_display_status(
         return "uncollected"
     if fallback_kind is not None:
         return "failed"
-    if x86_16_tail_validation_snapshot_passed(dict(snapshot), expected_stages=expected_stages):
+    passed = x86_16_tail_validation_snapshot_passed(dict(snapshot), expected_stages=expected_stages)
+    changed = any(bool(stage.get("changed")) for stage in snapshot.values() if isinstance(stage, Mapping))
+    if passed:
         return "passed"
-    if any(bool(stage.get("changed")) for stage in snapshot.values() if isinstance(stage, Mapping)):
+    if changed:
         return "changed"
     return "unknown"
+
+
+def format_tail_validation_diagnostic(
+    snapshot: Mapping[str, object] | None,
+    *,
+    function_addr: int = 0,
+    function_name: str = "sub",
+    block_count: int | None = None,
+    byte_count: int | None = None,
+    cfg_hash: str | None = None,
+    exit_kind: str | None = None,
+    exit_detail: str | None = None,
+) -> list[str]:
+    """Format a tail validation snapshot as human-readable diagnostic lines.
+
+    Returns lines suitable for printing as stdout comments (/* ... */).
+    When the snapshot is missing or uncollected, reports the exit kind/detail.
+    """
+    lines: list[str] = []
+    header = f"/* tail validation: {function_name} ({function_addr:#x}) */"
+    lines.append(header)
+
+    # Block/byte/cfg metadata
+    meta_parts: list[str] = []
+    if block_count is not None:
+        meta_parts.append(f"blocks={block_count}")
+    if byte_count is not None:
+        meta_parts.append(f"bytes={byte_count}")
+    if cfg_hash is not None:
+        meta_parts.append(f"cfg_hash={cfg_hash}")
+    if meta_parts:
+        lines.append(f"/* tail validation metadata: {', '.join(meta_parts)} */")
+
+    if not isinstance(snapshot, Mapping) or not snapshot:
+        reason = exit_kind or "uncollected"
+        detail = exit_detail or "no tail validation snapshot available"
+        lines.append(f"/* tail validation result: {reason} — {detail} */")
+        return lines
+
+    if snapshot.get("tail_validation_uncollected"):
+        reason = exit_kind or str(snapshot.get("exit_kind", "uncollected"))
+        detail = exit_detail or str(snapshot.get("exit_detail", "snapshot marked uncollected"))
+        lines.append(f"/* tail validation result: {reason} — {detail} */")
+        return lines
+
+    for stage_key in ("structuring", "postprocess"):
+        entry = snapshot.get(stage_key)
+        if not isinstance(entry, Mapping):
+            lines.append(f"/* tail validation {stage_key}: missing */")
+            continue
+        changed = bool(entry.get("changed", False))
+        status = entry.get("status", "changed" if changed else "stable")
+        mode = entry.get("mode", "unknown")
+        if isinstance(mode, str) and mode:
+            status_str = f"status={status} mode={mode} changed={changed}"
+        else:
+            status_str = f"status={status} changed={changed}"
+        lines.append(f"/* tail validation {stage_key}: {status_str} */")
+        verdict = entry.get("verdict")
+        if isinstance(verdict, str) and verdict:
+            lines.append(f"/* tail validation {stage_key} verdict: {verdict} */")
+        summary_text = entry.get("summary_text")
+        if isinstance(summary_text, str) and summary_text:
+            lines.append(f"/* tail validation {stage_key} detail: {summary_text} */")
+
+    return lines

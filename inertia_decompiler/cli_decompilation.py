@@ -434,40 +434,38 @@ def _emit_c_stage_trace(project: angr.Project, function, label: str, c_text: str
 
 def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool]:
     fallback_text = _snapshot_codegen_text(codegen)
+    log = logging.getLogger(__name__)
     try:
         rendered = codegen.render_text(codegen.cfunc)
         if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
             return rendered[0], False
         if isinstance(rendered, str):
             return rendered, False
-    except Exception:
-        pass
+    except Exception as ex:
+        log.debug("render_text before regeneration failed for %s: %s", context, ex)
     try:
         codegen.regenerate_text()
     except RecursionError:
+        log.debug("regenerate_text hit RecursionError for %s; retrying render", context)
         try:
             rendered = codegen.render_text(codegen.cfunc)
             if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
                 return rendered[0], False
             if isinstance(rendered, str):
                 return rendered, False
-        except Exception:
-            pass
+        except Exception as ex2:
+            log.warning("render_text after RecursionError also failed for %s: %s", context, ex2)
         return fallback_text, False
     except Exception as ex:
+        log.warning("regenerate_text failed for %s: %s", context, ex)
         try:
             rendered = codegen.render_text(codegen.cfunc)
             if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
                 return rendered[0], False
             if isinstance(rendered, str):
                 return rendered, False
-        except Exception:
-            pass
-        logging.getLogger(__name__).warning(
-            "Skipping C text regeneration for %s: %s",
-            context,
-            ex,
-        )
+        except Exception as ex2:
+            log.debug("render_text after failed regeneration also failed for %s: %s", context, ex2)
         return fallback_text, False
     try:
         rendered = codegen.render_text(codegen.cfunc)
@@ -475,8 +473,8 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
             return rendered[0], False
         if isinstance(rendered, str):
             return rendered, False
-    except Exception:
-        pass
+    except Exception as ex:
+        log.warning("render_text after successful regeneration failed for %s: %s", context, ex)
     return _snapshot_codegen_text(codegen), True
 
 def _emit_optional_source_sidecar_c_block(
@@ -1085,11 +1083,16 @@ def _decompile_function(
             block_count,
             byte_count,
         )
+    _stack_lowering_already_attempted = False
     for _ in range(2):
         iter_changed = False
         for rewrite in rewrite_passes:
+            if _stack_lowering_already_attempted and rewrite is _run_stack_lowering_pass:
+                continue
             if rewrite():
                 iter_changed = True
+            if rewrite is _run_stack_lowering_pass:
+                _stack_lowering_already_attempted = True
         if not iter_changed:
             break
         changed = True
