@@ -5,6 +5,7 @@ from __future__ import annotations
 AGENTS rule: no semantic recovery — this is pure formatting/fidelity output.
 """
 
+import re
 from pathlib import Path
 
 
@@ -36,7 +37,10 @@ def format_cod_comment_block(
         lines.append("///")
         lines.append("/// C source:")
         for src_line in source_lines:
-            lines.append(f"///   {src_line}")
+            safe_line = src_line.rstrip("\n\r")
+            if safe_line.endswith("\\"):
+                safe_line = safe_line[:-1] + "<backslash>"
+            lines.append(f"///   {safe_line}")
 
     if entries:
         lines.append("///")

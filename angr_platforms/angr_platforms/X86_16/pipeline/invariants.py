@@ -305,6 +305,13 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
     # Check if any AliasFailure records exist for proven SS
     from ..alias.alias_model_impl import AliasFailure, AliasStorageFacts
 
+    def _canonical_stack_offset_8616(offset):
+        if not isinstance(offset, int):
+            return offset
+        if 0x8000 <= offset <= 0xFFFF:
+            return offset - 0x10000
+        return offset
+
     failures: list[str] = []
     provisional_count = 0
     for fact in semantic_alias_facts:
@@ -323,14 +330,15 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
             if fact.identity and fact.identity[0] == "stack":
                 # Stack slot identified — check if it's been materialized
                 identity_val = fact.identity[1]
-                offset = getattr(identity_val, "offset", None)
+                offset = _canonical_stack_offset_8616(getattr(identity_val, "offset", None))
                 if offset is not None:
                     cfunc = getattr(codegen, "cfunc", None)
                     variables = getattr(cfunc, "variables_in_use", {}) if cfunc else {}
                     # Check if any variable matches this offset
                     from angr.sim_variable import SimStackVariable
                     found = any(
-                        isinstance(v, SimStackVariable) and getattr(v, "offset", None) == offset
+                        isinstance(v, SimStackVariable)
+                        and _canonical_stack_offset_8616(getattr(v, "offset", None)) == offset
                         for v in variables
                     )
                     if not found:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -29,7 +30,7 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 
 from .alias.alias_model import _stack_slot_identity_can_join, _stack_slot_identity_for_variable
 from .analysis_helpers import preferred_known_helper_signature_decl
-from .annotations import ANNOTATION_KEY, annotate_function
+from .annotations import ANNOTATION_KEY, _source_decl_from_cod_source_lines, annotate_function
 from .decompiler_postprocess_utils import (
     _c_constant_value_8616,
     _iter_c_nodes_deep_8616,
@@ -111,7 +112,12 @@ def _known_helper_arg_names_8616(name: str | None) -> list[str] | None:
 
     try:
         _, proto, _ = convert_cproto_to_py(decl)
-    except Exception:
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "convert_cproto_to_py failed for decl=%r: %s",
+            decl,
+            ex,
+        )
         return None
 
     if proto is None:
@@ -122,14 +128,31 @@ def _known_helper_arg_names_8616(name: str | None) -> list[str] | None:
 
 
 def _set_codegen_prototype_8616(codegen, prototype) -> None:
+    functy_ok = False
+    proto_ok = False
     try:
         codegen.cfunc.functy = prototype
-    except Exception:
-        pass
+        functy_ok = True
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "setting cfunc.functy failed for %#x: %s",
+            getattr(codegen.cfunc, "addr", 0),
+            ex,
+        )
     try:
         codegen.cfunc.prototype = prototype
-    except Exception:
-        pass
+        proto_ok = True
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "setting cfunc.prototype failed for %#x: %s",
+            getattr(codegen.cfunc, "addr", 0),
+            ex,
+        )
+    if not functy_ok and not proto_ok:
+        logging.getLogger(__name__).warning(
+            "codegen prototype set failed for %#x (neither functy nor prototype attribute)",
+            getattr(codegen.cfunc, "addr", 0),
+        )
 
 
 def _prune_return_address_stack_arguments_8616(project, codegen) -> bool:
@@ -452,6 +475,20 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
         maybe_annotations = info.get(ANNOTATION_KEY)
         if isinstance(maybe_annotations, dict):
             annotations = maybe_annotations
+    source_pointer_flags: tuple[bool, ...] = ()
+    source_lines = annotations.get("source_lines", ()) if isinstance(annotations, dict) else ()
+    source_decl = _source_decl_from_cod_source_lines(source_lines) if source_lines else None
+    if isinstance(source_decl, str) and source_decl:
+        try:
+            _, parsed_proto, _ = convert_cproto_to_py(source_decl)
+        except Exception:
+            parsed_proto = None
+        else:
+            if parsed_proto is not None:
+                source_pointer_flags = tuple(
+                    isinstance(arg, SimTypePointer)
+                    for arg in (getattr(parsed_proto, "args", ()) or ())
+                )
 
     stack_specs = annotations.get("stack_vars", {}) if isinstance(annotations, dict) else {}
     annotated_args = []
@@ -501,6 +538,8 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
                 resolved_arg = stack_cvars_by_offset.get(annotated_offset)
             resolved_args.append(resolved_arg)
             if resolved_arg is None:
+                continue
+            if index < len(source_pointer_flags) and source_pointer_flags[index] is False:
                 continue
             if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
                 continue
@@ -554,6 +593,8 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
 
         pointer_promoted = False
         for index, resolved_arg in enumerate(fallback_args):
+            if index < len(source_pointer_flags) and source_pointer_flags[index] is False:
+                continue
             if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
                 continue
             pointer_type = SimTypePointer(SimTypeShort(False))
@@ -711,16 +752,32 @@ def _classify_return_shape_8616(project, codegen) -> bool:
         return False
 
     source_return_lines: tuple[str, ...] = ()
+    source_lines: tuple[str, ...] = ()
     info = getattr(func, "info", None)
     if isinstance(info, dict):
         annotations = info.get(ANNOTATION_KEY)
         if isinstance(annotations, dict):
             source_return_lines = tuple(annotations.get("source_return_lines", ()) or ())
+            source_lines = tuple(annotations.get("source_lines", ()) or ())
+
+    source_decl = _source_decl_from_cod_source_lines(source_lines) if source_lines else None
+    source_decl_is_void = False
+    if isinstance(source_decl, str) and source_decl:
+        try:
+            _, source_proto, _ = convert_cproto_to_py(source_decl)
+        except Exception as ex:
+            logging.getLogger(__name__).debug(
+                "source decl proto parsing failed decl=%r: %s",
+                source_decl,
+                ex,
+            )
+            source_proto = None
+        source_decl_is_void = isinstance(getattr(source_proto, "returnty", None), SimTypeBottom)
 
     return_nodes = [node for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements) if isinstance(node, CReturn)]
     if not return_nodes:
         source_shape = _source_return_shape_8616(source_return_lines)
-        if source_shape is None:
+        if source_shape is None and not source_decl_is_void:
             return False
         return_nodes = []
     else:
@@ -748,10 +805,13 @@ def _classify_return_shape_8616(project, codegen) -> bool:
             return_shapes.add(shape)
 
     has_value_return = any(getattr(ret, "retval", None) is not None for ret in return_nodes)
-    if not has_value_return and source_shape is None:
+    if not has_value_return and not return_nodes and source_shape is None and not source_decl_is_void:
         return changed
 
-    shape = "scalar_ax" if has_value_return or source_shape is not None else "void"
+    if not has_value_return and source_shape is None:
+        shape = "void"
+    else:
+        shape = "scalar_ax"
 
     info = getattr(func, "info", None)
     if isinstance(info, dict):

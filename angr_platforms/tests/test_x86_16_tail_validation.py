@@ -54,6 +54,7 @@ from angr_platforms.X86_16.tail_validation import (
     x86_16_tail_validation_snapshot_passed,
     x86_16_tail_validation_result_passed,
 )
+from angr_platforms.X86_16.tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
 
 
 class _DummyCodegen:
@@ -180,6 +181,19 @@ def test_tail_validation_negative_memory_addr_is_not_counted_as_global():
 
     assert summary.global_writes == ()
     assert summary.stack_writes == ("stack:-0x8",)
+
+
+def test_tail_validation_live_out_ignores_nonsemantic_zero_stack_slot_write():
+    assert include_x86_16_tail_validation_stack_write(
+        "stack:+0x0",
+        mode="live_out",
+        observed_locations={"stack:+0x0"},
+    ) is False
+    assert include_x86_16_tail_validation_stack_write(
+        "stack:+0x4",
+        mode="live_out",
+        observed_locations={"stack:+0x4"},
+    ) is True
 
 
 def test_tail_validation_uses_callsite_summary_target_for_unknown_direct_call(monkeypatch):
@@ -888,8 +902,8 @@ def test_tail_validation_normalizes_boolean_cite_projection_noise():
     diff = compare_x86_16_tail_validation_summaries(before, after)
 
     assert diff["changed"] is False
-    assert before.conditions == ("Sub(reg:ax,const:2)",)
-    assert after.conditions == ("Sub(reg:ax,const:2)",)
+    assert before.conditions == ("Add(reg:ax,const:-2)",)
+    assert after.conditions == ("Add(reg:ax,const:-2)",)
 
 
 def test_tail_validation_normalizes_zero_flag_compare_projection_noise():
@@ -927,8 +941,8 @@ def test_tail_validation_normalizes_zero_flag_compare_projection_noise():
     diff = compare_x86_16_tail_validation_summaries(before, after)
 
     assert diff["changed"] is False
-    assert before.conditions == ("Sub(reg:ax,const:2)",)
-    assert after.conditions == ("Sub(reg:ax,const:2)",)
+    assert before.conditions == ("Add(reg:ax,const:-2)",)
+    assert after.conditions == ("Add(reg:ax,const:-2)",)
 
 
 def test_tail_validation_normalizes_adjacent_flag_assignment_guard_pairs():

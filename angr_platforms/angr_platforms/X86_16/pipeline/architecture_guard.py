@@ -18,6 +18,8 @@ __all__ = [
     "assert_final_c_quality_8616",
 ]
 
+from ..validation_semantics import assert_known_call_semantics_8616
+
 
 FORBIDDEN_NORMAL_PATHS: set[str] = {
     "collect_semantic_alias_facts_from_project_8616",
@@ -44,8 +46,14 @@ def assert_no_legacy_path_8616(name: str, *, project=None) -> None:
 
 
 _FORBIDDEN_FINAL_C_TOKENS: tuple[str, ...] = (
+    "ds << 4",
+    "es << 4",
     "ss << 4",
+    "*((ds << 4)",
+    "*((es << 4)",
+    "*((ss << 4)",
     "stack[",
+    "flags &",
 )
 
 
@@ -59,3 +67,4 @@ def assert_final_c_quality_8616(c_text: str, *, function_addr: int | None = None
                 layer="final_emission",
                 function_addr=function_addr,
             )
+    assert_known_call_semantics_8616(c_text, function_addr=function_addr)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +12,8 @@ INTERRUPT_CORE_VECTOR_COUNT = 0x100
 
 
 KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
+    "aNchkstk": "void aNchkstk(void);",
+    "__aNchkstk": "void __aNchkstk(void);",
     "_abort": "void _abort(void);",
     "_DEBUG": "int _DEBUG(const char *fmt, ...);",
     "_ERROR": "int _ERROR(const char *fmt, ...);",
@@ -25,6 +28,17 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "intdosx": "int intdosx(union REGS *in, union REGS *out, struct SREGS *sreg);",
     "loadprog": "int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline);",
     "clearRect": "void clearRect(void *dst, unsigned short left, unsigned short top, unsigned short right, unsigned short bottom);",
+    "clock": "clock_t clock(void);",
+    "settextrows": "int settextrows(int rows);",
+    "clearscreen": "void clearscreen(int mode);",
+    "displaycursor": "void displaycursor(int mode);",
+    "setvideomode": "void setvideomode(int mode);",
+    "DrawBar": "void DrawBar(unsigned short iRow);",
+    "DrawTime": "void DrawTime(unsigned short iRow);",
+    "PercolateUp": "void PercolateUp(unsigned short i);",
+    "PercolateDown": "void PercolateDown(unsigned short i);",
+    "SwapBars": "void SwapBars(unsigned short iRow1, unsigned short iRow2);",
+    "Swaps": "void Swaps(void *a, void *b);",
     "exit": "void exit(int status);",
     "inp": "unsigned char inp(unsigned short port);",
     "joyOrKey": "int joyOrKey(void);",
@@ -1695,7 +1709,8 @@ def seed_calling_conventions(cfg) -> None:
     for function in getattr(cfg, "functions", {}).values():
         try:
             function._init_prototype_and_calling_convention()
-        except Exception:
+        except Exception as ex:
+            logging.getLogger(__name__).debug("prototype init skipped: %s", ex)
             continue
 
 

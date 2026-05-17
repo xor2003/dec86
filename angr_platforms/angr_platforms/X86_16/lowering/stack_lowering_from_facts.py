@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
+import logging
 from typing import TYPE_CHECKING
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -43,6 +44,16 @@ __all__ = [
     "build_stack_variable_bindings_from_alias_facts_8616",
     "lower_stack_accesses_from_alias_facts_8616",
 ]
+
+log = logging.getLogger(__name__)
+
+
+def _canonical_stack_offset_8616(offset):
+    if not isinstance(offset, int):
+        return offset
+    if 0x8000 <= offset <= 0xFFFF:
+        return offset - 0x10000
+    return offset
 
 
 def build_stack_variable_bindings_from_alias_facts_8616(
@@ -71,7 +82,7 @@ def build_stack_variable_bindings_from_alias_facts_8616(
         if slot is None:
             continue
 
-        offset = getattr(slot, "offset", None)
+        offset = _canonical_stack_offset_8616(getattr(slot, "offset", None))
         width = getattr(slot, "width", None)
 
         if not isinstance(offset, int):
@@ -98,6 +109,7 @@ def build_stack_variable_bindings_from_alias_facts_8616(
 
 
 def _stack_object_name(offset: int) -> str:
+    offset = _canonical_stack_offset_8616(offset)
     if offset >= 0:
         return f"arg_{offset:x}"
     return f"local_{-offset:x}"
@@ -124,10 +136,31 @@ def _promote_direct_stack_cvariable(codegen, cvar, size, target_type):
             variable.size = size
 
 
+def _apply_stack_binding_name_8616(cvar, preferred_name: str | None) -> str | None:
+    if not isinstance(preferred_name, str) or not preferred_name:
+        return None
+    variable = getattr(cvar, "variable", None)
+    changed_name = None
+    if isinstance(variable, SimStackVariable) and getattr(variable, "name", None) != preferred_name:
+        variable.name = preferred_name
+        changed_name = preferred_name
+    if getattr(cvar, "name", None) != preferred_name:
+        with contextlib.suppress(Exception):
+            cvar.name = preferred_name
+            changed_name = preferred_name
+    unified = getattr(cvar, "unified_variable", None)
+    if unified is not None and getattr(unified, "name", None) != preferred_name:
+        unified.name = preferred_name
+        changed_name = preferred_name
+    return changed_name
+
+
 def _materialize_stack_cvar_at_offset(
     codegen,
     offset: int,
     size: int = 2,
+    *,
+    preferred_name: str | None = None,
 ):
     """Self-contained: register a SimStackVariable + CVariable for offset.
 
@@ -137,6 +170,7 @@ def _materialize_stack_cvar_at_offset(
     """
     if getattr(codegen, "cfunc", None) is None:
         return None
+    offset = _canonical_stack_offset_8616(offset)
     if not isinstance(offset, int):
         return None
 
@@ -144,9 +178,13 @@ def _materialize_stack_cvar_at_offset(
     variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
     if isinstance(variables_in_use, dict):
         for var, cvar in variables_in_use.items():
-            if isinstance(var, SimStackVariable) and getattr(var, "offset", None) == offset:
+            if (
+                isinstance(var, SimStackVariable)
+                and _canonical_stack_offset_8616(getattr(var, "offset", None)) == offset
+            ):
                 target_type = _stack_type_for_size(size, codegen=codegen)
                 _promote_direct_stack_cvariable(codegen, cvar, size, target_type)
+                _apply_stack_binding_name_8616(cvar, preferred_name)
                 return cvar
 
     target_type = _stack_type_for_size(size, codegen=codegen)
@@ -158,6 +196,7 @@ def _materialize_stack_cvar_at_offset(
         region=getattr(codegen.cfunc, "addr", None),
     )
     cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
+    _apply_stack_binding_name_8616(cvar, preferred_name)
 
     if isinstance(variables_in_use, dict):
         variables_in_use[variable] = cvar
@@ -195,14 +234,45 @@ def lower_stack_accesses_from_alias_facts_8616(
     NOT materialization.
     """
     bindings = build_stack_variable_bindings_from_alias_facts_8616(alias_facts)
+    stable_stack_fact_count = len(
+        [
+            fact for fact in alias_facts
+            if isinstance(getattr(fact, "identity", None), tuple)
+            and len(getattr(fact, "identity", None)) >= 2
+            and getattr(fact, "identity", None)[0] == "stack"
+        ]
+    )
+    stable_bp_fact_count = len(
+        [
+            fact for fact in alias_facts
+            if isinstance(getattr(fact, "identity", None), tuple)
+            and len(getattr(fact, "identity", None)) >= 2
+            and getattr(fact, "identity", None)[0] == "stack"
+            and getattr(getattr(fact, "identity", None)[1], "base", None) == "bp"
+        ]
+    )
+    debug_stats = {
+        "stable_stack_fact_count": stable_stack_fact_count,
+        "stable_bp_fact_count": stable_bp_fact_count,
+        "stack_binding_count": len(bindings),
+        "stack_slot_candidates": len(bindings),
+        "stack_slot_bindings": len(bindings),
+        "stack_slot_materialized": 0,
+        "stack_slot_failed": 0,
+    }
+    codegen._inertia_stack_lowering_debug = debug_stats
+    codegen._inertia_stack_variable_bindings = tuple(bindings)
 
     if not bindings:
         return StackLoweringResult(
-            ok=True,
-            replacements=0,
-            failures=0,
-            bindings=[],
-            failures_list=[],
+            status="ok",
+            failures=[],
+            materialized=[],
+            diagnostics=[
+                "stack_lowering_source=alias_facts bindings=0 materialized=0",
+                f"stable_stack_fact_count={stable_stack_fact_count}",
+                f"stable_bp_fact_count={stable_bp_fact_count}",
+            ],
         )
 
     codegen._inertia_stack_bindings = bindings
@@ -211,28 +281,47 @@ def lower_stack_accesses_from_alias_facts_8616(
 
     materialized_count = 0
     failures_list: list[StackSlotFailure] = []
+    materialized: list[tuple[int, str]] = []
 
     for binding in bindings:
         try:
-            offset = getattr(binding, "bp_offset", None)
+            offset = _canonical_stack_offset_8616(getattr(binding, "bp_offset", None))
             if offset is None:
-                offset = getattr(binding, "offset", None)
+                offset = _canonical_stack_offset_8616(getattr(binding, "offset", None))
             size = getattr(binding, "size", None)
             if size is None or not isinstance(size, int):
                 size = 2
 
-            _materialize_stack_cvar_at_offset(codegen, offset, size)
+            cvar = _materialize_stack_cvar_at_offset(
+                codegen,
+                offset,
+                size,
+                preferred_name=getattr(binding, "var_name", None),
+            )
+            materialized_name = getattr(getattr(cvar, "variable", None), "name", None) or getattr(cvar, "name", None)
             materialized_count += 1
+            materialized.append((int(offset), str(materialized_name or _stack_object_name(int(offset)))))
         except Exception as exc:
-            fallback_offset = getattr(binding, "bp_offset", None) or getattr(binding, "offset", 0)
+            fallback_offset = _canonical_stack_offset_8616(
+                getattr(binding, "bp_offset", None) or getattr(binding, "offset", 0)
+            )
             failures_list.append(
                 StackSlotFailure(
                     offset=fallback_offset,
+                    size=size if isinstance(size, int) else 2,
                     reason=str(exc),
                 )
             )
+            log.debug(
+                "stage=stack_lowering_from_facts function=%#x offset=%r failed: %s",
+                getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+                fallback_offset,
+                exc,
+            )
 
     codegen._inertia_semantic_stack_materialized_count = materialized_count
+    debug_stats["stack_slot_materialized"] = materialized_count
+    debug_stats["stack_slot_failed"] = len(failures_list)
 
     # ── Update STACK lane contract counters ──
     # AGENTS rule: bindings are NOT materialization.
@@ -247,21 +336,21 @@ def lower_stack_accesses_from_alias_facts_8616(
     if len(bindings) > 0 and materialized_count == 0:
         from ..pipeline.errors import PipelineHardError
         raise PipelineHardError(
-            "stack bindings created but no stack variables materialized",
-            layer="lowering",
+            "stable stack slots not materialized",
+            layer="stack_lowering",
         )
 
     ok = len(failures_list) == 0
 
     return StackLoweringResult(
-        ok=ok,
-        replacements=materialized_count,
-        failures=len(failures_list),
-        bindings=bindings,
-        failures_list=failures_list,
+        status="ok" if ok else "partial",
+        failures=failures_list,
+        materialized=materialized,
         diagnostics=[
             "stack_lowering_source=alias_facts "
             f"bindings={len(bindings)} "
             f"materialized={materialized_count}",
+            f"stable_stack_fact_count={stable_stack_fact_count}",
+            f"stable_bp_fact_count={stable_bp_fact_count}",
         ],
     )

@@ -9,6 +9,18 @@ STACK_PROBE_FACT_STAT_KEYS = (
     "stack_arg_materializations",
     "stable_ss_lowering_replacements",
     "stable_ss_lowering_refusals",
+    "callsite_count",
+    "call_target_fact_count",
+    "call_target_materialized_count",
+    "call_arg_fact_count",
+    "call_arg_materialized_count",
+    "bp_slot_arg_value_normalized_count",
+    "pointer_arg_materialized_count",
+    "push_order_reversed_count",
+    "consumed_outgoing_stack_placeholder_count",
+    "stale_target_rejected_count",
+    "known_prototype_arg_mismatch_count",
+    "failure_count",
 )
 
 

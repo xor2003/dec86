@@ -28,6 +28,7 @@ from ..ir.condition_ir import (
     ConditionFailure,
     deduplicate_conditions_8616,
 )
+from ..condition_trace import record_classified_conditions_trace_8616
 
 
 def collect_typed_conditions_from_emulator_8616(
@@ -58,7 +59,13 @@ def collect_typed_conditions_from_emulator_8616(
     try:
         from ..lift_86_16 import Instruction_ANY
         module_cache = Instruction_ANY._inertia_module_condition_cache
-    except Exception:
+    except Exception as ex:
+        import logging
+        logging.getLogger(__name__).warning(
+            "condition transfer import failed: %s: %s",
+            type(ex).__name__,
+            ex,
+        )
         module_cache = {}
 
     all_conditions: list[ConditionIR] = []
@@ -119,6 +126,7 @@ def transfer_typed_conditions_to_codegen_8616(
     conditions = collect_typed_conditions_from_emulator_8616(project, func_addr)
     codegen._inertia_typed_conditions = conditions
     codegen._inertia_condition_facts = conditions  # compatibility alias
+    record_classified_conditions_trace_8616(project, codegen, conditions)
 
     # ── Initialize CONDITION lane contract ──
     # classified = number of ConditionIR facts

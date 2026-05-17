@@ -186,6 +186,13 @@ def test_stack_offset_classifier_normalizes_wrapped_16bit_offsets():
     assert matched_offset == -4
 
 
+def test_stack_slot_identity_normalizes_wrapped_16bit_bp_offsets():
+    wrapped = _decompile.SimStackVariable(0xFFFE, 2, base="bp", name="arg_fffe", region=0x1000)
+    signed = _decompile.SimStackVariable(-2, 2, base="bp", name="iRow", region=0x1000)
+
+    assert _decompile._stack_slot_identity_for_variable(wrapped) == _decompile._stack_slot_identity_for_variable(signed)
+
+
 def test_stack_slot_identity_can_join_adjacent_bp_slices():
     codegen = _make_codegen()
     low = _decompile.structured_c.CVariable(

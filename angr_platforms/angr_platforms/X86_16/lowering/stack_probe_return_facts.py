@@ -43,7 +43,7 @@ def build_typed_stack_probe_return_facts_8616(codegen) -> dict[int, TypedStackPr
             continue
         width = getattr(summary, "helper_return_width", None)
         if not isinstance(width, int) or width <= 0:
-            width = 2
+            continue
         facts[call_node_id] = TypedStackProbeReturnFact8616(
             call_node_id=call_node_id,
             segment_space="ss",

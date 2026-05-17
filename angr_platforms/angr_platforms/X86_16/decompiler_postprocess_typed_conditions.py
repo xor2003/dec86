@@ -27,6 +27,7 @@ from .decompiler_postprocess_utils import (
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
+from .condition_trace import record_materialized_condition_trace_8616
 from .ir.condition_ir import ConditionIR
 from .tail_validation_fingerprint import _expr_fingerprint
 
@@ -177,6 +178,7 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
                         and _expr_fingerprint(new_cond.lhs, project) != _expr_fingerprint(new_cond.rhs, project)
                     ):
                         node.condition = new_cond
+                        record_materialized_condition_trace_8616(project, codegen, key, new_cond)
                         changed = True
 
         # Replace condition in loops
@@ -192,6 +194,7 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
                         and _expr_fingerprint(new_cond.lhs, project) != _expr_fingerprint(new_cond.rhs, project)
                     ):
                         setattr(node, "condition", new_cond)
+                        record_materialized_condition_trace_8616(project, codegen, key, new_cond)
                         changed = True
 
         # Recurse into children

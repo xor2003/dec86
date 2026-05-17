@@ -88,6 +88,29 @@ def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...]) -> str | N
     return None
 
 
+def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name: str | None) -> str | None:
+    if not isinstance(func_name, str) or not func_name:
+        return None
+
+    candidate_names = {func_name}
+    stripped_name = func_name.lstrip("_")
+    if stripped_name and stripped_name != func_name:
+        candidate_names.add(stripped_name)
+
+    decl_re = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$")
+    for line in source_lines:
+        stripped = line.strip()
+        if not stripped or stripped in {"{", "}"}:
+            continue
+        if stripped.startswith(("if ", "while ", "for ", "switch ", "return ", "case ", "default ")):
+            continue
+        decl_match = decl_re.match(stripped)
+        if decl_match is None or decl_match.group("name") not in candidate_names:
+            continue
+        return decl_match.group("args")
+    return None
+
+
 def annotate_function(
     project,
     func_addr: int,
@@ -283,6 +306,46 @@ def apply_x86_16_metadata_annotations(
             source_decl = _source_decl_from_cod_source_lines(source_lines)
             if source_decl is not None:
                 current_proto = getattr(func, "prototype", None)
+                try:
+                    parsed_name, parsed_proto, _ = convert_cproto_to_py(_normalize_c_decl_text(source_decl))
+                except Exception:
+                    parsed_name = None
+                    parsed_proto = None
+                else:
+                    if parsed_proto is not None:
+                        parsed_proto = parsed_proto.with_arch(project.arch)
+                if current_proto is not None and parsed_proto is not None:
+                    current_args = list(getattr(current_proto, "args", ()) or ())
+                    parsed_args = list(getattr(parsed_proto, "args", ()) or ())
+                    if len(current_args) == len(parsed_args):
+                        try:
+                            annotate_function(
+                                project,
+                                func_addr,
+                                name=getattr(func, "name", None) or parsed_name,
+                                prototype=current_proto.__class__(
+                                    current_args,
+                                    parsed_proto.returnty,
+                                    arg_names=getattr(current_proto, "arg_names", None),
+                                    variadic=getattr(current_proto, "variadic", False),
+                                ).with_arch(project.arch),
+                            )
+                        except ValueError:
+                            pass
+                        else:
+                            changed = True
+                elif parsed_proto is not None:
+                    try:
+                        annotate_function(
+                            project,
+                            func_addr,
+                            name=getattr(func, "name", None) or parsed_name,
+                            c_decl=source_decl,
+                        )
+                    except ValueError:
+                        pass
+                    else:
+                        changed = True
                 if current_proto is not None:
                     source_arg_text = _source_args_from_cod_source_lines(source_lines, getattr(func, "name", None))
                     source_arg_names: list[str] = []

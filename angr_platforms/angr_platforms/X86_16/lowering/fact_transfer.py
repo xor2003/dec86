@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 # Layer: Lowering (bridge)
 # Responsibility: transfer semantic alias facts from VEX lifter to codegen.
 # Input: AliasStorageFacts from IR lifting
@@ -36,8 +38,13 @@ def _lift_block_and_collect_facts(project, block_addr: int) -> list[object]:
     try:
         # Re-lift to populate the module cache (keyed by block_addr)
         project.factory.block(block_addr, opt_level=0)
-    except Exception:
-        pass
+    except Exception as ex:
+        import logging
+        logging.getLogger(__name__).debug(
+            "fact transfer block lift failed block_addr=%#x: %s",
+            block_addr,
+            ex,
+        )
 
     # Read from module-level cache in access.py
     from ..access import _inertia_module_alias_fact_cache
@@ -105,12 +112,12 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
                 n = migrate_block_accesses_to_function(ba, function_addr)
                 total_migrated += n
             if total_migrated > 0:
-                import sys
-                sys.stderr.write(
-                    f"[MIGRATE] 0x{function_addr:x}: migrated {total_migrated} "
-                    f"block-keyed accesses from {len(block_addrs)} blocks\n"
+                logging.getLogger(__name__).debug(
+                    "migrated %d block-keyed accesses from %d blocks for 0x%x",
+                    total_migrated,
+                    len(block_addrs),
+                    function_addr,
                 )
-                sys.stderr.flush()
 
     # Read raw semantic accesses from canonical evidence_cache (function-keyed)
     raw_accesses = _evidence_get_accesses(function_addr)

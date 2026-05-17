@@ -13,10 +13,8 @@ def _canonical_stack_base(base: str | None) -> str:
     if not isinstance(base, str) or not base:
         return "bp"
     normalized = base.lower()
-    if normalized in {"bp", "sp"}:
-        return normalized
-    if normalized == "ss":
-        return "ss"
+    if normalized in {"bp", "sp", "ss"}:
+        return "bp"
     return normalized
 
 
@@ -279,11 +277,22 @@ def _alias_identity_for_variable(variable) -> tuple[str, Any] | None:
     return None
 
 
+def _canonical_stack_offset(offset: Any) -> Any:
+    if not isinstance(offset, int):
+        return offset
+    # 16-bit stack slots may surface through wrapped unsigned offsets such as
+    # 0xfffe for BP-2. Canonicalize those identities before local/materialized
+    # consumers compare slots.
+    if 0x8000 <= offset <= 0xFFFF:
+        return offset - 0x10000
+    return offset
+
+
 def _stack_slot_identity_for_variable(variable) -> _StackSlotIdentity | None:
     if not isinstance(variable, SimStackVariable):
         return None
     base = _canonical_stack_base(getattr(variable, "base", None))
-    offset = getattr(variable, "offset", 0)
+    offset = _canonical_stack_offset(getattr(variable, "offset", 0))
     width = getattr(variable, "size", 0) or None
     region = getattr(variable, "region", None)
     return _StackSlotIdentity(base, offset, width, region=region)

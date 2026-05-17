@@ -29,6 +29,8 @@ from . import structuring_diagnostics as _diagnostics
 from . import type_array_matching as _array_match
 from . import type_equivalence_classes as _type_equiv
 from . import type_structure_merging as _struct_merge
+from .condition_trace import record_ast_condition_trace_8616
+from .lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
@@ -266,30 +268,73 @@ def _structuring_codegen_8616(project, codegen) -> bool:
 
     # Alias-completeness gate: structuring cannot run with provisional SS stack.
     # AGENTS rule #1: SS:BP+offset → stack slot → variable, never guess.
-    _assert_alias_complete_8616(codegen)
+    from .pipeline.errors import PipelineHardError
+
+    try:
+        _assert_alias_complete_8616(codegen)
+    except PipelineHardError as ex:
+        codegen._inertia_structuring_failed = True
+        codegen._inertia_structuring_failure_pass = "alias_completeness_gate"
+        codegen._inertia_structuring_failure_error = str(ex)
+        logging.getLogger(__name__).warning(
+            "structuring blocked by incomplete SS alias function=%#x: %s",
+            getattr(getattr(codegen, "cfunc", None), "addr", 0),
+            ex,
+        )
+        return False
 
     # ── Stack lowering (before structuring) ──
     # Must run early: alias facts → stack variables → structuring sees named variables.
     if not getattr(codegen, "_inertia_ss_stack_lowered", False):
+        from .pipeline.errors import PipelineHardError
+
         try:
             from .lowering.real_mode_linear import (
                 lower_stable_ss_linear_stack_dereferences_8616,
             )
             lower_stable_ss_linear_stack_dereferences_8616(codegen)
-        except Exception:
-            pass
+        except PipelineHardError:
+            raise
+        except Exception as ex:
+            codegen._inertia_structuring_failed = True
+            codegen._inertia_structuring_failure_pass = "lower_stable_ss_linear_stack_dereferences_8616"
+            codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
+            logging.getLogger(__name__).warning(
+                "stack lowering setup failed function=%#x stage=%s: %s: %s",
+                getattr(getattr(codegen, "cfunc", None), "addr", 0),
+                "lower_stable_ss_linear_stack_dereferences_8616",
+                type(ex).__name__,
+                ex,
+            )
+            return False
+
         try:
+            from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
             from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
-            lower_stack_accesses_from_alias_facts_8616(codegen)
-        except Exception:
-            pass
+            transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
+            alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+            if isinstance(alias_facts, list) and alias_facts:
+                lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+        except PipelineHardError:
+            raise
+        except Exception as ex:
+            codegen._inertia_structuring_failed = True
+            codegen._inertia_structuring_failure_pass = "lower_stack_accesses_from_alias_facts_8616"
+            codegen._inertia_structuring_failure_error = f"{type(ex).__name__}: {ex}"
+            logging.getLogger(__name__).warning(
+                "stack lowering from facts failed function=%#x stage=%s: %s: %s",
+                getattr(getattr(codegen, "cfunc", None), "addr", 0),
+                "lower_stack_accesses_from_alias_facts_8616",
+                type(ex).__name__,
+                ex,
+            )
+            return False
         codegen._inertia_ss_stack_lowered = True
 
     # ── Hard contract gate: classified > 0 && materialized == 0 → PipelineHardError ──
     # PipelineHardError MUST propagate — never silently caught.
     # Only non-fatal errors (import, attribute) are logged and cause structuring abort.
     from .pipeline.contracts import assert_pipeline_contracts_8616
-    from .pipeline.errors import PipelineHardError
     try:
         assert_pipeline_contracts_8616(codegen)
     except PipelineHardError:
@@ -401,7 +446,14 @@ def _decompile_structuring_8616(self):
     before_collect_started = time.perf_counter()
     before_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
     before_collect_elapsed = time.perf_counter() - before_collect_started
+    if not getattr(self.codegen, "_inertia_typed_conditions_transferred", False):
+        func_addr = getattr(getattr(self.codegen, "cfunc", None), "addr", None)
+        if isinstance(func_addr, int):
+            with contextlib.suppress(Exception):
+                transfer_typed_conditions_to_codegen_8616(self.project, func_addr, self.codegen)
+        self.codegen._inertia_typed_conditions_transferred = True
     changed = _structuring_codegen_8616(self.project, self.codegen)
+    record_ast_condition_trace_8616(self.project, self.codegen, stage="structured")
     after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
     after_collect_started = time.perf_counter()
     after_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)
@@ -501,19 +553,31 @@ def _assert_alias_complete_8616(codegen) -> None:
         return  # No facts recorded for this function — likely not yet lifted with typed IR.
 
     has_ss = False
+    has_ss_stable = False
+    has_ss_failure = False
+    _first_ss_failure_reason = None
     for fact in facts:
         if isinstance(fact, AliasFailure):
             if getattr(fact, "space", None) in {"ss", "SS"}:
                 has_ss = True
-                raise PipelineHardError(
-                    f"structuring before stable stack alias: {fact.reason}",
-                    layer="structuring",
-                )
+                has_ss_failure = True
+                if _first_ss_failure_reason is None:
+                    _first_ss_failure_reason = getattr(fact, "reason", None)
         elif hasattr(fact, "domain") and getattr(fact.domain, "space", None) == "stack":
             has_ss = True
+            has_ss_stable = True
 
     if not has_ss:
         return  # No SS accesses — nothing to block.
+
+    # Only block when SS accesses exist but NONE are successfully classified.
+    # Provisional SP-relative AliasFailures (push/pop/ret) are expected and
+    # should not prevent structuring when BP-relative stack accesses are resolved.
+    if not has_ss_stable and has_ss_failure:
+        raise PipelineHardError(
+            f"structuring before stable stack alias: {_first_ss_failure_reason}",
+            layer="structuring",
+        )
 
 
 def apply_x86_16_decompiler_structuring() -> None:

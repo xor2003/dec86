@@ -49,6 +49,7 @@ from .tail_validation_fingerprint import (
     _extract_same_zero_compare_expr_8616,
     _extract_zero_flag_source_expr_8616,
     _function_for_call_context_8616,
+    _is_runtime_segment_helper_call_8616,
     _lookup_function_for_call_context_8616,
     _location_fingerprint,
     _normalize_zero_flag_comparison_8616,
@@ -805,11 +806,13 @@ def _tail_validation_stage_status(entry: object) -> str:
         normalized = status.lower()
         if normalized in {"stable", "passed"}:
             return "passed"
-        if normalized in {"changed", "unknown", "uncollected"}:
+        if normalized in {"changed", "uncollected"}:
             return normalized
-        return "unknown"
+        if normalized == "unknown":
+            return "uncollected"
+        return "uncollected"
     if "changed" not in entry:
-        return "unknown"
+        return "uncollected"
     return "changed" if bool(entry.get("changed", False)) else "passed"
 
 
@@ -968,9 +971,16 @@ def extract_x86_16_tail_validation_snapshot(function_info: Mapping[str, object] 
             if "changed" in entry:
                 status = "changed" if bool(entry.get("changed", False)) else "stable"
             else:
-                status = "unknown"
+                # No "changed" field and no explicit status means the entry
+                # was persisted without classification metadata.  Mark it as
+                # uncollected so the downstream display layer never emits
+                # "unknown" as a terminal status.
+                status = "uncollected"
+        changed_value = bool(entry.get("changed", False))
+        if not isinstance(entry.get("changed"), bool) and "changed" not in entry:
+            changed_value = False
         stages[stage] = {
-            "changed": bool(entry.get("changed", False)),
+            "changed": changed_value,
             "status": status,
             "mode": entry.get("mode"),
             "verdict": entry.get("verdict"),
@@ -1500,6 +1510,8 @@ def _record_expr_locations(node, project, observed_locations: set[str]) -> None:
         _record_expr_locations(node.rhs, project, observed_locations)
         return
     if isinstance(node, CFunctionCall):
+        if _is_runtime_segment_helper_call_8616(node):
+            return
         for arg in getattr(node, "args", ()) or ():
             _record_expr_locations(arg, project, observed_locations)
         return
@@ -1516,6 +1528,8 @@ def _collect_observed_locations(root, project, mode: str) -> set[str]:
 
     for node in _iter_c_nodes_deep_8616(root):
         if isinstance(node, CFunctionCall):
+            if _is_runtime_segment_helper_call_8616(node):
+                continue
             for arg in getattr(node, "args", ()) or ():
                 _record_expr_locations(arg, project, observed_locations)
         if isinstance(node, CReturn):
@@ -1874,6 +1888,8 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
         if id(node) in suppressed_control_flow_nodes:
             continue
         if isinstance(node, CFunctionCall):
+            if _is_runtime_segment_helper_call_8616(node):
+                continue
             summary = contextual_call_summaries.get(id(node))
             target_addr = _call_summary_target_addr_8616(project, summary)
             call_fingerprint = f"addr:{target_addr:#x}" if isinstance(target_addr, int) else None

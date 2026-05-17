@@ -970,18 +970,35 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
     setattr(codegen, "_inertia_vvar_carrier_deltas", None)
     setattr(codegen, "_inertia_stack_offset_cache", None)
 
+    def _canonical_stack_offset_8616(offset):
+        if not isinstance(offset, int):
+            return offset
+        if 0x8000 <= offset <= 0xFFFF:
+            return offset - 0x10000
+        return offset
+
     def stack_cvar(access: RealModeLinearStackAccess8616):
+        displacement = _canonical_stack_offset_8616(access.displacement)
         target_type = _type_for_access_width_8616(access.width)
         variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
         if isinstance(variables_in_use, dict):
             for variable, cvar in variables_in_use.items():
-                if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == access.displacement:
+                if (
+                    isinstance(variable, SimStackVariable)
+                    and _canonical_stack_offset_8616(getattr(variable, "offset", None)) == displacement
+                ):
                     if getattr(variable, "size", None) != (access.width or 1):
                         variable.size = access.width or 1
                     if getattr(cvar, "variable_type", None) is None:
                         cvar.variable_type = target_type
                     return cvar
-        variable = SimStackVariable(access.displacement, access.width or 1, base="bp", name=f"s_{access.displacement & 0xffff:x}", region=getattr(codegen.cfunc, "addr", None))
+        variable = SimStackVariable(
+            displacement,
+            access.width or 1,
+            base="bp",
+            name=f"s_{displacement & 0xffff:x}",
+            region=getattr(codegen.cfunc, "addr", None),
+        )
         cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
         if isinstance(variables_in_use, dict):
             variables_in_use[variable] = cvar

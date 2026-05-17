@@ -16,7 +16,14 @@ from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     build_typed_stack_probe_return_facts_8616,
 )
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
+from angr_platforms.X86_16.decompiler_postprocess_utils import _same_c_expression_8616
 from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
+
+
+def _args_match(args: list, expected: list) -> bool:
+    if len(args) != len(expected):
+        return False
+    return all(_same_c_expression_8616(a, e) for a, e in zip(args, expected))
 
 
 class _DummyCodegen:
@@ -143,6 +150,18 @@ def test_stack_probe_typed_return_state_refuses_partial_recovery_when_summary_ar
         "stack_arg_materializations": 0,
         "stable_ss_lowering_replacements": 0,
         "stable_ss_lowering_refusals": 0,
+        "callsite_count": 0,
+        "call_target_fact_count": 0,
+        "call_target_materialized_count": 0,
+        "call_arg_fact_count": 0,
+        "call_arg_materialized_count": 0,
+        "bp_slot_arg_value_normalized_count": 0,
+        "pointer_arg_materialized_count": 0,
+        "push_order_reversed_count": 0,
+        "consumed_outgoing_stack_placeholder_count": 0,
+        "stale_target_rejected_count": 0,
+        "known_prototype_arg_mismatch_count": 0,
+        "failure_count": 0,
     }
 
 
@@ -193,11 +212,28 @@ def test_stack_probe_fact_stats_split_arg_pickup_from_later_lowering_refusal():
         "stack_arg_materializations": 3,
         "stable_ss_lowering_replacements": 0,
         "stable_ss_lowering_refusals": 1,
+        "callsite_count": 0,
+        "call_target_fact_count": 0,
+        "call_target_materialized_count": 0,
+        "call_arg_fact_count": 0,
+        "call_arg_materialized_count": 0,
+        "bp_slot_arg_value_normalized_count": 0,
+        "pointer_arg_materialized_count": 0,
+        "push_order_reversed_count": 0,
+        "consumed_outgoing_stack_placeholder_count": 0,
+        "stale_target_rejected_count": 0,
+        "known_prototype_arg_mismatch_count": 0,
+        "failure_count": 0,
     }
     assert (
         format_stack_probe_fact_stats_8616(codegen)
         == "summaries_attached=0 stack_probe_summaries=1 ss_stack_address_returns=1 "
-        "stack_arg_materializations=3 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=1"
+        "stack_arg_materializations=3 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=1 "
+        "callsite_count=0 call_target_fact_count=0 call_target_materialized_count=0 "
+        "call_arg_fact_count=0 call_arg_materialized_count=0 "
+        "bp_slot_arg_value_normalized_count=0 pointer_arg_materialized_count=0 "
+        "push_order_reversed_count=0 consumed_outgoing_stack_placeholder_count=0 "
+        "stale_target_rejected_count=0 known_prototype_arg_mismatch_count=0 failure_count=0"
     )
 
 
@@ -302,7 +338,7 @@ def test_stack_probe_materialized_arg_prunes_adjacent_segment_metadata_stores():
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
     assert changed is True
-    assert call.args == [zero_arg]
+    assert _args_match(call.args, [zero_arg])
     assert len(codegen.cfunc.statements.statements) == 2
     assert isinstance(codegen.cfunc.statements.statements[1], CExpressionStatement)
 
@@ -410,7 +446,7 @@ def test_stack_probe_materialized_arg_prunes_only_current_call_metadata():
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
     assert changed is True
-    assert call_a.args == [zero_arg]
+    assert _args_match(call_a.args, [zero_arg])
     assert codegen.cfunc.statements.statements[2] is stray_metadata
     assert codegen.cfunc.statements.statements[3].expr is call_b
 
@@ -679,7 +715,7 @@ def test_stack_probe_materialize_preserves_typed_ss_pickup_across_call_and_globa
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
     assert changed is True
-    assert call.args == [zero_arg]
+    assert _args_match(call.args, [zero_arg])
 
 
 def test_stack_probe_materialize_rebinds_stale_summary_node_ids_by_callsite_addr():
@@ -765,7 +801,7 @@ def test_stack_probe_materialize_rebinds_stale_summary_node_ids_by_callsite_addr
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
     assert changed is True
-    assert call.args == [zero_arg]
+    assert _args_match(call.args, [zero_arg])
     assert id(probe_call) in codegen._inertia_callsite_summaries
     assert id(call) in codegen._inertia_callsite_summaries
 
@@ -854,7 +890,7 @@ def test_stack_probe_materialize_carries_probe_state_across_sibling_cstatements_
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
     assert changed is True
-    assert clear_call.args == [zero_arg]
+    assert _args_match(clear_call.args, [zero_arg])
 
 
 def test_stack_probe_builder_records_only_typed_ss_width_bearing_facts():
@@ -1031,7 +1067,7 @@ def test_stack_probe_materialized_arg_prunes_dead_stack_address_carriers():
     assert codegen.cfunc.statements.statements == [probe, codegen.cfunc.statements.statements[1]]
     assert isinstance(codegen.cfunc.statements.statements[1], CExpressionStatement)
     assert codegen.cfunc.statements.statements[1].expr is call
-    assert call.args == [zero_arg]
+    assert _args_match(call.args, [zero_arg])
 
 
 def test_stack_probe_dead_carrier_pruning_keeps_later_reads():

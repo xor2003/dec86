@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import sys
 
@@ -10,10 +11,12 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CConstant,
     CFunctionCall,
+    CIndexedVariable,
     CTypeCast,
     CUnaryOp,
     CVariable,
 )
+from angr.sim_type import SimTypePointer
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from .callee_name_normalization import normalize_callee_name_8616
@@ -24,6 +27,7 @@ from .decompiler_postprocess_utils import (
     _match_bp_stack_dereference_8616,
     _match_segmented_dereference_8616,
     _same_c_expression_8616,
+    _stack_bp_displacement_8616,
     _structured_codegen_node_8616,
 )
 
@@ -67,6 +71,491 @@ def _c_constant_int_value(node) -> int | None:
     return None
 
 
+def _tail_validation_stack_alias_refusal_stats_8616(codegen) -> dict[str, int]:
+    stats = getattr(codegen, "_inertia_tail_validation_stack_alias_refusals", None)
+    if not isinstance(stats, dict):
+        stats = {}
+        codegen._inertia_tail_validation_stack_alias_refusals = stats
+    return stats
+
+
+def _record_stack_alias_refusal_8616(codegen, reason: str) -> None:
+    if codegen is None or not isinstance(reason, str) or not reason:
+        return
+    stats = _tail_validation_stack_alias_refusal_stats_8616(codegen)
+    stats[reason] = int(stats.get(reason, 0) or 0) + 1
+
+
+def _stack_slot_fingerprint_from_slot_8616(offset: int, size: int | None = None) -> str:
+    size_text = f":size{size}" if isinstance(size, int) and size > 0 else ""
+    return f"stack_slot:SS:BP{offset:+#x}{size_text}"
+
+
+def _lookup_widened_carrier_proof_8616(value, codegen):
+    mapping = getattr(codegen, "_inertia_tail_validation_widened_carriers", None)
+    if not isinstance(mapping, dict):
+        return None
+    variable = getattr(value, "variable", None)
+    name = getattr(value, "name", None) or getattr(variable, "name", None)
+    size = getattr(variable, "size", None)
+    offset = getattr(variable, "offset", None)
+    keys = [
+        id(value),
+        id(variable) if variable is not None else None,
+        name,
+        (name, size) if isinstance(name, str) and isinstance(size, int) else None,
+        (offset, size) if isinstance(offset, int) and isinstance(size, int) else None,
+    ]
+    for key in keys:
+        if key is not None and key in mapping:
+            return mapping[key]
+    return None
+
+
+def _candidate_widened_keys_8616(value) -> tuple[object, ...]:
+    variable = getattr(value, "variable", None)
+    name = getattr(value, "name", None) or getattr(variable, "name", None)
+    size = getattr(variable, "size", None)
+    offset = getattr(variable, "offset", None)
+    return tuple(
+        key
+        for key in (
+            id(value),
+            id(variable) if variable is not None else None,
+            name,
+            (name, size) if isinstance(name, str) and isinstance(size, int) else None,
+            (offset, size) if isinstance(offset, int) and isinstance(size, int) else None,
+        )
+        if key is not None
+    )
+
+
+def _widened_carrier_slot_fingerprint_8616(var_name: str | None, *, value=None, variable=None, codegen) -> str | None:
+    proof = _lookup_widened_carrier_proof_8616(value, codegen) if value is not None else None
+    if proof is None and isinstance(var_name, str):
+        mapping = getattr(codegen, "_inertia_tail_validation_widened_carriers", None)
+        if isinstance(mapping, dict):
+            proof = mapping.get(var_name)
+    if not isinstance(proof, dict):
+        _record_stack_alias_refusal_8616(codegen, "carrier_no_recurrence_proof")
+        return None
+    offset = proof.get("offset")
+    size = proof.get("size")
+    carrier_size = proof.get("carrier_size")
+    if not isinstance(offset, int):
+        _record_stack_alias_refusal_8616(codegen, "carrier_no_stable_slot")
+        return None
+    if not isinstance(size, int):
+        _record_stack_alias_refusal_8616(codegen, "carrier_no_materialized_local")
+        return None
+    if isinstance(carrier_size, int) and size <= carrier_size:
+        _record_stack_alias_refusal_8616(codegen, "carrier_width_not_widened")
+        return None
+    return _stack_slot_fingerprint_from_slot_8616(offset, size)
+
+
+def _stack_name_is_generic_for_validation_8616(name: object) -> bool:
+    return isinstance(name, str) and re.fullmatch(
+        r"(?:arg_\d+|local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)",
+        name,
+    ) is not None
+
+
+def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | None = None):
+    node = _strip_validation_casts(node)
+    if not isinstance(node, CVariable):
+        return None
+    variable = getattr(node, "variable", None)
+    if variable is None:
+        return None
+    codegen = getattr(node, "codegen", None)
+    if codegen is None:
+        return None
+    name = getattr(node, "name", None) or getattr(variable, "name", None)
+    if not _stack_name_is_generic_for_validation_8616(name):
+        return None
+    variable_id = id(variable)
+    if seen_var_ids is None:
+        seen_var_ids = set()
+    if variable_id in seen_var_ids:
+        return None
+    seen_var_ids.add(variable_id)
+    try:
+        from .lowering.real_mode_linear import _ensure_assignment_maps_8616
+    except Exception as ex:
+        _v_print("assignment map import failed: %s", ex)
+        return None
+    try:
+        var_id_map, name_map, reg_map, _multi_var, _multi_name, _multi_reg, first_name_map = _ensure_assignment_maps_8616(codegen)
+    except Exception:
+        return None
+    def _acceptable_stack_alias_rhs(value):
+        value = _strip_validation_casts(value)
+        if isinstance(value, CVariable):
+            return value
+        if isinstance(value, CIndexedVariable):
+            return value
+        if isinstance(value, CUnaryOp) and value.op in {"Dereference", "Reference"}:
+            return value
+        return None
+
+    rhs = var_id_map.get(variable_id)
+    if rhs is None and isinstance(name, str):
+        rhs = name_map.get(name)
+    if rhs is None and isinstance(variable, SimRegisterVariable):
+        reg = getattr(variable, "reg", None)
+        size = getattr(variable, "size", None)
+        if isinstance(reg, int) and isinstance(size, int):
+            rhs = reg_map.get((reg, size))
+    resolved_rhs = _acceptable_stack_alias_rhs(rhs)
+    if resolved_rhs is not None and resolved_rhs is not node:
+        return resolved_rhs
+    if isinstance(name, str):
+        # Validation-only fallback: generic stack carriers often receive a
+        # final trivial/non-stack update after their initial widened stack-slot
+        # seed is established. Preserve the earliest explicit stack proof for
+        # fingerprint canonicalization when the direct map is non-stack noise.
+        first_rhs = _acceptable_stack_alias_rhs(first_name_map.get(name))
+        if first_rhs is not None and first_rhs is not node:
+            return first_rhs
+    return None
+
+
+def _debug_tail_stack_alias_8616(
+    codegen,
+    *,
+    node=None,
+    candidate: str | None = None,
+    alias_keys: tuple[str, ...] = (),
+    binding: str | None = None,
+    final: str | None = None,
+) -> None:
+    if not os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS"):
+        return
+    cfunc = getattr(codegen, "cfunc", None) if codegen is not None else None
+    func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+    delta = getattr(getattr(codegen, "project", None), "_inertia_original_linear_delta", None) if codegen is not None else None
+    original = func_addr + delta if isinstance(func_addr, int) and isinstance(delta, int) else func_addr
+    if original != 0x10678:
+        return
+    try:
+        c_repr = node.c_repr(indent=0) if node is not None else None
+    except Exception:  # noqa: BLE001
+        c_repr = str(node) if node is not None else None
+    sys.stderr.write(
+        "[TAIL_STACK_ALIAS] "
+        f"func={original:#x} raw={c_repr!r} candidate={candidate!r} "
+        f"alias_keys={alias_keys!r} binding={binding!r} final={final!r}\n"
+    )
+    sys.stderr.flush()
+
+
+def _debug_tail_stack_alias_indexed_8616(
+    codegen,
+    *,
+    node=None,
+    base_var=None,
+    index_value=None,
+    bridge_key=None,
+    bridge_value=None,
+    alias_base_offset=None,
+    fallback_offset=None,
+    selected=None,
+    note: str,
+) -> None:
+    if not os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS"):
+        return
+    cfunc = getattr(codegen, "cfunc", None) if codegen is not None else None
+    func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
+    delta = getattr(getattr(codegen, "project", None), "_inertia_original_linear_delta", None) if codegen is not None else None
+    original = func_addr + delta if isinstance(func_addr, int) and isinstance(delta, int) else func_addr
+    if original != 0x10678:
+        return
+    try:
+        c_repr = node.c_repr(indent=0) if node is not None else None
+    except Exception:  # noqa: BLE001
+        c_repr = str(node) if node is not None else None
+    base_offset = getattr(base_var, "offset", None)
+    base_size = getattr(base_var, "size", None)
+    base_name = getattr(base_var, "name", None)
+    sys.stderr.write(
+        "[TAIL_STACK_ALIAS_INDEXED] "
+        f"func={original:#x} note={note} raw={c_repr!r} "
+        f"base_name={base_name!r} base_offset={base_offset!r} base_size={base_size!r} "
+        f"index={index_value!r} bridge_key={bridge_key!r} bridge_value={bridge_value!r} "
+        f"alias_base_offset={alias_base_offset!r} fallback_offset={fallback_offset!r} "
+        f"selected={selected!r}\n"
+    )
+    sys.stderr.flush()
+
+
+def _stack_alias_map_8616(codegen) -> dict[int, tuple[object, int]]:
+    cached = getattr(codegen, "_inertia_stack_pointer_aliases_for_cvars", None)
+    cfunc = getattr(codegen, "cfunc", None)
+    root = getattr(cfunc, "statements", None)
+    if (
+        isinstance(cached, tuple)
+        and len(cached) == 2
+        and cached[0] is root
+        and isinstance(cached[1], dict)
+    ):
+        return cached[1]
+    if root is None:
+        return {}
+
+    def _is_pointer_capable_stack_variable(var: object, cvar: object | None = None) -> bool:
+        if not isinstance(var, SimStackVariable):
+            return False
+        if getattr(var, "base", None) != "bp":
+            return False
+        size = getattr(var, "size", None)
+        if isinstance(size, int) and size >= 2:
+            return True
+        var_type = getattr(cvar, "variable_type", None)
+        return isinstance(var_type, SimTypePointer)
+
+    def _is_bp_stack_var(expr) -> bool:
+        expr = _strip_validation_casts(expr)
+        if isinstance(expr, CUnaryOp) and expr.op == "Reference":
+            expr = _strip_validation_casts(expr.operand)
+        if not isinstance(expr, CVariable):
+            return False
+        var = getattr(expr, "variable", None)
+        return isinstance(var, SimStackVariable) and getattr(var, "base", None) == "bp"
+
+    def _resolve_alias_expr(expr, aliases):
+        expr = _strip_validation_casts(expr)
+        if isinstance(expr, CVariable):
+            var = getattr(expr, "variable", None)
+            if not isinstance(var, SimStackVariable) or getattr(var, "base", None) != "bp":
+                return None
+            alias = aliases.get(id(var))
+            if alias is not None:
+                return alias
+            if _is_pointer_capable_stack_variable(var, expr):
+                return expr, 0
+            return None
+        if isinstance(expr, CUnaryOp) and expr.op == "Reference":
+            operand = _strip_validation_casts(expr.operand)
+            if _is_bp_stack_var(operand):
+                return operand, 0
+            return None
+        if isinstance(expr, CBinaryOp) and expr.op in {"Add", "Sub"}:
+            lhs = _resolve_alias_expr(expr.lhs, aliases)
+            rhs = _resolve_alias_expr(expr.rhs, aliases)
+            lhs_value = _c_constant_int_value(_strip_validation_casts(expr.lhs))
+            rhs_value = _c_constant_int_value(_strip_validation_casts(expr.rhs))
+            if lhs is not None and isinstance(rhs_value, int):
+                base, offset = lhs
+                return base, offset + (rhs_value if expr.op == "Add" else -rhs_value)
+            if rhs is not None and isinstance(lhs_value, int) and expr.op == "Add":
+                base, offset = rhs
+                return base, offset + lhs_value
+        return None
+
+    aliases: dict[int, tuple[object, int]] = {}
+    changed = True
+    while changed:
+        changed = False
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, CAssignment):
+                continue
+            lhs = _strip_validation_casts(getattr(node, "lhs", None))
+            if not isinstance(lhs, CVariable):
+                continue
+            lhs_var = getattr(lhs, "variable", None)
+            if not isinstance(lhs_var, SimStackVariable) or getattr(lhs_var, "base", None) != "bp":
+                continue
+            resolved = _resolve_alias_expr(getattr(node, "rhs", None), aliases)
+            if resolved is None:
+                continue
+            if not _is_pointer_capable_stack_variable(lhs_var, lhs):
+                rhs_expr = _strip_validation_casts(getattr(node, "rhs", None))
+                if not (
+                    isinstance(rhs_expr, CUnaryOp)
+                    and rhs_expr.op == "Reference"
+                    or isinstance(rhs_expr, CBinaryOp)
+                ):
+                    continue
+            if aliases.get(id(lhs_var)) != resolved:
+                aliases[id(lhs_var)] = resolved
+                changed = True
+    setattr(codegen, "_inertia_stack_pointer_aliases_for_cvars", (root, aliases))
+    setattr(codegen, "_inertia_tail_validation_stack_pointer_aliases", aliases)
+    return aliases
+
+
+def _materialized_local_map_8616(codegen) -> dict[int, tuple[int | None, str | None]]:
+    materialized: dict[int, tuple[int | None, str | None]] = {}
+    cfunc = getattr(codegen, "cfunc", None)
+    variables_in_use = getattr(cfunc, "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        for variable, cvar in variables_in_use.items():
+            if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
+                continue
+            offset = getattr(variable, "offset", None)
+            if not isinstance(offset, int):
+                continue
+            size = getattr(variable, "size", None)
+            name = getattr(variable, "name", None) or getattr(cvar, "name", None)
+            materialized[offset] = (size if isinstance(size, int) else None, name if isinstance(name, str) else None)
+    bindings = getattr(codegen, "_inertia_stack_variable_bindings", None)
+    if isinstance(bindings, tuple | list):
+        for binding in bindings:
+            offset = getattr(binding, "bp_offset", None)
+            size = getattr(binding, "size", None)
+            name = getattr(binding, "var_name", None)
+            if isinstance(offset, int) and offset not in materialized:
+                materialized[offset] = (size if isinstance(size, int) else None, name if isinstance(name, str) else None)
+    return materialized
+
+
+def _stack_canonicalization_bridges_8616(codegen) -> dict[tuple[str, int, int], int]:
+    bridges = getattr(codegen, "_inertia_stack_canonicalization_bridges", None)
+    return bridges if isinstance(bridges, dict) else {}
+
+
+def canonicalize_stack_alias_fingerprint_8616(value, *, stack_alias_map, materialized_local_map):
+    if not isinstance(value, int):
+        return None
+    entry = materialized_local_map.get(value)
+    if entry is None:
+        return None
+    size, name = entry
+    return _stack_slot_fingerprint_from_slot_8616(value, size)
+
+
+def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen, *, source: str, node=None) -> str:
+    materialized_local_map = _materialized_local_map_8616(codegen) if codegen is not None else {}
+    stack_alias_map = _stack_alias_map_8616(codegen) if codegen is not None else {}
+    normalized = canonicalize_stack_alias_fingerprint_8616(
+        offset,
+        stack_alias_map=stack_alias_map,
+        materialized_local_map=materialized_local_map,
+    )
+    if normalized is not None:
+        _debug_tail_stack_alias_8616(
+            codegen,
+            node=node,
+            candidate=f"stack:{offset:+#x}",
+            alias_keys=tuple(sorted(str(key) for key in stack_alias_map.keys())),
+            binding=f"bp{offset:+#x}",
+            final=normalized,
+        )
+        return normalized
+    if codegen is None:
+        return f"stack:{offset:+#x}"
+    has_alias_context = bool(stack_alias_map or materialized_local_map or getattr(codegen, "_inertia_stack_variable_bindings", None))
+    if has_alias_context:
+        unresolved = f"unresolved_stack_carrier:SS:BP{offset:+#x}:{source}"
+        _debug_tail_stack_alias_8616(
+            codegen,
+            node=node,
+            candidate=f"stack:{offset:+#x}",
+            alias_keys=tuple(sorted(str(key) for key in stack_alias_map.keys())),
+            binding=None,
+            final=unresolved,
+        )
+        return unresolved
+    return f"stack:{offset:+#x}"
+
+
+def _resolve_stack_alias_base_offset_8616(base_expr, codegen, *, seen: set[int] | None = None) -> int | None:
+    if seen is None:
+        seen = set()
+    while isinstance(base_expr, CTypeCast):
+        base_expr = base_expr.expr
+    if isinstance(base_expr, CUnaryOp) and base_expr.op == "Reference":
+        base_expr = base_expr.operand
+        while isinstance(base_expr, CTypeCast):
+            base_expr = base_expr.expr
+    if not isinstance(base_expr, CVariable):
+        return None
+    variable = getattr(base_expr, "variable", None)
+    if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
+        return None
+    variable_id = id(variable)
+    if variable_id in seen:
+        return None
+    seen.add(variable_id)
+    alias_entry = _stack_alias_map_8616(codegen).get(variable_id)
+    if alias_entry is not None:
+        alias_base_expr, alias_offset = alias_entry
+        base_offset = _resolve_stack_alias_base_offset_8616(alias_base_expr, codegen, seen=seen)
+        if isinstance(base_offset, int) and isinstance(alias_offset, int):
+            return base_offset + alias_offset
+        _record_stack_alias_refusal_8616(codegen, "stack_alias_ambiguous_offset")
+        return None
+    offset = getattr(variable, "offset", None)
+    return offset if isinstance(offset, int) else None
+
+
+def _resolve_stack_offset_from_indexed_8616(node, project=None) -> int | None:
+    node = _strip_validation_casts(node)
+    if isinstance(node, CUnaryOp) and node.op == "Reference":
+        node = _strip_validation_casts(node.operand)
+    if not isinstance(node, CIndexedVariable):
+        return None
+    base = _strip_validation_casts(getattr(node, "variable", None))
+    index = _strip_validation_casts(getattr(node, "index", None))
+    index_value = _c_constant_int_value(index)
+    if not isinstance(index_value, int):
+        return None
+    codegen = getattr(node, "codegen", None)
+    if isinstance(base, CVariable):
+        base_var = getattr(base, "variable", None)
+        if isinstance(base_var, SimStackVariable) and codegen is not None:
+            bridge_key = ("indexed_value", id(base_var), index_value)
+            bridged = _stack_canonicalization_bridges_8616(codegen).get(bridge_key)
+            _debug_tail_stack_alias_indexed_8616(
+                codegen,
+                node=node,
+                base_var=base_var,
+                index_value=index_value,
+                bridge_key=bridge_key,
+                bridge_value=bridged,
+                note="resolve_indexed_before_alias",
+            )
+            if isinstance(bridged, int):
+                return bridged
+    combined = CBinaryOp(
+        "Add",
+        base,
+        CConstant(index_value, getattr(index, "type", None), codegen=codegen),
+        codegen=codegen,
+    )
+    displacement = _stack_bp_displacement_8616(combined, project, codegen)
+    if isinstance(displacement, int):
+        return displacement
+    canonical_offset = _resolve_stack_alias_base_offset_8616(base, codegen) if codegen is not None else None
+    if isinstance(canonical_offset, int):
+        _debug_tail_stack_alias_indexed_8616(
+            codegen,
+            node=node,
+            base_var=getattr(base, "variable", None) if isinstance(base, CVariable) else None,
+            index_value=index_value,
+            alias_base_offset=canonical_offset,
+            selected=canonical_offset + index_value,
+            note="resolve_indexed_alias_base",
+        )
+        return canonical_offset + index_value
+    if isinstance(base, CVariable):
+        variable = getattr(base, "variable", None)
+        offset = getattr(variable, "offset", None)
+        if isinstance(variable, SimStackVariable) and isinstance(offset, int):
+            _debug_tail_stack_alias_indexed_8616(
+                codegen,
+                node=node,
+                base_var=variable,
+                index_value=index_value,
+                fallback_offset=offset,
+                selected=offset + index_value,
+                note="resolve_indexed_fallback",
+            )
+            return offset + index_value
+    return None
+
+
 def _strip_validation_casts(node):
     while isinstance(node, CTypeCast):
         node = node.expr
@@ -103,7 +592,12 @@ def _stack_word_pair_fingerprint(node, project) -> str | None:
         return None
     if high_offset != low_offset + 1:
         return None
-    return f"stack:{low_offset:+#x}"
+    return _canonical_or_unresolved_stack_fingerprint_8616(
+        low_offset,
+        getattr(node, "codegen", None),
+        source="word_pair",
+        node=node,
+    )
 
 
 def _stack_byte_offset_from_expr_8616(node, project) -> int | None:
@@ -115,8 +609,142 @@ def _stack_byte_offset_from_expr_8616(node, project) -> int | None:
         if isinstance(offset, int):
             return offset
     if isinstance(node, CUnaryOp) and node.op == "Dereference":
+        bp_disp = _match_bp_stack_dereference_8616(node, project)
+        if isinstance(bp_disp, int):
+            return bp_disp
+        operand = _strip_validation_casts(node.operand)
+        if isinstance(operand, CIndexedVariable):
+            base = _strip_validation_casts(getattr(operand, "variable", None))
+            index = _strip_validation_casts(getattr(operand, "index", None))
+            if isinstance(base, CUnaryOp) and base.op == "Reference":
+                base = _strip_validation_casts(base.operand)
+            base_var = getattr(base, "variable", None) if isinstance(base, CVariable) else None
+            index_value = _c_constant_int_value(index)
+            codegen = getattr(node, "codegen", None)
+            if isinstance(base_var, SimStackVariable) and isinstance(index_value, int) and codegen is not None:
+                bridged = _stack_canonicalization_bridges_8616(codegen).get(("indexed_deref", id(base_var), index_value))
+                if isinstance(bridged, int):
+                    return bridged
+        indexed_offset = _resolve_stack_offset_from_indexed_8616(node.operand, project)
+        if isinstance(indexed_offset, int):
+            return indexed_offset
         return _match_bp_stack_dereference_8616(node, project)
+    indexed_offset = _resolve_stack_offset_from_indexed_8616(node, project)
+    if isinstance(indexed_offset, int):
+        return indexed_offset
     return None
+
+
+def _stack_indexed_location_fingerprint_8616(node, project=None) -> str | None:
+    while isinstance(node, CTypeCast):
+        node = node.expr
+    if isinstance(node, CUnaryOp) and node.op == "Reference":
+        node = node.operand
+        while isinstance(node, CTypeCast):
+            node = node.expr
+    if not isinstance(node, CIndexedVariable):
+        return None
+    base = getattr(node, "variable", None)
+    index = getattr(node, "index", None)
+    while isinstance(base, CTypeCast):
+        base = base.expr
+    while isinstance(index, CTypeCast):
+        index = index.expr
+    if isinstance(base, CUnaryOp) and base.op == "Reference":
+        base = base.operand
+        while isinstance(base, CTypeCast):
+            base = base.expr
+    index_value = _c_constant_int_value(index)
+    if not isinstance(index_value, int):
+        return None
+    codegen = getattr(node, "codegen", None)
+    if isinstance(base, CVariable):
+        base_var = getattr(base, "variable", None)
+        if isinstance(base_var, SimStackVariable) and codegen is not None:
+            bridge_key = ("indexed_value", id(base_var), index_value)
+            bridged = _stack_canonicalization_bridges_8616(codegen).get(bridge_key)
+            _debug_tail_stack_alias_indexed_8616(
+                codegen,
+                node=node,
+                base_var=base_var,
+                index_value=index_value,
+                bridge_key=bridge_key,
+                bridge_value=bridged,
+                note="indexed_location_before_alias",
+            )
+            if isinstance(bridged, int):
+                return _canonical_or_unresolved_stack_fingerprint_8616(
+                    bridged,
+                    codegen,
+                    source="indexed_bridge",
+                    node=node,
+                )
+    combined = CBinaryOp(
+        "Add",
+        base,
+        CConstant(index_value, getattr(index, "type", None), codegen=codegen),
+        codegen=codegen,
+    )
+    displacement = _stack_bp_displacement_8616(combined, project, codegen)
+    if isinstance(displacement, int):
+        return _canonical_or_unresolved_stack_fingerprint_8616(
+            displacement,
+            codegen,
+            source="indexed_combined",
+            node=node,
+        )
+    canonical_offset = _resolve_stack_alias_base_offset_8616(base, codegen) if codegen is not None else None
+    if isinstance(canonical_offset, int):
+        _debug_tail_stack_alias_indexed_8616(
+            codegen,
+            node=node,
+            base_var=getattr(base, "variable", None) if isinstance(base, CVariable) else None,
+            index_value=index_value,
+            alias_base_offset=canonical_offset,
+            selected=canonical_offset + index_value,
+            note="indexed_location_alias_base",
+        )
+        canonical_offset += index_value
+        normalized = canonicalize_stack_alias_fingerprint_8616(
+            canonical_offset,
+            stack_alias_map=_stack_alias_map_8616(codegen),
+            materialized_local_map=_materialized_local_map_8616(codegen),
+        )
+        if normalized is not None:
+            return normalized
+        _record_stack_alias_refusal_8616(codegen, "stack_alias_no_materialized_local")
+    if not isinstance(base, CVariable):
+        codegen = getattr(node, "codegen", None)
+        _record_stack_alias_refusal_8616(codegen, "stack_alias_missing_binding")
+        return None
+    variable = getattr(base, "variable", None)
+    offset = getattr(variable, "offset", None)
+    if not isinstance(variable, SimStackVariable) or not isinstance(offset, int):
+        codegen = getattr(node, "codegen", None)
+        _record_stack_alias_refusal_8616(codegen, "stack_alias_missing_binding")
+        return None
+    size = getattr(variable, "size", None)
+    if isinstance(size, int) and size > 0:
+        direct_slot = _stack_slot_fingerprint_from_slot_8616(offset + index_value, size)
+        if direct_slot is not None:
+            return direct_slot
+    if codegen is not None:
+        _record_stack_alias_refusal_8616(codegen, "stack_alias_ambiguous_offset")
+        _debug_tail_stack_alias_indexed_8616(
+            codegen,
+            node=node,
+            base_var=variable if isinstance(variable, SimStackVariable) else None,
+            index_value=index_value,
+            fallback_offset=offset if isinstance(offset, int) else None,
+            selected=(offset + index_value) if isinstance(offset, int) else None,
+            note="indexed_location_fallback",
+        )
+    return _canonical_or_unresolved_stack_fingerprint_8616(
+        offset + index_value,
+        codegen,
+        source="indexed_fallback",
+        node=node,
+    )
 
 
 def _stack_byte_offset_from_scaled_expr_8616(node, project, *, scale: int) -> int | None:
@@ -276,6 +904,15 @@ def _simplify_expr_for_fingerprint_8616(node):
     return node
 
 
+def _flatten_additive_terms_8616(node, sign: int = 1) -> tuple[tuple[int, object], ...]:
+    node = _strip_validation_casts(node)
+    if isinstance(node, CBinaryOp) and node.op == "Add":
+        return _flatten_additive_terms_8616(node.lhs, sign) + _flatten_additive_terms_8616(node.rhs, sign)
+    if isinstance(node, CBinaryOp) and node.op == "Sub":
+        return _flatten_additive_terms_8616(node.lhs, sign) + _flatten_additive_terms_8616(node.rhs, -sign)
+    return ((sign, node),)
+
+
 def _expr_fingerprint(node, project) -> str:
     if node is None:
         return "none"
@@ -291,7 +928,22 @@ def _expr_fingerprint(node, project) -> str:
         return f"const:{node.value!r}"
     if isinstance(node, CVariable):
         return _location_fingerprint(node, project)
+    indexed_stack_location = _stack_indexed_location_fingerprint_8616(node, project)
+    if indexed_stack_location is not None:
+        return indexed_stack_location
     if isinstance(node, CUnaryOp):
+        indexed_stack_location = _stack_indexed_location_fingerprint_8616(node, project)
+        if indexed_stack_location is not None:
+            return indexed_stack_location
+        if node.op == "Dereference":
+            deref_location = _location_fingerprint(node, project)
+            if isinstance(deref_location, str) and deref_location.startswith(
+                ("stack:", "stack_slot:", "unresolved_stack_carrier:")
+            ):
+                return deref_location
+            operand_fp = _expr_fingerprint(node.operand, project)
+            if isinstance(operand_fp, str) and operand_fp.startswith("stack_slot:"):
+                return operand_fp
         operand = getattr(node, "operand", None)
         if node.op == "Not" and isinstance(operand, CBinaryOp):
             inverted = _invert_cmp_op_8616(operand.op)
@@ -301,10 +953,30 @@ def _expr_fingerprint(node, project) -> str:
                 return f"{inverted}({lhs},{rhs})"
         return f"{node.op}({_expr_fingerprint(node.operand, project)})"
     if isinstance(node, CBinaryOp):
+        if node.op in {"Add", "Sub"}:
+            parts: list[str] = []
+            const_total = 0
+            for sign, term in _flatten_additive_terms_8616(node):
+                const_value = _c_constant_int_value(term)
+                if isinstance(const_value, int):
+                    const_total += sign * const_value
+                    continue
+                part = _expr_fingerprint(term, project)
+                if sign < 0:
+                    part = f"Neg({part})"
+                parts.append(part)
+            if const_total != 0 or not parts:
+                parts.append(f"const:{const_total!r}")
+            return f"Add({','.join(parts)})"
+        if node.op == "Shl" and _c_constant_int_value(node.rhs) == 4:
+            return f"Mul({_expr_fingerprint(node.lhs, project)},const:16)"
         lhs = _expr_fingerprint(node.lhs, project)
         rhs = _expr_fingerprint(node.rhs, project)
         return f"{node.op}({lhs},{rhs})"
     if isinstance(node, CFunctionCall):
+        runtime_helper = _runtime_segment_helper_fingerprint_8616(node, project)
+        if runtime_helper is not None:
+            return runtime_helper
         callee = _call_target_name(node, project)
         args = ",".join(_expr_fingerprint(arg, project) for arg in getattr(node, "args", ()) or ())
         return f"call:{callee}({args})"
@@ -511,22 +1183,23 @@ def _iter_observable_call_nodes_8616(node):
             yield from _iter_observable_call_nodes_8616(stmt)
         return
     if isinstance(node, CFunctionCall):
-        yield node
+        if not _is_runtime_segment_helper_call_8616(node):
+            yield node
         return
     if isinstance(node, CAssignment):
         rhs = getattr(node, "rhs", None)
-        if isinstance(rhs, CFunctionCall):
+        if isinstance(rhs, CFunctionCall) and not _is_runtime_segment_helper_call_8616(rhs):
             yield rhs
         return
     for attr in ("retval", "condition", "cond", "expr"):
         child = getattr(node, attr, None)
-        if isinstance(child, CFunctionCall):
+        if isinstance(child, CFunctionCall) and not _is_runtime_segment_helper_call_8616(child):
             yield child
         elif child is not None:
             yield from _iter_observable_call_nodes_8616(child)
     if hasattr(node, "condition_and_nodes"):
         for cond, body in getattr(node, "condition_and_nodes", ()) or ():
-            if isinstance(cond, CFunctionCall):
+            if isinstance(cond, CFunctionCall) and not _is_runtime_segment_helper_call_8616(cond):
                 yield cond
             elif cond is not None:
                 yield from _iter_observable_call_nodes_8616(cond)
@@ -541,13 +1214,45 @@ def _iter_observable_call_nodes_8616(node):
 
 
 def _location_fingerprint(node, project) -> str:
+    if isinstance(node, CFunctionCall):
+        runtime_location = _runtime_segment_helper_location_8616(node, project)
+        if runtime_location is not None:
+            return runtime_location
     if isinstance(node, CVariable):
         variable = getattr(node, "variable", None)
+        codegen = getattr(node, "codegen", None)
+        name = getattr(node, "name", None) or getattr(variable, "name", None)
+        if codegen is not None and isinstance(name, str):
+            if os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS"):
+                log.warning(
+                    "[tail-carrier] cvar_id=%s name=%r obj=%r var=%r keys=%r widened_hit=%r",
+                    id(node),
+                    name,
+                    node,
+                    variable,
+                    _candidate_widened_keys_8616(node),
+                    _lookup_widened_carrier_proof_8616(node, codegen),
+                )
+            widened = _widened_carrier_slot_fingerprint_8616(name, value=node, variable=variable, codegen=codegen)
+            if widened is not None:
+                return widened
+        resolved_alias = _resolve_validation_copy_alias_expr_8616(node)
+        if resolved_alias is not None and resolved_alias is not node:
+            resolved_location = _location_fingerprint(resolved_alias, project)
+            if isinstance(resolved_location, str):
+                return resolved_location
         if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) is not None:
             return f"reg:{_register_name(project, variable.reg)}"
         if isinstance(variable, SimStackVariable):
             offset = getattr(variable, "offset", None)
-            return f"stack:{offset:+#x}" if isinstance(offset, int) else "stack:unknown"
+            if isinstance(offset, int):
+                return _canonical_or_unresolved_stack_fingerprint_8616(
+                    offset,
+                    codegen,
+                    source="stack_var",
+                    node=node,
+                )
+            return "stack:unknown"
         if isinstance(variable, SimMemoryVariable):
             addr = getattr(variable, "addr", None)
             if isinstance(addr, int) and addr < 0:
@@ -557,10 +1262,40 @@ def _location_fingerprint(node, project) -> str:
     if isinstance(node, CTypeCast):
         return _location_fingerprint(node.expr, project)
 
+    indexed_stack_location = _stack_indexed_location_fingerprint_8616(node)
+    if indexed_stack_location is not None:
+        return indexed_stack_location
+
     if isinstance(node, CUnaryOp) and node.op == "Dereference":
         stack_disp = _match_bp_stack_dereference_8616(node, project)
         if isinstance(stack_disp, int):
-            return f"stack:{stack_disp:+#x}"
+            return _canonical_or_unresolved_stack_fingerprint_8616(
+                stack_disp,
+                getattr(node, "codegen", None),
+                source="bp_deref",
+                node=node,
+            )
+        operand = _strip_validation_casts(node.operand)
+        if isinstance(operand, CIndexedVariable):
+            base = _strip_validation_casts(getattr(operand, "variable", None))
+            index = _strip_validation_casts(getattr(operand, "index", None))
+            if isinstance(base, CUnaryOp) and base.op == "Reference":
+                base = _strip_validation_casts(base.operand)
+            base_var = getattr(base, "variable", None) if isinstance(base, CVariable) else None
+            index_value = _c_constant_int_value(index)
+            codegen = getattr(node, "codegen", None)
+            if isinstance(base_var, SimStackVariable) and isinstance(index_value, int) and codegen is not None:
+                bridged = _stack_canonicalization_bridges_8616(codegen).get(("indexed_deref", id(base_var), index_value))
+                if isinstance(bridged, int):
+                    return _canonical_or_unresolved_stack_fingerprint_8616(
+                        bridged,
+                        codegen,
+                        source="indexed_deref_bridge",
+                        node=node,
+                    )
+        indexed_stack_location = _stack_indexed_location_fingerprint_8616(node.operand, project)
+        if indexed_stack_location is not None:
+            return indexed_stack_location
         seg_name, linear = _match_segmented_dereference_8616(node, project)
         if seg_name is not None:
             if isinstance(linear, int) and _segment_linear_lowering_allowed(node, seg_name):
@@ -569,3 +1304,60 @@ def _location_fingerprint(node, project) -> str:
         return f"deref:{_expr_fingerprint(_strip_validation_casts(node.operand), project)}"
 
     return _expr_fingerprint(node, project)
+
+
+def _runtime_segment_helper_name_8616(node: CFunctionCall) -> str | None:
+    callee = normalize_callee_name_8616(getattr(node, "callee_target", None))
+    if isinstance(callee, str):
+        return callee
+    return None
+
+
+def _runtime_segment_helper_args_8616(node: CFunctionCall) -> tuple[object, object] | None:
+    args = tuple(getattr(node, "args", ()) or ())
+    if len(args) != 2:
+        return None
+    return args[0], args[1]
+
+
+def _is_runtime_segment_helper_call_8616(node: CFunctionCall) -> bool:
+    name = _runtime_segment_helper_name_8616(node)
+    return name in {"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR"}
+
+
+def _runtime_segment_linear_fingerprint_8616(seg_expr, off_expr, project) -> str:
+    off_fp = _expr_fingerprint(off_expr, project)
+    if off_fp.startswith("Add(") and off_fp.endswith(")"):
+        inner = off_fp[4:-1]
+        return f"Add(Mul({_expr_fingerprint(seg_expr, project)},const:16),{inner})"
+    return f"Add(Mul({_expr_fingerprint(seg_expr, project)},const:16),{off_fp})"
+
+
+def _runtime_segment_helper_fingerprint_8616(node: CFunctionCall, project) -> str | None:
+    name = _runtime_segment_helper_name_8616(node)
+    args = _runtime_segment_helper_args_8616(node)
+    if name is None or args is None:
+        return None
+    seg_expr, off_expr = args
+    linear = _runtime_segment_linear_fingerprint_8616(seg_expr, off_expr, project)
+    if name in {"MK_FP", "SEG_PTR"}:
+        return linear
+    if name in {"SEG_U8", "SEG_U16", "SEG_U32"}:
+        return f"Dereference({linear})"
+    return None
+
+
+def _runtime_segment_helper_location_8616(node: CFunctionCall, project) -> str | None:
+    name = _runtime_segment_helper_name_8616(node)
+    args = _runtime_segment_helper_args_8616(node)
+    if name not in {"SEG_U8", "SEG_U16", "SEG_U32"} or args is None:
+        return None
+    seg_expr, off_expr = args
+    if isinstance(seg_expr, CVariable):
+        variable = getattr(seg_expr, "variable", None)
+        if isinstance(variable, SimRegisterVariable):
+            seg_name = _register_name(project, variable.reg)
+            off_value = _c_constant_int_value(off_expr)
+            if isinstance(off_value, int):
+                return f"deref:{seg_name}:{off_value:#x}"
+    return f"deref:{_runtime_segment_linear_fingerprint_8616(seg_expr, off_expr, project)}"

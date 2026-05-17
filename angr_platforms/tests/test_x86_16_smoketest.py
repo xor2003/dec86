@@ -5,7 +5,7 @@ import angr
 import keystone as ks
 from angr import options as o
 from angr.analyses.decompiler.structured_codegen.c import CVariable
-from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from decompile import _resolve_stack_cvar_at_offset
 
@@ -766,6 +766,28 @@ def test_known_helper_signatures_are_applied_before_decompilation():
 
     assert changed is True
     assert project.kb.functions.function(addr=0x2000, create=False).prototype is not None
+
+
+def test_source_decl_updates_return_type_while_preserving_recovered_arg_widths():
+    project = _project_from_asm("ret")
+    func = project.kb.functions.function(addr=0x1000, create=True)
+    func.prototype = SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), arg_names=("value",)).with_arch(project.arch)
+    changed = apply_x86_16_metadata_annotations(
+        project,
+        func_addr=0x1000,
+        cod_metadata=SimpleNamespace(
+            call_names=(),
+            source_lines=("void Demo(short value)", "{", "}",),
+            stack_aliases={},
+        ),
+    )
+
+    assert changed is True
+    updated = project.kb.functions.function(addr=0x1000, create=False).prototype
+    assert updated is not None
+    assert isinstance(updated.returnty, SimTypeBottom)
+    assert len(updated.args) == 1
+    assert isinstance(updated.args[0], SimTypeShort)
 
 
 def test_synthetic_global_annotation_preserves_known_object_metadata():

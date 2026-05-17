@@ -187,6 +187,56 @@ def test_bp_stack_prototype_promotion_preserves_pointer_evidence_without_annotat
     assert codegen.cfunc.arg_list == [stack_cvar]
 
 
+def test_bp_stack_prototype_promotion_respects_scalar_source_decl_over_weak_pointer_promotion():
+    stack_var = SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False), codegen=c_codegen)
+    func = SimpleNamespace(
+        prototype=_FakePrototype(
+            args=[SimTypeShort(False), SimTypeShort(False)],
+            arg_names=("iRow1", "iRow2"),
+            returnty=SimTypeBottom(),
+        ),
+        is_prototype_guessed=True,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {
+                    4: {"name": "iRow1"},
+                    6: {"name": "iRow2"},
+                },
+                "source_lines": (
+                    "void SwapBars(int iRow1, int iRow2)",
+                    "{",
+                    "}",
+                ),
+            }
+        },
+    )
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+    )
+    codegen = SimpleNamespace(
+        project=project,
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            statements=SimpleNamespace(
+                statements=[
+                    structured_c.CUnaryOp("Dereference", stack_cvar, codegen=c_codegen),
+                ]
+            ),
+            variables_in_use={stack_var: stack_cvar},
+            arg_list=[None, stack_cvar],
+            functy=func.prototype,
+        )
+    )
+    stack_cvar.codegen = codegen
+
+    postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
+
+    assert not isinstance(func.prototype.args[1], SimTypePointer)
+
+
 def test_bp_stack_prototype_promotion_shrinks_overguessed_stack_arguments():
     prototype = _FakePrototype(
         args=[SimTypeShort(False), SimTypeShort(False)],
@@ -332,6 +382,48 @@ def test_classify_return_shape_uses_source_return_lines_when_returns_are_missing
     assert changed is True
     assert isinstance(func.prototype.returnty, SimTypeLong)
     assert func.prototype.returnty.size == 32
+
+
+def test_classify_return_shape_uses_void_source_decl_when_returns_are_missing():
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    prototype = _FakePrototype(args=[], arg_names=(), returnty=SimTypeShort(False))
+    func = SimpleNamespace(
+        prototype=prototype,
+        is_prototype_guessed=True,
+        info={
+            ANNOTATION_KEY: {
+                "source_lines": ("void ReInitBars()", "{", "}",),
+                "source_return_lines": (),
+            }
+        },
+    )
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([], codegen=c_codegen)))
+
+    changed = postprocess._classify_return_shape_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(func.prototype.returnty, SimTypeBottom)
+
+
+def test_classify_return_shape_treats_explicit_void_returns_as_void():
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    ret = structured_c.CReturn(None, codegen=c_codegen)
+    prototype = _FakePrototype(args=[], arg_names=(), returnty=SimTypeShort(False))
+    func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)),
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=structured_c.CStatements([ret], codegen=c_codegen)))
+
+    changed = postprocess._classify_return_shape_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(func.prototype.returnty, SimTypeBottom)
 
 
 def test_classify_return_shape_promotes_far_pointer_returns_from_void_prototypes():

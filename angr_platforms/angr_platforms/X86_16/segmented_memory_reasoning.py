@@ -22,6 +22,7 @@ from angr.sim_variable import SimStackVariable
 
 from .alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 from .decompiler_postprocess_utils import _match_bp_stack_dereference_8616, _replace_c_children_8616
+from .lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
 
 if TYPE_CHECKING:
     pass
@@ -509,6 +510,9 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
             codegen._inertia_segmented_memory_lowering = {}
 
         changed = False
+        target = str(getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat") or "portable-flat")
+        if apply_runtime_segment_lowering_8616(codegen, target=target):
+            changed = True
         if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):
             def transform(node):
                 nonlocal changed
@@ -572,7 +576,9 @@ def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
             codegen._inertia_segmented_memory_lowering = {}
         # Do NOT transform codegen — let cli_decompilation.py lowering handle that
         return False
-    except Exception:
+    except Exception as ex:
+        logger.warning("Segmented memory analysis-only pass failed: %s", ex)
+        codegen._inertia_segmented_memory_error = str(ex)
         return False
 
 def _empty_segment_summary_8616():

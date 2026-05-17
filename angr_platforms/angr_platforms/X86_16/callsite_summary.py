@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import logging
 
 from .analysis_helpers import collect_neighbor_call_targets
 from .callee_name_normalization import normalize_callee_name_8616
 
 __all__ = ["CallsiteSummary8616", "summarize_x86_16_callsite"]
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +27,7 @@ class CallsiteSummary8616:
     helper_return_space: str | None = None
     helper_return_width: int | None = None
     helper_return_address_kind: str = "none"
+    push_arg_sources: tuple[tuple[str, int] | None, ...] = ()
 
     def brief(self) -> str:
         return (
@@ -78,7 +82,13 @@ def _lookup_target_name_8616(function, target_addr: int | None) -> str | None:
             if callable(lookup):
                 try:
                     callee = lookup(addr=candidate_addr, create=False)
-                except Exception:
+                except Exception as ex:
+                    log.debug(
+                        "callsite target lookup failed project=%r addr=%#x: %s",
+                        candidate_project,
+                        candidate_addr,
+                        ex,
+                    )
                     callee = None
                 name = getattr(callee, "name", None)
                 if isinstance(name, str) and name:
@@ -91,7 +101,13 @@ def _lookup_target_name_8616(function, target_addr: int | None) -> str | None:
                     continue
                 try:
                     label = labels.get(candidate_addr)
-                except Exception:
+                except Exception as ex:
+                    log.debug(
+                        "callsite label lookup failed project=%r addr=%#x: %s",
+                        candidate_project,
+                        candidate_addr,
+                        ex,
+                    )
                     label = None
                 if isinstance(label, str) and label:
                     return label
@@ -115,7 +131,8 @@ def _operand_reg_name(insn, operand) -> str | None:
     if callable(reg_name):
         try:
             value = reg_name(reg)
-        except Exception:
+        except Exception as ex:
+            log.debug("capstone reg_name lookup failed reg=%r: %s", reg, ex)
             value = None
         if isinstance(value, str) and value:
             return value.lower()
@@ -159,7 +176,8 @@ def _block_insns_for_callsite(function, callsite_addr: int) -> tuple:
     for block_addr in reversed(candidate_addrs):
         try:
             block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
+        except Exception as ex:
+            log.debug("callsite block decode failed block=%#x: %s", block_addr, ex)
             continue
         insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
         if _find_call_index(insns, callsite_addr) is not None:
@@ -175,7 +193,8 @@ def _next_linear_block_insns(function, callsite_addr: int) -> tuple:
     for block_addr in candidate_addrs:
         try:
             block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
+        except Exception as ex:
+            log.debug("callsite next block decode failed block=%#x: %s", block_addr, ex)
             continue
         insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
         if insns:
@@ -236,6 +255,44 @@ def _collect_push_args_before_call(insns: tuple, idx: int) -> tuple[int, ...]:
     return tuple(widths)
 
 
+def _push_arg_source(insn) -> tuple[str, int] | None:
+    operands = _instruction_operands(insn)
+    if len(operands) != 1:
+        return None
+    operand = operands[0]
+    mem = getattr(operand, "mem", None)
+    if mem is not None:
+        base = getattr(mem, "base", None)
+        disp = getattr(mem, "disp", None)
+        if isinstance(base, int) and isinstance(disp, int):
+            base_name = _operand_reg_name(insn, type("_PushMemOperand", (), {"reg": base})())
+            if base_name == "bp" and int(getattr(mem, "index", 0) or 0) == 0:
+                return ("bp", int(disp))
+    imm = _operand_imm_value(operand)
+    if isinstance(imm, int):
+        return ("imm", imm)
+    return None
+
+
+def _collect_push_arg_sources_before_call(insns: tuple, idx: int) -> tuple[tuple[str, int] | None, ...]:
+    sources: list[tuple[str, int] | None] = []
+    scan = idx - 1
+    skipped_transparents = 0
+    while scan >= 0:
+        insn = insns[scan]
+        if _mnemonic(insn).startswith("push"):
+            sources.append(_push_arg_source(insn))
+            scan -= 1
+            continue
+        if sources and skipped_transparents < 4 and _transparent_between_push_args_8616(insn):
+            skipped_transparents += 1
+            scan -= 1
+            continue
+        break
+    sources.reverse()
+    return tuple(sources)
+
+
 def _trim_push_args_to_stack_cleanup(arg_widths: tuple[int, ...], cleanup: int | None) -> tuple[int, ...]:
     if not isinstance(cleanup, int) or cleanup <= 0 or not arg_widths:
         return arg_widths
@@ -249,6 +306,27 @@ def _trim_push_args_to_stack_cleanup(arg_widths: tuple[int, ...], cleanup: int |
         if total == cleanup:
             return tuple(reversed(kept))
     return arg_widths
+
+
+def _trim_push_arg_sources_to_stack_cleanup(
+    arg_widths: tuple[int, ...],
+    arg_sources: tuple[tuple[str, int] | None, ...],
+    cleanup: int | None,
+) -> tuple[tuple[str, int] | None, ...]:
+    if not isinstance(cleanup, int) or cleanup <= 0 or not arg_widths or not arg_sources:
+        return arg_sources
+    if len(arg_widths) != len(arg_sources):
+        return arg_sources
+    total = 0
+    kept: list[tuple[str, int] | None] = []
+    for width, source in reversed(tuple(zip(arg_widths, arg_sources))):
+        if total + width > cleanup:
+            break
+        kept.append(source)
+        total += width
+        if total == cleanup:
+            return tuple(reversed(kept))
+    return arg_sources
 
 
 def _stack_cleanup_after_call(function, insns: tuple, idx: int, callsite_addr: int) -> int | None:
@@ -351,7 +429,10 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
         )
 
     cleanup = _stack_cleanup_after_call(function, insns, call_idx, callsite_addr)
-    arg_widths = _trim_push_args_to_stack_cleanup(_collect_push_args_before_call(insns, call_idx), cleanup)
+    raw_arg_widths = _collect_push_args_before_call(insns, call_idx)
+    raw_arg_sources = _collect_push_arg_sources_before_call(insns, call_idx)
+    arg_widths = _trim_push_args_to_stack_cleanup(raw_arg_widths, cleanup)
+    push_arg_sources = _trim_push_arg_sources_to_stack_cleanup(raw_arg_widths, raw_arg_sources, cleanup)
     arg_count = len(arg_widths)
     return_register, return_used = _return_use_after_call(function, insns, call_idx, callsite_addr)
     helper_return_state = "none"
@@ -382,4 +463,5 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
         helper_return_space=helper_return_space,
         helper_return_width=helper_return_width,
         helper_return_address_kind=helper_return_address_kind,
+        push_arg_sources=push_arg_sources,
     )
