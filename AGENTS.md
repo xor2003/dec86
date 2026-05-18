@@ -52,6 +52,7 @@ Semantic recovery → `X86_16/`. Cleanup-only → `postprocess/`. Do not add to 
 8. **Validation is truth** — compare register effects, memory writes, return values, control flow. No hiding `changed`/`uncollected`.
 9. **No guessing** — insufficient evidence → honest ugly output.
 10. **Determinism** — same input → same output.
+11. **Typed status/state, not text matching** — for any new work, represent statuses/verdicts with enums or structured fields instead of string matching/parsing.
 
 ## Golden rules
 

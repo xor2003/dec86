@@ -350,7 +350,7 @@ def tail_validation_display_status(
     if passed:
         return "passed"
     if changed:
-        return "changed"
+        return "failed"
 
     # ── Precise diagnostics instead of "unknown" ──
     # When the snapshot has entries but none are passed or changed,
