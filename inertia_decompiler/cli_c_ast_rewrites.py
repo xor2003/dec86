@@ -66,7 +66,7 @@ from angr_platforms.X86_16.widening.register_widening import (
     join_adjacent_register_slices,
 )
 from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
-from angr_platforms.X86_16.semantics.alias_query import _storage_domain_for_expr, describe_alias_storage
+from angr_platforms.X86_16.semantics.alias_query import _storage_domain_for_expr, _storage_domain_for_variable, describe_alias_storage
 
 structured_c = structured_codegen.c
 
@@ -2473,9 +2473,6 @@ def _match_duplicate_word_increment_shift_expr(node, resolve_copy_alias_expr, co
             continue
         base_expr = _match_duplicate_word_base(maybe_word)
         if base_expr is None:
-            continue
-        resolved_base = _unwrap_c_casts(resolve_copy_alias_expr(base_expr))
-        if isinstance(resolved_base, structured_c.CVariable) and isinstance(getattr(resolved_base, "variable", None), SimStackVariable):
             continue
         return structured_c.CBinaryOp(
             "Add" if lhs.op == "Add" else "Sub",

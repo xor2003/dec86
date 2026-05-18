@@ -58,6 +58,18 @@ def _prune_dead_local_assignments(
                     collect_storage_read_keys(node.rhs, keys, seen, allow_variable_read=True)
                 return
 
+            if node.__class__.__name__ == "CDirtyExpression":
+                if allow_variable_read:
+                    dirty = getattr(node, "dirty", None)
+                    if dirty is not None:
+                        varid = getattr(dirty, "varid", None)
+                        if isinstance(varid, int):
+                            keys.add(("dirty_varid", varid))
+                        name = getattr(dirty, "name", None)
+                        if isinstance(name, str) and name:
+                            keys.add(("dirty_name", name))
+                return
+
             for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "else_node", "retval"):
                 if not hasattr(node, attr):
                     continue
@@ -198,15 +210,42 @@ def _prune_dead_local_assignments(
                 ):
                     lhs_variable = getattr(stmt.lhs, "variable", None)
                     lhs_unified = getattr(stmt.lhs, "unified_variable", None)
-                    lhs_keys: set[tuple[object, ...]] = set()
+                    lhs_exact_keys: set[tuple[object, ...]] = set()
                     if lhs_variable is not None:
-                        lhs_keys.add(("var", id(lhs_variable)))
+                        lhs_exact_keys.add(("var", id(lhs_variable)))
                     if lhs_unified is not None:
-                        lhs_keys.add(("unified", id(lhs_unified)))
+                        lhs_exact_keys.add(("unified", id(lhs_unified)))
+                    lhs_keys = set(lhs_exact_keys)
+                    rhs_reads: set[tuple[object, ...]] = set()
+                    if structured_codegen_node(getattr(stmt, "rhs", None)):
+                        collect_storage_read_keys(stmt.rhs, rhs_reads)
                     storage_key = describe_alias_storage(stmt.lhs).identity
                     if storage_key is not None:
                         lhs_keys.add(("storage", storage_key))
-                    if lhs_keys.isdisjoint(reads):
+                    unread_register_local = isinstance(lhs_variable, SimRegisterVariable) and lhs_exact_keys.isdisjoint(reads)
+                    self_only_rhs_read = bool(lhs_keys) and not lhs_keys.isdisjoint(rhs_reads) and lhs_keys.isdisjoint(reads - rhs_reads)
+                    if unread_register_local or lhs_keys.isdisjoint(reads) or self_only_rhs_read:
+                        changed = True
+                        continue
+                    for key in lhs_keys:
+                        if key in pending_assignment_indices:
+                            new_statements[pending_assignment_indices[key]] = None
+                            changed = True
+                        pending_assignment_indices[key] = len(new_statements)
+                elif (
+                    isinstance(stmt, structured_c.CAssignment)
+                    and stmt.lhs.__class__.__name__ == "CDirtyExpression"
+                    and not _expr_has_side_effects(getattr(stmt, "rhs", None), iter_c_nodes_deep=iter_c_nodes_deep)
+                ):
+                    dirty = getattr(stmt.lhs, "dirty", None)
+                    dirty_varid = getattr(dirty, "varid", None) if dirty is not None else None
+                    dirty_name = getattr(dirty, "name", None) if dirty is not None else None
+                    lhs_keys = set()
+                    if isinstance(dirty_varid, int):
+                        lhs_keys.add(("dirty_varid", dirty_varid))
+                    if isinstance(dirty_name, str) and dirty_name:
+                        lhs_keys.add(("dirty_name", dirty_name))
+                    if lhs_keys and lhs_keys.isdisjoint(reads):
                         changed = True
                         continue
                     for key in lhs_keys:

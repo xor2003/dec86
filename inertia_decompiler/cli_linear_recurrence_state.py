@@ -33,8 +33,20 @@ class LinearRecurrenceState:
     dereferenced_variable_ids: set[int] = field(default_factory=set)
     protected_linear_alias_ids: set[int] = field(default_factory=set)
     variable_use_counts: dict[int, int] = field(default_factory=dict)
+    recurrence_candidates: int = 0
+    recurrence_bound_to_materialized_local: int = 0
+    recurrence_failed_to_bind: int = 0
+    recurrence_reasons: dict[str, int] = field(default_factory=dict)
 
     def prepare(self) -> None:
+        debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
+        if not isinstance(debug_stats, dict):
+            debug_stats = {}
+            self.codegen._inertia_stack_lowering_debug = debug_stats
+        debug_stats.setdefault("recurrence_candidates", 0)
+        debug_stats.setdefault("recurrence_bound_to_materialized_local", 0)
+        debug_stats.setdefault("recurrence_failed_to_bind", 0)
+        debug_stats.setdefault("recurrence_reasons", {})
         self.expr_aliases.update(self.seed_adjacent_byte_pair_aliases(self.project, self.codegen))
         for walk_node in self.iter_c_nodes_deep(self.codegen.cfunc.statements):
             if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
@@ -152,6 +164,8 @@ class LinearRecurrenceState:
             return expr
         seen_exprs.add(expr_key)
         if isinstance(expr, structured_c.CVariable):
+            if self.is_materialized_stack_local(expr):
+                return expr
             linear = None
             variable = getattr(expr, "variable", None)
             if variable is not None:
@@ -214,6 +228,8 @@ class LinearRecurrenceState:
 
     def resolve_known_copy_alias_expr(self, expr, active_expr_ids: set[int] | None = None, seen_var_ids: set[int] | None = None, seen_storage: set[object] | None = None, depth: int = 0):
         expr = self.unwrap_c_casts(expr)
+        if isinstance(expr, structured_c.CVariable) and self.is_materialized_stack_local(expr):
+            return self.canonicalize_stack_cvar_expr(expr, self.codegen)
         if depth > 64:
             return self.canonicalize_stack_cvar_expr(expr, self.codegen)
         active_expr_ids = set() if active_expr_ids is None else active_expr_ids
@@ -308,3 +324,60 @@ class LinearRecurrenceState:
         if analysis.delta == 0:
             return analysis.base_expr
         return self.build_linear_expr(analysis.base_expr, analysis.delta)
+
+    def _record_recurrence_reason(self, reason: str) -> None:
+        self.recurrence_failed_to_bind += 1
+        self.recurrence_reasons[reason] = self.recurrence_reasons.get(reason, 0) + 1
+        debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
+        if isinstance(debug_stats, dict):
+            debug_stats["recurrence_failed_to_bind"] = int(debug_stats.get("recurrence_failed_to_bind", 0) or 0) + 1
+            reasons = debug_stats.setdefault("recurrence_reasons", {})
+            reasons[reason] = int(reasons.get(reason, 0) or 0) + 1
+
+    def _record_recurrence_candidate(self) -> None:
+        self.recurrence_candidates += 1
+        debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
+        if isinstance(debug_stats, dict):
+            debug_stats["recurrence_candidates"] = int(debug_stats.get("recurrence_candidates", 0) or 0) + 1
+
+    def _record_recurrence_success(self) -> None:
+        self.recurrence_bound_to_materialized_local += 1
+        debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
+        if isinstance(debug_stats, dict):
+            debug_stats["recurrence_bound_to_materialized_local"] = int(
+                debug_stats.get("recurrence_bound_to_materialized_local", 0) or 0
+            ) + 1
+        setattr(self.codegen, "_inertia_has_rebound_materialized_recurrence", True)
+
+    def is_materialized_stack_local(self, cvar) -> bool:
+        if not isinstance(cvar, structured_c.CVariable):
+            return False
+        variable = getattr(cvar, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            return False
+        name = getattr(cvar, "name", None) or getattr(variable, "name", None)
+        if not isinstance(name, str):
+            return False
+        # `local_*` / `arg_*` are already materialized stack locals/args even if
+        # they still carry generic names. Reject only synthetic carriers/temps.
+        if not re.fullmatch(r"(?:s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name):
+            return True
+        bindings = getattr(self.codegen, "_inertia_stack_variable_bindings", None)
+        offset = getattr(variable, "offset", None)
+        size = getattr(variable, "size", None)
+        if not isinstance(bindings, tuple | list) or not isinstance(offset, int) or not isinstance(size, int):
+            return False
+        for binding in bindings:
+            binding_offset = getattr(binding, "bp_offset", None)
+            if binding_offset is None:
+                binding_offset = getattr(binding, "offset", None)
+            binding_size = getattr(binding, "size", None)
+            if (
+                isinstance(binding_offset, int)
+                and isinstance(binding_size, int)
+                and binding_size >= 2
+                and binding_offset == offset
+                and size >= 2
+            ):
+                return True
+        return False

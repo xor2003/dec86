@@ -1119,12 +1119,12 @@ def guard_angr_structuring_codegen_internal_timing():
     try:
         import angr_platforms.X86_16.lowering.stack_lowering_from_facts as _slf_mod
         _orig_slf = _slf_mod.lower_stack_accesses_from_alias_facts_8616
-        def _timed_slf(codegen):  # noqa: ANN001
+        def _timed_slf(codegen, *args, **kwargs):  # noqa: ANN001
             _t0 = _time.perf_counter()
             print(f"[dbg] stage-time: x86_16:lower_stack_from_facts start")
             sys.stderr.flush()
             try:
-                return _orig_slf(codegen)
+                return _orig_slf(codegen, *args, **kwargs)
             finally:
                 _elapsed = _time.perf_counter() - _t0
                 print(f"[dbg] stage-time: x86_16:lower_stack_from_facts done elapsed={_elapsed:.2f}s")

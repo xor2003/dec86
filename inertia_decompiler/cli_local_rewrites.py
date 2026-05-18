@@ -85,6 +85,19 @@ def _materialize_missing_stack_local_declarations(
     placeholder_cache: dict[str, structured_c.CVariable] = {}
     variables_in_use = getattr(cfunc, "variables_in_use", None)
 
+    def _is_materialized_named_stack_cvar(node) -> bool:
+        if not isinstance(node, structured_c.CVariable):
+            return False
+        variable = getattr(node, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            return False
+        name = getattr(node, "name", None) or getattr(variable, "name", None)
+        if not isinstance(name, str):
+            return False
+        if _STACK_BP_PLACEHOLDER_RE.search(name) is not None:
+            return False
+        return re.fullmatch(r"(?:arg_\d+|local_\d+|s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name) is None
+
     def _canonical_placeholder_cvar(node):
         nonlocal changed
         if not isinstance(node, structured_c.CVariable):
@@ -140,6 +153,13 @@ def _materialize_missing_stack_local_declarations(
                 cfunc.body = new_root
         if replace_c_children(cfunc.statements, _canonical_placeholder_cvar):
             changed = True
+        existing_identities.update(
+            identity
+            for node in iter_c_nodes_deep(cfunc.statements)
+            if _is_materialized_named_stack_cvar(node)
+            for identity in (stack_slot_identity_for_variable(getattr(node, "variable", None)),)
+            if identity is not None
+        )
     if isinstance(variables_in_use, dict) and root is not None:
         live_variable_ids = {
             id(getattr(node, "variable", None))

@@ -29,6 +29,12 @@ def _rewrite_ss_stack_byte_offsets(
     if getattr(codegen, "cfunc", None) is None:
         return False
 
+    # Ownership boundary:
+    # This pass is the generic AST-level place to resolve SS-local pointer-carrier
+    # chains (for example vvar_/ir_/tmp_ aliases that ultimately point at BP stack
+    # slots). If final emitted C still contains raw stack carrier math, fix it here
+    # or earlier in stack lowering, not in the final text cleanup layer.
+
     binary_path = getattr(getattr(codegen.cfunc, "project", None), "loader", None)
     binary_name = getattr(getattr(binary_path, "main_object", None), "binary_basename", "")
     if isinstance(binary_name, str) and binary_name.lower().endswith(".cod"):
@@ -73,11 +79,12 @@ def _rewrite_ss_stack_byte_offsets(
     def _alias_keys_for_cvar(cvar) -> tuple[object, ...]:
         keys: list[object] = []
         variable = getattr(cvar, "variable", None)
+        linear_temp = _is_linear_temp(cvar)
         if variable is not None:
             keys.append(("var", id(variable)))
             reg = getattr(variable, "reg", None)
             size = getattr(variable, "size", None)
-            if isinstance(reg, int) and isinstance(size, int):
+            if not linear_temp and isinstance(reg, int) and isinstance(size, int):
                 keys.append(("reg", reg, size))
         name = getattr(cvar, "name", None) or getattr(variable, "name", None)
         if isinstance(name, str) and name:
@@ -87,11 +94,12 @@ def _rewrite_ss_stack_byte_offsets(
     def _alias_lookup_keys_for_cvar(cvar) -> tuple[object, ...]:
         variable = getattr(cvar, "variable", None)
         keys: list[object] = []
+        linear_temp = _is_linear_temp(cvar)
         if variable is not None:
             keys.append(("var", id(variable)))
             reg = getattr(variable, "reg", None)
             size = getattr(variable, "size", None)
-            if isinstance(reg, int) and isinstance(size, int):
+            if not linear_temp and isinstance(reg, int) and isinstance(size, int):
                 keys.append(("reg", reg, size))
         for candidate in (
             getattr(cvar, "name", None),
@@ -106,15 +114,22 @@ def _rewrite_ss_stack_byte_offsets(
         if root is None:
             return None
 
+        target_varid = None
+        if name.startswith("vvar_"):
+            suffix = name.removeprefix("vvar_")
+            if suffix.isdigit():
+                target_varid = int(suffix)
+
         matches = []
         for stmt in iter_c_nodes_deep(root):
             if not isinstance(stmt, structured_c.CAssignment):
                 continue
             lhs = getattr(stmt, "lhs", None)
-            if not isinstance(lhs, structured_c.CVariable):
-                continue
-            lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
-            if lhs_name != name:
+            lhs_name = None
+            if isinstance(lhs, structured_c.CVariable):
+                lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
+            lhs_varid = getattr(getattr(lhs, "dirty", None), "varid", None)
+            if lhs_name != name and lhs_varid != target_varid:
                 continue
             matches.append(getattr(stmt, "rhs", None))
             if len(matches) > 1:
@@ -130,6 +145,7 @@ def _rewrite_ss_stack_byte_offsets(
         node_name = getattr(node_cvar, "name", None) or getattr(node_var, "name", None)
         node_reg = getattr(node_var, "reg", None)
         node_size = getattr(node_var, "size", None)
+        node_linear_temp = _is_linear_temp(node_cvar)
 
         def _same_lhs(lhs):
             if not isinstance(lhs, structured_c.CVariable):
@@ -142,6 +158,9 @@ def _rewrite_ss_stack_byte_offsets(
                 return True
             lhs_reg = getattr(lhs_var, "reg", None)
             lhs_size = getattr(lhs_var, "size", None)
+            lhs_linear_temp = _is_linear_temp(lhs)
+            if node_linear_temp or lhs_linear_temp:
+                return False
             return (
                 isinstance(node_reg, int)
                 and isinstance(node_size, int)
@@ -161,6 +180,48 @@ def _rewrite_ss_stack_byte_offsets(
             if len(matches) > 1:
                 return None
         return matches[0] if len(matches) == 1 else None
+
+    def _top_level_statements():
+        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+        statements = getattr(root, "statements", None)
+        if isinstance(statements, (list, tuple)):
+            return list(statements)
+        return []
+
+    def _statement_index_containing(node) -> int | None:
+        if node is None:
+            return None
+        for idx, stmt in enumerate(_top_level_statements()):
+            for nested in iter_c_nodes_deep(stmt):
+                if nested is node:
+                    return idx
+        return None
+
+    def _nearest_preceding_assignment_expr_for_cvar(node_cvar):
+        if not isinstance(node_cvar, structured_c.CVariable):
+            return None
+        node_var = getattr(node_cvar, "variable", None)
+        node_reg = getattr(node_var, "reg", None)
+        node_size = getattr(node_var, "size", None)
+        if not (isinstance(node_reg, int) and isinstance(node_size, int)):
+            return None
+        stmt_idx = _statement_index_containing(node_cvar)
+        if stmt_idx is None:
+            return None
+
+        nearest_rhs = None
+        for idx, stmt in enumerate(_top_level_statements()):
+            if idx >= stmt_idx or not isinstance(stmt, structured_c.CAssignment):
+                continue
+            lhs = getattr(stmt, "lhs", None)
+            if not isinstance(lhs, structured_c.CVariable):
+                continue
+            lhs_var = getattr(lhs, "variable", None)
+            lhs_reg = getattr(lhs_var, "reg", None)
+            lhs_size = getattr(lhs_var, "size", None)
+            if lhs_reg == node_reg and lhs_size == node_size:
+                nearest_rhs = getattr(stmt, "rhs", None)
+        return nearest_rhs
 
     def _resolve_dirty_virtual_expr(node):
         dirty = getattr(node, "dirty", None)
@@ -182,8 +243,19 @@ def _rewrite_ss_stack_byte_offsets(
             return _synthetic_sp_anchor_cvar()
         return None
 
+    def _dirty_alias_key(node):
+        varid = getattr(getattr(node, "dirty", None), "varid", None)
+        if isinstance(varid, int):
+            return ("vvar", varid)
+        return None
+
     def _resolve_stack_pointer_alias(node):
         node = unwrap_c_casts(node)
+        dirty_key = _dirty_alias_key(node)
+        if dirty_key is not None:
+            alias = stack_pointer_aliases.get(dirty_key)
+            if alias is not None:
+                return alias.base, alias.offset
         resolved_dirty = _resolve_dirty_virtual_expr(node)
         if resolved_dirty is not None:
             return _resolve_stack_pointer_alias(resolved_dirty)
@@ -202,6 +274,9 @@ def _rewrite_ss_stack_byte_offsets(
             single_assignment_rhs = _single_assignment_expr_for_cvar(node)
             if single_assignment_rhs is not None:
                 return _resolve_stack_pointer_alias(single_assignment_rhs)
+            nearest_assignment_rhs = _nearest_preceding_assignment_expr_for_cvar(node)
+            if nearest_assignment_rhs is not None:
+                return _resolve_stack_pointer_alias(nearest_assignment_rhs)
             return None
         if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
             operand = unwrap_c_casts(node.operand)
@@ -234,11 +309,18 @@ def _rewrite_ss_stack_byte_offsets(
         for _ in range(3):
             changed_local = False
             for walk_node in iter_c_nodes_deep(codegen.cfunc.statements):
-                if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(walk_node.lhs, structured_c.CVariable):
+                if not isinstance(walk_node, structured_c.CAssignment):
                     continue
-                if not _is_linear_temp(walk_node.lhs):
-                    continue
-                keys = _alias_keys_for_cvar(walk_node.lhs)
+                lhs = getattr(walk_node, "lhs", None)
+                if isinstance(lhs, structured_c.CVariable):
+                    if not _is_linear_temp(lhs):
+                        continue
+                    keys = _alias_keys_for_cvar(lhs)
+                else:
+                    dirty_key = _dirty_alias_key(lhs)
+                    if dirty_key is None:
+                        continue
+                    keys = (dirty_key,)
                 if not keys:
                     continue
                 rhs = unwrap_c_casts(walk_node.rhs)
@@ -318,6 +400,42 @@ def _rewrite_ss_stack_byte_offsets(
     def transform(node):
         if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
             return node
+        resolved_plain_alias = _resolve_stack_pointer_alias(getattr(node, "operand", None))
+        if resolved_plain_alias is not None:
+            base_cvar, extra_offset = resolved_plain_alias
+            bits = _effective_deref_bits(node)
+            if bits not in {8, 16}:
+                bits = 16
+            base_variable = getattr(base_cvar, "variable", None)
+            access_size = bits // project.arch.byte_width if isinstance(bits, int) and bits > 0 else None
+            if isinstance(base_variable, SimStackVariable) and isinstance(access_size, int):
+                target_offset = getattr(base_variable, "offset", 0) + extra_offset
+                resolved_cvar = resolve_stack_cvar_at_offset(codegen, target_offset)
+                if resolved_cvar is not None:
+                    resolved_variable = getattr(resolved_cvar, "variable", None)
+                    resolved_offset = getattr(resolved_variable, "offset", None)
+                    resolved_size = getattr(resolved_variable, "size", None)
+                    if (
+                        isinstance(resolved_variable, SimStackVariable)
+                        and access_size >= 4
+                    ):
+                        if resolved_size is not None and resolved_size < access_size:
+                            promote_direct_stack_cvariable(
+                                codegen,
+                                resolved_cvar,
+                                access_size,
+                                stack_type_for_size(access_size),
+                            )
+                        return resolved_cvar
+                    if (
+                        isinstance(resolved_variable, SimStackVariable)
+                        and resolved_offset == target_offset
+                        and resolved_size == access_size
+                    ):
+                        return resolved_cvar
+                if access_size >= 4:
+                    return materialize_stack_cvar_at_offset(codegen, target_offset, access_size)
+            return make_stack_deref(base_cvar, extra_offset, bits)
         classified = classify_segmented_dereference(node, project)
         if classified is None or classified.kind != "stack" or classified.cvar is None:
             if classified is None or classified.seg_name != "ss":
