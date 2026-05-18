@@ -10,6 +10,198 @@ Project priorities:
 
 This repo is not aiming to be a source-shaped transpiler. When evidence is weak, it prefers explicit low-level C, visible assumptions, and honest fallback modes.
 
+## Terminology / Glossary
+
+### Core Architecture
+
+The decompiler pipeline separates **execution semantics** (what the machine does) from **emitted C semantics** (what the output says). Internal representations carry low-level machine facts; later passes recover higher-level meaning and materialize it into C constructs. No machine-level artifact (e.g. `DS << 4`) may leak into final output unless explicitly chosen as a raw-emission mode.
+
+### Execution Semantics
+
+The low-level meaning of machine instructions during execution. In this decompiler, execution semantics are separated from emitted C semantics. Example: `DS << 4` may exist internally for real-mode execution, but must not leak into final C output.
+
+### Semantic Recovery
+
+The process of reconstructing higher-level program meaning from machine code: stack variables, loops, conditions, pointer types, function calls, structs/arrays. This happens *before* cosmetic rewrites.
+
+### Materialization
+
+The moment when an internal recovered semantic concept becomes an actual emitted C construct. Examples: stack slot `→` `local_2`, recurrence `→` `iRow++`, segmented access `→` `SEG_U16(ds, off)`. A semantic fact is not considered recovered until materialized into final emitted C.
+
+### Canonicalization
+
+Normalization of semantically equivalent expressions into a stable form. Examples: `x - 2 - 2 → x - 4`, `2892 + (i << 1) ↔ (i << 1) + 2892`. Canonicalization must not invent semantics.
+
+### Tail Validation
+
+Late-stage semantic comparison between the pre-postprocess representation and the final emitted representation. Used to ensure late rewrites did not corrupt semantics. Validation is strict: semantic drift = failure, unknown validation = failure, validation failure stops decompilation.
+
+### Semantic Drift
+
+A situation where recovered semantics change unexpectedly during later passes. Example: `iRow < nRows` becoming `iRow <= nRows` without proof. Semantic drift is treated as a pipeline error.
+
+### Semantic Honesty
+
+Principle that the decompiler must fail explicitly instead of emitting misleading C. Example: emitting `validation=failed` is acceptable; silently emitting wrong C is not acceptable.
+
+### Segmented Memory Model
+
+16-bit real-mode DOS memory model using segment registers (CS, DS, SS, ES) and offsets. Physical address: `(segment << 4) + offset`.
+
+#### Segment Linearization
+
+Conversion of segmented addresses into flat linear addresses. Example: `(ds << 4) + off`. Final emitted C must not expose raw linearization. Instead the decompiler emits `SEG_U16(ds, off)`, `SEG_PTR(ds, off)`, or `MK_FP(ds, off)`.
+
+#### Laundered Segment Linearization
+
+Illegal hidden form of segment linearization. Example: `tmp = ss; ptr = tmp << 4;` — even though `ss << 4` is not written literally, semantics are identical. Validation rejects such cases.
+
+#### Runtime Helper
+
+Portable helper abstraction replacing raw real-mode arithmetic. Examples: `SEG_U8(seg, off)`, `SEG_U16(seg, off)`, `SEG_PTR(seg, off)`, `MK_FP(seg, off)`. These preserve segmented-memory semantics without leaking implementation details.
+
+### Stack Recovery
+
+#### Stable Stack Slot
+
+A stack location proven to represent a persistent local variable. Example: `SS:BP-0x2:size2` means stack segment, base pointer relative, offset -2, 2-byte variable.
+
+#### Stack Carrier
+
+Temporary low-level representation of a stack value before materialization. Examples: `s_0`, `s_4`, `s_fffd`. Carriers should disappear after proper materialization.
+
+#### Byte Carrier
+
+A temporary variable representing one byte of a wider stack/local value. Often appears in 16-bit arithmetic: `s_fffd = s_4 + 1 >> 8; s_4 += 1;`. Should eventually materialize into `iRow++`.
+
+#### Widening
+
+Combining smaller low-level pieces into a larger semantic value. Examples: low byte + high byte, segmented pointer pieces, split arithmetic carriers. Widening happens after alias proof.
+
+#### Stack Alias
+
+Proof that multiple expressions reference the same stack location. Examples: `*(&(&v1)[4])`, `SS:BP-0x2`, and `local_2` may all refer to the same variable.
+
+#### Stack Canonicalization Bridge
+
+Validation-only metadata proving that two different stack expressions represent the same stable slot. Used by tail validation to avoid false semantic differences.
+
+#### Stack Lowering
+
+Transformation from raw low-level stack expressions into higher-level C locals.
+
+Example:
+
+```c
+*((ss << 4) + bp - 2)   →   local_2
+```
+
+### Control Flow / Conditions
+
+#### ConditionIR
+
+Intermediate representation for conditions and comparisons. Represents equality, ordering, signed/unsigned comparisons, and zero checks. Used to stabilize condition semantics before code generation.
+
+#### Typed Condition Materialization
+
+Conversion of low-level flag logic into typed C conditions.
+
+Example:
+
+```c
+ZF == 0   →   x != 0
+```
+
+#### Condition Drift
+
+Unexpected semantic mutation of a recovered condition during later passes. Detected by tail validation.
+
+### Linear Recurrence
+
+Recognized loop-update pattern.
+
+Examples:
+
+```c
+i = i + 1    i += 1    i++
+```
+
+Or low-level carrier equivalents.
+
+#### Recurrence Rebinding
+
+Replacing low-level recurrence carriers with the already materialized semantic local.
+
+Example:
+
+```c
+s_fffd = s_4 + 1 >> 8; s_4 += 1;   →   iRow++
+```
+
+### Callsite Recovery
+
+#### Callsite Materialization
+
+Recovery of actual function arguments from stack pushes and call setup patterns.
+
+#### Stale Pushed Arguments
+
+Arguments left over from previous stack state that incorrectly survive into recovered calls.
+
+Example: `clock(45, 14)` for a zero-argument function.
+
+#### Prototype Stabilization
+
+Recovery and enforcement of consistent function signatures. Sources: recovered call usage, known helper signatures, COD source headers, annotations.
+
+#### Honest Fallback Prototype
+
+Safe fallback signature used when exact prototype recovery is impossible. Preferred over emitting invalid or misleading C.
+
+### Validation / Pipeline
+
+#### PipelineHardError
+
+Fatal semantic pipeline error. Used when semantics are corrupted, validation fails, unresolved forbidden constructs remain, or materialization invariants fail. Stops decompilation immediately.
+
+#### Rewrite Lane
+
+Late-stage cosmetic transformation phase. Allowed: formatting, simplification, canonicalization. Forbidden: inventing semantics, changing recovered meaning, type inference.
+
+#### Semantic Consumer
+
+A pass that converts proven semantic facts into higher-level representations. Examples: stack lowering, recurrence materialization, prototype materialization.
+
+#### Acceptance Gate
+
+Final correctness gate requiring: generated C exists, validation passed, gcc syntax check passed, no unresolved semantic blockers.
+
+#### Compile-Readiness
+
+State where emitted C is syntactically valid and compilable.
+
+Checked using:
+
+```bash
+gcc -std=c99 -Wall -Werror -fsyntax-only
+```
+
+#### Dead Setup Artifact
+
+Low-level temporary emitted into final C even though semantic materialization already consumed it.
+
+Example:
+
+```c
+vvar_23 = &s_6 + 2;
+```
+
+Such artifacts must be removed before emission.
+
+#### Semantic Ownership
+
+Rule defining which pipeline layer is responsible for a semantic transformation. Example: stack lowering owns stack-local recovery; rewrite does not own semantic recovery; validation does not repair semantics. Used heavily throughout AGENTS.md.
+
 ## Killer Features
 
 - **Real-mode x86 support in angr**: in-tree `x86-16` arch, lifter, SimOS, DOS MZ loader, and DOS NE loader

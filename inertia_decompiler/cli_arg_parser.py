@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 
@@ -48,6 +49,12 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         "--alternate-source-c",
         action="store_true",
         help="When a same-stem .c/.C source sidecar exists, print it before each decompiled C block.",
+    )
+    parser.add_argument(
+        "--c-target",
+        choices=("msc-dos", "portable-flat"),
+        default="portable-flat",
+        help="Emit segmented-memory helper macros for a specific recompilable C target.",
     )
     parser.add_argument(
         "--trace-c-stages",
@@ -105,5 +112,13 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional deduplicated PAT catalog built from .pat/.obj/.lib inputs.",
+    )
+    parser.add_argument(
+        "-q",
+        "--brief",
+        action="store_true",
+        default=os.environ.get("INERTIA_BRIEF", "").lower() in ("1", "true", "yes"),
+        help="Token-efficient output: suppress timestamps, progress, diagnostic commentary. "
+        "Also set via INERTIA_BRIEF=1.",
     )
     return parser

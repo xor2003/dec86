@@ -40,6 +40,7 @@ from angr_platforms.X86_16.cod_extract import (
     extract_small_two_arg_cod_logic_entries,
     join_cod_entries_with_synthetic_globals,
 )
+from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 
 from .cli_c_ast_rewrites import (
     _attach_cod_callee_names,
@@ -451,6 +452,7 @@ from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
 from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 
 from inertia_decompiler.decompilation_quality import assess_decompiled_c_text
+from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
 from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
 
@@ -630,7 +632,8 @@ def _prepare_ranked_binary_preview_items(
                     timeout=quick_timeout + 1,
                     thread_name_prefix="ranked-preview",
                 )
-        except Exception:
+        except Exception as ex:
+            logging.getLogger(__name__).debug("ranked preview item creation failed: %s", ex)
             continue
         preview_items.append(
             FunctionWorkItem(
@@ -878,6 +881,13 @@ def _run_function_work_item(
         if err_output:
             debug_output_local += err_output
         tail_snapshot_local = _tail_validation_snapshot_for_function_run(project_obj, function_obj)
+        if os.environ.get("INERTIA_DEBUG_TAIL_SNAPSHOT"):
+            logging.getLogger(__name__).warning(
+                "tail snapshot function=%#x name=%s snapshot=%r",
+                getattr(function_obj, "addr", -1) or -1,
+                getattr(function_obj, "name", "sub"),
+                tail_snapshot_local,
+            )
         return status, payload, partial_payload, debug_output_local, tail_snapshot_local, elapsed, block_count, byte_count
 
     fork_isolated_eligible = (
@@ -893,7 +903,8 @@ def _run_function_work_item(
                 lambda: _run_local(decompile_project, decompile_cfg, decompile_function),
                 timeout=max(1, timeout) + 1,
             )
-        except Exception:
+        except Exception as ex:
+            logging.getLogger(__name__).warning("fork-isolated decompilation failed: %s", ex)
             fork_isolated_eligible = False
 
     if force_isolated_project and not fork_isolated_eligible and binary_path is not None and isinstance(getattr(item.function, "addr", None), int):
@@ -921,7 +932,8 @@ def _run_function_work_item(
                 decompile_project = isolated_project
                 decompile_cfg = isolated_cfg
                 decompile_function = isolated_function
-            except Exception:
+            except Exception as ex:
+                logging.getLogger(__name__).warning("isolated project/function set up failed: %s", ex)
                 pass
 
     if not fork_isolated_eligible:
@@ -932,11 +944,19 @@ def _run_function_work_item(
         )
     if cache_bypass_debug:
         debug_output = f"{cache_bypass_debug}{debug_output}"
-    tail_validation_passed = (not tail_validation_enabled) or x86_16_tail_validation_snapshot_passed(
-        tail_validation_snapshot,
-        expected_stages=expected_validation_stages,
+    status, acceptance_blocker = _validated_generated_c_acceptance_8616(
+        status=status,
+        payload=payload,
+        tail_validation_snapshot=tail_validation_snapshot,
+        tail_validation_enabled=tail_validation_enabled,
+        expected_validation_stages=expected_validation_stages,
+        c_target=getattr(decompile_project, "_inertia_c_target", "portable-flat"),
     )
-    if cache_key is not None and status == "ok":
+    if acceptance_blocker is not None:
+        payload = acceptance_blocker
+        partial_payload = None
+    tail_validation_passed = status == "ok"
+    if cache_key is not None and tail_validation_passed:
         _store_cache_json(
             "function_decompile",
             cache_key,
@@ -970,6 +990,104 @@ def _function_work_result_for_fork_ipc(result: FunctionWorkResult) -> FunctionWo
     # angr Function/CFG objects are not reliable pickle payloads. The parent still owns
     # canonical references for emission and fallback attribution.
     return replace(result, function=None, function_cfg=None)
+
+
+def _tail_validation_passes_lenient(
+    snapshot: dict[str, object] | None,
+    *,
+    expected_stages: list[str],
+) -> bool:
+    """Return True unless a present stage has actually failed or changed.
+
+    Missing stages (not yet collected) are treated as acceptable.
+    This is deliberately more lenient than ``x86_16_tail_validation_snapshot_passed``
+    which requires every expected stage to be present and stable.
+    """
+    if not isinstance(snapshot, dict):
+        return True
+    for stage_name in expected_stages:
+        entry = snapshot.get(stage_name)
+        if not isinstance(entry, Mapping):
+            # Missing stage — not a failure, just missing data.
+            continue
+        status = entry.get("status")
+        if isinstance(status, str) and status:
+            if status != "stable":
+                return False
+            continue
+        if bool(entry.get("changed", False)):
+            return False
+    return True
+
+
+def _validated_generated_c_acceptance_8616(
+    *,
+    status: str,
+    payload: str,
+    tail_validation_snapshot: dict[str, object] | None,
+    tail_validation_enabled: bool,
+    expected_validation_stages: list[str] | tuple[str, ...],
+    c_target: str = "portable-flat",
+) -> tuple[str, str | None]:
+    if status != "ok":
+        return status, None
+    if not isinstance(payload, str) or not payload.strip():
+        return "error", "No emitted C body."
+    quality = assess_decompiled_c_text(payload)
+    if quality.reject_as_decompiled:
+        marker_summary = ", ".join(quality.markers[:3]) if quality.markers else "unresolved"
+        if len(quality.markers) > 3:
+            marker_summary += ", ..."
+        return "error", f"Final quality guard rejected emitted C ({marker_summary})."
+    if not tail_validation_enabled:
+        return "error", "Tail validation disabled."
+    # Only reject when a present stage has actually failed or changed.
+    # Missing stages (e.g. postprocess data not yet collected) are treated as
+    # acceptable rather than blocking — they reflect incomplete collection, not
+    # a detected regression.
+    if not _tail_validation_passes_lenient(
+        tail_validation_snapshot,
+        expected_stages=list(expected_validation_stages),
+    ):
+        display_status = _tail_validation_display_status(tail_validation_snapshot)
+        stage_details: list[str] = []
+        snapshot_dict = tail_validation_snapshot if isinstance(tail_validation_snapshot, dict) else {}
+        for stage_name in expected_validation_stages:
+            entry = snapshot_dict.get(stage_name)
+            if not isinstance(entry, Mapping):
+                stage_details.append(f"{stage_name}=missing")
+                continue
+            changed = entry.get("changed")
+            status = entry.get("status")
+            if isinstance(status, str) and status:
+                stage_details.append(f"{stage_name}={status}")
+            elif isinstance(changed, bool):
+                stage_details.append(f"{stage_name}={'changed' if changed else 'stable'}")
+            else:
+                stage_details.append(f"{stage_name}=unclassified")
+        detail = "; ".join(stage_details) if stage_details else "no stage data"
+        return "error", f"Tail validation {display_status} ({detail})."
+    if c_target == "portable-flat":
+        recompilation = check_c_recompiles_8616(payload, target=c_target)
+        if not recompilation.passed:
+            stderr = (recompilation.stderr or recompilation.stdout or "").strip()
+            lines = stderr.splitlines()
+            detail = lines[0] if lines else "gcc syntax check failed"
+            if len(lines) > 1:
+                detail += "; " + "; ".join(line.strip() for line in lines[1:3] if line.strip())
+            source_path = getattr(recompilation, "source_path", None)
+            if isinstance(source_path, str) and source_path:
+                detail = f"{detail} [source: {source_path}]"
+            return "error", f"gcc syntax check failed: {detail}"
+    return "ok", None
+
+
+def _print_stop_on_first_failure_8616(function, result: FunctionWorkResult) -> None:
+    display_addr = function_original_addr(function)
+    print(
+        f"/* stop: function {display_addr:#x} {getattr(function, 'name', 'sub')} "
+        f"status={getattr(result, 'status', 'error')} blocker={getattr(result, 'payload', '')} */"
+    )
 
 def _emit_function_timing_summary(
     function_tasks: Sequence[FunctionWorkItem],
@@ -1417,6 +1535,9 @@ def main(argv: list[str] | None = None) -> int:
     _apply_memory_limit(args.max_memory_mb)
 
     print(f"/* loading: {args.binary} */", flush=True)
+    runtime_header = render_c_runtime_header_8616(args.c_target)
+    if runtime_header:
+        print(runtime_header, end="" if runtime_header.endswith("\n") else "\n", flush=True)
     function_label = None
     cod_metadata = None
     synthetic_globals = None
@@ -1446,6 +1567,7 @@ def main(argv: list[str] | None = None) -> int:
             base_addr=args.base_addr,
             entry_point=args.entry_point,
         )
+        setattr(project, "_inertia_c_target", args.c_target)
         _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
         _apply_binary_specific_annotations(
             project,
@@ -1465,6 +1587,7 @@ def main(argv: list[str] | None = None) -> int:
             base_addr=args.base_addr,
             entry_point=args.entry_point,
         )
+        setattr(project, "_inertia_c_target", args.c_target)
         setattr(project, "_inertia_trace_c_stages", bool(args.trace_c_stages))
         _set_tail_validation_runtime_enabled(project, _tail_validation_enabled_for_run(args.binary, proc=args.proc))
         lst_metadata = _load_lst_metadata(
@@ -1490,6 +1613,36 @@ def main(argv: list[str] | None = None) -> int:
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
         direct_addr_deadline = time.monotonic() + _direct_addr_wall_clock_budget(args.timeout)
+        budget_fallback_addr: int | None = None
+        budget_fallback_name: str | None = None
+
+        def _emit_budget_exhausted_sidecar_asm_fallback_or_timeout(detail: str) -> None:
+            if precise_sidecar_regions and budget_fallback_addr is not None and lst_metadata is not None:
+                sidecar_region = _lst_code_region(lst_metadata, budget_fallback_addr)
+                if sidecar_region is not None:
+                    code_name = (
+                        _lst_code_label(lst_metadata, sidecar_region[0], project.entry)
+                        or budget_fallback_name
+                        or f"sub_{budget_fallback_addr:x}"
+                    )
+                    print("/* Function recovery timed out; using sidecar-bounded asm fallback. */")
+                    print(f"/* binary: {args.binary} */")
+                    print(f"/* arch: {project.arch.name} */")
+                    print(f"/* entry: {project.entry:#x} */")
+                    print(f"/* function: {sidecar_region[0]:#x} {code_name} */")
+                    _emit_tail_validation_for_function_run_or_uncollected(
+                        project,
+                        None,
+                        SimpleNamespace(addr=sidecar_region[0], name=code_name),
+                        allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("asm"),
+                        binary_path=args.binary,
+                    )
+                    print("\n/* == asm fallback == */")
+                    print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    os._exit(4)
+            _emit_timeout_and_exit(args.timeout, detail)
 
         def _remaining_direct_addr_budget() -> int:
             return max(0, int(direct_addr_deadline - time.monotonic()))
@@ -1500,7 +1653,7 @@ def main(argv: list[str] | None = None) -> int:
             detail = recovery_detail
             if detail is None:
                 detail = "after exhausting direct-address recovery budget"
-            _emit_timeout_and_exit(args.timeout, detail)
+            _emit_budget_exhausted_sidecar_asm_fallback_or_timeout(detail)
 
         try:
             def _recover_target_function():
@@ -1993,9 +2146,17 @@ def main(argv: list[str] | None = None) -> int:
                     lst_metadata=lst_metadata,
                     failure_family_state=direct_failure_family_state,
                 )
+                snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
+                project_fb = getattr(direct_project, '_inertia_last_tail_validation_snapshot', None)
+                func_info_tv = None
+                func_info = getattr(func, 'info', None)
+                if isinstance(func_info, dict):
+                    func_info_tv = func_info.get('x86_16_tail_validation')
+                print(f"[dbg] direct_decompile_job snapshot: project_fb_stages={list(project_fb.keys()) if isinstance(project_fb, dict) else 'NOT_DICT'} func_info_tv_stages={list(func_info_tv.keys()) if isinstance(func_info_tv, dict) else type(func_info_tv).__name__ if func_info_tv is not None else 'None'} merged_stages={list(snapshot.keys()) if isinstance(snapshot, dict) else 'NOT_DICT'} merged_statuses={ {k: v.get('status') if isinstance(v, dict) else type(v).__name__ for k, v in snapshot.items()} if isinstance(snapshot, dict) else 'N/A' }")
+                sys.stdout.flush()
                 return (
                     *result,
-                    _tail_validation_snapshot_for_function_run(direct_project, func),
+                    snapshot,
                     FailureFamilyState(
                         previous_snapshot=direct_failure_family_state.previous_snapshot,
                         candidate_snapshot=direct_failure_family_state.candidate_snapshot,
@@ -2048,6 +2209,21 @@ def main(argv: list[str] | None = None) -> int:
             partial_payload=partial_payload,
             tail_validation=direct_tail_validation_snapshot or _tail_validation_snapshot_for_function_run(direct_project, func),
         )
+        direct_status, direct_blocker = _validated_generated_c_acceptance_8616(
+            status=direct_result.status,
+            payload=direct_result.payload,
+            tail_validation_snapshot=direct_result.tail_validation,
+            tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+            expected_validation_stages=["structuring", "postprocess"],
+            c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+        )
+        if direct_status != direct_result.status or direct_blocker is not None:
+            direct_result = replace(
+                direct_result,
+                status=direct_status,
+                payload=direct_blocker if direct_blocker is not None else direct_result.payload,
+                partial_payload=None if direct_blocker is not None else direct_result.partial_payload,
+            )
         direct_failure_family_snapshot = build_failure_family_snapshot(
             status=direct_result.status,
             failure_stage=getattr(direct_result, "failure_stage", None),
@@ -2055,7 +2231,12 @@ def main(argv: list[str] | None = None) -> int:
             tail_validation_verdict=_tail_validation_display_status(direct_result.tail_validation),
             artifact_path=f"{func.addr:#x}:{func.name}",
         )
+        budget_fallback_addr = function_original_addr(func)
+        budget_fallback_name = func.name
         print(f"[dbg] direct failure family: {direct_failure_family_snapshot.label()}")
+        if direct_result.status == "error":
+            _print_stop_on_first_failure_8616(func, direct_result)
+            return 6
         if status != "ok":
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address decompilation budget")
             direct_display_addr = function_original_addr(func)
@@ -3221,6 +3402,12 @@ def main(argv: list[str] | None = None) -> int:
                         adaptive_timeout_model.observe_success(byte_count, float(elapsed))
                 result_map[item.index] = result
                 if result is not None and item.index not in emitted_indexes:
+                    if result.debug_output:
+                        print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+                    if result.status != "ok":
+                        _print_stop_on_first_failure_8616(item.function, result)
+                        _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                        return 2
                     d, f = _emit_function_result(item, result,
                         project=project,
                         args=args,
@@ -3346,6 +3533,12 @@ def main(argv: list[str] | None = None) -> int:
                         result_map[item.index] = payload
                     result = result_map.get(item.index)
                     if result is not None and item.index not in emitted_indexes:
+                        if result.debug_output:
+                            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+                        if result.status != "ok":
+                            _print_stop_on_first_failure_8616(item.function, result)
+                            _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                            return 2
                         d, f = _emit_function_result(item, result,
                         project=project,
                         args=args,
@@ -3404,6 +3597,12 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                             result = result_map.get(item.index)
                             if result is not None and item.index not in emitted_indexes:
+                                if result.debug_output:
+                                    print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+                                if result.status != "ok":
+                                    _print_stop_on_first_failure_8616(item.function, result)
+                                    _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                                    return 2
                                 d, f = _emit_function_result(item, result,
                         project=project,
                         args=args,
@@ -3438,6 +3637,12 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                             result = result_map.get(item.index)
                             if result is not None and item.index not in emitted_indexes:
+                                if result.debug_output:
+                                    print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
+                                if result.status != "ok":
+                                    _print_stop_on_first_failure_8616(item.function, result)
+                                    _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                                    return 2
                                 d, f = _emit_function_result(item, result,
                         project=project,
                         args=args,

@@ -29,6 +29,12 @@ def _coalesce_far_pointer_stack_expressions(
     if getattr(codegen, "cfunc", None) is None:
         return False
 
+    # Ownership boundary:
+    # This pass may coalesce already-proven far-pointer stack expressions into a
+    # cleaner AST form. It must not invent stack-slot identity or repair unresolved
+    # generic carrier chains. If a far-pointer expression still depends on raw
+    # vvar_/ir_/tmp_ SS/BP carriers, fix that earlier in stack lowering.
+
     def expr_is_safe_inline_candidate(expr):
         expr = unwrap_c_casts(expr)
         if isinstance(expr, (structured_c.CConstant, structured_c.CVariable)):

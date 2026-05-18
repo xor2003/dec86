@@ -351,7 +351,31 @@ def tail_validation_display_status(
         return "passed"
     if changed:
         return "changed"
-    return "unknown"
+
+    # ── Precise diagnostics instead of "unknown" ──
+    # When the snapshot has entries but none are passed or changed,
+    # the validation metadata exists but is incomplete.
+    missing_stages: list[str] = []
+    for stage_name in expected_stages:
+        entry = snapshot.get(stage_name)
+        if not isinstance(entry, Mapping):
+            missing_stages.append(stage_name)
+        elif "changed" not in entry:
+            missing_stages.append(f"{stage_name}(no_changed_field)")
+    if missing_stages:
+        return "tail_validation_uncollected:" + ",".join(missing_stages)
+    # All expected stages exist with changed=False but not status=stable
+    ambiguous_stages: list[str] = []
+    for stage_name in expected_stages:
+        entry = snapshot.get(stage_name)
+        if isinstance(entry, Mapping):
+            status = entry.get("status")
+            if not isinstance(status, str) or not status:
+                status = "missing_status"
+            ambiguous_stages.append(f"{stage_name}({status})")
+    if ambiguous_stages:
+        return "tail_validation_uncollected:" + ",".join(ambiguous_stages)
+    return "tail_validation_uncollected"
 
 
 def format_tail_validation_diagnostic(

@@ -304,6 +304,7 @@ from .cli_c_text_postprocess import (
     _collapse_annotated_stack_aliases_text,
     _collapse_duplicate_type_keywords_text,
     _dedupe_adjacent_prototype_lines,
+    _dedupe_duplicate_local_declarations_text,
     _fix_billasm_rotate_pt_blind_spot,
     _fix_carr_inbox_guard_blind_spot,
     _fix_carr_inboxlng_guard_blind_spot,
@@ -317,7 +318,9 @@ from .cli_c_text_postprocess import (
     _normalize_anonymous_call_targets,
     _normalize_boolean_conditions,
     _normalize_function_signature_arg_names,
+    _normalize_portable_flat_main_signature_text,
     _normalize_spurious_duplicate_local_suffixes,
+    _prune_unused_staging_assignments,
     _prune_trailing_generic_return_text,
     _prune_unused_local_declarations_text,
     _prune_void_function_return_values_text,
@@ -350,6 +353,7 @@ from .direct_addr_failure_family import (
     record_failure_family_retry_stop,
     remember_failure_family_candidate,
 )
+from .msc51_local_hash import emit_msc51_diagnostic
 
 print = _timestamped_print
 __all__ = ['_apply_binary_specific_annotations', '_sidecar_cod_metadata_for_function', '_snapshot_codegen_text', '_regenerate_codegen_text_safely', '_emit_optional_source_sidecar_c_block', '_format_minimal_codegen_output', '_apply_known_cod_object_annotations', '_cod_proc_has_call_heavy_helper_profile', '_decompile_function', '_function_complexity', '_direct_call_stub_filter_regions', '_register_direct_call_target_function_stubs', '_prepare_function_for_decompilation', '_function_decompilation_profile', '_preferred_decompiler_options', '_preferred_expr_collapse_depth', '_decompile_function_with_stats']
@@ -407,7 +411,14 @@ def _sidecar_cod_metadata_for_function(
             return cache[cache_key]
         try:
             metadata = extract_cod_proc_metadata(cod_path, candidate, proc_kind)
-        except Exception:
+        except Exception as ex:
+            logging.getLogger(__name__).debug(
+                "COD metadata extraction failed path=%s candidate=%s kind=%s: %s",
+                cod_path,
+                candidate,
+                proc_kind,
+                ex,
+            )
             continue
         cache[cache_key] = metadata
         return metadata
@@ -416,7 +427,12 @@ def _sidecar_cod_metadata_for_function(
 def _snapshot_codegen_text(codegen) -> str:
     try:
         return codegen.text
-    except Exception:
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "Codegen text snapshot failed at function=%#x stage=snapshot-text: %s",
+            getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+            ex,
+        )
         return ""
 
 
@@ -432,17 +448,38 @@ def _emit_c_stage_trace(project: angr.Project, function, label: str, c_text: str
     print(c_text if c_text.endswith("\n") else c_text + "\n")
     sys.stdout.flush()
 
+
+def _debug_dump_calls_8616(label: str, c_text: str, function_addr: int) -> None:
+    if not os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
+        return
+    target_text = os.environ.get("INERTIA_DEBUG_CALL_MUTATION_ADDR")
+    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else 0x10970
+    if function_addr != target_addr:
+        return
+    if not isinstance(c_text, str) or not c_text:
+        return
+    log = logging.getLogger(__name__)
+    tracked = ("Swaps(", "SwapBars(", "PercolateDown(", "PercolateUp(", "DrawBar(", "DrawTime(")
+    for line in c_text.splitlines():
+        stripped = line.strip()
+        if any(name in stripped for name in tracked):
+            log.warning("[call-mutation] %s: %s", label, stripped)
+
 def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool]:
     fallback_text = _snapshot_codegen_text(codegen)
     log = logging.getLogger(__name__)
-    try:
-        rendered = codegen.render_text(codegen.cfunc)
-        if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
-            return rendered[0], False
-        if isinstance(rendered, str):
-            return rendered, False
-    except Exception as ex:
-        log.debug("render_text before regeneration failed for %s: %s", context, ex)
+    # Rendering rule:
+    # Once AST-level rewrites have run, prefer regenerating text from the updated
+    # codegen tree. Cached snapshots are fallback-only; do not let the final text
+    # path silently revert to pre-rewrite output.
+    trace_addr = -1
+    if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
+        target_text = os.environ.get("INERTIA_DEBUG_CALL_MUTATION_ADDR")
+        target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else 0x10970
+        if f"{target_addr:#x}" in context:
+            trace_addr = target_addr
+    if trace_addr > 0:
+        _debug_dump_calls_8616("regen-fallback-text", fallback_text, trace_addr)
     try:
         codegen.regenerate_text()
     except RecursionError:
@@ -450,8 +487,12 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
         try:
             rendered = codegen.render_text(codegen.cfunc)
             if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
+                if trace_addr > 0:
+                    _debug_dump_calls_8616("regen-render-text-after-recursionerror", rendered[0], trace_addr)
                 return rendered[0], False
             if isinstance(rendered, str):
+                if trace_addr > 0:
+                    _debug_dump_calls_8616("regen-render-text-after-recursionerror", rendered, trace_addr)
                 return rendered, False
         except Exception as ex2:
             log.warning("render_text after RecursionError also failed for %s: %s", context, ex2)
@@ -461,8 +502,12 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
         try:
             rendered = codegen.render_text(codegen.cfunc)
             if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
+                if trace_addr > 0:
+                    _debug_dump_calls_8616("regen-render-text-after-failed-regen", rendered[0], trace_addr)
                 return rendered[0], False
             if isinstance(rendered, str):
+                if trace_addr > 0:
+                    _debug_dump_calls_8616("regen-render-text-after-failed-regen", rendered, trace_addr)
                 return rendered, False
         except Exception as ex2:
             log.debug("render_text after failed regeneration also failed for %s: %s", context, ex2)
@@ -470,11 +515,17 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
     try:
         rendered = codegen.render_text(codegen.cfunc)
         if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str):
+            if trace_addr > 0:
+                _debug_dump_calls_8616("regen-render-text-after-regen", rendered[0], trace_addr)
             return rendered[0], False
         if isinstance(rendered, str):
+            if trace_addr > 0:
+                _debug_dump_calls_8616("regen-render-text-after-regen", rendered, trace_addr)
             return rendered, False
     except Exception as ex:
         log.warning("render_text after successful regeneration failed for %s: %s", context, ex)
+    if trace_addr > 0:
+        _debug_dump_calls_8616("regen-snapshot-after-regen", _snapshot_codegen_text(codegen), trace_addr)
     return _snapshot_codegen_text(codegen), True
 
 def _emit_optional_source_sidecar_c_block(
@@ -492,6 +543,17 @@ def _emit_optional_source_sidecar_c_block(
             print(source_text, end="" if source_text.endswith("\n") else "\n")
     print(c_header)
     print(c_text, end="" if c_text.endswith("\n") else "\n", flush=True)
+
+
+def _debug_reinitbars_stack_lines_8616(label: str, c_text: str, function_addr: int) -> None:
+    if not os.environ.get("INERTIA_DEBUG_REINITBARS_REWRITE"):
+        return
+    if function_addr != 0x10678:
+        return
+    log = logging.getLogger(__name__)
+    for line in str(c_text or "").splitlines():
+        if any(token in line for token in ("for (", "DrawBar(iRow)", "s_4", "s_fffd", "&s_")):
+            log.warning("[reinitbars-rewrite] %s: %s", label, line.strip())
 
 def _format_minimal_codegen_output(
     project: angr.Project,
@@ -675,8 +737,12 @@ def _decompile_function(
                     ),
                     timeout=max(1, timeout) + 1,
                 )
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.getLogger(__name__).warning(
+                    "Isolated retry timed out/fell back at function=%#x stage=retry-helper: %s",
+                    function_original_addr(function),
+                    ex,
+                )
         main_object = getattr(project.loader, "main_object", None)
         linked_base = getattr(main_object, "linked_base", None)
         max_addr = getattr(main_object, "max_addr", None)
@@ -959,6 +1025,21 @@ def _decompile_function(
                 changed_local = True
         return changed_local
 
+    def _run_materialize_missing_stack_local_declarations_pass() -> bool:
+        if getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False):
+            return False
+        return _materialize_missing_stack_local_declarations(dec.codegen)
+
+    def _run_materialize_missing_register_local_declarations_pass() -> bool:
+        if getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False):
+            return False
+        return _materialize_missing_register_local_declarations(dec.codegen)
+
+    def _run_simplify_structured_c_expressions_pass() -> bool:
+        if getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False):
+            return False
+        return _simplify_structured_c_expressions(dec.codegen)
+
     # ── FACT-BASED STACK LOWERING: transfer + materialize BEFORE old-style passes ──
     # AGENTS rule: alias facts must be transferred and materialized early.
     # If this produces bindings but no materialized variables, PipelineHardError raises.
@@ -968,8 +1049,12 @@ def _decompile_function(
     if alias_facts:
         try:
             lower_stack_accesses_from_alias_facts_8616(dec.codegen, alias_facts)
-        except Exception:
-            pass  # errors raised as PipelineHardError from within the function
+        except Exception as ex:
+            logging.getLogger(__name__).debug(
+                "Alias-fact stack lowering failed at function=%#x stage=rewrite-prepass: %s",
+                function_original_addr(function),
+                ex,
+            )
 
     rewrite_passes = (
         lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
@@ -1006,16 +1091,17 @@ def _decompile_function(
         lambda: _attach_pointer_member_names(project, dec.codegen),
         lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
         lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
-        lambda: _simplify_structured_c_expressions(dec.codegen),
+        _run_simplify_structured_c_expressions_pass,
         lambda: _simplify_basic_algebraic_identities(dec.codegen),
-        lambda: _materialize_missing_stack_local_declarations(dec.codegen),
-        lambda: _materialize_missing_register_local_declarations(dec.codegen),
+        _run_materialize_missing_stack_local_declarations_pass,
+        _run_materialize_missing_register_local_declarations_pass,
         lambda: _prune_unused_local_declarations(dec.codegen),
         lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
         lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
         _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
+        lambda: _prune_dead_local_assignments(dec.codegen),
         lambda: _prune_unused_local_declarations(dec.codegen),
     )
     if small_function:
@@ -1048,16 +1134,17 @@ def _decompile_function(
             lambda: _attach_pointer_member_names(project, dec.codegen),
             lambda: _attach_cod_variable_names(dec.codegen, cod_metadata),
             lambda: _attach_cod_callee_names(project, dec.codegen, cod_metadata),
-            lambda: _simplify_structured_c_expressions(dec.codegen),
+            _run_simplify_structured_c_expressions_pass,
             lambda: _simplify_basic_algebraic_identities(dec.codegen),
-            lambda: _materialize_missing_stack_local_declarations(dec.codegen),
-            lambda: _materialize_missing_register_local_declarations(dec.codegen),
+            _run_materialize_missing_stack_local_declarations_pass,
+            _run_materialize_missing_register_local_declarations_pass,
             lambda: _prune_unused_local_declarations(dec.codegen),
             lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
             lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
             _run_callsite_stack_fact_pass,
             _run_stack_lowering_pass,
             lambda: _run_typed_widening_pass(project, dec.codegen),
+            lambda: _prune_dead_local_assignments(dec.codegen),
             lambda: _prune_unused_local_declarations(dec.codegen),
         )
         if lst_metadata is not None:
@@ -1084,13 +1171,44 @@ def _decompile_function(
             byte_count,
         )
     _stack_lowering_already_attempted = False
-    for _ in range(2):
+    for round_idx in range(2):
         iter_changed = False
-        for rewrite in rewrite_passes:
+        for rewrite_idx, rewrite in enumerate(rewrite_passes):
             if _stack_lowering_already_attempted and rewrite is _run_stack_lowering_pass:
+                continue
+            recurrence_rebound = bool(
+                getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False)
+            ) or bool(
+                int(
+                    (getattr(dec.codegen, "_inertia_stack_lowering_debug", {}) or {}).get(
+                        "recurrence_bound_to_materialized_local",
+                        0,
+                    )
+                    or 0
+                )
+            )
+            if (
+                round_idx > 0
+                and recurrence_rebound
+                and rewrite in {
+                    _run_materialize_missing_stack_local_declarations_pass,
+                    _run_materialize_missing_register_local_declarations_pass,
+                }
+            ):
                 continue
             if rewrite():
                 iter_changed = True
+            if os.environ.get("INERTIA_DEBUG_REINITBARS_REWRITE"):
+                trace_addr = function_original_addr(function)
+                regenerated_text, _ = _regenerate_codegen_text_safely(
+                    dec.codegen,
+                    context=f"{hex(function.addr)} rewrite-round={round_idx} pass={rewrite_idx}",
+                )
+                _debug_reinitbars_stack_lines_8616(
+                    f"round={round_idx} pass={rewrite_idx}",
+                    regenerated_text,
+                    trace_addr,
+                )
             if rewrite is _run_stack_lowering_pass:
                 _stack_lowering_already_attempted = True
         if not iter_changed:
@@ -1100,13 +1218,42 @@ def _decompile_function(
     if stack_probe_fact_stats is not None:
         print(f"[dbg] stack-probe fact stats for {function.addr:#x}: {stack_probe_fact_stats}")
     if changed:
-        rendered_text, _ = _regenerate_codegen_text_safely(
+        cached_rendered_text = _snapshot_codegen_text(dec.codegen)
+        recurrence_rebound = bool(
+            getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False)
+        ) or bool(
+            int(
+                (getattr(dec.codegen, "_inertia_stack_lowering_debug", {}) or {}).get(
+                    "recurrence_bound_to_materialized_local",
+                    0,
+                )
+                or 0
+            )
+        )
+        if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
+            _debug_dump_calls_8616(
+                "pre-regenerate-codegen-snapshot",
+                cached_rendered_text,
+                function_original_addr(function),
+            )
+        rendered_text, regenerated = _regenerate_codegen_text_safely(
             dec.codegen,
             context=f"{hex(function.addr)} {function.name}",
         )
+        if (
+            not regenerated
+            and cached_rendered_text.strip()
+            and not recurrence_rebound
+            and (not isinstance(rendered_text, str) or not rendered_text.strip())
+        ):
+            rendered_text = cached_rendered_text
     else:
         rendered_text = _snapshot_codegen_text(dec.codegen)
+    debug_call_addr = function_original_addr(function)
+    _debug_dump_calls_8616("post-structured-codegen", rendered_text, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-structured-codegen", rendered_text)
+    if api_style in ("msc", "compiler"):
+        emit_msc51_diagnostic(dec.codegen)
     formatted = _format_known_helper_calls(
         project,
         function,
@@ -1115,36 +1262,78 @@ def _decompile_function(
         binary_path,
         cod_metadata=effective_cod_metadata,
     )
+    _debug_dump_calls_8616("post-helper-call-format", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-helper-call-format", formatted)
     formatted = _normalize_boolean_conditions(formatted)
+    _debug_dump_calls_8616("post-normalize-boolean-conditions", formatted, debug_call_addr)
     formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
+    _debug_dump_calls_8616("post-fix-carr-inbox-guard", formatted, debug_call_addr)
     formatted = _fix_carr_inboxlng_guard_blind_spot(formatted, function, binary_path)
+    _debug_dump_calls_8616("post-fix-carr-inboxlng-guard", formatted, debug_call_addr)
     formatted = _fix_nhorz_changeweather_blind_spot(formatted, function, binary_path)
+    _debug_dump_calls_8616("post-fix-nhorz-changeweather", formatted, debug_call_addr)
     formatted = _fix_cockpit_look_blind_spot(formatted, function, binary_path)
+    _debug_dump_calls_8616("post-fix-cockpit-look", formatted, debug_call_addr)
     formatted = _fix_billasm_rotate_pt_blind_spot(formatted, function, binary_path)
+    _debug_dump_calls_8616("post-fix-billasm-rotate-pt", formatted, debug_call_addr)
     formatted = _fix_monoprin_mset_pos_blind_spot(formatted, function, binary_path)
+    _debug_dump_calls_8616("post-fix-monoprin-mset-pos", formatted, debug_call_addr)
     formatted = _fix_planes3_ready5_blind_spot(formatted, function, binary_path)
+    _debug_dump_calls_8616("post-fix-planes3-ready5", formatted, debug_call_addr)
     formatted = _normalize_anonymous_call_targets(formatted)
+    _debug_dump_calls_8616("post-normalize-anon-targets", formatted, debug_call_addr)
     formatted = _prune_void_function_return_values_text(formatted)
+    _debug_dump_calls_8616("post-prune-void-return-values-text", formatted, debug_call_addr)
     formatted = _normalize_function_signature_arg_names(formatted)
+    _debug_dump_calls_8616("post-normalize-signature-arg-names", formatted, debug_call_addr)
     formatted = _collapse_annotated_stack_aliases_text(formatted)
+    _debug_dump_calls_8616("post-collapse-annotated-stack-aliases-1", formatted, debug_call_addr)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
+    _debug_dump_calls_8616("post-materialize-missing-generic-locals-1", formatted, debug_call_addr)
     formatted = _prune_unused_local_declarations_text(formatted)
+    _debug_dump_calls_8616("post-prune-unused-local-decls-1", formatted, debug_call_addr)
     formatted = _annotate_cod_proc_output(formatted, function, effective_cod_metadata)
+    _debug_dump_calls_8616("post-annotate-cod-proc-output", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-cod-annotation", formatted)
     formatted = _collapse_annotated_stack_aliases_text(formatted)
+    _debug_dump_calls_8616("post-collapse-annotated-stack-aliases-2", formatted, debug_call_addr)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
+    _debug_dump_calls_8616("post-materialize-missing-generic-locals-2", formatted, debug_call_addr)
     formatted = _prune_unused_local_declarations_text(formatted)
+    _debug_dump_calls_8616("post-prune-unused-local-decls-2", formatted, debug_call_addr)
     formatted = _rewrite_known_helper_signature_text(formatted, function)
+    _debug_dump_calls_8616("post-rewrite-known-helper-signature", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-helper-signature-rewrite", formatted)
     formatted = _prune_trailing_generic_return_text(formatted)
+    _debug_dump_calls_8616("post-prune-trailing-generic-return", formatted, debug_call_addr)
     formatted = _materialize_annotated_cod_declarations_text(formatted, function, effective_cod_metadata)
+    _debug_dump_calls_8616("post-materialize-annotated-cod-decls", formatted, debug_call_addr)
+    formatted = _normalize_portable_flat_main_signature_text(
+        formatted,
+        function,
+        c_target=getattr(project, "_inertia_c_target", "portable-flat"),
+    )
+    _debug_dump_calls_8616("post-normalize-portable-flat-main-signature", formatted, debug_call_addr)
+    formatted = _prune_unused_staging_assignments(formatted)
+    _debug_dump_calls_8616("post-prune-unused-staging-assignments", formatted, debug_call_addr)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
+    _debug_dump_calls_8616("post-collapse-duplicate-type-keywords", formatted, debug_call_addr)
     formatted = _normalize_spurious_duplicate_local_suffixes(formatted)
+    _debug_dump_calls_8616("post-normalize-duplicate-local-suffixes", formatted, debug_call_addr)
     formatted = _dedupe_adjacent_prototype_lines(formatted)
+    _debug_dump_calls_8616("post-dedupe-adjacent-prototypes", formatted, debug_call_addr)
     formatted = _sanitize_mangled_autonames_text(formatted)
+    _debug_dump_calls_8616("post-sanitize-mangled-autonames", formatted, debug_call_addr)
     formatted = normalize_unresolved_c_text(formatted)
+    _debug_dump_calls_8616("post-normalize-unresolved-c-text", formatted, debug_call_addr)
+    # Final text-cleanup boundary:
+    # From this point on, only do presentation/compile-hygiene cleanup. If output is
+    # still missing stack-variable recovery or carries raw pointer-carrier chains,
+    # the fix belongs earlier in stack lowering / AST rewrites, not below.
+    formatted = _materialize_missing_generic_local_declarations_text(formatted)
+    _debug_dump_calls_8616("post-materialize-missing-generic-locals-final", formatted, debug_call_addr)
     formatted = _prune_unused_local_declarations_text(formatted)
+    _debug_dump_calls_8616("post-prune-unused-local-decls-final", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-final-text-cleanup", formatted)
     if not (
         binary_path is not None
@@ -1152,8 +1341,16 @@ def _decompile_function(
         and getattr(function, "name", "") == "fold_values"
     ):
         simplified_formatted = _simplify_x86_16_stack_byte_pointers(formatted, effective_cod_metadata)
+        _debug_dump_calls_8616("post-simplify-x86-16-stack-byte-pointers", simplified_formatted, debug_call_addr)
         if simplified_formatted != formatted:
+            simplified_formatted = _materialize_missing_generic_local_declarations_text(simplified_formatted)
+            _debug_dump_calls_8616(
+                "post-materialize-missing-generic-locals-after-simplify",
+                simplified_formatted,
+                debug_call_addr,
+            )
             formatted = _prune_unused_local_declarations_text(simplified_formatted)
+            _debug_dump_calls_8616("post-prune-unused-local-decls-after-simplify", formatted, debug_call_addr)
         else:
             formatted = simplified_formatted
     if effective_cod_metadata is not None and len(tuple(dict.fromkeys(effective_cod_metadata.call_names))) == 1:
@@ -1163,6 +1360,10 @@ def _decompile_function(
             rf"(?P=indent)return\s+{re.escape(helper_name)}\((?P=args)\);\s*$"
         )
         formatted = redundant_wrapper_pattern.sub(rf"\g<indent>return {helper_name}(\g<args>);", formatted)
+        _debug_dump_calls_8616("post-redundant-wrapper-collapse", formatted, debug_call_addr)
+    _debug_dump_calls_8616("final-emitted-c", formatted, debug_call_addr)
+    formatted = _dedupe_duplicate_local_declarations_text(formatted)
+    _debug_dump_calls_8616("post-final-dedup", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "final-emitted-c", formatted)
     quality = assess_decompiled_c_text(formatted)
     if quality.reject_as_decompiled:
@@ -1210,7 +1411,13 @@ def _function_complexity(function):
     for block_addr in block_addrs:
         try:
             block = project.factory.block(block_addr, opt_level=0)
-        except Exception:
+        except Exception as ex:
+            logging.getLogger(__name__).debug(
+                "Function complexity block decode failed at function=%#x block=%#x: %s",
+                getattr(function, "addr", -1) or -1,
+                block_addr,
+                ex,
+            )
             continue
         total_bytes += len(block.bytes)
     complexity = (len(block_addrs), total_bytes)
@@ -1293,7 +1500,13 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
         for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
             try:
                 block = factory.block(block_addr, opt_level=0)
-            except Exception:
+            except Exception as ex:
+                logging.getLogger(__name__).debug(
+                    "Direct call block decode failed at function=%#x block=%#x: %s",
+                    getattr(function, "addr", -1) or -1,
+                    block_addr,
+                    ex,
+                )
                 continue
             for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ():
                 if getattr(insn, "mnemonic", "").lower() != "call":
@@ -1316,7 +1529,13 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
     for callsite in getattr(function, "get_call_sites", lambda: [])() or ():
         try:
             target = function.get_call_target(callsite)
-        except Exception:
+        except Exception as ex:
+            logging.getLogger(__name__).debug(
+                "Call target lookup failed at function=%#x callsite=%#x: %s",
+                getattr(function, "addr", -1) or -1,
+                callsite,
+                ex,
+            )
             continue
         direct_calls.append((callsite, target))
     if not direct_calls:
@@ -1371,10 +1590,22 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                 if isinstance(stub_name, str) and stub_name:
                     try:
                         stub.name = stub_name
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        logging.getLogger(__name__).debug(
+                            "Stub naming failed at function=%#x stub=%#x name=%s: %s",
+                            getattr(function, "addr", -1) or -1,
+                            candidate,
+                            stub_name,
+                            ex,
+                        )
                 created += 1
-            except Exception:
+            except Exception as ex:
+                logging.getLogger(__name__).debug(
+                    "Stub creation failed at function=%#x stub=%#x: %s",
+                    getattr(function, "addr", -1) or -1,
+                    candidate,
+                    ex,
+                )
                 continue
     return created
 
@@ -1417,7 +1648,12 @@ def _function_decompilation_profile(
     if hasattr(function, "get_call_sites"):
         try:
             call_sites = tuple(function.get_call_sites())
-        except Exception:
+        except Exception as ex:
+            logging.getLogger(__name__).debug(
+                "Call-site enumeration failed at function=%#x stage=profile: %s",
+                getattr(function, "addr", -1) or -1,
+                ex,
+            )
             call_sites = ()
 
     call_site_count = len(call_sites)
@@ -1428,7 +1664,13 @@ def _function_decompilation_profile(
         for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
             try:
                 block = project.factory.block(block_addr, opt_level=0)
-            except Exception:
+            except Exception as ex:
+                logging.getLogger(__name__).debug(
+                    "Profile block decode failed at function=%#x block=%#x: %s",
+                    getattr(function, "addr", -1) or -1,
+                    block_addr,
+                    ex,
+                )
                 continue
             for insn in getattr(getattr(block, "capstone", None), "insns", ()) or ():
                 mnemonic = getattr(insn, "mnemonic", "").lower()
