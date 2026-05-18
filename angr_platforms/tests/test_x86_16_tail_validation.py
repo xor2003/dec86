@@ -1671,6 +1671,25 @@ def test_tail_validation_record_summary_marks_uncollected_separately_from_unknow
     assert surface["consistency_issues"] == ()
 
 
+def test_tail_validation_partial_surface_uses_failed_headline():
+    surface = build_x86_16_tail_validation_surface(
+        {
+            "severity": "partial",
+            "changed_function_count": 0,
+            "structuring": {"stable_count": 1, "missing_count": 1, "coverage_count": 1},
+            "postprocess": {"stable_count": 1, "missing_count": 1, "coverage_count": 1},
+            "changed_functions": [],
+            "function_status_counts": {"passed": 1, "uncollected": 1},
+            "function_statuses": [],
+            "uncollected_functions": [{"cod_file": "B.COD", "proc_name": "_b", "proc_kind": "NEAR"}],
+            "unknown_functions": [],
+        },
+        scanned=2,
+    )
+
+    assert surface["headline"] == "whole-tail validation failed across 2 functions"
+
+
 def test_tail_validation_uncollected_records_fall_back_to_function_name_identity():
     summary = summarize_x86_16_tail_validation_records(
         [

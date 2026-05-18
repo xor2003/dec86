@@ -1239,7 +1239,7 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
     elif severity == "uncollected":
         headline = f"whole-tail validation not collected across {scanned_count} functions"
     elif severity == "partial":
-        headline = f"whole-tail validation partially collected across {scanned_count} functions"
+        headline = f"whole-tail validation failed across {scanned_count} functions"
     elif severity == "unknown":
         headline = f"whole-tail validation incomplete across {scanned_count} functions"
     else:

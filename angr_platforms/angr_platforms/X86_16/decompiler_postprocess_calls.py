@@ -1167,9 +1167,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
 
     def _resolve_recent_value_assignment(expr, statements_prefix: list):
         if not (_is_plain_register_value_expr(expr) or _is_outgoing_stack_value_carrier_expr(expr)):
-            return expr
+            return expr, len(statements_prefix)
         expr_value_key = _value_expr_key(expr)
-        for stmt in reversed(tuple(statements_prefix)):
+        for stmt_idx in range(len(statements_prefix) - 1, -1, -1):
+            stmt = statements_prefix[stmt_idx]
             for assignment in reversed(_iter_assignment_nodes(stmt)):
                 lhs, rhs = _assignment_lhs_rhs(assignment)
                 if lhs is None or rhs is None:
@@ -1180,11 +1181,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 ):
                     continue
                 if _assignment_lhs_writes_memory(lhs) or _is_segment_register_value_expr(rhs):
-                    return None
+                    return None, stmt_idx
                 if _same_c_expression_8616(rhs, expr):
-                    return None
-                return rhs
-        return None
+                    return None, stmt_idx
+                return rhs, stmt_idx
+        return None, None
 
     def _expr_contains_plain_register_uses(expr) -> bool:
         stack = [expr]
@@ -1216,17 +1217,23 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             if failed or not (_is_plain_register_value_expr(node) or _is_outgoing_stack_value_carrier_expr(node)):
                 return node
             key = _value_expr_key(node)
-            if key is not None and key in seen_keys:
+            scoped_key = (key, len(statements_prefix)) if key is not None else None
+            if scoped_key is not None and scoped_key in seen_keys:
                 failed = True
                 return node
-            resolved = _resolve_recent_value_assignment(node, statements_prefix)
+            resolved, resolved_stmt_idx = _resolve_recent_value_assignment(node, statements_prefix)
             if resolved is None:
                 failed = True
                 return node
             next_seen = set(seen_keys)
+            next_prefix = (
+                statements_prefix[:resolved_stmt_idx]
+                if isinstance(resolved_stmt_idx, int) and resolved_stmt_idx >= 0
+                else statements_prefix
+            )
             if key is not None:
-                next_seen.add(key)
-            resolved = _resolve_register_carriers_in_expr(resolved, statements_prefix, next_seen)
+                next_seen.add((key, len(next_prefix)))
+            resolved = _resolve_register_carriers_in_expr(resolved, next_prefix, next_seen)
             if resolved is None or _expr_contains_plain_register_uses(resolved):
                 failed = True
                 return node
@@ -1641,6 +1648,55 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             return None
         debug_materialization = bool(os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"))
         normalized = []
+
+        def _expr_int_constants(node) -> set[int]:
+            values: set[int] = set()
+            for current in (node, *_iter_c_nodes_deep_8616(node)):
+                if isinstance(current, structured_c.CConstant):
+                    value = getattr(current, "value", None)
+                    if isinstance(value, int):
+                        values.add(value)
+            return values
+
+        def _recent_dirty_value_rhs(expr, prefix: list):
+            expr_node = expr
+            while isinstance(expr_node, CTypeCast):
+                expr_node = expr_node.expr
+            expr_op = getattr(expr_node, "op", None) if isinstance(expr_node, CBinaryOp) else None
+            expr_consts = _expr_int_constants(expr_node)
+            matches: list[tuple[tuple[int, int], object]] = []
+            for stmt_idx in range(len(prefix) - 1, -1, -1):
+                stmt = prefix[stmt_idx]
+                for assignment in reversed(_iter_assignment_nodes(stmt)):
+                    lhs, rhs_stmt = _assignment_lhs_rhs(assignment)
+                    if lhs is None or rhs_stmt is None or _assignment_lhs_writes_memory(lhs):
+                        continue
+                    if lhs.__class__.__name__ != "CDirtyExpression":
+                        continue
+                    if _is_segment_register_value_expr(rhs_stmt) or _expr_contains_plain_register_uses(rhs_stmt):
+                        continue
+                    rhs_node = rhs_stmt
+                    while isinstance(rhs_node, CTypeCast):
+                        rhs_node = rhs_node.expr
+                    rhs_op = getattr(rhs_node, "op", None) if isinstance(rhs_node, CBinaryOp) else None
+                    if expr_op is not None and rhs_op != expr_op:
+                        continue
+                    rhs_consts = _expr_int_constants(rhs_node)
+                    if expr_consts and rhs_consts and expr_consts.isdisjoint(rhs_consts):
+                        continue
+                    score = (
+                        1 if _node_contains_stable_named_stack_value_8616(rhs_node) else 0,
+                        0 if _node_contains_placeholder_stack_8616(rhs_node) else 1,
+                        stmt_idx,
+                    )
+                    matches.append((score, rhs_stmt))
+            if not matches:
+                return None
+            matches.sort(key=lambda item: item[0], reverse=True)
+            if len(matches) > 1 and matches[0][0] == matches[1][0]:
+                return None
+            return matches[0][1]
+
         if len(source_indices) != len(rhs_values):
             source_indices = [-1] * len(rhs_values)
         for rhs, source_idx in zip(rhs_values, source_indices):
@@ -1661,21 +1717,34 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     source_idx,
                 )
                 if resolved is None:
-                    window_start = max(0, len(prefix) - 6)
-                    for stmt_idx, stmt in enumerate(prefix[window_start:], start=window_start):
-                        for assignment in _iter_assignment_nodes(stmt):
-                            lhs, rhs_stmt = _assignment_lhs_rhs(assignment)
-                            if lhs is None or rhs_stmt is None:
-                                continue
+                    dirty_rhs = _recent_dirty_value_rhs(rhs, prefix)
+                    if dirty_rhs is not None:
+                        if debug_materialization:
                             log.warning(
-                                "[call-normalize-prefix] function=%#x target=%s stmt_idx=%d lhs=%s rhs=%s memory_lhs=%s",
+                                "[call-normalize-dirty-fallback] function=%#x target=%s rhs=%s fallback=%s source_idx=%r",
                                 getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
                                 call_name,
-                                stmt_idx,
-                                _debug_expr_8616(lhs),
-                                _debug_expr_8616(rhs_stmt),
-                                _assignment_lhs_writes_memory(lhs),
+                                _debug_expr_8616(rhs),
+                                _debug_expr_8616(dirty_rhs),
+                                source_idx,
                             )
+                        resolved = dirty_rhs
+                    else:
+                        window_start = max(0, len(prefix) - 6)
+                        for stmt_idx, stmt in enumerate(prefix[window_start:], start=window_start):
+                            for assignment in _iter_assignment_nodes(stmt):
+                                lhs, rhs_stmt = _assignment_lhs_rhs(assignment)
+                                if lhs is None or rhs_stmt is None:
+                                    continue
+                                log.warning(
+                                    "[call-normalize-prefix] function=%#x target=%s stmt_idx=%d lhs=%s rhs=%s memory_lhs=%s",
+                                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                                    call_name,
+                                    stmt_idx,
+                                    _debug_expr_8616(lhs),
+                                    _debug_expr_8616(rhs_stmt),
+                                    _assignment_lhs_writes_memory(lhs),
+                                )
             if resolved is None:
                 return None
             expr = _clone_c_ast_tree(resolved)

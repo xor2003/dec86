@@ -2292,6 +2292,25 @@ def test_function_attempt_status_reports_uncollected_when_tail_validation_disabl
     assert "attempt=decompiled validation=uncollected" in capsys.readouterr().out
 
 
+def test_function_attempt_status_reports_failed_for_changed_tail_validation(capsys):
+    function = SimpleNamespace(
+        addr=0x10010,
+        name="sub_10010",
+        project=SimpleNamespace(_inertia_tail_validation_enabled=True),
+    )
+
+    decompile._print_function_attempt_status(
+        function,
+        attempt="decompiled",
+        validation_snapshot={
+            "structuring": {"changed": False, "status": "stable"},
+            "postprocess": {"changed": True, "status": "changed"},
+        },
+    )
+
+    assert "attempt=decompiled validation=failed" in capsys.readouterr().out
+
+
 def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
