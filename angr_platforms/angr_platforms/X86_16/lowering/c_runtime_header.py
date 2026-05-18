@@ -19,6 +19,7 @@ def render_c_runtime_header_8616(target: str | None) -> str:
         )
     if normalized == "portable-flat":
         return (
+            "#include <stdbool.h>\n"
             "#include <stdint.h>\n"
             "#include <time.h>\n"
             "\n"

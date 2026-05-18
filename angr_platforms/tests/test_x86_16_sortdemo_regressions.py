@@ -169,6 +169,24 @@ def test_sortdemo_main_uses_portable_flat_int_main_signature():
     assert "return 0;" in result.stdout
 
 
+def test_sortdemo_nfree_does_not_emit_undeclared_vvar_carrier():
+    result = _run_decompile_addr(
+        SORTDEMO_EXE,
+        0x10000,
+        extra_args=("--c-target", "portable-flat"),
+        analysis_timeout=12,
+        subprocess_timeout=60,
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    assert "function: 0x10000 $_nfree" in result.stdout
+    assert "validation=passed" in combined
+    assert "gcc syntax check failed:" not in combined
+    assert "undeclared" not in combined
+    assert "unsigned short vvar_2;" in result.stdout
+
+
 def test_sortdemo_heapsort_callsites_materialized_in_c_order():
     result = _run_decompile_addr(
         SORTDEMO_EXE,

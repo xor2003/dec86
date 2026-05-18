@@ -11,6 +11,7 @@ import re
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypePointer
+from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from ..decompiler_postprocess_utils import _match_bp_stack_dereference_8616
@@ -372,6 +373,7 @@ def _canonicalize_stack_cvar_expr(
     if expr_id in active_expr_ids:
         return expr
     active_expr_ids.add(expr_id)
+    synthetic_sp_anchor = None
 
     def _iter_statement_nodes(root):
         stack = [root]
@@ -404,6 +406,144 @@ def _canonicalize_stack_cvar_expr(
                 else:
                     stack.append(value)
 
+    def _synthetic_sp_anchor_cvar():
+        nonlocal synthetic_sp_anchor
+        if synthetic_sp_anchor is not None:
+            return synthetic_sp_anchor
+        cfunc = getattr(codegen, "cfunc", None)
+        region = getattr(cfunc, "addr", None) if cfunc is not None else None
+        variable = SimStackVariable(0, 2, base="sp", name="sp_0", region=region)
+        synthetic_sp_anchor = structured_c.CVariable(variable, variable_type=SimTypeShort(False), codegen=codegen)
+        variables_in_use = getattr(cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            variables_in_use.setdefault(variable, synthetic_sp_anchor)
+        unified_local_vars = getattr(cfunc, "unified_local_vars", None)
+        if isinstance(unified_local_vars, dict):
+            unified_local_vars.setdefault(variable, {(synthetic_sp_anchor, getattr(synthetic_sp_anchor, "variable_type", None))})
+        return synthetic_sp_anchor
+
+    def _is_sp_virtual_register(variable) -> bool:
+        sp_offset = getattr(getattr(getattr(codegen, "project", None), "arch", None), "registers", {}).get("sp", (None, None))[0]
+        return isinstance(sp_offset, int) and getattr(variable, "reg", None) == sp_offset
+
+    def _is_linear_temp_cvar(node) -> bool:
+        if not isinstance(node, structured_c.CVariable):
+            return False
+        variable = getattr(node, "variable", None)
+        if isinstance(variable, SimStackVariable):
+            return False
+        name = getattr(node, "name", None) or getattr(variable, "name", None)
+        if name is None:
+            return True
+        return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+|ir_\d+|tmp_\d+)", name) is not None
+
+    def _alias_keys_for_cvar(node, *, lookup: bool) -> tuple[object, ...]:
+        if not isinstance(node, structured_c.CVariable):
+            return ()
+        variable = getattr(node, "variable", None)
+        keys: list[object] = []
+        linear_temp = _is_linear_temp_cvar(node)
+        if variable is not None:
+            keys.append(("var", id(variable)))
+            reg = getattr(variable, "reg", None)
+            size = getattr(variable, "size", None)
+            if lookup and not linear_temp and isinstance(reg, int) and isinstance(size, int):
+                keys.append(("reg", reg, size))
+        for candidate in (
+            getattr(node, "name", None),
+            getattr(variable, "name", None),
+        ):
+            if isinstance(candidate, str) and candidate:
+                keys.append(("name", candidate))
+        return tuple(dict.fromkeys(keys))
+
+    def _single_assignment_expr_for_cvar(node_cvar):
+        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+        if root is None or not isinstance(node_cvar, structured_c.CVariable):
+            return None
+
+        node_var = getattr(node_cvar, "variable", None)
+        node_name = getattr(node_cvar, "name", None) or getattr(node_var, "name", None)
+        node_reg = getattr(node_var, "reg", None)
+        node_size = getattr(node_var, "size", None)
+        node_linear_temp = _is_linear_temp_cvar(node_cvar)
+
+        def _same_lhs(lhs):
+            if not isinstance(lhs, structured_c.CVariable):
+                return False
+            lhs_var = getattr(lhs, "variable", None)
+            if lhs_var is node_var:
+                return True
+            lhs_name = getattr(lhs, "name", None) or getattr(lhs_var, "name", None)
+            if isinstance(node_name, str) and node_name and lhs_name == node_name:
+                return True
+            lhs_reg = getattr(lhs_var, "reg", None)
+            lhs_size = getattr(lhs_var, "size", None)
+            lhs_linear_temp = _is_linear_temp_cvar(lhs)
+            if node_linear_temp or lhs_linear_temp:
+                return False
+            return (
+                isinstance(node_reg, int)
+                and isinstance(node_size, int)
+                and isinstance(lhs_reg, int)
+                and isinstance(lhs_size, int)
+                and lhs_reg == node_reg
+                and lhs_size == node_size
+            )
+
+        matches = []
+        for stmt in _iter_statement_nodes(root):
+            if not isinstance(stmt, structured_c.CAssignment):
+                continue
+            if not _same_lhs(getattr(stmt, "lhs", None)):
+                continue
+            matches.append(getattr(stmt, "rhs", None))
+            if len(matches) > 1:
+                return None
+        return matches[0] if len(matches) == 1 else None
+
+    def _top_level_statements() -> list[object]:
+        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+        statements = getattr(root, "statements", None)
+        if isinstance(statements, list | tuple):
+            return list(statements)
+        return []
+
+    def _statement_index_containing(node) -> int | None:
+        if node is None:
+            return None
+        for idx, stmt in enumerate(_top_level_statements()):
+            for nested in _iter_statement_nodes(stmt):
+                if nested is node:
+                    return idx
+        return None
+
+    def _nearest_preceding_assignment_expr_for_cvar(node_cvar):
+        if not isinstance(node_cvar, structured_c.CVariable):
+            return None
+        node_var = getattr(node_cvar, "variable", None)
+        node_reg = getattr(node_var, "reg", None)
+        node_size = getattr(node_var, "size", None)
+        if not (isinstance(node_reg, int) and isinstance(node_size, int)):
+            return None
+        stmt_idx = _statement_index_containing(node_cvar)
+        if stmt_idx is None:
+            return None
+
+        nearest_rhs = None
+        for idx, stmt in enumerate(_top_level_statements()):
+            if idx >= stmt_idx or not isinstance(stmt, structured_c.CAssignment):
+                continue
+            lhs = getattr(stmt, "lhs", None)
+            if not isinstance(lhs, structured_c.CVariable):
+                continue
+            lhs_var = getattr(lhs, "variable", None)
+            lhs_reg = getattr(lhs_var, "reg", None)
+            lhs_size = getattr(lhs_var, "size", None)
+            if lhs_reg == node_reg and lhs_size == node_size:
+                nearest_rhs = getattr(stmt, "rhs", None)
+        return nearest_rhs
+
     def _is_pointer_capable_stack_variable(var: object, cvar: object | None = None) -> bool:
         if not isinstance(var, SimStackVariable):
             return False
@@ -421,18 +561,27 @@ def _canonicalize_stack_cvar_expr(
         if isinstance(cached, tuple) and len(cached) == 2 and cached[0] is cache_key:
             return cached[1]
 
-        aliases: dict[int, tuple[object, int]] = {}
+        aliases: dict[object, tuple[object, int]] = {}
 
         def _resolve_stack_pointer_alias(node):
             node = unwrap_c_casts(node)
             if isinstance(node, structured_c.CVariable):
                 variable = getattr(node, "variable", None)
-                alias = aliases.get(id(variable))
-                if alias is not None:
-                    return alias
+                for key in _alias_keys_for_cvar(node, lookup=True):
+                    alias = aliases.get(key)
+                    if alias is not None:
+                        return alias
                 if _is_pointer_capable_stack_variable(variable, node):
                     if getattr(variable, "base", None) == "bp":
                         return node, 0
+                if _is_sp_virtual_register(variable):
+                    return _synthetic_sp_anchor_cvar(), 0
+                single_assignment_rhs = _single_assignment_expr_for_cvar(node)
+                if single_assignment_rhs is not None:
+                    return _resolve_stack_pointer_alias(single_assignment_rhs)
+                nearest_assignment_rhs = _nearest_preceding_assignment_expr_for_cvar(node)
+                if nearest_assignment_rhs is not None:
+                    return _resolve_stack_pointer_alias(nearest_assignment_rhs)
                 return None
             if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
                 operand = unwrap_c_casts(node.operand)
@@ -441,6 +590,10 @@ def _canonicalize_stack_cvar_expr(
                     if isinstance(variable, SimStackVariable):
                         if getattr(variable, "base", None) == "bp":
                             return operand, 0
+                    for key in _alias_keys_for_cvar(operand, lookup=True):
+                        alias = aliases.get(key)
+                        if alias is not None:
+                            return alias
                 return None
             if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
                 lhs = _resolve_stack_pointer_alias(node.lhs)
@@ -466,12 +619,18 @@ def _canonicalize_stack_cvar_expr(
                     if not isinstance(lhs, structured_c.CVariable):
                         continue
                     lhs_var = getattr(lhs, "variable", None)
-                    if not isinstance(lhs_var, SimStackVariable) or getattr(lhs_var, "base", None) != "bp":
+                    if lhs_var is None:
+                        continue
+                    keys = _alias_keys_for_cvar(lhs, lookup=False)
+                    if not keys:
                         continue
                     resolved = _resolve_stack_pointer_alias(getattr(node, "rhs", None))
                     if resolved is None:
                         continue
-                    if not _is_pointer_capable_stack_variable(lhs_var, lhs):
+                    if isinstance(lhs_var, SimStackVariable):
+                        if getattr(lhs_var, "base", None) != "bp":
+                            continue
+                    if isinstance(lhs_var, SimStackVariable) and not _is_pointer_capable_stack_variable(lhs_var, lhs):
                         # Accept tiny stack temporaries that are proved to carry a stack pointer.
                         # These appear in helper prologue/epilogue carrier patterns.
                         rhs_expr = unwrap_c_casts(getattr(node, "rhs", None))
@@ -481,14 +640,64 @@ def _canonicalize_stack_cvar_expr(
                             or isinstance(rhs_expr, structured_c.CBinaryOp)
                         ):
                             continue
-                    if aliases.get(id(lhs_var)) != resolved:
-                        aliases[id(lhs_var)] = resolved
+                    needs_update = False
+                    for key in keys:
+                        if aliases.get(key) != resolved:
+                            aliases[key] = resolved
+                            needs_update = True
+                    if needs_update:
                         changed_local = True
                 if not changed_local:
                     break
 
         setattr(codegen, "_inertia_stack_pointer_aliases_for_cvars", (cache_key, aliases))
         return aliases
+
+    def _resolve_stack_pointer_alias_expr(base_expr):
+        base_ref = unwrap_c_casts(base_expr)
+        if isinstance(base_ref, structured_c.CUnaryOp) and base_ref.op == "Reference":
+            operand = unwrap_c_casts(base_ref.operand)
+            if isinstance(operand, structured_c.CVariable):
+                base_var = getattr(operand, "variable", None)
+                for key in _alias_keys_for_cvar(operand, lookup=True):
+                    alias_state = _stack_pointer_aliases().get(key)
+                    if alias_state is not None:
+                        return alias_state
+                if isinstance(base_var, SimStackVariable) and getattr(base_var, "base", None) == "bp":
+                    return operand, 0
+            return None
+        if isinstance(base_ref, structured_c.CVariable):
+            base_var = getattr(base_ref, "variable", None)
+            for key in _alias_keys_for_cvar(base_ref, lookup=True):
+                alias_state = _stack_pointer_aliases().get(key)
+                if alias_state is not None:
+                    return alias_state
+            if isinstance(base_var, SimStackVariable) and getattr(base_var, "base", None) == "bp":
+                return base_ref, 0
+            if _is_sp_virtual_register(base_var):
+                return _synthetic_sp_anchor_cvar(), 0
+            single_assignment_rhs = _single_assignment_expr_for_cvar(base_ref)
+            if single_assignment_rhs is not None:
+                return _resolve_stack_pointer_alias_expr(single_assignment_rhs)
+            nearest_assignment_rhs = _nearest_preceding_assignment_expr_for_cvar(base_ref)
+            if nearest_assignment_rhs is not None:
+                return _resolve_stack_pointer_alias_expr(nearest_assignment_rhs)
+            return None
+        if isinstance(base_ref, structured_c.CBinaryOp) and base_ref.op in {"Add", "Sub"}:
+            lhs = _resolve_stack_pointer_alias_expr(base_ref.lhs)
+            rhs = _resolve_stack_pointer_alias_expr(base_ref.rhs)
+            lhs_value = getattr(unwrap_c_casts(base_ref.lhs), "value", None)
+            rhs_value = getattr(unwrap_c_casts(base_ref.rhs), "value", None)
+            if lhs is not None and isinstance(rhs_value, int):
+                alias_base_expr, alias_offset = lhs
+                return alias_base_expr, alias_offset + (rhs_value if base_ref.op == "Add" else -rhs_value)
+            if rhs is not None and isinstance(lhs_value, int) and base_ref.op == "Add":
+                alias_base_expr, alias_offset = rhs
+                return alias_base_expr, alias_offset + lhs_value
+        return None
+
+    def _resolve_base_stack_pointer_alias(base_expr):
+        return _resolve_stack_pointer_alias_expr(base_expr)
 
     if isinstance(expr, structured_c.CVariable):
         variable = getattr(expr, "variable", None)
@@ -523,31 +732,55 @@ def _canonicalize_stack_cvar_expr(
             materialize_stack_cvar_at_offset=materialize_stack_cvar_at_offset,
             active_expr_ids=active_expr_ids,
         )
-        base_ref = unwrap_c_casts(base_expr)
-        if isinstance(base_ref, structured_c.CUnaryOp) and base_ref.op == "Reference":
-            base_var_expr = unwrap_c_casts(base_ref.operand)
-            base_var = getattr(base_var_expr, "variable", None)
-            index_value = getattr(index_expr, "value", None)
-            if isinstance(base_var_expr, structured_c.CVariable) and isinstance(base_var, SimStackVariable) and isinstance(index_value, int):
-                alias_state = _stack_pointer_aliases().get(id(base_var))
-                if alias_state is not None:
-                    alias_base_expr, alias_offset = alias_state
-                    alias_base_var = getattr(alias_base_expr, "variable", None)
-                    target_offset = getattr(alias_base_var, "offset", None)
-                    if isinstance(target_offset, int):
-                        target_offset += alias_offset
-                else:
-                    target_offset = getattr(base_var, "offset", None)
-                if isinstance(target_offset, int):
-                    resolved_offset = target_offset + index_value
-                    resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset)
-                    resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
-                    resolved_var = getattr(resolved, "variable", None)
+        alias_state = _resolve_base_stack_pointer_alias(base_expr)
+        index_value = getattr(index_expr, "value", None)
+        if alias_state is not None and isinstance(index_value, int):
+            alias_base_expr, alias_offset = alias_state
+            alias_base_var = getattr(alias_base_expr, "variable", None)
+            target_offset = getattr(alias_base_var, "offset", None)
+            if isinstance(target_offset, int):
+                resolved_offset = target_offset + alias_offset + index_value
+                resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset)
+                resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
+                resolved_var = getattr(resolved, "variable", None)
+                if (
+                    isinstance(resolved, structured_c.CVariable)
+                    and isinstance(resolved_var, SimStackVariable)
+                    and getattr(resolved_var, "offset", None) == resolved_offset
+                ):
+                    _record_stack_canonicalization_bridge_8616(
+                        codegen,
+                        expr=expr,
+                        resolved_offset=resolved_offset,
+                        kind="indexed_value",
+                    )
+                    debug_stats["candidate_ast_match_count"] += 1
+                    debug_stats["lowering_replacements"] += 1
+                    active_expr_ids.discard(expr_id)
+                    return resolved
+                arch = getattr(getattr(codegen, "project", None), "arch", None)
+                byte_width = getattr(arch, "byte_width", None)
+                type_size_bits = getattr(getattr(expr, "type", None), "size", None)
+                requested_size = (
+                    max(type_size_bits // byte_width, 1)
+                    if isinstance(type_size_bits, int) and type_size_bits > 0 and isinstance(byte_width, int) and byte_width > 0
+                    else None
+                )
+                base_size = getattr(alias_base_var, "size", None)
+                if (
+                    callable(materialize_stack_cvar_at_offset)
+                    and isinstance(requested_size, int)
+                    and isinstance(base_size, int)
+                    and requested_size > base_size
+                ):
+                    materialized = materialize_stack_cvar_at_offset(codegen, resolved_offset, requested_size)
+                    materialized_var = getattr(materialized, "variable", None)
                     if (
-                        isinstance(resolved, structured_c.CVariable)
-                        and isinstance(resolved_var, SimStackVariable)
-                        and getattr(resolved_var, "offset", None) == resolved_offset
+                        isinstance(materialized, structured_c.CVariable)
+                        and isinstance(materialized_var, SimStackVariable)
+                        and getattr(materialized_var, "offset", None) == resolved_offset
                     ):
+                        materialized = _prefer_bound_stack_cvar_8616(codegen, materialized, resolve_stack_cvar_at_offset)
                         _record_stack_canonicalization_bridge_8616(
                             codegen,
                             expr=expr,
@@ -557,63 +790,30 @@ def _canonicalize_stack_cvar_expr(
                         debug_stats["candidate_ast_match_count"] += 1
                         debug_stats["lowering_replacements"] += 1
                         active_expr_ids.discard(expr_id)
-                        return resolved
-                    arch = getattr(getattr(codegen, "project", None), "arch", None)
-                    byte_width = getattr(arch, "byte_width", None)
-                    type_size_bits = getattr(getattr(expr, "type", None), "size", None)
-                    requested_size = (
-                        max(type_size_bits // byte_width, 1)
-                        if isinstance(type_size_bits, int) and type_size_bits > 0 and isinstance(byte_width, int) and byte_width > 0
-                        else None
+                        return materialized
+                if callable(materialize_stack_cvar_at_offset):
+                    materialized = materialize_stack_cvar_at_offset(
+                        codegen,
+                        resolved_offset,
+                        requested_size if isinstance(requested_size, int) and requested_size > 0 else 1,
                     )
-                    base_size = getattr(base_var, "size", None)
+                    materialized_var = getattr(materialized, "variable", None)
                     if (
-                        callable(materialize_stack_cvar_at_offset)
-                        and isinstance(requested_size, int)
-                        and isinstance(base_size, int)
-                        and requested_size > base_size
+                        isinstance(materialized, structured_c.CVariable)
+                        and isinstance(materialized_var, SimStackVariable)
+                        and getattr(materialized_var, "offset", None) == resolved_offset
                     ):
-                        materialized = materialize_stack_cvar_at_offset(codegen, resolved_offset, requested_size)
-                        materialized_var = getattr(materialized, "variable", None)
-                        if (
-                            isinstance(materialized, structured_c.CVariable)
-                            and isinstance(materialized_var, SimStackVariable)
-                            and getattr(materialized_var, "offset", None) == resolved_offset
-                        ):
-                            materialized = _prefer_bound_stack_cvar_8616(codegen, materialized, resolve_stack_cvar_at_offset)
-                            _record_stack_canonicalization_bridge_8616(
-                                codegen,
-                                expr=expr,
-                                resolved_offset=resolved_offset,
-                                kind="indexed_value",
-                            )
-                            debug_stats["candidate_ast_match_count"] += 1
-                            debug_stats["lowering_replacements"] += 1
-                            active_expr_ids.discard(expr_id)
-                            return materialized
-                    if callable(materialize_stack_cvar_at_offset):
-                        materialized = materialize_stack_cvar_at_offset(
+                        materialized = _prefer_bound_stack_cvar_8616(codegen, materialized, resolve_stack_cvar_at_offset)
+                        _record_stack_canonicalization_bridge_8616(
                             codegen,
-                            resolved_offset,
-                            requested_size if isinstance(requested_size, int) and requested_size > 0 else 1,
+                            expr=expr,
+                            resolved_offset=resolved_offset,
+                            kind="indexed_value",
                         )
-                        materialized_var = getattr(materialized, "variable", None)
-                        if (
-                            isinstance(materialized, structured_c.CVariable)
-                            and isinstance(materialized_var, SimStackVariable)
-                            and getattr(materialized_var, "offset", None) == resolved_offset
-                        ):
-                            materialized = _prefer_bound_stack_cvar_8616(codegen, materialized, resolve_stack_cvar_at_offset)
-                            _record_stack_canonicalization_bridge_8616(
-                                codegen,
-                                expr=expr,
-                                resolved_offset=resolved_offset,
-                                kind="indexed_value",
-                            )
-                            debug_stats["candidate_ast_match_count"] += 1
-                            debug_stats["lowering_replacements"] += 1
-                            active_expr_ids.discard(expr_id)
-                            return materialized
+                        debug_stats["candidate_ast_match_count"] += 1
+                        debug_stats["lowering_replacements"] += 1
+                        active_expr_ids.discard(expr_id)
+                        return materialized
         if base_expr is not expr.variable or index_expr is not expr.index:
             active_expr_ids.discard(expr_id)
             return structured_c.CIndexedVariable(base_expr, index_expr, codegen=getattr(expr, "codegen", None))
@@ -636,6 +836,13 @@ def _canonicalize_stack_cvar_expr(
                 project,
                 codegen,
             )
+            if displacement is None:
+                alias_state = _resolve_stack_pointer_alias_expr(deref_operand)
+                alias_base_expr = alias_state[0] if alias_state is not None else None
+                alias_base_var = getattr(alias_base_expr, "variable", None)
+                resolved_offset = getattr(alias_base_var, "offset", None)
+                if isinstance(resolved_offset, int) and alias_state is not None:
+                    displacement = resolved_offset + alias_state[1]
             if isinstance(displacement, int):
                 type_bits = getattr(getattr(expr, "type", None), "size", None)
                 arch = getattr(getattr(codegen, "project", None), "arch", None)

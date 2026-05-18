@@ -21,6 +21,7 @@ from .lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
     build_typed_stack_probe_return_facts_8616,
 )
+from .lowering.real_mode_linear import _stack_offset_from_expr_8616
 from .lowering.stack_lowering_from_facts import _materialize_stack_cvar_at_offset as _materialize_stack_cvar_at_offset_from_facts_8616
 from .decompiler_postprocess import _normalize_arg_names_8616
 from .decompiler_postprocess_utils import (
@@ -1095,8 +1096,26 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         return (
             getattr(variable, "reg", None),
             getattr(variable, "size", None),
+        )
+
+    def _outgoing_stack_value_expr_key(expr):
+        if not _is_outgoing_stack_value_carrier_expr(expr):
+            return None
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        variable = getattr(node, "variable", None)
+        if variable is None:
+            return None
+        return (
+            getattr(variable, "offset", None),
+            getattr(variable, "size", None),
+            getattr(variable, "base", None),
             getattr(variable, "name", None) or getattr(node, "name", None),
         )
+
+    def _value_expr_key(expr):
+        return _plain_register_expr_key(expr) or _outgoing_stack_value_expr_key(expr)
 
     def _is_outgoing_stack_value_carrier_expr(expr) -> bool:
         node = expr
@@ -1149,12 +1168,16 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     def _resolve_recent_value_assignment(expr, statements_prefix: list):
         if not (_is_plain_register_value_expr(expr) or _is_outgoing_stack_value_carrier_expr(expr)):
             return expr
+        expr_value_key = _value_expr_key(expr)
         for stmt in reversed(tuple(statements_prefix)):
             for assignment in reversed(_iter_assignment_nodes(stmt)):
                 lhs, rhs = _assignment_lhs_rhs(assignment)
                 if lhs is None or rhs is None:
                     continue
-                if not _same_c_expression_8616(lhs, expr):
+                lhs_value_key = _value_expr_key(lhs)
+                if not _same_c_expression_8616(lhs, expr) and not (
+                    expr_value_key is not None and lhs_value_key is not None and lhs_value_key == expr_value_key
+                ):
                     continue
                 if _assignment_lhs_writes_memory(lhs) or _is_segment_register_value_expr(rhs):
                     return None
@@ -1192,7 +1215,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             nonlocal failed
             if failed or not (_is_plain_register_value_expr(node) or _is_outgoing_stack_value_carrier_expr(node)):
                 return node
-            key = _plain_register_expr_key(node)
+            key = _value_expr_key(node)
             if key is not None and key in seen_keys:
                 failed = True
                 return node
@@ -1554,6 +1577,32 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     stack.extend(item for item in items if item is not None)
         return False
 
+    def _debug_expr_8616(node):
+        if isinstance(node, CTypeCast):
+            return f"Cast({_debug_expr_8616(node.expr)})"
+        if isinstance(node, structured_c.CVariable):
+            variable = getattr(node, "variable", None)
+            name = getattr(variable, "name", None) or getattr(node, "name", None) or "var"
+            offset = getattr(variable, "offset", None)
+            if isinstance(variable, SimStackVariable) and isinstance(offset, int):
+                return f"{name}@{offset}"
+            reg = getattr(variable, "reg", None)
+            if isinstance(variable, SimRegisterVariable) and reg is not None:
+                return f"{name}#{reg}"
+            return name
+        if isinstance(node, structured_c.CIndexedVariable):
+            return f"Index({_debug_expr_8616(node.variable)},{_debug_expr_8616(node.index)})"
+        if isinstance(node, structured_c.CConstant):
+            return repr(getattr(node, "value", None))
+        if isinstance(node, CUnaryOp):
+            return f"{node.op}({_debug_expr_8616(node.operand)})"
+        if isinstance(node, CBinaryOp):
+            return f"{node.op}({_debug_expr_8616(node.lhs)},{_debug_expr_8616(node.rhs)})"
+        if isinstance(node, CFunctionCall):
+            name = getattr(node, "callee_target", None) or getattr(getattr(node, "callee_func", None), "name", None) or "call"
+            return f"{name}({','.join(_debug_expr_8616(arg) for arg in (getattr(node, 'args', ()) or ()))})"
+        return node.__class__.__name__
+
     def _arg_semantic_quality_8616(arg_name: str | None, arg_index: int, node) -> int:
         kind = _call_arg_semantic_kind_8616(arg_name or "", arg_index)
         raw = node
@@ -1604,13 +1653,29 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             resolved = _resolve_register_carriers_in_expr(rhs, prefix)
             if debug_materialization:
                 log.warning(
-                    "[call-normalize] function=%#x target=%s rhs=%r resolved=%r source_idx=%r",
+                    "[call-normalize] function=%#x target=%s rhs=%s resolved=%s source_idx=%r",
                     getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
                     call_name,
-                    rhs,
-                    resolved,
+                    _debug_expr_8616(rhs),
+                    _debug_expr_8616(resolved) if resolved is not None else None,
                     source_idx,
                 )
+                if resolved is None:
+                    window_start = max(0, len(prefix) - 6)
+                    for stmt_idx, stmt in enumerate(prefix[window_start:], start=window_start):
+                        for assignment in _iter_assignment_nodes(stmt):
+                            lhs, rhs_stmt = _assignment_lhs_rhs(assignment)
+                            if lhs is None or rhs_stmt is None:
+                                continue
+                            log.warning(
+                                "[call-normalize-prefix] function=%#x target=%s stmt_idx=%d lhs=%s rhs=%s memory_lhs=%s",
+                                getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                                call_name,
+                                stmt_idx,
+                                _debug_expr_8616(lhs),
+                                _debug_expr_8616(rhs_stmt),
+                                _assignment_lhs_writes_memory(lhs),
+                            )
             if resolved is None:
                 return None
             expr = _clone_c_ast_tree(resolved)
@@ -1628,11 +1693,11 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     resolved_rewritten = _resolve_register_carriers_in_expr(rewritten, prefix)
                     if debug_materialization:
                         log.warning(
-                            "[call-post-bp-resolve] function=%#x target=%s rewritten=%r resolved=%r source_idx=%r",
+                            "[call-post-bp-resolve] function=%#x target=%s rewritten=%s resolved=%s source_idx=%r",
                             getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
                             call_name,
-                            rewritten,
-                            resolved_rewritten,
+                            _debug_expr_8616(rewritten),
+                            _debug_expr_8616(resolved_rewritten) if resolved_rewritten is not None else None,
                             source_idx,
                         )
                     if resolved_rewritten is not None:
@@ -1657,25 +1722,6 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 codegen._inertia_protected_call_args_8616 = protected
             return protected
 
-        def _debug_expr(node):
-            if isinstance(node, CTypeCast):
-                return f"Cast({_debug_expr(node.expr)})"
-            if isinstance(node, structured_c.CVariable):
-                variable = getattr(node, "variable", None)
-                return getattr(variable, "name", None) or getattr(node, "name", None) or "var"
-            if isinstance(node, structured_c.CIndexedVariable):
-                return f"Index({_debug_expr(node.variable)},{_debug_expr(node.index)})"
-            if isinstance(node, structured_c.CConstant):
-                return repr(getattr(node, "value", None))
-            if isinstance(node, CUnaryOp):
-                return f"{node.op}({_debug_expr(node.operand)})"
-            if isinstance(node, CBinaryOp):
-                return f"{node.op}({_debug_expr(node.lhs)},{_debug_expr(node.rhs)})"
-            if isinstance(node, CFunctionCall):
-                name = getattr(node, "callee_target", None) or getattr(getattr(node, "callee_func", None), "name", None) or "call"
-                return f"{name}({','.join(_debug_expr(arg) for arg in (getattr(node, 'args', ()) or ()))})"
-            return node.__class__.__name__
-
         args_before = tuple(getattr(call, "args", ()) or ())
         args_after = tuple(args)
         if args_before:
@@ -1689,8 +1735,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         call_name,
                         before_score,
                         after_score,
-                        tuple(_debug_expr(arg) for arg in args_before),
-                        tuple(_debug_expr(arg) for arg in args_after),
+                        tuple(_debug_expr_8616(arg) for arg in args_before),
+                        tuple(_debug_expr_8616(arg) for arg in args_after),
                     )
                 return
         if not args_before and len(args_after) > 1:
@@ -1709,16 +1755,16 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             "callarg-normalized function=%#x target=%s args_before=%s args_after=%s",
             getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
             call_name,
-            tuple(_debug_expr(arg) for arg in args_before),
-            tuple(_debug_expr(arg) for arg in args_after),
+            tuple(_debug_expr_8616(arg) for arg in args_before),
+            tuple(_debug_expr_8616(arg) for arg in args_after),
         )
         if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
             log.warning(
                 "[call-materialized] function=%#x target=%s args_before=%s args_after=%s",
                 getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
                 call_name,
-                tuple(_debug_expr(arg) for arg in args_before),
-                tuple(_debug_expr(arg) for arg in args_after),
+                tuple(_debug_expr_8616(arg) for arg in args_before),
+                tuple(_debug_expr_8616(arg) for arg in args_after),
             )
 
     def _prototype_arg_count(call) -> int | None:
@@ -1978,6 +2024,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 if _contains_ss_dereference(lhs):
                     return rhs
                 continue
+            if isinstance(_stack_offset_from_expr_8616(getattr(deref, "operand", None), project, codegen), int):
+                return rhs
             if _contains_ss_evidence(getattr(deref, "operand", None)):
                 return rhs
         return None
@@ -1986,17 +2034,23 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         if lhs is None or fact is None:
             return False
         seg_name, _offset_terms = _match_real_mode_segmented_store_shape_8616(lhs, project)
-        if seg_name != fact.segment_space:
-            return False
+        if seg_name == fact.segment_space:
+            def _contains_dirty_expr(term) -> bool:
+                nodes = (term, *_iter_c_nodes_deep_8616(term))
+                for raw_node in nodes:
+                    if raw_node.__class__.__name__ == "CDirtyExpression":
+                        return True
+                return False
 
-        def _contains_dirty_expr(term) -> bool:
-            nodes = (term, *_iter_c_nodes_deep_8616(term))
-            for raw_node in nodes:
-                if raw_node.__class__.__name__ == "CDirtyExpression":
-                    return True
-            return False
+            return not any(_contains_dirty_expr(term) for _sign, term in _offset_terms)
 
-        return not any(_contains_dirty_expr(term) for _sign, term in _offset_terms)
+        deref = lhs
+        while isinstance(deref, CTypeCast):
+            deref = deref.expr
+        if not isinstance(deref, CUnaryOp) or deref.op != "Dereference":
+            return False
+        stack_offset = _stack_offset_from_expr_8616(getattr(deref, "operand", None), project, codegen)
+        return isinstance(stack_offset, int)
 
     def _typed_stack_store_rhs_from_statement(stmt, fact: TypedStackProbeReturnFact8616 | None):
         if fact is None:
@@ -2492,11 +2546,13 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     expected_arg_count,
                     push_arg_sources,
                 )
-            rematerialize_call_args = _call_args_need_rematerialization_8616(call) if call is not None else False
             # When a stack-probe helper was seen but its segment space is not SS
             # (e.g. "ds"), the probe return address is not a stack address.
             # Reject backward-scan materialization for calls after the probe.
             probe_seen_without_ss_address = stack_probe_seen and not stack_probe_address_seen
+            rematerialize_call_args = _call_args_need_rematerialization_8616(call) if call is not None else False
+            if typed_stack_probe_materialization:
+                rematerialize_call_args = True
             if (
                 call is not None
                 and not is_stack_probe_helper
@@ -2517,7 +2573,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             ):
                 strict_arg_shape_applied = False
                 if (
-                    isinstance(push_arg_sources, tuple)
+                    not (stack_probe_seen and stack_probe_address_seen and not is_stack_probe_helper)
+                    and isinstance(push_arg_sources, tuple)
                     and len(push_arg_sources) == expected_arg_count
                     and any(source is not None for source in push_arg_sources)
                 ):

@@ -2222,6 +2222,60 @@ def test_canonicalize_stack_cvar_expr_uses_stack_local_pointer_alias_for_indexed
     assert canonical is target_cvar
 
 
+def test_canonicalize_stack_cvar_expr_uses_vvar_pointer_alias_for_direct_indexed_slot():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x1000)
+    target_var = SimStackVariable(-11, 1, base="bp", name="local_b", region=0x1000)
+    carrier_var = SimRegisterVariable(8, 2, name="vvar_24")
+    base_cvar = structured_c.CVariable(base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    target_cvar = structured_c.CVariable(target_var, variable_type=SimTypeChar(False), codegen=codegen)
+    carrier_cvar = structured_c.CVariable(carrier_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        variables_in_use={
+            base_var: base_cvar,
+            target_var: target_cvar,
+            carrier_var: carrier_cvar,
+        },
+    )
+    codegen.cfunc.statements = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                carrier_cvar,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    structured_c.CUnaryOp("Reference", base_cvar, codegen=codegen),
+                    structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            )
+        ],
+        addr=0x1000,
+        codegen=codegen,
+    )
+
+    expr = structured_c.CIndexedVariable(
+        carrier_cvar,
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    canonical = decompile._canonicalize_stack_cvar_expr(expr, codegen)
+
+    assert canonical is target_cvar
+
+
 def test_canonicalize_stack_cvar_expr_rewrites_ss_linear_deref_from_vvar_carrier():
     class _FakeCodegen:
         def __init__(self):
@@ -2281,6 +2335,62 @@ def test_canonicalize_stack_cvar_expr_rewrites_ss_linear_deref_from_vvar_carrier
                 structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
                 codegen=codegen,
             ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    canonical = decompile._canonicalize_stack_cvar_expr(expr, codegen)
+
+    assert isinstance(canonical, structured_c.CVariable)
+    assert canonical.variable is target_var
+
+
+def test_canonicalize_stack_cvar_expr_rewrites_plain_deref_from_vvar_carrier():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    carrier_var = SimRegisterVariable(0x20, 2, name="vvar_11")
+    carrier_cvar = structured_c.CVariable(carrier_var, variable_type=SimTypeShort(False), codegen=codegen)
+    base_var = SimStackVariable(-8, 2, base="bp", name="s_8", region=0x1000)
+    base_cvar = structured_c.CVariable(base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    target_var = SimStackVariable(-10, 2, base="bp", name="local_a", region=0x1000)
+    target_cvar = structured_c.CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        variables_in_use={
+            carrier_var: carrier_cvar,
+            base_var: base_cvar,
+            target_var: target_cvar,
+        },
+    )
+    codegen.cfunc.statements = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                carrier_cvar,
+                structured_c.CUnaryOp("Reference", base_cvar, codegen=codegen),
+                codegen=codegen,
+            )
+        ],
+        addr=0x1000,
+        codegen=codegen,
+    )
+
+    expr = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CBinaryOp(
+            "Sub",
+            carrier_cvar,
+            structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         ),
         codegen=codegen,

@@ -230,6 +230,280 @@ def test_rewrite_ss_stack_byte_offsets_resolves_dirty_virtual_variable_alias():
     assert rewritten.operand.expr.operand is stack_base_cvar
 
 
+def test_rewrite_ss_stack_byte_offsets_resolves_direct_reference_alias_chain():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        project=SimpleNamespace(loader=None),
+        variables_in_use={},
+        unified_local_vars={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    stack_base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x10010)
+    stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp_var = SimRegisterVariable(0, 2, name="vvar_20")
+    temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp2_var = SimRegisterVariable(2, 2, name="vvar_24")
+    temp2_cvar = structured_c.CVariable(temp2_var, variable_type=SimTypeShort(False), codegen=codegen)
+    cfunc.variables_in_use[stack_base_var] = stack_base_cvar
+    cfunc.variables_in_use[temp_var] = temp_cvar
+    cfunc.variables_in_use[temp2_var] = temp2_cvar
+
+    deref = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CBinaryOp(
+            "Add",
+            temp2_cvar,
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                temp_cvar,
+                structured_c.CUnaryOp("Reference", stack_base_cvar, codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                temp2_cvar,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    temp_cvar,
+                    structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                deref,
+                structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    changed = rewrites._rewrite_ss_stack_byte_offsets(
+        project,
+        codegen,
+        unwrap_c_casts=lambda expr: expr.expr if isinstance(expr, structured_c.CTypeCast) else expr,
+        iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
+        replace_c_children=decompile_replace_c_children,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        classify_segmented_dereference=lambda _node, _project: None,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr,
+        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+        promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
+        stack_type_for_size=lambda _size: SimTypeShort(False),
+        materialize_stack_cvar_at_offset=lambda *_args, **_kwargs: None,
+        stack_slot_identity_for_variable=_stack_identity,
+        stack_pointer_alias_state=_AliasState,
+    )
+
+    assert changed is True
+    rewritten = cfunc.statements.statements[2].lhs
+    assert isinstance(rewritten, structured_c.CUnaryOp)
+    assert rewritten.op == "Dereference"
+    assert isinstance(rewritten.operand, structured_c.CTypeCast)
+    inner = rewritten.operand.expr
+    assert isinstance(inner, structured_c.CBinaryOp)
+    assert inner.op == "Add"
+    assert isinstance(inner.lhs, structured_c.CUnaryOp)
+    assert inner.lhs.op == "Reference"
+    assert isinstance(inner.lhs.operand, structured_c.CVariable)
+    assert getattr(inner.lhs.operand.variable, "offset", None) == -8
+
+
+def test_rewrite_ss_stack_byte_offsets_resolves_named_vvar_aliases_sharing_one_register():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        project=SimpleNamespace(loader=None),
+        variables_in_use={},
+        unified_local_vars={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    stack_base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x10010)
+    stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp_var = SimRegisterVariable(0x30, 2, name="vvar_20")
+    temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    temp2_var = SimRegisterVariable(0x30, 2, name="vvar_24")
+    temp2_cvar = structured_c.CVariable(temp2_var, variable_type=SimTypeShort(False), codegen=codegen)
+    cfunc.variables_in_use[stack_base_var] = stack_base_cvar
+    cfunc.variables_in_use[temp_var] = temp_cvar
+    cfunc.variables_in_use[temp2_var] = temp2_cvar
+
+    deref = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CBinaryOp(
+            "Add",
+            temp2_cvar,
+            structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                temp_cvar,
+                structured_c.CUnaryOp("Reference", stack_base_cvar, codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                temp2_cvar,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    temp_cvar,
+                    structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                deref,
+                structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    changed = rewrites._rewrite_ss_stack_byte_offsets(
+        project,
+        codegen,
+        unwrap_c_casts=lambda expr: expr.expr if isinstance(expr, structured_c.CTypeCast) else expr,
+        iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
+        replace_c_children=decompile_replace_c_children,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        classify_segmented_dereference=lambda _node, _project: None,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr,
+        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+        promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
+        stack_type_for_size=lambda _size: SimTypeShort(False),
+        materialize_stack_cvar_at_offset=lambda *_args, **_kwargs: None,
+        stack_slot_identity_for_variable=_stack_identity,
+        stack_pointer_alias_state=_AliasState,
+    )
+
+    assert changed is True
+    rewritten = cfunc.statements.statements[2].lhs
+    assert isinstance(rewritten, structured_c.CUnaryOp)
+    assert rewritten.op == "Dereference"
+    assert isinstance(rewritten.operand, structured_c.CTypeCast)
+    inner = rewritten.operand.expr
+    assert isinstance(inner, structured_c.CBinaryOp)
+    assert inner.op == "Add"
+    assert isinstance(inner.lhs, structured_c.CUnaryOp)
+    assert inner.lhs.op == "Reference"
+    assert isinstance(inner.lhs.operand, structured_c.CVariable)
+    assert getattr(inner.lhs.operand.variable, "offset", None) == -8
+
+
+def test_rewrite_ss_stack_byte_offsets_resolves_dirty_assignment_alias_chain():
+    project = SimpleNamespace(arch=Arch86_16())
+    cfunc = SimpleNamespace(
+        addr=0x10010,
+        project=SimpleNamespace(loader=None),
+        variables_in_use={},
+        unified_local_vars={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+
+    stack_base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x10010)
+    stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    cfunc.variables_in_use[stack_base_var] = stack_base_cvar
+
+    dirty_20 = _FakeDirtyExpression(_FakeVirtualVariable(20))
+    dirty_24 = _FakeDirtyExpression(_FakeVirtualVariable(24))
+    deref = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CTypeCast(
+            SimTypeShort(False),
+            SimTypePointer(SimTypeShort(False)).with_arch(project.arch),
+            structured_c.CBinaryOp(
+                "Add",
+                dirty_24,
+                structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    root = structured_c.CStatements(
+        [
+            structured_c.CAssignment(
+                dirty_20,
+                structured_c.CUnaryOp("Reference", stack_base_cvar, codegen=codegen),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                dirty_24,
+                structured_c.CBinaryOp(
+                    "Sub",
+                    dirty_20,
+                    structured_c.CConstant(4, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CAssignment(
+                deref,
+                structured_c.CConstant(0, SimTypeShort(False), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x10010,
+        codegen=codegen,
+    )
+    cfunc.statements = root
+
+    changed = rewrites._rewrite_ss_stack_byte_offsets(
+        project,
+        codegen,
+        unwrap_c_casts=lambda expr: expr.expr if isinstance(expr, structured_c.CTypeCast) else expr,
+        iter_c_nodes_deep=lambda node: iter(getattr(node, "statements", ()) or ()),
+        replace_c_children=decompile_replace_c_children,
+        c_constant_value=lambda node: node.value if isinstance(node, structured_c.CConstant) else None,
+        flatten_c_add_terms=lambda node: [node.lhs, node.rhs] if isinstance(node, structured_c.CBinaryOp) and node.op == "Add" else [node],
+        classify_segmented_dereference=lambda _node, _project: None,
+        strip_segment_scale_from_addr_expr=lambda addr_expr, _project: addr_expr,
+        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+        promote_direct_stack_cvariable=lambda *_args, **_kwargs: False,
+        stack_type_for_size=lambda _size: SimTypeShort(False),
+        materialize_stack_cvar_at_offset=lambda *_args, **_kwargs: None,
+        stack_slot_identity_for_variable=_stack_identity,
+        stack_pointer_alias_state=_AliasState,
+    )
+
+    assert changed is True
+    rewritten = cfunc.statements.statements[2].lhs
+    assert isinstance(rewritten, structured_c.CUnaryOp)
+    assert rewritten.op == "Dereference"
+    assert isinstance(rewritten.operand, structured_c.CTypeCast)
+    inner = rewritten.operand.expr
+    assert isinstance(inner, structured_c.CBinaryOp)
+    assert inner.op == "Add"
+    assert isinstance(inner.lhs, structured_c.CUnaryOp)
+    assert inner.lhs.op == "Reference"
+    assert isinstance(inner.lhs.operand, structured_c.CVariable)
+    assert getattr(inner.lhs.operand.variable, "offset", None) == -8
+
+
 def test_rewrite_ss_stack_byte_offsets_uses_sp_virtual_register_as_stack_anchor():
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(

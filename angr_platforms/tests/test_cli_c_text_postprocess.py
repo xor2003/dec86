@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from inertia_decompiler.cli_c_text_postprocess import (
     _materialize_annotated_cod_declarations_text,
+    _materialize_missing_generic_local_declarations_text,
     _normalize_portable_flat_main_signature_text,
     _source_function_prototype_decls_from_cod_source_lines,
     _prune_unused_local_declarations_text,
@@ -196,3 +197,20 @@ int main(void)
     rewritten = _prune_unused_staging_assignments(c_text)
 
     assert "s_2_2 = vvar_2;" not in rewritten
+
+
+def test_materialize_missing_generic_local_declarations_text_handles_mangled_function_names():
+    c_text = """
+void $_nfree(void)
+{
+    unsigned short ir_0;
+    unsigned short ir_1;
+    unsigned short ir_2;
+
+    SEG_U8(ir_0, ir_1 + vvar_2) = SEG_U8(ir_0, ir_1 + vvar_2) + ir_2;
+}
+"""
+
+    rewritten = _materialize_missing_generic_local_declarations_text(c_text)
+
+    assert "unsigned short vvar_2;" in rewritten

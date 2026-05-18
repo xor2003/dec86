@@ -368,6 +368,14 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
                         if len(kept_statements) != len(new_statements):
                             new_statements = kept_statements
                             changed = True
+            # Ownership boundary:
+            # This pass may prune call-frame metadata stores and their dead generic
+            # carrier feeders after call arguments / metadata have already been
+            # materialized. It must not recover new stack-slot semantics here.
+            # If a vvar_/ir_/tmp_ carrier chain still needs to become a stack local,
+            # that belongs in stack lowering / AST stack-alias rewrites, not in this
+            # cleanup pass.
+            #
             # Far calls push CS + IP as a far return frame BEFORE the call.
             # The stores look like: *(vvar_N + 1) = cs >> 8;
             # Detect any preceding memory store whose rhs is a segment register
