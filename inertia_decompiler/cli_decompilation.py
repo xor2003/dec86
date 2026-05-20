@@ -35,6 +35,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import angr
+from angr.sim_type import SimTypeBottom, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.analysis_helpers import seed_calling_conventions
 from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations
@@ -52,6 +53,7 @@ from angr_platforms.X86_16.decompiler_postprocess_flags import (
     _rewrite_flag_bit_value_uses_8616,
     _rewrite_flag_condition_pairs_8616,
 )
+from angr_platforms.X86_16.decompiler_postprocess_jcc import _rewrite_decoded_jcc_conditions_8616
 from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
@@ -243,6 +245,7 @@ from inertia_decompiler.runtime_support import (
     run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
     raise_timeout as _raise_timeout,
     should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
+    timing_output_enabled as _timing_output_enabled,
 )
 
 from inertia_decompiler.work_items import (
@@ -305,16 +308,10 @@ from .cli_c_text_postprocess import (
     _collapse_duplicate_type_keywords_text,
     _dedupe_adjacent_prototype_lines,
     _dedupe_duplicate_local_declarations_text,
-    _fix_billasm_rotate_pt_blind_spot,
-    _fix_carr_inbox_guard_blind_spot,
-    _fix_carr_inboxlng_guard_blind_spot,
-    _fix_cockpit_look_blind_spot,
-    _fix_monoprin_mset_pos_blind_spot,
-    _fix_nhorz_changeweather_blind_spot,
-    _fix_planes3_ready5_blind_spot,
     _format_known_helper_calls,
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
+    _materialize_opaque_pointer_typedefs_text,
     _normalize_anonymous_call_targets,
     _normalize_boolean_conditions,
     _normalize_function_signature_arg_names,
@@ -322,6 +319,7 @@ from .cli_c_text_postprocess import (
     _normalize_spurious_duplicate_local_suffixes,
     _prune_unused_staging_assignments,
     _prune_trailing_generic_return_text,
+    _prune_non_lvalue_arithmetic_assignments,
     _prune_unused_local_declarations_text,
     _prune_void_function_return_values_text,
     _rewrite_known_helper_signature_text,
@@ -436,34 +434,120 @@ def _snapshot_codegen_text(codegen) -> str:
         return ""
 
 
+def _bind_codegen_render_variable_types_8616(codegen) -> None:
+    project = getattr(codegen, "project", None)
+    arch = getattr(project, "arch", None)
+    cfunc = getattr(codegen, "cfunc", None)
+    if arch is None or cfunc is None:
+        return
+
+    def _bind_type(type_):
+        if type(type_) is SimTypeBottom:
+            try:
+                return SimTypeShort(False).with_arch(arch)
+            except Exception:
+                return SimTypeShort(False)
+        if type_ is None or getattr(type_, "_arch", None) is not None or not hasattr(type_, "with_arch"):
+            return type_
+        try:
+            return type_.with_arch(arch)
+        except Exception:
+            return type_
+
+    variables_in_use = getattr(cfunc, "variables_in_use", None)
+    if isinstance(variables_in_use, dict):
+        for cvar in variables_in_use.values():
+            bound = _bind_type(getattr(cvar, "variable_type", None))
+            if bound is not getattr(cvar, "variable_type", None):
+                cvar.variable_type = bound
+
+    unified_locals = getattr(cfunc, "unified_local_vars", None)
+    if isinstance(unified_locals, dict):
+        for variable, entries in list(unified_locals.items()):
+            if not isinstance(entries, set):
+                continue
+            rebuilt = set()
+            changed = False
+            for cvar, vartype in entries:
+                bound = _bind_type(vartype)
+                changed = changed or (bound is not vartype)
+                if bound is not getattr(cvar, "variable_type", None):
+                    cvar.variable_type = bound
+                rebuilt.add((cvar, bound))
+            if changed:
+                unified_locals[variable] = rebuilt
+
+
 def _emit_c_stage_trace(project: angr.Project, function, label: str, c_text: str) -> None:
-    """Print an opt-in labeled C snapshot so text provenance is visible."""
+    """Emit opt-in C snapshots to stderr so stdout remains final C only."""
 
     if not bool(getattr(project, "_inertia_trace_c_stages", False)):
         return
     if not isinstance(c_text, str) or not c_text.strip():
         return
     display_addr = function_original_addr(function)
-    print(f"/* -- c trace: {display_addr:#x} {getattr(function, 'name', 'sub')} :: {label} -- */")
-    print(c_text if c_text.endswith("\n") else c_text + "\n")
-    sys.stdout.flush()
+    print(
+        f"/* -- c trace: {display_addr:#x} {getattr(function, 'name', 'sub')} :: {label} -- */",
+        file=sys.stderr,
+    )
+    print(c_text if c_text.endswith("\n") else c_text + "\n", file=sys.stderr)
+    sys.stderr.flush()
 
 
 def _debug_dump_calls_8616(label: str, c_text: str, function_addr: int) -> None:
     if not os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
         return
     target_text = os.environ.get("INERTIA_DEBUG_CALL_MUTATION_ADDR")
-    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else 0x10970
-    if function_addr != target_addr:
+    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
+    if isinstance(target_addr, int) and function_addr != target_addr:
         return
     if not isinstance(c_text, str) or not c_text:
         return
     log = logging.getLogger(__name__)
-    tracked = ("Swaps(", "SwapBars(", "PercolateDown(", "PercolateUp(", "DrawBar(", "DrawTime(")
+    filter_text = os.environ.get("INERTIA_DEBUG_CALL_MUTATION_FILTER", "")
+    tracked = tuple(part.strip() for part in filter_text.split(",") if part.strip())
+    call_line_re = re.compile(r"^\s*(?:[A-Za-z_]\w*\s*=\s*)?[A-Za-z_]\w*\s*\(")
     for line in c_text.splitlines():
         stripped = line.strip()
-        if any(name in stripped for name in tracked):
+        if (tracked and any(name in stripped for name in tracked)) or (not tracked and call_line_re.match(stripped)):
             log.warning("[call-mutation] %s: %s", label, stripped)
+
+
+def _prepend_recovered_callsite_prototypes_8616(c_text: str, codegen) -> str:
+    decls = tuple(getattr(codegen, "_inertia_callsite_prototype_decls", ()) or ())
+    if not decls:
+        return c_text
+    decl_name_re = re.compile(r"^\s*[A-Za-z_][\w\s\*]*\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*;\s*$")
+    defn_name_re = re.compile(r"^\s*[A-Za-z_][\w\s\*]*\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{?\s*$")
+    existing = {
+        line.strip()
+        for line in str(c_text or "").splitlines()
+        if decl_name_re.match(line)
+    }
+    existing_names = {
+        match.group("name")
+        for line in str(c_text or "").splitlines()
+        for match in (decl_name_re.match(line) or defn_name_re.match(line),)
+        if match is not None
+    }
+    filtered: list[str] = []
+    for decl in decls:
+        if not isinstance(decl, str):
+            continue
+        stripped = decl.strip()
+        if not stripped or stripped in existing:
+            continue
+        match = decl_name_re.match(stripped)
+        if match is not None and match.group("name") in existing_names:
+            continue
+        existing.add(stripped)
+        if match is not None:
+            existing_names.add(match.group("name"))
+        filtered.append(stripped)
+    if not filtered:
+        return c_text
+    return "\n".join(filtered) + "\n\n" + c_text
+
 
 def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool]:
     fallback_text = _snapshot_codegen_text(codegen)
@@ -475,12 +559,13 @@ def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool
     trace_addr = -1
     if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
         target_text = os.environ.get("INERTIA_DEBUG_CALL_MUTATION_ADDR")
-        target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else 0x10970
-        if f"{target_addr:#x}" in context:
+        target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
+        if isinstance(target_addr, int) and f"{target_addr:#x}" in context:
             trace_addr = target_addr
     if trace_addr > 0:
         _debug_dump_calls_8616("regen-fallback-text", fallback_text, trace_addr)
     try:
+        _bind_codegen_render_variable_types_8616(codegen)
         codegen.regenerate_text()
     except RecursionError:
         log.debug("regenerate_text hit RecursionError for %s; retrying render", context)
@@ -540,20 +625,11 @@ def _emit_optional_source_sidecar_c_block(
         source_text = render_local_source_sidecar_function(binary_path, function_name)
         if source_text is not None:
             print("/* -- source c -- */")
-            print(source_text, end="" if source_text.endswith("\n") else "\n")
+            for line in source_text.splitlines():
+                print(f"/// {line}")
     print(c_header)
     print(c_text, end="" if c_text.endswith("\n") else "\n", flush=True)
 
-
-def _debug_reinitbars_stack_lines_8616(label: str, c_text: str, function_addr: int) -> None:
-    if not os.environ.get("INERTIA_DEBUG_REINITBARS_REWRITE"):
-        return
-    if function_addr != 0x10678:
-        return
-    log = logging.getLogger(__name__)
-    for line in str(c_text or "").splitlines():
-        if any(token in line for token in ("for (", "DrawBar(iRow)", "s_4", "s_fffd", "&s_")):
-            log.warning("[reinitbars-rewrite] %s: %s", label, line.strip())
 
 def _format_minimal_codegen_output(
     project: angr.Project,
@@ -1005,6 +1081,8 @@ def _decompile_function(
     )
 
     def _run_stack_lowering_pass() -> bool:
+        if os.environ.get("INERTIA_ENABLE_LEGACY_CLI_STACK_RERUN", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            return False
         return run_stack_lowering_pass_8616(
             lower_stable_ss_stack_accesses=lambda: apply_x86_16_segmented_memory_reasoning(dec.codegen),
             rewrite_ss_stack_byte_offsets=lambda: _rewrite_ss_stack_byte_offsets(project, dec.codegen),
@@ -1012,6 +1090,13 @@ def _decompile_function(
             codegen=dec.codegen,
             project=project,
         )
+
+    def _run_fact_backed_stack_rewrite_pass() -> bool:
+        if not getattr(dec.codegen, "_inertia_semantic_stack_materialized_count", 0):
+            return False
+        changed_local = bool(_rewrite_ss_stack_byte_offsets(project, dec.codegen))
+        changed_local = bool(_canonicalize_stack_cvars(dec.codegen)) or changed_local
+        return changed_local
 
     def _run_callsite_stack_fact_pass() -> bool:
         changed_local = False
@@ -1065,12 +1150,14 @@ def _decompile_function(
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
         lambda: transfer_typed_conditions_to_codegen_8616(project, function.addr, dec.codegen),
         lambda: _apply_typed_conditions_to_codegen_8616(project, dec.codegen),
+        lambda: _rewrite_decoded_jcc_conditions_8616(project, dec.codegen),
         lambda: _rewrite_flag_condition_pairs_8616(dec.codegen),
         lambda: _rewrite_flag_bit_value_uses_8616(dec.codegen),
         lambda: _prune_unused_flag_assignments_8616(project, dec.codegen),
         lambda: _prune_overwritten_flag_assignments_8616(project, dec.codegen),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
+        _run_fact_backed_stack_rewrite_pass,
         _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
@@ -1112,7 +1199,15 @@ def _decompile_function(
         lambda: _attach_segment_register_names(dec.codegen, project),
         lambda: _attach_register_names(project, dec.codegen),
         lambda: _normalize_scalar_byte_register_types(dec.codegen),
+        lambda: transfer_typed_conditions_to_codegen_8616(project, function.addr, dec.codegen),
+        lambda: _apply_typed_conditions_to_codegen_8616(project, dec.codegen),
+        lambda: _rewrite_decoded_jcc_conditions_8616(project, dec.codegen),
+        lambda: _rewrite_flag_condition_pairs_8616(dec.codegen),
+        lambda: _rewrite_flag_bit_value_uses_8616(dec.codegen),
+        lambda: _prune_unused_flag_assignments_8616(project, dec.codegen),
+        lambda: _prune_overwritten_flag_assignments_8616(project, dec.codegen),
         lambda: _attach_ss_stack_variables(project, dec.codegen),
+        _run_fact_backed_stack_rewrite_pass,
         _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
@@ -1170,6 +1265,8 @@ def _decompile_function(
             block_count,
             byte_count,
         )
+    if getattr(dec.codegen, "_inertia_postprocess_discarded", False):
+        rewrite_passes = ()
     _stack_lowering_already_attempted = False
     for round_idx in range(2):
         iter_changed = False
@@ -1198,17 +1295,6 @@ def _decompile_function(
                 continue
             if rewrite():
                 iter_changed = True
-            if os.environ.get("INERTIA_DEBUG_REINITBARS_REWRITE"):
-                trace_addr = function_original_addr(function)
-                regenerated_text, _ = _regenerate_codegen_text_safely(
-                    dec.codegen,
-                    context=f"{hex(function.addr)} rewrite-round={round_idx} pass={rewrite_idx}",
-                )
-                _debug_reinitbars_stack_lines_8616(
-                    f"round={round_idx} pass={rewrite_idx}",
-                    regenerated_text,
-                    trace_addr,
-                )
             if rewrite is _run_stack_lowering_pass:
                 _stack_lowering_already_attempted = True
         if not iter_changed:
@@ -1242,6 +1328,7 @@ def _decompile_function(
         )
         if (
             not regenerated
+            and isinstance(cached_rendered_text, str)
             and cached_rendered_text.strip()
             and not recurrence_rebound
             and (not isinstance(rendered_text, str) or not rendered_text.strip())
@@ -1252,6 +1339,8 @@ def _decompile_function(
     debug_call_addr = function_original_addr(function)
     _debug_dump_calls_8616("post-structured-codegen", rendered_text, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-structured-codegen", rendered_text)
+    rendered_text = _prepend_recovered_callsite_prototypes_8616(rendered_text, dec.codegen)
+    _debug_dump_calls_8616("post-recovered-callsite-prototypes", rendered_text, debug_call_addr)
     if api_style in ("msc", "compiler"):
         emit_msc51_diagnostic(dec.codegen)
     formatted = _format_known_helper_calls(
@@ -1266,20 +1355,6 @@ def _decompile_function(
     _emit_c_stage_trace(project, function, "post-helper-call-format", formatted)
     formatted = _normalize_boolean_conditions(formatted)
     _debug_dump_calls_8616("post-normalize-boolean-conditions", formatted, debug_call_addr)
-    formatted = _fix_carr_inbox_guard_blind_spot(formatted, function, binary_path)
-    _debug_dump_calls_8616("post-fix-carr-inbox-guard", formatted, debug_call_addr)
-    formatted = _fix_carr_inboxlng_guard_blind_spot(formatted, function, binary_path)
-    _debug_dump_calls_8616("post-fix-carr-inboxlng-guard", formatted, debug_call_addr)
-    formatted = _fix_nhorz_changeweather_blind_spot(formatted, function, binary_path)
-    _debug_dump_calls_8616("post-fix-nhorz-changeweather", formatted, debug_call_addr)
-    formatted = _fix_cockpit_look_blind_spot(formatted, function, binary_path)
-    _debug_dump_calls_8616("post-fix-cockpit-look", formatted, debug_call_addr)
-    formatted = _fix_billasm_rotate_pt_blind_spot(formatted, function, binary_path)
-    _debug_dump_calls_8616("post-fix-billasm-rotate-pt", formatted, debug_call_addr)
-    formatted = _fix_monoprin_mset_pos_blind_spot(formatted, function, binary_path)
-    _debug_dump_calls_8616("post-fix-monoprin-mset-pos", formatted, debug_call_addr)
-    formatted = _fix_planes3_ready5_blind_spot(formatted, function, binary_path)
-    _debug_dump_calls_8616("post-fix-planes3-ready5", formatted, debug_call_addr)
     formatted = _normalize_anonymous_call_targets(formatted)
     _debug_dump_calls_8616("post-normalize-anon-targets", formatted, debug_call_addr)
     formatted = _prune_void_function_return_values_text(formatted)
@@ -1316,12 +1391,16 @@ def _decompile_function(
     _debug_dump_calls_8616("post-normalize-portable-flat-main-signature", formatted, debug_call_addr)
     formatted = _prune_unused_staging_assignments(formatted)
     _debug_dump_calls_8616("post-prune-unused-staging-assignments", formatted, debug_call_addr)
+    formatted = _prune_non_lvalue_arithmetic_assignments(formatted)
+    _debug_dump_calls_8616("post-prune-non-lvalue-arithmetic-assignments", formatted, debug_call_addr)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
     _debug_dump_calls_8616("post-collapse-duplicate-type-keywords", formatted, debug_call_addr)
     formatted = _normalize_spurious_duplicate_local_suffixes(formatted)
     _debug_dump_calls_8616("post-normalize-duplicate-local-suffixes", formatted, debug_call_addr)
     formatted = _dedupe_adjacent_prototype_lines(formatted)
     _debug_dump_calls_8616("post-dedupe-adjacent-prototypes", formatted, debug_call_addr)
+    formatted = _materialize_opaque_pointer_typedefs_text(formatted)
+    _debug_dump_calls_8616("post-materialize-opaque-pointer-typedefs", formatted, debug_call_addr)
     formatted = _sanitize_mangled_autonames_text(formatted)
     _debug_dump_calls_8616("post-sanitize-mangled-autonames", formatted, debug_call_addr)
     formatted = normalize_unresolved_c_text(formatted)
@@ -1368,7 +1447,7 @@ def _decompile_function(
     quality = assess_decompiled_c_text(formatted)
     if quality.reject_as_decompiled:
         _remember_tail_validation_snapshot(dec.codegen)
-        setattr(project, "_inertia_partial_codegen_text", None)
+        setattr(project, "_inertia_partial_codegen_text", formatted)
         marker_summary = ", ".join(quality.markers[:3])
         if len(quality.markers) > 3:
             marker_summary += ", ..."
@@ -1772,6 +1851,7 @@ def _decompile_function_with_stats(
     partial_payload = getattr(project, "_inertia_partial_codegen_text", None)
     elapsed = time.perf_counter() - start
     advance_failure_family_state(failure_family_state)
-    print(f"[dbg] decompilation time for {display_addr:#x} {function.name}: {elapsed:.2f}s")
-    sys.stdout.flush()
+    if _timing_output_enabled():
+        print(f"[dbg] decompilation time for {display_addr:#x} {function.name}: {elapsed:.2f}s")
+        sys.stdout.flush()
     return status, payload, partial_payload, block_count, byte_count, elapsed

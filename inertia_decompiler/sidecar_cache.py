@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
@@ -137,7 +138,9 @@ def apply_cached_sidecar_metadata(project, cached: CachedSidecarMetadata) -> LST
 def emit_sidecar_metadata_debug(project, metadata: LSTMetadata) -> None:
     print(
         f"[dbg] loaded sidecar metadata: format={metadata.source_format} "
-        f"code_labels={len(metadata.code_labels)} data_labels={len(metadata.data_labels)} structs={len(metadata.struct_names)}"
+        f"code_labels={len(metadata.code_labels)} data_labels={len(metadata.data_labels)} structs={len(metadata.struct_names)}",
+        file=sys.stderr,
+        flush=True,
     )
     compiler_names = getattr(project, "_inertia_signature_compiler_names", ())
     if compiler_names:
@@ -149,10 +152,18 @@ def emit_sidecar_metadata_debug(project, metadata: LSTMetadata) -> None:
             if normalized not in filtered_compiler_names:
                 filtered_compiler_names.append(normalized)
         if filtered_compiler_names:
-            print(f"[dbg] signature-matched compiler versions: {', '.join(filtered_compiler_names[:4])}")
+            print(
+                f"[dbg] signature-matched compiler versions: {', '.join(filtered_compiler_names[:4])}",
+                file=sys.stderr,
+                flush=True,
+            )
     flair_titles = getattr(project, "_inertia_flair_sig_titles", ())
     if flair_titles:
-        print(f"[dbg] flair signature catalogs: {', '.join(flair_titles[:3])}")
+        print(
+            f"[dbg] flair signature catalogs: {', '.join(flair_titles[:3])}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _serialize_lst_metadata(metadata: LSTMetadata) -> dict[str, object]:
