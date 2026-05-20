@@ -208,14 +208,6 @@ def _normalize_fact_backed_stack_accesses_8616(project, codegen) -> bool:
     return changed
 
 
-def _coalesce_linear_recurrence_after_stack_lowering_8616(project, codegen) -> bool:
-    from inertia_decompiler.cli_c_ast_rewrites import (
-        _coalesce_linear_recurrence_statements as _coalesce_linear_recurrence_statements,
-    )
-
-    return _coalesce_linear_recurrence_statements(project, codegen)
-
-
 @dataclass(frozen=True, slots=True)
 class DecompilerPostprocessPassSpec:
     name: str
@@ -291,11 +283,6 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_rerun_stack_lowering_consumers_after_calls_8616",
             _rerun_stack_lowering_consumers_after_calls_8616,
-            True,
-        ),
-        DecompilerPostprocessPassSpec(
-            "_coalesce_linear_recurrence_after_stack_lowering_8616",
-            _coalesce_linear_recurrence_after_stack_lowering_8616,
             True,
         ),
         DecompilerPostprocessPassSpec(
@@ -731,8 +718,6 @@ def _prepare_tail_validation_baseline_clone_8616(project, codegen, *, function_a
                 )
                 _v_sys.stderr.flush()
                 _pass_start = _tv_time.perf_counter()
-            if spec.name == "_coalesce_linear_recurrence_after_stack_lowering_8616":
-                break
         _attach_tail_validation_widened_carrier_provenance_8616(
             cloned_codegen,
             cloned_codegen.cfunc,
@@ -931,8 +916,10 @@ def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> 
         if isinstance(alias_facts, list) and alias_facts:
             lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
         _segmented_mem._lower_stable_ss_stack_accesses_8616(codegen)
+        from .lowering.real_mode_linear import lower_stable_ds_es_linear_global_dereferences_8616
+
+        lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
         _normalize_fact_backed_stack_accesses_8616(project, codegen)
-        _coalesce_linear_recurrence_after_stack_lowering_8616(project, codegen)
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Pre-validation stack semantics priming failed at function=%#x stage=pre-validation-baseline: %s",

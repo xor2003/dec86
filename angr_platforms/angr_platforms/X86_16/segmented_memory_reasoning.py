@@ -22,6 +22,9 @@ from angr.sim_variable import SimStackVariable
 
 from .alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 from .decompiler_postprocess_utils import _match_bp_stack_dereference_8616, _replace_c_children_8616
+from .lowering.real_mode_linear import (
+    lower_stable_ds_es_linear_global_dereferences_8616,
+)
 from .lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
 
 if TYPE_CHECKING:
@@ -511,6 +514,9 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
 
         changed = False
         target = str(getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat") or "portable-flat")
+        project = getattr(codegen, "project", None)
+        if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
+            changed = True
         if apply_runtime_segment_lowering_8616(codegen, target=target):
             changed = True
         if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):

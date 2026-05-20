@@ -9,6 +9,7 @@ consume a typed SS address fact instead of re-learning the arithmetic shape in
 late cleanup code.
 """
 
+import os
 import sys
 from dataclasses import dataclass
 
@@ -189,6 +190,11 @@ def _global_size_from_displacement_8616(codegen, displacement: int) -> int | Non
             if isinstance(size, int) and size > 0:
                 return size
     return None
+
+
+def _cvar_has_array_type_8616(cvar) -> bool:
+    type_name = type(getattr(cvar, "variable_type", None)).__name__
+    return "Array" in type_name
 
 
 def _iter_statement_nodes_8616(root):
@@ -872,24 +878,30 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
     def global_cvar(access: RealModeLinearGlobalAddress8616):
         addr = access.displacement & 0xFFFF
         name = f"g_{addr:04X}"
-        target_type = _type_for_access_width_8616(access.width)
+        scalar_width = min(access.width or 1, 2)
+        target_type = _type_for_access_width_8616(scalar_width)
         variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
         if isinstance(variables_in_use, dict):
             for variable, cvar in tuple(variables_in_use.items()):
                 if isinstance(variable, SimMemoryVariable) and getattr(variable, "addr", None) == addr:
-                    if getattr(variable, "size", None) != (access.width or 1):
-                        variable.size = access.width or 1
+                    existing_size = getattr(variable, "size", None)
+                    if _cvar_has_array_type_8616(cvar) or (isinstance(existing_size, int) and existing_size > 2):
+                        continue
+                    if getattr(variable, "size", None) != scalar_width:
+                        variable.size = scalar_width
                     if getattr(cvar, "variable_type", None) is None:
                         cvar.variable_type = target_type
                     return cvar
                 if isinstance(variable, SimVariable) and getattr(variable, "name", None) == name:
+                    if _cvar_has_array_type_8616(cvar):
+                        continue
                     if getattr(cvar, "variable_type", None) is None:
                         cvar.variable_type = target_type
                     return cvar
                 if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == access.displacement:
                     replacement = SimMemoryVariable(
                         addr,
-                        access.width or 1,
+                        scalar_width,
                         name=name,
                         region=getattr(codegen.cfunc, "addr", None),
                     )
@@ -904,7 +916,7 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
                             (replacement_cvar, getattr(replacement_cvar, "variable_type", None))
                         }
                     return replacement_cvar
-        variable = SimMemoryVariable(addr, access.width or 1, name=name, region=getattr(codegen.cfunc, "addr", None))
+        variable = SimMemoryVariable(addr, scalar_width, name=f"mem_{addr:04X}", region=getattr(codegen.cfunc, "addr", None))
         cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
         if isinstance(variables_in_use, dict):
             variables_in_use[variable] = cvar
@@ -1227,7 +1239,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
         if node is None or not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
             return False
         _node_count[0] += 1
-        if _node_count[0] % 500 == 0:
+        if os.environ.get("INERTIA_DEBUG_STACK_NOISE") and _node_count[0] % 500 == 0:
             print(f"[lower_ss_linear] tree walk: {_node_count[0]} nodes", file=sys.stderr, flush=True)
         if id(node) in _seen:
             return False

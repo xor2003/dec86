@@ -194,6 +194,23 @@ def _semantic_validation_pass_names_8616() -> tuple[str, ...]:
     )
 
 
+def _prime_structuring_validation_semantics_8616(project, codegen) -> None:
+    if getattr(codegen, "_inertia_structuring_validation_semantics_primed", False):
+        return
+    try:
+        from .lowering.real_mode_linear import lower_stable_ds_es_linear_global_dereferences_8616
+
+        lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "Structuring validation semantic priming failed function=%#x: %s",
+            getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+            ex,
+        )
+    finally:
+        codegen._inertia_structuring_validation_semantics_primed = True
+
+
 def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
     if not bool(getattr(project, "_inertia_tail_validation_enabled", True)):
         return None
@@ -201,6 +218,7 @@ def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
         return None
 
     mode = "live_out"
+    _prime_structuring_validation_semantics_8616(project, codegen)
     before_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode)
     before_summary = collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
 
@@ -443,6 +461,7 @@ def _decompile_structuring_8616(self):
         return
 
     validation_mode = "live_out"
+    _prime_structuring_validation_semantics_8616(self.project, self.codegen)
     before_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
     before_collect_started = time.perf_counter()
     before_summary = collect_x86_16_tail_validation_summary(self.project, self.codegen, mode=validation_mode)

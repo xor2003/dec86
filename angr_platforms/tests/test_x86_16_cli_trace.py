@@ -12,8 +12,8 @@ def test_emit_c_stage_trace_prints_labeled_snapshot(capsys):
     _emit_c_stage_trace(project, function, "post-helper-call-format", "int demo(void)\n{\n    return 0;\n}\n")
 
     captured = capsys.readouterr()
-    assert "/* -- c trace: 0x1234 demo :: post-helper-call-format -- */" in captured.out
-    assert "int demo(void)" in captured.out
+    assert "/* -- c trace: 0x1234 demo :: post-helper-call-format -- */" in captured.err
+    assert "int demo(void)" not in captured.err
 
 
 def test_emit_c_stage_trace_stays_silent_when_disabled(capsys):
@@ -24,3 +24,4 @@ def test_emit_c_stage_trace_stays_silent_when_disabled(capsys):
 
     captured = capsys.readouterr()
     assert captured.out == ""
+    assert captured.err == ""
