@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import sys
+from enum import Enum
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,15 @@ TAIL_VALIDATION_FALLBACK_PROJECT_SNAPSHOT_KINDS = frozenset(
     {"sidecar_slice", "peer_sidecar", "partial_timeout"}
 )
 TAIL_VALIDATION_ENABLE_ENV = "INERTIA_ENABLE_TAIL_VALIDATION"
+
+
+class TailValidationDisplayStatus(Enum):
+    PASSED = "passed"
+    FAILED = "failed"
+    UNCOLLECTED = "uncollected"
+
+
+_TAIL_VALIDATION_STABLE_STATUSES = frozenset({"stable", "passed"})
 
 
 def parse_env_bool(value: str | None) -> bool | None:
@@ -227,6 +237,8 @@ def tail_validation_snapshot_for_function_run(project, function) -> dict[str, ob
     merged: dict[str, object] = {}
     fallback_snapshot = getattr(project, "_inertia_last_tail_validation_snapshot", None)
     if isinstance(fallback_snapshot, dict):
+        if all(stage in fallback_snapshot for stage in ("structuring", "postprocess")):
+            return dict(fallback_snapshot)
         merged.update(fallback_snapshot)
     snapshot = extract_x86_16_tail_validation_snapshot(getattr(function, "info", None))
     if snapshot:
@@ -251,7 +263,7 @@ def tail_validation_snapshot_for_fallback(
         return {}
     fallback_snapshot = getattr(project, "_inertia_last_tail_validation_snapshot", None)
     if isinstance(fallback_snapshot, dict):
-        return dict(fallback_snapshot)
+        return extract_x86_16_tail_validation_snapshot({"x86_16_tail_validation": fallback_snapshot})
     return {}
 
 
@@ -342,40 +354,36 @@ def tail_validation_display_status(
     fallback_kind: str | None = None,
 ) -> str:
     if not isinstance(snapshot, Mapping) or not snapshot:
-        return "uncollected"
+        return TailValidationDisplayStatus.UNCOLLECTED.value
     if fallback_kind is not None:
-        return "failed"
+        return TailValidationDisplayStatus.FAILED.value
+    if bool(snapshot.get("tail_validation_uncollected")):
+        return TailValidationDisplayStatus.FAILED.value
     passed = x86_16_tail_validation_snapshot_passed(dict(snapshot), expected_stages=expected_stages)
-    changed = any(bool(stage.get("changed")) for stage in snapshot.values() if isinstance(stage, Mapping))
     if passed:
-        return "passed"
-    if changed:
-        return "failed"
+        return TailValidationDisplayStatus.PASSED.value
 
-    # ── Precise diagnostics instead of "unknown" ──
-    # When the snapshot has entries but none are passed or changed,
-    # the validation metadata exists but is incomplete.
-    missing_stages: list[str] = []
+    failed_stages: list[str] = []
     for stage_name in expected_stages:
         entry = snapshot.get(stage_name)
         if not isinstance(entry, Mapping):
-            missing_stages.append(stage_name)
-        elif "changed" not in entry:
-            missing_stages.append(f"{stage_name}(no_changed_field)")
-    if missing_stages:
-        return "tail_validation_uncollected:" + ",".join(missing_stages)
-    # All expected stages exist with changed=False but not status=stable
-    ambiguous_stages: list[str] = []
-    for stage_name in expected_stages:
-        entry = snapshot.get(stage_name)
-        if isinstance(entry, Mapping):
-            status = entry.get("status")
-            if not isinstance(status, str) or not status:
-                status = "missing_status"
-            ambiguous_stages.append(f"{stage_name}({status})")
-    if ambiguous_stages:
-        return "tail_validation_uncollected:" + ",".join(ambiguous_stages)
-    return "tail_validation_uncollected"
+            failed_stages.append(f"{stage_name}=missing")
+            continue
+        changed = bool(entry.get("changed"))
+        if changed:
+            failed_stages.append(f"{stage_name}=changed")
+            continue
+        status = entry.get("status")
+        if not isinstance(status, str):
+            failed_stages.append(f"{stage_name}=missing_status")
+            continue
+        if status not in _TAIL_VALIDATION_STABLE_STATUSES:
+            failed_stages.append(f"{stage_name}={status}")
+
+    if failed_stages:
+        return TailValidationDisplayStatus.FAILED.value
+
+    return TailValidationDisplayStatus.FAILED.value
 
 
 def format_tail_validation_diagnostic(
