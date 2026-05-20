@@ -567,6 +567,55 @@ def test_translate_cmp_jcc_guard_synthesizes_distinct_bp_slots_when_locals_missi
     assert _expr_fingerprint(decoded.lhs, project) != _expr_fingerprint(decoded.rhs, project)
 
 
+def test_translate_cmp_jcc_guard_supports_cmp_reg_mem_operand_order():
+    project = _project()
+    codegen = _codegen([])
+    codegen.cfunc.arg_list = ()
+    codegen.cfunc.variables_in_use = {}
+    codegen.cfunc.unified_local_vars = {}
+
+    class _Mem:
+        def __init__(self, base=0, disp=0):
+            self.base = base
+            self.disp = disp
+
+    class _Operand:
+        def __init__(self, type_, *, reg=0, imm=0, mem=None, size=2):
+            self.type = type_
+            self.reg = reg
+            self.imm = imm
+            self.mem = mem if mem is not None else _Mem()
+            self.size = size
+
+    class _Insn:
+        def __init__(self, address, mnemonic, operands):
+            self.address = address
+            self.mnemonic = mnemonic
+            self.operands = operands
+
+        @staticmethod
+        def reg_name(reg):
+            return {
+                1: "ax",
+                2: "dx",
+                5: "bp",
+            }.get(reg, "")
+
+    insns = (
+        _Insn(0x4000, "mov", (_Operand(1, reg=2, size=2), _Operand(3, mem=_Mem(5, -2), size=2))),
+        _Insn(0x4002, "cmp", (_Operand(1, reg=2, size=2), _Operand(3, mem=_Mem(5, -4), size=2))),
+        _Insn(0x4004, "jle", (_Operand(2, imm=0x4010, size=2),)),
+    )
+    project.factory = SimpleNamespace(block=lambda _addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=insns)))
+
+    decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x4000, 0x4004)
+
+    assert decoded is not None
+    assert decoded.op == "CmpLE"
+    assert decoded.lhs is not None
+    assert decoded.rhs is not None
+
+
 def test_compare_jcc_mapping_stays_in_sync_with_condition_ir_aliases():
     expected = {
         mnemonic: _COND_TO_CMP_OP_8616[cond_op]

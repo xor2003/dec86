@@ -222,6 +222,49 @@ def _memory_load_expr_8616(project, codegen, ds_var, base_expr, disp: int, size:
     return lowered if lowered is not None else deref
 
 
+def _resolve_cmp_operand_expr_8616(
+    project,
+    codegen,
+    operand,
+    reg_state: dict[str, object],
+    ds_var,
+    reg_name_fn,
+    reg_exprs: dict[tuple[int, str, int], object],
+    ins_addr: int,
+):
+    op_type = int(getattr(operand, "type", -1))
+    if op_type == 1:
+        reg_name = reg_name_fn(operand.reg).lower()
+        expr = reg_state.get(reg_name)
+        if expr is not None:
+            return expr
+        expr = _lookup_register_expr_8616(reg_exprs, int(ins_addr), reg_name, int(getattr(operand, "size", 0) or 2))
+        if expr is not None:
+            return expr
+        reg_offset = _reg_offset_8616(project, reg_name)
+        reg_size = int(getattr(operand, "size", 0) or 2)
+        if reg_offset is not None:
+            return CVariable(SimRegisterVariable(reg_offset, reg_size, name=reg_name), codegen=codegen)
+        return None
+    if op_type == 2:
+        return _const_8616(int(operand.imm), codegen)
+    if op_type == 3 and getattr(operand, "mem", None) is not None:
+        mem = operand.mem
+        if mem.base:
+            base_reg_name = reg_name_fn(mem.base).lower()
+            if base_reg_name == "bp":
+                return _stack_slot_expr_8616(codegen, int(mem.disp), int(getattr(operand, "size", 0) or 2))
+            return _memory_load_expr_8616(
+                project,
+                codegen,
+                ds_var,
+                reg_state.get(base_reg_name),
+                int(mem.disp),
+                int(getattr(operand, "size", 0) or 2),
+            )
+    return None
+
+
 def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: int) -> _DecodedCmpGuard8616 | None:
     debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
     try:
@@ -333,23 +376,14 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
             if reg_expr is not None:
                 reg_state[reg_name] = CBinaryOp("Shl", reg_expr, _const_8616(int(insn.operands[1].imm), codegen), codegen=codegen)
 
-    lhs = None
-    rhs = None
     lhs_op = cmp_insn.operands[0]
     rhs_op = cmp_insn.operands[1]
-    if lhs_op.type == 3 and lhs_op.mem.base:
-        lhs = _memory_load_expr_8616(
-            project,
-            codegen,
-            ds_var,
-            reg_state.get(cmp_insn.reg_name(lhs_op.mem.base).lower()),
-            int(lhs_op.mem.disp),
-            int(lhs_op.size),
-        )
-    if rhs_op.type == 1:
-        rhs = reg_state.get(cmp_insn.reg_name(rhs_op.reg).lower())
-    elif rhs_op.type == 2:
-        rhs = _const_8616(int(rhs_op.imm), codegen)
+    lhs = _resolve_cmp_operand_expr_8616(
+        project, codegen, lhs_op, reg_state, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
+    )
+    rhs = _resolve_cmp_operand_expr_8616(
+        project, codegen, rhs_op, reg_state, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
+    )
 
     if lhs is None or rhs is None:
         if debug_jcc:
@@ -410,6 +444,17 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
     changed = False
     materialized_count = 0
 
+    def _is_literal_condition_8616(expr) -> bool:
+        node = expr
+        while isinstance(node, CTypeCast):
+            node = node.expr
+        if isinstance(node, CConstant):
+            return isinstance(getattr(node, "value", None), int)
+        return False
+
+    def _is_tagged_condition_carrier_8616(expr) -> bool:
+        return type(expr).__name__ == "CITE"
+
     def _decoded_condition_replacement(cond):
         key = _condition_tags_8616(cond)
         ins_addr = None if key is None else key[0]
@@ -423,10 +468,15 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                 type(cond).__name__ if cond is not None else None,
                 getattr(cond, "op", None),
             )
+        if not (isinstance(ins_addr, int) and isinstance(block_addr, int)):
+            return None
+        # Primary lane: flags-backed conditions.
+        # Recovery lane: conditions that already collapsed to a literal constant
+        # but still carry insn/block tags for a decodable cmp+jcc origin.
         if not (
-            isinstance(ins_addr, int)
-            and isinstance(block_addr, int)
-            and _c_expr_uses_register_8616(cond, flags_offset)
+            _c_expr_uses_register_8616(cond, flags_offset)
+            or _is_literal_condition_8616(cond)
+            or _is_tagged_condition_carrier_8616(cond)
         ):
             return None
         decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
