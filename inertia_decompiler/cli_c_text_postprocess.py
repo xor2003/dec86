@@ -872,6 +872,17 @@ def _materialize_annotated_cod_declarations_text(
         prototype_declarations.append(source_proto)
         seen_declared.add(normalized_proto_name)
 
+    for call_name in getattr(metadata, "call_names", ()) or ():
+        if not isinstance(call_name, str) or not call_name:
+            continue
+        normalized_call_name = call_name.lstrip("_")
+        if not normalized_call_name or normalized_call_name == func_name or normalized_call_name in seen_declared:
+            continue
+        if not re.search(rf"(?<![A-Za-z_]){re.escape(normalized_call_name)}\s*\(", body_text):
+            continue
+        prototype_declarations.append(f"int {normalized_call_name}();")
+        seen_declared.add(normalized_call_name)
+
     for global_name in metadata.global_names:
         if not isinstance(global_name, str) or not global_name:
             continue
@@ -973,6 +984,71 @@ def _materialize_missing_segment_macro_locals_text(c_text: str) -> str:
     return c_text
 
 
+def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    declared = {
+        match.group("name")
+        for line in lines
+        for match in (
+            re.match(r"\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*;", line),
+        )
+        if match is not None
+    }
+    defined: set[str] = set()
+    definition_re = re.compile(r"\s*[A-Za-z_][\w\s\*]*\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?P<brace>\{?)\s*$")
+    for index, line in enumerate(lines):
+        match = definition_re.match(line)
+        if match is None:
+            continue
+        if match.group("brace"):
+            defined.add(match.group("name"))
+            continue
+        lookahead = index + 1
+        while lookahead < len(lines) and not lines[lookahead].strip():
+            lookahead += 1
+        if lookahead < len(lines) and lines[lookahead].strip().startswith("{"):
+            defined.add(match.group("name"))
+    declared.update(defined)
+    keywords = {"if", "for", "while", "switch", "return", "sizeof"}
+    runtime_helpers = {"SEG_U8", "SEG_U16", "SEG_U32", "SEG_PTR", "SEG_LINEAR", "MK_FP"}
+    calls: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(("/*", "*", "//", "#")):
+            continue
+        for match in re.finditer(r"(?<![A-Za-z_])(?P<name>[A-Za-z_]\w*)\s*\(", line):
+            name = match.group("name")
+            if name in keywords or name in runtime_helpers or name in declared or name in calls:
+                continue
+            calls.append(name)
+    if not calls:
+        return c_text
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if re.match(r"\s*[A-Za-z_][\w\s\*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*\{", line):
+            insert_at = index
+            break
+        if re.match(r"\s*[A-Za-z_][\w\s\*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*$", line):
+            lookahead = index + 1
+            while lookahead < len(lines) and not lines[lookahead].strip():
+                lookahead += 1
+            if lookahead < len(lines) and lines[lookahead].strip().startswith("{"):
+                insert_at = index
+                break
+    else:
+        return c_text
+    prototypes = [f"int {name}();" for name in calls]
+    if insert_at > 0 and lines[insert_at - 1].strip():
+        prototypes.append("")
+    lines[insert_at:insert_at] = prototypes
+    normalized = "\n".join(lines)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
 def _source_function_prototype_decls_from_cod_source_lines(source_lines: Sequence[str] | None) -> dict[str, str]:
     if not source_lines:
         return {}
@@ -1009,24 +1085,39 @@ def _normalize_portable_flat_main_signature_text(
     header_match = None
     for index, line in enumerate(lines):
         match = header_re.match(line)
-        if match is not None:
+        if match is None:
+            continue
+        current_args = match.group("args").strip()
+        if current_args not in {"", "void"}:
+            continue
+        replacement_header = f"{match.group('indent')}int main(void)"
+        if match.group("suffix") == "{":
+            replacement_header += " {"
+        elif match.group("suffix") == ";":
+            replacement_header += ";"
+        lines[index] = replacement_header
+        if match.group("suffix") != ";" and header_index is None:
             header_index = index
-            header_match = match
-            break
-    if header_index is None or header_match is None:
-        return c_text
-
-    current_ret = header_match.group("ret").strip()
-    current_args = header_match.group("args").strip()
-    if current_ret != "void" or current_args not in {"", "void"}:
-        return c_text
-
-    replacement_header = f"{header_match.group('indent')}int main(void)"
-    if header_match.group("suffix") == "{":
-        replacement_header += " {"
-    elif header_match.group("suffix") == ";":
-        replacement_header += ";"
-    lines[header_index] = replacement_header
+            header_match = header_re.match(lines[index])
+        elif header_index is None:
+            lookahead = index + 1
+            while lookahead < len(lines) and not lines[lookahead].strip():
+                lookahead += 1
+            if lookahead < len(lines) and lines[lookahead].lstrip().startswith("{"):
+                header_index = index
+                header_match = header_re.match(lines[index])
+    if header_index is None:
+        normalized = "\n".join(lines)
+        if c_text.endswith("\n"):
+            normalized += "\n"
+        return normalized
+    if header_match is None:
+        header_match = header_re.match(lines[header_index])
+    if header_match is None:
+        normalized = "\n".join(lines)
+        if c_text.endswith("\n"):
+            normalized += "\n"
+        return normalized
 
     brace_index = header_index
     while brace_index < len(lines):
