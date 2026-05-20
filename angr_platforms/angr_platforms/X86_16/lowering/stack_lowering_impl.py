@@ -169,7 +169,7 @@ def _record_stack_canonicalization_bridge_8616(
         return
     bridges[(kind, id(base_var), index_value)] = resolved_offset
 
-def _resolve_stack_cvar_at_offset(codegen, offset: int, *, stack_slot_identity_for_variable):
+def _resolve_stack_cvar_at_offset(codegen, offset: int, *, stack_slot_identity_for_variable, preferred_size: int | None = None):
     if getattr(codegen, "cfunc", None) is None:
         return None
     offset = _canonical_stack_offset_8616(offset)
@@ -223,11 +223,23 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int, *, stack_slot_identity_f
         is_arg_slot = 1 if identity in arg_slot_identities else 0
         has_preferred_name = 1 if preferred_name is not None else 0
         size = getattr(variable, "size", None)
-        size_rank = -size if isinstance(size, int) else 0
+        if isinstance(preferred_size, int) and preferred_size > 0 and isinstance(size, int):
+            if size == preferred_size:
+                size_rank = 3
+            elif size > preferred_size:
+                size_rank = 2
+            else:
+                size_rank = 1
+            preferred_rank = size_rank
+            name_rank = has_preferred_name
+        else:
+            size_rank = -size if isinstance(size, int) else 0
+            preferred_rank = has_preferred_name
+            name_rank = size_rank
         exact_rank = 1 if exact else 0
         canonical_offset = _canonical_stack_offset_8616(getattr(variable, "offset", 0))
         offset_rank = -canonical_offset if exact else canonical_offset
-        return (exact_rank, is_arg_variable, is_arg_slot, has_preferred_name, size_rank, offset_rank)
+        return (exact_rank, is_arg_variable, is_arg_slot, preferred_rank, name_rank, offset_rank)
 
     def _preferred_stack_name(variable, cvar):
         variable_name = getattr(variable, "name", None)
@@ -329,7 +341,7 @@ def _materialize_stack_cvar_at_offset(
     if not isinstance(offset, int):
         return None
 
-    resolved = resolve_stack_cvar_at_offset(codegen, offset)
+    resolved = resolve_stack_cvar_at_offset(codegen, offset, preferred_size=size)
     resolved_variable = getattr(resolved, "variable", None)
     if (
         isinstance(resolved_variable, SimStackVariable)
@@ -1034,12 +1046,39 @@ def _canonicalize_stack_cvar_expr(
     def _resolve_base_stack_pointer_alias(base_expr):
         return _resolve_stack_pointer_alias_expr(base_expr)
 
+    def _fact_backed_stack_size_for_offset(offset: int) -> int | None:
+        bindings = getattr(codegen, "_inertia_stack_variable_bindings", None)
+        if not isinstance(bindings, tuple):
+            return None
+        for binding in bindings:
+            binding_offset = _canonical_stack_offset_8616(getattr(binding, "bp_offset", None))
+            if binding_offset is None:
+                binding_offset = _canonical_stack_offset_8616(getattr(binding, "offset", None))
+            if binding_offset != offset:
+                continue
+            size = getattr(binding, "size", None)
+            if isinstance(size, int) and size > 0:
+                return size
+        return None
+
     if isinstance(expr, structured_c.CVariable):
         variable = getattr(expr, "variable", None)
         if isinstance(variable, SimStackVariable):
             offset = getattr(variable, "offset", None)
             if isinstance(offset, int):
-                resolved = resolve_stack_cvar_at_offset(codegen, offset)
+                canonical_offset = _canonical_stack_offset_8616(offset)
+                preferred_size = (
+                    _fact_backed_stack_size_for_offset(canonical_offset)
+                    if isinstance(canonical_offset, int)
+                    else None
+                )
+                if preferred_size is None:
+                    preferred_size = getattr(variable, "size", None)
+                resolved = resolve_stack_cvar_at_offset(
+                    codegen,
+                    offset,
+                    preferred_size=preferred_size if isinstance(preferred_size, int) else None,
+                )
                 if isinstance(resolved, structured_c.CVariable):
                     active_expr_ids.discard(expr_id)
                     return resolved
@@ -1075,7 +1114,7 @@ def _canonicalize_stack_cvar_expr(
             target_offset = getattr(alias_base_var, "offset", None)
             if isinstance(target_offset, int):
                 resolved_offset = target_offset + alias_offset + index_value
-                resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset)
+                resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset, preferred_size=requested_size)
                 resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
                 resolved_var = getattr(resolved, "variable", None)
                 if (
@@ -1187,7 +1226,7 @@ def _canonicalize_stack_cvar_expr(
                     if isinstance(type_bits, int) and type_bits > 0 and isinstance(byte_width, int) and byte_width > 0
                     else 2
                 )
-                resolved = resolve_stack_cvar_at_offset(codegen, displacement)
+                resolved = resolve_stack_cvar_at_offset(codegen, displacement, preferred_size=access_size)
                 resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
                 resolved_var = getattr(resolved, "variable", None)
                 if (
@@ -1232,7 +1271,7 @@ def _canonicalize_stack_cvar_expr(
                         resolved_offset = getattr(base_var, "offset", None)
                     if isinstance(resolved_offset, int):
                         resolved_offset += index_value
-                        resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset)
+                        resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset, preferred_size=2)
                         resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
                         resolved_var = getattr(resolved, "variable", None)
                         if (
@@ -1332,7 +1371,7 @@ def _canonicalize_stack_cvars(codegen, *, replace_c_children, canonicalize_stack
 
     changed = False
 
-    def _stack_cvar_identity(node) -> tuple[str, int, int | None, object] | None:
+    def _stack_cvar_identity(node) -> tuple[str, int, int | None, int | None, object] | None:
         if not isinstance(node, structured_c.CVariable):
             return None
         variable = getattr(node, "variable", None)
@@ -1344,7 +1383,8 @@ def _canonicalize_stack_cvars(codegen, *, replace_c_children, canonicalize_stack
         region = getattr(variable, "region", None)
         if not isinstance(base, str) or not isinstance(offset, int):
             return None
-        return base, offset, size if isinstance(size, int) else None, region
+        type_size = getattr(getattr(node, "variable_type", None), "size", None)
+        return base, offset, size if isinstance(size, int) else None, type_size if isinstance(type_size, int) else None, region
 
     def _same_stack_storage(lhs, rhs) -> bool:
         lhs_identity = _stack_cvar_identity(lhs)
@@ -1405,7 +1445,7 @@ def _resolve_stack_cvar_from_addr_expr(
         return None
 
     resolved_offset = target_offset + classified.extra_offset
-    resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset)
+    resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset, preferred_size=2)
     resolved_variable = getattr(resolved, "variable", None)
     if (
         isinstance(resolved_variable, SimStackVariable)

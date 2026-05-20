@@ -67,7 +67,7 @@ def build_stack_variable_bindings_from_alias_facts_8616(
 
     Returns empty list if no stack facts exist.
     """
-    addresses: list[tuple[int, int]] = []
+    address_sizes: dict[int, int] = {}
     preferred_names: dict[int, str] = {}
 
     for fact in alias_facts:
@@ -90,7 +90,9 @@ def build_stack_variable_bindings_from_alias_facts_8616(
             continue
 
         size = width if isinstance(width, int) and width > 0 else 1
-        addresses.append((offset, size))
+        current_size = address_sizes.get(offset)
+        if current_size is None or size > current_size:
+            address_sizes[offset] = size
 
         if offset < 0:
             name = f"local_{abs(offset):x}"
@@ -100,11 +102,11 @@ def build_stack_variable_bindings_from_alias_facts_8616(
             name = "frame_base"
         preferred_names[offset] = name
 
-    if not addresses:
+    if not address_sizes:
         return []
 
     return build_stack_variable_bindings_8616(
-        sorted(set(addresses)),
+        sorted(address_sizes.items()),
         preferred_names=preferred_names,
     )
 
