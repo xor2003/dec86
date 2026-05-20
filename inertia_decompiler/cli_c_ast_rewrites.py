@@ -881,7 +881,7 @@ def _replace_c_children(node, transform, seen: set[int] | None = None) -> bool:
             try:
                 value = getattr(current, attr)
             except Exception:
-                _AST_REWRITE_LOGGER.debug(
+                _AST_REWRITE_LOGGER.warning(
                     "cli_c_ast_rewrites._replace_c_children: failed to read node attribute %s on %r",
                     attr,
                     current,

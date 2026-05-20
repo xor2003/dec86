@@ -1015,8 +1015,11 @@ def _decompile_function(
                                                     "Selected decompiler structurer produced no code for %s; stopping same-family retry.",
                                                     function,
                                                 )
-                                                print(f"[dbg] Decompiler returned for {hex(function.addr)}")
-                                                sys.stdout.flush()
+                                                print(
+                                                    f"[dbg] Decompiler returned for {hex(function.addr)}",
+                                                    file=sys.stderr,
+                                                    flush=True,
+                                                )
     except _AnalysisTimeout:
         partial_payload = None
         if dec is not None and getattr(dec, "codegen", None) is not None:
