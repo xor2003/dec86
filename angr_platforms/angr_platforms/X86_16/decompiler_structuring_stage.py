@@ -205,6 +205,7 @@ def _prime_structuring_validation_semantics_8616(project, codegen) -> None:
 
         lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
         lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
+        _segmented_mem.apply_x86_16_segmented_memory_reasoning(project, codegen)
         from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
         from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 

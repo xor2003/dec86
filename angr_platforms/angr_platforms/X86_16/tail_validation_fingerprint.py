@@ -1270,7 +1270,7 @@ def _iter_observable_call_nodes_8616(node):
             yield from _iter_observable_call_nodes_8616(child)
 
 
-def _location_fingerprint(node, project, _seen: set[int] | None = None) -> str:
+def _location_fingerprint(node, project, _seen: set[int] | None = None, *, resolve_copy_alias: bool = True) -> str:
     if _seen is None:
         _seen = set()
     node_id = id(node)
@@ -1310,7 +1310,7 @@ def _location_fingerprint(node, project, _seen: set[int] | None = None) -> str:
                     node=node,
                 )
             return "stack:unknown"
-        resolved_alias = _resolve_validation_copy_alias_expr_8616(node)
+        resolved_alias = _resolve_validation_copy_alias_expr_8616(node) if resolve_copy_alias else None
         if resolved_alias is not None and resolved_alias is not node:
             resolved_location = _location_fingerprint(resolved_alias, project, _seen)
             if isinstance(resolved_location, str):
@@ -1324,7 +1324,7 @@ def _location_fingerprint(node, project, _seen: set[int] | None = None) -> str:
             return f"global:{addr:#x}" if isinstance(addr, int) else "global:unknown"
 
     if isinstance(node, CTypeCast):
-        return _location_fingerprint(node.expr, project, _seen)
+        return _location_fingerprint(node.expr, project, _seen, resolve_copy_alias=resolve_copy_alias)
 
     indexed_stack_location = _stack_indexed_location_fingerprint_8616(node)
     if indexed_stack_location is not None:

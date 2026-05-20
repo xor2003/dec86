@@ -1950,7 +1950,7 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
             if id(node) in prunable_segment_write_ids:
                 continue
             lhs = getattr(node, "lhs", None)
-            location = _location_fingerprint(lhs, project)
+            location = _location_fingerprint(lhs, project, resolve_copy_alias=False)
             if location.startswith("reg:"):
                 if mode == "coarse" or location in observed_locations:
                     register_writes.add(location)
