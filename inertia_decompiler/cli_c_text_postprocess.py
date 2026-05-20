@@ -721,7 +721,7 @@ def _materialize_annotated_cod_declarations_text(
     source_prototypes = _source_function_prototype_decls_from_cod_source_lines(metadata.source_lines)
     if source_decl:
         decl_match = re.match(
-            r"^(?P<ret>.+?)\\s+(?P<name>[A-Za-z_][\\w$?@]*)\\s*\\((?P<args>[^()]*)\\)\\s*;?\\s*$",
+            r"^(?P<ret>.+?)\s+(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^()]*)\)\s*;?\s*$",
             source_decl.strip(),
         )
         if decl_match is not None:
@@ -730,13 +730,13 @@ def _materialize_annotated_cod_declarations_text(
             source_args = _split_args(source_args_text)
             contains_custom_ptr = False
             for source_arg in source_args:
-                source_name_match = re.search(r"([A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*$", source_arg)
+                source_name_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", source_arg)
                 if source_name_match is None:
                     continue
                 source_prefix = source_arg[: source_name_match.start(1)].strip()
                 if "*" not in source_prefix:
                     continue
-                base_tokens = [token for token in re.split(r"\\s+", source_prefix.replace("*", " ").strip()) if token]
+                base_tokens = [token for token in re.split(r"\s+", source_prefix.replace("*", " ").strip()) if token]
                 if not base_tokens:
                     continue
                 base_type = base_tokens[-1]
@@ -880,7 +880,10 @@ def _materialize_annotated_cod_declarations_text(
             continue
         if not re.search(rf"(?<![A-Za-z_]){re.escape(normalized_call_name)}\s*\(", body_text):
             continue
-        prototype_declarations.append(f"int {normalized_call_name}();")
+        helper_decl = preferred_known_helper_signature_decl(call_name)
+        prototype_declarations.append(
+            helper_decl.rstrip(";").strip() + ";" if helper_decl is not None else f"int {normalized_call_name}();"
+        )
         seen_declared.add(normalized_call_name)
 
     for global_name in metadata.global_names:
@@ -988,6 +991,13 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
     lines = c_text.splitlines()
     if not lines:
         return c_text
+
+    def _prototype_for_call(name: str) -> str:
+        helper_decl = preferred_known_helper_signature_decl(name)
+        if helper_decl is not None:
+            return helper_decl.rstrip(";").strip() + ";"
+        return f"int {name}();"
+
     declared = {
         match.group("name")
         for line in lines
@@ -1039,7 +1049,7 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
                 break
     else:
         return c_text
-    prototypes = [f"int {name}();" for name in calls]
+    prototypes = [_prototype_for_call(name) for name in calls]
     if insert_at > 0 and lines[insert_at - 1].strip():
         prototypes.append("")
     lines[insert_at:insert_at] = prototypes
@@ -2662,17 +2672,37 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
         changed = False
         normalized_source_parts = tuple(_normalize_source_arg_text(part) for part in source_parts)
         normalized_candidate_parts = tuple(_normalize_source_arg_text(part) for part in parts)
+
+        def _source_part_has_custom_pointer(part: str) -> bool:
+            split = _split_decl_name(part)
+            if split is None:
+                return False
+            prefix, _name = split
+            if "*" not in prefix and "[" not in part:
+                return False
+            base_tokens = [token for token in re.split(r"\s+", prefix.replace("*", " ").strip()) if token]
+            if not base_tokens:
+                return False
+            base_type = base_tokens[-1]
+            return (
+                base_type
+                not in {"char", "short", "int", "long", "float", "double", "void", "size_t", "FILE"}
+                and base_type[0].isupper()
+            )
+
         use_source_args = bool(source_parts) and (
             not parts
             or len(parts) != len(source_parts)
             or args_text.strip() in {"", "void"}
             or all(_is_generic_arg_name(name) for name in current_arg_names)
         )
+        if use_source_args and any(_source_part_has_custom_pointer(part) for part in normalized_source_parts):
+            use_source_args = False
         if not use_source_args and normalized_source_parts and len(normalized_source_parts) == len(normalized_candidate_parts):
             for source_part, current_part in zip(normalized_source_parts, normalized_candidate_parts):
                 source_has_pointer = "*" in source_part or "[" in source_part
                 current_has_pointer = "*" in current_part or "[" in current_part
-                if source_has_pointer and not current_has_pointer:
+                if source_has_pointer and not current_has_pointer and not _source_part_has_custom_pointer(source_part):
                     use_source_args = True
                     break
         if use_source_args:
