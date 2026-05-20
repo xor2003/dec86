@@ -194,13 +194,6 @@ from .cli_c_text_postprocess import (
     _split_simple_assignment_conditions,
     _simplify_x86_16_wrapped_stack_offsets,
     _simplify_x86_16_stack_byte_pointers,
-    _fix_carr_inbox_guard_blind_spot,
-    _fix_carr_inboxlng_guard_blind_spot,
-    _fix_nhorz_changeweather_blind_spot,
-    _fix_cockpit_look_blind_spot,
-    _fix_billasm_rotate_pt_blind_spot,
-    _fix_monoprin_mset_pos_blind_spot,
-    _fix_planes3_ready5_blind_spot,
     _format_bp_disp,
     _annotate_cod_proc_output,
     _prune_unused_staging_assignments,
@@ -512,6 +505,7 @@ from inertia_decompiler.runtime_support import (
     run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
     raise_timeout as _raise_timeout,
     should_force_serial_supplemental_decompilation as _should_force_serial_supplemental_decompilation,
+    timing_output_enabled as _timing_output_enabled,
 )
 
 from inertia_decompiler.work_items import (
@@ -2165,7 +2159,10 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                 )
 
-            direct_decompile_timeout = max(1, args.timeout) + 1
+            # The inner decompilation path already enforces the analysis deadline.
+            # Give the forked direct-address wrapper a few extra seconds to merge
+            # tail-validation snapshots and serialize the result back to the parent.
+            direct_decompile_timeout = max(1, args.timeout) + 5
             direct_decompile_timeout = max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1))
             if (
                 os.name == "posix"
@@ -3468,7 +3465,8 @@ def main(argv: list[str] | None = None) -> int:
             same_family_retry_stops=same_family_retry_stops,
             fallback_family_labels=fallback_family_labels,
         )
-        _emit_function_timing_summary(function_tasks, result_map)
+        if _timing_output_enabled():
+            _emit_function_timing_summary(function_tasks, result_map)
         return 0 if decompiled else 2
     else:
         decompiled = 0
@@ -3720,5 +3718,6 @@ def main(argv: list[str] | None = None) -> int:
         same_family_retry_stops=same_family_retry_stops,
         fallback_family_labels=fallback_family_labels,
     )
-    _emit_function_timing_summary(function_tasks, result_map)
+    if _timing_output_enabled():
+        _emit_function_timing_summary(function_tasks, result_map)
     return 0 if decompiled else 2

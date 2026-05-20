@@ -47,8 +47,8 @@ Semantic recovery → `X86_16/`. Cleanup-only → `postprocess/`. Do not add to 
 3. **Segmented memory** — SS/DS/ES are distinct spaces. `Address(space=SS, offset=...)` not `(seg<<4)+offset`
 4. **Stack → Variable** — `SS:BP+offset` → `local_*`/`arg_*`. Not stack[x], not raw pointer arithmetic
 5. **Explicit conditions** — `if (x < y)` not `if (tmp_14)` or `if (flags & ...)`
-6. **No text-based recovery** — only IR, CFG, alias, typed structures. No regex on asm.
-7. **Rewrite boundary** — cleanup/naming/formatting only. No alias/type/semantic recovery.
+6. **No text-based recovery** — only IR, CFG, alias, typed structures. No regex on asm or rendered C.
+7. **Rewrite boundary** — cleanup/naming/formatting only. No alias/type/semantic recovery, no call-argument/signature/body repair.
 8. **Validation is truth** — compare register effects, memory writes, return values, control flow. No hiding `changed`/`uncollected`.
 9. **No guessing** — insufficient evidence → honest ugly output.
 10. **Determinism** — same input → same output.
@@ -77,9 +77,12 @@ DO: push semantics earlier, prefer generic typed effects, make register/segment/
 
 DON'T: build recovery around compiler/library names, assume nice frames/conventions/loops, leave semantics in raw VEX tmps, treat timeout fallback as final architecture, solve live flag/segment/loop state in rewrite, use text-pattern recovery over rendered asm/C, depend on runtime traces as sole semantics source.
 
+Sidecars/COD/debug listings are optional evidence only. They may provide labels, function bounds, and names, but must not be required for argument values, types, control-flow semantics, stack recovery, memory modeling, or validation success. The decompiler must work from binary IR/CFG/alias/typed effects for general 16-bit segmented binaries.
+
 ## Anti-patterns (never, unless explicitly marked temporary rescue)
 
 - sample-specific address hacks, symbol-name hacks as proof, shape-only widening
+- binary/function-specific C postprocess fixes, missing-argument fill-ins, signature rewrites, or whole-body replacements
 - flatten-segment-for-convenience, guessed structs/arrays/helpers
 - rewrite-stage semantic repairs, silent fallback as success
 - `if "...substring..." in asm_text`, regex over assembly lines

@@ -227,8 +227,26 @@ def _dedupe_codegen_variable_names_8616(codegen, *, make_unique_identifier):
                 return candidate
         return None
 
+    def normalize_sort_ident(variable, cvar) -> None:
+        ident = getattr(variable, "ident", None)
+        if isinstance(ident, str):
+            return
+        fallback = preferred_name(variable, cvar)
+        if not isinstance(fallback, str) or not fallback:
+            fallback = getattr(variable, "name", None)
+        if not isinstance(fallback, str) or not fallback:
+            fallback = f"var_{id(variable):x}"
+        try:
+            variable.ident = fallback if ident is None else str(ident)
+        except Exception:
+            pass
+
     def sort_key(item):
         variable, cvar = item
+        variable_name = getattr(variable, "name", None)
+        cvar_name = getattr(cvar, "name", None)
+        variable_name_key = variable_name if isinstance(variable_name, str) else ""
+        cvar_name_key = cvar_name if isinstance(cvar_name, str) else ""
         if isinstance(variable, SimStackVariable):
             offset = getattr(variable, "offset", 0)
             return (
@@ -236,23 +254,25 @@ def _dedupe_codegen_variable_names_8616(codegen, *, make_unique_identifier):
                 0 if isinstance(offset, int) and offset > 0 else 1,
                 offset if isinstance(offset, int) else 0,
                 getattr(variable, "size", 0) if isinstance(getattr(variable, "size", 0), int) else 0,
-                getattr(variable, "name", "") or "",
+                variable_name_key,
             )
         if isinstance(variable, SimRegisterVariable):
+            reg = getattr(variable, "reg", 0)
             return (
                 1,
-                getattr(variable, "reg", 0),
+                reg if isinstance(reg, int) else 0,
                 getattr(variable, "size", 0) if isinstance(getattr(variable, "size", 0), int) else 0,
-                getattr(variable, "name", "") or "",
+                variable_name_key,
             )
         if isinstance(variable, SimMemoryVariable):
+            addr = getattr(variable, "addr", 0)
             return (
                 2,
-                getattr(variable, "addr", 0),
+                addr if isinstance(addr, int) else 0,
                 getattr(variable, "size", 0) if isinstance(getattr(variable, "size", 0), int) else 0,
-                getattr(variable, "name", "") or "",
+                variable_name_key,
             )
-        return (3, getattr(variable, "name", "") or "", getattr(cvar, "name", "") or "")
+        return (3, variable_name_key, cvar_name_key)
 
     ordered_items = []
     for arg in getattr(codegen.cfunc, "arg_list", ()) or ():
@@ -292,6 +312,7 @@ def _dedupe_codegen_variable_names_8616(codegen, *, make_unique_identifier):
         if id(variable) in seen_variables:
             continue
         seen_variables.add(id(variable))
+        normalize_sort_ident(variable, cvar)
         name = preferred_name(variable, cvar)
         if name is None:
             continue

@@ -322,6 +322,7 @@ from .cli_c_text_postprocess import (
     _prune_non_lvalue_arithmetic_assignments,
     _prune_unused_local_declarations_text,
     _prune_void_function_return_values_text,
+    _normalize_shift_add_precedence_in_assignments,
     _rewrite_known_helper_signature_text,
     _sanitize_mangled_autonames_text,
     _simplify_x86_16_stack_byte_pointers,
@@ -1393,6 +1394,8 @@ def _decompile_function(
     _debug_dump_calls_8616("post-prune-unused-staging-assignments", formatted, debug_call_addr)
     formatted = _prune_non_lvalue_arithmetic_assignments(formatted)
     _debug_dump_calls_8616("post-prune-non-lvalue-arithmetic-assignments", formatted, debug_call_addr)
+    formatted = _normalize_shift_add_precedence_in_assignments(formatted)
+    _debug_dump_calls_8616("post-normalize-shift-precedence", formatted, debug_call_addr)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
     _debug_dump_calls_8616("post-collapse-duplicate-type-keywords", formatted, debug_call_addr)
     formatted = _normalize_spurious_duplicate_local_suffixes(formatted)

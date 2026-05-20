@@ -551,6 +551,86 @@ def _make_unique_identifier(base: str, used: set[str]) -> str:
 def _structured_codegen_node(value) -> bool:
     return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
 
+
+def _structured_slot_names_8616(value) -> tuple[str, ...]:
+    attrs: list[str] = []
+    if type(value) is object:
+        return ()
+
+    for cls in type(value).mro():
+        slots = getattr(cls, "__slots__", ())
+        if not slots:
+            continue
+        if isinstance(slots, str):
+            slots = (slots,)
+        for slot in slots:
+            if isinstance(slot, str) and not slot.startswith("_") and slot != "codegen":
+                attrs.append(slot)
+
+    if hasattr(value, "__dict__"):
+        attrs.extend(
+            attr
+            for attr in value.__dict__.keys()
+            if isinstance(attr, str) and not attr.startswith("_") and attr != "codegen"
+        )
+
+    # Preserve deterministic traversal order and avoid duplicates when
+    # inherited slots repeat between classes.
+    seen = set()
+    ordered: list[str] = []
+    for attr in attrs:
+        if attr in seen:
+            continue
+        seen.add(attr)
+        ordered.append(attr)
+    return tuple(ordered)
+
+
+def _iter_c_node_children_8616(value, seen_values: set[int] | None = None):
+    if seen_values is None:
+        seen_values = set()
+
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        try:
+            current_id = id(current)
+        except Exception:
+            continue
+        if current_id in seen_values:
+            continue
+        seen_values.add(current_id)
+
+        if _structured_codegen_node(current):
+            yield current
+            continue
+
+        if isinstance(current, (str, bytes)):
+            continue
+
+        if isinstance(current, dict):
+            try:
+                items = tuple(current.values())
+            except Exception:
+                continue
+            stack.extend(items)
+            continue
+
+        if isinstance(current, (list, tuple, set)):
+            try:
+                items = tuple(current)
+            except Exception:
+                continue
+            stack.extend(items)
+            continue
+
+        if hasattr(current, "__iter__"):
+            try:
+                stack.extend(tuple(current))
+            except Exception:
+                continue
+
+
 def _c_constant_value(node) -> int | None:
     if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
         return node.value
@@ -763,92 +843,117 @@ def _match_ss_local_plus_const(node, project: angr.Project):
 def _replace_c_children(node, transform, seen: set[int] | None = None) -> bool:
     if seen is None:
         seen = set()
-    node_id = id(node)
-    if node_id in seen:
+    if not _structured_codegen_node(node):
         return False
-    seen.add(node_id)
-    changed = False
 
-    for attr in (
-        "lhs",
-        "rhs",
-        "expr",
-        "operand",
-        "addr",
-        "data",
-        "guard",
-        "condition",
-        "cond",
-        "initializer",
-        "iterator",
-        "body",
-        "iffalse",
-        "iftrue",
-        "callee_target",
-        "else_node",
-        "retval",
-    ):
-        if not hasattr(node, attr):
+    node_stack: list[object] = [node]
+    changed = False
+    while node_stack:
+        current = node_stack.pop()
+        if not _structured_codegen_node(current):
             continue
-        try:
-            value = getattr(node, attr)
-        except Exception:
+        current_id = id(current)
+        if current_id in seen:
             continue
-        if _structured_codegen_node(value):
+        seen.add(current_id)
+
+        for attr in (
+            "lhs",
+            "rhs",
+            "expr",
+            "operand",
+            "addr",
+            "data",
+            "guard",
+            "condition",
+            "cond",
+            "initializer",
+            "iterator",
+            "body",
+            "iffalse",
+            "iftrue",
+            "callee_target",
+            "else_node",
+            "retval",
+        ):
+            if not hasattr(current, attr):
+                continue
+            try:
+                value = getattr(current, attr)
+            except Exception:
+                _AST_REWRITE_LOGGER.debug(
+                    "cli_c_ast_rewrites._replace_c_children: failed to read node attribute %s on %r",
+                    attr,
+                    current,
+                    exc_info=True,
+                )
+                continue
+            if not _structured_codegen_node(value):
+                continue
             new_value = transform(value)
             if new_value is not value:
-                setattr(node, attr, new_value)
+                setattr(current, attr, new_value)
                 changed = True
-                value = new_value
-            if _replace_c_children(value, transform, seen):
-                changed = True
+                continue
+            node_stack.append(value)
 
-    for attr in ("args", "operands", "statements"):
-        if not hasattr(node, attr):
-            continue
-        try:
-            items = getattr(node, attr)
-        except Exception:
-            continue
-        if not items:
-            continue
-        new_items = []
-        list_changed = False
-        for item in items:
-            if _structured_codegen_node(item):
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(current, attr):
+                continue
+            try:
+                items = getattr(current, attr)
+            except Exception:
+                _AST_REWRITE_LOGGER.debug(
+                    "cli_c_ast_rewrites._replace_c_children: failed to read iterable node attribute %s on %r",
+                    attr,
+                    current,
+                    exc_info=True,
+                )
+                continue
+            if not items:
+                continue
+            new_items = []
+            list_changed = False
+            for item in items:
+                if not _structured_codegen_node(item):
+                    new_items.append(item)
+                    continue
                 new_item = transform(item)
                 if new_item is not item:
                     list_changed = True
-                if _replace_c_children(new_item, transform, seen):
-                    changed = True
+                if new_item is item and _structured_codegen_node(new_item):
+                    node_stack.append(new_item)
                 new_items.append(new_item)
-            else:
-                new_items.append(item)
-        if list_changed:
-            setattr(node, attr, new_items)
-            changed = True
-
-    if hasattr(node, "condition_and_nodes"):
-        try:
-            pairs = getattr(node, "condition_and_nodes")
-        except Exception:
-            pairs = None
-        if pairs:
-            new_pairs = []
-            pair_changed = False
-            for cond, body in pairs:
-                new_cond = transform(cond) if _structured_codegen_node(cond) else cond
-                new_body = transform(body) if _structured_codegen_node(body) else body
-                if new_cond is not cond or new_body is not body:
-                    pair_changed = True
-                if _structured_codegen_node(new_cond) and _replace_c_children(new_cond, transform, seen):
-                    changed = True
-                if _structured_codegen_node(new_body) and _replace_c_children(new_body, transform, seen):
-                    changed = True
-                new_pairs.append((new_cond, new_body))
-            if pair_changed:
-                setattr(node, "condition_and_nodes", new_pairs)
+            if list_changed:
+                setattr(current, attr, new_items)
                 changed = True
+
+        if hasattr(current, "condition_and_nodes"):
+            try:
+                pairs = getattr(current, "condition_and_nodes")
+            except Exception:
+                _AST_REWRITE_LOGGER.debug(
+                    "cli_c_ast_rewrites._replace_c_children: failed to read condition_and_nodes on %r",
+                    current,
+                    exc_info=True,
+                )
+                pairs = None
+            if pairs:
+                new_pairs = []
+                pair_changed = False
+                for cond, body in pairs:
+                    new_cond = transform(cond) if _structured_codegen_node(cond) else cond
+                    new_body = transform(body) if _structured_codegen_node(body) else body
+                    if new_cond is not cond or new_body is not body:
+                        pair_changed = True
+                    if new_cond is cond and _structured_codegen_node(new_cond):
+                        node_stack.append(new_cond)
+                    if new_body is body and _structured_codegen_node(new_body):
+                        node_stack.append(new_body)
+                    new_pairs.append((new_cond, new_body))
+                if pair_changed:
+                    setattr(current, "condition_and_nodes", new_pairs)
+                    changed = True
 
     return changed
 
@@ -857,29 +962,25 @@ def _iter_c_nodes_deep(node, seen: set[int] | None = None):
         seen = set()
     if not _structured_codegen_node(node):
         return
-    node_id = id(node)
-    if node_id in seen:
-        return
-    seen.add(node_id)
-    yield node
-
-    for attr in dir(node):
-        if attr.startswith("_") or attr in {"codegen"}:
+    # Iterative walk avoids recursion overflow on degenerate structured-IR inputs.
+    node_stack = [node]
+    while node_stack:
+        current = node_stack.pop()
+        if not _structured_codegen_node(current):
             continue
-        try:
-            value = getattr(node, attr)
-        except Exception:
+        current_id = id(current)
+        if current_id in seen:
             continue
-        if _structured_codegen_node(value):
-            yield from _iter_c_nodes_deep(value, seen)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
+        seen.add(current_id)
+        yield current
+        for attr in _structured_slot_names_8616(current):
+            try:
+                value = getattr(current, attr)
+            except Exception:
+                continue
+            for item in _iter_c_node_children_8616(value, set()):
                 if _structured_codegen_node(item):
-                    yield from _iter_c_nodes_deep(item, seen)
-                elif isinstance(item, tuple):
-                    for subitem in item:
-                        if _structured_codegen_node(subitem):
-                            yield from _iter_c_nodes_deep(subitem, seen)
+                    node_stack.append(item)
 
 def _same_c_expression(lhs, rhs, seen_pairs: set[tuple[int, int]] | None = None) -> bool:
     if type(lhs) is not type(rhs):
@@ -2808,7 +2909,9 @@ def _analyze_widening_expr(
 ):
     node = resolve_copy_alias_expr(_unwrap_c_casts(node))
 
-    def _extract(expr, seen: set[int] | None = None):
+    def _extract(expr, seen: set[int] | None = None, depth: int = 0):
+        if depth > 64:
+            return expr, 0
         expr = resolve_copy_alias_expr(_unwrap_c_casts(expr))
         if seen is None:
             seen = set()
@@ -2825,8 +2928,8 @@ def _analyze_widening_expr(
         if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Add", "Sub"}:
             return expr, 0
 
-        left_base, left_delta = _extract(expr.lhs, seen)
-        right_base, right_delta = _extract(expr.rhs, seen)
+        left_base, left_delta = _extract(expr.lhs, seen, depth + 1)
+        right_base, right_delta = _extract(expr.rhs, seen, depth + 1)
         if isinstance(left_base, structured_c.CBinaryOp) and left_base.op == "Or":
             duplicate_word_base = _match_duplicate_word_base_expr(left_base, resolve_copy_alias_expr)
             if duplicate_word_base is None:
@@ -4021,3 +4124,4 @@ def _prune_tiny_wrapper_staging_locals(codegen) -> bool:
 # Missing symbols during split:
 # - _SegmentedAccess
 # - _SegmentAssociationState
+_AST_REWRITE_LOGGER = logging.getLogger(__name__)

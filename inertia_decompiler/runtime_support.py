@@ -39,6 +39,13 @@ _FORMAT_FIRST_BLOCK_ASM: Callable[[object, int], str] | None = None
 PEEPHOLE_COMPLEX_EXPR_NODE_LIMIT = 96
 
 
+def timing_output_enabled() -> bool:
+    value = os.environ.get("INERTIA_DEBUG_TIMING")
+    if value is None:
+        return False
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 def _expr_child_nodes(expr) -> tuple[object, ...]:  # noqa: ANN001
     children: list[object] = []
     operand = getattr(expr, "operand", None)
@@ -317,6 +324,9 @@ def guard_angr_variable_recovery_binop_sub_size_mismatch(project=None):
 
 @contextlib.contextmanager
 def guard_angr_clinic_stage_markers(project):
+    if not timing_output_enabled():
+        yield
+        return
     import time as _time
     from angr.analyses.decompiler.block_simplifier import BlockSimplifier
     from angr.analyses.decompiler.clinic import Clinic
@@ -941,6 +951,9 @@ def choose_function_parallelism(function_count: int) -> int:
 @contextlib.contextmanager
 def guard_angr_structurer_codegen_timing(project):
     """Emit per-stage timing for RecursiveStructurer, RegionSimplifier, and StructuredCodeGenerator."""
+    if not timing_output_enabled():
+        yield
+        return
     import time as _time
 
     from angr.analyses.decompiler.structuring.recursive_structurer import RecursiveStructurer
@@ -998,6 +1011,9 @@ def guard_angr_structurer_codegen_timing(project):
 @contextlib.contextmanager
 def guard_angr_tail_validation_collection_timing():
     """Emit timing for the tail validation 'before' collection in _decompile_structuring_8616."""
+    if not timing_output_enabled():
+        yield
+        return
     import time as _time
 
     from angr_platforms.X86_16.tail_validation import (
@@ -1045,6 +1061,9 @@ def guard_angr_tail_validation_collection_timing():
 @contextlib.contextmanager
 def guard_angr_structuring_codegen_internal_timing():
     """Emit timing for internal steps of _structuring_codegen_8616 before the pass loop."""
+    if not timing_output_enabled():
+        yield
+        return
     import time as _time
     import angr_platforms.X86_16.decompiler_structuring_stage as _ds_mod
     import angr_platforms.X86_16.pipeline.contracts as _contracts_mod
