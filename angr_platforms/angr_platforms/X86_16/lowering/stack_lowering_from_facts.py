@@ -152,7 +152,8 @@ def _promote_direct_stack_cvariable(codegen, cvar, size, target_type):
         cvar.variable_type = target_type
         variable = getattr(cvar, "variable", None)
         if isinstance(variable, SimStackVariable):
-            variable.size = size
+            if not isinstance(variable.size, int) or variable.size < size:
+                variable.size = size
 
 
 def _apply_stack_binding_name_8616(cvar, preferred_name: str | None) -> str | None:

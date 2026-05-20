@@ -228,6 +228,13 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return CVariable(variable, variable_type=vartype, codegen=codegen)
 
         if joined.space == "memory":
+            # Keep structuring-stage guard operands in register form.
+            # Folding to a global memory word here can perturb whole-tail
+            # validation fingerprints (reg -> memory read) even when the
+            # expression is algebraically equivalent.
+            stage = str(getattr(getattr(codegen, "project", None), "_inertia_decompiler_stage", "") or "")
+            if stage in {"core", "structuring"}:
+                return None
             low_var = getattr(low_expr, "variable", None)
             high_var = getattr(high_expr, "variable", None)
             low_addr = getattr(low_var, "addr", None)

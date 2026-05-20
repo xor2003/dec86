@@ -188,6 +188,7 @@ DECOMPILER_STRUCTURING_PASSES = _build_decompiler_structuring_passes()
 
 def _semantic_validation_pass_names_8616() -> tuple[str, ...]:
     return (
+        "_simplify_structured_expressions_8616",
         "_segmented_memory_reasoning_8616",
         "_array_expression_matching_8616",
         "_structuring_codegen_8616",
@@ -273,6 +274,12 @@ def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
             setattr(codegen, "_inertia_structuring_pass_validation", existing)
         existing[spec_name] = validation
         if not x86_16_tail_validation_result_passed(validation):
+            logging.getLogger(__name__).warning(
+                "structuring pass validation changed function=%#x pass=%s verdict=%s",
+                getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1,
+                spec_name,
+                validation.get("verdict"),
+            )
             codegen._inertia_structuring_validation_failed = True
             codegen._inertia_structuring_validation_failure_pass = spec_name
             codegen._inertia_structuring_validation_failure_error = (

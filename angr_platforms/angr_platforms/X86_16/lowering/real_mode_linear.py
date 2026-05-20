@@ -1221,8 +1221,10 @@ def lower_stable_ss_linear_stack_dereferences_8616(codegen, project=None) -> boo
                     isinstance(variable, SimStackVariable)
                     and _canonical_stack_offset_8616(getattr(variable, "offset", None)) == displacement
                 ):
-                    if getattr(variable, "size", None) != (access.width or 1):
-                        variable.size = access.width or 1
+                    requested_size = int(access.width or 1)
+                    existing_size = getattr(variable, "size", None)
+                    if not isinstance(existing_size, int) or existing_size < requested_size:
+                        variable.size = requested_size
                     if getattr(cvar, "variable_type", None) is None:
                         cvar.variable_type = target_type
                     return cvar

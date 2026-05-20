@@ -33,6 +33,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _canonical_stack_offset_8616(offset):
+    if not isinstance(offset, int):
+        return offset
+    if 0x8000 <= offset <= 0xFFFF:
+        return offset - 0x10000
+    return offset
+
+
 def _typed_ir_address_spaces_8616(codegen) -> tuple[tuple[str, ...], tuple[str, ...]]:
     artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
     summary = getattr(artifact, "summary", None)
@@ -415,7 +423,7 @@ def _existing_stack_cvar_for_offset_8616(codegen, offset: int):
     for variable, cvar in variables_in_use.items():
         if not isinstance(variable, SimStackVariable):
             continue
-        if getattr(variable, "offset", None) != offset:
+        if _canonical_stack_offset_8616(getattr(variable, "offset", None)) != _canonical_stack_offset_8616(offset):
             continue
         variable_region = getattr(variable, "region", None)
         if isinstance(region, int) and isinstance(variable_region, int) and variable_region != region:
@@ -442,6 +450,12 @@ def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
 
     existing = _existing_stack_cvar_for_offset_8616(codegen, displacement)
     if existing is not None:
+        requested_size = int(width or 1)
+        existing_var = getattr(existing, "variable", None)
+        if isinstance(existing_var, SimStackVariable):
+            existing_size = getattr(existing_var, "size", None)
+            if not isinstance(existing_size, int) or existing_size < requested_size:
+                existing_var.size = requested_size
         return existing
 
     name = f"s_{displacement & 0xFFFF:x}"
