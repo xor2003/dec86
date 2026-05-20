@@ -58,6 +58,7 @@ from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply
 from angr_platforms.X86_16.lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+from angr_platforms.X86_16.lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 from angr_platforms.X86_16.pipeline.contracts import assert_pipeline_contracts_8616
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -1099,6 +1100,10 @@ def _decompile_function(
             project=project,
         )
 
+    def _run_runtime_segment_lowering_pass() -> bool:
+        target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat")
+        return apply_runtime_segment_lowering_8616(dec.codegen, target=target)
+
     def _run_fact_backed_stack_rewrite_pass() -> bool:
         if not getattr(dec.codegen, "_inertia_semantic_stack_materialized_count", 0):
             return False
@@ -1164,6 +1169,7 @@ def _decompile_function(
         lambda: _prune_unused_flag_assignments_8616(project, dec.codegen),
         lambda: _prune_overwritten_flag_assignments_8616(project, dec.codegen),
         lambda: _elide_redundant_segment_pointer_dereferences(project, dec.codegen),
+        _run_runtime_segment_lowering_pass,
         lambda: _attach_ss_stack_variables(project, dec.codegen),
         _run_fact_backed_stack_rewrite_pass,
         _run_callsite_stack_fact_pass,
@@ -1214,6 +1220,7 @@ def _decompile_function(
             lambda: _rewrite_flag_bit_value_uses_8616(dec.codegen),
             lambda: _prune_unused_flag_assignments_8616(project, dec.codegen),
             lambda: _prune_overwritten_flag_assignments_8616(project, dec.codegen),
+            _run_runtime_segment_lowering_pass,
             lambda: _attach_ss_stack_variables(project, dec.codegen),
             _run_fact_backed_stack_rewrite_pass,
             _run_callsite_stack_fact_pass,
