@@ -109,6 +109,40 @@ class LinearRecurrenceState:
     def is_copy_alias_candidate(self, expr) -> bool:
         return isinstance(self.unwrap_c_casts(expr), structured_c.CVariable)
 
+    def expr_contains_stack_base_carrier(self, expr, active_expr_ids: set[int] | None = None) -> bool:
+        expr = self.unwrap_c_casts(expr)
+        active_expr_ids = set() if active_expr_ids is None else active_expr_ids
+        expr_id = id(expr)
+        if expr_id in active_expr_ids:
+            return False
+        active_expr_ids.add(expr_id)
+        if isinstance(expr, structured_c.CFakeVariable) and getattr(expr, "name", None) == "stack_base":
+            active_expr_ids.discard(expr_id)
+            return True
+        for attr in ("lhs", "rhs", "operand", "expr", "variable", "index"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                value = getattr(expr, attr)
+            except Exception:
+                continue
+            if value is not None and self.expr_contains_stack_base_carrier(value, active_expr_ids):
+                active_expr_ids.discard(expr_id)
+                return True
+        for attr in ("args", "operands"):
+            if not hasattr(expr, attr):
+                continue
+            try:
+                items = getattr(expr, attr)
+            except Exception:
+                continue
+            for item in items or ():
+                if self.expr_contains_stack_base_carrier(item, active_expr_ids):
+                    active_expr_ids.discard(expr_id)
+                    return True
+        active_expr_ids.discard(expr_id)
+        return False
+
     def extract_linear_delta(self, expr):
         expr = self.unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
@@ -183,6 +217,8 @@ class LinearRecurrenceState:
                 base_expr, delta = linear
                 if id(variable) in self.protected_linear_defs:
                     return expr
+                if self.expr_contains_stack_base_carrier(base_expr):
+                    return expr
                 if self.match_duplicate_word_base_expr(self.resolve_known_copy_alias_expr(base_expr), self.resolve_known_copy_alias_expr) is not None:
                     return expr
                 return self.build_linear_expr(base_expr, delta)
@@ -255,11 +291,14 @@ class LinearRecurrenceState:
             alias = self.expr_aliases.get(key)
             if alias is None and storage_key is not None:
                 alias = self.expr_aliases.get(storage_key)
+            if alias is not None and self.expr_contains_stack_base_carrier(alias):
+                alias = None
             if alias is None:
                 linear = self.linear_defs.get(key)
                 if linear is not None:
                     base_expr, delta = linear
-                    alias = self.build_linear_expr(base_expr, delta)
+                    if not self.expr_contains_stack_base_carrier(base_expr):
+                        alias = self.build_linear_expr(base_expr, delta)
             if alias is None:
                 break
             expr = self.unwrap_c_casts(alias)

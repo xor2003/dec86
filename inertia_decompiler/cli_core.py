@@ -3121,11 +3121,7 @@ def main(argv: list[str] | None = None) -> int:
             explicit_timeout=timeout_was_explicit,
             margin=1.5,
         )
-        allow_isolated_retry_in_function_tasks = (
-            interactive_stdout
-            or args.max_functions <= 0
-            or args.addr is not None
-        )
+        allow_isolated_retry_in_function_tasks = True
         for item in function_tasks:
             result = result_map.get(item.index)
             if result is None:
@@ -3399,12 +3395,6 @@ def main(argv: list[str] | None = None) -> int:
                         adaptive_timeout_model.observe_success(byte_count, float(elapsed))
                 result_map[item.index] = result
                 if result is not None and item.index not in emitted_indexes:
-                    if result.debug_output:
-                        print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
-                    if result.status != "ok":
-                        _print_stop_on_first_failure_8616(item.function, result)
-                        _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
-                        return 2
                     d, f = _emit_function_result(item, result,
                         project=project,
                         args=args,
@@ -3420,6 +3410,9 @@ def main(argv: list[str] | None = None) -> int:
                     decompiled += d
                     failed += f
                     emitted_indexes.add(item.index)
+                    if f:
+                        _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                        return 2
         attempted = sum(1 for item in function_tasks if result_map.get(item.index) is not None)
         attempted_target = "selected" if args.max_functions <= 0 and args.addr is None else "displayed"
         print(f"/* info: decompilation attempted for {attempted}/{shown_total} {attempted_target} function(s) */")
@@ -3531,27 +3524,26 @@ def main(argv: list[str] | None = None) -> int:
                         result_map[item.index] = payload
                     result = result_map.get(item.index)
                     if result is not None and item.index not in emitted_indexes:
-                        if result.debug_output:
-                            print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
-                        if result.status != "ok":
-                            _print_stop_on_first_failure_8616(item.function, result)
-                            _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
-                            return 2
-                        d, f = _emit_function_result(item, result,
-                        project=project,
-                        args=args,
-                        lst_metadata=lst_metadata,
-                        cod_metadata=cod_metadata,
-                        synthetic_globals=synthetic_globals,
-                        precise_sidecar_regions=precise_sidecar_regions,
-                        allow_heavy_fallbacks=allow_heavy_fallbacks,
-                        interactive_stdout=interactive_stdout,
-                        use_serial_fork_per_function=use_serial_fork_per_function,
-                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
-                    )
+                        d, f = _emit_function_result(
+                            item,
+                            result,
+                            project=project,
+                            args=args,
+                            lst_metadata=lst_metadata,
+                            cod_metadata=cod_metadata,
+                            synthetic_globals=synthetic_globals,
+                            precise_sidecar_regions=precise_sidecar_regions,
+                            allow_heavy_fallbacks=allow_heavy_fallbacks,
+                            interactive_stdout=interactive_stdout,
+                            use_serial_fork_per_function=use_serial_fork_per_function,
+                            fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                        )
                         decompiled += d
                         failed += f
                         emitted_indexes.add(item.index)
+                        if f:
+                            _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                            return 2
             finally:
                 pool.shutdown()
         else:
@@ -3595,27 +3587,26 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                             result = result_map.get(item.index)
                             if result is not None and item.index not in emitted_indexes:
-                                if result.debug_output:
-                                    print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
-                                if result.status != "ok":
-                                    _print_stop_on_first_failure_8616(item.function, result)
-                                    _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
-                                    return 2
-                                d, f = _emit_function_result(item, result,
-                        project=project,
-                        args=args,
-                        lst_metadata=lst_metadata,
-                        cod_metadata=cod_metadata,
-                        synthetic_globals=synthetic_globals,
-                        precise_sidecar_regions=precise_sidecar_regions,
-                        allow_heavy_fallbacks=allow_heavy_fallbacks,
-                        interactive_stdout=interactive_stdout,
-                        use_serial_fork_per_function=use_serial_fork_per_function,
-                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
-                    )
+                                d, f = _emit_function_result(
+                                    item,
+                                    result,
+                                    project=project,
+                                    args=args,
+                                    lst_metadata=lst_metadata,
+                                    cod_metadata=cod_metadata,
+                                    synthetic_globals=synthetic_globals,
+                                    precise_sidecar_regions=precise_sidecar_regions,
+                                    allow_heavy_fallbacks=allow_heavy_fallbacks,
+                                    interactive_stdout=interactive_stdout,
+                                    use_serial_fork_per_function=use_serial_fork_per_function,
+                                    fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                                )
                                 decompiled += d
                                 failed += f
                                 emitted_indexes.add(item.index)
+                                if f:
+                                    _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                                    return 2
                             pending.discard(future)
                     now = time.monotonic()
                     expired = [future for future in pending if now >= deadlines[future]]
@@ -3635,27 +3626,26 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                             result = result_map.get(item.index)
                             if result is not None and item.index not in emitted_indexes:
-                                if result.debug_output:
-                                    print(result.debug_output, end="" if result.debug_output.endswith("\n") else "\n")
-                                if result.status != "ok":
-                                    _print_stop_on_first_failure_8616(item.function, result)
-                                    _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
-                                    return 2
-                                d, f = _emit_function_result(item, result,
-                        project=project,
-                        args=args,
-                        lst_metadata=lst_metadata,
-                        cod_metadata=cod_metadata,
-                        synthetic_globals=synthetic_globals,
-                        precise_sidecar_regions=precise_sidecar_regions,
-                        allow_heavy_fallbacks=allow_heavy_fallbacks,
-                        interactive_stdout=interactive_stdout,
-                        use_serial_fork_per_function=use_serial_fork_per_function,
-                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
-                    )
+                                d, f = _emit_function_result(
+                                    item,
+                                    result,
+                                    project=project,
+                                    args=args,
+                                    lst_metadata=lst_metadata,
+                                    cod_metadata=cod_metadata,
+                                    synthetic_globals=synthetic_globals,
+                                    precise_sidecar_regions=precise_sidecar_regions,
+                                    allow_heavy_fallbacks=allow_heavy_fallbacks,
+                                    interactive_stdout=interactive_stdout,
+                                    use_serial_fork_per_function=use_serial_fork_per_function,
+                                    fallback_tail_validation_by_index=fallback_tail_validation_by_index,
+                                )
                                 decompiled += d
                                 failed += f
                                 emitted_indexes.add(item.index)
+                                if f:
+                                    _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
+                                    return 2
                             pending.discard(future)
                             continue
                         result_map[item.index] = FunctionWorkResult(

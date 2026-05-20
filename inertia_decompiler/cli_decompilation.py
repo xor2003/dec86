@@ -803,7 +803,11 @@ def _decompile_function(
             try:
                 if deadline is not None and time.monotonic() >= deadline:
                     return ("timeout", f"Timed out after {timeout}s before isolated retry.")
-                print(f"[dbg] retrying {function.addr:#x} {function.name} in a forked isolated project after empty decompilation")
+                logging.getLogger(__name__).debug(
+                    "retrying %#x %s in a forked isolated project after empty decompilation",
+                    function_original_addr(function),
+                    function.name,
+                )
                 return _run_with_timeout_in_fork(
                     lambda: _decompile_function(
                         project,
@@ -844,9 +848,10 @@ def _decompile_function(
                 entry_point=project.entry,
             )
             _inherit_tail_validation_runtime_policy(isolated_project, project)
+            retry_addr = function_original_addr(function)
             isolated_cfg, isolated_function = _recover_candidate_function_pair(
                 isolated_project,
-                candidate_addr=function.addr,
+                candidate_addr=retry_addr,
                 image_end=linked_base + max_addr + 1,
                 metadata=getattr(project, "_inertia_lst_metadata", None),
                 project_entry=project.entry,
@@ -854,7 +859,11 @@ def _decompile_function(
             )
         except Exception as ex:  # noqa: BLE001
             return ("empty", f"Optimized decompilation produced no code. Isolated retry setup failed: {_describe_exception(ex)}")
-        print(f"[dbg] retrying {function.addr:#x} {function.name} in an isolated project after empty decompilation")
+        logging.getLogger(__name__).debug(
+            "retrying %#x %s in an isolated project after empty decompilation",
+            function_original_addr(function),
+            function.name,
+        )
         return _decompile_function(
             isolated_project,
             isolated_cfg,
