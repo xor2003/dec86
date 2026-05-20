@@ -523,6 +523,35 @@ def _debug_dump_calls_8616(label: str, c_text: str, function_addr: int) -> None:
             log.warning("[call-mutation] %s: %s", label, stripped)
 
 
+def _debug_dump_rewrite_pass_lines_8616(codegen, *, pass_index: int, pass_name: str, function_addr: int) -> None:
+    filter_text = os.environ.get("INERTIA_DEBUG_REWRITE_PASS_FILTER", "")
+    tracked = tuple(part.strip() for part in filter_text.split(",") if part.strip())
+    if not tracked:
+        return
+    target_text = os.environ.get("INERTIA_DEBUG_REWRITE_PASS_ADDR")
+    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
+    if isinstance(target_addr, int) and function_addr != target_addr:
+        return
+    try:
+        rendered = codegen.render_text(codegen.cfunc)
+    except Exception:
+        rendered = _snapshot_codegen_text(codegen)
+    snapshot = rendered[0] if isinstance(rendered, tuple) and rendered and isinstance(rendered[0], str) else rendered
+    if not isinstance(snapshot, str) or not snapshot:
+        return
+    log = logging.getLogger(__name__)
+    for line in snapshot.splitlines():
+        stripped = line.strip()
+        if any(part in stripped for part in tracked):
+            log.warning(
+                "[rewrite-pass] idx=%d name=%s function=%#x %s",
+                pass_index,
+                pass_name,
+                function_addr,
+                stripped,
+            )
+
+
 def _prepend_recovered_callsite_prototypes_8616(c_text: str, codegen) -> str:
     decls = tuple(getattr(codegen, "_inertia_callsite_prototype_decls", ()) or ())
     if not decls:
@@ -1290,6 +1319,10 @@ def _decompile_function(
     if getattr(dec.codegen, "_inertia_postprocess_discarded", False):
         rewrite_passes = ()
     _stack_lowering_already_attempted = False
+    rewrite_pass_names = {
+        id(rewrite): getattr(rewrite, "__name__", type(rewrite).__name__)
+        for rewrite in rewrite_passes
+    }
     for round_idx in range(2):
         iter_changed = False
         for rewrite_idx, rewrite in enumerate(rewrite_passes):
@@ -1315,8 +1348,15 @@ def _decompile_function(
                 }
             ):
                 continue
+            pass_name = rewrite_pass_names.get(id(rewrite), getattr(rewrite, "__name__", type(rewrite).__name__))
             if rewrite():
                 iter_changed = True
+                _debug_dump_rewrite_pass_lines_8616(
+                    dec.codegen,
+                    pass_index=rewrite_idx,
+                    pass_name=pass_name,
+                    function_addr=function_original_addr(function),
+                )
             if rewrite is _run_stack_lowering_pass:
                 _stack_lowering_already_attempted = True
         if not iter_changed:
@@ -1324,7 +1364,11 @@ def _decompile_function(
         changed = True
     stack_probe_fact_stats = format_stack_probe_fact_stats_8616(dec.codegen)
     if stack_probe_fact_stats is not None:
-        print(f"[dbg] stack-probe fact stats for {function.addr:#x}: {stack_probe_fact_stats}")
+        logging.getLogger(__name__).debug(
+            "stack-probe fact stats for %#x: %s",
+            function.addr,
+            stack_probe_fact_stats,
+        )
     if changed:
         cached_rendered_text = _snapshot_codegen_text(dec.codegen)
         recurrence_rebound = bool(
