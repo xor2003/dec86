@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections import Counter
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
@@ -808,11 +809,13 @@ def _tail_validation_stage_status(entry: object) -> str:
             return "passed"
         if normalized in {"changed", "uncollected"}:
             return normalized
+        if normalized == "failed":
+            return "changed"
         if normalized == "unknown":
-            return "uncollected"
+            return "unknown"
         return "uncollected"
     if "changed" not in entry:
-        return "uncollected"
+        return "unknown"
     return "changed" if bool(entry.get("changed", False)) else "passed"
 
 
@@ -972,10 +975,9 @@ def extract_x86_16_tail_validation_snapshot(function_info: Mapping[str, object] 
                 status = "changed" if bool(entry.get("changed", False)) else "stable"
             else:
                 # No "changed" field and no explicit status means the entry
-                # was persisted without classification metadata.  Mark it as
-                # uncollected so the downstream display layer never emits
-                # "unknown" as a terminal status.
-                status = "uncollected"
+                # was persisted without classification metadata and should be
+                # treated as unknown rather than silently forcing uncollected.
+                status = "unknown"
         changed_value = bool(entry.get("changed", False))
         if not isinstance(entry.get("changed"), bool) and "changed" not in entry:
             changed_value = False
@@ -1050,7 +1052,7 @@ def persist_x86_16_tail_validation_snapshot(
     if isinstance(function_info, MutableMapping):
         validation_info = function_info.setdefault("x86_16_tail_validation", {})
         if isinstance(validation_info, MutableMapping):
-            validation_info[stage] = dict(validation)
+            validation_info[stage] = dict(snapshot_entry)
     if codegen is not None:
         snapshot = getattr(codegen, "_inertia_tail_validation_snapshot", None)
         if not isinstance(snapshot, dict):
@@ -1243,7 +1245,7 @@ def build_x86_16_tail_validation_surface(summary: Mapping[str, object], *, scann
     elif severity == "unknown":
         headline = f"whole-tail validation incomplete across {scanned_count} functions"
     else:
-        headline = f"whole-tail validation changed in {changed_function_count} functions"
+        headline = f"whole-tail validation failed across {changed_function_count} functions"
 
     surface = {
         "headline": headline,
@@ -2047,6 +2049,9 @@ def format_x86_16_tail_validation_diff(validation: dict[str, object]) -> str:
 
 
 def _format_x86_16_tail_validation_timing_suffix(validation: Mapping[str, object]) -> str:
+    timing_debug = os.environ.get("INERTIA_DEBUG_TIMING")
+    if timing_debug is None or timing_debug.strip().lower() in {"", "0", "false", "no", "off"}:
+        return ""
     timings = validation.get("timings")
     if not isinstance(timings, Mapping):
         return ""

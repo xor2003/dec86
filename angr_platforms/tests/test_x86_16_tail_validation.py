@@ -55,6 +55,7 @@ from angr_platforms.X86_16.tail_validation import (
     x86_16_tail_validation_result_passed,
 )
 from angr_platforms.X86_16.tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
+from inertia_decompiler.tail_validation import tail_validation_snapshot_for_function_run
 
 
 class _DummyCodegen:
@@ -1323,8 +1324,77 @@ def test_tail_validation_snapshot_persists_changed_postprocess_verdict_for_later
     )
 
     assert persisted == validation
+    assert function_info == {"x86_16_tail_validation": {"postprocess": validation}}
     assert extract_x86_16_tail_validation_snapshot(function_info) == {"postprocess": validation}
     assert codegen._inertia_tail_validation_snapshot == {"postprocess": validation}
+
+
+def test_tail_validation_snapshot_persists_compact_stage_entry_in_function_info():
+    function_info = {}
+    codegen = _DummyCodegen()
+    validation = {
+        "changed": True,
+        "status": "changed",
+        "mode": "live_out",
+        "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+        "summary_text": "helper_calls: +helper_ping",
+        "delta": {
+            "added": ["CmpGT(big, fat, delta)"],
+            "removed": ["CmpLE(old, fat, delta)"],
+        },
+        "before_summary": {"conditions": tuple(range(256))},
+        "after_summary": {"conditions": tuple(range(256, 512))},
+    }
+
+    persist_x86_16_tail_validation_snapshot(
+        function_info=function_info,
+        codegen=codegen,
+        stage="postprocess",
+        validation=validation,
+    )
+
+    assert function_info == {
+        "x86_16_tail_validation": {
+            "postprocess": {
+                "changed": True,
+                "status": "changed",
+                "mode": "live_out",
+                "verdict": "postprocess whole-tail validation [live_out] changed: helper_calls: +helper_ping",
+                "summary_text": "helper_calls: +helper_ping",
+                "delta": {
+                    "added": ["CmpGT(big, fat, delta)"],
+                    "removed": ["CmpLE(old, fat, delta)"],
+                },
+            }
+        }
+    }
+
+
+def test_tail_validation_snapshot_for_function_run_prefers_complete_project_snapshot():
+    project = SimpleNamespace(
+        _inertia_last_tail_validation_snapshot={
+            "structuring": {"status": "stable", "changed": False},
+            "postprocess": {"status": "stable", "changed": False},
+        }
+    )
+    function = SimpleNamespace(
+        info={
+            "x86_16_tail_validation": {
+                "structuring": {
+                    "status": "changed",
+                    "changed": True,
+                    "delta": {"added": list(range(1024))},
+                }
+            }
+        }
+    )
+
+    snapshot = tail_validation_snapshot_for_function_run(project, function)
+
+    assert snapshot == {
+        "structuring": {"status": "stable", "changed": False},
+        "postprocess": {"status": "stable", "changed": False},
+    }
 
 
 def test_tail_validation_snapshot_passed_rejects_non_stable_statuses():
@@ -1438,7 +1508,7 @@ def test_tail_validation_surface_summarizes_headline_rates_and_hotspots():
         scanned=5,
     )
 
-    assert surface["headline"] == "whole-tail validation changed in 2 functions"
+    assert surface["headline"] == "whole-tail validation failed across 2 functions"
     assert surface["severity"] == "changed"
     assert surface["merge_gate"] is False
     assert surface["changed_stage_total"] == 3
@@ -1873,7 +1943,7 @@ def test_tail_validation_baseline_comparison_distinguishes_match_improve_and_reg
 
 def test_tail_validation_surface_annotation_includes_baseline_counts():
     surface = annotate_x86_16_tail_validation_surface_with_baseline(
-        {"headline": "whole-tail validation changed in 1 functions"},
+        {"headline": "whole-tail validation failed across 1 functions"},
         {
             "status": "regressed",
             "unexpected": [{"proc_name": "_dos_resize"}],
@@ -1906,7 +1976,32 @@ def test_tail_validation_scope_description_exposes_whole_tail_boundary():
     assert "temporary names" in desc["ignored"]
 
 
-def test_tail_validation_verdict_includes_collection_timing_suffix():
+def test_tail_validation_verdict_omits_collection_timing_suffix_by_default(monkeypatch):
+    monkeypatch.delenv("INERTIA_DEBUG_TIMING", raising=False)
+
+    verdict = build_x86_16_tail_validation_verdict(
+        "postprocess",
+        {
+            "mode": "live_out",
+            "changed": True,
+            "summary_text": "register_writes: +reg:ax",
+            "timings": {
+                "collect_before_ms": 1.25,
+                "collect_after_ms": 2.5,
+                "compare_ms": 0.75,
+                "total_ms": 4.5,
+            },
+        },
+    )
+
+    assert "collect=" not in verdict
+    assert "compare=" not in verdict
+    assert "tail_validation=" not in verdict
+
+
+def test_tail_validation_verdict_includes_collection_timing_suffix_when_enabled(monkeypatch):
+    monkeypatch.setenv("INERTIA_DEBUG_TIMING", "1")
+
     verdict = build_x86_16_tail_validation_verdict(
         "postprocess",
         {
@@ -2076,6 +2171,54 @@ def test_postprocess_codegen_rejects_non_stable_per_pass_validation_status(monke
     assert codegen._inertia_postprocess_validation_failed is True
     assert codegen._inertia_postprocess_validation_failure_pass == "_pass"
     assert codegen._inertia_postprocess_validation_failure_error == "validation metadata missing"
+
+
+def test_postprocess_codegen_skips_heapsort_debug_regeneration_without_env(monkeypatch):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_postprocess_per_pass_validation_enabled=False,
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x10970, state="baseline"),
+        project=project,
+    )
+    calls: list[str] = []
+
+    def _apply_word_globals(_project, _codegen):
+        return set()
+
+    def _pass(_project, codegen_arg):
+        codegen_arg.cfunc.state = "after-callsite"
+        return True
+
+    monkeypatch.delenv("INERTIA_DEBUG_HEAPSORT_CALLS", raising=False)
+    monkeypatch.delenv("INERTIA_DEBUG_STACK_NOISE", raising=False)
+    monkeypatch.setattr(postprocess_stage._globals, "_coalesce_word_global_loads_8616", _apply_word_globals)
+    monkeypatch.setattr(
+        postprocess_stage._globals,
+        "_coalesce_word_global_constant_stores_8616",
+        lambda _project, _codegen: set(),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_decompiler_postprocess_passes_for_function",
+        lambda _project, _codegen: (
+            postprocess_stage.DecompilerPostprocessPassSpec(
+                "_materialize_callsite_stack_arguments_8616",
+                _pass,
+                True,
+            ),
+            postprocess_stage.DecompilerPostprocessPassSpec("_later_pass", lambda _codegen: False, False),
+        ),
+    )
+    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regen") or True)
+    monkeypatch.setattr(postprocess_stage, "_debug_heap_call_lines_8616", lambda *_args, **_kwargs: calls.append("heap"))
+    monkeypatch.setattr(postprocess_stage, "_debug_stack_noise_8616", lambda *_args, **_kwargs: calls.append("noise"))
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is True
+    assert calls == ["regen"]
 
 
 def test_tail_validation_compare_summaries_treats_negated_compare_and_inverted_compare_as_stable():
