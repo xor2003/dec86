@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import logging
+import os
 
 from .analysis_helpers import collect_neighbor_call_targets
 from .callee_name_normalization import normalize_callee_name_8616
@@ -27,7 +28,7 @@ class CallsiteSummary8616:
     helper_return_space: str | None = None
     helper_return_width: int | None = None
     helper_return_address_kind: str = "none"
-    push_arg_sources: tuple[tuple[str, int] | None, ...] = ()
+    push_arg_sources: tuple[tuple | None, ...] = ()
 
     def brief(self) -> str:
         return (
@@ -140,6 +141,9 @@ def _operand_reg_name(insn, operand) -> str | None:
 
 
 def _operand_imm_value(operand) -> int | None:
+    operand_type = getattr(operand, "type", None)
+    if isinstance(operand_type, int) and operand_type != 2:
+        return None
     imm = getattr(operand, "imm", None)
     return imm if isinstance(imm, int) else None
 
@@ -155,7 +159,17 @@ def _instruction_operands(insn) -> tuple:
 
 def _find_call_index(insns: tuple, callsite_addr: int) -> int | None:
     for idx, insn in enumerate(insns):
-        if getattr(insn, "address", None) == callsite_addr:
+        insn_addr = getattr(insn, "address", None)
+        if insn_addr == callsite_addr and _mnemonic(insn).startswith("call"):
+            return idx
+        insn_size = getattr(insn, "size", None)
+        if (
+            isinstance(insn_addr, int)
+            and isinstance(insn_size, int)
+            and insn_size > 0
+            and insn_addr < callsite_addr < insn_addr + insn_size
+            and _mnemonic(insn).startswith("call")
+        ):
             return idx
     return None
 
@@ -165,7 +179,53 @@ def _block_insns_for_callsite(function, callsite_addr: int) -> tuple:
     if project is None:
         return ()
 
+    debug = bool(os.environ.get("INERTIA_DEBUG_CALLSITE_SUMMARY"))
+
+    def _debug_insns(label: str, insns: tuple) -> None:
+        if not debug:
+            return
+        rendered = ", ".join(
+            f"{getattr(insn, 'address', None):#x}:{getattr(insn, 'mnemonic', '')} {getattr(insn, 'op_str', '')}"
+            for insn in insns[:12]
+        )
+        log.warning("[callsite-window] callsite=%#x %s count=%d %s", callsite_addr, label, len(insns), rendered)
+
+    def _decode_linear_window(start_addr: int) -> tuple:
+        if not isinstance(start_addr, int) or start_addr > callsite_addr:
+            return ()
+        size = max(callsite_addr - start_addr + 16, 16)
+        try:
+            block = project.factory.block(
+                start_addr,
+                size=size,
+                num_inst=max(callsite_addr - start_addr + 8, 8),
+                strict_block_end=False,
+                opt_level=0,
+            )
+        except Exception as ex:
+            log.debug("callsite linear-window decode failed start=%#x callsite=%#x: %s", start_addr, callsite_addr, ex)
+            block = None
+        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()) if block is not None else ()
+        _debug_insns(f"factory-window start={start_addr:#x}", insns)
+        if _find_call_index(insns, callsite_addr) is not None:
+            return insns
+        capstone_engine = getattr(getattr(project, "arch", None), "capstone", None)
+        memory = getattr(getattr(project, "loader", None), "memory", None)
+        if capstone_engine is None or memory is None:
+            return insns
+        try:
+            data = bytes(memory.load(start_addr, size))
+            capstone_insns = tuple(capstone_engine.disasm(data, start_addr))
+            _debug_insns(f"capstone-window start={start_addr:#x}", capstone_insns)
+            return capstone_insns
+        except Exception as ex:
+            log.debug("callsite capstone-window decode failed start=%#x callsite=%#x: %s", start_addr, callsite_addr, ex)
+            return insns
+
     candidate_addrs = [callsite_addr]
+    func_addr = getattr(function, "addr", None)
+    if isinstance(func_addr, int) and func_addr <= callsite_addr:
+        candidate_addrs.append(func_addr)
     for block_addr in tuple(sorted(getattr(function, "block_addrs_set", ()) or ())):
         if block_addr == callsite_addr:
             continue
@@ -180,7 +240,16 @@ def _block_insns_for_callsite(function, callsite_addr: int) -> tuple:
             log.debug("callsite block decode failed block=%#x: %s", block_addr, ex)
             continue
         insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
-        if _find_call_index(insns, callsite_addr) is not None:
+        _debug_insns(f"factory-block start={block_addr:#x}", insns)
+        call_idx = _find_call_index(insns, callsite_addr)
+        if call_idx is not None and call_idx > 0:
+            return insns
+        if call_idx is not None:
+            for start_addr in reversed(candidate_addrs):
+                window_insns = _decode_linear_window(start_addr)
+                window_idx = _find_call_index(window_insns, callsite_addr)
+                if window_idx is not None and window_idx > 0:
+                    return window_insns
             return insns
     return ()
 
@@ -211,8 +280,17 @@ def _push_arg_width(insn) -> int:
     return 2
 
 
+def _is_segment_register_push_8616(insn) -> bool:
+    if not _mnemonic(insn).startswith("push"):
+        return False
+    operands = _instruction_operands(insn)
+    return len(operands) == 1 and _operand_reg_name(insn, operands[0]) in {"cs", "ds", "es", "ss"}
+
+
 def _transparent_between_push_args_8616(insn) -> bool:
     mnemonic = _mnemonic(insn)
+    if mnemonic == "nop":
+        return True
     if mnemonic in {"mov", "lea"}:
         operands = _instruction_operands(insn)
         if len(operands) != 2:
@@ -240,10 +318,18 @@ def _collect_push_args_before_call(insns: tuple, idx: int) -> tuple[int, ...]:
     widths: list[int] = []
     scan = idx - 1
     skipped_transparents = 0
+    skipped_call_segment = False
     while scan >= 0:
         insn = insns[scan]
         if _mnemonic(insn).startswith("push"):
+            if not widths and _is_segment_register_push_8616(insn):
+                skipped_call_segment = True
+                scan -= 1
+                continue
             widths.append(_push_arg_width(insn))
+            scan -= 1
+            continue
+        if not widths and skipped_call_segment and _transparent_between_push_args_8616(insn):
             scan -= 1
             continue
         if widths and skipped_transparents < 4 and _transparent_between_push_args_8616(insn):
@@ -255,7 +341,7 @@ def _collect_push_args_before_call(insns: tuple, idx: int) -> tuple[int, ...]:
     return tuple(widths)
 
 
-def _push_arg_source(insn) -> tuple[str, int] | None:
+def _push_arg_source(insn) -> tuple | None:
     operands = _instruction_operands(insn)
     if len(operands) != 1:
         return None
@@ -274,14 +360,78 @@ def _push_arg_source(insn) -> tuple[str, int] | None:
     return None
 
 
-def _collect_push_arg_sources_before_call(insns: tuple, idx: int) -> tuple[tuple[str, int] | None, ...]:
-    sources: list[tuple[str, int] | None] = []
+def _source_from_mov_operand(insn, operand) -> tuple | None:
+    imm = _operand_imm_value(operand)
+    if isinstance(imm, int):
+        return ("imm", imm)
+    mem = getattr(operand, "mem", None)
+    if mem is not None:
+        base = getattr(mem, "base", None)
+        disp = getattr(mem, "disp", None)
+        if isinstance(base, int) and isinstance(disp, int):
+            base_name = _operand_reg_name(insn, type("_MovMemOperand", (), {"reg": base})())
+            if base_name == "bp" and int(getattr(mem, "index", 0) or 0) == 0:
+                return ("bp", int(disp))
+    return None
+
+
+def _push_arg_source_from_context(insns: tuple, idx: int) -> tuple | None:
+    source = _push_arg_source(insns[idx])
+    if source is not None:
+        return source
+    operands = _instruction_operands(insns[idx])
+    if len(operands) != 1:
+        return None
+    pushed_reg = _operand_reg_name(insns[idx], operands[0])
+    if pushed_reg is None or pushed_reg in {"sp", "bp", "ss", "ds", "es", "cs"}:
+        return None
+    scan = idx - 1
+    skipped = 0
+    ops: list[tuple[str, int]] = []
+    while scan >= 0 and skipped < 6:
+        insn = insns[scan]
+        operands = _instruction_operands(insn)
+        mnemonic = _mnemonic(insn)
+        if mnemonic == "mov" and len(operands) == 2 and _operand_reg_name(insn, operands[0]) == pushed_reg:
+            base_source = _source_from_mov_operand(insn, operands[1])
+            if base_source is None:
+                return None
+            if not ops:
+                return base_source
+            return ("expr", base_source, tuple(reversed(ops)))
+        if mnemonic in {"add", "sub", "shl", "shr"} and len(operands) == 2 and _operand_reg_name(insn, operands[0]) == pushed_reg:
+            value = _operand_imm_value(operands[1])
+            if not isinstance(value, int):
+                return None
+            ops.append((mnemonic, value))
+            scan -= 1
+            skipped += 1
+            continue
+        if _mnemonic(insn).startswith(("call", "push", "pop", "ret", "jmp")):
+            return None
+        if not _transparent_between_push_args_8616(insn):
+            return None
+        skipped += 1
+        scan -= 1
+    return None
+
+
+def _collect_push_arg_sources_before_call(insns: tuple, idx: int) -> tuple[tuple | None, ...]:
+    sources: list[tuple | None] = []
     scan = idx - 1
     skipped_transparents = 0
+    skipped_call_segment = False
     while scan >= 0:
         insn = insns[scan]
         if _mnemonic(insn).startswith("push"):
-            sources.append(_push_arg_source(insn))
+            if not sources and _is_segment_register_push_8616(insn):
+                skipped_call_segment = True
+                scan -= 1
+                continue
+            sources.append(_push_arg_source_from_context(insns, scan))
+            scan -= 1
+            continue
+        if not sources and skipped_call_segment and _transparent_between_push_args_8616(insn):
             scan -= 1
             continue
         if sources and skipped_transparents < 4 and _transparent_between_push_args_8616(insn):
@@ -310,15 +460,15 @@ def _trim_push_args_to_stack_cleanup(arg_widths: tuple[int, ...], cleanup: int |
 
 def _trim_push_arg_sources_to_stack_cleanup(
     arg_widths: tuple[int, ...],
-    arg_sources: tuple[tuple[str, int] | None, ...],
+    arg_sources: tuple[tuple | None, ...],
     cleanup: int | None,
-) -> tuple[tuple[str, int] | None, ...]:
+) -> tuple[tuple | None, ...]:
     if not isinstance(cleanup, int) or cleanup <= 0 or not arg_widths or not arg_sources:
         return arg_sources
     if len(arg_widths) != len(arg_sources):
         return arg_sources
     total = 0
-    kept: list[tuple[str, int] | None] = []
+    kept: list[tuple | None] = []
     for width, source in reversed(tuple(zip(arg_widths, arg_sources))):
         if total + width > cleanup:
             break
@@ -433,6 +583,17 @@ def summarize_x86_16_callsite(function, callsite_addr: int) -> CallsiteSummary86
     raw_arg_sources = _collect_push_arg_sources_before_call(insns, call_idx)
     arg_widths = _trim_push_args_to_stack_cleanup(raw_arg_widths, cleanup)
     push_arg_sources = _trim_push_arg_sources_to_stack_cleanup(raw_arg_widths, raw_arg_sources, cleanup)
+    if os.environ.get("INERTIA_DEBUG_CALLSITE_SUMMARY"):
+        log.warning(
+            "[callsite-summary] callsite=%#x call_idx=%s cleanup=%r raw_widths=%r raw_sources=%r widths=%r sources=%r",
+            callsite_addr,
+            call_idx,
+            cleanup,
+            raw_arg_widths,
+            raw_arg_sources,
+            arg_widths,
+            push_arg_sources,
+        )
     arg_count = len(arg_widths)
     return_register, return_used = _return_use_after_call(function, insns, call_idx, callsite_addr)
     helper_return_state = "none"
