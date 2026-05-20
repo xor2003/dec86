@@ -416,7 +416,7 @@ def _attach_cod_variable_names(codegen, cod_metadata: CODProcMetadata | None) ->
         key=lambda item: (
             0 if isinstance(getattr(item[0], "offset", None), int) and getattr(item[0], "offset", 0) > 0 else 1,
             getattr(item[0], "offset", 0) if isinstance(getattr(item[0], "offset", 0), int) else 0,
-            getattr(item[0], "size", 0) if isinstance(getattr(item[0], "size", 0), int) else 0,
+            -getattr(item[0], "size", 0) if isinstance(getattr(item[0], "size", 0), int) else 0,
             getattr(item[0], "name", "") or "",
         ),
     )
