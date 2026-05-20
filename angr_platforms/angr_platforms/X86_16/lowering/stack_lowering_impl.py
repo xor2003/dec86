@@ -223,14 +223,22 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int, *, stack_slot_identity_f
         is_arg_slot = 1 if identity in arg_slot_identities else 0
         has_preferred_name = 1 if preferred_name is not None else 0
         size = getattr(variable, "size", None)
+        type_size = getattr(getattr(cvar, "variable_type", None), "size", None)
         if isinstance(preferred_size, int) and preferred_size > 0 and isinstance(size, int):
+            preferred_bits = preferred_size * 8
             if size == preferred_size:
                 size_rank = 3
             elif size > preferred_size:
                 size_rank = 2
             else:
                 size_rank = 1
-            preferred_rank = size_rank
+            if type_size == preferred_bits:
+                type_rank = 3
+            elif isinstance(type_size, int) and type_size > preferred_bits:
+                type_rank = 2
+            else:
+                type_rank = 1
+            preferred_rank = min(size_rank, type_rank)
             name_rank = has_preferred_name
         else:
             size_rank = -size if isinstance(size, int) else 0
