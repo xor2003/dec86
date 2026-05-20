@@ -226,7 +226,8 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int, *, stack_slot_identity_f
         size_rank = -size if isinstance(size, int) else 0
         exact_rank = 1 if exact else 0
         canonical_offset = _canonical_stack_offset_8616(getattr(variable, "offset", 0))
-        return (exact_rank, is_arg_variable, is_arg_slot, has_preferred_name, size_rank, -canonical_offset)
+        offset_rank = -canonical_offset if exact else canonical_offset
+        return (exact_rank, is_arg_variable, is_arg_slot, has_preferred_name, size_rank, offset_rank)
 
     def _preferred_stack_name(variable, cvar):
         variable_name = getattr(variable, "name", None)
@@ -240,6 +241,16 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int, *, stack_slot_identity_f
             ),
             None,
         )
+
+    def _stack_name_root(name: object) -> str | None:
+        if not isinstance(name, str) or not name:
+            return None
+        match = re.fullmatch(r"(?P<root>.*?)(?:_(?P<suffix>\d+))?", name)
+        if match is None:
+            return name
+        root = match.group("root")
+        suffix = match.group("suffix")
+        return root if suffix is not None and root else name
 
     candidates = list(arg_candidates)
     candidates.extend(list(getattr(codegen.cfunc, "variables_in_use", {}).items()))
@@ -287,7 +298,14 @@ def _resolve_stack_cvar_at_offset(codegen, offset: int, *, stack_slot_identity_f
             and isinstance(covering_size, int)
             and exact_size == 1
             and covering_size > exact_size
-            and (covering_name is not None or _stack_name_is_generic(getattr(exact_cvar, "name", None) or getattr(exact_var, "name", None)))
+            and (
+                _stack_name_is_generic(getattr(exact_cvar, "name", None) or getattr(exact_var, "name", None))
+                or (
+                    covering_name is not None
+                    and exact_name is not None
+                    and _stack_name_root(covering_name) == _stack_name_root(exact_name)
+                )
+            )
         ):
             return covering_cvar
 
@@ -958,7 +976,10 @@ def _canonicalize_stack_cvar_expr(
             inferred_alias = _infer_stack_base_alias_from_bp_slots()
             if inferred_alias is not None:
                 return inferred_alias
-            return _synthetic_bp_anchor_cvar(), 0
+            # `stack_base` is angr's entry-SP placeholder. In a BP-framed
+            # 16-bit function, `push bp; mov bp, sp` makes BP two bytes below
+            # that value, so stack_base-relative offsets need a +2 BP bias.
+            return _synthetic_bp_anchor_cvar(), 2
         if isinstance(base_ref, structured_c.CVariable):
             base_var = getattr(base_ref, "variable", None)
             for key in _alias_keys_for_cvar(base_ref, lookup=True):
