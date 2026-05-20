@@ -60,6 +60,15 @@ def _constant_value_8616(node) -> int | None:
     return None
 
 
+def _stack_base_bp_bias_8616(node) -> int | None:
+    node = _strip_casts_8616(node)
+    if isinstance(node, structured_c.CFakeVariable) and getattr(node, "name", None) == "stack_base":
+        # angr's initial stack pointer names the entry SP. In a BP-framed
+        # 16-bit function, `push bp; mov bp, sp` makes BP two bytes below it.
+        return 2
+    return None
+
+
 def _segment_base_name_8616(node, project) -> str | None:
     """Return the segment register name for ``seg << 4`` or ``seg * 16``."""
 
@@ -245,10 +254,10 @@ def _same_variable_storage_8616(lhs, rhs) -> bool:
 # ── Precomputed maps (built once per lowering pass) ──
 
 def _build_assignment_maps_8616(codegen):
-    """Precompute var_id→rhs, name→rhs, reg→rhs, first_name→rhs maps in a single pass."""
+    """Precompute assignment maps used by lowering and validation fingerprinting."""
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
     if root is None:
-        return ({}, {}, {}, set(), set(), set(), {})
+        return ({}, {}, {}, set(), set(), set(), {}, {})
 
     var_id_map: dict[int, object] = {}
     name_map: dict[str, object] = {}
@@ -257,6 +266,7 @@ def _build_assignment_maps_8616(codegen):
     multi_name: set[str] = set()
     multi_reg: set[tuple] = set()
     first_name_map: dict[str, object] = {}
+    first_reg_map: dict[tuple, object] = {}
 
     for stmt in _iter_statement_nodes_8616(root):
         if not isinstance(stmt, structured_c.CAssignment):
@@ -313,13 +323,15 @@ def _build_assignment_maps_8616(codegen):
             size = getattr(var, "size", None)
             if isinstance(reg, int) and isinstance(size, int):
                 reg_key = (reg, size)
+                if reg_key not in first_reg_map:
+                    first_reg_map[reg_key] = rhs
                 if reg_key in reg_map:
                     multi_reg.add(reg_key)
                     reg_map[reg_key] = None
                 elif reg_key not in multi_reg:
                     reg_map[reg_key] = rhs
 
-    return (var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, first_name_map)
+    return (var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, first_name_map, first_reg_map)
 
 
 def _ensure_assignment_maps_8616(codegen) -> tuple:
@@ -442,7 +454,7 @@ def _ensure_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
 def _single_assignment_rhs_8616(codegen, target):
     if not isinstance(target, structured_c.CVariable):
         return None
-    var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, _first_name_map = (
+    var_id_map, name_map, reg_map, multi_var, multi_name, multi_reg, _first_name_map, _first_reg_map = (
         _ensure_assignment_maps_8616(codegen)
     )
     var = getattr(target, "variable", None)
@@ -526,7 +538,7 @@ def _lhs_name_8616(lhs) -> str | None:
 
 
 def _single_assignment_rhs_for_virtual_name_8616(codegen, target_name: str, *, allow_multi: bool = False):
-    _unused_var_id_map, name_map, _unused_reg_map, _unused_multi_var, multi_name, _unused_multi_reg, first_name_map = (
+    _unused_var_id_map, name_map, _unused_reg_map, _unused_multi_var, multi_name, _unused_multi_reg, first_name_map, _first_reg_map = (
         _ensure_assignment_maps_8616(codegen)
     )
     if allow_multi:
@@ -589,6 +601,11 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
     if const is not None:
         offset_cache[node_id] = const
         return const
+
+    stack_base_bias = _stack_base_bp_bias_8616(node)
+    if stack_base_bias is not None:
+        offset_cache[node_id] = stack_base_bias
+        return stack_base_bias
 
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
         operand = _strip_casts_8616(node.operand)
@@ -954,6 +971,8 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
         nonlocal changed
         access = match_stable_ds_es_linear_global_access_8616(node, project, codegen)
         if access is not None:
+            if access.residual_terms:
+                return node
             changed = True
             return global_expr(access)
         return node
@@ -1083,6 +1102,8 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
         nonlocal changed
         access = match_stable_ds_es_linear_global_address_8616(node, project, codegen)
         if access is None:
+            return node
+        if access.residual_terms:
             return node
         base_expr = _reference_expr(access.displacement)
         rebuilt = base_expr

@@ -489,6 +489,8 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
         return False
     current_proto = getattr(getattr(codegen, "cfunc", None), "functy", None) or prototype
     existing_args = list(getattr(codegen.cfunc, "arg_list", ()) or ())
+    c_target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat").strip().lower()
+    promote_near_pointers = c_target != "portable-flat"
 
     annotations = {}
     info = getattr(func, "info", None)
@@ -560,6 +562,8 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
             resolved_args.append(resolved_arg)
             if resolved_arg is None:
                 continue
+            if not promote_near_pointers:
+                continue
             if index < len(source_pointer_flags) and source_pointer_flags[index] is False:
                 continue
             if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
@@ -614,6 +618,8 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
 
         pointer_promoted = False
         for index, resolved_arg in enumerate(fallback_args):
+            if not promote_near_pointers:
+                continue
             if index < len(source_pointer_flags) and source_pointer_flags[index] is False:
                 continue
             if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
@@ -937,6 +943,8 @@ def _apply_annotations_8616(project, codegen) -> bool:
 
     stack_specs = annotations.get("stack_vars", {})
     global_specs = annotations.get("global_vars", {})
+    c_target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat").strip().lower()
+    promote_near_pointers = c_target != "portable-flat"
 
     def global_spec_for(addr: int):
         spec = global_specs.get(addr)
@@ -1118,6 +1126,8 @@ def _apply_annotations_8616(project, codegen) -> bool:
 
         pointer_promoted = False
         for index, resolved_arg in enumerate(resolved_args):
+            if not promote_near_pointers:
+                continue
             if not _stack_arg_has_pointer_evidence_8616(codegen, getattr(resolved_arg, "variable", None)):
                 continue
             pointer_type = SimTypePointer(SimTypeShort(False))

@@ -29,7 +29,7 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "#define far\n"
             "#endif\n"
             "\n"
-            "#define SEG_LINEAR(seg, off) ((((uint32_t)(seg)) << 4) + ((uint16_t)(off)))\n"
+            "#define SEG_LINEAR(seg, off) ((((uint32_t)(uintptr_t)(seg)) << 4) + ((uint16_t)(uintptr_t)(off)))\n"
             "#define MK_FP(seg, off)      (&inertia_memory[SEG_LINEAR((seg), (off))])\n"
             "#define SEG_PTR(seg, off)    (&inertia_memory[SEG_LINEAR((seg), (off))])\n"
             "#define SEG_U8(seg, off)     (*(uint8_t  *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"

@@ -540,7 +540,7 @@ def _attach_tail_validation_widened_carrier_provenance_8616(codegen, cfunc, *, f
 
     carrier_map: dict[str, dict[str, object]] = {}
     try:
-        var_id_map, name_map, _reg_map, _multi_var, _multi_name, _multi_reg, first_name_map = _ensure_assignment_maps_8616(codegen)
+        var_id_map, name_map, _reg_map, _multi_var, _multi_name, _multi_reg, first_name_map, _first_reg_map = _ensure_assignment_maps_8616(codegen)
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Tail-validation widened-carrier provenance assignment-map build failed at function=%#x stage=baseline-canonicalization: %s",

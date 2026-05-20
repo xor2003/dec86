@@ -435,6 +435,8 @@ def _node_boundary_fingerprint(
             ),
         )
     if isinstance(node, CFunctionCall):
+        if _is_runtime_segment_helper_call_8616(node):
+            return ("expr", _expr_fingerprint(node, project))
         call_fingerprint = None
         if isinstance(contextual_call_fingerprints, Mapping):
             call_fingerprint = contextual_call_fingerprints.get(id(node))
@@ -1733,7 +1735,26 @@ def _looks_like_ss_segment_store_8616(lhs, project) -> bool:
 
 
 def _is_dynamic_dirty_ss_location_8616(location: str) -> bool:
-    return isinstance(location, str) and location.startswith("deref:") and "reg:ss" in location and "CDirtyExpression" in location
+    return (
+        isinstance(location, str)
+        and location.startswith("deref:")
+        and "reg:ss" in location
+        and ("CDirtyExpression" in location or "CFakeVariable" in location)
+    )
+
+
+def _canonicalize_segmented_write_aliases_8616(segmented_writes: set[str], global_writes: set[str]) -> set[str]:
+    if not segmented_writes or not global_writes:
+        return segmented_writes
+    filtered: set[str] = set()
+    for location in segmented_writes:
+        match = re.fullmatch(r"deref:ds:0x([0-9a-fA-F]+)", location)
+        if match is not None:
+            global_location = f"global:{int(match.group(1), 16):#x}"
+            if global_location in global_writes:
+                continue
+        filtered.add(location)
+    return filtered
 
 
 def _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_summaries: Mapping[int, object]) -> set[int]:
@@ -2010,12 +2031,13 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
                     conditions.add(_expr_fingerprint(value, project))
 
     def _build_summary() -> X86_16TailValidationSummary:
+        canonical_segmented_writes = _canonicalize_segmented_write_aliases_8616(segmented_writes, global_writes)
         return X86_16TailValidationSummary(
             helper_calls=_sorted_unique(helper_calls),
             register_writes=_sorted_unique(register_writes),
             stack_writes=_sorted_unique(stack_writes),
             global_writes=_sorted_unique(global_writes),
-            segmented_writes=_sorted_unique(segmented_writes),
+            segmented_writes=_sorted_unique(canonical_segmented_writes),
             returns=_sorted_unique(returns),
             conditions=_sorted_unique(conditions),
             control_flow_effects=_sorted_unique(control_flow_effects),

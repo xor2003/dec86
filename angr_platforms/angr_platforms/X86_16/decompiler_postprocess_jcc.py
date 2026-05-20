@@ -319,9 +319,12 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
             if insn.reg_name(mem.base) != "bp":
                 continue
             src_reg = insn.reg_name(insn.operands[1].reg).lower()
-            src_expr = reg_state.get(src_reg)
-            if src_expr is not None:
-                stack_slots[(int(mem.disp), int(insn.operands[1].size))] = src_expr
+            size = int(insn.operands[1].size)
+            slot_expr = _stack_slot_expr_8616(codegen, int(mem.disp), size)
+            if slot_expr is not None:
+                stack_slots[(int(mem.disp), size)] = slot_expr
+            elif reg_state.get(src_reg) is not None:
+                stack_slots[(int(mem.disp), size)] = reg_state[src_reg]
             continue
 
         if mnemonic == "shl" and len(insn.operands) == 2 and insn.operands[0].type == 1 and insn.operands[1].type == 2:
@@ -369,7 +372,31 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
             _log.warning("[jcc-rewrite] op map missing mnemonic=%s block=%#x jcc=%#x", jcc_mnemonic, block_addr, jcc_addr)
         return None
     if debug_jcc:
-        _log.warning("[jcc-rewrite] decoded block=%#x jcc=%#x mnemonic=%s op=%s lhs=%r rhs=%r", block_addr, jcc_addr, jcc_mnemonic, op, lhs, rhs)
+        reg_state_fp = {}
+        stack_slots_fp = {}
+        for key, value in reg_state.items():
+            try:
+                reg_state_fp[key] = _expr_fingerprint(value, project)
+            except Exception:
+                reg_state_fp[key] = repr(value)
+        for key, value in stack_slots.items():
+            try:
+                stack_slots_fp[key] = _expr_fingerprint(value, project)
+            except Exception:
+                stack_slots_fp[key] = repr(value)
+        _log.warning(
+            "[jcc-rewrite] decoded block=%#x jcc=%#x mnemonic=%s op=%s lhs=%r rhs=%r reg_state=%r stack_slots=%r reg_state_fp=%r stack_slots_fp=%r",
+            block_addr,
+            jcc_addr,
+            jcc_mnemonic,
+            op,
+            lhs,
+            rhs,
+            reg_state,
+            stack_slots,
+            reg_state_fp,
+            stack_slots_fp,
+        )
     return _DecodedCmpGuard8616(lhs=lhs, rhs=rhs, op=op)
 
 

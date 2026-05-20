@@ -198,9 +198,25 @@ def _prime_structuring_validation_semantics_8616(project, codegen) -> None:
     if getattr(codegen, "_inertia_structuring_validation_semantics_primed", False):
         return
     try:
-        from .lowering.real_mode_linear import lower_stable_ds_es_linear_global_dereferences_8616
+        from .lowering.real_mode_linear import (
+            lower_stable_ds_es_linear_global_dereferences_8616,
+            lower_stable_ss_linear_stack_dereferences_8616,
+        )
 
+        lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
         lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
+        from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
+        from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
+
+        transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
+        alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+        if isinstance(alias_facts, list) and alias_facts:
+            lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+        if not getattr(codegen, "_inertia_typed_conditions_transferred", False):
+            func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+            if isinstance(func_addr, int):
+                transfer_typed_conditions_to_codegen_8616(project, func_addr, codegen)
+            codegen._inertia_typed_conditions_transferred = True
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Structuring validation semantic priming failed function=%#x: %s",
@@ -209,6 +225,20 @@ def _prime_structuring_validation_semantics_8616(project, codegen) -> None:
         )
     finally:
         codegen._inertia_structuring_validation_semantics_primed = True
+
+
+def _refresh_structuring_condition_semantics_8616(project, codegen) -> None:
+    func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    if not isinstance(func_addr, int):
+        return
+    try:
+        transfer_typed_conditions_to_codegen_8616(project, func_addr, codegen)
+    except Exception as ex:
+        logging.getLogger(__name__).debug(
+            "Structuring condition semantic refresh failed function=%#x: %s",
+            func_addr,
+            ex,
+        )
 
 
 def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
@@ -223,6 +253,7 @@ def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
     before_summary = collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
 
     def finalize():
+        _refresh_structuring_condition_semantics_8616(project, codegen)
         after_fingerprint = fingerprint_x86_16_tail_validation_boundary(project, codegen, mode=mode)
         after_summary = collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
         validation = build_x86_16_tail_validation_cached_result(
@@ -406,6 +437,7 @@ def _structuring_codegen_8616(project, codegen) -> bool:
                 spec.name,
                 last_changed_pass or "no earlier structuring",
                 ex,
+                exc_info=True,
             )
             break
         if spec_changed:
@@ -473,6 +505,7 @@ def _decompile_structuring_8616(self):
                 transfer_typed_conditions_to_codegen_8616(self.project, func_addr, self.codegen)
         self.codegen._inertia_typed_conditions_transferred = True
     changed = _structuring_codegen_8616(self.project, self.codegen)
+    _refresh_structuring_condition_semantics_8616(self.project, self.codegen)
     record_ast_condition_trace_8616(self.project, self.codegen, stage="structured")
     after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
     after_collect_started = time.perf_counter()

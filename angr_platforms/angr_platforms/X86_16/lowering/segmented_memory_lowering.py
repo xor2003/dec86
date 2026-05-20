@@ -149,6 +149,7 @@ def lower_runtime_segment_access_8616(expr, *, target: str):
         None,
         [matched.segment_expr, matched.offset_expr],
         codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": macro},
     )
 
 
@@ -167,6 +168,7 @@ def lower_runtime_segment_address_8616(expr, *, target: str):
         None,
         [matched.segment_expr, matched.offset_expr],
         codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "MK_FP"},
     )
 
 

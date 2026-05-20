@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import logging
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -50,6 +51,7 @@ __all__ = [
 
 TAIL_VALIDATION_FINGERPRINT_VERSION = 5
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
+log = logging.getLogger(__name__)
 
 
 def _segment_linear_lowering_allowed(node, segment_reg: str) -> bool:
@@ -172,7 +174,7 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
     if codegen is None:
         return None
     name = getattr(node, "name", None) or getattr(variable, "name", None)
-    if not _stack_name_is_generic_for_validation_8616(name):
+    if not _stack_name_is_generic_for_validation_8616(name) and not isinstance(variable, SimRegisterVariable):
         return None
     variable_id = id(variable)
     if seen_var_ids is None:
@@ -186,7 +188,7 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
         _v_print("assignment map import failed: %s", ex)
         return None
     try:
-        var_id_map, name_map, reg_map, _multi_var, _multi_name, _multi_reg, first_name_map = _ensure_assignment_maps_8616(codegen)
+        var_id_map, name_map, reg_map, _multi_var, _multi_name, _multi_reg, first_name_map, first_reg_map = _ensure_assignment_maps_8616(codegen)
     except Exception:
         return None
     def _acceptable_stack_alias_rhs(value):
@@ -199,6 +201,24 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
             return value
         return None
 
+    def _rhs_references_same_variable(value) -> bool:
+        pending = [_strip_validation_casts(value)]
+        seen_nodes: set[int] = set()
+        while pending:
+            current = _strip_validation_casts(pending.pop())
+            if current is None:
+                continue
+            current_id = id(current)
+            if current_id in seen_nodes:
+                continue
+            seen_nodes.add(current_id)
+            if isinstance(current, CVariable) and getattr(current, "variable", None) is variable:
+                return True
+            for attr in ("variable", "index", "operand", "lhs", "rhs", "expr"):
+                if hasattr(current, attr):
+                    pending.append(getattr(current, attr, None))
+        return False
+
     rhs = var_id_map.get(variable_id)
     if rhs is None and isinstance(name, str):
         rhs = name_map.get(name)
@@ -208,15 +228,22 @@ def _resolve_validation_copy_alias_expr_8616(node, *, seen_var_ids: set[int] | N
         if isinstance(reg, int) and isinstance(size, int):
             rhs = reg_map.get((reg, size))
     resolved_rhs = _acceptable_stack_alias_rhs(rhs)
-    if resolved_rhs is not None and resolved_rhs is not node:
+    if resolved_rhs is not None and resolved_rhs is not node and not _rhs_references_same_variable(resolved_rhs):
         return resolved_rhs
+    if rhs is None and isinstance(variable, SimRegisterVariable):
+        reg = getattr(variable, "reg", None)
+        size = getattr(variable, "size", None)
+        if isinstance(reg, int) and isinstance(size, int):
+            first_rhs = _acceptable_stack_alias_rhs(first_reg_map.get((reg, size)))
+            if first_rhs is not None and first_rhs is not node and not _rhs_references_same_variable(first_rhs):
+                return first_rhs
     if isinstance(name, str):
         # Validation-only fallback: generic stack carriers often receive a
         # final trivial/non-stack update after their initial widened stack-slot
         # seed is established. Preserve the earliest explicit stack proof for
         # fingerprint canonicalization when the direct map is non-stack noise.
         first_rhs = _acceptable_stack_alias_rhs(first_name_map.get(name))
-        if first_rhs is not None and first_rhs is not node:
+        if first_rhs is not None and first_rhs is not node and not _rhs_references_same_variable(first_rhs):
             return first_rhs
     return None
 
@@ -1225,7 +1252,13 @@ def _iter_observable_call_nodes_8616(node):
             yield from _iter_observable_call_nodes_8616(child)
 
 
-def _location_fingerprint(node, project) -> str:
+def _location_fingerprint(node, project, _seen: set[int] | None = None) -> str:
+    if _seen is None:
+        _seen = set()
+    node_id = id(node)
+    if node_id in _seen:
+        return "alias_cycle"
+    _seen.add(node_id)
     if isinstance(node, CFunctionCall):
         runtime_location = _runtime_segment_helper_location_8616(node, project)
         if runtime_location is not None:
@@ -1237,24 +1270,18 @@ def _location_fingerprint(node, project) -> str:
         if codegen is not None and isinstance(name, str):
             if os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS"):
                 log.warning(
-                    "[tail-carrier] cvar_id=%s name=%r obj=%r var=%r keys=%r widened_hit=%r",
+                    "[tail-carrier] cvar_id=%s name=%r obj=%r var=%r unified=%r keys=%r widened_hit=%r",
                     id(node),
                     name,
                     node,
                     variable,
+                    getattr(node, "unified_variable", None),
                     _candidate_widened_keys_8616(node),
                     _lookup_widened_carrier_proof_8616(node, codegen),
                 )
             widened = _widened_carrier_slot_fingerprint_8616(name, value=node, variable=variable, codegen=codegen)
             if widened is not None:
                 return widened
-        resolved_alias = _resolve_validation_copy_alias_expr_8616(node)
-        if resolved_alias is not None and resolved_alias is not node:
-            resolved_location = _location_fingerprint(resolved_alias, project)
-            if isinstance(resolved_location, str):
-                return resolved_location
-        if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) is not None:
-            return f"reg:{_register_name(project, variable.reg)}"
         if isinstance(variable, SimStackVariable):
             offset = getattr(variable, "offset", None)
             if isinstance(offset, int):
@@ -1265,6 +1292,13 @@ def _location_fingerprint(node, project) -> str:
                     node=node,
                 )
             return "stack:unknown"
+        resolved_alias = _resolve_validation_copy_alias_expr_8616(node)
+        if resolved_alias is not None and resolved_alias is not node:
+            resolved_location = _location_fingerprint(resolved_alias, project, _seen)
+            if isinstance(resolved_location, str):
+                return resolved_location
+        if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) is not None:
+            return f"reg:{_register_name(project, variable.reg)}"
         if isinstance(variable, SimMemoryVariable):
             addr = getattr(variable, "addr", None)
             if isinstance(addr, int) and addr < 0:
@@ -1272,7 +1306,7 @@ def _location_fingerprint(node, project) -> str:
             return f"global:{addr:#x}" if isinstance(addr, int) else "global:unknown"
 
     if isinstance(node, CTypeCast):
-        return _location_fingerprint(node.expr, project)
+        return _location_fingerprint(node.expr, project, _seen)
 
     indexed_stack_location = _stack_indexed_location_fingerprint_8616(node)
     if indexed_stack_location is not None:
@@ -1319,7 +1353,15 @@ def _location_fingerprint(node, project) -> str:
 
 
 def _runtime_segment_helper_name_8616(node: CFunctionCall) -> str | None:
+    tags = getattr(node, "tags", None)
+    marker_name = tags.get("inertia_x86_16_runtime_segment_helper") if isinstance(tags, dict) else None
+    if isinstance(marker_name, str):
+        return marker_name
     callee = normalize_callee_name_8616(getattr(node, "callee_target", None))
+    if isinstance(callee, str):
+        return callee
+    callee_func = getattr(node, "callee_func", None)
+    callee = normalize_callee_name_8616(getattr(callee_func, "name", None))
     if isinstance(callee, str):
         return callee
     return None

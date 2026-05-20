@@ -54,6 +54,7 @@ __all__ = [
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 _NAMESPACED_TARGET_RE = re.compile(r"^::0x(?P<addr>[0-9a-fA-F]+)::")
 log = logging.getLogger(__name__)
+_RUNTIME_SEGMENT_HELPERS_8616 = frozenset({"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR"})
 
 
 @dataclass(slots=True)
@@ -444,6 +445,14 @@ def _call_node_name_8616(node) -> str | None:
     return None
 
 
+def _is_runtime_segment_helper_call_8616(node) -> bool:
+    tags = getattr(node, "tags", None)
+    marker_name = tags.get("inertia_x86_16_runtime_segment_helper") if isinstance(tags, dict) else None
+    if isinstance(marker_name, str) and marker_name in _RUNTIME_SEGMENT_HELPERS_8616:
+        return True
+    return _call_node_name_8616(node) in _RUNTIME_SEGMENT_HELPERS_8616
+
+
 def _call_name_is_unknown_8616(name: str | None) -> bool:
     return name is None or name.startswith("sub_") or name == "CallReturn"
 
@@ -537,7 +546,11 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
         return False
 
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
-    call_nodes = [node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CFunctionCall)]
+    call_nodes = [
+        node
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CFunctionCall) and not _is_runtime_segment_helper_call_8616(node)
+    ]
     if not call_nodes:
         return False
 
@@ -586,6 +599,8 @@ def _normalize_call_target_names_8616(codegen) -> bool:
     source_call_idx = 0
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CFunctionCall):
+            continue
+        if _is_runtime_segment_helper_call_8616(node):
             continue
         summary = summary_map.get(id(node))
         expected_source_name = None
@@ -821,7 +836,11 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
     patch_direct_call_sites(function)
 
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
-    call_nodes = [node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CFunctionCall)]
+    call_nodes = [
+        node
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CFunctionCall) and not _is_runtime_segment_helper_call_8616(node)
+    ]
     callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
     if not call_nodes or not callsite_addrs:
         return False
@@ -991,7 +1010,11 @@ def _refresh_callsite_summary_node_ids_8616(codegen, summary_map: dict[int, obje
         value = getattr(node, "addr", None)
         return value if isinstance(value, int) else None
 
-    call_nodes = [node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CFunctionCall)]
+    call_nodes = [
+        node
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CFunctionCall) and not _is_runtime_segment_helper_call_8616(node)
+    ]
     nodes_by_callsite: dict[int, CFunctionCall] = {}
     current_node_ids: set[int] = set()
     for node in call_nodes:
