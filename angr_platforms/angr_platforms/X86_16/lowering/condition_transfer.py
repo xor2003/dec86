@@ -29,6 +29,27 @@ from ..ir.condition_ir import (
     deduplicate_conditions_8616,
 )
 from ..condition_trace import record_classified_conditions_trace_8616
+import logging
+import os
+
+log = logging.getLogger(__name__)
+
+
+def _relift_blocks_for_condition_cache_8616(project, block_addrs: list[int]) -> None:
+    factory = getattr(project, "factory", None) if project is not None else None
+    block_lifter = getattr(factory, "block", None)
+    if not callable(block_lifter):
+        return
+    for block_addr in block_addrs:
+        try:
+            block_lifter(block_addr, opt_level=0)
+        except TypeError:
+            try:
+                block_lifter(block_addr)
+            except Exception:
+                continue
+        except Exception:
+            continue
 
 
 def collect_typed_conditions_from_emulator_8616(
@@ -68,6 +89,17 @@ def collect_typed_conditions_from_emulator_8616(
         )
         module_cache = {}
 
+    if not any(isinstance(module_cache.get(block_addr, None), list) for block_addr in block_addrs):
+        _relift_blocks_for_condition_cache_8616(project, block_addrs)
+    if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+        cache_keys = tuple(sorted(k for k in module_cache.keys() if isinstance(k, int)))
+        log.warning(
+            "[condition-transfer] func=%#x blocks=%s cache_keys=%s",
+            func_addr,
+            tuple(hex(a) for a in block_addrs),
+            tuple(hex(a) for a in cache_keys),
+        )
+
     all_conditions: list[ConditionIR] = []
     for block_addr in block_addrs:
         block_conds = module_cache.get(block_addr, None)
@@ -75,6 +107,17 @@ def collect_typed_conditions_from_emulator_8616(
             for cond in block_conds:
                 if isinstance(cond, ConditionIR):
                     all_conditions.append(cond)
+                    if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+                        log.warning(
+                            "[condition-transfer] cond cache_block=%#x src_insn=%r block=%r op=%s source=%s lhs=%r rhs=%r",
+                            block_addr,
+                            cond.src_insn,
+                            cond.block_addr,
+                            cond.op,
+                            cond.source,
+                            cond.lhs,
+                            cond.rhs,
+                        )
 
     return deduplicate_conditions_8616(all_conditions)
 
@@ -128,6 +171,17 @@ def transfer_typed_conditions_to_codegen_8616(
     codegen._inertia_condition_facts = conditions  # compatibility alias
     record_classified_conditions_trace_8616(project, codegen, conditions)
 
+    def _materializable_condition(cond: ConditionIR) -> bool:
+        if not isinstance(cond.src_insn, int) or not isinstance(cond.block_addr, int):
+            return False
+        if not isinstance(cond.lhs, (str, int)):
+            return False
+        if cond.rhs is not None and not isinstance(cond.rhs, (str, int)):
+            return False
+        return True
+
+    classified_count = sum(1 for cond in conditions if _materializable_condition(cond))
+
     # ── Initialize CONDITION lane contract ──
     # classified = number of ConditionIR facts
     # bound = 0 (no equivalent of StackVariableBinding for conditions yet)
@@ -136,7 +190,7 @@ def transfer_typed_conditions_to_codegen_8616(
         name="condition",
         raw=len(conditions),       # raw facts = all ConditionIR from lifting
         normalized=len(conditions),
-        classified=len(conditions),
+        classified=classified_count,
         bound=0,
         materialized=0,
         verified=0,

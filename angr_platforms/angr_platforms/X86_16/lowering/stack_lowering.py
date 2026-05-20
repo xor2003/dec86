@@ -20,7 +20,11 @@ from .stack_lowering_result import (
     StackSlotFailure,
     materialization_diagnostics_8616,
 )
-from .real_mode_linear import lower_stable_ss_linear_stack_dereferences_8616
+from .real_mode_linear import (
+    lower_stable_ds_es_linear_global_addresses_8616,
+    lower_stable_ds_es_linear_global_dereferences_8616,
+    lower_stable_ss_linear_stack_dereferences_8616,
+)
 from .segmented_memory_lowering import apply_runtime_segment_lowering_8616
 from .stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
@@ -70,6 +74,16 @@ def run_stack_lowering_pass_8616(
         # linearization produced by the VEX lifter for SS-relative accesses.
         if codegen is not None:
             if lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
+                record_stable_ss_lowering_replacement_8616(codegen)
+                round_changed = True
+        # ── DS/ES linear global dereference lowering ──
+        # Keep global DS/ES accesses as typed memory variables in the IR
+        # whenever a stable real-mode segment expression is available.
+        if codegen is not None:
+            if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
+                record_stable_ss_lowering_replacement_8616(codegen)
+                round_changed = True
+            if lower_stable_ds_es_linear_global_addresses_8616(codegen, project=project):
                 record_stable_ss_lowering_replacement_8616(codegen)
                 round_changed = True
         if codegen is not None and apply_runtime_segment_lowering_8616(

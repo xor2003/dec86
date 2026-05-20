@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeInt, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
@@ -34,6 +34,10 @@ class RealModeLinearGlobalAddress8616:
     segment_name: str
     displacement: int
     residual_terms: tuple[tuple[int, object], ...]
+    width: int | None = None
+
+
+_UNRESOLVED_STACK_OFFSET_8616 = object()
 
 
 def _type_for_access_width_8616(width: int | None):
@@ -77,13 +81,114 @@ def _segment_base_name_8616(node, project) -> str | None:
     return None
 
 
-def _flatten_signed_terms_8616(node, sign: int = 1) -> tuple[tuple[int, object], ...]:
-    node = _strip_casts_8616(node)
-    if isinstance(node, structured_c.CBinaryOp) and node.op == "Add":
-        return _flatten_signed_terms_8616(node.lhs, sign) + _flatten_signed_terms_8616(node.rhs, sign)
-    if isinstance(node, structured_c.CBinaryOp) and node.op == "Sub":
-        return _flatten_signed_terms_8616(node.lhs, sign) + _flatten_signed_terms_8616(node.rhs, -sign)
-    return ((sign, node),)
+def _flatten_signed_terms_8616(
+    node,
+    sign: int = 1,
+) -> tuple[tuple[int, object], ...] | None:
+    terms: list[tuple[int, object]] = []
+    # We use an explicit stack to avoid recursion depth crashes on very deep trees.
+    # active path markers prevent infinite loops from cyclic expressions.
+    pending: list[tuple[object, int, bool]] = [(node, sign, False)]
+    active: set[int] = set()
+
+    while pending:
+        current, current_sign, exiting = pending.pop()
+        current = _strip_casts_8616(current)
+        if current is None:
+            return None
+        if exiting:
+            if isinstance(current, int):
+                active.discard(current)
+            continue
+
+        node_id = id(current)
+        if node_id in active:
+            return None
+        if len(active) > 1024:
+            return None
+
+        if isinstance(current, structured_c.CBinaryOp) and current.op == "Add":
+            active.add(node_id)
+            pending.append((node_id, 0, True))
+            pending.append((current.rhs, current_sign, False))
+            pending.append((current.lhs, current_sign, False))
+            continue
+        if isinstance(current, structured_c.CBinaryOp) and current.op == "Sub":
+            active.add(node_id)
+            pending.append((node_id, 0, True))
+            pending.append((current.rhs, -current_sign, False))
+            pending.append((current.lhs, current_sign, False))
+            continue
+
+        terms.append((current_sign, current))
+        if len(terms) > 4096:
+            return None
+
+    return tuple(terms)
+
+
+def _decompose_linear_global_terms_8616(node, project) -> tuple[str | None, int, tuple[tuple[int, object], ...]] | None:
+    segment_name: str | None = None
+    displacement = 0
+    residual_terms: list[tuple[int, object]] = []
+
+    terms = _flatten_signed_terms_8616(node)
+    if terms is None:
+        return None
+    for sign, term in terms:
+        seg = _segment_base_name_8616(term, project)
+        if seg is not None:
+            if sign != 1 or segment_name is not None:
+                return None
+            segment_name = seg
+            continue
+        const = _constant_value_8616(term)
+        if const is not None:
+            displacement += sign * const
+            continue
+        if not _address_projection_term_is_safe_8616(term):
+            return None
+        residual_terms.append((sign, term))
+
+    return segment_name, displacement, tuple(residual_terms)
+
+
+def _global_displacement_known_8616(codegen, displacement: int) -> bool:
+    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+    if not isinstance(variables_in_use, dict):
+        return False
+    addr = displacement & 0xFFFF
+    global_name = f"g_{addr:04X}"
+    for variable in variables_in_use:
+        if isinstance(variable, SimMemoryVariable) and getattr(variable, "addr", None) == addr:
+            return True
+        if isinstance(variable, SimVariable) and getattr(variable, "name", None) == global_name:
+            return True
+    return False
+
+
+def _global_size_from_displacement_8616(codegen, displacement: int) -> int | None:
+    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+    if not isinstance(variables_in_use, dict):
+        return None
+    addr = displacement & 0xFFFF
+    global_name = f"g_{addr:04X}"
+    for variable in variables_in_use:
+        if isinstance(variable, SimMemoryVariable) and getattr(variable, "addr", None) == addr:
+            size = getattr(variable, "size", None)
+            if isinstance(size, int) and size > 0:
+                return size
+        if isinstance(variable, SimVariable) and getattr(variable, "name", None) == global_name:
+            cvar = variables_in_use[variable]
+            declared = getattr(cvar, "variable", None)
+            if isinstance(declared, SimMemoryVariable):
+                size = getattr(declared, "size", None)
+                if isinstance(size, int) and size > 0:
+                    return size
+            size = getattr(declared, "size", None) if declared is not None else None
+            if isinstance(size, int) and size > 0:
+                return size
+    return None
 
 
 def _iter_statement_nodes_8616(root):
@@ -293,7 +398,10 @@ def _build_vvar_carrier_delta_map_8616(codegen) -> dict[int, int]:
             base_ids: list[tuple[int, int]] = []
             const_total = 0
             unknown = False
-            for sign, term in _flatten_signed_terms_8616(getattr(stmt, "rhs", None)):
+            terms = _flatten_signed_terms_8616(getattr(stmt, "rhs", None))
+            if terms is None:
+                continue
+            for sign, term in terms:
                 base_id = _extract_vvar_id_8616(term)
                 if isinstance(base_id, int):
                     base_ids.append((sign, base_id))
@@ -348,8 +456,16 @@ def _single_assignment_rhs_8616(codegen, target):
     return None
 
 
-def _stack_pointer_carrier_offset_8616(node, project, codegen) -> int | None:
+def _stack_pointer_carrier_offset_8616(
+    node,
+    project,
+    codegen,
+    seen: set[int] | None = None,
+) -> int | None:
     """Recover a stack-pointer carrier from existing stack-probe facts."""
+
+    if seen is None:
+        seen = set()
 
     variable = getattr(node, "variable", None) if isinstance(node, structured_c.CVariable) else None
     dirty = getattr(node, "dirty", None)
@@ -365,7 +481,7 @@ def _stack_pointer_carrier_offset_8616(node, project, codegen) -> int | None:
             target_name = f"vvar_{varid}"
             resolved = _single_assignment_rhs_for_virtual_name_8616(codegen, target_name)
             if resolved is not None:
-                return _stack_offset_from_expr_8616(resolved, project, codegen)
+                return _stack_offset_from_expr_8616(resolved, project, codegen, seen)
             delta = _stack_probe_carrier_delta_8616(node, codegen)
             if delta is not None:
                 return delta
@@ -448,10 +564,18 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
     if not isinstance(offset_cache, dict):
         offset_cache = {}
         setattr(codegen, "_inertia_stack_offset_cache", offset_cache)
-    cached = offset_cache.get(node_id, None)
-    if cached is not None:
+
+    if node_id in offset_cache:
+        cached = offset_cache.get(node_id)
+        if cached is _UNRESOLVED_STACK_OFFSET_8616:
+            return None
         return cached
+
     if node_id in seen:
+        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
+        return None
+    if len(seen) > 8192:
+        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
         return None
     seen.add(node_id)
 
@@ -466,13 +590,13 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         if isinstance(variable, SimStackVariable) and isinstance(getattr(variable, "offset", None), int):
             offset_cache[node_id] = variable.offset
             return variable.offset
-        offset_cache[node_id] = None
+        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
         return None
 
     if isinstance(node, structured_c.CVariable):
         variable = getattr(node, "variable", None)
         if isinstance(variable, SimRegisterVariable):
-            carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen)
+            carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
             if carrier_offset is not None:
                 offset_cache[node_id] = carrier_offset
                 return carrier_offset
@@ -499,7 +623,7 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
             if delta is not None:
                 offset_cache[node_id] = delta
                 return delta
-        offset_cache[node_id] = None
+        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
         return None
 
     # CDirtyExpression: extract varid/name and try vvar resolution
@@ -540,7 +664,7 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         else:
             _diag["no_varid_or_name"] = True
         # Try SP carrier
-        carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen)
+        carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
         if carrier_offset is not None:
             offset_cache[node_id] = carrier_offset
             return carrier_offset
@@ -552,10 +676,10 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
             return 0
         _diag["carrier_none"] = True
         _log_refusal_8616(codegen, "cdirty_diag", **_diag)
-        offset_cache[node_id] = None
+        offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
         return None
 
-    dirty_carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen)
+    dirty_carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
     if dirty_carrier_offset is not None:
         offset_cache[node_id] = dirty_carrier_offset
         return dirty_carrier_offset
@@ -564,19 +688,19 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         lhs = _stack_offset_from_expr_8616(node.lhs, project, codegen, seen)
         rhs = _stack_offset_from_expr_8616(node.rhs, project, codegen, seen)
         if lhs is None and _constant_value_8616(node.rhs) is not None:
-            offset_cache[node_id] = None
+            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
             return None
         if rhs is None and _constant_value_8616(node.lhs) is not None and node.op == "Add":
-            offset_cache[node_id] = None
+            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
             return None
         if lhs is None or rhs is None:
-            offset_cache[node_id] = None
+            offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
             return None
         resolved = lhs + rhs if node.op == "Add" else lhs - rhs
         offset_cache[node_id] = resolved
         return resolved
 
-    offset_cache[node_id] = None
+    offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
     return None
 
 
@@ -596,7 +720,10 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
     segment_name: str | None = None
     offset_total = 0
     offset_terms: list[object] = []
-    for sign, term in _flatten_signed_terms_8616(node.operand):
+    terms = _flatten_signed_terms_8616(node.operand)
+    if terms is None:
+        return None
+    for sign, term in terms:
         seg = _segment_base_name_8616(term, project)
         if seg is not None:
             if sign != 1 or segment_name is not None:
@@ -632,49 +759,75 @@ def match_stable_ss_linear_stack_access_8616(node, project, codegen) -> RealMode
     return RealModeLinearStackAccess8616(displacement=displacement, width=width)
 
 
-def match_stable_ds_es_linear_global_access_8616(node, project, codegen) -> RealModeLinearStackAccess8616 | None:
+def match_stable_ds_es_linear_global_access_8616(node, project, codegen) -> RealModeLinearGlobalAddress8616 | None:
     """Match a dereference of ``(ds << 4) + addr`` or ``(es << 4) + addr``."""
 
     node = _strip_casts_8616(node)
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
         return None
 
-    segment_name: str | None = None
-    offset_total = 0
-    offset_terms: list[object] = []
-
-    for sign, term in _flatten_signed_terms_8616(node.operand):
-        seg = _segment_base_name_8616(term, project)
-        if seg is not None:
-            if sign != 1 or segment_name is not None:
-                return None
-            segment_name = seg
-            continue
-        const = _constant_value_8616(term)
-        if const is not None:
-            offset_total += sign * const
-            continue
+    decomposed = _decompose_linear_global_terms_8616(node.operand, project)
+    if decomposed is None:
         return None
+    segment_name, displacement, residual_terms = decomposed
 
-    if segment_name not in {"ds", "es"}:
+    if segment_name in {"ds", "es"}:
+        width_bits = getattr(getattr(node, "type", None), "size", None)
+        width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
+        if width is None:
+            inferred_width = _global_size_from_displacement_8616(codegen, displacement)
+            if isinstance(inferred_width, int) and inferred_width > 0:
+                width = inferred_width
+        return RealModeLinearGlobalAddress8616(
+            segment_name=segment_name,
+            displacement=displacement,
+            residual_terms=tuple(residual_terms),
+            width=width,
+        )
+
+    if segment_name is not None or not _global_displacement_known_8616(codegen, displacement):
         return None
 
     width_bits = getattr(getattr(node, "type", None), "size", None)
     width = max(width_bits // 8, 1) if isinstance(width_bits, int) and width_bits > 0 else None
-    return RealModeLinearStackAccess8616(displacement=offset_total, width=width)
+    if width is None:
+        inferred_width = _global_size_from_displacement_8616(codegen, displacement)
+        if isinstance(inferred_width, int) and inferred_width > 0:
+            width = inferred_width
+    return RealModeLinearGlobalAddress8616(
+        segment_name="segless",
+        displacement=displacement,
+        residual_terms=tuple(residual_terms),
+        width=width,
+    )
 
 
 def _address_projection_term_is_safe_8616(node) -> bool:
-    node = _strip_casts_8616(node)
-    if _constant_value_8616(node) is not None:
-        return True
-    if isinstance(node, structured_c.CVariable):
-        return True
-    if isinstance(node, structured_c.CUnaryOp) and node.op in {"Neg", "BitNot", "Reference"}:
-        return _address_projection_term_is_safe_8616(node.operand)
-    if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub", "Mul", "Shl", "Shr", "And", "Or", "Xor"}:
-        return _address_projection_term_is_safe_8616(node.lhs) and _address_projection_term_is_safe_8616(node.rhs)
-    return False
+    allowed_unary = {"Neg", "BitNot", "Reference"}
+    allowed_binary = {"Add", "Sub", "Mul", "Shl", "Shr", "And", "Or", "Xor"}
+    pending: list[object] = [_strip_casts_8616(node)]
+    seen: set[int] = set()
+    while pending:
+        expr = _strip_casts_8616(pending.pop())
+        if expr is None:
+            return False
+        expr_id = id(expr)
+        if expr_id in seen:
+            return False
+        seen.add(expr_id)
+        if _constant_value_8616(expr) is not None:
+            continue
+        if isinstance(expr, structured_c.CVariable):
+            continue
+        if isinstance(expr, structured_c.CUnaryOp) and expr.op in allowed_unary:
+            pending.append(expr.operand)
+            continue
+        if isinstance(expr, structured_c.CBinaryOp) and expr.op in allowed_binary:
+            pending.append(expr.rhs)
+            pending.append(expr.lhs)
+            continue
+        return False
+    return True
 
 
 def match_stable_ds_es_linear_global_address_8616(node, project, codegen) -> RealModeLinearGlobalAddress8616 | None:
@@ -684,32 +837,26 @@ def match_stable_ds_es_linear_global_address_8616(node, project, codegen) -> Rea
     if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
         return None
 
-    segment_name: str | None = None
-    displacement = 0
-    residual_terms: list[tuple[int, object]] = []
-    for sign, term in _flatten_signed_terms_8616(node):
-        seg = _segment_base_name_8616(term, project)
-        if seg is not None:
-            if sign != 1 or segment_name is not None:
-                return None
-            segment_name = seg
-            continue
-        const = _constant_value_8616(term)
-        if const is not None:
-            displacement += sign * const
-            continue
-        if not _address_projection_term_is_safe_8616(term):
-            return None
-        residual_terms.append((sign, term))
-
-    if segment_name not in {"ds", "es"}:
+    decomposed = _decompose_linear_global_terms_8616(node, project)
+    if decomposed is None:
         return None
-    if displacement == 0:
+    segment_name, displacement, residual_terms = decomposed
+
+    if segment_name in {"ds", "es"}:
+        return RealModeLinearGlobalAddress8616(
+            segment_name=segment_name,
+            displacement=displacement,
+            residual_terms=tuple(residual_terms),
+            width=None,
+        )
+
+    if segment_name is not None or not _global_displacement_known_8616(codegen, displacement):
         return None
     return RealModeLinearGlobalAddress8616(
-        segment_name=segment_name,
+        segment_name="segless",
         displacement=displacement & 0xFFFF,
         residual_terms=tuple(residual_terms),
+        width=None,
     )
 
 
@@ -722,7 +869,7 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
     if project is None or root is None:
         return False
 
-    def global_cvar(access: RealModeLinearStackAccess8616):
+    def global_cvar(access: RealModeLinearGlobalAddress8616):
         addr = access.displacement & 0xFFFF
         name = f"g_{addr:04X}"
         target_type = _type_for_access_width_8616(access.width)
@@ -766,6 +913,29 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
             unified[variable] = {(cvar, getattr(cvar, "variable_type", None))}
         return cvar
 
+    def global_expr(access: RealModeLinearGlobalAddress8616):
+        if not access.residual_terms:
+            return global_cvar(access)
+        target_type = _type_for_access_width_8616(access.width)
+        ptr_type = SimTypePointer(target_type).with_arch(project.arch)
+        rebuilt = structured_c.CUnaryOp(
+            "Reference",
+            global_cvar(access),
+            codegen=codegen,
+        )
+        for sign, term in access.residual_terms:
+            rebuilt = structured_c.CBinaryOp(
+                "Add" if sign == 1 else "Sub",
+                rebuilt,
+                term,
+                codegen=codegen,
+            )
+        return structured_c.CUnaryOp(
+            "Dereference",
+            structured_c.CTypeCast(ptr_type, ptr_type, rebuilt, codegen=codegen),
+            codegen=codegen,
+        )
+
     changed = False
 
     def transform(node):
@@ -773,55 +943,72 @@ def lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=None) ->
         access = match_stable_ds_es_linear_global_access_8616(node, project, codegen)
         if access is not None:
             changed = True
-            return global_cvar(access)
+            return global_expr(access)
         return node
 
     _seen = set()
-    def replace_children(node) -> bool:
-        if id(node) in _seen:
+
+    def replace_children(root_node) -> bool:
+        if root_node is None:
             return False
-        _seen.add(id(node))
+        node_stack: list[object] = [root_node]
         local_changed = False
-        for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
-            if not hasattr(node, attr):
+        while node_stack:
+            node = node_stack.pop()
+            if not isinstance(node, object) or node is None:
                 continue
-            value = getattr(node, attr)
-            if isinstance(value, list):
-                for index, item in enumerate(tuple(value)):
-                    replacement = transform(item)
-                    if replacement is not item:
-                        value[index] = replacement
+            node_id = id(node)
+            if node_id in _seen:
+                continue
+            _seen.add(node_id)
+
+            for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
+                if not hasattr(node, attr):
+                    continue
+                try:
+                    value = getattr(node, attr)
+                except Exception:
+                    continue
+
+                if isinstance(value, list):
+                    for index, item in enumerate(tuple(value)):
+                        if not isinstance(item, object):
+                            continue
+                        replacement = transform(item)
+                        if replacement is not item:
+                            value[index] = replacement
+                            local_changed = True
+                        candidate = value[index]
+                        if isinstance(candidate, object):
+                            node_stack.append(candidate)
+                elif value is not None:
+                    replacement = transform(value)
+                    if replacement is not value:
+                        setattr(node, attr, replacement)
                         local_changed = True
-                    if replace_children(value[index]):
+                        value = replacement
+                    node_stack.append(value)
+
+            condition_and_nodes = getattr(node, "condition_and_nodes", None)
+            if condition_and_nodes:
+                new_pairs = []
+                pair_changed = False
+                for cond, body in condition_and_nodes:
+                    new_cond = transform(cond) if isinstance(cond, object) else cond
+                    new_body = transform(body) if isinstance(body, object) else body
+                    if new_cond is not cond:
+                        pair_changed = True
                         local_changed = True
-            elif value is not None:
-                replacement = transform(value)
-                if replacement is not value:
-                    setattr(node, attr, replacement)
-                    local_changed = True
-                    value = replacement
-                if replace_children(value):
-                    local_changed = True
-        condition_and_nodes = getattr(node, "condition_and_nodes", None)
-        if condition_and_nodes:
-            new_pairs = []
-            pair_changed = False
-            for cond, body in condition_and_nodes:
-                new_cond = transform(cond)
-                if new_cond is not cond:
-                    pair_changed = True
-                    local_changed = True
-                new_body = transform(body)
-                if new_body is not body:
-                    pair_changed = True
-                    local_changed = True
-                if replace_children(new_cond):
-                    local_changed = True
-                if replace_children(new_body):
-                    local_changed = True
-                new_pairs.append((new_cond, new_body))
-            if pair_changed:
-                setattr(node, "condition_and_nodes", new_pairs)
+                    if new_body is not body:
+                        pair_changed = True
+                        local_changed = True
+                    if isinstance(new_cond, object):
+                        node_stack.append(new_cond)
+                    if isinstance(new_body, object):
+                        node_stack.append(new_body)
+                    new_pairs.append((new_cond, new_body))
+                if pair_changed:
+                    setattr(node, "condition_and_nodes", new_pairs)
         return local_changed
 
     if replace_children(root):
@@ -896,54 +1083,68 @@ def lower_stable_ds_es_linear_global_addresses_8616(codegen, project=None) -> bo
             )
         ptr_type = SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
         changed = True
-        return structured_c.CTypeCast(None, ptr_type, rebuilt, codegen=codegen)
+        return structured_c.CTypeCast(ptr_type, ptr_type, rebuilt, codegen=codegen)
 
-    _seen = set()
-    def replace_children(node) -> bool:
-        if id(node) in _seen:
+    _seen: set[int] = set()
+
+    def replace_children(root_node) -> bool:
+        if root_node is None:
             return False
-        _seen.add(id(node))
+        node_stack: list[object] = [root_node]
         local_changed = False
-        for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
-            if not hasattr(node, attr):
+        while node_stack:
+            node = node_stack.pop()
+            if node is None:
                 continue
-            value = getattr(node, attr)
-            if isinstance(value, list):
-                for index, item in enumerate(tuple(value)):
-                    replacement = transform(item)
-                    if replacement is not item:
-                        value[index] = replacement
+            node_id = id(node)
+            if node_id in _seen:
+                continue
+            _seen.add(node_id)
+
+            for attr in ("statements", "lhs", "rhs", "operand", "expr", "init", "condition", "iteration", "body", "else_node"):
+                if not hasattr(node, attr):
+                    continue
+                try:
+                    value = getattr(node, attr)
+                except Exception:
+                    continue
+                if isinstance(value, list):
+                    for index, item in enumerate(tuple(value)):
+                        replacement = transform(item)
+                        if replacement is not item:
+                            value[index] = replacement
+                            local_changed = True
+                        item_candidate = value[index]
+                        if item_candidate is not None:
+                            node_stack.append(item_candidate)
+                elif value is not None:
+                    replacement = transform(value)
+                    if replacement is not value:
+                        setattr(node, attr, replacement)
                         local_changed = True
-                    if replace_children(value[index]):
+                        value = replacement
+                    node_stack.append(value)
+
+            condition_and_nodes = getattr(node, "condition_and_nodes", None)
+            if condition_and_nodes:
+                new_pairs = []
+                pair_changed = False
+                for cond, body in condition_and_nodes:
+                    new_cond = transform(cond)
+                    if new_cond is not cond:
+                        pair_changed = True
                         local_changed = True
-            elif value is not None:
-                replacement = transform(value)
-                if replacement is not value:
-                    setattr(node, attr, replacement)
-                    local_changed = True
-                    value = replacement
-                if replace_children(value):
-                    local_changed = True
-        condition_and_nodes = getattr(node, "condition_and_nodes", None)
-        if condition_and_nodes:
-            new_pairs = []
-            pair_changed = False
-            for cond, body in condition_and_nodes:
-                new_cond = transform(cond)
-                if new_cond is not cond:
-                    pair_changed = True
-                    local_changed = True
-                new_body = transform(body)
-                if new_body is not body:
-                    pair_changed = True
-                    local_changed = True
-                if replace_children(new_cond):
-                    local_changed = True
-                if replace_children(new_body):
-                    local_changed = True
-                new_pairs.append((new_cond, new_body))
-            if pair_changed:
-                setattr(node, "condition_and_nodes", new_pairs)
+                    new_body = transform(body)
+                    if new_body is not body:
+                        pair_changed = True
+                        local_changed = True
+                    if new_cond is not None:
+                        node_stack.append(new_cond)
+                    if new_body is not None:
+                        node_stack.append(new_body)
+                    new_pairs.append((new_cond, new_body))
+                if pair_changed:
+                    setattr(node, "condition_and_nodes", new_pairs)
         return local_changed
 
     new_root = transform(root)

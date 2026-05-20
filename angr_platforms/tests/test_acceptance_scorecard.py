@@ -61,11 +61,11 @@ def test_acceptance_scorecard_detects_clean_tail_validation_console_summary() ->
 
 def test_acceptance_scorecard_detects_changed_tail_validation_console_summary() -> None:
     output = """
-[tail-validation] whole-tail validation changed in 1 functions
+[tail-validation] whole-tail validation failed across 1 functions
 [tail-validation] severity=changed merge_gate=hold
 /* == c == */
 """
 
     scorecard = build_acceptance_scorecard("main", output)
 
-    assert scorecard.validation_verdict == "changed"
+    assert scorecard.validation_verdict == "failed"

@@ -692,6 +692,35 @@ def test_match_stable_ds_es_linear_global_address_accepts_base_plus_scaled_index
     assert access.residual_terms == ((1, index_expr),)
 
 
+def test_match_stable_ds_es_linear_global_access_supports_segmentless_indexed_base():
+    project, codegen = _codegen([])
+    global_symbol = SimMemoryVariable(0x0B4C, 2, name="g_0B4C", region=0x4010)
+    global_cvar = CVariable(global_symbol, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[global_symbol] = global_cvar
+
+    index_expr = CBinaryOp("Shl", _reg(project, "bx", codegen), _const(1, codegen), codegen=codegen)
+    access = match_stable_ds_es_linear_global_access_8616(
+        CUnaryOp(
+            "Dereference",
+        CBinaryOp(
+                "Add",
+                index_expr,
+                _const(0x0B4C, codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        ),
+        project,
+        codegen,
+    )
+
+    assert access is not None
+    assert access.segment_name == "segless"
+    assert access.displacement == 0x0B4C
+    assert access.residual_terms == ((1, index_expr),)
+    assert access.width == 2
+
+
 def test_real_mode_linear_global_address_lowering_materializes_reference_base():
     project, codegen = _codegen([])
     index_expr = CBinaryOp("Shl", _reg(project, "bx", codegen), _const(1, codegen), codegen=codegen)
@@ -723,6 +752,46 @@ def test_real_mode_linear_global_address_lowering_materializes_reference_base():
     assert isinstance(rhs.expr.lhs.operand.variable, SimMemoryVariable)
     assert rhs.expr.lhs.operand.variable.addr == 0x0B4C
     assert rhs.expr.rhs is index_expr
+
+
+def test_real_mode_linear_global_dereference_lowering_materializes_segmentless_indexed_loads():
+    project, codegen = _codegen([])
+    global_symbol = SimMemoryVariable(0x0B4C, 2, name="g_0B4C", region=0x4010)
+    global_cvar = CVariable(global_symbol, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[global_symbol] = global_cvar
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                CUnaryOp(
+                    "Dereference",
+                        CBinaryOp(
+                            "Add",
+                            CBinaryOp(
+                                "Shl",
+                                _reg(project, "bx", codegen),
+                                _const(1, codegen),
+                                codegen=codegen,
+                            ),
+	                        _const(0x0B4C, codegen),
+                            codegen=codegen,
+                        ),
+                    codegen=codegen,
+                ),
+                _const(7, codegen),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = lower_stable_ds_es_linear_global_dereferences_8616(codegen)
+
+    assert changed is True
+    lhs = codegen.cfunc.statements.statements[0].lhs
+    assert isinstance(lhs, CUnaryOp)
+    assert lhs.op == "Dereference"
 
 
 def test_structuring_stage_does_not_relower_ds_globals_after_validation_boundary(monkeypatch):

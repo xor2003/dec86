@@ -13,9 +13,6 @@ from .tail_validation_fingerprint import _expr_fingerprint
 
 log = logging.getLogger(__name__)
 
-_TRACE_TARGET_ORIGINAL_ADDR = 0x10678
-
-
 def _current_original_func_addr_8616(project, codegen) -> int | None:
     cfunc = getattr(codegen, "cfunc", None)
     func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
@@ -30,7 +27,10 @@ def _current_original_func_addr_8616(project, codegen) -> int | None:
 def _condition_trace_enabled_8616(project, codegen) -> bool:
     if not os.environ.get("INERTIA_DEBUG_CONDITION_TRACE"):
         return False
-    return _current_original_func_addr_8616(project, codegen) == _TRACE_TARGET_ORIGINAL_ADDR
+    target_text = os.environ.get("INERTIA_DEBUG_CONDITION_TRACE_ADDR")
+    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
+    current_addr = _current_original_func_addr_8616(project, codegen)
+    return not isinstance(target_addr, int) or current_addr == target_addr
 
 
 def _condition_trace_store_8616(codegen) -> dict[tuple[int, int], dict[str, object]]:
@@ -124,6 +124,8 @@ def record_classified_conditions_trace_8616(project, codegen, conditions: list[C
             len(conditions),
         )
     for cond in conditions:
+        if not isinstance(cond.src_insn, int) or not isinstance(cond.block_addr, int):
+            continue
         key = _condition_trace_key_8616(cond.src_insn, cond.block_addr)
         _condition_id_for_key_8616(codegen, key)
         entry = store[key]

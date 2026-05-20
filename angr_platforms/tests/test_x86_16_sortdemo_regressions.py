@@ -480,6 +480,14 @@ def test_sortdemo_acceptance_scorecards_capture_main_sleep_and_percolateup_state
     assert percolate_scorecard.raw_ds_linear_count >= 1
     assert percolate_scorecard.raw_ss_linear_count >= 1
     assert percolate_scorecard.validation_verdict in {"changed", "stable", "unknown", "uncollected"}
+    for marker in ("int PercolateUp(", "short PercolateUp(", "void PercolateUp("):
+        if marker in percolate_result.stdout:
+            percolate_body = marker + percolate_result.stdout.rsplit(marker, 1)[-1]
+            break
+    else:
+        percolate_body = percolate_result.stdout
+    assert "arg_6" not in percolate_body
+    assert "SwapBars(arg_6" not in percolate_body
 
 
 def test_sortdemo_acceptance_scorecards_capture_heapsort_quicksort_runmenu_and_beep_state():
@@ -626,6 +634,7 @@ def test_heapsort_has_no_byte_carrier_stack_leaks():
         subprocess_timeout=45,
     )
 
+    combined = _combined_output(result)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x10970 HeapSort" in result.stdout
     assert "validation=passed" in combined

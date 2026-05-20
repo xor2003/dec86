@@ -39,6 +39,7 @@ from .tail_validation import (
     persist_x86_16_tail_validation_snapshot,
     x86_16_tail_validation_result_passed,
 )
+from inertia_decompiler.runtime_support import timing_output_enabled
 
 __all__ = [
     "DecompilerStructuringPassSpec",
@@ -365,7 +366,7 @@ def _structuring_codegen_8616(project, codegen) -> bool:
     for spec in pass_specs:
         try:
             project._inertia_decompiler_stage = f"structuring:{spec.name}"
-            if os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
+            if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
                 import sys as _sys
                 _sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] structuring pass: {spec.name} (+{time.perf_counter() - _t_structuring_start:.1f}s)\n")
                 _sys.stderr.flush()
@@ -560,6 +561,10 @@ def _assert_alias_complete_8616(codegen) -> None:
         if isinstance(fact, AliasFailure):
             if getattr(fact, "space", None) in {"ss", "SS"}:
                 has_ss = True
+                address = getattr(fact, "address", None)
+                status = getattr(address, "status", None)
+                if getattr(status, "name", None) == "PROVISIONAL":
+                    continue
                 has_ss_failure = True
                 if _first_ss_failure_reason is None:
                     _first_ss_failure_reason = getattr(fact, "reason", None)

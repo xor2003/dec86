@@ -320,7 +320,7 @@ def test_corpus_scan_summary_aggregates_tail_validation():
         }
     ]
     assert summary["tail_validation_surface"] == {
-        "headline": "whole-tail validation changed in 1 functions",
+        "headline": "whole-tail validation failed across 1 functions",
         "severity": "changed",
         "merge_gate": False,
         "changed_function_count": 1,

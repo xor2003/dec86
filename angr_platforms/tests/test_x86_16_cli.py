@@ -4727,7 +4727,7 @@ def test_main_emits_current_run_tail_validation_for_direct_nonoptimized_fallback
     assert rc == 0
     assert "/* == c (non-optimized fallback) == */" in captured.out
     assert "int fallback(void) { return 7; }" in captured.out
-    assert "[tail-validation] whole-tail validation changed in 2 functions" in captured.err
+    assert "[tail-validation] whole-tail validation failed across 2 functions" in captured.err
     assert "not collected" not in captured.err
 
 
@@ -10381,6 +10381,73 @@ def test_simplify_x86_16_stack_byte_pointers_splits_reused_temp_windows_for_sour
     assert "    *cs = exeLoadParams.cs;\n" in simplified
     assert "    *ss = exeLoadParams.ss;\n" in simplified
     assert simplified.index("    *cs = exeLoadParams.cs;\n") < simplified.index("    *ss = exeLoadParams.ss;\n")
+
+
+def test_dedupe_codegen_variable_names_tolerates_none_sort_fields():
+    from angr.analyses.decompiler.structured_codegen.c import CVariable
+    from angr.sim_variable import SimMemoryVariable
+
+    class _Codegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name: str) -> int:
+            self._idx += 1
+            return self._idx
+
+    codegen = _Codegen()
+    mem_var = SimMemoryVariable(addr=None, size=2)
+    cvar = CVariable(mem_var, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        variables_in_use={mem_var: cvar},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=lambda: None,
+    )
+
+    changed = decompile._dedupe_codegen_variable_names_8616(codegen)
+
+    assert changed is True
+    assert isinstance(mem_var.name, str) and mem_var.name
+
+
+def test_dedupe_codegen_variable_names_normalizes_mixed_ident_sort_fields():
+    from angr.analyses.decompiler.structured_codegen.c import CVariable
+    from angr.sim_variable import SimRegisterVariable
+
+    class _Codegen:
+        def __init__(self):
+            self._idx = 0
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name: str) -> int:
+            self._idx += 1
+            return self._idx
+
+    codegen = _Codegen()
+    reg_a = SimRegisterVariable(0, 2, name="alpha", ident=None)
+    reg_b = SimRegisterVariable(2, 2, name="beta", ident="r1")
+    cvar_a = CVariable(reg_a, codegen=codegen)
+    cvar_b = CVariable(reg_b, codegen=codegen)
+
+    def sort_local_vars():
+        sorted(codegen.cfunc.variables_in_use, key=lambda v: v.ident)
+
+    codegen.cfunc = SimpleNamespace(
+        variables_in_use={reg_a: cvar_a, reg_b: cvar_b},
+        unified_local_vars={},
+        arg_list=(),
+        sort_local_vars=sort_local_vars,
+    )
+
+    changed = decompile._dedupe_codegen_variable_names_8616(codegen)
+
+    assert changed is False
+    assert isinstance(reg_a.ident, str)
+    assert isinstance(reg_b.ident, str)
 
 
 def test_format_known_helper_calls_handles_missing_cod_metadata(monkeypatch):

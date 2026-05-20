@@ -102,12 +102,13 @@ def _expr_to_value(expr, tmps: dict[int, IRValue], conditions: dict[int, IRCondi
         return IRValue(MemSpace.TMP, name="load", size=addr.size or _int_size(expr), expr=("load",))
     return IRValue(MemSpace.UNKNOWN, name=tag or "expr")
 
-def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions, *, segment_hints) -> IRInstr | None:
+def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions, *, segment_hints, tmp_exprs: dict[int, Any]) -> IRInstr | None:
     tag = getattr(stmt, "tag", "")
     if tag == "Ist_WrTmp":
         data = getattr(stmt, "data", None)
         tmp_id = int(getattr(stmt, "tmp"))
         data_tag = getattr(data, "tag", "")
+        tmp_exprs[tmp_id] = data
         dst = IRValue(MemSpace.TMP, name=f"t{tmp_id}", size=_int_size(data))
         if data_tag == "Iex_Load":
             addr = expr_to_address(
@@ -126,13 +127,30 @@ def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions, *, segment_hints)
             if len(args) == 2:
                 left = _expr_to_value(args[0], tmps, conditions)
                 right = _expr_to_value(args[1], tmps, conditions)
-                cond = build_condition_from_binop(op, left, right)
-                if cond is not None:
-                    conditions[tmp_id] = cond
-                elif "And" in op:
-                    conditions[tmp_id] = expr_to_condition(data, tmps, conditions, expr_to_value=_expr_to_value)
+                if any(token in op for token in ("Cmp", "And", "Or")):
+                    conditions[tmp_id] = expr_to_condition(
+                        data,
+                        tmps,
+                        conditions,
+                        expr_to_value=_expr_to_value,
+                        tmp_exprs=tmp_exprs,
+                    )
+                else:
+                    cond = build_condition_from_binop(op, left, right)
+                    if cond is not None:
+                        conditions[tmp_id] = cond
                 tmps[tmp_id] = _expr_to_value(data, tmps, conditions)
                 return IRInstr(op=op, dst=dst, args=(left, right), size=max(left.size, right.size))
+        if data_tag == "Iex_ITE":
+            cond = expr_to_condition(data, tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs)
+            if not (
+                cond.op == "nonzero"
+                and len(cond.args) == 1
+                and isinstance(cond.args[0], IRValue)
+                and cond.args[0].space == MemSpace.UNKNOWN
+                and cond.args[0].name == "Iex_ITE"
+            ):
+                conditions[tmp_id] = cond
         value = _expr_to_value(data, tmps, conditions)
         tmps[tmp_id] = value
         return IRInstr(op="MOV", dst=dst, args=(value,), size=value.size)
@@ -153,7 +171,7 @@ def _stmt_to_instr(stmt, tmps: dict[int, IRValue], conditions, *, segment_hints)
         data = _expr_to_value(getattr(stmt, "data", None), tmps, conditions)
         return IRInstr(op="STORE", dst=None, args=(addr, data), size=data.size)
     if tag == "Ist_Exit":
-        cond = expr_to_condition(getattr(stmt, "guard", None), tmps, conditions, expr_to_value=_expr_to_value)
+        cond = expr_to_condition(getattr(stmt, "guard", None), tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs)
         target = _expr_to_value(getattr(stmt, "dst", None), tmps, conditions)
         return IRInstr(op="CJMP", dst=None, args=(cond, target), size=0)
     return None
@@ -166,11 +184,12 @@ def _block_to_ir(block) -> IRBlock:
         return IRBlock(addr=addr, refusals=(IRRefusal("missing_vex", "block has no vex IR", addr),))
     tmps: dict[int, IRValue] = {}
     conditions = {}
+    tmp_exprs: dict[int, Any] = {}
     instrs: list[IRInstr] = []
     refusals: list[IRRefusal] = []
     segment_hints = block_segment_hints(block)
     for stmt in tuple(getattr(vex, "statements", ()) or ()):
-        instr = _stmt_to_instr(stmt, tmps, conditions, segment_hints=segment_hints)
+        instr = _stmt_to_instr(stmt, tmps, conditions, segment_hints=segment_hints, tmp_exprs=tmp_exprs)
         if instr is None:
             tag = getattr(stmt, "tag", "")
             if tag:
@@ -227,17 +246,25 @@ def build_x86_16_ir_function_artifact_summary(artifact: IRFunctionArtifact) -> d
     condition_counts: dict[str, int] = {}
     ssa_binding_count = 0
     aliasable_values = 0
+
+    def _record_condition_atom(cond: IRCondition) -> None:
+        nonlocal aliasable_values
+        condition_counts[cond.op] = condition_counts.get(cond.op, 0) + 1
+        for item in cond.args:
+            if isinstance(item, IRCondition):
+                _record_condition_atom(item)
+                continue
+            space_counts[item.space.value] = space_counts.get(item.space.value, 0) + 1
+            if storage_of(item) is not None:
+                aliasable_values += 1
+
     for block in artifact.blocks:
         ssa_binding_count += len(build_x86_16_block_local_ssa(block).bindings)
         for instr in block.instrs:
             atoms: tuple[IRAtom, ...] = instr.args + (() if instr.dst is None else (instr.dst,))
             for atom in atoms:
                 if isinstance(atom, IRCondition):
-                    condition_counts[atom.op] = condition_counts.get(atom.op, 0) + 1
-                    for value in atom.args:
-                        space_counts[value.space.value] = space_counts.get(value.space.value, 0) + 1
-                        if storage_of(value) is not None:
-                            aliasable_values += 1
+                    _record_condition_atom(atom)
                     continue
                 space_counts[atom.space.value] = space_counts.get(atom.space.value, 0) + 1
                 if isinstance(atom, IRAddress):

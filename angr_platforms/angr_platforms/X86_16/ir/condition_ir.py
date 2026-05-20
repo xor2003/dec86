@@ -41,40 +41,40 @@ _COMPARE_SYMBOLS_8616: dict[str, str] = {
     "uge": ">=",
 }
 
-# ── JCC mnemonic → ConditionOp mapping ──
+# ── JCC mnemonic families (flag aliases normalized) ──
+
+JCC_EQ_MNEMONICS_8616: frozenset[str] = frozenset({"je", "jz"})
+JCC_NE_MNEMONICS_8616: frozenset[str] = frozenset({"jne", "jnz"})
+JCC_ULT_MNEMONICS_8616: frozenset[str] = frozenset({"jb", "jnae", "jc"})
+JCC_UGE_MNEMONICS_8616: frozenset[str] = frozenset({"jae", "jnb", "jnc"})
+JCC_ULE_MNEMONICS_8616: frozenset[str] = frozenset({"jbe", "jna"})
+JCC_UGT_MNEMONICS_8616: frozenset[str] = frozenset({"ja", "jnbe"})
+JCC_SLT_MNEMONICS_8616: frozenset[str] = frozenset({"jl", "jnge"})
+JCC_SGE_MNEMONICS_8616: frozenset[str] = frozenset({"jge", "jnl"})
+JCC_SLE_MNEMONICS_8616: frozenset[str] = frozenset({"jle", "jng"})
+JCC_SGT_MNEMONICS_8616: frozenset[str] = frozenset({"jg", "jnle"})
+
+_JCC_COMPARISON_MNEMONICS_8616: frozenset[str] = frozenset(
+    {"jo", "jno", "js", "jns", "jp", "jpe", "jpo", "jnp"}
+)
 
 JCC_TO_COND_8616: dict[str, ConditionOp] = {
-    "je": "eq",
-    "jz": "eq",
-    "jne": "ne",
-    "jnz": "ne",
-
-    "jb": "ult",
-    "jc": "ult",
-    "jnae": "ult",
-
-    "jae": "uge",
-    "jnb": "uge",
-    "jnc": "uge",
-
-    "jbe": "ule",
-    "jna": "ule",
-
-    "ja": "ugt",
-    "jnbe": "ugt",
-
-    "jl": "slt",
-    "jnge": "slt",
-
-    "jge": "sge",
-    "jnl": "sge",
-
-    "jle": "sle",
-    "jng": "sle",
-
-    "jg": "sgt",
-    "jnle": "sgt",
+    mnemonic: "eq"
+    for mnemonic in JCC_EQ_MNEMONICS_8616
 }
+JCC_TO_COND_8616.update({mnemonic: "ne" for mnemonic in JCC_NE_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "ult" for mnemonic in JCC_ULT_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "uge" for mnemonic in JCC_UGE_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "ule" for mnemonic in JCC_ULE_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "ugt" for mnemonic in JCC_UGT_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "slt" for mnemonic in JCC_SLT_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "sge" for mnemonic in JCC_SGE_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "sle" for mnemonic in JCC_SLE_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "sgt" for mnemonic in JCC_SGT_MNEMONICS_8616})
+JCC_TO_COND_8616.update({mnemonic: "compare" for mnemonic in _JCC_COMPARISON_MNEMONICS_8616})
+
+# Canonical list of all supported jcc synonyms, used for coverage checks.
+_SUPPORTED_JCC_MNEMONICS_8616: frozenset[str] = frozenset(JCC_TO_COND_8616.keys())
 
 
 # ── Condition builders from CMP/TEST sources ──
@@ -92,6 +92,8 @@ class ConditionIR:
     rhs: Any | None = None
     width_bits: int = 16
     source: tuple[str, ...] = ()
+    src_insn: int | None = None
+    block_addr: int | None = None
 
     @property
     def is_comparison(self) -> bool:
@@ -134,6 +136,8 @@ def build_condition_from_cmp_8616(
     jcc: str,
     *,
     width_bits: int = 16,
+    src_insn: int | None = None,
+    block_addr: int | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from CMP operands + JCC mnemonic.
 
@@ -153,6 +157,8 @@ def build_condition_from_cmp_8616(
         rhs=rhs,
         width_bits=width_bits,
         source=("cmp", jcc),
+        src_insn=src_insn,
+        block_addr=block_addr,
     )
 
 
@@ -161,6 +167,8 @@ def build_condition_from_test_8616(
     jcc: str,
     *,
     width_bits: int = 16,
+    src_insn: int | None = None,
+    block_addr: int | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from TEST/OR/AND self-test + JCC mnemonic.
 
@@ -174,6 +182,8 @@ def build_condition_from_test_8616(
             lhs=value,
             width_bits=width_bits,
             source=("test", jcc),
+            src_insn=src_insn,
+            block_addr=block_addr,
         )
     if jcc in {"jne", "jnz"}:
         return ConditionIR(
@@ -181,6 +191,8 @@ def build_condition_from_test_8616(
             lhs=value,
             width_bits=width_bits,
             source=("test", jcc),
+            src_insn=src_insn,
+            block_addr=block_addr,
         )
     return ConditionFailure(
         "unsupported_test_jcc",
@@ -196,6 +208,8 @@ def build_condition_from_compare_8616(
     *,
     width_bits: int = 16,
     source: tuple[str, ...] = (),
+    src_insn: int | None = None,
+    block_addr: int | None = None,
 ) -> ConditionIR:
     """Direct ConditionIR constructor from known op and operands."""
     return ConditionIR(
@@ -204,6 +218,8 @@ def build_condition_from_compare_8616(
         rhs=rhs,
         width_bits=width_bits,
         source=source,
+        src_insn=src_insn,
+        block_addr=block_addr,
     )
 
 
@@ -217,6 +233,7 @@ class ConditionSource:
     rhs: Any | None = None
     width_bits: int = 16
     addr: int | None = None
+    block_addr: int | None = None
 
 
 # ── Condition sorting/deduplication ──
@@ -224,6 +241,8 @@ class ConditionSource:
 def condition_sort_key_8616(cond: ConditionIR) -> tuple:
     """Deterministic sort key for ConditionIR."""
     return (
+        cond.block_addr if isinstance(cond.block_addr, int) else -1,
+        cond.src_insn if isinstance(cond.src_insn, int) else -1,
         "".join(cond.source),
         cond.op,
         str(cond.lhs) if cond.lhs is not None else "",

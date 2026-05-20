@@ -12,6 +12,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 
+from .decompiler_postprocess_jcc import _condition_tags_8616, _translate_cmp_jcc_guard_8616
 from .decompiler_postprocess_flags import (
     _extract_flag_predicate_from_expr_8616,
     _extract_flag_test_info_8616,
@@ -59,6 +60,22 @@ def _contextual_condition_fingerprint(assign_stmt, cond, project) -> str | None:
     return _expr_fingerprint(predicate, project)
 
 
+def _decoded_jcc_condition_fingerprint(cond, project) -> str | None:
+    key = _condition_tags_8616(cond)
+    if key is None:
+        return None
+    ins_addr, block_addr = key
+    codegen = getattr(cond, "codegen", None)
+    decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
+    if decoded is None:
+        return None
+    lhs = _expr_fingerprint(decoded.lhs, project)
+    rhs = _expr_fingerprint(decoded.rhs, project)
+    if lhs == rhs:
+        return None
+    return f"{decoded.op}({lhs},{rhs})"
+
+
 def build_x86_16_contextual_condition_fingerprints(root, project) -> dict[int, str]:
     mapping: dict[int, str] = {}
 
@@ -71,7 +88,14 @@ def build_x86_16_contextual_condition_fingerprints(root, project) -> dict[int, s
                     continue
                 next_stmt = statements[index + 1]
                 for cond in _iter_stmt_conditions(next_stmt):
-                    fingerprint = _contextual_condition_fingerprint(assign_stmt, cond, project)
+                    fingerprint = _decoded_jcc_condition_fingerprint(cond, project)
+                    if fingerprint is None:
+                        fingerprint = _contextual_condition_fingerprint(assign_stmt, cond, project)
+                    if fingerprint is not None:
+                        mapping[id(cond)] = fingerprint
+            for stmt in statements:
+                for cond in _iter_stmt_conditions(stmt):
+                    fingerprint = _decoded_jcc_condition_fingerprint(cond, project)
                     if fingerprint is not None:
                         mapping[id(cond)] = fingerprint
             for stmt in statements:

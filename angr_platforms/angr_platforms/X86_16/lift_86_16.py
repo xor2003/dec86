@@ -8,7 +8,7 @@ from pyvex.lifting.util import GymratLifter, Instruction, JumpKind, ParseError
 from pyvex.lifting.util.vex_helper import Type
 
 from .arch_86_16 import Arch86_16
-from .ir.core import IRCondition
+from .ir.core import AddressStatus, IRCondition, IRAddress, MemSpace, SegmentOrigin
 from .emulator import Emulator
 from .instr16 import Instr16
 from .instr32 import Instr32
@@ -17,6 +17,17 @@ from .ir.condition_ir import (
     ConditionSource,
     ConditionIR,
     ConditionFailure,
+    JCC_UGE_MNEMONICS_8616,
+    JCC_UGT_MNEMONICS_8616,
+    JCC_ULE_MNEMONICS_8616,
+    JCC_ULT_MNEMONICS_8616,
+    JCC_EQ_MNEMONICS_8616,
+    JCC_NE_MNEMONICS_8616,
+    JCC_SGE_MNEMONICS_8616,
+    JCC_SGT_MNEMONICS_8616,
+    JCC_SLE_MNEMONICS_8616,
+    JCC_SLT_MNEMONICS_8616,
+    _JCC_COMPARISON_MNEMONICS_8616,
     build_condition_from_cmp_8616,
     build_condition_from_test_8616,
     deduplicate_conditions_8616,
@@ -56,24 +67,24 @@ class _LifterInstructionFacade:
 class Instruction_ANY(Instruction):
     _REG8_NAMES = {"al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"}
     _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}
+    _SIMPLE_JCC_8616: frozenset[str] = frozenset(
+        JCC_EQ_MNEMONICS_8616
+        | JCC_NE_MNEMONICS_8616
+        | JCC_ULT_MNEMONICS_8616
+        | JCC_UGE_MNEMONICS_8616
+        | JCC_ULE_MNEMONICS_8616
+        | JCC_UGT_MNEMONICS_8616
+        | JCC_SLT_MNEMONICS_8616
+        | JCC_SGE_MNEMONICS_8616
+        | JCC_SLE_MNEMONICS_8616
+        | JCC_SGT_MNEMONICS_8616
+        | _JCC_COMPARISON_MNEMONICS_8616
+    )
+
     _BLOCK_TERMINATORS = {
         "call",
         "jmp",
-        "je",
-        "jz",
-        "jne",
-        "jnz",
-        "jle",
-        "jg",
-        "jl",
-        "jge",
-        "jb",
-        "jbe",
-        "ja",
-        "jae",
-        "jnb",
-        "jnc",
-        "jc",
+        *_SIMPLE_JCC_8616,
         "ret",
         "retf",
         "iret",
@@ -204,9 +215,7 @@ class Instruction_ANY(Instruction):
                 return ("push_mem16", mem)
         if self.cs.mnemonic == "call" and len(ops) == 1 and ops[0].type == 2:
             return ("call", ops[0].imm)
-        if self.cs.mnemonic in {
-            "jmp", "je", "jz", "jne", "jnz", "jle", "jg", "jl", "jge", "jb", "jbe", "ja", "jae", "jnb", "jnc", "jc"
-        } and len(ops) == 1 and ops[0].type == 2:
+        if self.cs.mnemonic in {"jmp", *self._SIMPLE_JCC_8616} and len(ops) == 1 and ops[0].type == 2:
             return (self.cs.mnemonic, ops[0].imm)
         if len(ops) != 2:
             return None
@@ -334,20 +343,63 @@ class Instruction_ANY(Instruction):
             return addr
         return addr + self._const16(signed_disp)
 
+    def _ss_addr_from_bp_mem(self, mem_spec):
+        return self._real_mode_linear("ss", self._addr_from_bp_mem(mem_spec))
+
+    def _record_bp_mem_access(self, mem_spec, mode: int, *, size: int = 2) -> None:
+        base, _, signed_disp = mem_spec
+        self._record_mem_access(
+            "ss",
+            int(signed_disp),
+            mode,
+            base=(str(base),),
+            size=size,
+            segment_origin=SegmentOrigin.DEFAULTED,
+            status=AddressStatus.STABLE,
+        )
+
     def _load_mem16(self, mem_spec):
-        return self.load(self._addr_from_bp_mem(mem_spec), Type.int_16)
+        self._record_bp_mem_access(mem_spec, 0, size=2)
+        return self.load(self._ss_addr_from_bp_mem(mem_spec), Type.int_16)
 
     def _store_mem16(self, mem_spec, value):
-        self.store(value, self._addr_from_bp_mem(mem_spec))
+        self._record_bp_mem_access(mem_spec, 1, size=2)
+        self.store(value, self._ss_addr_from_bp_mem(mem_spec))
 
-    def _record_mem_access(self, seg: str, offset: int, mode: int = 0) -> None:
+    def _record_mem_access(
+        self,
+        seg: str,
+        offset: int,
+        mode: int = 0,
+        *,
+        base: tuple[str, ...] = (),
+        size: int = 2,
+        segment_origin=None,
+        status=None,
+    ) -> None:
         try:
-            func_addr = getattr(self.emu, "_inertia_current_function_addr", None)
+            from .semantics.evidence_cache import (
+                get_current_function_addr,
+                record_access,
+                record_access_by_block,
+            )
+            space = getattr(MemSpace, seg.upper())
+            addr = IRAddress(
+                space=space,
+                base=base,
+                offset=offset,
+                size=size,
+                status=status if status is not None else AddressStatus.STABLE,
+                segment_origin=segment_origin if segment_origin is not None else SegmentOrigin.PROVEN,
+                expr=(seg, *base),
+            )
+            func_addr = get_current_function_addr()
             if isinstance(func_addr, int):
-                from .ir.core import IRAddress
-                from .semantics.evidence_cache import record_access
-                addr = IRAddress(segment=seg, offset=offset)
                 record_access(func_addr, mode, addr)
+            else:
+                block_addr = getattr(self.emu, "_inertia_current_block_addr", None)
+                if isinstance(block_addr, int):
+                    record_access_by_block(block_addr, mode, addr)
         except Exception:
             pass
 
@@ -367,13 +419,13 @@ class Instruction_ANY(Instruction):
     def _stack_load16(self, off16):
         off_val = getattr(off16, "constant", None)
         if isinstance(off_val, int):
-            self._record_mem_access("ss", off_val, 0)
+            self._record_mem_access("ss", off_val, 0, base=("sp",), size=2)
         return self.load(self._real_mode_linear("ss", off16), Type.int_16)
 
     def _stack_store16(self, off16, value):
         off_val = getattr(off16, "constant", None)
         if isinstance(off_val, int):
-            self._record_mem_access("ss", off_val, 1)
+            self._record_mem_access("ss", off_val, 1, base=("sp",), size=2)
         self.store(value, self._real_mode_linear("ss", off16))
 
     def _set_zf_from_cond(self, cond):
@@ -539,23 +591,7 @@ class Instruction_ANY(Instruction):
         nxt_semantics = getattr(nxt, "simple_semantics", None)
         if nxt_semantics is None:
             return False
-        return nxt_semantics[0] in {
-            "je",
-            "jz",
-            "jne",
-            "jnz",
-            "jle",
-            "jg",
-            "jl",
-            "jge",
-            "jb",
-            "jbe",
-            "ja",
-            "jae",
-            "jnb",
-            "jnc",
-            "jc",
-        }
+        return nxt_semantics[0] in self._SIMPLE_JCC_8616
 
     def _direct_jcc_condition(self, kind):
         if not getattr(self, "_past_instructions", None):
@@ -582,67 +618,81 @@ class Instruction_ANY(Instruction):
             return None
         lhs, rhs = operands
 
-        if kind in {"je", "jz"}:
+        if kind in JCC_EQ_MNEMONICS_8616:
             return _finish(lhs == rhs)
-        if kind in {"jne", "jnz"}:
+        if kind in JCC_NE_MNEMONICS_8616:
             return _finish(lhs != rhs)
-        if kind == "jle":
+        if kind in JCC_SLE_MNEMONICS_8616:
             return _finish(lhs.signed <= rhs.signed)
-        if kind == "jg":
+        if kind in JCC_SGT_MNEMONICS_8616:
             return _finish(lhs.signed > rhs.signed)
-        if kind == "jl":
+        if kind in JCC_SLT_MNEMONICS_8616:
             return _finish(lhs.signed < rhs.signed)
-        if kind == "jge":
+        if kind in JCC_SGE_MNEMONICS_8616:
             return _finish(lhs.signed >= rhs.signed)
-        if kind in {"jb", "jc"}:
+        if kind in JCC_ULT_MNEMONICS_8616:
             return _finish(lhs < rhs)
-        if kind in {"jae", "jnb", "jnc"}:
+        if kind in JCC_UGE_MNEMONICS_8616:
             return _finish(lhs >= rhs)
-        if kind == "jbe":
+        if kind in JCC_ULE_MNEMONICS_8616:
             return _finish(lhs <= rhs)
-        if kind == "ja":
+        if kind in JCC_UGT_MNEMONICS_8616:
             return _finish(lhs > rhs)
         return None
 
     def _record_cmp_condition_source(self, lhs, rhs, *, width_bits: int = 16) -> None:
         """Record CMP operands on the emulator for downstream JCC consumption."""
+        block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
         source = ConditionSource(
             kind="cmp",
             lhs=lhs,
             rhs=rhs,
             width_bits=width_bits,
             addr=self.addr,
+            block_addr=block_addr if isinstance(block_addr, int) else None,
         )
         self.emu._inertia_last_condition_source = source
 
     def _record_test_condition_source(self, value, *, width_bits: int = 16) -> None:
         """Record TEST/self-test operands for downstream JCC consumption."""
+        block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
         source = ConditionSource(
             kind="test",
             lhs=value,
             rhs=None,
             width_bits=width_bits,
             addr=self.addr,
+            block_addr=block_addr if isinstance(block_addr, int) else None,
         )
         self.emu._inertia_last_condition_source = source
 
     def _emit_simple_jcc(self, taken_cond, target):
         # Before emitting, record the typed ConditionIR if source available
         source = getattr(self.emu, "_inertia_last_condition_source", None)
+        if not isinstance(source, ConditionSource) and getattr(self, "_past_instructions", None):
+            prev_emu = getattr(self._past_instructions[-1], "emu", None)
+            source = getattr(prev_emu, "_inertia_last_condition_source", None)
         if isinstance(source, ConditionSource):
             jcc_mnemonic = self.simple_semantics[0] if self.simple_semantics else ""
+            block_addr = getattr(self.emu, "_inertia_current_block_addr", None)
+            if not isinstance(block_addr, int):
+                block_addr = source.block_addr
             if source.kind == "cmp":
                 cond_ir = build_condition_from_cmp_8616(
                     source.lhs,
                     source.rhs,
                     jcc_mnemonic,
                     width_bits=source.width_bits,
+                    src_insn=self.addr,
+                    block_addr=block_addr if isinstance(block_addr, int) else None,
                 )
             elif source.kind == "test":
                 cond_ir = build_condition_from_test_8616(
                     source.lhs,
                     jcc_mnemonic,
                     width_bits=source.width_bits,
+                    src_insn=self.addr,
+                    block_addr=block_addr if isinstance(block_addr, int) else None,
                 )
             else:
                 cond_ir = ConditionFailure(
@@ -848,7 +898,7 @@ class Instruction_ANY(Instruction):
             if not self._next_instruction_is_simple_jcc():
                 self._update_cmp_flags(lhs_val, rhs_val)
             return
-        if kind in {"je", "jz", "jne", "jnz", "jmp", "jle", "jg", "jl", "jge", "jb", "jbe", "ja", "jae", "jnb", "jnc", "jc"}:
+        if kind in (self._SIMPLE_JCC_8616 | {"jmp"}):
             _, abs_target = self.simple_semantics
             target = self._const16(abs_target)
             if kind == "jmp":
@@ -860,30 +910,46 @@ class Instruction_ANY(Instruction):
                 cf = self._flag_is_set(0)
                 sf = self._flag_is_set(7)
                 of = self._flag_is_set(11)
+                nof = self._flag_is_clear(11)
                 nzf = self._flag_is_clear(6)
                 ncf = self._flag_is_clear(0)
-                if kind in {"je", "jz"}:
-                    cond = zf
-                elif kind in {"jne", "jnz"}:
-                    cond = nzf
-                elif kind == "jle":
-                    cond = zf | (sf != of)
-                elif kind == "jg":
-                    cond = nzf & (sf == of)
-                elif kind == "jl":
-                    cond = sf != of
-                elif kind == "jge":
-                    cond = sf == of
-                elif kind in {"jb", "jc"}:
-                    cond = cf
-                elif kind in {"jae", "jnb", "jnc"}:
-                    cond = ncf
-                elif kind == "jbe":
-                    cond = cf | zf
-                elif kind == "ja":
-                    cond = ncf & nzf
-                else:
-                    raise NotImplementedError(kind)
+            else:
+                self._emit_simple_jcc(cond, target)
+                return
+            if kind in JCC_EQ_MNEMONICS_8616:
+                cond = zf
+            elif kind in JCC_NE_MNEMONICS_8616:
+                cond = nzf
+            elif kind in JCC_SLE_MNEMONICS_8616:
+                cond = zf | (sf != of)
+            elif kind in JCC_SGT_MNEMONICS_8616:
+                cond = nzf & (sf == of)
+            elif kind in JCC_SLT_MNEMONICS_8616:
+                cond = sf != of
+            elif kind in JCC_SGE_MNEMONICS_8616:
+                cond = sf == of
+            elif kind in JCC_ULT_MNEMONICS_8616:
+                cond = cf
+            elif kind in JCC_UGE_MNEMONICS_8616:
+                cond = ncf
+            elif kind in JCC_ULE_MNEMONICS_8616:
+                cond = cf | zf
+            elif kind in JCC_UGT_MNEMONICS_8616:
+                cond = ncf & nzf
+            elif kind == "jo":
+                cond = of
+            elif kind == "jno":
+                cond = nof
+            elif kind == "js":
+                cond = sf
+            elif kind == "jns":
+                cond = ~sf
+            elif kind in {"jp", "jpe"}:
+                cond = self._flag_is_set(2)
+            elif kind in {"jnp", "jpo"}:
+                cond = ~self._flag_is_set(2)
+            else:
+                raise NotImplementedError(kind)
             self._emit_simple_jcc(cond, target)
             return
         if kind == "ret":

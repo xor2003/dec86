@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, IRCondition, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.ir.vex_import import (
     apply_x86_16_vex_ir_artifact,
@@ -35,6 +37,26 @@ def _store(addr, data):
 
 def _exit(guard, dst):
     return SimpleNamespace(tag="Ist_Exit", guard=guard, dst=dst)
+
+
+def _ite(cond, iftrue, iffalse):
+    return SimpleNamespace(tag="Iex_ITE", cond=cond, iftrue=iftrue, iffalse=iffalse)
+
+
+def _flag_test(mask: int, *, is_set: bool):
+    return _binop(
+        "Iop_CmpNE8" if is_set else "Iop_CmpEQ8",
+        _binop("Iop_And16", _get(18), _const(mask)),
+        _const(0),
+    )
+
+
+def _flags_equal(mask_a: int, mask_b: int):
+    return _binop("Iop_CmpEQ8", _flag_test(mask_a, is_set=True), _flag_test(mask_b, is_set=True))
+
+
+def _flags_not_equal(mask_a: int, mask_b: int):
+    return _binop("Iop_CmpNE8", _flag_test(mask_a, is_set=True), _flag_test(mask_b, is_set=True))
 
 
 def _insn(mnemonic: str, op_str: str = ""):
@@ -287,6 +309,94 @@ def test_vex_import_lifts_masked_nonzero_exit_to_typed_condition():
     assert cond.op == "masked_nonzero"
     assert [value.name for value in cond.args] == ["si", None]
     assert artifact.summary["condition_counts"] == {"masked_nonzero": 1}
+
+
+def test_vex_import_preserves_ite_wrapped_condition_temp_for_exit():
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    project = _project(
+        {
+            0x1000: _block(
+                0x1000,
+                _wrtmp(0, _get(12)),
+                _wrtmp(1, _const(0)),
+                _wrtmp(2, _binop("Iop_CmpNE16", _rdtmp(0), _rdtmp(1))),
+                _wrtmp(3, _ite(_rdtmp(2), _const(0), _const(1))),
+                _exit(_rdtmp(3), _const(0x1010)),
+            )
+        },
+        function,
+    )
+
+    artifact = build_x86_16_ir_function_artifact(project, function)
+    cond = artifact.blocks[0].instrs[-1].args[0]
+
+    assert isinstance(cond, IRCondition)
+    assert cond.op == "zero"
+    assert [value.name for value in cond.args] == ["si"]
+
+
+@pytest.mark.parametrize(
+    ("guard_expr", "expected_op"),
+    [
+        (_flag_test(0x0040, is_set=True), "eq"),
+        (_flag_test(0x0040, is_set=False), "ne"),
+        (_flag_test(0x0001, is_set=True), "ult"),
+        (_flag_test(0x0001, is_set=False), "uge"),
+        (_binop("Iop_Or8", _flag_test(0x0001, is_set=True), _flag_test(0x0040, is_set=True)), "ule"),
+        (_binop("Iop_And8", _flag_test(0x0001, is_set=False), _flag_test(0x0040, is_set=False)), "ugt"),
+        (_flags_not_equal(0x0080, 0x0800), "slt"),
+        (_flags_equal(0x0080, 0x0800), "sge"),
+        (_binop("Iop_Or8", _flag_test(0x0040, is_set=True), _flags_not_equal(0x0080, 0x0800)), "sle"),
+        (_binop("Iop_And8", _flag_test(0x0040, is_set=False), _flags_equal(0x0080, 0x0800)), "sgt"),
+    ],
+)
+def test_vex_import_lifts_flag_formula_jcc_variants_to_typed_compare(guard_expr, expected_op):
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    project = _project(
+        {
+            0x1000: _block(
+                0x1000,
+                _wrtmp(0, _get(0)),
+                _wrtmp(1, _get(6)),
+                _wrtmp(2, _binop("Iop_CmpEQ16", _rdtmp(0), _rdtmp(1))),
+                _wrtmp(3, guard_expr),
+                _exit(_rdtmp(3), _const(0x1010)),
+            )
+        },
+        function,
+    )
+
+    artifact = build_x86_16_ir_function_artifact(project, function)
+    cond = artifact.blocks[0].instrs[-1].args[0]
+
+    assert isinstance(cond, IRCondition)
+    assert cond.op == expected_op
+    assert [value.name for value in cond.args] == ["ax", "bx"]
+
+
+def test_vex_import_inverts_ite_wrapped_flag_formula_to_complement_compare():
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    sgt_formula = _binop("Iop_And8", _flag_test(0x0040, is_set=False), _flags_equal(0x0080, 0x0800))
+    project = _project(
+        {
+            0x1000: _block(
+                0x1000,
+                _wrtmp(0, _get(0)),
+                _wrtmp(1, _get(6)),
+                _wrtmp(2, _binop("Iop_CmpEQ16", _rdtmp(0), _rdtmp(1))),
+                _wrtmp(3, _ite(sgt_formula, _const(0), _const(1))),
+                _exit(_rdtmp(3), _const(0x1010)),
+            )
+        },
+        function,
+    )
+
+    artifact = build_x86_16_ir_function_artifact(project, function)
+    cond = artifact.blocks[0].instrs[-1].args[0]
+
+    assert isinstance(cond, IRCondition)
+    assert cond.op == "sle"
+    assert [value.name for value in cond.args] == ["ax", "bx"]
 
 
 def test_vex_import_records_successor_addrs_and_function_ssa():

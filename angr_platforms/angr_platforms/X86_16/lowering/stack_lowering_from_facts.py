@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -108,10 +109,26 @@ def build_stack_variable_bindings_from_alias_facts_8616(
     )
 
 
-def _stack_object_name(offset: int) -> str:
+def _stack_object_name(offset: int, codegen=None) -> str:
     offset = _canonical_stack_offset_8616(offset)
-    if offset >= 0:
+    if not isinstance(offset, int):
+        return "arg_0"
+
+    arg_offsets: set[int] = set()
+    cfunc = getattr(codegen, "cfunc", None) if codegen is not None else None
+    if cfunc is not None:
+        for arg in getattr(cfunc, "arg_list", ()) or ():
+            arg_var = getattr(arg, "variable", None)
+            if isinstance(arg_var, SimStackVariable):
+                arg_offset = _canonical_stack_offset_8616(getattr(arg_var, "offset", None))
+                if isinstance(arg_offset, int):
+                    arg_offsets.add(arg_offset)
+
+    if offset in arg_offsets:
         return f"arg_{offset:x}"
+
+    if offset >= 0:
+        return f"local_{offset:x}"
     return f"local_{-offset:x}"
 
 
@@ -262,6 +279,15 @@ def lower_stack_accesses_from_alias_facts_8616(
     }
     codegen._inertia_stack_lowering_debug = debug_stats
     codegen._inertia_stack_variable_bindings = tuple(bindings)
+    if os.environ.get("INERTIA_DEBUG_STACK_FACTS"):
+        log.warning(
+            "[stack-lowering] bindings=%d stable_stack=%d stable_bp=%d",
+            len(bindings),
+            stable_stack_fact_count,
+            stable_bp_fact_count,
+        )
+        for binding in bindings[:16]:
+            log.warning("[stack-lowering] binding=%r", binding)
 
     if not bindings:
         return StackLoweringResult(
@@ -300,7 +326,7 @@ def lower_stack_accesses_from_alias_facts_8616(
             )
             materialized_name = getattr(getattr(cvar, "variable", None), "name", None) or getattr(cvar, "name", None)
             materialized_count += 1
-            materialized.append((int(offset), str(materialized_name or _stack_object_name(int(offset)))))
+            materialized.append((int(offset), str(materialized_name or _stack_object_name(int(offset), codegen=codegen))))
         except Exception as exc:
             fallback_offset = _canonical_stack_offset_8616(
                 getattr(binding, "bp_offset", None) or getattr(binding, "offset", 0)

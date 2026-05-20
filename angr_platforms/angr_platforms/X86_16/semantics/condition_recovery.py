@@ -14,6 +14,17 @@ if TYPE_CHECKING:
 from ..ir.core import IRCondition, IRValue, MemSpace
 from ..ir.condition_ir import (
     ConditionOp,
+    _JCC_COMPARISON_MNEMONICS_8616,
+    JCC_EQ_MNEMONICS_8616,
+    JCC_NE_MNEMONICS_8616,
+    JCC_SGE_MNEMONICS_8616,
+    JCC_SGT_MNEMONICS_8616,
+    JCC_SLE_MNEMONICS_8616,
+    JCC_SLT_MNEMONICS_8616,
+    JCC_UGE_MNEMONICS_8616,
+    JCC_UGT_MNEMONICS_8616,
+    JCC_ULE_MNEMONICS_8616,
+    JCC_ULT_MNEMONICS_8616,
     build_condition_ir_8616,
     harmonize_condition_args_8616,
     normalize_condition_op_8616,
@@ -278,37 +289,23 @@ def _same_operand_test_8616(lhs, rhs) -> bool:
 
 # JCC mnemonic → condition op mapping (unsigned by default)
 _JCC_UNSIGNED_OP_8616: dict[str, ConditionOp] = {
-    "jz": "eq",
-    "je": "eq",
-    "jnz": "ne",
-    "jne": "ne",
-    "jb": "ult",
-    "jnae": "ult",
-    "jc": "ult",
-    "jnb": "uge",
-    "jae": "uge",
-    "jnc": "uge",
-    "jbe": "ule",
-    "jna": "ule",
-    "ja": "ugt",
-    "jnbe": "ugt",
+    **{mnemonic: "eq" for mnemonic in JCC_EQ_MNEMONICS_8616},
+    **{mnemonic: "ne" for mnemonic in JCC_NE_MNEMONICS_8616},
+    **{mnemonic: "ult" for mnemonic in JCC_ULT_MNEMONICS_8616},
+    **{mnemonic: "uge" for mnemonic in JCC_UGE_MNEMONICS_8616},
+    **{mnemonic: "ule" for mnemonic in JCC_ULE_MNEMONICS_8616},
+    **{mnemonic: "ugt" for mnemonic in JCC_UGT_MNEMONICS_8616},
 }
 
 _JCC_SIGNED_OP_8616: dict[str, ConditionOp] = {
-    "jl": "slt",
-    "jnge": "slt",
-    "jge": "sge",
-    "jnl": "sge",
-    "jle": "sle",
-    "jng": "sle",
-    "jg": "sgt",
-    "jnle": "sgt",
-    "jo": "compare",
-    "jno": "compare",
-    "js": "compare",
-    "jns": "compare",
-    "jp": "compare",
-    "jnp": "compare",
+    **{mnemonic: "slt" for mnemonic in JCC_SLT_MNEMONICS_8616},
+    **{mnemonic: "sge" for mnemonic in JCC_SGE_MNEMONICS_8616},
+    **{mnemonic: "sle" for mnemonic in JCC_SLE_MNEMONICS_8616},
+    **{mnemonic: "sgt" for mnemonic in JCC_SGT_MNEMONICS_8616},
+}
+
+_JCC_COMPARE_OP_8616: dict[str, ConditionOp] = {
+    **{mnemonic: "compare" for mnemonic in _JCC_COMPARISON_MNEMONICS_8616},
 }
 
 
@@ -322,6 +319,9 @@ def _jcc_to_condition_op_8616(mnemonic: str | None, lhs, rhs) -> ConditionOp:
         signed = _JCC_SIGNED_OP_8616.get(mnemonic)
         if signed is not None:
             return signed
+        compare = _JCC_COMPARE_OP_8616.get(mnemonic)
+        if compare is not None:
+            return compare
     return "compare"
 
 
@@ -329,24 +329,26 @@ def _jcc_to_condition_op_with_zero_8616(mnemonic: str | None, lhs, rhs) -> Condi
     """Map a JCC against zero to the appropriate condition op."""
     if isinstance(mnemonic, str):
         mnemonic = mnemonic.lower().strip()
-        if mnemonic in {"jz", "je"}:
+        if mnemonic in JCC_EQ_MNEMONICS_8616:
             return "eq"
-        if mnemonic in {"jnz", "jne"}:
+        if mnemonic in JCC_NE_MNEMONICS_8616:
             return "ne"
-        if mnemonic in {"jg", "jnle"}:
+        if mnemonic in JCC_SGT_MNEMONICS_8616:
             return "sgt"
-        if mnemonic in {"jge", "jnl"}:
+        if mnemonic in JCC_SGE_MNEMONICS_8616:
             return "sge"
-        if mnemonic in {"jl", "jnge"}:
+        if mnemonic in JCC_SLT_MNEMONICS_8616:
             return "slt"
-        if mnemonic in {"jle", "jng"}:
+        if mnemonic in JCC_SLE_MNEMONICS_8616:
             return "sle"
-        if mnemonic in {"ja", "jnbe"}:
+        if mnemonic in JCC_UGT_MNEMONICS_8616:
             return "ugt"
-        if mnemonic in {"jae", "jnb", "jnc"}:
+        if mnemonic in JCC_UGE_MNEMONICS_8616:
             return "uge"
-        if mnemonic in {"jb", "jnae", "jc"}:
+        if mnemonic in JCC_ULT_MNEMONICS_8616:
             return "ult"
-        if mnemonic in {"jbe", "jna"}:
+        if mnemonic in JCC_ULE_MNEMONICS_8616:
             return "ule"
+        if mnemonic in _JCC_COMPARISON_MNEMONICS_8616:
+            return "compare"
     return "ne"

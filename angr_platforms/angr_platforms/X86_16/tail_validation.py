@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import json
 import os
 from collections import Counter
@@ -382,6 +383,15 @@ def _node_boundary_fingerprint(
 ):
     if node is None:
         return None
+    contextual_condition_fingerprints = getattr(
+        project,
+        "_inertia_tail_validation_contextual_condition_fingerprints",
+        None,
+    )
+    if isinstance(contextual_condition_fingerprints, Mapping):
+        condition_fingerprint = contextual_condition_fingerprints.get(id(node))
+        if isinstance(condition_fingerprint, str):
+            return ("condition", condition_fingerprint)
     if isinstance(node, CConstant):
         return ("const", node.value)
     if isinstance(node, CVariable):
@@ -944,17 +954,31 @@ def fingerprint_x86_16_tail_validation_boundary(project, codegen, *, mode: str =
     root = _codegen_root(codegen)
     contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
     contextual_call_summaries = _build_contextual_call_summary_map(root, project)
-    payload = {
-        "arch": getattr(getattr(project, "arch", None), "name", None),
-        "mode": mode,
-        "fingerprint_version": TAIL_VALIDATION_FINGERPRINT_VERSION,
-        "root": _node_boundary_fingerprint(
-            root,
-            project,
-            contextual_call_fingerprints,
-            contextual_call_summaries,
-        ),
-    }
+    contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
+    previous_condition_fingerprints = getattr(
+        project,
+        "_inertia_tail_validation_contextual_condition_fingerprints",
+        None,
+    )
+    project._inertia_tail_validation_contextual_condition_fingerprints = contextual_condition_fingerprints
+    try:
+        payload = {
+            "arch": getattr(getattr(project, "arch", None), "name", None),
+            "mode": mode,
+            "fingerprint_version": TAIL_VALIDATION_FINGERPRINT_VERSION,
+            "root": _node_boundary_fingerprint(
+                root,
+                project,
+                contextual_call_fingerprints,
+                contextual_call_summaries,
+            ),
+        }
+    finally:
+        if previous_condition_fingerprints is None:
+            with contextlib.suppress(Exception):
+                delattr(project, "_inertia_tail_validation_contextual_condition_fingerprints")
+        else:
+            project._inertia_tail_validation_contextual_condition_fingerprints = previous_condition_fingerprints
     return build_x86_16_validation_cache_descriptor("tail_validation.boundary", payload).fingerprint
 
 

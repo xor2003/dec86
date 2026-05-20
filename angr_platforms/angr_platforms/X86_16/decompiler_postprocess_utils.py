@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import suppress
+
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CITE,
@@ -71,6 +73,76 @@ def _unwrap_statements_8616(node) -> tuple:
 
 def _structured_codegen_node_8616(value) -> bool:
     return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
+
+
+def _structured_slot_names_8616(value) -> tuple[str, ...]:
+    attrs: list[str] = []
+    if type(value) is object:
+        return ()
+
+    for cls in type(value).mro():
+        slots = getattr(cls, "__slots__", ())
+        if not slots:
+            continue
+        if isinstance(slots, str):
+            slots = (slots,)
+        for slot in slots:
+            if isinstance(slot, str) and not slot.startswith("_") and slot != "codegen":
+                attrs.append(slot)
+
+    if hasattr(value, "__dict__"):
+        attrs.extend(
+            attr
+            for attr in value.__dict__.keys()
+            if isinstance(attr, str) and not attr.startswith("_") and attr != "codegen"
+        )
+
+    seen = set()
+    ordered: list[str] = []
+    for attr in attrs:
+        if attr in seen:
+            continue
+        seen.add(attr)
+        ordered.append(attr)
+    return tuple(ordered)
+
+
+def _iter_c_node_children_8616(value, seen_values: set[int] | None = None):
+    if seen_values is None:
+        seen_values = set()
+
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        try:
+            current_id = id(current)
+        except Exception:
+            continue
+        if current_id in seen_values:
+            continue
+        seen_values.add(current_id)
+
+        if _structured_codegen_node_8616(current):
+            yield current
+            continue
+
+        if isinstance(current, (str, bytes)):
+            continue
+
+        if isinstance(current, dict):
+            with suppress(Exception):
+                stack.extend(tuple(current.values()))
+            continue
+
+        if isinstance(current, (list, tuple, set)):
+            with suppress(Exception):
+                stack.extend(tuple(current))
+            continue
+
+        if hasattr(current, "__iter__"):
+            with suppress(Exception, TypeError, AttributeError):
+                stack.extend(tuple(current))
+            continue
 
 
 def _c_constant_value_8616(node) -> int | None:
@@ -206,94 +278,104 @@ def _match_segmented_dereference_8616(node, project) -> tuple[str | None, int | 
 def _replace_c_children_8616(node, transform, seen: set[int] | None = None) -> bool:
     if seen is None:
         seen = set()
-    node_id = id(node)
-    if node_id in seen:
-        return False
-    seen.add(node_id)
     changed = False
+    node_stack = [node]
 
-    for attr in (
-        "lhs",
-        "rhs",
-        "expr",
-        "operand",
-        "condition",
-        "cond",
-        "initializer",
-        "iterator",
-        "body",
-        "iffalse",
-        "iftrue",
-        "callee_target",
-        "else_node",
-        "retval",
-    ):
-        if not hasattr(node, attr):
+    while node_stack:
+        current = node_stack.pop()
+        if not _structured_codegen_node_8616(current):
             continue
-        try:
-            value = getattr(node, attr)
-        except Exception:
+        current_id = id(current)
+        if current_id in seen:
             continue
-        if _structured_codegen_node_8616(value):
+        seen.add(current_id)
+
+        for attr in (
+            "lhs",
+            "rhs",
+            "expr",
+            "operand",
+            "variable",
+            "index",
+            "condition",
+            "cond",
+            "initializer",
+            "iterator",
+            "body",
+            "iffalse",
+            "iftrue",
+            "callee_target",
+            "else_node",
+            "retval",
+        ):
+            if not hasattr(current, attr):
+                continue
+            try:
+                value = getattr(current, attr)
+            except Exception:
+                continue
+            if not _structured_codegen_node_8616(value):
+                continue
             new_value = transform(value)
             if new_value is not value:
-                setattr(node, attr, new_value)
+                setattr(current, attr, new_value)
                 changed = True
                 value = new_value
-            if _replace_c_children_8616(value, transform, seen):
-                changed = True
+            node_stack.append(value)
 
-    for attr in ("args", "operands", "statements"):
-        if not hasattr(node, attr):
-            continue
-        try:
-            items = getattr(node, attr)
-        except Exception:
-            continue
-        if not items:
-            continue
-        new_items = []
-        list_changed = False
-        for item in items:
-            if _structured_codegen_node_8616(item):
-                new_item = transform(item)
-                if new_item is not item:
-                    list_changed = True
-                if _replace_c_children_8616(new_item, transform, seen):
+        for attr in ("args", "operands", "statements"):
+            if not hasattr(current, attr):
+                continue
+            try:
+                items = getattr(current, attr)
+            except Exception:
+                continue
+            if not items:
+                continue
+            new_items = None
+            for idx, item in enumerate(items):
+                if not _structured_codegen_node_8616(item):
+                    continue
+                transformed_item = transform(item)
+                if transformed_item is not item:
+                    if new_items is None:
+                        new_items = list(items)
+                    new_items[idx] = transformed_item
                     changed = True
-                new_items.append(new_item)
-            else:
-                new_items.append(item)
-        if list_changed:
-            # Preserve CStatements wrapper on nested 'statements' attributes.
-            # Setting a plain list breaks all downstream passes expecting .statements
-            # on structured nodes (e.g. CIfElse, CWhileLoop, CForLoop).
-            if attr == "statements" and isinstance(items, CStatements):
-                new_items = CStatements(statements=new_items, codegen=getattr(node, "codegen", None))
-            setattr(node, attr, new_items)
-            changed = True
+                else:
+                    transformed_item = item
+                node_stack.append(transformed_item)
+            if new_items is not None:
+                # Preserve CStatements wrapper on nested 'statements' attributes.
+                # Setting a plain list breaks downstream passes expecting .statements
+                # on structured nodes (e.g. CIfElse, CWhileLoop, CForLoop).
+                if attr == "statements" and isinstance(items, CStatements):
+                    new_items = CStatements(statements=new_items, codegen=getattr(current, "codegen", None))
+                setattr(current, attr, new_items)
 
-    if hasattr(node, "condition_and_nodes"):
-        try:
-            pairs = getattr(node, "condition_and_nodes")
-        except Exception:
-            pairs = None
-        if pairs:
-            new_pairs = []
-            pair_changed = False
-            for cond, body in pairs:
-                new_cond = transform(cond) if _structured_codegen_node_8616(cond) else cond
-                new_body = transform(body) if _structured_codegen_node_8616(body) else body
-                if new_cond is not cond or new_body is not body:
-                    pair_changed = True
-                if _structured_codegen_node_8616(new_cond) and _replace_c_children_8616(new_cond, transform, seen):
+        if hasattr(current, "condition_and_nodes"):
+            try:
+                pairs = getattr(current, "condition_and_nodes")
+            except Exception:
+                pairs = None
+            if pairs:
+                pair_changed = False
+                new_pairs = []
+                for cond, body in pairs:
+                    new_cond = transform(cond) if _structured_codegen_node_8616(cond) else cond
+                    new_body = transform(body) if _structured_codegen_node_8616(body) else body
+                    if new_cond is not cond:
+                        pair_changed = True
+                    if new_body is not body:
+                        pair_changed = True
+                    if _structured_codegen_node_8616(new_cond):
+                        node_stack.append(new_cond)
+                    if _structured_codegen_node_8616(new_body):
+                        node_stack.append(new_body)
+                    new_pairs.append((new_cond, new_body))
+                if pair_changed:
+                    setattr(current, "condition_and_nodes", new_pairs)
                     changed = True
-                if _structured_codegen_node_8616(new_body) and _replace_c_children_8616(new_body, transform, seen):
-                    changed = True
-                new_pairs.append((new_cond, new_body))
-            if pair_changed:
-                setattr(node, "condition_and_nodes", new_pairs)
-                changed = True
 
     return changed
 
@@ -303,38 +385,26 @@ def _iter_c_nodes_deep_8616(node, seen: set[int] | None = None):
         seen = set()
     if not _structured_codegen_node_8616(node):
         return
-    node_id = id(node)
-    if node_id in seen:
-        return
-    seen.add(node_id)
-    yield node
 
-    for attr in dir(node):
-        if attr.startswith("_") or attr in {"codegen"}:
+    node_stack = [node]
+    while node_stack:
+        current = node_stack.pop()
+        if not _structured_codegen_node_8616(current):
             continue
-        try:
-            value = getattr(node, attr)
-        except Exception:
+        node_id = id(current)
+        if node_id in seen:
             continue
-        if _structured_codegen_node_8616(value):
-            yield from _iter_c_nodes_deep_8616(value, seen)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                if _structured_codegen_node_8616(item):
-                    yield from _iter_c_nodes_deep_8616(item, seen)
-                elif isinstance(item, tuple):
-                    for subitem in item:
-                        if _structured_codegen_node_8616(subitem):
-                            yield from _iter_c_nodes_deep_8616(subitem, seen)
-        elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
-            # Guard: treat iterable non-list/tuple nodes the same way
-            # (e.g. CStatements may be iterable in some angr versions)
+        seen.add(node_id)
+        yield current
+
+        for attr in _structured_slot_names_8616(current):
             try:
-                for item in value:
-                    if _structured_codegen_node_8616(item):
-                        yield from _iter_c_nodes_deep_8616(item, seen)
-            except (TypeError, AttributeError):
-                pass
+                value = getattr(current, attr)
+            except Exception:
+                continue
+            for child in _iter_c_node_children_8616(value, set()):
+                if _structured_codegen_node_8616(child):
+                    node_stack.append(child)
 
 
 def _global_memory_addr_8616(node) -> int | None:

@@ -85,20 +85,42 @@ def _build_c_condition_expr(project, cond: ConditionIR, codegen) -> CBinaryOp | 
 
 def _condition_key_from_tags(node) -> tuple | None:
     """Extract a match key (ins_addr, block_addr) from node tags."""
-    tags = getattr(node, "tags", None)
-    if not isinstance(tags, dict):
+    seen: set[int] = set()
+
+    def _walk(current) -> tuple | None:
+        if current is None:
+            return None
+        marker = id(current)
+        if marker in seen:
+            return None
+        seen.add(marker)
+
+        tags = getattr(current, "tags", None)
+        if isinstance(tags, dict):
+            ins_addr = tags.get("ins_addr")
+            block_addr = tags.get("vex_block_addr")
+            if isinstance(ins_addr, int) and isinstance(block_addr, int):
+                return (ins_addr, block_addr)
+
+        if isinstance(current, CUnaryOp):
+            return _walk(getattr(current, "operand", None))
+        if isinstance(current, CBinaryOp):
+            return _walk(getattr(current, "lhs", None)) or _walk(getattr(current, "rhs", None))
+
+        cond = getattr(current, "cond", None)
+        if cond is not None:
+            return _walk(cond)
         return None
-    ins_addr = tags.get("ins_addr")
-    block_addr = tags.get("vex_block_addr")
-    if not isinstance(ins_addr, int) or not isinstance(block_addr, int):
-        return None
-    return (ins_addr, block_addr)
+
+    return _walk(node)
 
 
 def _index_conditions_by_tag(conditions: list[ConditionIR]) -> dict[tuple, ConditionIR]:
     """Index ConditionIR objects by their (ins_addr, block_addr) key."""
     index: dict[tuple, ConditionIR] = {}
     for cond in conditions:
+        if not isinstance(cond.src_insn, int) or not isinstance(cond.block_addr, int):
+            continue
         key = (cond.src_insn, cond.block_addr)
         index[key] = cond
     return index
@@ -133,6 +155,9 @@ def _is_flag_based_condition_node(node) -> bool:
         if _is_flag_based_condition_node(node.lhs) or _is_flag_based_condition_node(node.rhs):
             return True
 
+    if isinstance(node, CUnaryOp):
+        return _is_flag_based_condition_node(getattr(node, "operand", None))
+
     return False
 
 
@@ -153,6 +178,20 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
 
     changed = False
 
+    def _replacement_for_condition_node(cond):
+        key = _condition_key_from_tags(cond)
+        if key is None or key not in condition_index:
+            return None
+        new_cond = _build_c_condition_expr(project, condition_index[key], codegen)
+        if new_cond is None:
+            return None
+        if _same_c_expression_8616(new_cond.lhs, new_cond.rhs):
+            return None
+        if _expr_fingerprint(new_cond.lhs, project) == _expr_fingerprint(new_cond.rhs, project):
+            return None
+        record_materialized_condition_trace_8616(project, codegen, key, new_cond)
+        return new_cond
+
     def _walk_statements(statements_obj):
         nonlocal changed
         raw = getattr(statements_obj, "statements", ()) or ()
@@ -169,33 +208,38 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
         if isinstance(node, CIfElse):
             cond = getattr(node, "condition", None)
             if cond is not None:
-                key = _condition_key_from_tags(cond)
-                if key is not None and key in condition_index:
-                    new_cond = _build_c_condition_expr(project, condition_index[key], codegen)
-                    if (
-                        new_cond is not None
-                        and not _same_c_expression_8616(new_cond.lhs, new_cond.rhs)
-                        and _expr_fingerprint(new_cond.lhs, project) != _expr_fingerprint(new_cond.rhs, project)
-                    ):
-                        node.condition = new_cond
-                        record_materialized_condition_trace_8616(project, codegen, key, new_cond)
-                        changed = True
+                new_cond = _replacement_for_condition_node(cond)
+                if new_cond is not None:
+                    node.condition = new_cond
+                    changed = True
+            cond_pairs = getattr(node, "condition_and_nodes", None)
+            if cond_pairs:
+                rebuilt_pairs = []
+                pair_changed = False
+                for cond_pair in cond_pairs:
+                    if isinstance(cond_pair, (tuple, list)) and len(cond_pair) >= 2:
+                        pair_cond = cond_pair[0]
+                        pair_body = cond_pair[1]
+                        new_pair_cond = _replacement_for_condition_node(pair_cond) if _is_flag_based_condition_node(pair_cond) else None
+                        if new_pair_cond is not None:
+                            rebuilt_pairs.append((new_pair_cond, pair_body))
+                            pair_changed = True
+                            changed = True
+                        else:
+                            rebuilt_pairs.append(tuple(cond_pair))
+                    else:
+                        rebuilt_pairs.append(cond_pair)
+                if pair_changed:
+                    setattr(node, "condition_and_nodes", rebuilt_pairs)
 
         # Replace condition in loops
         if hasattr(node, "condition") and not isinstance(node, CIfElse):
             cond = getattr(node, "condition", None)
             if _is_flag_based_condition_node(cond):
-                key = _condition_key_from_tags(cond)
-                if key is not None and key in condition_index:
-                    new_cond = _build_c_condition_expr(project, condition_index[key], codegen)
-                    if (
-                        new_cond is not None
-                        and not _same_c_expression_8616(new_cond.lhs, new_cond.rhs)
-                        and _expr_fingerprint(new_cond.lhs, project) != _expr_fingerprint(new_cond.rhs, project)
-                    ):
-                        setattr(node, "condition", new_cond)
-                        record_materialized_condition_trace_8616(project, codegen, key, new_cond)
-                        changed = True
+                new_cond = _replacement_for_condition_node(cond)
+                if new_cond is not None:
+                    setattr(node, "condition", new_cond)
+                    changed = True
 
         # Recurse into children
         if hasattr(node, "statements"):

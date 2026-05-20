@@ -107,7 +107,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             ],
         },
         "tail_validation_surface": {
-            "headline": "whole-tail validation changed in 1 functions",
+            "headline": "whole-tail validation failed across 1 functions",
             "severity": "changed",
             "merge_gate": False,
             "changed_function_count": 1,
@@ -905,7 +905,7 @@ def test_x86_16_tail_validation_console_summary_is_brief_when_clean(tmp_path):
 def test_x86_16_tail_validation_console_summary_expands_when_changed_and_uses_cache(tmp_path):
     cache_path = tmp_path / "tail_validation_console.json"
     surface = {
-        "headline": "whole-tail validation changed in 2 functions",
+        "headline": "whole-tail validation failed across 2 functions",
         "severity": "changed",
         "merge_gate": False,
         "baseline_status": "regressed",
@@ -980,7 +980,7 @@ def test_x86_16_tail_validation_console_summary_expands_when_changed_and_uses_ca
 
     assert first["cache_hit"] is False
     assert first["lines"] == [
-        "whole-tail validation changed in 2 functions",
+        "whole-tail validation failed across 2 functions",
         "severity=changed merge_gate=hold",
         "baseline=regressed unexpected=2 missing=0",
         "coverage=0 missing=0 unknown=0",
@@ -1031,7 +1031,7 @@ def test_x86_16_tail_validation_console_summary_calls_out_uncollected_coverage(t
 def test_x86_16_tail_validation_detail_artifact_uses_cache(tmp_path):
     cache_path = tmp_path / "tail_validation_surface.json"
     surface = {
-        "headline": "whole-tail validation changed in 1 functions",
+        "headline": "whole-tail validation failed across 1 functions",
         "severity": "changed",
         "top_changed_functions": [
             {

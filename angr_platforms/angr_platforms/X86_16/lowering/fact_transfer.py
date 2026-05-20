@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 # Layer: Lowering (bridge)
 # Responsibility: transfer semantic alias facts from VEX lifter to codegen.
@@ -333,6 +334,19 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
         ),
     }
     codegen._inertia_pipeline_diag = _diagnostic
+    if os.environ.get("INERTIA_DEBUG_STACK_FACTS"):
+        logging.getLogger(__name__).warning(
+            "[stack-facts] func=0x%x raw=%d normalized=%d facts=%d stack=%d failures=%d blocker=%s",
+            func_addr,
+            raw_count,
+            normalized_count,
+            len(facts),
+            stack_count,
+            len(failures),
+            _diagnostic.get("primary_blocker"),
+        )
+        for fact in facts[:16]:
+            logging.getLogger(__name__).warning("[stack-facts] fact=%r", fact)
 
     return len(facts) + len(failures)
 
@@ -344,4 +358,3 @@ def emit_pipeline_diagnostic_8616(codegen) -> dict:
     to codegen._inertia_pipeline_diag after fact transfer.
     """
     return getattr(codegen, "_inertia_pipeline_diag", {})
-

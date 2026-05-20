@@ -650,7 +650,7 @@ def test_main_emits_changed_tail_validation_detail_summary_to_stderr(tmp_path, m
     detail_path = _script._default_tail_validation_detail_path(cod_dir, timeout=20, cod_files=[cod_path], proc_names=None)
     detail_files = sorted(detail_path.parent.glob("COCKPIT.timeout20.tail_validation_surface.*.json"))
 
-    assert "[tail-validation] whole-tail validation changed in 1 functions" in captured.err
+    assert "[tail-validation] whole-tail validation failed across 1 functions" in captured.err
     assert detail_files
     assert f"[tail-validation] detail artifact {detail_files[0]}" in captured.err
     assert "[tail-validation]" not in captured.out

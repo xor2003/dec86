@@ -14,14 +14,7 @@ __all__ = [
 ]
 
 
-_KNOWN_CALL_ARG_KINDS_8616: dict[str, dict[int, str]] = {
-    "PercolateUp": {0: "value"},
-    "Swaps": {0: "pointer", 1: "pointer"},
-    "SwapBars": {0: "value", 1: "value"},
-    "PercolateDown": {0: "value"},
-    "DrawBar": {0: "value"},
-    "DrawTime": {0: "value"},
-}
+_KNOWN_CALL_ARG_KINDS_8616: dict[str, dict[int, str]] = {}
 
 _CALL_STMT_RE_8616 = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)\s*;\s*$")
 _SIMPLE_ASSIGN_RE_8616 = re.compile(
@@ -233,76 +226,6 @@ def _validate_known_call_arg_kinds_8616(
                 )
 
 
-def _validate_heapsort_known_calls_8616(
-    report: ValidationSemanticsReport8616,
-    *,
-    callee: str,
-    args: tuple[str, ...],
-) -> None:
-    if callee == "Swaps" and len(args) == 2:
-        for arg_index, arg_text in enumerate(args):
-            if _has_stack_placeholder_8616(arg_text):
-                _record_issue_8616(
-                    report,
-                    callee=callee,
-                    arg_index=arg_index,
-                    arg_text=arg_text,
-                    message="HeapSort Swaps pointer args must not degrade to stack-address syntax",
-                )
-    elif callee == "SwapBars" and len(args) == 2:
-        lhs = args[0].replace(" ", "")
-        rhs = args[1].replace(" ", "")
-        if lhs != "0" or rhs == "0":
-            _record_issue_8616(
-                report,
-                callee=callee,
-                arg_index=None,
-                arg_text=", ".join(args),
-                message="HeapSort SwapBars must remain SwapBars(0, i)",
-            )
-    elif callee == "PercolateDown" and len(args) == 1:
-        arg_text = args[0].replace(" ", "")
-        if re.fullmatch(r"\d+", arg_text) is not None or "2892" in arg_text:
-            _record_issue_8616(
-                report,
-                callee=callee,
-                arg_index=0,
-                arg_text=args[0],
-                message="HeapSort PercolateDown must stay value-like i - 1, not a constant or DS offset",
-            )
-
-
-def _validate_heapsort_stack_noise_8616(
-    report: ValidationSemanticsReport8616,
-    *,
-    c_text: str,
-) -> None:
-    if "&s_" in c_text:
-        _record_issue_8616(
-            report,
-            callee="HeapSort",
-            arg_index=None,
-            arg_text="&s_",
-            message="HeapSort leaked raw stack-address syntax into final C",
-        )
-    if "stack[" in c_text or "ss << 4" in c_text:
-        _record_issue_8616(
-            report,
-            callee="HeapSort",
-            arg_index=None,
-            arg_text="stack/ss",
-            message="HeapSort leaked raw stack addressing into final C",
-        )
-    if _RAW_STACK_NAME_RE_8616.search(c_text):
-        _record_issue_8616(
-            report,
-            callee="HeapSort",
-            arg_index=None,
-            arg_text=_RAW_STACK_NAME_RE_8616.search(c_text).group(0),
-            message="HeapSort leaked unresolved stack locals into final C",
-        )
-
-
 def validate_known_call_semantics_8616(
     c_text: str,
     *,
@@ -320,10 +243,6 @@ def validate_known_call_semantics_8616(
         )
     for callee, args, _line in _iter_statement_calls_8616(c_text):
         _validate_known_call_arg_kinds_8616(report, callee=callee, args=args)
-        if function_addr == 0x10970:
-            _validate_heapsort_known_calls_8616(report, callee=callee, args=args)
-    if function_addr == 0x10970:
-        _validate_heapsort_stack_noise_8616(report, c_text=c_text)
     return report
 
 

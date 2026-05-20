@@ -65,7 +65,7 @@ def _rewrite_atom(atom: IRAtom, versions: dict[tuple[str, str | None, int], int]
     if isinstance(atom, IRCondition):
         return IRCondition(
             op=atom.op,
-            args=tuple(_rewrite_value(arg, versions) for arg in atom.args),
+            args=tuple(_rewrite_atom(arg, versions) for arg in atom.args),
             expr=atom.expr,
         )
     if not isinstance(atom, IRValue):

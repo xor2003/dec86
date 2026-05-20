@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import os
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -11,17 +13,52 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 from .decompiler_postprocess_flags import _c_expr_uses_register_8616
 from .decompiler_postprocess_utils import (
+    _replace_c_children_8616,
     _iter_c_nodes_deep_8616,
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
+from .ir.condition_ir import JCC_TO_COND_8616
 from .tail_validation_fingerprint import _expr_fingerprint
+from .lowering.segmented_memory_lowering import lower_runtime_segment_access_8616
 
 __all__ = ["_rewrite_decoded_jcc_conditions_8616"]
+
+_COND_TO_CMP_OP_8616: dict[str, str] = {
+    "eq": "CmpEQ",
+    "ne": "CmpNE",
+    "ult": "CmpLT",
+    "ule": "CmpLE",
+    "ugt": "CmpGT",
+    "uge": "CmpGE",
+    "slt": "CmpLT",
+    "sle": "CmpLE",
+    "sgt": "CmpGT",
+    "sge": "CmpGE",
+}
+
+_JCC_COMPARE_OPS_8616: dict[str, str] = {
+    mnemonic: _COND_TO_CMP_OP_8616[cond_op]
+    for mnemonic, cond_op in JCC_TO_COND_8616.items()
+    if cond_op in _COND_TO_CMP_OP_8616
+}
+
+_JCC_COMPARE_MASK_TESTS_8616: dict[str, tuple[int, bool]] = {
+    "jo": (0x800, True),
+    "jno": (0x800, False),
+    "js": (0x80, True),
+    "jns": (0x80, False),
+    "jp": (0x4, True),
+    "jpe": (0x4, True),
+    "jnp": (0x4, False),
+    "jpo": (0x4, False),
+}
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +66,32 @@ class _DecodedCmpGuard8616:
     lhs: object
     rhs: object
     op: str
+
+
+def _condition_tags_8616(node) -> tuple[int, int] | None:
+    seen: set[int] = set()
+
+    def _walk(current) -> tuple[int, int] | None:
+        if current is None:
+            return None
+        marker = id(current)
+        if marker in seen:
+            return None
+        seen.add(marker)
+        tags = getattr(current, "tags", None)
+        if isinstance(tags, dict):
+            ins_addr = tags.get("ins_addr")
+            block_addr = tags.get("vex_block_addr")
+            if isinstance(ins_addr, int) and isinstance(block_addr, int):
+                return (ins_addr, block_addr)
+        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond"):
+            child = getattr(current, attr, None)
+            found = _walk(child)
+            if found is not None:
+                return found
+        return None
+
+    return _walk(node)
 
 
 def _reg_offset_8616(project, name: str) -> int | None:
@@ -40,8 +103,8 @@ def _const_8616(value: int, codegen):
     return CConstant(int(value), SimTypeShort(False), codegen=codegen)
 
 
-def _register_exprs_by_ins_addr_8616(codegen, project) -> dict[tuple[int, str], object]:
-    reg_exprs: dict[tuple[int, str], object] = {}
+def _register_exprs_by_ins_addr_8616(codegen, project) -> dict[tuple[int, str, int], object]:
+    reg_exprs: dict[tuple[int, str, int], object] = {}
     for node in _iter_c_nodes_deep_8616(getattr(codegen, "cfunc", None)):
         if not isinstance(node, CAssignment) or not isinstance(node.lhs, CVariable):
             continue
@@ -52,12 +115,64 @@ def _register_exprs_by_ins_addr_8616(codegen, project) -> dict[tuple[int, str], 
         variable = getattr(node.lhs, "variable", None)
         if not isinstance(variable, SimRegisterVariable):
             continue
-        for reg_name, (reg_offset, _reg_size) in project.arch.registers.items():
+        var_size = int(getattr(variable, "size", 0) or 0)
+        for reg_name, (reg_offset, reg_size) in project.arch.registers.items():
             if int(reg_offset) != int(getattr(variable, "reg", -1)):
                 continue
-            reg_exprs[(ins_addr, reg_name.lower())] = node.rhs
-            break
+            if var_size and int(reg_size) != var_size:
+                continue
+            reg_exprs[(ins_addr, reg_name.lower(), int(reg_size))] = node.rhs
     return reg_exprs
+
+
+def _lookup_register_expr_8616(reg_exprs: dict[tuple[int, str, int], object], ins_addr: int, reg_name: str, size: int):
+    expr = reg_exprs.get((int(ins_addr), reg_name.lower(), int(size)))
+    if expr is not None:
+        return expr
+    for (candidate_addr, candidate_name, _candidate_size), candidate_expr in reg_exprs.items():
+        if int(candidate_addr) == int(ins_addr) and candidate_name == reg_name.lower():
+            return candidate_expr
+    return None
+
+
+def _stack_slot_placeholder_name_8616(disp: int, size: int) -> str:
+    sign = "m" if int(disp) < 0 else "p"
+    return f"stack_bp_{sign}{abs(int(disp)):x}_b{int(size)}"
+
+
+def _stack_slot_expr_8616(codegen, disp: int, size: int = 2):
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return None
+
+    def _candidate_exprs():
+        for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
+            yield arg
+        variables_in_use = getattr(cfunc, "variables_in_use", None)
+        if isinstance(variables_in_use, dict):
+            yield from variables_in_use.values()
+        unified_locals = getattr(cfunc, "unified_local_vars", None)
+        if isinstance(unified_locals, dict):
+            for cvars in unified_locals.values():
+                for item in cvars or ():
+                    if isinstance(item, tuple) and item:
+                        yield item[0]
+
+    for expr in _candidate_exprs():
+        variable = getattr(expr, "variable", None)
+        if isinstance(variable, SimStackVariable) and int(getattr(variable, "offset", 0) or 0) == int(disp):
+            return expr
+    region = getattr(cfunc, "addr", None)
+    return CVariable(
+        SimStackVariable(
+            int(disp),
+            int(size) or 2,
+            base="bp",
+            name=_stack_slot_placeholder_name_8616(disp, size),
+            region=region,
+        ),
+        codegen=codegen,
+    )
 
 
 def _low_byte_expr_from_assignment_8616(expr):
@@ -93,7 +208,7 @@ def _memory_load_expr_8616(project, codegen, ds_var, base_expr, disp: int, size:
         codegen=codegen,
     )
     pointee = (SimTypeChar() if int(size) == 1 else SimTypeShort(False)).with_arch(project.arch)
-    return CUnaryOp(
+    deref = CUnaryOp(
         "Dereference",
         CTypeCast(
             SimTypeShort(False).with_arch(project.arch),
@@ -103,27 +218,64 @@ def _memory_load_expr_8616(project, codegen, ds_var, base_expr, disp: int, size:
         ),
         codegen=codegen,
     )
+    lowered = lower_runtime_segment_access_8616(deref, target="portable-flat")
+    return lowered if lowered is not None else deref
 
 
 def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: int) -> _DecodedCmpGuard8616 | None:
+    debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
     try:
         block = project.factory.block(block_addr, opt_level=0)
     except Exception:
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] block decode failed block=%#x jcc=%#x", block_addr, jcc_addr)
         return None
 
     insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
     jcc_index = next((idx for idx, insn in enumerate(insns) if int(insn.address) == int(jcc_addr)), None)
     if jcc_index is None or jcc_index == 0:
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] jcc index missing block=%#x jcc=%#x insn_count=%d", block_addr, jcc_addr, len(insns))
         return None
     jcc_insn = insns[jcc_index]
     cmp_insn = insns[jcc_index - 1]
-    if jcc_insn.mnemonic not in {"jg", "jge", "jl", "jle", "ja", "jae", "jb", "jbe", "je", "jz", "jne", "jnz"}:
+    jcc_mnemonic = jcc_insn.mnemonic.lower()
+    if jcc_mnemonic in _JCC_COMPARE_MASK_TESTS_8616:
+        flags_offset = _reg_offset_8616(project, "flags")
+        if flags_offset is None:
+            if debug_jcc:
+                _log.warning(
+                    "[jcc-rewrite] flags register offset missing for compare-flags mnemonic=%s block=%#x jcc=%#x",
+                    jcc_mnemonic,
+                    block_addr,
+                    jcc_addr,
+                )
+            return None
+        bitmask, is_set = _JCC_COMPARE_MASK_TESTS_8616[jcc_mnemonic]
+        return _DecodedCmpGuard8616(
+            lhs=CBinaryOp(
+                "And",
+                CVariable(SimRegisterVariable(flags_offset, 2, name="flags"), codegen=codegen),
+                _const_8616(bitmask, codegen),
+                codegen=codegen,
+            ),
+            rhs=_const_8616(0, codegen),
+            op=("CmpNE" if is_set else "CmpEQ"),
+        )
+
+    if jcc_mnemonic not in _JCC_COMPARE_OPS_8616:
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] unsupported jcc mnemonic=%s block=%#x jcc=%#x", jcc_mnemonic, block_addr, jcc_addr)
         return None
     if cmp_insn.mnemonic != "cmp" or len(cmp_insn.operands) != 2:
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] predecessor not cmp mnemonic=%s block=%#x jcc=%#x", cmp_insn.mnemonic, block_addr, jcc_addr)
         return None
 
     ds_offset = _reg_offset_8616(project, "ds")
     if ds_offset is None:
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] ds reg missing block=%#x jcc=%#x", block_addr, jcc_addr)
         return None
     ds_var = CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen)
     reg_exprs = _register_exprs_by_ins_addr_8616(codegen, project)
@@ -138,11 +290,15 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
             key = None
             if insn.reg_name(mem.base) == "bp":
                 key = (int(mem.disp), int(insn.operands[0].size))
-            expr = reg_exprs.get((int(insn.address), dst_reg))
+            expr = None
+            if key is not None:
+                expr = _stack_slot_expr_8616(codegen, key[0], key[1])
+                if expr is None:
+                    expr = stack_slots.get(key)
+            if expr is None:
+                expr = _lookup_register_expr_8616(reg_exprs, int(insn.address), dst_reg, int(insn.operands[0].size))
             if dst_reg == "al" and expr is not None:
                 expr = _low_byte_expr_from_assignment_8616(expr)
-            elif expr is None and key is not None:
-                expr = stack_slots.get(key)
             elif expr is None and mem.base:
                 expr = _memory_load_expr_8616(
                     project,
@@ -193,24 +349,27 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
         rhs = _const_8616(int(rhs_op.imm), codegen)
 
     if lhs is None or rhs is None:
+        if debug_jcc:
+            _log.warning(
+                "[jcc-rewrite] operand recovery failed block=%#x jcc=%#x lhs=%r rhs=%r lhs_op_type=%s rhs_op_type=%s reg_state=%r stack_slots=%r",
+                block_addr,
+                jcc_addr,
+                lhs,
+                rhs,
+                getattr(lhs_op, "type", None),
+                getattr(rhs_op, "type", None),
+                reg_state,
+                stack_slots,
+            )
         return None
 
-    op = {
-        "jg": "CmpGT",
-        "jge": "CmpGE",
-        "jl": "CmpLT",
-        "jle": "CmpLE",
-        "ja": "CmpGT",
-        "jae": "CmpGE",
-        "jb": "CmpLT",
-        "jbe": "CmpLE",
-        "je": "CmpEQ",
-        "jz": "CmpEQ",
-        "jne": "CmpNE",
-        "jnz": "CmpNE",
-    }.get(jcc_insn.mnemonic)
+    op = _JCC_COMPARE_OPS_8616.get(jcc_mnemonic)
     if op is None:
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] op map missing mnemonic=%s block=%#x jcc=%#x", jcc_mnemonic, block_addr, jcc_addr)
         return None
+    if debug_jcc:
+        _log.warning("[jcc-rewrite] decoded block=%#x jcc=%#x mnemonic=%s op=%s lhs=%r rhs=%r", block_addr, jcc_addr, jcc_mnemonic, op, lhs, rhs)
     return _DecodedCmpGuard8616(lhs=lhs, rhs=rhs, op=op)
 
 
@@ -222,65 +381,103 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         return False
 
     changed = False
+    materialized_count = 0
 
-    def visit(node):
-        nonlocal changed
+    def _decoded_condition_replacement(cond):
+        key = _condition_tags_8616(cond)
+        ins_addr = None if key is None else key[0]
+        block_addr = None if key is None else key[1]
+        debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
+        if debug_jcc:
+            _log.warning(
+                "[jcc-rewrite] candidate key=%r uses_flags=%s cond_type=%s cond_op=%s",
+                key,
+                _c_expr_uses_register_8616(cond, flags_offset) if isinstance(ins_addr, int) and isinstance(block_addr, int) else _c_expr_uses_register_8616(cond, flags_offset),
+                type(cond).__name__ if cond is not None else None,
+                getattr(cond, "op", None),
+            )
+        if not (
+            isinstance(ins_addr, int)
+            and isinstance(block_addr, int)
+            and _c_expr_uses_register_8616(cond, flags_offset)
+        ):
+            return None
+        decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
+        if decoded is None:
+            return None
+        same_expr = _same_c_expression_8616(decoded.lhs, decoded.rhs)
+        lhs_fp = _expr_fingerprint(decoded.lhs, project)
+        rhs_fp = _expr_fingerprint(decoded.rhs, project)
+        if debug_jcc:
+            _log.warning(
+                "[jcc-rewrite] decoded candidate key=%r same_expr=%s lhs_fp=%r rhs_fp=%r",
+                key,
+                same_expr,
+                lhs_fp,
+                rhs_fp,
+            )
+        if same_expr or lhs_fp == rhs_fp:
+            if debug_jcc:
+                _log.warning("[jcc-rewrite] decoded candidate rejected key=%r", key)
+            return None
+        if debug_jcc:
+            _log.warning("[jcc-rewrite] decoded candidate accepted key=%r", key)
+        return CBinaryOp(
+            decoded.op,
+            decoded.lhs,
+            decoded.rhs,
+            codegen=codegen,
+            tags=getattr(cond, "tags", None),
+        )
+
+    def _rewrite_condition(node):
+        nonlocal changed, materialized_count
+        replacement = _decoded_condition_replacement(node)
+        if replacement is None:
+            return node
+        changed = True
+        materialized_count += 1
+        return replacement
+
+    def _replace_tagged_condition(node):
+        replacement = _rewrite_condition(node)
+        if replacement is not None:
+            return replacement
         if not _structured_codegen_node_8616(node):
-            return
-        if hasattr(node, "condition_and_nodes") and isinstance(getattr(node, "condition_and_nodes", None), list):
-            new_pairs = []
+            return node
+        changed_in_place = _replace_c_children_8616(node, _replace_tagged_condition)
+        if changed_in_place:
+            changed = True
+        return node
+
+    for node in _iter_c_nodes_deep_8616(codegen.cfunc.statements):
+        cond_pairs = getattr(node, "condition_and_nodes", None)
+        if isinstance(cond_pairs, (list, tuple)):
             pair_changed = False
-            for cond, body in node.condition_and_nodes:
-                tags = getattr(cond, "tags", None)
-                ins_addr = None if tags is None else tags.get("ins_addr")
-                block_addr = None if tags is None else tags.get("vex_block_addr")
-                new_cond = cond
-                if (
-                    isinstance(ins_addr, int)
-                    and isinstance(block_addr, int)
-                    and _c_expr_uses_register_8616(cond, flags_offset)
-                ):
-                    decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
-                    if decoded is not None:
-                        # Validation truth boundary: never replace a flags-based guard
-                        # with a self-compare such as x > x. That indicates the local
-                        # decode collapsed distinct operands into the same expression.
-                        if (
-                            _same_c_expression_8616(decoded.lhs, decoded.rhs)
-                            or _expr_fingerprint(decoded.lhs, project) == _expr_fingerprint(decoded.rhs, project)
-                        ):
-                            decoded = None
-                    if decoded is not None:
-                        new_cond = CBinaryOp(
-                            decoded.op,
-                            decoded.lhs,
-                            decoded.rhs,
-                            codegen=codegen,
-                            tags=getattr(cond, "tags", None),
-                        )
+            new_pairs = []
+            for cond, body in cond_pairs:
+                new_cond = _replace_tagged_condition(cond)
                 pair_changed = pair_changed or (new_cond is not cond)
                 new_pairs.append((new_cond, body))
-                visit(body)
+                if new_cond is not cond:
+                    changed = True
             if pair_changed:
-                node.condition_and_nodes = new_pairs
-                changed = True
-            return
+                node.condition_and_nodes = type(cond_pairs)(new_pairs)
+        if hasattr(node, "condition"):
+            cond = getattr(node, "condition", None)
+            if cond is not None:
+                new_cond = _replace_tagged_condition(cond)
+                if new_cond is not cond:
+                    node.condition = new_cond
+                    changed = True
 
-        for attr in ("lhs", "rhs", "operand", "condition", "cond", "body", "iftrue", "iffalse", "else_node", "expr"):
-            child = getattr(node, attr, None)
-            if _structured_codegen_node_8616(child):
-                visit(child)
-        for attr in ("statements", "args", "operands"):
-            seq = getattr(node, attr, None)
-            if not seq:
-                continue
-            for item in seq:
-                if _structured_codegen_node_8616(item):
-                    visit(item)
-                elif isinstance(item, tuple):
-                    for subitem in item:
-                        if _structured_codegen_node_8616(subitem):
-                            visit(subitem)
+    if changed:
+        lane = getattr(codegen, "_inertia_condition_lane", None)
+        if lane is not None:
+            lane.materialized = max(int(getattr(lane, "materialized", 0) or 0), materialized_count)
+        codegen._inertia_semantic_condition_materialized_count = max(
+            int(getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) or 0),
+            materialized_count,
+        )
 
-    visit(codegen.cfunc.statements)
     return changed

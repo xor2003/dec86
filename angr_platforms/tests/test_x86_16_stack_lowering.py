@@ -6,6 +6,7 @@ AGENTS rule: SS:BP-2 → local_*, SS:BP+4 → arg_*, no stack[x].
 """
 
 import pytest
+from types import SimpleNamespace
 from angr_platforms.X86_16.alias.alias_model_impl import (
     _StackSlotIdentity,
     _stack_storage_facts_for_segmented_address_8616,
@@ -23,6 +24,7 @@ from angr_platforms.X86_16.ir.core import (
     SegmentOrigin,
     is_stack_address_8616,
 )
+from angr.sim_type import SimTypeShort
 
 
 class TestStackObjectNaming:
@@ -45,6 +47,47 @@ class TestStackObjectNaming:
         name = _stack_object_name(0)
         assert name.startswith("arg_"), f"Expected arg_ prefix for offset 0, got {name}"
         assert "0" in name
+
+    def test_unknown_positive_stack_slot_uses_local_name_in_codegen_context(self):
+        from angr_platforms.X86_16.lowering.stack_lowering_impl import _materialize_stack_cvar_at_offset
+        from angr.analyses.decompiler.structured_codegen import c as structured_c
+        from angr.sim_variable import SimStackVariable
+
+        class _FakeCodegen:
+            def __init__(self):
+                self.project = None
+                self.cstyle_null_cmp = False
+                self._idx = 0
+                self.cfunc = SimpleNamespace(
+                    addr=0x1000,
+                    arg_list=[],
+                    variables_in_use={},
+                    unified_local_vars={},
+                    sort_local_vars=lambda: None,
+                )
+
+            def next_idx(self, _name):
+                self._idx += 1
+                return self._idx
+
+        codegen = _FakeCodegen()
+        arg_var = SimStackVariable(4, 2, base="bp", name="arg", region=0x1000)
+        arg_type = SimTypeShort(False)
+        codegen.cfunc.arg_list = [SimpleNamespace(variable=arg_var)]
+        codegen.cfunc.variables_in_use = {arg_var: structured_c.CVariable(arg_var, variable_type=arg_type, codegen=codegen)}
+
+        materialized = _materialize_stack_cvar_at_offset(
+            codegen,
+            6,
+            2,
+            resolve_stack_cvar_at_offset=lambda *_args, **_kwargs: None,
+            promote_direct_stack_cvariable=lambda *_args, **_kwargs: None,
+            stack_type_for_size=lambda size: SimTypeShort(False),
+        )
+
+        assert materialized is not None
+        materialized_name = getattr(getattr(materialized, "variable", None), "name", None)
+        assert materialized_name == "local_6"
 
 
 class TestStackSlotIdentity:

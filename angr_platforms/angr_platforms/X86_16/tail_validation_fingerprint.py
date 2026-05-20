@@ -236,7 +236,9 @@ def _debug_tail_stack_alias_8616(
     func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
     delta = getattr(getattr(codegen, "project", None), "_inertia_original_linear_delta", None) if codegen is not None else None
     original = func_addr + delta if isinstance(func_addr, int) and isinstance(delta, int) else func_addr
-    if original != 0x10678:
+    target_text = os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS_ADDR")
+    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
+    if isinstance(target_addr, int) and original != target_addr:
         return
     try:
         c_repr = node.c_repr(indent=0) if node is not None else None
@@ -269,7 +271,9 @@ def _debug_tail_stack_alias_indexed_8616(
     func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
     delta = getattr(getattr(codegen, "project", None), "_inertia_original_linear_delta", None) if codegen is not None else None
     original = func_addr + delta if isinstance(func_addr, int) and isinstance(delta, int) else func_addr
-    if original != 0x10678:
+    target_text = os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS_ADDR")
+    target_addr = int(target_text, 0) if isinstance(target_text, str) and target_text.strip() else None
+    if isinstance(target_addr, int) and original != target_addr:
         return
     try:
         c_repr = node.c_repr(indent=0) if node is not None else None
@@ -426,6 +430,14 @@ def canonicalize_stack_alias_fingerprint_8616(value, *, stack_alias_map, materia
 
 
 def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen, *, source: str, node=None) -> str:
+    if source == "stack_var":
+        variable = getattr(node, "variable", None)
+        size = getattr(variable, "size", None)
+        if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+            return _stack_slot_fingerprint_from_slot_8616(
+                offset,
+                size if isinstance(size, int) and size > 0 else None,
+            )
     materialized_local_map = _materialized_local_map_8616(codegen) if codegen is not None else {}
     stack_alias_map = _stack_alias_map_8616(codegen) if codegen is not None else {}
     normalized = canonicalize_stack_alias_fingerprint_8616(

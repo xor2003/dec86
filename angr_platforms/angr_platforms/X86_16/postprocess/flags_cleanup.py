@@ -1047,120 +1047,157 @@ def _prune_unused_flag_assignments_8616(project, codegen) -> bool:
     used_registers: set[int] = set()
     used_variables: set[int] = set()
 
-    def collect_reads(node, *, assignment_lhs: bool = False):
-        if not _structured_codegen_node_8616(node):
-            return
-        if isinstance(node, CVariable) and not assignment_lhs:
-            variable = getattr(node, "variable", None)
-            if variable is not None:
-                used_variables.add(id(variable))
-                if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) is not None:
-                    used_registers.add(variable.reg)
-            unified = getattr(node, "unified_variable", None)
-            if unified is not None:
-                used_variables.add(id(unified))
-                if isinstance(unified, SimRegisterVariable) and getattr(unified, "reg", None) is not None:
-                    used_registers.add(unified.reg)
-            return
-
-        for attr in ("rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "callee_target", "else_node", "retval"):
-            child = getattr(node, attr, None)
-            if _structured_codegen_node_8616(child):
-                collect_reads(child)
-        lhs = getattr(node, "lhs", None)
-        if _structured_codegen_node_8616(lhs):
-            collect_reads(lhs, assignment_lhs=isinstance(node, CAssignment))
-        for attr in ("args", "operands", "statements"):
-            seq = getattr(node, attr, None)
-            if not seq:
+    def collect_reads(root):
+        traversal_stack = [(root, False)]
+        seen: set[int] = set()
+        while traversal_stack:
+            node, assignment_lhs = traversal_stack.pop()
+            if not _structured_codegen_node_8616(node):
                 continue
-            for item in seq:
-                if _structured_codegen_node_8616(item):
-                    collect_reads(item)
-                elif isinstance(item, tuple):
-                    for subitem in item:
-                        if _structured_codegen_node_8616(subitem):
-                            collect_reads(subitem)
-        pairs = getattr(node, "condition_and_nodes", None)
-        if pairs:
-            for cond, body in pairs:
-                if _structured_codegen_node_8616(cond):
-                    collect_reads(cond)
-                if _structured_codegen_node_8616(body):
-                    collect_reads(body)
+
+            node_id = id(node)
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+
+            if isinstance(node, CVariable) and not assignment_lhs:
+                variable = getattr(node, "variable", None)
+                if variable is not None:
+                    used_variables.add(id(variable))
+                    if isinstance(variable, SimRegisterVariable) and getattr(variable, "reg", None) is not None:
+                        used_registers.add(variable.reg)
+                unified = getattr(node, "unified_variable", None)
+                if unified is not None:
+                    used_variables.add(id(unified))
+                    if isinstance(unified, SimRegisterVariable) and getattr(unified, "reg", None) is not None:
+                        used_registers.add(unified.reg)
+                continue
+
+            for attr in ("rhs", "expr", "operand", "condition", "cond", "body", "iffalse", "iftrue", "callee_target", "else_node", "retval"):
+                child = getattr(node, attr, None)
+                if _structured_codegen_node_8616(child):
+                    traversal_stack.append((child, False))
+
+            lhs = getattr(node, "lhs", None)
+            if _structured_codegen_node_8616(lhs):
+                traversal_stack.append((lhs, isinstance(node, CAssignment)))
+
+            for attr in ("args", "operands", "statements"):
+                seq = getattr(node, attr, None)
+                if not seq:
+                    continue
+                for item in seq:
+                    if _structured_codegen_node_8616(item):
+                        traversal_stack.append((item, False))
+                        continue
+                    if isinstance(item, tuple):
+                        for subitem in item:
+                            if _structured_codegen_node_8616(subitem):
+                                traversal_stack.append((subitem, False))
+
+            pairs = getattr(node, "condition_and_nodes", None)
+            if pairs:
+                for cond, body in pairs:
+                    if _structured_codegen_node_8616(cond):
+                        traversal_stack.append((cond, False))
+                    if _structured_codegen_node_8616(body):
+                        traversal_stack.append((body, False))
 
     collect_reads(codegen.cfunc.statements)
 
     changed = False
 
-    def visit(node):
-        nonlocal changed
+    stack = [codegen.cfunc.statements]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if not _structured_codegen_node_8616(node):
+            continue
+        node_id = id(node)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+
         if isinstance(node, CStatements):
             new_statements = []
-            for stmt in node.statements:
-                visit(stmt)
-                if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
+            for stmt in getattr(node, "statements", ()):
+                if (
+                    isinstance(stmt, CAssignment)
+                    and isinstance(stmt.lhs, CVariable)
+                    and _c_variable_register_offset_8616(stmt.lhs) == flags_offset
+                ):
                     variable = getattr(stmt.lhs, "variable", None)
                     unified = getattr(stmt.lhs, "unified_variable", None)
                     if (
-                        _c_variable_register_offset_8616(stmt.lhs) == flags_offset
-                        and all(
-                            id(candidate) not in used_variables
-                            for candidate in (variable, unified)
-                            if candidate is not None
-                        )
+                        all(id(candidate) not in used_variables for candidate in (variable, unified) if candidate is not None)
                         and flags_offset not in used_registers
                     ):
                         changed = True
                         continue
                 new_statements.append(stmt)
+                if _structured_codegen_node_8616(stmt):
+                    stack.append(stmt)
+
             node.statements = new_statements
 
         for attr in ("body", "else_node"):
             child = getattr(node, attr, None)
             if _structured_codegen_node_8616(child):
-                visit(child)
+                stack.append(child)
 
         pairs = getattr(node, "condition_and_nodes", None)
         if pairs:
             for _cond, body in pairs:
                 if _structured_codegen_node_8616(body):
-                    visit(body)
-
-    visit(codegen.cfunc.statements)
+                    stack.append(body)
     return changed
 
 
 def _c_expr_uses_register_8616(node, reg_offset: int) -> bool:
     if not _structured_codegen_node_8616(node):
         return False
-    if isinstance(node, CVariable):
-        return _c_variable_register_offset_8616(node) == reg_offset
 
-    for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iftrue", "iffalse", "callee_target", "else_node", "retval"):
-        child = getattr(node, attr, None)
-        if _structured_codegen_node_8616(child) and _c_expr_uses_register_8616(child, reg_offset):
-            return True
-
-    for attr in ("args", "operands", "statements"):
-        seq = getattr(node, attr, None)
-        if not seq:
+    traversal_stack = [node]
+    seen: set[int] = set()
+    while traversal_stack:
+        current = traversal_stack.pop()
+        if not _structured_codegen_node_8616(current):
             continue
-        for item in seq:
-            if _structured_codegen_node_8616(item) and _c_expr_uses_register_8616(item, reg_offset):
-                return True
-            if isinstance(item, tuple):
-                for subitem in item:
-                    if _structured_codegen_node_8616(subitem) and _c_expr_uses_register_8616(subitem, reg_offset):
-                        return True
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
 
-    pairs = getattr(node, "condition_and_nodes", None)
-    if pairs:
-        for cond, body in pairs:
-            if _structured_codegen_node_8616(cond) and _c_expr_uses_register_8616(cond, reg_offset):
+        if isinstance(current, CVariable):
+            if _c_variable_register_offset_8616(current) == reg_offset:
                 return True
-            if _structured_codegen_node_8616(body) and _c_expr_uses_register_8616(body, reg_offset):
-                return True
+            continue
+
+        for attr in ("lhs", "rhs", "expr", "operand", "condition", "cond", "body", "iftrue", "iffalse", "callee_target", "else_node", "retval"):
+            child = getattr(current, attr, None)
+            if _structured_codegen_node_8616(child):
+                traversal_stack.append(child)
+
+        for attr in ("args", "operands", "statements"):
+            seq = getattr(current, attr, None)
+            if not seq:
+                continue
+            for item in seq:
+                if _structured_codegen_node_8616(item):
+                    traversal_stack.append(item)
+                    continue
+                if isinstance(item, tuple):
+                    for subitem in item:
+                        if _structured_codegen_node_8616(subitem):
+                            traversal_stack.append(subitem)
+
+        pairs = getattr(current, "condition_and_nodes", None)
+        if pairs:
+            for cond, body in pairs:
+                if _structured_codegen_node_8616(cond):
+                    traversal_stack.append(cond)
+                if _structured_codegen_node_8616(body):
+                    traversal_stack.append(body)
 
     return False
 
@@ -1221,11 +1258,20 @@ def _prune_overwritten_flag_assignments_8616(project, codegen) -> bool:
 
     changed = False
 
-    def visit(node):
-        nonlocal changed
+    stack = [codegen.cfunc.statements]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if not _structured_codegen_node_8616(node):
+            continue
+        node_id = id(node)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+
         if isinstance(node, CStatements):
             new_statements = []
-            statements = list(node.statements)
+            statements = list(getattr(node, "statements", ()))
             for idx, stmt in enumerate(statements):
                 remove = False
                 if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
@@ -1238,19 +1284,18 @@ def _prune_overwritten_flag_assignments_8616(project, codegen) -> bool:
                     changed = True
                     continue
                 new_statements.append(stmt)
-                visit(stmt)
+                stack.append(stmt)
             node.statements = new_statements
 
         for attr in ("body", "else_node"):
             child = getattr(node, attr, None)
             if _structured_codegen_node_8616(child):
-                visit(child)
+                stack.append(child)
 
         pairs = getattr(node, "condition_and_nodes", None)
         if pairs:
             for _cond, body in pairs:
                 if _structured_codegen_node_8616(body):
-                    visit(body)
+                    stack.append(body)
 
-    visit(codegen.cfunc.statements)
     return changed
