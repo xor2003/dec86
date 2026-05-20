@@ -313,6 +313,7 @@ from .cli_c_text_postprocess import (
     _materialize_missing_direct_call_prototypes_text,
     _materialize_missing_generic_local_declarations_text,
     _materialize_missing_segment_macro_locals_text,
+    _materialize_missing_synthetic_global_declarations_text,
     _materialize_opaque_pointer_typedefs_text,
     _normalize_anonymous_call_targets,
     _normalize_boolean_conditions,
@@ -1459,6 +1460,7 @@ def _decompile_function(
     formatted = _normalize_scalar_assigned_extern_arrays_text(formatted)
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _materialize_missing_segment_macro_locals_text(formatted)
+    formatted = _materialize_missing_synthetic_global_declarations_text(formatted)
     formatted = _materialize_missing_direct_call_prototypes_text(formatted)
     _debug_dump_calls_8616("post-final-dedup", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "final-emitted-c", formatted)
