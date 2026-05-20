@@ -66,12 +66,18 @@ def _validation_verdict_from_output(output: str) -> str:
             surface = payload.get("surface", {})
             severity = surface.get("severity")
             if isinstance(severity, str) and severity:
+                if severity == "changed":
+                    return "failed"
                 return severity
-    for verdict in ("changed", "unknown", "uncollected", "stable"):
+    for verdict in ("failed", "unknown", "uncollected", "stable", "changed"):
         if f"tail-validation:{verdict}" in lowered or f"validation={verdict}" in lowered:
+            if verdict == "changed":
+                return "failed"
             return verdict
     if "[tail-validation] whole-tail validation changed" in lowered:
-        return "changed"
+        return "failed"
+    if "[tail-validation] whole-tail validation failed" in lowered:
+        return "failed"
     if "[tail-validation] whole-tail validation clean" in lowered:
         return "stable"
     if "[tail-validation] whole-tail validation unknown" in lowered:
