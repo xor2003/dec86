@@ -3616,11 +3616,12 @@ def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
 def _stack_type_for_size(size: int):
     return _cli_stack_locals._stack_type_for_size(size)
 
-def _resolve_stack_cvar_at_offset(codegen, offset: int):
+def _resolve_stack_cvar_at_offset(codegen, offset: int, *, preferred_size: int | None = None):
     return _cli_stack_cvars._resolve_stack_cvar_at_offset(
         codegen,
         offset,
         stack_slot_identity_for_variable=_stack_slot_identity_for_variable,
+        preferred_size=preferred_size,
     )
 
 def _materialize_stack_cvar_at_offset(codegen, offset: int, size: int = 2):

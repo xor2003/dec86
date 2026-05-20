@@ -249,11 +249,12 @@ def _dedupe_codegen_variable_names_8616(codegen, *, make_unique_identifier):
         cvar_name_key = cvar_name if isinstance(cvar_name, str) else ""
         if isinstance(variable, SimStackVariable):
             offset = getattr(variable, "offset", 0)
+            size = getattr(variable, "size", 0)
             return (
                 0,
                 0 if isinstance(offset, int) and offset > 0 else 1,
                 offset if isinstance(offset, int) else 0,
-                getattr(variable, "size", 0) if isinstance(getattr(variable, "size", 0), int) else 0,
+                -size if isinstance(size, int) else 0,
                 variable_name_key,
             )
         if isinstance(variable, SimRegisterVariable):
