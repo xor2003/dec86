@@ -137,6 +137,8 @@ from inertia_decompiler import cli_local_prune as _cli_local_prune
 from inertia_decompiler import cli_mkfp_simplify as _cli_mkfp_simplify
 
 from inertia_decompiler import cli_local_rewrites as _cli_local_rewrites
+from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
+from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
 
 from inertia_decompiler import cli_cod_globals as _cli_cod_globals
 
@@ -150,9 +152,6 @@ from inertia_decompiler import cli_far_pointer_stack as _cli_far_pointer_stack
 
 from inertia_decompiler import cli_linear_aliases as _cli_linear_aliases
 
-from inertia_decompiler import cli_linear_recurrence as _cli_linear_recurrence
-
-from inertia_decompiler import cli_linear_recurrence_rules as _cli_linear_recurrence_rules
 
 from inertia_decompiler import cli_stack_coalesce as _cli_stack_coalesce
 
@@ -311,11 +310,13 @@ from .cli_c_text_postprocess import (
     _format_known_helper_calls,
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
+    _materialize_missing_segment_macro_locals_text,
     _materialize_opaque_pointer_typedefs_text,
     _normalize_anonymous_call_targets,
     _normalize_boolean_conditions,
     _normalize_function_signature_arg_names,
     _normalize_portable_flat_main_signature_text,
+    _normalize_scalar_assigned_extern_arrays_text,
     _normalize_spurious_duplicate_local_suffixes,
     _prune_unused_staging_assignments,
     _prune_trailing_generic_return_text,
@@ -480,7 +481,11 @@ def _bind_codegen_render_variable_types_8616(codegen) -> None:
 
 
 def _emit_c_stage_trace(project: angr.Project, function, label: str, c_text: str) -> None:
-    """Emit opt-in C snapshots to stderr so stdout remains final C only."""
+    """Emit opt-in C snapshot headers to stderr.
+
+    Full per-stage C bodies are disabled by default to avoid noisy
+    duplication. Set INERTIA_TRACE_C_STAGES_FULL=1 to enable them.
+    """
 
     if not bool(getattr(project, "_inertia_trace_c_stages", False)):
         return
@@ -491,7 +496,8 @@ def _emit_c_stage_trace(project: angr.Project, function, label: str, c_text: str
         f"/* -- c trace: {display_addr:#x} {getattr(function, 'name', 'sub')} :: {label} -- */",
         file=sys.stderr,
     )
-    print(c_text if c_text.endswith("\n") else c_text + "\n", file=sys.stderr)
+    if bool(int(os.environ.get("INERTIA_TRACE_C_STAGES_FULL", "0"))):
+        print(c_text if c_text.endswith("\n") else c_text + "\n", file=sys.stderr)
     sys.stderr.flush()
 
 
@@ -1162,6 +1168,7 @@ def _decompile_function(
         _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
+        lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
         lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
         lambda: _prune_dead_local_assignments(dec.codegen),
         lambda: _prune_unused_local_declarations(dec.codegen),
@@ -1185,7 +1192,6 @@ def _decompile_function(
         _run_materialize_missing_register_local_declarations_pass,
         lambda: _prune_unused_local_declarations(dec.codegen),
         lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
-        lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
         _run_callsite_stack_fact_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
@@ -1197,23 +1203,23 @@ def _decompile_function(
             lambda: _attach_dos_pseudo_callees(project, function, dec.codegen, api_style),
             lambda: _attach_interrupt_wrapper_callees(project, dec.codegen, api_style),
             lambda: _lower_interrupt_wrapper_result_reads(project, dec.codegen, api_style),
-        lambda: _attach_segment_register_names(dec.codegen, project),
-        lambda: _attach_register_names(project, dec.codegen),
-        lambda: _normalize_scalar_byte_register_types(dec.codegen),
-        lambda: transfer_typed_conditions_to_codegen_8616(project, function.addr, dec.codegen),
-        lambda: _apply_typed_conditions_to_codegen_8616(project, dec.codegen),
-        lambda: _rewrite_decoded_jcc_conditions_8616(project, dec.codegen),
-        lambda: _rewrite_flag_condition_pairs_8616(dec.codegen),
-        lambda: _rewrite_flag_bit_value_uses_8616(dec.codegen),
-        lambda: _prune_unused_flag_assignments_8616(project, dec.codegen),
-        lambda: _prune_overwritten_flag_assignments_8616(project, dec.codegen),
-        lambda: _attach_ss_stack_variables(project, dec.codegen),
-        _run_fact_backed_stack_rewrite_pass,
-        _run_callsite_stack_fact_pass,
-        _run_stack_lowering_pass,
-        lambda: _run_typed_widening_pass(project, dec.codegen),
-        lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
-        lambda: _prune_tiny_wrapper_staging_locals(dec.codegen),
+            lambda: _attach_segment_register_names(dec.codegen, project),
+            lambda: _attach_register_names(project, dec.codegen),
+            lambda: _normalize_scalar_byte_register_types(dec.codegen),
+            lambda: transfer_typed_conditions_to_codegen_8616(project, function.addr, dec.codegen),
+            lambda: _apply_typed_conditions_to_codegen_8616(project, dec.codegen),
+            lambda: _rewrite_decoded_jcc_conditions_8616(project, dec.codegen),
+            lambda: _rewrite_flag_condition_pairs_8616(dec.codegen),
+            lambda: _rewrite_flag_bit_value_uses_8616(dec.codegen),
+            lambda: _prune_unused_flag_assignments_8616(project, dec.codegen),
+            lambda: _prune_overwritten_flag_assignments_8616(project, dec.codegen),
+            lambda: _attach_ss_stack_variables(project, dec.codegen),
+            _run_fact_backed_stack_rewrite_pass,
+            _run_callsite_stack_fact_pass,
+            _run_stack_lowering_pass,
+            lambda: _run_typed_widening_pass(project, dec.codegen),
+            lambda: _coalesce_segmented_word_load_expressions(project, dec.codegen),
+            lambda: _prune_tiny_wrapper_staging_locals(dec.codegen),
             lambda: _prune_unused_unnamed_memory_declarations(dec.codegen),
             lambda: _prune_dead_local_assignments(dec.codegen),
             lambda: _prune_unused_local_declarations(dec.codegen),
@@ -1236,7 +1242,6 @@ def _decompile_function(
             _run_materialize_missing_register_local_declarations_pass,
             lambda: _prune_unused_local_declarations(dec.codegen),
             lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
-            lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
             _run_callsite_stack_fact_pass,
             _run_stack_lowering_pass,
             lambda: _run_typed_widening_pass(project, dec.codegen),
@@ -1254,9 +1259,7 @@ def _decompile_function(
         if fold_values_cod_outlier:
             rewrite_passes = ()
         else:
-            rewrite_passes = rewrite_passes[:6] + (
-                lambda: _coalesce_linear_recurrence_statements(project, dec.codegen),
-            ) + rewrite_passes[6:14] + (
+            rewrite_passes = rewrite_passes[:6] + rewrite_passes[6:14] + (
                 lambda: _attach_lst_data_names(project, dec.codegen, lst_metadata),
             ) + rewrite_passes[14:]
     if not enable_structured_simplify or small_function or fold_values_cod_outlier:
@@ -1445,6 +1448,9 @@ def _decompile_function(
         _debug_dump_calls_8616("post-redundant-wrapper-collapse", formatted, debug_call_addr)
     _debug_dump_calls_8616("final-emitted-c", formatted, debug_call_addr)
     formatted = _dedupe_duplicate_local_declarations_text(formatted)
+    formatted = _normalize_scalar_assigned_extern_arrays_text(formatted)
+    formatted = _materialize_missing_generic_local_declarations_text(formatted)
+    formatted = _materialize_missing_segment_macro_locals_text(formatted)
     _debug_dump_calls_8616("post-final-dedup", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "final-emitted-c", formatted)
     quality = assess_decompiled_c_text(formatted)

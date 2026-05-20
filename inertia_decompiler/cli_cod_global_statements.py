@@ -6,6 +6,43 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 
 
+def _same_expr(left: Any, right: Any) -> bool:
+    if left is right:
+        return True
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, structured_c.CConstant):
+        return getattr(left, "value", None) == getattr(right, "value", None)
+    if isinstance(left, structured_c.CVariable):
+        left_var = getattr(left, "variable", None)
+        right_var = getattr(right, "variable", None)
+        if left_var is right_var:
+            return True
+        return (
+            getattr(left, "name", None) == getattr(right, "name", None)
+            and getattr(left_var, "name", None) == getattr(right_var, "name", None)
+        )
+    if isinstance(left, structured_c.CBinaryOp):
+        return (
+            getattr(left, "op", None) == getattr(right, "op", None)
+            and _same_expr(getattr(left, "lhs", None), getattr(right, "lhs", None))
+            and _same_expr(getattr(left, "rhs", None), getattr(right, "rhs", None))
+        )
+    if isinstance(left, structured_c.CUnaryOp):
+        return getattr(left, "op", None) == getattr(right, "op", None) and _same_expr(
+            getattr(left, "operand", None),
+            getattr(right, "operand", None),
+        )
+    return False
+
+
+def _is_high_byte_projection(high_expr: Any, low_expr: Any) -> bool:
+    if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op != "Shr":
+        return False
+    shift = getattr(getattr(high_expr, "rhs", None), "value", None)
+    return shift == 8 and _same_expr(getattr(high_expr, "lhs", None), low_expr)
+
+
 def _coalesce_cod_word_global_statements(
     project: Any,
     codegen: Any,
@@ -52,8 +89,20 @@ def _coalesce_cod_word_global_statements(
                             changed = True
                             i += 2
                             continue
+                        if _is_high_byte_projection(next_stmt.rhs, stmt.rhs):
+                            new_statements.append(
+                                structured_c.CAssignment(
+                                    word_global,
+                                    stmt.rhs,
+                                    codegen=codegen,
+                                )
+                            )
+                            changed = True
+                            i += 2
+                            continue
                         changed = True
                         new_statements.append(stmt)
+                        new_statements.append(next_stmt)
                         i += 2
                         continue
 
