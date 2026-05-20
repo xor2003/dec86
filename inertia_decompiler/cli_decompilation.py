@@ -1239,6 +1239,7 @@ def _decompile_function(
         lambda: _prune_unused_local_declarations(dec.codegen),
         lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
         _run_callsite_stack_fact_pass,
+        _run_fact_backed_stack_rewrite_pass,
         _run_stack_lowering_pass,
         lambda: _run_typed_widening_pass(project, dec.codegen),
         lambda: _prune_dead_local_assignments(dec.codegen),
@@ -1290,6 +1291,7 @@ def _decompile_function(
             lambda: _prune_unused_local_declarations(dec.codegen),
             lambda: _dedupe_codegen_variable_names_8616(dec.codegen),
             _run_callsite_stack_fact_pass,
+            _run_fact_backed_stack_rewrite_pass,
             _run_stack_lowering_pass,
             lambda: _run_typed_widening_pass(project, dec.codegen),
             lambda: _prune_dead_local_assignments(dec.codegen),
@@ -1325,8 +1327,9 @@ def _decompile_function(
     }
     for round_idx in range(2):
         iter_changed = False
+        stack_lowering_dirty = not _stack_lowering_already_attempted
         for rewrite_idx, rewrite in enumerate(rewrite_passes):
-            if _stack_lowering_already_attempted and rewrite is _run_stack_lowering_pass:
+            if rewrite is _run_stack_lowering_pass and not stack_lowering_dirty:
                 continue
             recurrence_rebound = bool(
                 getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False)
@@ -1349,7 +1352,8 @@ def _decompile_function(
             ):
                 continue
             pass_name = rewrite_pass_names.get(id(rewrite), getattr(rewrite, "__name__", type(rewrite).__name__))
-            if rewrite():
+            rewrite_changed = rewrite()
+            if rewrite_changed:
                 iter_changed = True
                 _debug_dump_rewrite_pass_lines_8616(
                     dec.codegen,
@@ -1359,6 +1363,9 @@ def _decompile_function(
                 )
             if rewrite is _run_stack_lowering_pass:
                 _stack_lowering_already_attempted = True
+                stack_lowering_dirty = False
+            elif rewrite_changed and _stack_lowering_already_attempted:
+                stack_lowering_dirty = True
         if not iter_changed:
             break
         changed = True

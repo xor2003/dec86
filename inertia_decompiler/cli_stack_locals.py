@@ -17,13 +17,28 @@ def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
     variable = getattr(cvar, "variable", None)
     if variable is None:
         return False
+    target_base = getattr(variable, "base", None)
+    target_offset = getattr(variable, "offset", None)
 
-    if getattr(variable, "size", 0) < size:
-        variable.size = size
-        changed = True
-    if getattr(cvar, "variable_type", None) != type_:
-        cvar.variable_type = type_
-        changed = True
+    def same_stack_slot(candidate) -> bool:
+        return (
+            isinstance(candidate, SimStackVariable)
+            and getattr(candidate, "base", None) == target_base
+            and getattr(candidate, "offset", None) == target_offset
+        )
+
+    def promote_view(candidate_var, candidate_cvar) -> None:
+        nonlocal changed
+        if not same_stack_slot(candidate_var):
+            return
+        if getattr(candidate_var, "size", 0) < size:
+            candidate_var.size = size
+            changed = True
+        if getattr(candidate_cvar, "variable_type", None) != type_:
+            candidate_cvar.variable_type = type_
+            changed = True
+
+    promote_view(variable, cvar)
 
     unified = getattr(cvar, "unified_variable", None)
     if unified is not None and getattr(unified, "size", 0) < size:
@@ -35,15 +50,13 @@ def _promote_direct_stack_cvariable(codegen, cvar, size: int, type_) -> bool:
 
     variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
     if isinstance(variables_in_use, dict):
-        tracked = variables_in_use.get(variable)
-        if tracked is not None and getattr(tracked, "variable_type", None) != type_:
-            tracked.variable_type = type_
-            changed = True
+        for tracked_var, tracked in list(variables_in_use.items()):
+            promote_view(tracked_var, tracked)
 
     unified_locals = getattr(codegen.cfunc, "unified_local_vars", None)
     if isinstance(unified_locals, dict):
         for tracked_var, cvar_and_vartypes in list(unified_locals.items()):
-            if tracked_var is not variable:
+            if not same_stack_slot(tracked_var):
                 continue
             new_entries = set()
             for tracked_cvar, _vartype in cvar_and_vartypes:
