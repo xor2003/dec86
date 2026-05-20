@@ -1059,6 +1059,53 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
     return normalized
 
 
+def _materialize_missing_synthetic_global_declarations_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    declared = {
+        match.group("name")
+        for line in lines
+        for match in (
+            re.match(r"\s*(?:extern\s+)?(?:unsigned\s+)?(?:char|short|int|long|uint\d+_t|int\d+_t)\s+(?P<name>g_b[0-9a-fA-F]+)\s*(?:;|=|,)", line),
+        )
+        if match is not None
+    }
+    used: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(("/*", "*", "//", "#")):
+            continue
+        for match in re.finditer(r"(?<![A-Za-z_])(?P<name>g_b[0-9a-fA-F]+)(?![A-Za-z_])", line):
+            name = match.group("name")
+            if name not in declared and name not in used:
+                used.append(name)
+    if not used:
+        return c_text
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if re.match(r"\s*[A-Za-z_][\w\s\*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*\{", line):
+            insert_at = index
+            break
+        if re.match(r"\s*[A-Za-z_][\w\s\*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*$", line):
+            lookahead = index + 1
+            while lookahead < len(lines) and not lines[lookahead].strip():
+                lookahead += 1
+            if lookahead < len(lines) and lines[lookahead].strip().startswith("{"):
+                insert_at = index
+                break
+    else:
+        return c_text
+    declarations = [f"extern char {name};" for name in used]
+    if insert_at > 0 and lines[insert_at - 1].strip():
+        declarations.append("")
+    lines[insert_at:insert_at] = declarations
+    normalized = "\n".join(lines)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
 def _source_function_prototype_decls_from_cod_source_lines(source_lines: Sequence[str] | None) -> dict[str, str]:
     if not source_lines:
         return {}
