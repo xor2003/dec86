@@ -768,7 +768,7 @@ def _word_type_8616(project):
 def _summary_return_type_8616(project, summary):
     if getattr(summary, "return_register", None) == "ax" and getattr(summary, "return_used", None) is True:
         return _summary_type_8616(project, 2)
-    ty = SimTypeBottom()
+    ty = SimTypeBottom(label="void")
     arch = getattr(project, "arch", None)
     return ty.with_arch(arch) if arch is not None and hasattr(ty, "with_arch") else ty
 

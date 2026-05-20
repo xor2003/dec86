@@ -843,7 +843,7 @@ def _classify_return_shape_8616(project, codegen) -> bool:
 
     new_returnty = None
     if shape == "void":
-        new_returnty = SimTypeBottom()
+        new_returnty = SimTypeBottom(label="void")
     elif shape == "scalar_ax" and ((return_shapes and return_shapes <= {"scalar"}) or source_shape == "scalar"):
         if not isinstance(prototype.returnty, SimTypeShort):
             new_returnty = SimTypeShort(False)
