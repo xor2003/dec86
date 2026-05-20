@@ -258,6 +258,55 @@ from inertia_decompiler.non_optimized_fallback import (
 print = _timestamped_print
 __all__ = ['_normalize_anonymous_call_targets', '_prune_void_function_return_values_text', '_contains_void_function_definition_text', '_normalize_function_signature_arg_names', '_materialize_missing_generic_local_declarations_text', '_materialize_annotated_cod_declarations_text', '_materialize_opaque_pointer_typedefs_text', '_source_args_from_cod_source_lines', '_repair_missing_cod_function_header_text', '_render_cod_source_function_text', '_restore_collapsed_cod_source_function_text', '_dedupe_duplicate_local_declarations_text', '_normalize_spurious_duplicate_local_suffixes', '_collapse_duplicate_type_keywords_text', '_dedupe_adjacent_prototype_lines', '_sanitize_mangled_autonames_text', '_prune_trailing_generic_return_text', '_collapse_annotated_stack_aliases_text', '_split_top_level_binary', '_simplify_negated_condition', '_simplify_condition_line', '_simplify_x86_16_conditions', '_split_simple_assignment_conditions', '_simplify_x86_16_wrapped_stack_offsets', '_simplify_x86_16_stack_byte_pointers', '_format_bp_disp', '_annotate_cod_proc_output', '_prune_unused_staging_assignments', '_rewrite_known_helper_signature_text', '_prune_unused_local_declarations_text', '_format_known_helper_calls', '_repair_missing_fallthrough_returns', '_normalize_boolean_conditions', '_normalize_mk_fp_segment_names', '_simplify_x86_16_stack_references']
 
+
+def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    prototype_re = re.compile(
+        r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
+    )
+
+    def _score(ret: str, args: str, decl: str) -> tuple[int, int]:
+        ret = ret.strip()
+        args = args.strip()
+        is_generic = ret == "int" and args == ""
+        has_typed_args = bool(args and args != "void")
+        return ((2 if has_typed_args else 0) + (0 if is_generic else 1), len(decl))
+
+    best_by_name: dict[str, str] = {}
+    best_score_by_name: dict[str, tuple[int, int]] = {}
+    for line in lines:
+        stripped = line.strip()
+        match = prototype_re.match(stripped)
+        if match is None:
+            continue
+        name = match.group("name")
+        score = _score(match.group("ret"), match.group("args"), stripped)
+        prev = best_score_by_name.get(name)
+        if prev is None or score > prev:
+            best_score_by_name[name] = score
+            best_by_name[name] = stripped
+
+    if not best_by_name:
+        return c_text
+
+    out_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        match = prototype_re.match(stripped)
+        if match is None:
+            out_lines.append(line)
+            continue
+        name = match.group("name")
+        if best_by_name.get(name) != stripped:
+            continue
+        out_lines.append(line)
+    normalized = "\n".join(out_lines)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
 def _helper_name(project, addr: int) -> str | None:
     proc = project.hooked_by(addr)
     if proc is None:
@@ -1023,6 +1072,15 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
     declared.update(defined)
     keywords = {"if", "for", "while", "switch", "return", "sizeof"}
     runtime_helpers = {"SEG_U8", "SEG_U16", "SEG_U32", "SEG_PTR", "SEG_LINEAR", "MK_FP"}
+    def _has_any_decl_or_def(name: str) -> bool:
+        escaped = re.escape(name)
+        decl_or_def_re = re.compile(
+            rf"(?m)^\s*(?:extern\s+)?[A-Za-z_][\w\s\*]*\b{escaped}\s*\([^;{{}}]*\)\s*(?:;|\{{\s*$)"
+        )
+        if decl_or_def_re.search(c_text):
+            return True
+        return name in declared
+
     calls: list[str] = []
     for line in lines:
         stripped = line.strip()
@@ -1030,7 +1088,12 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
             continue
         for match in re.finditer(r"(?<![A-Za-z_])(?P<name>[A-Za-z_]\w*)\s*\(", line):
             name = match.group("name")
-            if name in keywords or name in runtime_helpers or name in declared or name in calls:
+            if (
+                name in keywords
+                or name in runtime_helpers
+                or name in calls
+                or _has_any_decl_or_def(name)
+            ):
                 continue
             calls.append(name)
     if not calls:

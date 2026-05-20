@@ -326,6 +326,7 @@ from .cli_c_text_postprocess import (
     _prune_non_lvalue_arithmetic_assignments,
     _prune_unused_local_declarations_text,
     _prune_void_function_return_values_text,
+    _prune_weaker_conflicting_prototypes_text,
     _normalize_shift_add_precedence_in_assignments,
     _rewrite_known_helper_signature_text,
     _sanitize_mangled_autonames_text,
@@ -569,12 +570,40 @@ def _prepend_recovered_callsite_prototypes_8616(c_text: str, codegen) -> str:
         for match in (decl_name_re.match(line) or defn_name_re.match(line),)
         if match is not None
     }
-    filtered: list[str] = []
+    best_decl_by_name: dict[str, str] = {}
+    anonymous_decls: list[str] = []
+
+    def _decl_score(decl_text: str, name: str) -> tuple[int, int]:
+        m = re.match(r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s+" + re.escape(name) + r"\s*\((?P<args>[^)]*)\)\s*;\s*$", decl_text)
+        if m is None:
+            return (0, len(decl_text))
+        ret = m.group("ret").strip()
+        args = m.group("args").strip()
+        is_generic_int = ret == "int" and args == ""
+        has_typed_args = bool(args and args != "void")
+        return (
+            (2 if has_typed_args else 0) + (0 if is_generic_int else 1),
+            len(decl_text),
+        )
+
     for decl in decls:
         if not isinstance(decl, str):
             continue
         stripped = decl.strip()
-        if not stripped or stripped in existing:
+        if not stripped:
+            continue
+        match = decl_name_re.match(stripped)
+        if match is None:
+            anonymous_decls.append(stripped)
+            continue
+        name = match.group("name")
+        current = best_decl_by_name.get(name)
+        if current is None or _decl_score(stripped, name) > _decl_score(current, name):
+            best_decl_by_name[name] = stripped
+
+    filtered: list[str] = []
+    for stripped in anonymous_decls + [best_decl_by_name[name] for name in sorted(best_decl_by_name)]:
+        if stripped in existing:
             continue
         match = decl_name_re.match(stripped)
         if match is not None and match.group("name") in existing_names:
@@ -585,7 +614,28 @@ def _prepend_recovered_callsite_prototypes_8616(c_text: str, codegen) -> str:
         filtered.append(stripped)
     if not filtered:
         return c_text
-    return "\n".join(filtered) + "\n\n" + c_text
+    preferred_by_name: dict[str, str] = {}
+    for decl in filtered:
+        match = decl_name_re.match(decl)
+        if match is not None:
+            preferred_by_name[match.group("name")] = decl
+
+    # Drop weaker/conflicting existing prototypes for names we are prepending
+    # with recovered callsite signatures.
+    pruned_lines: list[str] = []
+    for line in str(c_text or "").splitlines():
+        stripped = line.strip()
+        match = decl_name_re.match(stripped)
+        if match is not None:
+            name = match.group("name")
+            preferred = preferred_by_name.get(name)
+            if preferred is not None and stripped != preferred:
+                continue
+        pruned_lines.append(line)
+    pruned_text = "\n".join(pruned_lines)
+    if c_text.endswith("\n"):
+        pruned_text += "\n"
+    return "\n".join(filtered) + "\n\n" + pruned_text
 
 
 def _regenerate_codegen_text_safely(codegen, *, context: str) -> tuple[str, bool]:
@@ -1522,6 +1572,7 @@ def _decompile_function(
     formatted = _materialize_missing_segment_macro_locals_text(formatted)
     formatted = _materialize_missing_synthetic_global_declarations_text(formatted)
     formatted = _materialize_missing_direct_call_prototypes_text(formatted)
+    formatted = _prune_weaker_conflicting_prototypes_text(formatted)
     _debug_dump_calls_8616("post-final-dedup", formatted, debug_call_addr)
     _emit_c_stage_trace(project, function, "final-emitted-c", formatted)
     quality = assess_decompiled_c_text(formatted)
