@@ -418,6 +418,16 @@ def _stack_alias_map_8616(codegen) -> dict[int, tuple[object, int]]:
 
 def _materialized_local_map_8616(codegen) -> dict[int, tuple[int | None, str | None]]:
     materialized: dict[int, tuple[int | None, str | None]] = {}
+
+    def _record(offset: int, size: int | None, name: str | None) -> None:
+        current = materialized.get(offset)
+        if current is None:
+            materialized[offset] = (size, name)
+            return
+        current_size, current_name = current
+        if isinstance(size, int) and (not isinstance(current_size, int) or size > current_size):
+            materialized[offset] = (size, name if name is not None else current_name)
+
     cfunc = getattr(codegen, "cfunc", None)
     variables_in_use = getattr(cfunc, "variables_in_use", None)
     if isinstance(variables_in_use, dict):
@@ -429,15 +439,15 @@ def _materialized_local_map_8616(codegen) -> dict[int, tuple[int | None, str | N
                 continue
             size = getattr(variable, "size", None)
             name = getattr(variable, "name", None) or getattr(cvar, "name", None)
-            materialized[offset] = (size if isinstance(size, int) else None, name if isinstance(name, str) else None)
+            _record(offset, size if isinstance(size, int) else None, name if isinstance(name, str) else None)
     bindings = getattr(codegen, "_inertia_stack_variable_bindings", None)
     if isinstance(bindings, tuple | list):
         for binding in bindings:
             offset = getattr(binding, "bp_offset", None)
             size = getattr(binding, "size", None)
             name = getattr(binding, "var_name", None)
-            if isinstance(offset, int) and offset not in materialized:
-                materialized[offset] = (size if isinstance(size, int) else None, name if isinstance(name, str) else None)
+            if isinstance(offset, int):
+                _record(offset, size if isinstance(size, int) else None, name if isinstance(name, str) else None)
     return materialized
 
 
@@ -461,10 +471,18 @@ def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen, *, sou
         variable = getattr(node, "variable", None)
         size = getattr(variable, "size", None)
         if isinstance(variable, SimStackVariable) and getattr(variable, "base", None) == "bp":
+            materialized_local_map = _materialized_local_map_8616(codegen) if codegen is not None else {}
+            materialized_size = materialized_local_map.get(offset, (None, None))[0]
+            if isinstance(materialized_size, int) and (
+                not isinstance(size, int) or materialized_size > size
+            ):
+                size = materialized_size
             return _stack_slot_fingerprint_from_slot_8616(
                 offset,
                 size if isinstance(size, int) and size > 0 else None,
             )
+    if source == "word_pair":
+        return _stack_slot_fingerprint_from_slot_8616(offset, 2)
     materialized_local_map = _materialized_local_map_8616(codegen) if codegen is not None else {}
     stack_alias_map = _stack_alias_map_8616(codegen) if codegen is not None else {}
     normalized = canonicalize_stack_alias_fingerprint_8616(
