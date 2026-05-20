@@ -1117,6 +1117,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
 
 def _regenerate_text_safely(codegen, *, context: str) -> bool:
     try:
+        _normalize_stack_variable_identifiers_8616(codegen)
         _bind_codegen_variable_types_to_arch_8616(codegen)
         codegen.regenerate_text()
     except Exception as ex:
@@ -1129,6 +1130,7 @@ def _regenerate_text_safely(codegen, *, context: str) -> bool:
             context,
             getattr(codegen, "_inertia_last_postprocess_pass", None) or "no prior rewrite",
             ex,
+            exc_info=True,
         )
         return False
     codegen._inertia_regeneration_failed = False
@@ -1136,6 +1138,29 @@ def _regenerate_text_safely(codegen, *, context: str) -> bool:
     codegen._inertia_regeneration_context = context
     codegen._inertia_regeneration_last_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
     return True
+
+
+def _normalize_stack_variable_identifiers_8616(codegen) -> None:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return
+    local_maps = []
+    unified = getattr(cfunc, "unified_local_vars", None)
+    if isinstance(unified, dict):
+        local_maps.append(unified)
+    vars_in_use = getattr(cfunc, "variables_in_use", None)
+    if isinstance(vars_in_use, dict):
+        local_maps.append(vars_in_use)
+    for mapping in local_maps:
+        for var in tuple(mapping.keys()):
+            if var.__class__.__name__ != "SimStackVariable":
+                continue
+            ident = getattr(var, "ident", None)
+            if ident is None:
+                try:
+                    var.ident = ""
+                except Exception:
+                    continue
 
 
 def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:

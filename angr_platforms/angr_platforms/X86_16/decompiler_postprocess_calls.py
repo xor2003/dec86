@@ -3038,6 +3038,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 and expected_arg_count > 0
                 and _known_default_args_for_missing_8616(call_name or "", codegen) is not None
             )
+            # Do not destructively clear existing call args when inferred arg-count
+            # drops to zero. Zero can be an unproven placeholder; preserving current
+            # args keeps call semantics stable until stronger evidence rematerializes.
             if (
                 call is not None
                 and not is_stack_probe_helper
@@ -3045,9 +3048,6 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 and tuple(getattr(call, "args", ()) or ())
                 and not probe_seen_without_ss_address
             ):
-                call.args = []
-                _refresh_summary_arg_shape(call, summary)
-                changed = True
                 rematerialize_call_args = False
             if (
                 call is not None

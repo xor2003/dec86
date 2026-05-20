@@ -63,10 +63,16 @@ def _constant_value_8616(node) -> int | None:
 def _stack_base_bp_bias_8616(node) -> int | None:
     node = _strip_casts_8616(node)
     if isinstance(node, structured_c.CFakeVariable) and getattr(node, "name", None) == "stack_base":
-        # angr's initial stack pointer names the entry SP. In a BP-framed
-        # 16-bit function, `push bp; mov bp, sp` makes BP two bytes below it.
-        return 2
+        # Preserve a neutral anchor for direct stack_base arithmetic. The
+        # conversion to BP-relative byte offsets happens in expression-specific
+        # handling below.
+        return 0
     return None
+
+
+def _is_stack_base_placeholder_8616(node) -> bool:
+    node = _strip_casts_8616(node)
+    return isinstance(node, structured_c.CFakeVariable) and getattr(node, "name", None) == "stack_base"
 
 
 def _segment_base_name_8616(node, project) -> str | None:
@@ -708,6 +714,24 @@ def _stack_offset_from_expr_8616(node, project, codegen, seen: set[int] | None =
         return dirty_carrier_offset
 
     if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
+        # In 16-bit AIL, direct stack_base arithmetic frequently carries
+        # word-oriented displacements. Normalize them to byte offsets before
+        # stack-slot matching so SS:BP materialization can occur early.
+        if _is_stack_base_placeholder_8616(node.lhs):
+            rhs_const = _constant_value_8616(node.rhs)
+            if rhs_const is not None:
+                base = _stack_base_bp_bias_8616(node.lhs) or 0
+                scaled = int(rhs_const) * 2
+                resolved_direct = base + (scaled if node.op == "Add" else -scaled)
+                offset_cache[node_id] = resolved_direct
+                return resolved_direct
+        if node.op == "Add" and _is_stack_base_placeholder_8616(node.rhs):
+            lhs_const = _constant_value_8616(node.lhs)
+            if lhs_const is not None:
+                base = _stack_base_bp_bias_8616(node.rhs) or 0
+                resolved_direct = base + int(lhs_const) * 2
+                offset_cache[node_id] = resolved_direct
+                return resolved_direct
         lhs = _stack_offset_from_expr_8616(node.lhs, project, codegen, seen)
         rhs = _stack_offset_from_expr_8616(node.rhs, project, codegen, seen)
         if lhs is None and _constant_value_8616(node.rhs) is not None:
