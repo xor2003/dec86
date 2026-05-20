@@ -45,6 +45,9 @@ def _rewrite_ss_stack_byte_offsets(
     changed = False
     stack_pointer_aliases: dict[object, object] = {}
     synthetic_sp_anchor = None
+    _UNRESOLVED_SINGLE_ASSIGN = object()
+    dirty_expr_single_assignment_cache: dict[str, object | None] = {}
+    cvar_single_assignment_cache: dict[int, object | None] = {}
 
     def _synthetic_sp_anchor_cvar():
         nonlocal synthetic_sp_anchor
@@ -110,8 +113,14 @@ def _rewrite_ss_stack_byte_offsets(
         return tuple(dict.fromkeys(keys))
 
     def _single_assignment_expr_for_virtual_name(name: str):
+        if not name:
+            return None
+        cached = dirty_expr_single_assignment_cache.get(name)
+        if cached is not None:
+            return None if cached is _UNRESOLVED_SINGLE_ASSIGN else cached
         root = getattr(getattr(codegen, "cfunc", None), "statements", None)
         if root is None:
+            dirty_expr_single_assignment_cache[name] = _UNRESOLVED_SINGLE_ASSIGN
             return None
 
         target_varid = None
@@ -119,6 +128,9 @@ def _rewrite_ss_stack_byte_offsets(
             suffix = name.removeprefix("vvar_")
             if suffix.isdigit():
                 target_varid = int(suffix)
+        if not isinstance(target_varid, int):
+            dirty_expr_single_assignment_cache[name] = _UNRESOLVED_SINGLE_ASSIGN
+            return None
 
         matches = []
         for stmt in iter_c_nodes_deep(root):
@@ -133,12 +145,20 @@ def _rewrite_ss_stack_byte_offsets(
                 continue
             matches.append(getattr(stmt, "rhs", None))
             if len(matches) > 1:
+                dirty_expr_single_assignment_cache[name] = _UNRESOLVED_SINGLE_ASSIGN
                 return None
-        return matches[0] if len(matches) == 1 else None
+        resolved = matches[0] if len(matches) == 1 else None
+        dirty_expr_single_assignment_cache[name] = resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGN
+        return resolved
 
     def _single_assignment_expr_for_cvar(node_cvar):
+        cache_key = id(node_cvar)
+        if cache_key in cvar_single_assignment_cache:
+            return cvar_single_assignment_cache[cache_key]
+
         root = getattr(getattr(codegen, "cfunc", None), "statements", None)
         if root is None or not isinstance(node_cvar, structured_c.CVariable):
+            cvar_single_assignment_cache[cache_key] = None
             return None
 
         node_var = getattr(node_cvar, "variable", None)
@@ -178,8 +198,11 @@ def _rewrite_ss_stack_byte_offsets(
                 continue
             matches.append(getattr(stmt, "rhs", None))
             if len(matches) > 1:
+                cvar_single_assignment_cache[cache_key] = None
                 return None
-        return matches[0] if len(matches) == 1 else None
+        resolved = matches[0] if len(matches) == 1 else None
+        cvar_single_assignment_cache[cache_key] = resolved
+        return resolved
 
     def _top_level_statements():
         root = getattr(getattr(codegen, "cfunc", None), "statements", None)
@@ -223,7 +246,11 @@ def _rewrite_ss_stack_byte_offsets(
                 nearest_rhs = getattr(stmt, "rhs", None)
         return nearest_rhs
 
-    def _resolve_dirty_virtual_expr(node):
+    def _resolve_dirty_virtual_expr(
+        node,
+        *,
+        seen_varids: set[int] | None = None,
+    ):
         dirty = getattr(node, "dirty", None)
         if dirty is None:
             return None
@@ -234,6 +261,11 @@ def _rewrite_ss_stack_byte_offsets(
             if _is_sp_virtual_register(SimpleNamespace(reg=reg, size=(bits // 8) if isinstance(bits, int) else None)):
                 return _synthetic_sp_anchor_cvar()
             return None
+        if seen_varids is None:
+            seen_varids = set()
+        if varid in seen_varids:
+            return None
+        seen_varids.add(varid)
         resolved = _single_assignment_expr_for_virtual_name(f"vvar_{varid}")
         if resolved is not None:
             return resolved
@@ -249,16 +281,34 @@ def _rewrite_ss_stack_byte_offsets(
             return ("vvar", varid)
         return None
 
-    def _resolve_stack_pointer_alias(node):
+    def _resolve_stack_pointer_alias(
+        node,
+        *,
+        seen_expr_ids: set[int] | None = None,
+        seen_varids: set[int] | None = None,
+    ):
         node = unwrap_c_casts(node)
+        if node is None:
+            return None
+        if seen_expr_ids is None:
+            seen_expr_ids = set()
+        node_id = id(node)
+        if node_id in seen_expr_ids:
+            return None
+        seen_expr_ids.add(node_id)
+
         dirty_key = _dirty_alias_key(node)
         if dirty_key is not None:
             alias = stack_pointer_aliases.get(dirty_key)
             if alias is not None:
                 return alias.base, alias.offset
-        resolved_dirty = _resolve_dirty_virtual_expr(node)
+        resolved_dirty = _resolve_dirty_virtual_expr(node, seen_varids=seen_varids)
         if resolved_dirty is not None:
-            return _resolve_stack_pointer_alias(resolved_dirty)
+            return _resolve_stack_pointer_alias(
+                resolved_dirty,
+                seen_expr_ids=seen_expr_ids,
+                seen_varids=seen_varids,
+            )
         if isinstance(node, structured_c.CVariable):
             variable = getattr(node, "variable", None)
             if isinstance(variable, SimStackVariable):
@@ -273,10 +323,18 @@ def _rewrite_ss_stack_byte_offsets(
                     return alias.base, alias.offset
             single_assignment_rhs = _single_assignment_expr_for_cvar(node)
             if single_assignment_rhs is not None:
-                return _resolve_stack_pointer_alias(single_assignment_rhs)
+                return _resolve_stack_pointer_alias(
+                    single_assignment_rhs,
+                    seen_expr_ids=seen_expr_ids,
+                    seen_varids=seen_varids,
+                )
             nearest_assignment_rhs = _nearest_preceding_assignment_expr_for_cvar(node)
             if nearest_assignment_rhs is not None:
-                return _resolve_stack_pointer_alias(nearest_assignment_rhs)
+                return _resolve_stack_pointer_alias(
+                    nearest_assignment_rhs,
+                    seen_expr_ids=seen_expr_ids,
+                    seen_varids=seen_varids,
+                )
             return None
         if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
             operand = unwrap_c_casts(node.operand)
@@ -292,8 +350,16 @@ def _rewrite_ss_stack_byte_offsets(
                         return alias.base, alias.offset
             return None
         if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
-            lhs = _resolve_stack_pointer_alias(node.lhs)
-            rhs = _resolve_stack_pointer_alias(node.rhs)
+            lhs = _resolve_stack_pointer_alias(
+                node.lhs,
+                seen_expr_ids=seen_expr_ids,
+                seen_varids=seen_varids,
+            )
+            rhs = _resolve_stack_pointer_alias(
+                node.rhs,
+                seen_expr_ids=seen_expr_ids,
+                seen_varids=seen_varids,
+            )
             lhs_const = c_constant_value(unwrap_c_casts(node.lhs))
             rhs_const = c_constant_value(unwrap_c_casts(node.rhs))
             if lhs is not None and rhs_const is not None:
@@ -397,6 +463,46 @@ def _rewrite_ss_stack_byte_offsets(
                 return True
         return False
 
+    def _stack_cvar_identity(cvar) -> tuple[str, int, int | None, object] | None:
+        variable = getattr(cvar, "variable", None)
+        if not isinstance(variable, SimStackVariable):
+            return None
+        base = getattr(variable, "base", None)
+        offset = getattr(variable, "offset", None)
+        size = getattr(variable, "size", None)
+        region = getattr(variable, "region", None)
+        if not isinstance(base, str) or not isinstance(offset, int):
+            return None
+        return base, offset, size if isinstance(size, int) else None, region
+
+    def _stack_deref_identity(node) -> tuple[tuple[str, int, int | None, object], int, int] | None:
+        if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
+            return None
+        bits = _effective_deref_bits(node)
+        if bits not in {8, 16}:
+            bits = 16
+        resolved = _resolve_stack_pointer_alias(getattr(node, "operand", None))
+        if resolved is None:
+            return None
+        base_cvar, extra_offset = resolved
+        base_identity = _stack_cvar_identity(base_cvar)
+        if base_identity is None:
+            return None
+        return base_identity, int(extra_offset), int(bits)
+
+    def _return_if_changed(original, replacement):
+        if replacement is original:
+            return original
+        original_cvar = _stack_cvar_identity(original)
+        replacement_cvar = _stack_cvar_identity(replacement)
+        if original_cvar is not None and original_cvar == replacement_cvar:
+            return original
+        original_deref = _stack_deref_identity(original)
+        replacement_deref = _stack_deref_identity(replacement)
+        if original_deref is not None and original_deref == replacement_deref:
+            return original
+        return replacement
+
     def transform(node):
         if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
             return node
@@ -426,16 +532,16 @@ def _rewrite_ss_stack_byte_offsets(
                                 access_size,
                                 stack_type_for_size(access_size),
                             )
-                        return resolved_cvar
+                        return _return_if_changed(node, resolved_cvar)
                     if (
                         isinstance(resolved_variable, SimStackVariable)
                         and resolved_offset == target_offset
                         and resolved_size == access_size
                     ):
-                        return resolved_cvar
+                        return _return_if_changed(node, resolved_cvar)
                 if access_size >= 4:
-                    return materialize_stack_cvar_at_offset(codegen, target_offset, access_size)
-            return make_stack_deref(base_cvar, extra_offset, bits)
+                    return _return_if_changed(node, materialize_stack_cvar_at_offset(codegen, target_offset, access_size))
+            return _return_if_changed(node, make_stack_deref(base_cvar, extra_offset, bits))
         classified = classify_segmented_dereference(node, project)
         if classified is None or classified.kind != "stack" or classified.cvar is None:
             if classified is None or classified.seg_name != "ss":
@@ -470,16 +576,16 @@ def _rewrite_ss_stack_byte_offsets(
                                     access_size,
                                     stack_type_for_size(access_size),
                                 )
-                            return resolved_cvar
+                            return _return_if_changed(node, resolved_cvar)
                         if (
                             isinstance(resolved_variable, SimStackVariable)
                             and resolved_offset == target_offset
                             and resolved_size == access_size
                         ):
-                            return resolved_cvar
+                            return _return_if_changed(node, resolved_cvar)
                     if access_size >= 4:
-                        return materialize_stack_cvar_at_offset(codegen, target_offset, access_size)
-                return make_stack_deref(base_cvar, extra_offset, bits)
+                        return _return_if_changed(node, materialize_stack_cvar_at_offset(codegen, target_offset, access_size))
+                return _return_if_changed(node, make_stack_deref(base_cvar, extra_offset, bits))
             if classified.extra_offset <= 0:
                 return node
             if _contains_large_unsigned_constant(addr_expr):
@@ -487,7 +593,7 @@ def _rewrite_ss_stack_byte_offsets(
             bits = _effective_deref_bits(node)
             if bits not in {8, 16}:
                 return node
-            return make_addr_deref(addr_expr, bits)
+            return _return_if_changed(node, make_addr_deref(addr_expr, bits))
         else:
             cvar = classified.cvar
             extra_offset = classified.extra_offset
@@ -510,16 +616,16 @@ def _rewrite_ss_stack_byte_offsets(
                     ):
                         if resolved_size is not None and resolved_size < access_size:
                             promote_direct_stack_cvariable(codegen, resolved_cvar, access_size, stack_type_for_size(access_size))
-                        return resolved_cvar
+                        return _return_if_changed(node, resolved_cvar)
                     if (
                         isinstance(resolved_variable, SimStackVariable)
                         and isinstance(access_size, int)
                         and resolved_offset == target_offset
                         and resolved_size == access_size
                     ):
-                        return resolved_cvar
+                        return _return_if_changed(node, resolved_cvar)
                 if isinstance(access_size, int) and access_size >= 4:
-                    return materialize_stack_cvar_at_offset(codegen, target_offset, access_size)
+                    return _return_if_changed(node, materialize_stack_cvar_at_offset(codegen, target_offset, access_size))
             elif getattr(classified, "seg_name", None) == "ss":
                 addr_expr = strip_segment_scale_from_addr_expr(getattr(classified, "addr_expr", None), project)
                 if addr_expr is not None:
@@ -545,23 +651,23 @@ def _rewrite_ss_stack_byte_offsets(
                                 ):
                                     if resolved_size is not None and resolved_size < access_size:
                                         promote_direct_stack_cvariable(codegen, resolved_cvar, access_size, stack_type_for_size(access_size))
-                                    return resolved_cvar
+                                    return _return_if_changed(node, resolved_cvar)
                                 if (
                                     isinstance(resolved_variable, SimStackVariable)
                                     and resolved_offset == target_offset
                                     and resolved_size == access_size
                                 ):
-                                    return resolved_cvar
+                                    return _return_if_changed(node, resolved_cvar)
                             if access_size >= 4:
-                                return materialize_stack_cvar_at_offset(codegen, target_offset, access_size)
-                        return make_stack_deref(base_cvar, extra_offset, bits)
+                                return _return_if_changed(node, materialize_stack_cvar_at_offset(codegen, target_offset, access_size))
+                        return _return_if_changed(node, make_stack_deref(base_cvar, extra_offset, bits))
         bits = _effective_deref_bits(node)
         if bits not in {8, 16}:
             if getattr(classified, "seg_name", None) == "ss":
                 bits = 16
             else:
                 return node
-        return make_stack_deref(cvar, extra_offset, bits)
+        return _return_if_changed(node, make_stack_deref(cvar, extra_offset, bits))
 
     root = codegen.cfunc.statements
     new_root = transform(root)

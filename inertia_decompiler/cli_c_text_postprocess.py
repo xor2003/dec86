@@ -256,7 +256,7 @@ from inertia_decompiler.non_optimized_fallback import (
 )
 
 print = _timestamped_print
-__all__ = ['_normalize_anonymous_call_targets', '_prune_void_function_return_values_text', '_contains_void_function_definition_text', '_normalize_function_signature_arg_names', '_materialize_missing_generic_local_declarations_text', '_materialize_annotated_cod_declarations_text', '_source_args_from_cod_source_lines', '_repair_missing_cod_function_header_text', '_render_cod_source_function_text', '_restore_collapsed_cod_source_function_text', '_dedupe_duplicate_local_declarations_text', '_normalize_spurious_duplicate_local_suffixes', '_collapse_duplicate_type_keywords_text', '_dedupe_adjacent_prototype_lines', '_sanitize_mangled_autonames_text', '_prune_trailing_generic_return_text', '_collapse_annotated_stack_aliases_text', '_split_top_level_binary', '_simplify_negated_condition', '_simplify_condition_line', '_simplify_x86_16_conditions', '_split_simple_assignment_conditions', '_simplify_x86_16_wrapped_stack_offsets', '_simplify_x86_16_stack_byte_pointers', '_fix_carr_inbox_guard_blind_spot', '_fix_carr_inboxlng_guard_blind_spot', '_fix_nhorz_changeweather_blind_spot', '_fix_cockpit_look_blind_spot', '_fix_billasm_rotate_pt_blind_spot', '_fix_monoprin_mset_pos_blind_spot', '_fix_planes3_ready5_blind_spot', '_format_bp_disp', '_annotate_cod_proc_output', '_prune_unused_staging_assignments', '_rewrite_known_helper_signature_text', '_prune_unused_local_declarations_text', '_format_known_helper_calls', '_repair_missing_fallthrough_returns', '_normalize_boolean_conditions', '_normalize_mk_fp_segment_names', '_simplify_x86_16_stack_references']
+__all__ = ['_normalize_anonymous_call_targets', '_prune_void_function_return_values_text', '_contains_void_function_definition_text', '_normalize_function_signature_arg_names', '_materialize_missing_generic_local_declarations_text', '_materialize_annotated_cod_declarations_text', '_materialize_opaque_pointer_typedefs_text', '_source_args_from_cod_source_lines', '_repair_missing_cod_function_header_text', '_render_cod_source_function_text', '_restore_collapsed_cod_source_function_text', '_dedupe_duplicate_local_declarations_text', '_normalize_spurious_duplicate_local_suffixes', '_collapse_duplicate_type_keywords_text', '_dedupe_adjacent_prototype_lines', '_sanitize_mangled_autonames_text', '_prune_trailing_generic_return_text', '_collapse_annotated_stack_aliases_text', '_split_top_level_binary', '_simplify_negated_condition', '_simplify_condition_line', '_simplify_x86_16_conditions', '_split_simple_assignment_conditions', '_simplify_x86_16_wrapped_stack_offsets', '_simplify_x86_16_stack_byte_pointers', '_format_bp_disp', '_annotate_cod_proc_output', '_prune_unused_staging_assignments', '_rewrite_known_helper_signature_text', '_prune_unused_local_declarations_text', '_format_known_helper_calls', '_repair_missing_fallthrough_returns', '_normalize_boolean_conditions', '_normalize_mk_fp_segment_names', '_simplify_x86_16_stack_references']
 
 def _helper_name(project, addr: int) -> str | None:
     proc = project.hooked_by(addr)
@@ -688,6 +688,32 @@ def _materialize_annotated_cod_declarations_text(
         r"^(?P<indent>\s*)(?:(?:extern|static)\s+)?(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
     )
     pointer_evidence_text = body_text
+    def _split_args(arg_text: str) -> list[str]:
+        args: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for char in arg_text:
+            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
+                args.append("".join(current).strip())
+                current = []
+                continue
+            current.append(char)
+            if char == "(":
+                depth_paren += 1
+            elif char == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif char == "[":
+                depth_bracket += 1
+            elif char == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif char == "{":
+                depth_brace += 1
+            elif char == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            args.append("".join(current).strip())
+        return args
+
     source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, func_name)
     if source_arg_text:
         pointer_evidence_text = f"{source_arg_text}\n{pointer_evidence_text}"
@@ -695,22 +721,53 @@ def _materialize_annotated_cod_declarations_text(
     source_prototypes = _source_function_prototype_decls_from_cod_source_lines(metadata.source_lines)
     if source_decl:
         decl_match = re.match(
-            r"^(?P<ret>.+?)\s+(?P<name>[A-Za-z_][\w$?@]*)\s*\((?P<args>[^()]*)\)\s*;?\s*$",
+            r"^(?P<ret>.+?)\\s+(?P<name>[A-Za-z_][\\w$?@]*)\\s*\\((?P<args>[^()]*)\\)\\s*;?\\s*$",
             source_decl.strip(),
         )
         if decl_match is not None:
             source_ret = decl_match.group("ret").strip()
             source_args_text = decl_match.group("args").strip()
-            current_header = header_re.match(lines[header_index])
-            if current_header is not None:
-                replacement_header = f"{current_header.group('indent')}{source_ret} {func_name}({source_args_text})"
-                if current_header.group("suffix") == "{":
-                    replacement_header += " {"
-                elif current_header.group("suffix") == ";":
-                    replacement_header += ";"
-                if lines[header_index] != replacement_header:
-                    lines[header_index] = replacement_header
-                    header_changed = True
+            source_args = _split_args(source_args_text)
+            contains_custom_ptr = False
+            for source_arg in source_args:
+                source_name_match = re.search(r"([A-Za-z_]\\w*)\\s*(?:\\[[^\\]]*\\])?\\s*$", source_arg)
+                if source_name_match is None:
+                    continue
+                source_prefix = source_arg[: source_name_match.start(1)].strip()
+                if "*" not in source_prefix:
+                    continue
+                base_tokens = [token for token in re.split(r"\\s+", source_prefix.replace("*", " ").strip()) if token]
+                if not base_tokens:
+                    continue
+                base_type = base_tokens[-1]
+                if (
+                    base_type not in {
+                        "char",
+                        "short",
+                        "int",
+                        "long",
+                        "float",
+                        "double",
+                        "void",
+                        "size_t",
+                        "FILE",
+                    }
+                    and base_type[0].isupper()
+                ):
+                    contains_custom_ptr = True
+                    break
+
+            if not contains_custom_ptr:
+                current_header = header_re.match(lines[header_index])
+                if current_header is not None:
+                    replacement_header = f"{current_header.group('indent')}{source_ret} {func_name}({source_args_text})"
+                    if current_header.group("suffix") == "{":
+                        replacement_header += " {"
+                    elif current_header.group("suffix") == ";":
+                        replacement_header += ";"
+                    if lines[header_index] != replacement_header:
+                        lines[header_index] = replacement_header
+                        header_changed = True
 
     for scan_index in range(0, body_start):
         line = lines[scan_index]
@@ -748,37 +805,24 @@ def _materialize_annotated_cod_declarations_text(
         )
         return any(re.search(pattern, pointer_evidence_text) is not None for pattern in patterns)
 
-    def _split_args(arg_text: str) -> list[str]:
-        args: list[str] = []
-        current: list[str] = []
-        depth_paren = depth_bracket = depth_brace = 0
-        for char in arg_text:
-            if char == "," and depth_paren == depth_bracket == depth_brace == 0:
-                args.append("".join(current).strip())
-                current = []
-                continue
-            current.append(char)
-            if char == "(":
-                depth_paren += 1
-            elif char == ")" and depth_paren > 0:
-                depth_paren -= 1
-            elif char == "[":
-                depth_bracket += 1
-            elif char == "]" and depth_bracket > 0:
-                depth_bracket -= 1
-            elif char == "{":
-                depth_brace += 1
-            elif char == "}" and depth_brace > 0:
-                depth_brace -= 1
-        if current:
-            args.append("".join(current).strip())
-        return args
-
     def _rewrite_arg_decl(arg_text: str, source_arg_text: str | None = None) -> str:
         split_match = re.search(r"([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", arg_text.strip())
         if split_match is None:
             return arg_text
         arg_name = split_match.group(1)
+        if source_arg_text is not None:
+            source_prefix = source_arg_text[: source_arg_text.rfind(arg_name)].strip() if arg_name in source_arg_text else source_arg_text
+            source_prefix_clean = re.sub(r"\b(?:const|volatile|register|struct|union|enum)\b", " ", source_prefix)
+            pointer_name = source_prefix_clean.rsplit("*", 1)
+            if len(pointer_name) > 1 and "*" in source_prefix_clean:
+                base_tokens = [t for t in re.split(r"[\s\*]", source_prefix_clean) if t]
+                if base_tokens:
+                    base_type = base_tokens[-1]
+                    if (
+                        base_type not in {"char", "short", "int", "long", "float", "double", "void", "size_t"}
+                        and base_type and base_type[0].isupper()
+                    ):
+                        return arg_text
         if not _arg_has_pointer_evidence(arg_name, source_arg_text):
             return arg_text
         if "*" in arg_text[: split_match.start(1)]:
@@ -1218,7 +1262,7 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
         r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
     )
     decl_re = re.compile(
-        r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
+        r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
     )
 
     def _split_args(args_text: str) -> list[str]:
@@ -1309,7 +1353,7 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
                     unique_name = _make_unique_identifier(name, used_names)
                     old_line = lines[line_index]
                     lines[line_index] = decl_re.sub(
-                        lambda m, un=unique_name: f"{m.group('indent')}{m.group('type')} {un};"
+                        lambda m, un=unique_name: f"{m.group('indent')}{m.group('type')} {un}{m.group('array') or ''};"
                         + (f" {m.group('comment')}" if m.group('comment') else ""),
                         old_line,
                         count=1,
@@ -1350,7 +1394,7 @@ def _dedupe_duplicate_local_declarations_text(c_text: str) -> str:
 def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
     trailing_newline = c_text.endswith("\n")
     lines = c_text.splitlines()
-    decl_re = re.compile(r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$")
+    decl_re = re.compile(r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$")
     declared_names: set[str] = set()
     for line in lines:
         if line.lstrip().startswith("return "):
@@ -1417,6 +1461,65 @@ def _dedupe_adjacent_prototype_lines(c_text: str) -> str:
 
     normalized = "\n".join(deduped)
     if trailing_newline:
+        normalized += "\n"
+    return normalized
+
+
+def _materialize_opaque_pointer_typedefs_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    text = "\n".join(lines)
+    known_types = {
+        "FILE",
+        "clock_t",
+        "int8_t",
+        "int16_t",
+        "int32_t",
+        "int64_t",
+        "uint8_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+        "size_t",
+    }
+    known_types.update(re.findall(r"\btypedef\s+(?:struct\s+)?[A-Za-z_]\w*(?:\s+\*)?\s+([A-Za-z_]\w*)\s*;", text))
+    known_types.update(re.findall(r"\b(?:struct|union|enum)\s+([A-Za-z_]\w*)\b", text))
+
+    prototype_re = re.compile(r"^\s*[A-Za-z_][\w\s\*]*?\s+[A-Za-z_]\w*\s*\((?P<args>[^;{}]*)\)\s*;\s*$")
+    function_header_re = re.compile(r"^\s*[A-Za-z_][\w\s\*]*?\s+[A-Za-z_]\w*\s*\((?P<args>[^;{}]*)\)\s*$")
+    pointer_type_re = re.compile(r"\b(?P<type>[A-Z][A-Za-z_]\w*)\s*\*")
+    needed: list[str] = []
+    for line in lines:
+        match = prototype_re.match(line.strip())
+        if match is None:
+            continue
+        for type_name in pointer_type_re.findall(match.group("args")):
+            if type_name in known_types or type_name in needed:
+                continue
+            needed.append(type_name)
+
+    # Handle function headers where the opening brace is on a following line (e.g. decompiled
+    # function definitions often use `void foo(...)` + next-line `{` style).
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        match = function_header_re.match(stripped)
+        if match is None:
+            continue
+        if index + 1 >= len(lines) or lines[index + 1].strip() != "{":
+            continue
+        for type_name in pointer_type_re.findall(match.group("args")):
+            if type_name in known_types or type_name in needed:
+                continue
+            needed.append(type_name)
+    if not needed:
+        return c_text
+
+    typedef_lines = [f"typedef struct {type_name} {type_name};" for type_name in needed]
+    insert_at = next((idx for idx, line in enumerate(lines) if prototype_re.match(line.strip())), 0)
+    lines[insert_at:insert_at] = typedef_lines + [""]
+    normalized = "\n".join(lines)
+    if c_text.endswith("\n"):
         normalized += "\n"
     return normalized
 
@@ -1957,6 +2060,9 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
     direct_ss_stack_expr_re = re.compile(
         r"\*\(\((?P<type>[^()]+?)\s*\*\)\(\(ss << 4\) \+ (?P<base>(?:\(unsigned int\))?&[A-Za-z_][\w$?@]*)(?: (?P<op>[+-]) (?P<delta>\d+))?\)\)"
     )
+    indexed_ss_local_expr_re = re.compile(
+        r"\(&(?P<base>[A-Za-z_][\w$?@]*)\)\[(?P<segmul>(?:16\s*\*\s*ss|ss\s*\*\s*16))(?:\s*(?P<op>[+-])\s*(?P<delta>\d+))?\]"
+    )
 
     def _rewrite_direct_ss_stack_expr(match: re.Match[str]) -> str:
         base_expr = match.group("base").replace("(unsigned int)", "").strip()
@@ -1967,6 +2073,17 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         return f'*(({match.group("type").strip()} *){addr_expr})'
 
     result = direct_ss_stack_expr_re.sub(_rewrite_direct_ss_stack_expr, result)
+
+    def _rewrite_indexed_ss_local_expr(match: re.Match[str]) -> str:
+        delta = int(match.group("delta") or "0", 0)
+        if match.group("op") == "-":
+            delta = -delta
+        addr_expr = f"&{match.group('base')}"
+        if delta != 0:
+            addr_expr = f"({addr_expr} {'+' if delta > 0 else '-'} {abs(delta)})"
+        return f'*((char *){addr_expr})'
+
+    result = indexed_ss_local_expr_re.sub(_rewrite_indexed_ss_local_expr, result)
 
     # Fallback: strip any remaining (ss << 4) + patterns that leaked
     # through the structured lowering.  In real-mode x86 the stack segment
@@ -2166,148 +2283,26 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         result += "\n"
     return result
 
-def _fix_carr_inbox_guard_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    if binary_path.name.lower() != "carr.cod":
-        return c_text
-    if getattr(function, "name", "") != "_InBox":
-        return c_text
-
-    c_text = re.sub(
-        r"if \(\s*([A-Za-z_][\w$?@]*)\s*>\s*([A-Za-z_][\w$?@]*)\s*&&\s*([A-Za-z_][\w$?@]*)\s*<\s*\2\s*\)",
-        r"if (\1 <= \2 && \3 >= \2)",
-        c_text,
-        count=1,
-    )
-    c_text = re.sub(
-        r"if \(\s*([A-Za-z_][\w$?@]*)\s*>\s*([A-Za-z_][\w$?@]*)\s*&&\s*!\(\s*([A-Za-z_][\w$?@]*)\s*>=\s*\2\s*\)\s*\)",
-        r"if (\1 <= \2 && \3 >= \2)",
-        c_text,
-        count=1,
-    )
-    return c_text
-
-def _fix_carr_inboxlng_guard_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    if binary_path.name.lower() != "carr.cod":
-        return c_text
-    if getattr(function, "name", "") != "_InBoxLng":
-        return c_text
-
-    return """unsigned short _InBoxLng(unsigned short a0, unsigned short x, unsigned short a2, unsigned short z, unsigned short a4, unsigned short xl, unsigned short a6, unsigned short zl, unsigned short a8, unsigned short xh, unsigned short a10, unsigned short zh)
-{
-    unsigned short ss;  // ss
-    unsigned short v3;  // ax
-    unsigned short v4;  // flags
-    unsigned short v0;  // [bp-0x2]
-    char v1;  // [bp+0x0]
-
-    if (x < xl || x > xh || z < zl || z > zh)
-        return 0;
-    return 1;
-}"""
-
-def _fix_nhorz_changeweather_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    if binary_path.name.lower() != "nhorz.cod":
-        return c_text
-    if getattr(function, "name", "") != "_ChangeWeather":
-        return c_text
-
-    return c_text.replace("if (!(!BadWeather))", "if (BadWeather)")
-
-def _fix_cockpit_look_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    if binary_path.name.lower() != "cockpit.cod":
-        return c_text
-
-    func_name = getattr(function, "name", "")
-    if func_name == "_LookDown":
-        return """void _LookDown(void)
-{
-    if (!(BackSeat))
-    {
-        Rp3D->Length1 = 50;
-        RpCRT1->YBgn = 27;
-        RpCRT2->YBgn = 25;
-        RpCRT4->YBgn = 39;
-        VdiMask[MASKY] = 27;
-        AdiMask[MASKY] = 25;
-        RawMask[MASKY] = 39;
-        return;
-    }
-    Rp3D->Length1 = 50;
-    return;
-}"""
-    if func_name == "_LookUp":
-        return """void _LookUp(void)
-{
-    if (!(BackSeat))
-    {
-        Rp3D->Length1 = 150;
-        RpCRT1->YBgn = 138;
-        RpCRT2->YBgn = 136;
-        RpCRT4->YBgn = 150;
-        VdiMask[MASKY] = 138;
-        AdiMask[MASKY] = 136;
-        RawMask[MASKY] = 150;
-        return;
-    }
-    Rp3D->Length1 = 139;
-    return;
-}"""
-
-    return c_text
-
-def _fix_billasm_rotate_pt_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    if binary_path.name.lower() != "billasm.cod":
-        return c_text
-    if "_rotate_pt" not in c_text:
-        return c_text
-
-    return re.sub(
-        r"int _rotate_pt\(\)",
-        "int _rotate_pt(int *s, int *d, int ang)",
-        c_text,
-        count=1,
-    )
-
-def _fix_monoprin_mset_pos_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    if binary_path.name.lower() != "monoprin.cod":
-        return c_text
-    if getattr(function, "name", "") != "_mset_pos":
-        return c_text
-
-    return c_text.replace(
-        "short _mset_pos(unsigned short a0, unsigned short x, unsigned short y)",
-        "int _mset_pos(int x, int y)",
-        1,
-    )
-
-def _fix_planes3_ready5_blind_spot(c_text: str, function, binary_path: Path | None) -> str:
-    if binary_path is None:
-        return c_text
-    if binary_path.name.lower() != "planes3.cod":
-        return c_text
-    if getattr(function, "name", "") != "_Ready5":
-        return c_text
-
-    c_text = c_text.replace("long _Ready5(void)", "void _Ready5(void)", 1)
-    c_text = c_text.replace("return v2 * 46 >> 16 << 16 | v4;", "return;", 1)
-    return c_text
-
 def _format_bp_disp(disp: int) -> str:
     if disp >= 0:
         return f"[bp+0x{disp:x}]"
     return f"[bp-0x{-disp:x}]"
+
+
+def _sorted_metadata_stack_aliases(
+    metadata: CODProcMetadata,
+    *,
+    negatives_last: bool = False,
+) -> list[tuple[int, object]]:
+    if metadata is None:
+        return []
+    aliases = getattr(metadata, "stack_aliases", None)
+    if not aliases:
+        return []
+    if negatives_last:
+        return sorted(aliases.items(), key=lambda item: (item[0] < 0, item[0], str(item[1])))
+    return sorted(aliases.items(), key=lambda item: (item[0], str(item[1])))
+
 
 def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata | None) -> str:
     if metadata is None:
@@ -2332,7 +2327,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
     source_arg_text = _source_args_from_cod_source_lines(metadata.source_lines, getattr(function, "name", None))
     positive_arg_aliases = [
         name
-        for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: item[0])
+        for disp, name in _sorted_metadata_stack_aliases(metadata)
         if disp > 0 and isinstance(name, str) and name
     ]
     positive_aliases = _build_cod_positive_bp_alias_map(
@@ -2602,7 +2597,7 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
     comments: list[str] = []
     if metadata.stack_aliases or metadata.call_names or metadata.global_names:
         comments.append("/* COD annotations:")
-        for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: (item[0] < 0, item[0])):
+        for disp, name in _sorted_metadata_stack_aliases(metadata, negatives_last=True):
             comments.append(f" * {_format_bp_disp(disp)} = {str(name).replace('/*', '/ *')}")
         if metadata.global_names:
             comments.append(f" * globals = {', '.join(str(n).replace('/*', '/ *') for n in metadata.global_names)}")
@@ -2692,6 +2687,58 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
             return updated
         current = updated
 
+
+def _prune_non_lvalue_arithmetic_assignments(c_text: str) -> str:
+    """Drop invalid assignments whose left side is an arithmetic expression.
+
+    This is compile-hygiene cleanup only: real variable, member, index, and
+    dereference assignments are preserved.
+    """
+    assign_re = re.compile(r"^(?P<indent>\s*)(?P<lhs>[^=;]+?)\s*=\s*(?P<rhs>[^;]+);\s*$")
+    kept: list[str] = []
+    for line in c_text.splitlines():
+        match = assign_re.match(line)
+        if match is None:
+            kept.append(line)
+            continue
+        lhs = match.group("lhs").strip()
+        if lhs.startswith(("*", "SEG_", "MK_FP")):
+            kept.append(line)
+            continue
+        if re.fullmatch(r"[A-Za-z_]\w*(?:\[[^\]]+\]|\.[A-Za-z_]\w*|->[A-Za-z_]\w*)*", lhs):
+            kept.append(line)
+            continue
+        if re.search(r"(?:\+|-|\*|/|<<|>>|\bSEG_PTR\b|\bstack_base\b)", lhs):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _normalize_shift_add_precedence_in_assignments(c_text: str) -> str:
+    """Normalize assignment RHS expressions that parse incorrectly without explicit parentheses.
+
+    Examples:
+      ``x = y + 1 >> 8;`` -> ``x = (y + 1) >> 8;``
+    """
+    assign_re = re.compile(r"^(?P<indent>\s*)(?P<lhs>[^=;]+?)\s*=\s*(?P<rhs>[^;]+);\s*$")
+
+    def _rewrite_match(match: re.Match[str]) -> str:
+        rhs = match.group("rhs").strip()
+        full_match = re.fullmatch(r"(?P<base>.+?)\+\s*1\s*>>\s*8", rhs)
+        if full_match is None:
+            return match.group(0)
+        base_expr = full_match.group("base").rstrip()
+        if base_expr.endswith(">>") or base_expr.endswith("<<") or base_expr.endswith("&"):
+            return match.group(0)
+        if base_expr.startswith("(") and base_expr.endswith(")"):
+            return match.group(0)
+        return f'{match.group("indent")}{match.group("lhs").strip()} = ({base_expr} + 1) >> 8;'
+
+    lines = c_text.splitlines()
+    rewritten = [_rewrite_match(match) if (match := assign_re.match(line)) else line for line in lines]
+    return "\n".join(rewritten)
+
+
 def _rewrite_known_helper_signature_text(c_text: str, function) -> str:
     SOURCE_EMPTY_HELPERS = {"_dos_getProcessId", "_dos_setProcessId"}
     helper_decl = preferred_known_helper_signature_decl(getattr(function, "name", None))
@@ -2725,6 +2772,8 @@ def _rewrite_known_helper_signature_text(c_text: str, function) -> str:
         return prefix, name
 
     func_name = getattr(function, "name", "")
+    if not isinstance(func_name, str) or not func_name:
+        return c_text
     header_pattern = re.compile(
         rf"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+{re.escape(func_name)}\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{{;]?)\s*$"
     )
@@ -2855,7 +2904,7 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
         r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
     )
     decl_re = re.compile(
-        r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default)\b)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*(?P<comment>//.*)?$"
+        r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default)\b)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
     )
     synthetic_name_re = re.compile(
         r"^(?:ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|stack_bp_[pm][0-9a-fA-F]+_b\d+|tmp_slot_\d+|v\d+|vvar_\d+|a\d+|arg_\d+|ax(?:_\d+)?|dx(?:_\d+)?|cx(?:_\d+)?|bx(?:_\d+)?|al|ah)$"
@@ -3160,7 +3209,7 @@ def _normalize_mk_fp_segment_names(c_text: str, metadata: CODProcMetadata | None
 
     positive_aliases = [
         (disp, name)
-        for disp, name in sorted(metadata.stack_aliases.items(), key=lambda item: item[0])
+        for disp, name in _sorted_metadata_stack_aliases(metadata)
         if disp > 0 and isinstance(name, str) and name
     ]
     if not positive_aliases:
