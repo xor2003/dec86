@@ -145,6 +145,12 @@ def _match_byte_carrier_high_update(expr, state):
         if const != 1:
             continue
         low_expr = state.unwrap_c_casts(maybe_low)
+        duplicate_word_base = state.match_duplicate_word_base_expr(
+            state.resolve_known_copy_alias_expr(low_expr),
+            state.resolve_known_copy_alias_expr,
+        )
+        if duplicate_word_base is not None:
+            low_expr = state.unwrap_c_casts(duplicate_word_base)
         if isinstance(low_expr, structured_c.CVariable):
             if _linear_recurrence_debug_enabled():
                 log.warning(
