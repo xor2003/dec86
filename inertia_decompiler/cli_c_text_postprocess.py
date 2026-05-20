@@ -911,6 +911,68 @@ def _materialize_annotated_cod_declarations_text(
     return normalized
 
 
+def _normalize_scalar_assigned_extern_arrays_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    body = "\n".join(lines)
+    changed = False
+    seen: set[str] = set()
+    normalized_lines: list[str] = []
+    decl_re = re.compile(r"^(?P<indent>\s*)extern\s+char\s+(?P<name>[A-Za-z_]\w*)\[(?P<size>\d+)\];\s*$")
+    for line in lines:
+        match = decl_re.match(line)
+        if match is None:
+            normalized_lines.append(line)
+            continue
+        name = match.group("name")
+        if re.search(rf"(?m)^\s*{re.escape(name)}\s*=", body) is None:
+            normalized_lines.append(line)
+            continue
+        replacement = f"{match.group('indent')}extern unsigned short {name};"
+        if replacement in seen:
+            changed = True
+            continue
+        seen.add(replacement)
+        normalized_lines.append(replacement)
+        changed = True
+    if not changed:
+        return c_text
+    normalized = "\n".join(normalized_lines)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
+def _materialize_missing_segment_macro_locals_text(c_text: str) -> str:
+    needed = {
+        segment
+        for segment in ("ds", "es", "ss")
+        if re.search(rf"\b(?:SEG_U8|SEG_U16|SEG_U32|SEG_PTR|MK_FP)\s*\(\s*{segment}\b", c_text)
+    }
+    if not needed:
+        return c_text
+    lines = c_text.splitlines()
+    existing = {
+        match.group("name")
+        for line in lines
+        for match in (re.match(r"\s*unsigned\s+short\s+(?P<name>ds|es|ss)\s*(?:;|,)", line),)
+        if match is not None
+    }
+    missing = sorted(needed - existing)
+    if not missing:
+        return c_text
+    for index, line in enumerate(lines):
+        if line.strip() == "{":
+            insert_at = index + 1
+            lines[insert_at:insert_at] = [f"    unsigned short {name};" for name in missing]
+            normalized = "\n".join(lines)
+            if c_text.endswith("\n"):
+                normalized += "\n"
+            return normalized
+    return c_text
+
+
 def _source_function_prototype_decls_from_cod_source_lines(source_lines: Sequence[str] | None) -> dict[str, str]:
     if not source_lines:
         return {}
