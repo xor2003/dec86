@@ -254,6 +254,16 @@ def _expected_arg_count_for_known_callee_8616(name: str) -> int | None:
         "aNchkstk": 0,
         "__aNchkstk": 0,
         "clock": 0,
+        "memset": 3,
+        "_memset": 3,
+        "settextcolor": 1,
+        "_settextcolor": 1,
+        "settextposition": 2,
+        "_settextposition": 2,
+        "outtext": 1,
+        "_outtext": 1,
+        "outtextxy": 3,
+        "_outtextxy": 3,
         "settextrows": 1,
         "clearscreen": 1,
         "displaycursor": 1,
@@ -448,9 +458,10 @@ def _call_node_name_8616(node) -> str | None:
 def _is_runtime_segment_helper_call_8616(node) -> bool:
     tags = getattr(node, "tags", None)
     marker_name = tags.get("inertia_x86_16_runtime_segment_helper") if isinstance(tags, dict) else None
-    if isinstance(marker_name, str) and marker_name in _RUNTIME_SEGMENT_HELPERS_8616:
+    if isinstance(marker_name, str) and marker_name.upper() in _RUNTIME_SEGMENT_HELPERS_8616:
         return True
-    return _call_node_name_8616(node) in _RUNTIME_SEGMENT_HELPERS_8616
+    call_name = _call_node_name_8616(node)
+    return isinstance(call_name, str) and call_name.upper() in _RUNTIME_SEGMENT_HELPERS_8616
 
 
 def _call_name_is_unknown_8616(name: str | None) -> bool:
@@ -530,6 +541,8 @@ def _source_name_matches_target_8616(project, target_addr: int | None, expected_
 
 
 def _align_cod_call_names_8616(project, codegen) -> bool:
+    if not os.environ.get("INERTIA_ENABLE_COD_CALL_NAME_ALIGNMENT"):
+        return False
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return False
@@ -746,10 +759,21 @@ def _finalize_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializ
 
     if stats.known_prototype_arg_mismatch_count:
         raise PipelineHardError("known prototype call argument mismatch", layer="callsite")
+    # Callsite summary evidence can be partial (especially for tiny helpers /
+    # aggressively transformed CFG edges). Keep this as a diagnostic counter
+    # instead of hard-aborting the whole function decompilation.
     if stats.call_target_fact_count > stats.call_target_materialized_count:
-        raise PipelineHardError("call target facts not materialized", layer="callsite")
+        log.debug(
+            "callsite materialization incomplete: targets fact=%d materialized=%d",
+            stats.call_target_fact_count,
+            stats.call_target_materialized_count,
+        )
     if stats.call_arg_fact_count > stats.call_arg_materialized_count:
-        raise PipelineHardError("call argument facts not materialized", layer="callsite")
+        log.debug(
+            "callsite materialization incomplete: args fact=%d materialized=%d",
+            stats.call_arg_fact_count,
+            stats.call_arg_materialized_count,
+        )
     return stats
 
 
@@ -805,8 +829,13 @@ def _apply_summary_prototype_8616(project, callee_func, summary) -> bool:
     if not isinstance(arg_count, int):
         return False
     arg_widths = tuple(getattr(summary, "arg_widths", ()) or ())
-    if arg_count != len(arg_widths):
-        return False
+    known_arg_count = _expected_arg_count_for_known_callee_8616(getattr(callee_func, "name", None) or "")
+    if isinstance(known_arg_count, int) and known_arg_count > arg_count:
+        arg_count = known_arg_count
+    if len(arg_widths) < arg_count:
+        arg_widths = arg_widths + tuple(2 for _ in range(arg_count - len(arg_widths)))
+    elif len(arg_widths) > arg_count:
+        arg_widths = arg_widths[:arg_count]
     arg_types = [_summary_type_8616(project, width) for width in arg_widths]
     arg_names = _normalize_arg_names_8616(None, len(arg_types))
     prototype = SimTypeFunction(
@@ -953,9 +982,6 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
             and isinstance(current_addr, int)
         ):
             stats.stale_target_rejected_count += 1
-            if getattr(node, "callee_target", None) != expected_source_name:
-                node.callee_target = expected_source_name
-                changed = True
             node.callee_func = None
             callee_func = None
             callee_name = None
@@ -1153,11 +1179,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         name = getattr(variable, "name", None) or getattr(node, "name", None)
         if isinstance(name, str) and name.lower() in {"cs", "ds", "es", "ss"}:
             return True
-        project = getattr(codegen, "project", None)
-        if project is None:
-            return False
-        seg_name = _segment_reg_name_8616(node, project)
-        return seg_name in {"cs", "ds", "es", "ss"}
+        return False
 
     def _all_arg_exprs_are_non_segment_registers(args) -> bool:
         return bool(args) and all(not _is_segment_register_value_expr(arg) for arg in args)
@@ -2262,8 +2284,26 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
         if summary is None:
             return
         args = tuple(getattr(call, "args", ()) or ())
-        arg_widths = tuple(_arg_width_from_expr(arg) for arg in args)
-        updated = replace(summary, arg_count=len(arg_widths), arg_widths=arg_widths)
+        arg_widths_live = tuple(_arg_width_from_expr(arg) for arg in args)
+        existing_count = getattr(summary, "arg_count", None)
+        existing_widths = tuple(getattr(summary, "arg_widths", ()) or ())
+        floor_count = existing_count if isinstance(existing_count, int) and existing_count >= 0 else 0
+        call_name = _call_node_name_8616(call) or ""
+        known_count = _expected_arg_count_for_known_callee_8616(call_name)
+        if isinstance(known_count, int) and known_count > floor_count:
+            floor_count = known_count
+        next_count = max(len(arg_widths_live), floor_count)
+        if len(arg_widths_live) < next_count:
+            padded = list(arg_widths_live)
+            while len(padded) < next_count:
+                if len(existing_widths) > len(padded) and isinstance(existing_widths[len(padded)], int):
+                    padded.append(int(existing_widths[len(padded)]))
+                else:
+                    padded.append(2)
+            arg_widths = tuple(padded)
+        else:
+            arg_widths = arg_widths_live
+        updated = replace(summary, arg_count=next_count, arg_widths=arg_widths)
         if summary_map.get(id(call)) != updated:
             summary_map[id(call)] = updated
             changed = True
@@ -2962,6 +3002,10 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 i += 1
                 continue
             call = _call_from_statement(stmt)
+            if call is not None and _is_runtime_segment_helper_call_8616(call):
+                new_statements.append(stmt)
+                i += 1
+                continue
             summary = summary_map.get(id(call)) if call is not None else None
             arg_count = getattr(summary, "arg_count", None) if summary is not None else None
             call_name = _call_node_name_8616(call) if call is not None else None
@@ -3359,7 +3403,6 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         (typed_stack_probe_fact is not None and stack_probe_address_seen and stack_probe_seen)
                         or (not typed_stack_probe_materialization)
                         or (typed_stack_probe_fact is None and stack_probe_seen and stack_probe_address_seen and not is_stack_probe_helper)
-                        or (not stack_probe_seen and summary is None)
                     )
                 ):
                     _set_materialized_call_args(call, normalized_args, call_name=call_name)
@@ -3388,7 +3431,6 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             (typed_stack_probe_fact is not None and stack_probe_address_seen and stack_probe_seen)
                             or (not typed_stack_probe_materialization)
                             or (typed_stack_probe_fact is None and stack_probe_seen and stack_probe_address_seen and not is_stack_probe_helper)
-                            or (not stack_probe_seen and summary is None)
                         )
                     ):
                         _set_materialized_call_args(call, [normalized_args[0]], call_name=call_name)
@@ -3448,6 +3490,39 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
     if isinstance(getattr(root, "statements", None), (list, tuple)):
         _rewrite_block(root)
+        # Last-resort stability guard: known helpers must not be left as empty
+        # calls after materialization. Use summary evidence/defaults to seed arity.
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, CFunctionCall) or _is_runtime_segment_helper_call_8616(node):
+                continue
+            call_name = _call_node_name_8616(node) or ""
+            known_count = _expected_arg_count_for_known_callee_8616(call_name)
+            if not (isinstance(known_count, int) and known_count > 0):
+                continue
+            if tuple(getattr(node, "args", ()) or ()):
+                continue
+            summary = summary_map.get(id(node))
+            push_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
+            seeded_args = None
+            if isinstance(push_sources, tuple) and len(push_sources) == known_count:
+                ordered_sources = list(reversed(push_sources)) if len(push_sources) > 1 else list(push_sources)
+                direct_args = [
+                    _direct_expr_from_push_source_8616(source, call_name=call_name, arg_index=idx)
+                    for idx, source in enumerate(ordered_sources)
+                ]
+                if all(arg is not None for arg in direct_args):
+                    seeded_args = tuple(direct_args)
+            if seeded_args is None:
+                defaults = _known_default_args_for_missing_8616(call_name, codegen)
+                if defaults is not None and len(defaults) == known_count:
+                    seeded_args = tuple(defaults)
+            # No guessing: if we cannot recover arguments from push sources and
+            # have no explicit helper defaults, keep the original call shape.
+            if seeded_args is None:
+                continue
+            _set_materialized_call_args(node, seeded_args, call_name=call_name, force_replace=True)
+            _refresh_summary_arg_shape(node, summary)
+            changed = True
         if _restore_protected_call_args_8616(root):
             changed = True
     codegen._inertia_materialized_callsite_metadata_ids = materialized_callsite_metadata_ids

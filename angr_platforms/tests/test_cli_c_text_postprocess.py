@@ -6,6 +6,7 @@ from inertia_decompiler.cli_c_text_postprocess import (
     _materialize_annotated_cod_declarations_text,
     _materialize_missing_generic_local_declarations_text,
     _normalize_portable_flat_main_signature_text,
+    _prune_weaker_conflicting_prototypes_text,
     _source_function_prototype_decls_from_cod_source_lines,
     _prune_unused_local_declarations_text,
     _prune_unused_staging_assignments,
@@ -214,3 +215,18 @@ void $_nfree(void)
     rewritten = _materialize_missing_generic_local_declarations_text(c_text)
 
     assert "unsigned short vvar_2;" in rewritten
+
+
+def test_prune_weaker_conflicting_prototypes_text_downgrades_typed_proto_on_lower_observed_arity():
+    c_text = """\
+void *memset(void *dst, int ch, unsigned long count);
+
+void DrawBar(int iRow)
+{
+    memset();
+    memset(iRow, 0);
+}
+"""
+    rewritten = _prune_weaker_conflicting_prototypes_text(c_text)
+    assert "int memset();" in rewritten
+    assert "void *memset(void *dst, int ch, unsigned long count);" not in rewritten
