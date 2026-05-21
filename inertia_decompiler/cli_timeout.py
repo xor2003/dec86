@@ -34,7 +34,19 @@ class _AdaptivePerByteTimeoutModel:
         return max(0.005, rate), max(0.0, overhead)
 
     def timeout_for_byte_count(self, byte_count: int) -> int:
-        return self.configured_timeout
+        base = max(1, int(self.configured_timeout))
+        if self.explicit_timeout:
+            return base
+        # Adaptive default budgets for larger functions in serial file sweeps.
+        # Keeps deterministic behavior while avoiding frequent 86_16 timeout
+        # churn on medium/large procedures (e.g. menu/render loops).
+        if byte_count >= 520:
+            return max(base, 300)
+        if byte_count >= 380:
+            return max(base, 240)
+        if byte_count >= 280:
+            return max(base, 180)
+        return base
 
 
 def _stdout_is_interactive() -> bool:

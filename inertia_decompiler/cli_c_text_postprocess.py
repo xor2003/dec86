@@ -1162,6 +1162,119 @@ def _materialize_stack_base_placeholder_declaration_text(c_text: str) -> str:
     return out
 
 
+def _normalize_integer_dereference_stores_text(c_text: str) -> str:
+    # Compile-hygiene only: preserve explicit linear-address store semantics in a
+    # compilable lvalue form when codegen leaves integer-as-pointer stores.
+    # Example: *(seg*16 + stack_base + K) = v;  -> SEG_U8(0, seg*16 + stack_base + K) = v;
+    pattern = re.compile(
+        r"(?m)^(?P<indent>\s*)\*\(\s*(?P<addr>[^)]+)\s*\)\s*=\s*(?P<rhs>[^;]+);\s*$"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        addr = match.group("addr").strip()
+        rhs = match.group("rhs").strip()
+        # Preserve already-lowered SEG_* lvalues and obvious typed pointers.
+        if addr.startswith("SEG_U8(") or addr.startswith("SEG_U16(") or addr.startswith("SEG_U32("):
+            return match.group(0)
+        # Compile-hygiene lowering target: raw real-mode linearized integer address.
+        # Evidence: expressions that carry seg*16 linearization or stack-base carrier math.
+        has_linearized_seg = re.search(r"\bir_\d+\s*\*\s*16\b", addr) is not None
+        has_stack_carrier = "stack_base" in addr
+        has_vvar_linear_carrier = re.search(r"\bvvar_\d+\b", addr) is not None and any(op in addr for op in ("+", "-"))
+        if not (has_linearized_seg or has_stack_carrier or has_vvar_linear_carrier):
+            return match.group(0)
+        return f"{indent}SEG_U8(0, {addr}) = {rhs};"
+
+    return pattern.sub(_replace, c_text)
+
+
+def _materialize_missing_g_hex_externs_text(c_text: str) -> str:
+    token_re = re.compile(r"(?<![A-Za-z_0-9])(g_[0-9a-fA-F]+)(?![A-Za-z_0-9])")
+    decl_re = re.compile(r"(?m)^\s*extern\s+[^\n;]*\b(g_[0-9a-fA-F]+)\b[^\n;]*;\s*$")
+    used = set(token_re.findall(c_text))
+    declared = set(decl_re.findall(c_text))
+    missing = sorted(name for name in used if name not in declared)
+    if not missing:
+        return c_text
+    lines = c_text.splitlines()
+    insert_at = 0
+    for idx, line in enumerate(lines):
+        if line.strip().startswith("extern "):
+            insert_at = idx + 1
+    decl_lines = [f"extern unsigned short {name};" for name in missing]
+    lines[insert_at:insert_at] = decl_lines
+    out = "\n".join(lines)
+    if c_text.endswith("\n"):
+        out += "\n"
+    return out
+
+
+def _dedupe_conflicting_extern_variable_declarations_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    decl_re = re.compile(
+        r"^(?P<indent>\s*)extern\s+(?P<type>[^;()]+?)\s+(?P<name>[A-Za-z_]\w*)\s*;\s*$"
+    )
+    type_rank = {
+        "void": 0,
+        "char": 1,
+        "unsigned char": 2,
+        "short": 3,
+        "unsigned short": 4,
+        "int": 5,
+        "unsigned int": 6,
+        "long": 7,
+        "unsigned long": 8,
+    }
+    winners: dict[str, tuple[int, str, str, int]] = {}
+    for idx, line in enumerate(lines):
+        match = decl_re.match(line)
+        if match is None:
+            continue
+        name = match.group("name")
+        raw_type = " ".join(match.group("type").split())
+        rank = type_rank.get(raw_type, 100)
+        prior = winners.get(name)
+        if prior is None or rank > prior[0]:
+            winners[name] = (rank, raw_type, match.group("indent"), idx)
+
+    if not winners:
+        return c_text
+
+    kept: list[str] = []
+    emitted: set[str] = set()
+    changed = False
+    for line in lines:
+        match = decl_re.match(line)
+        if match is None:
+            kept.append(line)
+            continue
+        name = match.group("name")
+        winner = winners.get(name)
+        if winner is None:
+            kept.append(line)
+            continue
+        if name in emitted:
+            changed = True
+            continue
+        winner_type = winner[1]
+        winner_indent = winner[2]
+        normalized = f"{winner_indent}extern {winner_type} {name};"
+        if normalized != line:
+            changed = True
+        kept.append(normalized)
+        emitted.add(name)
+
+    if not changed:
+        return c_text
+    out = "\n".join(kept)
+    if c_text.endswith("\n"):
+        out += "\n"
+    return out
+
+
 def _materialize_missing_segment_macro_locals_text(c_text: str) -> str:
     needed = {
         segment
@@ -1237,6 +1350,20 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
             defined.add(match.group("name"))
     declared.update(defined)
     keywords = {"if", "for", "while", "switch", "return", "sizeof"}
+    standard_c_functions = {
+        "toupper",
+        "tolower",
+        "isalpha",
+        "isdigit",
+        "isalnum",
+        "isspace",
+        "isupper",
+        "islower",
+        "isprint",
+        "iscntrl",
+        "ispunct",
+        "isxdigit",
+    }
     runtime_helpers = {"SEG_U8", "SEG_U16", "SEG_U32", "SEG_PTR", "SEG_LINEAR", "MK_FP"}
     def _has_any_decl_or_def(name: str) -> bool:
         escaped = re.escape(name)
@@ -1266,6 +1393,7 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
                 observed_args[name] = max(observed_args.get(name, 0), argc)
             if (
                 name in keywords
+                or name in standard_c_functions
                 or name in runtime_helpers
                 or name in calls
                 or _has_any_decl_or_def(name)
@@ -3164,6 +3292,9 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
         assign_re = re.compile(
             rf"^(?P<indent>\s*)(?P<name>{staging_name_pattern})(?:\{{[^}}]+\}})?\s*=\s*(?P<rhs>[^;]+);\s*$"
         )
+        self_addr_assign_re = re.compile(
+            r"^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*&\s*(?P=name)\s*;\s*$"
+        )
         used_names: dict[str, int] = {}
         for line in lines:
             if staging_name_re.search(line) is None:
@@ -3188,6 +3319,9 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
         changed = False
         for line in lines:
             stripped = line.strip()
+            if self_addr_assign_re.match(stripped):
+                changed = True
+                continue
             match = assign_re.match(stripped)
             if match is None:
                 kept_lines.append(line)
