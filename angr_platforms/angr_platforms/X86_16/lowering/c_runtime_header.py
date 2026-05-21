@@ -21,7 +21,9 @@ def render_c_runtime_header_8616(target: str | None) -> str:
         return (
             "#include <stdbool.h>\n"
             "#include <stdint.h>\n"
-            "#include <time.h>\n"
+            "\n"
+            "typedef unsigned long clock_t;\n"
+            "typedef long time_t;\n"
             "\n"
             "extern uint8_t inertia_memory[];\n"
             "\n"

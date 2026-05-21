@@ -206,7 +206,7 @@ def _prime_structuring_validation_semantics_8616(project, codegen) -> None:
 
         lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
         lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project)
-        _segmented_mem.apply_x86_16_segmented_memory_reasoning(project, codegen)
+        _segmented_mem.apply_x86_16_segmented_memory_reasoning(codegen)
         from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
         from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
 
@@ -214,6 +214,10 @@ def _prime_structuring_validation_semantics_8616(project, codegen) -> None:
         alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
         if isinstance(alias_facts, list) and alias_facts:
             lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+        # Keep structuring-tail validation stable: if priming already applied
+        # SS stack lowering and alias-fact lowering, skip re-running it in the
+        # structuring body to avoid representation-only drift.
+        codegen._inertia_ss_stack_lowered = True
         if not getattr(codegen, "_inertia_typed_conditions_transferred", False):
             func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
             if isinstance(func_addr, int):
@@ -246,7 +250,8 @@ def _refresh_structuring_condition_semantics_8616(project, codegen) -> None:
 def _maybe_validate_structuring_pass_8616(project, codegen, spec_name: str):
     if not bool(getattr(project, "_inertia_tail_validation_enabled", True)):
         return None
-    if spec_name not in _semantic_validation_pass_names_8616():
+    validate_all = os.environ.get("INERTIA_VALIDATE_ALL_STRUCTURING_PASSES") == "1"
+    if not validate_all and spec_name not in _semantic_validation_pass_names_8616():
         return None
 
     mode = "live_out"
@@ -350,7 +355,7 @@ def _structuring_codegen_8616(project, codegen) -> bool:
             from .lowering.real_mode_linear import (
                 lower_stable_ss_linear_stack_dereferences_8616,
             )
-            lower_stable_ss_linear_stack_dereferences_8616(codegen)
+            lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
         except PipelineHardError:
             raise
         except Exception as ex:
