@@ -623,3 +623,69 @@ def test_compare_jcc_mapping_stays_in_sync_with_condition_ir_aliases():
         if cond_op in _COND_TO_CMP_OP_8616
     }
     assert _JCC_COMPARE_OPS_8616 == expected
+
+
+def test_translate_cmp_jcc_guard_decodes_32bit_le_chain():
+    project = _project()
+    codegen = _codegen([])
+    hi = _stack(-2, codegen, "goal_hi")
+    lo = _stack(-4, codegen, "goal_lo")
+    codegen.cfunc.arg_list = ()
+    codegen.cfunc.variables_in_use = {
+        hi.variable: hi,
+        lo.variable: lo,
+    }
+    codegen.cfunc.unified_local_vars = {}
+
+    class _Mem:
+        def __init__(self, base=0, disp=0):
+            self.base = base
+            self.disp = disp
+
+    class _Operand:
+        def __init__(self, type_, *, reg=0, imm=0, mem=None, size=2):
+            self.type = type_
+            self.reg = reg
+            self.imm = imm
+            self.mem = mem if mem is not None else _Mem()
+            self.size = size
+
+    class _Insn:
+        def __init__(self, address, mnemonic, operands):
+            self.address = address
+            self.mnemonic = mnemonic
+            self.operands = operands
+
+        @staticmethod
+        def reg_name(reg):
+            return {
+                1: "ax",
+                2: "dx",
+                5: "bp",
+            }.get(reg, "")
+
+    block_hi = (
+        _Insn(0x5000, "cmp", (_Operand(1, reg=2, size=2), _Operand(3, mem=_Mem(5, -2), size=2))),
+        _Insn(0x5002, "jle", (_Operand(2, imm=0x5010, size=2),)),
+    )
+    block_mid = (
+        _Insn(0x5010, "jge", (_Operand(2, imm=0x5020, size=2),)),
+    )
+    block_lo = (
+        _Insn(0x5020, "cmp", (_Operand(1, reg=1, size=2), _Operand(3, mem=_Mem(5, -4), size=2))),
+        _Insn(0x5022, "jbe", (_Operand(2, imm=0x5030, size=2),)),
+    )
+    blocks = {
+        0x5000: block_hi,
+        0x5010: block_mid,
+        0x5020: block_lo,
+    }
+    project.factory = SimpleNamespace(
+        block=lambda addr, opt_level=0: SimpleNamespace(capstone=SimpleNamespace(insns=blocks.get(addr, ())))
+    )
+
+    decoded = _translate_cmp_jcc_guard_8616(project, codegen, 0x5000, 0x5002)
+
+    assert decoded is not None
+    assert decoded.expr is not None
+    assert isinstance(decoded.expr, CBinaryOp)

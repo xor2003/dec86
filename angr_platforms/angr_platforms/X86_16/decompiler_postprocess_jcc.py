@@ -66,6 +66,7 @@ class _DecodedCmpGuard8616:
     lhs: object
     rhs: object
     op: str
+    expr: object | None = None
 
 
 def _condition_tags_8616(node) -> tuple[int, int] | None:
@@ -222,6 +223,129 @@ def _memory_load_expr_8616(project, codegen, ds_var, base_expr, disp: int, size:
     return lowered if lowered is not None else deref
 
 
+_JCC_LOW_OP_8616: dict[str, str] = {
+    "jb": "CmpLT",
+    "jnae": "CmpLT",
+    "jc": "CmpLT",
+    "jbe": "CmpLE",
+    "jna": "CmpLE",
+    "ja": "CmpGT",
+    "jnbe": "CmpGT",
+    "jae": "CmpGE",
+    "jnb": "CmpGE",
+    "jnc": "CmpGE",
+    "je": "CmpEQ",
+    "jz": "CmpEQ",
+    "jne": "CmpNE",
+    "jnz": "CmpNE",
+}
+
+
+def _branch_target_imm_8616(insn) -> int | None:
+    operands = tuple(getattr(insn, "operands", ()) or ())
+    if not operands:
+        return None
+    op0 = operands[0]
+    if int(getattr(op0, "type", -1)) != 2:
+        return None
+    return int(getattr(op0, "imm", 0))
+
+
+def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_exprs, ds_var):
+    jcc1 = str(getattr(jcc_insn, "mnemonic", "")).lower()
+    mid_addr = _branch_target_imm_8616(jcc_insn)
+    if mid_addr is None:
+        return None
+    try:
+        mid_block = project.factory.block(mid_addr, opt_level=0)
+    except Exception:
+        return None
+    mid_insns = tuple(getattr(getattr(mid_block, "capstone", None), "insns", ()) or ())
+    if len(mid_insns) != 1:
+        return None
+    jcc2_insn = mid_insns[0]
+    jcc2 = str(getattr(jcc2_insn, "mnemonic", "")).lower()
+    cmp2_addr = _branch_target_imm_8616(jcc2_insn)
+    if cmp2_addr is None:
+        return None
+    try:
+        low_block = project.factory.block(cmp2_addr, opt_level=0)
+    except Exception:
+        return None
+    low_insns = tuple(getattr(getattr(low_block, "capstone", None), "insns", ()) or ())
+    if len(low_insns) < 2:
+        return None
+    cmp2_insn = low_insns[0]
+    jcc3_insn = low_insns[1]
+    if str(getattr(cmp2_insn, "mnemonic", "")).lower() != "cmp":
+        return None
+    jcc3 = str(getattr(jcc3_insn, "mnemonic", "")).lower()
+    low_op = _JCC_LOW_OP_8616.get(jcc3)
+    if low_op is None:
+        return None
+
+    lhs_hi = _resolve_cmp_operand_expr_8616(
+        project, codegen, cmp_insn.operands[0], {}, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
+    )
+    rhs_hi = _resolve_cmp_operand_expr_8616(
+        project, codegen, cmp_insn.operands[1], {}, ds_var, cmp_insn.reg_name, reg_exprs, int(cmp_insn.address)
+    )
+    lhs_lo = _resolve_cmp_operand_expr_8616(
+        project, codegen, cmp2_insn.operands[0], {}, ds_var, cmp2_insn.reg_name, reg_exprs, int(cmp2_insn.address)
+    )
+    rhs_lo = _resolve_cmp_operand_expr_8616(
+        project, codegen, cmp2_insn.operands[1], {}, ds_var, cmp2_insn.reg_name, reg_exprs, int(cmp2_insn.address)
+    )
+    if lhs_hi is None or rhs_hi is None or lhs_lo is None or rhs_lo is None:
+        return None
+
+    hi_lt = CBinaryOp("CmpLT", lhs_hi, rhs_hi, codegen=codegen)
+    hi_gt = CBinaryOp("CmpGT", lhs_hi, rhs_hi, codegen=codegen)
+    hi_eq = CBinaryOp("CmpEQ", lhs_hi, rhs_hi, codegen=codegen)
+    lo_rel = CBinaryOp(low_op, lhs_lo, rhs_lo, codegen=codegen)
+    eq_expr = CBinaryOp("LogicalAnd", hi_eq, CBinaryOp("CmpEQ", lhs_lo, rhs_lo, codegen=codegen), codegen=codegen)
+
+    if jcc1 in {"jl", "jnge", "jb", "jnae", "jc"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
+        return _DecodedCmpGuard8616(
+            lhs=None,
+            rhs=None,
+            op="CmpLT",
+            expr=CBinaryOp("LogicalOr", hi_lt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+        )
+    if jcc1 in {"jle", "jng", "jbe", "jna"} and jcc2 in {"jge", "jnl", "jae", "jnb", "jnc"}:
+        return _DecodedCmpGuard8616(
+            lhs=None,
+            rhs=None,
+            op="CmpLE",
+            expr=CBinaryOp("LogicalOr", hi_lt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+        )
+    if jcc1 in {"jg", "jnle", "ja", "jnbe"} and jcc2 in {"jle", "jng", "jbe", "jna"}:
+        return _DecodedCmpGuard8616(
+            lhs=None,
+            rhs=None,
+            op="CmpGT",
+            expr=CBinaryOp("LogicalOr", hi_gt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+        )
+    if jcc1 in {"jge", "jnl", "jae", "jnb", "jnc"} and jcc2 in {"jle", "jng", "jbe", "jna"}:
+        return _DecodedCmpGuard8616(
+            lhs=None,
+            rhs=None,
+            op="CmpGE",
+            expr=CBinaryOp("LogicalOr", hi_gt, CBinaryOp("LogicalAnd", hi_eq, lo_rel, codegen=codegen), codegen=codegen),
+        )
+    if jcc1 in {"je", "jz"} and jcc2 in {"je", "jz", "jne", "jnz"}:
+        return _DecodedCmpGuard8616(lhs=None, rhs=None, op="CmpEQ", expr=eq_expr)
+    if jcc1 in {"jne", "jnz"} and jcc2 in {"je", "jz", "jne", "jnz"}:
+        ne_expr = CBinaryOp(
+            "LogicalOr",
+            CBinaryOp("CmpNE", lhs_hi, rhs_hi, codegen=codegen),
+            CBinaryOp("LogicalAnd", hi_eq, CBinaryOp("CmpNE", lhs_lo, rhs_lo, codegen=codegen), codegen=codegen),
+            codegen=codegen,
+        )
+        return _DecodedCmpGuard8616(lhs=None, rhs=None, op="CmpNE", expr=ne_expr)
+    return None
+
+
 def _resolve_cmp_operand_expr_8616(
     project,
     codegen,
@@ -322,6 +446,9 @@ def _translate_cmp_jcc_guard_8616(project, codegen, block_addr: int, jcc_addr: i
         return None
     ds_var = CVariable(SimRegisterVariable(ds_offset, 2, name="ds"), codegen=codegen)
     reg_exprs = _register_exprs_by_ins_addr_8616(codegen, project)
+    chain_decoded = _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_exprs, ds_var)
+    if chain_decoded is not None:
+        return chain_decoded
     reg_state: dict[str, object] = {}
     stack_slots: dict[tuple[int, int], object] = {}
 
@@ -482,6 +609,10 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
         if decoded is None:
             return None
+        if getattr(decoded, "expr", None) is not None:
+            if debug_jcc:
+                _log.warning("[jcc-rewrite] decoded candidate accepted (expr) key=%r", key)
+            return decoded.expr
         same_expr = _same_c_expression_8616(decoded.lhs, decoded.rhs)
         lhs_fp = _expr_fingerprint(decoded.lhs, project)
         rhs_fp = _expr_fingerprint(decoded.rhs, project)
@@ -540,6 +671,15 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
                     changed = True
             if pair_changed:
                 node.condition_and_nodes = type(cond_pairs)(new_pairs)
+                # Keep primary condition in sync when the node-level condition
+                # has already collapsed (e.g. literal false), but a tagged
+                # branch-pair condition was successfully recovered.
+                primary = getattr(node, "condition", None)
+                if _is_literal_condition_8616(primary) and new_pairs:
+                    first_cond = new_pairs[0][0]
+                    if first_cond is not None:
+                        node.condition = first_cond
+                        changed = True
         if hasattr(node, "condition"):
             cond = getattr(node, "condition", None)
             if cond is not None:
