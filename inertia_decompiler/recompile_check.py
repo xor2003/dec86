@@ -65,6 +65,8 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
         "-Wno-error=unused-but-set-variable",
         "-Wno-error=parentheses",
         "-Wno-error=unused-variable",
+        "-Wno-error=nonnull",
+        "-Wno-error=builtin-declaration-mismatch",
         "-fsyntax-only",
         str(src_path),
     )

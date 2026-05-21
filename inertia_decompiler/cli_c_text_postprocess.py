@@ -264,14 +264,69 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
     if not lines:
         return c_text
     prototype_re = re.compile(
-        r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
+        r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s*(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
     )
 
-    def _score(ret: str, args: str, decl: str) -> tuple[int, int]:
+    def _split_top_level_args(args_text: str) -> list[str]:
+        text = args_text.strip()
+        if not text:
+            return []
+        parts: list[str] = []
+        current: list[str] = []
+        depth_paren = depth_bracket = depth_brace = 0
+        for ch in text:
+            if ch == "," and depth_paren == depth_bracket == depth_brace == 0:
+                parts.append("".join(current).strip())
+                current = []
+                continue
+            current.append(ch)
+            if ch == "(":
+                depth_paren += 1
+            elif ch == ")" and depth_paren > 0:
+                depth_paren -= 1
+            elif ch == "[":
+                depth_bracket += 1
+            elif ch == "]" and depth_bracket > 0:
+                depth_bracket -= 1
+            elif ch == "{":
+                depth_brace += 1
+            elif ch == "}" and depth_brace > 0:
+                depth_brace -= 1
+        if current:
+            parts.append("".join(current).strip())
+        return [part for part in parts if part]
+
+    call_re = re.compile(r"(?<![A-Za-z0-9_])(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^;\n{}]*)\)\s*;")
+    observed_min_arity: dict[str, int] = {}
+    for line in lines:
+        for call_match in call_re.finditer(line):
+            name = call_match.group("name")
+            args = call_match.group("args").strip()
+            arity = 0 if not args else len(_split_top_level_args(args))
+            prev = observed_min_arity.get(name)
+            if prev is None or arity < prev:
+                observed_min_arity[name] = arity
+
+    def _declared_arity(args: str) -> int | None:
+        text = args.strip()
+        if not text:
+            return 0
+        if text == "void":
+            return 0
+        if "..." in text:
+            return None
+        return len(_split_top_level_args(text))
+
+    def _score(ret: str, args: str, decl: str, name: str) -> tuple[int, int]:
         ret = ret.strip()
         args = args.strip()
         is_generic = ret == "int" and args == ""
         has_typed_args = bool(args and args != "void")
+        observed = observed_min_arity.get(name)
+        declared = _declared_arity(args)
+        arity_conflict = isinstance(observed, int) and isinstance(declared, int) and declared > observed
+        if arity_conflict and has_typed_args:
+            return (-10, len(decl))
         return ((2 if has_typed_args else 0) + (0 if is_generic else 1), len(decl))
 
     best_by_name: dict[str, str] = {}
@@ -282,7 +337,7 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
         if match is None:
             continue
         name = match.group("name")
-        score = _score(match.group("ret"), match.group("args"), stripped)
+        score = _score(match.group("ret"), match.group("args"), stripped, name)
         prev = best_score_by_name.get(name)
         if prev is None or score > prev:
             best_score_by_name[name] = score
@@ -290,6 +345,16 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
 
     if not best_by_name:
         return c_text
+
+    replacement_by_name: dict[str, str] = {}
+    for name, decl in tuple(best_by_name.items()):
+        match = prototype_re.match(decl)
+        if match is None:
+            continue
+        observed = observed_min_arity.get(name)
+        declared = _declared_arity(match.group("args"))
+        if isinstance(observed, int) and isinstance(declared, int) and declared > observed:
+            replacement_by_name[name] = f"int {name}();"
 
     out_lines: list[str] = []
     for line in lines:
@@ -301,7 +366,13 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
         name = match.group("name")
         if best_by_name.get(name) != stripped:
             continue
-        out_lines.append(line)
+        replacement = replacement_by_name.get(name)
+        if replacement is None:
+            out_lines.append(line)
+            continue
+        indent_match = re.match(r"^\s*", line)
+        indent = indent_match.group(0) if indent_match is not None else ""
+        out_lines.append(f"{indent}{replacement}")
     normalized = "\n".join(out_lines)
     if c_text.endswith("\n"):
         normalized += "\n"
@@ -1023,6 +1094,46 @@ def _normalize_scalar_assigned_extern_arrays_text(c_text: str) -> str:
     return normalized
 
 
+def _normalize_concat_zero_text(c_text: str) -> str:
+    # Lower decompiler textual CONCAT forms that represent zero-extension.
+    # Examples:
+    #   "x CONCAT 0" -> "x"
+    #   "0 CONCAT x" -> "x"
+    normalized = re.sub(r"\(\s*([A-Za-z_]\w*)\s+CONCAT\s+0\s*\)", r"\1", c_text)
+    normalized = re.sub(r"(?<![A-Za-z_])([A-Za-z_]\w*)\s+CONCAT\s+0(?![A-Za-z_])", r"\1", normalized)
+    normalized = re.sub(r"0\s+CONCAT\s+([A-Za-z_]\w*)", r"\1", normalized)
+    return normalized
+
+
+def _prune_dead_stack_base_assignments_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    assign_re = re.compile(r"^(?P<indent>\s*)(?P<lhs>[A-Za-z_]\w*)\s*=\s*(?P<rhs>[^;]*stack_base[^;]*);\s*$")
+    changed = False
+    kept: list[str] = []
+    full_text = "\n".join(lines)
+    for line in lines:
+        m = assign_re.match(line)
+        if m is None:
+            kept.append(line)
+            continue
+        lhs = m.group("lhs")
+        token_re = re.compile(rf"(?<![A-Za-z_0-9]){re.escape(lhs)}(?![A-Za-z_0-9])")
+        occurrences = len(token_re.findall(full_text))
+        # Two occurrences means declaration + this assignment, i.e. no real use.
+        if occurrences <= 2:
+            changed = True
+            continue
+        kept.append(line)
+    if not changed:
+        return c_text
+    out = "\n".join(kept)
+    if c_text.endswith("\n"):
+        out += "\n"
+    return out
+
+
 def _materialize_missing_segment_macro_locals_text(c_text: str) -> str:
     needed = {
         segment
@@ -1057,9 +1168,20 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
     if not lines:
         return c_text
 
-    def _prototype_for_call(name: str) -> str:
+    def _prototype_for_call(name: str, observed_arg_count: int | None) -> str:
         helper_decl = preferred_known_helper_signature_decl(name)
         if helper_decl is not None:
+            m = re.search(r"\((?P<args>[^)]*)\)", helper_decl)
+            helper_arg_count = None
+            if m is not None:
+                arg_text = m.group("args").strip()
+                if not arg_text or arg_text == "void":
+                    helper_arg_count = 0
+                else:
+                    helper_arg_count = len([part for part in arg_text.split(",") if part.strip()])
+            if isinstance(helper_arg_count, int) and isinstance(observed_arg_count, int):
+                if helper_arg_count != observed_arg_count:
+                    return f"int {name}();"
             return helper_decl.rstrip(";").strip() + ";"
         return f"int {name}();"
 
@@ -1098,12 +1220,22 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
         return name in declared
 
     calls: list[str] = []
+    observed_args: dict[str, int] = {}
     for line in lines:
         stripped = line.strip()
         if stripped.startswith(("/*", "*", "//", "#")):
             continue
         for match in re.finditer(r"(?<![A-Za-z_])(?P<name>[A-Za-z_]\w*)\s*\(", line):
             name = match.group("name")
+            after = line[match.end():]
+            close_idx = after.find(")")
+            if close_idx >= 0:
+                arg_expr = after[:close_idx].strip()
+                if not arg_expr:
+                    argc = 0
+                else:
+                    argc = len([part for part in arg_expr.split(",") if part.strip()])
+                observed_args[name] = max(observed_args.get(name, 0), argc)
             if (
                 name in keywords
                 or name in runtime_helpers
@@ -1128,7 +1260,7 @@ def _materialize_missing_direct_call_prototypes_text(c_text: str) -> str:
                 break
     else:
         return c_text
-    prototypes = [_prototype_for_call(name) for name in calls]
+    prototypes = [_prototype_for_call(name, observed_args.get(name)) for name in calls]
     if insert_at > 0 and lines[insert_at - 1].strip():
         prototypes.append("")
     lines[insert_at:insert_at] = prototypes
