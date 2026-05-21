@@ -346,10 +346,15 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
     if not best_by_name:
         return c_text
 
+    protected_standard_names = {
+        "time",
+    }
     replacement_by_name: dict[str, str] = {}
     for name, decl in tuple(best_by_name.items()):
         match = prototype_re.match(decl)
         if match is None:
+            continue
+        if name in protected_standard_names:
             continue
         observed = observed_min_arity.get(name)
         declared = _declared_arity(match.group("args"))
@@ -1129,6 +1134,29 @@ def _prune_dead_stack_base_assignments_text(c_text: str) -> str:
     if not changed:
         return c_text
     out = "\n".join(kept)
+    if c_text.endswith("\n"):
+        out += "\n"
+    return out
+
+
+def _materialize_stack_base_placeholder_declaration_text(c_text: str) -> str:
+    if "stack_base" not in c_text:
+        return c_text
+    decl_re = re.compile(r"(?m)^\s*[A-Za-z_][\w\s\*]*\bstack_base\b\s*(?:[;=,\[])")
+    if decl_re.search(c_text):
+        return c_text
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+    insert_at = None
+    for idx, line in enumerate(lines):
+        if "{" in line:
+            insert_at = idx + 1
+            break
+    if insert_at is None:
+        return c_text
+    lines.insert(insert_at, "    unsigned short stack_base;")
+    out = "\n".join(lines)
     if c_text.endswith("\n"):
         out += "\n"
     return out
