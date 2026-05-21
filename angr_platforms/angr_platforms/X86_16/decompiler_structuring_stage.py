@@ -423,6 +423,12 @@ def _structuring_codegen_8616(project, codegen) -> bool:
     for spec in pass_specs:
         try:
             project._inertia_decompiler_stage = f"structuring:{spec.name}"
+            # Structuring must remain semantics-preserving under tail validation.
+            # Expression simplification is allowed in postprocess; in structuring it
+            # can rewrite boundary-visible conditions (e.g. 32-bit compare forms),
+            # so keep this step analysis-only here.
+            if spec.name == "_simplify_structured_expressions_8616":
+                continue
             if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
                 import sys as _sys
                 _sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] structuring pass: {spec.name} (+{time.perf_counter() - _t_structuring_start:.1f}s)\n")
