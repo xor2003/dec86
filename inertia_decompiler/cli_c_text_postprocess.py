@@ -989,7 +989,23 @@ def _normalize_scalar_assigned_extern_arrays_text(c_text: str) -> str:
             normalized_lines.append(line)
             continue
         name = match.group("name")
-        if re.search(rf"(?m)^\s*{re.escape(name)}\s*=", body) is None:
+        usage_body = "\n".join(
+            candidate
+            for candidate in lines
+            if not decl_re.match(candidate)
+        )
+        direct_assign = re.search(rf"(?m)^\s*{re.escape(name)}\s*=", usage_body) is not None
+        scalar_arith = re.search(
+            rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+|-|\*|/|>>|<<|==|!=|<=|>=|<|>)",
+            usage_body,
+        ) is not None
+        unary_update = re.search(
+            rf"(?:\+\+|--)\s*(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])|"
+            rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+\+|--)",
+            usage_body,
+        ) is not None
+        indexed_use = re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*\[", usage_body) is not None
+        if indexed_use or not (direct_assign or scalar_arith or unary_update):
             normalized_lines.append(line)
             continue
         replacement = f"{match.group('indent')}extern unsigned short {name};"
@@ -1130,7 +1146,11 @@ def _materialize_missing_synthetic_global_declarations_text(c_text: str) -> str:
         match.group("name")
         for line in lines
         for match in (
-            re.match(r"\s*(?:extern\s+)?(?:unsigned\s+)?(?:char|short|int|long|uint\d+_t|int\d+_t)\s+(?P<name>g_b[0-9a-fA-F]+)\s*(?:;|=|,)", line),
+            re.match(
+                r"\s*(?:extern\s+)?(?:unsigned\s+)?(?:char|short|int|long|uint\d+_t|int\d+_t)\s+"
+                r"(?P<name>g_b[0-9a-fA-F]+)\s*(?:\[[^\]]*\])?\s*(?:;|=|,)",
+                line,
+            ),
         )
         if match is not None
     }
@@ -1163,6 +1183,49 @@ def _materialize_missing_synthetic_global_declarations_text(c_text: str) -> str:
     if insert_at > 0 and lines[insert_at - 1].strip():
         declarations.append("")
     lines[insert_at:insert_at] = declarations
+    normalized = "\n".join(lines)
+    if c_text.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
+def _normalize_scalar_gb_array_declarations_text(c_text: str) -> str:
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+
+    decl_re = re.compile(
+        r"^(?P<indent>\s*)extern\s+char\s+(?P<name>g_b[0-9a-fA-F]+)\s*\[(?P<size>\d+)\]\s*;\s*$"
+    )
+    names: dict[str, tuple[int, int]] = {}
+    for idx, line in enumerate(lines):
+        match = decl_re.match(line)
+        if match is None:
+            continue
+        names[match.group("name")] = (idx, int(match.group("size")))
+    if not names:
+        return c_text
+
+    changed = False
+    for name, (idx, _size) in names.items():
+        # Scalar usage evidence: arithmetic on the symbol itself (not indexing)
+        scalar_use_re = re.compile(
+            rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+|-|\*|/|>>|<<|==|!=|<=|>=|<|>)"
+            rf"|(?:\+\+|--)\s*(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])"
+            rf"|(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*(?:\+\+|--)"
+        )
+        indexed_use_re = re.compile(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z_])\s*\[")
+        if indexed_use_re.search(c_text):
+            continue
+        if scalar_use_re.search(c_text):
+            lines[idx] = re.sub(
+                rf"\bextern\s+char\s+{re.escape(name)}\s*\[\d+\]\s*;",
+                f"extern unsigned short {name};",
+                lines[idx],
+            )
+            changed = True
+    if not changed:
+        return c_text
     normalized = "\n".join(lines)
     if c_text.endswith("\n"):
         normalized += "\n"
