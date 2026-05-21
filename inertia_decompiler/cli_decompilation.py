@@ -317,10 +317,13 @@ from .cli_c_text_postprocess import (
     _materialize_opaque_pointer_typedefs_text,
     _normalize_anonymous_call_targets,
     _normalize_boolean_conditions,
+    _normalize_concat_zero_text,
     _normalize_function_signature_arg_names,
     _normalize_portable_flat_main_signature_text,
     _normalize_scalar_assigned_extern_arrays_text,
     _normalize_spurious_duplicate_local_suffixes,
+    _materialize_stack_base_placeholder_declaration_text,
+    _prune_dead_stack_base_assignments_text,
     _prune_unused_staging_assignments,
     _prune_trailing_generic_return_text,
     _prune_non_lvalue_arithmetic_assignments,
@@ -787,7 +790,11 @@ def _decompile_function(
     failure_family_state: FailureFamilyState | None = None,
 ) -> tuple[str, str]:
     setattr(project, "_inertia_partial_codegen_text", None)
-    setattr(project, "_inertia_last_tail_validation_snapshot", None)
+    current_func_addr = function_original_addr(function)
+    active_func_addr = getattr(project, "_inertia_tv_active_function_addr", None)
+    if active_func_addr != current_func_addr:
+        setattr(project, "_inertia_last_tail_validation_snapshot", None)
+    setattr(project, "_inertia_tv_active_function_addr", current_func_addr)
     effective_cod_metadata = cod_metadata or _sidecar_cod_metadata_for_function(
         project,
         function,
@@ -1059,6 +1066,19 @@ def _decompile_function(
     except Exception as ex:
         setattr(project, "_inertia_partial_codegen_text", None)
         return "error", str(ex)
+
+    if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
+        try:
+            messages = _analysis_log_messages(dec)
+        except Exception:
+            messages = []
+        if messages:
+            print(
+                f"[dbg] decompiler.errors for {function_original_addr(function):#x} {function.name}: "
+                + " | ".join(messages[:6]),
+                file=sys.stderr,
+                flush=True,
+            )
 
     if dec.codegen is None:
         messages = _analysis_log_messages(dec)
@@ -1521,6 +1541,10 @@ def _decompile_function(
     _debug_dump_calls_8616("post-prune-non-lvalue-arithmetic-assignments", formatted, debug_call_addr)
     formatted = _normalize_shift_add_precedence_in_assignments(formatted)
     _debug_dump_calls_8616("post-normalize-shift-precedence", formatted, debug_call_addr)
+    formatted = _normalize_concat_zero_text(formatted)
+    formatted = _materialize_stack_base_placeholder_declaration_text(formatted)
+    formatted = _prune_dead_stack_base_assignments_text(formatted)
+    _debug_dump_calls_8616("post-normalize-concat-zero", formatted, debug_call_addr)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
     _debug_dump_calls_8616("post-collapse-duplicate-type-keywords", formatted, debug_call_addr)
     formatted = _normalize_spurious_duplicate_local_suffixes(formatted)
