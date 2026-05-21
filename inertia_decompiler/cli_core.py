@@ -2146,8 +2146,16 @@ def main(argv: list[str] | None = None) -> int:
                 func_info = getattr(func, 'info', None)
                 if isinstance(func_info, dict):
                     func_info_tv = func_info.get('x86_16_tail_validation')
-                print(f"[dbg] direct_decompile_job snapshot: project_fb_stages={list(project_fb.keys()) if isinstance(project_fb, dict) else 'NOT_DICT'} func_info_tv_stages={list(func_info_tv.keys()) if isinstance(func_info_tv, dict) else type(func_info_tv).__name__ if func_info_tv is not None else 'None'} merged_stages={list(snapshot.keys()) if isinstance(snapshot, dict) else 'NOT_DICT'} merged_statuses={ {k: v.get('status') if isinstance(v, dict) else type(v).__name__ for k, v in snapshot.items()} if isinstance(snapshot, dict) else 'N/A' }")
-                sys.stdout.flush()
+                merged_statuses = (
+                    {k: v.get("status") if isinstance(v, dict) else type(v).__name__ for k, v in snapshot.items()}
+                    if isinstance(snapshot, dict)
+                    else "N/A"
+                )
+                print(
+                    f"[dbg] direct_decompile_job snapshot: project_fb_stages={list(project_fb.keys()) if isinstance(project_fb, dict) else 'NOT_DICT'} func_info_tv_stages={list(func_info_tv.keys()) if isinstance(func_info_tv, dict) else type(func_info_tv).__name__ if func_info_tv is not None else 'None'} merged_stages={list(snapshot.keys()) if isinstance(snapshot, dict) else 'NOT_DICT'} merged_statuses={merged_statuses}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return (
                     *result,
                     snapshot,
@@ -3096,8 +3104,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("/* parallel function decompilation: disabled (RAM pressure or single function) */")
     force_isolated_function_projects = (
-        workers > 1
-        and lst_metadata is None
+        args.addr is None
         and args.binary.suffix.lower() == ".exe"
         and project.arch.name == "86_16"
     )
@@ -3325,7 +3332,7 @@ def main(argv: list[str] | None = None) -> int:
                                         synthetic_globals=synthetic_globals,
                                         lst_metadata=lst_metadata,
                                         enable_structured_simplify=True,
-                                        force_isolated_project=False,
+                                        force_isolated_project=force_isolated_function_projects,
                                         allow_isolated_retry=allow_isolated_retry_in_function_tasks,
                                     )
                                 ),
@@ -3494,7 +3501,7 @@ def main(argv: list[str] | None = None) -> int:
                     synthetic_globals=synthetic_globals,
                     lst_metadata=lst_metadata,
                     enable_structured_simplify=True,
-                    force_isolated_project=False,
+                    force_isolated_project=force_isolated_function_projects,
                     allow_isolated_retry=allow_isolated_retry_for_parallel_tasks,
                 )
 

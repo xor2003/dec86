@@ -323,6 +323,9 @@ from .cli_c_text_postprocess import (
     _normalize_scalar_assigned_extern_arrays_text,
     _normalize_spurious_duplicate_local_suffixes,
     _materialize_stack_base_placeholder_declaration_text,
+    _materialize_missing_g_hex_externs_text,
+    _dedupe_conflicting_extern_variable_declarations_text,
+    _normalize_integer_dereference_stores_text,
     _prune_dead_stack_base_assignments_text,
     _prune_unused_staging_assignments,
     _prune_trailing_generic_return_text,
@@ -1542,7 +1545,9 @@ def _decompile_function(
     formatted = _normalize_shift_add_precedence_in_assignments(formatted)
     _debug_dump_calls_8616("post-normalize-shift-precedence", formatted, debug_call_addr)
     formatted = _normalize_concat_zero_text(formatted)
+    formatted = _normalize_integer_dereference_stores_text(formatted)
     formatted = _materialize_stack_base_placeholder_declaration_text(formatted)
+    formatted = _materialize_missing_g_hex_externs_text(formatted)
     formatted = _prune_dead_stack_base_assignments_text(formatted)
     _debug_dump_calls_8616("post-normalize-concat-zero", formatted, debug_call_addr)
     formatted = _collapse_duplicate_type_keywords_text(formatted)
@@ -1598,6 +1603,7 @@ def _decompile_function(
     formatted = _materialize_missing_generic_local_declarations_text(formatted)
     formatted = _materialize_missing_segment_macro_locals_text(formatted)
     formatted = _materialize_missing_synthetic_global_declarations_text(formatted)
+    formatted = _dedupe_conflicting_extern_variable_declarations_text(formatted)
     formatted = _materialize_missing_direct_call_prototypes_text(formatted)
     formatted = _prune_weaker_conflicting_prototypes_text(formatted)
     _debug_dump_calls_8616("post-final-dedup", formatted, debug_call_addr)

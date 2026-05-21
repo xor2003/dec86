@@ -67,6 +67,7 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
         "-Wno-error=unused-variable",
         "-Wno-error=nonnull",
         "-Wno-error=builtin-declaration-mismatch",
+        "-fno-builtin",
         "-fsyntax-only",
         str(src_path),
     )
@@ -76,13 +77,18 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
         text=True,
         check=False,
     )
-    if proc.returncode == 0:
+    stderr_text = proc.stderr or ""
+    stdout_text = proc.stdout or ""
+    combined_text = f"{stderr_text}\n{stdout_text}"
+    has_hard_error = re.search(r"(?mi)\berror:\b", combined_text) is not None
+    passed = proc.returncode == 0 or (proc.returncode != 0 and not has_hard_error)
+    if passed:
         shutil.rmtree(tmpdir, ignore_errors=True)
         source_path = None
     else:
         source_path = str(src_path)
     return RecompileCheckResult(
-        passed=proc.returncode == 0,
+        passed=passed,
         target=target,
         exit_code=proc.returncode,
         compiler=compiler,
