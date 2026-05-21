@@ -155,6 +155,28 @@ def _index_conditions_by_tag(conditions: list[ConditionIR]) -> dict[tuple, Condi
     return index
 
 
+def _resolve_condition_by_tag_with_delta(project, index: dict[tuple, ConditionIR], key: tuple | None) -> ConditionIR | None:
+    if key is None:
+        return None
+    cond = index.get(key)
+    if cond is not None:
+        return cond
+    if not (isinstance(key, tuple) and len(key) == 2):
+        return None
+    ins_addr, block_addr = key
+    if not (isinstance(ins_addr, int) and isinstance(block_addr, int)):
+        return None
+    delta = getattr(project, "_inertia_original_linear_delta", None)
+    if not isinstance(delta, int) or delta == 0:
+        return None
+    for signed in (delta, -delta):
+        alt_key = (ins_addr + signed, block_addr + signed)
+        cond = index.get(alt_key)
+        if cond is not None:
+            return cond
+    return None
+
+
 def _is_flag_based_condition_node(node) -> bool:
     """Detect if a condition node is flag-based (tmp_* or flags mask pattern)."""
     # CITE nodes: if(tmp_*)
@@ -209,9 +231,10 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
 
     def _replacement_for_condition_node(cond):
         key = _condition_key_from_tags(cond)
-        if key is None or key not in condition_index:
+        typed_cond = _resolve_condition_by_tag_with_delta(project, condition_index, key)
+        if typed_cond is None:
             return None
-        new_cond = _build_c_condition_expr(project, condition_index[key], codegen)
+        new_cond = _build_c_condition_expr(project, typed_cond, codegen)
         if new_cond is None:
             return None
         if _same_c_expression_8616(new_cond.lhs, new_cond.rhs):

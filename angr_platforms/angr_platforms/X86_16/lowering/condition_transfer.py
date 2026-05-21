@@ -28,6 +28,7 @@ from ..ir.condition_ir import (
     ConditionFailure,
     deduplicate_conditions_8616,
 )
+from ..ir.core import IRValue
 from ..condition_trace import record_classified_conditions_trace_8616
 import logging
 import os
@@ -174,9 +175,9 @@ def transfer_typed_conditions_to_codegen_8616(
     def _materializable_condition(cond: ConditionIR) -> bool:
         if not isinstance(cond.src_insn, int) or not isinstance(cond.block_addr, int):
             return False
-        if not isinstance(cond.lhs, (str, int)):
+        if not isinstance(cond.lhs, (str, int, IRValue)):
             return False
-        if cond.rhs is not None and not isinstance(cond.rhs, (str, int)):
+        if cond.rhs is not None and not isinstance(cond.rhs, (str, int, IRValue)):
             return False
         return True
 

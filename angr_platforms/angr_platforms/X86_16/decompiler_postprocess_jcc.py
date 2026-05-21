@@ -582,6 +582,31 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
     def _is_tagged_condition_carrier_8616(expr) -> bool:
         return type(expr).__name__ == "CITE"
 
+    def _has_nonflag_cmp_8616(expr) -> bool:
+        seen: set[int] = set()
+
+        def _walk(node) -> bool:
+            if node is None:
+                return False
+            marker = id(node)
+            if marker in seen:
+                return False
+            seen.add(marker)
+            if isinstance(node, CBinaryOp):
+                op = getattr(node, "op", None)
+                if isinstance(op, str) and op.startswith("Cmp"):
+                    if not _c_expr_uses_register_8616(node, flags_offset):
+                        return True
+                return _walk(getattr(node, "lhs", None)) or _walk(getattr(node, "rhs", None))
+            if isinstance(node, CUnaryOp):
+                return _walk(getattr(node, "operand", None))
+            cond = getattr(node, "cond", None)
+            if cond is not None:
+                return _walk(cond)
+            return False
+
+        return _walk(expr)
+
     def _decoded_condition_replacement(cond):
         key = _condition_tags_8616(cond)
         ins_addr = None if key is None else key[0]
@@ -605,6 +630,10 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
             or _is_literal_condition_8616(cond)
             or _is_tagged_condition_carrier_8616(cond)
         ):
+            return None
+        # Guardrail: if a condition already contains explicit non-flag
+        # comparisons, do not rewrite it via flag-decode lane.
+        if _has_nonflag_cmp_8616(cond):
             return None
         decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
         if decoded is None:
