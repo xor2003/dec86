@@ -29,6 +29,7 @@ from .decompiler_postprocess_utils import (
 )
 from .condition_trace import record_materialized_condition_trace_8616
 from .ir.condition_ir import ConditionIR
+from .ir.core import IRValue, MemSpace
 from .tail_validation_fingerprint import _expr_fingerprint
 
 __all__ = ["_apply_typed_conditions_to_codegen_8616"]
@@ -45,10 +46,38 @@ def _build_reg_var(project, reg_name: str, codegen, size: int = 2) -> CVariable 
 
 def _build_c_expr_for_operand(project, operand, codegen) -> object | None:
     """Convert a ConditionIR operand (reg name string or int) to a C AST node."""
+    if isinstance(operand, IRValue):
+        if operand.space == MemSpace.CONST:
+            return CConstant(int(operand.const or 0), SimTypeInt(signed=False, label="int"), codegen=codegen)
+        if operand.space == MemSpace.REG and isinstance(operand.name, str) and operand.name:
+            return _build_reg_var(project, operand.name, codegen, size=max(1, int(operand.size or 2)))
+        return None
     if isinstance(operand, str):
         return _build_reg_var(project, operand, codegen)
     if isinstance(operand, int):
         return CConstant(int(operand), SimTypeInt(signed=False, label="int"), codegen=codegen)
+    # Compatibility lane: some condition facts still carry raw VexValue-like
+    # wrappers. Resolve register/const evidence if present.
+    try:
+        value_const = getattr(operand, "value", None)
+    except Exception:
+        value_const = None
+    if isinstance(value_const, int):
+        return CConstant(int(value_const), SimTypeInt(signed=False, label="int"), codegen=codegen)
+    try:
+        reg_name = getattr(operand, "reg_name", None)
+    except Exception:
+        reg_name = None
+    if isinstance(reg_name, str) and reg_name:
+        return _build_reg_var(project, reg_name, codegen)
+    try:
+        reg_offset = getattr(operand, "reg", None)
+    except Exception:
+        reg_offset = None
+    if isinstance(reg_offset, int):
+        reg_label = project.arch.register_names.get(int(reg_offset))
+        if isinstance(reg_label, str) and reg_label:
+            return _build_reg_var(project, reg_label, codegen)
     return None
 
 
@@ -220,7 +249,7 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
                     if isinstance(cond_pair, (tuple, list)) and len(cond_pair) >= 2:
                         pair_cond = cond_pair[0]
                         pair_body = cond_pair[1]
-                        new_pair_cond = _replacement_for_condition_node(pair_cond) if _is_flag_based_condition_node(pair_cond) else None
+                        new_pair_cond = _replacement_for_condition_node(pair_cond)
                         if new_pair_cond is not None:
                             rebuilt_pairs.append((new_pair_cond, pair_body))
                             pair_changed = True

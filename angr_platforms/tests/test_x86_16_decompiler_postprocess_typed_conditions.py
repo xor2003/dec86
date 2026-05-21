@@ -9,6 +9,7 @@ from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 
 
 class _DummyCodegen:
@@ -177,3 +178,35 @@ def test_apply_typed_conditions_refuses_fingerprint_equal_replacement(monkeypatc
 
     assert changed is False
     assert if_stmt.condition_and_nodes[0][0] is cond
+
+
+def test_apply_typed_conditions_materializes_irvalue_operands():
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            op="ule",
+            lhs=IRValue(MemSpace.REG, name="ax", size=2),
+            rhs=IRValue(MemSpace.CONST, const=7, size=2),
+            src_insn=0x4020,
+            block_addr=0x4000,
+        )
+    ]
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    updated = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(updated, CBinaryOp)
+    assert updated.op == "CmpLE"
