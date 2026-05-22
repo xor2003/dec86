@@ -23,6 +23,7 @@ import sys
 import threading
 
 import time
+import traceback
 
 from collections.abc import Mapping, Sequence
 
@@ -858,9 +859,17 @@ def _decompile_function(
         for entry in getattr(dec_obj, "errors", ()) or ():
             exc_type = getattr(entry, "exc_type", None)
             exc_value = getattr(entry, "exc_value", None)
+            exc_tb = getattr(entry, "exc_traceback", None)
             error = getattr(entry, "error", None)
             if exc_type is not None and exc_value is not None:
                 text = f"{getattr(exc_type, '__name__', str(exc_type))}: {exc_value}"
+                if exc_tb is not None and os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS_TRACEBACK"):
+                    try:
+                        tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb)).strip()
+                        if tb:
+                            text = f"{text} | traceback={tb}"
+                    except Exception:
+                        pass
             elif error is not None:
                 text = f"{type(error).__name__}: {error}"
             else:
@@ -898,7 +907,15 @@ def _decompile_function(
         except _AnalysisTimeout:
             return "clinic-failure=timeout"
         except Exception as ex:  # noqa: BLE001
-            return f"clinic-failure={type(ex).__name__}: {_describe_exception(ex)}"
+            detail = f"clinic-failure={type(ex).__name__}: {_describe_exception(ex)}"
+            if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS_TRACEBACK"):
+                try:
+                    tb = traceback.format_exc().strip()
+                    if tb:
+                        detail = f"{detail} | traceback={tb}"
+                except Exception:
+                    pass
+            return detail
         return None
 
     def _retry_in_isolated_project() -> tuple[str, str] | None:
