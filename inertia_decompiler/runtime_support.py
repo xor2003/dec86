@@ -1084,9 +1084,7 @@ def guard_angr_tail_validation_collection_timing():
 @contextlib.contextmanager
 def guard_angr_structuring_codegen_internal_timing():
     """Emit timing for internal steps of _structuring_codegen_8616 before the pass loop."""
-    if not timing_output_enabled():
-        yield
-        return
+    emit_timing = timing_output_enabled()
     import time as _time
     import angr_platforms.X86_16.decompiler_structuring_stage as _ds_mod
     import angr_platforms.X86_16.pipeline.contracts as _contracts_mod
@@ -1096,25 +1094,29 @@ def guard_angr_structuring_codegen_internal_timing():
 
     def _timed_alias_complete(codegen):  # noqa: ANN001
         _t0 = _time.perf_counter()
-        print(f"[dbg] stage-time: x86_16:_assert_alias_complete start")
-        sys.stderr.flush()
+        if emit_timing:
+            print(f"[dbg] stage-time: x86_16:_assert_alias_complete start")
+            sys.stderr.flush()
         try:
             return orig_alias(codegen)
         finally:
-            _elapsed = _time.perf_counter() - _t0
-            print(f"[dbg] stage-time: x86_16:_assert_alias_complete done elapsed={_elapsed:.2f}s")
-            sys.stderr.flush()
+            if emit_timing:
+                _elapsed = _time.perf_counter() - _t0
+                print(f"[dbg] stage-time: x86_16:_assert_alias_complete done elapsed={_elapsed:.2f}s")
+                sys.stderr.flush()
 
     def _timed_contracts(codegen):  # noqa: ANN001
         _t0 = _time.perf_counter()
-        print(f"[dbg] stage-time: x86_16:assert_pipeline_contracts start")
-        sys.stderr.flush()
+        if emit_timing:
+            print(f"[dbg] stage-time: x86_16:assert_pipeline_contracts start")
+            sys.stderr.flush()
         try:
             return orig_contracts(codegen)
         finally:
-            _elapsed = _time.perf_counter() - _t0
-            print(f"[dbg] stage-time: x86_16:assert_pipeline_contracts done elapsed={_elapsed:.2f}s")
-            sys.stderr.flush()
+            if emit_timing:
+                _elapsed = _time.perf_counter() - _t0
+                print(f"[dbg] stage-time: x86_16:assert_pipeline_contracts done elapsed={_elapsed:.2f}s")
+                sys.stderr.flush()
 
     _ds_mod._assert_alias_complete_8616 = _timed_alias_complete
     _contracts_mod.assert_pipeline_contracts_8616 = _timed_contracts
@@ -1135,20 +1137,23 @@ def guard_angr_structuring_codegen_internal_timing():
             if _rml_timed_out[0]:
                 return False
             _t0 = _time.perf_counter()
-            print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack start")
-            sys.stderr.flush()
+            if emit_timing:
+                print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack start")
+                sys.stderr.flush()
             try:
                 with analysis_timeout(int(_BOUNDED_STAGE_SECONDS)):
                     return _orig_rml(codegen, **kwargs)
             except AnalysisTimeout:
                 _rml_timed_out[0] = True
-                _elapsed = _time.perf_counter() - _t0
-                print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack TIMEOUT elapsed={_elapsed:.2f}s budget={_BOUNDED_STAGE_SECONDS}s", file=sys.stderr, flush=True)
+                if emit_timing:
+                    _elapsed = _time.perf_counter() - _t0
+                    print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack TIMEOUT elapsed={_elapsed:.2f}s budget={_BOUNDED_STAGE_SECONDS}s", file=sys.stderr, flush=True)
                 return False
             finally:
-                _elapsed = _time.perf_counter() - _t0
-                print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack done elapsed={_elapsed:.2f}s")
-                sys.stderr.flush()
+                if emit_timing:
+                    _elapsed = _time.perf_counter() - _t0
+                    print(f"[dbg] stage-time: x86_16:lower_ss_linear_stack done elapsed={_elapsed:.2f}s")
+                    sys.stderr.flush()
         _rml_mod.lower_stable_ss_linear_stack_dereferences_8616 = _timed_rml
         # Also patch the import-time reference in stack_lowering.py that
         # bypasses the module-level monkey-patch (see issue with
@@ -1163,14 +1168,16 @@ def guard_angr_structuring_codegen_internal_timing():
         _orig_slf = _slf_mod.lower_stack_accesses_from_alias_facts_8616
         def _timed_slf(codegen, *args, **kwargs):  # noqa: ANN001
             _t0 = _time.perf_counter()
-            print(f"[dbg] stage-time: x86_16:lower_stack_from_facts start")
-            sys.stderr.flush()
+            if emit_timing:
+                print(f"[dbg] stage-time: x86_16:lower_stack_from_facts start")
+                sys.stderr.flush()
             try:
                 return _orig_slf(codegen, *args, **kwargs)
             finally:
-                _elapsed = _time.perf_counter() - _t0
-                print(f"[dbg] stage-time: x86_16:lower_stack_from_facts done elapsed={_elapsed:.2f}s")
-                sys.stderr.flush()
+                if emit_timing:
+                    _elapsed = _time.perf_counter() - _t0
+                    print(f"[dbg] stage-time: x86_16:lower_stack_from_facts done elapsed={_elapsed:.2f}s")
+                    sys.stderr.flush()
         _slf_mod.lower_stack_accesses_from_alias_facts_8616 = _timed_slf
     except Exception:
         pass
