@@ -21,7 +21,10 @@ from concurrent.futures.thread import _threads_queues, _worker
 from datetime import datetime
 from _pytest.capture import EncodedFile
 
-from .variable_recovery_sub_guard import build_guarded_handle_binop_sub_8616
+from .variable_recovery_sub_guard import (
+    build_guarded_handle_binop_mul_8616,
+    build_guarded_handle_binop_sub_8616,
+)
 
 
 DEFAULT_FREE_RAM_BUDGET_FRACTION = 0.45
@@ -258,13 +261,20 @@ def install_angr_variable_recovery_binop_sub_size_guard(
         typevars_module = angr_typevars
 
     original_handle_binop_sub = engine_cls._handle_binop_Sub
+    original_handle_binop_mul = engine_cls._handle_binop_Mul
     engine_cls._handle_binop_Sub = build_guarded_handle_binop_sub_8616(
         richr_cls=richr_cls,
         typevars_module=typevars_module,
         project=project,
         context_suffix=(_project_current_function_context, _project_current_function_context_suffix),
     )
-    return original_handle_binop_sub
+    engine_cls._handle_binop_Mul = build_guarded_handle_binop_mul_8616(
+        richr_cls=richr_cls,
+        typevars_module=typevars_module,
+        project=project,
+        context_suffix=(_project_current_function_context, _project_current_function_context_suffix),
+    )
+    return original_handle_binop_sub, original_handle_binop_mul
 
 
 def install_angr_basepointeroffset_codegen_guard(codegen_cls) -> object:
@@ -315,11 +325,14 @@ def guard_angr_variable_recovery_binop_sub_size_mismatch(project=None):
     from angr.analyses.variable_recovery import engine_ail as variable_recovery_engine
 
     engine_cls = variable_recovery_engine.SimEngineVRAIL
-    original_handle_binop_sub = install_angr_variable_recovery_binop_sub_size_guard(engine_cls, project=project)
+    original_handle_binop_sub, original_handle_binop_mul = install_angr_variable_recovery_binop_sub_size_guard(
+        engine_cls, project=project
+    )
     try:
         yield
     finally:
         engine_cls._handle_binop_Sub = original_handle_binop_sub
+        engine_cls._handle_binop_Mul = original_handle_binop_mul
 
 
 @contextlib.contextmanager
@@ -359,6 +372,8 @@ def guard_angr_clinic_stage_markers(project):
     def _stage_transform_to_ssa_level1(self, *args, **kwargs):  # noqa: ANN001
         _emit_stage_time("clinic:ssa_level1")
         project._inertia_decompiler_stage = "core:clinic:ssa_level1_transformation"
+        if getattr(project, "_inertia_tiny_core_disable_peephole", False):
+            return None
         return orig_stage_ssa_level1(self, *args, **kwargs)
 
     def _stage_post_ssa_level1_simplifications(self, *args, **kwargs):  # noqa: ANN001
@@ -378,6 +393,10 @@ def guard_angr_clinic_stage_markers(project):
 
     def _simplify_block(self, *args, **kwargs):  # noqa: ANN001
         project._inertia_decompiler_stage = "core:clinic:simplify_block"
+        if getattr(project, "_inertia_tiny_core_disable_peephole", False):
+            block = args[0] if args else kwargs.get("block")
+            if block is not None:
+                return block
         _simplify_count[0] += 1
         _t_start = _time.perf_counter()
         result = orig_simplify_block(self, *args, **kwargs)
@@ -393,6 +412,8 @@ def guard_angr_clinic_stage_markers(project):
         _t_start = _time.perf_counter()
         try:
             block = args[0] if args else kwargs.get("block")
+            if block is not None and getattr(project, "_inertia_tiny_core_disable_peephole", False):
+                return block
             if block is not None and getattr(project, "_inertia_fast_block_peephole", False):
                 statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
                 new_block = block.copy(statements=statements) if stmts_updated else block
