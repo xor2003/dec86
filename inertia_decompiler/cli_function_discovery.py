@@ -763,6 +763,39 @@ def _richest_bounded_recovery_region(
 ) -> tuple[int, int]:
     return (addr, min(addr + _x86_16_recovery_windows(region_span)[-1], image_end))
 
+
+def _maybe_extend_x86_16_exact_region_terminator(
+    project: angr.Project | None,
+    exact_region: tuple[int, int] | None,
+) -> tuple[int, int] | None:
+    if exact_region is None:
+        return None
+    start, end = exact_region
+    size = max(0, end - start)
+    if size <= 0 or size > 0x40:
+        return exact_region
+    if project is None:
+        return exact_region
+    main_object = getattr(project.loader, "main_object", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    if not isinstance(max_addr, int):
+        return exact_region
+    image_end = max_addr + 1
+    if end >= image_end:
+        return exact_region
+    try:
+        trailer = bytes(project.loader.memory.load(end, min(3, image_end - end)))
+    except Exception:
+        return exact_region
+    if not trailer:
+        return exact_region
+    op0 = trailer[0]
+    if op0 in {0xC3, 0xCB}:  # ret / retf
+        return (start, end + 1)
+    if op0 in {0xC2, 0xCA}:  # ret imm16 / retf imm16
+        return (start, min(image_end, end + 3))
+    return exact_region
+
 def _recovery_score_good_enough(score: tuple[int, int]) -> bool:
     blocks, total_bytes = score
     return total_bytes >= 0x40 or blocks >= 4
@@ -2427,9 +2460,15 @@ def _recover_lst_function(
     addr = offset if lst_metadata.absolute_addrs else project.entry + offset
     exact_region = _lst_code_region(lst_metadata, addr)
     if project.arch.name == "86_16" and exact_region is not None:
+        exact_region = _maybe_extend_x86_16_exact_region_terminator(project, exact_region)
+    if project.arch.name == "86_16" and exact_region is not None:
         exact_region_size = max(0, exact_region[1] - exact_region[0])
         slice_plan = plan_x86_16_exact_slice(*exact_region)
-        if slice_plan.needs_rebased_slice and exact_region_size >= 0x40:
+        use_rebased_exact_slice = (
+            slice_plan.needs_rebased_slice
+            and 0x40 <= exact_region_size <= 0x120
+        )
+        if use_rebased_exact_slice:
             code = bytes(project.loader.memory.load(slice_plan.original_start, slice_plan.original_end - slice_plan.original_start))
             slice_project = _build_project_from_bytes(
                 code,
@@ -2438,9 +2477,13 @@ def _recover_lst_function(
             )
             slice_project._inertia_original_project = project
             slice_project._inertia_original_linear_delta = exact_region[0] - slice_plan.slice_start
-            slice_project._inertia_disable_ail_narrowing = True
-            slice_project._inertia_disable_complex_expr_scan = True
-            slice_project._inertia_fast_block_peephole = True
+            # Keep aggressive clinic bypass only for tiny rebased slices.
+            # Larger functions need normal narrowing passes to avoid
+            # pathological structuring timeouts.
+            tiny_rebased_core = exact_region_size <= 0x90
+            slice_project._inertia_disable_ail_narrowing = tiny_rebased_core
+            slice_project._inertia_disable_complex_expr_scan = tiny_rebased_core
+            slice_project._inertia_fast_block_peephole = tiny_rebased_core
             _inherit_tail_validation_runtime_policy(slice_project, project)
             slice_region = (slice_plan.slice_start, slice_plan.slice_end)
             with _analysis_timeout(max(1, timeout)):
