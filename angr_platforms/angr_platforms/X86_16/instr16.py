@@ -1122,7 +1122,7 @@ class Instr16(InstrBase):
     def sal_rm16_imm8(self):
         rm16 = self.get_rm16()
         count = self._shift_count(self.instr.imm8)
-        self.set_rm16(rm16 << count)
+        self.set_rm16(rm16 << count.cast_to(rm16.ty))
         self.emu.update_eflags_shl(rm16, count)
 
     def sar_rm16_imm8(self):
@@ -1195,7 +1195,7 @@ class Instr16(InstrBase):
 
     def shl(self, a, b):
         count = self._shift_count(b)
-        self.set_rm16(a << count)
+        self.set_rm16(a << count.cast_to(a.ty))
         self.emu.update_eflags_shl(a, count)
 
     def rol_rm16_imm8(self):

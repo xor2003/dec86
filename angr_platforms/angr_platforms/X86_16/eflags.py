@@ -44,10 +44,12 @@ class Eflags:
     def is_direction(self):
         return self.get_flag(10)
 
-    @staticmethod
-    def set_flag(flags, idx, value):
-        #value = value.cast_to(Type.int_1)
-        return flags & ~(1 << idx) | (value.cast_to(Type.int_16) << idx)
+    def set_flag(self, flags, idx, value):
+        flags16 = self.constant(flags, Type.int_16) if isinstance(flags, int) else flags.cast_to(Type.int_16)
+        value16 = self.constant(value, Type.int_1) if isinstance(value, int) else value.cast_to(Type.int_1)
+        clear_mask = self.constant((~(1 << idx)) & 0xFFFF, Type.int_16)
+        bit_mask = self.constant((1 << idx) & 0xFFFF, Type.int_16)
+        return (flags16 & clear_mask) | ((value16.cast_to(Type.int_16) << idx) & bit_mask)
 
     def set_carry(self, flags, carry):
         return self.set_flag(flags, 0, carry)
