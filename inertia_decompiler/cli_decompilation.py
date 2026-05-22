@@ -875,6 +875,7 @@ def _decompile_function(
         and int(profile.get("call_site_count", 0) or 0) == 0
         and int(profile.get("internal_call_count", 0) or 0) == 0
     )
+    helper_guard_active = bool(tiny_core_guard or no_call_helper_guard)
     prev_disable_ail_narrowing = getattr(project, "_inertia_disable_ail_narrowing", False)
     prev_disable_complex_expr_scan = getattr(project, "_inertia_disable_complex_expr_scan", False)
     prev_fast_block_peephole = getattr(project, "_inertia_fast_block_peephole", False)
@@ -883,6 +884,9 @@ def _decompile_function(
     prev_skip_clinic_pre_ssa = getattr(project, "_inertia_skip_clinic_pre_ssa", False)
     prev_skip_clinic_post_ssa = getattr(project, "_inertia_skip_clinic_post_ssa", False)
     prev_skip_clinic_recover_variables_assert = getattr(project, "_inertia_skip_clinic_recover_variables_assert", False)
+    prev_recover_variables_seed_empty = getattr(project, "_inertia_recover_variables_seed_empty", False)
+    prev_skip_clinic_recover_variables_full = getattr(project, "_inertia_skip_clinic_recover_variables_full", False)
+    prev_skip_clinic_simplify_block = getattr(project, "_inertia_skip_clinic_simplify_block", False)
     prev_disable_peephole_expr_guard = getattr(project, "_inertia_disable_peephole_expr_guard", False)
     if tiny_core_guard:
         setattr(project, "_inertia_disable_ail_narrowing", True)
@@ -890,8 +894,11 @@ def _decompile_function(
         setattr(project, "_inertia_fast_block_peephole", True)
         setattr(project, "_inertia_tiny_core_aggressive_simplify", True)
         setattr(project, "_inertia_tiny_core_disable_peephole", True)
-        setattr(project, "_inertia_disable_peephole_expr_guard", True)
         setattr(project, "_inertia_skip_clinic_post_ssa", True)
+        setattr(project, "_inertia_recover_variables_seed_empty", True)
+        setattr(project, "_inertia_skip_clinic_simplify_block", True)
+        setattr(project, "_inertia_skip_clinic_recover_variables_full", True)
+        setattr(project, "_inertia_clinic_peephole_cap", 48)
     elif no_call_helper_guard:
         # Arithmetic/memory helpers with no calls often blow up peephole
         # expression scanning cost. Keep narrowing enabled, but skip deep
@@ -899,7 +906,10 @@ def _decompile_function(
         setattr(project, "_inertia_disable_complex_expr_scan", True)
         setattr(project, "_inertia_fast_block_peephole", True)
         setattr(project, "_inertia_tiny_core_disable_peephole", True)
-        setattr(project, "_inertia_disable_peephole_expr_guard", True)
+        setattr(project, "_inertia_recover_variables_seed_empty", True)
+        setattr(project, "_inertia_skip_clinic_simplify_block", True)
+        setattr(project, "_inertia_skip_clinic_recover_variables_full", True)
+        setattr(project, "_inertia_clinic_peephole_cap", 48)
     def _analysis_log_messages(dec_obj) -> list[str]:
         messages: list[str] = []
         for entry in getattr(dec_obj, "errors", ()) or ():
@@ -1153,7 +1163,7 @@ def _decompile_function(
         setattr(project, "_inertia_partial_codegen_text", None)
         return "error", str(ex)
     finally:
-        if tiny_core_guard:
+        if helper_guard_active:
             setattr(project, "_inertia_disable_ail_narrowing", prev_disable_ail_narrowing)
             setattr(project, "_inertia_disable_complex_expr_scan", prev_disable_complex_expr_scan)
             setattr(project, "_inertia_fast_block_peephole", prev_fast_block_peephole)
@@ -1162,6 +1172,9 @@ def _decompile_function(
             setattr(project, "_inertia_skip_clinic_pre_ssa", prev_skip_clinic_pre_ssa)
             setattr(project, "_inertia_skip_clinic_post_ssa", prev_skip_clinic_post_ssa)
             setattr(project, "_inertia_skip_clinic_recover_variables_assert", prev_skip_clinic_recover_variables_assert)
+            setattr(project, "_inertia_recover_variables_seed_empty", prev_recover_variables_seed_empty)
+            setattr(project, "_inertia_skip_clinic_recover_variables_full", prev_skip_clinic_recover_variables_full)
+            setattr(project, "_inertia_skip_clinic_simplify_block", prev_skip_clinic_simplify_block)
             setattr(project, "_inertia_disable_peephole_expr_guard", prev_disable_peephole_expr_guard)
 
     if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
