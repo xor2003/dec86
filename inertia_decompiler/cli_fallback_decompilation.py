@@ -157,6 +157,8 @@ from inertia_decompiler.decompile_file_summary import emit_file_decompilation_su
 
 from inertia_decompiler.cli_decompilation import (
     _decompile_function_with_stats,
+    _effective_decompile_timeout_8616,
+    _function_complexity,
     _prepare_function_for_decompilation,
     _sidecar_cod_metadata_for_function,
 )
@@ -729,11 +731,18 @@ def _try_decompile_non_optimized_known_function(
         lst_metadata,
     )
     _prepare_function_for_decompilation(project, function, effective_cod_metadata)
+    block_count, byte_count = _function_complexity(function)
+    fallback_timeout = _effective_decompile_timeout_8616(
+        project,
+        timeout,
+        block_count=block_count,
+        byte_count=byte_count,
+    )
     status, payload, partial_payload, *_ = _decompile_function_with_stats(
         project,
         cfg,
         function,
-        max(1, min(timeout, 4)),
+        max(1, fallback_timeout),
         api_style,
         binary_path,
         cod_metadata=effective_cod_metadata,

@@ -2493,6 +2493,10 @@ def _recover_lst_function(
     if project.arch.name == "86_16" and exact_region is not None:
         exact_region = _maybe_extend_x86_16_exact_region_terminator(project, exact_region)
         exact_size = max(0, exact_region[1] - exact_region[0])
+        if exact_size <= 0x80:
+            # For very small procedures, exact sidecar clipping can over-constrain
+            # CFG/decompiler setup; prefer inferred bounded recovery windows.
+            exact_region = None
         if exact_size <= 0x80 and not _x86_16_exact_region_has_terminator(project, exact_region):
             # Sidecar regions for tiny helpers are occasionally truncated before
             # terminal control-transfer bytes; let CFG recovery infer a bounded
@@ -2503,7 +2507,7 @@ def _recover_lst_function(
         slice_plan = plan_x86_16_exact_slice(*exact_region)
         use_rebased_exact_slice = (
             slice_plan.needs_rebased_slice
-            and 0x40 <= exact_region_size <= 0x120
+            and 0x180 <= exact_region_size <= 0x280
         )
         if use_rebased_exact_slice:
             code = bytes(project.loader.memory.load(slice_plan.original_start, slice_plan.original_end - slice_plan.original_start))

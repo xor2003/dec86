@@ -149,7 +149,19 @@ def install_angr_peephole_expr_bitwidth_guard(walker_cls, project=None) -> objec
         return replacement
 
     def _guarded_handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):
-        expr = super(walker_cls, self)._handle_expr(expr_idx, expr, stmt_idx, stmt, block)
+        try:
+            expr = super(walker_cls, self)._handle_expr(expr_idx, expr, stmt_idx, stmt, block)
+        except AssertionError:
+            if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                block_addr = getattr(block, "addr", None)
+                print(
+                    "[dbg] clinic:skip-expr-assertion "
+                    f"block={block_addr:#x} stmt_idx={stmt_idx} expr_idx={expr_idx}"
+                    f"{_project_current_function_context_suffix(project)}",
+                    file=sys.stderr,
+                )
+                sys.stderr.flush()
+            return expr
         old_expr = expr
         if not getattr(project, "_inertia_disable_complex_expr_scan", False):
             expr_node_cache = getattr(self, "_inertia_expr_node_cache", None)
@@ -166,38 +178,60 @@ def install_angr_peephole_expr_bitwidth_guard(walker_cls, project=None) -> objec
                 skip_key = (block_addr, stmt_idx, expr_idx, type(expr).__name__)
                 if skip_key not in complex_seen:
                     complex_seen.add(skip_key)
+                    if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                        print(
+                            "[dbg] clinic:skip-peephole-complex-expr "
+                            f"block={block_addr:#x} "
+                            f"stmt_idx={stmt_idx} "
+                            f"expr_idx={expr_idx} "
+                            f"expr_type={type(expr).__name__} "
+                            f"node_count={expr_node_count}",
+                            file=sys.stderr,
+                        )
+                        sys.stderr.flush()
+                return expr
+        redo = True
+        rewrite_iter = 0
+        seen_shapes: set[tuple[str, int | None]] = set()
+        while redo:
+            redo = False
+            rewrite_iter += 1
+            expr_shape = (type(expr).__name__, getattr(expr, "bits", None))
+            if expr_shape in seen_shapes or rewrite_iter > 32:
+                if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                    block_addr = getattr(block, "addr", None)
                     print(
-                        "[dbg] clinic:skip-peephole-complex-expr "
+                        "[dbg] clinic:stop-peephole-rewrite-loop "
                         f"block={block_addr:#x} "
-                        f"stmt_idx={stmt_idx} "
-                        f"expr_idx={expr_idx} "
-                        f"expr_type={type(expr).__name__} "
-                        f"node_count={expr_node_count}",
+                        f"stmt_idx={stmt_idx} expr_idx={expr_idx} "
+                        f"iter={rewrite_iter} shape={expr_shape!r}",
                         file=sys.stderr,
                     )
                     sys.stderr.flush()
-                return expr
-        redo = True
-        while redo:
-            redo = False
+                break
+            seen_shapes.add(expr_shape)
             for expr_opt in self.expr_opts:
                 if isinstance(expr, expr_opt.expr_classes):
-                    replacement = expr_opt.optimize(expr, stmt_idx=stmt_idx, block=block)
+                    try:
+                        replacement = expr_opt.optimize(expr, stmt_idx=stmt_idx, block=block)
+                    except AssertionError:
+                        continue
                     if replacement is not None and replacement is not expr:
                         replacement = _normalize_replacement_bits(expr, replacement)
                         if getattr(expr, "bits", None) != getattr(replacement, "bits", None):
                             block_addr = getattr(block, "addr", None)
-                            print(
-                                "[dbg] clinic:peephole-bits-mismatch "
-                                f"opt={type(expr_opt).__name__} "
-                                f"block={block_addr:#x} "
-                                f"stmt_idx={stmt_idx} "
-                                f"expr_bits={getattr(expr, 'bits', None)} "
-                                f"replacement_bits={getattr(replacement, 'bits', None)} "
-                                f"expr={expr!s} replacement={replacement!s}",
-                                file=sys.stderr,
-                            )
-                            sys.stderr.flush()
+                            if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                                print(
+                                    "[dbg] clinic:peephole-bits-mismatch "
+                                    f"opt={type(expr_opt).__name__} "
+                                    f"block={block_addr:#x} "
+                                    f"stmt_idx={stmt_idx} "
+                                    f"expr_bits={getattr(expr, 'bits', None)} "
+                                    f"replacement_bits={getattr(replacement, 'bits', None)} "
+                                    f"expr={expr!s} replacement={replacement!s}",
+                                    file=sys.stderr,
+                                )
+                                sys.stderr.flush()
                             continue
                         expr = replacement
                         redo = True
@@ -298,6 +332,9 @@ def install_angr_basepointeroffset_codegen_guard(codegen_cls) -> object:
 
 @contextlib.contextmanager
 def guard_angr_peephole_expr_bitwidth_assertion(project=None):
+    if project is not None and getattr(project, "_inertia_disable_peephole_expr_guard", False):
+        yield
+        return
     from angr.analyses.decompiler import utils as decompiler_utils
 
     walker_cls = decompiler_utils._PeepholeExprsWalker
@@ -367,6 +404,8 @@ def guard_angr_clinic_stage_markers(project):
     def _stage_pre_ssa_level1_simplifications(self, *args, **kwargs):  # noqa: ANN001
         _emit_stage_time("clinic:pre_ssa_l1")
         project._inertia_decompiler_stage = "core:clinic:pre_ssa_level1_simplifications"
+        if getattr(project, "_inertia_skip_clinic_pre_ssa", False):
+            return self._ail_graph
         return orig_stage_pre_ssa(self, *args, **kwargs)
 
     def _stage_transform_to_ssa_level1(self, *args, **kwargs):  # noqa: ANN001
@@ -393,15 +432,31 @@ def guard_angr_clinic_stage_markers(project):
 
     def _simplify_block(self, *args, **kwargs):  # noqa: ANN001
         project._inertia_decompiler_stage = "core:clinic:simplify_block"
+        block = args[0] if args else kwargs.get("block")
         if getattr(project, "_inertia_tiny_core_disable_peephole", False):
-            block = args[0] if args else kwargs.get("block")
             if block is not None:
                 return block
         _simplify_count[0] += 1
         _t_start = _time.perf_counter()
-        result = orig_simplify_block(self, *args, **kwargs)
+        try:
+            result = orig_simplify_block(self, *args, **kwargs)
+        except AssertionError:
+            if block is not None:
+                if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                    print(
+                        "[dbg] clinic:skip-simplify-block-assertion "
+                        f"block={getattr(block, 'addr', None)!r}"
+                        f"{_project_current_function_context_suffix(project)}",
+                        file=sys.stderr,
+                    )
+                    sys.stderr.flush()
+                return block
+            raise
         _simplify_total[0] += _time.perf_counter() - _t_start
-        if _simplify_count[0] % 20 == 0:
+        if (
+            (timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"))
+            and _simplify_count[0] % 20 == 0
+        ):
             print(f"[dbg] stage-time: simplify_block x{_simplify_count[0]} cumulative={_simplify_total[0]:.2f}s (peephole x{_peephole_count[0]} cumulative={_peephole_total[0]:.2f}s)")
             sys.stderr.flush()
         return result
@@ -429,12 +484,13 @@ def guard_angr_clinic_stage_markers(project):
                 block_addr = getattr(block, "addr", None)
                 if block_addr not in skipped:
                     skipped.add(block_addr)
-                    print(
-                        "[dbg] clinic:skip-peephole-complex-block "
-                        f"block={block_addr:#x}{_project_current_function_context_suffix(project)}",
-                        file=sys.stderr,
-                    )
-                    sys.stderr.flush()
+                    if timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"):
+                        print(
+                            "[dbg] clinic:skip-peephole-complex-block "
+                            f"block={block_addr:#x}{_project_current_function_context_suffix(project)}",
+                            file=sys.stderr,
+                        )
+                        sys.stderr.flush()
                 statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
                 new_block = block.copy(statements=statements) if stmts_updated else block
                 statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)

@@ -369,6 +369,24 @@ from .msc51_local_hash import emit_msc51_diagnostic
 print = _timestamped_print
 __all__ = ['_apply_binary_specific_annotations', '_sidecar_cod_metadata_for_function', '_snapshot_codegen_text', '_regenerate_codegen_text_safely', '_emit_optional_source_sidecar_c_block', '_format_minimal_codegen_output', '_apply_known_cod_object_annotations', '_cod_proc_has_call_heavy_helper_profile', '_decompile_function', '_function_complexity', '_direct_call_stub_filter_regions', '_register_direct_call_target_function_stubs', '_prepare_function_for_decompilation', '_function_decompilation_profile', '_preferred_decompiler_options', '_preferred_expr_collapse_depth', '_decompile_function_with_stats']
 
+
+def _effective_decompile_timeout_8616(
+    project: angr.Project,
+    timeout: int,
+    *,
+    block_count: int,
+    byte_count: int,
+) -> int:
+    effective_timeout = int(timeout)
+    if getattr(project.arch, "name", "") == "86_16":
+        if byte_count >= 320 or block_count >= 48:
+            effective_timeout = max(effective_timeout, 40)
+        elif byte_count >= 160 or block_count >= 24:
+            effective_timeout = max(effective_timeout, 24)
+        elif byte_count >= 64 or block_count >= 8:
+            effective_timeout = max(effective_timeout, 14)
+    return effective_timeout
+
 def _apply_binary_specific_annotations(
     project: angr.Project,
     binary_path: Path | None,
@@ -833,6 +851,12 @@ def _decompile_function(
             byte_count,
             wrapper_like=bool(profile.get("wrapper_like")),
             tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
+            no_call_helper=bool(
+                block_count <= 24
+                and byte_count <= 0x180
+                and int(profile.get("call_site_count", 0) or 0) == 0
+                and int(profile.get("internal_call_count", 0) or 0) == 0
+            ),
         )
         expr_collapse_depth = _preferred_expr_collapse_depth(
             block_count,
@@ -845,17 +869,33 @@ def _decompile_function(
         or profile.get("tiny_single_call_helper")
         or (block_count <= 1 and byte_count <= 0x20)
     )
+    no_call_helper_guard = bool(
+        block_count <= 16
+        and byte_count <= 0x180
+        and int(profile.get("call_site_count", 0) or 0) == 0
+        and int(profile.get("internal_call_count", 0) or 0) == 0
+    )
     prev_disable_ail_narrowing = getattr(project, "_inertia_disable_ail_narrowing", False)
     prev_disable_complex_expr_scan = getattr(project, "_inertia_disable_complex_expr_scan", False)
     prev_fast_block_peephole = getattr(project, "_inertia_fast_block_peephole", False)
     prev_tiny_core_aggressive_simplify = getattr(project, "_inertia_tiny_core_aggressive_simplify", False)
     prev_tiny_core_disable_peephole = getattr(project, "_inertia_tiny_core_disable_peephole", False)
+    prev_skip_clinic_pre_ssa = getattr(project, "_inertia_skip_clinic_pre_ssa", False)
+    prev_disable_peephole_expr_guard = getattr(project, "_inertia_disable_peephole_expr_guard", False)
     if tiny_core_guard:
         setattr(project, "_inertia_disable_ail_narrowing", True)
         setattr(project, "_inertia_disable_complex_expr_scan", True)
         setattr(project, "_inertia_fast_block_peephole", True)
         setattr(project, "_inertia_tiny_core_aggressive_simplify", True)
         setattr(project, "_inertia_tiny_core_disable_peephole", True)
+    elif no_call_helper_guard:
+        # Arithmetic/memory helpers with no calls often blow up peephole
+        # expression scanning cost. Keep narrowing enabled, but skip deep
+        # expression peephole work.
+        setattr(project, "_inertia_disable_complex_expr_scan", True)
+        setattr(project, "_inertia_fast_block_peephole", True)
+        setattr(project, "_inertia_tiny_core_disable_peephole", True)
+        setattr(project, "_inertia_skip_clinic_pre_ssa", True)
     def _analysis_log_messages(dec_obj) -> list[str]:
         messages: list[str] = []
         for entry in getattr(dec_obj, "errors", ()) or ():
@@ -1115,6 +1155,8 @@ def _decompile_function(
             setattr(project, "_inertia_fast_block_peephole", prev_fast_block_peephole)
             setattr(project, "_inertia_tiny_core_aggressive_simplify", prev_tiny_core_aggressive_simplify)
             setattr(project, "_inertia_tiny_core_disable_peephole", prev_tiny_core_disable_peephole)
+            setattr(project, "_inertia_skip_clinic_pre_ssa", prev_skip_clinic_pre_ssa)
+            setattr(project, "_inertia_disable_peephole_expr_guard", prev_disable_peephole_expr_guard)
 
     if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
         try:
@@ -1920,7 +1962,22 @@ def _prepare_function_for_decompilation(
     # Ensure function is normalized before decompilation.
     if not function.normalized:
         print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
-        function.normalize()
+        block_count = len(getattr(function, "block_addrs_set", ()) or ())
+        normalize_budget = 2 if block_count <= 1 else 6
+        try:
+            setattr(project, "_inertia_decompiler_stage", "prepare:normalize")
+            with _analysis_timeout(normalize_budget):
+                function.normalize()
+            if os.environ.get("INERTIA_DEBUG_NORMALIZE_STAGE"):
+                print(f"[dbg] normalized function {function.addr:#x} {function.name}")
+        except _AnalysisTimeout:
+            # Keep decompilation moving: a subset of malformed/truncated regions
+            # can spin in normalization. Downstream analyses remain bounded by
+            # their own timeouts and validation gates.
+            print(
+                f"[dbg] normalize timeout for {function.addr:#x} {function.name}; "
+                f"continuing without normalized form"
+            )
     created_helper_stubs = _register_direct_call_target_function_stubs(project, function, cod_metadata=cod_metadata)
     if created_helper_stubs:
         print(f"[dbg] registered {created_helper_stubs} direct callee stub(s) for {function.addr:#x}")
@@ -2003,12 +2060,20 @@ def _preferred_decompiler_options(
     *,
     wrapper_like: bool = False,
     tiny_single_call_helper: bool = False,
+    no_call_helper: bool = False,
 ) -> list[tuple[str, str]] | None:
     """Choose a cheaper decompiler structurer for true wrapper-like functions."""
     if block_count <= 1 and byte_count <= 96:
         return [("structurer_cls", "Phoenix")]
     if wrapper_like or tiny_single_call_helper:
         return [("structurer_cls", "Phoenix")]
+    if no_call_helper:
+        return [
+            ("structurer_cls", "Phoenix"),
+            ("rewrite_ites_to_diamonds", False),
+            ("semvar_naming", False),
+            ("remove_dead_memdefs", False),
+        ]
     return None
 
 def _preferred_expr_collapse_depth(
@@ -2044,16 +2109,12 @@ def _decompile_function_with_stats(
     failure_family_state: FailureFamilyState | None = None,
 ):
     block_count, byte_count = _function_complexity(function)
-    effective_timeout = int(timeout)
-    if getattr(project.arch, "name", "") == "86_16":
-        # Keep tiny/simple procedures fast, but avoid under-budgeting
-        # medium/heavy 16-bit routines in corpus sweeps.
-        if byte_count >= 320 or block_count >= 48:
-            effective_timeout = max(effective_timeout, 40)
-        elif byte_count >= 160 or block_count >= 24:
-            effective_timeout = max(effective_timeout, 24)
-        elif byte_count >= 64 or block_count >= 8:
-            effective_timeout = max(effective_timeout, 14)
+    effective_timeout = _effective_decompile_timeout_8616(
+        project,
+        timeout,
+        block_count=block_count,
+        byte_count=byte_count,
+    )
     display_addr = function_original_addr(function)
     print(f"[dbg] function complexity for {display_addr:#x} {function.name}: blocks={block_count}, bytes={byte_count}")
     sys.stdout.flush()
