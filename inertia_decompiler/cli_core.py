@@ -3312,6 +3312,24 @@ def main(argv: list[str] | None = None) -> int:
                         )
                 if result is None:
                     if active_item.function_cfg is None:
+                        result_map[item.index] = FunctionWorkResult(
+                            index=item.index,
+                            status="error",
+                            payload=(
+                                f"Recovery failed to produce a function CFG for "
+                                f"{item.function.name} at {item.function.addr:#x}."
+                            ),
+                            debug_output="",
+                            function=item.function,
+                            function_cfg=None,
+                            failure_stage=f"recovery:{recovery_mode}",
+                        )
+                        result = result_map[item.index]
+                        if item.index not in emitted_indexes:
+                            d, f = _emit_function_result(item, result)
+                            decompiled += d
+                            failed += f
+                            emitted_indexes.add(item.index)
                         continue
                     _block_count, byte_count = _function_complexity(active_item.function)
                     decompile_timeout = adaptive_timeout_model.timeout_for_byte_count(byte_count)
@@ -3423,7 +3441,7 @@ def main(argv: list[str] | None = None) -> int:
                     decompiled += d
                     failed += f
                     emitted_indexes.add(item.index)
-                    if f:
+                    if f and args.addr is not None:
                         _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
                         return 2
         attempted = sum(1 for item in function_tasks if result_map.get(item.index) is not None)
@@ -3554,7 +3572,7 @@ def main(argv: list[str] | None = None) -> int:
                         decompiled += d
                         failed += f
                         emitted_indexes.add(item.index)
-                        if f:
+                        if f and args.addr is not None:
                             _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
                             return 2
             finally:
@@ -3617,7 +3635,7 @@ def main(argv: list[str] | None = None) -> int:
                                 decompiled += d
                                 failed += f
                                 emitted_indexes.add(item.index)
-                                if f:
+                                if f and args.addr is not None:
                                     _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
                                     return 2
                             pending.discard(future)
@@ -3656,7 +3674,7 @@ def main(argv: list[str] | None = None) -> int:
                                 decompiled += d
                                 failed += f
                                 emitted_indexes.add(item.index)
-                                if f:
+                                if f and args.addr is not None:
                                     _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
                                     return 2
                             pending.discard(future)
