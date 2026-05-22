@@ -133,3 +133,35 @@ def build_guarded_handle_binop_sub_8616(*, richr_cls, typevars_module, project, 
         return richr_cls(compute, typevar=typevar, type_constraints=type_constraints)
 
     return _guarded_handle_binop_sub
+
+
+def build_guarded_handle_binop_mul_8616(*, richr_cls, typevars_module, project, context_suffix):
+    def _guarded_handle_binop_mul(self, expr):
+        arg0, arg1 = expr.operands
+        r0, r1 = self._expr_pair(arg0, arg1)
+        mismatch_bits = r0.data.size() != r1.data.size()
+        unresolved_mismatch = False
+
+        if r0.data.size() == r1.data.size() == expr.bits:
+            compute = r0.data * r1.data
+        else:
+            compute_bits = max(r0.data.size(), r1.data.size(), expr.bits)
+            lhs = _coerce_bv_width_8616(r0.data, compute_bits)
+            rhs = _coerce_bv_width_8616(r1.data, compute_bits)
+            if lhs.size() == rhs.size() == compute_bits:
+                wide = lhs * rhs
+                compute = _narrow_bv_width_8616(wide, expr.bits, self.state)
+            else:
+                unresolved_mismatch = True
+                compute = self.state.top(expr.bits)
+        if mismatch_bits and unresolved_mismatch:
+            _log_size_mismatch_once_8616(self, expr, r0, r1, project, context_suffix)
+
+        typevar = typevars_module.TypeVariable()
+        type_constraints = set()
+        if r0.typevar is not None and r1.typevar is not None and hasattr(typevars_module, "Mul"):
+            type_constraints.add(typevars_module.Mul(r0.typevar, r1.typevar, typevar))
+
+        return richr_cls(compute, typevar=typevar, type_constraints=type_constraints)
+
+    return _guarded_handle_binop_mul

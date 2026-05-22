@@ -849,11 +849,13 @@ def _decompile_function(
     prev_disable_complex_expr_scan = getattr(project, "_inertia_disable_complex_expr_scan", False)
     prev_fast_block_peephole = getattr(project, "_inertia_fast_block_peephole", False)
     prev_tiny_core_aggressive_simplify = getattr(project, "_inertia_tiny_core_aggressive_simplify", False)
+    prev_tiny_core_disable_peephole = getattr(project, "_inertia_tiny_core_disable_peephole", False)
     if tiny_core_guard:
         setattr(project, "_inertia_disable_ail_narrowing", True)
         setattr(project, "_inertia_disable_complex_expr_scan", True)
         setattr(project, "_inertia_fast_block_peephole", True)
         setattr(project, "_inertia_tiny_core_aggressive_simplify", True)
+        setattr(project, "_inertia_tiny_core_disable_peephole", True)
     def _analysis_log_messages(dec_obj) -> list[str]:
         messages: list[str] = []
         for entry in getattr(dec_obj, "errors", ()) or ():
@@ -1112,6 +1114,7 @@ def _decompile_function(
             setattr(project, "_inertia_disable_complex_expr_scan", prev_disable_complex_expr_scan)
             setattr(project, "_inertia_fast_block_peephole", prev_fast_block_peephole)
             setattr(project, "_inertia_tiny_core_aggressive_simplify", prev_tiny_core_aggressive_simplify)
+            setattr(project, "_inertia_tiny_core_disable_peephole", prev_tiny_core_disable_peephole)
 
     if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
         try:
