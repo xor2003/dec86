@@ -1021,6 +1021,17 @@ def _try_emit_known_runtime_helper_c(
             "    return out;\n"
             "}\n"
         )
+    if lowered == "strlen":
+        return (
+            "size_t strlen(const char *s)\n"
+            "{\n"
+            "    size_t n = 0;\n"
+            "    while (s[n] != '\\0') {\n"
+            "        n++;\n"
+            "    }\n"
+            "    return n;\n"
+            "}\n"
+        )
     if lowered == "memset":
         return (
             "void *memset(void *dst, int c, size_t n)\n"
@@ -1098,6 +1109,13 @@ def _try_emit_known_runtime_helper_c(
             "        return 0;\n"
             "    }\n"
             "    return a / b;\n"
+            "}\n"
+        )
+    if lowered == "nullcheck":
+        return (
+            "int nullcheck(const void *p)\n"
+            "{\n"
+            "    return p == NULL;\n"
             "}\n"
         )
     if lowered.startswith("afc") and lowered.endswith("ceill"):
