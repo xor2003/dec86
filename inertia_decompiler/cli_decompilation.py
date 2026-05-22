@@ -833,6 +833,18 @@ def _decompile_function(
             wrapper_like=bool(profile.get("wrapper_like")),
             tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
         )
+    tiny_core_guard = bool(
+        profile.get("wrapper_like")
+        or profile.get("tiny_single_call_helper")
+        or (block_count <= 1 and byte_count <= 0x80)
+    )
+    prev_disable_ail_narrowing = getattr(project, "_inertia_disable_ail_narrowing", False)
+    prev_disable_complex_expr_scan = getattr(project, "_inertia_disable_complex_expr_scan", False)
+    prev_fast_block_peephole = getattr(project, "_inertia_fast_block_peephole", False)
+    if tiny_core_guard:
+        setattr(project, "_inertia_disable_ail_narrowing", True)
+        setattr(project, "_inertia_disable_complex_expr_scan", True)
+        setattr(project, "_inertia_fast_block_peephole", True)
     def _analysis_log_messages(dec_obj) -> list[str]:
         messages: list[str] = []
         for entry in getattr(dec_obj, "errors", ()) or ():
@@ -1069,6 +1081,11 @@ def _decompile_function(
     except Exception as ex:
         setattr(project, "_inertia_partial_codegen_text", None)
         return "error", str(ex)
+    finally:
+        if tiny_core_guard:
+            setattr(project, "_inertia_disable_ail_narrowing", prev_disable_ail_narrowing)
+            setattr(project, "_inertia_disable_complex_expr_scan", prev_disable_complex_expr_scan)
+            setattr(project, "_inertia_fast_block_peephole", prev_fast_block_peephole)
 
     if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
         try:
@@ -1933,12 +1950,15 @@ def _function_decompilation_profile(
         and not has_non_wrapper_traffic
     )
     tiny_single_call_helper = (
-        block_count <= 3
-        and byte_count <= 0x20
-        and call_site_count <= 1
-        and internal_call_count <= 1
-        and not has_non_wrapper_traffic
-    )
+        (
+            block_count <= 3
+            and byte_count <= 0x20
+        )
+        or (
+            block_count <= 1
+            and byte_count <= 0x80
+        )
+    ) and call_site_count <= 1 and internal_call_count <= 1 and not has_non_wrapper_traffic
     return {
         "block_count": block_count,
         "byte_count": byte_count,

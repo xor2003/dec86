@@ -2427,8 +2427,9 @@ def _recover_lst_function(
     addr = offset if lst_metadata.absolute_addrs else project.entry + offset
     exact_region = _lst_code_region(lst_metadata, addr)
     if project.arch.name == "86_16" and exact_region is not None:
+        exact_region_size = max(0, exact_region[1] - exact_region[0])
         slice_plan = plan_x86_16_exact_slice(*exact_region)
-        if slice_plan.needs_rebased_slice:
+        if slice_plan.needs_rebased_slice and exact_region_size >= 0x40:
             code = bytes(project.loader.memory.load(slice_plan.original_start, slice_plan.original_end - slice_plan.original_start))
             slice_project = _build_project_from_bytes(
                 code,
