@@ -805,6 +805,12 @@ def _decompile_function(
         lst_metadata,
     )
     with DECOMPILATION_PREP_LOCK:
+        pre_block_count, pre_byte_count = _function_complexity(function)
+        setattr(
+            project,
+            "_inertia_skip_normalize_for_tiny_core",
+            bool(pre_block_count <= 1 and pre_byte_count <= 0x80),
+        )
         _apply_binary_specific_annotations(
             project,
             binary_path,
@@ -841,10 +847,12 @@ def _decompile_function(
     prev_disable_ail_narrowing = getattr(project, "_inertia_disable_ail_narrowing", False)
     prev_disable_complex_expr_scan = getattr(project, "_inertia_disable_complex_expr_scan", False)
     prev_fast_block_peephole = getattr(project, "_inertia_fast_block_peephole", False)
+    prev_tiny_core_aggressive_simplify = getattr(project, "_inertia_tiny_core_aggressive_simplify", False)
     if tiny_core_guard:
         setattr(project, "_inertia_disable_ail_narrowing", True)
         setattr(project, "_inertia_disable_complex_expr_scan", True)
         setattr(project, "_inertia_fast_block_peephole", True)
+        setattr(project, "_inertia_tiny_core_aggressive_simplify", True)
     def _analysis_log_messages(dec_obj) -> list[str]:
         messages: list[str] = []
         for entry in getattr(dec_obj, "errors", ()) or ():
@@ -1086,6 +1094,7 @@ def _decompile_function(
             setattr(project, "_inertia_disable_ail_narrowing", prev_disable_ail_narrowing)
             setattr(project, "_inertia_disable_complex_expr_scan", prev_disable_complex_expr_scan)
             setattr(project, "_inertia_fast_block_peephole", prev_fast_block_peephole)
+            setattr(project, "_inertia_tiny_core_aggressive_simplify", prev_tiny_core_aggressive_simplify)
 
     if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
         try:
@@ -1988,7 +1997,7 @@ def _preferred_expr_collapse_depth(
     tiny_single_call_helper: bool = False,
 ) -> int:
     if wrapper_like or tiny_single_call_helper:
-        return 16
+        return 2
     if block_count <= 24 and byte_count <= 256:
         return 32
     if block_count <= 64 and byte_count <= 1024:

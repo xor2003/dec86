@@ -466,6 +466,8 @@ def guard_angr_fast_post_ssa_8616(project):
     def _fast_simplify_function(self, ail_graph, **kwargs):  # noqa: ANN001
         c = _counter.get(id(self), 0)
         _counter[id(self)] = c + 1
+        if getattr(project, "_inertia_tiny_core_aggressive_simplify", False) and c >= 1:
+            return
         # Calls 0-2 are earlier stages; calls 3 and 4 are the 3rd and 4th
         # post-SSA whole-graph rounds that 86_16 does not need.
         if c in (3, 4):
