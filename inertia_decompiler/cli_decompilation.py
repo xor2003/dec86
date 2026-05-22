@@ -843,7 +843,7 @@ def _decompile_function(
     tiny_core_guard = bool(
         profile.get("wrapper_like")
         or profile.get("tiny_single_call_helper")
-        or (block_count <= 1 and byte_count <= 0x80)
+        or (block_count <= 1 and byte_count <= 0x20)
     )
     prev_disable_ail_narrowing = getattr(project, "_inertia_disable_ail_narrowing", False)
     prev_disable_complex_expr_scan = getattr(project, "_inertia_disable_complex_expr_scan", False)
@@ -2005,6 +2005,8 @@ def _preferred_decompiler_options(
     tiny_single_call_helper: bool = False,
 ) -> list[tuple[str, str]] | None:
     """Choose a cheaper decompiler structurer for true wrapper-like functions."""
+    if block_count <= 1 and byte_count <= 96:
+        return [("structurer_cls", "Phoenix")]
     if wrapper_like or tiny_single_call_helper:
         return [("structurer_cls", "Phoenix")]
     return None
@@ -2016,6 +2018,8 @@ def _preferred_expr_collapse_depth(
     wrapper_like: bool = False,
     tiny_single_call_helper: bool = False,
 ) -> int:
+    if block_count <= 1 and byte_count <= 96:
+        return 2
     if wrapper_like or tiny_single_call_helper:
         return 2
     if block_count <= 24 and byte_count <= 256:
@@ -2040,16 +2044,26 @@ def _decompile_function_with_stats(
     failure_family_state: FailureFamilyState | None = None,
 ):
     block_count, byte_count = _function_complexity(function)
+    effective_timeout = int(timeout)
+    if getattr(project.arch, "name", "") == "86_16":
+        # Keep tiny/simple procedures fast, but avoid under-budgeting
+        # medium/heavy 16-bit routines in corpus sweeps.
+        if byte_count >= 320 or block_count >= 48:
+            effective_timeout = max(effective_timeout, 40)
+        elif byte_count >= 160 or block_count >= 24:
+            effective_timeout = max(effective_timeout, 24)
+        elif byte_count >= 64 or block_count >= 8:
+            effective_timeout = max(effective_timeout, 14)
     display_addr = function_original_addr(function)
     print(f"[dbg] function complexity for {display_addr:#x} {function.name}: blocks={block_count}, bytes={byte_count}")
     sys.stdout.flush()
     start = time.perf_counter()
-    deadline = time.monotonic() + max(1, timeout)
+    deadline = time.monotonic() + max(1, effective_timeout)
     status, payload = _decompile_function(
         project,
         cfg,
         function,
-        timeout,
+        effective_timeout,
         api_style,
         binary_path,
         cod_metadata=cod_metadata,

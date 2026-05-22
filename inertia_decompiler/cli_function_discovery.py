@@ -796,6 +796,37 @@ def _maybe_extend_x86_16_exact_region_terminator(
         return (start, min(image_end, end + 3))
     return exact_region
 
+
+def _x86_16_exact_region_has_terminator(
+    project: angr.Project,
+    exact_region: tuple[int, int] | None,
+) -> bool:
+    if exact_region is None:
+        return False
+    start, end = exact_region
+    size = max(0, end - start)
+    if size <= 0:
+        return False
+    main_object = getattr(project.loader, "main_object", None)
+    max_addr = getattr(main_object, "max_addr", None)
+    if not isinstance(max_addr, int):
+        return False
+    image_end = max_addr + 1
+    if start >= image_end:
+        return False
+    read_size = min(size, image_end - start)
+    if read_size <= 0:
+        return False
+    try:
+        raw = bytes(project.loader.memory.load(start, read_size))
+    except Exception:
+        return False
+    if not raw:
+        return False
+    # Accept plain returns, iret, and direct near/far jumps as explicit block terminators.
+    terminators = {0xC2, 0xC3, 0xCA, 0xCB, 0xCF, 0xE9, 0xEA, 0xEB}
+    return any(byte in terminators for byte in raw)
+
 def _recovery_score_good_enough(score: tuple[int, int]) -> bool:
     blocks, total_bytes = score
     return total_bytes >= 0x40 or blocks >= 4
@@ -2461,6 +2492,12 @@ def _recover_lst_function(
     exact_region = _lst_code_region(lst_metadata, addr)
     if project.arch.name == "86_16" and exact_region is not None:
         exact_region = _maybe_extend_x86_16_exact_region_terminator(project, exact_region)
+        exact_size = max(0, exact_region[1] - exact_region[0])
+        if exact_size <= 0x80 and not _x86_16_exact_region_has_terminator(project, exact_region):
+            # Sidecar regions for tiny helpers are occasionally truncated before
+            # terminal control-transfer bytes; let CFG recovery infer a bounded
+            # region instead of forcing a malformed exact slice.
+            exact_region = None
     if project.arch.name == "86_16" and exact_region is not None:
         exact_region_size = max(0, exact_region[1] - exact_region[0])
         slice_plan = plan_x86_16_exact_slice(*exact_region)

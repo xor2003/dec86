@@ -3090,6 +3090,13 @@ def main(argv: list[str] | None = None) -> int:
         and args.max_functions <= 2
     ):
         workers = 1
+    if (
+        args.addr is None
+        and args.binary.suffix.lower() == ".exe"
+        and project.arch.name == "86_16"
+        and bool(getattr(args, "include_library_functions", False))
+    ):
+        workers = 1
     forced_serial_function_decomp = (
         os.environ.get(_FORCE_SERIAL_FUNCTION_DECOMP_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
     )
@@ -3097,6 +3104,11 @@ def main(argv: list[str] | None = None) -> int:
         workers <= 1
         and args.addr is None
         and type(project).__module__.startswith("angr.")
+        and not (
+            args.binary.suffix.lower() == ".exe"
+            and project.arch.name == "86_16"
+            and bool(getattr(args, "include_library_functions", False))
+        )
         and os.name == "posix"
         and threading.current_thread() is threading.main_thread()
         and threading.active_count() == 1
@@ -3113,6 +3125,7 @@ def main(argv: list[str] | None = None) -> int:
         args.addr is None
         and args.binary.suffix.lower() == ".exe"
         and project.arch.name == "86_16"
+        and not bool(getattr(args, "include_library_functions", False))
     )
 
     if force_isolated_function_projects:
