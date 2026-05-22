@@ -2270,8 +2270,9 @@ def main(argv: list[str] | None = None) -> int:
                 # optimized lane repeats an "empty" family; this is often a
                 # recoverable clinic/core failure class for helper routines.
                 exact_retry_blocked = False
-            if partial_payload is None and (precise_sidecar_regions or using_rebased_direct_slice):
-                if not exact_retry_blocked:
+            allow_known_nonopt = (not exact_retry_blocked) or (direct_result.status == "timeout")
+            if partial_payload is None:
+                if allow_known_nonopt:
                     _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
                     known_nonopt_result = _try_decompile_non_optimized_known_function(
                         direct_project,
@@ -2300,6 +2301,39 @@ def main(argv: list[str] | None = None) -> int:
                     args.binary,
                     func.name,
                     known_nonopt_c,
+                    alternate_source_c=bool(args.alternate_source_c),
+                    c_header="\n/* == c (non-optimized fallback) == */",
+                )
+                return 0
+            _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
+            generic_nonopt_result = _try_decompile_non_optimized_slice(
+                direct_project,
+                direct_display_addr,
+                func.name,
+                timeout=max(1, min(_bounded_non_optimized_timeout(args.timeout), _remaining_direct_addr_budget() or 1)),
+                api_style=args.api_style,
+                binary_path=args.binary,
+                lst_metadata=None if using_rebased_direct_slice else lst_metadata,
+                cod_metadata=cod_metadata,
+                allow_fresh_project_retry=True,
+                failure_family_state=direct_failure_family_state,
+                original_addr=direct_display_addr,
+            )
+            generic_nonopt_c = _non_optimized_slice_rendered(generic_nonopt_result)
+            if generic_nonopt_c is not None:
+                _emit_tail_validation_for_function_run_or_uncollected(
+                    direct_project,
+                    cfg,
+                    func,
+                    allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
+                    binary_path=args.binary,
+                )
+                print(f"\n/* Decompilation {status}: {payload} */")
+                print("/* Falling back to non-optimized slice decompilation. */")
+                _emit_optional_source_sidecar_c_block(
+                    args.binary,
+                    func.name,
+                    generic_nonopt_c,
                     alternate_source_c=bool(args.alternate_source_c),
                     c_header="\n/* == c (non-optimized fallback) == */",
                 )

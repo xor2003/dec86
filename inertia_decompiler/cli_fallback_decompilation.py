@@ -371,7 +371,7 @@ def _try_decompile_sidecar_slice(
                 if attempt.snapshot:
                     setattr(project, "_inertia_last_tail_validation_snapshot", dict(attempt.snapshot))
                 if attempt.attempt_name != "lean":
-                    print(f"[dbg] sidecar slice fallback recovered {addr:#x} {name} via {attempt.attempt_name}")
+                    print(f"[dbg] sidecar slice fallback recovered {addr:#x} {name} via {attempt.attempt_name}", file=sys.stderr, flush=True)
                 return attempt
         if not outcomes:
             return SliceRecoveryAttemptOutcome(
@@ -480,6 +480,12 @@ def _try_decompile_non_optimized_slice(
                 slice_project._inertia_disable_ail_narrowing = True
                 slice_project._inertia_disable_complex_expr_scan = True
                 slice_project._inertia_fast_block_peephole = True
+            if arch_name == "86_16":
+                # Non-optimized rescue lane: prefer forward progress over expensive
+                # pre-SSA peephole passes that are known to assert on bitwidth
+                # mismatches for some tiny helpers.
+                slice_project._inertia_tiny_core_disable_peephole = True
+                slice_project._inertia_disable_peephole_expr_guard = True
             if isinstance(original_addr, int):
                 mark_function_original_addr(func, original_addr)
             _prepare_function_for_decompilation(slice_project, func, effective_cod_metadata)
@@ -494,11 +500,18 @@ def _try_decompile_non_optimized_slice(
                 arch_name,
                 slice_plan,
             )
+            block_count, byte_count = _function_complexity(func)
+            effective_attempt_timeout = _effective_decompile_timeout_8616(
+                slice_project,
+                timeout,
+                block_count=block_count,
+                byte_count=byte_count,
+            )
             status, payload, partial_payload, *_ = _decompile_function_with_stats(
                 slice_project,
                 cfg,
                 func,
-                max(1, min(timeout, 4)),
+                max(1, effective_attempt_timeout),
                 api_style,
                 binary_path,
                 cod_metadata=effective_cod_metadata,
@@ -523,7 +536,17 @@ def _try_decompile_non_optimized_slice(
             )
 
         def _run_bounded_attempt(attempt_name: str, job, trace_snapshot):
-            attempt_timeout = bounded_non_optimized_attempt_timeout(timeout)
+            attempt_timeout = bounded_non_optimized_attempt_timeout(
+                max(
+                    1,
+                    _effective_decompile_timeout_8616(
+                        slice_source_project,
+                        timeout,
+                        block_count=1,
+                        byte_count=max(1, slice_end - slice_start),
+                    ),
+                )
+            )
             try:
                 if (
                     os.name == "posix"
@@ -651,7 +674,7 @@ def _try_decompile_non_optimized_slice(
         if isinstance(slice_snapshot, dict):
             setattr(slice_source_project, "_inertia_partial_tail_validation_snapshot", dict(slice_snapshot))
         if outcome.rendered is not None and outcome.status != "ok":
-            print(f"[dbg] non-optimized fallback produced partial output for {addr:#x} {name} via {label}")
+            print(f"[dbg] non-optimized fallback produced partial output for {addr:#x} {name} via {label}", file=sys.stderr, flush=True)
         return outcome
     outcome = _attempt(project, label="shared-project slice")
     if outcome.rendered is not None:
@@ -682,7 +705,7 @@ def _try_decompile_non_optimized_slice(
         else:
             outcome = _attempt(fresh_project, label="fresh-project slice")
             if outcome.rendered is not None:
-                print(f"[dbg] non-optimized fallback recovered {addr:#x} {name} after rebuilding a fresh project")
+                print(f"[dbg] non-optimized fallback recovered {addr:#x} {name} after rebuilding a fresh project", file=sys.stderr, flush=True)
                 return outcome
             if outcome.attempt_failures:
                 retry_failures.extend(outcome.attempt_failures)
@@ -701,7 +724,7 @@ def _try_decompile_non_optimized_slice(
 
     failure_detail = "; ".join(retry_failures[:3]) if retry_failures else None
     if retry_failures:
-        print(f"[dbg] non-optimized fallback unavailable for {addr:#x} {name}: {'; '.join(retry_failures[:3])}")
+        print(f"[dbg] non-optimized fallback unavailable for {addr:#x} {name}: {'; '.join(retry_failures[:3])}", file=sys.stderr, flush=True)
     return NonOptimizedSliceOutcome(
         rendered=None,
         status="error",
@@ -862,7 +885,7 @@ def _try_decompile_peer_sidecar_slice(
                 setattr(project, "_inertia_last_tail_validation_snapshot", dict(peer_snapshot))
             if slice_result.status != "ok":
                 continue
-            print(f"[dbg] peer sidecar fallback recovered {addr:#x} {peer_name} from {peer_path.name}")
+            print(f"[dbg] peer sidecar fallback recovered {addr:#x} {peer_name} from {peer_path.name}", file=sys.stderr, flush=True)
             return slice_result.payload
     return None
 

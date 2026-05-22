@@ -100,35 +100,70 @@ def _log_size_mismatch_once_8616(self: Any, expr: Any, r0: Any, r1: Any, project
     sys.stderr.flush()
 
 
+def _log_variable_recovery_guard_fallback_once_8616(self: Any, expr: Any, ex: Exception, project: Any, context_suffix) -> None:
+    seen = None
+    if project is not None:
+        seen = getattr(project, "_inertia_variable_recovery_guard_fallback_seen", None)
+        if not isinstance(seen, set):
+            seen = set()
+            setattr(project, "_inertia_variable_recovery_guard_fallback_seen", seen)
+    else:
+        seen = getattr(self, "_inertia_variable_recovery_guard_fallback_seen", None)
+    if not isinstance(seen, set):
+        seen = set()
+        if project is not None:
+            setattr(project, "_inertia_variable_recovery_guard_fallback_seen", seen)
+        else:
+            self._inertia_variable_recovery_guard_fallback_seen = seen
+    function_addr, _function_name, _slice_addr = context_suffix[0](project)
+    key = (function_addr, type(expr).__name__, type(ex).__name__, str(ex))
+    if key in seen:
+        return
+    seen.add(key)
+    print(
+        "[dbg] clinic:variable-recovery-guard-fallback "
+        f"expr={type(expr).__name__} error={type(ex).__name__}: {ex}"
+        f"{context_suffix[1](project)}",
+        file=sys.stderr,
+    )
+    sys.stderr.flush()
+
+
 def build_guarded_handle_binop_sub_8616(*, richr_cls, typevars_module, project, context_suffix):
     def _guarded_handle_binop_sub(self, expr):
-        arg0, arg1 = expr.operands
-        r0, r1 = self._expr_pair(arg0, arg1)
-        mismatch_bits = r0.data.size() != r1.data.size()
-        unresolved_mismatch = False
+        try:
+            arg0, arg1 = expr.operands
+            r0, r1 = self._expr_pair(arg0, arg1)
+            mismatch_bits = r0.data.size() != r1.data.size()
+            unresolved_mismatch = False
 
-        if r0.data.size() == r1.data.size() == expr.bits:
-            compute = r0.data - r1.data
-        else:
-            compute_bits = max(r0.data.size(), r1.data.size(), expr.bits)
-            lhs = _widen_sub_operand_8616(r0.data, compute_bits)
-            rhs = _widen_sub_operand_8616(r1.data, compute_bits)
-            if lhs.size() == rhs.size() == compute_bits:
-                wide = lhs - rhs
-                compute = _narrow_bv_width_8616(wide, expr.bits, self.state)
+            if r0.data.size() == r1.data.size() == expr.bits:
+                compute = r0.data - r1.data
             else:
-                unresolved_mismatch = True
-                compute = self.state.top(expr.bits)
-        if mismatch_bits and unresolved_mismatch:
-            _log_size_mismatch_once_8616(self, expr, r0, r1, project, context_suffix)
+                compute_bits = max(r0.data.size(), r1.data.size(), expr.bits)
+                lhs = _widen_sub_operand_8616(r0.data, compute_bits)
+                rhs = _widen_sub_operand_8616(r1.data, compute_bits)
+                if lhs.size() == rhs.size() == compute_bits:
+                    wide = lhs - rhs
+                    compute = _narrow_bv_width_8616(wide, expr.bits, self.state)
+                else:
+                    unresolved_mismatch = True
+                    compute = self.state.top(expr.bits)
+            if mismatch_bits and unresolved_mismatch:
+                _log_size_mismatch_once_8616(self, expr, r0, r1, project, context_suffix)
 
-        type_constraints = set()
-        if r0.typevar is not None and r1.data.concrete and isinstance(r0.typevar, typevars_module.TypeVariable):
-            typevar = typevars_module.new_dtv(r0.typevar, label=typevars_module.SubN(r1.data.concrete_value))
-        else:
+            type_constraints = set()
+            if r0.typevar is not None and r1.data.concrete and isinstance(r0.typevar, typevars_module.TypeVariable):
+                typevar = typevars_module.new_dtv(r0.typevar, label=typevars_module.SubN(r1.data.concrete_value))
+            else:
+                typevar = typevars_module.TypeVariable()
+                if r0.typevar is not None and r1.typevar is not None:
+                    type_constraints.add(typevars_module.Sub(r0.typevar, r1.typevar, typevar))
+        except Exception as ex:  # noqa: BLE001
+            _log_variable_recovery_guard_fallback_once_8616(self, expr, ex, project, context_suffix)
+            compute = self.state.top(getattr(expr, "bits", 1) or 1)
             typevar = typevars_module.TypeVariable()
-            if r0.typevar is not None and r1.typevar is not None:
-                type_constraints.add(typevars_module.Sub(r0.typevar, r1.typevar, typevar))
+            type_constraints = set()
 
         return richr_cls(compute, typevar=typevar, type_constraints=type_constraints)
 
@@ -137,30 +172,36 @@ def build_guarded_handle_binop_sub_8616(*, richr_cls, typevars_module, project, 
 
 def build_guarded_handle_binop_mul_8616(*, richr_cls, typevars_module, project, context_suffix):
     def _guarded_handle_binop_mul(self, expr):
-        arg0, arg1 = expr.operands
-        r0, r1 = self._expr_pair(arg0, arg1)
-        mismatch_bits = r0.data.size() != r1.data.size()
-        unresolved_mismatch = False
+        try:
+            arg0, arg1 = expr.operands
+            r0, r1 = self._expr_pair(arg0, arg1)
+            mismatch_bits = r0.data.size() != r1.data.size()
+            unresolved_mismatch = False
 
-        if r0.data.size() == r1.data.size() == expr.bits:
-            compute = r0.data * r1.data
-        else:
-            compute_bits = max(r0.data.size(), r1.data.size(), expr.bits)
-            lhs = _coerce_bv_width_8616(r0.data, compute_bits)
-            rhs = _coerce_bv_width_8616(r1.data, compute_bits)
-            if lhs.size() == rhs.size() == compute_bits:
-                wide = lhs * rhs
-                compute = _narrow_bv_width_8616(wide, expr.bits, self.state)
+            if r0.data.size() == r1.data.size() == expr.bits:
+                compute = r0.data * r1.data
             else:
-                unresolved_mismatch = True
-                compute = self.state.top(expr.bits)
-        if mismatch_bits and unresolved_mismatch:
-            _log_size_mismatch_once_8616(self, expr, r0, r1, project, context_suffix)
+                compute_bits = max(r0.data.size(), r1.data.size(), expr.bits)
+                lhs = _coerce_bv_width_8616(r0.data, compute_bits)
+                rhs = _coerce_bv_width_8616(r1.data, compute_bits)
+                if lhs.size() == rhs.size() == compute_bits:
+                    wide = lhs * rhs
+                    compute = _narrow_bv_width_8616(wide, expr.bits, self.state)
+                else:
+                    unresolved_mismatch = True
+                    compute = self.state.top(expr.bits)
+            if mismatch_bits and unresolved_mismatch:
+                _log_size_mismatch_once_8616(self, expr, r0, r1, project, context_suffix)
 
-        typevar = typevars_module.TypeVariable()
-        type_constraints = set()
-        if r0.typevar is not None and r1.typevar is not None and hasattr(typevars_module, "Mul"):
-            type_constraints.add(typevars_module.Mul(r0.typevar, r1.typevar, typevar))
+            typevar = typevars_module.TypeVariable()
+            type_constraints = set()
+            if r0.typevar is not None and r1.typevar is not None and hasattr(typevars_module, "Mul"):
+                type_constraints.add(typevars_module.Mul(r0.typevar, r1.typevar, typevar))
+        except Exception as ex:  # noqa: BLE001
+            _log_variable_recovery_guard_fallback_once_8616(self, expr, ex, project, context_suffix)
+            compute = self.state.top(getattr(expr, "bits", 1) or 1)
+            typevar = typevars_module.TypeVariable()
+            type_constraints = set()
 
         return richr_cls(compute, typevar=typevar, type_constraints=type_constraints)
 
