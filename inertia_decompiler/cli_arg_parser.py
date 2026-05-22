@@ -96,6 +96,11 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         help="Maximum number of recovered functions to print when decompiling a whole binary. Defaults to 0 (all functions).",
     )
     parser.add_argument(
+        "--include-library-functions",
+        action="store_true",
+        help="Include sidecar signature/library-labeled functions in whole-binary decompilation and tail-validation sweeps.",
+    )
+    parser.add_argument(
         "--api-style",
         choices=("modern", "dos", "raw", "pseudo", "service", "msc", "compiler"),
         default="modern",
