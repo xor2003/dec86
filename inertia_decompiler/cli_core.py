@@ -223,6 +223,7 @@ from .cli_decompilation import (
     _function_decompilation_profile,
     _preferred_decompiler_options,
     _preferred_expr_collapse_depth,
+    _effective_decompile_timeout_8616,
     _decompile_function_with_stats,
 )
 
@@ -571,12 +572,13 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
     # nondeterministic fallback-to-timeout flapping in corpus runs.
     return min(max(1, timeout), 5)
 
-def _direct_addr_wall_clock_budget(timeout: int) -> int:
+def _direct_addr_wall_clock_budget(timeout: int, *, effective_timeout: int | None = None) -> int:
     # One-function direct-address recovery may chain bounded recovery,
     # non-optimized fallback, and final attribution. Keep that lane inside a
     # deterministic wall-clock budget so callers see an explicit timeout class
     # instead of an outer subprocess kill.
-    return max(2, max(1, timeout) + _bounded_non_optimized_timeout(timeout) + 2)
+    base = max(1, effective_timeout if isinstance(effective_timeout, int) else timeout)
+    return max(2, base + _bounded_non_optimized_timeout(base) + 2)
 
 def _prepare_ranked_binary_preview_items(
     project: angr.Project,
@@ -1606,7 +1608,13 @@ def main(argv: list[str] | None = None) -> int:
     precise_sidecar_regions = metadata_has_precise_code_regions(lst_metadata)
     if args.addr is not None:
         print("/* recovering function... */", flush=True)
-        direct_addr_deadline = time.monotonic() + _direct_addr_wall_clock_budget(args.timeout)
+        direct_budget_timeout = args.timeout
+        if project.arch.name == "86_16":
+            direct_budget_timeout = max(direct_budget_timeout, 24)
+        direct_addr_deadline = time.monotonic() + _direct_addr_wall_clock_budget(
+            args.timeout,
+            effective_timeout=direct_budget_timeout,
+        )
         budget_fallback_addr: int | None = None
         budget_fallback_name: str | None = None
 
@@ -2170,7 +2178,14 @@ def main(argv: list[str] | None = None) -> int:
             # The inner decompilation path already enforces the analysis deadline.
             # Give the forked direct-address wrapper a few extra seconds to merge
             # tail-validation snapshots and serialize the result back to the parent.
-            direct_decompile_timeout = max(1, args.timeout) + 5
+            _direct_blocks, _direct_bytes = _function_complexity(func)
+            _direct_effective_timeout = _effective_decompile_timeout_8616(
+                direct_project,
+                args.timeout,
+                block_count=_direct_blocks,
+                byte_count=_direct_bytes,
+            )
+            direct_decompile_timeout = max(1, _direct_effective_timeout) + 5
             direct_decompile_timeout = max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1))
             if (
                 os.name == "posix"
@@ -2250,6 +2265,11 @@ def main(argv: list[str] | None = None) -> int:
             sidecar_closed_nonopt = False
             known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
             exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
+            if direct_result.status == "empty":
+                # Allow one non-optimized known-function lane even when the
+                # optimized lane repeats an "empty" family; this is often a
+                # recoverable clinic/core failure class for helper routines.
+                exact_retry_blocked = False
             if partial_payload is None and (precise_sidecar_regions or using_rebased_direct_slice):
                 if not exact_retry_blocked:
                     _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
@@ -3346,6 +3366,12 @@ def main(argv: list[str] | None = None) -> int:
                         continue
                     _block_count, byte_count = _function_complexity(active_item.function)
                     decompile_timeout = adaptive_timeout_model.timeout_for_byte_count(byte_count)
+                    decompile_timeout = _effective_decompile_timeout_8616(
+                        active_item.function.project,
+                        decompile_timeout,
+                        block_count=_block_count,
+                        byte_count=byte_count,
+                    )
                     if (
                         use_serial_fork_per_function
                         and threading.current_thread() is threading.main_thread()
