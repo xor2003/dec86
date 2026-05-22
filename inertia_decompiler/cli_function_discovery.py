@@ -2615,6 +2615,65 @@ def _is_zero_filled_region(project: angr.Project, addr: int, *, size: int = 8) -
         return False
     return bool(data) and all(byte == 0x00 for byte in data)
 
+
+def _is_plausible_code_seed(
+    project: angr.Project,
+    addr: int,
+    *,
+    metadata: LSTMetadata | None = None,
+) -> bool:
+    region = _lst_code_region(metadata, addr)
+    probe_size = 16
+    if region is not None:
+        region_size = max(0, region[1] - region[0])
+        if region_size == 0:
+            return False
+        probe_size = min(probe_size, region_size)
+    if probe_size <= 0:
+        return False
+    try:
+        data = bytes(project.loader.memory.load(addr, probe_size))
+    except Exception:
+        return True
+    if not data:
+        return False
+    if all(byte == 0x00 for byte in data):
+        return False
+    if all(byte == 0xFF for byte in data):
+        return False
+    if region is not None:
+        region_size = max(0, region[1] - region[0])
+        if 0 < region_size <= 8:
+            try:
+                block = project.factory.block(addr, size=region_size, opt_level=0)
+                insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+            except Exception:
+                insns = ()
+            if not insns:
+                return False
+            terminators = {"ret", "retn", "retf", "jmp", "ljmp", "call", "lcall", "int", "iret"}
+            if not any(getattr(insn, "mnemonic", "").lower() in terminators for insn in insns):
+                return False
+    # If sidecar does not provide an exact code region and the seed begins with
+    # a null-padded stream, treat it as data-like unless proven otherwise.
+    if region is None:
+        head = data[:8]
+        if len(head) >= 4 and head[:2] == b"\x00\x00" and sum(1 for b in head if b == 0x00) >= 4:
+            return False
+    return True
+
+
+def _filter_noncode_labeled_entries(
+    project: angr.Project,
+    labeled_entries: list[tuple[int, str]],
+    metadata: LSTMetadata | None = None,
+) -> list[tuple[int, str]]:
+    filtered: list[tuple[int, str]] = []
+    for addr, name in labeled_entries:
+        if _is_plausible_code_seed(project, addr, metadata=metadata):
+            filtered.append((addr, name))
+    return filtered
+
 def _rank_labeled_function_entries(
     project: angr.Project,
     labeled_entries: list[tuple[int, str]],
@@ -2721,7 +2780,8 @@ def _rank_labeled_function_entries_cached(
     labeled_entries: list[tuple[int, str]],
     metadata: LSTMetadata | None = None,
 ) -> tuple[list[tuple[int, str]], bool]:
-    cache_key = _sidecar_label_ranking_cache_key(project, labeled_entries, metadata)
+    filtered_entries = _filter_noncode_labeled_entries(project, labeled_entries, metadata)
+    cache_key = _sidecar_label_ranking_cache_key(project, filtered_entries, metadata)
     cached = _load_cache_json("recovery", cache_key) if cache_key is not None else None
     if isinstance(cached, dict):
         entries = cached.get("entries")
@@ -2734,7 +2794,7 @@ def _rank_labeled_function_entries_cached(
         ):
             return [(item[0], item[1]) for item in entries], True
 
-    ranked = _rank_labeled_function_entries(project, labeled_entries, metadata)
+    ranked = _rank_labeled_function_entries(project, filtered_entries, metadata)
     if cache_key is not None:
         _store_cache_json("recovery", cache_key, {"entries": ranked})
     return ranked, False
