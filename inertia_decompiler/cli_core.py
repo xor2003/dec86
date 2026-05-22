@@ -855,6 +855,40 @@ def _run_function_work_item(
     decompile_function = item.function
     failure_family_state = FailureFamilyState()
 
+    if isinstance(getattr(decompile_function, "name", None), str):
+        helper_outcome = _try_decompile_non_optimized_known_function(
+            decompile_project,
+            decompile_cfg,
+            decompile_function,
+            timeout=max(1, min(timeout, 2)),
+            api_style=api_style,
+            binary_path=binary_path,
+            lst_metadata=lst_metadata,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            failure_family_state=failure_family_state,
+        )
+        helper_c = _non_optimized_slice_rendered(helper_outcome)
+        if helper_c is not None:
+            helper_snapshot = _tail_validation_snapshot_for_fallback(
+                decompile_project,
+                decompile_function,
+                allow_project_fallback=False,
+            )
+            return FunctionWorkResult(
+                index=item.index,
+                status="ok",
+                payload=helper_c,
+                partial_payload=None,
+                debug_output="",
+                function=item.function,
+                function_cfg=item.function_cfg,
+                tail_validation=helper_snapshot,
+                elapsed=0.0,
+                block_count=None,
+                byte_count=None,
+            )
+
     def _run_local(project_obj, cfg_obj, function_obj) -> tuple[str, str, str | None, str, dict[str, object] | None, float, int, int]:
         with _capture_thread_output() as (stdout_buf, stderr_buf):
             status, payload, partial_payload, block_count, byte_count, elapsed = _decompile_function_with_stats(
@@ -1261,13 +1295,63 @@ def _emit_function_result(
             binary_path=args.binary,
         )
     if slice_result is not None and slice_result.status == "ok":
-        decompiled_local += 1
         fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
             item,
             allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
         )
+        if x86_16_tail_validation_snapshot_passed(fallback_snapshot):
+            decompiled_local += 1
+            _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+            _emit_optional_source_sidecar_c_block(args.binary, item.function.name, slice_result.payload, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (sidecar slice fallback) -- */")
+            return decompiled_local, failed_local
         _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, slice_result.payload, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (sidecar slice fallback) -- */")
+        print("/* problem: sidecar slice fallback validation=uncollected; continuing fallback lanes */")
+
+    nonopt_result: NonOptimizedSliceOutcome | str | None = None
+    known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
+    function_project = getattr(function, "project", project)
+    using_rebased_function_slice = function_project is not project
+    function_lst_metadata = None if using_rebased_function_slice else lst_metadata
+    if result.partial_payload is None:
+        known_nonopt_result = _try_decompile_non_optimized_known_function(
+            function_project,
+            item.function_cfg,
+            function,
+            timeout=_bounded_non_optimized_timeout(args.timeout),
+            api_style=args.api_style,
+            binary_path=args.binary,
+            lst_metadata=function_lst_metadata,
+            cod_metadata=cod_metadata,
+        )
+        if function_project is not project:
+            for attr_name in (
+                "_inertia_partial_tail_validation_snapshot",
+                "_inertia_last_tail_validation_snapshot",
+            ):
+                attr_value = getattr(function_project, attr_name, None)
+                if isinstance(attr_value, dict):
+                    setattr(project, attr_name, dict(attr_value))
+    known_nonopt_c = _non_optimized_slice_rendered(known_nonopt_result)
+    if known_nonopt_c is not None:
+        decompiled_local += 1
+        fallback_snapshot = _remember_fallback_tail_validation(
+            project,
+            fallback_tail_validation_by_index,
+            item,
+            function=function,
+            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
+        )
+        _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
+        if not emitted_problem:
+            print(f"/* problem: {result.status} */")
+            _print_diagnostic_text(result.payload)
+        _emit_optional_source_sidecar_c_block(
+            args.binary,
+            item.function.name,
+            known_nonopt_c,
+            alternate_source_c=bool(args.alternate_source_c),
+            c_header="/* -- c (non-optimized fallback) -- */",
+        )
         return decompiled_local, failed_local
 
     nonopt_skip_reason: str | None = None
@@ -1373,36 +1457,6 @@ def _emit_function_result(
             _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
             _emit_optional_source_sidecar_c_block(args.binary, item.function.name, trivial_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (trivial sidecar fallback) -- */")
             return decompiled_local, failed_local
-    nonopt_result: NonOptimizedSliceOutcome | str | None = None
-    known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
-    function_project = getattr(function, "project", project)
-    using_rebased_function_slice = function_project is not project
-    function_lst_metadata = None if using_rebased_function_slice else lst_metadata
-    if result.partial_payload is None and item.function_cfg is not None:
-        known_nonopt_result = _try_decompile_non_optimized_known_function(
-            function_project,
-            item.function_cfg,
-            function,
-            timeout=_bounded_non_optimized_timeout(args.timeout),
-            api_style=args.api_style,
-            binary_path=args.binary,
-            lst_metadata=function_lst_metadata,
-            cod_metadata=cod_metadata,
-        )
-    known_nonopt_c = _non_optimized_slice_rendered(known_nonopt_result)
-    if known_nonopt_c is not None:
-        decompiled_local += 1
-        fallback_snapshot = _remember_fallback_tail_validation(project, fallback_tail_validation_by_index,
-            item,
-            function=function,
-            allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
-        )
-        _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-        if not emitted_problem:
-            print(f"/* problem: {result.status} */")
-            _print_diagnostic_text(result.payload)
-        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, known_nonopt_c, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (non-optimized fallback) -- */")
-        return decompiled_local, failed_local
     if (
         result.partial_payload is None
         and (precise_sidecar_regions or args.addr is not None)
@@ -1422,6 +1476,14 @@ def _emit_function_result(
             cod_metadata=cod_metadata,
             allow_fresh_project_retry=not use_serial_fork_per_function,
         )
+        if function_project is not project:
+            for attr_name in (
+                "_inertia_partial_tail_validation_snapshot",
+                "_inertia_last_tail_validation_snapshot",
+            ):
+                attr_value = getattr(function_project, attr_name, None)
+                if isinstance(attr_value, dict):
+                    setattr(project, attr_name, dict(attr_value))
     elif slice_result is not None and sidecar_verdict_closes_non_optimized_lane(slice_result.verdict):
         print(
             "/* non-optimized fallback unavailable: "

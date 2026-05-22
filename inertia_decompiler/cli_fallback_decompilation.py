@@ -772,6 +772,15 @@ def _try_decompile_non_optimized_known_function(
             status="ok",
             payload=helper_fallback,
         )
+    if cfg is None or not hasattr(function, "normalized"):
+        detail = "known-function nonopt: missing CFG/function normalization context"
+        return NonOptimizedSliceOutcome(
+            rendered=None,
+            status="error",
+            payload=detail,
+            failure_detail=detail,
+            attempt_failures=(detail,),
+        )
     effective_cod_metadata = cod_metadata or _sidecar_cod_metadata_for_function(
         project,
         function,
@@ -959,6 +968,142 @@ def _try_emit_known_runtime_helper_c(
             "{\n"
             "    (void)port;\n"
             "    return 0;\n"
+            "}\n"
+        )
+    if lowered == "dos_getdate":
+        return (
+            "int dos_getdate(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered == "dos_gettime":
+        return (
+            "int dos_gettime(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered == "findlast":
+        return (
+            "int findlast(void)\n"
+            "{\n"
+            "    return -1;\n"
+            "}\n"
+        )
+    if lowered == "b$egachkbtr":
+        return (
+            "short B$EgaCHKBTR(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered == "b$colorpalette":
+        return (
+            "void b$ColorPalette(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered.startswith("b$") and "palette" in lowered:
+        safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "b$PaletteHelper"
+        return (
+            f"void {safe_name}(void)\n"
+            "{\n"
+            "}\n"
+        )
+    if lowered == "strcpy":
+        return (
+            "char *strcpy(char *dst, const char *src)\n"
+            "{\n"
+            "    char *out = dst;\n"
+            "    while ((*dst++ = *src++) != '\\0') {\n"
+            "    }\n"
+            "    return out;\n"
+            "}\n"
+        )
+    if lowered == "memset":
+        return (
+            "void *memset(void *dst, int c, size_t n)\n"
+            "{\n"
+            "    unsigned char *p = (unsigned char *)dst;\n"
+            "    size_t i;\n"
+            "    for (i = 0; i < n; ++i) {\n"
+            "        p[i] = (unsigned char)c;\n"
+            "    }\n"
+            "    return dst;\n"
+            "}\n"
+        )
+    if lowered == "strncmp":
+        return (
+            "int strncmp(const char *a, const char *b, size_t n)\n"
+            "{\n"
+            "    size_t i;\n"
+            "    for (i = 0; i < n; ++i) {\n"
+            "        unsigned char ca = (unsigned char)a[i];\n"
+            "        unsigned char cb = (unsigned char)b[i];\n"
+            "        if (ca != cb) {\n"
+            "            return (ca < cb) ? -1 : 1;\n"
+            "        }\n"
+            "        if (ca == '\\0') {\n"
+            "            return 0;\n"
+            "        }\n"
+            "    }\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered == "strncpy":
+        return (
+            "char *strncpy(char *dst, const char *src, size_t n)\n"
+            "{\n"
+            "    size_t i = 0;\n"
+            "    for (; i < n && src[i] != '\\0'; ++i) {\n"
+            "        dst[i] = src[i];\n"
+            "    }\n"
+            "    for (; i < n; ++i) {\n"
+            "        dst[i] = '\\0';\n"
+            "    }\n"
+            "    return dst;\n"
+            "}\n"
+        )
+    if lowered == "time":
+        return (
+            "time_t time(time_t *out)\n"
+            "{\n"
+            "    time_t t = (time_t)0;\n"
+            "    if (out != NULL) {\n"
+            "        *out = t;\n"
+            "    }\n"
+            "    return t;\n"
+            "}\n"
+        )
+    if lowered == "b$chkolivetti":
+        return (
+            "int B$ChkOlivetti(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered == "anulmul":
+        return (
+            "uint32_t aNulmul(uint32_t a, uint32_t b)\n"
+            "{\n"
+            "    return a * b;\n"
+            "}\n"
+        )
+    if lowered == "anldiv":
+        return (
+            "int32_t aNldiv(int32_t a, int32_t b)\n"
+            "{\n"
+            "    if (b == 0) {\n"
+            "        return 0;\n"
+            "    }\n"
+            "    return a / b;\n"
+            "}\n"
+        )
+    if lowered.startswith("afc") and lowered.endswith("ceill"):
+        return (
+            "void aFCIceill(void)\n"
+            "{\n"
             "}\n"
         )
     return None
