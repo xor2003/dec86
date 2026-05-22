@@ -881,6 +881,8 @@ def _decompile_function(
     prev_tiny_core_aggressive_simplify = getattr(project, "_inertia_tiny_core_aggressive_simplify", False)
     prev_tiny_core_disable_peephole = getattr(project, "_inertia_tiny_core_disable_peephole", False)
     prev_skip_clinic_pre_ssa = getattr(project, "_inertia_skip_clinic_pre_ssa", False)
+    prev_skip_clinic_post_ssa = getattr(project, "_inertia_skip_clinic_post_ssa", False)
+    prev_skip_clinic_recover_variables_assert = getattr(project, "_inertia_skip_clinic_recover_variables_assert", False)
     prev_disable_peephole_expr_guard = getattr(project, "_inertia_disable_peephole_expr_guard", False)
     if tiny_core_guard:
         setattr(project, "_inertia_disable_ail_narrowing", True)
@@ -888,6 +890,8 @@ def _decompile_function(
         setattr(project, "_inertia_fast_block_peephole", True)
         setattr(project, "_inertia_tiny_core_aggressive_simplify", True)
         setattr(project, "_inertia_tiny_core_disable_peephole", True)
+        setattr(project, "_inertia_disable_peephole_expr_guard", True)
+        setattr(project, "_inertia_skip_clinic_post_ssa", True)
     elif no_call_helper_guard:
         # Arithmetic/memory helpers with no calls often blow up peephole
         # expression scanning cost. Keep narrowing enabled, but skip deep
@@ -895,7 +899,7 @@ def _decompile_function(
         setattr(project, "_inertia_disable_complex_expr_scan", True)
         setattr(project, "_inertia_fast_block_peephole", True)
         setattr(project, "_inertia_tiny_core_disable_peephole", True)
-        setattr(project, "_inertia_skip_clinic_pre_ssa", True)
+        setattr(project, "_inertia_disable_peephole_expr_guard", True)
     def _analysis_log_messages(dec_obj) -> list[str]:
         messages: list[str] = []
         for entry in getattr(dec_obj, "errors", ()) or ():
@@ -1088,7 +1092,7 @@ def _decompile_function(
                                                     )
                                                     if repeat_reason is not None:
                                                         record_failure_family_retry_stop(failure_family_state, failure_snapshot)
-                                                    print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry")
+                                                    print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry", file=sys.stderr, flush=True)
                                                     detail = "Decompiler did not produce code."
                                                     messages = _analysis_log_messages(dec)
                                                     if messages:
@@ -1127,7 +1131,7 @@ def _decompile_function(
             )
         setattr(project, "_inertia_partial_codegen_text", partial_payload)
         timeout_stage = getattr(project, "_inertia_decompiler_stage", None)
-        print(f"[dbg] {function.addr:#x} {function.name} TIMEOUT stage={timeout_stage}")
+        print(f"[dbg] {function.addr:#x} {function.name} TIMEOUT stage={timeout_stage}", file=sys.stderr, flush=True)
         if timeout_stage == "core":
             detail = "during core decompilation"
         elif isinstance(timeout_stage, str) and timeout_stage.startswith("core:clinic:"):
@@ -1156,6 +1160,8 @@ def _decompile_function(
             setattr(project, "_inertia_tiny_core_aggressive_simplify", prev_tiny_core_aggressive_simplify)
             setattr(project, "_inertia_tiny_core_disable_peephole", prev_tiny_core_disable_peephole)
             setattr(project, "_inertia_skip_clinic_pre_ssa", prev_skip_clinic_pre_ssa)
+            setattr(project, "_inertia_skip_clinic_post_ssa", prev_skip_clinic_post_ssa)
+            setattr(project, "_inertia_skip_clinic_recover_variables_assert", prev_skip_clinic_recover_variables_assert)
             setattr(project, "_inertia_disable_peephole_expr_guard", prev_disable_peephole_expr_guard)
 
     if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS"):
@@ -1187,7 +1193,7 @@ def _decompile_function(
             )
             if repeat_reason is not None:
                 record_failure_family_retry_stop(failure_family_state, failure_snapshot)
-                print(f"[dbg] stop: {repeat_reason}; lane=isolated_retry")
+                print(f"[dbg] stop: {repeat_reason}; lane=isolated_retry", file=sys.stderr, flush=True)
                 detail = "Decompiler did not produce code."
                 if messages:
                     detail += " angr details: " + "; ".join(messages[:3])
@@ -1218,7 +1224,7 @@ def _decompile_function(
             )
             if repeat_reason is not None:
                 record_failure_family_retry_stop(failure_family_state, fallback_snapshot)
-                print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry")
+                print(f"[dbg] stop: {repeat_reason}; lane=structurer_retry", file=sys.stderr, flush=True)
                 detail = "Decompiler did not produce code."
                 if messages:
                     detail += " angr details: " + "; ".join(messages[:3])
@@ -1947,7 +1953,7 @@ def _prepare_function_for_decompilation(
 ) -> int:
     display_addr = function_original_addr(function)
     if display_addr == function.addr:
-        print(f"[dbg] decompile_function: addr={display_addr:#x} name={function.name}")
+        print(f"[dbg] decompile_function: addr={display_addr:#x} name={function.name}", file=sys.stderr, flush=True)
     else:
         print(
             f"[dbg] decompile_function: addr={display_addr:#x} "
@@ -1961,7 +1967,7 @@ def _prepare_function_for_decompilation(
     )
     # Ensure function is normalized before decompilation.
     if not function.normalized:
-        print(f"[dbg] function {function.addr:#x} not normalized, normalizing...")
+        print(f"[dbg] function {function.addr:#x} not normalized, normalizing...", file=sys.stderr, flush=True)
         block_count = len(getattr(function, "block_addrs_set", ()) or ())
         normalize_budget = 2 if block_count <= 1 else 6
         try:
@@ -1969,7 +1975,7 @@ def _prepare_function_for_decompilation(
             with _analysis_timeout(normalize_budget):
                 function.normalize()
             if os.environ.get("INERTIA_DEBUG_NORMALIZE_STAGE"):
-                print(f"[dbg] normalized function {function.addr:#x} {function.name}")
+                print(f"[dbg] normalized function {function.addr:#x} {function.name}", file=sys.stderr, flush=True)
         except _AnalysisTimeout:
             # Keep decompilation moving: a subset of malformed/truncated regions
             # can spin in normalization. Downstream analyses remain bounded by
@@ -1980,7 +1986,7 @@ def _prepare_function_for_decompilation(
             )
     created_helper_stubs = _register_direct_call_target_function_stubs(project, function, cod_metadata=cod_metadata)
     if created_helper_stubs:
-        print(f"[dbg] registered {created_helper_stubs} direct callee stub(s) for {function.addr:#x}")
+        print(f"[dbg] registered {created_helper_stubs} direct callee stub(s) for {function.addr:#x}", file=sys.stderr, flush=True)
     return created_helper_stubs
 
 def _function_decompilation_profile(
@@ -2116,7 +2122,7 @@ def _decompile_function_with_stats(
         byte_count=byte_count,
     )
     display_addr = function_original_addr(function)
-    print(f"[dbg] function complexity for {display_addr:#x} {function.name}: blocks={block_count}, bytes={byte_count}")
+    print(f"[dbg] function complexity for {display_addr:#x} {function.name}: blocks={block_count}, bytes={byte_count}", file=sys.stderr, flush=True)
     sys.stdout.flush()
     start = time.perf_counter()
     deadline = time.monotonic() + max(1, effective_timeout)
@@ -2140,6 +2146,6 @@ def _decompile_function_with_stats(
     elapsed = time.perf_counter() - start
     advance_failure_family_state(failure_family_state)
     if _timing_output_enabled():
-        print(f"[dbg] decompilation time for {display_addr:#x} {function.name}: {elapsed:.2f}s")
+        print(f"[dbg] decompilation time for {display_addr:#x} {function.name}: {elapsed:.2f}s", file=sys.stderr, flush=True)
         sys.stdout.flush()
     return status, payload, partial_payload, block_count, byte_count, elapsed

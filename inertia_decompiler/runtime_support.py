@@ -374,9 +374,6 @@ def guard_angr_variable_recovery_binop_sub_size_mismatch(project=None):
 
 @contextlib.contextmanager
 def guard_angr_clinic_stage_markers(project):
-    if not timing_output_enabled():
-        yield
-        return
     import time as _time
     from angr.analyses.decompiler.block_simplifier import BlockSimplifier
     from angr.analyses.decompiler.clinic import Clinic
@@ -391,13 +388,19 @@ def guard_angr_clinic_stage_markers(project):
     _t0 = _time.perf_counter()
     _last_stage: list[str] = ["start"]
     _stage_entry: list[float] = [_t0]
+    _emit_stage_logs = bool(timing_output_enabled() or os.environ.get("INERTIA_DEBUG_CLINIC_COMPLEX_EXPR"))
 
     def _emit_stage_time(new_stage: str) -> None:
         now = _time.perf_counter()
         elapsed_since_start = now - _t0
         elapsed_in_prev = now - _stage_entry[0]
-        print(f"[dbg] stage-time: {new_stage} elapsed={elapsed_since_start:.2f}s (prev={_last_stage[0]} took {elapsed_in_prev:.2f}s)")
-        sys.stderr.flush()
+        if _emit_stage_logs:
+            print(
+                f"[dbg] stage-time: {new_stage} elapsed={elapsed_since_start:.2f}s "
+                f"(prev={_last_stage[0]} took {elapsed_in_prev:.2f}s)",
+                file=sys.stderr,
+            )
+            sys.stderr.flush()
         _last_stage[0] = new_stage
         _stage_entry[0] = now
 
@@ -418,12 +421,26 @@ def guard_angr_clinic_stage_markers(project):
     def _stage_post_ssa_level1_simplifications(self, *args, **kwargs):  # noqa: ANN001
         _emit_stage_time("clinic:post_ssa_l1")
         project._inertia_decompiler_stage = "core:clinic:post_ssa_level1_simplifications"
+        if getattr(project, "_inertia_skip_clinic_post_ssa", False):
+            return self._ail_graph
         return orig_stage_post_ssa(self, *args, **kwargs)
 
     def _stage_recover_variables(self, *args, **kwargs):  # noqa: ANN001
         _emit_stage_time("clinic:recover_vars")
         project._inertia_decompiler_stage = "core:clinic:recover_variables"
-        return orig_stage_recover_vars(self, *args, **kwargs)
+        try:
+            return orig_stage_recover_vars(self, *args, **kwargs)
+        except AssertionError:
+            if getattr(project, "_inertia_skip_clinic_recover_variables_assert", False):
+                if _emit_stage_logs:
+                    print(
+                        "[dbg] clinic:skip-recover-variables-assertion"
+                        f"{_project_current_function_context_suffix(project)}",
+                        file=sys.stderr,
+                    )
+                    sys.stderr.flush()
+                return None
+            raise
 
     _simplify_count: list[int] = [0]
     _peephole_count: list[int] = [0]
