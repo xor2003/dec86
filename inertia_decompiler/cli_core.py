@@ -993,19 +993,13 @@ def _tail_validation_passes_lenient(
     *,
     expected_stages: list[str],
 ) -> bool:
-    """Return True unless a present stage has actually failed or changed.
-
-    Missing stages (not yet collected) are treated as acceptable.
-    This is deliberately more lenient than ``x86_16_tail_validation_snapshot_passed``
-    which requires every expected stage to be present and stable.
-    """
+    """Return True only when every expected stage is present and stable."""
     if not isinstance(snapshot, dict):
-        return True
+        return False
     for stage_name in expected_stages:
         entry = snapshot.get(stage_name)
         if not isinstance(entry, Mapping):
-            # Missing stage — not a failure, just missing data.
-            continue
+            return False
         status = entry.get("status")
         if isinstance(status, str) and status:
             if status != "stable":
@@ -1037,10 +1031,6 @@ def _validated_generated_c_acceptance_8616(
         return "error", f"Final quality guard rejected emitted C ({marker_summary})."
     if not tail_validation_enabled:
         return "error", "Tail validation disabled."
-    # Only reject when a present stage has actually failed or changed.
-    # Missing stages (e.g. postprocess data not yet collected) are treated as
-    # acceptable rather than blocking — they reflect incomplete collection, not
-    # a detected regression.
     if not _tail_validation_passes_lenient(
         tail_validation_snapshot,
         expected_stages=list(expected_validation_stages),
@@ -1062,7 +1052,7 @@ def _validated_generated_c_acceptance_8616(
             else:
                 stage_details.append(f"{stage_name}=unclassified")
         detail = "; ".join(stage_details) if stage_details else "no stage data"
-        return "error", f"Tail validation {display_status} ({detail})."
+        return "validation_failed", f"Tail validation {display_status} ({detail})."
     if c_target == "portable-flat":
         recompilation = check_c_recompiles_8616(payload, target=c_target)
         if not recompilation.passed:
@@ -1218,17 +1208,33 @@ def _emit_function_result(
     if args.show_asm:
         print("/* -- asm -- */")
         print(_format_first_block_asm(project, function.addr))
+    emitted_problem = False
     if result.status == "ok":
-        decompiled_local += 1
+        if x86_16_tail_validation_snapshot_passed(result.tail_validation):
+            decompiled_local += 1
+            _print_function_attempt_status(
+                function,
+                attempt="decompiled",
+                validation_snapshot=result.tail_validation,
+            )
+            _emit_optional_source_sidecar_c_block(
+                args.binary,
+                item.function.name,
+                result.payload,
+                alternate_source_c=bool(args.alternate_source_c),
+                c_header="/* -- c -- */",
+            )
+            return decompiled_local, failed_local
         _print_function_attempt_status(
             function,
             attempt="decompiled",
             validation_snapshot=result.tail_validation,
         )
-        _emit_optional_source_sidecar_c_block(args.binary, item.function.name, result.payload, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c -- */")
-        return decompiled_local, failed_local
+        print("/* problem: validation=uncollected */")
+        print("/* decompiled output produced without full tail-validation snapshot; trying fallback lanes */")
+        attempt_status_printed = True
+        emitted_problem = True
 
-    emitted_problem = False
     if result.partial_payload:
         _print_function_attempt_status(
             function,
@@ -2257,7 +2263,7 @@ def main(argv: list[str] | None = None) -> int:
         if direct_result.status == "error":
             _print_stop_on_first_failure_8616(func, direct_result)
             return 6
-        if status != "ok":
+        if direct_result.status != "ok":
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address decompilation budget")
             direct_display_addr = function_original_addr(func)
             using_rebased_direct_slice = direct_project is not project
@@ -2270,7 +2276,10 @@ def main(argv: list[str] | None = None) -> int:
                 # optimized lane repeats an "empty" family; this is often a
                 # recoverable clinic/core failure class for helper routines.
                 exact_retry_blocked = False
-            allow_known_nonopt = (not exact_retry_blocked) or (direct_result.status == "timeout")
+            allow_known_nonopt = (
+                (not exact_retry_blocked)
+                or (direct_result.status in {"timeout", "validation_failed"})
+            )
             if partial_payload is None:
                 if allow_known_nonopt:
                     _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
@@ -2295,7 +2304,7 @@ def main(argv: list[str] | None = None) -> int:
                     allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
                     binary_path=args.binary,
                 )
-                print(f"\n/* Decompilation {status}: {payload} */")
+                print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                 print("/* Falling back to known-function non-optimized decompilation. */")
                 _emit_optional_source_sidecar_c_block(
                     args.binary,
@@ -2328,7 +2337,7 @@ def main(argv: list[str] | None = None) -> int:
                     allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
                     binary_path=args.binary,
                 )
-                print(f"\n/* Decompilation {status}: {payload} */")
+                print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                 print("/* Falling back to non-optimized slice decompilation. */")
                 _emit_optional_source_sidecar_c_block(
                     args.binary,

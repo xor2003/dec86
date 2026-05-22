@@ -943,6 +943,24 @@ def _try_emit_known_runtime_helper_c(
             "    return dx;\n"
             "}\n"
         )
+    if lowered == "toupper":
+        return (
+            "int toupper(int ch)\n"
+            "{\n"
+            "    if (ch >= 'a' && ch <= 'z') {\n"
+            "        return ch - ('a' - 'A');\n"
+            "    }\n"
+            "    return ch;\n"
+            "}\n"
+        )
+    if lowered == "inp":
+        return (
+            "uint8_t inp(uint16_t port)\n"
+            "{\n"
+            "    (void)port;\n"
+            "    return 0;\n"
+            "}\n"
+        )
     return None
 
 def _try_decompile_peer_sidecar_slice(
