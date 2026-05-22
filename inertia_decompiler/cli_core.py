@@ -2511,6 +2511,10 @@ def main(argv: list[str] | None = None) -> int:
     prefer_ranked_hidden_sidecar_full_queue = False
     visible_code_labels = _visible_code_labels(lst_metadata)
     recovery_code_labels = _recovery_code_labels(lst_metadata) if lst_metadata is not None else {}
+    include_library_functions = bool(getattr(args, "include_library_functions", False))
+    if include_library_functions and lst_metadata is not None:
+        visible_code_labels = dict(getattr(lst_metadata, "code_labels", {}) or {})
+        recovery_code_labels = dict(visible_code_labels)
     seed_code_labels = visible_code_labels or recovery_code_labels
     skipped_signature_labels = (
         len(getattr(lst_metadata, "code_labels", {})) - len(visible_code_labels) if lst_metadata is not None else 0
@@ -2774,6 +2778,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if skipped_signature_labels > 0:
         print(f"/* skipping {skipped_signature_labels} signature-matched function(s) by default. */")
+    elif include_library_functions and lst_metadata is not None:
+        print("/* including signature/library-labeled functions as requested. */")
 
     if cfg is not None:
         if function_label is not None and project.entry in cfg.functions:
