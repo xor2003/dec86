@@ -118,7 +118,10 @@ CarrierKey8616 = tuple[str, str | int]
 class StackCarrierPruneDecision8616(enum.Enum):
     DEFINITELY_DEAD = "definitely_dead"
     LIVE_CALL_ARG_SETUP = "live_call_arg_setup"
+    LIVE_MEMORY_WRITE = "live_memory_write"
     LIVE_STACK_CARRIER = "live_stack_carrier"
+    LIVE_WIDENING_CARRIER = "live_widening_carrier"
+    LIVE_CONDITION_SOURCE = "live_condition_source"
     UNKNOWN_REFUSE = "unknown_refuse"
 
 
@@ -196,6 +199,80 @@ def _generic_stack_carrier_keys_8616(node: object) -> set[CarrierKey8616]:
         if key is not None:
             names.add(key)
     return names
+
+
+def _stmt_has_call_8616(stmt: object) -> bool:
+    if stmt is None:
+        return False
+    if _call_from_statement_8616(stmt) is not None:
+        return True
+    for node in _iter_c_nodes_deep_8616(stmt):
+        if isinstance(node, CFunctionCall):
+            return True
+    return False
+
+
+def _stmt_has_memory_write_8616(stmt: object) -> bool:
+    for assign in _assignment_nodes_8616(stmt):
+        lhs, _rhs = _assignment_lhs_rhs_8616(assign)
+        if _lhs_writes_memory_8616(lhs):
+            return True
+    return False
+
+
+def _stmt_uses_carrier_key_8616(stmt: object, key: CarrierKey8616) -> bool:
+    return key in _generic_stack_carrier_keys_8616(stmt)
+
+
+def _carrier_key_protected_8616(lhs_key: CarrierKey8616, codegen: object | None) -> bool:
+    if codegen is None:
+        return False
+    for attr in (
+        "_inertia_callsite_arg_sources",
+        "_inertia_stack_variable_bindings",
+        "_inertia_stack_canonicalization_bridges",
+        "_inertia_tail_validation_widened_carriers",
+        "_inertia_linear_recurrence_state",
+    ):
+        value = getattr(codegen, attr, None)
+        if value is None:
+            continue
+        text = repr(value)
+        if lhs_key[0] == "name" and isinstance(lhs_key[1], str) and lhs_key[1] in text:
+            return True
+    return False
+
+
+def _classify_dead_carrier_candidate_8616(
+    stmt: object,
+    lhs_key: CarrierKey8616,
+    rhs: object,
+    *,
+    live: set[CarrierKey8616],
+    known_carriers: set[CarrierKey8616],
+    call_indices: set[int],
+    stmt_index: int,
+    statements: list[object],
+    codegen: object | None,
+) -> StackCarrierPruneDecision8616:
+    if _stmt_has_memory_write_8616(stmt):
+        return StackCarrierPruneDecision8616.LIVE_MEMORY_WRITE
+    if lhs_key in live:
+        return StackCarrierPruneDecision8616.LIVE_STACK_CARRIER
+    if _carrier_key_protected_8616(lhs_key, codegen):
+        return StackCarrierPruneDecision8616.LIVE_WIDENING_CARRIER
+    if _stmt_has_call_8616(stmt):
+        return StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP
+    # Keep setup around call boundaries only when the call actually references
+    # this carrier key.
+    for near in (stmt_index - 1, stmt_index + 1):
+        if near in call_indices and 0 <= near < len(statements) and _stmt_uses_carrier_key_8616(statements[near], lhs_key):
+            return StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP
+    if _generic_stack_carrier_keys_8616(rhs).intersection(known_carriers):
+        # If RHS references other carrier keys, preserve unless we can prove the
+        # entire chain is dead; conservative by default.
+        return StackCarrierPruneDecision8616.UNKNOWN_REFUSE
+    return StackCarrierPruneDecision8616.DEFINITELY_DEAD
 
 
 def _expr_is_pure_stack_address_carrier_8616(
@@ -299,11 +376,15 @@ def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | 
             ):
                 changed |= _prune_dead_stack_carrier_assignments_8616(pair[1], codegen=codegen)
 
+    statement_list = list(getattr(block, "statements", ()) or ())
     known_carriers = _collect_stack_carrier_assignments_8616(block)
+    call_indices = {idx for idx, stmt in enumerate(statement_list) if _stmt_has_call_8616(stmt)}
     live: set[CarrierKey8616] = set()
     kept_reversed: list = []
     removed = 0
-    for stmt in reversed(list(getattr(block, "statements", ()) or ())):
+    reversed_pairs = list(enumerate(statement_list))
+    reversed_pairs.reverse()
+    for stmt_index, stmt in reversed_pairs:
         carrier = _dead_stack_carrier_assignment_8616(stmt, known_carriers)
         if carrier is not None:
             lhs_key, rhs = carrier
@@ -311,16 +392,36 @@ def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | 
             _bump_dead_setup_counter_8616(codegen, "dead_setup_raw_fact_count")
             _bump_dead_setup_counter_8616(codegen, "dead_setup_normalized_fact_count")
             _bump_dead_setup_counter_8616(codegen, "dead_setup_classified_fact_count")
-            if lhs_key not in live:
+            decision = _classify_dead_carrier_candidate_8616(
+                stmt,
+                lhs_key,
+                rhs,
+                live=live,
+                known_carriers=known_carriers,
+                call_indices=call_indices,
+                stmt_index=stmt_index,
+                statements=statement_list,
+                codegen=codegen,
+            )
+            if decision == StackCarrierPruneDecision8616.DEFINITELY_DEAD:
                 changed = True
                 removed += 1
                 _bump_dead_setup_counter_8616(codegen, "dead_setup_pruned")
                 _bump_dead_setup_counter_8616(codegen, "dead_setup_materialized_count")
                 continue
+            if decision == StackCarrierPruneDecision8616.LIVE_CALL_ARG_SETUP:
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_call_arg")
+            elif decision == StackCarrierPruneDecision8616.LIVE_STACK_CARRIER:
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_stack_carrier")
+            elif decision == StackCarrierPruneDecision8616.LIVE_WIDENING_CARRIER:
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_widening_carrier")
+            elif decision == StackCarrierPruneDecision8616.LIVE_CONDITION_SOURCE:
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_live_condition_source")
+            else:
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_unknown_refuse")
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
             live.discard(lhs_key)
             live.update(_generic_stack_carrier_keys_8616(rhs).intersection(known_carriers))
-            _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
-            _bump_dead_setup_counter_8616(codegen, "dead_setup_live_stack_carrier")
             kept_reversed.append(stmt)
             continue
         live.update(_generic_stack_carrier_keys_8616(stmt).intersection(known_carriers))
