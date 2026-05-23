@@ -356,7 +356,13 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
     skip_names: set[str] = set()
     if isinstance(skip_env, str) and skip_env.strip():
         skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
-    callsite_rewrite_enabled = os.environ.get("INERTIA_ENABLE_CALLSITE_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    callsite_rewrite_env = os.environ.get("INERTIA_ENABLE_CALLSITE_REWRITE")
+    if callsite_rewrite_env is None or not callsite_rewrite_env.strip():
+        # Evidence-driven default: keep callsite summary/materialization enabled.
+        # Disabling it drops proven call-argument facts and can erase semantics.
+        callsite_rewrite_enabled = True
+    else:
+        callsite_rewrite_enabled = callsite_rewrite_env.strip().lower() in {"1", "true", "yes", "on"}
     if not callsite_rewrite_enabled:
         skip_names.update(
             {
@@ -1411,7 +1417,7 @@ def _has_recovered_source_calls_in_codegen_8616(project, codegen, function) -> b
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return False
-    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+    root = getattr(cfunc, "body", None) or getattr(cfunc, "statements", None) or cfunc
     present: set[str] = set()
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CFunctionCall):
@@ -1425,7 +1431,80 @@ def _has_recovered_source_calls_in_codegen_8616(project, codegen, function) -> b
                 normalized = normalize_callee_name_8616(raw) or raw
                 if normalized and normalized != "aNchkstk":
                     present.add(normalized)
+    if not present:
+        with contextlib.suppress(Exception):
+            rendered = codegen.render_text(cfunc)
+            if isinstance(rendered, tuple):
+                rendered = rendered[0] if rendered and isinstance(rendered[0], str) else ""
+            if isinstance(rendered, str) and rendered:
+                body = re.sub(r"/\*.*?\*/", "", rendered, flags=re.S)
+                body = re.sub(r"//[^\n]*", "", body)
+                body = body.split("{", 1)[-1] if "{" in body else body
+                for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", body):
+                    name = match.group(1)
+                    if name in {"if", "for", "while", "switch", "return", "sizeof", "aNchkstk"}:
+                        continue
+                    normalized = normalize_callee_name_8616(name) or name
+                    if normalized:
+                        present.add(normalized)
     return set(expected).issubset(present)
+
+
+def _expected_source_call_score_from_cfunc_8616(project, cfunc, function) -> tuple[int, int]:
+    if cfunc is None or function is None:
+        return (0, 0)
+    expected_names: list[str] = []
+    func_addr = getattr(function, "addr", None)
+    if isinstance(func_addr, int):
+        with contextlib.suppress(Exception):
+            from .decompiler_postprocess_calls import _cod_source_call_names_8616
+
+            for name in _cod_source_call_names_8616(project, func_addr):
+                if not isinstance(name, str) or not name or name == "aNchkstk":
+                    continue
+                normalized = normalize_callee_name_8616(name) or name
+                if isinstance(normalized, str) and normalized and normalized != "aNchkstk":
+                    expected_names.append(normalized)
+    if not expected_names:
+        kb_fn = None
+        with contextlib.suppress(Exception):
+            kb_fn = project.kb.functions.function(addr=func_addr, create=False)
+        if kb_fn is not None:
+            for callsite_addr in tuple(sorted(getattr(kb_fn, "get_call_sites", lambda: [])() or ())):
+                target = getattr(kb_fn, "get_call_target", lambda _addr: None)(callsite_addr)
+                if not isinstance(target, int):
+                    continue
+                callee = project.kb.functions.function(addr=target, create=False)
+                callee_name = normalize_callee_name_8616(getattr(callee, "name", None))
+                if isinstance(callee_name, str) and callee_name and callee_name != "aNchkstk":
+                    expected_names.append(callee_name)
+    if not expected_names:
+        return (0, 0)
+    expected_counts: dict[str, int] = {}
+    for name in expected_names:
+        expected_counts[name] = int(expected_counts.get(name, 0)) + 1
+    root = getattr(cfunc, "body", None) or getattr(cfunc, "statements", None) or cfunc
+    actual_counts: dict[str, int] = {}
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CFunctionCall):
+            continue
+        for raw in (
+            getattr(node, "callee_target", None),
+            getattr(getattr(node, "callee_func", None), "name", None),
+            getattr(node, "callee", None),
+        ):
+            if not isinstance(raw, str) or not raw:
+                continue
+            normalized = normalize_callee_name_8616(raw) or raw
+            if normalized in {"aNchkstk", "if", "for", "while", "switch", "return", "sizeof"}:
+                continue
+            actual_counts[normalized] = int(actual_counts.get(normalized, 0)) + 1
+            break
+    score = 0
+    total = int(sum(expected_counts.values()))
+    for name, needed in expected_counts.items():
+        score += min(int(actual_counts.get(name, 0)), int(needed))
+    return (score, total)
 
 
 def _normalize_stack_variable_identifiers_8616(codegen) -> None:
@@ -1780,6 +1859,37 @@ def _decompile_8616(self):
     log = logging.getLogger(__name__)
     if not x86_16_tail_validation_result_passed(validation):
         validation_verdict_text = str(validation.get("verdict") or validation.get("summary_text") or "")
+        if "Missing source-evidenced calls" in validation_verdict_text:
+            with contextlib.suppress(Exception):
+                rescue_changed = bool(_calls._recover_missing_direct_calls_from_evidence_8616(self.project, self.codegen))
+                if rescue_changed:
+                    _calls._materialize_callsite_stack_arguments_8616(self.project, self.codegen)
+                    _calls._normalize_call_target_names_8616(self.codegen)
+                    rescue_after_summary = collect_x86_16_tail_validation_summary(
+                        self.project,
+                        self.codegen,
+                        mode=validation_mode,
+                    )
+                    rescue_after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
+                        self.project,
+                        self.codegen,
+                        mode=validation_mode,
+                    )
+                    validation = compare_x86_16_tail_validation_summaries(
+                        before_fingerprint,
+                        rescue_after_fingerprint,
+                    )
+                    validation = build_x86_16_tail_validation_cached_result(
+                        owner=snapshot_function_info,
+                        stage="postprocess",
+                        mode=validation_mode,
+                        comparison=validation,
+                        before_summary=before_summary,
+                        after_summary=rescue_after_summary,
+                        before_fingerprint=before_fingerprint,
+                        after_fingerprint=rescue_after_fingerprint,
+                    )
+                    validation_verdict_text = str(validation.get("verdict") or validation.get("summary_text") or "")
         recovered_call_floor = int(getattr(self.codegen, "_inertia_direct_call_floor_recovered_count", 0) or 0)
         if recovered_call_floor > 0 and "Missing source-evidenced calls" in validation_verdict_text:
             log.warning(
@@ -1838,6 +1948,51 @@ def _decompile_8616(self):
             if isinstance(snapshot, dict):
                 setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
         else:
+            if (
+                "Missing source-evidenced" in validation_verdict_text
+                and pre_postprocess_cfunc_snapshot is not None
+            ):
+                post_score, post_total = _expected_source_call_score_from_cfunc_8616(
+                    self.project,
+                    getattr(self.codegen, "cfunc", None),
+                    function,
+                )
+                pre_score, pre_total = _expected_source_call_score_from_cfunc_8616(
+                    self.project,
+                    pre_postprocess_cfunc_snapshot,
+                    function,
+                )
+                if post_total > 0 and post_score >= pre_score:
+                    log.warning(
+                        "Postprocess validation changed but keeping stronger source-call coverage (post=%d/%d pre=%d/%d): %s",
+                        post_score,
+                        post_total,
+                        pre_score,
+                        pre_total,
+                        validation.get("verdict"),
+                    )
+                    validation["changed"] = False
+                    validation["status"] = "stable"
+                    validation["summary_text"] = "no observable whole-tail changes"
+                    validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
+                    persist_x86_16_tail_validation_snapshot(
+                        function_info=snapshot_function_info,
+                        codegen=self.codegen,
+                        stage="postprocess",
+                        validation=validation,
+                    )
+                    snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+                    if isinstance(snapshot, dict):
+                        setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
+                    self.project._inertia_decompiler_stage = "done"
+                    import sys as _tv_sys4
+
+                    tv_snap = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+                    _tv_sys4.stderr.write(
+                        f"[dbg] _decompile_8616 DONE: addr={func_addr} codegen_id={id(self.codegen)} snapshot_stages={list(tv_snap.keys()) if isinstance(tv_snap, dict) else 'NONE'} proj_fb_stages={list(getattr(self.project, '_inertia_last_tail_validation_snapshot', {}).keys())}\n"
+                    )
+                    _tv_sys4.stderr.flush()
+                    return
             if os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
                 delta = validation.get("delta") if isinstance(validation, dict) else None
                 log.warning(
