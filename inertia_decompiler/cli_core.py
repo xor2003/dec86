@@ -306,6 +306,7 @@ from .cli_function_discovery import (
     _format_sidecar_function_catalog,
     _recover_blob_entry_function,
     _recover_direct_addr_function,
+    _recover_lst_function,
 )
 
 from .cli_interrupt_modeling import (
@@ -2431,6 +2432,37 @@ def main(argv: list[str] | None = None) -> int:
             print(_format_asm_range(project, start, end))
             return 5
 
+        if (
+            precise_sidecar_regions
+            and lst_metadata is not None
+            and project.arch.name == "86_16"
+            and args.addr is not None
+        ):
+            try:
+                sidecar_region = _lst_code_region(lst_metadata, args.addr)
+                block_count, byte_count = _function_complexity(func)
+                if (
+                    sidecar_region is not None
+                    and isinstance(sidecar_region[0], int)
+                    and (block_count <= 3 or byte_count <= 24)
+                ):
+                    sidecar_addr = sidecar_region[0]
+                    code_name = _lst_code_label(lst_metadata, sidecar_addr, project.entry) or f"sub_{sidecar_addr:x}"
+                    cfg2, func2 = _recover_lst_function(
+                        project,
+                        lst_metadata,
+                        sidecar_addr if lst_metadata.absolute_addrs else sidecar_addr - project.entry,
+                        code_name,
+                        timeout=max(1, min(args.timeout, 6)),
+                        window=args.window,
+                        low_memory=low_memory_path,
+                    )
+                    if func2 is not None:
+                        cfg, func = cfg2, func2
+                        mark_function_original_addr(func, args.addr)
+            except Exception:
+                pass
+
         if function_label is not None:
             func.name = function_label
         elif lst_metadata is not None:
@@ -2598,6 +2630,82 @@ def main(argv: list[str] | None = None) -> int:
                 # optimized lane repeats an "empty" family; this is often a
                 # recoverable clinic/core failure class for helper routines.
                 exact_retry_blocked = False
+            if (
+                direct_result.status == "validation_failed"
+                and precise_sidecar_regions
+                and not using_rebased_direct_slice
+                and lst_metadata is not None
+            ):
+                sidecar_region = _lst_code_region(lst_metadata, direct_display_addr)
+                if sidecar_region is not None:
+                    try:
+                        sidecar_addr = sidecar_region[0]
+                        code_name = _lst_code_label(lst_metadata, sidecar_addr, project.entry) or func.name
+                        side_cfg, side_func = _recover_lst_function(
+                            project,
+                            lst_metadata,
+                            sidecar_addr if lst_metadata.absolute_addrs else sidecar_addr - project.entry,
+                            code_name,
+                            timeout=max(2, min(args.timeout, 8)),
+                            window=args.window,
+                            low_memory=low_memory_path,
+                        )
+                        side_status, side_payload, *_ = _decompile_function_with_stats(
+                            project,
+                            side_cfg,
+                            side_func,
+                            max(2, min(args.timeout, 8)),
+                            args.api_style,
+                            args.binary,
+                            cod_metadata=cod_metadata,
+                            synthetic_globals=synthetic_globals,
+                            lst_metadata=lst_metadata,
+                            failure_family_state=direct_failure_family_state,
+                        )
+                        if side_status == "ok":
+                            _emit_tail_validation_for_function_run_or_uncollected(
+                                project,
+                                side_cfg,
+                                side_func,
+                                allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
+                                binary_path=args.binary,
+                            )
+                            _emit_optional_source_sidecar_c_block(
+                                args.binary,
+                                side_func.name,
+                                side_payload,
+                                alternate_source_c=bool(args.alternate_source_c),
+                                c_header="\n/* == c (sidecar slice fallback) == */",
+                            )
+                            return 0
+                    except Exception:
+                        pass
+                _early_slice = _try_decompile_sidecar_slice(
+                    project,
+                    lst_metadata,
+                    direct_display_addr,
+                    func.name,
+                    timeout=max(2, min(args.timeout, _remaining_direct_addr_budget() or 2)),
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                    failure_family_state=direct_failure_family_state,
+                )
+                if _early_slice is not None and _early_slice.status == "ok":
+                    _emit_tail_validation_for_function_run_or_uncollected(
+                        direct_project,
+                        cfg,
+                        func,
+                        allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
+                        binary_path=args.binary,
+                    )
+                    _emit_optional_source_sidecar_c_block(
+                        args.binary,
+                        func.name,
+                        _early_slice.payload,
+                        alternate_source_c=bool(args.alternate_source_c),
+                        c_header="\n/* == c (sidecar slice fallback) == */",
+                    )
+                    return 0
             allow_known_nonopt = (
                 (not exact_retry_blocked)
                 or (direct_result.status in {"timeout", "validation_failed"})
@@ -2670,8 +2778,19 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
+            if direct_result.status == "validation_failed":
+                # Validation-failed direct lane is frequently under-recovered
+                # semantics. Allow exact sidecar retry even when the failure
+                # family repeats so richer bounded slices can be considered.
+                exact_retry_blocked = False
             if precise_sidecar_regions and not using_rebased_direct_slice:
                 if not exact_retry_blocked:
+                    _dbg_region = _lst_code_region(lst_metadata, direct_display_addr) if lst_metadata is not None else None
+                    print(
+                        f"[dbg] sidecar slice gate: precise={precise_sidecar_regions} rebased={using_rebased_direct_slice} blocked={exact_retry_blocked} addr={direct_display_addr:#x} region={_dbg_region}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
                     slice_result = _try_decompile_sidecar_slice(
                         project,
@@ -2683,8 +2802,15 @@ def main(argv: list[str] | None = None) -> int:
                         binary_path=args.binary,
                         failure_family_state=direct_failure_family_state,
                     )
+                    if slice_result is None:
+                        print("[dbg] sidecar slice attempt returned None", file=sys.stderr, flush=True)
             if slice_result is not None:
                 if slice_result.status != "ok":
+                    print(
+                        f"[dbg] sidecar slice attempt status={slice_result.status} payload={getattr(slice_result, 'payload', None)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     sidecar_closed_nonopt = sidecar_verdict_closes_non_optimized_lane(slice_result.verdict)
                     slice_result = None
                 else:

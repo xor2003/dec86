@@ -296,8 +296,17 @@ def _try_decompile_sidecar_slice(
         return None
     try:
         code = bytes(project.loader.memory.load(start, end - start))
-    except Exception:
-        return None
+    except Exception as ex:
+        try:
+            log.debug("sidecar slice runner wrapper failed: %s; retrying in-process", ex)
+            return _recover_and_decompile()
+        except Exception as inner_ex:
+            log.debug("sidecar slice in-process retry failed: %s", inner_ex)
+            return SliceRecoveryAttemptOutcome(
+                attempt_name="sidecar-slice",
+                status="error",
+                payload=f"sidecar slice failed: {_describe_exception(inner_ex)}",
+            )
 
     def _recover_and_decompile():
         slice_plan = plan_x86_16_exact_slice(start, end) if project.arch.name == "86_16" else None

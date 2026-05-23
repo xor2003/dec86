@@ -818,6 +818,21 @@ def _under_recovered_call_heavy_codegen_8616(
     has_loop = any(tok in body for tok in ("for(", "for (", "while(", "while ("))
     return not has_loop
 
+
+def _expected_call_presence_score_8616(rendered_text: str, cod_metadata: CODProcMetadata | None) -> int:
+    if not isinstance(rendered_text, str) or not rendered_text:
+        return 0
+    if cod_metadata is None:
+        return 0
+    score = 0
+    for raw_name in tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ())):
+        name = str(raw_name).lstrip("_")
+        if not name or name == "aNchkstk":
+            continue
+        if f"{name}(" in rendered_text:
+            score += 1
+    return score
+
 def _decompile_function(
     project: angr.Project,
     cfg,
@@ -1623,6 +1638,11 @@ def _decompile_function(
             and not _under_recovered_call_heavy_codegen_8616(cached_rendered_text, effective_cod_metadata)
         ):
             rendered_text = cached_rendered_text
+        if regenerated and isinstance(cached_rendered_text, str) and cached_rendered_text.strip():
+            cached_score = _expected_call_presence_score_8616(cached_rendered_text, effective_cod_metadata)
+            rendered_score = _expected_call_presence_score_8616(rendered_text, effective_cod_metadata)
+            if cached_score > rendered_score:
+                rendered_text = cached_rendered_text
     else:
         rendered_text = _snapshot_codegen_text(dec.codegen)
     debug_call_addr = function_original_addr(function)
