@@ -1010,8 +1010,10 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
     codegen._inertia_postprocess_passes = tuple(spec.name for spec in pass_specs)
     validation_enabled = bool(getattr(project, "_inertia_tail_validation_enabled", True))
+    # Correctness-first default: keep semantic gate active for each pass, unless
+    # explicitly disabled for emergency performance triage.
     per_pass_validation_enabled = bool(
-        getattr(project, "_inertia_postprocess_per_pass_validation_enabled", False)
+        getattr(project, "_inertia_postprocess_per_pass_validation_enabled", True)
     )
     if os.environ.get("INERTIA_DEBUG_CONDITION_TRACE") or os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
         per_pass_validation_enabled = True
