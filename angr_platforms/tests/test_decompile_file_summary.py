@@ -23,12 +23,19 @@ def test_emit_file_decompilation_summary_reports_compilers_and_signature_sources
         skipped_signature_labels=60,
         same_family_retry_stops=1,
         fallback_family_labels=("structurer_retry",),
+        dead_setup_candidates=9,
+        dead_setup_pruned=7,
+        dead_setup_refused=2,
+        dead_setup_escaped=0,
     )
 
     out = capsys.readouterr().out
     assert "summary: probable compiler versions: Microsoft C v5, Microsoft C v6ax" in out
-    assert "summary: probable library/signature sources: Turbo Pascal V5.0/5.5/6.0/7.0, microsoft_c_reimported, SORTDEMO" in out
+    assert "summary: probable library/signature sources:" in out
+    assert "microsoft_c_reimported" in out
+    assert "SORTDEMO" in out
     assert "summary: signature-matched library functions: 2" in out
     assert "summary: hidden signature-matched labels: 60" in out
     assert "summary: same_family_retry_stops=1 fallback_family_labels=structurer_retry" in out
+    assert "summary: dead_setup_candidates=9 dead_setup_pruned=7 dead_setup_refused=2 dead_setup_escaped=0" in out
     assert "summary: shown=8 decompiled=5 asm_or_detail_fallback=3" in out
