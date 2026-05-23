@@ -86,3 +86,21 @@ def test_dead_setup_live_carrier_is_not_pruned_or_escaped():
     assert getattr(codegen, "dead_setup_refused", 0) >= 1
     # Live setup carriers are not considered escaped dead artifacts.
     assert _count_dead_setup_escaped_8616(codegen) == 0
+
+
+def test_dead_setup_escape_counter_flags_unpruned_dead_candidate():
+    codegen = _mk_codegen_with_statements([])
+    vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
+    base = _mk_cvar(codegen, "s_6", 2)
+    rhs = structured_c.CBinaryOp(
+        "Add",
+        base,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    # Deliberately keep an unread setup carrier in final statements to validate
+    # that escape counting catches it.
+    setup_assign = structured_c.CAssignment(vvar_1, rhs, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([setup_assign], codegen=codegen)
+
+    assert _count_dead_setup_escaped_8616(codegen) == 1
