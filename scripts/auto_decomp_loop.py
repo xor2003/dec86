@@ -46,16 +46,21 @@ class IterationStats:
     tail_unknown: int
     tail_uncollected: int
     tail_missing: int
+    dead_setup_candidates: int
+    dead_setup_pruned: int
+    dead_setup_refused: int
+    dead_setup_escaped: int
     report_path: Path
     log_path: Path
 
-    def quality_tuple(self) -> tuple[int, int, int, int]:
+    def quality_tuple(self) -> tuple[int, int, int, int, int]:
         # higher is better
         return (
             self.tail_clean,
             -self.tail_failed,
             -self.tail_uncollected,
             -self.asm_fallback_count,
+            -self.dead_setup_escaped,
         )
 
 
@@ -80,6 +85,10 @@ _TAIL_FAILED_RE = re.compile(r"whole-tail validation failed across (\d+) functio
 _TAIL_UNKNOWN_RE = re.compile(r"whole-tail validation unknown across (\d+) functions", re.IGNORECASE)
 _TAIL_UNCOLLECTED_RE = re.compile(r"whole-tail validation not collected across (\d+) functions", re.IGNORECASE)
 _TAIL_COVERAGE_RE = re.compile(r"coverage=(\d+)\s+missing=(\d+)\s+unknown=(\d+)")
+_DEAD_SETUP_SUMMARY_RE = re.compile(
+    r"summary:\s+dead_setup_candidates=(\d+)\s+dead_setup_pruned=(\d+)\s+dead_setup_refused=(\d+)\s+dead_setup_escaped=(\d+)",
+    re.IGNORECASE,
+)
 
 
 def _parse_tail_stats(output: str) -> tuple[TailVerdict, int, int, int, int, int, int]:
@@ -129,6 +138,19 @@ def _count_functions(output: str) -> int:
     return len(_FUNCTION_LINE_RE.findall(output))
 
 
+def _parse_dead_setup_summary(output: str) -> tuple[int, int, int, int]:
+    candidates = 0
+    pruned = 0
+    refused = 0
+    escaped = 0
+    for m in _DEAD_SETUP_SUMMARY_RE.finditer(output):
+        candidates = max(candidates, int(m.group(1)))
+        pruned = max(pruned, int(m.group(2)))
+        refused = max(refused, int(m.group(3)))
+        escaped = max(escaped, int(m.group(4)))
+    return candidates, pruned, refused, escaped
+
+
 def _run_iteration(cfg: LoopConfig, iteration: int) -> IterationStats:
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     log_path = cfg.out_dir / f"iter_{iteration:04d}.log"
@@ -164,6 +186,7 @@ def _run_iteration(cfg: LoopConfig, iteration: int) -> IterationStats:
     log_path.write_text(output, encoding="utf-8")
 
     verdict, tail_total, tail_clean, tail_failed, tail_unknown, tail_uncollected, tail_missing = _parse_tail_stats(output)
+    dead_setup_candidates, dead_setup_pruned, dead_setup_refused, dead_setup_escaped = _parse_dead_setup_summary(output)
     stats = IterationStats(
         iteration=iteration,
         elapsed_sec=elapsed,
@@ -179,6 +202,10 @@ def _run_iteration(cfg: LoopConfig, iteration: int) -> IterationStats:
         tail_unknown=tail_unknown,
         tail_uncollected=tail_uncollected,
         tail_missing=tail_missing,
+        dead_setup_candidates=dead_setup_candidates,
+        dead_setup_pruned=dead_setup_pruned,
+        dead_setup_refused=dead_setup_refused,
+        dead_setup_escaped=dead_setup_escaped,
         report_path=report_path,
         log_path=log_path,
     )
@@ -199,6 +226,10 @@ def _run_iteration(cfg: LoopConfig, iteration: int) -> IterationStats:
                 "tail_unknown": stats.tail_unknown,
                 "tail_uncollected": stats.tail_uncollected,
                 "tail_missing": stats.tail_missing,
+                "dead_setup_candidates": stats.dead_setup_candidates,
+                "dead_setup_pruned": stats.dead_setup_pruned,
+                "dead_setup_refused": stats.dead_setup_refused,
+                "dead_setup_escaped": stats.dead_setup_escaped,
                 "log_path": str(stats.log_path),
             },
             indent=2,
@@ -216,6 +247,8 @@ def _goals_met(cfg: LoopConfig, stats: IterationStats) -> bool:
         return False
     if cfg.gate_require_zero_asm_fallback and stats.asm_fallback_count != 0:
         return False
+    if stats.dead_setup_escaped != 0:
+        return False
     return True
 
 
@@ -227,6 +260,8 @@ def _print_status(stats: IterationStats, best: IterationStats | None, stagnation
         f"asm={stats.asm_fallback_count} tail={stats.tail_verdict.value} "
         f"(clean={stats.tail_clean} failed={stats.tail_failed} unknown={stats.tail_unknown} "
         f"uncollected={stats.tail_uncollected} missing={stats.tail_missing} total={stats.tail_total}) "
+        f"dead_setup=(cand={stats.dead_setup_candidates} pruned={stats.dead_setup_pruned} "
+        f"refused={stats.dead_setup_refused} escaped={stats.dead_setup_escaped}) "
         f"best_iter={best_iter} stagnation={stagnation}"
     )
     print(f"[loop] report={stats.report_path} log={stats.log_path}")

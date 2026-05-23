@@ -2139,22 +2139,28 @@ def _decompile_function_with_stats(
     sys.stdout.flush()
     start = time.perf_counter()
     deadline = time.monotonic() + max(1, effective_timeout)
-    status, payload = _decompile_function(
-        project,
-        cfg,
-        function,
-        effective_timeout,
-        api_style,
-        binary_path,
-        cod_metadata=cod_metadata,
-        synthetic_globals=synthetic_globals,
-        lst_metadata=lst_metadata,
-        enable_structured_simplify=enable_structured_simplify,
-        enable_postprocess=enable_postprocess,
-        allow_isolated_retry=allow_isolated_retry,
-        deadline=deadline,
-        failure_family_state=failure_family_state,
-    )
+    try:
+        status, payload = _decompile_function(
+            project,
+            cfg,
+            function,
+            effective_timeout,
+            api_style,
+            binary_path,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
+            enable_structured_simplify=enable_structured_simplify,
+            enable_postprocess=enable_postprocess,
+            allow_isolated_retry=allow_isolated_retry,
+            deadline=deadline,
+            failure_family_state=failure_family_state,
+        )
+    except PipelineHardError as ex:
+        # Keep whole-binary sweeps alive: pipeline contract violations are
+        # per-function failures and must not abort the entire run.
+        status = "empty"
+        payload = f"Pipeline contract violation: {ex}"
     partial_payload = getattr(project, "_inertia_partial_codegen_text", None)
     elapsed = time.perf_counter() - start
     advance_failure_family_state(failure_family_state)
