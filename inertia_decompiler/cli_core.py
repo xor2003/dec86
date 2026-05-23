@@ -2660,6 +2660,7 @@ def main(argv: list[str] | None = None) -> int:
                             cod_metadata=cod_metadata,
                             synthetic_globals=synthetic_globals,
                             lst_metadata=lst_metadata,
+                            allow_isolated_retry=False,
                             failure_family_state=direct_failure_family_state,
                         )
                         if side_status == "ok":
@@ -2670,6 +2671,18 @@ def main(argv: list[str] | None = None) -> int:
                                 allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
                                 binary_path=args.binary,
                             )
+                            side_tail = _tail_validation_snapshot_for_function_run(project, side_func)
+                            side_status_checked, _side_blocker = _validated_generated_c_acceptance_8616(
+                                status=side_status,
+                                payload=side_payload,
+                                tail_validation_snapshot=side_tail,
+                                tail_validation_enabled=_tail_validation_runtime_enabled(project),
+                                expected_validation_stages=["structuring", "postprocess"],
+                                c_target=getattr(project, "_inertia_c_target", "portable-flat"),
+                            )
+                            if side_status_checked != "ok":
+                                side_status = side_status_checked
+                        if side_status == "ok":
                             _emit_optional_source_sidecar_c_block(
                                 args.binary,
                                 side_func.name,
