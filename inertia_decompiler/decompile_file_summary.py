@@ -15,6 +15,10 @@ def emit_file_decompilation_summary(
     skipped_signature_labels: int,
     same_family_retry_stops: int = 0,
     fallback_family_labels: Sequence[str] = (),
+    dead_setup_candidates: int = 0,
+    dead_setup_pruned: int = 0,
+    dead_setup_refused: int = 0,
+    dead_setup_escaped: int = 0,
 ) -> None:
     compiler_versions = _compiler_versions(project)
     if compiler_versions:
@@ -32,6 +36,13 @@ def emit_file_decompilation_summary(
         "summary: "
         f"same_family_retry_stops={same_family_retry_stops} "
         f"fallback_family_labels={fallback_labels}"
+    )
+    print(
+        "summary: "
+        f"dead_setup_candidates={int(dead_setup_candidates)} "
+        f"dead_setup_pruned={int(dead_setup_pruned)} "
+        f"dead_setup_refused={int(dead_setup_refused)} "
+        f"dead_setup_escaped={int(dead_setup_escaped)}"
     )
     print(f"summary: shown={shown_total} decompiled={decompiled} asm_or_detail_fallback={failed}")
 
