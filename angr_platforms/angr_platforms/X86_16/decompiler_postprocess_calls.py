@@ -213,7 +213,7 @@ def _is_stack_probe_call_name_8616(name: str | None) -> bool:
     }
 
 
-def _lookup_callee_function_8616(project, target_addr: int):
+def _lookup_callee_function_8616(project, target_addr: int, *, allow_containing: bool = False):
     def _lookup_exact_or_containing(candidate_project, candidate_addr: int):
         functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
         lookup = getattr(functions, "function", lambda **_: None)
@@ -251,7 +251,7 @@ def _lookup_callee_function_8616(project, target_addr: int):
 
         if _contains_addr(function, allow_range=False):
             return function
-        if not callable(floor_func):
+        if not allow_containing or not callable(floor_func):
             return None
         try:
             containing = floor_func(candidate_addr)
