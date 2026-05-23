@@ -541,7 +541,9 @@ def _source_name_matches_target_8616(project, target_addr: int | None, expected_
 
 
 def _align_cod_call_names_8616(project, codegen) -> bool:
-    if not os.environ.get("INERTIA_ENABLE_COD_CALL_NAME_ALIGNMENT"):
+    # Evidence-based rename from optional COD/debug metadata.
+    # Safe by default: if no metadata exists, this pass is a no-op.
+    if os.environ.get("INERTIA_DISABLE_COD_CALL_NAME_ALIGNMENT"):
         return False
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
@@ -572,11 +574,12 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
     for node in call_nodes:
         current_name = _call_node_name_8616(node)
         if not _call_name_is_unknown_8616(current_name):
-            while cod_idx < len(cod_call_names) and cod_call_names[cod_idx] != current_name:
-                cod_idx += 1
             if cod_idx < len(cod_call_names) and cod_call_names[cod_idx] == current_name:
                 cod_idx += 1
-                continue
+            elif cod_idx == 0 and current_name in cod_call_names:
+                # Initial alignment tolerance: allow one-time seek when the first
+                # emitted call appears later in the COD sequence (e.g., stack probe skipped).
+                cod_idx = cod_call_names.index(current_name) + 1
             continue
         if cod_idx >= len(cod_call_names):
             break
@@ -617,7 +620,8 @@ def _normalize_call_target_names_8616(codegen) -> bool:
             continue
         summary = summary_map.get(id(node))
         expected_source_name = None
-        if summary is not None and not bool(getattr(summary, "stack_probe_helper", False)) and source_call_idx < len(source_call_names):
+        is_stack_probe_helper = bool(getattr(summary, "stack_probe_helper", False)) if summary is not None else False
+        if not is_stack_probe_helper and source_call_idx < len(source_call_names):
             expected_source_name = source_call_names[source_call_idx]
             source_call_idx += 1
         target_addr = getattr(summary, "target_addr", None) if summary is not None else None
@@ -670,6 +674,19 @@ def _normalize_call_target_names_8616(codegen) -> bool:
                 if getattr(node, "callee_target", None) != expected_source_name:
                     node.callee_target = expected_source_name
                     changed = True
+
+        if (
+            isinstance(expected_source_name, str)
+            and expected_source_name
+            and _call_name_is_unknown_8616(_call_node_name_8616(node))
+        ):
+            if getattr(node, "callee_target", None) != expected_source_name:
+                node.callee_target = expected_source_name
+                changed = True
+            callee_func = getattr(node, "callee_func", None)
+            if callee_func is not None and getattr(callee_func, "name", None) != expected_source_name:
+                callee_func.name = expected_source_name
+                changed = True
 
         if _rename_call_node_from_sidecar_8616(project, node):
             changed = True

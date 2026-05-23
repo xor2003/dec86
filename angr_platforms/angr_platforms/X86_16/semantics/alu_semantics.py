@@ -5,6 +5,12 @@ from pyvex.lifting.util.vex_helper import Type
 from ..ir.condition_ir import build_condition_ir_8616, harmonize_condition_args_8616
 from ..ir.core import IRCondition, IRValue, MemSpace
 from ..addressing_helpers import type_for_bits
+from ..ir.regs import REG16_OFFSET_MAP, register_name_from_offset
+
+
+def _type_name_for_operand(value) -> str:
+    ty = getattr(value, "ty", None)
+    return str(getattr(ty, "name", ty or type(value).__name__))
 
 
 def _size_bytes_from_operand(value) -> int:
@@ -42,6 +48,46 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
     if isinstance(value_const, int):
         size = _size_bytes_from_operand(value) or hinted_size
         return IRValue(MemSpace.CONST, const=value_const, size=size, expr=("vex_const",))
+
+    reg_offset = getattr(value, "reg", None)
+    if isinstance(reg_offset, int) and int(reg_offset) in REG16_OFFSET_MAP:
+        reg_name = register_name_from_offset(reg_offset)
+        size = _size_bytes_from_operand(value) or hinted_size
+        return IRValue(MemSpace.REG, name=reg_name, offset=reg_offset, size=size, expr=(_type_name_for_operand(value),))
+
+    reg_name = getattr(value, "reg_name", None)
+    if isinstance(reg_name, str) and reg_name:
+        size = _size_bytes_from_operand(value) or hinted_size
+        reg_offset = getattr(value, "offset", None)
+        return IRValue(
+            MemSpace.REG,
+            name=reg_name.lower(),
+            offset=int(reg_offset) if isinstance(reg_offset, int) else 0,
+            size=size,
+            expr=(_type_name_for_operand(value),),
+        )
+
+    reg_offset = getattr(value, "offset", None)
+    if isinstance(reg_offset, int) and int(reg_offset) in REG16_OFFSET_MAP:
+        size = _size_bytes_from_operand(value) or hinted_size
+        reg_name = register_name_from_offset(reg_offset)
+        return IRValue(
+            MemSpace.REG,
+            name=reg_name,
+            offset=reg_offset,
+            size=size,
+            expr=(_type_name_for_operand(value),),
+        )
+
+    tmp = getattr(value, "tmp", None)
+    if isinstance(tmp, int):
+        return IRValue(
+            MemSpace.TMP,
+            name=f"tmp_{tmp}",
+            size=_size_bytes_from_operand(value) or hinted_size,
+            expr=("tmp",),
+        )
+
     return IRValue(
         MemSpace.TMP,
         name=type(value).__name__,

@@ -529,10 +529,18 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
         changed = False
         target = str(getattr(getattr(codegen, "project", None), "_inertia_c_target", "portable-flat") or "portable-flat")
         project = getattr(codegen, "project", None)
+        current_stage = str(getattr(project, "_inertia_decompiler_stage", "") or "")
+        if current_stage.startswith("structuring:"):
+            # Structuring must remain validation-stable. Defer all segmented-memory
+            # AST rewrites to post-structuring layers.
+            return False
         if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
             changed = True
-        if apply_runtime_segment_lowering_8616(codegen, target=target):
-            changed = True
+        # Keep structuring-time tail validation stable: defer runtime segment
+        # helper call materialization outside structuring pass execution.
+        if not current_stage.startswith("structuring:"):
+            if apply_runtime_segment_lowering_8616(codegen, target=target):
+                changed = True
         if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):
             def transform(node):
                 nonlocal changed

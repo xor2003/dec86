@@ -229,6 +229,12 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
 
     changed = False
 
+    def _is_literal_condition(expr) -> bool:
+        node = expr
+        while isinstance(node, CUnaryOp) and getattr(node, "op", None) == "Not":
+            node = getattr(node, "operand", None)
+        return isinstance(node, CConstant) and isinstance(getattr(node, "value", None), int)
+
     def _replacement_for_condition_node(cond):
         key = _condition_key_from_tags(cond)
         typed_cond = _resolve_condition_by_tag_with_delta(project, condition_index, key)
@@ -283,6 +289,12 @@ def _apply_typed_conditions_to_codegen_8616(project, codegen) -> bool:
                         rebuilt_pairs.append(cond_pair)
                 if pair_changed:
                     setattr(node, "condition_and_nodes", rebuilt_pairs)
+                    primary = getattr(node, "condition", None)
+                    if _is_literal_condition(primary):
+                        first_pair = rebuilt_pairs[0] if rebuilt_pairs else None
+                        if isinstance(first_pair, (tuple, list)) and len(first_pair) >= 1 and first_pair[0] is not None:
+                            node.condition = first_pair[0]
+                            changed = True
 
         # Replace condition in loops
         if hasattr(node, "condition") and not isinstance(node, CIfElse):

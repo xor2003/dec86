@@ -570,6 +570,23 @@ def _canonicalize_stack_cvar_expr(
         return isinstance(node, structured_c.CFakeVariable) and getattr(node, "name", None) == "stack_base"
 
     def _is_ss_segment_scale_expr(node) -> bool:
+        def _expr_is_ss_segment(expr, *, depth: int = 0) -> bool:
+            if depth > 4:
+                return False
+            seg_expr = unwrap_c_casts(expr)
+            if isinstance(seg_expr, structured_c.CVariable):
+                seg_var = getattr(seg_expr, "variable", None)
+                seg_name = getattr(seg_expr, "name", None) or getattr(seg_var, "name", None)
+                if seg_name == "ss":
+                    return True
+                # Accept temporary segment carriers when single-assignment
+                # evidence resolves them back to SS.
+                if _is_linear_temp_cvar(seg_expr):
+                    rhs = _single_assignment_expr_for_cvar(seg_expr)
+                    if rhs is not None and _expr_is_ss_segment(rhs, depth=depth + 1):
+                        return True
+            return False
+
         node = unwrap_c_casts(node)
         if not isinstance(node, structured_c.CBinaryOp):
             return False
@@ -584,12 +601,8 @@ def _canonicalize_stack_cvar_expr(
         for maybe_seg, maybe_scale in pairs:
             if getattr(unwrap_c_casts(maybe_scale), "value", None) != scale:
                 continue
-            seg_expr = unwrap_c_casts(maybe_seg)
-            if isinstance(seg_expr, structured_c.CVariable):
-                seg_var = getattr(seg_expr, "variable", None)
-                seg_name = getattr(seg_expr, "name", None) or getattr(seg_var, "name", None)
-                if seg_name == "ss":
-                    return True
+            if _expr_is_ss_segment(maybe_seg):
+                return True
         return False
 
     def _is_sp_virtual_register(variable) -> bool:

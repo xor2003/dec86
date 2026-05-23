@@ -42,6 +42,12 @@ class _AluEmu:
         self.last_condition = condition
 
 
+class _RegOperand:
+    def __init__(self, reg: int, size: int = 16):
+        self.reg = reg
+        self.ty = Type.int_16 if size == 16 else Type.int_8
+
+
 def test_binary_operation_updates_result_and_flags():
     emu = _AluEmu()
     state = {}
@@ -262,6 +268,36 @@ def test_build_compare_condition_harmonizes_plain_int_width_to_peer_operand():
         args=(
             IRValue(MemSpace.CONST, const=4, size=2, expr=("vex_const",)),
             IRValue(MemSpace.CONST, const=2, size=2, expr=("int",)),
+        ),
+        expr=("update_eflags_sub",),
+    )
+
+
+def test_build_compare_condition_recovers_register_operand_from_vex_offset():
+    condition = build_compare_condition_8616(_RegOperand(0), 7, _AluEmu().update_eflags_sub)
+
+    assert condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.REG, name="ax", offset=0, size=2, expr=("Ity_I16",)),
+            IRValue(MemSpace.CONST, const=7, size=2, expr=("int",)),
+        ),
+        expr=("update_eflags_sub",),
+    )
+
+
+def test_build_compare_condition_recovers_register_operand_from_reg_name():
+    class _RegNameOperand:
+        reg_name = "bx"
+        ty = Type.int_16
+
+    condition = build_compare_condition_8616(_RegNameOperand(), 1, _AluEmu().update_eflags_sub)
+
+    assert condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.REG, name="bx", offset=0, size=2, expr=("Ity_I16",)),
+            IRValue(MemSpace.CONST, const=1, size=2, expr=("int",)),
         ),
         expr=("update_eflags_sub",),
     )

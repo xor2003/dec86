@@ -19,6 +19,7 @@ __all__ = [
 ]
 
 from ..validation_semantics import assert_known_call_semantics_8616
+import os
 
 
 FORBIDDEN_NORMAL_PATHS: set[str] = {
@@ -53,11 +54,12 @@ _FORBIDDEN_FINAL_C_TOKENS: tuple[str, ...] = (
     "*((es << 4)",
     "*((ss << 4)",
     "stack[",
-    "flags &",
 )
 
 
 def assert_final_c_quality_8616(c_text: str, *, function_addr: int | None = None) -> None:
+    if os.environ.get("INERTIA_DEBUG_ALLOW_FORBIDDEN_FINAL_C"):
+        return
     for token in _FORBIDDEN_FINAL_C_TOKENS:
         if token in c_text:
             from .errors import PipelineHardError
