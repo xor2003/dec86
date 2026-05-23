@@ -49,6 +49,14 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "writestringat": "void writestringat(unsigned short rowcol, const char *s);",
     "dispdigit": "void dispdigit(unsigned char digit);",
     "dispnum": "void dispnum(unsigned short value);",
+    "Swaps": "int Swaps(void *lhs, void *rhs);",
+    "_Swaps": "int _Swaps(void *lhs, void *rhs);",
+    "SwapBars": "int SwapBars(int iRow1, int iRow2);",
+    "_SwapBars": "int _SwapBars(int iRow1, int iRow2);",
+    "PercolateUp": "int PercolateUp(int i);",
+    "_PercolateUp": "int _PercolateUp(int i);",
+    "PercolateDown": "int PercolateDown(int i);",
+    "_PercolateDown": "int _PercolateDown(int i);",
 }
 
 

@@ -157,6 +157,9 @@ class CallArgSemanticKind8616(Enum):
     VALUE = "value"
 
 
+_KNOWN_HELPER_ARG_KIND_CACHE_8616: dict[str, dict[int, CallArgSemanticKind8616]] = {}
+
+
 def _ensure_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializationStats:
     stats = getattr(codegen, "_inertia_callsite_materialization_stats", None)
     if not isinstance(stats, CallsiteMaterializationStats):
@@ -370,16 +373,27 @@ def _callee_expects_pointer_arg_8616(name: str, arg_index: int) -> bool:
     normalized = normalize_callee_name_8616(name)
     if not isinstance(normalized, str):
         return False
-    table = {}
-    return arg_index in table.get(normalized, set())
+    return _call_arg_semantic_kind_8616(normalized, arg_index) is CallArgSemanticKind8616.POINTER
 
 
 def _call_arg_semantic_kind_8616(callee: str, arg_index: int) -> CallArgSemanticKind8616:
     normalized = normalize_callee_name_8616(callee)
     if not isinstance(normalized, str):
         return CallArgSemanticKind8616.UNKNOWN
-    table = {}
-    return table.get(normalized, {}).get(arg_index, CallArgSemanticKind8616.UNKNOWN)
+    cached = _KNOWN_HELPER_ARG_KIND_CACHE_8616.get(normalized)
+    if cached is None:
+        cached = {}
+        decl = preferred_known_helper_signature_decl(normalized)
+        if isinstance(decl, str):
+            m = re.search(r"\((?P<args>[^)]*)\)", decl)
+            arg_text = m.group("args").strip() if m is not None else ""
+            if arg_text and arg_text != "void":
+                parts = [part.strip() for part in arg_text.split(",") if part.strip()]
+                for idx, part in enumerate(parts):
+                    kind = CallArgSemanticKind8616.POINTER if ("*" in part or "[" in part) else CallArgSemanticKind8616.VALUE
+                    cached[idx] = kind
+        _KNOWN_HELPER_ARG_KIND_CACHE_8616[normalized] = cached
+    return cached.get(arg_index, CallArgSemanticKind8616.UNKNOWN)
 
 
 def _callee_name_should_yield_to_sidecar_8616(callee_func, sidecar_label: str | None) -> bool:

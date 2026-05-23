@@ -262,11 +262,6 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
-            "_recover_missing_direct_calls_from_evidence_8616",
-            _calls._recover_missing_direct_calls_from_evidence_8616,
-            True,
-        ),
-        DecompilerPostprocessPassSpec(
             "_lower_stable_ss_stack_accesses_8616",
             _segmented_mem._lower_stable_ss_stack_accesses_8616,
             False,
@@ -300,6 +295,11 @@ def _build_decompiler_postprocess_passes():
             "_normalize_call_target_names_8616",
             _calls._normalize_call_target_names_8616,
             False,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_recover_missing_direct_calls_from_evidence_8616",
+            _calls._recover_missing_direct_calls_from_evidence_8616,
+            True,
         ),
         DecompilerPostprocessPassSpec(
             "_classify_return_shape_8616",
