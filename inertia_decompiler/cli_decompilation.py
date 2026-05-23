@@ -1861,12 +1861,33 @@ def _direct_call_stub_filter_regions(project: angr.Project, function) -> tuple[l
 
 def _register_direct_call_target_function_stubs(project: angr.Project, function, cod_metadata: CODProcMetadata | None = None) -> int:
     stack_probe_names = {"anchkstk", "__anchkstk", "_anchkstk", "analloca_probe", "__analloca_probe"}
+    known_noreturn_names = {"abort", "_abort", "__abort", "exit", "_exit", "__exit", "fatalerror", "_fatalerror"}
 
     def _is_stack_probe_name(name: str | None) -> bool:
         if not isinstance(name, str):
             return False
         normalized = name.strip().lower().lstrip("_")
         return normalized in stack_probe_names
+
+    def _is_known_noreturn_name(name: str | None) -> bool:
+        if not isinstance(name, str):
+            return False
+        normalized = name.strip().lower()
+        return normalized in known_noreturn_names or normalized.lstrip("_") in known_noreturn_names
+
+    def _sidecar_enclosing_label(metadata, addr: int) -> str | None:
+        labels = getattr(metadata, "code_labels", None)
+        if not isinstance(labels, dict):
+            return None
+        for start, label in labels.items():
+            if not isinstance(start, int) or not isinstance(label, str) or not label:
+                continue
+            span = _lst_code_region(metadata, start)
+            if span is None:
+                continue
+            if span[0] <= addr < span[1]:
+                return label
+        return None
 
     def _original_callee_name(slice_target: int) -> str | None:
         original_project = getattr(project, "_inertia_original_project", None)
@@ -1882,6 +1903,9 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
             label = getattr(metadata, "code_labels", {}).get(original_target)
             if isinstance(label, str) and label:
                 return label
+            span_label = _sidecar_enclosing_label(metadata, original_target)
+            if isinstance(span_label, str) and span_label:
+                return span_label
         return None
 
     if getattr(getattr(project, "arch", None), "name", None) != "86_16":
@@ -1930,11 +1954,14 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                     continue
                 target = _parse_direct_call_target(insn)
                 if isinstance(target, int):
-                    yield getattr(insn, "address", block_addr), target
+                    insn_addr = getattr(insn, "address", block_addr)
+                    insn_size = getattr(getattr(insn, "insn", None), "size", None)
+                    ret_addr = (insn_addr + insn_size) if isinstance(insn_size, int) and insn_size > 0 else None
+                    yield insn_addr, target, ret_addr
 
     created = 0
     seen: set[int] = set()
-    direct_calls: list[tuple[int | None, int]] = []
+    direct_calls: list[tuple[int | None, int, int | None]] = []
     local_ranges, original_region = _direct_call_stub_filter_regions(project, function)
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
     cod_call_names = tuple(
@@ -1954,10 +1981,24 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                 ex,
             )
             continue
-        direct_calls.append((callsite, target))
+        ret_addr = None
+        with contextlib.suppress(Exception):
+            ret_addr = function.get_call_return(callsite)
+        direct_calls.append((callsite, target, ret_addr))
     if not direct_calls:
         direct_calls.extend(_iter_capstone_direct_calls())
-    for _callsite, target in direct_calls:
+    ordered_callsites: list[int] = []
+    for cs, _t, _r in direct_calls:
+        if isinstance(cs, int) and cs not in ordered_callsites:
+            ordered_callsites.append(cs)
+    call_name_by_callsite: dict[int, str] = {}
+    if cod_call_names and ordered_callsites and len(cod_call_names) >= len(ordered_callsites):
+        for idx, cs in enumerate(sorted(ordered_callsites)):
+            name = cod_call_names[idx]
+            if isinstance(name, str) and name:
+                call_name_by_callsite[cs] = name
+
+    for callsite_addr, target, ret_addr in direct_calls:
         if not isinstance(target, int):
             continue
         candidates = {target}
@@ -1971,6 +2012,8 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                 if 0 <= unbased_target < 0x10000:
                     candidates.add(unbased_target)
         fallback_call_name: str | None = None
+        preferred_candidate: int | None = None
+        preferred_rank: tuple[int, int] | None = None
         for candidate in sorted(candidates):
             original_target = candidate + original_delta if isinstance(original_delta, int) else None
             if _addr_in_ranges(candidate, local_ranges):
@@ -1981,10 +2024,32 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                 and original_region[0] <= original_target <= original_region[1]
             ):
                 continue
-            fallback_call_name = _original_callee_name(candidate)
-            if isinstance(fallback_call_name, str) and fallback_call_name:
-                break
-        if (not isinstance(fallback_call_name, str) or not fallback_call_name) and cod_call_name_index < len(cod_call_names):
+            original_label = _original_callee_name(candidate)
+            if preferred_candidate is None:
+                preferred_candidate = candidate
+                preferred_rank = (1, 1)
+            # Prefer candidates that have original-project label evidence; then
+            # prefer larger absolute candidate (rebased exact-slice target) over
+            # tiny wrapped immediates.
+            slice_entry = getattr(project, "entry", None)
+            unbased_penalty = 1 if isinstance(slice_entry, int) and candidate < slice_entry else 0
+            rank = (
+                unbased_penalty,
+                0 if isinstance(original_label, str) and bool(original_label) else 1,
+                -candidate,
+            )
+            if preferred_rank is None or rank < preferred_rank:
+                preferred_candidate = candidate
+                preferred_rank = rank
+            if isinstance(original_label, str) and original_label:
+                fallback_call_name = original_label
+        if (
+            isinstance(callsite_addr, int)
+            and callsite_addr in call_name_by_callsite
+            and isinstance(call_name_by_callsite[callsite_addr], str)
+        ):
+            fallback_call_name = call_name_by_callsite[callsite_addr]
+        elif (not isinstance(fallback_call_name, str) or not fallback_call_name) and cod_call_name_index < len(cod_call_names):
             fallback_call_name = cod_call_names[cod_call_name_index]
             cod_call_name_index += 1
 
@@ -2003,6 +2068,11 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
             seen.add(candidate)
             try:
                 stub = project.kb.functions.function(addr=candidate, create=True)
+                if isinstance(callsite_addr, int) and (preferred_candidate is None or candidate == preferred_candidate):
+                    with contextlib.suppress(Exception):
+                        if not isinstance(ret_addr, int):
+                            ret_addr = function.get_call_return(callsite_addr)
+                        function._call_sites[callsite_addr] = (candidate, ret_addr)
                 stub_name = _original_callee_name(candidate) or fallback_call_name
                 if isinstance(stub_name, str) and stub_name:
                     try:
@@ -2015,12 +2085,26 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                             stub_name,
                             ex,
                         )
+                # Evidence-safe default:
+                # direct-call stubs are placeholders for unresolved callees; they
+                # should return unless we have explicit noreturn evidence.
+                if not _is_known_noreturn_name(getattr(stub, "name", None)):
+                    with contextlib.suppress(Exception):
+                        stub.returning = True
                 # Evidence-based control-flow guard:
                 # stack-probe helpers (aNchkstk family) return to caller and
                 # must not terminate function recovery as noreturn calls.
                 if _is_stack_probe_name(getattr(stub, "name", None)):
                     with contextlib.suppress(Exception):
                         stub.returning = True
+                if os.environ.get("INERTIA_DEBUG_CALLSITE_SEEDING") and isinstance(callsite_addr, int):
+                    print(
+                        f"[dbg] callsite-seed fn={function.addr:#x} cs={callsite_addr:#x} "
+                        f"target={candidate:#x} preferred={preferred_candidate:#x} "
+                        f"name={getattr(stub, 'name', None)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 created += 1
             except Exception as ex:
                 logging.getLogger(__name__).debug(
@@ -2073,6 +2157,32 @@ def _prepare_function_for_decompilation(
     created_helper_stubs = _register_direct_call_target_function_stubs(project, function, cod_metadata=cod_metadata)
     if created_helper_stubs:
         print(f"[dbg] registered {created_helper_stubs} direct callee stub(s) for {function.addr:#x}", file=sys.stderr, flush=True)
+    if os.environ.get("INERTIA_DEBUG_CALLSITE_RETURNING"):
+        try:
+            callsites = tuple(getattr(function, "get_call_sites", lambda: [])() or ())
+            print(
+                f"[dbg] callsite-returning fn={function.addr:#x} callsite_count={len(callsites)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            for callsite in callsites:
+                target = None
+                with contextlib.suppress(Exception):
+                    target = function.get_call_target(callsite)
+                if not isinstance(target, int):
+                    continue
+                callee = None
+                with contextlib.suppress(Exception):
+                    callee = project.kb.functions.function(addr=target, create=False)
+                print(
+                    f"[dbg] callsite-returning fn={function.addr:#x} cs={callsite:#x} "
+                    f"target={target:#x} callee={getattr(callee, 'name', None)} "
+                    f"returning={getattr(callee, 'returning', None)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        except Exception:
+            pass
     return created_helper_stubs
 
 def _function_decompilation_profile(
