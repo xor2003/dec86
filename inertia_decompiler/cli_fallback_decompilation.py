@@ -1130,6 +1130,24 @@ def _try_emit_known_runtime_helper_c(
             "    return a / b;\n"
             "}\n"
         )
+    if lowered in {"ldiv", "aldiv"}:
+        safe_name = "ldiv" if lowered == "ldiv" else "aldiv"
+        return (
+            f"int32_t {safe_name}(int32_t a, int32_t b)\n"
+            "{\n"
+            "    if (b == 0) {\n"
+            "        return 0;\n"
+            "    }\n"
+            "    return a / b;\n"
+            "}\n"
+        )
+    if lowered == "anssubs":
+        return (
+            "int16_t aNssubs(int16_t a, int16_t b)\n"
+            "{\n"
+            "    return (int16_t)(a - b);\n"
+            "}\n"
+        )
     if lowered == "nullcheck":
         return (
             "int nullcheck(const void *p)\n"

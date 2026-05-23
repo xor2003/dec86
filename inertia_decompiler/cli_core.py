@@ -3250,7 +3250,6 @@ def main(argv: list[str] | None = None) -> int:
         args.addr is None
         and args.binary.suffix.lower() == ".exe"
         and project.arch.name == "86_16"
-        and not bool(getattr(args, "include_library_functions", False))
     )
 
     if force_isolated_function_projects:
