@@ -1211,7 +1211,10 @@ def _missing_expected_calls_from_embedded_evidence_8616(emitted_c: str) -> list[
     if not expected:
         return []
     clean = _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
-    found = set(_CALL_TOKEN_RE.findall(clean))
+    found = {
+        (token[1:] if isinstance(token, str) and token.startswith("_") else token)
+        for token in _CALL_TOKEN_RE.findall(clean)
+    }
     missing = [name for name in expected if name not in found]
     return missing
 
