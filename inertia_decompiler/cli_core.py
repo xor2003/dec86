@@ -23,6 +23,7 @@ import threading
 import time
 
 from collections.abc import Mapping, Sequence
+from collections import Counter
 
 from concurrent.futures import FIRST_COMPLETED, Future, TimeoutError as FuturesTimeoutError, wait
 
@@ -1053,18 +1054,29 @@ def _validated_generated_c_acceptance_8616(
     expected_validation_stages: list[str] | tuple[str, ...],
     c_target: str = "portable-flat",
 ) -> tuple[str, str | None]:
+    def _validation_fail(detail: str) -> tuple[str, str]:
+        _mark_tail_validation_failed_with_blocker_8616(
+            tail_validation_snapshot,
+            detail,
+            stage="postprocess",
+        )
+        print("[tail-validation] whole-tail validation failed across 1 functions", file=sys.stderr)
+        print(f"[tail-validation] acceptance-gate detail: {detail}", file=sys.stderr)
+        sys.stderr.flush()
+        return "validation_failed", detail
+
     if status != "ok":
         return status, None
     if not isinstance(payload, str) or not payload.strip():
-        return "error", "No emitted C body."
+        return _validation_fail("No emitted C body.")
     quality = assess_decompiled_c_text(payload)
     if quality.reject_as_decompiled:
         marker_summary = ", ".join(quality.markers[:3]) if quality.markers else "unresolved"
         if len(quality.markers) > 3:
             marker_summary += ", ..."
-        return "error", f"Final quality guard rejected emitted C ({marker_summary})."
+        return _validation_fail(f"Final quality guard rejected emitted C ({marker_summary}).")
     if not tail_validation_enabled:
-        return "error", "Tail validation disabled."
+        return _validation_fail("Tail validation disabled.")
     if not _tail_validation_passes_lenient(
         tail_validation_snapshot,
         expected_stages=list(expected_validation_stages),
@@ -1086,7 +1098,7 @@ def _validated_generated_c_acceptance_8616(
             else:
                 stage_details.append(f"{stage_name}=unclassified")
         detail = "; ".join(stage_details) if stage_details else "no stage data"
-        return "validation_failed", f"Tail validation {display_status} ({detail})."
+        return _validation_fail(f"Tail validation {display_status} ({detail}).")
     if c_target == "portable-flat":
         recompilation = check_c_recompiles_8616(payload, target=c_target)
         if not recompilation.passed:
@@ -1098,8 +1110,238 @@ def _validated_generated_c_acceptance_8616(
             source_path = getattr(recompilation, "source_path", None)
             if isinstance(source_path, str) and source_path:
                 detail = f"{detail} [source: {source_path}]"
-            return "error", f"gcc syntax check failed: {detail}"
+            return _validation_fail(f"gcc syntax check failed: {detail}")
+    missing_calls = _missing_expected_calls_from_embedded_evidence_8616(payload)
+    if missing_calls:
+        return _validation_fail("Missing source-evidenced calls in emitted C: " + ", ".join(missing_calls[:6]))
+    missing_multiplicity = _missing_expected_call_multiplicity_8616(payload)
+    if missing_multiplicity:
+        return _validation_fail(
+            "Missing source-evidenced call multiplicity in emitted C: " + ", ".join(missing_multiplicity[:6])
+        )
+    arg_class = _arg_class_violations_8616(payload)
+    if arg_class:
+        return _validation_fail("Source-evidenced pointer/value argument class mismatch: " + ", ".join(arg_class[:6]))
+    call_order = _call_order_gate_violations_8616(payload)
+    if call_order:
+        return _validation_fail("Source-evidenced call order mismatch/missing: " + ", ".join(call_order[:6]))
+    if _loop_presence_violation_8616(payload):
+        return _validation_fail("Source-evidenced loop structure missing from emitted C.")
+    if _side_effect_floor_violation_8616(payload):
+        return _validation_fail("Source-evidenced side-effect floor not met (missing non-prologue calls).")
+    if _stack_slot_evidence_violation_8616(payload):
+        return _validation_fail("Stack-slot evidence present but emitted C lacks clear stack materialization.")
     return "ok", None
+
+
+def _mark_tail_validation_failed_with_blocker_8616(
+    snapshot: dict[str, object] | None,
+    detail: str,
+    *,
+    stage: str = "postprocess",
+) -> None:
+    if not isinstance(snapshot, dict):
+        return
+    entry = snapshot.get(stage)
+    if not isinstance(entry, dict):
+        entry = {}
+        snapshot[stage] = entry
+    entry["changed"] = True
+    entry["status"] = "changed"
+    entry["mode"] = entry.get("mode", "live_out")
+    entry["summary_text"] = str(detail)
+    entry["verdict"] = f"{stage} whole-tail validation [live_out] changed: {detail}"
+
+
+_EMBEDDED_CALLS_RE = re.compile(r"(?m)^\s*\*\s*calls\s*=\s*(.+?)\s*$")
+_CALL_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_ORIGINAL_C_START_RE = re.compile(r"(?m)^\s*///\s*C source:\s*$")
+_ORIGINAL_C_END_RE = re.compile(r"(?m)^\s*///\s*Assembly:\s*$")
+_COD_BP_ANNOT_RE = re.compile(r"(?m)^\s*\*\s*\[bp[^\]]+\]\s*=")
+
+
+def _strip_comment_blocks_8616(text: str) -> str:
+    out = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    lines = []
+    for line in out.splitlines():
+        if line.lstrip().startswith("///"):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _missing_expected_calls_from_embedded_evidence_8616(emitted_c: str) -> list[str]:
+    if not isinstance(emitted_c, str) or not emitted_c:
+        return []
+    m = _EMBEDDED_CALLS_RE.search(emitted_c)
+    if m is None:
+        return []
+    raw = m.group(1)
+    expected = []
+    for token in [part.strip() for part in raw.split(",")]:
+        if not token:
+            continue
+        name = token.lstrip("_")
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            continue
+        # Ignore compiler/runtime scaffolding helpers.
+        if name in {"aNchkstk"}:
+            continue
+        expected.append(name)
+    if not expected:
+        return []
+    clean = _strip_comment_blocks_8616(emitted_c)
+    found = set(_CALL_TOKEN_RE.findall(clean))
+    missing = [name for name in expected if name not in found]
+    return missing
+
+
+def _extract_original_c_comment_block_8616(emitted_c: str) -> str:
+    start = _ORIGINAL_C_START_RE.search(emitted_c)
+    if start is None:
+        return ""
+    end = _ORIGINAL_C_END_RE.search(emitted_c, start.end())
+    segment = emitted_c[start.end() : end.start() if end is not None else len(emitted_c)]
+    lines: list[str] = []
+    for raw in segment.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("///"):
+            lines.append(stripped[3:].strip())
+    return "\n".join(lines)
+
+
+def _call_counts_from_text_8616(text: str) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for name in _CALL_TOKEN_RE.findall(text or ""):
+        if name in {"if", "for", "while", "switch", "return"}:
+            continue
+        counts[name] += 1
+    return counts
+
+
+def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
+    original_c = _extract_original_c_comment_block_8616(emitted_c)
+    if not original_c:
+        return []
+    expected_counts = _call_counts_from_text_8616(original_c)
+    if not expected_counts:
+        return []
+    actual_counts = _call_counts_from_text_8616(_strip_comment_blocks_8616(emitted_c))
+    missing: list[str] = []
+    for name, needed in expected_counts.items():
+        if name in {"aNchkstk"}:
+            continue
+        have = int(actual_counts.get(name, 0))
+        if have < needed:
+            missing.append(f"{name}({have}/{needed})")
+    return missing
+
+
+def _extract_function_body_text_8616(emitted_c: str) -> str:
+    clean = _strip_comment_blocks_8616(emitted_c)
+    m = re.search(r"\{", clean)
+    if m is None:
+        return clean
+    return clean[m.start() :]
+
+
+def _expected_call_order_from_original_8616(emitted_c: str) -> list[str]:
+    original_c = _extract_original_c_comment_block_8616(emitted_c)
+    if not original_c:
+        return []
+    order: list[str] = []
+    for name in _CALL_TOKEN_RE.findall(original_c):
+        if name in {"if", "for", "while", "switch", "return", "aNchkstk"}:
+            continue
+        if not order or order[-1] != name:
+            order.append(name)
+    return order
+
+
+def _call_order_gate_violations_8616(emitted_c: str) -> list[str]:
+    expected_order = _expected_call_order_from_original_8616(emitted_c)
+    if len(expected_order) < 2:
+        return []
+    body = _extract_function_body_text_8616(emitted_c)
+    current_pos = -1
+    missing_or_reordered: list[str] = []
+    for name in expected_order:
+        pos = body.find(f"{name}(")
+        if pos < 0:
+            missing_or_reordered.append(name)
+            continue
+        if pos < current_pos:
+            missing_or_reordered.append(name)
+            continue
+        current_pos = pos
+    return missing_or_reordered
+
+
+def _loop_presence_violation_8616(emitted_c: str) -> bool:
+    original_c = _extract_original_c_comment_block_8616(emitted_c)
+    if not original_c:
+        return False
+    expected_loops = sum(original_c.count(tok) for tok in ("for(", "for (", "while(", "while ("))
+    if expected_loops <= 0:
+        return False
+    body = _extract_function_body_text_8616(emitted_c)
+    actual_loops = sum(body.count(tok) for tok in ("for(", "for (", "while(", "while ("))
+    return actual_loops < expected_loops
+
+
+def _side_effect_floor_violation_8616(emitted_c: str) -> bool:
+    # If evidence says function has multiple non-prologue calls, body must retain
+    # at least one non-prologue call.
+    expected_calls = _EMBEDDED_CALLS_RE.search(emitted_c)
+    if expected_calls is None:
+        return False
+    raw = expected_calls.group(1)
+    names = [t.strip().lstrip("_") for t in raw.split(",") if t.strip()]
+    names = [n for n in names if n and n != "aNchkstk"]
+    if len(names) < 1:
+        return False
+    body = _extract_function_body_text_8616(emitted_c)
+    has_non_prologue = any(f"{name}(" in body for name in set(names))
+    return not has_non_prologue
+
+
+def _stack_slot_evidence_violation_8616(emitted_c: str) -> bool:
+    # If COD annotations describe bp-based slots, emitted C should contain either
+    # arg_/local_ variables or explicit typed parameters.
+    has_bp_annotations = _COD_BP_ANNOT_RE.search(emitted_c) is not None
+    if not has_bp_annotations:
+        return False
+    body = _extract_function_body_text_8616(emitted_c)
+    if "arg_" in body or "local_" in body:
+        return False
+    # Accept ordinary named parameters as stack materialization evidence.
+    header = emitted_c.split("{", 1)[0]
+    return "(" in header and ")" in header and re.search(r"\b[A-Za-z_][A-Za-z0-9_]*\s*\(", header) is None
+
+
+def _arg_class_violations_8616(emitted_c: str) -> list[str]:
+    # Minimal, evidence-based: from original C comment, if call shows '&' in args
+    # but emitted call has no pointer-like argument, flag it.
+    original_c = _extract_original_c_comment_block_8616(emitted_c)
+    if not original_c:
+        return []
+    body = _extract_function_body_text_8616(emitted_c)
+    violations: list[str] = []
+    for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", original_c):
+        name, args = m.group(1), m.group(2)
+        if name in {"if", "for", "while", "switch", "return"}:
+            continue
+        expects_ptr = "&" in args
+        if not expects_ptr:
+            continue
+        call_m = re.search(rf"\b{name}\s*\(([^)]*)\)", body)
+        if call_m is None:
+            continue
+        emitted_args = call_m.group(1)
+        pointer_like = ("&" in emitted_args) or ("SEG_PTR(" in emitted_args)
+        if not pointer_like:
+            violations.append(name)
+    return violations
 
 
 def _print_stop_on_first_failure_8616(function, result: FunctionWorkResult) -> None:
@@ -2312,6 +2554,8 @@ def main(argv: list[str] | None = None) -> int:
                 payload=direct_blocker if direct_blocker is not None else direct_result.payload,
                 partial_payload=None if direct_blocker is not None else direct_result.partial_payload,
             )
+            if direct_status == "validation_failed" and isinstance(direct_result.tail_validation, dict):
+                setattr(direct_project, "_inertia_forced_tail_validation_snapshot", dict(direct_result.tail_validation))
         direct_failure_family_snapshot = build_failure_family_snapshot(
             status=direct_result.status,
             failure_stage=getattr(direct_result, "failure_stage", None),

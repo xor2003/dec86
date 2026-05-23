@@ -80,10 +80,19 @@ def emit_tail_validation_for_function_run_or_uncollected(
         function,
         allow_project_fallback=allow_project_fallback,
     )
+    validation_status = tail_validation_display_status(snapshot)
+    if validation_status in {"failed", "changed"}:
+        result_status = "validation_failed"
+    elif validation_status == "stable":
+        result_status = "ok"
+    elif validation_status in {"unknown", "uncollected"}:
+        result_status = validation_status
+    else:
+        result_status = "uncollected"
     item = FunctionWorkItem(index=1, function_cfg=function_cfg, function=function)
     result = FunctionWorkResult(
         index=1,
-        status="ok" if snapshot else "uncollected",
+        status=result_status if snapshot else "uncollected",
         payload="",
         debug_output="",
         function=function,
@@ -104,10 +113,19 @@ def emit_tail_validation_snapshot_or_uncollected(
     if project is not None and not tail_validation_runtime_enabled(project):
         return
     normalized_snapshot = dict(snapshot) if isinstance(snapshot, Mapping) else {}
+    validation_status = tail_validation_display_status(normalized_snapshot)
+    if validation_status in {"failed", "changed"}:
+        result_status = "validation_failed"
+    elif validation_status == "stable":
+        result_status = "ok"
+    elif validation_status in {"unknown", "uncollected"}:
+        result_status = validation_status
+    else:
+        result_status = "uncollected"
     item = FunctionWorkItem(index=1, function_cfg=function_cfg, function=function)
     result = FunctionWorkResult(
         index=1,
-        status="ok" if normalized_snapshot else "uncollected",
+        status=result_status if normalized_snapshot else "uncollected",
         payload="",
         debug_output="",
         function=function,

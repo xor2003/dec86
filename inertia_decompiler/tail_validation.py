@@ -252,6 +252,11 @@ def tail_validation_snapshot_for_fallback(
     *,
     allow_project_fallback: bool,
 ) -> dict[str, object]:
+    forced_snapshot = getattr(project, "_inertia_forced_tail_validation_snapshot", None)
+    if isinstance(forced_snapshot, dict):
+        setattr(project, "_inertia_forced_tail_validation_snapshot", None)
+        return extract_x86_16_tail_validation_snapshot({"x86_16_tail_validation": forced_snapshot})
+
     current_snapshot = getattr(project, "_inertia_partial_tail_validation_snapshot", None)
     if isinstance(current_snapshot, dict):
         setattr(project, "_inertia_partial_tail_validation_snapshot", None)
@@ -289,8 +294,25 @@ def emit_tail_validation_console_summary(
     aggregate = build_x86_16_tail_validation_aggregate(records, scanned=scanned)
     summary = dict(aggregate.get("summary", {}) or {})
     surface = dict(aggregate.get("surface", {}) or {})
-    console_cache_path = tail_validation_console_cache_path(binary_path, function_tasks)
-    detail_cache_path = tail_validation_detail_cache_path(binary_path, function_tasks)
+    acceptance_validation_failed = any(
+        str(getattr(result, "status", "")).strip().lower() == "validation_failed"
+        for result in result_map.values()
+    )
+    if acceptance_validation_failed and str(surface.get("severity", "")).strip().lower() == "clean":
+        # Acceptance gates are part of semantic validation policy; if they fail,
+        # the surface summary must not claim clean.
+        surface["severity"] = "changed"
+        surface["merge_gate"] = "hold"
+        surface["headline"] = f"whole-tail validation failed across {max(1, int(scanned or 1))} functions"
+    cache_payload = {
+        "surface": surface,
+        "summary": summary,
+    }
+    cache_salt = hashlib.sha256(
+        json.dumps(cache_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:12]
+    console_cache_path = tail_validation_console_cache_path(binary_path, function_tasks, cache_salt=cache_salt)
+    detail_cache_path = tail_validation_detail_cache_path(binary_path, function_tasks, cache_salt=cache_salt)
     emit_tail_validation_surface_summary(
         records=records,
         scanned=scanned,
@@ -301,7 +323,12 @@ def emit_tail_validation_console_summary(
     )
 
 
-def tail_validation_cache_label(binary_path: Path | None, function_tasks: Sequence[Any]) -> str | None:
+def tail_validation_cache_label(
+    binary_path: Path | None,
+    function_tasks: Sequence[Any],
+    *,
+    cache_salt: str | None = None,
+) -> str | None:
     if binary_path is None:
         return None
     resolved = Path(binary_path).resolve()
@@ -321,6 +348,8 @@ def tail_validation_cache_label(binary_path: Path | None, function_tasks: Sequen
             label = f"{label}@{addr:x}"
         labels.append(label)
     payload = f"{resolved}\n" + "\n".join(labels or ["whole-binary"])
+    if isinstance(cache_salt, str) and cache_salt:
+        payload += f"\ncache_salt={cache_salt}"
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
     if len(labels) == 1:
         return f"{base_name}.{digest}"
@@ -330,8 +359,10 @@ def tail_validation_cache_label(binary_path: Path | None, function_tasks: Sequen
 def tail_validation_console_cache_path(
     binary_path: Path | None,
     function_tasks: Sequence[Any],
+    *,
+    cache_salt: str | None = None,
 ) -> Path | None:
-    label = tail_validation_cache_label(binary_path, function_tasks)
+    label = tail_validation_cache_label(binary_path, function_tasks, cache_salt=cache_salt)
     if label is None:
         return None
     return TAIL_VALIDATION_CONSOLE_CACHE_DIR / f"{label}.tail_validation_console.json"
@@ -340,8 +371,10 @@ def tail_validation_console_cache_path(
 def tail_validation_detail_cache_path(
     binary_path: Path | None,
     function_tasks: Sequence[Any],
+    *,
+    cache_salt: str | None = None,
 ) -> Path | None:
-    label = tail_validation_cache_label(binary_path, function_tasks)
+    label = tail_validation_cache_label(binary_path, function_tasks, cache_salt=cache_salt)
     if label is None:
         return None
     return TAIL_VALIDATION_DETAIL_CACHE_DIR / f"{label}.tail_validation_surface.json"
