@@ -1335,9 +1335,25 @@ def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
     codegen._inertia_invariant_report = report
     codegen._inertia_invariant_checked = True
 
+    # Record dead setup/staging counters for diagnostics and loop harnesses.
+    if function is not None:
+        info = getattr(function, "info", None)
+        if isinstance(info, MutableMapping):
+            info["x86_16_dead_setup"] = {
+                "dead_setup_candidates": int(getattr(codegen, "dead_setup_candidates", 0)),
+                "dead_setup_pruned": int(getattr(codegen, "dead_setup_pruned", 0)),
+                "dead_setup_refused": int(getattr(codegen, "dead_setup_refused", 0)),
+            }
+
     # Hard gate: dead setup/staging artifacts must not escape final typed AST.
     dead_setup_escaped = _count_dead_setup_escaped_8616(codegen)
     setattr(codegen, "dead_setup_escaped", int(dead_setup_escaped))
+    if function is not None:
+        info = getattr(function, "info", None)
+        if isinstance(info, MutableMapping):
+            dead_setup_info = info.setdefault("x86_16_dead_setup", {})
+            if isinstance(dead_setup_info, MutableMapping):
+                dead_setup_info["dead_setup_escaped"] = int(dead_setup_escaped)
     if dead_setup_escaped > 0:
         raise PipelineHardError(
             "dead setup artifacts escaped final C",
