@@ -2618,7 +2618,7 @@ def _recover_lst_function(
         slice_plan = plan_x86_16_exact_slice(*exact_region)
         use_rebased_exact_slice = (
             slice_plan.needs_rebased_slice
-            and 0x180 <= exact_region_size <= 0x280
+            and 0x40 <= exact_region_size <= 0x280
         )
         if use_rebased_exact_slice:
             code = bytes(project.loader.memory.load(slice_plan.original_start, slice_plan.original_end - slice_plan.original_start))
@@ -2714,6 +2714,29 @@ def _recover_lst_function(
                             best_cfg = retried_cfg
                             best_func = retried_func
                             best_score = retried_score
+                    # Escalate through richer candidate-pair recovery when the
+                    # exact-region target still looks truncated.
+                    if _exact_region_recovery_looks_truncated(best_func, exact_region):
+                        main_object = getattr(project.loader, "main_object", None)
+                        linked_base = getattr(main_object, "linked_base", None)
+                        max_addr = getattr(main_object, "max_addr", None)
+                        if isinstance(linked_base, int) and isinstance(max_addr, int):
+                            try:
+                                cand_cfg, cand_func = _recover_candidate_function_pair(
+                                    project,
+                                    candidate_addr=addr,
+                                    image_end=linked_base + max_addr + 1,
+                                    metadata=lst_metadata,
+                                    project_entry=project.entry,
+                                    region_span=max(window, max(0x180, exact_region[1] - exact_region[0])),
+                                )
+                                cand_score = _function_recovery_score(cand_func)
+                                if cand_score > best_score:
+                                    best_cfg = cand_cfg
+                                    best_func = cand_func
+                                    best_score = cand_score
+                            except Exception:
+                                pass
                     cfg, func = best_cfg, best_func
             else:
                 last_error = None
