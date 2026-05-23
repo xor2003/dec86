@@ -1239,11 +1239,30 @@ def _call_counts_from_text_8616(text: str) -> Counter[str]:
     return counts
 
 
+def _extract_original_call_evidence_lines_8616(original_c: str) -> str:
+    """Keep only code-like lines from embedded original-C evidence.
+
+    This avoids counting prose/commentary tokens such as "HeapSort (...)" that
+    appear in descriptive text blocks.
+    """
+    lines: list[str] = []
+    for raw in (original_c or "").splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("/*", "*", "//")):
+            continue
+        # Prefer executable-style call evidence lines.
+        if "(" in stripped and ")" in stripped and ";" in stripped:
+            lines.append(stripped)
+    return "\n".join(lines)
+
+
 def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
     original_c = _extract_original_c_comment_block_8616(emitted_c)
     if not original_c:
         return []
-    expected_counts = _call_counts_from_text_8616(original_c)
+    expected_counts = _call_counts_from_text_8616(_extract_original_call_evidence_lines_8616(original_c))
     if not expected_counts:
         return []
     actual_counts = _call_counts_from_text_8616(_strip_comment_blocks_8616(emitted_c))
@@ -1269,6 +1288,7 @@ def _expected_call_order_from_original_8616(emitted_c: str) -> list[str]:
     original_c = _extract_original_c_comment_block_8616(emitted_c)
     if not original_c:
         return []
+    original_c = _extract_original_call_evidence_lines_8616(original_c)
     function_name = _extract_emitted_function_name_8616(emitted_c)
     order: list[str] = []
     for name in _CALL_TOKEN_RE.findall(original_c):
