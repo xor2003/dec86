@@ -1261,14 +1261,66 @@ def _extract_original_call_evidence_lines_8616(original_c: str) -> str:
     return "\n".join(lines)
 
 
-def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
-    original_c = _extract_original_c_comment_block_8616(emitted_c)
-    if not original_c:
+def _embedded_call_evidence_names_8616(emitted_c: str) -> list[str]:
+    if not isinstance(emitted_c, str) or not emitted_c:
         return []
-    expected_counts = _call_counts_from_text_8616(_extract_original_call_evidence_lines_8616(original_c))
+    m = _EMBEDDED_CALLS_RE.search(emitted_c)
+    if m is None:
+        return []
+    names: list[str] = []
+    for token in [part.strip() for part in m.group(1).split(",")]:
+        if not token:
+            continue
+        name = token.lstrip("_")
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            continue
+        if name in {"aNchkstk"}:
+            continue
+        names.append(name)
+    return names
+
+
+def _extract_original_function_body_from_comment_8616(original_c: str, function_name: str | None) -> str:
+    if not isinstance(original_c, str) or not original_c.strip() or not isinstance(function_name, str) or not function_name:
+        return original_c
+    lines = original_c.splitlines()
+    start_idx = None
+    for idx, raw in enumerate(lines):
+        if re.search(rf"\b{re.escape(function_name)}\s*\(", raw):
+            start_idx = idx
+            break
+    if start_idx is None:
+        return original_c
+    body_lines: list[str] = []
+    depth = 0
+    started = False
+    for raw in lines[start_idx:]:
+        line = str(raw)
+        if "{" in line:
+            started = True
+        if started:
+            body_lines.append(line)
+            depth += line.count("{")
+            depth -= line.count("}")
+            if depth <= 0 and "}" in line:
+                break
+    return "\n".join(body_lines) if body_lines else original_c
+
+
+def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
+    function_name = _extract_emitted_function_name_8616(emitted_c)
+    expected_counts: Counter[str] = Counter()
+    embedded_calls = _embedded_call_evidence_names_8616(emitted_c)
+    if embedded_calls:
+        expected_counts = Counter(embedded_calls)
+    else:
+        original_c = _extract_original_c_comment_block_8616(emitted_c)
+        if not original_c:
+            return []
+        original_body = _extract_original_function_body_from_comment_8616(original_c, function_name)
+        expected_counts = _call_counts_from_text_8616(_extract_original_call_evidence_lines_8616(original_body))
     if not expected_counts:
         return []
-    function_name = _extract_emitted_function_name_8616(emitted_c)
     actual_counts = _call_counts_from_text_8616(
         _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
     )
@@ -1296,6 +1348,9 @@ def _extract_function_body_text_8616(emitted_c: str) -> str:
 
 
 def _expected_call_order_from_original_8616(emitted_c: str) -> list[str]:
+    embedded_calls = _embedded_call_evidence_names_8616(emitted_c)
+    if embedded_calls:
+        return embedded_calls
     original_c = _extract_original_c_comment_block_8616(emitted_c)
     if not original_c:
         return []
@@ -2653,11 +2708,16 @@ def main(argv: list[str] | None = None) -> int:
             c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
         )
         if direct_status != direct_result.status or direct_blocker is not None:
+            preserved_candidate = (
+                direct_result.partial_payload
+                if isinstance(direct_result.partial_payload, str) and direct_result.partial_payload.strip()
+                else (direct_result.payload if isinstance(direct_result.payload, str) and direct_result.payload.strip() else None)
+            )
             direct_result = replace(
                 direct_result,
                 status=direct_status,
                 payload=direct_blocker if direct_blocker is not None else direct_result.payload,
-                partial_payload=None if direct_blocker is not None else direct_result.partial_payload,
+                partial_payload=preserved_candidate if direct_blocker is not None else direct_result.partial_payload,
             )
             if direct_status == "validation_failed" and isinstance(direct_result.tail_validation, dict):
                 setattr(direct_project, "_inertia_forced_tail_validation_snapshot", dict(direct_result.tail_validation))
@@ -2675,6 +2735,10 @@ def main(argv: list[str] | None = None) -> int:
             _print_stop_on_first_failure_8616(func, direct_result)
             return 6
         if direct_result.status != "ok":
+            def _candidate_text_for_missing_call_score(result: FunctionWorkResult) -> str:
+                candidate = result.partial_payload if isinstance(result.partial_payload, str) and result.partial_payload.strip() else result.payload
+                return candidate if isinstance(candidate, str) else ""
+
             def _missing_call_count(payload_text: str) -> int:
                 if not isinstance(payload_text, str) or not payload_text.strip():
                     return 10**9
@@ -2684,6 +2748,8 @@ def main(argv: list[str] | None = None) -> int:
             # better semantic candidate. Keep the one with fewer missing
             # source-evidenced calls before entering heavy fallback fan-out.
             if direct_result.status == "validation_failed":
+                best_direct_candidate = direct_result
+                best_direct_missing = _missing_call_count(_candidate_text_for_missing_call_score(direct_result))
                 try:
                     retry_status, retry_payload, retry_partial, *retry_extra = _run_with_timeout_in_daemon_thread(
                         direct_decompile_job,
@@ -2713,18 +2779,28 @@ def main(argv: list[str] | None = None) -> int:
                         c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
                     )
                     if retry_checked_status != retry_result.status or retry_blocker is not None:
+                        retry_preserved_candidate = (
+                            retry_result.partial_payload
+                            if isinstance(retry_result.partial_payload, str) and retry_result.partial_payload.strip()
+                            else (retry_result.payload if isinstance(retry_result.payload, str) and retry_result.payload.strip() else None)
+                        )
                         retry_result = replace(
                             retry_result,
                             status=retry_checked_status,
                             payload=retry_blocker if retry_blocker is not None else retry_result.payload,
-                            partial_payload=None if retry_blocker is not None else retry_result.partial_payload,
+                            partial_payload=retry_preserved_candidate if retry_blocker is not None else retry_result.partial_payload,
                         )
-                    current_missing = _missing_call_count(direct_result.payload)
-                    retry_missing = _missing_call_count(retry_result.payload)
+                    current_missing = _missing_call_count(_candidate_text_for_missing_call_score(direct_result))
+                    retry_missing = _missing_call_count(_candidate_text_for_missing_call_score(retry_result))
                     if retry_result.status == "ok" or retry_missing < current_missing:
                         direct_result = retry_result
+                    if retry_missing < best_direct_missing:
+                        best_direct_candidate = retry_result
+                        best_direct_missing = retry_missing
                 except Exception:
                     pass
+                if direct_result.status != "ok" and best_direct_missing < _missing_call_count(_candidate_text_for_missing_call_score(direct_result)):
+                    direct_result = best_direct_candidate
 
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address decompilation budget")
             direct_display_addr = function_original_addr(func)
