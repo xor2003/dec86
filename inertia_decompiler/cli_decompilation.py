@@ -48,6 +48,8 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _attach_callsite_summaries_8616,
     _materialize_callsite_prototypes_8616,
     _materialize_callsite_stack_arguments_8616,
+    _normalize_call_target_names_8616,
+    _recover_missing_direct_calls_from_evidence_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_flags import (
     _prune_overwritten_flag_assignments_8616,
@@ -826,14 +828,103 @@ def _expected_call_presence_score_8616(rendered_text: str, cod_metadata: CODProc
         return 0
     if cod_metadata is None:
         return 0
+    # Evaluate call presence on executable body text only.
+    text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered_text, flags=re.S)
+    text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    body = text_wo_comments.split("{", 1)[-1] if "{" in text_wo_comments else text_wo_comments
+    call_token_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    found_calls = {
+        name
+        for name in call_token_re.findall(body)
+        if name not in {"if", "for", "while", "switch", "return", "sizeof"}
+    }
     score = 0
     for raw_name in tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ())):
         name = str(raw_name).lstrip("_")
         if not name or name == "aNchkstk":
             continue
-        if f"{name}(" in rendered_text:
+        if name in found_calls:
             score += 1
     return score
+
+
+def _missing_expected_calls_from_cod_metadata_8616(rendered_text: str, cod_metadata: CODProcMetadata | None) -> list[str]:
+    if not isinstance(rendered_text, str) or not rendered_text:
+        return []
+    if cod_metadata is None:
+        return []
+    text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered_text, flags=re.S)
+    text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    body = text_wo_comments.split("{", 1)[-1] if "{" in text_wo_comments else text_wo_comments
+    found_calls = {
+        name
+        for name in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", body)
+        if name not in {"if", "for", "while", "switch", "return", "sizeof"}
+    }
+    missing: list[str] = []
+    for raw_name in tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ())):
+        name = str(raw_name).lstrip("_")
+        if not name or name == "aNchkstk":
+            continue
+        if name not in found_calls:
+            missing.append(name)
+    return missing
+
+
+def _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
+    project: angr.Project,
+    codegen,
+    cod_metadata: CODProcMetadata | None,
+    rendered_text: str,
+) -> str:
+    debug_enabled = bool(os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"))
+    if cod_metadata is None or codegen is None:
+        if debug_enabled:
+            logging.getLogger(__name__).warning(
+                "[call-recover-live] skip=no-metadata-or-codegen codegen_id=%#x has_metadata=%s",
+                id(codegen) if codegen is not None else 0,
+                bool(cod_metadata is not None),
+            )
+        return rendered_text
+    expected = [str(name).lstrip("_") for name in tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ())) if str(name).lstrip("_") not in {"", "aNchkstk"}]
+    if not expected:
+        if debug_enabled:
+            logging.getLogger(__name__).warning(
+                "[call-recover-live] skip=no-expected codegen_id=%#x",
+                id(codegen),
+            )
+        return rendered_text
+    present_score = _expected_call_presence_score_8616(rendered_text, cod_metadata)
+    if present_score >= len(expected):
+        if debug_enabled:
+            logging.getLogger(__name__).warning(
+                "[call-recover-live] skip=already-present codegen_id=%#x score=%d expected=%d",
+                id(codegen),
+                present_score,
+                len(expected),
+            )
+        return rendered_text
+    if debug_enabled:
+        logging.getLogger(__name__).warning(
+            "[call-recover-live] run codegen_id=%#x score=%d expected=%d expected_calls=%r",
+            id(codegen),
+            present_score,
+            len(expected),
+            expected,
+        )
+    setattr(codegen, "_inertia_call_recover_context", "live-rehydrate")
+    changed = bool(_recover_missing_direct_calls_from_evidence_8616(project, codegen))
+    setattr(codegen, "_inertia_call_recover_context", "postprocess")
+    if not changed:
+        return rendered_text
+    # Live rehydrate is a late safety net. Keep it non-destructive: avoid
+    # rerunning semantic call/arg materialization here, which can relabel or
+    # collapse freshly recovered callsites in retry lanes.
+    refreshed, _regenerated = _regenerate_codegen_text_safely(
+        codegen,
+        context=f"{hex(getattr(getattr(codegen, 'cfunc', None), 'addr', 0) or 0)} rehydrate-evidenced-calls",
+    )
+    return refreshed if isinstance(refreshed, str) and refreshed.strip() else rendered_text
 
 def _decompile_function(
     project: angr.Project,
@@ -1588,6 +1679,24 @@ def _decompile_function(
         id(rewrite): getattr(rewrite, "__name__", type(rewrite).__name__)
         for rewrite in rewrite_passes
     }
+    try:
+        rehydrate_metadata = effective_cod_metadata or _sidecar_cod_metadata_for_function(
+            project,
+            function,
+            binary_path,
+            lst_metadata,
+        )
+        _live_snapshot = _snapshot_codegen_text(dec.codegen)
+        _rehydrated = _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
+            project,
+            dec.codegen,
+            rehydrate_metadata,
+            _live_snapshot,
+        )
+        if isinstance(_rehydrated, str) and _rehydrated.strip():
+            setattr(project, "_inertia_partial_codegen_text", _rehydrated)
+    except Exception as ex:
+        logging.getLogger(__name__).debug("live call rehydration skipped: %s", ex)
     if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
         try:
             pre_rewrite_text = _snapshot_codegen_text(dec.codegen)
@@ -1626,6 +1735,10 @@ def _decompile_function(
                 continue
             pass_name = rewrite_pass_names.get(id(rewrite), getattr(rewrite, "__name__", type(rewrite).__name__))
             before_calls = _codegen_call_expr_count()
+            before_missing = _missing_expected_calls_from_cod_metadata_8616(
+                _snapshot_codegen_text(dec.codegen),
+                effective_cod_metadata,
+            )
             snapshot = _snapshot_codegen_cfunc()
             rewrite_changed = rewrite()
             if rewrite_changed:
@@ -1640,6 +1753,21 @@ def _decompile_function(
                         after_calls,
                     )
                     rewrite_changed = False
+                else:
+                    after_missing = _missing_expected_calls_from_cod_metadata_8616(
+                        _snapshot_codegen_text(dec.codegen),
+                        effective_cod_metadata,
+                    )
+                    if len(after_missing) > len(before_missing) and _restore_codegen_cfunc(snapshot):
+                        logging.getLogger(__name__).warning(
+                            "Rejected CLI rewrite pass due to worse source-evidenced call coverage at function=%#x pass=%s idx=%d (missing %d -> %d)",
+                            function_original_addr(function),
+                            pass_name,
+                            rewrite_idx,
+                            len(before_missing),
+                            len(after_missing),
+                        )
+                        rewrite_changed = False
             if rewrite_changed:
                 iter_changed = True
                 _debug_dump_rewrite_pass_lines_8616(
