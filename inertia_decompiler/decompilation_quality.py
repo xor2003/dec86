@@ -27,7 +27,6 @@ _RAW_IR_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _FATAL_MARKERS = frozenset(
     {
         "goto-none",
-        "stack-base",
         "missing-type",
         "ellipsis-condition",
         "raw-register-frag",
