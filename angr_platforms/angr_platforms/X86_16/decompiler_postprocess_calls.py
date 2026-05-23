@@ -120,17 +120,37 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
         if isinstance(callee_name, str) and callee_name:
             present_names.append(callee_name)
 
-    expected_counts = Counter(
-        (normalize_callee_name_8616(name) or name) for name in expected_names if name != "aNchkstk"
-    )
-    present_counts = Counter(
-        (normalize_callee_name_8616(name) or name) for name in present_names if name != "aNchkstk"
-    )
+    source_sequence = [
+        (normalize_callee_name_8616(name) or name)
+        for name in _cod_source_call_names_8616(project, func_addr)
+        if isinstance(name, str) and name and name != "aNchkstk"
+    ]
+    actual_sequence = [
+        (normalize_callee_name_8616(name) or name)
+        for name in present_names
+        if isinstance(name, str) and name and name != "aNchkstk"
+    ]
     missing: list[str] = []
-    for name, needed in expected_counts.items():
-        have = int(present_counts.get(name, 0))
-        if have < needed:
-            missing.extend([name] * (needed - have))
+    if source_sequence:
+        # Evidence-based ordered recovery: only insert calls that are missing in
+        # source call order after greedy alignment with current emitted sequence.
+        j = 0
+        for expected_name in source_sequence:
+            while j < len(actual_sequence) and actual_sequence[j] != expected_name:
+                j += 1
+            if j < len(actual_sequence) and actual_sequence[j] == expected_name:
+                j += 1
+            else:
+                missing.append(expected_name)
+    else:
+        expected_counts = Counter(
+            (normalize_callee_name_8616(name) or name) for name in expected_names if name != "aNchkstk"
+        )
+        present_counts = Counter(actual_sequence)
+        for name, needed in expected_counts.items():
+            have = int(present_counts.get(name, 0))
+            if have < needed:
+                missing.extend([name] * (needed - have))
     if not missing:
         return False
 
