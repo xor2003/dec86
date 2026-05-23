@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import copy
+from collections import Counter
 from dataclasses import dataclass, replace
 from enum import Enum
 import logging
@@ -97,24 +98,30 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
     if not expected_names:
         return False
 
-    present_names: set[str] = set()
+    present_names: list[str] = []
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CFunctionCall):
             continue
         name = getattr(node, "callee_target", None)
         if isinstance(name, str) and name:
-            present_names.add(name)
+            present_names.append(name)
             continue
         callee = getattr(node, "callee_func", None)
         callee_name = getattr(callee, "name", None)
         if isinstance(callee_name, str) and callee_name:
-            present_names.add(callee_name)
+            present_names.append(callee_name)
             continue
         callee_name = getattr(node, "callee", None)
         if isinstance(callee_name, str) and callee_name:
-            present_names.add(callee_name)
+            present_names.append(callee_name)
 
-    missing = [name for name in expected_names if name not in present_names and name != "aNchkstk"]
+    expected_counts = Counter(name for name in expected_names if name != "aNchkstk")
+    present_counts = Counter(name for name in present_names if name != "aNchkstk")
+    missing: list[str] = []
+    for name, needed in expected_counts.items():
+        have = int(present_counts.get(name, 0))
+        if have < needed:
+            missing.extend([name] * (needed - have))
     if not missing:
         return False
 
