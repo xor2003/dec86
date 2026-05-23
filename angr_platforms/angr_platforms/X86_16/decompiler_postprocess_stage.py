@@ -332,6 +332,12 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
                 "_normalize_call_target_names_8616",
             }
         )
+    simplify_structured_enabled = os.environ.get("INERTIA_ENABLE_STRUCTURED_SIMPLIFY_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not simplify_structured_enabled:
+        skip_names.add("_simplify_structured_expressions_8616")
+    simplify_boolean_enabled = os.environ.get("INERTIA_ENABLE_BOOLEAN_SIMPLIFY_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not simplify_boolean_enabled:
+        skip_names.add("_simplify_boolean_cites_8616")
 
     func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
     if func_addr is None:
