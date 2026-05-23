@@ -2047,7 +2047,11 @@ def main(argv: list[str] | None = None) -> int:
         print("/* recovering function... */", flush=True)
         direct_budget_timeout = args.timeout
         if project.arch.name == "86_16":
-            direct_budget_timeout = max(direct_budget_timeout, 24)
+            # 86_16 direct-address recovery may require repeated internal
+            # structuring/materialization attempts even for tiny functions.
+            # Keep enough wall-clock budget so a successful candidate is not
+            # discarded by wrapper timeout.
+            direct_budget_timeout = max(direct_budget_timeout, 48)
         direct_addr_deadline = time.monotonic() + _direct_addr_wall_clock_budget(
             args.timeout,
             effective_timeout=direct_budget_timeout,
@@ -2615,6 +2619,11 @@ def main(argv: list[str] | None = None) -> int:
                     cod_metadata=cod_metadata,
                     synthetic_globals=synthetic_globals,
                     lst_metadata=lst_metadata,
+                    # Direct-address mode must prefer deterministic single-lane
+                    # recovery. Isolated retries can re-run the full pipeline
+                    # multiple times and overwrite a valid candidate with a
+                    # later timeout lane.
+                    allow_isolated_retry=False,
                     failure_family_state=direct_failure_family_state,
                 )
                 snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
@@ -2654,7 +2663,7 @@ def main(argv: list[str] | None = None) -> int:
                 block_count=_direct_blocks,
                 byte_count=_direct_bytes,
             )
-            direct_decompile_timeout = max(1, _direct_effective_timeout) + 5
+            direct_decompile_timeout = max(1, _direct_effective_timeout) + 20
             direct_decompile_timeout = max(1, min(direct_decompile_timeout, _remaining_direct_addr_budget() or 1))
             if (
                 os.name == "posix"
