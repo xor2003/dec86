@@ -88,6 +88,12 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
         if callee_name in _RUNTIME_SEGMENT_HELPERS_8616:
             continue
         expected_names.append(callee_name)
+    # Optional sidecar/COD evidence: adds call floor when call-target recovery is
+    # incomplete in structured output.
+    for source_name in _cod_source_call_names_8616(project, func_addr):
+        if isinstance(source_name, str) and source_name and source_name not in expected_names:
+            expected_names.append(source_name)
+
     if not expected_names:
         return False
 
@@ -121,7 +127,9 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
     changed = False
     for name in missing:
         callee_func = project.kb.functions.function(name=name, create=False)
-        call = CFunctionCall(name, callee_func, [], codegen=codegen)
+        seeded_args = _known_default_args_for_missing_8616(name, codegen)
+        call_args = list(seeded_args) if isinstance(seeded_args, tuple) else []
+        call = CFunctionCall(name, callee_func, call_args, codegen=codegen)
         call_stmt = structured_c.CExpressionStatement(call, codegen=codegen)
         root.statements.insert(insert_at, call_stmt)
         insert_at += 1
@@ -717,6 +725,7 @@ def _normalize_call_target_names_8616(codegen) -> bool:
             expected_source_name = source_call_names[source_call_idx]
             source_call_idx += 1
         target_addr = getattr(summary, "target_addr", None) if summary is not None else None
+        summary_arg_count = int(getattr(summary, "arg_count", 0) or 0) if summary is not None else 0
 
         callee_target = getattr(node, "callee_target", None)
         normalized_target = normalize_callee_name_8616(callee_target)
@@ -730,6 +739,31 @@ def _normalize_call_target_names_8616(codegen) -> bool:
         if callee_func is not None and isinstance(normalized_name, str) and normalized_name != callee_name:
             callee_func.name = normalized_name
             changed = True
+            callee_name = normalized_name
+
+        # Evidence reconciliation: if source call names exist for this function and
+        # the current helper identity disagrees, prefer source-evidenced call name.
+        # This is conservative: only applies to known helpers with matching arity.
+        if isinstance(expected_source_name, str) and expected_source_name:
+            expected_arity = _expected_arg_count_for_known_callee_8616(expected_source_name)
+            current_call_name = _call_node_name_8616(node)
+            current_arity = len(tuple(getattr(node, "args", ()) or ()))
+            callsite_arity = summary_arg_count if summary_arg_count > 0 else current_arity
+            if (
+                isinstance(expected_arity, int)
+                and expected_arity > 0
+                and callsite_arity == expected_arity
+                and isinstance(current_call_name, str)
+                and current_call_name
+                and current_call_name != expected_source_name
+                and _expected_arg_count_for_known_callee_8616(current_call_name) == callsite_arity
+            ):
+                if getattr(node, "callee_func", None) is not None:
+                    node.callee_func = None
+                    changed = True
+                if getattr(node, "callee_target", None) != expected_source_name:
+                    node.callee_target = expected_source_name
+                    changed = True
 
         if isinstance(target_addr, int):
             candidate = _lookup_callee_function_8616(project, target_addr)
@@ -1013,9 +1047,21 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
     for callsite_addr in callsite_addrs:
         matched_nodes = nodes_by_callsite.get(callsite_addr)
         if matched_nodes:
-            node = matched_nodes.pop(0)
-            ordered_pairs.append((node, callsite_addr))
-            used_node_ids.add(id(node))
+            summary = summarize_x86_16_callsite(function, callsite_addr)
+            chosen_index = None
+            if summary is not None:
+                for idx, node in enumerate(matched_nodes):
+                    if _call_node_matches_summary_8616(project, node, summary):
+                        chosen_index = idx
+                        break
+            if chosen_index is not None:
+                node = matched_nodes.pop(chosen_index)
+                ordered_pairs.append((node, callsite_addr))
+                used_node_ids.add(id(node))
+            else:
+                # Do not force-bind by stale/ambiguous callsite tags.
+                # Leave this callsite for evidence-based matching in the next lane.
+                unmatched_callsites.append(callsite_addr)
         else:
             unmatched_callsites.append(callsite_addr)
 
