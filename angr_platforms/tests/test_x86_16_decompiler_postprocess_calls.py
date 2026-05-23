@@ -4192,6 +4192,12 @@ def test_prune_dead_stack_carriers_only_recurses_into_plain_statement_blocks():
     loop_like.statements = root.statements
 
     codegen._inertia_enable_safe_dead_carrier_prune = True
+    codegen._inertia_callsite_materialization_stats = SimpleNamespace(
+        call_target_fact_count=1,
+        call_target_materialized_count=1,
+        call_arg_fact_count=1,
+        call_arg_materialized_count=1,
+    )
     changed = _prune_dead_stack_carrier_assignments_8616(root, codegen=codegen)
 
     assert changed is True
@@ -4201,6 +4207,35 @@ def test_prune_dead_stack_carriers_only_recurses_into_plain_statement_blocks():
 
 
 def test_prune_dead_stack_carriers_disabled_by_default():
+    project = _project()
+    codegen = _DummyCodegen(project)
+    structured_c = _scg.c
+    local_slot = structured_c.CVariable(
+        SimStackVariable(-6, 2, base="bp", name="s_6", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="vvar_11"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    root = CStatements(
+        [
+            CAssignment(carrier, structured_c.CUnaryOp("Reference", local_slot, codegen=codegen), codegen=codegen),
+            CReturn(None, codegen=codegen),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+
+    changed = _prune_dead_stack_carrier_assignments_8616(root, codegen=codegen)
+
+    assert changed is False
+    assert len(root.statements) == 2
+
+
+def test_prune_dead_stack_carriers_refuses_without_materialization_evidence():
     project = _project()
     codegen = _DummyCodegen(project)
     structured_c = _scg.c

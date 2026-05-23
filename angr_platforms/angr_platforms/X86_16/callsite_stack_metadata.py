@@ -123,12 +123,35 @@ class StackCarrierPruneDecision8616(enum.Enum):
 
 
 def _safe_dead_carrier_prune_enabled_8616(codegen: object | None) -> bool:
+    # Emergency kill switch.
+    flag_disable = os.environ.get("INERTIA_DISABLE_SAFE_DEAD_CARRIER_PRUNE", "").strip().lower()
+    if flag_disable in {"1", "true", "yes", "on"}:
+        return False
     if codegen is not None:
         attr = getattr(codegen, "_inertia_enable_safe_dead_carrier_prune", None)
         if isinstance(attr, bool):
             return attr
-    flag = os.environ.get("INERTIA_ENABLE_SAFE_DEAD_CARRIER_PRUNE", "").strip().lower()
-    return flag in {"1", "true", "yes", "on"}
+    # Production default.
+    return True
+
+
+def _callsite_materialization_complete_8616(codegen: object | None) -> bool:
+    if codegen is None:
+        return False
+    stats = getattr(codegen, "_inertia_callsite_materialization_stats", None)
+    if stats is None:
+        return False
+    target_fact = int(getattr(stats, "call_target_fact_count", 0) or 0)
+    target_mat = int(getattr(stats, "call_target_materialized_count", 0) or 0)
+    arg_fact = int(getattr(stats, "call_arg_fact_count", 0) or 0)
+    arg_mat = int(getattr(stats, "call_arg_materialized_count", 0) or 0)
+    return target_mat >= target_fact and arg_mat >= arg_fact
+
+
+def _bump_dead_setup_counter_8616(codegen: object | None, name: str, inc: int = 1) -> None:
+    if codegen is None:
+        return
+    setattr(codegen, name, int(getattr(codegen, name, 0)) + int(inc))
 
 
 def _generic_stack_carrier_name_8616(node: object) -> str | None:
@@ -243,6 +266,14 @@ def _collect_stack_carrier_assignments_8616(block: object) -> set[CarrierKey8616
 def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | None = None) -> bool:
     """Remove dead generic address carriers left after call arguments are materialized."""
     if not _safe_dead_carrier_prune_enabled_8616(codegen):
+        _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
+        _bump_dead_setup_counter_8616(codegen, "dead_setup_unknown_refuse")
+        return False
+    if not _callsite_materialization_complete_8616(codegen):
+        # Evidence gate: do not prune carrier setup until callsite argument facts
+        # are fully materialized.
+        _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
+        _bump_dead_setup_counter_8616(codegen, "dead_setup_live_call_arg")
         return False
     changed = False
     if not _is_plain_statement_block_8616(block):
@@ -276,12 +307,20 @@ def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | 
         carrier = _dead_stack_carrier_assignment_8616(stmt, known_carriers)
         if carrier is not None:
             lhs_key, rhs = carrier
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_candidates")
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_raw_fact_count")
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_normalized_fact_count")
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_classified_fact_count")
             if lhs_key not in live:
                 changed = True
                 removed += 1
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_pruned")
+                _bump_dead_setup_counter_8616(codegen, "dead_setup_materialized_count")
                 continue
             live.discard(lhs_key)
             live.update(_generic_stack_carrier_keys_8616(rhs).intersection(known_carriers))
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_refused")
+            _bump_dead_setup_counter_8616(codegen, "dead_setup_live_stack_carrier")
             kept_reversed.append(stmt)
             continue
         live.update(_generic_stack_carrier_keys_8616(stmt).intersection(known_carriers))
