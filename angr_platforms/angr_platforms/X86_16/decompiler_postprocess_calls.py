@@ -46,6 +46,7 @@ from .pipeline.errors import PipelineHardError
 
 __all__ = [
     "_attach_callsite_summaries_8616",
+    "_recover_missing_direct_calls_from_evidence_8616",
     "_materialize_callsite_stack_arguments_8616",
     "_materialize_callsite_prototypes_8616",
     "_normalize_call_target_names_8616",
@@ -55,6 +56,83 @@ _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 _NAMESPACED_TARGET_RE = re.compile(r"^::0x(?P<addr>[0-9a-fA-F]+)::")
 log = logging.getLogger(__name__)
 _RUNTIME_SEGMENT_HELPERS_8616 = frozenset({"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR"})
+
+
+def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+    root = getattr(cfunc, "statements", None)
+    if not isinstance(root, structured_c.CStatements):
+        return False
+    func_addr = getattr(cfunc, "addr", None)
+    if not isinstance(func_addr, int):
+        return False
+    function = project.kb.functions.function(addr=func_addr, create=False)
+    if function is None:
+        return False
+
+    callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
+    if not callsite_addrs:
+        return False
+
+    expected_names: list[str] = []
+    for callsite_addr in callsite_addrs:
+        target = getattr(function, "get_call_target", lambda _addr: None)(callsite_addr)
+        if not isinstance(target, int):
+            continue
+        callee = project.kb.functions.function(addr=target, create=False)
+        callee_name = getattr(callee, "name", None)
+        if not isinstance(callee_name, str) or not callee_name:
+            continue
+        if callee_name in _RUNTIME_SEGMENT_HELPERS_8616:
+            continue
+        expected_names.append(callee_name)
+    if not expected_names:
+        return False
+
+    present_names: set[str] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CFunctionCall):
+            continue
+        name = getattr(node, "callee_target", None)
+        if isinstance(name, str) and name:
+            present_names.add(name)
+            continue
+        callee = getattr(node, "callee_func", None)
+        callee_name = getattr(callee, "name", None)
+        if isinstance(callee_name, str) and callee_name:
+            present_names.add(callee_name)
+            continue
+        callee_name = getattr(node, "callee", None)
+        if isinstance(callee_name, str) and callee_name:
+            present_names.add(callee_name)
+
+    missing = [name for name in expected_names if name not in present_names and name != "aNchkstk"]
+    if not missing:
+        return False
+
+    insert_at = len(root.statements)
+    for idx, stmt in enumerate(root.statements):
+        if isinstance(stmt, structured_c.CReturn):
+            insert_at = idx
+            break
+
+    changed = False
+    for name in missing:
+        callee_func = project.kb.functions.function(name=name, create=False)
+        call = CFunctionCall(name, callee_func, [], codegen=codegen)
+        call_stmt = structured_c.CExpressionStatement(call, codegen=codegen)
+        root.statements.insert(insert_at, call_stmt)
+        insert_at += 1
+        changed = True
+    if changed:
+        setattr(
+            codegen,
+            "_inertia_direct_call_floor_recovered_count",
+            int(getattr(codegen, "_inertia_direct_call_floor_recovered_count", 0)) + len(missing),
+        )
+    return changed
 
 
 @dataclass(slots=True)

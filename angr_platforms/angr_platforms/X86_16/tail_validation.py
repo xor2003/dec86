@@ -1939,10 +1939,14 @@ def collect_x86_16_tail_validation_summary(project, codegen, *, mode: str = "liv
                 continue
             summary = contextual_call_summaries.get(id(node))
             target_addr = _call_summary_target_addr_8616(project, summary)
-            call_fingerprint = f"addr:{target_addr:#x}" if isinstance(target_addr, int) else None
-            if call_fingerprint is None:
-                call_fingerprint = contextual_call_fingerprints.get(id(node))
-            helper_calls.add(call_fingerprint or _call_target_name(node, project))
+            call_name = _call_target_name(node, project)
+            if isinstance(call_name, str) and call_name:
+                call_fingerprint = f"name:{call_name}"
+            else:
+                call_fingerprint = f"addr:{target_addr:#x}" if isinstance(target_addr, int) else None
+                if call_fingerprint is None:
+                    call_fingerprint = contextual_call_fingerprints.get(id(node))
+            helper_calls.add(call_fingerprint or "<unknown-call>")
         elif isinstance(node, CReturn):
             returns.add(_expr_fingerprint(getattr(node, "retval", None), project))
             control_flow_effects.add("return")
