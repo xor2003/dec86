@@ -1087,9 +1087,28 @@ def _try_emit_known_runtime_helper_c(
             "    return t;\n"
             "}\n"
         )
+    if lowered == "setvbuf":
+        return (
+            "int setvbuf(void *stream, char *buffer, int mode, size_t size)\n"
+            "{\n"
+            "    (void)stream;\n"
+            "    (void)buffer;\n"
+            "    (void)mode;\n"
+            "    (void)size;\n"
+            "    return 0;\n"
+            "}\n"
+        )
     if lowered == "b$chkolivetti":
         return (
             "int B$ChkOlivetti(void)\n"
+            "{\n"
+            "    return 0;\n"
+            "}\n"
+        )
+    if lowered in {"b$cganreadl", "b$eganreadl"}:
+        safe_name = "B$CgaNReadL" if lowered == "b$cganreadl" else "B$EgaNReadL"
+        return (
+            f"int {safe_name}(void)\n"
             "{\n"
             "    return 0;\n"
             "}\n"
