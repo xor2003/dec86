@@ -529,8 +529,29 @@ def _expected_arg_count_for_known_callee_8616(name: str) -> int | None:
         "clearscreen": 1,
         "displaycursor": 1,
         "setvideomode": 1,
+        "PercolateUp": 1,
+        "_PercolateUp": 1,
+        "PercolateDown": 1,
+        "_PercolateDown": 1,
+        "SwapBars": 2,
+        "_SwapBars": 2,
+        "Swaps": 2,
+        "_Swaps": 2,
+        "DrawBar": 1,
+        "_DrawBar": 1,
+        "DrawTime": 1,
+        "_DrawTime": 1,
     }
-    return table.get(normalized)
+    if normalized in table:
+        return table[normalized]
+    decl = preferred_known_helper_signature_decl(normalized)
+    if isinstance(decl, str):
+        m = re.search(r"\((?P<args>[^)]*)\)", decl)
+        arg_text = m.group("args").strip() if m is not None else ""
+        if not arg_text or arg_text == "void":
+            return 0
+        return len([part for part in arg_text.split(",") if part.strip()])
+    return None
 
 
 def _known_default_args_for_missing_8616(name: str, codegen) -> tuple | None:

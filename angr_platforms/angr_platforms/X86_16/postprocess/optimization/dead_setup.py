@@ -251,9 +251,20 @@ def _rhs_looks_like_stack_carrier(rhs: object) -> bool:
     return False
 
 
-def _classify_candidate_8616(cand: _Candidate, reads: dict[tuple[str, int | str], int]) -> DeadSetupDecision8616:
+def _classify_candidate_8616(
+    cand: _Candidate,
+    reads: dict[tuple[str, int | str], int],
+    *,
+    call_indices: set[int] | None = None,
+) -> DeadSetupDecision8616:
     if _is_observable_storage(cand.lhs):
         return DeadSetupDecision8616.LIVE_CALL_ARG_SETUP
+    if call_indices:
+        # Conservative production rule: setup/carrier statements in call-bearing
+        # regions can encode outgoing argument staging. Refuse pruning unless
+        # we have stronger evidence than local shape/liveness.
+        if any(cand.stmt_index <= idx for idx in call_indices):
+            return DeadSetupDecision8616.LIVE_CALL_ARG_SETUP
     if _rhs_has_side_effects(cand.rhs):
         return DeadSetupDecision8616.UNKNOWN_REFUSE
     if _rhs_mentions_flag_like_state(cand.rhs):
@@ -307,6 +318,9 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
             stmts = list(getattr(block, "statements", ()) or ())
             if not stmts:
                 continue
+            call_indices = {
+                idx for idx, stmt in enumerate(stmts) if any(isinstance(node, CFunctionCall) for node in _iter_c_nodes_deep_8616(stmt))
+            }
             candidates = _gather_candidates(block)
             if not candidates:
                 continue
@@ -317,7 +331,7 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
             refused = 0
             for cand in candidates:
                 try:
-                    decision = _classify_candidate_8616(cand, reads)
+                    decision = _classify_candidate_8616(cand, reads, call_indices=call_indices)
                 except Exception:
                     _bump_counter_8616(codegen, "dead_setup_failure_count")
                     decision = DeadSetupDecision8616.UNKNOWN_REFUSE
