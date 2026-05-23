@@ -1210,7 +1210,7 @@ def _missing_expected_calls_from_embedded_evidence_8616(emitted_c: str) -> list[
         expected.append(name)
     if not expected:
         return []
-    clean = _strip_comment_blocks_8616(emitted_c)
+    clean = _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
     found = set(_CALL_TOKEN_RE.findall(clean))
     missing = [name for name in expected if name not in found]
     return missing
@@ -1265,7 +1265,9 @@ def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
     expected_counts = _call_counts_from_text_8616(_extract_original_call_evidence_lines_8616(original_c))
     if not expected_counts:
         return []
-    actual_counts = _call_counts_from_text_8616(_strip_comment_blocks_8616(emitted_c))
+    actual_counts = _call_counts_from_text_8616(
+        _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
+    )
     missing: list[str] = []
     for name, needed in expected_counts.items():
         if name in {"aNchkstk"}:
