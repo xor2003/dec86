@@ -2637,6 +2637,57 @@ def main(argv: list[str] | None = None) -> int:
             _print_stop_on_first_failure_8616(func, direct_result)
             return 6
         if direct_result.status != "ok":
+            def _missing_call_count(payload_text: str) -> int:
+                if not isinstance(payload_text, str) or not payload_text.strip():
+                    return 10**9
+                return len(_missing_expected_calls_from_embedded_evidence_8616(payload_text))
+
+            # Evidence-first retry: a repeated direct run can produce a strictly
+            # better semantic candidate. Keep the one with fewer missing
+            # source-evidenced calls before entering heavy fallback fan-out.
+            if direct_result.status == "validation_failed":
+                try:
+                    retry_status, retry_payload, retry_partial, *retry_extra = _run_with_timeout_in_daemon_thread(
+                        direct_decompile_job,
+                        timeout=max(1, min(args.timeout, 30)),
+                        thread_name_prefix="direct-decomp-retry",
+                    )
+                    retry_tail_validation = None
+                    for extra in retry_extra:
+                        if isinstance(extra, dict):
+                            retry_tail_validation = dict(extra)
+                    retry_result = FunctionWorkResult(
+                        index=1,
+                        status=retry_status,
+                        payload=retry_payload,
+                        debug_output="",
+                        function=func,
+                        function_cfg=cfg,
+                        partial_payload=retry_partial,
+                        tail_validation=retry_tail_validation or _tail_validation_snapshot_for_function_run(direct_project, func),
+                    )
+                    retry_checked_status, retry_blocker = _validated_generated_c_acceptance_8616(
+                        status=retry_result.status,
+                        payload=retry_result.payload,
+                        tail_validation_snapshot=retry_result.tail_validation,
+                        tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+                        expected_validation_stages=["structuring", "postprocess"],
+                        c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                    )
+                    if retry_checked_status != retry_result.status or retry_blocker is not None:
+                        retry_result = replace(
+                            retry_result,
+                            status=retry_checked_status,
+                            payload=retry_blocker if retry_blocker is not None else retry_result.payload,
+                            partial_payload=None if retry_blocker is not None else retry_result.partial_payload,
+                        )
+                    current_missing = _missing_call_count(direct_result.payload)
+                    retry_missing = _missing_call_count(retry_result.payload)
+                    if retry_result.status == "ok" or retry_missing < current_missing:
+                        direct_result = retry_result
+                except Exception:
+                    pass
+
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address decompilation budget")
             direct_display_addr = function_original_addr(func)
             using_rebased_direct_slice = direct_project is not project
