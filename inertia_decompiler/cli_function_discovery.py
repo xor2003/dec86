@@ -35,6 +35,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.analysis_helpers import (
+    collect_neighbor_call_targets,
     extend_cfg_for_far_calls,
     extend_cfg_for_neighbor_calls,
     patch_interrupt_service_call_sites,
@@ -91,6 +92,10 @@ from inertia_decompiler.cli_timeout import (
     _default_recovery_timeout,
     _stdout_is_interactive,
 )
+
+# Pseudo-callee DOS helper addresses (when materialized) live in a synthetic
+# high-address range, well above real 16-bit image code.
+DOS_SERVICE_BASE_ADDR = 0xF000_0000
 
 from inertia_decompiler import cli_access_traits as _cli_access_traits
 
@@ -1037,6 +1042,23 @@ def _interesting_functions(cfg, *, limit: int | None):
         functions = functions[:limit]
     return functions, total
 
+
+def _function_complexity_local(function) -> tuple[int, int]:
+    """Best-effort function complexity when cli_decompilation helper is unavailable."""
+    blocks = tuple(getattr(function, "blocks", ()) or ())
+    if blocks:
+        count = len(blocks)
+        total = 0
+        for block in blocks:
+            size = getattr(block, "size", 0)
+            if isinstance(size, int) and size > 0:
+                total += size
+        return count, total
+    block_addrs = tuple(getattr(function, "block_addrs_set", ()) or ())
+    if block_addrs:
+        return len(block_addrs), 0
+    return 0, 0
+
 def _rank_function_cfg_pairs_for_display(
     project: angr.Project,
     function_cfg_pairs: list[tuple[object, object]],
@@ -1047,7 +1069,7 @@ def _rank_function_cfg_pairs_for_display(
     direct_entry_targets = _linear_function_seed_targets(project, entry_addr, max_scan=0x180, include_jumps=False)
 
     def _display_metrics(function) -> tuple[int, int]:
-        complexity_blocks, complexity_bytes = _function_complexity(function)
+        complexity_blocks, complexity_bytes = _function_complexity_local(function)
         recovery_blocks, recovery_bytes = _function_recovery_score(function)
         return (max(complexity_blocks, recovery_blocks), max(complexity_bytes, recovery_bytes))
 
@@ -1517,6 +1539,70 @@ def _relocation_seed_targets(
                     strong_targets.add(target)
     weak_targets.difference_update(strong_targets)
     return strong_targets, weak_targets
+
+
+@dataclass(frozen=True, slots=True)
+class _SeedTrace16:
+    call_targets: frozenset[int]
+    jump_targets: frozenset[int]
+
+
+def trace_16bit_seed_candidates(
+    project,
+    code: bytes,
+    *,
+    linked_base: int,
+    windows: Sequence[tuple[int, int]],
+) -> _SeedTrace16:
+    """Collect lightweight call/jump seed candidates from 16-bit code bytes."""
+
+    def _window_contains(addr: int) -> bool:
+        return any(start <= addr < end for start, end in windows)
+
+    call_targets: set[int] = set()
+    jump_targets: set[int] = set()
+    n = len(code)
+
+    # near call rel16 / near jmp rel16
+    for off in range(max(0, n - 2)):
+        op = code[off]
+        if op == 0xE8:
+            rel = int.from_bytes(code[off + 1 : off + 3], "little", signed=True)
+            target = linked_base + off + 3 + rel
+            canonical = _resolve_x86_16_call_target(code, target - linked_base)
+            if canonical is None:
+                continue
+            resolved = linked_base + canonical
+            if _window_contains(resolved):
+                call_targets.add(resolved)
+                jump_targets.add(resolved)
+            continue
+        if op == 0xE9:
+            rel = int.from_bytes(code[off + 1 : off + 3], "little", signed=True)
+            target = linked_base + off + 3 + rel
+            canonical = _resolve_x86_16_function_start(code, target - linked_base)
+            if canonical is None:
+                continue
+            resolved = linked_base + canonical
+            if _window_contains(resolved):
+                jump_targets.add(resolved)
+
+    # far call ptr16:16
+    for off in range(max(0, n - 4)):
+        if code[off] != 0x9A:
+            continue
+        tgt_off = int.from_bytes(code[off + 1 : off + 3], "little")
+        seg = int.from_bytes(code[off + 3 : off + 5], "little")
+        target = linked_base + (seg << 4) + tgt_off
+        canonical = _resolve_x86_16_call_target(code, target - linked_base)
+        if canonical is None:
+            continue
+        resolved = linked_base + canonical
+        if _window_contains(resolved):
+            call_targets.add(resolved)
+            jump_targets.add(resolved)
+
+    return _SeedTrace16(frozenset(call_targets), frozenset(jump_targets))
 
 def _rank_exe_function_seeds(project: angr.Project) -> list[int]:
     main_object = getattr(project.loader, "main_object", None)
