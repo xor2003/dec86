@@ -1055,6 +1055,24 @@ def _validated_generated_c_acceptance_8616(
     expected_validation_stages: list[str] | tuple[str, ...],
     c_target: str = "portable-flat",
 ) -> tuple[str, str | None]:
+    def _dump_validation_failed_payload(detail: str) -> None:
+        if not isinstance(payload, str) or not payload.strip():
+            return
+        try:
+            from pathlib import Path
+            import hashlib
+            import time
+
+            root = Path("angr_platforms/.cache/validation_failed_payloads")
+            root.mkdir(parents=True, exist_ok=True)
+            digest = hashlib.sha1(payload.encode("utf-8", errors="ignore")).hexdigest()[:12]
+            stamp = int(time.time())
+            out = root / f"payload_{stamp}_{digest}.c"
+            out.write_text(payload, encoding="utf-8")
+            print(f"[tail-validation] failed payload artifact: {out}", file=sys.stderr)
+        except Exception:
+            return
+
     def _validation_fail(detail: str) -> tuple[str, str]:
         _mark_tail_validation_failed_with_blocker_8616(
             tail_validation_snapshot,
@@ -1063,6 +1081,7 @@ def _validated_generated_c_acceptance_8616(
         )
         print("[tail-validation] whole-tail validation failed across 1 functions", file=sys.stderr)
         print(f"[tail-validation] acceptance-gate detail: {detail}", file=sys.stderr)
+        _dump_validation_failed_payload(detail)
         sys.stderr.flush()
         return "validation_failed", detail
 

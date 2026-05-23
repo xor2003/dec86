@@ -36,6 +36,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import angr
+from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeBottom, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.analysis_helpers import seed_calling_conventions
@@ -302,6 +303,7 @@ from .cli_c_ast_rewrites import (
     _simplify_basic_algebraic_identities,
     _simplify_structured_c_expressions,
     _simplify_nested_mk_fp_calls,
+    _iter_c_nodes_deep,
 )
 from .cli_c_text_postprocess import (
     _align_unknown_call_names_from_cod_evidence_text,
@@ -1348,6 +1350,33 @@ def _decompile_function(
         "_inertia_structuring_enabled",
         bool(enable_structured_simplify and not small_function and not fold_values_cod_outlier),
     )
+    def _codegen_call_expr_count() -> int:
+        cfunc = getattr(dec.codegen, "cfunc", None)
+        if cfunc is None:
+            return 0
+        root = getattr(cfunc, "statements", None)
+        if root is None:
+            return 0
+        return sum(1 for node in _iter_c_nodes_deep(root) if isinstance(node, structured_c.CFunctionCall))
+
+    def _snapshot_codegen_cfunc():
+        cfunc = getattr(dec.codegen, "cfunc", None)
+        if cfunc is None:
+            return None
+        with contextlib.suppress(Exception):
+            return copy.deepcopy(cfunc)
+        return None
+
+    def _restore_codegen_cfunc(snapshot) -> bool:
+        if snapshot is None:
+            return False
+        dec.codegen.cfunc = snapshot
+        with contextlib.suppress(Exception):
+            setattr(dec.codegen.cfunc, "codegen", dec.codegen)
+        for node in _iter_c_nodes_deep(dec.codegen.cfunc):
+            with contextlib.suppress(Exception):
+                setattr(node, "codegen", dec.codegen)
+        return True
 
     def _run_stack_lowering_pass() -> bool:
         if os.environ.get("INERTIA_ENABLE_LEGACY_CLI_STACK_RERUN", "").strip().lower() not in {"1", "true", "yes", "on"}:
@@ -1379,7 +1408,20 @@ def _decompile_function(
             lambda: _materialize_callsite_stack_arguments_8616(project, dec.codegen),
             lambda: _materialize_callsite_prototypes_8616(project, dec.codegen),
         ):
+            before_calls = _codegen_call_expr_count()
+            snapshot = _snapshot_codegen_cfunc()
             if rewrite():
+                after_calls = _codegen_call_expr_count()
+                # Evidence-based semantic guard: callsite stack-fact materialization
+                # must not drop existing call expressions.
+                if after_calls < before_calls and _restore_codegen_cfunc(snapshot):
+                    logging.getLogger(__name__).warning(
+                        "Rejected callsite stack-fact rewrite due to call loss at function=%#x (%d -> %d calls)",
+                        function_original_addr(function),
+                        before_calls,
+                        after_calls,
+                    )
+                    continue
                 changed_local = True
         return changed_local
 
@@ -1573,7 +1615,21 @@ def _decompile_function(
             ):
                 continue
             pass_name = rewrite_pass_names.get(id(rewrite), getattr(rewrite, "__name__", type(rewrite).__name__))
+            before_calls = _codegen_call_expr_count()
+            snapshot = _snapshot_codegen_cfunc()
             rewrite_changed = rewrite()
+            if rewrite_changed:
+                after_calls = _codegen_call_expr_count()
+                if after_calls < before_calls and _restore_codegen_cfunc(snapshot):
+                    logging.getLogger(__name__).warning(
+                        "Rejected CLI rewrite pass due to call loss at function=%#x pass=%s idx=%d (%d -> %d calls)",
+                        function_original_addr(function),
+                        pass_name,
+                        rewrite_idx,
+                        before_calls,
+                        after_calls,
+                    )
+                    rewrite_changed = False
             if rewrite_changed:
                 iter_changed = True
                 _debug_dump_rewrite_pass_lines_8616(
@@ -2205,8 +2261,11 @@ def _prepare_function_for_decompilation(
             )
             for callsite in callsites:
                 target = None
+                ret_site = None
                 with contextlib.suppress(Exception):
                     target = function.get_call_target(callsite)
+                with contextlib.suppress(Exception):
+                    ret_site = function.get_call_return(callsite)
                 if not isinstance(target, int):
                     continue
                 callee = None
@@ -2215,10 +2274,25 @@ def _prepare_function_for_decompilation(
                 print(
                     f"[dbg] callsite-returning fn={function.addr:#x} cs={callsite:#x} "
                     f"target={target:#x} callee={getattr(callee, 'name', None)} "
-                    f"returning={getattr(callee, 'returning', None)}",
+                    f"ret={ret_site:#x} " if isinstance(ret_site, int) else
+                    f"[dbg] callsite-returning fn={function.addr:#x} cs={callsite:#x} "
+                    f"target={target:#x} callee={getattr(callee, 'name', None)} ret=None "
+                    f"returning={getattr(callee, 'returning', None)} "
+                    f"hooked={project.is_hooked(target) if hasattr(project, 'is_hooked') else None} "
+                    f"hook_no_ret={getattr(project.hooked_by(target), 'NO_RET', None) if hasattr(project, 'is_hooked') and project.is_hooked(target) else None}",
                     file=sys.stderr,
                     flush=True,
                 )
+                if isinstance(ret_site, int):
+                    print(
+                        f"[dbg] callsite-returning fn={function.addr:#x} cs={callsite:#x} "
+                        f"target={target:#x} callee={getattr(callee, 'name', None)} ret={ret_site:#x} "
+                    f"returning={getattr(callee, 'returning', None)} "
+                    f"hooked={project.is_hooked(target) if hasattr(project, 'is_hooked') else None} "
+                    f"hook_no_ret={getattr(project.hooked_by(target), 'NO_RET', None) if hasattr(project, 'is_hooked') and project.is_hooked(target) else None}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         except Exception:
             pass
     return created_helper_stubs
