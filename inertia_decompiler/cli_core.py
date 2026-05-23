@@ -567,10 +567,10 @@ def _function_recovery_detail(stage: str | None) -> str | None:
 
 def _bounded_non_optimized_timeout(timeout: int) -> int:
     # The non-optimized slice path is our recovery fallback after bounded
-    # function discovery times out.  A 2s cap was too tight for small COD
-    # procedures that decompile in ~1.5-2s plus setup overhead, causing
-    # nondeterministic fallback-to-timeout flapping in corpus runs.
-    return min(max(1, timeout), 5)
+    # function discovery times out. Very small caps cause deterministic
+    # failures for medium procedures that need project/slice setup plus
+    # decompiler warmup before emitting fallback C.
+    return min(max(1, timeout), 20)
 
 def _direct_addr_wall_clock_budget(timeout: int, *, effective_timeout: int | None = None) -> int:
     # One-function direct-address recovery may chain bounded recovery,
@@ -3623,6 +3623,22 @@ def main(argv: list[str] | None = None) -> int:
             },
             key=lambda item: (item.casefold(), item),
         )
+        dead_setup_candidates = 0
+        dead_setup_pruned = 0
+        dead_setup_refused = 0
+        dead_setup_escaped = 0
+        for result in result_map.values():
+            function_obj = getattr(result, "function", None)
+            info = getattr(function_obj, "info", None)
+            if not isinstance(info, dict):
+                continue
+            ds = info.get("x86_16_dead_setup")
+            if not isinstance(ds, dict):
+                continue
+            dead_setup_candidates += int(ds.get("dead_setup_candidates", 0) or 0)
+            dead_setup_pruned += int(ds.get("dead_setup_pruned", 0) or 0)
+            dead_setup_refused += int(ds.get("dead_setup_refused", 0) or 0)
+            dead_setup_escaped += int(ds.get("dead_setup_escaped", 0) or 0)
         emit_file_decompilation_summary(
             project,
             lst_metadata,
@@ -3632,6 +3648,10 @@ def main(argv: list[str] | None = None) -> int:
             skipped_signature_labels=skipped_signature_labels,
             same_family_retry_stops=same_family_retry_stops,
             fallback_family_labels=fallback_family_labels,
+            dead_setup_candidates=dead_setup_candidates,
+            dead_setup_pruned=dead_setup_pruned,
+            dead_setup_refused=dead_setup_refused,
+            dead_setup_escaped=dead_setup_escaped,
         )
         if _timing_output_enabled():
             _emit_function_timing_summary(function_tasks, result_map)
@@ -3873,6 +3893,22 @@ def main(argv: list[str] | None = None) -> int:
         },
         key=lambda item: (item.casefold(), item),
     )
+    dead_setup_candidates = 0
+    dead_setup_pruned = 0
+    dead_setup_refused = 0
+    dead_setup_escaped = 0
+    for result in result_map.values():
+        function_obj = getattr(result, "function", None)
+        info = getattr(function_obj, "info", None)
+        if not isinstance(info, dict):
+            continue
+        ds = info.get("x86_16_dead_setup")
+        if not isinstance(ds, dict):
+            continue
+        dead_setup_candidates += int(ds.get("dead_setup_candidates", 0) or 0)
+        dead_setup_pruned += int(ds.get("dead_setup_pruned", 0) or 0)
+        dead_setup_refused += int(ds.get("dead_setup_refused", 0) or 0)
+        dead_setup_escaped += int(ds.get("dead_setup_escaped", 0) or 0)
     emit_file_decompilation_summary(
         project,
         lst_metadata,
@@ -3882,6 +3918,10 @@ def main(argv: list[str] | None = None) -> int:
         skipped_signature_labels=skipped_signature_labels,
         same_family_retry_stops=same_family_retry_stops,
         fallback_family_labels=fallback_family_labels,
+        dead_setup_candidates=dead_setup_candidates,
+        dead_setup_pruned=dead_setup_pruned,
+        dead_setup_refused=dead_setup_refused,
+        dead_setup_escaped=dead_setup_escaped,
     )
     if _timing_output_enabled():
         _emit_function_timing_summary(function_tasks, result_map)
