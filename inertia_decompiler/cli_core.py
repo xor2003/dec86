@@ -2744,63 +2744,98 @@ def main(argv: list[str] | None = None) -> int:
                     return 10**9
                 return len(_missing_expected_calls_from_embedded_evidence_8616(payload_text))
 
-            # Evidence-first retry: a repeated direct run can produce a strictly
-            # better semantic candidate. Keep the one with fewer missing
-            # source-evidenced calls before entering heavy fallback fan-out.
+            def _candidate_rank(result: FunctionWorkResult) -> tuple[int, int, int, int, int, int]:
+                text = _candidate_text_for_missing_call_score(result)
+                missing = _missing_call_count(text)
+                arg_class_violations = len(_arg_class_violations_8616(text))
+                call_order_violations = len(_call_order_gate_violations_8616(text))
+                side_effect_floor_violation = 1 if _side_effect_floor_violation_8616(text) else 0
+                body = _extract_function_body_text_8616(_strip_comment_blocks_8616(text))
+                present_calls = sum(
+                    1
+                    for name in _CALL_TOKEN_RE.findall(body)
+                    if name not in {"if", "for", "while", "switch", "return", "sizeof"}
+                )
+                loop_violation = 1 if _loop_presence_violation_8616(text) else 0
+                return (
+                    -missing,
+                    -arg_class_violations,
+                    -call_order_violations,
+                    -side_effect_floor_violation,
+                    -loop_violation,
+                    present_calls,
+                )
+
+            # Evidence-first retry: repeated direct runs can land on different
+            # internal lanes. Keep the candidate with strongest source-call
+            # preservation before entering heavy fallback fan-out.
             if direct_result.status == "validation_failed":
                 best_direct_candidate = direct_result
-                best_direct_missing = _missing_call_count(_candidate_text_for_missing_call_score(direct_result))
-                try:
-                    retry_status, retry_payload, retry_partial, *retry_extra = _run_with_timeout_in_daemon_thread(
-                        direct_decompile_job,
-                        timeout=max(1, min(args.timeout, 30)),
-                        thread_name_prefix="direct-decomp-retry",
-                    )
-                    retry_tail_validation = None
-                    for extra in retry_extra:
-                        if isinstance(extra, dict):
-                            retry_tail_validation = dict(extra)
-                    retry_result = FunctionWorkResult(
-                        index=1,
-                        status=retry_status,
-                        payload=retry_payload,
-                        debug_output="",
-                        function=func,
-                        function_cfg=cfg,
-                        partial_payload=retry_partial,
-                        tail_validation=retry_tail_validation or _tail_validation_snapshot_for_function_run(direct_project, func),
-                    )
-                    retry_checked_status, retry_blocker = _validated_generated_c_acceptance_8616(
-                        status=retry_result.status,
-                        payload=retry_result.payload,
-                        tail_validation_snapshot=retry_result.tail_validation,
-                        tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
-                        expected_validation_stages=["structuring", "postprocess"],
-                        c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
-                    )
-                    if retry_checked_status != retry_result.status or retry_blocker is not None:
-                        retry_preserved_candidate = (
-                            retry_result.partial_payload
-                            if isinstance(retry_result.partial_payload, str) and retry_result.partial_payload.strip()
-                            else (retry_result.payload if isinstance(retry_result.payload, str) and retry_result.payload.strip() else None)
+                best_direct_rank = _candidate_rank(direct_result)
+                retry_count = 2
+                for retry_idx in range(retry_count):
+                    try:
+                        retry_status, retry_payload, retry_partial, *retry_extra = _run_with_timeout_in_daemon_thread(
+                            direct_decompile_job,
+                            timeout=max(1, min(args.timeout, 30)),
+                            thread_name_prefix=f"direct-decomp-retry-{retry_idx + 1}",
                         )
-                        retry_result = replace(
-                            retry_result,
-                            status=retry_checked_status,
-                            payload=retry_blocker if retry_blocker is not None else retry_result.payload,
-                            partial_payload=retry_preserved_candidate if retry_blocker is not None else retry_result.partial_payload,
+                        retry_tail_validation = None
+                        for extra in retry_extra:
+                            if isinstance(extra, dict):
+                                retry_tail_validation = dict(extra)
+                        retry_result = FunctionWorkResult(
+                            index=1,
+                            status=retry_status,
+                            payload=retry_payload,
+                            debug_output="",
+                            function=func,
+                            function_cfg=cfg,
+                            partial_payload=retry_partial,
+                            tail_validation=retry_tail_validation
+                            or _tail_validation_snapshot_for_function_run(direct_project, func),
                         )
-                    current_missing = _missing_call_count(_candidate_text_for_missing_call_score(direct_result))
-                    retry_missing = _missing_call_count(_candidate_text_for_missing_call_score(retry_result))
-                    if retry_result.status == "ok" or retry_missing < current_missing:
-                        direct_result = retry_result
-                    if retry_missing < best_direct_missing:
-                        best_direct_candidate = retry_result
-                        best_direct_missing = retry_missing
-                except Exception:
-                    pass
-                if direct_result.status != "ok" and best_direct_missing < _missing_call_count(_candidate_text_for_missing_call_score(direct_result)):
-                    direct_result = best_direct_candidate
+                        retry_checked_status, retry_blocker = _validated_generated_c_acceptance_8616(
+                            status=retry_result.status,
+                            payload=retry_result.payload,
+                            tail_validation_snapshot=retry_result.tail_validation,
+                            tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+                            expected_validation_stages=["structuring", "postprocess"],
+                            c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                        )
+                        if retry_checked_status != retry_result.status or retry_blocker is not None:
+                            retry_preserved_candidate = (
+                                retry_result.partial_payload
+                                if isinstance(retry_result.partial_payload, str) and retry_result.partial_payload.strip()
+                                else (
+                                    retry_result.payload
+                                    if isinstance(retry_result.payload, str) and retry_result.payload.strip()
+                                    else None
+                                )
+                            )
+                            retry_result = replace(
+                                retry_result,
+                                status=retry_checked_status,
+                                payload=retry_blocker if retry_blocker is not None else retry_result.payload,
+                                partial_payload=retry_preserved_candidate
+                                if retry_blocker is not None
+                                else retry_result.partial_payload,
+                            )
+                        retry_rank = _candidate_rank(retry_result)
+                        if retry_result.status == "ok":
+                            direct_result = retry_result
+                            best_direct_candidate = retry_result
+                            best_direct_rank = retry_rank
+                            break
+                        if retry_rank > best_direct_rank:
+                            best_direct_candidate = retry_result
+                            best_direct_rank = retry_rank
+                    except Exception:
+                        continue
+                if direct_result.status != "ok":
+                    current_rank = _candidate_rank(direct_result)
+                    if best_direct_rank > current_rank:
+                        direct_result = best_direct_candidate
 
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address decompilation budget")
             direct_display_addr = function_original_addr(func)
