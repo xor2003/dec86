@@ -213,6 +213,18 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
                 missing_counts[name] -= 1
     else:
         ordered_missing = list(missing)
+    def _summary_looks_loop_carried_arg_8616(summary_obj) -> bool:
+        if summary_obj is None:
+            return False
+        raw_sources = tuple(getattr(summary_obj, "arg_sources", ()) or ())
+        for src in raw_sources:
+            if not isinstance(src, tuple) or len(src) != 2:
+                continue
+            base, disp = src
+            if base == "bp" and isinstance(disp, int):
+                return True
+        return False
+
     for idx, name in enumerate(ordered_missing):
         callee_func = project.kb.functions.function(name=name, create=False)
         seeded_args = _known_default_args_for_missing_8616(name, codegen)
@@ -220,19 +232,23 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
         call = CFunctionCall(name, callee_func, call_args, codegen=codegen)
         call_stmt = structured_c.CExpressionStatement(call, codegen=codegen)
         inserted_in_loop = False
+        summary_candidates = expected_summary_by_name.get(normalize_callee_name_8616(name) or name, [])
+        preferred_summary = summary_candidates[0] if summary_candidates else None
+        loop_carried_missing = _summary_looks_loop_carried_arg_8616(preferred_summary)
         if (
-            idx == 0
-            and source_sequence
-            and source_sequence[0] == name
-            and first_empty_loop_body is not None
-        ):
+            (
+                idx == 0
+                and source_sequence
+                and source_sequence[0] == name
+            )
+            or loop_carried_missing
+        ) and first_empty_loop_body is not None:
             loop_body_statements = list(getattr(first_empty_loop_body, "statements", ()) or ())
             loop_body_statements.append(call_stmt)
             first_empty_loop_body.statements = loop_body_statements
             inserted_in_loop = True
         if not inserted_in_loop:
             mutable_statements.insert(insert_at, call_stmt)
-        summary_candidates = expected_summary_by_name.get(normalize_callee_name_8616(name) or name, [])
         if summary_candidates:
             summary_map[id(call)] = summary_candidates.pop(0)
         if not inserted_in_loop:
@@ -275,6 +291,51 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             "_inertia_direct_call_floor_recovered_count",
             int(getattr(codegen, "_inertia_direct_call_floor_recovered_count", 0)) + len(missing),
         )
+    if (not changed) and source_sequence:
+        empty_loop_bodies = _empty_loop_bodies_8616(root_statements)
+        if len(empty_loop_bodies) >= 2:
+            mutable_statements = list(root_statements)
+            call_stmt_indexes: list[int] = []
+            call_stmt_names: list[str] = []
+            for idx, stmt in enumerate(mutable_statements):
+                expr = getattr(stmt, "expr", None)
+                if not isinstance(expr, CFunctionCall):
+                    continue
+                normalized = normalize_callee_name_8616(_call_node_name_8616(expr)) or _call_node_name_8616(expr)
+                if not isinstance(normalized, str) or not normalized:
+                    continue
+                call_stmt_indexes.append(idx)
+                call_stmt_names.append(normalized)
+            expected = [name for name in source_sequence if isinstance(name, str) and name]
+            if expected and call_stmt_names[: len(expected)] == expected:
+                first_body = empty_loop_bodies[0]
+                second_body = empty_loop_bodies[1]
+                first_idx = call_stmt_indexes[0]
+                second_indexes = call_stmt_indexes[1: len(expected)]
+                first_body_statements = list(getattr(first_body, "statements", ()) or ())
+                second_body_statements = list(getattr(second_body, "statements", ()) or ())
+                first_body_statements.append(mutable_statements[first_idx])
+                for idx in second_indexes:
+                    second_body_statements.append(mutable_statements[idx])
+                first_body.statements = first_body_statements
+                second_body.statements = second_body_statements
+                remove_indexes = {first_idx, *second_indexes}
+                mutable_statements = [
+                    stmt for idx, stmt in enumerate(mutable_statements) if idx not in remove_indexes
+                ]
+                updated_statements = mutable_statements if isinstance(root_statements, list) else tuple(mutable_statements)
+                root.statements = updated_statements
+                if hasattr(root, "statements"):
+                    with contextlib.suppress(Exception):
+                        cfunc.body = root
+                cfunc_statements = getattr(cfunc, "statements", None)
+                if root is not cfunc_statements and isinstance(cfunc_statements, (list, tuple)):
+                    cfunc.statements = list(updated_statements) if isinstance(cfunc_statements, list) else tuple(updated_statements)
+                cfunc_body = getattr(cfunc, "body", None)
+                body_statements = getattr(cfunc_body, "statements", None)
+                if cfunc_body is not None and cfunc_body is not root and isinstance(body_statements, (list, tuple)):
+                    cfunc_body.statements = list(updated_statements) if isinstance(body_statements, list) else tuple(updated_statements)
+                changed = True
     return changed
 
 
@@ -287,6 +348,20 @@ def _first_empty_loop_body_8616(statements) -> object | None:
             if hasattr(stmt, "condition") or hasattr(stmt, "cond"):
                 return body
     return None
+
+
+def _empty_loop_bodies_8616(statements) -> list[object]:
+    bodies: list[object] = []
+    for stmt in statements:
+        body = getattr(stmt, "body", None)
+        body_statements = getattr(body, "statements", None)
+        if not isinstance(body_statements, (list, tuple)):
+            continue
+        if len(body_statements) != 0:
+            continue
+        if hasattr(stmt, "condition") or hasattr(stmt, "cond"):
+            bodies.append(body)
+    return bodies
 
 
 def _rendered_call_names_8616(codegen, cfunc) -> tuple[list[str], bool]:
