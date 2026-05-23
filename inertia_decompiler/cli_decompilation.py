@@ -1860,6 +1860,14 @@ def _direct_call_stub_filter_regions(project: angr.Project, function) -> tuple[l
     return local_ranges, original_region
 
 def _register_direct_call_target_function_stubs(project: angr.Project, function, cod_metadata: CODProcMetadata | None = None) -> int:
+    stack_probe_names = {"anchkstk", "__anchkstk", "_anchkstk", "analloca_probe", "__analloca_probe"}
+
+    def _is_stack_probe_name(name: str | None) -> bool:
+        if not isinstance(name, str):
+            return False
+        normalized = name.strip().lower().lstrip("_")
+        return normalized in stack_probe_names
+
     def _original_callee_name(slice_target: int) -> str | None:
         original_project = getattr(project, "_inertia_original_project", None)
         original_delta = getattr(project, "_inertia_original_linear_delta", None)
@@ -2007,6 +2015,12 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
                             stub_name,
                             ex,
                         )
+                # Evidence-based control-flow guard:
+                # stack-probe helpers (aNchkstk family) return to caller and
+                # must not terminate function recovery as noreturn calls.
+                if _is_stack_probe_name(getattr(stub, "name", None)):
+                    with contextlib.suppress(Exception):
+                        stub.returning = True
                 created += 1
             except Exception as ex:
                 logging.getLogger(__name__).debug(
