@@ -31,6 +31,7 @@ class LoopConfig:
     out_dir: Path
     marker_file: Path
     goal_marker_file: Path | None
+    goal_stop_reason: str | None
     stop_file: Path | None
     goal_cmd: str | None
     status_cmd: str | None
@@ -71,11 +72,11 @@ def _run_codex_iteration(cfg: LoopConfig, iteration: int) -> IterationResult:
 
     cmd = [
         cfg.codex_bin,
-        "resume",
-        "--no-alt-screen",
+        "exec",
         "-C",
         str(cfg.cwd),
         *cfg.extra_codex_args,
+        "resume",
     ]
     if cfg.resume_last:
         cmd.append("--last")
@@ -125,7 +126,15 @@ def _run_codex_iteration(cfg: LoopConfig, iteration: int) -> IterationResult:
 
 def _goal_met(cfg: LoopConfig) -> StopReason | None:
     if cfg.goal_marker_file is not None and cfg.goal_marker_file.exists():
-        return StopReason.GOAL_MARKER_EXISTS
+        if cfg.goal_stop_reason:
+            try:
+                payload = json.loads(cfg.goal_marker_file.read_text(encoding="utf-8"))
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and str(payload.get("stop_reason", "")).strip() == cfg.goal_stop_reason:
+                return StopReason.GOAL_MARKER_EXISTS
+        else:
+            return StopReason.GOAL_MARKER_EXISTS
     if cfg.goal_cmd:
         rc, _ = _run_shell(cfg.goal_cmd, cwd=cfg.cwd)
         if rc == 0:
@@ -202,17 +211,37 @@ def run_loop(cfg: LoopConfig) -> StopReason:
 def _parse_args() -> LoopConfig:
     p = argparse.ArgumentParser(description="Harness loop above `codex resume`.")
     p.add_argument("--prompt", required=True, help="Prompt sent to `codex resume` each iteration.")
-    p.add_argument("--max-iterations", type=int, default=100)
-    p.add_argument("--stagnation-limit", type=int, default=20)
+    p.add_argument("--max-iterations", type=int, default=200)
+    p.add_argument("--stagnation-limit", type=int, default=30)
     p.add_argument("--sleep-sec", type=float, default=0.5)
     p.add_argument("--out-dir", type=Path, default=Path("angr_platforms/.cache/codex_resume_loop"))
     p.add_argument("--marker-file", type=Path, default=Path("angr_platforms/.cache/codex_resume_loop/DONE.marker.json"))
-    p.add_argument("--goal-marker-file", type=Path, default=None, help="Stop when this file appears.")
+    p.add_argument(
+        "--goal-marker-file",
+        type=Path,
+        default=Path("angr_platforms/.cache/auto_decomp_loop/DONE.marker.json"),
+        help="Goal marker file to watch (default: auto_decomp_loop done marker).",
+    )
+    p.add_argument(
+        "--goal-stop-reason",
+        default="goals_met",
+        help="When --goal-marker-file exists, require this stop_reason value inside marker JSON (default: goals_met). Use empty string to accept any marker.",
+    )
     p.add_argument("--stop-file", type=Path, default=None, help="External kill-switch file.")
     p.add_argument("--goal-cmd", default=None, help="Shell command; exit code 0 means done.")
-    p.add_argument("--status-cmd", default=None, help="Shell command to collect status each iteration.")
-    p.add_argument("--session-id", default=None, help="Optional explicit session id/thread for `codex resume`.")
-    p.add_argument("--no-last", action="store_true", help="Do not use `--last`; requires --session-id.")
+    p.add_argument(
+        "--status-cmd",
+        default="test -f angr_platforms/.cache/auto_decomp_loop/DONE.marker.json",
+        help="Shell command to collect status each iteration.",
+    )
+    p.add_argument("--session-id", default=None, help="Explicit session id/thread for `codex resume`.")
+    p.add_argument(
+        "--last",
+        dest="resume_last",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use --last with `codex resume` (default: true). Use --no-last to require --session-id.",
+    )
     p.add_argument("--codex-bin", default="codex")
     p.add_argument("--cwd", type=Path, default=Path.cwd())
     p.add_argument(
@@ -223,8 +252,7 @@ def _parse_args() -> LoopConfig:
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 
-    resume_last = not args.no_last
-    if not resume_last and not args.session_id:
+    if not bool(args.resume_last) and not args.session_id:
         p.error("--no-last requires --session-id")
 
     return LoopConfig(
@@ -235,11 +263,12 @@ def _parse_args() -> LoopConfig:
         out_dir=args.out_dir,
         marker_file=args.marker_file,
         goal_marker_file=args.goal_marker_file,
+        goal_stop_reason=(str(args.goal_stop_reason).strip() or None),
         stop_file=args.stop_file,
         goal_cmd=args.goal_cmd,
         status_cmd=args.status_cmd,
-        resume_last=resume_last,
-        session_id=args.session_id,
+        resume_last=bool(args.resume_last),
+        session_id=str(args.session_id) if args.session_id is not None else None,
         codex_bin=args.codex_bin,
         cwd=args.cwd.resolve(),
         extra_codex_args=tuple(shlex.split(args.extra_codex_args)),
@@ -256,4 +285,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
