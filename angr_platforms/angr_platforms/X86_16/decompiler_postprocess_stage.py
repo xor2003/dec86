@@ -1308,6 +1308,23 @@ def _is_direct_callsite_helper_delta_only_8616(project, function, validation: di
     # Accept helper-call deltas when every added helper target can be justified
     # by direct callsite evidence after normalization.
     if not expected_targets:
+        expected_targets = set()
+    # Fallback evidence lane: source call names from optional COD/sidecar.
+    func_addr = getattr(function, "addr", None)
+    if isinstance(func_addr, int):
+        try:
+            from .decompiler_postprocess_calls import _cod_source_call_names_8616  # local import avoids cycle
+            for source_name in _cod_source_call_names_8616(project, func_addr):
+                if not isinstance(source_name, str) or not source_name:
+                    continue
+                expected_targets.add(f"name:{source_name}")
+                normalized = normalize_callee_name_8616(source_name)
+                if isinstance(normalized, str) and normalized:
+                    expected_targets.add(f"name:{normalized}")
+                    expected_targets.add(f"name:_{normalized}")
+        except Exception:
+            pass
+    if not expected_targets:
         return False
     return set(added).issubset(expected_targets)
 
