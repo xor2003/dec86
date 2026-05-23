@@ -2622,6 +2622,17 @@ def _recover_lst_function(
         )
         if use_rebased_exact_slice:
             code = bytes(project.loader.memory.load(slice_plan.original_start, slice_plan.original_end - slice_plan.original_start))
+            # Guard against low-signal rebased slices (commonly NOP-padded due
+            # to weak region evidence). These slices tend to recover incorrect
+            # call targets and structurings while still "decompiling".
+            if code:
+                nop_ratio = float(code.count(0x90)) / float(len(code))
+                if nop_ratio > 0.30:
+                    use_rebased_exact_slice = False
+            if not use_rebased_exact_slice:
+                # Fall through to regular recovery lanes below.
+                pass
+        if use_rebased_exact_slice:
             slice_project = _build_project_from_bytes(
                 code,
                 base_addr=slice_plan.slice_base,
