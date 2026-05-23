@@ -304,6 +304,7 @@ from .cli_c_ast_rewrites import (
     _simplify_nested_mk_fp_calls,
 )
 from .cli_c_text_postprocess import (
+    _align_unknown_call_names_from_cod_evidence_text,
     _annotate_cod_proc_output,
     _collapse_annotated_stack_aliases_text,
     _collapse_duplicate_type_keywords_text,
@@ -1639,6 +1640,8 @@ def _decompile_function(
     _debug_dump_calls_8616("post-prune-trailing-generic-return", formatted, debug_call_addr)
     formatted = _materialize_annotated_cod_declarations_text(formatted, function, effective_cod_metadata)
     _debug_dump_calls_8616("post-materialize-annotated-cod-decls", formatted, debug_call_addr)
+    formatted = _align_unknown_call_names_from_cod_evidence_text(formatted)
+    _debug_dump_calls_8616("post-align-unknown-call-names-from-cod", formatted, debug_call_addr)
     formatted = _normalize_portable_flat_main_signature_text(
         formatted,
         function,

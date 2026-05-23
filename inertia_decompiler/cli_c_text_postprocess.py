@@ -264,7 +264,7 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
     if not lines:
         return c_text
     prototype_re = re.compile(
-        r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s*(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
+        r"^\s*(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
     )
 
     def _split_top_level_args(args_text: str) -> list[str]:
@@ -2154,6 +2154,111 @@ def _sanitize_mangled_autonames_text(c_text: str) -> str:
         return match.group("sub") or match.group("dos") or match.group(0)
 
     return token_re.sub(_replace, c_text)
+
+
+def _align_unknown_call_names_from_cod_evidence_text(c_text: str) -> str:
+    """Rename unknown call targets (sub_*) using COD call-order evidence comments.
+
+    Evidence source: `* calls = ...` comment emitted from parsed COD metadata.
+    This pass only changes names and only when order-matched evidence exists.
+    """
+    lines = c_text.splitlines()
+    if not lines:
+        return c_text
+
+    calls_line = None
+    for line in lines:
+        match = re.match(r"^\s*\*\s*calls\s*=\s*(?P<names>.+?)\s*$", line)
+        if match is not None:
+            calls_line = match.group("names")
+            break
+    if not isinstance(calls_line, str):
+        return c_text
+
+    def _norm_name(name: str | None) -> str | None:
+        if not isinstance(name, str):
+            return None
+        text = name.strip()
+        if not text:
+            return None
+        while text.startswith("_"):
+            text = text[1:]
+        return text or None
+
+    expected = [_norm_name(part.strip()) for part in calls_line.split(",")]
+    expected = [name for name in expected if isinstance(name, str) and name]
+    if not expected:
+        return c_text
+
+    call_re = re.compile(r"^(?P<indent>\s*)(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^;\n{}]*)\)\s*;\s*$")
+    proto_re = re.compile(
+        r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
+    )
+
+    # Gather body calls in source order.
+    body_calls: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("///", "/*", "*", "*/", "//")):
+            continue
+        m = call_re.match(stripped)
+        if m is None:
+            continue
+        name = _norm_name(m.group("name"))
+        if isinstance(name, str):
+            body_calls.append((idx, name))
+    if not body_calls:
+        return c_text
+
+    rename_map: dict[str, str] = {}
+    exp_idx = 0
+    for _line_idx, actual in body_calls:
+        if exp_idx >= len(expected):
+            break
+        want = expected[exp_idx]
+        if actual == want:
+            exp_idx += 1
+            continue
+        if actual.startswith("sub_") and not want.startswith("sub_"):
+            rename_map.setdefault(actual, want)
+            exp_idx += 1
+
+    if not rename_map:
+        return c_text
+
+    changed = False
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        m_call = call_re.match(stripped)
+        if m_call is not None:
+            name = _norm_name(m_call.group("name"))
+            replacement = rename_map.get(name or "")
+            if isinstance(replacement, str):
+                lines[idx] = re.sub(
+                    rf"^(\s*){re.escape(m_call.group('name'))}\b",
+                    rf"\1{replacement}",
+                    line,
+                    count=1,
+                )
+                changed = True
+                continue
+        m_proto = proto_re.match(stripped)
+        if m_proto is not None:
+            name = _norm_name(m_proto.group("name"))
+            replacement = rename_map.get(name or "")
+            if isinstance(replacement, str):
+                lines[idx] = (
+                    f"{m_proto.group('indent')}{m_proto.group('ret')} {replacement}"
+                    f"({m_proto.group('args')});"
+                )
+                changed = True
+
+    if not changed:
+        return c_text
+    out = "\n".join(lines)
+    if c_text.endswith("\n"):
+        out += "\n"
+    return out
 
 def _prune_trailing_generic_return_text(c_text: str) -> str:
     trailing_newline = c_text.endswith("\n")

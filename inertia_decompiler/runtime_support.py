@@ -149,6 +149,8 @@ def install_angr_peephole_expr_bitwidth_guard(walker_cls, project=None) -> objec
         return replacement
 
     def _guarded_handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):
+        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
+            return expr
         try:
             expr = super(walker_cls, self)._handle_expr(expr_idx, expr, stmt_idx, stmt, block)
         except AssertionError:
@@ -377,6 +379,7 @@ def guard_angr_clinic_stage_markers(project):
     import time as _time
     from angr.analyses.decompiler.block_simplifier import BlockSimplifier
     from angr.analyses.decompiler.clinic import Clinic
+    from angr.analyses.decompiler import utils as decompiler_utils
     from angr.analyses.decompiler.utils import peephole_optimize_multistmts, peephole_optimize_stmts
 
     orig_stage_pre_ssa = Clinic._stage_pre_ssa_level1_simplifications
@@ -385,6 +388,7 @@ def guard_angr_clinic_stage_markers(project):
     orig_stage_recover_vars = Clinic._stage_recover_variables
     orig_simplify_block = Clinic._simplify_block
     orig_peephole_optimize = BlockSimplifier._peephole_optimize
+    orig_peephole_optimize_exprs = decompiler_utils.peephole_optimize_exprs
     _t0 = _time.perf_counter()
     _last_stage: list[str] = ["start"]
     _stage_entry: list[float] = [_t0]
@@ -407,6 +411,8 @@ def guard_angr_clinic_stage_markers(project):
     def _stage_pre_ssa_level1_simplifications(self, *args, **kwargs):  # noqa: ANN001
         _emit_stage_time("clinic:pre_ssa_l1")
         project._inertia_decompiler_stage = "core:clinic:pre_ssa_level1_simplifications"
+        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
+            return self._ail_graph
         if getattr(project, "_inertia_skip_clinic_pre_ssa", False):
             return self._ail_graph
         return orig_stage_pre_ssa(self, *args, **kwargs)
@@ -421,6 +427,8 @@ def guard_angr_clinic_stage_markers(project):
     def _stage_post_ssa_level1_simplifications(self, *args, **kwargs):  # noqa: ANN001
         _emit_stage_time("clinic:post_ssa_l1")
         project._inertia_decompiler_stage = "core:clinic:post_ssa_level1_simplifications"
+        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
+            return self._ail_graph
         if getattr(project, "_inertia_skip_clinic_post_ssa", False):
             return self._ail_graph
         return orig_stage_post_ssa(self, *args, **kwargs)
@@ -428,18 +436,41 @@ def guard_angr_clinic_stage_markers(project):
     def _stage_recover_variables(self, *args, **kwargs):  # noqa: ANN001
         _emit_stage_time("clinic:recover_vars")
         project._inertia_decompiler_stage = "core:clinic:recover_variables"
+        if getattr(project, "_inertia_skip_clinic_recover_variables_full", False):
+            if getattr(self, "arg_list", None) is None:
+                self.arg_list = []
+            if getattr(self, "arg_vvars", None) is None:
+                self.arg_vvars = {}
+            if getattr(self, "vvar_to_vvar", None) is None:
+                self.vvar_to_vvar = {}
+            if getattr(self, "variable_kb", None) is None:
+                self.variable_kb = getattr(self, "kb", None)
+            if _emit_stage_logs:
+                print(
+                    "[dbg] clinic:skip-recover-variables-full"
+                    f"{_project_current_function_context_suffix(project)}",
+                    file=sys.stderr,
+                )
+                sys.stderr.flush()
+            return None
         try:
             return orig_stage_recover_vars(self, *args, **kwargs)
         except AssertionError:
-            if getattr(project, "_inertia_skip_clinic_recover_variables_assert", False):
+            if getattr(project, "_inertia_recover_variables_seed_empty", False):
+                if getattr(self, "arg_list", None) is None:
+                    self.arg_list = []
+                if getattr(self, "arg_vvars", None) is None:
+                    self.arg_vvars = {}
+                if getattr(self, "vvar_to_vvar", None) is None:
+                    self.vvar_to_vvar = {}
                 if _emit_stage_logs:
                     print(
-                        "[dbg] clinic:skip-recover-variables-assertion"
+                        "[dbg] clinic:recover-variables-seeded-empty"
                         f"{_project_current_function_context_suffix(project)}",
                         file=sys.stderr,
                     )
                     sys.stderr.flush()
-                return None
+                return orig_stage_recover_vars(self, *args, **kwargs)
             raise
 
     _simplify_count: list[int] = [0]
@@ -450,6 +481,9 @@ def guard_angr_clinic_stage_markers(project):
     def _simplify_block(self, *args, **kwargs):  # noqa: ANN001
         project._inertia_decompiler_stage = "core:clinic:simplify_block"
         block = args[0] if args else kwargs.get("block")
+        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
+            if block is not None:
+                return block
         if getattr(project, "_inertia_tiny_core_disable_peephole", False):
             if block is not None:
                 return block
@@ -484,6 +518,50 @@ def guard_angr_clinic_stage_markers(project):
         _t_start = _time.perf_counter()
         try:
             block = args[0] if args else kwargs.get("block")
+            if os.environ.get("INERTIA_DEBUG_CLINIC_FLAGS"):
+                seen = getattr(project, "_inertia_debug_clinic_flags_seen", None)
+                if not isinstance(seen, set):
+                    seen = set()
+                    setattr(project, "_inertia_debug_clinic_flags_seen", seen)
+                addr, _name, slice_addr = _project_current_function_context(project)
+                key = (addr, slice_addr, "peephole")
+                if key not in seen:
+                    seen.add(key)
+                    print(
+                        "[dbg] clinic:flags "
+                        f"skip_simplify={bool(getattr(project, '_inertia_skip_clinic_simplify_block', False))} "
+                        f"tiny_disable_peephole={bool(getattr(project, '_inertia_tiny_core_disable_peephole', False))} "
+                        f"disable_expr_guard={bool(getattr(project, '_inertia_disable_peephole_expr_guard', False))} "
+                        f"block_is_none={block is None}"
+                        f"{_project_current_function_context_suffix(project)}",
+                        file=sys.stderr,
+                    )
+                    sys.stderr.flush()
+            if getattr(project, "_inertia_skip_clinic_simplify_block", False):
+                cap = int(getattr(project, "_inertia_clinic_peephole_cap", 128) or 128)
+                key_addr = None
+                ctx = getattr(project, "_inertia_current_function_debug", None)
+                if isinstance(ctx, dict):
+                    key_addr = ctx.get("slice_addr") or ctx.get("addr")
+                if not isinstance(key_addr, int):
+                    key_addr = getattr(block, "addr", None)
+                counts = getattr(project, "_inertia_clinic_peephole_counts", None)
+                if not isinstance(counts, dict):
+                    counts = {}
+                    setattr(project, "_inertia_clinic_peephole_counts", counts)
+                key = int(key_addr) if isinstance(key_addr, int) else -1
+                count = int(counts.get(key, 0)) + 1
+                counts[key] = count
+                if count > cap:
+                    if os.environ.get("INERTIA_DEBUG_CLINIC_FLAGS"):
+                        print(
+                            "[dbg] clinic:peephole-cap-hit "
+                            f"count={count} cap={cap}{_project_current_function_context_suffix(project)}",
+                            file=sys.stderr,
+                        )
+                        sys.stderr.flush()
+                    return block
+                return block
             if block is not None and getattr(project, "_inertia_tiny_core_disable_peephole", False):
                 return block
             if block is not None and getattr(project, "_inertia_fast_block_peephole", False):
@@ -516,7 +594,32 @@ def guard_angr_clinic_stage_markers(project):
                 return new_block.copy(statements=statements)
             return orig_peephole_optimize(self, *args, **kwargs)
         finally:
-            _peephole_total[0] += _time.perf_counter() - _t_start
+            elapsed = _time.perf_counter() - _t_start
+            _peephole_total[0] += elapsed
+            if os.environ.get("INERTIA_DEBUG_CLINIC_FLAGS"):
+                stats = getattr(project, "_inertia_debug_peephole_stats", None)
+                if not isinstance(stats, dict):
+                    stats = {}
+                    setattr(project, "_inertia_debug_peephole_stats", stats)
+                addr, _name, slice_addr = _project_current_function_context(project)
+                key = (addr if isinstance(addr, int) else -1, slice_addr if isinstance(slice_addr, int) else -1)
+                calls, total = stats.get(key, (0, 0.0))
+                calls = int(calls) + 1
+                total = float(total) + float(elapsed)
+                stats[key] = (calls, total)
+                if calls in (1, 10, 50, 100, 200, 500, 1000):
+                    print(
+                        "[dbg] clinic:peephole-stats "
+                        f"calls={calls} total={total:.3f}s avg={(total / calls):.6f}s"
+                        f"{_project_current_function_context_suffix(project)}",
+                        file=sys.stderr,
+                    )
+                    sys.stderr.flush()
+
+    def _peephole_optimize_exprs_guarded(block, expr_opts):  # noqa: ANN001
+        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
+            return block
+        return orig_peephole_optimize_exprs(block, expr_opts)
 
     Clinic._stage_pre_ssa_level1_simplifications = _stage_pre_ssa_level1_simplifications
     Clinic._stage_transform_to_ssa_level1 = _stage_transform_to_ssa_level1
@@ -524,6 +627,7 @@ def guard_angr_clinic_stage_markers(project):
     Clinic._stage_recover_variables = _stage_recover_variables
     Clinic._simplify_block = _simplify_block
     BlockSimplifier._peephole_optimize = _peephole_optimize
+    decompiler_utils.peephole_optimize_exprs = _peephole_optimize_exprs_guarded
     try:
         yield
     finally:
@@ -533,6 +637,7 @@ def guard_angr_clinic_stage_markers(project):
         Clinic._stage_recover_variables = orig_stage_recover_vars
         Clinic._simplify_block = orig_simplify_block
         BlockSimplifier._peephole_optimize = orig_peephole_optimize
+        decompiler_utils.peephole_optimize_exprs = orig_peephole_optimize_exprs
 
 
 @contextlib.contextmanager

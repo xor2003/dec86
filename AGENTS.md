@@ -100,6 +100,17 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 - Unknown classification means **refuse and keep code**, never delete.
 - Passing gcc by deleting semantically live code is a hard failure.
 
+### Function-fix acceptance contract (mandatory)
+
+- For every function being fixed, run a focused function regression before and after changes.
+- If original C/COD source exists, compare output shape and call semantics against source:
+  required calls must survive with correct argument classes (value vs pointer).
+- Do not mark a function “fixed” unless:
+  1) `validation=passed`,
+  2) no semantic call loss,
+  3) output is closer to original C than previous baseline.
+- Any DCE candidate without full evidence is `UNKNOWN_REFUSE` and must be kept.
+
 ## Review checklist
 
 1. What layer? Why earliest correct layer?
