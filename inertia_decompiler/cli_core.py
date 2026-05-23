@@ -2635,6 +2635,26 @@ def main(argv: list[str] | None = None) -> int:
                 heavy_fallback_budget -= 1
                 return True
 
+            def _accept_direct_fallback_payload(payload_text: str) -> bool:
+                snapshot = _tail_validation_snapshot_for_function_run(direct_project, func)
+                checked_status, checked_blocker = _validated_generated_c_acceptance_8616(
+                    status="ok",
+                    payload=payload_text,
+                    tail_validation_snapshot=snapshot,
+                    tail_validation_enabled=_tail_validation_runtime_enabled(direct_project),
+                    expected_validation_stages=["structuring", "postprocess"],
+                    c_target=getattr(direct_project, "_inertia_c_target", "portable-flat"),
+                )
+                if checked_status == "ok":
+                    return True
+                print(
+                    f"[dbg] rejected direct fallback payload: {checked_status} "
+                    f"detail={checked_blocker or 'n/a'}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return False
+
             exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
             if direct_result.status == "empty":
                 # Allow one non-optimized known-function lane even when the
@@ -2701,7 +2721,8 @@ def main(argv: list[str] | None = None) -> int:
                                 alternate_source_c=bool(args.alternate_source_c),
                                 c_header="\n/* == c (sidecar slice fallback) == */",
                             )
-                            return 0
+                            if _accept_direct_fallback_payload(side_payload):
+                                return 0
                     except Exception:
                         pass
                 _early_slice = _try_decompile_sidecar_slice(
@@ -2722,14 +2743,15 @@ def main(argv: list[str] | None = None) -> int:
                         allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
                         binary_path=args.binary,
                     )
-                    _emit_optional_source_sidecar_c_block(
-                        args.binary,
-                        func.name,
-                        _early_slice.payload,
-                        alternate_source_c=bool(args.alternate_source_c),
-                        c_header="\n/* == c (sidecar slice fallback) == */",
-                    )
-                    return 0
+                    if _accept_direct_fallback_payload(_early_slice.payload):
+                        _emit_optional_source_sidecar_c_block(
+                            args.binary,
+                            func.name,
+                            _early_slice.payload,
+                            alternate_source_c=bool(args.alternate_source_c),
+                            c_header="\n/* == c (sidecar slice fallback) == */",
+                        )
+                        return 0
             allow_known_nonopt = (
                 (not exact_retry_blocked)
                 or (direct_result.status in {"timeout", "validation_failed"})
@@ -2761,16 +2783,17 @@ def main(argv: list[str] | None = None) -> int:
                     allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
                     binary_path=args.binary,
                 )
-                print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
-                print("/* Falling back to known-function non-optimized decompilation. */")
-                _emit_optional_source_sidecar_c_block(
-                    args.binary,
-                    func.name,
-                    known_nonopt_c,
-                    alternate_source_c=bool(args.alternate_source_c),
-                    c_header="\n/* == c (non-optimized fallback) == */",
-                )
-                return 0
+                if _accept_direct_fallback_payload(known_nonopt_c):
+                    print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
+                    print("/* Falling back to known-function non-optimized decompilation. */")
+                    _emit_optional_source_sidecar_c_block(
+                        args.binary,
+                        func.name,
+                        known_nonopt_c,
+                        alternate_source_c=bool(args.alternate_source_c),
+                        c_header="\n/* == c (non-optimized fallback) == */",
+                    )
+                    return 0
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
             generic_nonopt_result = None
             if _consume_heavy_fallback_budget():
@@ -2796,16 +2819,17 @@ def main(argv: list[str] | None = None) -> int:
                     allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
                     binary_path=args.binary,
                 )
-                print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
-                print("/* Falling back to non-optimized slice decompilation. */")
-                _emit_optional_source_sidecar_c_block(
-                    args.binary,
-                    func.name,
-                    generic_nonopt_c,
-                    alternate_source_c=bool(args.alternate_source_c),
-                    c_header="\n/* == c (non-optimized fallback) == */",
-                )
-                return 0
+                if _accept_direct_fallback_payload(generic_nonopt_c):
+                    print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
+                    print("/* Falling back to non-optimized slice decompilation. */")
+                    _emit_optional_source_sidecar_c_block(
+                        args.binary,
+                        func.name,
+                        generic_nonopt_c,
+                        alternate_source_c=bool(args.alternate_source_c),
+                        c_header="\n/* == c (non-optimized fallback) == */",
+                    )
+                    return 0
             exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
             if direct_result.status == "validation_failed":
                 # Validation-failed direct lane is frequently under-recovered
@@ -2853,14 +2877,15 @@ def main(argv: list[str] | None = None) -> int:
                         allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("sidecar_slice"),
                         binary_path=args.binary,
                     )
-                    _emit_optional_source_sidecar_c_block(
-                        args.binary,
-                        func.name,
-                        slice_result.payload,
-                        alternate_source_c=bool(args.alternate_source_c),
-                        c_header="\n/* == c (sidecar slice fallback) == */",
-                    )
-                    return 0
+                    if _accept_direct_fallback_payload(slice_result.payload):
+                        _emit_optional_source_sidecar_c_block(
+                            args.binary,
+                            func.name,
+                            slice_result.payload,
+                            alternate_source_c=bool(args.alternate_source_c),
+                            c_header="\n/* == c (sidecar slice fallback) == */",
+                        )
+                        return 0
             if precise_sidecar_regions and not using_rebased_direct_slice:
                 peer_sidecar_c = _try_decompile_peer_sidecar_slice(
                     project,
@@ -2936,16 +2961,17 @@ def main(argv: list[str] | None = None) -> int:
                     allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("non_optimized"),
                     binary_path=args.binary,
                 )
-                print(f"\n/* Decompilation {status}: {payload} */")
-                print("/* Falling back to non-optimized slice decompilation. */")
-                _emit_optional_source_sidecar_c_block(
-                    args.binary,
-                    func.name,
-                    nonopt_c,
-                    alternate_source_c=bool(args.alternate_source_c),
-                    c_header="\n/* == c (non-optimized fallback) == */",
-                )
-                return 0
+                if _accept_direct_fallback_payload(nonopt_c):
+                    print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
+                    print("/* Falling back to non-optimized slice decompilation. */")
+                    _emit_optional_source_sidecar_c_block(
+                        args.binary,
+                        func.name,
+                        nonopt_c,
+                        alternate_source_c=bool(args.alternate_source_c),
+                        c_header="\n/* == c (non-optimized fallback) == */",
+                    )
+                    return 0
             if partial_payload is not None:
                 _emit_tail_validation_snapshot_or_uncollected(
                     cfg,
@@ -2979,7 +3005,7 @@ def main(argv: list[str] | None = None) -> int:
                     allow_project_fallback=_tail_validation_fallback_allows_project_snapshot("string_intrinsic"),
                     binary_path=args.binary,
                 )
-                print(f"\n/* Decompilation {status}: {payload} */")
+                print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
                 print("/* Falling back to generic string-intrinsic recovery. */")
                 nonopt_skip_reason = describe_non_optimized_unavailable(
                     allow_heavy_fallbacks=True,
@@ -2987,7 +3013,7 @@ def main(argv: list[str] | None = None) -> int:
                     interactive_stdout=interactive_stdout,
                     max_functions=args.max_functions,
                     addr_requested=args.addr is not None,
-                    result_status=status,
+                    result_status=direct_result.status,
                     failure_stage=None,
                     nonopt_failure_detail=_non_optimized_slice_failure_detail(nonopt_result),
                 )
@@ -3013,7 +3039,7 @@ def main(argv: list[str] | None = None) -> int:
                 if sidecar_region is not None
                 else _format_asm_range(project, *_infer_linear_disassembly_window(project, func.addr))
             )
-            print(f"\n/* Decompilation {status}: {payload} */")
+            print(f"\n/* Decompilation {direct_result.status}: {direct_result.payload} */")
             print("/* Falling back to non-optimized disassembly. */")
             nonopt_failure_detail = _non_optimized_slice_failure_detail(nonopt_result)
             if nonopt_failure_detail is not None:
@@ -3024,8 +3050,8 @@ def main(argv: list[str] | None = None) -> int:
                 function_name=func.name,
                 block_count=getattr(direct_result, 'block_count', None),
                 byte_count=getattr(direct_result, 'byte_count', None),
-                exit_kind=status,
-                exit_detail=payload,
+                exit_kind=direct_result.status,
+                exit_detail=direct_result.payload,
             ):
                 print(_diag_line)
             print("\n/* == lift break probe == */")
