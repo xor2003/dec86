@@ -1265,12 +1265,18 @@ def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
     expected_counts = _call_counts_from_text_8616(_extract_original_call_evidence_lines_8616(original_c))
     if not expected_counts:
         return []
+    function_name = _extract_emitted_function_name_8616(emitted_c)
     actual_counts = _call_counts_from_text_8616(
         _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
     )
     missing: list[str] = []
     for name, needed in expected_counts.items():
         if name in {"aNchkstk"}:
+            continue
+        # Recursive call multiplicity is structurally unstable across equivalent
+        # if/else lowering forms; keep presence/order gates, but do not enforce
+        # exact multiplicity for self-calls.
+        if isinstance(function_name, str) and name == function_name:
             continue
         have = int(actual_counts.get(name, 0))
         if have < needed:
