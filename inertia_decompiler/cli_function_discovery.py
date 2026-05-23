@@ -857,6 +857,35 @@ def _count_region_local_functions(cfg, exact_region: tuple[int, int] | None) -> 
     start, end = exact_region
     return sum(1 for addr in functions.keys() if isinstance(addr, int) and start <= addr < end)
 
+
+def _best_region_function_candidate(
+    cfg,
+    *,
+    exact_region: tuple[int, int] | None,
+    preferred_addr: int | None,
+):
+    if cfg is None or exact_region is None:
+        return None
+    functions = getattr(cfg, "functions", None)
+    if functions is None:
+        return None
+    start, end = exact_region
+    best = None
+    best_rank = None
+    for candidate in functions.values():
+        caddr = getattr(candidate, "addr", None)
+        if not isinstance(caddr, int) or not (start <= caddr < end):
+            continue
+        c_blocks, c_bytes = _function_recovery_score(candidate)
+        c_truncated = _function_recovery_truncated(candidate)
+        # Prefer non-truncated, semantically richer region-local bodies.
+        distance = abs(caddr - preferred_addr) if isinstance(preferred_addr, int) else 0
+        rank = (0 if not c_truncated else 1, -c_bytes, -c_blocks, distance)
+        if best is None or rank < best_rank:
+            best = candidate
+            best_rank = rank
+    return best
+
 def _function_recovery_truncated(function) -> bool:
     info = getattr(function, "info", None)
     return isinstance(info, dict) and bool(info.get("x86_16_recovery_truncated"))
@@ -2709,6 +2738,27 @@ def _recover_lst_function(
         else:
             regions = [(addr, addr + window)]
             cfg, func = _pick_function(project, addr, regions=regions)
+
+    if exact_region is not None:
+        selected_blocks, selected_bytes = _function_recovery_score(func)
+        selected_tiny = selected_blocks <= 2 and selected_bytes <= 0x20 and not _function_recovery_truncated(func)
+        if selected_tiny:
+            promoted = _best_region_function_candidate(
+                cfg,
+                exact_region=exact_region,
+                preferred_addr=addr,
+            )
+            if promoted is not None:
+                promoted_blocks, promoted_bytes = _function_recovery_score(promoted)
+                if (promoted_bytes, promoted_blocks) > (selected_bytes, selected_blocks):
+                    print(
+                        f"[dbg] promoted exact-region candidate for {name}: "
+                        f"{func.addr:#x}({selected_blocks}/{selected_bytes}) -> "
+                        f"{promoted.addr:#x}({promoted_blocks}/{promoted_bytes})",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    func = promoted
 
     func.name = name
     return cfg, func

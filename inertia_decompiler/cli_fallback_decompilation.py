@@ -409,7 +409,11 @@ def _try_decompile_sidecar_slice(
                 thread_name_prefix="slice-fallback",
             )
     except Exception:
-        return None
+        return SliceRecoveryAttemptOutcome(
+            attempt_name="sidecar-slice",
+            status="error",
+            payload="sidecar slice timed wrapper failed",
+        )
 
 def _try_decompile_non_optimized_slice(
     project: angr.Project,
