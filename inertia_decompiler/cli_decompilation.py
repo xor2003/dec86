@@ -796,6 +796,28 @@ def _cod_proc_has_call_heavy_helper_profile(cod_metadata: CODProcMetadata | None
     call_names = tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ()))
     return len(call_names) >= 4
 
+
+def _under_recovered_call_heavy_codegen_8616(
+    rendered_text: str,
+    cod_metadata: CODProcMetadata | None,
+) -> bool:
+    if not isinstance(rendered_text, str) or not rendered_text.strip():
+        return False
+    if not _cod_proc_has_call_heavy_helper_profile(cod_metadata):
+        return False
+    expected = tuple(dict.fromkeys(getattr(cod_metadata, "call_names", ()) or ()))
+    expected_non_prologue = [str(name).lstrip("_") for name in expected if str(name).lstrip("_") not in {"aNchkstk"}]
+    if len(expected_non_prologue) < 2:
+        return False
+    body = rendered_text.split("{", 1)[-1] if "{" in rendered_text else rendered_text
+    call_token_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    found = [name for name in call_token_re.findall(body) if name not in {"if", "for", "while", "switch", "return"}]
+    found_non_prologue = [name for name in found if name not in {"aNchkstk"}]
+    if len(found_non_prologue) >= 2:
+        return False
+    has_loop = any(tok in body for tok in ("for(", "for (", "while(", "while ("))
+    return not has_loop
+
 def _decompile_function(
     project: angr.Project,
     cfg,
@@ -1591,11 +1613,25 @@ def _decompile_function(
             and (not isinstance(rendered_text, str) or not rendered_text.strip())
         ):
             rendered_text = cached_rendered_text
+        # Evidence gate: regeneration may occasionally collapse a call-heavy body
+        # to scaffolding-only text. Prefer richer cached text in that case.
+        if (
+            regenerated
+            and isinstance(cached_rendered_text, str)
+            and cached_rendered_text.strip()
+            and _under_recovered_call_heavy_codegen_8616(rendered_text, effective_cod_metadata)
+            and not _under_recovered_call_heavy_codegen_8616(cached_rendered_text, effective_cod_metadata)
+        ):
+            rendered_text = cached_rendered_text
     else:
         rendered_text = _snapshot_codegen_text(dec.codegen)
     debug_call_addr = function_original_addr(function)
     _debug_dump_calls_8616("post-structured-codegen", rendered_text, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-structured-codegen", rendered_text)
+    if _under_recovered_call_heavy_codegen_8616(rendered_text, effective_cod_metadata):
+        retried = _retry_in_isolated_project()
+        if retried is not None and retried[0] != "empty":
+            return retried
     rendered_text = _prepend_recovered_callsite_prototypes_8616(rendered_text, dec.codegen)
     _debug_dump_calls_8616("post-recovered-callsite-prototypes", rendered_text, debug_call_addr)
     if api_style in ("msc", "compiler"):

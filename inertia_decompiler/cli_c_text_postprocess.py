@@ -2190,7 +2190,10 @@ def _align_unknown_call_names_from_cod_evidence_text(c_text: str) -> str:
     if not expected:
         return c_text
 
-    call_re = re.compile(r"^(?P<indent>\s*)(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^;\n{}]*)\)\s*;\s*$")
+    call_re = re.compile(
+        r"^(?P<indent>\s*)(?:(?P<prefix>::[A-Za-z0-9_x]+::))?(?P<name>[A-Za-z_]\w*)\s*"
+        r"\((?P<args>[^;\n{}]*)\)\s*;\s*(?P<trailing>/\*.*\*/\s*)?$"
+    )
     proto_re = re.compile(
         r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*]*?)\s+(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^)]*)\)\s*;\s*$"
     )
@@ -2234,11 +2237,12 @@ def _align_unknown_call_names_from_cod_evidence_text(c_text: str) -> str:
             name = _norm_name(m_call.group("name"))
             replacement = rename_map.get(name or "")
             if isinstance(replacement, str):
-                lines[idx] = re.sub(
-                    rf"^(\s*){re.escape(m_call.group('name'))}\b",
-                    rf"\1{replacement}",
-                    line,
-                    count=1,
+                prefix = m_call.group("prefix") or ""
+                trailing = m_call.group("trailing") or ""
+                lines[idx] = (
+                    f"{m_call.group('indent')}{prefix}{replacement}"
+                    f"({m_call.group('args')});"
+                    + (f" {trailing.strip()}" if trailing else "")
                 )
                 changed = True
                 continue
