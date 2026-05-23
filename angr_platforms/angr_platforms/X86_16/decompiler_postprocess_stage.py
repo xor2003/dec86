@@ -46,6 +46,7 @@ from .pipeline.errors import PipelineHardError
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
 from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
 from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
+from .callee_name_normalization import normalize_callee_name_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
@@ -302,6 +303,16 @@ def _build_decompiler_postprocess_passes():
             True,
         ),
         DecompilerPostprocessPassSpec(
+            "_materialize_recovered_callsite_stack_arguments_8616",
+            _calls._materialize_callsite_stack_arguments_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_normalize_recovered_call_target_names_8616",
+            _calls._normalize_call_target_names_8616,
+            False,
+        ),
+        DecompilerPostprocessPassSpec(
             "_classify_return_shape_8616",
             _post._classify_return_shape_8616,
             True,
@@ -333,8 +344,10 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
             {
                 "_attach_callsite_summaries_8616",
                 "_materialize_callsite_stack_arguments_8616",
+                "_materialize_recovered_callsite_stack_arguments_8616",
                 "_materialize_callsite_prototypes_8616",
                 "_normalize_call_target_names_8616",
+                "_normalize_recovered_call_target_names_8616",
             }
         )
     simplify_structured_enabled = os.environ.get("INERTIA_ENABLE_STRUCTURED_SIMPLIFY_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -371,8 +384,10 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
             "_lower_stable_ss_stack_accesses_8616",
             "_attach_callsite_summaries_8616",
             "_materialize_callsite_stack_arguments_8616",
+            "_materialize_recovered_callsite_stack_arguments_8616",
             "_materialize_callsite_prototypes_8616",
             "_normalize_call_target_names_8616",
+            "_normalize_recovered_call_target_names_8616",
         }
         passes = tuple(
             spec for spec in DECOMPILER_POSTPROCESS_PASSES
@@ -1286,6 +1301,12 @@ def _is_direct_callsite_helper_delta_only_8616(project, function, validation: di
             callee_name = getattr(callee, "name", None)
             if isinstance(callee_name, str) and callee_name:
                 expected_targets.add(f"name:{callee_name}")
+                normalized = normalize_callee_name_8616(callee_name)
+                if isinstance(normalized, str) and normalized:
+                    expected_targets.add(f"name:{normalized}")
+                    expected_targets.add(f"name:_{normalized}")
+    # Accept helper-call deltas when every added helper target can be justified
+    # by direct callsite evidence after normalization.
     if not expected_targets:
         return False
     return set(added).issubset(expected_targets)

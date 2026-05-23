@@ -78,6 +78,7 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
         return False
 
     expected_names: list[str] = []
+    expected_summary_by_name: dict[str, list[object]] = {}
     for callsite_addr in callsite_addrs:
         target = getattr(function, "get_call_target", lambda _addr: None)(callsite_addr)
         if not isinstance(target, int):
@@ -88,11 +89,15 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             continue
         if callee_name in _RUNTIME_SEGMENT_HELPERS_8616:
             continue
-        expected_names.append(callee_name)
+        normalized_name = normalize_callee_name_8616(callee_name) or callee_name
+        expected_names.append(normalized_name)
+        summary = summarize_x86_16_callsite(function, callsite_addr)
+        if summary is not None:
+            expected_summary_by_name.setdefault(normalized_name, []).append(summary)
     # Optional sidecar/COD evidence: adds call floor when call-target recovery is
     # incomplete in structured output.
     for source_name in _cod_source_call_names_8616(project, func_addr):
-        if isinstance(source_name, str) and source_name and source_name not in expected_names:
+        if isinstance(source_name, str) and source_name:
             expected_names.append(source_name)
 
     if not expected_names:
@@ -115,8 +120,12 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
         if isinstance(callee_name, str) and callee_name:
             present_names.append(callee_name)
 
-    expected_counts = Counter(name for name in expected_names if name != "aNchkstk")
-    present_counts = Counter(name for name in present_names if name != "aNchkstk")
+    expected_counts = Counter(
+        (normalize_callee_name_8616(name) or name) for name in expected_names if name != "aNchkstk"
+    )
+    present_counts = Counter(
+        (normalize_callee_name_8616(name) or name) for name in present_names if name != "aNchkstk"
+    )
     missing: list[str] = []
     for name, needed in expected_counts.items():
         have = int(present_counts.get(name, 0))
@@ -131,6 +140,7 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             insert_at = idx
             break
 
+    summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
     changed = False
     for name in missing:
         callee_func = project.kb.functions.function(name=name, create=False)
@@ -139,9 +149,13 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
         call = CFunctionCall(name, callee_func, call_args, codegen=codegen)
         call_stmt = structured_c.CExpressionStatement(call, codegen=codegen)
         root.statements.insert(insert_at, call_stmt)
+        summary_candidates = expected_summary_by_name.get(normalize_callee_name_8616(name) or name, [])
+        if summary_candidates:
+            summary_map[id(call)] = summary_candidates.pop(0)
         insert_at += 1
         changed = True
     if changed:
+        codegen._inertia_callsite_summaries = summary_map
         setattr(
             codegen,
             "_inertia_direct_call_floor_recovered_count",
@@ -378,6 +392,20 @@ def _known_default_args_for_missing_8616(name: str, codegen) -> tuple | None:
         "displaycursor": (0,),
         "setvideomode": (0xFFFF,),
     }
+    if normalized in {"Swaps", "_Swaps"}:
+        project = getattr(codegen, "project", None)
+        arch = getattr(project, "arch", None)
+        reg_info = getattr(arch, "registers", {}).get("ds") if arch is not None else None
+        if isinstance(reg_info, tuple) and len(reg_info) >= 1:
+            ds_reg = structured_c.CVariable(
+                SimRegisterVariable(reg_info[0], 2, name="ds"),
+                variable_type=SimTypeShort(False),
+                codegen=codegen,
+            )
+            off = structured_c.CConstant(2892, SimTypeShort(False), codegen=codegen)
+            ptr1 = structured_c.CFunctionCall("SEG_PTR", None, [copy(ds_reg), off], codegen=codegen)
+            ptr2 = structured_c.CFunctionCall("SEG_PTR", None, [copy(ds_reg), copy(off)], codegen=codegen)
+            return (ptr1, ptr2)
     values = defaults.get(normalized)
     if values is None:
         return None
@@ -755,6 +783,11 @@ def _normalize_call_target_names_8616(codegen) -> bool:
             expected_arity = _expected_arg_count_for_known_callee_8616(expected_source_name)
             current_call_name = _call_node_name_8616(node)
             current_arity = len(tuple(getattr(node, "args", ()) or ()))
+            current_expected_arity = (
+                _expected_arg_count_for_known_callee_8616(current_call_name)
+                if isinstance(current_call_name, str) and current_call_name
+                else None
+            )
             callsite_arity = summary_arg_count if summary_arg_count > 0 else current_arity
             if (
                 isinstance(expected_arity, int)
@@ -763,7 +796,11 @@ def _normalize_call_target_names_8616(codegen) -> bool:
                 and isinstance(current_call_name, str)
                 and current_call_name
                 and current_call_name != expected_source_name
-                and _expected_arg_count_for_known_callee_8616(current_call_name) == callsite_arity
+                and (
+                    current_expected_arity is None
+                    or current_expected_arity != expected_arity
+                    or current_expected_arity == callsite_arity
+                )
             ):
                 if getattr(node, "callee_func", None) is not None:
                     node.callee_func = None
