@@ -2736,8 +2736,37 @@ def main(argv: list[str] | None = None) -> int:
             return 6
         if direct_result.status != "ok":
             def _candidate_text_for_missing_call_score(result: FunctionWorkResult) -> str:
-                candidate = result.partial_payload if isinstance(result.partial_payload, str) and result.partial_payload.strip() else result.payload
-                return candidate if isinstance(candidate, str) else ""
+                payload_text = result.payload if isinstance(result.payload, str) and result.payload.strip() else ""
+                partial_text = result.partial_payload if isinstance(result.partial_payload, str) and result.partial_payload.strip() else ""
+                if payload_text and not partial_text:
+                    return payload_text
+                if partial_text and not payload_text:
+                    return partial_text
+                if not payload_text and not partial_text:
+                    return ""
+
+                def _text_semantic_rank(text: str) -> tuple[int, int, int, int, int, int]:
+                    missing = len(_missing_expected_calls_from_embedded_evidence_8616(text))
+                    arg_class_violations = len(_arg_class_violations_8616(text))
+                    call_order_violations = len(_call_order_gate_violations_8616(text))
+                    side_effect_floor_violation = 1 if _side_effect_floor_violation_8616(text) else 0
+                    loop_violation = 1 if _loop_presence_violation_8616(text) else 0
+                    body = _extract_function_body_text_8616(_strip_comment_blocks_8616(text))
+                    present_calls = sum(
+                        1
+                        for name in _CALL_TOKEN_RE.findall(body)
+                        if name not in {"if", "for", "while", "switch", "return", "sizeof"}
+                    )
+                    return (
+                        -missing,
+                        -arg_class_violations,
+                        -call_order_violations,
+                        -side_effect_floor_violation,
+                        -loop_violation,
+                        present_calls,
+                    )
+
+                return payload_text if _text_semantic_rank(payload_text) >= _text_semantic_rank(partial_text) else partial_text
 
             def _missing_call_count(payload_text: str) -> int:
                 if not isinstance(payload_text, str) or not payload_text.strip():
