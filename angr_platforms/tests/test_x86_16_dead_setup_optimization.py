@@ -45,7 +45,7 @@ def _mk_cvar(codegen, name: str, reg: int):
 def test_dead_setup_prunes_unread_setup_carrier_and_updates_counters():
     codegen = _mk_codegen_with_statements([])
     vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
-    base = _mk_cvar(codegen, "s_6", 2)
+    base = _mk_cvar(codegen, "local_6", 2)
     rhs = structured_c.CBinaryOp(
         "Add",
         base,
@@ -55,6 +55,7 @@ def test_dead_setup_prunes_unread_setup_carrier_and_updates_counters():
     setup_assign = structured_c.CAssignment(vvar_1, rhs, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([setup_assign], codegen=codegen)
 
+    codegen._inertia_enable_safe_dead_setup_prune = True
     changed = _prune_dead_setup_carriers_8616(codegen)
 
     assert changed is True
@@ -79,6 +80,7 @@ def test_dead_setup_live_carrier_is_not_pruned_or_escaped():
     use_assign = structured_c.CAssignment(sink, vvar_1, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([setup_assign, use_assign], codegen=codegen)
 
+    codegen._inertia_enable_safe_dead_setup_prune = True
     changed = _prune_dead_setup_carriers_8616(codegen)
 
     assert changed is False
@@ -104,3 +106,23 @@ def test_dead_setup_escape_counter_flags_unpruned_dead_candidate():
     codegen.cfunc.statements = structured_c.CStatements([setup_assign], codegen=codegen)
 
     assert _count_dead_setup_escaped_8616(codegen) == 1
+
+
+def test_dead_setup_prune_is_disabled_by_default():
+    codegen = _mk_codegen_with_statements([])
+    vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
+    base = _mk_cvar(codegen, "s_6", 2)
+    rhs = structured_c.CBinaryOp(
+        "Add",
+        base,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    setup_assign = structured_c.CAssignment(vvar_1, rhs, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([setup_assign], codegen=codegen)
+
+    changed = _prune_dead_setup_carriers_8616(codegen)
+
+    assert changed is False
+    assert len(list(codegen.cfunc.statements.statements)) == 1
+    assert getattr(codegen, "dead_setup_prune_disabled", 0) >= 1

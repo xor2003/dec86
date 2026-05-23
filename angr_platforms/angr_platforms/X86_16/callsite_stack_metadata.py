@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import enum
 import logging
+import os
 
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CFunctionCall, CTypeCast, CUnaryOp
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
@@ -113,6 +115,22 @@ def _segment_metadata_store_8616(stmt: object, project: object, *, allow_carried
 CarrierKey8616 = tuple[str, str | int]
 
 
+class StackCarrierPruneDecision8616(enum.Enum):
+    DEFINITELY_DEAD = "definitely_dead"
+    LIVE_CALL_ARG_SETUP = "live_call_arg_setup"
+    LIVE_STACK_CARRIER = "live_stack_carrier"
+    UNKNOWN_REFUSE = "unknown_refuse"
+
+
+def _safe_dead_carrier_prune_enabled_8616(codegen: object | None) -> bool:
+    if codegen is not None:
+        attr = getattr(codegen, "_inertia_enable_safe_dead_carrier_prune", None)
+        if isinstance(attr, bool):
+            return attr
+    flag = os.environ.get("INERTIA_ENABLE_SAFE_DEAD_CARRIER_PRUNE", "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
+
+
 def _generic_stack_carrier_name_8616(node: object) -> str | None:
     while isinstance(node, CTypeCast):
         node = node.expr
@@ -222,8 +240,10 @@ def _collect_stack_carrier_assignments_8616(block: object) -> set[CarrierKey8616
     return known
 
 
-def _prune_dead_stack_carrier_assignments_8616(block: object) -> bool:
+def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | None = None) -> bool:
     """Remove dead generic address carriers left after call arguments are materialized."""
+    if not _safe_dead_carrier_prune_enabled_8616(codegen):
+        return False
     changed = False
     if not _is_plain_statement_block_8616(block):
         return False
@@ -237,16 +257,16 @@ def _prune_dead_stack_carrier_assignments_8616(block: object) -> bool:
             getattr(stmt, "else_node", None),
         ):
             if _is_plain_statement_block_8616(child):
-                changed |= _prune_dead_stack_carrier_assignments_8616(child)
+                changed |= _prune_dead_stack_carrier_assignments_8616(child, codegen=codegen)
         if _is_plain_statement_block_8616(stmt):
-            changed |= _prune_dead_stack_carrier_assignments_8616(stmt)
+            changed |= _prune_dead_stack_carrier_assignments_8616(stmt, codegen=codegen)
         for pair in getattr(stmt, "condition_and_nodes", ()) or ():
             if (
                 isinstance(pair, tuple)
                 and len(pair) == 2
                 and _is_plain_statement_block_8616(pair[1])
             ):
-                changed |= _prune_dead_stack_carrier_assignments_8616(pair[1])
+                changed |= _prune_dead_stack_carrier_assignments_8616(pair[1], codegen=codegen)
 
     known_carriers = _collect_stack_carrier_assignments_8616(block)
     live: set[CarrierKey8616] = set()
@@ -438,6 +458,6 @@ def prune_materialized_callsite_segment_metadata_8616(project: object, codegen: 
         return stack_probe_address_seen
 
     rewrite_block(root)
-    if _prune_dead_stack_carrier_assignments_8616(root):
+    if _prune_dead_stack_carrier_assignments_8616(root, codegen=codegen):
         changed = True
     return changed

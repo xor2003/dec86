@@ -11,6 +11,8 @@ This pass removes setup/carrier assignments only when they are proven dead:
 """
 
 from dataclasses import dataclass
+import enum
+import os
 import re
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -25,6 +27,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 
 __all__ = [
+    "DeadSetupDecision8616",
     "_prune_dead_setup_carriers_8616",
     "_count_dead_setup_escaped_8616",
 ]
@@ -43,12 +46,28 @@ class _Candidate:
     rhs: object
 
 
+class DeadSetupDecision8616(enum.Enum):
+    DEFINITELY_DEAD = "definitely_dead"
+    LIVE_CALL_ARG_SETUP = "live_call_arg_setup"
+    LIVE_MEMORY_WRITE = "live_memory_write"
+    LIVE_CONDITION_SOURCE = "live_condition_source"
+    LIVE_STACK_CARRIER = "live_stack_carrier"
+    LIVE_WIDENING_CARRIER = "live_widening_carrier"
+    UNKNOWN_REFUSE = "unknown_refuse"
+
+
 def _setup_counter_defaults(codegen) -> None:
     for name in (
         "dead_setup_candidates",
         "dead_setup_pruned",
         "dead_setup_refused",
         "dead_setup_escaped",
+        "dead_setup_live_call_arg",
+        "dead_setup_live_stack_carrier",
+        "dead_setup_live_widening_carrier",
+        "dead_setup_live_condition_source",
+        "dead_setup_unknown_refuse",
+        "dead_setup_prune_disabled",
     ):
         if not isinstance(getattr(codegen, name, None), int):
             setattr(codegen, name, 0)
@@ -83,6 +102,15 @@ def _is_observable_storage(lhs: CVariable) -> bool:
     if isinstance(region, str) and region.lower() in {"global", "argument", "arg"}:
         return True
     return False
+
+
+def _prune_enabled_8616(codegen) -> bool:
+    # Safe default: diagnostics-only mode unless explicitly enabled.
+    attr = getattr(codegen, "_inertia_enable_safe_dead_setup_prune", None)
+    if isinstance(attr, bool):
+        return attr
+    flag = os.environ.get("INERTIA_ENABLE_DEAD_SETUP_PRUNE", "").strip().lower()
+    return flag in {"1", "true", "yes", "on"}
 
 
 def _is_candidate_lhs(lhs: object) -> bool:
@@ -207,6 +235,53 @@ def _gather_candidates(statements) -> list[_Candidate]:
     return out
 
 
+def _rhs_mentions_flag_like_state(rhs: object) -> bool:
+    for node in _iter_c_nodes_deep_8616(rhs):
+        if not isinstance(node, CVariable):
+            continue
+        name = _var_name(node).lower()
+        if name.startswith("flags") or name.startswith("eflags"):
+            return True
+    return False
+
+
+def _rhs_looks_like_stack_carrier(rhs: object) -> bool:
+    for node in _iter_c_nodes_deep_8616(rhs):
+        if not isinstance(node, CVariable):
+            continue
+        name = _var_name(node)
+        if name.startswith("s_") or name.startswith("arg_"):
+            return True
+    return False
+
+
+def _classify_candidate_8616(cand: _Candidate, reads: dict[tuple[str, int | str], int]) -> DeadSetupDecision8616:
+    if _is_observable_storage(cand.lhs):
+        return DeadSetupDecision8616.LIVE_CALL_ARG_SETUP
+    if _rhs_has_side_effects(cand.rhs):
+        return DeadSetupDecision8616.UNKNOWN_REFUSE
+    if _rhs_mentions_flag_like_state(cand.rhs):
+        return DeadSetupDecision8616.LIVE_CONDITION_SOURCE
+    if _rhs_looks_like_stack_carrier(cand.rhs):
+        return DeadSetupDecision8616.LIVE_STACK_CARRIER
+    if reads.get(cand.key, 0) > 0:
+        return DeadSetupDecision8616.UNKNOWN_REFUSE
+    return DeadSetupDecision8616.DEFINITELY_DEAD
+
+
+def _record_decision_counter_8616(codegen, decision: DeadSetupDecision8616) -> None:
+    if decision == DeadSetupDecision8616.LIVE_CALL_ARG_SETUP:
+        setattr(codegen, "dead_setup_live_call_arg", int(getattr(codegen, "dead_setup_live_call_arg", 0)) + 1)
+    elif decision == DeadSetupDecision8616.LIVE_STACK_CARRIER:
+        setattr(codegen, "dead_setup_live_stack_carrier", int(getattr(codegen, "dead_setup_live_stack_carrier", 0)) + 1)
+    elif decision == DeadSetupDecision8616.LIVE_WIDENING_CARRIER:
+        setattr(codegen, "dead_setup_live_widening_carrier", int(getattr(codegen, "dead_setup_live_widening_carrier", 0)) + 1)
+    elif decision == DeadSetupDecision8616.LIVE_CONDITION_SOURCE:
+        setattr(codegen, "dead_setup_live_condition_source", int(getattr(codegen, "dead_setup_live_condition_source", 0)) + 1)
+    elif decision == DeadSetupDecision8616.UNKNOWN_REFUSE:
+        setattr(codegen, "dead_setup_unknown_refuse", int(getattr(codegen, "dead_setup_unknown_refuse", 0)) + 1)
+
+
 def _prune_dead_setup_carriers_8616(codegen) -> bool:
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
@@ -216,6 +291,10 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
         return False
 
     _setup_counter_defaults(codegen)
+    if not _prune_enabled_8616(codegen):
+        setattr(codegen, "dead_setup_prune_disabled", int(getattr(codegen, "dead_setup_prune_disabled", 0)) + 1)
+        # Diagnostics-only by default: conservative mode keeps semantics intact.
+        return False
     changed = False
 
     while True:
@@ -235,16 +314,12 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
             to_remove: set[int] = set()
             refused = 0
             for cand in candidates:
-                if _is_observable_storage(cand.lhs):
-                    refused += 1
+                decision = _classify_candidate_8616(cand, reads)
+                if decision == DeadSetupDecision8616.DEFINITELY_DEAD:
+                    to_remove.add(cand.stmt_index)
                     continue
-                if _rhs_has_side_effects(cand.rhs):
-                    refused += 1
-                    continue
-                if reads.get(cand.key, 0) > 0:
-                    refused += 1
-                    continue
-                to_remove.add(cand.stmt_index)
+                refused += 1
+                _record_decision_counter_8616(codegen, decision)
             total_refused += refused
             if not to_remove:
                 continue
