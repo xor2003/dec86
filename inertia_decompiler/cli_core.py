@@ -1249,13 +1249,29 @@ def _expected_call_order_from_original_8616(emitted_c: str) -> list[str]:
     original_c = _extract_original_c_comment_block_8616(emitted_c)
     if not original_c:
         return []
+    function_name = _extract_emitted_function_name_8616(emitted_c)
     order: list[str] = []
     for name in _CALL_TOKEN_RE.findall(original_c):
         if name in {"if", "for", "while", "switch", "return", "aNchkstk"}:
             continue
+        if isinstance(function_name, str) and name == function_name:
+            continue
         if not order or order[-1] != name:
             order.append(name)
     return order
+
+
+def _extract_emitted_function_name_8616(emitted_c: str) -> str | None:
+    if not isinstance(emitted_c, str) or not emitted_c:
+        return None
+    header = emitted_c.split("{", 1)[0]
+    m = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\([^()]*\)\s*$", header, flags=re.MULTILINE)
+    if m is None:
+        return None
+    name = m.group(1)
+    if name in {"if", "for", "while", "switch", "return"}:
+        return None
+    return name
 
 
 def _call_order_gate_violations_8616(emitted_c: str) -> list[str]:
