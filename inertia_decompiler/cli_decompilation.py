@@ -1914,6 +1914,13 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
     linked_base = getattr(main_object, "linked_base", None)
     max_addr = getattr(main_object, "max_addr", None)
     image_end = linked_base + max_addr + 1 if isinstance(linked_base, int) and isinstance(max_addr, int) else None
+    if os.environ.get("INERTIA_DEBUG_CALLSITE_SEEDING"):
+        print(
+            f"[dbg] callsite-seed-config fn={function.addr:#x} entry={getattr(project, 'entry', None)} "
+            f"linked_base={linked_base} image_end={image_end}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     def _parse_direct_call_target(insn) -> int | None:
         capstone_insn = getattr(insn, "insn", None)
@@ -2021,7 +2028,7 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
             if (
                 isinstance(original_target, int)
                 and original_region is not None
-                and original_region[0] <= original_target <= original_region[1]
+                and original_region[0] <= original_target < original_region[1]
             ):
                 continue
             original_label = _original_callee_name(candidate)
@@ -2062,7 +2069,7 @@ def _register_direct_call_target_function_stubs(project: angr.Project, function,
             if (
                 isinstance(original_target, int)
                 and original_region is not None
-                and original_region[0] <= original_target <= original_region[1]
+                and original_region[0] <= original_target < original_region[1]
             ):
                 continue
             seen.add(candidate)
@@ -2157,6 +2164,37 @@ def _prepare_function_for_decompilation(
     created_helper_stubs = _register_direct_call_target_function_stubs(project, function, cod_metadata=cod_metadata)
     if created_helper_stubs:
         print(f"[dbg] registered {created_helper_stubs} direct callee stub(s) for {function.addr:#x}", file=sys.stderr, flush=True)
+    if os.environ.get("INERTIA_DEBUG_FUNCTION_BLOCKS"):
+        try:
+            blocks = sorted(int(a) for a in (getattr(function, "block_addrs_set", ()) or ()) if isinstance(a, int))
+            print(
+                f"[dbg] function-blocks fn={function.addr:#x} count={len(blocks)} "
+                f"first={blocks[:8]}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            pass
+    if os.environ.get("INERTIA_DEBUG_FUNCTION_GRAPH"):
+        try:
+            graph = getattr(function, "graph", None)
+            nodes = list(getattr(graph, "nodes", lambda: [])()) if graph is not None else []
+            edges = list(getattr(graph, "edges", lambda: [])()) if graph is not None else []
+            entry_nodes = [n for n in nodes if getattr(n, "addr", None) == function.addr]
+            succ_addrs: list[int] = []
+            if graph is not None and entry_nodes:
+                for succ in graph.successors(entry_nodes[0]):
+                    saddr = getattr(succ, "addr", None)
+                    if isinstance(saddr, int):
+                        succ_addrs.append(saddr)
+            print(
+                f"[dbg] function-graph fn={function.addr:#x} nodes={len(nodes)} edges={len(edges)} "
+                f"entry_succ={sorted(set(succ_addrs))[:8]}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            pass
     if os.environ.get("INERTIA_DEBUG_CALLSITE_RETURNING"):
         try:
             callsites = tuple(getattr(function, "get_call_sites", lambda: [])() or ())

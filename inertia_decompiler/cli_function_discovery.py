@@ -2632,7 +2632,7 @@ def _recover_lst_function(
             # Keep aggressive clinic bypass only for tiny rebased slices.
             # Larger functions need normal narrowing passes to avoid
             # pathological structuring timeouts.
-            tiny_rebased_core = exact_region_size <= 0x90
+            tiny_rebased_core = exact_region_size <= 0x30
             slice_project._inertia_disable_ail_narrowing = tiny_rebased_core
             slice_project._inertia_disable_complex_expr_scan = tiny_rebased_core
             slice_project._inertia_fast_block_peephole = tiny_rebased_core
