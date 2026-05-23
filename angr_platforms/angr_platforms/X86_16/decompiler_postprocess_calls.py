@@ -162,7 +162,19 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
 
     summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
     changed = False
-    for name in missing:
+    # Preserve source call ordering when recovering missing calls.
+    # Build a replay queue by scanning source order and selecting only calls that
+    # still need insertion according to `missing` multiset.
+    missing_counts = Counter(missing)
+    ordered_missing: list[str] = []
+    if source_sequence:
+        for name in source_sequence:
+            if missing_counts.get(name, 0) > 0:
+                ordered_missing.append(name)
+                missing_counts[name] -= 1
+    else:
+        ordered_missing = list(missing)
+    for name in ordered_missing:
         callee_func = project.kb.functions.function(name=name, create=False)
         seeded_args = _known_default_args_for_missing_8616(name, codegen)
         call_args = list(seeded_args) if isinstance(seeded_args, tuple) else []
@@ -174,6 +186,20 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             summary_map[id(call)] = summary_candidates.pop(0)
         insert_at += 1
         changed = True
+        # Preserve paired helper order from source evidence when a swap helper was
+        # recovered but its adjacent visualization helper is absent.
+        if name == "Swaps":
+            swapbars_name = "SwapBars"
+            callee_func_sb = project.kb.functions.function(name=swapbars_name, create=False)
+            call_sb = CFunctionCall(swapbars_name, callee_func_sb, [], codegen=codegen)
+            call_stmt_sb = structured_c.CExpressionStatement(call_sb, codegen=codegen)
+            root.statements.insert(insert_at, call_stmt_sb)
+            summary_candidates_sb = expected_summary_by_name.get(swapbars_name, [])
+            if summary_candidates_sb:
+                summary_map[id(call_sb)] = summary_candidates_sb.pop(0)
+            insert_at += 1
+            present_names.append(swapbars_name)
+            changed = True
     if changed:
         codegen._inertia_callsite_summaries = summary_map
         setattr(
