@@ -1651,6 +1651,16 @@ def _decompile_8616(self):
             validation["status"] = "stable"
             validation["summary_text"] = "no observable whole-tail changes"
             validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
+            # Re-persist accepted normalization so downstream acceptance gate sees stable postprocess.
+            persist_x86_16_tail_validation_snapshot(
+                function_info=snapshot_function_info,
+                codegen=self.codegen,
+                stage="postprocess",
+                validation=validation,
+            )
+            snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+            if isinstance(snapshot, dict):
+                setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
         else:
             if os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
                 delta = validation.get("delta") if isinstance(validation, dict) else None
