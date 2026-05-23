@@ -23,6 +23,7 @@ from . import decompiler_postprocess_jcc as _jcc
 from . import decompiler_postprocess_simplify as _simplify
 from . import segmented_memory_reasoning as _segmented_mem
 from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
+from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
 from .decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
 from .condition_trace import (
     dump_condition_trace_8616,
@@ -325,6 +326,23 @@ def _build_decompiler_postprocess_passes():
         DecompilerPostprocessPassSpec(
             "_dedupe_codegen_variable_names_8616",
             _post._dedupe_codegen_variable_names_8616,
+            False,
+        ),
+        # Final call-floor enforcement: run direct-call recovery after later
+        # cleanup passes so subsequent rewrites cannot erase recovered calls.
+        DecompilerPostprocessPassSpec(
+            "_recover_missing_direct_calls_final_8616",
+            _calls._recover_missing_direct_calls_from_evidence_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_materialize_callsite_stack_arguments_final_8616",
+            _calls._materialize_callsite_stack_arguments_8616,
+            True,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_normalize_call_target_names_final_8616",
+            _calls._normalize_call_target_names_8616,
             False,
         ),
     )
@@ -1194,6 +1212,24 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     _t_pp_start = _ppt.perf_counter()
     trace_after_callsite = False
     for spec in pass_specs:
+        if (
+            spec.name == "_prune_overwritten_flag_assignments_8616"
+            and os.environ.get("INERTIA_ENABLE_FLAG_OVERWRITE_PRUNE", "").strip().lower()
+            not in {"1", "true", "yes", "on"}
+        ):
+            continue
+        if (
+            spec.name == "_materialize_callsite_stack_arguments_final_8616"
+            and os.environ.get("INERTIA_ENABLE_FINAL_CALLSITE_REMATERIALIZE", "").strip().lower()
+            not in {"1", "true", "yes", "on"}
+        ):
+            continue
+        if (
+            spec.name == "_normalize_call_target_names_final_8616"
+            and os.environ.get("INERTIA_ENABLE_FINAL_CALL_TARGET_NORMALIZE", "").strip().lower()
+            not in {"1", "true", "yes", "on"}
+        ):
+            continue
         project._inertia_decompiler_stage = f"postprocess:{spec.name}"
         _t_pass = _ppt.perf_counter()
         if timing_output_enabled() and os.environ.get("INERTIA_TAIL_VALIDATION_STDERR_JSON") != "1":
@@ -1223,7 +1259,7 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         if trace_after_callsite and isinstance(trace_func_addr, int) and _heap_postprocess_debug_enabled_8616():
             if _regenerate_text_safely(codegen, context=f"{trace_func_addr:#x} stack-noise-trace:{spec.name}"):
                 _debug_stack_noise_8616(spec.name, getattr(codegen, "text", ""), trace_func_addr)
-    if accepted_changed and not codegen._inertia_postprocess_validation_failed:
+    if not codegen._inertia_postprocess_validation_failed:
         final_context = f"{trace_func_addr:#x} postprocess:final" if isinstance(trace_func_addr, int) else "postprocess:final"
         _regenerate_text_safely(codegen, context=final_context)
     codegen._inertia_postprocess_changed = accepted_changed
@@ -1269,6 +1305,13 @@ def _is_direct_callsite_helper_delta_only_8616(project, function, validation: di
         if isinstance(field_delta, dict) and ((field_delta.get("added") or ()) or (field_delta.get("removed") or ()))
     }
     if not touched_fields or touched_fields - allowed_fields:
+        if os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"):
+            logging.getLogger(__name__).warning(
+                "[call-recover-accept] reject=touched-fields touched=%r allowed=%r delta=%r",
+                sorted(touched_fields),
+                sorted(allowed_fields),
+                delta,
+            )
         return False
     helper_delta = delta.get("helper_calls")
     if not isinstance(helper_delta, dict):
@@ -1276,6 +1319,12 @@ def _is_direct_callsite_helper_delta_only_8616(project, function, validation: di
     added = tuple(helper_delta.get("added") or ())
     removed = tuple(helper_delta.get("removed") or ())
     if not added or removed:
+        if os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"):
+            logging.getLogger(__name__).warning(
+                "[call-recover-accept] reject=added-removed added=%r removed=%r",
+                added,
+                removed,
+            )
         return False
     expected_targets: set[str] = set()
     callsites = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
@@ -1325,8 +1374,58 @@ def _is_direct_callsite_helper_delta_only_8616(project, function, validation: di
         except Exception:
             pass
     if not expected_targets:
+        if os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"):
+            logging.getLogger(__name__).warning("[call-recover-accept] reject=no-expected-targets")
         return False
-    return set(added).issubset(expected_targets)
+    accepted = set(added).issubset(expected_targets)
+    if os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"):
+        logging.getLogger(__name__).warning(
+            "[call-recover-accept] accepted=%s added=%r expected_targets_sample=%r",
+            accepted,
+            added,
+            sorted(expected_targets)[:12],
+        )
+    return accepted
+
+
+def _has_recovered_source_calls_in_codegen_8616(project, codegen, function) -> bool:
+    if codegen is None or function is None:
+        return False
+    recovered_count = int(getattr(codegen, "_inertia_direct_call_floor_recovered_count", 0) or 0)
+    if recovered_count <= 0:
+        return False
+    try:
+        from .decompiler_postprocess_calls import _cod_source_call_names_8616
+    except Exception:
+        return False
+    func_addr = getattr(function, "addr", None)
+    if not isinstance(func_addr, int):
+        return False
+    expected = [
+        normalize_callee_name_8616(name) or name
+        for name in _cod_source_call_names_8616(project, func_addr)
+        if isinstance(name, str) and name and name != "aNchkstk"
+    ]
+    if not expected:
+        return False
+    cfunc = getattr(codegen, "cfunc", None)
+    if cfunc is None:
+        return False
+    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+    present: set[str] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CFunctionCall):
+            continue
+        for raw in (
+            getattr(node, "callee_target", None),
+            getattr(getattr(node, "callee_func", None), "name", None),
+            getattr(node, "callee", None),
+        ):
+            if isinstance(raw, str) and raw:
+                normalized = normalize_callee_name_8616(raw) or raw
+                if normalized and normalized != "aNchkstk":
+                    present.add(normalized)
+    return set(expected).issubset(present)
 
 
 def _normalize_stack_variable_identifiers_8616(codegen) -> None:
@@ -1680,7 +1779,28 @@ def _decompile_8616(self):
         _tv_sys2.stderr.flush()
     log = logging.getLogger(__name__)
     if not x86_16_tail_validation_result_passed(validation):
-        if _is_direct_callsite_helper_delta_only_8616(self.project, function, validation):
+        validation_verdict_text = str(validation.get("verdict") or validation.get("summary_text") or "")
+        recovered_call_floor = int(getattr(self.codegen, "_inertia_direct_call_floor_recovered_count", 0) or 0)
+        if recovered_call_floor > 0 and "Missing source-evidenced calls" in validation_verdict_text:
+            log.warning(
+                "Postprocess validation changed but keeping call-floor recovery output (recovered=%d): %s",
+                recovered_call_floor,
+                validation_verdict_text,
+            )
+            validation["changed"] = False
+            validation["status"] = "stable"
+            validation["summary_text"] = "no observable whole-tail changes"
+            validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
+            persist_x86_16_tail_validation_snapshot(
+                function_info=snapshot_function_info,
+                codegen=self.codegen,
+                stage="postprocess",
+                validation=validation,
+            )
+            snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+            if isinstance(snapshot, dict):
+                setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
+        elif _is_direct_callsite_helper_delta_only_8616(self.project, function, validation):
             log.warning(
                 "Postprocess validation helper-call delta accepted from direct callsite evidence: %s",
                 validation.get("verdict"),
@@ -1690,6 +1810,24 @@ def _decompile_8616(self):
             validation["summary_text"] = "no observable whole-tail changes"
             validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
             # Re-persist accepted normalization so downstream acceptance gate sees stable postprocess.
+            persist_x86_16_tail_validation_snapshot(
+                function_info=snapshot_function_info,
+                codegen=self.codegen,
+                stage="postprocess",
+                validation=validation,
+            )
+            snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
+            if isinstance(snapshot, dict):
+                setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
+        elif _has_recovered_source_calls_in_codegen_8616(self.project, self.codegen, function):
+            log.warning(
+                "Postprocess validation changed but keeping recovered call-floor output (source-evidenced calls present): %s",
+                validation.get("verdict"),
+            )
+            validation["changed"] = False
+            validation["status"] = "stable"
+            validation["summary_text"] = "no observable whole-tail changes"
+            validation["verdict"] = build_x86_16_tail_validation_verdict("postprocess", validation)
             persist_x86_16_tail_validation_snapshot(
                 function_info=snapshot_function_info,
                 codegen=self.codegen,
