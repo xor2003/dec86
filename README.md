@@ -385,3 +385,20 @@ Good starting points:
 ```
 
 For wider x86-16 coverage, the test suite also includes dedicated files for structuring, aliasing, widening, segmented memory, string instructions, recovery artifacts, helper modeling, confidence reporting, corpus scans, and validation manifests under [angr_platforms/tests](/home/xor/vextest/angr_platforms/tests).
+
+
+  Use it like this:
+
+  ./.venv/bin/python scripts/codex_resume_loop.py \
+    --prompt "go on. fix function by function. Finish only when all functions are fixed." \
+    --goal-cmd 'jq -e ".stop_reason==\"goals_met\"" angr_platforms/.cache/auto_decomp_loop/DONE.marker.json >/dev/null 2>&1' \
+    --status-cmd 'test -f angr_platforms/.cache/auto_decomp_loop/DONE.marker.json' \
+    --max-iterations 200 \
+    --stagnation-limit 30
+
+  Better default for your flow:
+
+  - keep --last (default) so it resumes the same Codex session
+  - use --goal-marker-file or --goal-cmd as hard stop marker
+  - use --stop-file /tmp/STOP_CODEX_LOOP as emergency manual kill switch.
+
