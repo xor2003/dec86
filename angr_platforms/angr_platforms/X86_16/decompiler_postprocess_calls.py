@@ -831,7 +831,7 @@ def _source_name_matches_target_8616(project, target_addr: int | None, expected_
     if not isinstance(normalized_expected, str):
         return False
     if not isinstance(target_addr, int):
-        return True
+        return False
     for candidate_name in (
         _sidecar_label_for_target_8616(project, target_addr),
         normalize_callee_name_8616(getattr(_lookup_callee_function_8616(project, target_addr), "name", None)),
@@ -961,13 +961,16 @@ def _normalize_call_target_names_8616(codegen) -> bool:
                 else None
             )
             callsite_arity = summary_arg_count if summary_arg_count > 0 else current_arity
+            current_is_unknown = _call_name_is_unknown_8616(current_call_name)
+            source_name_proved = _source_name_matches_target_8616(project, target_addr, expected_source_name)
             if (
                 isinstance(expected_arity, int)
-                and expected_arity > 0
+                and expected_arity >= 0
                 and callsite_arity == expected_arity
                 and isinstance(current_call_name, str)
                 and current_call_name
                 and current_call_name != expected_source_name
+                and (current_is_unknown or source_name_proved)
                 and (
                     current_expected_arity is None
                     or current_expected_arity != expected_arity
@@ -984,9 +987,23 @@ def _normalize_call_target_names_8616(codegen) -> bool:
         if isinstance(target_addr, int):
             candidate = _lookup_callee_function_8616(project, target_addr)
             if candidate is not None and getattr(node, "callee_func", None) is not candidate:
-                node.callee_func = candidate
-                changed = True
-                callee_func = candidate
+                current_call_name = _call_node_name_8616(node)
+                candidate_name = normalize_callee_name_8616(getattr(candidate, "name", None))
+                # Target-address evidence is the primary owner for direct-call identity.
+                # Only refuse replacement when source-evidenced name is proved for this
+                # exact target and conflicts with the target-derived candidate name.
+                source_conflict = (
+                    isinstance(expected_source_name, str)
+                    and expected_source_name
+                    and _source_name_matches_target_8616(project, target_addr, expected_source_name)
+                    and isinstance(candidate_name, str)
+                    and candidate_name
+                    and expected_source_name != candidate_name
+                )
+                if not source_conflict:
+                    node.callee_func = candidate
+                    changed = True
+                    callee_func = candidate
             current_addr = getattr(getattr(node, "callee_func", None), "addr", None)
             matched_function = candidate if candidate is not None else getattr(node, "callee_func", None)
             if (
