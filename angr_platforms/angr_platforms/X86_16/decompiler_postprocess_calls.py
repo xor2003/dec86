@@ -1021,6 +1021,11 @@ def _cod_source_call_names_8616(project, func_addr: int) -> tuple[str, ...]:
         normalized = normalize_callee_name_8616(item[0])
         if isinstance(normalized, str) and normalized and not normalized.startswith("sub_"):
             names.append(normalized)
+    if not names:
+        for raw_name in getattr(cod_metadata, "call_names", ()) or ():
+            normalized = normalize_callee_name_8616(raw_name)
+            if isinstance(normalized, str) and normalized and not normalized.startswith("sub_"):
+                names.append(normalized)
     return tuple(names)
 
 
