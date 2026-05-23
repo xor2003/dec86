@@ -261,9 +261,19 @@ def _decode_cmp_jcc_32bit_chain_8616(project, codegen, cmp_insn, jcc_insn, reg_e
     except Exception:
         return None
     mid_insns = tuple(getattr(getattr(mid_block, "capstone", None), "insns", ()) or ())
-    if len(mid_insns) != 1:
+    # Compilers often emit `jcc short; jmp far` in the middle block. Accept
+    # both one-insn and two-insn forms and pick the first conditional jump.
+    jcc2_insn = next(
+        (
+            ins
+            for ins in mid_insns
+            if str(getattr(ins, "mnemonic", "")).lower().startswith("j")
+            and str(getattr(ins, "mnemonic", "")).lower() not in {"jmp", "ljmp"}
+        ),
+        None,
+    )
+    if jcc2_insn is None:
         return None
-    jcc2_insn = mid_insns[0]
     jcc2 = str(getattr(jcc2_insn, "mnemonic", "")).lower()
     cmp2_addr = _branch_target_imm_8616(jcc2_insn)
     if cmp2_addr is None:

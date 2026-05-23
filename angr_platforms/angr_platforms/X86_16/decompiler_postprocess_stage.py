@@ -1070,6 +1070,17 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     skip_names: set[str] = set()
     if isinstance(skip_env, str) and skip_env.strip():
         skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
+    pass_timeout_seconds: int | None = None
+    pass_timeout_raw = os.environ.get("INERTIA_POSTPROCESS_PASS_TIMEOUT_SEC", "").strip()
+    if not pass_timeout_raw:
+        pass_timeout_raw = "6"
+    if pass_timeout_raw:
+        try:
+            parsed = float(pass_timeout_raw)
+            if parsed > 0.0:
+                pass_timeout_seconds = max(1, int(round(parsed)))
+        except ValueError:
+            pass_timeout_seconds = None
 
     baseline_summary = (
         _collect_tail_validation_summary_with_baseline_canonicalization_8616(
@@ -1088,7 +1099,24 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         _repair_cfunc_statements_wrapper(codegen)
         snapshot = _snapshot_codegen_cfunc(codegen) if per_pass_validation_enabled else None
         try:
-            step_changed = bool(step_func())
+            if isinstance(pass_timeout_seconds, int) and pass_timeout_seconds > 0:
+                with analysis_timeout(pass_timeout_seconds):
+                    step_changed = bool(step_func())
+            else:
+                step_changed = bool(step_func())
+        except AnalysisTimeout as ex:
+            if per_pass_validation_enabled:
+                _restore_codegen_cfunc(codegen, snapshot)
+            codegen._inertia_rewrite_failed = True
+            codegen._inertia_rewrite_failure_pass = pass_name
+            codegen._inertia_rewrite_failure_error = f"timeout: {ex}"
+            logging.getLogger(__name__).warning(
+                "Skipping 86_16 postprocess pass %s after %s: timeout (%s)",
+                pass_name,
+                last_changed_pass or "no earlier rewrite",
+                ex,
+            )
+            return False
         except PipelineHardError:
             if per_pass_validation_enabled:
                 _restore_codegen_cfunc(codegen, snapshot)
@@ -1890,8 +1918,16 @@ def _decompile_8616(self):
                         after_fingerprint=rescue_after_fingerprint,
                     )
                     validation_verdict_text = str(validation.get("verdict") or validation.get("summary_text") or "")
+        allow_validation_override = (
+            str(os.environ.get("INERTIA_ALLOW_POSTPROCESS_VALIDATION_OVERRIDE", "")).strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
         recovered_call_floor = int(getattr(self.codegen, "_inertia_direct_call_floor_recovered_count", 0) or 0)
-        if recovered_call_floor > 0 and "Missing source-evidenced calls" in validation_verdict_text:
+        if (
+            allow_validation_override
+            and recovered_call_floor > 0
+            and "Missing source-evidenced calls" in validation_verdict_text
+        ):
             log.warning(
                 "Postprocess validation changed but keeping call-floor recovery output (recovered=%d): %s",
                 recovered_call_floor,
@@ -1910,7 +1946,7 @@ def _decompile_8616(self):
             snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
             if isinstance(snapshot, dict):
                 setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
-        elif _is_direct_callsite_helper_delta_only_8616(self.project, function, validation):
+        elif allow_validation_override and _is_direct_callsite_helper_delta_only_8616(self.project, function, validation):
             log.warning(
                 "Postprocess validation helper-call delta accepted from direct callsite evidence: %s",
                 validation.get("verdict"),
@@ -1929,7 +1965,7 @@ def _decompile_8616(self):
             snapshot = getattr(self.codegen, "_inertia_tail_validation_snapshot", None)
             if isinstance(snapshot, dict):
                 setattr(self.project, "_inertia_last_tail_validation_snapshot", dict(snapshot))
-        elif _has_recovered_source_calls_in_codegen_8616(self.project, self.codegen, function):
+        elif allow_validation_override and _has_recovered_source_calls_in_codegen_8616(self.project, self.codegen, function):
             log.warning(
                 "Postprocess validation changed but keeping recovered call-floor output (source-evidenced calls present): %s",
                 validation.get("verdict"),
@@ -1962,7 +1998,7 @@ def _decompile_8616(self):
                     pre_postprocess_cfunc_snapshot,
                     function,
                 )
-                if post_total > 0 and post_score >= pre_score:
+                if allow_validation_override and post_total > 0 and post_score >= pre_score:
                     log.warning(
                         "Postprocess validation changed but keeping stronger source-call coverage (post=%d/%d pre=%d/%d): %s",
                         post_score,
