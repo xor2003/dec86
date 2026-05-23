@@ -129,28 +129,32 @@ def _rhs_has_side_effects(rhs: object) -> bool:
 
 def _collect_read_counts(root) -> dict[tuple[str, int | str], int]:
     reads: dict[tuple[str, int | str], int] = {}
-    for node in _iter_c_nodes_deep_8616(root):
-        if isinstance(node, CAssignment):
-            lhs = getattr(node, "lhs", None)
-            rhs = getattr(node, "rhs", None)
-            if isinstance(rhs, CVariable):
-                key = _var_key(rhs)
-                reads[key] = reads.get(key, 0) + 1
-            for rhs_node in _iter_c_nodes_deep_8616(rhs):
-                if isinstance(rhs_node, CVariable):
-                    key = _var_key(rhs_node)
+    # Traverse by statement blocks to avoid double-counting that occurs when
+    # walking the full tree and then re-walking each nested node.
+    for block in _iter_statement_blocks(root):
+        for stmt in list(getattr(block, "statements", ()) or ()):
+            if isinstance(stmt, CAssignment):
+                lhs = getattr(stmt, "lhs", None)
+                rhs = getattr(stmt, "rhs", None)
+                if isinstance(rhs, CVariable):
+                    key = _var_key(rhs)
                     reads[key] = reads.get(key, 0) + 1
-            # count nested lvalue uses only for address forms, not direct def lhs
-            if isinstance(lhs, CUnaryOp) and getattr(lhs, "op", None) in {"Dereference", "Reference"}:
-                for lhs_node in _iter_c_nodes_deep_8616(lhs):
-                    if isinstance(lhs_node, CVariable):
-                        key = _var_key(lhs_node)
+                for rhs_node in _iter_c_nodes_deep_8616(rhs):
+                    if isinstance(rhs_node, CVariable):
+                        key = _var_key(rhs_node)
                         reads[key] = reads.get(key, 0) + 1
-            continue
-        for sub in _iter_c_nodes_deep_8616(node):
-            if isinstance(sub, CVariable):
-                key = _var_key(sub)
-                reads[key] = reads.get(key, 0) + 1
+                # count nested lvalue uses only for address forms, not direct def lhs
+                if isinstance(lhs, CUnaryOp) and getattr(lhs, "op", None) in {"Dereference", "Reference"}:
+                    for lhs_node in _iter_c_nodes_deep_8616(lhs):
+                        if isinstance(lhs_node, CVariable):
+                            key = _var_key(lhs_node)
+                            reads[key] = reads.get(key, 0) + 1
+                continue
+
+            for sub in _iter_c_nodes_deep_8616(stmt):
+                if isinstance(sub, CVariable):
+                    key = _var_key(sub)
+                    reads[key] = reads.get(key, 0) + 1
     return reads
 
 
