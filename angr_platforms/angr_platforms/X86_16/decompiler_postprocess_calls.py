@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import copy
 from collections import Counter
+import contextlib
 from dataclasses import dataclass, replace
 from enum import Enum
 import logging
@@ -57,28 +58,47 @@ _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 _NAMESPACED_TARGET_RE = re.compile(r"^::0x(?P<addr>[0-9a-fA-F]+)::")
 log = logging.getLogger(__name__)
 _RUNTIME_SEGMENT_HELPERS_8616 = frozenset({"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR"})
+_CALL_TOKEN_RE_8616 = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+
+
+def _structured_root_8616(cfunc):
+    return getattr(cfunc, "body", None) or getattr(cfunc, "statements", None) or cfunc
 
 
 def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
+    debug_enabled = bool(os.environ.get("INERTIA_DEBUG_CALL_RECOVERY"))
+    context_tag = getattr(codegen, "_inertia_call_recover_context", "postprocess")
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
+        if debug_enabled:
+            log.warning("[call-recover] context=%s skip=no-cfunc codegen_id=%#x", context_tag, id(codegen))
         return False
-    root = getattr(cfunc, "statements", None)
-    if not isinstance(root, structured_c.CStatements):
+    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+    root_statements = getattr(root, "statements", None)
+    if not isinstance(root_statements, (list, tuple)):
+        if debug_enabled:
+            log.warning(
+                "[call-recover] context=%s skip=bad-root-statements codegen_id=%#x root=%s root_statements=%s",
+                context_tag,
+                id(codegen),
+                type(root).__name__,
+                type(root_statements).__name__ if root_statements is not None else "None",
+            )
         return False
     func_addr = getattr(cfunc, "addr", None)
     if not isinstance(func_addr, int):
+        if debug_enabled:
+            log.warning("[call-recover] context=%s skip=bad-func-addr codegen_id=%#x", context_tag, id(codegen))
         return False
     function = project.kb.functions.function(addr=func_addr, create=False)
     if function is None:
-        return False
-
-    callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
-    if not callsite_addrs:
+        if debug_enabled:
+            log.warning("[call-recover] context=%s skip=no-kb-function addr=%r codegen_id=%#x", context_tag, func_addr, id(codegen))
         return False
 
     expected_names: list[str] = []
     expected_summary_by_name: dict[str, list[object]] = {}
+    callsite_addrs = tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
     for callsite_addr in callsite_addrs:
         target = getattr(function, "get_call_target", lambda _addr: None)(callsite_addr)
         if not isinstance(target, int):
@@ -96,33 +116,39 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             expected_summary_by_name.setdefault(normalized_name, []).append(summary)
     # Optional sidecar/COD evidence: adds call floor when call-target recovery is
     # incomplete in structured output.
-    for source_name in _cod_source_call_names_8616(project, func_addr):
+    source_call_names = list(_cod_source_call_names_8616(project, func_addr))
+    if not source_call_names:
+        source_call_names = list(_cod_source_call_names_for_symbol_8616(project, getattr(cfunc, "name", None)))
+    for source_name in source_call_names:
         if isinstance(source_name, str) and source_name:
             expected_names.append(source_name)
 
     if not expected_names:
+        if debug_enabled:
+            log.warning("[call-recover] context=%s skip=no-expected-names addr=%#x codegen_id=%#x", context_tag, func_addr, id(codegen))
         return False
 
-    present_names: list[str] = []
-    for node in _iter_c_nodes_deep_8616(root):
-        if not isinstance(node, CFunctionCall):
-            continue
-        name = getattr(node, "callee_target", None)
-        if isinstance(name, str) and name:
-            present_names.append(name)
-            continue
-        callee = getattr(node, "callee_func", None)
-        callee_name = getattr(callee, "name", None)
-        if isinstance(callee_name, str) and callee_name:
-            present_names.append(callee_name)
-            continue
-        callee_name = getattr(node, "callee", None)
-        if isinstance(callee_name, str) and callee_name:
-            present_names.append(callee_name)
+    present_names = _rendered_call_names_8616(codegen, cfunc)
+    if not present_names:
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, CFunctionCall):
+                continue
+            name = getattr(node, "callee_target", None)
+            if isinstance(name, str) and name:
+                present_names.append(name)
+                continue
+            callee = getattr(node, "callee_func", None)
+            callee_name = getattr(callee, "name", None)
+            if isinstance(callee_name, str) and callee_name:
+                present_names.append(callee_name)
+                continue
+            callee_name = getattr(node, "callee", None)
+            if isinstance(callee_name, str) and callee_name:
+                present_names.append(callee_name)
 
     source_sequence = [
         (normalize_callee_name_8616(name) or name)
-        for name in _cod_source_call_names_8616(project, func_addr)
+        for name in source_call_names
         if isinstance(name, str) and name and name != "aNchkstk"
     ]
     actual_sequence = [
@@ -152,16 +178,31 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             if have < needed:
                 missing.extend([name] * (needed - have))
     if not missing:
+        cfunc_statements = getattr(cfunc, "statements", None)
+        cfunc_body = getattr(cfunc, "body", None)
+        body_statements = getattr(cfunc_body, "statements", None)
+        if root is not cfunc and isinstance(root_statements, (list, tuple)):
+            if hasattr(root, "statements"):
+                with contextlib.suppress(Exception):
+                    cfunc.body = root
+            if isinstance(cfunc_statements, (list, tuple)) and cfunc_statements is not root_statements:
+                cfunc.statements = list(root_statements) if isinstance(cfunc_statements, list) else tuple(root_statements)
+            if cfunc_body is not None and isinstance(body_statements, (list, tuple)) and body_statements is not root_statements:
+                cfunc_body.statements = list(root_statements) if isinstance(body_statements, list) else tuple(root_statements)
+        if debug_enabled:
+            log.warning("[call-recover] context=%s skip=no-missing addr=%#x codegen_id=%#x", context_tag, func_addr, id(codegen))
         return False
 
-    insert_at = len(root.statements)
-    for idx, stmt in enumerate(root.statements):
+    insert_at = len(root_statements)
+    mutable_statements = list(root_statements)
+    for idx, stmt in enumerate(mutable_statements):
         if isinstance(stmt, structured_c.CReturn):
             insert_at = idx
             break
 
     summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
     changed = False
+    first_empty_loop_body = _first_empty_loop_body_8616(mutable_statements)
     # Preserve source call ordering when recovering missing calls.
     # Build a replay queue by scanning source order and selecting only calls that
     # still need insertion according to `missing` multiset.
@@ -174,33 +215,62 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
                 missing_counts[name] -= 1
     else:
         ordered_missing = list(missing)
-    for name in ordered_missing:
+    for idx, name in enumerate(ordered_missing):
         callee_func = project.kb.functions.function(name=name, create=False)
         seeded_args = _known_default_args_for_missing_8616(name, codegen)
         call_args = list(seeded_args) if isinstance(seeded_args, tuple) else []
         call = CFunctionCall(name, callee_func, call_args, codegen=codegen)
         call_stmt = structured_c.CExpressionStatement(call, codegen=codegen)
-        root.statements.insert(insert_at, call_stmt)
+        inserted_in_loop = False
+        if (
+            idx == 0
+            and source_sequence
+            and source_sequence[0] == name
+            and first_empty_loop_body is not None
+        ):
+            loop_body_statements = list(getattr(first_empty_loop_body, "statements", ()) or ())
+            loop_body_statements.append(call_stmt)
+            first_empty_loop_body.statements = loop_body_statements
+            inserted_in_loop = True
+        if not inserted_in_loop:
+            mutable_statements.insert(insert_at, call_stmt)
         summary_candidates = expected_summary_by_name.get(normalize_callee_name_8616(name) or name, [])
         if summary_candidates:
             summary_map[id(call)] = summary_candidates.pop(0)
-        insert_at += 1
-        changed = True
-        # Preserve paired helper order from source evidence when a swap helper was
-        # recovered but its adjacent visualization helper is absent.
-        if name == "Swaps":
-            swapbars_name = "SwapBars"
-            callee_func_sb = project.kb.functions.function(name=swapbars_name, create=False)
-            call_sb = CFunctionCall(swapbars_name, callee_func_sb, [], codegen=codegen)
-            call_stmt_sb = structured_c.CExpressionStatement(call_sb, codegen=codegen)
-            root.statements.insert(insert_at, call_stmt_sb)
-            summary_candidates_sb = expected_summary_by_name.get(swapbars_name, [])
-            if summary_candidates_sb:
-                summary_map[id(call_sb)] = summary_candidates_sb.pop(0)
+        if not inserted_in_loop:
             insert_at += 1
-            present_names.append(swapbars_name)
-            changed = True
+        changed = True
     if changed:
+        updated_statements = mutable_statements if isinstance(root_statements, list) else tuple(mutable_statements)
+        root.statements = updated_statements
+        if hasattr(root, "statements"):
+            with contextlib.suppress(Exception):
+                cfunc.body = root
+        cfunc_statements = getattr(cfunc, "statements", None)
+        if root is not cfunc_statements and isinstance(cfunc_statements, (list, tuple)):
+            cfunc.statements = list(updated_statements) if isinstance(cfunc_statements, list) else tuple(updated_statements)
+        cfunc_body = getattr(cfunc, "body", None)
+        body_statements = getattr(cfunc_body, "statements", None)
+        if cfunc_body is not None and cfunc_body is not root and isinstance(body_statements, (list, tuple)):
+            cfunc_body.statements = list(updated_statements) if isinstance(body_statements, list) else tuple(updated_statements)
+        if debug_enabled:
+            cfunc_calls = []
+            cfunc_root_now = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+            for node in _iter_c_nodes_deep_8616(cfunc_root_now):
+                if isinstance(node, CFunctionCall):
+                    cfunc_calls.append(_call_node_name_8616(node))
+            log.warning(
+                "[call-recover] context=%s function=%#x codegen_id=%#x recovered=%r root=%s root_id=%#x cfunc_root=%s cfunc_root_id=%#x calls=%r",
+                context_tag,
+                getattr(cfunc, "addr", 0) or 0,
+                id(codegen),
+                ordered_missing,
+                type(root).__name__,
+                id(root),
+                type(cfunc_root_now).__name__,
+                id(cfunc_root_now),
+                cfunc_calls,
+            )
         codegen._inertia_callsite_summaries = summary_map
         setattr(
             codegen,
@@ -208,6 +278,37 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             int(getattr(codegen, "_inertia_direct_call_floor_recovered_count", 0)) + len(missing),
         )
     return changed
+
+
+def _first_empty_loop_body_8616(statements) -> object | None:
+    for stmt in statements:
+        body = getattr(stmt, "body", None)
+        body_statements = getattr(body, "statements", None)
+        if isinstance(body_statements, (list, tuple)) and len(body_statements) == 0:
+            # Loop-like nodes expose condition fields in structured_codegen nodes.
+            if hasattr(stmt, "condition") or hasattr(stmt, "cond"):
+                return body
+    return None
+
+
+def _rendered_call_names_8616(codegen, cfunc) -> list[str]:
+    try:
+        rendered = codegen.render_text(cfunc)
+    except Exception:
+        rendered = ""
+    if isinstance(rendered, tuple):
+        rendered = rendered[0] if rendered and isinstance(rendered[0], str) else ""
+    if not isinstance(rendered, str) or not rendered:
+        return []
+    text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered, flags=re.S)
+    text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    body = text_wo_comments.split("{", 1)[-1] if "{" in text_wo_comments else text_wo_comments
+    names: list[str] = []
+    for name in _CALL_TOKEN_RE_8616.findall(body):
+        if name in {"if", "for", "while", "switch", "return", "sizeof"}:
+            continue
+        names.append(name)
+    return names
 
 
 @dataclass(slots=True)
@@ -878,10 +979,7 @@ def _normalize_call_target_names_8616(codegen) -> bool:
             elif (
                 isinstance(expected_source_name, str)
                 and callee_func is not None
-                and (
-                    _source_name_matches_target_8616(project, target_addr, expected_source_name)
-                    or (isinstance(current_addr, int) and current_addr == target_addr)
-                )
+            and _source_name_matches_target_8616(project, target_addr, expected_source_name)
             ):
                 current_name = normalize_callee_name_8616(getattr(callee_func, "name", None))
                 if current_name != expected_source_name:
@@ -1029,6 +1127,31 @@ def _cod_source_call_names_8616(project, func_addr: int) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _cod_source_call_names_for_symbol_8616(project, symbol_name: str | None) -> tuple[str, ...]:
+    if not isinstance(symbol_name, str) or not symbol_name:
+        return ()
+    lst_metadata = getattr(project, "_inertia_lst_metadata", None)
+    cod_path = getattr(lst_metadata, "cod_path", None)
+    if not cod_path:
+        return ()
+    proc_kind = "NEAR"
+    for candidate in (symbol_name, symbol_name.lstrip("_"), f"_{symbol_name.lstrip('_')}"):
+        if not candidate:
+            continue
+        try:
+            metadata = extract_cod_proc_metadata(Path(cod_path), candidate, proc_kind)
+        except Exception:
+            continue
+        names: list[str] = []
+        for raw_name in getattr(metadata, "call_names", ()) or ():
+            normalized = normalize_callee_name_8616(raw_name)
+            if isinstance(normalized, str) and normalized and not normalized.startswith("sub_"):
+                names.append(normalized)
+        if names:
+            return tuple(names)
+    return ()
+
+
 def _summary_type_8616(project, width: int):
     arch = getattr(project, "arch", None)
     if width >= 4:
@@ -1127,6 +1250,28 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
     summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
     source_call_names = _cod_source_call_names_8616(project, func_addr)
     source_call_idx = 0
+    debug_callsites = bool(os.environ.get("INERTIA_DEBUG_CALLSITE_SUMMARY"))
+    if debug_callsites:
+        try:
+            callsite_dbg = []
+            for cs_addr in callsite_addrs:
+                tgt = getattr(function, "get_call_target", lambda _addr: None)(cs_addr)
+                callee = project.kb.functions.function(addr=tgt, create=False) if isinstance(tgt, int) else None
+                callsite_dbg.append(
+                    (
+                        hex(cs_addr),
+                        hex(tgt) if isinstance(tgt, int) else None,
+                        normalize_callee_name_8616(getattr(callee, "name", None)) if callee is not None else None,
+                    )
+                )
+            log.warning(
+                "[callsite-summary] function=%#x callsites=%r source_calls=%r",
+                int(func_addr),
+                callsite_dbg,
+                tuple(source_call_names),
+            )
+        except Exception:
+            pass
     nodes_by_callsite: dict[int, list[CFunctionCall]] = {}
     remaining_nodes: list[CFunctionCall] = []
     for node in call_nodes:
@@ -1186,6 +1331,14 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         summary = summarize_x86_16_callsite(function, callsite_addr)
         if summary is None:
             continue
+        if debug_callsites:
+            log.warning(
+                "[callsite-summary] map node_id=%#x callsite=%#x target=%r name_before=%r",
+                id(node),
+                callsite_addr,
+                getattr(summary, "target_addr", None),
+                _call_node_name_8616(node),
+            )
         if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
             log.warning(
                 "[call-attach] function=%#x node=%s callsite=%#x summary_args=%r summary_sources=%r",
@@ -1239,15 +1392,8 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         if (
             isinstance(expected_source_name, str)
             and callee_func is not None
-            and (
-                _source_name_matches_target_8616(project, target_addr, expected_source_name)
-                or (isinstance(target_addr, int) and isinstance(current_addr, int) and current_addr == target_addr)
-            )
-            and (
-                callee_name is None
-                or callee_name.startswith("sub_")
-                or (len(tuple(getattr(callee_func, "block_addrs_set", ()) or ())) == 0 and callee_name != expected_source_name)
-            )
+            and _source_name_matches_target_8616(project, target_addr, expected_source_name)
+            and callee_name != expected_source_name
         ):
             callee_func.name = expected_source_name
             changed = True
@@ -1357,7 +1503,7 @@ def _materialize_callsite_prototypes_8616(project, codegen) -> bool:
     prototype_decls: list[str] = []
     seen_decls: set[str] = set(getattr(codegen, "_inertia_callsite_prototype_decls", ()) or ())
     changed = False
-    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
+    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CFunctionCall):
             continue
@@ -3260,7 +3406,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             arg_count = getattr(summary, "arg_count", None) if summary is not None else None
             call_name = _call_node_name_8616(call) if call is not None else None
             prototype_arg_count = _prototype_arg_count(call) if call is not None else None
-            known_arg_count = _expected_arg_count_for_known_callee_8616(call_name or "") if call is not None else None
+            normalized_call_name = normalize_callee_name_8616(call_name) if isinstance(call_name, str) else None
+            known_arg_count = (
+                _expected_arg_count_for_known_callee_8616(call_name or "")
+                if call is not None
+                else None
+            )
+            if known_arg_count is None and isinstance(normalized_call_name, str) and normalized_call_name:
+                known_arg_count = _expected_arg_count_for_known_callee_8616(normalized_call_name)
             is_stack_probe_helper = bool(getattr(summary, "stack_probe_helper", False))
             push_arg_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
             if call is not None and not is_stack_probe_helper and _is_stack_probe_call_name_8616(call_name):
@@ -3301,6 +3454,17 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     call_name,
                     expected_arg_count,
                     push_arg_sources,
+                )
+            if os.environ.get("INERTIA_DEBUG_PERCOLATEUP_CALLSITE") and call is not None and call_name == "PercolateUp":
+                log.warning(
+                    "[percolateup-callsite] function=%#x expected_arg_count=%r prototype_arg_count=%r known_arg_count=%r remat=%r push_arg_sources=%r args=%r",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                    expected_arg_count,
+                    prototype_arg_count,
+                    known_arg_count,
+                    rematerialize_call_args if 'rematerialize_call_args' in locals() else None,
+                    push_arg_sources,
+                    tuple(_debug_expr_8616(arg) for arg in tuple(getattr(call, "args", ()) or ())),
                 )
             # When a stack-probe helper was seen but its segment space is not SS
             # (e.g. "ds"), the probe return address is not a stack address.
@@ -3343,6 +3507,14 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 and not probe_seen_without_ss_address
             ):
                 rematerialize_call_args = False
+            if os.environ.get("INERTIA_DEBUG_PERCOLATEUP_CALLSITE") and call is not None and call_name == "PercolateUp":
+                log.warning(
+                    "[percolateup-callsite-post-zero] function=%#x expected_arg_count=%r remat=%r args=%r",
+                    getattr(getattr(codegen, "cfunc", None), "addr", 0) or 0,
+                    expected_arg_count,
+                    rematerialize_call_args,
+                    tuple(_debug_expr_8616(arg) for arg in tuple(getattr(call, "args", ()) or ())),
+                )
             if (
                 call is not None
                 and tuple(getattr(call, "args", ()) or ())
@@ -3737,7 +3909,7 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         )
         return stack_probe_seen, stack_probe_address_seen, typed_stack_probe_fact
 
-    root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None)
+    root = _structured_root_8616(cfunc)
     if isinstance(getattr(root, "statements", None), (list, tuple)):
         _rewrite_block(root)
         # Last-resort stability guard: known helpers must not be left as empty
