@@ -2640,6 +2640,12 @@ def main(argv: list[str] | None = None) -> int:
     if include_library_functions and lst_metadata is not None:
         visible_code_labels = dict(getattr(lst_metadata, "code_labels", {}) or {})
         recovery_code_labels = dict(visible_code_labels)
+    elif lst_metadata is not None and not visible_code_labels and recovery_code_labels:
+        # Sidecar has only signature/library labels. Use them as bounded catalog
+        # instead of speculative ranked scans that are often noisy on packed EXEs.
+        include_library_functions = True
+        visible_code_labels = dict(recovery_code_labels)
+        print("/* sidecar provides only signature labels; auto-enabling library-labeled function catalog for stable recovery. */")
     seed_code_labels = visible_code_labels or recovery_code_labels
     skipped_signature_labels = (
         len(getattr(lst_metadata, "code_labels", {})) - len(visible_code_labels) if lst_metadata is not None else 0
@@ -2676,7 +2682,10 @@ def main(argv: list[str] | None = None) -> int:
             and args.max_functions > 0
         )
         if args.addr is None and args.binary.suffix.lower() == ".exe":
-            ranked_binary_offsets = _rank_exe_function_seeds(project)
+            ranked_seed_discovery_enabled = os.environ.get(
+                "INERTIA_ENABLE_RANKED_EXE_DISCOVERY", ""
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            ranked_binary_offsets = _rank_exe_function_seeds(project) if ranked_seed_discovery_enabled else []
             direct_inventory_total = len(ranked_binary_offsets) if ranked_binary_offsets else None
         discovery_limit = (
             _expanded_exe_discovery_limit(args.max_functions)
@@ -2861,13 +2870,12 @@ def main(argv: list[str] | None = None) -> int:
 
         if cfg is None and not function_cfg_pairs:
             fast_seed_pairs: list[tuple[object, object]] = []
-            if lst_metadata is None:
-                print("/* Whole-program control-flow recovery failed; attempting a quick function-entry scan without helper metadata. */")
-                fast_seed_pairs = _recover_fast_seed_functions(
-                    project,
-                    timeout=min(max(4, args.timeout), 8),
-                    limit=discovery_limit,
-                )
+            print("/* Whole-program control-flow recovery failed; attempting a quick function-entry scan fallback. */")
+            fast_seed_pairs = _recover_fast_seed_functions(
+                project,
+                timeout=min(max(4, args.timeout), 8),
+                limit=discovery_limit,
+            )
             if fast_seed_pairs:
                 function_cfg_pairs = fast_seed_pairs
                 total_functions = len(function_cfg_pairs)
@@ -3082,6 +3090,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             lst_metadata is not None
             and not visible_code_labels
+            and include_library_functions
             and args.max_functions <= 0
         ):
             function_tasks = [
@@ -3125,6 +3134,7 @@ def main(argv: list[str] | None = None) -> int:
             and args.binary.suffix.lower() == ".exe"
             and lst_metadata is not None
             and not visible_code_labels
+            and include_library_functions
             and ranked_binary_offsets
             and args.max_functions <= 0
         ):
@@ -3158,6 +3168,7 @@ def main(argv: list[str] | None = None) -> int:
             and args.binary.suffix.lower() == ".exe"
             and lst_metadata is not None
             and not visible_code_labels
+            and include_library_functions
             and ranked_binary_offsets
             and args.max_functions > 0
         ):
@@ -3219,7 +3230,7 @@ def main(argv: list[str] | None = None) -> int:
         args.addr is None
         and args.binary.suffix.lower() == ".exe"
         and project.arch.name == "86_16"
-        and bool(getattr(args, "include_library_functions", False))
+        and include_library_functions
     ):
         workers = 1
     forced_serial_function_decomp = (
@@ -3232,7 +3243,7 @@ def main(argv: list[str] | None = None) -> int:
         and not (
             args.binary.suffix.lower() == ".exe"
             and project.arch.name == "86_16"
-            and bool(getattr(args, "include_library_functions", False))
+            and include_library_functions
         )
         and os.name == "posix"
         and threading.current_thread() is threading.main_thread()
