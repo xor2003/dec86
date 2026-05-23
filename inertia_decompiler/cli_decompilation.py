@@ -1588,6 +1588,16 @@ def _decompile_function(
         id(rewrite): getattr(rewrite, "__name__", type(rewrite).__name__)
         for rewrite in rewrite_passes
     }
+    if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
+        try:
+            pre_rewrite_text = _snapshot_codegen_text(dec.codegen)
+            _debug_dump_calls_8616(
+                "pre-cli-rewrite",
+                pre_rewrite_text,
+                function_original_addr(function),
+            )
+        except Exception:
+            pass
     for round_idx in range(2):
         iter_changed = False
         stack_lowering_dirty = not _stack_lowering_already_attempted
@@ -1705,9 +1715,32 @@ def _decompile_function(
     _debug_dump_calls_8616("post-structured-codegen", rendered_text, debug_call_addr)
     _emit_c_stage_trace(project, function, "post-structured-codegen", rendered_text)
     if _under_recovered_call_heavy_codegen_8616(rendered_text, effective_cod_metadata):
-        retried = _retry_in_isolated_project()
-        if retried is not None and retried[0] != "empty":
-            return retried
+        # Evidence-first fallback for call-heavy functions:
+        # keep the candidate with the strongest expected-call preservation score.
+        best_status = "ok"
+        best_payload = rendered_text
+        best_score = _expected_call_presence_score_8616(rendered_text, effective_cod_metadata)
+        if _under_recovered_call_heavy_codegen_8616(rendered_text, effective_cod_metadata):
+            for _ in range(2):
+                retried = _retry_in_isolated_project()
+                if retried is None:
+                    break
+                retry_status, retry_payload = retried
+                if retry_status == "ok" and isinstance(retry_payload, str) and retry_payload.strip():
+                    retry_score = _expected_call_presence_score_8616(retry_payload, effective_cod_metadata)
+                    if retry_score > best_score:
+                        best_score = retry_score
+                        best_payload = retry_payload
+                        best_status = "ok"
+                elif retry_status != "empty":
+                    # Keep the last non-empty failure only when we have no viable text.
+                    if not isinstance(best_payload, str) or not best_payload.strip():
+                        best_status = retry_status
+                        best_payload = retry_payload
+            if isinstance(best_payload, str) and best_payload.strip():
+                rendered_text = best_payload
+            elif best_status != "ok":
+                return best_status, best_payload
     rendered_text = _prepend_recovered_callsite_prototypes_8616(rendered_text, dec.codegen)
     _debug_dump_calls_8616("post-recovered-callsite-prototypes", rendered_text, debug_call_addr)
     if api_style in ("msc", "compiler"):
