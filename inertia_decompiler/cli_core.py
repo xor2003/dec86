@@ -1178,6 +1178,7 @@ _CALL_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _ORIGINAL_C_START_RE = re.compile(r"(?m)^\s*///\s*C source:\s*$")
 _ORIGINAL_C_END_RE = re.compile(r"(?m)^\s*///\s*Assembly:\s*$")
 _COD_BP_ANNOT_RE = re.compile(r"(?m)^\s*\*\s*\[bp[^\]]+\]\s*=")
+_CALL_FLOOR_SCAFFOLD_HELPERS_8616 = {"aNchkstk", "aNldiv"}
 
 
 def _strip_comment_blocks_8616(text: str) -> str:
@@ -1205,16 +1206,13 @@ def _missing_expected_calls_from_embedded_evidence_8616(emitted_c: str) -> list[
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             continue
         # Ignore compiler/runtime scaffolding helpers.
-        if name in {"aNchkstk"}:
+        if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
             continue
         expected.append(name)
     if not expected:
         return []
     clean = _extract_function_body_text_8616(_strip_comment_blocks_8616(emitted_c))
-    found = {
-        (token[1:] if isinstance(token, str) and token.startswith("_") else token)
-        for token in _CALL_TOKEN_RE.findall(clean)
-    }
+    found = {token.lstrip("_") if isinstance(token, str) else token for token in _CALL_TOKEN_RE.findall(clean)}
     missing = [name for name in expected if name not in found]
     return missing
 
@@ -1238,7 +1236,7 @@ def _call_counts_from_text_8616(text: str) -> Counter[str]:
     for name in _CALL_TOKEN_RE.findall(text or ""):
         if name in {"if", "for", "while", "switch", "return"}:
             continue
-        counts[name] += 1
+        counts[name.lstrip("_")] += 1
     return counts
 
 
@@ -1274,7 +1272,7 @@ def _embedded_call_evidence_names_8616(emitted_c: str) -> list[str]:
         name = token.lstrip("_")
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             continue
-        if name in {"aNchkstk"}:
+        if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
             continue
         names.append(name)
     return names
@@ -1326,7 +1324,7 @@ def _missing_expected_call_multiplicity_8616(emitted_c: str) -> list[str]:
     )
     missing: list[str] = []
     for name, needed in expected_counts.items():
-        if name in {"aNchkstk"}:
+        if name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
             continue
         # Recursive call multiplicity is structurally unstable across equivalent
         # if/else lowering forms; keep presence/order gates, but do not enforce
@@ -1358,7 +1356,7 @@ def _expected_call_order_from_original_8616(emitted_c: str) -> list[str]:
     function_name = _extract_emitted_function_name_8616(emitted_c)
     order: list[str] = []
     for name in _CALL_TOKEN_RE.findall(original_c):
-        if name in {"if", "for", "while", "switch", "return", "aNchkstk"}:
+        if name in {"if", "for", "while", "switch", "return"} or name in _CALL_FLOOR_SCAFFOLD_HELPERS_8616:
             continue
         if isinstance(function_name, str) and name == function_name:
             continue
@@ -1426,7 +1424,7 @@ def _side_effect_floor_violation_8616(emitted_c: str) -> bool:
         return False
     raw = expected_calls.group(1)
     names = [t.strip().lstrip("_") for t in raw.split(",") if t.strip()]
-    names = [n for n in names if n and n != "aNchkstk"]
+    names = [n for n in names if n and n not in _CALL_FLOOR_SCAFFOLD_HELPERS_8616]
     if len(names) < 1:
         return False
     body = _extract_function_body_text_8616(emitted_c)
@@ -2556,6 +2554,7 @@ def main(argv: list[str] | None = None) -> int:
                 if (
                     sidecar_region is not None
                     and isinstance(sidecar_region[0], int)
+                    and int(sidecar_region[0]) == int(args.addr)
                     and (block_count <= 3 or byte_count <= 24)
                 ):
                     sidecar_addr = sidecar_region[0]

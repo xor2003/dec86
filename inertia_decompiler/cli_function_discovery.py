@@ -788,8 +788,9 @@ def _maybe_extend_x86_16_exact_region_terminator(
     image_end = max_addr + 1
     if end >= image_end:
         return exact_region
+    lookahead = min(0x10, image_end - end)
     try:
-        trailer = bytes(project.loader.memory.load(end, min(3, image_end - end)))
+        trailer = bytes(project.loader.memory.load(end, lookahead))
     except Exception:
         return exact_region
     if not trailer:
@@ -799,6 +800,14 @@ def _maybe_extend_x86_16_exact_region_terminator(
         return (start, end + 1)
     if op0 in {0xC2, 0xCA}:  # ret imm16 / retf imm16
         return (start, min(image_end, end + 3))
+    # Coarse sidecar regions for tiny functions can stop at a branch target
+    # right before the epilogue bytes. If a nearby return exists, extend to
+    # include it so control-flow/condition recovery can see full tail shape.
+    for idx, byte in enumerate(trailer):
+        if byte in {0xC3, 0xCB}:  # ret / retf
+            return (start, min(image_end, end + idx + 1))
+        if byte in {0xC2, 0xCA}:  # ret imm16 / retf imm16
+            return (start, min(image_end, end + idx + 3))
     return exact_region
 
 
@@ -2605,6 +2614,26 @@ def _recover_lst_function(
 ):
     addr = offset if lst_metadata.absolute_addrs else project.entry + offset
     exact_region = _lst_code_region(lst_metadata, addr)
+    if (
+        project.arch.name == "86_16"
+        and exact_region is not None
+        and isinstance(addr, int)
+        and exact_region[0] < addr < exact_region[1]
+    ):
+        # Sidecar spans may be coarse and can contain multiple adjacent
+        # functions. If caller requested an in-span address that is a proved
+        # x86-16 function prologue, re-anchor the exact region start at the
+        # requested address to avoid recovering the wrong predecessor body.
+        try:
+            probe = bytes(project.loader.memory.load(addr, min(4, max(0, exact_region[1] - addr))))
+        except Exception:
+            probe = b""
+        if _looks_like_x86_16_function_prologue(probe, 0):
+            exact_region = (addr, exact_region[1])
+            print(
+                f"[dbg] adjusted exact-region start for {name}: "
+                f"{addr:#x}-{exact_region[1]:#x} (from containing sidecar span)"
+            )
     if project.arch.name == "86_16" and exact_region is not None:
         exact_region = _maybe_extend_x86_16_exact_region_terminator(project, exact_region)
         exact_size = max(0, exact_region[1] - exact_region[0])
@@ -3181,12 +3210,17 @@ def _recover_direct_addr_function(
         and project.arch.name == "86_16"
         and _lst_code_region(lst_metadata, addr) is not None
     ):
-        sidecar_addr = _lst_code_region(lst_metadata, addr)[0]
-        code_name = _lst_code_label(lst_metadata, sidecar_addr, project.entry) or f"sub_{sidecar_addr:x}"
+        sidecar_region = _lst_code_region(lst_metadata, addr)
+        sidecar_addr = sidecar_region[0]
+        # For explicit direct-address recovery, keep requested address as the
+        # function start and use sidecar region only as a bounded evidence span.
+        # This avoids snapping to a predecessor when sidecar spans are coarse.
+        recover_addr = addr
+        code_name = _lst_code_label(lst_metadata, recover_addr, project.entry) or f"sub_{recover_addr:x}"
         return _recover_lst_function(
             project,
             lst_metadata,
-            sidecar_addr if lst_metadata.absolute_addrs else sidecar_addr - project.entry,
+            recover_addr if lst_metadata.absolute_addrs else recover_addr - project.entry,
             code_name,
             timeout=timeout,
             window=window,
