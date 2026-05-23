@@ -68,6 +68,11 @@ def _setup_counter_defaults(codegen) -> None:
         "dead_setup_live_condition_source",
         "dead_setup_unknown_refuse",
         "dead_setup_prune_disabled",
+        "dead_setup_raw_fact_count",
+        "dead_setup_normalized_fact_count",
+        "dead_setup_classified_fact_count",
+        "dead_setup_materialized_count",
+        "dead_setup_failure_count",
     ):
         if not isinstance(getattr(codegen, name, None), int):
             setattr(codegen, name, 0)
@@ -102,15 +107,6 @@ def _is_observable_storage(lhs: CVariable) -> bool:
     if isinstance(region, str) and region.lower() in {"global", "argument", "arg"}:
         return True
     return False
-
-
-def _prune_enabled_8616(codegen) -> bool:
-    # Safe default: diagnostics-only mode unless explicitly enabled.
-    attr = getattr(codegen, "_inertia_enable_safe_dead_setup_prune", None)
-    if isinstance(attr, bool):
-        return attr
-    flag = os.environ.get("INERTIA_ENABLE_DEAD_SETUP_PRUNE", "").strip().lower()
-    return flag in {"1", "true", "yes", "on"}
 
 
 def _is_candidate_lhs(lhs: object) -> bool:
@@ -269,6 +265,10 @@ def _classify_candidate_8616(cand: _Candidate, reads: dict[tuple[str, int | str]
     return DeadSetupDecision8616.DEFINITELY_DEAD
 
 
+def _bump_counter_8616(codegen, name: str, inc: int = 1) -> None:
+    setattr(codegen, name, int(getattr(codegen, name, 0)) + int(inc))
+
+
 def _record_decision_counter_8616(codegen, decision: DeadSetupDecision8616) -> None:
     if decision == DeadSetupDecision8616.LIVE_CALL_ARG_SETUP:
         setattr(codegen, "dead_setup_live_call_arg", int(getattr(codegen, "dead_setup_live_call_arg", 0)) + 1)
@@ -291,9 +291,9 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
         return False
 
     _setup_counter_defaults(codegen)
-    if not _prune_enabled_8616(codegen):
+    # DCE is production-enabled by default. Keep one emergency kill-switch.
+    if os.environ.get("INERTIA_DISABLE_DEAD_SETUP_PRUNE", "").strip().lower() in {"1", "true", "yes", "on"}:
         setattr(codegen, "dead_setup_prune_disabled", int(getattr(codegen, "dead_setup_prune_disabled", 0)) + 1)
-        # Diagnostics-only by default: conservative mode keeps semantics intact.
         return False
     changed = False
 
@@ -311,10 +311,17 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
             if not candidates:
                 continue
             total_candidates += len(candidates)
+            _bump_counter_8616(codegen, "dead_setup_raw_fact_count", len(candidates))
+            _bump_counter_8616(codegen, "dead_setup_normalized_fact_count", len(candidates))
             to_remove: set[int] = set()
             refused = 0
             for cand in candidates:
-                decision = _classify_candidate_8616(cand, reads)
+                try:
+                    decision = _classify_candidate_8616(cand, reads)
+                except Exception:
+                    _bump_counter_8616(codegen, "dead_setup_failure_count")
+                    decision = DeadSetupDecision8616.UNKNOWN_REFUSE
+                _bump_counter_8616(codegen, "dead_setup_classified_fact_count")
                 if decision == DeadSetupDecision8616.DEFINITELY_DEAD:
                     to_remove.add(cand.stmt_index)
                     continue
@@ -328,6 +335,7 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
                 if 0 <= idx < len(stmts):
                     del stmts[idx]
                     pruned += 1
+                    _bump_counter_8616(codegen, "dead_setup_materialized_count")
             if pruned:
                 block.statements = stmts
                 total_pruned += pruned

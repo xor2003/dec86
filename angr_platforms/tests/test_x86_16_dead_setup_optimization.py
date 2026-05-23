@@ -111,6 +111,26 @@ def test_dead_setup_escape_counter_flags_unpruned_dead_candidate():
 def test_dead_setup_prune_is_disabled_by_default():
     codegen = _mk_codegen_with_statements([])
     vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
+    base = _mk_cvar(codegen, "local_6", 2)
+    rhs = structured_c.CBinaryOp(
+        "Add",
+        base,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    setup_assign = structured_c.CAssignment(vvar_1, rhs, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([setup_assign], codegen=codegen)
+
+    changed = _prune_dead_setup_carriers_8616(codegen)
+
+    assert changed is True
+    assert len(list(codegen.cfunc.statements.statements)) == 0
+    assert getattr(codegen, "dead_setup_pruned", 0) >= 1
+
+
+def test_dead_setup_prune_can_be_forced_disabled_with_env(monkeypatch):
+    codegen = _mk_codegen_with_statements([])
+    vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
     base = _mk_cvar(codegen, "s_6", 2)
     rhs = structured_c.CBinaryOp(
         "Add",
@@ -120,6 +140,7 @@ def test_dead_setup_prune_is_disabled_by_default():
     )
     setup_assign = structured_c.CAssignment(vvar_1, rhs, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([setup_assign], codegen=codegen)
+    monkeypatch.setenv("INERTIA_DISABLE_DEAD_SETUP_PRUNE", "1")
 
     changed = _prune_dead_setup_carriers_8616(codegen)
 
