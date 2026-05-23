@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -283,6 +284,11 @@ def _make_unique_identifier_8616(base: str, used: set[str]) -> str:
 
 
 def _dedupe_codegen_variable_names_8616(codegen) -> bool:
+    # Name dedup is readability-only. If it perturbs canonicalized semantics it must
+    # not run in the correctness pipeline by default.
+    if os.environ.get("INERTIA_ENABLE_NAME_DEDUP", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+
     if getattr(codegen, "cfunc", None) is None:
         return False
 
@@ -307,20 +313,6 @@ def _dedupe_codegen_variable_names_8616(codegen) -> bool:
             if isinstance(candidate, str) and candidate:
                 return candidate
         return None
-
-    def normalize_sort_ident(variable, cvar) -> None:
-        ident = getattr(variable, "ident", None)
-        if isinstance(ident, str):
-            return
-        fallback = preferred_name(variable, cvar)
-        if not isinstance(fallback, str) or not fallback:
-            fallback = getattr(variable, "name", None)
-        if not isinstance(fallback, str) or not fallback:
-            fallback = f"var_{id(variable):x}"
-        try:
-            variable.ident = fallback if ident is None else str(ident)
-        except Exception:
-            pass
 
     def sort_key(item):
         variable, cvar = item
@@ -389,7 +381,6 @@ def _dedupe_codegen_variable_names_8616(codegen) -> bool:
         if id(variable) in seen_variables:
             continue
         seen_variables.add(id(variable))
-        normalize_sort_ident(variable, cvar)
         name = preferred_name(variable, cvar)
         if name is None:
             continue
@@ -763,6 +754,11 @@ def _promote_stack_prototype_from_bp_loads_8616(project, codegen) -> bool:
 
 
 def _classify_return_shape_8616(project, codegen) -> bool:
+    # Return-shape reclassification mutates function prototypes and can affect
+    # observable memory/ABI behavior. Keep it opt-in until fully proven stable.
+    if os.environ.get("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+
     if getattr(codegen, "cfunc", None) is None:
         return False
 

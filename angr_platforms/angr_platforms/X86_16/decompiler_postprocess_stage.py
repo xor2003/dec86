@@ -45,6 +45,7 @@ from .pipeline.contracts import assert_pipeline_contracts_8616
 from .pipeline.errors import PipelineHardError
 from .pipeline.invariants import format_invariant_report_8616, validate_before_rewrite_8616
 from .postprocess.optimization.pass_driver import _run_optimization_passes_8616
+from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
 from .tail_validation import (
     build_x86_16_tail_validation_cached_result,
     build_x86_16_tail_validation_verdict,
@@ -317,17 +318,41 @@ DECOMPILER_POSTPROCESS_PASSES = _build_decompiler_postprocess_passes()
 
 
 def _decompiler_postprocess_passes_for_function(project, codegen):
+    skip_env = os.environ.get("INERTIA_SKIP_POSTPROCESS_PASSES")
+    skip_names: set[str] = set()
+    if isinstance(skip_env, str) and skip_env.strip():
+        skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
+    callsite_rewrite_enabled = os.environ.get("INERTIA_ENABLE_CALLSITE_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not callsite_rewrite_enabled:
+        skip_names.update(
+            {
+                "_attach_callsite_summaries_8616",
+                "_materialize_callsite_stack_arguments_8616",
+                "_materialize_callsite_prototypes_8616",
+                "_normalize_call_target_names_8616",
+            }
+        )
+
     func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
     if func_addr is None:
-        return DECOMPILER_POSTPROCESS_PASSES
+        passes = DECOMPILER_POSTPROCESS_PASSES
+        if skip_names:
+            passes = tuple(spec for spec in passes if spec.name not in skip_names)
+        return passes
 
     func = project.kb.functions.function(addr=func_addr, create=False)
     if func is None:
-        return DECOMPILER_POSTPROCESS_PASSES
+        passes = DECOMPILER_POSTPROCESS_PASSES
+        if skip_names:
+            passes = tuple(spec for spec in passes if spec.name not in skip_names)
+        return passes
 
     info = getattr(func, "info", None)
     if not isinstance(info, dict):
-        return DECOMPILER_POSTPROCESS_PASSES
+        passes = DECOMPILER_POSTPROCESS_PASSES
+        if skip_names:
+            passes = tuple(spec for spec in passes if spec.name not in skip_names)
+        return passes
 
     profile = info.get("x86_16_decompilation_profile", {})
     if isinstance(profile, dict) and profile.get("wrapper_like"):
@@ -338,12 +363,18 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
             "_materialize_callsite_prototypes_8616",
             "_normalize_call_target_names_8616",
         }
-        return tuple(
+        passes = tuple(
             spec for spec in DECOMPILER_POSTPROCESS_PASSES
             if spec.name in wrapper_pass_names or DECOMPILER_POSTPROCESS_PASSES.index(spec) < 11
         )
+        if skip_names:
+            passes = tuple(spec for spec in passes if spec.name not in skip_names)
+        return passes
 
-    return DECOMPILER_POSTPROCESS_PASSES
+    passes = DECOMPILER_POSTPROCESS_PASSES
+    if skip_names:
+        passes = tuple(spec for spec in passes if spec.name not in skip_names)
+    return passes
 
 
 def describe_x86_16_decompiler_postprocess_stage():
@@ -853,14 +884,33 @@ def _debug_condition_progress_8616(project, codegen, *, function_addr: int, labe
 
 def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project, codegen, *, mode: str):
     function_addr = getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1
+    # Large functions frequently time out in baseline clone canonicalization.
+    # For those, use direct summary collection to keep validation deterministic
+    # and avoid repeated timeout churn.
+    try:
+        kb_funcs = getattr(getattr(project, "kb", None), "functions", None)
+        fn = kb_funcs.function(function_addr, create=False) if kb_funcs is not None and isinstance(function_addr, int) and function_addr >= 0 else None
+        block_count = len(getattr(fn, "block_addrs_set", ()) or ()) if fn is not None else 0
+    except Exception:
+        block_count = 0
+    if block_count >= 40:
+        return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
+
     cloned_codegen = None
     if cloned_codegen is None:
         try:
-            cloned_codegen = _prepare_tail_validation_baseline_clone_8616(
-                project,
-                codegen,
-                function_addr=function_addr,
+            with analysis_timeout(3):
+                cloned_codegen = _prepare_tail_validation_baseline_clone_8616(
+                    project,
+                    codegen,
+                    function_addr=function_addr,
+                )
+        except AnalysisTimeout:
+            logging.getLogger(__name__).warning(
+                "Tail-validation baseline canonicalization timed out at function=%#x; falling back to direct summary collection",
+                function_addr,
             )
+            return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
         except Exception as ex:
             logging.getLogger(__name__).debug(
                 "Tail-validation baseline canonicalization failed at function=%#x stage=baseline-canonicalization: %s",
@@ -904,7 +954,15 @@ def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project
         function_addr=function_addr,
         label="baseline-clone",
     )
-    return collect_x86_16_tail_validation_summary(project, cloned_codegen, mode=mode)
+    try:
+        with analysis_timeout(3):
+            return collect_x86_16_tail_validation_summary(project, cloned_codegen, mode=mode)
+    except AnalysisTimeout:
+        logging.getLogger(__name__).warning(
+            "Tail-validation baseline summary timed out at function=%#x; falling back to direct summary collection",
+            function_addr,
+        )
+        return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
 
 
 def _prime_stack_semantics_before_validation_baseline_8616(project, codegen) -> None:
@@ -951,6 +1009,12 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
     )
     if os.environ.get("INERTIA_DEBUG_CONDITION_TRACE") or os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
         per_pass_validation_enabled = True
+    if os.environ.get("INERTIA_FORCE_PER_PASS_TV"):
+        per_pass_validation_enabled = True
+    skip_env = os.environ.get("INERTIA_SKIP_POSTPROCESS_PASSES")
+    skip_names: set[str] = set()
+    if isinstance(skip_env, str) and skip_env.strip():
+        skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
 
     baseline_summary = (
         _collect_tail_validation_summary_with_baseline_canonicalization_8616(
@@ -997,6 +1061,12 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                     validation.get("summary_text")
                     or f"tail-validation status={validation.get('status', 'unknown')}"
                 )
+                logging.getLogger(__name__).warning(
+                    "postprocess validation rejected function=%#x pass=%s verdict=%s",
+                    trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                    pass_name,
+                    validation.get("summary_text") or validation.get("verdict") or validation.get("status"),
+                )
                 if os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
                     logging.getLogger(__name__).warning(
                         "[postprocess-validation] function=%#x pass=%s delta=%s",
@@ -1029,32 +1099,35 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         codegen._inertia_typed_conditions_transferred = True
 
     # ── Typed condition rewriting pass (ConditionIR → explicit C comparisons) ──
-    if not _apply_step(
-        "_normalize_fact_backed_stack_accesses_8616",
-        lambda: _normalize_fact_backed_stack_accesses_8616(project, codegen),
-    ):
-        codegen._inertia_postprocess_changed = accepted_changed
-        project._inertia_decompiler_stage = "postprocess"
-        return accepted_changed
-    if codegen._inertia_postprocess_validation_failed:
-        codegen._inertia_postprocess_changed = accepted_changed
-        project._inertia_decompiler_stage = "postprocess"
-        return accepted_changed
+    if "_normalize_fact_backed_stack_accesses_8616" not in skip_names:
+        if not _apply_step(
+            "_normalize_fact_backed_stack_accesses_8616",
+            lambda: _normalize_fact_backed_stack_accesses_8616(project, codegen),
+        ):
+            codegen._inertia_postprocess_changed = accepted_changed
+            project._inertia_decompiler_stage = "postprocess"
+            return accepted_changed
+        if codegen._inertia_postprocess_validation_failed:
+            codegen._inertia_postprocess_changed = accepted_changed
+            project._inertia_decompiler_stage = "postprocess"
+            return accepted_changed
 
-    if not _apply_step(
-        "_apply_typed_conditions_to_codegen_8616",
-        lambda: _apply_typed_conditions_to_codegen_8616(project, codegen),
-    ):
-        codegen._inertia_postprocess_changed = accepted_changed
-        project._inertia_decompiler_stage = "postprocess"
-        return accepted_changed
-    if codegen._inertia_postprocess_validation_failed:
-        codegen._inertia_postprocess_changed = accepted_changed
-        project._inertia_decompiler_stage = "postprocess"
-        return accepted_changed
+    if "_apply_typed_conditions_to_codegen_8616" not in skip_names:
+        if not _apply_step(
+            "_apply_typed_conditions_to_codegen_8616",
+            lambda: _apply_typed_conditions_to_codegen_8616(project, codegen),
+        ):
+            codegen._inertia_postprocess_changed = accepted_changed
+            project._inertia_decompiler_stage = "postprocess"
+            return accepted_changed
+        if codegen._inertia_postprocess_validation_failed:
+            codegen._inertia_postprocess_changed = accepted_changed
+            project._inertia_decompiler_stage = "postprocess"
+            return accepted_changed
 
     # ── Optimization layer ──
-    if not per_pass_validation_enabled:
+    optimization_enabled = os.environ.get("INERTIA_ENABLE_POSTPROCESS_OPT", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not per_pass_validation_enabled and optimization_enabled:
         # Skip optimization for now — widening passes handle
         # CStatements internally via _unwrap_statements_8616
         if not _apply_step(
@@ -1151,6 +1224,7 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
     vars_in_use = getattr(cfunc, "variables_in_use", None)
     if isinstance(vars_in_use, dict):
         local_maps.append(vars_in_use)
+    stack_name_pat = re.compile(r"^(?:s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|arg_[0-9a-fA-F]+)$")
     for mapping in local_maps:
         for var in tuple(mapping.keys()):
             if var.__class__.__name__ != "SimStackVariable":
@@ -1161,6 +1235,22 @@ def _normalize_stack_variable_identifiers_8616(codegen) -> None:
                     var.ident = ""
                 except Exception:
                     continue
+            # Normalize unresolved stack carrier names to stable stack semantics.
+            # This is typed/name materialization from stack offsets, not text cleanup.
+            name = getattr(var, "name", None)
+            if not isinstance(name, str) or not stack_name_pat.match(name):
+                continue
+            offset = getattr(var, "offset", None)
+            if not isinstance(offset, int):
+                continue
+            if offset >= 0:
+                new_name = f"arg_{offset:x}"
+            else:
+                new_name = f"local_{(-offset):x}"
+            try:
+                var.name = new_name
+            except Exception:
+                continue
 
 
 def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
@@ -1239,10 +1329,38 @@ def _inertia_run_pre_rewrite_invariant_gate(project, codegen, function) -> None:
     codegen._inertia_invariant_report = report
     codegen._inertia_invariant_checked = True
 
+    # Hard gate: dead setup/staging artifacts must not escape final typed AST.
+    dead_setup_escaped = _count_dead_setup_escaped_8616(codegen)
+    setattr(codegen, "dead_setup_escaped", int(dead_setup_escaped))
+    if dead_setup_escaped > 0:
+        raise PipelineHardError(
+            "dead setup artifacts escaped final C",
+            layer="codegen",
+            function_addr=getattr(function, "addr", None),
+            details={
+                "dead_setup_candidates": int(getattr(codegen, "dead_setup_candidates", 0)),
+                "dead_setup_pruned": int(getattr(codegen, "dead_setup_pruned", 0)),
+                "dead_setup_refused": int(getattr(codegen, "dead_setup_refused", 0)),
+                "dead_setup_escaped": int(dead_setup_escaped),
+            },
+        )
+
     # ── HARD CONTRACT GATE: abort if facts exist but aren't materialized ──
     # This MUST run after lowering and before any output is emitted.
     # If stack_facts > 0 and stack_materialized == 0, raise PipelineHardError.
-    assert_pipeline_contracts_8616(codegen)
+    try:
+        assert_pipeline_contracts_8616(codegen)
+    except Exception as ex:
+        stack_lane = getattr(codegen, "_inertia_stack_lane", None)
+        cond_lane = getattr(codegen, "_inertia_condition_lane", None)
+        logging.getLogger(__name__).warning(
+            "Pipeline contract gate failed at function=%#x stage=invariant-gate: %s stack_lane=%s condition_lane=%s",
+            getattr(function, "addr", -1) or -1,
+            ex,
+            stack_lane.summary_line() if stack_lane is not None and hasattr(stack_lane, "summary_line") else stack_lane,
+            cond_lane.summary_line() if cond_lane is not None and hasattr(cond_lane, "summary_line") else cond_lane,
+        )
+        raise
 
     if report.rewrite_blocked:
         codegen._inertia_rewrite_failed = True
@@ -1441,8 +1559,10 @@ def _decompile_8616(self):
                 (validation.get("after") or {}).get("stack_writes"),
             )
         log.warning(
-            "Postprocess validation changed — discarding postprocessed C, emitting pre-postprocess C: %s",
+            "Postprocess validation changed — discarding postprocessed C, emitting pre-postprocess C: %s (last_pass=%s failure_pass=%s)",
             validation["verdict"],
+            getattr(self.codegen, "_inertia_last_postprocess_pass", None),
+            getattr(self.codegen, "_inertia_postprocess_validation_failure_pass", None),
         )
         # Semantic gate: restore pre-postprocess codegen when postprocess changed live-out observables
         if pre_postprocess_cfunc_snapshot is not None:
