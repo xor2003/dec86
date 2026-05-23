@@ -93,6 +93,13 @@ Sidecars/COD/debug listings are optional evidence only. They may provide labels,
 
 Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normalized_fact_count`, `classified_fact_count`, `materialized_count`, `failure_count`. If `classified > 0` and `materialized == 0`, pipeline must fail.
 
+### Persistent startup contract (do not relax)
+
+- Inertia is an **evidence-based decompiler in every layer**.
+- DCE is allowed only when evidence is collected and consumed (not guessed).
+- Unknown classification means **refuse and keep code**, never delete.
+- Passing gcc by deleting semantically live code is a hard failure.
+
 ## Review checklist
 
 1. What layer? Why earliest correct layer?
