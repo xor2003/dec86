@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -1703,12 +1704,21 @@ def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) 
 
 
 def seed_calling_conventions(cfg) -> None:
+    def _is_stack_probe_helper_name(name: str | None) -> bool:
+        if not isinstance(name, str):
+            return False
+        normalized = name.strip().lower().lstrip("_")
+        return normalized in {"anchkstk", "analloca_probe"}
+
     for function in getattr(cfg, "functions", {}).values():
         try:
             function._init_prototype_and_calling_convention()
         except Exception as ex:
             logging.getLogger(__name__).debug("prototype init skipped: %s", ex)
             continue
+        if _is_stack_probe_helper_name(getattr(function, "name", None)):
+            with contextlib.suppress(Exception):
+                function.returning = True
 
 
 def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_window: int = 0x80):
