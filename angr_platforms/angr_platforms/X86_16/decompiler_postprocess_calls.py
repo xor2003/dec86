@@ -128,23 +128,21 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             log.warning("[call-recover] context=%s skip=no-expected-names addr=%#x codegen_id=%#x", context_tag, func_addr, id(codegen))
         return False
 
-    present_names = _rendered_call_names_8616(codegen, cfunc)
-    if not present_names:
+    # Presence/missing checks should prefer emitted body text.
+    # If rendering fails, fall back to AST call names as best-effort evidence.
+    present_names, rendered_ok = _rendered_call_names_8616(codegen, cfunc)
+    if not rendered_ok:
         for node in _iter_c_nodes_deep_8616(root):
             if not isinstance(node, CFunctionCall):
                 continue
-            name = getattr(node, "callee_target", None)
-            if isinstance(name, str) and name:
-                present_names.append(name)
-                continue
-            callee = getattr(node, "callee_func", None)
-            callee_name = getattr(callee, "name", None)
-            if isinstance(callee_name, str) and callee_name:
-                present_names.append(callee_name)
-                continue
-            callee_name = getattr(node, "callee", None)
-            if isinstance(callee_name, str) and callee_name:
-                present_names.append(callee_name)
+            for raw in (
+                getattr(node, "callee_target", None),
+                getattr(getattr(node, "callee_func", None), "name", None),
+                getattr(node, "callee", None),
+            ):
+                if isinstance(raw, str) and raw:
+                    present_names.append(raw)
+                    break
 
     source_sequence = [
         (normalize_callee_name_8616(name) or name)
@@ -291,24 +289,30 @@ def _first_empty_loop_body_8616(statements) -> object | None:
     return None
 
 
-def _rendered_call_names_8616(codegen, cfunc) -> list[str]:
+def _rendered_call_names_8616(codegen, cfunc) -> tuple[list[str], bool]:
     try:
         rendered = codegen.render_text(cfunc)
     except Exception:
-        rendered = ""
+        return ([], False)
     if isinstance(rendered, tuple):
         rendered = rendered[0] if rendered and isinstance(rendered[0], str) else ""
     if not isinstance(rendered, str) or not rendered:
-        return []
+        return ([], False)
+    # Presence checks must only inspect executable body text.
+    # Embedded original-source evidence comments (/// ...) include call names
+    # that can otherwise mask genuinely missing recovered calls.
     text_wo_comments = re.sub(r"/\*.*?\*/", "", rendered, flags=re.S)
     text_wo_comments = re.sub(r"//[^\n]*", "", text_wo_comments)
+    text_wo_comments = "\n".join(
+        line for line in text_wo_comments.splitlines() if not line.lstrip().startswith("///")
+    )
     body = text_wo_comments.split("{", 1)[-1] if "{" in text_wo_comments else text_wo_comments
     names: list[str] = []
     for name in _CALL_TOKEN_RE_8616.findall(body):
         if name in {"if", "for", "while", "switch", "return", "sizeof"}:
             continue
         names.append(name)
-    return names
+    return (names, True)
 
 
 @dataclass(slots=True)
