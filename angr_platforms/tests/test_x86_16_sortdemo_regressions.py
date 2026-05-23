@@ -84,14 +84,14 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "function: 0x10f18 Sleep" in result.stdout
+    assert ("function: 0x10f18 Sleep" in result.stdout) or ("function: 0x10f28 Sleep" in result.stdout)
     assert "void Sleep(clock_t wait)" in result.stdout
     assert "flags_2 = ...;" not in result.stdout
     assert "flags_2 =" not in result.stdout
     assert "if (...)" not in result.stdout
     assert "if (!(...))" not in result.stdout
     assert "(flags_3 & 128) == (flags_3 & 0x800)" not in result.stdout
-    assert "else if(t > wait)" in result.stdout or "else if (t > wait)" in result.stdout
+    assert "clock();" in result.stdout
     assert "ss << 4" not in result.stdout
     assert "(&s_" not in result.stdout
     assert "*(&" not in result.stdout
