@@ -2624,6 +2624,17 @@ def main(argv: list[str] | None = None) -> int:
             slice_result = None
             sidecar_closed_nonopt = False
             known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
+            # Cap heavy fallback fan-out per function to keep direct-addr mode
+            # deterministic and prevent minute-long retry storms.
+            heavy_fallback_budget = 2 if direct_result.status == "validation_failed" else 4
+
+            def _consume_heavy_fallback_budget() -> bool:
+                nonlocal heavy_fallback_budget
+                if heavy_fallback_budget <= 0:
+                    return False
+                heavy_fallback_budget -= 1
+                return True
+
             exact_retry_blocked = direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen
             if direct_result.status == "empty":
                 # Allow one non-optimized known-function lane even when the
@@ -2725,6 +2736,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             if partial_payload is None:
                 if allow_known_nonopt:
+                    if not _consume_heavy_fallback_budget():
+                        allow_known_nonopt = False
+                if allow_known_nonopt:
                     _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
                     known_nonopt_result = _try_decompile_non_optimized_known_function(
                         direct_project,
@@ -2758,19 +2772,21 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
-            generic_nonopt_result = _try_decompile_non_optimized_slice(
-                direct_project,
-                direct_display_addr,
-                func.name,
-                timeout=max(1, min(_bounded_non_optimized_timeout(args.timeout), _remaining_direct_addr_budget() or 1)),
-                api_style=args.api_style,
-                binary_path=args.binary,
-                lst_metadata=None if using_rebased_direct_slice else lst_metadata,
-                cod_metadata=cod_metadata,
-                allow_fresh_project_retry=True,
-                failure_family_state=direct_failure_family_state,
-                original_addr=direct_display_addr,
-            )
+            generic_nonopt_result = None
+            if _consume_heavy_fallback_budget():
+                generic_nonopt_result = _try_decompile_non_optimized_slice(
+                    direct_project,
+                    direct_display_addr,
+                    func.name,
+                    timeout=max(1, min(_bounded_non_optimized_timeout(args.timeout), _remaining_direct_addr_budget() or 1)),
+                    api_style=args.api_style,
+                    binary_path=args.binary,
+                    lst_metadata=None if using_rebased_direct_slice else lst_metadata,
+                    cod_metadata=cod_metadata,
+                    allow_fresh_project_retry=False,
+                    failure_family_state=direct_failure_family_state,
+                    original_addr=direct_display_addr,
+                )
             generic_nonopt_c = _non_optimized_slice_rendered(generic_nonopt_result)
             if generic_nonopt_c is not None:
                 _emit_tail_validation_for_function_run_or_uncollected(
@@ -2805,17 +2821,20 @@ def main(argv: list[str] | None = None) -> int:
                         flush=True,
                     )
                     _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
-                    slice_result = _try_decompile_sidecar_slice(
-                        project,
-                        lst_metadata,
-                        direct_display_addr,
-                        func.name,
-                        timeout=max(1, min(args.timeout, _remaining_direct_addr_budget() or 1)),
-                        api_style=args.api_style,
-                        binary_path=args.binary,
-                        failure_family_state=direct_failure_family_state,
-                    )
-                    if slice_result is None:
+                    sidecar_attempted = False
+                    if _consume_heavy_fallback_budget():
+                        sidecar_attempted = True
+                        slice_result = _try_decompile_sidecar_slice(
+                            project,
+                            lst_metadata,
+                            direct_display_addr,
+                            func.name,
+                            timeout=max(1, min(args.timeout, _remaining_direct_addr_budget() or 1)),
+                            api_style=args.api_style,
+                            binary_path=args.binary,
+                            failure_family_state=direct_failure_family_state,
+                        )
+                    if sidecar_attempted and slice_result is None:
                         print("[dbg] sidecar slice attempt returned None", file=sys.stderr, flush=True)
             if slice_result is not None:
                 if slice_result.status != "ok":
@@ -2892,6 +2911,7 @@ def main(argv: list[str] | None = None) -> int:
                 and (precise_sidecar_regions or using_rebased_direct_slice)
                 and not sidecar_closed_nonopt
                 and not (direct_failure_family_state.repeat_detected and not direct_failure_family_state.new_proof_seen)
+                and _consume_heavy_fallback_budget()
             ):
                 _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
                 nonopt_result = _try_decompile_non_optimized_slice(
@@ -2903,6 +2923,7 @@ def main(argv: list[str] | None = None) -> int:
                     binary_path=args.binary,
                     lst_metadata=None if using_rebased_direct_slice else lst_metadata,
                     cod_metadata=cod_metadata,
+                    allow_fresh_project_retry=False,
                     failure_family_state=direct_failure_family_state,
                     original_addr=direct_display_addr,
                 )

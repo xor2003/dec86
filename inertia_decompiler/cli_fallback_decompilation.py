@@ -190,6 +190,8 @@ from inertia_decompiler.tail_validation import (
     tail_validation_snapshot_for_function_run as _tail_validation_snapshot_for_function_run,
 )
 
+logger = logging.getLogger(__name__)
+
 from inertia_decompiler.runtime_support import (
     AnalysisTimeout as _AnalysisTimeout,
     DaemonThreadPoolExecutor,
@@ -298,10 +300,10 @@ def _try_decompile_sidecar_slice(
         code = bytes(project.loader.memory.load(start, end - start))
     except Exception as ex:
         try:
-            log.debug("sidecar slice runner wrapper failed: %s; retrying in-process", ex)
+            logger.debug("sidecar slice runner wrapper failed: %s; retrying in-process", ex)
             return _recover_and_decompile()
         except Exception as inner_ex:
-            log.debug("sidecar slice in-process retry failed: %s", inner_ex)
+            logger.debug("sidecar slice in-process retry failed: %s", inner_ex)
             return SliceRecoveryAttemptOutcome(
                 attempt_name="sidecar-slice",
                 status="error",
@@ -392,22 +394,30 @@ def _try_decompile_sidecar_slice(
 
     try:
         runner_timeout = max(2, min(timeout, 8))
+        result = None
         if (
             os.name == "posix"
             and threading.current_thread() is threading.main_thread()
             and threading.active_count() == 1
             and isinstance(project, angr.Project)
         ):
-            return _run_with_timeout_in_fork(
+            result = _run_with_timeout_in_fork(
                 _recover_and_decompile,
                 timeout=runner_timeout,
             )
         else:
-            return _run_with_timeout_in_daemon_thread(
+            result = _run_with_timeout_in_daemon_thread(
                 _recover_and_decompile,
                 timeout=runner_timeout,
                 thread_name_prefix="slice-fallback",
             )
+        if result is None:
+            return SliceRecoveryAttemptOutcome(
+                attempt_name="sidecar-slice",
+                status="timeout",
+                payload=f"sidecar slice runner timed out after {runner_timeout}s",
+            )
+        return result
     except Exception:
         return SliceRecoveryAttemptOutcome(
             attempt_name="sidecar-slice",
