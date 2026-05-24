@@ -1736,13 +1736,24 @@ def _emit_function_result(
                 c_header="/* -- c -- */",
             )
             return decompiled_local, failed_local
+        validation_status = _tail_validation_display_status(result.tail_validation)
+        print("/* problem: validation=failed */")
+        for _diag_line in _format_tail_validation_diagnostic(
+            result.tail_validation,
+            function_addr=function.addr,
+            function_name=function.name,
+            block_count=getattr(result, "block_count", None),
+            byte_count=getattr(result, "byte_count", None),
+            exit_kind=result.status,
+            exit_detail=f"tail-validation status={validation_status}",
+        ):
+            print(_diag_line)
         _print_function_attempt_status(
             function,
             attempt="decompiled",
             validation_snapshot=result.tail_validation,
         )
-        print("/* problem: validation=uncollected */")
-        print("/* decompiled output produced without full tail-validation snapshot; trying fallback lanes */")
+        print("/* decompiled output failed tail-validation; trying fallback lanes */")
         attempt_status_printed = True
         emitted_problem = True
 
@@ -1782,7 +1793,17 @@ def _emit_function_result(
             _emit_optional_source_sidecar_c_block(args.binary, item.function.name, slice_result.payload, alternate_source_c=bool(args.alternate_source_c), c_header="/* -- c (sidecar slice fallback) -- */")
             return decompiled_local, failed_local
         _print_function_attempt_status(function, attempt="fallback", validation_snapshot=fallback_snapshot)
-        print("/* problem: sidecar slice fallback validation=uncollected; continuing fallback lanes */")
+        print("/* problem: validation=failed */")
+        for _diag_line in _format_tail_validation_diagnostic(
+            fallback_snapshot,
+            function_addr=function.addr,
+            function_name=function.name,
+            block_count=getattr(result, "block_count", None),
+            byte_count=getattr(result, "byte_count", None),
+            exit_kind="fallback",
+            exit_detail="sidecar slice fallback not semantically stable",
+        ):
+            print(_diag_line)
 
     nonopt_result: NonOptimizedSliceOutcome | str | None = None
     known_nonopt_result: NonOptimizedSliceOutcome | str | None = None
