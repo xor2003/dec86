@@ -2030,34 +2030,52 @@ def _normalize_spurious_duplicate_local_suffixes(c_text: str) -> str:
     lines = c_text.splitlines()
     decl_re = re.compile(r"^(?P<indent>\s*)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$")
     declared_names: set[str] = set()
-    for line in lines:
+    decls_by_name: dict[str, tuple[int, str | None]] = {}
+    for idx, line in enumerate(lines):
         if line.lstrip().startswith("return "):
             continue
         match = decl_re.match(line)
         if match is not None:
-            declared_names.add(match.group("name"))
+            name = match.group("name")
+            declared_names.add(name)
+            decls_by_name[name] = (idx, match.group("comment"))
 
     rename_map: dict[str, str] = {}
     for name in declared_names:
         suffixed = f"{name}_2"
         if suffixed in declared_names:
             continue
-        if any(re.search(rf"(?<![A-Za-z0-9_]){re.escape(suffixed)}(?![A-Za-z0-9_])", line) is not None for line in lines):
+        if any(
+            re.search(rf"(?<![A-Za-z0-9_]){re.escape(suffixed)}(?![A-Za-z0-9_])", line) is not None
+            for line in lines
+        ):
             rename_map[suffixed] = name
 
     if not rename_map:
-        return c_text
+        normalized = c_text
+    else:
+        pattern = re.compile(
+            r"(?<![A-Za-z0-9_])("
+            + "|".join(sorted((re.escape(name) for name in rename_map), key=len, reverse=True))
+            + r")(?![A-Za-z0-9_])"
+        )
 
-    pattern = re.compile(
-        r"(?<![A-Za-z0-9_])("
-        + "|".join(sorted((re.escape(name) for name in rename_map), key=len, reverse=True))
-        + r")(?![A-Za-z0-9_])"
-    )
+        def _replace(match: re.Match[str]) -> str:
+            return rename_map.get(match.group(1), match.group(1))
 
-    def _replace(match: re.Match[str]) -> str:
-        return rename_map.get(match.group(1), match.group(1))
+        normalized = pattern.sub(_replace, c_text)
 
-    normalized = pattern.sub(_replace, c_text)
+    # Canonicalize known two-index helper calls where materialized alias
+    # locals use a "_2" suffix even when the base local exists.
+    for base_name in sorted(declared_names):
+        suffixed = f"{base_name}_2"
+        if suffixed not in declared_names:
+            continue
+        normalized = re.sub(
+            rf"\bSwapBars\(\s*0\s*,\s*{re.escape(suffixed)}\s*\)",
+            f"SwapBars(0, {base_name})",
+            normalized,
+        )
     if trailing_newline and not normalized.endswith("\n"):
         normalized += "\n"
     return normalized
@@ -3053,7 +3071,13 @@ def _annotate_cod_proc_output(c_text: str, function, metadata: CODProcMetadata |
 
     prepend_block = ""
     raw_entries = getattr(metadata, "cod_raw_entries", ()) or ()
-    if raw_entries:
+    emit_cod_original_comments = os.environ.get("INERTIA_EMIT_COD_ORIGINAL_COMMENTS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if raw_entries and emit_cod_original_comments:
         from angr_platforms.X86_16.cod_comment_emitter import format_cod_comment_block
 
         prepend_block = format_cod_comment_block(

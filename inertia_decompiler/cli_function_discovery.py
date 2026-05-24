@@ -571,22 +571,30 @@ def _pick_function_lean(
     seed_calling_conventions(cfg)
     return cfg, function
 
-def _x86_16_recovery_windows(window: int, *, low_memory: bool = False) -> tuple[int, ...]:
-    base_window = max(window, 0x80 if low_memory else 0x200)
+def _normalized_x86_16_recovery_window(window: int | None, *, low_memory: bool = False) -> int:
+    floor = 0x80 if low_memory else 0x200
+    if not isinstance(window, int):
+        return floor
+    return max(window, floor)
+
+
+def _x86_16_recovery_windows(window: int | None, *, low_memory: bool = False) -> tuple[int, ...]:
+    base_window = _normalized_x86_16_recovery_window(window, low_memory=low_memory)
     return tuple(base_window * factor for factor in (1, 2, 4, 8, 16))
 
-def _x86_16_fast_recovery_windows(window: int, *, low_memory: bool = False) -> tuple[int, ...]:
+def _x86_16_fast_recovery_windows(window: int | None, *, low_memory: bool = False) -> tuple[int, ...]:
+    effective_window = _normalized_x86_16_recovery_window(window, low_memory=low_memory)
     candidate_windows = (0x40, 0x80, 0x100) if low_memory else (0x80, 0x100, 0x200)
     windows: list[int] = []
     for candidate in candidate_windows:
-        if window <= candidate:
-            effective_window = window
+        if effective_window <= candidate:
+            current_window = effective_window
         else:
-            effective_window = candidate
-        if effective_window not in windows:
-            windows.append(effective_window)
+            current_window = candidate
+        if current_window not in windows:
+            windows.append(current_window)
     if not windows:
-        windows.append(window)
+        windows.append(effective_window)
     return tuple(windows)
 
 def _recover_cfg(
