@@ -200,6 +200,12 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
 
     summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
     changed = False
+    # Metadata-first by default: avoid rewriting callee identities here unless
+    # explicitly enabled for debugging.
+    allow_call_target_rewrites = bool(int(os.environ.get("INERTIA_ENABLE_CALLSITE_TARGET_REWRITES", "0")))
+    # Callsite summary attachment should be metadata-first. Rewriting callee
+    # identities here can perturb later passes and leak semantic deltas.
+    allow_call_target_rewrites = bool(int(os.environ.get("INERTIA_ENABLE_CALLSITE_TARGET_REWRITES", "0")))
     first_empty_loop_body = _first_empty_loop_body_8616(mutable_statements)
     # Preserve source call ordering when recovering missing calls.
     # Build a replay queue by scanning source order and selecting only calls that
@@ -1032,6 +1038,7 @@ def _normalize_call_target_names_8616(codegen) -> bool:
 
     project = getattr(codegen, "project", None)
     changed = False
+    allow_call_target_rewrites = bool(int(os.environ.get("INERTIA_ENABLE_CALLSITE_TARGET_REWRITES", "0")))
     stats = _ensure_callsite_materialization_stats_8616(codegen)
     root = getattr(cfunc, "statements", None) or getattr(cfunc, "body", None) or cfunc
     summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
@@ -1409,6 +1416,7 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         return value if isinstance(value, int) else None
 
     changed = False
+    allow_call_target_rewrites = bool(int(os.environ.get("INERTIA_ENABLE_CALLSITE_TARGET_REWRITES", "0")))
     stats = _ensure_callsite_materialization_stats_8616(codegen)
     summary_map = dict(getattr(codegen, "_inertia_callsite_summaries", {}) or {})
     source_call_names = _cod_source_call_names_8616(project, func_addr)
@@ -1518,9 +1526,11 @@ def _attach_callsite_summaries_8616(project, codegen) -> bool:
         if summary_map.get(id(node)) != summary:
             summary_map[id(node)] = summary
             record_callsite_summary_fact_8616(codegen, summary, node_id=id(node), attached=True)
-            changed = True
+            # Metadata-only update: do not mark AST as changed.
         target_addr = summary.target_addr
         if not isinstance(target_addr, int):
+            continue
+        if not allow_call_target_rewrites:
             continue
         callee_func = getattr(node, "callee_func", None)
         candidate = _lookup_callee_function_8616(project, target_addr)

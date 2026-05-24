@@ -617,6 +617,36 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
 
         return _walk(expr)
 
+    def _expr_uses_bp_positive_stack_slot_8616(expr) -> bool:
+        seen: set[int] = set()
+
+        def _walk(node) -> bool:
+            if node is None:
+                return False
+            marker = id(node)
+            if marker in seen:
+                return False
+            seen.add(marker)
+            if isinstance(node, CVariable):
+                variable = getattr(node, "variable", None)
+                if isinstance(variable, SimStackVariable):
+                    offset = int(getattr(variable, "offset", 0) or 0)
+                    if offset >= 0:
+                        return True
+            if isinstance(node, CBinaryOp):
+                return _walk(getattr(node, "lhs", None)) or _walk(getattr(node, "rhs", None))
+            if isinstance(node, CUnaryOp):
+                return _walk(getattr(node, "operand", None))
+            if isinstance(node, CTypeCast):
+                return _walk(getattr(node, "expr", None))
+            for attr in ("expr", "condition", "cond"):
+                child = getattr(node, attr, None)
+                if child is not None and _walk(child):
+                    return True
+            return False
+
+        return _walk(expr)
+
     def _decoded_condition_replacement(cond):
         key = _condition_tags_8616(cond)
         ins_addr = None if key is None else key[0]
@@ -666,6 +696,14 @@ def _rewrite_decoded_jcc_conditions_8616(project, codegen) -> bool:
         if same_expr or lhs_fp == rhs_fp:
             if debug_jcc:
                 _log.warning("[jcc-rewrite] decoded candidate rejected key=%r", key)
+            return None
+        # Safety guard: avoid rewriting via decoded jcc when compare operands
+        # depend on BP+positive stack slots (arg/return area). This pattern is
+        # frequently ambiguous in 16-bit lifted state and can introduce false
+        # loop predicates.
+        if _expr_uses_bp_positive_stack_slot_8616(decoded.lhs) or _expr_uses_bp_positive_stack_slot_8616(decoded.rhs):
+            if debug_jcc:
+                _log.warning("[jcc-rewrite] decoded candidate rejected (bp+ slot) key=%r", key)
             return None
         if debug_jcc:
             _log.warning("[jcc-rewrite] decoded candidate accepted key=%r", key)
