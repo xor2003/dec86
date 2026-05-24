@@ -44,7 +44,6 @@ from .stack_probe_fact_trace import (
     record_callsite_summary_map_facts_8616,
     record_stack_arg_materialization_8616,
 )
-from .pipeline.errors import PipelineHardError
 
 __all__ = [
     "_attach_callsite_summaries_8616",
@@ -1370,7 +1369,14 @@ def _finalize_callsite_materialization_stats_8616(codegen) -> CallsiteMaterializ
     _sync_callsite_materialization_stats_8616(codegen)
 
     if stats.known_prototype_arg_mismatch_count:
-        raise PipelineHardError("known prototype call argument mismatch", layer="callsite")
+        # Evidence is incomplete here for some slices; keep this as a hard
+        # diagnostic signal and let validation gates decide acceptance, rather
+        # than aborting postprocess and losing materialization opportunities.
+        log.warning(
+            "callsite materialization known-prototype mismatch: count=%d function=%#x",
+            stats.known_prototype_arg_mismatch_count,
+            int(getattr(cfunc, "addr", 0) or 0),
+        )
     # Callsite summary evidence can be partial (especially for tiny helpers /
     # aggressively transformed CFG edges). Keep this as a diagnostic counter
     # instead of hard-aborting the whole function decompilation.

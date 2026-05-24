@@ -361,6 +361,13 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
     skip_names: set[str] = set()
     if isinstance(skip_env, str) and skip_env.strip():
         skip_names = {name.strip() for name in skip_env.split(",") if name.strip()}
+    if os.environ.get("INERTIA_ENABLE_FACT_BACKED_STACK_NORMALIZE", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        skip_names.add("_normalize_fact_backed_stack_accesses_8616")
     callsite_rewrite_env = os.environ.get("INERTIA_ENABLE_CALLSITE_REWRITE")
     if callsite_rewrite_env is None or not callsite_rewrite_env.strip():
         # Evidence-driven default: keep callsite summary/materialization enabled.
@@ -1297,6 +1304,12 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         if (
             spec.name == "_normalize_call_target_names_final_8616"
             and os.environ.get("INERTIA_ENABLE_FINAL_CALL_TARGET_NORMALIZE", "").strip().lower()
+            not in {"1", "true", "yes", "on"}
+        ):
+            continue
+        if (
+            spec.name == "_normalize_fact_backed_stack_accesses_8616"
+            and os.environ.get("INERTIA_ENABLE_FACT_BACKED_STACK_NORMALIZE", "").strip().lower()
             not in {"1", "true", "yes", "on"}
         ):
             continue
