@@ -1850,6 +1850,18 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
     stats = _ensure_callsite_materialization_stats_8616(codegen)
 
     changed = False
+    conservative_materialization = os.environ.get("INERTIA_CONSERVATIVE_CALLSITE_ARG_MATERIALIZE", "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    prune_consumed_arg_stores = os.environ.get("INERTIA_ENABLE_PRUNE_CONSUMED_CALL_ARG_STORES", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     materialized_callsite_metadata_ids: dict[int, tuple[int, ...]] = {}
     synthetic_stack_cvars: dict[int, structured_c.CVariable] = {}
 
@@ -3917,7 +3929,8 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                             new_statements,
                             candidate_indices,
                         )
-                        del new_statements[-expected_arg_count:]
+                        if prune_consumed_arg_stores:
+                            del new_statements[-expected_arg_count:]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -3947,8 +3960,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         _set_materialized_call_args(call, normalized_args, call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        for consume_idx in sorted(consumed_indices, reverse=True):
-                            del new_statements[consume_idx]
+                        if prune_consumed_arg_stores:
+                            for consume_idx in sorted(consumed_indices, reverse=True):
+                                del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -3974,8 +3988,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         _set_materialized_call_args(call, normalized_args, call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        for consume_idx in sorted(consumed_indices, reverse=True):
-                            del new_statements[consume_idx]
+                        if prune_consumed_arg_stores:
+                            for consume_idx in sorted(consumed_indices, reverse=True):
+                                del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -3994,8 +4009,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         _set_materialized_call_args(call, normalized_args, call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        for consume_idx in sorted(consumed_indices, reverse=True):
-                            del new_statements[consume_idx]
+                        if prune_consumed_arg_stores:
+                            for consume_idx in sorted(consumed_indices, reverse=True):
+                                del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -4036,8 +4052,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
                         _set_materialized_call_args(call, normalized_args, call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, len(normalized_args))
-                        for consume_idx in sorted(consumed_indices, reverse=True):
-                            del new_statements[consume_idx]
+                        if prune_consumed_arg_stores:
+                            for consume_idx in sorted(consumed_indices, reverse=True):
+                                del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -4065,8 +4082,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                         _set_materialized_call_args(call, [normalized_args[0]], call_name=call_name)
                         record_stack_arg_materialization_8616(codegen, 1)
                         _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                        for consume_idx in sorted(consumed_indices, reverse=True):
-                            del new_statements[consume_idx]
+                        if prune_consumed_arg_stores:
+                            for consume_idx in sorted(consumed_indices, reverse=True):
+                                del new_statements[consume_idx]
                         _refresh_summary_arg_shape(call, summary)
                         changed = True
                         strict_arg_shape_applied = True
@@ -4134,8 +4152,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                     _set_materialized_call_args(call, normalized_args, call_name=call_name)
                     record_stack_arg_materialization_8616(codegen, len(normalized_args))
                     _record_prunable_segment_metadata_ids(call, new_statements, consumed_indices)
-                    for consume_idx in sorted(consumed_indices, reverse=True):
-                        del new_statements[consume_idx]
+                    if prune_consumed_arg_stores:
+                        for consume_idx in sorted(consumed_indices, reverse=True):
+                            del new_statements[consume_idx]
                     _refresh_summary_arg_shape(call, summary)
                     changed = True
                 else:
@@ -4215,7 +4234,50 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
 
     root = _structured_root_8616(cfunc)
     if isinstance(getattr(root, "statements", None), (list, tuple)):
-        _rewrite_block(root)
+        if not conservative_materialization:
+            _rewrite_block(root)
+        else:
+            # Evidence-only conservative lane: seed call args from proven callsite
+            # push sources/defaults without mutating surrounding statement shape.
+            for node in _iter_c_nodes_deep_8616(root):
+                if not isinstance(node, CFunctionCall) or _is_runtime_segment_helper_call_8616(node):
+                    continue
+                call_name = _call_node_name_8616(node) or ""
+                summary = summary_map.get(id(node))
+                push_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
+                summary_arg_count = getattr(summary, "arg_count", None) if summary is not None else None
+                known_count = _expected_arg_count_for_known_callee_8616(call_name)
+                expected_count = summary_arg_count if isinstance(summary_arg_count, int) and summary_arg_count >= 0 else known_count
+                if not (isinstance(expected_count, int) and expected_count > 0):
+                    continue
+                current_args = tuple(getattr(node, "args", ()) or ())
+                if current_args and not _call_args_need_rematerialization_8616(node, push_arg_sources=push_sources):
+                    continue
+                seeded_args = None
+                if isinstance(push_sources, tuple) and len(push_sources) == expected_count:
+                    ordered_sources = list(reversed(push_sources)) if len(push_sources) > 1 else list(push_sources)
+                    direct_args = [
+                        _direct_expr_from_push_source_8616(source, call_name=call_name, arg_index=idx)
+                        for idx, source in enumerate(ordered_sources)
+                    ]
+                    if all(arg is not None for arg in direct_args):
+                        normalized_args = _normalize_materialized_call_args(
+                            direct_args,
+                            [-1] * len(direct_args),
+                            [],
+                            call_name=call_name,
+                        )
+                        if normalized_args is not None and _all_arg_exprs_are_non_segment_registers(normalized_args):
+                            seeded_args = tuple(normalized_args)
+                if seeded_args is None:
+                    defaults = _known_default_args_for_missing_8616(call_name, codegen)
+                    if defaults is not None and len(defaults) == expected_count:
+                        seeded_args = tuple(defaults)
+                if seeded_args is None:
+                    continue
+                _set_materialized_call_args(node, seeded_args, call_name=call_name, force_replace=True)
+                _refresh_summary_arg_shape(node, summary)
+                changed = True
         # Last-resort stability guard: known helpers must not be left as empty
         # calls after materialization. Use summary evidence/defaults to seed arity.
         for node in _iter_c_nodes_deep_8616(root):

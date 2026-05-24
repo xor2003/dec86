@@ -1887,7 +1887,11 @@ def _decompile_8616(self):
         _regenerate_text_safely(self.codegen, context=context)
     record_ast_condition_trace_8616(self.project, self.codegen, stage="emitted_c")
     # ── Pre-rewrite invariant gate ──
-    _inertia_run_pre_rewrite_invariant_gate(self.project, self.codegen, function)
+    # Keep diagnostics available, but do not run mutating gate logic by default
+    # in validated flow. Late-stage semantic mutation here can invalidate the
+    # postprocess equivalence contract.
+    if os.environ.get("INERTIA_ENABLE_PRE_REWRITE_INVARIANT_GATE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        _inertia_run_pre_rewrite_invariant_gate(self.project, self.codegen, function)
     after_fingerprint = fingerprint_x86_16_tail_validation_boundary(self.project, self.codegen, mode=validation_mode)
     after_collect_started = time.perf_counter()
     after_summary = _collect_tail_validation_summary_with_baseline_canonicalization_8616(
