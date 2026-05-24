@@ -2077,6 +2077,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_cli_argument_parser()
     args = parser.parse_args(argv)
     timeout_was_explicit = _argument_was_explicit("--timeout")
+    if args.addr is None:
+        if not timeout_was_explicit:
+            # Whole-file sweeps should be bounded by default; callers that need a
+            # larger per-function budget can still pass --timeout explicitly.
+            args.timeout = max(4, min(int(args.timeout), 8))
+        elif isinstance(getattr(args, "max_functions", None), int) and int(args.max_functions) > 0:
+            # Even with explicit timeout, bounded "show top N functions" runs
+            # should stay interactive and deterministic.
+            args.timeout = max(4, min(int(args.timeout), 12))
 
     _lower_process_priority()
     _apply_memory_limit(args.max_memory_mb)
@@ -4380,6 +4389,9 @@ def main(argv: list[str] | None = None) -> int:
                         block_count=_block_count,
                         byte_count=byte_count,
                     )
+                    if args.addr is None:
+                        # Keep whole-file sweeps bounded by the per-run cap.
+                        decompile_timeout = max(1, min(int(decompile_timeout), int(args.timeout)))
                     if (
                         use_serial_fork_per_function
                         and threading.current_thread() is threading.main_thread()
