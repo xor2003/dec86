@@ -291,13 +291,25 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
             "_inertia_direct_call_floor_recovered_count",
             int(getattr(codegen, "_inertia_direct_call_floor_recovered_count", 0)) + len(missing),
         )
-    if (not changed) and source_sequence:
-        empty_loop_bodies = _empty_loop_bodies_8616(root_statements)
+    if source_sequence:
+        current_statements = getattr(root, "statements", None)
+        if not isinstance(current_statements, (list, tuple)):
+            current_statements = root_statements
+        empty_loop_bodies = _empty_loop_bodies_8616(current_statements)
         if len(empty_loop_bodies) >= 2:
-            mutable_statements = list(root_statements)
+            mutable_statements = list(current_statements)
+            first_return_idx = None
+            for idx, stmt in enumerate(mutable_statements):
+                if isinstance(stmt, structured_c.CReturn):
+                    first_return_idx = idx
+                    break
+            if first_return_idx is not None:
+                scan_slice = list(enumerate(mutable_statements[first_return_idx + 1 :], start=first_return_idx + 1))
+            else:
+                scan_slice = list(enumerate(mutable_statements))
             call_stmt_indexes: list[int] = []
             call_stmt_names: list[str] = []
-            for idx, stmt in enumerate(mutable_statements):
+            for idx, stmt in scan_slice:
                 expr = getattr(stmt, "expr", None)
                 if not isinstance(expr, CFunctionCall):
                     continue
@@ -336,6 +348,14 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
                 if cfunc_body is not None and cfunc_body is not root and isinstance(body_statements, (list, tuple)):
                     cfunc_body.statements = list(updated_statements) if isinstance(body_statements, list) else tuple(updated_statements)
                 changed = True
+                # Preserve reachable control flow: remove early top-level return
+                # when it now precedes only relocated callsites.
+                if first_return_idx is not None and first_return_idx < len(mutable_statements):
+                    with contextlib.suppress(Exception):
+                        updated_top = list(getattr(root, "statements", ()) or ())
+                        if first_return_idx < len(updated_top) and isinstance(updated_top[first_return_idx], structured_c.CReturn):
+                            del updated_top[first_return_idx]
+                            root.statements = updated_top if isinstance(getattr(root, "statements", None), list) else tuple(updated_top)
     return changed
 
 
@@ -357,9 +377,35 @@ def _empty_loop_bodies_8616(statements) -> list[object]:
         body_statements = getattr(body, "statements", None)
         if not isinstance(body_statements, (list, tuple)):
             continue
-        if len(body_statements) != 0:
+        if not (hasattr(stmt, "condition") or hasattr(stmt, "cond")):
             continue
-        if hasattr(stmt, "condition") or hasattr(stmt, "cond"):
+        if len(body_statements) == 0:
+            bodies.append(body)
+            continue
+        has_call = False
+        only_placeholder_effects = True
+        for body_stmt in body_statements:
+            expr = getattr(body_stmt, "expr", None)
+            if isinstance(expr, CFunctionCall):
+                has_call = True
+                only_placeholder_effects = False
+                break
+            if isinstance(expr, CBinaryOp):
+                # Keep conservative: loop bodies with binary expression side-effects
+                # are not safe anchors.
+                only_placeholder_effects = False
+                break
+            if isinstance(expr, structured_c.CAssignment):
+                lhs = getattr(expr, "lhs", None)
+                rhs = getattr(expr, "rhs", None)
+                if _same_c_expression_8616(lhs, rhs):
+                    continue
+                only_placeholder_effects = False
+                break
+            # Unknown loop statement kind: refuse anchoring.
+            only_placeholder_effects = False
+            break
+        if (not has_call) and only_placeholder_effects:
             bodies.append(body)
     return bodies
 
