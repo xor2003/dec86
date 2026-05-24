@@ -1142,6 +1142,12 @@ def _align_cod_call_names_8616(project, codegen) -> bool:
         cod_idx += 1
         if not isinstance(replacement, str) or not replacement or replacement.startswith("sub_"):
             continue
+        expected_arity = _expected_arg_count_for_known_callee_8616(replacement)
+        current_arity = len(tuple(getattr(node, "args", ()) or ()))
+        # Guard against order drift: never rename an unknown call to a helper
+        # whose known arity disagrees with the current callsite shape.
+        if isinstance(expected_arity, int) and current_arity != expected_arity:
+            continue
         callee_func = getattr(node, "callee_func", None)
         if callee_func is not None and getattr(callee_func, "name", None) != replacement:
             callee_func.name = replacement
@@ -1221,7 +1227,7 @@ def _normalize_call_target_names_8616(codegen) -> bool:
                 and isinstance(current_call_name, str)
                 and current_call_name
                 and current_call_name != expected_source_name
-                and (current_is_unknown or source_name_proved)
+                and source_name_proved
                 and (
                     current_expected_arity is None
                     or current_expected_arity != expected_arity
@@ -1781,7 +1787,35 @@ def _refresh_callsite_summary_node_ids_8616(codegen, summary_map: dict[int, obje
         codegen._inertia_callsite_summaries = refreshed
         summary_map.clear()
         summary_map.update(refreshed)
-    return changed
+        return True
+
+    # Fallback remap lane: when callsite tags are unavailable after AST
+    # rewrites, rebind summaries by stable source order (callsite address) to
+    # current call-node order. This is conservative and only applies when every
+    # candidate summary carries a concrete callsite address.
+    stale_items: list[tuple[int, object]] = [
+        (node_id, summary)
+        for node_id, summary in tuple(summary_map.items())
+        if node_id not in current_node_ids
+    ]
+    if not stale_items:
+        return False
+    if not all(isinstance(getattr(summary, "callsite_addr", None), int) for _, summary in stale_items):
+        return False
+    available_nodes = [node for node in call_nodes if id(node) not in refreshed]
+    if len(available_nodes) < len(stale_items):
+        return False
+
+    stale_items.sort(key=lambda item: int(getattr(item[1], "callsite_addr", 0)))
+    rebound = dict(refreshed)
+    for (old_node_id, summary), node in zip(stale_items, available_nodes):
+        rebound.pop(old_node_id, None)
+        rebound[id(node)] = summary
+
+    codegen._inertia_callsite_summaries = rebound
+    summary_map.clear()
+    summary_map.update(rebound)
+    return True
 
 
 def _materialize_callsite_prototypes_8616(project, codegen) -> bool:
@@ -3693,6 +3727,25 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 protected_arg, protected_score = protected_entry
                 current_score = _arg_semantic_quality_8616(call_name, idx, current_arg)
                 if current_score < int(protected_score):
+                    summary = summary_map.get(id(node)) if isinstance(summary_map, dict) else None
+                    push_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
+                    source_idx = idx
+                    if isinstance(push_sources, tuple) and len(push_sources) > 1:
+                        source_idx = len(push_sources) - 1 - idx
+                    if (
+                        isinstance(push_sources, tuple)
+                        and source_idx >= 0
+                        and source_idx < len(push_sources)
+                        and isinstance(push_sources[source_idx], tuple)
+                        and len(push_sources[source_idx]) >= 2
+                        and push_sources[source_idx][0] == "imm"
+                        and isinstance(push_sources[source_idx][1], int)
+                        and isinstance(current_arg, structured_c.CConstant)
+                        and getattr(current_arg, "value", None) == int(push_sources[source_idx][1])
+                    ):
+                        # Keep source-evidenced immediates (e.g. first arg 0)
+                        # instead of restoring higher-scored stack carriers.
+                        continue
                     current_args[idx] = _clone_c_ast_tree(protected_arg)
                     updated = True
             if updated:
@@ -3770,12 +3823,9 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 elif typed_stack_probe_materialization and prototype_arg_count > expected_arg_count:
                     expected_arg_count = prototype_arg_count
             if isinstance(known_arg_count, int):
-                if not isinstance(expected_arg_count, int):
-                    expected_arg_count = known_arg_count
-                elif known_arg_count > expected_arg_count:
-                    expected_arg_count = known_arg_count
-                elif known_arg_count == 0:
-                    expected_arg_count = 0
+                # Known helper/callee signatures are exact arity evidence and
+                # must cap noisy backtracked stack materialization.
+                expected_arg_count = known_arg_count
             if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION") and call is not None:
                 log.warning(
                     "[call-summary] function=%#x target=%s expected_arg_count=%r push_arg_sources=%r",
@@ -3851,6 +3901,35 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
             ):
                 _refresh_summary_arg_shape(call, summary)
                 changed = True
+            if (
+                call is not None
+                and not is_stack_probe_helper
+                and isinstance(expected_arg_count, int)
+                and expected_arg_count == 1
+                and isinstance(push_arg_sources, tuple)
+                and len(push_arg_sources) == 1
+                and isinstance(push_arg_sources[0], tuple)
+                and len(push_arg_sources[0]) >= 2
+                and push_arg_sources[0][0] == "bp"
+                and isinstance(push_arg_sources[0][1], int)
+            ):
+                src_off = int(push_arg_sources[0][1])
+                direct_stack_arg = _stack_cvar_for_offset(src_off, allow_best_match=False)
+                if direct_stack_arg is None:
+                    direct_stack_arg = _stack_cvar_for_offset(src_off, allow_best_match=True)
+                if direct_stack_arg is not None:
+                    _set_materialized_call_args(
+                        call,
+                        [_clone_c_ast_tree(direct_stack_arg)],
+                        call_name=call_name,
+                        force_replace=True,
+                    )
+                    record_stack_arg_materialization_8616(codegen, 1)
+                    _refresh_summary_arg_shape(call, summary)
+                    changed = True
+                    new_statements.append(stmt)
+                    i += 1
+                    continue
             if (
                 call is not None
                 and isinstance(expected_arg_count, int)
@@ -4260,11 +4339,16 @@ def _materialize_callsite_stack_arguments_8616(project, codegen) -> bool:
                 push_sources = getattr(summary, "push_arg_sources", ()) if summary is not None else ()
                 summary_arg_count = getattr(summary, "arg_count", None) if summary is not None else None
                 known_count = _expected_arg_count_for_known_callee_8616(call_name)
-                expected_count = summary_arg_count if isinstance(summary_arg_count, int) and summary_arg_count >= 0 else known_count
+                expected_count = (
+                    known_count
+                    if isinstance(known_count, int)
+                    else (summary_arg_count if isinstance(summary_arg_count, int) and summary_arg_count >= 0 else None)
+                )
                 if not (isinstance(expected_count, int) and expected_count > 0):
                     continue
                 current_args = tuple(getattr(node, "args", ()) or ())
-                if current_args and not _call_args_need_rematerialization_8616(node, push_arg_sources=push_sources):
+                arity_mismatch = isinstance(known_count, int) and len(current_args) != known_count
+                if current_args and not arity_mismatch and not _call_args_need_rematerialization_8616(node, push_arg_sources=push_sources):
                     continue
                 seeded_args = None
                 if isinstance(push_sources, tuple) and len(push_sources) == expected_count:

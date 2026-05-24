@@ -53,8 +53,8 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "_Swaps": "int _Swaps(void *lhs, void *rhs);",
     "SwapBars": "int SwapBars(int iRow1, int iRow2);",
     "_SwapBars": "int _SwapBars(int iRow1, int iRow2);",
-    "PercolateUp": "int PercolateUp(int i);",
-    "_PercolateUp": "int _PercolateUp(int i);",
+    "PercolateUp": "short PercolateUp(int iMaxLevel);",
+    "_PercolateUp": "short _PercolateUp(int iMaxLevel);",
     "PercolateDown": "int PercolateDown(int i);",
     "_PercolateDown": "int _PercolateDown(int i);",
 }
@@ -632,6 +632,10 @@ def known_helper_signature_decl(name: str) -> str | None:
 
 def preferred_known_helper_signature_decl(name: str) -> str | None:
     if name in KNOWN_HELPER_SIGNATURE_DECLS:
+        if name.startswith("_"):
+            stripped = name.lstrip("_")
+            if stripped and stripped in KNOWN_HELPER_SIGNATURE_DECLS:
+                return KNOWN_HELPER_SIGNATURE_DECLS[stripped]
         if not name.startswith("_"):
             underscored = f"_{name}"
             if underscored in KNOWN_HELPER_SIGNATURE_DECLS:

@@ -907,9 +907,31 @@ def _apply_annotations_8616(project, codegen) -> bool:
         return False
 
     changed = False
-    helper_decl = preferred_known_helper_signature_decl(getattr(func, "name", None))
+    func_name = getattr(func, "name", None)
+    if isinstance(func_name, str) and func_name.startswith("_") and not func_name.startswith("__"):
+        stripped_name = func_name.lstrip("_")
+        if (
+            isinstance(stripped_name, str)
+            and stripped_name
+            and preferred_known_helper_signature_decl(func_name) is not None
+            and preferred_known_helper_signature_decl(stripped_name) is not None
+            and getattr(func, "name", None) != stripped_name
+        ):
+            func.name = stripped_name
+            if getattr(codegen, "cfunc", None) is not None and getattr(codegen.cfunc, "name", None) != stripped_name:
+                codegen.cfunc.name = stripped_name
+            changed = True
+            func_name = stripped_name
+        stripped_decl = preferred_known_helper_signature_decl(stripped_name) if isinstance(stripped_name, str) else None
+        if isinstance(stripped_decl, str) and stripped_decl:
+            existing = tuple(getattr(codegen, "_inertia_callsite_prototype_decls", ()) or ())
+            if stripped_decl not in existing:
+                codegen._inertia_callsite_prototype_decls = existing + (stripped_decl,)
+                changed = True
+
+    helper_decl = preferred_known_helper_signature_decl(func_name)
     if helper_decl is not None:
-        annotate_function(project, func_addr, name=getattr(func, "name", None), c_decl=helper_decl)
+        annotate_function(project, func_addr, name=func_name, c_decl=helper_decl)
         func = project.kb.functions.function(addr=func_addr, create=False)
         if func is None:
             return False

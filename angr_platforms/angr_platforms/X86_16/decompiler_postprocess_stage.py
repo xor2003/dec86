@@ -394,6 +394,20 @@ def _decompiler_postprocess_passes_for_function(project, codegen):
                 "_normalize_recovered_call_target_names_8616",
             }
         )
+    direct_call_floor_recovery_enabled = os.environ.get(
+        "INERTIA_ENABLE_DIRECT_CALL_FLOOR_RECOVERY", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if not direct_call_floor_recovery_enabled:
+        skip_names.update(
+            {
+                "_recover_missing_direct_calls_from_evidence_8616",
+                "_recover_missing_direct_calls_final_8616",
+                "_materialize_recovered_callsite_stack_arguments_8616",
+                "_materialize_callsite_stack_arguments_final_8616",
+                "_normalize_recovered_call_target_names_8616",
+                "_normalize_call_target_names_final_8616",
+            }
+        )
     simplify_structured_enabled = os.environ.get("INERTIA_ENABLE_STRUCTURED_SIMPLIFY_REWRITE", "").strip().lower() in {"1", "true", "yes", "on"}
     if not simplify_structured_enabled:
         skip_names.add("_simplify_structured_expressions_8616")
