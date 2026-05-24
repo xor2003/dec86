@@ -933,6 +933,8 @@ def _debug_condition_progress_8616(project, codegen, *, function_addr: int, labe
 
 
 def _collect_tail_validation_summary_with_baseline_canonicalization_8616(project, codegen, *, mode: str):
+    if os.environ.get("INERTIA_ENABLE_TV_BASELINE_CANONICALIZATION", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return collect_x86_16_tail_validation_summary(project, codegen, mode=mode)
     function_addr = getattr(getattr(codegen, "cfunc", None), "addr", -1) or -1
     # Large functions frequently time out in baseline clone canonicalization.
     # For those, use direct summary collection to keep validation deterministic
@@ -1082,13 +1084,14 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
         except ValueError:
             pass_timeout_seconds = None
 
+    jcc_guard_enabled = validation_enabled
     baseline_summary = (
         _collect_tail_validation_summary_with_baseline_canonicalization_8616(
             project,
             codegen,
             mode="live_out",
         )
-        if validation_enabled and per_pass_validation_enabled
+        if validation_enabled and (per_pass_validation_enabled or jcc_guard_enabled)
         else None
     )
 
@@ -1134,7 +1137,11 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                 ex,
             )
             return False
-        if validation_enabled and per_pass_validation_enabled:
+        enforce_pass_validation = (
+            per_pass_validation_enabled
+            or pass_name == "_rewrite_decoded_jcc_conditions_8616"
+        )
+        if validation_enabled and enforce_pass_validation:
             current_summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
             validation = compare_x86_16_tail_validation_summaries(baseline_summary, current_summary)
             if not x86_16_tail_validation_result_passed(validation):
@@ -1147,9 +1154,13 @@ def _postprocess_codegen_8616(project, codegen) -> bool:
                     "Source-evidenced pointer/value argument class mismatch",
                     "Source-evidenced call order mismatch/missing",
                     "Source-evidenced loop structure missing",
+                    "Source-evidenced loop call was hoisted outside loop",
+                    "Unreachable call statements present after return",
                     "Source-evidenced side-effect floor not met",
                 )
                 is_blocking_delta = any(marker in summary_text for marker in blocking_markers)
+                if pass_name == "_rewrite_decoded_jcc_conditions_8616":
+                    is_blocking_delta = True
                 if not is_blocking_delta:
                     # Non-blocking per-pass delta: keep pass result and continue.
                     if step_changed:

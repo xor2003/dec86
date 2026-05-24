@@ -302,7 +302,38 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
         if not isinstance(current_statements, (list, tuple)):
             current_statements = root_statements
         empty_loop_bodies = _empty_loop_bodies_8616(current_statements)
-        if len(empty_loop_bodies) >= 2:
+        if debug_enabled:
+            stmt_kinds = []
+            for stmt in list(current_statements)[:12]:
+                body = getattr(stmt, "body", None)
+                body_statements = getattr(body, "statements", None)
+                stmt_kinds.append(
+                    (
+                        type(stmt).__name__,
+                        bool(hasattr(stmt, "condition") or hasattr(stmt, "cond")),
+                        type(body).__name__ if body is not None else None,
+                        len(body_statements) if isinstance(body_statements, (list, tuple)) else None,
+                    )
+                )
+            loop_body_details = []
+            for stmt in list(current_statements)[:12]:
+                if not isinstance(stmt, structured_c.CForLoop):
+                    continue
+                body = getattr(stmt, "body", None)
+                body_statements = list(getattr(body, "statements", ()) or ())
+                for bstmt in body_statements[:6]:
+                    expr = getattr(bstmt, "expr", None)
+                    loop_body_details.append((type(bstmt).__name__, type(expr).__name__, repr(expr)[:120]))
+            log.warning(
+                "[call-recover] context=%s loop-relocate precheck addr=%#x empty_loops=%d source_sequence=%r top=%r loop_body=%r",
+                context_tag,
+                func_addr,
+                len(empty_loop_bodies),
+                source_sequence,
+                stmt_kinds,
+                loop_body_details,
+            )
+        if empty_loop_bodies:
             mutable_statements = list(current_statements)
             first_return_idx = None
             for idx, stmt in enumerate(mutable_statements):
@@ -324,23 +355,54 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
                     continue
                 call_stmt_indexes.append(idx)
                 call_stmt_names.append(normalized)
-            expected = [name for name in source_sequence if isinstance(name, str) and name]
-            if expected and call_stmt_names[: len(expected)] == expected:
-                first_body = empty_loop_bodies[0]
-                second_body = empty_loop_bodies[1]
-                first_idx = call_stmt_indexes[0]
-                second_indexes = call_stmt_indexes[1: len(expected)]
-                first_body_statements = list(getattr(first_body, "statements", ()) or ())
-                second_body_statements = list(getattr(second_body, "statements", ()) or ())
-                first_body_statements.append(mutable_statements[first_idx])
-                for idx in second_indexes:
-                    second_body_statements.append(mutable_statements[idx])
-                first_body.statements = first_body_statements
-                second_body.statements = second_body_statements
-                remove_indexes = {first_idx, *second_indexes}
+            expected = [name for name in ordered_missing if isinstance(name, str) and name]
+            matched_call_stmt_indexes: list[int] = []
+            if expected:
+                exp_i = 0
+                for rel_i, call_name in enumerate(call_stmt_names):
+                    if exp_i >= len(expected):
+                        break
+                    if call_name == expected[exp_i]:
+                        matched_call_stmt_indexes.append(call_stmt_indexes[rel_i])
+                        exp_i += 1
+            if debug_enabled:
+                log.warning(
+                    "[call-recover] context=%s loop-relocate candidates addr=%#x first_return_idx=%r calls=%r expected=%r matched=%r",
+                    context_tag,
+                    func_addr,
+                    first_return_idx,
+                    call_stmt_names,
+                    expected,
+                    matched_call_stmt_indexes,
+                )
+            if expected and len(matched_call_stmt_indexes) == len(expected):
+                # Relocate source-ordered recovered callsites from unreachable tail
+                # into recovered empty loop body/bodies.
+                target_bodies = list(empty_loop_bodies)
+                move_count = min(len(expected), len(matched_call_stmt_indexes))
+                for rel_idx in range(move_count):
+                    stmt_idx = matched_call_stmt_indexes[rel_idx]
+                    body_idx = min(rel_idx, len(target_bodies) - 1)
+                    body = target_bodies[body_idx]
+                    body_statements = list(getattr(body, "statements", ()) or ())
+                    body_statements.append(mutable_statements[stmt_idx])
+                    body.statements = body_statements
+                remove_indexes = set(matched_call_stmt_indexes[:move_count])
                 mutable_statements = [
                     stmt for idx, stmt in enumerate(mutable_statements) if idx not in remove_indexes
                 ]
+                # Preserve reachable control flow: remove early top-level return
+                # when it now only fronts relocated recovered calls.
+                if first_return_idx is not None and first_return_idx < len(mutable_statements):
+                    if isinstance(mutable_statements[first_return_idx], structured_c.CReturn):
+                        del mutable_statements[first_return_idx]
+                if debug_enabled:
+                    log.warning(
+                        "[call-recover] context=%s loop-relocate applied addr=%#x moved=%d",
+                        context_tag,
+                        func_addr,
+                        move_count,
+                    )
                 updated_statements = mutable_statements if isinstance(root_statements, list) else tuple(mutable_statements)
                 root.statements = updated_statements
                 if hasattr(root, "statements"):
@@ -354,14 +416,6 @@ def _recover_missing_direct_calls_from_evidence_8616(project, codegen) -> bool:
                 if cfunc_body is not None and cfunc_body is not root and isinstance(body_statements, (list, tuple)):
                     cfunc_body.statements = list(updated_statements) if isinstance(body_statements, list) else tuple(updated_statements)
                 changed = True
-                # Preserve reachable control flow: remove early top-level return
-                # when it now precedes only relocated callsites.
-                if first_return_idx is not None and first_return_idx < len(mutable_statements):
-                    with contextlib.suppress(Exception):
-                        updated_top = list(getattr(root, "statements", ()) or ())
-                        if first_return_idx < len(updated_top) and isinstance(updated_top[first_return_idx], structured_c.CReturn):
-                            del updated_top[first_return_idx]
-                            root.statements = updated_top if isinstance(getattr(root, "statements", None), list) else tuple(updated_top)
     return changed
 
 
@@ -377,6 +431,28 @@ def _first_empty_loop_body_8616(statements) -> object | None:
 
 
 def _empty_loop_bodies_8616(statements) -> list[object]:
+    def _stmt_is_placeholder_8616(stmt) -> bool:
+        if stmt is None:
+            return True
+        nested = getattr(stmt, "statements", None)
+        if isinstance(nested, (list, tuple)):
+            return all(_stmt_is_placeholder_8616(child) for child in nested)
+        expr = getattr(stmt, "expr", None)
+        if expr is None:
+            return True
+        if isinstance(expr, CFunctionCall):
+            return False
+        if isinstance(expr, CBinaryOp):
+            # Keep conservative: loop bodies with binary expression side-effects
+            # are not safe anchors.
+            return False
+        if isinstance(expr, structured_c.CAssignment):
+            lhs = getattr(expr, "lhs", None)
+            rhs = getattr(expr, "rhs", None)
+            return _same_c_expression_8616(lhs, rhs)
+        # Unknown loop statement kind: refuse anchoring.
+        return False
+
     bodies: list[object] = []
     for stmt in statements:
         body = getattr(stmt, "body", None)
@@ -388,30 +464,7 @@ def _empty_loop_bodies_8616(statements) -> list[object]:
         if len(body_statements) == 0:
             bodies.append(body)
             continue
-        has_call = False
-        only_placeholder_effects = True
-        for body_stmt in body_statements:
-            expr = getattr(body_stmt, "expr", None)
-            if isinstance(expr, CFunctionCall):
-                has_call = True
-                only_placeholder_effects = False
-                break
-            if isinstance(expr, CBinaryOp):
-                # Keep conservative: loop bodies with binary expression side-effects
-                # are not safe anchors.
-                only_placeholder_effects = False
-                break
-            if isinstance(expr, structured_c.CAssignment):
-                lhs = getattr(expr, "lhs", None)
-                rhs = getattr(expr, "rhs", None)
-                if _same_c_expression_8616(lhs, rhs):
-                    continue
-                only_placeholder_effects = False
-                break
-            # Unknown loop statement kind: refuse anchoring.
-            only_placeholder_effects = False
-            break
-        if (not has_call) and only_placeholder_effects:
+        if all(_stmt_is_placeholder_8616(body_stmt) for body_stmt in body_statements):
             bodies.append(body)
     return bodies
 
